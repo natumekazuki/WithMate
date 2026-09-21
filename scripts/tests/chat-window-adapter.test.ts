@@ -497,6 +497,17 @@ test("createIdleChatMessageColumnProps は approval や diff のない message c
   assert.equal(messageColumnProps.getChangedFilesEmptyText("artifact-1", false), "");
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "static text conversationはsession・character・messages・running stateとmessage actionsを共通column propsへ変換する"
+// oracle = { type = "contract", ref = "src/chat/chat-window-adapter.ts" }
+// fault = "static conversationのidentity、message、running state、copy/quote callbackを落とす"
+// observable = "返却propsのsessionId/character/messages/isRunning/onCopyMessageText/onQuoteMessageText"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-adapter.static-message-column"
+// lifecycle = "permanent"
+// distinction = "adapter projectionの値とcallback identityを共通component境界で確認する"
+// @end-test-value
 test("createStaticTextConversationMessageColumnProps は text conversation を共通 message column に変換する", () => {
   const messageListRef = React.createRef<HTMLDivElement>();
   const onCopyMessageText = () => {};
@@ -508,7 +519,7 @@ test("createStaticTextConversationMessageColumnProps は text conversation を�
     characterIconPath: "data:image/png;base64,AA==",
     messages: [
       { role: "user", text: "おはよう" },
-      { role: "mate", text: "やあ" },
+      { role: "assistant", text: "やあ" },
     ],
     messageListRef,
     isRunning: true,
@@ -570,7 +581,7 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
     onCopyMessageText,
     onQuoteMessageText,
     onToggleMessageBookmark,
-  };
+  } satisfies Parameters<typeof buildLiveSessionMessageColumnProps>[0];
   const composerMessageColumnProps = buildLiveSessionMessageColumnProps(messageColumnInput);
   const explicitEmptyMessageColumnProps = buildLiveSessionMessageColumnProps({
     ...messageColumnInput,
@@ -586,6 +597,17 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
   assert.equal(composerMessageColumnProps.onToggleMessageBookmark, onToggleMessageBookmark);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "live session composer propsは表示可能な共通操作を既定値として保持する"
+// oracle = { type = "contract", ref = "src/chat/live-session-window-props.ts" }
+// fault = "attachment、directory、execution mode、custom agent操作を誤って非表示にする"
+// observable = "composer propsのshowAttachmentControls/showAdditionalDirectoryControls/showExecutionModeControls/showCustomAgentPicker"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-adapter.live-composer"
+// lifecycle = "permanent"
+// distinction = "adapterの表示capability projectionをDOMではなく共通props値で確認する"
+// @end-test-value
 test("buildLiveSessionComposerProps は composer の表示デフォルトを反映する", () => {
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
   const composerProps = buildLiveSessionComposerProps({
@@ -598,7 +620,6 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     selectedCustomAgentLabel: "Agent",
     selectedCustomAgentTitle: "",
     additionalDirectoryCount: 0,
-    canCollapseActionDock: false,
     showJumpToBottom: false,
     isCustomAgentListLoading: false,
     customAgentItems: [],
@@ -617,6 +638,10 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     isComposerBlockedFeedbackActive: false,
     approvalOptions: [{ value: "never", label: "never" }],
     selectedApprovalMode: "never",
+    reviewerOptions: [],
+    selectedCodexReviewer: "user",
+    speedOptions: [],
+    selectedCodexSpeed: "standard",
     sandboxOptions: [],
     selectedCodexSandboxMode: "workspace-write",
     modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
@@ -631,7 +656,6 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     onToggleSkillPicker: () => {},
     onAddAdditionalDirectory: () => {},
     onToggleAdditionalDirectoryList: () => {},
-    onCollapse: () => {},
     onJumpToBottom: () => {},
     onSelectCustomAgent: () => {},
     onRemoveAttachment: () => {},
@@ -643,6 +667,8 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     onDraftCompositionEnd: () => {},
     onSendOrCancel: () => {},
     onChangeApprovalMode: () => {},
+    onChangeCodexReviewer: () => {},
+    onChangeCodexSpeed: () => {},
     onChangeCodexSandboxMode: () => {},
     onChangeModel: () => {},
     onChangeReasoningEffort: () => {},
@@ -701,7 +727,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     selectedCustomAgentLabel: "Agent",
     selectedCustomAgentTitle: "",
     additionalDirectoryCount: 2,
-    canCollapseActionDock: true,
     isMessageListFollowing: false,
     isCustomAgentListLoading: false,
     customAgentItems: [],
@@ -720,6 +745,10 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     isComposerBlockedFeedbackActive: false,
     approvalOptions: [{ value: "never", label: "never" }],
     selectedApprovalMode: "never",
+    reviewerOptions: [],
+    selectedCodexReviewer: "user",
+    speedOptions: [],
+    selectedCodexSpeed: "standard",
     sandboxOptions: [],
     selectedCodexSandboxMode: "workspace-write",
     modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
@@ -747,6 +776,8 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     onDraftCompositionEnd: () => {},
     onSendOrCancel,
     onChangeApprovalMode: () => {},
+    onChangeCodexReviewer: () => {},
+    onChangeCodexSpeed: () => {},
     onChangeCodexSandboxMode: () => {},
     onChangeModel: () => {},
     onChangeReasoningEffort: () => {},
@@ -819,21 +850,21 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     onChangeReasoningEffort: noop,
   });
   const compactActionDockProps = createStaticChatCompactActionDockProps({
-    draft: "",
     isRunning: false,
-    isSendDisabled: true,
-    onSendOrCancel: noop,
+    onCancel: noop,
   });
   const rightPaneProps = buildLiveSessionContextPaneProps({
-    taskTitle: "Right pane",
-    isHeaderExpanded: false,
     activeContextPaneTab: "latest-command",
     availableContextPaneTabs: ["latest-command"],
     contextPaneProjection: {
-      latestCommand: { state: "empty", tone: "muted", label: "No command" },
-      tasks: { state: "empty", tone: "muted", label: "No tasks" },
-      reasoning: { state: "empty", tone: "muted", label: "No reasoning" },
-      context: { state: "empty", tone: "muted", label: "No context" },
+      activeTab: "latest-command",
+      badgeLabel: "",
+      toneClassName: "",
+      latestCommandToneClassName: "",
+      latestCommandStatusLabel: "",
+      latestCommandSourceCopy: "",
+      reasoningToneClassName: "",
+      tasksToneClassName: "",
     },
     latestCommandView: null,
     runningDetailsEntries: [],
@@ -846,10 +877,16 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     selectedCopilotRemainingRequestsLabel: "",
     selectedCopilotQuotaResetLabel: "",
     selectedSessionContextTelemetry: null,
-    selectedSessionContextTelemetryProjection: null,
+    selectedSessionContextTelemetryProjection: {
+      summaryLabel: "",
+      currentTokensLabel: "",
+      tokenLimitLabel: "",
+      messagesLengthLabel: "",
+      systemTokensLabel: "",
+      conversationTokensLabel: "",
+    },
     contextEmptyText: "context empty",
     latestCommandEmptyText: "latest command empty",
-    onToggleHeaderExpanded: noop,
     onCycleContextPaneTab: noop,
   });
 
@@ -869,12 +906,13 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
       onPointerDown: noop,
       onTogglePanel: noop,
     },
+    skillPickerProps: undefined,
     isRightPaneVisible: true,
     rightPaneProps,
     modals: React.createElement("div"),
   });
   const auxiliaryProps = buildLiveSessionWindowShellProps({
-    mode: "auxiliary",
+    mode: "agent",
     baseClassName: "theme-accent",
     isHeaderExpanded: false,
     workbenchRef: React.createRef<HTMLDivElement>(),
@@ -889,6 +927,7 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
       onPointerDown: noop,
       onTogglePanel: noop,
     },
+    skillPickerProps: undefined,
     isRightPaneVisible: true,
     rightPaneProps,
     modals: React.createElement("div"),
@@ -902,11 +941,20 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
   assert.equal(auxiliaryProps.className, "theme-accent auxiliary-session-mode");
   assert.match(renderToStaticMarkup(agentProps.mainContent), /Preview/);
   assert.match(renderToStaticMarkup(React.createElement(ChatWindow, agentProps)), /LatestCommand/);
-  assert.equal(agentProps.rightPaneProps?.taskTitle, "Right pane");
-
   assert.equal(auxiliaryProps.rightPaneProps, rightPaneProps);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "live session chat body propsはbodyの表示内容と補助paneの入力を共通形式で保持する"
+// oracle = { type = "contract", ref = "src/chat/live-session-window-props.ts" }
+// fault = "live bodyのsession identity、message column、composer、context paneを欠落または混線させる"
+// observable = "返却chat body propsのsession/mode/message/composer/context pane fields"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-adapter.live-chat-body"
+// lifecycle = "permanent"
+// distinction = "複合adapter projectionを実入力から一度に確認する"
+// @end-test-value
 test("buildLiveSessionChatBodyProps は live session body props をまとめて組み立てる", () => {
   const messageListRef = React.createRef<HTMLDivElement>();
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
@@ -952,7 +1000,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       selectedCustomAgentLabel: "Agent",
       selectedCustomAgentTitle: "",
       additionalDirectoryCount: 0,
-      canCollapseActionDock: true,
       showJumpToBottom: true,
       isCustomAgentListLoading: false,
       customAgentItems: [],
@@ -971,6 +1018,10 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       isComposerBlockedFeedbackActive: false,
       approvalOptions: [{ value: "never", label: "never" }],
       selectedApprovalMode: "never",
+      reviewerOptions: [],
+      selectedCodexReviewer: "user",
+      speedOptions: [],
+      selectedCodexSpeed: "standard",
       sandboxOptions: [],
       selectedCodexSandboxMode: "workspace-write",
       modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
@@ -985,7 +1036,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       onToggleSkillPicker: () => {},
       onAddAdditionalDirectory: () => {},
       onToggleAdditionalDirectoryList: () => {},
-      onCollapse: () => {},
       onJumpToBottom: () => {},
       onSelectCustomAgent: () => {},
       onRemoveAttachment: () => {},
@@ -997,6 +1047,8 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       onDraftCompositionEnd: () => {},
       onSendOrCancel,
       onChangeApprovalMode: () => {},
+      onChangeCodexReviewer: () => {},
+      onChangeCodexSpeed: () => {},
       onChangeCodexSandboxMode: () => {},
       onChangeModel: () => {},
       onChangeReasoningEffort: () => {},
@@ -1041,18 +1093,19 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
 // lifecycle = "permanent"
 // @end-test-value
 test("buildLiveSessionContextPaneProps は right pane props を共通形式で保持する", () => {
-  const onToggleHeaderExpanded = () => {};
   const onCycleContextPaneTab = () => {};
   const props = buildLiveSessionContextPaneProps({
-    taskTitle: "Right pane",
-    isHeaderExpanded: true,
     activeContextPaneTab: "latest-command",
     availableContextPaneTabs: ["latest-command"],
     contextPaneProjection: {
-      latestCommand: { state: "empty", tone: "muted", label: "No command" },
-      tasks: { state: "empty", tone: "muted", label: "No tasks" },
-      reasoning: { state: "empty", tone: "muted", label: "No reasoning" },
-      context: { state: "empty", tone: "muted", label: "No context" },
+      activeTab: "latest-command",
+      badgeLabel: "",
+      toneClassName: "",
+      latestCommandToneClassName: "",
+      latestCommandStatusLabel: "",
+      latestCommandSourceCopy: "",
+      reasoningToneClassName: "",
+      tasksToneClassName: "",
     },
     latestCommandView: null,
     runningDetailsEntries: [],
@@ -1065,17 +1118,21 @@ test("buildLiveSessionContextPaneProps は right pane props を共通形式で�
     selectedCopilotRemainingRequestsLabel: "",
     selectedCopilotQuotaResetLabel: "",
     selectedSessionContextTelemetry: null,
-    selectedSessionContextTelemetryProjection: null,
+    selectedSessionContextTelemetryProjection: {
+      summaryLabel: "",
+      currentTokensLabel: "",
+      tokenLimitLabel: "",
+      messagesLengthLabel: "",
+      systemTokensLabel: "",
+      conversationTokensLabel: "",
+    },
     contextEmptyText: "context empty",
     latestCommandEmptyText: "latest command empty",
-    onToggleHeaderExpanded,
     onCycleContextPaneTab,
   });
 
-  assert.equal(props.taskTitle, "Right pane");
   assert.equal(props.contextEmptyText, "context empty");
   assert.equal(props.latestCommandEmptyText, "latest command empty");
-  assert.equal(props.onToggleHeaderExpanded, onToggleHeaderExpanded);
   assert.equal(props.onCycleContextPaneTab, onCycleContextPaneTab);
 });
 

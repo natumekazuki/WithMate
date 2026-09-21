@@ -441,13 +441,16 @@ test("publication commit後のlock解放失敗はowner entryをrollbackする", 
     }
   }));
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "heartbeatは保護済みslot内でACL処理を再実行せずleaseをatomic更新する"
 // oracle = { type = "adr", ref = "ADR-023" }
-// failure_mode = "5秒周期のheartbeatがACL helperを起動して共通lockを長時間占有し、fresh runtimeをstale化する"
+// fault = "5秒周期のheartbeatがACL helperを起動して共通lockを長時間占有し、fresh runtimeをstale化する"
+// observable = "security call count、lease expiry、fake clock heartbeat callback"
+// observation_boundary = "public-boundary"
 // scope = "runtime-discovery-registry"
 // lifecycle = "permanent"
+// distinction = "初回publish成功では検出できないheartbeat更新とACL再実行抑止を確認する"
 // @end-test-value
 test("heartbeatはACL処理を再実行せずfake clockのleaseを更新する", async () =>
   withRoot(async (root) => {
@@ -463,9 +466,9 @@ test("heartbeatはACL処理を再実行せずfake clockのleaseを更新する",
       timers: {
         setInterval: (cb) => {
           callback = cb;
-          return 1 as ReturnType<typeof setInterval>;
+          return setInterval(() => {}, 60_000);
         },
-        clearInterval: () => undefined,
+        clearInterval: (handle) => globalThis.clearInterval(handle),
       },
     });
     const securityCallCountAfterPublish = securityCallCount;

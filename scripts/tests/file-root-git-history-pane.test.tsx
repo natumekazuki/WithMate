@@ -8,13 +8,16 @@ import { createRoot, type Root } from "react-dom/client";
 import type {
   FileRootGitChangeEntry,
   FileRootGitHistoryCommit,
+  FileRootGitHistoryCommitDetailResult,
   FileRootGitHistoryCommitsRequest,
   FileRootGitHistoryCommitsResult,
   FileRootGitHistoryComparisonRequest,
   FileRootGitHistoryComparisonResult,
   FileRootGitHistoryDiffRequest,
+  FileRootGitHistoryRepositoriesResult,
   FileRootGitHistoryRepository,
 } from "../../src/file-explorer/file-explorer-contract.js";
+import { isFileRootGitHistoryComparisonDiffRequest } from "../../src/file-explorer/file-explorer-contract.js";
 
 type ObserverEntry = { isIntersecting: boolean };
 
@@ -331,7 +334,7 @@ test("History 追加pageの失敗は既存一覧を維持し、sentinelから再
   let appendAttempts = 0;
   const api = {
     listFileRootGitHistoryRepositories: async () => ({ status: "ok" as const, repositories: [repositoryA] }),
-    listFileRootGitHistoryCommits: async (request: { cursor: string | null }) => {
+    listFileRootGitHistoryCommits: async (request: FileRootGitHistoryCommitsRequest) => {
       pageRequests.push(request.cursor ?? "first");
       if (request.cursor === "100") {
         appendAttempts += 1;
@@ -342,7 +345,7 @@ test("History 追加pageの失敗は既存一覧を維持し、sentinelから再
       return { status: "ok" as const, page: { entries: [first], nextCursor: "100", hasMore: true } };
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: first, entries: [] }),
-    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, relativePath: null, patch: "", previewResource: null }),
     getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
@@ -567,14 +570,14 @@ test("History repository一覧の再読込開始時に旧Diffを即座に失効�
   const { dom, restore } = installDom();
   const repositoryChanges: Array<string | null> = [];
   let repositoryRequests = 0;
-  let resolveReload: ((result: unknown) => void) | null = null;
+  let resolveReload: ((result: FileRootGitHistoryRepositoriesResult) => void) | null = null;
   const api = {
     listFileRootGitHistoryRepositories: async () => {
       repositoryRequests += 1;
       if (repositoryRequests === 1) {
         return { status: "ok" as const, repositories: [repositoryA] };
       }
-      return new Promise((resolve) => {
+        return new Promise<FileRootGitHistoryRepositoriesResult>((resolve) => {
         resolveReload = resolve;
       });
     },
@@ -880,7 +883,23 @@ test("History detail はref種別、commit metadata、changed file tree、file d
     }),
     getFileRootGitHistoryDiff: async (request: FileRootGitHistoryDiffRequest) => {
       diffRequests.push(request);
-      return { status: "ok" as const, commitId: request.commitId, relativePath: request.relativePath ?? null, patch: "diff --git" };
+      if (isFileRootGitHistoryComparisonDiffRequest(request)) {
+        return {
+          status: "ok" as const,
+          comparison: request.comparison,
+          relativePath: request.relativePath ?? null,
+          patch: "diff --git",
+          previewBeforeResource: null,
+          previewAfterResource: null,
+        };
+      }
+      return {
+        status: "ok" as const,
+        commitId: request.commitId,
+        relativePath: request.relativePath ?? null,
+        patch: "diff --git",
+        previewResource: null,
+      };
     },
     getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
@@ -943,15 +962,19 @@ test("History detail はref種別、commit metadata、changed file tree、file d
     assert.ok(fileButton);
     await act(async () => fileButton.click());
     await flush();
-    assert.equal(diffRequests.at(-1)?.relativePath, "src/example.ts");
-    assert.equal(diffRequests.at(-1)?.commitId, targetCommit.id);
+    const fileDiffRequest = diffRequests.at(-1);
+    assert.ok(fileDiffRequest && !isFileRootGitHistoryComparisonDiffRequest(fileDiffRequest));
+    assert.equal(fileDiffRequest.relativePath, "src/example.ts");
+    assert.equal(fileDiffRequest.commitId, targetCommit.id);
     const openChanges = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent === "Open All Changes");
     assert.ok(openChanges);
     await act(async () => openChanges.click());
     await flush();
-    assert.equal(diffRequests.at(-1)?.relativePath, null);
-    assert.equal(diffRequests.at(-1)?.commitId, targetCommit.id);
+    const allChangesRequest = diffRequests.at(-1);
+    assert.ok(allChangesRequest && !isFileRootGitHistoryComparisonDiffRequest(allChangesRequest));
+    assert.equal(allChangesRequest.relativePath, null);
+    assert.equal(allChangesRequest.commitId, targetCommit.id);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -1192,18 +1215,18 @@ test("History は古いcommit detail結果を現在のcommitへ混入させな�
   const { dom, restore } = installDom();
   const firstCommit = commit("a", "first detail");
   const secondCommit = commit("b", "second detail");
-  const pendingDetails: Array<(result: unknown) => void> = [];
+  const pendingDetails: Array<(result: FileRootGitHistoryCommitDetailResult) => void> = [];
   const api = {
     listFileRootGitHistoryRepositories: async () => ({ status: "ok" as const, repositories: [repositoryA] }),
     listFileRootGitHistoryCommits: async () => ({
       status: "ok" as const,
       page: { entries: [firstCommit, secondCommit], nextCursor: null, hasMore: false },
     }),
-    getFileRootGitHistoryCommitDetail: (request: { commitId: string }) => new Promise((resolve) => {
+    getFileRootGitHistoryCommitDetail: (request: { commitId: string }) => new Promise<FileRootGitHistoryCommitDetailResult>((resolve) => {
       pendingDetails.push((result) => resolve(result));
       assert.ok(request.commitId === firstCommit.id || request.commitId === secondCommit.id);
     }),
-    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, relativePath: null, patch: "", previewResource: null }),
     getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
@@ -1274,7 +1297,7 @@ test("History は古いfile Diff結果をBack後のcommitへ混入させない",
   const { dom, restore } = installDom();
   const firstCommit = commit("a", "first diff");
   const secondCommit = commit("b", "second diff");
-  let resolveDiff: ((message: string | null) => void) | null = null;
+  const diffResolver: { resolve: ((message: string | null) => void) | null } = { resolve: null };
   const api = {
     listFileRootGitHistoryRepositories: async () => ({ status: "ok" as const, repositories: [repositoryA] }),
     listFileRootGitHistoryCommits: async () => ({
@@ -1286,7 +1309,7 @@ test("History は古いfile Diff結果をBack後のcommitへ混入させない",
       commit: request.commitId === firstCommit.id ? firstCommit : secondCommit,
       entries: [changedEntry(request.commitId === firstCommit.id ? "first.ts" : "second.ts")],
     }),
-    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, relativePath: null, patch: "", previewResource: null }),
     getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
@@ -1301,7 +1324,7 @@ test("History は古いfile Diff結果をBack後のcommitへ混入させない",
         rootsRevision: "roots-1",
         refreshRevision: 0,
         onOpenDiff: async () => new Promise<string | null>((resolve) => {
-          resolveDiff = resolve;
+          diffResolver.resolve = resolve;
         }),
       }));
       await Promise.resolve();
@@ -1316,7 +1339,7 @@ test("History は古いfile Diff結果をBack後のcommitへ混入させない",
     assert.ok(firstFile);
     await act(async () => firstFile.click());
     await flush();
-    assert.ok(resolveDiff);
+    assert.ok(diffResolver.resolve);
     const backButton = dom.window.document.querySelector<HTMLButtonElement>(".file-history-back");
     assert.ok(backButton);
     await act(async () => backButton.click());
@@ -1326,7 +1349,7 @@ test("History は古いfile Diff結果をBack後のcommitへ混入させない",
     assert.ok(secondRow);
     await act(async () => secondRow.click());
     await flush();
-    resolveDiff?.("stale diff");
+    diffResolver.resolve?.("stale diff");
     await flush();
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /stale diff/);
     assert.match(dom.window.document.body.textContent ?? "", /second\.ts/);

@@ -540,6 +540,17 @@ describe("Glossary lookup and search projection", () => {
 });
 
 describe("Glossary external update projection", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Glossary watcherは各eventでcurrent fileを再読込しvalid・invalid・missing・recoveryを投影する"
+  // oracle = { type = "contract", ref = "src-electron/glossary-application-service.ts: watch projection" }
+  // fault = "stale snapshotを保持して変更を隠す、またはrecovery後もmissing/error表示を残す"
+  // observable = "projected glossary stateとwatcher lifecycle"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-watch-projection"
+  // lifecycle = "permanent"
+  // distinction = "単一read成功では検出できないwatch eventの状態遷移を検証する"
+  // @end-test-value
   it("watch eventごとにcurrent fileを再読込し、valid・invalid・missing・recoveryを投影する", async () => {
     const { root, target } = await createRepository();
     type FakeWatcher = {
@@ -565,7 +576,7 @@ describe("Glossary external update projection", () => {
           close: () => {
             watcher.closed = true;
           },
-          on: (_event, errorListener) => {
+          on: (_event: string, errorListener: (error: Error) => void) => {
             errorListeners.push(errorListener as (error: Error) => void);
             return undefined as never;
           },
@@ -601,13 +612,24 @@ describe("Glossary external update projection", () => {
     assert.equal(watchers.every((watcher) => watcher.closed), true);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Glossary watcher failureはstale snapshotではなくwatch-errorとして投影する"
+  // oracle = { type = "contract", ref = "src-electron/glossary-application-service.ts: watch error" }
+  // fault = "失敗後に古いGlossaryを現行値として表示し、利用者へ不整合を隠す"
+  // observable = "error stateとcurrent snapshot"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-watch-failure"
+  // lifecycle = "permanent"
+  // distinction = "正常watch更新では検出できないread failureの公開状態を検証する"
+  // @end-test-value
   it("watcher failureはstale snapshotではなくwatch-errorを返す", async () => {
     const { root, target } = await createRepository();
     const errors: Array<(error: Error) => void> = [];
     const service = new GlossaryApplicationService({
       watchPath: () => ({
         close() {},
-        on: (_event, listener) => {
+          on: (_event: string, listener: (error: Error) => void) => {
           errors.push(listener as (error: Error) => void);
           return undefined as never;
         },
@@ -666,6 +688,17 @@ describe("Glossary external update projection", () => {
     assert.equal(watchers.every((watcher) => watcher.closed), true);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "root watcher failure後も購読を張り直しmissingから復旧する"
+  // oracle = { type = "contract", ref = "src-electron/glossary-application-service.ts: root watcher" }
+  // fault = "watcherを再購読せず、root復旧後もmissing状態を更新できない"
+  // observable = "watcher count、projected state、recovery content"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-root-watcher-recovery"
+  // lifecycle = "permanent"
+  // distinction = "単発watch failureでは検出できない再購読と復旧の連続動作を検証する"
+  // @end-test-value
   it("root watcher failure後も購読を張り直してmissingから復旧する", async () => {
     const { root, target } = await createRepository();
     type FakeWatcher = {
@@ -691,7 +724,7 @@ describe("Glossary external update projection", () => {
           close: () => {
             watcher.closed = true;
           },
-          on: (_event, errorListener) => {
+          on: (_event: string, errorListener: (error: Error) => void) => {
             errorListeners.push(errorListener as (error: Error) => void);
             return undefined as never;
           },

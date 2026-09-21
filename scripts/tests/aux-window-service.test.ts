@@ -558,9 +558,9 @@ test("AuxWindowService は literal backslash を含む canonical path を separa
 // @end-test-value
 test("AuxWindowService は entry load 中に閉じた Session を opened 扱いにしない", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
-  let finishLoad: (() => void) | null = null;
+  const loadControl = { resolve: undefined as (() => void) | undefined };
   const load = new Promise<void>((resolve) => {
-    finishLoad = resolve;
+    loadControl.resolve = resolve;
   });
   const service = new AuxWindowService({
     createWindow() {
@@ -586,7 +586,7 @@ test("AuxWindowService は entry load 中に閉じた Session を opened 扱い�
   });
 
   service.closeFilePreviewWindowsForSession("session-1");
-  finishLoad?.();
+  loadControl.resolve?.();
 
   await assert.rejects(opening, /Session is no longer active/);
   assert.equal(stubs[0]?.window.isDestroyed(), true);
@@ -605,9 +605,9 @@ test("AuxWindowService は entry load 中に閉じた Session を opened 扱い�
 // @end-test-value
 test("AuxWindowService は共有 entry load 中に閉じた Session を reused 扱いにしない", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
-  let finishLoad: (() => void) | null = null;
+  const loadControl = { resolve: undefined as (() => void) | undefined };
   const load = new Promise<void>((resolve) => {
-    finishLoad = resolve;
+    loadControl.resolve = resolve;
   });
   const service = new AuxWindowService({
     createWindow() {
@@ -635,7 +635,7 @@ test("AuxWindowService は共有 entry load 中に閉じた Session を reused �
   const reusedOpening = service.openFilePreviewWindow(payload);
 
   service.closeFilePreviewWindowsForSession("session-1");
-  finishLoad?.();
+  loadControl.resolve?.();
 
   await assert.rejects(firstOpening, /Session is no longer active/);
   await assert.rejects(reusedOpening, /Session is no longer active/);

@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   buildNewSession,
   type AuditLogEntry,
+  type AuditLogSummary,
   type LiveApprovalRequest,
   type LiveElicitationRequest,
   type LiveSessionRunState,
@@ -27,7 +28,9 @@ function makeBackgroundActivity(
   };
 }
 
-function makeAuditLog(partial: Partial<AuditLogEntry> & Pick<AuditLogEntry, "id" | "sessionId" | "phase">): AuditLogEntry {
+type TestAuditLog = AuditLogSummary & Pick<AuditLogEntry, "logicalPrompt" | "transportPayload" | "assistantText" | "rawItemsJson">;
+
+function makeAuditLog(partial: Partial<AuditLogEntry> & Pick<AuditLogEntry, "id" | "sessionId" | "phase">): TestAuditLog {
   return {
     id: partial.id,
     sessionId: partial.sessionId,
@@ -41,11 +44,22 @@ function makeAuditLog(partial: Partial<AuditLogEntry> & Pick<AuditLogEntry, "id"
     logicalPrompt: partial.logicalPrompt ?? { systemText: "", inputText: "", composedText: "" },
     transportPayload: partial.transportPayload ?? null,
     assistantText: partial.assistantText ?? "",
+    assistantTextPreview: partial.assistantText ?? "",
     operations: partial.operations ?? [],
     rawItemsJson: partial.rawItemsJson ?? "[]",
     usage: partial.usage ?? null,
     errorMessage: partial.errorMessage ?? "",
+    detailAvailable: true,
   };
+}
+
+function readAssistantText(entry: AuditLogSummary | undefined): string | undefined {
+  if (!entry) {
+    return undefined;
+  }
+  return "assistantText" in entry && typeof entry.assistantText === "string"
+    ? entry.assistantText
+    : entry.assistantTextPreview;
 }
 
 function makeLiveRun(overrides?: Partial<LiveSessionRunState>): LiveSessionRunState {
@@ -179,6 +193,17 @@ describe("buildDisplayedAuditLogs", () => {
     assert.deepEqual(result, persistedLogs);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "同一sessionのrunning persisted rowはlive stateで置換される"
+  // oracle = { type = "contract", ref = "src/audit-log-refresh.ts" }
+  // fault = "古いpersisted progressやoperationsを表示し、live runの内容を失う"
+  // observable = "先頭rowのphase、assistant text、threadId、operations、usage"
+  // observation_boundary = "public-boundary"
+  // scope = "audit-log-refresh.live-merge"
+  // lifecycle = "permanent"
+  // distinction = "refresh projectionの出力をfixtureのpersisted/live stateから直接比較する"
+  // @end-test-value
   it("running persisted row がある時は live state で置き換える", () => {
     const runningSession = {
       ...selectedSession,
@@ -221,7 +246,7 @@ describe("buildDisplayedAuditLogs", () => {
 
     assert.equal(result[0]?.id, 10);
     assert.equal(result[0]?.phase, "running");
-    assert.equal(result[0]?.assistantText, "新しい progress");
+    assert.equal(readAssistantText(result[0]), "新しい progress");
     assert.equal(result[0]?.threadId, "thread-live");
     assert.equal(result[0]?.operations.length, 2);
     assert.equal(result[0]?.operations[0]?.summary, "npm test");
@@ -229,6 +254,17 @@ describe("buildDisplayedAuditLogs", () => {
     assert.deepEqual(result[0]?.usage, { inputTokens: 20, cachedInputTokens: 0, outputTokens: 8 });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "live stateは別sessionのpersisted running rowへmergeされない"
+  // oracle = { type = "contract", ref = "src/audit-log-refresh.ts" }
+  // fault = "selected sessionのlive progressを別session rowへ混入する"
+  // observable = "各rowのsessionId、assistant text、detailAvailable"
+  // observation_boundary = "public-boundary"
+  // scope = "audit-log-refresh.session-isolation"
+  // lifecycle = "permanent"
+  // distinction = "同じrefresh出力に対象sessionと非対象sessionを並べて境界を確認する"
+  // @end-test-value
   it("別 session の running persisted row には live state を merge しない", () => {
     const runningSession = {
       ...selectedSession,
@@ -265,13 +301,24 @@ describe("buildDisplayedAuditLogs", () => {
 
     assert.equal(result[0]?.phase, "running");
     assert.equal(result[0]?.sessionId, "aux-live");
-    assert.equal(result[0]?.assistantText, "aux live progress");
+    assert.equal(readAssistantText(result[0]), "aux live progress");
     assert.equal(result[1]?.id, 20);
     assert.equal(result[1]?.sessionId, "session-parent");
-    assert.equal(result[1]?.assistantText, "parent progress");
+    assert.equal(readAssistantText(result[1]), "parent progress");
     assert.equal(result[1]?.detailAvailable, false);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "複数sessionのrunning rowが混在してもlive runと同一sessionだけが更新される"
+  // oracle = { type = "contract", ref = "src/audit-log-refresh.ts" }
+  // fault = "rowの順序やrunning状態だけでmerge対象を選び、別sessionのprogressを上書きする"
+  // observable = "各rowのid/sessionId/assistant text/threadId/operations"
+  // observation_boundary = "public-boundary"
+  // scope = "audit-log-refresh.session-isolation"
+  // lifecycle = "permanent"
+  // distinction = "複数sessionのprojection結果をrow単位で照合する"
+  // @end-test-value
   it("複数 session の running row が混在しても live run と同じ sessionId の row だけ merge する", () => {
     const runningSession = {
       ...selectedSession,
@@ -306,14 +353,25 @@ describe("buildDisplayedAuditLogs", () => {
 
     assert.equal(result[0]?.id, 30);
     assert.equal(result[0]?.sessionId, "aux-other");
-    assert.equal(result[0]?.assistantText, "other progress");
+    assert.equal(readAssistantText(result[0]), "other progress");
     assert.equal(result[1]?.id, 29);
     assert.equal(result[1]?.sessionId, "aux-live");
-    assert.equal(result[1]?.assistantText, "new live progress");
+    assert.equal(readAssistantText(result[1]), "new live progress");
     assert.equal(result[1]?.threadId, "thread-aux-live");
     assert.equal(result[1]?.operations[0]?.summary, "npm test");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "running persisted rowのoperationsへpending approval requestを投影する"
+  // oracle = { type = "contract", ref = "src/audit-log-refresh.ts" }
+  // fault = "pending approvalをoperationsから落とし、承認待ちをrunning logで確認できない"
+  // observable = "operations length/type/summary/details"
+  // observation_boundary = "public-boundary"
+  // scope = "audit-log-refresh.pending-approval"
+  // lifecycle = "permanent"
+  // distinction = "live projectionのoperation artifactを公開結果で確認する"
+  // @end-test-value
   it("running persisted row の operations に pending approval request を含める", () => {
     const runningSession = {
       ...selectedSession,
@@ -327,6 +385,7 @@ describe("buildDisplayedAuditLogs", () => {
       summary: "npm test を実行します。",
       details: "scripts/tests を対象に検証します。",
       warning: "書き込みはありません。",
+      decisionMode: "direct-decision",
     };
     const persistedLogs = [
       makeAuditLog({
@@ -454,6 +513,17 @@ describe("buildDisplayedAuditLogs", () => {
     assert.deepEqual(result, persistedLogs);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "running sessionの先頭がterminal rowなら新runのsynthetic running rowを先頭へ挿入する"
+  // oracle = { type = "contract", ref = "src/audit-log-refresh.ts" }
+  // fault = "新runを過去のterminal rowへ上書きする、またはrunning rowを先頭へ出さない"
+  // observable = "result length、先頭rowのphase/text/threadId/detailAvailable、既存rowのid/phase"
+  // observation_boundary = "public-boundary"
+  // scope = "audit-log-refresh.synthetic-running"
+  // lifecycle = "permanent"
+  // distinction = "persisted historyを保持しつつsynthetic projectionを確認する"
+  // @end-test-value
   it("session.runState が running で、先頭が terminal persisted の時は synthetic running row を先頭へ挿入する (新 run 対応)", () => {
     const runningSession = {
       ...selectedSession,
@@ -475,13 +545,24 @@ describe("buildDisplayedAuditLogs", () => {
 
     assert.equal(result.length, 2);
     assert.equal(result[0]?.phase, "running");
-    assert.equal(result[0]?.assistantText, "新しい run の progress");
+    assert.equal(readAssistantText(result[0]), "新しい run の progress");
     assert.equal(result[0]?.threadId, "thread-new-run");
     assert.equal(result[0]?.detailAvailable, false);
     assert.equal(result[1]?.id, 10);
     assert.equal(result[1]?.phase, "completed");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "running persisted rowがない場合はselected session情報を持つsynthetic rowを先頭へ挿入する"
+  // oracle = { type = "contract", ref = "src/audit-log-refresh.ts" }
+  // fault = "live running状態を表示せず、provider/model/thread/operationを欠落させる"
+  // observable = "result先頭rowのid/phase/sessionId/text/provider/model/threadId/operation"
+  // observation_boundary = "public-boundary"
+  // scope = "audit-log-refresh.synthetic-running"
+  // lifecycle = "permanent"
+  // distinction = "persisted historyが空でもrefresh projectionが公開するrunning rowを照合する"
+  // @end-test-value
   it("running persisted row が無い時は synthetic running row を先頭へ挿入する", () => {
     const runningSession = {
       ...selectedSession,
@@ -506,7 +587,7 @@ describe("buildDisplayedAuditLogs", () => {
     assert.equal(result[0]?.id, 9);
     assert.equal(result[0]?.phase, "running");
     assert.equal(result[0]?.sessionId, selectedSession.id);
-    assert.equal(result[0]?.assistantText, "処理中...");
+    assert.equal(readAssistantText(result[0]), "処理中...");
     assert.equal(result[0]?.provider, selectedSession.provider);
     assert.equal(result[0]?.model, selectedSession.model);
     assert.equal(result[0]?.threadId, "thread-synthetic");
@@ -555,6 +636,18 @@ describe("buildDisplayedAuditLogs", () => {
     assert.match(result[0]?.operations[0]?.details ?? "", /required:対象ブランチ/);
   });
 
+  // @test-value v2
+  // kind = "security"
+  // claim = "synthetic running rowは前回runのprompt・transport payload・raw itemsを再利用しない"
+  // oracle = { type = "contract", ref = "src/audit-log-refresh.ts" }
+  // fault = "前回runの入力やprovider payloadを新runのprojectionへ混入する"
+  // observable = "synthetic rowのlogicalPrompt/transportPayload/rawItemsJson"
+  // observation_boundary = "public-boundary"
+  // scope = "audit-log-refresh.synthetic-running"
+  // lifecycle = "permanent"
+  // impact = "過去runの入力情報を新run表示へ漏えいさせない"
+  // distinction = "projection outputのsensitive/raw fieldsを明示的に確認する"
+  // @end-test-value
   it("synthetic running row は前回 run の prompt / payload / raw items を引き継がない", () => {
     const runningSession = {
       ...selectedSession,
@@ -587,13 +680,17 @@ describe("buildDisplayedAuditLogs", () => {
       }),
     });
 
-    assert.deepEqual(result[0]?.logicalPrompt, {
+    const syntheticEntry = result[0];
+    assert.ok(syntheticEntry && "logicalPrompt" in syntheticEntry);
+    assert.deepEqual(syntheticEntry.logicalPrompt, {
       systemText: "",
       inputText: "",
       composedText: "",
     });
-    assert.equal(result[0]?.transportPayload, null);
-    assert.equal(result[0]?.rawItemsJson, "[]");
+    assert.ok("transportPayload" in syntheticEntry);
+    assert.equal(syntheticEntry.transportPayload, null);
+    assert.ok("rawItemsJson" in syntheticEntry);
+    assert.equal(syntheticEntry.rawItemsJson, "[]");
   });
 });
 

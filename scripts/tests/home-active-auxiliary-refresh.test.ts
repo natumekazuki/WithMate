@@ -31,7 +31,9 @@ function createAuxiliarySummary(id: string): AuxiliarySessionSummary {
     catalogRevision: 1,
     model: "gpt-5.4",
     reasoningEffort: "high",
-    approvalMode: "safety",
+    approvalMode: "on-request",
+    codexSpeed: "standard",
+    codexReviewer: "auto-review",
     codexSandboxMode: "danger-full-access",
     customAgentName: "",
     allowedAdditionalDirectories: [],
@@ -175,10 +177,12 @@ describe("createHomeAuxiliarySessionRefresher", () => {
     const errorFetch = createDeferred<AuxiliarySessionSummary[]>();
     const setCalls: AuxiliarySessionSummary[][] = [];
     const errors: unknown[] = [];
+    const recordSetCall = (sessions: AuxiliarySessionSummary[]) => { setCalls.push(sessions); };
+    const recordError = (error: unknown) => { errors.push(error); };
     const refresher = createHomeAuxiliarySessionRefresher({
       fetchAuxiliarySessionSummaries: () => firstFetch.promise,
-      setAuxiliarySessionSummaries: (sessions) => setCalls.push(sessions),
-      onError: (error) => errors.push(error),
+      setAuxiliarySessionSummaries: recordSetCall,
+      onError: recordError,
     });
 
     refresher.refresh();
@@ -193,8 +197,8 @@ describe("createHomeAuxiliarySessionRefresher", () => {
 
     const errorRefresher = createHomeAuxiliarySessionRefresher({
       fetchAuxiliarySessionSummaries: () => errorFetch.promise,
-      setAuxiliarySessionSummaries: (sessions) => setCalls.push(sessions),
-      onError: (error) => errors.push(error),
+      setAuxiliarySessionSummaries: recordSetCall,
+      onError: recordError,
     });
 
     errorRefresher.refresh();

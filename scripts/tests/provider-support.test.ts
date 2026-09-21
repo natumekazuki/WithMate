@@ -5,6 +5,7 @@ import type {
   ProviderCodingAdapter,
   ProviderTurnAdapter,
 } from "../../src-electron/provider-runtime.js";
+import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
 import {
   fetchProviderQuotaTelemetry,
   getProviderRuntimeCapabilities,
@@ -58,9 +59,36 @@ test("resolveProviderCatalogOrThrow は指定 provider の catalog を返す", (
   })();
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "providerIdに応じてcoding/background adapterを対応providerへ解決する"
+// oracle = { type = "contract", ref = "src/provider-support.ts: resolveProvider adapters" }
+// fault = "provider adapterを取り違え、別providerの実行経路を呼び出す"
+// observable = "codex/copilotのcodingとbackground adapter identity"
+// observation_boundary = "public-boundary"
+// scope = "provider-adapter-resolution"
+// lifecycle = "permanent"
+// distinction = "adapter内部動作では検出できないprovider routingを確認する"
+// @end-test-value
 test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は providerId に応じて adapter を返す", () => {
-  const codexAdapter = { kind: "codex" } as ProviderTurnAdapter;
-  const copilotAdapter = { kind: "copilot" } as ProviderTurnAdapter;
+  const createStubAdapter = (): ProviderTurnAdapter => ({
+    composePrompt: () => { throw new Error("not used"); },
+    getProviderQuotaTelemetry: async () => null,
+    invalidateSessionThread: async () => {},
+    invalidateAllSessionThreads: async () => {},
+    runSessionTurn: async () => { throw new Error("not used"); },
+    getBackgroundStructuredPromptPolicy: () => ({
+      allowsFileWrite: false,
+      allowsShellWrite: false,
+      allowsToolPermissionRequests: false,
+      structuredOutputOnly: true,
+      structuredOutputMode: "provider_schema",
+    }),
+    extractSessionMemoryDelta: async () => { throw new Error("not used"); },
+    runBackgroundStructuredPrompt: async () => { throw new Error("not used"); },
+  });
+  const codexAdapter = createStubAdapter();
+  const copilotAdapter = createStubAdapter();
 
   assert.equal(
     resolveProviderCodingAdapter({
@@ -96,46 +124,49 @@ test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は prov
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "provider quota telemetryは選択providerのadapterとapp settingsを使って取得する"
+// oracle = { type = "contract", ref = "src/provider-support.ts: fetchProviderQuotaTelemetry" }
+// fault = "別providerまたは誤ったsettingsをadapterへ渡し、quota表示を誤る"
+// observable = "adapter input providerId/settingsと返却telemetry"
+// observation_boundary = "public-boundary"
+// scope = "provider-quota-telemetry"
+// lifecycle = "permanent"
+// distinction = "adapter routing testでは検出できないquota input propagationを確認する"
+// @end-test-value
 test("fetchProviderQuotaTelemetry は adapter と app settings を使って quota を取得する", async () => {
-  const calls: string[] = [];
+  let receivedProviderId = "";
+  let receivedSettings: AppSettings | undefined;
   const telemetry = { provider: "codex", remainingPercentage: 50 } as never;
   const adapter = {
     composePrompt() {
       throw new Error("not used");
     },
     async getProviderQuotaTelemetry(input) {
-      calls.push(`${input.providerId}:${input.appSettings.providers.codex?.model ?? ""}`);
+      receivedProviderId = input.providerId;
+      receivedSettings = input.appSettings;
       return telemetry;
     },
-    async extractSessionMemoryDelta() {
-      throw new Error("not used");
-    },
-    async runCharacterReflection() {
-      throw new Error("not used");
-    },
-    invalidateSessionThread() {},
-    invalidateAllSessionThreads() {},
+    async invalidateSessionThread() {},
+    async invalidateAllSessionThreads() {},
     async runSessionTurn() {
       throw new Error("not used");
     },
   } satisfies ProviderCodingAdapter;
+  const appSettings = createDefaultAppSettings();
 
   const result = await fetchProviderQuotaTelemetry({
     providerId: "codex",
-    getAppSettings: () =>
-      ({
-        providers: { codex: { model: "gpt-5.4" } },
-        codingProviderSettings: {},
-        memoryExtractionProviderSettings: {},
-        characterReflectionProviderSettings: {},
-      }) as never,
+    getAppSettings: () => appSettings,
     getProviderCodingAdapter() {
       return adapter;
     },
   });
 
   assert.equal(result, telemetry);
-  assert.deepEqual(calls, ["codex:gpt-5.4"]);
+  assert.equal(receivedProviderId, "codex");
+  assert.equal(receivedSettings, appSettings);
 });
 
 test("getProviderRuntimeCapabilities は provider と background policy から対応状況を返す", () => {

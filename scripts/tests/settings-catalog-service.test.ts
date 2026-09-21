@@ -15,11 +15,56 @@ import type { AuxiliarySessionRuntimeMetadataPatchInput } from "../../src-electr
 import type { ProviderRuntimeMetadataPatch } from "../../src-electron/provider-runtime-metadata-patch.js";
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 import { SettingsCatalogService as SettingsCatalogServiceImpl } from "../../src-electron/settings-catalog-service.js";
+import type { SettingsCatalogServiceDeps } from "../../src-electron/settings-catalog-service.js";
+
+type SettingsCatalogDeps = SettingsCatalogServiceDeps;
+type DefaultedSettingsCatalogDependency =
+  | "runProviderRuntimeOperationExclusive"
+  | "updateSessionThreadIfMatches"
+  | "updateAuxiliarySessionThreadIfMatches"
+  | "updateSessionRuntimeMetadataIfMatches"
+  | "updateAuxiliarySessionRuntimeMetadataIfMatches"
+  | "replaceAllSessions"
+  | "clearAuditLogs"
+  | "resetAppSettings"
+  | "resetModelCatalogToBundled"
+  | "clearProjectMemories"
+  | "resetSessionRuntime"
+  | "clearAllProviderQuotaTelemetry"
+  | "clearAllSessionContextTelemetry"
+  | "clearAllSessionBackgroundActivities"
+  | "invalidateAllProviderSessionThreads"
+  | "closeResetTargetWindows"
+  | "dismissSessionTurnNotification"
+  | "recreateDatabaseFile";
+type SettingsCatalogTestDeps = Omit<SettingsCatalogDeps, DefaultedSettingsCatalogDependency>
+  & Partial<Pick<SettingsCatalogDeps, DefaultedSettingsCatalogDependency>>;
+
+const defaultSettingsCatalogDependencies: Pick<SettingsCatalogDeps, DefaultedSettingsCatalogDependency> = {
+  runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+  updateSessionThreadIfMatches: async () => { throw new Error("unexpected updateSessionThreadIfMatches"); },
+  updateAuxiliarySessionThreadIfMatches: async () => { throw new Error("unexpected updateAuxiliarySessionThreadIfMatches"); },
+  updateSessionRuntimeMetadataIfMatches: async () => { throw new Error("unexpected updateSessionRuntimeMetadataIfMatches"); },
+  updateAuxiliarySessionRuntimeMetadataIfMatches: async () => { throw new Error("unexpected updateAuxiliarySessionRuntimeMetadataIfMatches"); },
+  replaceAllSessions: async () => { throw new Error("unexpected replaceAllSessions"); },
+  clearAuditLogs: async () => { throw new Error("unexpected clearAuditLogs"); },
+  resetAppSettings: async () => { throw new Error("unexpected resetAppSettings"); },
+  resetModelCatalogToBundled: async () => { throw new Error("unexpected resetModelCatalogToBundled"); },
+  clearProjectMemories: () => { throw new Error("unexpected clearProjectMemories"); },
+  resetSessionRuntime: () => { throw new Error("unexpected resetSessionRuntime"); },
+  clearAllProviderQuotaTelemetry: () => { throw new Error("unexpected clearAllProviderQuotaTelemetry"); },
+  clearAllSessionContextTelemetry: () => { throw new Error("unexpected clearAllSessionContextTelemetry"); },
+  clearAllSessionBackgroundActivities: () => { throw new Error("unexpected clearAllSessionBackgroundActivities"); },
+  invalidateAllProviderSessionThreads: async () => { throw new Error("unexpected invalidateAllProviderSessionThreads"); },
+  closeResetTargetWindows: () => { throw new Error("unexpected closeResetTargetWindows"); },
+  dismissSessionTurnNotification: () => { throw new Error("unexpected dismissSessionTurnNotification"); },
+  recreateDatabaseFile: async () => { throw new Error("unexpected recreateDatabaseFile"); },
+};
 
 class SettingsCatalogService extends SettingsCatalogServiceImpl {
-  constructor(deps: Omit<ConstructorParameters<typeof SettingsCatalogServiceImpl>[0], "updateSessionThreadIfMatches" | "updateAuxiliarySessionThreadIfMatches" | "updateSessionRuntimeMetadataIfMatches" | "updateAuxiliarySessionRuntimeMetadataIfMatches"> & Partial<Pick<ConstructorParameters<typeof SettingsCatalogServiceImpl>[0], "updateSessionThreadIfMatches" | "updateAuxiliarySessionThreadIfMatches" | "updateSessionRuntimeMetadataIfMatches" | "updateAuxiliarySessionRuntimeMetadataIfMatches">>) {
-    super({
-      runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+  constructor(deps: SettingsCatalogTestDeps) {
+    const completeDeps: SettingsCatalogDeps = {
+      ...defaultSettingsCatalogDependencies,
       ...deps,
       updateSessionThreadIfMatches: deps.updateSessionThreadIfMatches ?? (async (input: SessionThreadPatchInput) => {
         const sessions = await deps.listSessions();
@@ -86,7 +131,8 @@ class SettingsCatalogService extends SettingsCatalogServiceImpl {
         Object.assign(target, next);
         return next;
       }),
-    });
+    };
+    super(completeDeps);
   }
 }
 
@@ -94,7 +140,7 @@ function createDeferred(): {
   promise: Promise<void>;
   resolve(): void;
 } {
-  let resolve = () => undefined;
+  let resolve: () => void = () => {};
   const promise = new Promise<void>((nextResolve) => {
     resolve = nextResolve;
   });
@@ -116,7 +162,16 @@ function createSession(overrides?: Partial<Session>): Session {
     character: "A",
     characterIconPath: "",
     characterThemeColors: { main: "#000", sub: "#111" },
+    isPinned: false,
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 5,
+    characterRuntimeSnapshot: null,
     approvalMode: "on-request",
+    codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
+    customAgentName: "",
     status: "idle",
     runState: "idle",
     threadId: "thread-1",
@@ -141,6 +196,8 @@ function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): Auxiliar
     reasoningEffort: "high",
     approvalMode: "on-request",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "aux-thread-1",
@@ -346,7 +403,7 @@ describe("SettingsCatalogService", () => {
     const storage = new AppSettingsStorage(dbPath);
     const sessionReplacementStarted = createDeferred();
     const resumeSessionReplacement = createDeferred();
-    let broadcastSettings: AppSettings | null = null;
+    const broadcast = { settings: null as AppSettings | null };
 
     try {
       const previousSettings = storage.getSettings();
@@ -401,7 +458,7 @@ describe("SettingsCatalogService", () => {
         invalidateProviderSessionThread() {},
         broadcastSessions() {},
         broadcastAppSettings(settings) {
-          broadcastSettings = settings ?? storage.getSettings();
+          broadcast.settings = settings ?? storage.getSettings();
         },
         broadcastModelCatalog() {},
       });
@@ -431,8 +488,9 @@ describe("SettingsCatalogService", () => {
         actionDock: "expanded",
         sidePane: "files",
       });
-      assert.ok(broadcastSettings);
-      assert.deepEqual(broadcastSettings.chatLayoutPreference, updated.chatLayoutPreference);
+      assert.ok(broadcast.settings);
+      const observedBroadcastSettings = broadcast.settings;
+      assert.deepEqual(observedBroadcastSettings.chatLayoutPreference, updated.chatLayoutPreference);
       assert.deepEqual(storage.getSettings().chatLayoutPreference, updated.chatLayoutPreference);
     } finally {
       storage.close();
@@ -668,7 +726,7 @@ describe("SettingsCatalogService", () => {
     const clearContextCalls: string[] = [];
     const invalidated: string[] = [];
     let replacedSessions: Session[] = [];
-    let savedSettings: AppSettings | null = null;
+    const saved = { settings: null as AppSettings | null };
 
     const service = new SettingsCatalogService({
       hasInFlightSessionRuns() {
@@ -687,10 +745,10 @@ describe("SettingsCatalogService", () => {
         return [];
       },
       getAppSettings() {
-        return savedSettings ?? previousSettings;
+        return saved.settings ?? previousSettings;
       },
       updateAppSettings(settings) {
-        savedSettings = settings;
+        saved.settings = settings;
         return settings;
       },
       getModelCatalog() {
@@ -753,7 +811,8 @@ describe("SettingsCatalogService", () => {
       },
     });
 
-    assert.equal(savedSettings?.codingProviderSettings.codex.apiKey, "changed-key");
+    assert.ok(saved.settings);
+    assert.equal(saved.settings.codingProviderSettings["codex"]?.apiKey, "changed-key");
     assert.equal(next.codingProviderSettings.codex.apiKey, "changed-key");
     assert.deepEqual(clearQuotaCalls, ["codex"]);
     assert.deepEqual(clearContextCalls, ["session-1", "session-empty-thread"]);
@@ -1004,7 +1063,7 @@ describe("SettingsCatalogService", () => {
       broadcastSessions: () => {},
       broadcastAppSettings: () => {},
       broadcastModelCatalog: () => {},
-    } as any);
+    });
 
     const updating = service.updateAppSettings({
       ...previousSettings,
@@ -1035,7 +1094,7 @@ describe("SettingsCatalogService", () => {
   // @end-test-value
   it("appSettings-only reset後のsettings rollbackを拒否する", async () => {
     for (const invalidation of ["owner", "settings-reset"] as const) {
-      const previous = { ...createDefaultAppSettings(), codingProviderSettings: { ...createDefaultAppSettings().codingProviderSettings, codex: { ...createDefaultAppSettings().codingProviderSettings.codex, apiKey: "old-key" } } };
+      const previous: AppSettings = { ...createDefaultAppSettings(), codingProviderSettings: { ...createDefaultAppSettings().codingProviderSettings, codex: { ...createDefaultAppSettings().codingProviderSettings.codex, apiKey: "old-key" } } };
       const resetSettings = createDefaultAppSettings();
       const session = createSession();
       let current = previous;
@@ -1061,7 +1120,7 @@ describe("SettingsCatalogService", () => {
         closeResetTargetWindows: () => {}, resetSessionRuntime: () => {}, clearAuditLogs: async () => {},
         clearProjectMemories: () => {}, recreateDatabaseFile: async () => createCatalogSnapshot(),
         resetModelCatalogToBundled: () => createCatalogSnapshot(),
-      } as any);
+      });
       const updating = service.updateAppSettings(resetSettings);
       await cleanupStarted.promise;
       assert.deepEqual(current, resetSettings);
@@ -1112,8 +1171,8 @@ describe("SettingsCatalogService", () => {
       importModelCatalogDocument: () => createCatalogSnapshot(), exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
       replaceAllSessions: () => [], replaceAuxiliarySessions: (sessions) => { auxiliary = sessions[0]; return sessions; },
       clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {}, invalidateProviderSessionThread: async () => { throw new Error("cleanup failed"); },
-      broadcastSessions: (ids) => { sessionNotifications.push([...ids]); }, broadcastAppSettings: (settings) => { broadcasted.push(settings ?? current); }, broadcastModelCatalog: () => {},
-    } as any);
+      broadcastSessions: (ids) => { sessionNotifications.push(ids ? [...ids] : []); }, broadcastAppSettings: (settings) => { broadcasted.push(settings ?? current); }, broadcastModelCatalog: () => {},
+    });
     await assert.rejects(service.updateAppSettings({ ...previous, codingProviderSettings: { ...previous.codingProviderSettings, codex: { ...previous.codingProviderSettings.codex, apiKey: "new-key" } } }), /cleanup failed/);
     assert.equal(broadcasted.length, 2);
     assert.equal(broadcasted[0].codingProviderSettings.codex.apiKey, "new-key");
@@ -1155,7 +1214,7 @@ describe("SettingsCatalogService", () => {
         if (cleanupCount === 1) { firstCleanup.resolve(); await firstCleanupRelease.promise; throw new Error("first cleanup failed"); }
       },
       broadcastSessions: () => {}, broadcastAppSettings: () => {}, broadcastModelCatalog: () => {},
-    } as any);
+    });
     const first = service.updateAppSettings({ ...previous, codingProviderSettings: { ...previous.codingProviderSettings, codex: { ...previous.codingProviderSettings.codex, apiKey: "first" } } });
     await firstCleanup.promise;
     const second = service.updateAppSettings({ ...current, codingProviderSettings: { ...current.codingProviderSettings, codex: { ...current.codingProviderSettings.codex, apiKey: "second" } } });
@@ -1372,9 +1431,9 @@ describe("SettingsCatalogService", () => {
       replaceAllSessions: () => [], replaceAuxiliarySessions: () => [],
       clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {},
       invalidateProviderSessionThread: async () => { throw new Error("catalog cleanup failed"); },
-      broadcastSessions: (ids) => { sessionNotifications.push([...ids]); }, broadcastAppSettings: () => {},
+      broadcastSessions: (ids) => { sessionNotifications.push(ids ? [...ids] : []); }, broadcastAppSettings: () => {},
       broadcastModelCatalog: (snapshot) => { if (snapshot) broadcasts.push(snapshot.revision); },
-    } as any);
+      });
     await assert.rejects(service.importModelCatalogDocument({ providers: createCatalogSnapshot(2).providers }), /catalog cleanup failed/);
     assert.deepEqual(broadcasts, [2, 3]);
     assert.equal(catalog.revision, 3);
@@ -1549,7 +1608,6 @@ describe("SettingsCatalogService", () => {
         return createCatalogSnapshot(1);
       },
       clearProjectMemories() {},
-      clearCharacterMemories() {},
       resetSessionRuntime() {},
       clearAllProviderQuotaTelemetry() {},
       clearAllSessionContextTelemetry() {},
@@ -1667,9 +1725,6 @@ describe("SettingsCatalogService", () => {
       },
       clearProjectMemories() {
         calls.push("clearProject");
-      },
-      clearCharacterMemories() {
-        calls.push("clearCharacter");
       },
       resetSessionRuntime() {
         calls.push("resetRuntime");
@@ -1892,7 +1947,6 @@ describe("SettingsCatalogService", () => {
         return createCatalogSnapshot(3);
       },
       clearProjectMemories() {},
-      clearCharacterMemories() {},
       resetSessionRuntime() {},
       clearAllProviderQuotaTelemetry() {},
       clearAllSessionContextTelemetry() {},

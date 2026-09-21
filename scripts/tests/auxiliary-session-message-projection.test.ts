@@ -28,6 +28,8 @@ function createAuxiliarySession(
     reasoningEffort: "medium",
     approvalMode: "untrusted",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "thread-1",

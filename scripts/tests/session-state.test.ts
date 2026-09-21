@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { DEFAULT_CODEX_REVIEWER } from "../../src/codex-reviewer.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED } from "../../src/codex-speed.js";
 import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
 import { resolveModelSelection, type ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
@@ -302,6 +305,8 @@ function makeSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     status: "idle",
     updatedAt: "2026-04-15 12:00",
     isPinned: false,
+    accessMode: "active",
+    sourceSchemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
     provider: "codex",
     catalogRevision: 1,
     workspaceLabel: "workspace",
@@ -314,6 +319,9 @@ function makeSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     characterThemeColors: { main: "#000", sub: "#fff" },
     runState: "idle",
     approvalMode: DEFAULT_APPROVAL_MODE,
+    codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+    codexSpeed: DEFAULT_CODEX_SPEED,
+    codexReviewer: DEFAULT_CODEX_REVIEWER,
     model: "gpt-5.4",
     reasoningEffort: "high",
     customAgentName: "",

@@ -19,22 +19,23 @@ type WorkerData =
 if (!parentPort) {
   throw new Error("Character Affect concurrency worker requires a parent port.");
 }
+const workerPort = parentPort;
 
 const input = workerData as WorkerData;
 
 if (input.mode === "blocker") {
   const db = openAppDatabase(input.dbPath);
   db.exec("BEGIN IMMEDIATE TRANSACTION;");
-  parentPort.postMessage({ type: "locked" });
-  parentPort.once("message", (message: { type?: string }) => {
+  workerPort.postMessage({ type: "locked" });
+  workerPort.once("message", (message: { type?: string }) => {
     try {
       if (message.type !== "release") {
         throw new Error("Unexpected blocker command.");
       }
       db.exec("COMMIT;");
-      parentPort.postMessage({ type: "released" });
+      workerPort.postMessage({ type: "released" });
     } catch (error) {
-      parentPort.postMessage({
+      workerPort.postMessage({
         type: "error",
         message: error instanceof Error ? error.message : String(error),
       });
@@ -44,24 +45,24 @@ if (input.mode === "blocker") {
   });
 } else {
   const storage = new CharacterAffectStorage(input.dbPath);
-  parentPort.postMessage({ type: "ready" });
-  parentPort.once("message", (message: { type?: string }) => {
+  workerPort.postMessage({ type: "ready" });
+  workerPort.once("message", (message: { type?: string }) => {
     try {
       if (message.type !== "start") {
         throw new Error("Unexpected append command.");
       }
-      parentPort.postMessage({ type: "attempting" });
+      workerPort.postMessage({ type: "attempting" });
       const started = new Int32Array(input.started);
       Atomics.add(started, 0, 1);
       Atomics.notify(started, 0);
       const result = storage.recordEvent(input.event);
-      parentPort.postMessage({
+      workerPort.postMessage({
         type: "result",
         created: result.created,
         eventId: result.event.id,
       });
     } catch (error) {
-      parentPort.postMessage({
+      workerPort.postMessage({
         type: "error",
         message: error instanceof Error ? error.message : String(error),
       });

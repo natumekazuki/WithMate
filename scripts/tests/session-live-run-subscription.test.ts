@@ -49,11 +49,21 @@ test("startLiveSessionRunSubscription は reset 後に初回 live run を反映�
   assert.deepEqual(refreshedSessionIds, ["session-1"]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "live run subscriptionは対象sessionの更新だけを反映しcleanup後の更新を無視する"
+// oracle = { type = "contract", ref = "live run subscription ownership" }
+// fault = "別sessionまたはcleanup後のstale updateが現在のlive stateへ混入する"
+// observable = "applied owner state, refreshed ids, and unsubscribe count"
+// observation_boundary = "public-boundary"
+// scope = "live-run-subscription-owner-filter"
+// lifecycle = "permanent"
+// @end-test-value
 test("startLiveSessionRunSubscription は対象 session の購読更新だけを反映する", async () => {
   const subscribedState = createLiveRunState("subscribed");
   const updates: LiveSessionRunStateUpdate[] = [];
   const refreshedSessionIds: string[] = [];
-  let subscribedListener: ((sessionId: string, state: LiveSessionRunState | null) => void) | null = null;
+  const control: { subscribedListener: ((sessionId: string, state: LiveSessionRunState | null) => void) | null } = { subscribedListener: null };
   let resolveInitialLiveRun: (state: LiveSessionRunState | null) => void = () => undefined;
   let unsubscribeCount = 0;
   const api: LiveSessionRunSubscriptionApi = {
@@ -61,7 +71,7 @@ test("startLiveSessionRunSubscription は対象 session の購読更新だけを
       resolveInitialLiveRun = resolve;
     }),
     subscribeLiveSessionRun: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => {
         unsubscribeCount += 1;
       };
@@ -74,10 +84,10 @@ test("startLiveSessionRunSubscription は対象 session の購読更新だけを
     applyLiveRunState: (update) => updates.push(update),
     onSessionRunUpdated: (sessionId) => refreshedSessionIds.push(sessionId),
   });
-  subscribedListener?.("session-other", createLiveRunState("ignored"));
-  subscribedListener?.("session-1", subscribedState);
+  if (control.subscribedListener) control.subscribedListener("session-other", createLiveRunState("ignored"));
+  if (control.subscribedListener) control.subscribedListener("session-1", subscribedState);
   cleanup();
-  subscribedListener?.("session-1", createLiveRunState("stale"));
+  if (control.subscribedListener) control.subscribedListener("session-1", createLiveRunState("stale"));
   resolveInitialLiveRun(null);
   await flushPromises();
 
@@ -89,18 +99,28 @@ test("startLiveSessionRunSubscription は対象 session の購読更新だけを
   assert.equal(unsubscribeCount, 1);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "live run購読更新後の遅い初回取得は新しいlive stateを巻き戻さない"
+// oracle = { type = "contract", ref = "live run subscription ordering" }
+// fault = "遅い初回nullが購読済みlive runを消去する"
+// observable = "applied live run update sequence"
+// observation_boundary = "public-boundary"
+// scope = "live-run-stale-initial"
+// lifecycle = "permanent"
+// @end-test-value
 test("startLiveSessionRunSubscription は購読更新後に遅い初回取得で live run を巻き戻さない", async () => {
   const subscribedState = createLiveRunState("subscribed");
   const updates: LiveSessionRunStateUpdate[] = [];
   const refreshedSessionIds: string[] = [];
-  let subscribedListener: ((sessionId: string, state: LiveSessionRunState | null) => void) | null = null;
+  const control: { subscribedListener: ((sessionId: string, state: LiveSessionRunState | null) => void) | null } = { subscribedListener: null };
   let resolveInitialLiveRun: (state: LiveSessionRunState | null) => void = () => undefined;
   const api: LiveSessionRunSubscriptionApi = {
     getLiveSessionRun: () => new Promise((resolve) => {
       resolveInitialLiveRun = resolve;
     }),
     subscribeLiveSessionRun: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => undefined;
     },
   };
@@ -111,7 +131,7 @@ test("startLiveSessionRunSubscription は購読更新後に遅い初回取得で
     applyLiveRunState: (update) => updates.push(update),
     onSessionRunUpdated: (sessionId) => refreshedSessionIds.push(sessionId),
   });
-  subscribedListener?.("session-1", subscribedState);
+  if (control.subscribedListener) control.subscribedListener("session-1", subscribedState);
   resolveInitialLiveRun(null);
   await flushPromises();
   cleanup();

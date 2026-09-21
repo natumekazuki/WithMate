@@ -25,6 +25,8 @@ function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxili
     reasoningEffort: "medium",
     approvalMode: "untrusted",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "",
@@ -99,6 +101,17 @@ describe("runAuxiliarySessionSendOperation", () => {
     assert.deepEqual(appliedStates, [{ ownerSessionId: "aux-1", state: null }]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary送信結果handlerはblocked・running target・errorを対応callbackへ一度ずつ振り分ける"
+  // oracle = { type = "contract", ref = "src/auxiliary-session-send-operation.ts: handleAuxiliarySessionSendOperationResult" }
+  // fault = "送信結果を誤callbackへ渡し、blocked送信の副作用やerror復旧を誤った経路で処理する"
+  // observable = "各callbackが受け取るblocked reason、target reason、error identity"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-send-result-routing"
+  // lifecycle = "permanent"
+  // distinction = "実際のprovider送信を行わず結果unionのrouting契約だけを検証する"
+  // @end-test-value
   it("send operation result handler は blocked / running target / error だけ callback に渡す", () => {
     const error = new Error("failed");
     const events: string[] = [];
@@ -106,7 +119,7 @@ describe("runAuxiliarySessionSendOperation", () => {
     handleAuxiliarySessionSendOperationResult({
       result: {
         status: "blocked",
-        preflight: { blockedReason: "empty", blockedMessage: "empty", userMessage: "" },
+        preflight: { blockedReason: "empty-message", blockedMessage: "empty", userMessage: "" },
       },
       onBlocked: (preflight) => {
         events.push(`blocked:${preflight.blockedMessage}`);

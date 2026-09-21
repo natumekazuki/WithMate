@@ -332,7 +332,7 @@ describe("SessionWindowBridge", () => {
   // @end-test-value
   it("entry load中のAuxiliary openは親Windowの共有結果へnavigationする", async () => {
     const session = createSession();
-    let resolveLoad: (() => void) | null = null;
+    let resolveLoad: () => void = () => undefined;
     let createCount = 0;
     let loadCount = 0;
     const navigationPayloads: unknown[] = [];
@@ -367,7 +367,7 @@ describe("SessionWindowBridge", () => {
     assert.equal(createCount, 1);
     assert.equal(loadCount, 1);
     assert.ok(resolveLoad);
-    resolveLoad();
+resolveLoad!();
 
     const [mainWindow, auxiliaryWindow] = await Promise.all([mainOpen, auxiliaryOpen]);
     assert.equal(mainWindow, auxiliaryWindow);
@@ -558,7 +558,7 @@ describe("SessionWindowBridge", () => {
     const session = createSession();
     let createCount = 0;
     let loadCount = 0;
-    let rejectLoad: ((error: Error) => void) | null = null;
+    let rejectLoad: (error: Error) => void = () => undefined;
     const bridge = new SessionWindowBridge({
       createWindow() {
         createCount += 1;
@@ -585,7 +585,7 @@ describe("SessionWindowBridge", () => {
     const firstOpen = bridge.openSessionWindow(session.id);
     const secondOpen = bridge.openSessionWindow(session.id);
     assert.ok(rejectLoad);
-    rejectLoad(new Error("load failed"));
+rejectLoad!(new Error("load failed"));
 
     const results = await Promise.allSettled([firstOpen, secondOpen]);
 
@@ -609,7 +609,7 @@ describe("SessionWindowBridge", () => {
   // @end-test-value
   it("open通知の集合にはopening中を含め、復元除外用の集合にはload完了後だけ含める", async () => {
     const session = createSession();
-    let resolveLoad: (() => void) | null = null;
+    let resolveLoad: () => void = () => undefined;
     const bridge = new SessionWindowBridge({
       createWindow: () => new StubWindow(),
       loadChatEntry: () => new Promise<void>((resolve) => {
@@ -629,7 +629,7 @@ describe("SessionWindowBridge", () => {
     assert.equal(bridge.getSessionWindowRestoreStates().get(session.id)?.kind, "opening");
 
     assert.ok(resolveLoad);
-    resolveLoad();
+    resolveLoad!();
     await opening;
 
     assert.deepEqual(bridge.listSettledOpenSessionWindowIds(), [session.id]);
@@ -651,7 +651,7 @@ describe("SessionWindowBridge", () => {
   it("別Sessionのopen完了時に読込中のWindowをsnapshotへ混ぜず、読込失敗後も残さない", async () => {
     const sessionA = createSession({ id: "session-a" });
     const sessionB = createSession({ id: "session-b" });
-    let rejectSessionA: ((error: Error) => void) | null = null;
+    let rejectSessionA: (error: Error) => void = () => undefined;
     const savedSnapshots: string[][] = [];
     const bridge = new SessionWindowBridge({
       createWindow: () => new StubWindow(),
@@ -678,7 +678,7 @@ describe("SessionWindowBridge", () => {
     assert.deepEqual(savedSnapshots, [[sessionB.id]]);
 
     assert.ok(rejectSessionA);
-    rejectSessionA(new Error("load failed"));
+rejectSessionA!(new Error("load failed"));
     await assert.rejects(openingA, /load failed/);
 
     assert.deepEqual(savedSnapshots, [[sessionB.id]]);

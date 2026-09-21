@@ -27,6 +27,7 @@ function createHit(id: string, title: string): MemoryV6ReviewSearchHit {
     tags: [],
     sourceSessionId: null,
     sourceProviderId: "codex",
+    createdAt: "2026-06-27T00:00:00.000Z",
     updatedAt: "2026-06-27T00:00:00.000Z",
   };
 }

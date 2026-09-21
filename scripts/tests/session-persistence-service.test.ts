@@ -340,8 +340,6 @@ describe("SessionPersistenceService", () => {
       },
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions(sessionIds) {
@@ -385,7 +383,7 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(snapshotCharacterIds, ["char-a"]);
     assert.deepEqual(created.characterRuntimeSnapshot, characterRuntimeSnapshot);
     assert.notEqual(created.characterRuntimeSnapshot, characterRuntimeSnapshot);
-    assert.deepEqual(persistedSession?.characterRuntimeSnapshot, characterRuntimeSnapshot);
+    assert.deepEqual(persistedSession!.characterRuntimeSnapshot, characterRuntimeSnapshot);
     assert.equal(storedSessions[0]?.characterRuntimeSnapshot, null);
     assert.deepEqual(syncedSessionIds, [created.id]);
     assert.deepEqual(broadcastedSessionIds, [[created.id]]);
@@ -432,6 +430,16 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(storeOperations, ["create"]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "既存Session IDとの衝突時は新規入力で既存Sessionを上書きしない"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#createSession" }
+  // fault = "衝突したIDの既存Sessionを破壊または置換する"
+  // observable = "reject結果、upsert回数、既存Sessionの主要属性"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-create-collision"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("createSession は指定 ID が既存 Session と衝突する場合に上書きしない", async () => {
     const existing = createSession({
       id: "existing-session",
@@ -446,14 +454,14 @@ describe("SessionPersistenceService", () => {
       getSession: (sessionId) => sessionId === existing.id ? existing : null,
       getStoredSession: () => existing,
       isSessionRunInFlight: () => true,
-      upsertStoredSession(session) {
+      upsertStoredSession(session, _operation) {
         upsertCount += 1;
         return session;
       },
       replaceStoredSessions() {},
       listStoredSessions: () => [existing],
       deleteStoredSession() {},
-      getAppSettings: () => normalizeAppSettings(),
+      getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: () => createSnapshot(),
       syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
@@ -483,6 +491,16 @@ describe("SessionPersistenceService", () => {
     assert.equal(existing.workspacePath, "C:/workspace");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "createSessionへ渡されたCharacterRuntimeSnapshotをfallback生成結果より優先して保存する"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#createSession" }
+  // fault = "入力snapshotを破棄してfallback snapshotを保存する"
+  // observable = "作成Sessionと永続化Sessionのsnapshot identityおよびfallback呼び出し回数"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-create-runtime-snapshot"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("createSession は input の CharacterRuntimeSnapshot を優先して保存する", async () => {
     const storedSessions: Session[] = [];
     const inputSnapshot = createCharacterRuntimeSnapshot({
@@ -505,7 +523,7 @@ describe("SessionPersistenceService", () => {
       isSessionRunInFlight() {
         return false;
       },
-      upsertStoredSession(session) {
+      upsertStoredSession(session, _operation) {
         persistedSession = session;
         storedSessions.splice(0, storedSessions.length, session);
         return session;
@@ -518,7 +536,7 @@ describe("SessionPersistenceService", () => {
       },
       deleteStoredSession() {},
       getAppSettings() {
-        return normalizeAppSettings();
+        return normalizeAppSettings({});
       },
       getModelCatalogSnapshot() {
         return createSnapshot();
@@ -530,8 +548,6 @@ describe("SessionPersistenceService", () => {
       syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -553,10 +569,20 @@ describe("SessionPersistenceService", () => {
     assert.equal(fallbackSnapshotCalls, 0);
     assert.deepEqual(created.characterRuntimeSnapshot, inputSnapshot);
     assert.notEqual(created.characterRuntimeSnapshot, inputSnapshot);
-    assert.deepEqual(persistedSession?.characterRuntimeSnapshot, inputSnapshot);
+    assert.deepEqual(persistedSession!.characterRuntimeSnapshot, inputSnapshot);
     assert.equal(storedSessions[0]?.characterRuntimeSnapshot, null);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "summary-only更新で入力にない既存messagesを保持して保存する"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#upsertSession" }
+  // fault = "summary更新で既存messagesを空配列または入力値へ置換する"
+  // observable = "永続化Sessionと返却Sessionのmessage本文"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-summary-message-preservation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("upsertSession は summary-only session 更新でも既存 messages を保持する", async () => {
     const fullSession = createSession({
       id: "session-with-messages",
@@ -591,7 +617,7 @@ describe("SessionPersistenceService", () => {
       isSessionRunInFlight() {
         return false;
       },
-      upsertStoredSession(session) {
+      upsertStoredSession(session, _operation) {
         storedSession = session;
         return session;
       },
@@ -601,7 +627,7 @@ describe("SessionPersistenceService", () => {
       },
       deleteStoredSession() {},
       getAppSettings() {
-        return normalizeAppSettings();
+        return normalizeAppSettings({});
       },
       getModelCatalogSnapshot() {
         return createSnapshot();
@@ -609,8 +635,6 @@ describe("SessionPersistenceService", () => {
       syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -619,13 +643,23 @@ describe("SessionPersistenceService", () => {
     const updated = await service.upsertSession(summaryOnlySession);
 
     assert.deepEqual(
-      storedSession?.messages.map((message) => message.text),
+      storedSession!.messages.map((message) => message.text),
       ["残すメッセージ", "残す返答"],
     );
     assert.deepEqual(updated.messages.map((message) => message.text), ["残すメッセージ", "残す返答"]);
     assert.deepEqual(inMemorySessions[0]?.messages, []);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "createSessionはlast-used model、reasoning、customAgentNameを現行設定へ正規化して保存する"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#createSession" }
+  // fault = "不正または未指定のruntime選択値を未正規化のまま保存する"
+  // observable = "作成Sessionのmodel、reasoningEffort、customAgentName"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-create-runtime-selection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("createSession は last-used model / reasoning / customAgentName を正規化して保存する", async () => {
     const storedSessions: Session[] = [];
 
@@ -642,7 +676,7 @@ describe("SessionPersistenceService", () => {
       isSessionRunInFlight() {
         return false;
       },
-      upsertStoredSession(session) {
+      upsertStoredSession(session, _operation) {
         storedSessions.splice(0, storedSessions.length, session);
         return session;
       },
@@ -667,8 +701,6 @@ describe("SessionPersistenceService", () => {
       syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -696,6 +728,16 @@ describe("SessionPersistenceService", () => {
     assert.equal(created.customAgentName, "planner");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "provider変更時はtelemetryをclearし、thread reset時は旧provider thread cacheをinvalidateする"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#updateSession" }
+  // fault = "provider変更またはthread reset後に旧provider状態を残す"
+  // observable = "clear/invalidate呼び出し記録と保存Sessionのprovider/threadId"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-provider-thread-reset"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("updateSession は provider 変更時に telemetry をクリアし、thread reset 時は provider cache を invalidate する", async () => {
     const baseSession = createSession({ provider: "codex", model: "codex-default", threadId: "thread-1" });
     const storedSessions: Session[] = [baseSession];
@@ -714,7 +756,7 @@ describe("SessionPersistenceService", () => {
       isSessionRunInFlight() {
         return false;
       },
-      upsertStoredSession(session) {
+      upsertStoredSession(session, _operation) {
         storedSessions.splice(0, storedSessions.length, session);
         return session;
       },
@@ -736,8 +778,6 @@ describe("SessionPersistenceService", () => {
         clearedTelemetry.push(sessionId);
       },
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread(providerId, sessionId) {
         invalidatedThreads.push({ providerId, sessionId });
       },
@@ -771,12 +811,14 @@ describe("SessionPersistenceService", () => {
     );
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
   // claim = "Main Sessionのfull-session更新は保存済みApprovalがneverの間、他項目を更新しても現在のReviewerを保持する"
   // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-3" }
-  // failure_mode = "直接IPCまたはstale payloadがnever中のReviewerを変更し、後のinteractive復帰で意図しない値が有効になる"
+  // fault = "直接IPCまたはstale payloadがnever中のReviewerを変更し、後のinteractive復帰で意図しない値が有効になる"
   // scope = "session-persistence-service"
+  // observable = "保存後のSession codexReviewer"
+  // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // @end-test-value
   it("updateSession は保存済みApprovalがneverの間Reviewerを保持する", async () => {
@@ -792,7 +834,7 @@ describe("SessionPersistenceService", () => {
       },
       getSession: (sessionId) => storedSessions.find((session) => session.id === sessionId) ?? null,
       isSessionRunInFlight: () => false,
-      upsertStoredSession(session) {
+      upsertStoredSession(session, _operation) {
         storedSessions.splice(0, storedSessions.length, session);
         return session;
       },
@@ -806,8 +848,6 @@ describe("SessionPersistenceService", () => {
       syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -824,6 +864,16 @@ describe("SessionPersistenceService", () => {
     assert.equal(storedSessions[0]?.codexReviewer, "auto-review");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "保存済みCharacter ownerまたはruntime snapshot identityの差し替えを永続化前に拒否する"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#updateSession" }
+  // fault = "既存Character identityと異なる更新を保存し、owner境界を破壊する"
+  // observable = "reject結果と永続化呼び出しの不在"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-character-identity-guard"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("updateSession は保存済み Character owner / runtime snapshot の差し替えを永続化前に拒否する", async () => {
     const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
     const storedSession = createSession({ characterRuntimeSnapshot });
@@ -865,7 +915,7 @@ describe("SessionPersistenceService", () => {
         isSessionRunInFlight() {
           return false;
         },
-        upsertStoredSession(session) {
+      upsertStoredSession(session, _operation) {
           upsertCallCount += 1;
           return session;
         },
@@ -883,8 +933,6 @@ describe("SessionPersistenceService", () => {
         syncSessionDependencies() {},
         clearSessionContextTelemetry() {},
         clearSessionBackgroundActivities() {},
-        clearCharacterReflectionCheckpoint() {},
-        clearInFlightCharacterReflection() {},
         invalidateProviderSessionThread() {},
         closeSessionWindow() {},
         broadcastSessions() {},
@@ -898,6 +946,16 @@ describe("SessionPersistenceService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "model/reasoning変更では既存threadIdを維持する"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#updateSession" }
+  // fault = "選択変更だけでprovider threadを破棄し、継続中会話を切断する"
+  // observable = "更新後SessionのthreadIdとmodel/reasoning"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-model-selection-update"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("updateSession は model / reasoning 変更時に threadId を維持する", async () => {
     const baseSession = createSession({
       provider: "copilot",
@@ -921,7 +979,7 @@ describe("SessionPersistenceService", () => {
       isSessionRunInFlight() {
         return false;
       },
-      upsertStoredSession(session) {
+      upsertStoredSession(session, _operation) {
         storedSessions.splice(0, storedSessions.length, session);
         return session;
       },
@@ -941,8 +999,6 @@ describe("SessionPersistenceService", () => {
       syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread(providerId, sessionId) {
         invalidatedThreads.push({ providerId, sessionId });
       },
@@ -961,6 +1017,16 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(invalidatedThreads, []);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "runtime parameter変更では既存threadIdを維持する"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#updateSession" }
+  // fault = "runtime parameter変更だけでprovider threadをresetする"
+  // observable = "更新後SessionのthreadIdとruntime parameter"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-runtime-parameter-update"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("updateSession は runtime parameter 変更時に threadId を維持する", async () => {
     const baseSession = createSession({
       provider: "codex",
@@ -987,7 +1053,7 @@ describe("SessionPersistenceService", () => {
       isSessionRunInFlight() {
         return false;
       },
-      upsertStoredSession(session) {
+      upsertStoredSession(session, _operation) {
         storedSessions.splice(0, storedSessions.length, session);
         return session;
       },
@@ -1007,8 +1073,6 @@ describe("SessionPersistenceService", () => {
       syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread(providerId, sessionId) {
         invalidatedThreads.push({ providerId, sessionId });
       },
@@ -1029,6 +1093,16 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(invalidatedThreads, []);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "legacy read-only Sessionへのupdate/upsertを拒否する"
+  // oracle = { type = "contract", ref = "src/session-state.ts#isReadOnlySession" }
+  // fault = "read-onlyデータを通常Sessionとして更新し永続化する"
+  // observable = "reject結果とstored sessionの不変性"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-legacy-readonly-guard"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("legacy read-only session は update/upsert できない", async () => {
     const legacySession = createSession({
       accessMode: "legacy_readonly",
@@ -1050,7 +1124,7 @@ describe("SessionPersistenceService", () => {
       isSessionRunInFlight() {
         return false;
       },
-      upsertStoredSession(session) {
+      upsertStoredSession(session, _operation) {
         storedSessions.splice(0, storedSessions.length, session);
         return session;
       },
@@ -1070,8 +1144,6 @@ describe("SessionPersistenceService", () => {
       syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -1152,8 +1224,6 @@ describe("SessionPersistenceService", () => {
       clearSessionBackgroundActivities(sessionId) {
         clearedBackground.push(sessionId);
       },
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread(providerId, sessionId) {
         invalidatedThreads.push({ providerId, sessionId });
       },
@@ -1183,6 +1253,16 @@ describe("SessionPersistenceService", () => {
     assert.equal(storedSessions.length, 0);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "active Auxiliaryが実行中の親SessionをdeleteSessionで削除できない"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#deleteSession" }
+  // fault = "子turn実行中の親Sessionを削除し、継続中turnの保存対象を失う"
+  // observable = "delete結果とstored parent/child sessionの存在"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-delete-running-parent-guard"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("deleteSession は active Auxiliary が実行中の親 Session を削除しない", async () => {
     const parentSession = createSession({ id: "parent" });
     const storedSessions: Session[] = [parentSession];
@@ -1229,8 +1309,6 @@ describe("SessionPersistenceService", () => {
       syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -1245,6 +1323,16 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(storedSessions.map((session) => session.id), [parentSession.id]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "bulk削除はcutoff対象のidle Sessionだけを削除しrunning Sessionをskipする"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#deleteSessionsLastActiveBefore" }
+  // fault = "running Sessionをbulk削除し、実行中状態を破壊する"
+  // observable = "削除対象idsとstored sessions"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-bulk-delete-running-skip"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("deleteSessionsLastActiveBefore は対象だけ bulk 削除し running は skip する", async () => {
     const oldSession = createSession({ id: "old", updatedAt: "2026-06-01T00:00:00.000Z" });
     const runningSession = createSession({
@@ -1306,8 +1394,6 @@ describe("SessionPersistenceService", () => {
       clearSessionBackgroundActivities(sessionId) {
         clearedBackground.push(sessionId);
       },
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow(sessionId) {
         closedWindows.push(sessionId);
@@ -1333,6 +1419,16 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(storedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "bulk削除はactive Auxiliary実行中の親Sessionをskipする"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#deleteSessionsLastActiveBefore" }
+  // fault = "子turn実行中の親Sessionを削除する"
+  // observable = "削除結果と親Sessionの存在"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-bulk-delete-running-parent-skip"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("deleteSessionsLastActiveBefore は active Auxiliary が実行中の親 Session を skip する", async () => {
     const parentSession = createSession({ id: "parent", updatedAt: "2026-06-01T00:00:00.000Z" });
     const oldSession = createSession({ id: "old", updatedAt: "2026-06-01T01:00:00.000Z" });
@@ -1385,8 +1481,6 @@ describe("SessionPersistenceService", () => {
       syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -1404,6 +1498,16 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(storedSessions.map((session) => session.id), [parentSession.id, recentSession.id]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "bulk削除はcache未読込でもstored Sessionを対象にする"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#deleteSessionsLastActiveBefore" }
+  // fault = "cacheにない対象を見落としてstored Sessionを残す"
+  // observable = "stored session削除結果と通知対象"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-bulk-delete-stored-cache-miss"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("deleteSessionsLastActiveBefore は cache 未読込の stored session も削除する", async () => {
     const uncachedOldSession = createSession({ id: "uncached-old", updatedAt: "2026-06-01T00:00:00.000Z" });
     const runningSession = createSession({
@@ -1466,8 +1570,6 @@ describe("SessionPersistenceService", () => {
       clearSessionBackgroundActivities(sessionId) {
         clearedBackground.push(sessionId);
       },
-      clearCharacterReflectionCheckpoint() {},
-      clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow(sessionId) {
         closedWindows.push(sessionId);
@@ -1494,6 +1596,16 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(persistedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "replaceAllSessionsは進行中appraisal完了後にremoved/provider change副作用を処理する"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#replaceAllSessions" }
+  // fault = "appraisal完了前にSessionを削除またはprovider cleanupし、進行中保存と競合する"
+  // observable = "副作用順序と最終stored sessions"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-replace-all-appraisal-order"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("replaceAllSessions は進行中appraisalを待ってから removed/provider change の副作用を処理する", async () => {
     const sessionA = createSession({ id: "session-a", provider: "codex", model: "codex-default" });
     const sessionB = createSession({ id: "session-b", provider: "copilot", model: "copilot-default" });
@@ -1505,8 +1617,8 @@ describe("SessionPersistenceService", () => {
     const broadcastedSessionIds: string[][] = [];
     const replaceOrder: string[] = [];
     const ownershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
-    let releaseAppraisal = () => undefined;
-    let markAppraisalStarted = () => undefined;
+    let releaseAppraisal: () => void = () => undefined;
+    let markAppraisalStarted: () => void = () => undefined;
     const appraisalBarrier = new Promise<void>((resolve) => {
       releaseAppraisal = resolve;
     });

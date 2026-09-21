@@ -50,6 +50,7 @@ function createSession(): Session {
     taskTitle: "Main session",
     status: "idle",
     updatedAt: "2026-05-24T00:00:00.000Z",
+    isPinned: false,
     provider: "codex",
     catalogRevision: 1,
     workspaceLabel: "WithMate",
@@ -69,6 +70,8 @@ function createSession(): Session {
     approvalMode: "never",
     codexSandboxMode: "workspace-write",
     codexSpeed: "fast",
+    codexReviewer: "user",
+    characterRuntimeSnapshot: null,
     model: "gpt-test",
     reasoningEffort: "low",
     customAgentName: "",
@@ -81,11 +84,17 @@ function createSession(): Session {
 
 function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInput> = {}): AgentSessionChatProjectionInput {
   return {
+    isFilesPaneVisible: false,
     selectedSession: createSession(),
     selectedSessionCharacter: createCharacterProfile(),
     displayedMessages: [],
     expandedArtifacts: {},
+    glossaryPaneProps: undefined,
     sessionThemeStyle: undefined,
+    sessionDockLayoutRef: React.createRef<HTMLDivElement>(),
+    headerDockRef: React.createRef<HTMLDivElement>(),
+    actionDockRef: React.createRef<HTMLDivElement>(),
+    sessionDockLayoutStyle: {},
     sessionWorkbenchRef: React.createRef<HTMLDivElement>(),
     sessionWorkbenchStyle: undefined,
     isSessionHeaderExpanded: true,
@@ -143,6 +152,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     composerSendButtonTitle: undefined,
     isComposerBlockedFeedbackActive: false,
     approvalChoiceOptions: [{ value: "never", label: "never" }],
+    reviewerChoiceOptions: [{ value: "user", label: "User" }],
     sandboxChoiceOptions: [{ value: "workspace-write", label: "workspace-write" }],
     speedChoiceOptions: [{ value: "standard", label: "Standard" }, { value: "fast", label: "Fast" }],
     modelSelectOptions: [{ value: "gpt-test", label: "GPT Test" }],
@@ -150,6 +160,8 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     reasoningSelectOptions: [{ value: "low", label: "low" }],
     attachmentCount: 0,
     isActionDockExpanded: true,
+    isActionDockResizing: false,
+    isFilesPaneResizing: false,
     isContextRailResizing: false,
     isContextRailVisible: true,
     latestCommandView: null,
@@ -158,18 +170,29 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     activeContextPaneTab: "latest-command",
     availableContextPaneTabs: ["latest-command"],
     contextPaneProjection: {
-      latestCommand: { state: "empty", tone: "muted", label: "No command" },
-      tasks: { state: "empty", tone: "muted", label: "No tasks" },
-      reasoning: { state: "empty", tone: "muted", label: "No reasoning" },
-      context: { state: "empty", tone: "muted", label: "No context" },
-    } as AgentSessionChatProjectionInput["contextPaneProjection"],
+      activeTab: "latest-command",
+      badgeLabel: "",
+      toneClassName: "muted",
+      latestCommandToneClassName: "muted",
+      latestCommandStatusLabel: "No command",
+      latestCommandSourceCopy: "",
+      reasoningToneClassName: "muted",
+      tasksToneClassName: "muted",
+    },
     selectedBackgroundTasks: [],
     isCopilotSession: false,
     selectedCopilotRemainingPercentLabel: "",
     selectedCopilotRemainingRequestsLabel: "",
     selectedCopilotQuotaResetLabel: "",
     selectedSessionContextTelemetry: null,
-    selectedSessionContextTelemetryProjection: null,
+    selectedSessionContextTelemetryProjection: {
+      summaryLabel: "",
+      currentTokensLabel: "",
+      tokenLimitLabel: "",
+      messagesLengthLabel: "",
+      systemTokensLabel: "",
+      conversationTokensLabel: "",
+    },
     selectedContextEmptyText: "context usage はまだありません",
     latestCommandEmptyText: "直近 run の command 記録はありません",
     selectedDiff: null,
@@ -182,7 +205,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     auditLogsLoading: false,
     auditLogsTotal: 0,
     auditLogsErrorMessage: null,
-    onToggleHeaderExpanded: noop,
+    onToggleHeaderSplitter: noop,
     onOpenAuditLog: noop,
     onOpenSessionTerminal: noop,
     onOpenSessionFilesTerminal: noop,
@@ -216,12 +239,13 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onPickImage: noop,
     onAddToSessionFiles: noop,
     onPickSessionFiles: noop,
+    onPickSessionFolder: noop,
+    onPickSessionImage: noop,
     onToggleAgentPicker: noop,
     onToggleSkillPicker: noop,
     onOpenPromptTemplates: noop,
     onAddAdditionalDirectory: noop,
     onToggleAdditionalDirectoryList: noop,
-    onCollapseActionDock: noop,
     onJumpToMessageListBottom: noop,
     onSelectCustomAgent: noop,
     onSelectSkill: noop,
@@ -236,11 +260,16 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onDraftCompositionEnd: noop,
     onSendOrCancel: noop,
     onChangeApprovalMode: noop,
+    onChangeCodexReviewer: noop,
     onChangeCodexSandboxMode: noop,
     onChangeCodexSpeed: noop,
     onChangeModel: noop,
     onChangeReasoningEffort: noop,
     onStartContextRailResize: noop,
+    onStartFilesPaneResize: noop,
+    onStartActionDockResize: noop,
+    onToggleActionDock: noop,
+    onToggleFilesPaneVisibility: noop,
     onToggleContextRailVisibility: noop,
     onCycleContextPaneTab: noop,
     onCloseDiff: noop,
@@ -464,7 +493,7 @@ test("buildAgentSessionChatWindowProps は Header から独立した right pane 
   const props = buildAgentSessionChatWindowProps(createProjectionInput({
     selectedContextEmptyText: "Agent context empty",
     latestCommandEmptyText: "Agent latest command empty",
-    onToggleHeaderExpanded,
+    // Header expansion is owned by the common shell, not this projection input.
     onCycleContextPaneTab,
   }));
   const paneProps = props.rightPaneProps as SessionContextPaneProps;
@@ -522,6 +551,16 @@ test("buildAgentSessionChatWindowProps は header action callbacks を維持す�
   assert.equal(props.headerProps.onTogglePin, onToggleSessionPin);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "agent session projectionはrunning composerとcompact dockへlive propsを転送する"
+// oracle = { type = "contract", ref = "shared chat shell projection" }
+// fault = "running状態、picker、cancel、追加directory情報が共通chat surfaceから欠落する"
+// observable = "projected composer and compact dock properties"
+// observation_boundary = "public-boundary"
+// scope = "agent-chat-live-projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildAgentSessionChatWindowProps は composer と compact dock の live props を維持する", () => {
   const onCollapseActionDock = () => {};
   const onToggleActionDock = () => {};
@@ -544,7 +583,6 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
     composerSendButtonTitle: "Agent stop",
     chatNotice: "New messages",
     attachmentCount: 2,
-    onCollapseActionDock,
     onToggleActionDock,
     onJumpToMessageListBottom,
     onSendOrCancel,

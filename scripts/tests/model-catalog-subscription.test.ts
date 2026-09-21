@@ -64,14 +64,24 @@ test("startModelCatalogSubscription は disabled なら fetch / subscribe しな
   assert.deepEqual(updates, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "model catalog subscriptionは初回snapshotと購読更新を順序通り反映する"
+// oracle = { type = "contract", ref = "model catalog subscription" }
+// fault = "初回取得または購読更新が欠落し古いcatalogを表示する"
+// observable = "applied catalog snapshots and unsubscribe count"
+// observation_boundary = "public-boundary"
+// scope = "model-catalog-initial-and-update"
+// lifecycle = "permanent"
+// @end-test-value
 test("startModelCatalogSubscription は初回取得と購読更新を反映する", async () => {
   const updates: Array<ModelCatalogSnapshot | null> = [];
-  let subscribedListener: ((snapshot: ModelCatalogSnapshot) => void) | null = null;
+  const control: { subscribedListener: ((snapshot: ModelCatalogSnapshot) => void) | null } = { subscribedListener: null };
   let unsubscribeCount = 0;
   const api: ModelCatalogSubscriptionApi = {
     getModelCatalog: async () => modelCatalogSnapshot,
     subscribeModelCatalog: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => {
         unsubscribeCount += 1;
       };
@@ -85,9 +95,9 @@ test("startModelCatalogSubscription は初回取得と購読更新を反映す�
     applyModelCatalog: (snapshot) => updates.push(snapshot),
   });
   await flushPromises();
-  subscribedListener?.(nextModelCatalogSnapshot);
+  if (control.subscribedListener) control.subscribedListener(nextModelCatalogSnapshot);
   cleanup();
-  subscribedListener?.({ revision: 3, providers: [] });
+  if (control.subscribedListener) control.subscribedListener({ revision: 3, providers: [] });
 
   assert.deepEqual(updates, [
     modelCatalogSnapshot,
@@ -96,16 +106,26 @@ test("startModelCatalogSubscription は初回取得と購読更新を反映す�
   assert.equal(unsubscribeCount, 1);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "購読更新後の遅い初回取得は新しいcatalog revisionを巻き戻さない"
+// oracle = { type = "contract", ref = "model catalog subscription ordering" }
+// fault = "遅い初回取得が新しい購読snapshotを上書きする"
+// observable = "applied snapshot sequence"
+// observation_boundary = "public-boundary"
+// scope = "model-catalog-stale-initial"
+// lifecycle = "permanent"
+// @end-test-value
 test("startModelCatalogSubscription は購読更新後に遅い初回取得で古い revision へ戻さない", async () => {
   const updates: Array<ModelCatalogSnapshot | null> = [];
   let resolveInitialSnapshot: (snapshot: ModelCatalogSnapshot | null) => void = () => undefined;
-  let subscribedListener: ((snapshot: ModelCatalogSnapshot) => void) | null = null;
+  const control: { subscribedListener: ((snapshot: ModelCatalogSnapshot) => void) | null } = { subscribedListener: null };
   const api: ModelCatalogSubscriptionApi = {
     getModelCatalog: () => new Promise((resolve) => {
       resolveInitialSnapshot = resolve;
     }),
     subscribeModelCatalog: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => undefined;
     },
   };
@@ -116,7 +136,7 @@ test("startModelCatalogSubscription は購読更新後に遅い初回取得で�
     subscribe: true,
     applyModelCatalog: (snapshot) => updates.push(snapshot),
   });
-  subscribedListener?.(nextModelCatalogSnapshot);
+  if (control.subscribedListener) control.subscribedListener(nextModelCatalogSnapshot);
   resolveInitialSnapshot(modelCatalogSnapshot);
   await flushPromises();
   cleanup();
@@ -126,16 +146,26 @@ test("startModelCatalogSubscription は購読更新後に遅い初回取得で�
   ]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "購読更新後の遅い初回nullは有効なcatalogを消去しない"
+// oracle = { type = "contract", ref = "model catalog subscription ordering" }
+// fault = "初回nullが購読済みcatalogを空状態へ戻す"
+// observable = "applied catalog state after null initial result"
+// observation_boundary = "public-boundary"
+// scope = "model-catalog-null-initial"
+// lifecycle = "permanent"
+// @end-test-value
 test("startModelCatalogSubscription は購読更新後に遅い初回 null で catalog を消さない", async () => {
   const updates: Array<ModelCatalogSnapshot | null> = [];
   let resolveInitialSnapshot: (snapshot: ModelCatalogSnapshot | null) => void = () => undefined;
-  let subscribedListener: ((snapshot: ModelCatalogSnapshot) => void) | null = null;
+  const control: { subscribedListener: ((snapshot: ModelCatalogSnapshot) => void) | null } = { subscribedListener: null };
   const api: ModelCatalogSubscriptionApi = {
     getModelCatalog: () => new Promise((resolve) => {
       resolveInitialSnapshot = resolve;
     }),
     subscribeModelCatalog: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => undefined;
     },
   };
@@ -146,7 +176,7 @@ test("startModelCatalogSubscription は購読更新後に遅い初回 null で c
     subscribe: true,
     applyModelCatalog: (snapshot) => updates.push(snapshot),
   });
-  subscribedListener?.(nextModelCatalogSnapshot);
+  if (control.subscribedListener) control.subscribedListener(nextModelCatalogSnapshot);
   resolveInitialSnapshot(null);
   await flushPromises();
   cleanup();
@@ -156,16 +186,26 @@ test("startModelCatalogSubscription は購読更新後に遅い初回 null で c
   ]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "購読更新後の遅い初回取得失敗は新しいcatalogをfallbackへ戻さない"
+// oracle = { type = "contract", ref = "model catalog subscription ordering" }
+// fault = "初回取得失敗が購読済みsnapshotをfallbackで上書きする"
+// observable = "applied catalog and fallback invocation count"
+// observation_boundary = "public-boundary"
+// scope = "model-catalog-failed-initial"
+// lifecycle = "permanent"
+// @end-test-value
 test("startModelCatalogSubscription は購読更新後に遅い初回取得失敗 fallback を呼ばない", async () => {
   let errorCount = 0;
   let rejectInitialSnapshot: (error: Error) => void = () => undefined;
-  let subscribedListener: ((snapshot: ModelCatalogSnapshot) => void) | null = null;
+  const control: { subscribedListener: ((snapshot: ModelCatalogSnapshot) => void) | null } = { subscribedListener: null };
   const api: ModelCatalogSubscriptionApi = {
     getModelCatalog: () => new Promise((_, reject) => {
       rejectInitialSnapshot = reject;
     }),
     subscribeModelCatalog: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => undefined;
     },
   };
@@ -179,7 +219,7 @@ test("startModelCatalogSubscription は購読更新後に遅い初回取得失�
       errorCount += 1;
     },
   });
-  subscribedListener?.(nextModelCatalogSnapshot);
+  if (control.subscribedListener) control.subscribedListener(nextModelCatalogSnapshot);
   rejectInitialSnapshot(new Error("failed"));
   await flushPromises();
   cleanup();

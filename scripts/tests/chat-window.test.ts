@@ -821,6 +821,7 @@ test("SessionChatScreen は左ペインのCollapse後もchild stateを保持す�
     headerSplitter: null,
     isHeaderVisible: true,
     messageColumn: React.createElement("div", null, "Messages"),
+    rightPane: null,
     actionDock: React.createElement("div", null, "Composer"),
     actionDockSplitter: null,
     isActionDockExpanded: true,
@@ -1136,6 +1137,7 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
     assert.ok(targetDocks[0]);
     assert.ok(targetDocks[1]);
     for (const targetDock of targetDocks) {
+      assert.ok(targetDock);
       const targetButtons = [...targetDock.querySelectorAll<HTMLButtonElement>("button")];
       assert.deepEqual(targetButtons.map((button) => button.textContent), ["Main", "Auxiliary"]);
       await act(async () => targetButtons[0].click());
@@ -1453,7 +1455,7 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
 // @end-test-value
 test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示し送信時追従を維持する", async () => {
   const props = createChatWindowProps({
-    messages: [{ role: "mate", text: "message" }],
+    messages: [{ role: "assistant", text: "message" }],
   });
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -1576,7 +1578,7 @@ test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示�
 // @end-test-value
 test("ChatWindow はcomposer入力後もMain/Auxiliaryの表示済み画像DOMとready状態を保持する", async () => {
   const props = createChatWindowProps({
-    messages: [{ role: "mate", text: "![cached](data:image/png;base64,AAAA)" }],
+    messages: [{ role: "assistant", text: "![cached](data:image/png;base64,AAAA)" }],
   });
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -2122,6 +2124,7 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
     headerSplitter: null,
     isHeaderVisible: true,
     messageColumn: React.createElement(StatefulCentral),
+    rightPane: null,
     style: { "--session-action-dock-height": `${height}px`, "--session-header-dock-row-height": "64px", "--session-dock-splitter-size": "20px" } as React.CSSProperties,
     actionDock: React.createElement("div", null, "Composer"),
     actionDockSplitter: null,

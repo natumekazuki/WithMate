@@ -113,14 +113,25 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "並行watch deliveryは新しいeventを優先し遅れて完了した古いstateを破棄する"
+  // oracle = { type = "contract", ref = "src-electron/glossary-session-projection-service.ts: watch delivery" }
+  // fault = "古いdeliveryが新しいGlossary projectionを巻き戻す"
+  // observable = "target stateとdelivery order"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-session-watch-race"
+  // lifecycle = "permanent"
+  // distinction = "直列watchでは検出できないdelivery raceを検証する"
+  // @end-test-value
   it("並行watch deliveryは新しいeventを優先し、遅れて完了した古いstateを破棄する", async () => {
     const { root, target } = await createRepository();
-    let releaseFirstScope: (() => void) | null = null;
+    const firstScopeGate: { release: (() => void) | null } = { release: null };
     const firstScope = new Promise<void>((resolve) => {
-      releaseFirstScope = resolve;
+      firstScopeGate.release = resolve;
     });
     let resolveCount = 0;
-    let emit: ((state: GlossaryProjectionState) => void) | null = null;
+    const projectionGate: { emit: ((state: GlossaryProjectionState) => void) | null } = { emit: null };
     class DelayedProjectionService extends GlossaryApplicationService {
       override async resolvePrimaryCheckout(): Promise<ResolvedGlossaryCheckout> {
         resolveCount += 1;
@@ -138,7 +149,7 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
         _target: ResolvedGlossaryCheckout,
         listener: (state: GlossaryProjectionState) => void,
       ): () => void {
-        emit = listener;
+        projectionGate.emit = listener;
         return () => undefined;
       }
     }
@@ -172,17 +183,28 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
       entries: [{ term: "Current", aliases: [], definition: "current state" }],
     };
 
-    emit?.(firstState);
+    projectionGate.emit?.(firstState);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    emit?.(secondState);
+    projectionGate.emit?.(secondState);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    releaseFirstScope?.();
+    firstScopeGate.release?.();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.deepEqual(projections, ["Current"]);
     dispose();
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "並行scope re-armは古いattemptを破棄しdisposeで全watch handleを閉じる"
+  // oracle = { type = "contract", ref = "src-electron/glossary-session-projection-service.ts: scope lifecycle" }
+  // fault = "旧attemptが新scopeへ書き込み、dispose後もwatch handleが残る"
+  // observable = "projection state、attempt identity、closed handles"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-scope-rearm"
+  // lifecycle = "permanent"
+  // distinction = "単一scopeのdisposeでは検出できないre-arm競合を検証する"
+  // @end-test-value
   it("並行scope re-armは古いattemptを破棄し、disposeで全watch handleを閉じる", async () => {
     const repositoryA = await createRepository();
     const repositoryB = await createRepository();
@@ -194,9 +216,9 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
       workspaceLabel: "repository-a",
       branch: "main",
     };
-    let releaseSlowArm: (() => void) | null = null;
+    const slowArmGate: { release: (() => void) | null } = { release: null };
     const slowArm = new Promise<void>((resolve) => {
-      releaseSlowArm = resolve;
+      slowArmGate.release = resolve;
     });
     let markSlowArmStarted: (() => void) | null = null;
     const slowArmStarted = new Promise<void>((resolve) => {
@@ -263,7 +285,7 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
     for (let attempt = 0; attempt < 20 && subscriptions.length < 2; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    releaseSlowArm?.();
+    slowArmGate.release?.();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.deepEqual(subscriptions.map((subscription) => subscription.target.rootPath), [

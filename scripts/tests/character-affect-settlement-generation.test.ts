@@ -57,12 +57,9 @@ test("Affect settlementは非同期処理中のstorage交換で失効する", { 
           await pause("context");
           return {
             schemaVersion: "withmate-character-context-v1",
-            characterId: "character-a",
-            sessionId: "session-a",
             baseline: { definitionSha256: "fixture", snapshotAt: occurredAt },
             affect: { mode: "active", effective: [], evaluatedAt: occurredAt, version: "v1", updatedAt: null },
             memory: { items: [], updatedAt: null },
-            scope: { userId: "local-user", characterId: "character-a", sessionId: "session-a" },
           } satisfies CharacterContextResponse;
         },
         evaluate: async () => {

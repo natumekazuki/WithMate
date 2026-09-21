@@ -125,7 +125,7 @@ function createRepairableLegacyV6Database(dbPath: string): void {
         `);
         continue;
       }
-      db.exec(statement === CREATE_V6_AUDIT_EVENTS_TABLE_SQL
+      db.exec((statement as string) === CREATE_V6_AUDIT_EVENTS_TABLE_SQL
         ? `
           CREATE TABLE IF NOT EXISTS audit_events_v6 (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

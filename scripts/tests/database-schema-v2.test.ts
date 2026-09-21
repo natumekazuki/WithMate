@@ -150,6 +150,16 @@ describe("database-schema-v2", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V2 audit schemaは一覧summaryとdetail payloadとoperationsを別tableへ分離する"
+  // oracle = { type = "contract", ref = "V2 database schema contract" }
+  // fault = "detail列やoperations列をsummary tableのschemaへ混在させる"
+  // observable = "各tableのcolumn names"
+  // observation_boundary = "declaration"
+  // scope = "V2 audit database schema"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("audit log は一覧 summary と detail payload を分離する", () => {
     const db = createV2Schema();
     try {
@@ -161,10 +171,10 @@ describe("database-schema-v2", () => {
       assert.deepEqual(auditColumns, [...EXPECTED_AUDIT_LOG_SUMMARY_COLUMNS]);
       assert.deepEqual(detailColumns, ["audit_log_id", ...AUDIT_DETAIL_PAYLOAD_COLUMNS]);
       for (const column of AUDIT_DETAIL_PAYLOAD_COLUMNS) {
-        assert.equal(auditColumns.includes(column), false);
+        assert.equal((auditColumns as string[]).includes(column), false);
       }
-      assert.equal(auditColumns.includes("operations_json"), false);
-      assert.equal(detailColumns.includes("operations_json"), false);
+      assert.equal((auditColumns as string[]).includes("operations_json"), false);
+      assert.equal((detailColumns as string[]).includes("operations_json"), false);
       assert.deepEqual(operationColumns, ["id", "audit_log_id", "seq", "operation_type", "summary", "details"]);
     } finally {
       db.close();

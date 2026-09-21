@@ -182,7 +182,7 @@ const DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS = 5_000;
 export type CodexAdapterOptions = {
   streamCloseGraceMs?: number;
   snapshotDeadlineMs?: number;
-  createClient?: (options: CodexOptions) => Codex;
+  createClient?: (options: CodexOptions) => CodexThreadConnector;
 };
 
 type CodexClientScope = "foreground" | "background";
@@ -282,10 +282,15 @@ function toCodexSdkThreadOptions(options: CodexThreadOptions): CodexSdkThreadOpt
   return options;
 }
 
-type CodexThreadConnector = Pick<Codex, "resumeThread" | "startThread">;
+type CodexThread = Pick<Thread, "id" | "run" | "runStreamed">;
+
+type CodexThreadConnector = {
+  startThread: (...args: Parameters<Codex["startThread"]>) => CodexThread;
+  resumeThread: (...args: Parameters<Codex["resumeThread"]>) => CodexThread;
+};
 
 type CachedCodexThread = {
-  thread: Thread;
+  thread: CodexThread;
   settingsKey: string;
 };
 
@@ -1479,7 +1484,7 @@ async function buildArtifact(
 }
 
 export class CodexAdapter implements ProviderTurnAdapter {
-  private readonly clients = new Map<string, Codex>();
+  private readonly clients = new Map<string, CodexThreadConnector>();
   private readonly clientKeysBySession = new Map<string, string>();
   private readonly threads = new Map<string, CachedCodexThread>();
   private readonly workspaceSnapshotIndexes = new Map<string, WorkspaceSnapshotIndex>();
@@ -1640,7 +1645,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     scope: CodexClientScope = "foreground",
     serviceTier: CodexServiceTier = mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
     approvalsReviewer: CodexApprovalsReviewer = mapCodexReviewerToApprovalsReviewer(DEFAULT_CODEX_REVIEWER),
-  ): { client: Codex; clientKey: string } {
+  ): { client: CodexThreadConnector; clientKey: string } {
     const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
     const codexPathOverride = resolvePackagedProviderBinaryPath("codex");
     const bindingCacheKey = buildProviderAgentRuntimeBindingCacheKey(agentRuntimeBinding);
@@ -1677,7 +1682,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     return { client, clientKey };
   }
 
-  private getThread(input: RunSessionTurnInput): { thread: Thread; selection: ResolvedModelSelection } {
+  private getThread(input: RunSessionTurnInput): { thread: CodexThread; selection: ResolvedModelSelection } {
     const { client, clientKey } = this.getClient(
       input.providerCatalog.id,
       input.appSettings,
@@ -2241,7 +2246,7 @@ export function resolveCodexThreadForSettings(args: {
   threadId: string | null;
   options: CodexThreadOptions;
   client: CodexThreadConnector;
-}): { thread: Thread; reusedCached: boolean } {
+}): { thread: CodexThread; reusedCached: boolean } {
   const {
     cached,
     nextSettingsKey,

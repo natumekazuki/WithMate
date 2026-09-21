@@ -6,7 +6,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { useAuxiliaryWorkspace, type AuxiliaryWorkspaceApi as WorkspaceApi, type AuxiliaryWorkspace } from "../../src/chat/use-auxiliary-workspace.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
 
 type AuxiliaryWorkspaceApi = Omit<WorkspaceApi, "getAuxiliarySessionStatus"> & Partial<Pick<WorkspaceApi, "getAuxiliarySessionStatus">>;
 
@@ -23,8 +23,8 @@ function session(id: string, createdAt: string, overrides: Partial<AuxiliarySess
     reasoningEffort: "medium",
     approvalMode: "never",
     codexSandboxMode: "workspace-write",
-    codexSpeed: "balanced",
-    codexReviewer: "none",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: id,
@@ -218,17 +218,17 @@ test("parent切替後は旧parentの遅延terminalを捨てる", async () => {
   assert.deepEqual(view.current.summaries, []);
   await view.render("parent-1");
   await act(async () => { view.current.selectSession("a"); });
-  assert.deepEqual(view.current.summaries.map((summary) => summary.id), ["a"]);
+    assert.deepEqual(view.current.summaries.map((summary: AuxiliarySessionSummary) => summary.id), ["a"]);
   await view.render("parent-2");
-  assert.deepEqual(view.current.summaries.map((summary) => summary.id), ["b"]);
+    assert.deepEqual(view.current.summaries.map((summary: AuxiliarySessionSummary) => summary.id), ["b"]);
   await act(async () => {
-    const parentOneListener = subscribedListeners.at(-2);
-    assert.ok(parentOneListener);
+    const parentOneListener = subscribedListeners[subscribedListeners.length - 2];
+    if (!parentOneListener) throw new Error("parent listener missing");
     parentOneListener("a", null);
     delayedOldTerminal.resolve(null);
     await delayedOldTerminal.promise;
   });
-  assert.deepEqual(view.current.summaries.map((summary) => summary.id), ["b"]);
+  assert.deepEqual(view.current.summaries.map((summary: AuxiliarySessionSummary) => summary.id), ["b"]);
   assert.equal(view.current.error, null);
   assert.equal([...listeners].includes(subscribedListeners.at(-2)!), false);
   await view.unmount();
@@ -312,7 +312,7 @@ test("対象切替は選択・幅を変更せず、Auxiliaryの幅0を保持す�
 test("hidden sessionのterminal詳細を保存済draftとともに正しい会話へ反映する", async () => {
   const a = session("a", "2026-01-01", { composerDraft: "hidden draft" });
   const b = session("b", "2026-01-02", { composerDraft: "selected draft" });
-  let terminal: ((id: string, state: null) => void) | null = null;
+  let terminal!: (id: string, state: null) => void;
   let latest = a;
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => [a, b],
@@ -334,7 +334,8 @@ test("hidden sessionのterminal詳細を保存済draftとともに正しい会�
   assert.equal(binding.sessionRef.current?.id, a.id);
   assert.equal(binding.sessionRef.current?.composerDraft, "hidden draft");
   latest = { ...latest, preview: "terminal answer", messages: [...latest.messages, { role: "assistant", text: "terminal answer" }] };
-  assert.ok(terminal);
+  if (!terminal) throw new Error("terminal listener missing");
+  const terminalListener = terminal;
   await act(async () => { terminal?.("a", null); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   assert.equal(binding.sessionRef.current?.id, a.id);
@@ -369,7 +370,7 @@ test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detai
   };
   const initialDetail = deferred<AuxiliarySession | null>();
   let initialDetailPending = true;
-  let terminal: ((id: string, state: null) => void) | null = null;
+  let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => [initial],
     getAuxiliarySession: async () => {
@@ -388,10 +389,11 @@ test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detai
 
   await view.render();
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  assert.ok(terminal);
+  if (!terminal) throw new Error("terminal listener missing");
+  const terminalListener = terminal;
 
   await act(async () => {
-    terminal?.(initial.id, null);
+    terminalListener(initial.id, null);
     await Promise.resolve();
   });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -429,7 +431,7 @@ test("terminal確定後の遅い初期detailエラーはMessagesを隠さない"
   let rejectInitialDetail!: (cause: Error) => void;
   const initialDetail = new Promise<AuxiliarySession | null>((_resolve, reject) => { rejectInitialDetail = reject; });
   let initialDetailPending = true;
-  let terminal: ((id: string, state: null) => void) | null = null;
+  let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => [initial],
     getAuxiliarySession: async () => {
@@ -482,7 +484,7 @@ test("terminal詳細取得失敗時は初期detailへフォールバックする
   const initial = session("a", "2026-01-01");
   const initialDetail = deferred<AuxiliarySession | null>();
   let initialDetailPending = true;
-  let terminal: ((id: string, state: null) => void) | null = null;
+  let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => [initial],
     getAuxiliarySession: async () => {
@@ -515,7 +517,9 @@ test("terminal詳細取得失敗時は初期detailへフォールバックする
     initialDetail.resolve(initial);
     await initialDetail.promise;
   });
-  assert.equal(view.current.selectedSession?.id, initial.id);
+  const resolvedSession = view.current.selectedSession;
+  if (!resolvedSession) throw new Error("initial detail missing");
+  assert.equal(resolvedSession, initial);
   assert.equal(view.current.detailLoading, false);
   assert.equal(view.current.detailError, null);
   await view.unmount();
@@ -538,7 +542,7 @@ test("非選択Auxiliaryの遅延terminalエラーは選択中Auxiliaryへ波及
   let rejectTerminal!: (cause: Error) => void;
   const terminalFailure = new Promise<AuxiliarySession | null>((_resolve, reject) => { rejectTerminal = reject; });
   const aDetails = [Promise.resolve<AuxiliarySession | null>(a), terminalFailure];
-  let terminal: ((id: string, state: null) => void) | null = null;
+  let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => [a, b],
     getAuxiliarySession: (id) => id === a.id ? (aDetails.shift() ?? Promise.resolve(a)) : Promise.resolve(b),
@@ -588,7 +592,7 @@ test("terminal詳細がnullなら一覧と選択状態を再同期する", async
   const initial = session("a", "2026-01-01");
   let listed = [initial];
   let initialDetailPending = true;
-  let terminal: ((id: string, state: null) => void) | null = null;
+  let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => listed,
     getAuxiliarySession: async () => {
@@ -646,7 +650,7 @@ test("terminal完了後の古い一覧応答はsummaryを巻き戻さない", as
   const listStarted = deferred<void>();
   let listCall = 0;
   let detailCall = 0;
-  let terminal: ((id: string, state: null) => void) | null = null;
+  let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => {
       listCall += 1;

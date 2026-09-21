@@ -22,8 +22,18 @@ test("persistChatLayoutPreference は専用 API へ単一 target の更新を保
   assert.deepEqual(saved, [update]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "chat layout preference保存失敗はrenderer logへ記録し呼び出し元へ再送出しない"
+// oracle = { type = "contract", ref = "chat layout preference persistence" }
+// fault = "保存失敗が未記録になるか呼び出し元へ例外が伝播する"
+// observable = "reported failure kind/data and resolved persistence call"
+// observation_boundary = "public-boundary"
+// scope = "chat-layout-preference-save-failure"
+// lifecycle = "permanent"
+// @end-test-value
 test("persistChatLayoutPreference は保存失敗を記録し、呼び出し元へは送出しない", async () => {
-  const logs: Array<{ kind: string; data?: Record<string, unknown> }> = [];
+  const logs: Array<{ kind: string; data?: unknown }> = [];
   const update: ChatLayoutPreferenceUpdate = { target: "header", value: "visible" };
 
   await persistChatLayoutPreference({

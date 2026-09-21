@@ -59,7 +59,7 @@ function createFixtureWorkerUrl(): URL {
 // distinction = "型検査では確認できないtransportのエラー型・詳細復元を実動作で確認する"
 // @end-test-value
 test("storage worker rehydrates allowlisted memory domain errors", async () => {
-  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { type: "module", workerData: {} });
+  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
   try {
     await assert.rejects(() => client.call("typed-error", null), (error: unknown) => {
       assert.ok(error instanceof MemoryV6FileQuotaExceededError);
@@ -87,7 +87,6 @@ test("storage worker rehydrates allowlisted memory domain errors", async () => {
 // @end-test-value
 test("storage worker client queues calls until ready and returns queued work", async () => {
   const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
-    type: "module",
     workerData: {},
   });
   try {
@@ -112,7 +111,6 @@ test("storage worker client queues calls until ready and returns queued work", a
 // @end-test-value
 test("storage worker client rejects sent mutations after worker exit", async () => {
   const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
-    type: "module",
     workerData: {},
   });
   await client.call("echo", { ready: true });
@@ -140,7 +138,7 @@ test("storage worker client rejects sent mutations after worker exit", async () 
 test("auxiliary conditional save reports an unknown write outcome after worker exit", async () => {
   const bundle = createV6StorageWorkerBundle({
     dbPath: "unused.db", bundledModelCatalogPath: "unused.json", userDataPath: ".",
-    workerUrl: createFixtureWorkerUrl(), workerOptions: { type: "module" },
+  workerUrl: createFixtureWorkerUrl(), workerOptions: {},
   });
   try {
     // This transport fixture exits before interpreting storage arguments; it does not open a database.
@@ -166,7 +164,7 @@ test("auxiliary conditional save reports an unknown write outcome after worker e
 // distinction = "型検査では送信済みreadとmutationのfault分類を確認できない"
 // @end-test-value
 test("storage worker client keeps interrupted reads distinct from unknown writes", async () => {
-  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { type: "module", workerData: {} });
+  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
   await client.call("echo", { ready: true });
   try {
     const pending = client.call("exit", null);
@@ -191,7 +189,6 @@ test("storage worker client keeps interrupted reads distinct from unknown writes
 test("storage worker diagnostics report request correlation and worker timings", async () => {
   const events: Array<{ stage: string; requestId?: string; waitMs?: number; holdMs?: number }> = [];
   const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
-    type: "module",
     workerData: {},
     diagnosticSink: (event) => events.push(event),
   });
@@ -219,7 +216,6 @@ test("storage worker diagnostics report request correlation and worker timings",
 // @end-test-value
 test("storage worker client rejects calls after generation close", async () => {
   const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
-    type: "module",
     workerData: {},
   });
   await client.close();
@@ -239,7 +235,7 @@ test("storage worker client rejects calls after generation close", async () => {
 // distinction = "実Workerへのstructured clone境界を通らない型検査では検出できない"
 // @end-test-value
 test("storage worker client settles structured clone failures without leaking pending work", async () => {
-  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { type: "module", workerData: {} });
+  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
   try {
     await client.call("echo", null);
     await assert.rejects(
@@ -265,7 +261,7 @@ test("storage worker client settles structured clone failures without leaking pe
 // distinction = "entryのmutation分類は静的なdispatch確認だけでは検出できない"
 // @end-test-value
 test("storage worker classifies non-mutation command failures as not-executed", async () => {
-  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { type: "module", workerData: {} });
+  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
   try {
     await assert.rejects(
       client.call("not-allowed", null),
@@ -294,7 +290,7 @@ test("storage worker classifies non-mutation command failures as not-executed", 
 // distinction = "型検査ではruntime message validationとpending解放を確認できない"
 // @end-test-value
 test("storage worker faults on malformed response frames", async () => {
-  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { type: "module", workerData: {} });
+  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
   try {
     await assert.rejects(client.call("bad-frame", null), Error);
     await assert.rejects(() => client.call("echo", null), StorageWorkerGenerationError);

@@ -735,6 +735,16 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character Memory appendへbinding principalをsourceとidempotency namespaceとして引き渡す"
+  // oracle = { type = "contract", ref = "Character context memory append authority contract" }
+  // fault = "principalを欠落または別namespaceへ写像し、別sessionの同一keyと衝突させる"
+  // observable = "保存されたmemory entryのsourceとidempotency結果"
+  // observation_boundary = "public-boundary"
+  // scope = "CharacterContextApplicationService memory append"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Character Memory appendはbinding principalをsourceとidempotency namespaceへ引き渡す", async () => {
     const fixture = createFixture();
     try {
@@ -774,7 +784,8 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(isCharacterContextError(first), false);
       assert.equal(isCharacterContextError(second), false);
       if (isCharacterContextError(first) || isCharacterContextError(second)) return;
-      assert.notEqual(first.entry?.id, second.entry?.id);
+      assert.ok(first.entry && second.entry);
+      assert.notEqual(first.entry.id, second.entry.id);
       const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
       try {
         const rows = db.prepare(`
@@ -782,7 +793,7 @@ describe("CharacterContextApplicationService", () => {
           FROM memory_entries_v6
           WHERE id IN (?, ?)
           ORDER BY source_session_id
-        `).all(first.entry?.id, second.entry?.id) as Array<{ id: string; source_session_id: string }>;
+        `).all(first.entry.id, second.entry.id) as Array<{ id: string; source_session_id: string }>;
         assert.deepEqual(rows.map((row) => row.source_session_id), ["session-a", "session-b"]);
       } finally {
         db.close();

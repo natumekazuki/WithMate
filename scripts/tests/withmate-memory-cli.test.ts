@@ -1786,11 +1786,13 @@ it("runtime identityを検証できないport再利用先へmutation bodyやsecr
     });
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "challenge後のpeer差替えでdispatchを再実行しない"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "偽peerへcredentialを再送する"
+// fault = "偽peerへcredentialを再送する"
+// observable = "差替え後serverへのrequest数と、CLIのstructured error/exit code"
+// observation_boundary = "public-boundary"
 // scope = "memory-cli-transport"
 // lifecycle = "permanent"
 // @end-test-value
@@ -1856,7 +1858,7 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
     } finally {
       await closeServer(firstServer);
       if (replacementListening) {
-        await replacementListening.catch(() => undefined);
+        await Promise.resolve(replacementListening).catch(() => undefined);
       }
       if (replacementServer) {
         await closeServer(replacementServer);
@@ -2137,11 +2139,13 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
     assert.match(message, /--tag/);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
   // claim = "operator CLIは複数active候補を列挙でき、暗黙のlast-writer選択を行わない"
   // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-  // failure_mode = "instances/status --allが一意性を確認せず後発runtimeへ接続する"
+  // fault = "instances/status --allが一意性を確認せず後発runtimeへ接続する"
+  // observable = "instancesとstatus --allのsafe metadata列挙結果、およびactive候補ごとのidentity"
+  // observation_boundary = "public-boundary"
   // scope = "withmate-memory-cli-discovery"
   // lifecycle = "permanent"
   // @end-test-value
@@ -2151,7 +2155,7 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
       ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
       ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"],
     ] as const;
-    const publications = [] as Array<{ unpublish(): Promise<boolean>; cleanupGeneration(): Promise<void> }>;
+    const publications = [] as Array<{ unpublish(): Promise<boolean>; cleanupGeneration(): Promise<boolean> }>;
     try {
       for (const [applicationInstanceId, runtimeGenerationId] of ids) {
         const publication = await publishRuntimeDiscoveryEntry({
@@ -2160,6 +2164,7 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
           identity: { applicationInstanceId, runtimeKind: "memory", runtimeGenerationId },
           buildChannel: "development",
           process: { pid: 100, startedAt: "2026-08-30T00:00:00.000Z" },
+          challenge: async () => true,
           credentialDocuments: [{ adapterKind: "cli", document: {
             schemaVersion: "withmate-runtime-credential-v1",
             applicationInstanceId,
@@ -2190,7 +2195,6 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
       assert.equal(await runWithMateMemoryCli(["instances"], {
         env,
         registryRootDirectoryPath: root,
-        legacyDiscoveryFilePath: join(root, "none.json"),
         readFile: async () => { throw new Error("no legacy projection"); },
         stdout: output.stream,
       }), WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
@@ -2201,7 +2205,6 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
       assert.equal(await runWithMateMemoryCli(["status", "--all"], {
         env,
         registryRootDirectoryPath: root,
-        legacyDiscoveryFilePath: join(root, "none.json"),
         readFile: async () => { throw new Error("no legacy projection"); },
         stdout: allOutput.stream,
       }), WITHMATE_MEMORY_CLI_EXIT_CODES.ok);

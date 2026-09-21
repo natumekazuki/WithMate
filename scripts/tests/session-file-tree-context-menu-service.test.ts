@@ -47,7 +47,7 @@ function createMenuHarness(options?: {
       template = nextTemplate as MenuItem[];
       return {
         popup(popupOptions) {
-          popupCallback = popupOptions.callback;
+          popupCallback = popupOptions?.callback;
         },
       };
     },

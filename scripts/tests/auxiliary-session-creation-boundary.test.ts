@@ -600,6 +600,7 @@ test("Auxiliary作成のunknownはDB未検出後も保持し、後発commitをqu
     };
     await assert.rejects(service.createAuxiliarySession(request), /commit result lost/);
     assert.ok(captured);
+    const committed: Parameters<typeof storage.upsertAuxiliarySession>[0] = captured!;
     storage.deleteAuxiliarySessionsForParent(currentParent.id);
     assert.deepEqual(await service.getAuxiliaryCreation({
       parentSessionId: currentParent.id,
@@ -607,12 +608,12 @@ test("Auxiliary作成のunknownはDB未検出後も保持し、後発commitをqu
       creationContext: context,
     }), { status: "unknown" });
     storage.upsertAuxiliarySession = originalUpsert as typeof storage.upsertAuxiliarySession;
-    storage.upsertAuxiliarySession(captured);
+    storage.upsertAuxiliarySession(committed);
     assert.deepEqual(await service.getAuxiliaryCreation({
       parentSessionId: currentParent.id,
       clientRequestId: request.clientRequestId,
       creationContext: context,
-    }), { status: "committed", auxiliarySessionId: captured.id });
+    }), { status: "committed", auxiliarySessionId: committed.id });
   } finally {
     storage.close();
     await rm(directory, { recursive: true, force: true });

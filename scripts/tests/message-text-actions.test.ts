@@ -28,18 +28,29 @@ test("copyMessageTextToClipboard は空でない response text だけを書き�
   assert.deepEqual(writes, ["hello"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "clipboard失敗の例外をfailure handlerから取得でき、空白入力ではhandlerを追加で呼ばない"
+// oracle = { type = "contract", ref = "message text copy actions" }
+// fault = "clipboard失敗の例外がhandlerへ届かない、または空白入力で追加通知する"
+// observable = "copy result and collected failure errors"
+// observation_boundary = "public-boundary"
+// scope = "message-copy-failure-handler"
+// lifecycle = "permanent"
+// @end-test-value
 test("copyMessageTextToClipboardWithFailureHandler は失敗時だけ handler を呼ぶ", async () => {
   const failures: unknown[] = [];
   const error = new Error("denied");
   const writeText = async () => {
     throw error;
   };
+  const onFailure = (caughtError: unknown) => failures.push(caughtError);
 
   assert.equal(
     await copyMessageTextToClipboardWithFailureHandler({
       text: "hello",
       writeText,
-      onFailure: (caughtError) => failures.push(caughtError),
+      onFailure,
     }),
     false,
   );
@@ -49,7 +60,7 @@ test("copyMessageTextToClipboardWithFailureHandler は失敗時だけ handler �
     await copyMessageTextToClipboardWithFailureHandler({
       text: "   ",
       writeText,
-      onFailure: (caughtError) => failures.push(caughtError),
+      onFailure,
     }),
     false,
   );

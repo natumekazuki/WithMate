@@ -17,6 +17,8 @@ function createAuxiliarySession(provider: string): AuxiliarySession {
     reasoningEffort: "medium",
     approvalMode: "on-request",
     codexSandboxMode: "workspace-write-network",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "",

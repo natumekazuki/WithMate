@@ -28,6 +28,15 @@ function createSessionSummary(overrides: Partial<SessionSummary> = {}): SessionS
     },
     approvalMode: "untrusted",
     ...overrides,
+    runState: overrides.runState ?? "idle",
+    codexSandboxMode: overrides.codexSandboxMode ?? "workspace-write",
+    codexSpeed: overrides.codexSpeed ?? "standard",
+    codexReviewer: overrides.codexReviewer ?? "auto-review",
+    model: overrides.model ?? "gpt-5.4",
+    reasoningEffort: overrides.reasoningEffort ?? "medium",
+    customAgentName: overrides.customAgentName ?? "",
+    allowedAdditionalDirectories: overrides.allowedAdditionalDirectories ?? [],
+    threadId: overrides.threadId ?? "",
   };
 }
 

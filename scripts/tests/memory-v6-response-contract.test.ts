@@ -103,6 +103,16 @@ describe("memory-v6 response contract", () => {
     assert.equal((response as MemoryGetEntryResponse).entry.body, baseEntry.body);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "forgotten、superseded、missingのget_entry結果はschema versionを保ち、同じnot-found errorへ正規化される"
+  // oracle = { type = "contract", ref = "memory-v6-get-entry-response" }
+  // fault = "非activeまたは不存在entryを成功entryとして返す、またはnot-found code/schemaを失う"
+  // observable = "各responseのschemaVersionとerror.code"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-response-contract"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("get_entry responseはforgotten / superseded / missingをnot found errorにする", () => {
     const forgotten = createMemoryGetEntryResponse({
       ...baseEntry,
@@ -118,11 +128,21 @@ describe("memory-v6 response contract", () => {
 
     for (const response of [forgotten, superseded, missing]) {
       assert.equal(response.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
-      assert.equal("error" in response, true);
+      assert.ok("error" in response);
       assert.equal(response.error.code, "MEMORY_ENTRY_NOT_FOUND");
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "state関連fieldが不整合なactive entryはget_entry成功として公開されず、not-found errorへ正規化される"
+  // oracle = { type = "contract", ref = "memory-v6-get-entry-response" }
+  // fault = "active stateとsupersededByの矛盾を検出せずentry bodyを公開する"
+  // observable = "不整合entryから生成されたresponseのschemaVersionとerror.code"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-response-contract"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("get_entry responseはstate関連fieldが不整合なactive entryをnot found errorにする", () => {
     const inconsistentActive = {
       ...baseEntry,
@@ -132,7 +152,7 @@ describe("memory-v6 response contract", () => {
     const response = createMemoryGetEntryResponse(inconsistentActive);
 
     assert.equal(response.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
-    assert.equal("error" in response, true);
+    assert.ok("error" in response);
     assert.equal(response.error.code, "MEMORY_ENTRY_NOT_FOUND");
   });
 

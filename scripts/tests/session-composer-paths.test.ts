@@ -93,11 +93,22 @@ test("buildSelectedPathReferenceInsertionState は選択 path を解決して挿
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "composer attachment表示はsource/kind/locationを保持し正規化済みremove targetsを生成する"
+// oracle = { type = "contract", ref = "composer attachment path handling" }
+// fault = "添付表示または削除対象pathが欠落し別添付を削除する"
+// observable = "attachment display items and removal targets"
+// observation_boundary = "public-boundary"
+// scope = "composer-attachment-display"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildComposerAttachmentItems は attachment display と remove targets を作る", () => {
   const attachments = [
     {
       id: "att-1",
       kind: "file" as const,
+      source: "text" as const,
       absolutePath: "C:\\workspace\\project\\src\\App.tsx",
       displayPath: "src/App.tsx",
       workspaceRelativePath: "src/App.tsx",
@@ -106,8 +117,10 @@ test("buildComposerAttachmentItems は attachment display と remove targets を
     {
       id: "att-2",
       kind: "image" as const,
+      source: "markdown-image" as const,
       absolutePath: "D:\\assets\\cover image.png",
       displayPath: "  ",
+      workspaceRelativePath: null,
       isOutsideWorkspace: true,
     },
   ];

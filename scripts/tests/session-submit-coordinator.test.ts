@@ -39,11 +39,13 @@ function createSession(overrides: Partial<Session> = {}): Session {
     characterId: "character-1",
     character: "Character",
     characterIconPath: "",
-    characterThemeColors: { primary: "#000000", secondary: "#000000", accent: "#000000" },
+    characterThemeColors: { main: "#000000", sub: "#000000" },
     characterRuntimeSnapshot: null,
     runState: "idle",
     approvalMode: "on-request",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     model: "model",
     reasoningEffort: "medium",
     customAgentName: "",
@@ -71,9 +73,19 @@ function createLiveRun(overrides: Partial<LiveSessionRunState> = {}): LiveSessio
   };
 }
 
+// @test-value v2
+// kind = "invariant"
+// claim = "同一sessionのpreview待機中submitは一件だけleaseを取得し、release後に再取得可能になる"
+// oracle = { type = "contract", ref = "src/session-submit-coordinator.ts#tryAcquire" }
+// fault = "同一sessionの同時submitを二重dispatchするか、leaseをreleaseせず後続submitを恒久的に拒否する"
+// observable = "submit結果、dispatch回数、isClaimedの前後状態"
+// observation_boundary = "public-boundary"
+// scope = "session-submit-coordinator-rapid-submit"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionSubmitCoordinator は preview 待機中の同一session rapid submitを一件だけ通す", async () => {
   const coordinator = new SessionSubmitCoordinator();
-  let releasePreview: (() => void) | null = null;
+  let releasePreview: () => void = () => undefined;
   const preview = new Promise<void>((resolve) => {
     releasePreview = resolve;
   });

@@ -107,9 +107,8 @@ function createRuntimeDeps(
     waitForElicitationResponse: async () => ({ action: "cancel" }),
     setProviderQuotaTelemetry: () => undefined,
     setSessionContextTelemetry: () => undefined,
-    invalidateProviderSessionThread: () => undefined,
+    invalidateProviderSessionThread: async () => undefined,
     scheduleProviderQuotaTelemetryRefresh: () => undefined,
-    runCharacterReflection: () => undefined,
     broadcastLiveSessionRun: () => undefined,
     resolvePendingApprovalRequest: () => undefined,
     resolvePendingElicitationRequest: () => undefined,
@@ -128,8 +127,8 @@ function createAdapter(runSessionTurn: ProviderCodingAdapter["runSessionTurn"]):
       additionalDirectories: [],
     }),
     getProviderQuotaTelemetry: async () => null,
-    invalidateSessionThread: () => undefined,
-    invalidateAllSessionThreads: () => undefined,
+    invalidateSessionThread: async () => undefined,
+    invalidateAllSessionThreads: async () => undefined,
     runSessionTurn,
   };
 }
@@ -188,8 +187,9 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
   assert.equal(timingResolverCalls, 0);
   assert.equal(affectResolverCalls, 0);
   assert.ok(composedInput);
-  assert.equal(composedInput.conversationTimingContext, undefined);
-  assert.equal(composedInput.characterContext, undefined);
+  const composed = composedInput as RunSessionTurnInput;
+  assert.equal(composed.conversationTimingContext, undefined);
+  assert.equal(composed.characterContext, undefined);
 
   const runWithSettings = async (appSettings: ReturnType<typeof normalizeAppSettings>) => {
     let timingCalls = 0;
@@ -244,7 +244,7 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
     const partialResult = await partialService.runSessionTurn(session.id, { userMessage: "お願い" });
     assert.equal(partialResult.runState, "error");
     assert.ok(composedInput);
-    return { timingCalls, affectCalls, composedInput };
+    return { timingCalls, affectCalls, composedInput: composedInput! };
   };
   const timingOff = await runWithSettings({
     ...normalizeAppSettings({}),
@@ -259,12 +259,12 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
 
   assert.equal(timingOff.timingCalls, 0);
   assert.equal(timingOff.affectCalls, 1);
-  assert.equal(timingOff.composedInput.conversationTimingContext, undefined);
-  assert.equal(timingOff.composedInput.characterContext?.affect.version, "sentinel-affect");
+  assert.equal((timingOff.composedInput as RunSessionTurnInput).conversationTimingContext, undefined);
+  assert.equal((timingOff.composedInput as RunSessionTurnInput).characterContext?.affect.version, "sentinel-affect");
   assert.equal(affectOff.timingCalls, 1);
   assert.equal(affectOff.affectCalls, 0);
-  assert.equal(affectOff.composedInput.conversationTimingContext?.observedAt, "2026-09-19T04:00:00.000+09:00");
-  assert.equal(affectOff.composedInput.characterContext, undefined);
+  assert.equal((affectOff.composedInput as RunSessionTurnInput).conversationTimingContext?.observedAt, "2026-09-19T04:00:00.000+09:00");
+  assert.equal((affectOff.composedInput as RunSessionTurnInput).characterContext, undefined);
 });
 
 // @test-value v1

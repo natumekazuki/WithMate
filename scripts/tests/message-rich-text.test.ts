@@ -57,7 +57,7 @@ async function openMarkdownLinkContextMenu(target: string) {
     target,
     async (request) => {
       requests.push(request);
-      return { status: "copied" };
+      return { status: "link-copied" };
     },
   );
 
@@ -95,7 +95,7 @@ function installDomGlobals(dom: JSDOM): () => void {
   };
 }
 
-function waitForAnimationFrame(window: Window): Promise<void> {
+function waitForAnimationFrame(window: { requestAnimationFrame: (callback: FrameRequestCallback) => number }): Promise<void> {
   return new Promise((resolve) => {
     window.requestAnimationFrame(() => resolve());
   });
@@ -106,7 +106,10 @@ type ControlledTimer = {
   delay: number;
 };
 
-function installControlledTimers(window: Window): {
+function installControlledTimers(window: {
+  setTimeout: (handler: TimerHandler, timeout?: number) => number;
+  clearTimeout: (id: number) => void;
+}): {
   pending: Map<number, ControlledTimer>;
   restore: () => void;
 } {
@@ -585,6 +588,16 @@ test("handleMarkdownLinkClick は encoded local link を decode せず openPath 
   assert.deepEqual(opened, ["docs/my%20file-%E4%BB%95%E6%A7%98.md"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Markdown link context menuは各種targetを変換せず元targetと座標をmenu requestへ渡す"
+// oracle = { type = "contract", ref = "Markdown link context menu target forwarding contract" }
+// fault = "URL、mailto、local pathをdecodeまたは別形式へ変換し、copy結果やdefault preventionを壊す"
+// observable = "defaultPrevented、menu request target/point、copy result"
+// observation_boundary = "public-boundary"
+// scope = "handleMarkdownLinkContextMenu target forwarding"
+// lifecycle = "permanent"
+// @end-test-value
 test("handleMarkdownLinkContextMenu は openPath と同じ各種targetを変換せずmenuへ渡す", async () => {
   const targets = [
     "https://example.test/docs/my%20file.md?raw=%2F#intro",
@@ -598,7 +611,7 @@ test("handleMarkdownLinkContextMenu は openPath と同じ各種targetを変換�
     const { defaultPrevented, requests, result } = await openMarkdownLinkContextMenu(target);
     assert.equal(defaultPrevented, true);
     assert.deepEqual(requests, [{ target, point: { x: 120, y: 240 } }]);
-    assert.deepEqual(result, { status: "copied" });
+    assert.deepEqual(result, { status: "link-copied" });
   }
 });
 

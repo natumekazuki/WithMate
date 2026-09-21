@@ -147,7 +147,15 @@ function createCodexRunSessionTurnInput(workspacePath: string): RunSessionTurnIn
       workspacePath,
     },
     sessionMemory: {
-      entries: [],
+      sessionId: "session-1",
+      workspacePath,
+      threadId: "",
+      schemaVersion: 1,
+      goal: "",
+      decisions: [],
+      openQuestions: [],
+      nextActions: [],
+      notes: [],
       updatedAt: "",
     },
     projectMemoryEntries: [],
@@ -195,6 +203,9 @@ function createCodexStreamThatNeverClosesAfter(events: unknown[]): AsyncGenerato
     },
     async throw(error?: unknown) {
       throw error;
+    },
+    async [Symbol.asyncDispose]() {
+      await new Promise<void>(() => {});
     },
   };
 }
@@ -280,6 +291,17 @@ describe("CodexAdapter thread settings", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Codexのturn.completed後にstream closeが遅延してもterminal eventで成功へ収束する"
+  // oracle = { type = "contract", ref = "src-electron/codex-adapter.ts: runSessionTurn" }
+  // fault = "stream close待ちで成功結果を返さず、完了済みturnを失敗または長時間実行中として扱う"
+  // observable = "threadId、assistantText、stream-close-timeout log"
+  // observation_boundary = "public-boundary"
+  // scope = "codex-terminal-event-settlement"
+  // lifecycle = "permanent"
+  // distinction = "通常stream closeの成功testでは検出できない完了通知とclose競合を検証する"
+  // @end-test-value
   it("turn.completed 後に stream が閉じなくても terminal event で成功へ収束する", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-terminal-event-"));
     const logs: Array<{ kind: string }> = [];
@@ -332,6 +354,17 @@ describe("CodexAdapter thread settings", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Codex再接続通知後のturn.completedは成功結果へ収束する"
+  // oracle = { type = "contract", ref = "src-electron/codex-adapter.ts: runSessionTurn" }
+  // fault = "再接続通知を最終失敗として扱い、後続turn.completedの確定結果を捨てる"
+  // observable = "progress errors、threadId、assistantText"
+  // observation_boundary = "public-boundary"
+  // scope = "codex-reconnect-settlement"
+  // lifecycle = "permanent"
+  // distinction = "通常のstream completionでは検出できないreconnect後のterminal収束を確認する"
+  // @end-test-value
   it("再接続通知の後に turn.completed を受けた場合は成功へ収束する", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-reconnect-completed-"));
     const reconnectMessage =
@@ -374,7 +407,7 @@ describe("CodexAdapter thread settings", () => {
 
       const result = await adapter.runSessionTurn(
         createCodexRunSessionTurnInput(workspacePath),
-        (state) => progressErrors.push(state.errorMessage),
+        (state) => { progressErrors.push(state.errorMessage); },
       );
 
       assert.equal(result.threadId, "thread-reconnect-completed");
@@ -1427,6 +1460,17 @@ describe("CodexAdapter thread settings", () => {
     assert.deepEqual(nextSettings.options.additionalDirectories, [path.resolve("F:/external-b")]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "既存threadIdがあるCodex turnはstartThreadではなく同一threadをresumeする"
+  // oracle = { type = "contract", ref = "src-electron/codex-adapter.ts: thread reuse" }
+  // fault = "既存会話を新規threadとして開始し履歴の継続性を失う"
+  // observable = "startThread/resumeThread呼出数とresume options"
+  // observation_boundary = "public-boundary"
+  // scope = "codex-thread-resume"
+  // lifecycle = "permanent"
+  // distinction = "新規thread作成では検出できない既存thread再利用契約を確認する"
+  // @end-test-value
   it("threadId がある場合は startThread ではなく resumeThread(threadId, options) を使う", () => {
     const previousSession = createSession({
       threadId: "thread-1",
@@ -1466,7 +1510,7 @@ describe("CodexAdapter thread settings", () => {
       } as never,
     });
 
-    assert.equal(result.thread, resumedThread);
+      assert.equal(result.thread, resumedThread);
     assert.equal(result.reusedCached, false);
     assert.equal(startCalls.length, 0);
     assert.equal(resumeCalls.length, 1);
@@ -1477,13 +1521,16 @@ describe("CodexAdapter thread settings", () => {
 });
 
 describe("CodexAdapter service tier clients", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
   // claim = "foreground clientはSessionのtierとReviewerを明示し、background clientはdefault tierとUser Reviewerを明示する"
   // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-4" }
-  // failure_mode = "Reviewer変更後も旧clientを使う、global設定を継承する、またはbackground jobへAuto-reviewが漏れる"
+  // fault = "Reviewer変更後も旧clientを使う、global設定を継承する、またはbackground jobへAuto-reviewが漏れる"
+  // observable = "foreground/background client optionsとrun checkのspeed/reviewer"
+  // observation_boundary = "public-boundary"
   // scope = "codex-client-cache"
   // lifecycle = "permanent"
+  // distinction = "foreground/background client分離とrun checkの記録を同時に確認し、単なるclient生成数検証と区別する"
   // @end-test-value
   it("service_tierとReviewerでforeground/background clientを分離しrun checkへ記録する", async () => {
     const createdOptions: CodexOptions[] = [];
@@ -1500,7 +1547,7 @@ describe("CodexAdapter service tier clients", () => {
               { type: "turn.completed", usage: null },
             ]),
           }),
-          run: async () => ({ finalResponse: "{\"answer\":\"ok\"}", usage: null }),
+          run: async () => ({ items: [], finalResponse: "{\"answer\":\"ok\"}", usage: null }),
         });
         return {
           startThread: () => createThread(`thread-${++threadSequence}`),
@@ -1508,7 +1555,7 @@ describe("CodexAdapter service tier clients", () => {
             resumedThreadIds.push(threadId);
             return createThread(threadId);
           },
-        } as Codex;
+        };
       },
     });
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-speed-client-"));
@@ -1517,6 +1564,7 @@ describe("CodexAdapter service tier clients", () => {
       const fastInput = createCodexRunSessionTurnInput(workspacePath);
       fastInput.session.codexSpeed = "fast";
       const fastResult = await adapter.runSessionTurn(fastInput);
+      assert.ok(fastResult.threadId);
       await adapter.runBackgroundStructuredPrompt(createCodexBackgroundPromptInput({ workspacePath }));
       const standardInput = createCodexRunSessionTurnInput(workspacePath);
       standardInput.session.id = fastInput.session.id;
@@ -1524,6 +1572,7 @@ describe("CodexAdapter service tier clients", () => {
       standardInput.session.codexSpeed = "standard";
       standardInput.session.codexReviewer = "auto-review";
       const autoReviewResult = await adapter.runSessionTurn(standardInput);
+      assert.ok(autoReviewResult.threadId);
       const userInput = createCodexRunSessionTurnInput(workspacePath);
       userInput.session.id = fastInput.session.id;
       userInput.session.threadId = autoReviewResult.threadId;
@@ -1552,7 +1601,18 @@ describe("CodexAdapter service tier clients", () => {
   });
 });
 
-describe("CodexAdapter background structured prompt", () => {
+  describe("CodexAdapter background structured prompt", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Codex background structured promptはoutputSchemaをthread.run optionsへ渡す"
+  // oracle = { type = "contract", ref = "src-electron/codex-adapter.ts: runBackgroundStructuredPromptFromInput" }
+  // fault = "outputSchemaを落としてstructured responseの検証境界を失う"
+  // observable = "thread.run options.outputSchema"
+  // observation_boundary = "public-boundary"
+  // scope = "codex-background-output-schema"
+  // lifecycle = "permanent"
+  // distinction = "通常turnでは検出できないbackground schema伝播を確認する"
+  // @end-test-value
   it("runBackgroundStructuredPromptFromInput は outputSchema を thread.run の options.outputSchema へ渡す", async () => {
     const adapter = new CodexAdapter() as unknown as {
       getClient: (
@@ -1613,11 +1673,13 @@ describe("CodexAdapter background structured prompt", () => {
     });
 
     assert.equal(threadRunCalled, true);
-    assert.equal(capturedThreadOptions?.workingDirectory, backgroundInput.workspacePath);
-    assert.equal(capturedThreadOptions?.skipGitRepoCheck, true);
-    assert.equal(capturedThreadOptions?.sandboxMode, "read-only");
-    assert.equal(capturedThreadOptions?.approvalPolicy, "never");
-    assert.equal(capturedRunOptions?.outputSchema, backgroundInput.prompt.outputSchema);
+    const threadOptions = capturedThreadOptions as { workingDirectory?: unknown; skipGitRepoCheck?: unknown; sandboxMode?: unknown; approvalPolicy?: unknown } | null;
+    const runOptions = capturedRunOptions as { outputSchema?: unknown } | null;
+    assert.equal(threadOptions?.workingDirectory, backgroundInput.workspacePath);
+    assert.equal(threadOptions?.skipGitRepoCheck, true);
+    assert.equal(threadOptions?.sandboxMode, "read-only");
+    assert.equal(threadOptions?.approvalPolicy, "never");
+    assert.equal(runOptions?.outputSchema, backgroundInput.prompt.outputSchema);
     assert.equal(capturedRunInput, `${backgroundInput.prompt.systemText}\n\n${backgroundInput.prompt.userText}`.trim());
     assert.equal(result.rawText, "{\"answer\":\"ok\"}");
     assert.equal(result.output?.answer, "ok");

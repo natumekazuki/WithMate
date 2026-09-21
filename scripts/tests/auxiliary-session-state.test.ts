@@ -59,6 +59,8 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
     reasoningEffort: "medium",
     approvalMode: "untrusted",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "",

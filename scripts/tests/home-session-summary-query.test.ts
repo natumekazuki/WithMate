@@ -7,25 +7,31 @@ import {
   fetchHomeSessionSummarySnapshot,
   mergeSessionSummaryEntries,
 } from "../../src/home/home-session-summary-query.js";
-import type { SessionSummary } from "../../src/session-state.js";
+import type { SessionSummary, SessionSummaryPageRequest } from "../../src/session-state.js";
 
 function summary(id: string): SessionSummary {
   return { id } as SessionSummary;
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Home summary queryはopen Session IDを100件単位で取得し重複を除く"
+// oracle = { type = "contract", ref = "Home session summary query paging contract" }
+// fault = "open IDが一括送信される、分割数が誤る、重複entryが残る、またはcharacter usageが失われる"
+// observable = "open request sizes、snapshot.openの件数とID、characterUsage"
+// observation_boundary = "public-boundary"
+// scope = "fetchHomeSessionSummarySnapshot open paging"
+// lifecycle = "permanent"
+// @end-test-value
 test("Home summary query は open Session ID を100件ずつ取得し、重複を除く", async () => {
   const openRequests: string[][] = [];
   const openSearchTexts: Array<string | undefined> = [];
   const api = {
-    listSessionSummaryPage: async (request?: {
-      scope?: string;
-      sessionIds?: readonly string[] | null;
-      searchText?: string;
-    }) => {
+    listSessionSummaryPage: async (request?: SessionSummaryPageRequest | null) => {
       if (request?.scope === "open") {
         const sessionIds = [...(request.sessionIds ?? [])];
         openRequests.push(sessionIds);
-        openSearchTexts.push(request.searchText);
+        openSearchTexts.push(request.searchText ?? undefined);
         return {
           entries: sessionIds.map((id) => summary(id)),
           nextCursor: null,
@@ -57,20 +63,26 @@ test("Home summary merge は pinned を先に置き、Session IDでdedupeする"
   );
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Home summary background refreshは既存page数ぶんcursor chainを再取得する"
+// oracle = { type = "contract", ref = "Home session summary cursor refresh contract" }
+// fault = "cursor chainを欠落・重複取得し、loaded pageの表示順またはrequest cursorを壊す"
+// observable = "request cursor列と返却pageのrequestCursor列"
+// observation_boundary = "public-boundary"
+// scope = "fetchHomeSessionSummaryPages cursor chain"
+// lifecycle = "permanent"
+// @end-test-value
 test("Home summary background refresh はloaded page数ぶんcursor chainを再取得する", async () => {
   const requests: Array<string | undefined> = [];
   const api = {
-    listSessionSummaryPage: async (request?: {
-      scope?: string;
-      cursor?: string | null;
-      searchText?: string;
-    }) => {
+    listSessionSummaryPage: async (request?: SessionSummaryPageRequest | null) => {
       if (request?.scope !== "recent") {
         return { entries: [], nextCursor: null, hasMore: false };
       }
 
       requests.push(request.cursor ?? undefined);
-      const pageIndex = request.cursor === undefined ? 0 : Number(request.cursor.split("-")[1]);
+      const pageIndex = request.cursor == null ? 0 : Number(request.cursor.split("-")[1]);
       return {
         entries: [summary(`recent-${pageIndex}`)],
         nextCursor: pageIndex < 2 ? `cursor-${pageIndex + 1}` : null,

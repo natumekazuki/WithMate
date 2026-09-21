@@ -240,6 +240,16 @@ test("message search projection はfootnote内のlist tailをDOM境界どおり�
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "検索投影はmount済みrich text DOMのinline空白とhard break境界を一致させる"
+// oracle = { type = "contract", ref = "message rendered search projection" }
+// fault = "検索結果がMarkdown sourceまたはDOM表示と異なり一致箇所を見失う"
+// observable = "projected normalized text equals rendered DOM index"
+// observation_boundary = "component-behavior"
+// scope = "message-rendered-search-dom-boundaries"
+// lifecycle = "permanent"
+// @end-test-value
 test("message search projection はmount済みDOMのinline空白とhard break境界に一致する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -331,7 +341,7 @@ test("message search projection はmount済みDOMのinline空白とhard break境
       await act(async () => {
         root?.render(React.createElement(MessageRichText, { text: markdown, forceFullRender: true }));
       });
-      const richText = container.querySelector<HTMLElement>(".rich-text");
+      const richText: HTMLElement | null = container.querySelector<HTMLElement>(".rich-text");
       assert.ok(richText, label);
       const projected = projectMessageRenderedSearchText(markdown);
       const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);

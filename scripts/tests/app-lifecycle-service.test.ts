@@ -198,8 +198,8 @@ test("AppLifecycleService は before-quit で runtime cleanup後にpersistent st
 test("AppLifecycleService はproviderとMemory runtime停止完了後にpersistent storesを閉じて終了する", async () => {
   let prevented = false;
   const calls: string[] = [];
-  let resolveProviderCleanup: (() => void) | null = null;
-  let resolveMemoryCleanup: (() => void) | null = null;
+  const providerCleanup = { resolve: undefined as (() => void) | undefined };
+  const memoryCleanup = { resolve: undefined as (() => void) | undefined };
   const service = new AppLifecycleService({
     hasInFlightSessionRuns: () => false,
     getAllowQuitWithInFlightRuns: () => false,
@@ -218,7 +218,7 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
     async invalidateAllProviderSessionThreads() {
       calls.push("invalidateAllProviderSessionThreads:start");
       await new Promise<void>((resolve) => {
-        resolveProviderCleanup = resolve;
+        providerCleanup.resolve = resolve;
       });
       calls.push("invalidateAllProviderSessionThreads:end");
     },
@@ -227,7 +227,7 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
     },
     async stopMemoryRuntime() {
       calls.push("stopMemoryRuntime:start");
-      await new Promise<void>((resolve) => { resolveMemoryCleanup = resolve; });
+      await new Promise<void>((resolve) => { memoryCleanup.resolve = resolve; });
       calls.push("stopMemoryRuntime:end");
     },
   });
@@ -241,11 +241,11 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
   assert.equal(prevented, true);
   assert.deepEqual(calls, ["invalidateAllProviderSessionThreads:start"]);
 
-  resolveProviderCleanup?.();
+  providerCleanup.resolve?.();
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(calls, ["invalidateAllProviderSessionThreads:start", "invalidateAllProviderSessionThreads:end", "revokeAllAgentRuntimeBindings", "stopMemoryRuntime:start"]);
   assert.equal(calls.includes("closePersistentStores"), false);
-  resolveMemoryCleanup?.();
+  memoryCleanup.resolve?.();
   await cleanup;
 
   assert.deepEqual(calls, [
@@ -273,7 +273,7 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
 // @end-test-value
 test("AppLifecycleService は非同期persistent store closeの完了後にquitする", async () => {
   const calls: string[] = [];
-  let resolveClose: (() => void) | null = null;
+  const closeControl = { resolve: undefined as (() => void) | undefined };
   const service = new AppLifecycleService({
     hasInFlightSessionRuns: () => false,
     getAllowQuitWithInFlightRuns: () => false,
@@ -287,7 +287,7 @@ test("AppLifecycleService は非同期persistent store closeの完了後にquit�
     closePersistentStores() {
       calls.push("closePersistentStores:start");
       return new Promise<void>((resolve) => {
-        resolveClose = () => {
+          closeControl.resolve = () => {
           calls.push("closePersistentStores:end");
           resolve();
         };
@@ -298,7 +298,7 @@ test("AppLifecycleService は非同期persistent store closeの完了後にquit�
   const cleanup = service.handleBeforeQuit({ preventDefault() {} });
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(calls, ["closePersistentStores:start"]);
-  resolveClose?.();
+  closeControl.resolve?.();
   await cleanup;
   assert.deepEqual(calls, ["closePersistentStores:start", "closePersistentStores:end", "quitApp"]);
 });
@@ -386,9 +386,9 @@ test("AppLifecycleService は複数Window flush失敗時にcleanupを保留し�
       calls.push(`flush-${flushAttempt}-window-b`);
       return flushAttempt > 1;
     },
-    closePersistentStores: () => calls.push("close"),
-    invalidateAllProviderSessionThreads: async () => calls.push("provider"),
-    stopMemoryRuntime: async () => calls.push("memory"),
+    closePersistentStores: () => { calls.push("close"); },
+    invalidateAllProviderSessionThreads: async () => { calls.push("provider"); },
+    stopMemoryRuntime: async () => { calls.push("memory"); },
   });
 
   await service.handleBeforeQuit({ preventDefault() {} });

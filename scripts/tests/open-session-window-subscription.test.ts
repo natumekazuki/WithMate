@@ -47,16 +47,26 @@ test("open Session Window 一覧の初回取得失敗を error として反映�
   assert.deepEqual(appliedStates, [{ status: "error", sessionIds: [] }]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "購読更新後の遅い初回取得失敗はloaded stateをerrorへ巻き戻さない"
+// oracle = { type = "contract", ref = "open session window subscription ordering" }
+// fault = "初回取得失敗が購読で受け取ったsession idsを消す"
+// observable = "applied open-window states"
+// observation_boundary = "public-boundary"
+// scope = "open-session-window-stale-error"
+// lifecycle = "permanent"
+// @end-test-value
 test("購読更新後の初回取得失敗は loaded state を error へ戻さない", async () => {
   const appliedStates: OpenSessionWindowIdsState[] = [];
-  let subscribedListener: ((sessionIds: string[]) => void) | null = null;
+  const control: { subscribedListener: ((sessionIds: string[]) => void) | null } = { subscribedListener: null };
   let rejectList: (error: Error) => void = () => undefined;
   const api: OpenSessionWindowIdsSubscriptionApi = {
     listOpenSessionWindowIds: () => new Promise((_, reject) => {
       rejectList = reject;
     }),
     subscribeOpenSessionWindowIds: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => undefined;
     },
   };
@@ -65,7 +75,7 @@ test("購読更新後の初回取得失敗は loaded state を error へ戻さ�
     api,
     applyState: (state) => appliedStates.push(state),
   });
-  subscribedListener?.(["session-current"]);
+  if (control.subscribedListener) control.subscribedListener(["session-current"]);
   rejectList(new Error("stale list failed"));
   await flushPromises();
   cleanup();
@@ -73,15 +83,25 @@ test("購読更新後の初回取得失敗は loaded state を error へ戻さ�
   assert.deepEqual(appliedStates, [{ status: "loaded", sessionIds: ["session-current"] }]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "初回取得失敗後の購読更新はloaded stateへ復帰させる"
+// oracle = { type = "contract", ref = "open session window subscription recovery" }
+// fault = "取得失敗後に有効な購読更新を無視しerror表示を維持する"
+// observable = "recovered state and session ids"
+// observation_boundary = "public-boundary"
+// scope = "open-session-window-recovery"
+// lifecycle = "permanent"
+// @end-test-value
 test("初回取得失敗後も購読更新で loaded state へ復帰する", async () => {
   const appliedStates: OpenSessionWindowIdsState[] = [];
-  let subscribedListener: ((sessionIds: string[]) => void) | null = null;
+  const control: { subscribedListener: ((sessionIds: string[]) => void) | null } = { subscribedListener: null };
   const api: OpenSessionWindowIdsSubscriptionApi = {
     listOpenSessionWindowIds: async () => {
       throw new Error("list failed");
     },
     subscribeOpenSessionWindowIds: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => undefined;
     },
   };
@@ -91,7 +111,7 @@ test("初回取得失敗後も購読更新で loaded state へ復帰する", asy
     applyState: (state) => appliedStates.push(state),
   });
   await flushPromises();
-  subscribedListener?.(["session-recovered"]);
+  if (control.subscribedListener) control.subscribedListener(["session-recovered"]);
   cleanup();
 
   assert.deepEqual(appliedStates, [

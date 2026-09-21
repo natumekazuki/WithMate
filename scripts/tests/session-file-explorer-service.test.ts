@@ -891,6 +891,17 @@ test("SessionFileExplorerService は directory worker timeout 後に認可 handl
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "SessionFileExplorerServiceは認可root内のrealpathだけを既定アプリへ渡す"
+// oracle = { type = "contract", ref = "src-electron/session-file-explorer-service.ts: open authorization" }
+// fault = "root外またはsymlink経由のpathを既定アプリへ渡し、意図しないファイルを公開する"
+// observable = "openPath requestと拒否結果"
+// observation_boundary = "public-boundary"
+// scope = "session-file-open-authorization"
+// lifecycle = "permanent"
+// distinction = "単純なroot内open成功では検出できないrealpath境界を確認する"
+// @end-test-value
 test("SessionFileExplorerService は認可 root 内だけを realpath 後に既定アプリへ渡す", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-open-root-"));
   const workspacePath = path.join(basePath, "workspace");
@@ -906,7 +917,9 @@ test("SessionFileExplorerService は認可 root 内だけを realpath 後に既�
     getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
     async openResolvedPath(targetPath, reveal) {
       openedPaths.push(targetPath);
-      return { status: reveal ? "revealed" : "opened", targetType: "local-path", target: targetPath, ...(reveal ? { message: "revealed" } : {}) };
+      return reveal
+        ? { status: "revealed", targetType: "local-path", target: targetPath, message: "revealed" }
+        : { status: "opened", targetType: "local-path", target: targetPath };
     },
   });
   try {

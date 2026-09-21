@@ -50,6 +50,16 @@ describe("PromptTemplateStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "PromptTemplateStorageは名前重複と存在しないIDへの更新・削除を拒否する"
+  // oracle = { type = "contract", ref = "PromptTemplateStorage mutation validation contract" }
+  // fault = "大文字小文字だけ異なる重複名や未知IDの操作が成功し、保存状態を壊す"
+  // observable = "各操作の例外と残存template件数"
+  // observation_boundary = "public-boundary"
+  // scope = "PromptTemplateStorage duplicate and missing ID validation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("大文字小文字だけ異なる重複名と存在しないIDの変更を拒否する", () => {
     const directory = mkdtempSync(join(tmpdir(), "withmate-prompt-templates-"));
     const dbPath = join(directory, "withmate-v6.db");
@@ -58,15 +68,15 @@ describe("PromptTemplateStorage", () => {
       storage = new PromptTemplateStorage(dbPath);
       storage.createPromptTemplate({ name: "Review", prompt: "first" });
       assert.throws(
-        () => storage.createPromptTemplate({ name: "review", prompt: "second" }),
+        () => storage!.createPromptTemplate({ name: "review", prompt: "second" }),
         /same name/i,
       );
       assert.throws(
-        () => storage.updatePromptTemplate({ id: "missing", name: "Missing", prompt: "body" }),
+        () => storage!.updatePromptTemplate({ id: "missing", name: "Missing", prompt: "body" }),
         /not found/i,
       );
-      assert.throws(() => storage.deletePromptTemplate("missing"), /not found/i);
-      assert.equal(storage.listPromptTemplates().length, 1);
+      assert.throws(() => storage!.deletePromptTemplate("missing"), /not found/i);
+      assert.equal(storage!.listPromptTemplates().length, 1);
     } finally {
       storage?.close();
       rmSync(directory, { recursive: true, force: true });

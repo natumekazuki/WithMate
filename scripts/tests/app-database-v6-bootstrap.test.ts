@@ -52,6 +52,16 @@ describe("createOrVerifyV6FreshDatabase", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "既存のV6 foundation DBへ不足schemaを追加適用した後もvalid databaseとして再利用できる"
+  // oracle = { type = "contract", ref = "V6 database bootstrap contract" }
+  // fault = "不足schemaを補完せず既存DBをinvalid扱いする、または別のDB pathを返す"
+  // observable = "検証結果、database path、補完後のschema"
+  // observation_boundary = "public-boundary"
+  // scope = "createOrVerifyV6FreshDatabase"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("既存の旧 V6 foundation DB は additive ensure 後に valid として扱う", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
     try {
@@ -82,7 +92,7 @@ describe("createOrVerifyV6FreshDatabase", () => {
             `);
             continue;
           }
-          db.exec(statement === CREATE_V6_AUDIT_EVENTS_TABLE_SQL
+          db.exec((statement as string) === CREATE_V6_AUDIT_EVENTS_TABLE_SQL
             ? `
               CREATE TABLE IF NOT EXISTS audit_events_v6 (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

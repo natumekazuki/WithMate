@@ -12,12 +12,15 @@ const summary = {
   taskTitle: "Summary",
   status: "idle",
   updatedAt: "2026-04-28T00:00:00.000Z",
+  isPinned: false,
   provider: "codex",
   catalogRevision: 1,
   workspaceLabel: "workspace",
   workspacePath: "C:/workspace",
   branch: "main",
   sessionKind: "default",
+  accessMode: "active",
+  sourceSchemaVersion: 5,
   characterId: "char-a",
   character: "A",
   characterIconPath: "",
@@ -25,6 +28,8 @@ const summary = {
   runState: "idle",
   approvalMode: "on-request",
   codexSandboxMode: "workspace-write",
+  codexSpeed: "standard",
+  codexReviewer: "user",
   model: "gpt-5.4",
   reasoningEffort: "high",
   customAgentName: "",
@@ -42,9 +47,20 @@ test("sessionSummariesToSessions は表示用に空 messages / stream を付け�
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "summary一覧から取得できるfull detailだけを返し、全Sessionの一括取得には依存しない"
+// oracle = { type = "contract", ref = "src-electron/session-summary-adapter.ts hydrateSessionsFromSummaries" }
+// fault = "messagesとstreamをsummary用の空値へ置換する、取得不能なSessionを含める、またはlistSessionsを呼ぶ"
+// observable = "返却Sessionのmessagesとstreamを含む全体、およびlistSessions呼び出し回数"
+// observation_boundary = "public-boundary"
+// scope = "hydrateSessionsFromSummaries"
+// lifecycle = "permanent"
+// @end-test-value
 test("hydrateSessionsFromSummaries は summary shape ではなく full detail を返す", () => {
   const fullSession: Session = {
     ...summary,
+    characterRuntimeSnapshot: null,
     messages: [{ role: "user", text: "keep history" }],
     stream: [{ mood: "calm", time: "2026-04-28T00:00:00.000Z", text: "legacy stream" }],
   };

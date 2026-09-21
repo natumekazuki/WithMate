@@ -7,6 +7,16 @@ import {
 } from "../../src/composer-textarea-focus.js";
 
 describe("restoreComposerTextareaFocusAndCaret", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "指定textareaへのfocusとcaret復元はscheduler callback実行時に行われる"
+  // oracle = { type = "contract", ref = "composer textarea focus restoration" }
+  // fault = "scheduler登録前にDOMを操作するかcaret位置が失われる"
+  // observable = "queued callback and focus/selection calls"
+  // observation_boundary = "public-boundary"
+  // scope = "composer-textarea-focus-caret"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("指定した textarea に scheduler 経由でフォーカスと caret を戻す", () => {
     const calls: (() => void)[] = [];
     let didFocus = false;
@@ -25,7 +35,9 @@ describe("restoreComposerTextareaFocusAndCaret", () => {
     });
 
     assert.equal(calls.length, 1);
-    calls.shift()();
+    const callback = calls.shift();
+    assert.ok(callback);
+    callback();
 
     assert.equal(didFocus, true);
     assert.deepEqual(nextRange, [13, 13]);
@@ -44,6 +56,16 @@ describe("restoreComposerTextareaFocusAndCaret", () => {
     assert.equal(calledScheduler, true);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "現在textareaと最新draft長はscheduler実行時に解決される"
+  // oracle = { type = "contract", ref = "composer textarea focus restoration" }
+  // fault = "古いtextareaまたは古いdraft長へfocus/caretを戻す"
+  // observable = "focus target and end selection after deferred callback"
+  // observation_boundary = "public-boundary"
+  // scope = "composer-current-textarea-caret"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("現在の textarea と末尾 caret は scheduler 実行時に読む", () => {
     const calls: (() => void)[] = [];
     let didFocus = false;
@@ -68,7 +90,9 @@ describe("restoreComposerTextareaFocusAndCaret", () => {
     } as unknown as HTMLTextAreaElement;
 
     assert.equal(calls.length, 1);
-    calls.shift()();
+    const callback = calls.shift();
+    assert.ok(callback);
+    callback();
 
     assert.equal(didFocus, true);
     assert.deepEqual(nextRange, [13, 13]);

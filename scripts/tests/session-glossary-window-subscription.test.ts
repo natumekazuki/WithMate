@@ -29,13 +29,23 @@ class TestWindow {
   }
 }
 
+// @test-value v2
+// kind = "invariant"
+// claim = "glossary window subscriptionはstarting中のwindow交代後もcurrent windowだけへwatchを確立する"
+// oracle = { type = "contract", ref = "glossary window subscription ownership" }
+// fault = "旧windowへ購読を残すか新windowへの購読確立を失う"
+// observable = "subscription/disposal counts across window replacement"
+// observation_boundary = "public-boundary"
+// scope = "glossary-window-subscription-ownership"
+// lifecycle = "permanent"
+// @end-test-value
 it("Session Windowをstarting中に開き直してもcurrent windowへwatchを確立する", async () => {
   const windowA = new TestWindow(1);
   const windowB = new TestWindow(2);
   let currentWindow: TestWindow | null = windowA;
-  let resolveFirstSubscription: ((dispose: () => void) => void) | null = null;
+  const control: { resolveFirstSubscription: ((dispose: () => void) => void) | null } = { resolveFirstSubscription: null };
   const firstSubscription = new Promise<() => void>((resolve) => {
-    resolveFirstSubscription = resolve;
+    control.resolveFirstSubscription = resolve;
   });
   let subscribeCount = 0;
   let disposeA = 0;
@@ -59,7 +69,7 @@ it("Session Windowをstarting中に開き直してもcurrent windowへwatchを�
   windowA.close();
   currentWindow = windowB;
   const ensureB = coordinator.ensure("session-1");
-  resolveFirstSubscription?.(() => {
+  if (control.resolveFirstSubscription) control.resolveFirstSubscription(() => {
     disposeA += 1;
   });
   await Promise.all([ensureA, ensureB]);

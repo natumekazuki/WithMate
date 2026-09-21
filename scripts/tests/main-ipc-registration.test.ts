@@ -2169,7 +2169,8 @@ test("Auxiliary draft IPC はreadをownerへ、mutationをSession ownerへ限定
     text: "next",
     updatedAt: draft.updatedAt,
   };
-  assert.equal((await handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, input)).outcome, "saved");
+  const savedDraftResult = await handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, input);
+  assert.equal((savedDraftResult as { outcome: string } | undefined)?.outcome, "saved");
 
 
   for (const unauthorizedWindow of [homeWindow, otherSessionWindow]) {

@@ -41,6 +41,16 @@ describe("CharacterAffectTurnSettlementStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "pending settlementを再起動後も列挙し、settled後に会話payloadを除去する"
+  // oracle = { type = "contract", ref = "Character Affect settlement storage durability contract" }
+  // fault = "再起動でpendingを失う、またはsettled rowに会話本文を残す"
+  // observable = "listPending結果とsettled rowのpayload列"
+  // observation_boundary = "public-boundary"
+  // scope = "CharacterAffectTurnSettlementStorage persistence lifecycle"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("pendingを再起動後も列挙し、settled後は会話payloadを除去する", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settlement-"));
     const dbPath = path.join(directory, "settlement.db");
@@ -57,11 +67,12 @@ describe("CharacterAffectTurnSettlementStorage", () => {
     let recovered: CharacterAffectTurnSettlementStorage | null = null;
     let db: ReturnType<typeof openAppDatabase> | null = null;
     try {
-      first = new CharacterAffectTurnSettlementStorage(dbPath);
-      assert.deepEqual(first.enqueue(input), { created: true });
-      assert.deepEqual(first.enqueue(input), { created: false });
-      assert.throws(() => first.enqueue({ ...input, assistantMessage: "different" }), /reused/);
-      first.close();
+      const firstStorage = new CharacterAffectTurnSettlementStorage(dbPath);
+      first = firstStorage;
+      assert.deepEqual(firstStorage.enqueue(input), { created: true });
+      assert.deepEqual(firstStorage.enqueue(input), { created: false });
+      assert.throws(() => firstStorage.enqueue({ ...input, assistantMessage: "different" }), /reused/);
+      firstStorage.close();
       first = null;
 
       recovered = new CharacterAffectTurnSettlementStorage(dbPath);

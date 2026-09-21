@@ -55,6 +55,16 @@ async function withKeyStore<T>(
 }
 
 describe("MemoryProtectedObjectKeyStore", () => {
+  // @test-value v2
+  // kind = "security"
+  // claim = "active keyはuser-data配下の専用keyringへwrapped形式で保存され、再読込後も同じkeyを返す"
+  // oracle = { type = "contract", ref = "memory-protected-object-keyring-v1" }
+  // fault = "keyringへ平文keyを書き込む、objects領域をkeyringとして使う、または再読込で別keyを生成する"
+  // observable = "作成keyと再読込keyのkeyId/key、keyring JSONの保存形式とkeyring path"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-protected-object-key-store"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("active keyを生成し、wrapped keyringから同じkeyを読み直せる", async () => {
     await withKeyStore(async ({ keyStore, keyringPath, userDataPath }) => {
       const created = await keyStore.getOrCreateActiveKey();
@@ -70,7 +80,7 @@ describe("MemoryProtectedObjectKeyStore", () => {
       assert.equal(loaded.keyId, created.keyId);
       assert.deepEqual(loaded.key, created.key);
       assert.deepEqual(await keyStore.readKey(created.keyId), created);
-      assert.equal(keyringJson.includes(created.key.toString("base64")), false);
+      assert.equal(keyringJson.includes(Buffer.from(created.key).toString("base64")), false);
       assert.match(keyringJson, /memory-protected-object-keyring-v1/);
       assert.match(keyringJson, /encryptedKeyBase64/);
       await assert.rejects(

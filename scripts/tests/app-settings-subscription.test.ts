@@ -32,6 +32,16 @@ test("startAppSettingsSubscription は api 不在なら no-op cleanup を返す"
   assert.deepEqual(updates, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "初回AppSettingsと購読更新を順に反映し、cleanup後の更新を無視する"
+// oracle = { type = "contract", ref = "startAppSettingsSubscription public update contract" }
+// fault = "初回値・購読値の欠落、順序逆転、またはcleanup後の副作用"
+// observable = "applyAppSettingsの呼び出し列とunsubscribe回数"
+// observation_boundary = "public-boundary"
+// scope = "startAppSettingsSubscription initial and subscribed updates"
+// lifecycle = "permanent"
+// @end-test-value
 test("startAppSettingsSubscription は初回取得と購読更新を反映する", async () => {
   const updates: AppSettings[] = [];
   let subscribedListener: ((settings: AppSettings) => void) | null = null;
@@ -52,9 +62,9 @@ test("startAppSettingsSubscription は初回取得と購読更新を反映する
     applyAppSettings: (settings) => updates.push(settings),
   });
   await flushPromises();
-  subscribedListener?.(nextAppSettings);
+  subscribedListener!(nextAppSettings);
   cleanup();
-  subscribedListener?.(appSettings);
+  subscribedListener!(appSettings);
 
   assert.deepEqual(updates, [
     appSettings,
@@ -63,6 +73,16 @@ test("startAppSettingsSubscription は初回取得と購読更新を反映する
   assert.equal(unsubscribeCount, 1);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "購読更新後に遅れて到着した初回取得は新しいsettingsを巻き戻さない"
+// oracle = { type = "contract", ref = "startAppSettingsSubscription stale initial load contract" }
+// fault = "遅い初回取得が購読済みの新しいsettingsを上書きする"
+// observable = "applyAppSettingsの呼び出し列"
+// observation_boundary = "public-boundary"
+// scope = "startAppSettingsSubscription stale initial settings"
+// lifecycle = "permanent"
+// @end-test-value
 test("startAppSettingsSubscription は購読更新後に遅い初回取得で古い settings へ戻さない", async () => {
   const updates: AppSettings[] = [];
   let resolveInitialSettings: (settings: AppSettings) => void = () => undefined;
@@ -82,7 +102,7 @@ test("startAppSettingsSubscription は購読更新後に遅い初回取得で古
     loadInitial: true,
     applyAppSettings: (settings) => updates.push(settings),
   });
-  subscribedListener?.(nextAppSettings);
+  subscribedListener!(nextAppSettings);
   resolveInitialSettings(appSettings);
   await flushPromises();
   cleanup();
@@ -92,6 +112,16 @@ test("startAppSettingsSubscription は購読更新後に遅い初回取得で古
   ]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "購読更新後の遅い初回取得失敗はfallback callbackを呼ばない"
+// oracle = { type = "contract", ref = "startAppSettingsSubscription stale initial error contract" }
+// fault = "既に購読更新を適用した後の初回取得失敗で不要なerror fallbackが発生する"
+// observable = "onInitialLoadErrorの呼び出し回数"
+// observation_boundary = "public-boundary"
+// scope = "startAppSettingsSubscription stale initial error"
+// lifecycle = "permanent"
+// @end-test-value
 test("startAppSettingsSubscription は購読更新後に遅い初回取得失敗 fallback を呼ばない", async () => {
   let errorCount = 0;
   let rejectInitialSettings: (error: Error) => void = () => undefined;
@@ -114,7 +144,7 @@ test("startAppSettingsSubscription は購読更新後に遅い初回取得失敗
       errorCount += 1;
     },
   });
-  subscribedListener?.(nextAppSettings);
+  subscribedListener!(nextAppSettings);
   rejectInitialSettings(new Error("failed"));
   await flushPromises();
   cleanup();
@@ -122,6 +152,16 @@ test("startAppSettingsSubscription は購読更新後に遅い初回取得失敗
   assert.equal(errorCount, 0);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "loadInitial無効時は初回取得せず購読更新だけを反映する"
+// oracle = { type = "contract", ref = "startAppSettingsSubscription loadInitial contract" }
+// fault = "無効化した初回取得が実行されるか購読更新が欠落する"
+// observable = "getAppSettings呼び出し回数と適用settings"
+// observation_boundary = "public-boundary"
+// scope = "startAppSettingsSubscription disabled initial load"
+// lifecycle = "permanent"
+// @end-test-value
 test("startAppSettingsSubscription は loadInitial 無効なら購読更新だけ反映する", async () => {
   const updates: AppSettings[] = [];
   let getCallCount = 0;
@@ -143,7 +183,7 @@ test("startAppSettingsSubscription は loadInitial 無効なら購読更新だ�
     applyAppSettings: (settings) => updates.push(settings),
   });
   await flushPromises();
-  subscribedListener?.(nextAppSettings);
+  subscribedListener!(nextAppSettings);
   cleanup();
 
   assert.equal(getCallCount, 0);

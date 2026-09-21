@@ -18,6 +18,12 @@ const EMPTY_SNAPSHOT_STATS: SnapshotCaptureStats = {
 function createSession(): Session {
   return {
     id: "session-1",
+    isPinned: false,
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 1,
+    codexSpeed: "standard",
+    codexReviewer: "user",
     taskTitle: "CSV を作る",
     status: "idle",
     updatedAt: "2026-03-23 00:00",
@@ -30,11 +36,15 @@ function createSession(): Session {
     character: "test",
     characterIconPath: "",
     characterThemeColors: { main: "#fff", sub: "#000" },
+    characterRuntimeSnapshot: null,
     runState: "idle",
     approvalMode: "on-request",
+    codexSandboxMode: "workspace-write",
     model: "gpt-5-mini",
     reasoningEffort: "medium",
     threadId: "thread-1",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
     messages: [],
     stream: [],
   };

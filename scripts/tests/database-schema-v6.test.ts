@@ -972,6 +972,16 @@ describe("database-schema-v6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V6 schema repair後もauditのauxiliary ownerを保持する"
+  // oracle = { type = "contract", ref = "V6 database schema repair contract" }
+  // fault = "auxiliary_sessions rebuildでaudit owner参照を失う"
+  // observable = "repaired schemaとaudit summaryのowner fields"
+  // observation_boundary = "public-boundary"
+  // scope = "ensureV6Schema auxiliary rebuild and audit owner preservation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("ensureV6Schema は auxiliary_sessions rebuild 後も audit の Auxiliary owner を保持する", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "withmate-v6-schema-"));
     const dbPath = join(tempDir, APP_DATABASE_V6_FILENAME);
@@ -982,7 +992,7 @@ describe("database-schema-v6", () => {
       db.exec("PRAGMA foreign_keys = ON;");
 
       for (const statement of CREATE_V6_SCHEMA_SQL) {
-        if (statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL && statement !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL) {
+        if ((statement as string) !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL && (statement as string) !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL) {
           db.exec(statement);
         }
       }
@@ -1113,6 +1123,16 @@ describe("database-schema-v6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V6 schema repair失敗時は部分適用をrollbackする"
+  // oracle = { type = "contract", ref = "V6 database schema repair transaction contract" }
+  // fault = "repair途中のtableだけが残り、再起動時に不完全schemaをvalid扱いする"
+  // observable = "failure後のtable namesとschema state"
+  // observation_boundary = "public-boundary"
+  // scope = "ensureV6Schema transactional repair rollback"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("ensureV6Schema は auxiliary_sessions repair 失敗時に部分適用を rollback する", () => {
     const db = new DatabaseSync(":memory:");
     try {
@@ -1127,7 +1147,7 @@ describe("database-schema-v6", () => {
           && statement !== CREATE_V6_SESSION_TURNS_TABLE_SQL
           && statement !== CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL
           && statement !== CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL
-          && statement !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL
+          && (statement as string) !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL
         ) {
           db.exec(statement);
         }

@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createMainBootstrapDeps } from "../../src-electron/main-bootstrap-deps.js";
+import type {
+  MainIpcCatalogDepsArgs,
+  MainIpcPromptTemplateDepsArgs,
+  MainIpcSessionQueryDepsArgs,
+  MainIpcSettingsDepsArgs,
+  MainIpcWindowDepsArgs,
+} from "../../src-electron/main-ipc-deps.js";
 
 // @test-value v2
 // kind = "contract"
@@ -33,9 +40,6 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     async recoverInterruptedSessions() {
       calls.push("recover");
     },
-    async refreshCharactersFromStorage() {
-      calls.push("refreshCharacters");
-    },
     async createHomeWindow() {
       calls.push("openHome");
       return {} as never;
@@ -45,10 +49,19 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     },
     ipcRegistration: {
       window: {
+        acknowledgeSessionDraftFlush: () => {
+          throw new Error("unused window fixture method");
+        },
         resolveEventWindow: () => null,
         resolveHomeWindow: () => null,
         resolveSessionWindow: () => null,
         openSessionWindow: async () => ({}) as never,
+        getSessionWindowRestoreSet: async () => {
+          throw new Error("unused window fixture method");
+        },
+        restoreSessionWindows: async () => {
+          throw new Error("unused window fixture method");
+        },
         openHomeWindow: async () => ({}) as never,
         openSessionMonitorWindow: async () => ({}) as never,
         isSessionMonitorWindow: () => false,
@@ -59,7 +72,17 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         isMemoryV6ReviewWindow: () => false,
         openCharacterEditorWindow: async () => ({}) as never,
         openDiffWindow: async () => ({}) as never,
+        isFilePreviewWindow: () => {
+          throw new Error("unused window fixture method");
+        },
+        getFilePreviewWindowResource: () => {
+          throw new Error("unused window fixture method");
+        },
+        isFilePreviewTokenWindow: () => {
+          throw new Error("unused window fixture method");
+        },
         pickDirectory: async () => null,
+        validateWorkspaceDirectory: async () => ({ valid: true }),
         pickFile: async () => null,
         pickFiles: async () => [],
         pickSessionFiles: async () => [],
@@ -72,19 +95,31 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         openSessionFilesTerminal: async () => {},
         copySessionFilePreviewImage: async () => ({ status: "copied" }),
         showSessionFilePreviewImageContextMenu: async () => ({ status: "dismissed" }),
-        openPathTarget: async () => {},
+        copySessionFileObject: async () => {
+          throw new Error("unused window fixture method");
+        },
+        showSessionFileObjectCopyContextMenu: async () => {
+          throw new Error("unused window fixture method");
+        },
+        showSessionFileTreeContextMenu: async () => {
+          throw new Error("unused window fixture method");
+        },
+        showMarkdownLinkContextMenu: async () => {
+          throw new Error("unused window fixture method");
+        },
+        openPathTarget: async () => ({ status: "opened", targetType: "local-path", target: "" }),
         openAppLogFolder: async () => {},
         openCrashDumpFolder: async () => {},
         openSessionTerminal: async () => {},
         openTerminalAtPath: async () => {},
-      },
+      } satisfies MainIpcWindowDepsArgs,
       catalog: {
         getModelCatalog: () => null,
         importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
         importModelCatalogFromFile: async () => null,
         exportModelCatalogDocument: () => null,
         exportModelCatalogToFile: async () => null,
-      },
+      } satisfies MainIpcCatalogDepsArgs,
       settings: {
         getAppSettings: () =>
           ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
@@ -101,15 +136,20 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         getMemoryV6Entry: () => null,
         forgetMemoryV6Entry: (entryId: string) => ({ entryId, status: "not_found", reason: "user_request" }),
         resetAppDatabase: async () => null,
-      },
+      } satisfies MainIpcSettingsDepsArgs,
       promptTemplates: {
         listPromptTemplates: () => [],
         createPromptTemplate: () => [],
         updatePromptTemplate: () => [],
         deletePromptTemplate: () => [],
-      },
+      } satisfies MainIpcPromptTemplateDepsArgs,
       sessionQuery: {
-        listSessionSummaries: () => [],
+        listSessionSummaryPage: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        listSessionCharacterUsage: async () => {
+          throw new Error("unused session query fixture method");
+        },
         listSessionAuditLogs: () => [],
         listSessionAuditLogSummaries: () => [],
         listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
@@ -134,7 +174,55 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         getSessionMessageArtifact: () => null,
         getDiffPreview: () => null,
         previewComposerInput: async () => null,
-      },
+        getSessionFileExplorerOwnerSessionId: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        listSessionFileRoots: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        listSessionDirectory: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        inspectSessionFile: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        readSessionFileChunk: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        openSessionFile: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        openSessionFilePreviewWindow: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        getSessionFilePreviewWindowPayload: () => {
+          throw new Error("unused session query fixture method");
+        },
+        listFileRootChanges: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        listFileRootChangesRepositories: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        getFileRootDiff: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        listFileRootGitHistoryRepositories: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        listFileRootGitHistoryCommits: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        getFileRootGitHistoryCommitDetail: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        getFileRootGitHistoryComparison: async () => {
+          throw new Error("unused session query fixture method");
+        },
+        getFileRootGitHistoryDiff: async () => {
+          throw new Error("unused session query fixture method");
+        },
+      } satisfies MainIpcSessionQueryDepsArgs,
       sessionRuntime: {
         getLiveSessionRun: () => null,
         getProviderQuotaTelemetry: async () => null,
@@ -148,6 +236,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         deleteSessionsLastActiveBefore: () => ({ deletedSessionIds: [], skippedRunningSessionIds: [] }),
         runSessionTurn: async () => ({}) as never,
         cancelSessionRun: () => {},
+        setSessionPinned: () => { throw new Error("not used"); },
       },
       character: {
         listCharacters: async () => [],
@@ -157,6 +246,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         updateCharacterDefinition: async () => ({}) as never,
         archiveCharacter: async () => ({}) as never,
         resolveLaunchCharacter: async () => null,
+        startCharacterAuthoringSession: async () => { throw new Error("not used"); },
       },
       mate: {
         getMateState: () => "not_created",

@@ -129,6 +129,17 @@ describe("auxiliary-launch-state", () => {
     ]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary作成入力はparent/providerと選択済みlaunch defaultsを保持して構築される"
+  // oracle = { type = "contract", ref = "src/chat/auxiliary-launch-state.ts: buildCreateAuxiliarySessionInput" }
+  // fault = "providerまたはruntime optionを落とし、選択したモデル設定と異なるAuxiliaryを作成する"
+  // observable = "buildCreateAuxiliarySessionInputの返却input"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-launch-input"
+  // lifecycle = "permanent"
+  // distinction = "作成入力のfield mappingをUI表示ではなく作成API境界で確認する"
+  // @end-test-value
   it("create input は parent/provider と launch defaults を引き継ぐ", () => {
     assert.deepEqual(
       buildCreateAuxiliarySessionInput({
@@ -139,6 +150,7 @@ describe("auxiliary-launch-state", () => {
           reasoningEffort: "high",
           approvalMode: "never",
           codexSandboxMode: "read-only",
+          codexSpeed: "fast",
           customAgentName: "planner",
         },
       }),
@@ -149,6 +161,7 @@ describe("auxiliary-launch-state", () => {
         reasoningEffort: "high",
         approvalMode: "never",
         codexSandboxMode: "read-only",
+        codexSpeed: "fast",
         customAgentName: "planner",
       },
     );
@@ -173,12 +186,24 @@ describe("auxiliary-launch-state", () => {
     );
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Auxiliaryのlaunch defaultsは同一providerの場合だけ再利用される"
+  // oracle = { type = "contract", ref = "src/chat/auxiliary-launch-state.ts: resolveAuxiliaryLaunchSessionDefaults" }
+  // fault = "異なるproviderのruntime optionを引き継ぎ、対象providerに不正なモデル設定を渡す"
+  // observable = "provider一致・不一致・defaults nullの返却値"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-launch-defaults"
+  // lifecycle = "permanent"
+  // distinction = "provider境界の再利用条件をprovider selectionのUI testと分離して確認する"
+  // @end-test-value
   it("launch defaults は同じ provider の場合だけ引き継ぐ", () => {
     const defaults = {
       model: "gpt-5.4-mini",
       reasoningEffort: "high" as const,
       approvalMode: "never" as const,
       codexSandboxMode: "read-only" as const,
+      codexSpeed: "fast" as const,
       customAgentName: "planner",
     };
 
@@ -208,6 +233,17 @@ describe("auxiliary-launch-state", () => {
     );
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "latest-session作成ではrenderer由来のruntime optionを作成入力へ混入させない"
+  // oracle = { type = "contract", ref = "src/chat/auxiliary-launch-state.ts: buildCreateAuxiliarySessionInput" }
+  // fault = "rendererの偽装runtime optionを保存し、Main側のlatest-session選択契約を迂回する"
+  // observable = "runtimeSelection latest-session時の返却input"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-latest-session-launch"
+  // lifecycle = "permanent"
+  // distinction = "通常のdefaults mappingでは検出できないlatest-sessionのoption遮断を確認する"
+  // @end-test-value
   it("latest-session 選択では runtime option を renderer から送らない", () => {
     assert.deepEqual(
       buildCreateAuxiliarySessionInput({
@@ -219,6 +255,7 @@ describe("auxiliary-launch-state", () => {
           reasoningEffort: "low",
           approvalMode: "never",
           codexSandboxMode: "danger-full-access",
+          codexSpeed: "standard",
           customAgentName: "forged-agent",
         },
       }),

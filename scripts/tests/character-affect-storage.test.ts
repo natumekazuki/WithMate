@@ -140,10 +140,10 @@ function createMailbox(worker: Worker): { next(type: WorkerMessage["type"]): Pro
     }
   });
   worker.on("error", (error) => {
-    exitError = error;
+    exitError = error instanceof Error ? error : new Error(String(error));
     const pending = waiters.splice(0);
     for (const waiter of pending) {
-      waiter.reject(error);
+      waiter.reject(exitError);
     }
   });
   worker.on("exit", (code) => {
@@ -560,6 +560,16 @@ describe("CharacterAffectStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "relationship affectのtarget制約とsession resetの境界を維持する"
+  // oracle = { type = "contract", ref = "Character Affect storage ownership contract" }
+  // fault = "不正targetをrelationshipとして保存する、またはsession resetでrelationship affectを削除する"
+  // observable = "recordEventの拒否、reset後のeffective stateとprojection metrics"
+  // observation_boundary = "public-boundary"
+  // scope = "CharacterAffectStorage relationship validation and reset"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("bug targetをrelationshipへ保存できず、session resetはrelationshipを消さない", () => {
     const fixture = createFixture();
     const storage = affectStorage(fixture.dbPath);
@@ -949,6 +959,16 @@ describe("CharacterAffectStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "直近sessionのafterglowだけをcurrent contextとの連続性条件付きでread-time合成する"
+  // oracle = { type = "contract", ref = "Character Affect afterglow projection contract" }
+  // fault = "古いsessionや非連続taskのaffectをcurrent stateへ混入する"
+  // observable = "effective componentsとafterglow projection metrics"
+  // observation_boundary = "component-behavior"
+  // scope = "CharacterAffectStorage afterglow projection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("直近Sessionのafterglowだけをcurrent優先・task continuity・legacy identity付きでread-time合成する", () => {
     const fixture = createFixture();
     let storage = new CharacterAffectStorage(fixture.dbPath, {
@@ -1148,13 +1168,23 @@ describe("CharacterAffectStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character Definition baselineの代表labelをafterglowが上書きしない"
+  // oracle = { type = "contract", ref = "Character Affect baseline precedence contract" }
+  // fault = "afterglowのlabelをbaselineの代表labelとして返す"
+  // observable = "effective componentのlabelとcontributingLayers"
+  // observation_boundary = "component-behavior"
+  // scope = "CharacterAffectStorage baseline and afterglow projection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Character Definition baselineの代表labelをafterglowが上書きしない", () => {
     const fixture = createFixture();
     const storage = affectStorage(fixture.dbPath);
     try {
       storage.recordEvent(event({
         sessionId: "session-b",
-        targetType: "user",
+        targetType: "relationship",
         targetId: "local-user",
         family: "determination",
         value: { label: "afterglow-label", valence: 0.8 },
@@ -1167,7 +1197,7 @@ describe("CharacterAffectStorage", () => {
         userId: "local-user",
         sessionId: "session-a",
         baseline: [{
-          targetType: "user",
+          targetType: "relationship",
           targetId: "local-user",
           family: "determination",
           value: { label: "definition-label", valence: 0.6 },

@@ -77,6 +77,16 @@ test("resolveSessionRunErrorMessage は message 付き object でも非 Error �
   assert.equal(resolveSessionRunErrorMessage({ message: "provider failed" }, "fallback"), "fallback");
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "optimistic session updateはrunning sessionとowner付きpending live runを整合して生成する"
+// oracle = { type = "contract", ref = "live run optimistic update ownership" }
+// fault = "user message、running state、background taskが不整合なownerへ反映される"
+// observable = "running session and pending live run snapshots"
+// observation_boundary = "public-boundary"
+// scope = "optimistic-session-run-update"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildOptimisticSessionRunUpdate は running session と pending live run updater を作る", () => {
   const session: TestSession = {
     id: "session-1",
@@ -90,7 +100,7 @@ test("buildOptimisticSessionRunUpdate は running session と pending live run u
     ownerSessionId: "session-1",
     state: {
       ...makeLiveRunState("session-1"),
-      backgroundTasks: [{ id: "task-1", title: "Install", status: "running" }],
+      backgroundTasks: [{ id: "task-1", kind: "shell", title: "Install", status: "running", updatedAt: "before" }],
     },
   };
 
@@ -119,7 +129,7 @@ test("buildOptimisticSessionRunUpdate は running session と pending live run u
       assistantText: "",
       reasoningText: "",
       steps: [],
-      backgroundTasks: [{ id: "task-1", title: "Install", status: "running" }],
+      backgroundTasks: [{ id: "task-1", kind: "shell", title: "Install", status: "running", updatedAt: "before" }],
       usage: null,
       errorMessage: "",
       approvalRequest: null,

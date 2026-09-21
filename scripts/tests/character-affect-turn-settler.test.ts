@@ -37,8 +37,6 @@ import {
 function context(version: string): CharacterContextResponse {
   return {
     schemaVersion: "withmate-character-context-v1",
-    characterId: "character-a",
-    sessionId: "session-a",
     baseline: { definitionSha256: "sha", snapshotAt: "2026-08-09T00:00:00.000Z" },
     affect: {
       mode: "active",
@@ -48,7 +46,6 @@ function context(version: string): CharacterContextResponse {
       updatedAt: null,
     },
     memory: { items: [], updatedAt: null },
-    scope: { userId: "local-user", characterId: "character-a", sessionId: "session-a" },
   };
 }
 
@@ -107,7 +104,7 @@ function settle(
     ): Promise<CharacterAffectAppraiseResponse | CharacterContextErrorResponse>;
     afterRecordAppraisalFailure?(result: { reevaluationPrepared: boolean }): void;
     validateOwner?(): Promise<boolean>;
-    runAppraisalExclusive<T>(operation: () => T | Promise<T>): Promise<T>;
+    runAppraisalExclusive?<T>(operation: () => T | Promise<T>): Promise<T>;
   },
 ) {
   const unitOwnership = async <T>(operation: () => T | Promise<T>): Promise<T> => operation();
@@ -341,7 +338,7 @@ describe("settleCharacterAffectTurnWithRetry", () => {
           await evaluationWaiting;
           return [candidate(`${idempotencyPrefix}:0`)];
         },
-        persistEvaluation: (input) => settlement.saveEvaluation({ correlationId, ...input }),
+        persistEvaluation: (input) => { settlement.saveEvaluation({ correlationId, ...input }); },
         appraise: async () => { appraisals += 1; return success(); },
         recordAppraisalFailure: (input) => settlement.recordAppraisalFailure({ correlationId, ...input }),
         validateOwner: async () => {
@@ -351,7 +348,7 @@ describe("settleCharacterAffectTurnWithRetry", () => {
         },
         runAppraisalExclusive: (operation) => affectOwnership.runExclusive(operation),
         markDiscarded: () => { discards += 1; settlement.markDiscarded(correlationId); },
-        markSettled: () => settlement.markSettled(correlationId),
+        markSettled: () => { settlement.markSettled(correlationId); },
       });
       await evaluationStarted;
       const created = await auxiliaryService.createAuxiliarySession({ parentSessionId: sessionB.id, provider: "codex" });
@@ -387,7 +384,7 @@ describe("settleCharacterAffectTurnWithRetry", () => {
         getPending: () => settlement.getPending(liveCorrelationId),
         getContext: async () => ({ ...context("v-live"), sessionId: sessionB.id }),
         evaluate: async (_current, prefix) => [{ ...candidate(`${prefix}:0`), sessionId: sessionB.id }],
-        persistEvaluation: (input) => settlement.saveEvaluation({ correlationId: liveCorrelationId, ...input }),
+        persistEvaluation: (input) => { settlement.saveEvaluation({ correlationId: liveCorrelationId, ...input }); },
         validateOwner: async () => {
           const owner = sessions.getSession(sessionB.id);
           return Boolean(owner && owner.characterId === sessionB.characterId
@@ -401,7 +398,7 @@ describe("settleCharacterAffectTurnWithRetry", () => {
         },
         recordAppraisalFailure: (input) => settlement.recordAppraisalFailure({ correlationId: liveCorrelationId, ...input }),
         markDiscarded: () => { throw new Error("live owner must not be discarded"); },
-        markSettled: () => settlement.markSettled(liveCorrelationId),
+        markSettled: () => { settlement.markSettled(liveCorrelationId); },
       });
       await appraisalStarted;
       let deletionCompleted = false;
@@ -454,7 +451,7 @@ describe("settleCharacterAffectTurnWithRetry", () => {
         async getContext() {
           return context("v-owner-recheck");
         },
-        async evaluate(_current, idempotencyPrefix) {
+        async evaluate(_current: CharacterContextResponse, idempotencyPrefix: string) {
           ownerAvailable = false;
           return [candidate(`${idempotencyPrefix}:0`)];
         },
@@ -640,6 +637,16 @@ describe("settleCharacterAffectTurnWithRetry", () => {
     scheduler.dispose();
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "effect:noneのversion conflictだけを最新contextで再評価し、別idempotency namespaceへ進める"
+  // oracle = { type = "contract", ref = "Character Affect settler retry contract" }
+  // fault = "retry対象外のconflictを再評価する、または旧namespaceのkeyを再利用する"
+  // observable = "context/appraisal回数、candidate idempotency keys、settlement状態"
+  // observation_boundary = "component-behavior"
+  // scope = "settleCharacterAffectTurnWithRetry version conflict recovery"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("effect:noneのversion conflictだけ最新contextで再評価し、別idempotency namespaceを使う", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settler-version-"));
     const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "settlement.db"));
@@ -654,7 +661,7 @@ describe("settleCharacterAffectTurnWithRetry", () => {
           contextReadCount += 1;
           return context(`v${contextReadCount}`);
         },
-        async evaluate(_current, idempotencyPrefix) {
+        async evaluate(_current: CharacterContextResponse, idempotencyPrefix: string) {
           prefixes.push(idempotencyPrefix);
           return [candidate(`${idempotencyPrefix}:0`, `evaluation ${prefixes.length}`)];
         },

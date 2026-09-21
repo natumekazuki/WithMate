@@ -524,15 +524,17 @@ function matchesAccelerator(event: KeyboardEvent, accelerator: ShortcutAccelerat
     && event.altKey === expected.altKey;
 }
 
+type ShortcutEventTarget = Pick<Window, "addEventListener" | "removeEventListener">;
+
 type ShortcutDispatcherOptions = Readonly<{
-  eventTarget: Window;
+  eventTarget: ShortcutEventTarget;
   platform?: ShortcutPlatform;
   entries?: readonly ShortcutEntry[];
   settings?: KeyboardShortcutSettings;
 }>;
 
 export class ShortcutDispatcher {
-  private readonly eventTarget: Window;
+  private readonly eventTarget: ShortcutEventTarget;
   private readonly platform: ShortcutPlatform;
   private readonly entries: readonly ShortcutEntry[];
   private settings: KeyboardShortcutSettings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS;

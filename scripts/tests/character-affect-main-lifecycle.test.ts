@@ -5,13 +5,14 @@ import path from "node:path";
 import test from "node:test";
 import { buildNewSession, type Session } from "../../src/session-state.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import type { CharacterContextResponse } from "../../src/character-context/character-context-contract.js";
+import type { CharacterContextResponse, CharacterAffectAppraiseRequest } from "../../src/character-context/character-context-contract.js";
 import type { AppLogInput } from "../../src/app-log-types.js";
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
 import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character-affect-turn-ownership-coordinator.js";
 import { createCharacterAffectTurnMainLifecycle, type CharacterAffectTurnLifecycleRuntime } from "../../src-electron/character-affect-turn-main-lifecycle.js";
 import type { CharacterAffectTurnDrainCursor } from "../../src-electron/character-affect-turn-drain.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
+import type { RunBackgroundStructuredPromptInput, RunBackgroundStructuredPromptResult } from "../../src-electron/provider-runtime.js";
 
 function deferred() {
   let resolve!: () => void;
@@ -29,11 +30,10 @@ const session: Session = {
   messages: [{ role: "user", text: "user" }, { role: "assistant", text: "assistant" }],
 };
 const context: CharacterContextResponse = {
-  schemaVersion: "withmate-character-context-v1", characterId: "character-a", sessionId: session.id,
+  schemaVersion: "withmate-character-context-v1",
   baseline: { definitionSha256: "fixture", snapshotAt: occurredAt },
   affect: { mode: "active", effective: [], evaluatedAt: occurredAt, version: "v1", updatedAt: null },
   memory: { items: [], updatedAt: null },
-  scope: { userId: "local-user", characterId: "character-a", sessionId: session.id },
 };
 
 // @test-value v2
@@ -86,7 +86,7 @@ test("Main Affect drainは交換前の評価結果と例外を破棄してcurren
             definitionSha256: "fixture", definitionByteSize: 11, snapshotAt: occurredAt,
           }),
           getAppSettings: () => normalizeAppSettings({}),
-          getProviderBackgroundAdapter: () => ({ runBackgroundStructuredPrompt: async () => {
+          getProviderBackgroundAdapter: () => ({ runBackgroundStructuredPrompt: async <TOutput>(_input: RunBackgroundStructuredPromptInput): Promise<RunBackgroundStructuredPromptResult<TOutput>> => {
             evaluations += 1;
             if (evaluations === 1) {
               entered.resolve();
@@ -96,7 +96,7 @@ test("Main Affect drainは交換前の評価結果と例外を破棄してcurren
             return { threadId: null, rawText: "", rawItemsJson: "[]", usage: null, output: { candidates: [{
               layer: "session", targetType: "task", targetId: "task", family: "interest", label: "interest",
               valence: 0.4, arousal: null, intensity: 0.5, reason: "test", evidence: "test",
-            }] } };
+            }] } as TOutput };
           } }),
           getSession: async () => session,
           startupRecoveryCutoff: occurredAt,
@@ -204,7 +204,7 @@ test("Main Affect drainは同じIDで再作成されたSessionへ旧評価を適
           theme: { main: "#6f8cff", sub: "#6fb8c7" }, definitionMarkdown: "Character A",
           definitionSha256: "fixture", definitionByteSize: 11, snapshotAt: occurredAt }),
         getAppSettings: () => normalizeAppSettings({}),
-        getProviderBackgroundAdapter: () => ({ runBackgroundStructuredPrompt: async () => {
+        getProviderBackgroundAdapter: () => ({ runBackgroundStructuredPrompt: async <TOutput>(_input: RunBackgroundStructuredPromptInput): Promise<RunBackgroundStructuredPromptResult<TOutput>> => {
           evaluations += 1;
           if (recreateAt === "during-evaluation" && evaluations === 1) {
             entered.resolve();
@@ -213,7 +213,7 @@ test("Main Affect drainは同じIDで再作成されたSessionへ旧評価を適
           return { threadId: null, rawText: "", rawItemsJson: "[]", usage: null, output: { candidates: [{
             layer: "session", targetType: "task", targetId: "task", family: "interest", label: "interest",
             valence: 0.4, arousal: null, intensity: 0.5, reason: "test", evidence: "test",
-          }] } };
+          }] } as TOutput };
         } }),
         getSession: async (id) => sessions.getSession(id),
         startupRecoveryCutoff: occurredAt,
@@ -278,12 +278,11 @@ test("Main Affect drainはruntime交換後も保存済みevaluationを再利用�
       storage.enqueue({ correlationId, characterId: "character-a", sessionId: session.id,
         userMessage: "user", assistantMessage: "assistant", assistantMessageIndex: 1, occurredAt });
       storage.markReady(correlationId);
-      type AppraiseRequest = Parameters<CharacterAffectTurnLifecycleRuntime["characterContextService"]["appraise"]>[0];
       const createRuntime = (runtime: "initial" | "replacement"): CharacterAffectTurnLifecycleRuntime => ({
         characterContextService: {
           getContext: async () => context,
-          appraise: async (request: AppraiseRequest) => {
-            appraiseCalls.push({ runtime, expectedVersion: request.expectedVersion, candidates: structuredClone(request.candidates) });
+          appraise: async (request: CharacterAffectAppraiseRequest) => {
+            appraiseCalls.push({ runtime, expectedVersion: request.expectedVersion ?? "", candidates: structuredClone(request.candidates) });
             if (runtime === "initial" && replacementPoint === "appraise") {
               entered.resolve();
               await release.promise;
@@ -305,12 +304,12 @@ test("Main Affect drainはruntime交換後も保存済みevaluationを再利用�
           theme: { main: "#6f8cff", sub: "#6fb8c7" }, definitionMarkdown: "Character A",
           definitionSha256: "fixture", definitionByteSize: 11, snapshotAt: occurredAt }),
         getAppSettings: () => normalizeAppSettings({}),
-        getProviderBackgroundAdapter: () => ({ runBackgroundStructuredPrompt: async () => {
+        getProviderBackgroundAdapter: () => ({ runBackgroundStructuredPrompt: async <TOutput>(_input: RunBackgroundStructuredPromptInput): Promise<RunBackgroundStructuredPromptResult<TOutput>> => {
           evaluations += 1;
           return { threadId: null, rawText: "", rawItemsJson: "[]", usage: null, output: { candidates: [{
             layer: "session", targetType: "task", targetId: "task", family: "interest", label: "interest",
             valence: 0.4, arousal: null, intensity: 0.5, reason: "test", evidence: "test",
-          }] } };
+          }] } as TOutput };
         } }),
         getSession: async () => session,
         startupRecoveryCutoff: occurredAt,

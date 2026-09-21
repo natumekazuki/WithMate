@@ -19,13 +19,23 @@ test("startSessionSummaryInvalidationSubscription は api がない場合 no-op 
   assert.deepEqual(received, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "session summary invalidation subscriptionはids/all scopeをそのまま通知しcleanup後は無視する"
+// oracle = { type = "contract", ref = "session summary invalidation subscription" }
+// fault = "scopeまたはsession idsが変形されるか購読解除後のstale通知が伝播する"
+// observable = "received invalidations and unsubscribe count"
+// observation_boundary = "public-boundary"
+// scope = "session-summary-invalidation"
+// lifecycle = "permanent"
+// @end-test-value
 test("startSessionSummaryInvalidationSubscription は ids / all をそのまま反映する", () => {
   const received: SessionSummaryInvalidation[] = [];
-  let listener: ((payload: SessionSummaryInvalidation) => void) | null = null;
+  const control: { listener: ((payload: SessionSummaryInvalidation) => void) | null } = { listener: null };
   let unsubscribeCount = 0;
   const api: SessionSummaryInvalidationSubscriptionApi = {
     subscribeSessionInvalidation: (nextListener) => {
-      listener = nextListener;
+      control.listener = nextListener;
       return () => {
         unsubscribeCount += 1;
       };
@@ -36,10 +46,10 @@ test("startSessionSummaryInvalidationSubscription は ids / all をそのまま�
     api,
     onInvalidation: (payload) => received.push(payload),
   });
-  listener?.({ scope: "ids", sessionIds: ["session-1"] });
-  listener?.({ scope: "all" });
+  if (control.listener) control.listener({ scope: "ids", sessionIds: ["session-1"] });
+  if (control.listener) control.listener({ scope: "all" });
   cleanup();
-  listener?.({ scope: "ids", sessionIds: ["stale"] });
+  if (control.listener) control.listener({ scope: "ids", sessionIds: ["stale"] });
 
   assert.deepEqual(received, [
     { scope: "ids", sessionIds: ["session-1"] },

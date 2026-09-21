@@ -19,11 +19,13 @@ const providerCatalog: ModelCatalogProvider = {
   ],
 };
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "providerと現在の選択値から一貫したruntime selector optionsを構築する"
 // oracle = { type = "contract", ref = "docs/design/codex-capability-matrix.md#6-approval--sandbox--model--reasoning-depth" }
-// failure_mode = "provider非対応の設定が現れるか、既存sessionのmodelまたはreasoning表示が失われる"
+// fault = "provider非対応の設定が現れるか、既存sessionのmodelまたはreasoning表示が失われる"
+// observable = "approval、sandbox、model、reasoning optionsとfallback label"
+// observation_boundary = "public-boundary"
 // scope = "runtime-selection-options"
 // lifecycle = "permanent"
 // @end-test-value
@@ -36,6 +38,8 @@ test("buildRuntimeSelectionOptions は approval / sandbox / model / reasoning / 
     reasoningEfforts: ["high", "low"],
     selectedApprovalMode: "on-request",
     selectedCodexSandboxMode: "danger-full-access" as CodexSandboxMode,
+    selectedCodexSpeed: "standard",
+    selectedCodexReviewer: "auto-review",
   });
 
   assert.deepEqual(options.approvalChoiceOptions, [
@@ -52,6 +56,16 @@ test("buildRuntimeSelectionOptions は approval / sandbox / model / reasoning / 
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Codex以外のproviderでもsandbox選択肢を空として保持し、model選択結果を構築する"
+// oracle = { type = "contract", ref = "runtime-selection-options provider capability contract" }
+// fault = "非対応providerにsandbox選択肢を表示するか空の選択結果を返せない"
+// observable = "sandboxChoiceOptionsとmodelSelectOptions"
+// observation_boundary = "public-boundary"
+// scope = "runtime-selection-options non-Codex sandbox"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildRuntimeSelectionOptions は Copilot 以外で sandbox 選択肢が空でも保持できる", () => {
   const options = buildRuntimeSelectionOptions({
     providerId: "openai",
@@ -61,6 +75,8 @@ test("buildRuntimeSelectionOptions は Copilot 以外で sandbox 選択肢が空
     reasoningEfforts: [],
     selectedApprovalMode: "untrusted",
     selectedCodexSandboxMode: "workspace-write",
+    selectedCodexSpeed: "standard",
+    selectedCodexReviewer: "auto-review",
   });
 
   assert.deepEqual(options.sandboxChoiceOptions, []);

@@ -9,6 +9,7 @@ import {
   createDefaultSessionMemory,
   type LiveRunStep,
 } from "../../src/app-state.js";
+import type { LiveBackgroundTask, LiveApprovalDecision } from "../../src/runtime-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src/model-catalog.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
@@ -476,6 +477,17 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     assert.equal(adapter.clients.size, 0);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Copilot session invalidation中の同一key再接続は旧cleanupで新clientを削除しない"
+  // oracle = { type = "contract", ref = "src-electron/copilot-adapter.ts: session lifecycle" }
+  // fault = "旧sessionのcleanupが再接続済みclientを停止し、後続turnを失敗させる"
+  // observable = "clients/sessions mapとstop呼出の最終状態"
+  // observation_boundary = "public-boundary"
+  // scope = "copilot-session-invalidation"
+  // lifecycle = "permanent"
+  // distinction = "単一sessionのcleanupでは検出できない同一key再接続競合を検証する"
+  // @end-test-value
   it("Session invalidation中の同一key再接続を旧cleanupで削除しない", async () => {
     const adapter = new CopilotAdapter() as unknown as {
       clients: Map<string, { stop(): Promise<Error[]> }>;
@@ -487,13 +499,13 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       clientKeysBySession: Map<string, string>;
       invalidateSessionThread(sessionId: string): Promise<void>;
     };
-    let releaseDisconnect = () => undefined;
+    let releaseDisconnect: () => void = () => undefined;
     const disconnectBarrier = new Promise<void>((resolve) => {
-      releaseDisconnect = resolve;
+      releaseDisconnect = () => resolve();
     });
-    let signalDisconnectStarted = () => undefined;
+    let signalDisconnectStarted: () => void = () => undefined;
     const disconnectStarted = new Promise<void>((resolve) => {
-      signalDisconnectStarted = resolve;
+      signalDisconnectStarted = () => resolve();
     });
     let oldClientStopped = false;
     let newClientStopped = false;
@@ -2101,6 +2113,17 @@ describe("CopilotAdapter session settings", () => {
     assert.deepEqual(writeResult, { kind: "reject" });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "provider-controlled permissionはapproval callbackのapprove/denyとhandler不在をlegacy kindへ変換する"
+  // oracle = { type = "contract", ref = "src-electron/copilot-adapter.ts: permission handler" }
+  // fault = "approval decisionを誤変換し、provider permissionを許可または拒否できない"
+  // observable = "approval callback入力と返却legacy kind"
+  // observation_boundary = "public-boundary"
+  // scope = "copilot-provider-permission"
+  // lifecycle = "permanent"
+  // distinction = "通常turnの成功では検出できないprovider-controlled permission境界を検証する"
+  // @end-test-value
   it("provider-controlled permission handler は approval callback 経由の approve / deny と handler 不在を legacy kind へ橋渡しする", async () => {
     const approvedInput = createRunSessionInput();
     const bindingReference = approvedInput.agentRuntimeBinding?.bindingReference ?? "";
@@ -2108,7 +2131,7 @@ describe("CopilotAdapter session settings", () => {
     const approvalRequests: unknown[] = [];
     approvedInput.onApprovalRequest = async (request) => {
       approvalRequests.push(request);
-      return "approve";
+      return "approve" as LiveApprovalDecision;
     };
     const approvedSettings = buildCopilotSessionSettings(approvedInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
 
@@ -2127,7 +2150,7 @@ describe("CopilotAdapter session settings", () => {
 
     const deniedInput = createRunSessionInput();
     deniedInput.session.approvalMode = "on-request";
-    deniedInput.onApprovalRequest = async () => "deny";
+    deniedInput.onApprovalRequest = async () => "deny" as LiveApprovalDecision;
     const deniedSettings = buildCopilotSessionSettings(deniedInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const deniedWriteResult = await deniedSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
     assert.deepEqual(deniedWriteResult, { kind: "reject" });
@@ -2479,6 +2502,17 @@ describe("CopilotAdapter background structured prompt", () => {
     assert.equal(parseCalled, false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "schema submit tool呼出時はtoolのstructured outputを最終結果として採用する"
+  // oracle = { type = "contract", ref = "src-electron/copilot-adapter.ts: structured prompt" }
+  // fault = "tool outputを無視してtext fallbackを採用し、schema契約の回答を失う"
+  // observable = "parsedJsonとtool invocation"
+  // observation_boundary = "public-boundary"
+  // scope = "copilot-schema-submit"
+  // lifecycle = "permanent"
+  // distinction = "通常のtext responseでは検出できないstructured output採用経路を検証する"
+  // @end-test-value
   it("schema submit tool 呼び出し時は tool の structured output を使用する", async () => {
     const expectedSchema = createBackgroundPromptInput().prompt.outputSchema;
     const adapter = new CopilotAdapter() as unknown as {
@@ -2522,7 +2556,7 @@ describe("CopilotAdapter background structured prompt", () => {
       createSession: async (config) => {
         const submitTool = config.tools?.find((tool) => tool.name === "withmate_submit_structured_output");
         assert.ok(submitTool);
-        submitSchema = submitTool.parameters;
+        submitSchema = (submitTool as typeof submitTool & { parameters?: unknown }).parameters;
         return {
           on: () => () => undefined,
           sendAndWait: async () => {
@@ -2551,6 +2585,17 @@ describe("CopilotAdapter background structured prompt", () => {
     assert.deepEqual(result.parsedJson, { answer: "ok" });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "background structured promptはbuilt-in read toolsを保持しapproval modeを反映する"
+  // oracle = { type = "contract", ref = "src-electron/copilot-adapter.ts: background structured prompt" }
+  // fault = "read toolsを遮断する、またはapproval modeを落としてprovider実行境界を弱める"
+  // observable = "availableTools、permission handler、approval mode"
+  // observation_boundary = "public-boundary"
+  // scope = "copilot-background-structured-prompt"
+  // lifecycle = "permanent"
+  // distinction = "foreground promptでは確認できないbackground tool/approval組合せを検証する"
+  // @end-test-value
   it("background structured prompt は built-in read tools を塞がず approval mode を反映する", async () => {
     const adapter = new CopilotAdapter() as unknown as {
       getOrCreateClientByAppSettings: () => {
@@ -2588,7 +2633,7 @@ describe("CopilotAdapter background structured prompt", () => {
       }>;
     };
 
-    let capturedConfig: {
+    const capturedConfig: { value: {
       tools?: Array<{
         name: string;
         handler: (args: Record<string, unknown>) => string;
@@ -2598,11 +2643,11 @@ describe("CopilotAdapter background structured prompt", () => {
         request: PermissionRequest,
         context: { sessionId: string },
       ) => Promise<unknown> | unknown;
-    } | null = null;
+    } | null } = { value: null };
     adapter.getOrCreateClientByAppSettings = () => ({
       start: async () => undefined,
       createSession: async (config) => {
-        capturedConfig = config;
+        capturedConfig.value = config;
         const submitTool = config.tools?.find((tool) => tool.name === "withmate_submit_structured_output");
         assert.ok(submitTool);
         return {
@@ -2622,11 +2667,12 @@ describe("CopilotAdapter background structured prompt", () => {
       (rawText) => JSON.parse(rawText) as { answer: string },
     );
 
-    assert.ok(capturedConfig);
-    assert.equal(capturedConfig.availableTools, undefined);
-    assert.ok(capturedConfig.onPermissionRequest);
-    const readResult = await capturedConfig.onPermissionRequest(createReadPermissionRequest(), { sessionId: "background" });
-    const writeResult = await capturedConfig.onPermissionRequest(createWritePermissionRequest(), { sessionId: "background" });
+    const capturedConfigState = capturedConfig.value;
+    assert.ok(capturedConfigState);
+    assert.equal(capturedConfigState.availableTools, undefined);
+    assert.ok(capturedConfigState.onPermissionRequest);
+    const readResult = await capturedConfigState.onPermissionRequest(createReadPermissionRequest(), { sessionId: "background" });
+    const writeResult = await capturedConfigState.onPermissionRequest(createWritePermissionRequest(), { sessionId: "background" });
     assert.deepEqual(readResult, { kind: "approve-once" });
     assert.deepEqual(writeResult, { kind: "reject" });
   });

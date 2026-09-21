@@ -4,6 +4,7 @@ import test from "node:test";
 import type { ProviderCodingAdapter } from "../../src-electron/provider-runtime.js";
 import { MainObservabilityFacade } from "../../src-electron/main-observability-facade.js";
 import { SessionObservabilityService } from "../../src-electron/session-observability-service.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 
 function createService() {
   return new SessionObservabilityService({
@@ -14,29 +15,35 @@ function createService() {
   });
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "MainObservabilityFacadeがquota更新とsession observability stateをserviceへ委譲する"
+// oracle = { type = "contract", ref = "src-electron/main-observability-facade.ts" }
+// fault = "provider quotaまたはbackground activityがfacade境界で欠落・誤変換される"
+// observable = "adapterへのquota入力とserviceから取得したtelemetry state"
+// observation_boundary = "public-boundary"
+// scope = "main-observability-facade"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainObservabilityFacade は observability service を透過し quota refresh を helper 経由で行う", async () => {
   const service = createService();
-  const calls: string[] = [];
+  const appSettings = createDefaultAppSettings();
+  appSettings.codingProviderSettings.codex.apiKey = "quota-settings-fixture";
+  const calls: Parameters<ProviderCodingAdapter["getProviderQuotaTelemetry"]>[0][] = [];
   const adapter = {
     composePrompt() {
       throw new Error("not used");
     },
     async getProviderQuotaTelemetry(input) {
-      calls.push(`${input.providerId}:${input.appSettings.providers.codex?.model ?? ""}`);
+      calls.push(input);
       return {
         provider: input.providerId,
         updatedAt: new Date().toISOString(),
         snapshots: [],
       };
     },
-    async extractSessionMemoryDelta() {
-      throw new Error("not used");
-    },
-    async runCharacterReflection() {
-      throw new Error("not used");
-    },
-    invalidateSessionThread() {},
-    invalidateAllSessionThreads() {},
+    async invalidateSessionThread() {},
+    async invalidateAllSessionThreads() {},
     async runSessionTurn() {
       throw new Error("not used");
     },
@@ -44,13 +51,7 @@ test("MainObservabilityFacade は observability service を透過し quota refre
 
   const facade = new MainObservabilityFacade({
     getSessionObservabilityService: () => service,
-    getAppSettings: () =>
-      ({
-        providers: { codex: { model: "gpt-5.4" } },
-        codingProviderSettings: {},
-        memoryExtractionProviderSettings: {},
-        characterReflectionProviderSettings: {},
-      }) as never,
+    getAppSettings: () => appSettings,
     getProviderCodingAdapter() {
       return adapter;
     },
@@ -68,14 +69,17 @@ test("MainObservabilityFacade は observability service を透過し quota refre
   });
   facade.setSessionBackgroundActivity("s-1", "memory-generation", {
     kind: "memory-generation",
+    sessionId: "s-1",
     status: "running",
+    title: "Memory generation",
     updatedAt: new Date().toISOString(),
     summary: "running",
+    errorMessage: "",
   });
 
   assert.equal(refreshed?.provider, "codex");
   assert.equal(facade.getProviderQuotaTelemetry("codex")?.provider, "codex");
   assert.equal(facade.getSessionContextTelemetry("s-1")?.currentTokens, 200);
   assert.equal(facade.getSessionBackgroundActivity("s-1", "memory-generation")?.status, "running");
-  assert.deepEqual(calls, ["codex:gpt-5.4"]);
+  assert.deepEqual(calls, [{ providerId: "codex", appSettings }]);
 });

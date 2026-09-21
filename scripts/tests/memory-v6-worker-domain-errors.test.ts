@@ -34,11 +34,11 @@ test("Memory Worker preserves quota and idempotency rejection types", async () =
       source: { type: "agent", sessionId: null, messageId: null, providerId: "codex" },
       idempotencyKey: "append-a", bindingIdHash: "binding-a",
     };
-    await assert.rejects(worker.storage.appendEntry({
+    await assert.rejects(Promise.resolve(worker.storage.appendEntry({
       ...input, fileQuotaBytes: 1,
       protectedObjects: [{ objectId: "a".repeat(32), role: "evidence", mediaKind: "image", contentType: "image/png",
         displayName: "example.png", summary: "Example", originalBytes: 10, storedBytes: 20, sha256: "b".repeat(64), keyId: "key-a" }],
-    }), (error: unknown) => {
+    })), (error: unknown) => {
       assert.ok(error instanceof MemoryV6FileQuotaExceededError);
       assert.equal(error.quotaBytes, 1);
       assert.equal(error.usedBytes, 0);
@@ -47,7 +47,7 @@ test("Memory Worker preserves quota and idempotency rejection types", async () =
     });
     assert.equal(await worker.storage.getEntry(input.id!), null);
     await worker.storage.appendEntry(input);
-    await assert.rejects(worker.storage.appendEntry({ ...input, body: "Conflicting body" }), MemoryV6IdempotencyConflictError);
+    await assert.rejects(Promise.resolve(worker.storage.appendEntry({ ...input, body: "Conflicting body" })), MemoryV6IdempotencyConflictError);
     assert.equal((await worker.storage.getEntry(input.id!))?.body, "Original body");
   } finally {
     await worker?.close();
@@ -88,14 +88,14 @@ test("Affect Worker preserves version and idempotency rejection types", async ()
       reason: "Completed task", evidence: "Task completed", occurredAt: "2026-09-19T00:00:00.000Z", idempotencyKey: "event-a",
     };
     const state = await worker.affectStorage.getStateVersion({ characterId: "character-a", userId: "local-user", sessionId: "session-a" });
-    await assert.rejects(worker.affectStorage.recordEvent(event, { expectedVersion: "stale-version" }), (error: unknown) => {
+    await assert.rejects(Promise.resolve(worker.affectStorage.recordEvent(event, { expectedVersion: "stale-version" })), (error: unknown) => {
       assert.ok(error instanceof CharacterAffectVersionConflictError);
       assert.equal(error.expectedVersion, "stale-version");
       assert.equal(error.actualVersion, state.version);
       return true;
     });
     const saved = await worker.affectStorage.recordEvent(event);
-    await assert.rejects(worker.affectStorage.recordEvent({ ...event, reason: "Different request" }), CharacterAffectIdempotencyConflictError);
+    await assert.rejects(Promise.resolve(worker.affectStorage.recordEvent({ ...event, reason: "Different request" })), CharacterAffectIdempotencyConflictError);
     assert.equal((await worker.affectStorage.getEvent({ eventId: saved.event.id, characterId: "character-a", userId: "local-user" }))?.reason, event.reason);
   } finally {
     await worker?.close();

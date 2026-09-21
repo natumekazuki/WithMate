@@ -81,6 +81,8 @@ describe("HomeSettingsContent", () => {
     onChangeSessionTurnNotificationEnabled: noOp,
     onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
     onChangeToolCallPresenceEnabled: noOp,
+    onChangeKeyboardShortcuts: noOp,
+    onChangeMemoryFileQuotaMegabytes: noOp,
     onChangeGlossaryProactiveCreateLimit: noOp,
     onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
@@ -303,10 +305,10 @@ describe("HomeSettingsContent", () => {
 });
 
 describe("HomeMateSetupPanel", () => {
-  const collectElements = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
-    const result: React.ReactElement[] = [];
+  const collectElements = (node: ReactNode, predicate: (element: React.ReactElement<Record<string, unknown>>) => boolean): React.ReactElement<Record<string, unknown>>[] => {
+    const result: React.ReactElement<Record<string, unknown>>[] = [];
     const visitNode = (currentNode: ReactNode) => {
-      if (!isValidElement(currentNode)) {
+      if (!isValidElement<Record<string, unknown>>(currentNode)) {
         return;
       }
 
@@ -380,6 +382,16 @@ describe("HomeMateSetupPanel", () => {
     assert.ok(html.includes("作成完了まで少し待ってね。"));
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Mate setup formはsubmit操作をonSubmit callbackへ転送する"
+  // oracle = { type = "contract", ref = "HomeMateSetupPanel submit contract" }
+  // fault = "submitがpreventDefault後にcallbackへ到達しない"
+  // observable = "submitted counter"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMateSetupPanel form submission"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("form submit で onSubmit が呼ばれる", () => {
     let submitted = 0;
     const panel = renderPanel({
@@ -393,11 +405,21 @@ describe("HomeMateSetupPanel", () => {
       throw new Error("HomeMateSetupPanel の form が見つかりません。");
     }
 
-    form.props.onSubmit({ preventDefault: () => undefined });
+    (form.props.onSubmit as (event: { preventDefault(): void }) => void)({ preventDefault: () => undefined });
 
     assert.equal(submitted, 1);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Mate setup panelの設定buttonはonOpenSettingsへ遷移要求を渡す"
+  // oracle = { type = "contract", ref = "HomeMateSetupPanel settings navigation contract" }
+  // fault = "設定導線が表示されてもcallbackが呼ばれない"
+  // observable = "settingsOpened counter"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMateSetupPanel settings button"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("設定ボタンで onOpenSettings が呼ばれる", () => {
     let settingsOpened = 0;
     const panel = renderPanel({
@@ -414,7 +436,7 @@ describe("HomeMateSetupPanel", () => {
       throw new Error("HomeMateSetupPanel の設定ボタンが見つかりません。");
     }
 
-    settingsButton.props.onClick();
+    (settingsButton.props.onClick as () => void)();
     assert.equal(settingsOpened, 1);
   });
 
@@ -431,6 +453,16 @@ describe("HomeMateSetupPanel", () => {
     assert.equal(submitButton.props.children, "作成中...");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Mate setup edit modeは保存と戻る導線を表示する"
+  // oracle = { type = "contract", ref = "HomeMateSetupPanel edit mode contract" }
+  // fault = "edit modeで保存または戻る操作が欠落する"
+  // observable = "rendered labelsとcancel callback"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMateSetupPanel edit mode controls"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("edit mode では Mate プロフィール保存と戻る導線を表示する", () => {
     let canceled = 0;
     const panel = renderPanel({
@@ -451,7 +483,7 @@ describe("HomeMateSetupPanel", () => {
     assert.ok(html.includes("Mate プロフィール"));
     assert.equal(submitButton?.props.children, "Mate を保存");
     assert.ok(cancelButton);
-    cancelButton.props.onClick();
+    (cancelButton.props.onClick as () => void)();
     assert.equal(canceled, 1);
   });
 
@@ -472,6 +504,16 @@ describe("HomeMateSetupPanel", () => {
     assert.equal(html.includes("Mate を保存"), false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Mate setup edit modeはiconの選択と解除操作をcallbackへ渡す"
+  // oracle = { type = "contract", ref = "HomeMateSetupPanel avatar controls contract" }
+  // fault = "avatar選択または解除の操作がcallbackに届かない"
+  // observable = "selected/cancelled counters"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMateSetupPanel avatar controls"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("edit mode では Mate アイコンの選択と解除を実行できる", () => {
     let selected = 0;
     let cleared = 0;
@@ -501,8 +543,8 @@ describe("HomeMateSetupPanel", () => {
     assert.ok(html.includes("画像を選択できます。"));
     assert.ok(selectButton);
     assert.ok(clearButton);
-    selectButton.props.onClick();
-    clearButton.props.onClick();
+    (selectButton.props.onClick as () => void)();
+    (clearButton.props.onClick as () => void)();
     assert.equal(selected, 1);
     assert.equal(cleared, 1);
   });
@@ -686,6 +728,8 @@ describe("HomeRecentSessionsPanel", () => {
     allowedAdditionalDirectories: [],
     threadId: "",
     ...partial,
+    codexSpeed: partial.codexSpeed ?? "standard",
+    codexReviewer: partial.codexReviewer ?? "auto-review",
   });
   const renderHomeRecentSessions = ({
     canUsePrimaryFeatures = true,
@@ -849,11 +893,20 @@ describe("HomeRecentSessionsPanel", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home recent sessionsはcharacter-authoring sessionをCharacter badgeで表示する"
+  // oracle = { type = "contract", ref = "HomeRecentSessionsPanel session kind presentation" }
+  // fault = "character-authoring sessionが通常Agentとして表示される"
+  // observable = "rendered title、badge class、badge text"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeRecentSessionsPanel character authoring card"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("character authoring session は Character badge で表示する", () => {
     const html = renderHomeRecentSessions({
       filteredSessionEntries: [
         {
-          kind: "agent",
           session: createSessionSummary({
             id: "authoring",
             taskTitle: "Mia の character.md 改善",
@@ -869,11 +922,20 @@ describe("HomeRecentSessionsPanel", () => {
     assert.ok(html.includes(">Character<"));
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home recent sessionsはpinned Agentを先頭にし、openとpinを兄弟buttonとして表示する"
+  // oracle = { type = "contract", ref = "HomeRecentSessionsPanel pinned card controls" }
+  // fault = "pinned順序が崩れる、またはopen/pin操作が入れ子になる"
+  // observable = "rendered order、card class、open class、aria-pressed、pin label"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeRecentSessionsPanel pinned Agent card"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("pin済みAgentを先頭にし、開く操作とpin操作を兄弟buttonで表示する", () => {
     const html = renderHomeRecentSessions({
       filteredSessionEntries: [
         {
-          kind: "agent",
           session: createSessionSummary({
             id: "recent",
             taskTitle: "Recent task",
@@ -882,7 +944,6 @@ describe("HomeRecentSessionsPanel", () => {
           state: { kind: "neutral", label: "待機" },
         },
         {
-          kind: "agent",
           session: createSessionSummary({
             id: "pinned",
             taskTitle: "Pinned task",
@@ -914,7 +975,6 @@ describe("HomeRecentSessionsPanel", () => {
   it("履歴カードに Mate アイコンを表示し、V4 以前の Agent session は閲覧専用として開ける", () => {
     const html = renderHomeRecentSessions({
       filteredSessionEntries: [{
-        kind: "agent",
         session: createSessionSummary({
           id: "session-v4",
           taskTitle: "Legacy task",
@@ -978,6 +1038,8 @@ describe("HomeMonitorContent", () => {
     closedAt: "",
     characterIconPath: "mate.png",
     preview: "Auxiliary preview",
+    codexSpeed: "standard",
+    codexReviewer: "auto-review",
     ...overrides,
   } as AuxiliarySessionSummary);
 
@@ -1277,6 +1339,9 @@ describe("HomeMonitorContent", () => {
     const container = dom.window.document.getElementById("root") as HTMLElement;
     const root = createRoot(container);
     const openedSessions: Array<{ sessionId: string; auxiliarySessionId?: string }> = [];
+    const recordOpenedSession = (sessionId: string, auxiliarySessionId?: string) => {
+      openedSessions.push({ sessionId, auxiliarySessionId });
+    };
     const auxiliarySessions = [
       {
         id: "aux-a",
@@ -1332,7 +1397,7 @@ describe("HomeMonitorContent", () => {
         <HomeMonitorContent
           runningEntries={[]}
           nonRunningEntries={[entry, secondEntry]}
-          onOpenSession={(sessionId, auxiliarySessionId) => openedSessions.push({ sessionId, auxiliarySessionId })}
+          onOpenSession={recordOpenedSession}
           onShowContextMenu={noOp}
         />,
       ));
@@ -1368,7 +1433,7 @@ describe("HomeMonitorContent", () => {
         <HomeMonitorContent
           runningEntries={[entry]}
           nonRunningEntries={[secondEntry]}
-          onOpenSession={(sessionId, auxiliarySessionId) => openedSessions.push({ sessionId, auxiliarySessionId })}
+          onOpenSession={recordOpenedSession}
           onShowContextMenu={noOp}
         />,
       ));
@@ -1429,10 +1494,19 @@ describe("HomeMonitorContent", () => {
       session: {
         id: "session-context-menu",
         taskTitle: "Context menu task",
+        status: "idle",
+        updatedAt: "2026-03-28T00:00:00.000Z",
+        isPinned: false,
         workspaceLabel: "workspace",
         workspacePath: "C:/workspace",
+        sessionKind: "default",
+        accessMode: "active",
+        sourceSchemaVersion: 5,
+        characterId: "mate",
         character: "Solo Mate",
         characterIconPath: "mate.png",
+        characterThemeColors: { main: "#223344", sub: "#88bbcc" },
+        runState: "idle",
       },
       state: { kind: "neutral", label: "待機" },
       mainState: { kind: "neutral", label: "待機" },
@@ -1569,6 +1643,7 @@ describe("HomeRightPane", () => {
       rightPaneView={rightPaneView}
       runningMonitorEntries={[]}
       nonRunningMonitorEntries={[]}
+      auxiliaryDataState="ready"
       characterEntries={characters}
       characterListFeedback={characterListFeedback}
       monitorWindowIcon={<span>Monitor</span>}

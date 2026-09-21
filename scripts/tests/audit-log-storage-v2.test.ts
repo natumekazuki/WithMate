@@ -527,6 +527,16 @@ describe("AuditLogStorageV2", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "旧V2 audit detailのusage_jsonが空でもusage列を復元し、欠損時はusage列へのfallbackまたはnullを許容する"
+  // oracle = { type = "contract", ref = "V2 audit log storage usage contract" }
+  // fault = "空または欠損usageを不正JSONとして失敗させる、または未提供値を誤ったusageへ変換する"
+  // observable = "listSessionAuditLogsのusage値"
+  // observation_boundary = "public-boundary"
+  // scope = "AuditLogStorageV2 usage reconstruction"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("usage_json が空でも usage 列を使える形で復元し、未提供時は null でも許容する", async () => {
     await withTempV2Database((dbPath) => {
       const db = new DatabaseSync(dbPath);
@@ -577,7 +587,8 @@ describe("AuditLogStorageV2", () => {
           outputTokens: 3,
         });
 
-        if (missingUsageEntry?.usage !== null) {
+        assert.ok(missingUsageEntry);
+        if (missingUsageEntry.usage !== null) {
           assert.deepEqual(missingUsageEntry.usage, {
             inputTokens: 11,
             cachedInputTokens: 2,

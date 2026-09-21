@@ -49,6 +49,7 @@ import {
   runSessionFilesOpenCommand,
   toggleExpandedArtifactState,
 } from "../../src/chat/session-shell-handlers.js";
+import type { ContextPaneTabKey } from "../../src/session-ui-projection.js";
 
 describe("toggleExpandedArtifactState", () => {
   it("指定 artifact の展開状態を反転する", () => {
@@ -608,11 +609,22 @@ describe("applySkillPromptInsertionUiState", () => {
 });
 
 describe("applySkillPromptInsertionCommand", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "skill prompt挿入後はdraft/UI stateを反映してfocusとcaret復元を行う"
+  // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts" }
+  // fault = "draftだけ更新してfocus/caret復元を失う、またはstate反映順を壊す"
+  // observable = "handler eventsのdraft/UI state/focus/caret sequence"
+  // observation_boundary = "component-behavior"
+  // scope = "session-shell-handlers.skill-prompt"
+  // lifecycle = "permanent"
+  // distinction = "handler callbackへ渡る順序と引数をevent logで確認する"
+  // @end-test-value
   it("skill prompt 挿入後の UI state と draft 反映後に focus と caret を復元する", () => {
     const events: string[] = [];
     const textarea = {
-      focus: () => events.push("focus"),
-      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+      focus: () => { events.push("focus"); },
+      setSelectionRange: (start: number, end: number) => { events.push(`selection:${start}:${end}`); },
     } as HTMLTextAreaElement;
 
     applySkillPromptInsertionCommand({
@@ -645,11 +657,22 @@ describe("applySkillPromptInsertionCommand", () => {
 });
 
 describe("createSkillPromptInsertionHandler", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "providerがある場合だけskill prompt handlerがdraftとUI stateを反映する"
+  // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts" }
+  // fault = "providerなしでもdraft/stateを更新する、またはproviderありの反映を欠落させる"
+  // observable = "provider有無ごとのhandler return valueとevents"
+  // observation_boundary = "component-behavior"
+  // scope = "session-shell-handlers.skill-prompt"
+  // lifecycle = "permanent"
+  // distinction = "provider guardとstate projectionを有無の両ケースで確認する"
+  // @end-test-value
   it("skill prompt 挿入 handler を作り、provider がある場合だけ draft と UI state を反映する", () => {
     const events: string[] = [];
     const textarea = {
-      focus: () => events.push("focus"),
-      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+      focus: () => { events.push("focus"); },
+      setSelectionRange: (start: number, end: number) => { events.push(`selection:${start}:${end}`); },
     } as HTMLTextAreaElement;
     const selectSkill = createSkillPromptInsertionHandler({
       getProvider: () => "codex",
@@ -770,29 +793,29 @@ describe("applyContextPaneTabCycleCommand", () => {
   // lifecycle = "permanent"
   // @end-test-value
   it("利用可能な context pane tab の中で active tab を循環する", () => {
-    let activeTab: "latest-command" | "reasoning" | "tasks" = "latest-command";
+    let activeTab: ContextPaneTabKey = "latest-command";
 
     applyContextPaneTabCycleCommand({
       direction: 1,
-      availableTabs: ["latest-command", "tasks"],
+      availableTabs: ["latest-command", "tasks"] as ContextPaneTabKey[],
       setActiveTab: (updater) => {
-        activeTab = updater(activeTab);
+        activeTab = typeof updater === "function" ? updater(activeTab) : updater;
       },
     });
     assert.equal(activeTab, "tasks");
 
     applyContextPaneTabCycleCommand({
       direction: 1,
-      availableTabs: ["latest-command", "tasks"],
+      availableTabs: ["latest-command", "tasks"] as ContextPaneTabKey[],
       setActiveTab: (updater) => {
-        activeTab = updater(activeTab);
+        activeTab = typeof updater === "function" ? updater(activeTab) : updater;
       },
     });
     assert.equal(activeTab, "latest-command");
 
     applyContextPaneTabCycleCommand({
       direction: -1,
-      availableTabs: ["latest-command", "tasks"],
+      availableTabs: ["latest-command", "tasks"] as ContextPaneTabKey[],
       setActiveTab: (updater) => {
         activeTab = typeof updater === "function" ? updater(activeTab) : updater;
       },
@@ -811,11 +834,11 @@ describe("applyContextPaneTabCycleCommand", () => {
   // lifecycle = "permanent"
   // @end-test-value
   it("active tab が利用可能タブにない場合は先頭から循環する", () => {
-    let activeTab: "latest-command" | "reasoning" | "tasks" = "reasoning";
+    let activeTab: ContextPaneTabKey = "reasoning";
 
     applyContextPaneTabCycleCommand({
       direction: 1,
-      availableTabs: ["latest-command", "tasks"],
+      availableTabs: ["latest-command", "tasks"] as ContextPaneTabKey[],
       setActiveTab: (updater) => {
         activeTab = typeof updater === "function" ? updater(activeTab) : updater;
       },
@@ -835,11 +858,11 @@ describe("applyContextPaneTabCycleCommand", () => {
   // lifecycle = "permanent"
   // @end-test-value
   it("利用可能タブが空の場合は latest-command を維持する", () => {
-    let activeTab: "latest-command" | "reasoning" | "tasks" = "reasoning";
+    let activeTab: ContextPaneTabKey = "reasoning";
 
     applyContextPaneTabCycleCommand({
       direction: 1,
-      availableTabs: [],
+      availableTabs: [] as ContextPaneTabKey[],
       setActiveTab: (updater) => {
         activeTab = typeof updater === "function" ? updater(activeTab) : updater;
       },
@@ -861,9 +884,9 @@ describe("createContextPaneTabCycleHandler", () => {
   // lifecycle = "permanent"
   // @end-test-value
   it("context pane tab cycle handler を作る", () => {
-    let activeTab: "latest-command" | "reasoning" | "tasks" = "tasks";
+    let activeTab: ContextPaneTabKey = "tasks";
     const cycleTab = createContextPaneTabCycleHandler({
-      availableTabs: ["latest-command", "tasks"],
+      availableTabs: ["latest-command", "tasks"] as ContextPaneTabKey[],
       setActiveTab: (updater) => {
         activeTab = typeof updater === "function" ? updater(activeTab) : updater;
       },
@@ -876,32 +899,43 @@ describe("createContextPaneTabCycleHandler", () => {
 });
 
 describe("applyUnavailableContextPaneTabFallbackCommand", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "active context pane tabは利用可能なら維持し、利用不可なら利用可能tabへ退避する"
+  // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts" }
+  // fault = "利用不可tabを保持して存在しないpaneを選択する"
+  // observable = "available tab集合ごとのsetActiveTab呼出値"
+  // observation_boundary = "component-behavior"
+  // scope = "session-shell-handlers.context-pane"
+  // lifecycle = "permanent"
+  // distinction = "handlerのfallback projectionをavailable tabの変化で確認する"
+  // @end-test-value
   it("active tab が利用可能なら維持し、利用不可なら利用可能な tab へ退避する", () => {
-    const activeTabs: string[] = [];
+    let activeTabs: string[] = [];
 
     applyUnavailableContextPaneTabFallbackCommand({
       activeTab: "tasks",
-      availableTabs: ["latest-command", "tasks"],
+      availableTabs: ["latest-command", "tasks"] as ContextPaneTabKey[],
       setActiveTab: (tab) => {
-        activeTabs.push(tab);
+        activeTabs = [...activeTabs, tab];
       },
     });
     assert.deepEqual(activeTabs, []);
 
     applyUnavailableContextPaneTabFallbackCommand({
       activeTab: "reasoning",
-      availableTabs: ["latest-command", "tasks"],
+      availableTabs: ["latest-command", "tasks"] as ContextPaneTabKey[],
       setActiveTab: (tab) => {
-        activeTabs.push(tab);
+        activeTabs = [...activeTabs, tab];
       },
     });
     assert.deepEqual(activeTabs, ["latest-command"]);
 
     applyUnavailableContextPaneTabFallbackCommand({
       activeTab: "reasoning",
-      availableTabs: [],
+      availableTabs: [] as ContextPaneTabKey[],
       setActiveTab: (tab) => {
-        activeTabs.push(tab);
+        activeTabs = [...activeTabs, tab];
       },
     });
     assert.deepEqual(activeTabs, ["latest-command", "latest-command"]);
@@ -909,8 +943,19 @@ describe("applyUnavailableContextPaneTabFallbackCommand", () => {
 });
 
 describe("applyPickedComposerReferencePathCommand", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "選択pathがある場合だけbase directory更新後にcommandを挿入し、空入力はno-opにする"
+  // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts" }
+  // fault = "空pathでstateを変更する、またはbase directory更新と挿入の順序を逆にする"
+  // observable = "runCommand return valueとbase directory/insert events"
+  // observation_boundary = "component-behavior"
+  // scope = "session-shell-handlers.path-command"
+  // lifecycle = "permanent"
+  // distinction = "入力境界と副作用順序をevent logで直接確認する"
+  // @end-test-value
   it("選択 path がない場合は何もせず、ある場合は base directory 更新後に挿入する", () => {
-    const events: string[] = [];
+    let events: string[] = [];
     const runCommand = (
       selectedPath: string | null | undefined,
       kind: "file" | "folder" | "image" = "file",
@@ -950,12 +995,23 @@ describe("applyPickedComposerReferencePathCommand", () => {
 });
 
 describe("applyQuoteMessageTextCommand", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "quoteを挿入できる場合だけstate反映後にfocusとcaretを復元する"
+  // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts" }
+  // fault = "quote不可でも副作用を実行する、または挿入後のfocus/caret復元を失う"
+  // observable = "insert resultとeventsのstate/focus/caret sequence"
+  // observation_boundary = "component-behavior"
+  // scope = "session-shell-handlers.quote"
+  // lifecycle = "permanent"
+  // distinction = "可否分岐とDOM復元callbackの実行順をevent logで確認する"
+  // @end-test-value
   it("quote 挿入できない場合は何もせず、できる場合は反映後に focus と caret を復元する", () => {
-    const events: string[] = [];
+    let events: string[] = [];
     const textarea = {
       selectionStart: "hello".length,
-      focus: () => events.push("focus"),
-      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+      focus: () => { events.push("focus"); },
+      setSelectionRange: (start: number, end: number) => { events.push(`selection:${start}:${end}`); },
     } as HTMLTextAreaElement;
 
     assert.equal(
@@ -964,7 +1020,7 @@ describe("applyQuoteMessageTextCommand", () => {
         draft: "hello world",
         fallbackCaret: "hello world".length,
         textarea,
-        applyInsertion: ({ draft, caret }) => events.push(`apply:${caret}:${draft}`),
+        applyInsertion: ({ draft, caret }) => { events = [...events, `apply:${caret}:${draft}`]; },
         restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
           textarea?.focus();
           textarea?.setSelectionRange(caret, caret);
@@ -980,7 +1036,7 @@ describe("applyQuoteMessageTextCommand", () => {
         draft: "hello world",
         fallbackCaret: "hello world".length,
         textarea,
-        applyInsertion: ({ draft, caret }) => events.push(`apply:${caret}:${draft}`),
+        applyInsertion: ({ draft, caret }) => { events = [...events, `apply:${caret}:${draft}`]; },
         restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
           textarea?.focus();
           textarea?.setSelectionRange(caret, caret);
@@ -998,12 +1054,24 @@ describe("applyQuoteMessageTextCommand", () => {
 });
 
 describe("createQuoteMessageTextHandler", () => {
+  // @test-value v2
+  // kind = "security"
+  // claim = "blocked時は通知だけでquoteを挿入せず、許可時だけcomposer stateから挿入する"
+  // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts" }
+  // fault = "blocked操作を通す、または許可時に現在のcomposer stateでなく古い入力を使う"
+  // observable = "blocked/allowed return valueとfeedback/apply/focus events"
+  // observation_boundary = "component-behavior"
+  // scope = "session-shell-handlers.quote"
+  // lifecycle = "permanent"
+  // impact = "禁止中のcomposer mutationを防ぐ"
+  // distinction = "blocked guardと許可時のstate sourceを両方確認する"
+  // @end-test-value
   it("blocked の場合は通知だけ行い、許可時は composer state を使って quote を挿入する", () => {
-    const events: string[] = [];
+    const events: Array<string> = [];
     const textarea = {
       selectionStart: "hello".length,
-      focus: () => events.push("focus"),
-      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+      focus: () => { events.push("focus"); },
+      setSelectionRange: (start: number, end: number) => { events.push(`selection:${start}:${end}`); },
     } as HTMLTextAreaElement;
     const createHandler = (blocked: boolean) => createQuoteMessageTextHandler({
       isBlocked: () => blocked,
@@ -1034,8 +1102,19 @@ describe("createQuoteMessageTextHandler", () => {
 });
 
 describe("applyPathReferenceRemovalCommand", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "path reference削除handlerは削除後のdraftを反映する"
+  // oracle = { type = "contract", ref = "src/session-composer-paths.ts" }
+  // fault = "referenceを残す、または削除後draftを適用callbackへ渡さない"
+  // observable = "apply callbackへ渡るdraft"
+  // observation_boundary = "component-behavior"
+  // scope = "session-shell-handlers.path-reference"
+  // lifecycle = "permanent"
+  // distinction = "path normalizationではなくhandlerの実際の反映値を確認する"
+  // @end-test-value
   it("path reference 削除後の draft を反映する", () => {
-    const events: string[] = [];
+    const events = new Array<string>();
 
     applyPathReferenceRemovalCommand({
       draft: "確認 @src/App.tsx して",
@@ -1048,8 +1127,19 @@ describe("applyPathReferenceRemovalCommand", () => {
     assert.deepEqual(events, ["apply:5:確認 して"]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "path reference削除はWindows separatorを正規化した削除対象にも適用する"
+  // oracle = { type = "contract", ref = "src/session-composer-paths.ts" }
+  // fault = "separator差分で同一pathを削除対象と認識しない"
+  // observable = "apply callbackへ渡るnormalized draft"
+  // observation_boundary = "component-behavior"
+  // scope = "session-shell-handlers.path-reference"
+  // lifecycle = "permanent"
+  // distinction = "Windows path入力を実handlerへ渡し、結果draftを確認する"
+  // @end-test-value
   it("正規化済みの削除対象で Windows separator の path reference も削除する", () => {
-    const events: string[] = [];
+    let events: string[] = [];
     const removalTargets = resolvePathReferenceRemovalTargets(["src\\App.tsx"]);
 
     applyPathReferenceRemovalCommand({
@@ -1065,8 +1155,19 @@ describe("applyPathReferenceRemovalCommand", () => {
 });
 
 describe("createPathReferenceRemovalHandler", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "path reference削除handlerは実行時のdraft getterから現在値を取得する"
+  // oracle = { type = "contract", ref = "src/session-composer-paths.ts" }
+  // fault = "handler生成時の古いdraftを閉じ込め、実行時の現在値を削除しない"
+  // observable = "draft getterの更新後にapplyへ渡るdraft"
+  // observation_boundary = "component-behavior"
+  // scope = "session-shell-handlers.path-reference"
+  // lifecycle = "permanent"
+  // distinction = "生成と実行の間にdraftを変更してclosureの値を観測する"
+  // @end-test-value
   it("現在の draft getter を使って path reference 削除 handler を作る", () => {
-    const events: string[] = [];
+    let events: string[] = [];
     const removeAttachmentReference = createPathReferenceRemovalHandler({
       getDraft: () => "確認 @src/App.tsx して",
       applyRemoval: (state, candidates) => {
@@ -1128,12 +1229,23 @@ describe("createPathReferenceRemovalHandler", () => {
 });
 
 describe("applySelectedPathReferenceInsertionCommand", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "選択pathがある場合だけinsert stateを反映し、その後focusとcaretを復元する"
+  // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts" }
+  // fault = "空選択で挿入する、またはstate反映前にfocus/caretを復元する"
+  // observable = "runCommand return valueとapply/focus/caret events"
+  // observation_boundary = "component-behavior"
+  // scope = "session-shell-handlers.path-insert"
+  // lifecycle = "permanent"
+  // distinction = "空配列と有効pathの副作用差をevent logで確認する"
+  // @end-test-value
   it("選択 path がない場合は何もせず、ある場合は挿入 state 反映後に focus と caret を復元する", () => {
     const events: string[] = [];
     const textarea = {
       selectionStart: "see ".length,
-      focus: () => events.push("focus"),
-      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+      focus: () => { events.push("focus"); },
+      setSelectionRange: (start: number, end: number) => { events.push(`selection:${start}:${end}`); },
     } as HTMLTextAreaElement;
     const runCommand = (selectedPaths: string[]) =>
       applySelectedPathReferenceInsertionCommand({
@@ -1314,8 +1426,18 @@ describe("runSessionFilesOpenCommand", () => {
 });
 
 describe("createSessionFilesOpenHandler", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Files open handlerはAPI未提供時に何も呼ばず、提供時は現在のSessionを開き、非Error失敗をfallback文言で通知する"
+  // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts createSessionFilesOpenHandler" }
+  // fault = "未提供APIを呼び出す、別Sessionを開く、またはAPIの失敗を成功扱いする"
+  // observable = "handlerの成否とopen/alert呼び出し列"
+  // observation_boundary = "component-behavior"
+  // scope = "createSessionFilesOpenHandler"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("session files open handler を作り、API がない場合は何もしない", async () => {
-    const events: string[] = [];
+    let events: string[] = [];
     let openSessionFiles: ((sessionId: string) => Promise<void>) | null = null;
     const openHandler = createSessionFilesOpenHandler({
       getSessionId: () => "session-1",
@@ -1327,14 +1449,14 @@ describe("createSessionFilesOpenHandler", () => {
     assert.equal(await openHandler(), false);
     assert.deepEqual(events, []);
 
-    openSessionFiles = async (sessionId) => {
-      events.push(`open:${sessionId}`);
+    openSessionFiles = async (sessionId: string) => {
+      events = [...events, `open:${sessionId}`];
     };
     assert.equal(await openHandler(), true);
     assert.deepEqual(events, ["open:session-1"]);
 
-    openSessionFiles = async (sessionId) => {
-      events.push(`open:${sessionId}`);
+    openSessionFiles = async (sessionId: string) => {
+      events = [...events, `open:${sessionId}`];
       throw "failed";
     };
     assert.equal(await openHandler(), false);

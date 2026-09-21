@@ -69,6 +69,16 @@ function createModelCatalog(): ModelCatalogSnapshot {
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Character EditorのImprove with Agent操作はauthoring session開始要求をcharacter metadataへ結び付ける"
+// oracle = { type = "contract", ref = "CharacterEditorApp authoring session launch contract" }
+// fault = "Improve操作がsession開始を呼ばない、対象characterを失う、またはmetadata更新とicon選択を混同する"
+// observable = "startCharacterAuthoringSession input、metadata updates、icon picker calls"
+// observation_boundary = "component-behavior"
+// scope = "CharacterEditorApp Improve with Agent"
+// lifecycle = "permanent"
+// @end-test-value
 test("CharacterEditorApp は Improve with Agent 押下で authoring session を開始する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "https://withmate.local/character-editor.html?characterId=char-1",
@@ -140,6 +150,9 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
         sessionKind: "character-authoring",
         characterId: "char-1",
         character: "Muse",
+        characterIconPath: "",
+        characterThemeColors: { main: DEFAULT_CHARACTER_THEME.main, sub: DEFAULT_CHARACTER_THEME.sub },
+        approvalMode: "on-request",
       });
       return {
         session,
@@ -153,22 +166,22 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
       currentCharacter = {
         ...currentCharacter,
         definitionMarkdown: input.definitionMarkdown,
-        notesMarkdown: input.notesMarkdown,
+        notesMarkdown: input.notesMarkdown ?? "",
       };
       return currentCharacter;
     },
     async updateCharacterMetadata(input) {
       assert.equal(input.characterId, "char-1");
       metadataUpdates.push({
-        name: input.name,
-        description: input.description,
+        name: input.name ?? "",
+        description: input.description ?? "",
       });
       currentCharacter = {
         ...currentCharacter,
-        name: input.name,
-        description: input.description,
+        name: input.name ?? "",
+        description: input.description ?? "",
         iconFilePath: input.iconFilePath ?? "",
-        theme: input.theme,
+        theme: { ...currentCharacter.theme, ...(input.theme ?? {}) },
       };
       return currentCharacter;
     },

@@ -12,6 +12,9 @@ import {
 import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character-affect-turn-ownership-coordinator.js";
 import { ProviderRuntimeOperationCoordinator } from "../../src-electron/provider-runtime-operation-coordinator.js";
 import { admitSessionTurn } from "../../src-electron/session-turn-admission.js";
+import type { ProviderCodingAdapter } from "../../src-electron/provider-runtime.js";
+import { AuxiliarySessionService } from "../../src-electron/auxiliary-session-service.js";
+import { AuxiliarySessionStorage } from "../../src-electron/auxiliary-session-storage.js";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -31,6 +34,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
       characterId: "char-a",
       character: "A",
       characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       approvalMode: DEFAULT_APPROVAL_MODE,
     }),
     ...overrides,
@@ -60,7 +64,11 @@ function createRuntime(options: {
     async getProviderQuotaTelemetry() { return null; },
     async invalidateSessionThread() {},
     async invalidateAllSessionThreads() {},
-    async runSessionTurn(input: { signal: AbortSignal }) {
+    async runSessionTurn(input: Parameters<ProviderCodingAdapter["runSessionTurn"]>[0]) {
+      const signal = input.signal;
+      if (!signal) {
+        throw new Error("test adapter requires an abort signal");
+      }
       if (options.providerCallCount) {
         options.providerCallCount.value += 1;
       }
@@ -69,12 +77,12 @@ function createRuntime(options: {
         await Promise.race([
           options.releaseProvider.promise,
           new Promise<never>((_, reject) => {
-            if (input.signal.aborted) {
+            if (signal.aborted) {
               options.abortObserved?.resolve();
               reject(new Error("canceled"));
               return;
             }
-            input.signal.addEventListener("abort", () => {
+            signal.addEventListener("abort", () => {
               options.abortObserved?.resolve();
               reject(new Error("canceled"));
             }, { once: true });
@@ -371,23 +379,68 @@ describe("SessionRuntimeService session admission", () => {
   // scope = "auxiliary-parent-turn-admission"
   // lifecycle = "permanent"
   // impact = "Auxiliary childを対象とする削除・操作guardが実行中状態を正しく参照できる"
-  // distinction = "sessionKind auxiliary のchildを実行し、親削除処理自体ではなく公開inFlight判定を直接確認する"
+  // distinction = "実storageからAuxiliary runtime projectionを取得してchild IDで実行し、親削除処理自体ではなく公開inFlight判定を直接確認する"
   // @end-test-value
   it("Auxiliary child の実行中状態を公開inFlight判定で観測する", async () => {
     const providerStarted = deferred();
     const releaseProvider = deferred();
-    const session = createSession({ sessionKind: "auxiliary", parentSessionId: "parent-1" });
-    const runtime = createRuntime({
-      session,
-      runSessionAdmissionExclusive: async (_sessionId, operation) => operation(),
-      providerStarted,
-      releaseProvider,
-    });
-    const turn = runRequest(runtime.service, session.id);
-    await providerStarted.promise;
-    assert.equal(runtime.service.isRunInFlight(session.id), true);
-    releaseProvider.resolve();
-    await turn;
+    const parent = createSession();
+    const storage = new AuxiliarySessionStorage(":memory:");
+    try {
+      const auxiliary = storage.upsertAuxiliarySession({
+        id: "auxiliary-child",
+        parentSessionId: parent.id,
+        status: "active",
+        runState: "idle",
+        title: "Auxiliary",
+        provider: parent.provider,
+        catalogRevision: parent.catalogRevision,
+        model: parent.model,
+        reasoningEffort: parent.reasoningEffort,
+        approvalMode: parent.approvalMode,
+        codexSandboxMode: parent.codexSandboxMode,
+        codexSpeed: parent.codexSpeed,
+        codexReviewer: parent.codexReviewer,
+        customAgentName: parent.customAgentName,
+        allowedAdditionalDirectories: [],
+        threadId: "",
+        messages: [],
+        composerDraft: "",
+        displayAfterMessageIndex: null,
+        createdAt: "2026-09-21T00:00:00.000Z",
+        updatedAt: "2026-09-21T00:00:00.000Z",
+        closedAt: "",
+      });
+      const auxiliaryService = new AuxiliarySessionService({
+        getStorage: () => storage,
+        getParentSession: (id) => id === parent.id ? parent : null,
+        runProviderRuntimeOperationExclusive: async (operation) => operation(),
+        resolveSessionLaunchSelection: async () => { throw new Error("unexpected launch selection"); },
+        listActiveCharacters: () => { throw new Error("unexpected character listing"); },
+        createCharacterRuntimeSnapshot: () => { throw new Error("unexpected snapshot creation"); },
+      });
+      const session = await auxiliaryService.getAuxiliaryRuntimeSession(auxiliary.id);
+      assert.ok(session);
+      assert.equal(session.id, auxiliary.id);
+      assert.equal(session.sessionKind, parent.sessionKind);
+      const runtime = createRuntime({
+        session,
+        runSessionAdmissionExclusive: async (_sessionId, operation) => operation(),
+        providerStarted,
+        releaseProvider,
+      });
+      const turn = runRequest(runtime.service, session.id);
+      try {
+        await providerStarted.promise;
+        assert.equal(runtime.service.isRunInFlight(auxiliary.id), true);
+        assert.equal(runtime.service.isRunInFlight(parent.id), false);
+      } finally {
+        releaseProvider.resolve();
+        await turn;
+      }
+    } finally {
+      storage.close();
+    }
   });
 
   // @test-value v2

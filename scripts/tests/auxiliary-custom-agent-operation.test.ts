@@ -20,6 +20,8 @@ function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxili
     reasoningEffort: "medium",
     approvalMode: "untrusted",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "",

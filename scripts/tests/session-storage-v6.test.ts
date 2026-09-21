@@ -177,11 +177,13 @@ function listSessionTurnSummaries(dbPath: string): string[] {
 }
 
 describe("SessionStorageV6", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
   // claim = "Main SessionのReviewerは新規作成でUserになり、V6 runtime policyでroundtripし未知値はUserへ正規化される"
   // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-2" }
-  // failure_mode = "Auto-review選択が再起動で消える、新規値がUser以外になる、または未知値がAuto-reviewへ昇格する"
+  // fault = "Auto-review選択が再起動で消える、新規値がUser以外になる、または未知値がAuto-reviewへ昇格する"
+  // observable = "保存後・再読込後のcodexReviewer値"
+  // observation_boundary = "public-boundary"
   // scope = "session-storage-v6"
   // lifecycle = "permanent"
   // @end-test-value
@@ -202,6 +204,7 @@ describe("SessionStorageV6", () => {
         character: "A",
         characterIconPath: "",
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
         codexSpeed: "fast",
         codexReviewer: "auto-review",
       }));
@@ -215,6 +218,7 @@ describe("SessionStorageV6", () => {
         character: "A",
         characterIconPath: "",
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
       }));
       assert.equal(storage.getSession(legacySession.id)?.codexReviewer, "user");
       storage.close();
@@ -1344,6 +1348,7 @@ describe("SessionStorageV6", () => {
           character: "A",
           characterIconPath: "",
           characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
         }),
         isPinned: true,
         messages: [{ role: "user", text: "keep this" }],

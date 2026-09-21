@@ -55,11 +55,13 @@ function directoryEntry(name: string): SessionDirectoryEntry {
   };
 }
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "File Explorer root revisionはactive Session、workspace path、Additional Directory集合の組を一意に表す"
 // oracle = { type = "contract", ref = "accepted behavior invariant 2: root change invalidates pending insertion" }
-// failure_mode = "同じSession IDのworkspace pathだけが変わったときに旧rootのmenu結果を新rootへ挿入する"
+// fault = "同じSession IDのworkspace pathだけが変わったときに旧rootのmenu結果を新rootへ挿入する"
+// observable = "workspace path変更時のroot revision値が初期値と異なること"
+// observation_boundary = "public-boundary"
 // scope = "buildSessionFileExplorerRootsRevision"
 // lifecycle = "permanent"
 // distinction = "Additional Directory変更だけでなくMain rootの対応先であるworkspace path変更もrevisionへ反映する"
@@ -78,11 +80,13 @@ test("File Explorer root revisionはworkspace path変更を検出する", () => 
   assert.notEqual(initial, workspaceChanged);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "Files treeはroot・directory・regular fileだけを同じpath context menu契約へ渡し、通常clickとload identityを維持する"
 // oracle = { type = "contract", ref = "accepted behavior: File Explorer tree path context menu siblings" }
-// failure_mode = "rootまたはdirectoryでpath操作できない、対象外rowに操作が出る、またはcontext menu追加で通常clickと非同期loadが回帰する"
+// fault = "rootまたはdirectoryでpath操作できない、対象外rowに操作が出る、またはcontext menu追加で通常clickと非同期loadが回帰する"
+// observable = "path menu callback、通常click callback、tree load identity"
+// observation_boundary = "component-behavior"
 // scope = "SessionFileExplorerPane Files tree interaction"
 // lifecycle = "permanent"
 // distinction = "root・directory・fileの兄弟入口とsymbolic link除外を、既存click/load observableと同時に確認する"
@@ -331,7 +335,7 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
         onOpenFile() {},
         canInsertPathReference: false,
         onInsertPathReference() {},
-        changesContent: React.createElement("div", null, "Changes content"),
+        renderChangesContent: () => React.createElement("div", null, "Changes content"),
       }));
     });
     const changesRefresh = dom.window.document.querySelector<HTMLButtonElement>(".session-file-explorer-refresh");

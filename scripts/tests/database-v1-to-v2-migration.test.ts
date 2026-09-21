@@ -675,6 +675,16 @@ describe("V1 to V2 database migration write mode", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V1から移行したV2 DBをruntime lifecycleで開き主要read/write pathを継続できる"
+  // oracle = { type = "contract", ref = "V1 to V2 migration contract" }
+  // fault = "migration後のlifecycle初期化に失敗する、またはsession/audit read-write pathが欠落する"
+  // observable = "migration reportとlifecycle経由の保存・取得結果"
+  // observation_boundary = "public-boundary"
+  // scope = "V1 to V2 migration runtime lifecycle"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("V1 から移行した V2 DB を runtime lifecycle で開き主要 read/write path を通せる", async () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -736,7 +746,6 @@ describe("V1 to V2 database migration write mode", () => {
         },
         createSessionMemoryStorage: () => ({ close() {} }) as never,
         createProjectMemoryStorage: () => ({ close() {} }) as never,
-        createCharacterMemoryStorage: () => ({ close() {} }) as never,
         createAuditLogStorage: () => {
           throw new Error("V2 lifecycle では V1 audit log storage を生成しない");
         },

@@ -22,11 +22,13 @@ function character() {
 }
 
 describe("character affect turn evaluator", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
   // claim = "provider-facing evaluator promptはCharacter/User/Sessionの生identityを投影せず、定義とaffectのversioned contextだけを渡す"
   // oracle = { type = "adr", ref = "ADR-024" }
-  // failure_mode = "prompt JSONへcharacter.idまたはscopeのuserId/characterId/sessionIdが混入し、providerがserver-owned identityを参照できる"
+  // fault = "prompt JSONへcharacter.idまたはscopeのuserId/characterId/sessionIdが混入し、providerがserver-owned identityを参照できる"
+  // observable = "provider prompt payloadの公開キー集合とidentity値の不在"
+  // observation_boundary = "public-boundary"
   // scope = "character-affect-turn-evaluator provider prompt projection"
   // lifecycle = "permanent"
   // distinction = "内部のtoAffectEventInputsがserver-owned identityを保持する契約とは別に、provider入力の公開キー集合を直接検証する"
@@ -36,14 +38,12 @@ describe("character affect turn evaluator", () => {
       character: character(),
       context: {
         schemaVersion: "withmate-character-context-v1",
-        characterId: "character-a",
-        sessionId: "session-a",
         baseline: { definitionSha256: "definition-sha", snapshotAt: "2026-08-09T00:00:00.000Z" },
         affect: {
           mode: "active",
           effective: [{
-            layer: "session",
-            targetType: "task",
+          targetType: "task",
+          contributingLayers: ["session"],
             targetId: "current-task",
             family: "interest",
             label: "interest",
@@ -59,15 +59,11 @@ describe("character affect turn evaluator", () => {
             id: "memory-secret",
             title: "Private title",
             preview: "Private preview",
-            body: "RAW MEMORY BODY MUST NOT LEAK",
-            target: { owner: "character", scope: "character", character: { type: "id", id: "character-a" } },
             tags: [],
-            createdAt: "2026-08-09T00:00:00.000Z",
             updatedAt: "2026-08-09T00:00:00.000Z",
           }],
           updatedAt: "2026-08-09T00:00:00.000Z",
         },
-        scope: { userId: "local-user", characterId: "character-a", sessionId: "session-a" },
       },
       userMessage: "直ったね",
       assistantMessage: "うん、通ったよ。",
@@ -80,7 +76,7 @@ describe("character affect turn evaluator", () => {
     assert.deepEqual(Object.keys(promptPayload.event).sort(), ["assistantMessage", "userMessage"]);
     assert.equal(promptPayload.character.definition, "# Definition");
     assert.deepEqual(promptPayload.currentAffect.effective, [{
-      layer: "session",
+      contributingLayers: ["session"],
       targetType: "task",
       targetId: "current-task",
       family: "interest",

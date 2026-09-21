@@ -400,18 +400,6 @@ describe("AppSettingsStorage", () => {
             timeoutSeconds: 360,
           },
         },
-        characterReflectionProviderSettings: {
-          codex: {
-            model: "gpt-5.4-mini",
-            reasoningEffort: "medium",
-            timeoutSeconds: 210,
-          },
-          copilot: {
-            model: "gpt-5",
-            reasoningEffort: "low",
-            timeoutSeconds: 420,
-          },
-        },
         mateMemoryGenerationSettings: {
           priorityList: [
             {
@@ -711,18 +699,6 @@ describe("AppSettingsStorage", () => {
             reasoningEffort: "low",
             outputTokensThreshold: 180,
             timeoutSeconds: 360,
-          },
-        },
-        characterReflectionProviderSettings: {
-          codex: {
-            model: "gpt-5.4-mini",
-            reasoningEffort: "medium",
-            timeoutSeconds: 210,
-          },
-          copilot: {
-            model: "gpt-5",
-            reasoningEffort: "low",
-            timeoutSeconds: 420,
           },
         },
         mateMemoryGenerationSettings: {

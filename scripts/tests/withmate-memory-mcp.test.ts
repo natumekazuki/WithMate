@@ -103,6 +103,16 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
 }
 
 describe("WithMate Memory / Character Affect MCP contract", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "MCP initialize handshakeは要求されたprotocol versionを受理し、正しいserver nameとversionを公開する"
+  // oracle = { type = "contract", ref = "MCP 2025-06-18 initialize handshake" }
+  // fault = "handshake responseのprotocolVersion、serverInfo.name、serverInfo.versionを欠落または別値で返す"
+  // observable = "initialize responseのprotocolVersionとserverInfo"
+  // observation_boundary = "public-boundary"
+  // scope = "withmate-memory-mcp-handshake"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("2025-06-18 handshakeでserver nameとversionを公開する", async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createWithMateMemoryMcpServer();
@@ -116,7 +126,9 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
               reject(new Error(JSON.stringify(message.error)));
               return;
             }
-            resolve(message.result as Record<string, any>);
+            if ("result" in message) {
+              resolve(message.result as Record<string, any>);
+            }
           }
         };
         clientTransport.onerror = reject;
@@ -1777,11 +1789,13 @@ it("runtime unavailableをtool successにせず、retryabilityとconversation継
     }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "challenge後のpeer差替えでMCP dispatchを再実行しない"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "偽peerへcredentialを再送する"
+// fault = "偽peerへcredentialを再送する"
+// observable = "差替え後peerへのrequest数、送信headers/body、およびMCP tool結果のerror"
+// observation_boundary = "public-boundary"
 // scope = "memory-mcp-transport"
 // lifecycle = "permanent"
 // @end-test-value
@@ -1855,7 +1869,7 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
       await server.close();
       await closeServer(firstServer);
       if (replacementListening) {
-        await replacementListening.catch(() => undefined);
+        await Promise.resolve(replacementListening).catch(() => undefined);
       }
       if (replacementServer) {
         await closeServer(replacementServer);

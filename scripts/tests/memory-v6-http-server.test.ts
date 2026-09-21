@@ -178,11 +178,23 @@ it("status はapplication instance、generation、build channelとowner challeng
     });
   });
 
+  // @test-value v2
+  // kind = "security"
+  // claim = "Memory HTTP serverはapiSecret未設定で起動せず、未認証または誤ったsecretのrequestを401で拒否する"
+  // oracle = { type = "contract", ref = "memory-v6-http-authentication" }
+  // fault = "空secretでserverを起動する、または認証失敗を成功応答や別のroute errorへ変換する"
+  // observable = "createMemoryV6HttpServerのthrowと、secretなし/誤secretのHTTP status・error.code"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-http-adapter-authentication"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("apiSecretなしではserverを作成できず、secretなしのrequestを拒否する", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       assert.throws(() => createMemoryV6HttpServer({
         service: {} as MemoryV6Service,
         apiSecret: "",
+        operatorApiSecret: "operator-secret",
+        mcpApiSecret: "mcp-secret",
         runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
       }), /apiSecret/);
 

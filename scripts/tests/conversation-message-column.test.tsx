@@ -192,7 +192,10 @@ test("conversation column controls はscroll状態と送信時追従操作を公
   Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
   let root: Root | null = null;
   let latest: ReturnType<typeof useConversationMessageColumn> = null;
-  let controls: { isMessageListFollowing: boolean; handleMessageListSend: (scrollToLatestOnSend: boolean) => void } | null = null;
+  let controls = {
+    isMessageListFollowing: false,
+    handleMessageListSend: (_scrollToLatestOnSend: boolean) => {},
+  };
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
@@ -210,6 +213,7 @@ test("conversation column controls はscroll状態と送信時追従操作を公
         });
       }));
     });
+    assert.ok(controls);
     const element = dom.window.document.querySelector<HTMLDivElement>("[data-id='main']");
     assert.ok(element);
     Object.defineProperties(element, {
@@ -247,7 +251,7 @@ test("conversation column controls はscroll状態と送信時追従操作を公
 // lifecycle = "permanent"
 // @end-test-value
 test("conversation column はcollapseとnavigator jumpを公開する", async () => {
-  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
@@ -262,7 +266,11 @@ test("conversation column はcollapseとnavigator jumpを公開する", async ()
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
   let root: Root | null = null;
   let latest: ReturnType<typeof useConversationMessageColumn> = null;
-  let controls: { messageCollapseTargetKeys: readonly string[]; messageNavigatorEntries: readonly { key: string; isCollapsed: boolean }[]; onJumpToMessage: (key: string) => void } | null = null;
+  let controls = {
+    messageCollapseTargetKeys: [] as readonly string[],
+    messageNavigatorEntries: [] as readonly { key: string; isCollapsed: boolean }[],
+    onJumpToMessage: (_key: string) => {},
+  };
   const testApi: ConversationMessageColumnApi = {};
   const liveRun: LiveSessionRunState = {
     sessionId: "main",
@@ -296,6 +304,8 @@ test("conversation column はcollapseとnavigator jumpを公開する", async ()
         return null;
       }));
     });
+    assert.ok(controls);
+    const getCurrent = () => latest!;
     assert.deepEqual(controls?.messageNavigatorEntries.map((entry) => entry.key), [
       "session-main-0",
       "live-assistant-main-1-main-thread",
@@ -307,20 +317,20 @@ test("conversation column はcollapseとnavigator jumpを公開する", async ()
     const key = controls?.messageNavigatorEntries[0]?.key;
     assert.ok(key);
     await act(async () => latest?.onToggleMessageCollapse?.(key));
-    assert.equal(latest?.collapsedMessageKeys?.has(key), true);
+    assert.equal(getCurrent().collapsedMessageKeys?.has(key), true);
     assert.equal(controls?.messageNavigatorEntries[0]?.isCollapsed, true);
     const responseKey = controls?.messageNavigatorEntries[1]?.key;
     assert.ok(responseKey);
     await act(async () => latest?.onToggleMessageCollapse?.(responseKey));
-    assert.equal(latest?.collapsedMessageKeys?.has(responseKey), true);
+    assert.equal(getCurrent().collapsedMessageKeys?.has(responseKey), true);
     assert.equal(controls?.messageNavigatorEntries[1]?.isCollapsed, true);
     await act(async () => controls?.onJumpToMessage(responseKey));
-    assert.equal(latest?.messageJumpRequest?.key, responseKey);
-    assert.equal(latest?.messageJumpRequest?.sessionId, "main");
+    assert.equal(getCurrent().messageJumpRequest?.key, responseKey);
+    assert.equal(getCurrent().messageJumpRequest?.sessionId, "main");
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
-    globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
     Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
@@ -340,7 +350,7 @@ test("conversation column はcollapseとnavigator jumpを公開する", async ()
 // lifecycle = "permanent"
 // @end-test-value
 test("conversation column は親snapshotを優先し、snapshot未提供Columnだけ購読する", async () => {
-  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
@@ -421,7 +431,7 @@ test("conversation column は親snapshotを優先し、snapshot未提供Column�
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
-    globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
     Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });

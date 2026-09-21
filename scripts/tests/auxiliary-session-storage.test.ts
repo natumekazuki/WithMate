@@ -8,6 +8,7 @@ import test from "node:test";
 import { buildNewSession } from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../../src/approval-mode.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
+import type { AuxiliaryDraftRecord } from "../../src/auxiliary-draft-contract.js";
 import {
   DEFAULT_CODEX_SANDBOX_MODE,
   type CodexSandboxMode,
@@ -33,11 +34,11 @@ class AuxiliarySessionService extends AuxiliarySessionServiceImpl {
   constructor(
     deps: Omit<
       AuxiliarySessionServiceDeps,
-      "runProviderRuntimeOperationExclusive" | "resolveSessionLaunchSelection"
+      "runProviderRuntimeOperationExclusive" | "resolveSessionLaunchSelection" | "listActiveCharacters" | "createCharacterRuntimeSnapshot"
     > & Partial<
       Pick<
         AuxiliarySessionServiceDeps,
-        "runProviderRuntimeOperationExclusive" | "resolveSessionLaunchSelection"
+        "runProviderRuntimeOperationExclusive" | "resolveSessionLaunchSelection" | "listActiveCharacters" | "createCharacterRuntimeSnapshot"
       >
     >,
   ) {
@@ -122,6 +123,7 @@ function buildAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxil
     approvalMode: DEFAULT_APPROVAL_MODE,
     codexSandboxMode: "danger-full-access",
     codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "",
@@ -553,11 +555,11 @@ test("Auxiliary送信の終了待ちは実SQLiteのconsumeと復元保存まで�
       });
     },
   });
-  let releaseRun: (() => void) | null = null;
+  let releaseRun!: () => void;
   let runStarted: (() => void) | null = null;
   const started = new Promise<void>((resolve) => { runStarted = resolve; });
   const runGate = new Promise<void>((resolve) => { releaseRun = resolve; });
-  let releaseLookup: (() => void) | null = null;
+  let releaseLookup!: () => void;
   const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve; });
   try {
     const session = auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
@@ -583,14 +585,14 @@ test("Auxiliary送信の終了待ちは実SQLiteのconsumeと復元保存まで�
     });
     let barrierSettled = false;
     const barrier = service.waitForPendingDraftSends().then((result) => { barrierSettled = true; return result; });
-    releaseLookup?.();
+    releaseLookup();
     await started;
     assert.equal(barrierSettled, false, "quit must wait even if only the outer IPC lookup existed at the barrier");
     assert.equal(auxiliaryStorage.getAuxiliaryDraft(session.id)?.text, "");
     let releaseRestore!: () => void;
     heldRestore = new Promise<void>((resolve) => { releaseRestore = resolve; });
     const restoreStarted = new Promise<void>((resolve) => { notifyRestoreStarted = resolve; });
-    releaseRun?.();
+    releaseRun();
     await restoreStarted;
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(barrierSettled, false, "a failed run is not settled until its restoration save finishes");
@@ -609,7 +611,7 @@ test("Auxiliary送信の終了待ちは実SQLiteのconsumeと復元保存まで�
       composerDraft: "must restore",
     }));
     const failedInitial = auxiliaryStorage.getAuxiliaryDraft(failedSession.id)!;
-    let releaseFailedRun: (() => void) | null = null;
+    let releaseFailedRun!: () => void;
     const failedRun = new Promise<void>((resolve) => { releaseFailedRun = resolve; });
     let failedStarted: (() => void) | null = null;
     const failedStartedPromise = new Promise<void>((resolve) => { failedStarted = resolve; });
@@ -634,7 +636,7 @@ test("Auxiliary送信の終了待ちは実SQLiteのconsumeと復元保存まで�
     releaseFailedLookup();
     await failedStartedPromise;
     failRestore = true;
-    releaseFailedRun?.();
+    releaseFailedRun();
     await assert.rejects(failedOperation, /draft restore failed/);
     assert.equal(await failedBarrier, false);
     assert.equal(auxiliaryStorage.getAuxiliaryDraft(failedSession.id)?.text, "");
@@ -677,7 +679,7 @@ test("Auxiliary送信の終了待ちは実SQLiteのconsumeと復元保存まで�
       }), /draft restore failed/);
       failRestore = false;
       if (resolution === "saved") {
-        const consumed = auxiliaryStorage.getAuxiliaryDraft(laterSession.id)!;
+        const consumed: AuxiliaryDraftRecord = auxiliaryStorage.getAuxiliaryDraft(laterSession.id)!;
         assert.equal((await service.saveAuxiliaryDraft({
           auxiliarySessionId: laterSession.id,
           parentSessionId: parent.id,
@@ -1235,7 +1237,6 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       const preserved = await service.upsertAuxiliaryRuntimeSession({
         ...runtimeSession,
         runState,
-        preview: "途中で上書きしない",
         messages: [...persistedRuntime.messages, { role: "assistant", text: "中間通知" }],
         updatedAt: `2026-05-24T00:00:0${runState === "running" ? "1" : runState === "error" ? "2" : "3"}.000Z`,
       });
@@ -1457,6 +1458,7 @@ test("AuxiliarySessionService はMain除外とsnapshot失敗時の既存状態�
     const parent = {
       ...buildNewSession({
         taskTitle: "character selection",
+        approvalMode: DEFAULT_APPROVAL_MODE,
         workspaceLabel: "workspace",
         workspacePath: "C:/workspace",
         branch: "main",
@@ -1548,6 +1550,7 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
     const parent = {
       ...buildNewSession({
         taskTitle: "race",
+        approvalMode: DEFAULT_APPROVAL_MODE,
         workspaceLabel: "workspace",
         workspacePath: "C:/workspace",
         branch: "main",
@@ -1650,6 +1653,7 @@ test("Auxiliary Reviewerは親から継承した後に独立して保存する",
       ...buildNewSession({
         id: "speed-parent",
         taskTitle: "Speed parent",
+        approvalMode: DEFAULT_APPROVAL_MODE,
         workspaceLabel: "workspace",
         workspacePath: "C:/workspace",
         branch: "main",
@@ -1954,6 +1958,8 @@ test("AuxiliarySessionService は latest-session 選択を Main の resolver か
           reasoningEffort: "medium",
           approvalMode: "never",
           codexSandboxMode: "read-only",
+          codexSpeed: "standard",
+          codexReviewer: "user",
           customAgentName: "latest-agent",
         };
       },
@@ -2612,6 +2618,7 @@ test("Auxiliaryの削除後更新は行を復活させず現存行の更新と�
     parentStorage.upsertSession(buildNewSession({
       id: session.parentSessionId,
       taskTitle: "parent",
+      approvalMode: DEFAULT_APPROVAL_MODE,
       workspaceLabel: "workspace",
       workspacePath: "C:/workspace",
       branch: "main",
@@ -2643,6 +2650,7 @@ test("Auxiliaryの削除後更新は行を復活させず現存行の更新と�
     parentStorage.upsertSession(buildNewSession({
       id: session.parentSessionId,
       taskTitle: "parent",
+      approvalMode: DEFAULT_APPROVAL_MODE,
       workspaceLabel: "workspace",
       workspacePath: "C:/workspace",
       branch: "main",
@@ -2726,6 +2734,7 @@ test("Auxiliary serviceはread待機中の親削除と保存先交換後の更�
     parentStorage.upsertSession(buildNewSession({
       id: session.parentSessionId,
       taskTitle: "parent",
+      approvalMode: DEFAULT_APPROVAL_MODE,
       workspaceLabel: "workspace",
       workspacePath: "C:/workspace",
       branch: "main",
@@ -2757,6 +2766,7 @@ test("Auxiliary serviceはread待機中の親削除と保存先交換後の更�
     replacementParentStorage.upsertSession(buildNewSession({
       id: session.parentSessionId,
       taskTitle: "replacement parent",
+      approvalMode: DEFAULT_APPROVAL_MODE,
       workspaceLabel: "workspace",
       workspacePath: "C:/workspace",
       branch: "main",

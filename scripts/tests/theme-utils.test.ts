@@ -29,11 +29,22 @@ describe("theme utils", () => {
     assert.ok(typeof palette.muted === "string");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "character theme styleは背景色と可読なink色をCSS varsへ投影する"
+  // oracle = { type = "contract", ref = "theme-utils readable character theme contract" }
+  // fault = "theme CSS varが欠落するかinkのcontrastがAAを満たさない"
+  // observable = "CSS var valuesとcontrast ratio"
+  // observation_boundary = "public-boundary"
+  // scope = "buildCharacterThemeStyle readable ink"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("character theme style は readable ink を CSS var へ入れる", () => {
     const style = buildCharacterThemeStyle({ main: "#f8b4d9", sub: "#2563eb" });
+    const characterStyle = style as typeof style & Record<"--character-main" | "--character-main-ink", string>;
 
-    assert.equal(style["--character-main"], "#f8b4d9");
-    assert.ok(typeof style["--character-main-ink"] === "string");
-    assert.ok(contrastRatio(String(style["--character-main-ink"]), "#f8b4d9") >= 4.5);
+    assert.equal(characterStyle["--character-main"], "#f8b4d9");
+    assert.ok(typeof characterStyle["--character-main-ink"] === "string");
+    assert.ok(contrastRatio(characterStyle["--character-main-ink"], "#f8b4d9") >= 4.5);
   });
 });

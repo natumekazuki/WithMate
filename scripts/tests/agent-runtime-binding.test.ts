@@ -102,6 +102,17 @@ describe("AgentRuntimeBindingRegistry", () => {
     assert.equal(registry.resolve(first.bindingReference, "character.context.get").ok, false);
   });
 
+  // @test-value v2
+  // kind = "security"
+  // claim = "runtime binding解決は期限切れ・unknown・binding不在をdispatch前に区別する"
+  // oracle = { type = "contract", ref = "src-electron/agent-runtime-binding.ts: resolve" }
+  // fault = "無効なbindingを有効としてservice dispatchへ渡し、権限外のruntime操作を許可する"
+  // observable = "resolve結果のok/codeと各失敗分類"
+  // observation_boundary = "public-boundary"
+  // scope = "agent-runtime-binding-resolution"
+  // lifecycle = "permanent"
+  // distinction = "binding発行の成功確認では検出できない解決時の失敗分類を検証する"
+  // @end-test-value
   it("期限切れ、unknown、bindingなしをservice dispatch前に区別する", () => {
     const registry = new AgentRuntimeBindingRegistry();
     const binding = registry.issueOrReuse({
@@ -111,12 +122,16 @@ describe("AgentRuntimeBindingRegistry", () => {
       now: new Date("2026-08-15T00:00:00.000Z"),
       expiresAt: "2026-08-15T00:01:00.000Z",
     });
-    assert.equal(registry.resolve(undefined, "character.context.get").code, "SESSION_BINDING_REQUIRED");
-    assert.equal(registry.resolve("unknown", "character.context.get").code, "SESSION_BINDING_INVALID");
-    assert.equal(
-      registry.resolve(binding.bindingReference, "character.context.get", new Date("2026-08-15T00:01:00.000Z")).code,
-      "SESSION_BINDING_INVALID",
-    );
+    const missing = registry.resolve(undefined, "character.context.get");
+    const unknown = registry.resolve("unknown", "character.context.get");
+    const expired = registry.resolve(binding.bindingReference, "character.context.get", new Date("2026-08-15T00:01:00.000Z"));
+    assert.equal(missing.ok, false);
+    assert.equal(unknown.ok, false);
+    assert.equal(expired.ok, false);
+    if (missing.ok || unknown.ok || expired.ok) throw new Error("expected binding resolution failure");
+    assert.equal(missing.code, "SESSION_BINDING_REQUIRED");
+    assert.equal(unknown.code, "SESSION_BINDING_INVALID");
+    assert.equal(expired.code, "SESSION_BINDING_INVALID");
   });
 
   it("期限を正規化してreuse identityへ含める", () => {

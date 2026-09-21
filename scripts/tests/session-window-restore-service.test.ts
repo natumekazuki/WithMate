@@ -68,7 +68,6 @@ function createBridge(input: {
     async loadChatEntry() {},
     getSession: () => null,
     isRunInFlight: () => false,
-    getAllowQuitWithInFlightRuns: () => false,
     confirmCloseWhileRunning: () => false,
     broadcastOpenSessionWindowIds() {},
     persistOpenSessionWindowIds: input.persist,
@@ -189,14 +188,24 @@ describe("SessionWindowRestoreService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "起動時snapshotの読み込み完了前に現在集合の保存で復元集合を上書きしない"
+  // oracle = { type = "contract", ref = "src-electron/session-window-restore-service.ts" }
+  // fault = "初期loadとsaveが競合し、次回起動の復元対象を失う"
+  // observable = "永続化snapshotとrestore後のrequestedSessionIds"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-restore"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("起動時の復元集合を先に読み込み、現在集合の保存では上書きしない", async () => {
-    let resolveInitialSnapshot: ((sessionIds: string[]) => void) | null = null;
+    const initialSnapshotControl = { resolve: undefined as ((sessionIds: string[]) => void) | undefined };
     const durableSnapshots: string[][] = [];
     const opened: string[] = [];
     const service = new SessionWindowRestoreService({
       storage: {
         loadSnapshot: () => new Promise<string[]>((resolve) => {
-          resolveInitialSnapshot = resolve;
+          initialSnapshotControl.resolve = resolve;
         }),
         async saveSnapshot(sessionIds) {
           durableSnapshots.push([...sessionIds]);
@@ -213,8 +222,8 @@ describe("SessionWindowRestoreService", () => {
     await Promise.resolve();
     assert.deepEqual(durableSnapshots, []);
 
-    assert.ok(resolveInitialSnapshot);
-    resolveInitialSnapshot(["session-a", "session-b"]);
+    assert.ok(initialSnapshotControl.resolve);
+    initialSnapshotControl.resolve(["session-a", "session-b"]);
     await saveCurrentSnapshot;
 
     assert.deepEqual(durableSnapshots, [["session-c"]]);
@@ -308,9 +317,19 @@ describe("SessionWindowRestoreService", () => {
     assert.deepEqual(await service.getSnapshot(), []);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "手動open中のsessionのload失敗を復元失敗として扱い、後続対象を継続する"
+  // oracle = { type = "contract", ref = "src-electron/session-window-restore-service.ts" }
+  // fault = "失敗対象を成功扱いするか、後続window復元を中断する"
+  // observable = "openedSessionIds、failures、未復元snapshot集合"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-restore"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("手動open中の対象へ合流し、load失敗を再試行集合へ残して後続対象を復元する", async () => {
-    let rejectSessionA: ((error: Error) => void) | null = null;
-    let resolveSessionB: ((session: { id: string }) => void) | null = null;
+    const rejectSessionAControl = { reject: undefined as ((error: Error) => void) | undefined };
+    const sessionBControl = { resolve: undefined as ((session: { id: string }) => void) | undefined };
     const created = new Map<string, StubWindow[]>();
     const restoreOpenCalls: string[] = [];
     const restoreSetChanges: string[][] = [];
@@ -325,7 +344,7 @@ describe("SessionWindowRestoreService", () => {
       getSession: (sessionId) => {
         if (sessionId === "session-b") {
           return new Promise<{ id: string }>((resolve) => {
-            resolveSessionB = resolve;
+            sessionBControl.resolve = resolve;
           });
         }
         return { id: sessionId };
@@ -348,14 +367,13 @@ describe("SessionWindowRestoreService", () => {
       loadChatEntry(_window, mode) {
         if (mode.sessionId === "session-a") {
           return new Promise<void>((_resolve, reject) => {
-            rejectSessionA = reject;
+            rejectSessionAControl.reject = reject;
           });
         }
         return Promise.resolve();
       },
       getSession: () => null,
       isRunInFlight: () => false,
-      getAllowQuitWithInFlightRuns: () => false,
       confirmCloseWhileRunning: () => false,
       broadcastOpenSessionWindowIds() {},
       persistOpenSessionWindowIds: (sessionIds) => service.saveSnapshot(sessionIds),
@@ -376,10 +394,10 @@ describe("SessionWindowRestoreService", () => {
     assert.equal(created.get("session-b")?.length ?? 0, 0);
     assert.deepEqual(restoreOpenCalls, ["session-a"]);
     assert.equal(restoreSettled, false);
-    assert.ok(rejectSessionA);
-    rejectSessionA(new Error("load failed"));
-    assert.ok(resolveSessionB);
-    resolveSessionB({ id: "session-b" });
+    assert.ok(rejectSessionAControl.reject);
+    rejectSessionAControl.reject(new Error("load failed"));
+    assert.ok(sessionBControl.resolve);
+    sessionBControl.resolve({ id: "session-b" });
 
     const [manualResult, restoreResult] = await outcomes;
 
@@ -400,8 +418,18 @@ describe("SessionWindowRestoreService", () => {
     assert.deepEqual(restoreSetChanges, [["session-a"]]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "手動open中のsessionへ復元処理が合流し、windowを重複生成しない"
+  // oracle = { type = "contract", ref = "src-electron/session-window-restore-service.ts" }
+  // fault = "同一sessionのrestoreで二重windowを作成し、復元結果を誤分類する"
+  // observable = "生成window数とopenedSessionIds"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-restore"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("手動open中の対象へ合流し、load成功を重複生成せず復元成功に分類する", async () => {
-    let resolveSessionA: (() => void) | null = null;
+    const sessionAControl = { resolve: undefined as (() => void) | undefined };
     const created = new Map<string, StubWindow[]>();
     let bridge: SessionWindowBridge<StubWindow>;
     const service = new SessionWindowRestoreService({
@@ -424,14 +452,13 @@ describe("SessionWindowRestoreService", () => {
       loadChatEntry(_window, mode) {
         if (mode.sessionId === "session-a") {
           return new Promise<void>((resolve) => {
-            resolveSessionA = resolve;
+            sessionAControl.resolve = resolve;
           });
         }
         return Promise.resolve();
       },
       getSession: () => null,
       isRunInFlight: () => false,
-      getAllowQuitWithInFlightRuns: () => false,
       confirmCloseWhileRunning: () => false,
       broadcastOpenSessionWindowIds() {},
       persistOpenSessionWindowIds: (sessionIds) => service.saveSnapshot(sessionIds),
@@ -442,8 +469,8 @@ describe("SessionWindowRestoreService", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(created.get("session-a")?.length, 1);
-    assert.ok(resolveSessionA);
-    resolveSessionA();
+    assert.ok(sessionAControl.resolve);
+    sessionAControl.resolve();
 
     const [, result] = await Promise.all([manualOpen, restoring]);
 

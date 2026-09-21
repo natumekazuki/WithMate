@@ -73,8 +73,7 @@ describe("ComposerControllerRegistry", () => {
   it("keeps only the latest pending text and waits for flush", { timeout: 1000 }, async () => {
     let now = 0;
     const saves: string[] = [];
-    let releaseFirstSave: (() => void) | null = null;
-    let releaseSecondSave: (() => void) | null = null;
+    const control: { releaseFirstSave: (() => void) | null; releaseSecondSave: (() => void) | null } = { releaseFirstSave: null, releaseSecondSave: null };
     let secondSaveStarted!: () => void;
     const secondSave = new Promise<void>((resolve) => { secondSaveStarted = resolve; });
     const owner = new AuxiliaryDraftPersistenceOwner({
@@ -84,9 +83,9 @@ describe("ComposerControllerRegistry", () => {
       save: async (input) => {
         saves.push(input.text);
         await new Promise<void>((resolve) => {
-          if (input.text === "A") releaseFirstSave = resolve;
+          if (input.text === "A") control.releaseFirstSave = resolve;
           else {
-            releaseSecondSave = resolve;
+            control.releaseSecondSave = resolve;
             secondSaveStarted();
           }
         });
@@ -98,14 +97,14 @@ describe("ComposerControllerRegistry", () => {
     owner.enqueue("AB");
     owner.enqueue("ABC");
     assert.deepEqual(saves, ["A"]);
-    releaseFirstSave?.();
+    if (control.releaseFirstSave) control.releaseFirstSave();
     await secondSave;
     assert.deepEqual(saves, ["A", "ABC"]);
     let flushCompleted = false;
     const flush = owner.flush().then(() => { flushCompleted = true; });
     await Promise.resolve();
     assert.equal(flushCompleted, false);
-    releaseSecondSave?.();
+    if (control.releaseSecondSave) control.releaseSecondSave();
     await flush;
     await first;
   });

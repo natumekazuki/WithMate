@@ -21,7 +21,9 @@ const sessionTelemetry: SessionContextTelemetry = {
   provider: "copilot",
   sessionId: "session-1",
   updatedAt: "2026-06-10T00:00:00.000Z",
-  snapshots: [],
+  tokenLimit: 1000,
+  currentTokens: 100,
+  messagesLength: 2,
 };
 
 const flushPromises = () => new Promise<void>((resolve) => {
@@ -67,18 +69,28 @@ test("startProviderQuotaTelemetrySubscription は disabled provider では fetch
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "provider quota telemetryは初回取得と対象providerの更新だけを反映する"
+// oracle = { type = "contract", ref = "provider quota telemetry subscription" }
+// fault = "別providerまたはcleanup後のtelemetryが混入する"
+// observable = "owner provider telemetry update sequence"
+// observation_boundary = "public-boundary"
+// scope = "provider-quota-telemetry-subscription"
+// lifecycle = "permanent"
+// @end-test-value
 test("startProviderQuotaTelemetrySubscription は初回取得と対象 provider の購読更新を反映する", async () => {
   const subscribedTelemetry: ProviderQuotaTelemetry = {
     ...providerTelemetry,
     updatedAt: "2026-06-10T01:00:00.000Z",
   };
   const updates: ProviderOwnedQuotaTelemetry[] = [];
-  let subscribedListener: ((providerId: string, telemetry: ProviderQuotaTelemetry | null) => void) | null = null;
+  const control: { subscribedListener: ((providerId: string, telemetry: ProviderQuotaTelemetry | null) => void) | null } = { subscribedListener: null };
   let unsubscribeCount = 0;
   const api: ProviderQuotaTelemetrySubscriptionApi = {
     getProviderQuotaTelemetry: async () => providerTelemetry,
     subscribeProviderQuotaTelemetry: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => {
         unsubscribeCount += 1;
       };
@@ -92,10 +104,10 @@ test("startProviderQuotaTelemetrySubscription は初回取得と対象 provider 
     applyProviderQuotaTelemetry: (state) => updates.push(state),
   });
   await flushPromises();
-  subscribedListener?.("codex", subscribedTelemetry);
-  subscribedListener?.("copilot", subscribedTelemetry);
+  if (control.subscribedListener) control.subscribedListener("codex", subscribedTelemetry);
+  if (control.subscribedListener) control.subscribedListener("copilot", subscribedTelemetry);
   cleanup();
-  subscribedListener?.("copilot", null);
+  if (control.subscribedListener) control.subscribedListener("copilot", null);
 
   assert.deepEqual(updates, [
     { ownerProviderId: "copilot", telemetry: null },
@@ -105,20 +117,30 @@ test("startProviderQuotaTelemetrySubscription は初回取得と対象 provider 
   assert.equal(unsubscribeCount, 1);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "provider telemetry購読更新後の遅い初回取得は新しいtelemetryを巻き戻さない"
+// oracle = { type = "contract", ref = "provider quota telemetry ordering" }
+// fault = "遅い初回nullが購読済みtelemetryを消去する"
+// observable = "applied telemetry sequence"
+// observation_boundary = "public-boundary"
+// scope = "provider-telemetry-stale-initial"
+// lifecycle = "permanent"
+// @end-test-value
 test("startProviderQuotaTelemetrySubscription は購読更新後に遅い初回取得で telemetry を巻き戻さない", async () => {
   const subscribedTelemetry: ProviderQuotaTelemetry = {
     ...providerTelemetry,
     updatedAt: "2026-06-10T01:00:00.000Z",
   };
   const updates: ProviderOwnedQuotaTelemetry[] = [];
-  let subscribedListener: ((providerId: string, telemetry: ProviderQuotaTelemetry | null) => void) | null = null;
+  const control: { subscribedListener: ((providerId: string, telemetry: ProviderQuotaTelemetry | null) => void) | null } = { subscribedListener: null };
   let resolveTelemetry: (telemetry: ProviderQuotaTelemetry | null) => void = () => undefined;
   const api: ProviderQuotaTelemetrySubscriptionApi = {
     getProviderQuotaTelemetry: () => new Promise((resolve) => {
       resolveTelemetry = resolve;
     }),
     subscribeProviderQuotaTelemetry: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => undefined;
     },
   };
@@ -129,7 +151,7 @@ test("startProviderQuotaTelemetrySubscription は購読更新後に遅い初回�
     enabled: true,
     applyProviderQuotaTelemetry: (state) => updates.push(state),
   });
-  subscribedListener?.("copilot", subscribedTelemetry);
+  if (control.subscribedListener) control.subscribedListener("copilot", subscribedTelemetry);
   resolveTelemetry(null);
   await flushPromises();
   cleanup();
@@ -140,20 +162,30 @@ test("startProviderQuotaTelemetrySubscription は購読更新後に遅い初回�
   ]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "provider telemetry購読更新後の遅い初回失敗は有効なtelemetryをnullへ戻さない"
+// oracle = { type = "contract", ref = "provider quota telemetry ordering" }
+// fault = "初回取得失敗が購読済みtelemetryをnullで上書きする"
+// observable = "applied telemetry after failed initial fetch"
+// observation_boundary = "public-boundary"
+// scope = "provider-telemetry-failed-initial"
+// lifecycle = "permanent"
+// @end-test-value
 test("startProviderQuotaTelemetrySubscription は購読更新後に遅い初回取得失敗で telemetry を null に戻さない", async () => {
   const subscribedTelemetry: ProviderQuotaTelemetry = {
     ...providerTelemetry,
     updatedAt: "2026-06-10T01:00:00.000Z",
   };
   const updates: ProviderOwnedQuotaTelemetry[] = [];
-  let subscribedListener: ((providerId: string, telemetry: ProviderQuotaTelemetry | null) => void) | null = null;
+  const control: { subscribedListener: ((providerId: string, telemetry: ProviderQuotaTelemetry | null) => void) | null } = { subscribedListener: null };
   let rejectTelemetry: (error: Error) => void = () => undefined;
   const api: ProviderQuotaTelemetrySubscriptionApi = {
     getProviderQuotaTelemetry: () => new Promise((_, reject) => {
       rejectTelemetry = reject;
     }),
     subscribeProviderQuotaTelemetry: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => undefined;
     },
   };
@@ -164,7 +196,7 @@ test("startProviderQuotaTelemetrySubscription は購読更新後に遅い初回�
     enabled: true,
     applyProviderQuotaTelemetry: (state) => updates.push(state),
   });
-  subscribedListener?.("copilot", subscribedTelemetry);
+  if (control.subscribedListener) control.subscribedListener("copilot", subscribedTelemetry);
   rejectTelemetry(new Error("failed"));
   await flushPromises();
   cleanup();
@@ -275,18 +307,28 @@ test("startSessionContextTelemetrySubscription は disabled session では fetch
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "session context telemetryは初回取得と対象session更新を反映する"
+// oracle = { type = "contract", ref = "session context telemetry subscription" }
+// fault = "別sessionのtelemetryが表示状態へ混入する"
+// observable = "owner session telemetry update sequence"
+// observation_boundary = "public-boundary"
+// scope = "session-context-telemetry-subscription"
+// lifecycle = "permanent"
+// @end-test-value
 test("startSessionContextTelemetrySubscription は初回取得と対象 session の購読更新を反映する", async () => {
   const subscribedTelemetry: SessionContextTelemetry = {
     ...sessionTelemetry,
     updatedAt: "2026-06-10T01:00:00.000Z",
   };
   const updates: SessionOwnedContextTelemetry[] = [];
-  let subscribedListener: ((sessionId: string, telemetry: SessionContextTelemetry | null) => void) | null = null;
+  const control: { subscribedListener: ((sessionId: string, telemetry: SessionContextTelemetry | null) => void) | null } = { subscribedListener: null };
   let unsubscribeCount = 0;
   const api: SessionContextTelemetrySubscriptionApi = {
     getSessionContextTelemetry: async () => sessionTelemetry,
     subscribeSessionContextTelemetry: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => {
         unsubscribeCount += 1;
       };
@@ -300,10 +342,10 @@ test("startSessionContextTelemetrySubscription は初回取得と対象 session 
     applySessionContextTelemetry: (state) => updates.push(state),
   });
   await flushPromises();
-  subscribedListener?.("session-other", subscribedTelemetry);
-  subscribedListener?.("session-1", subscribedTelemetry);
+  if (control.subscribedListener) control.subscribedListener("session-other", subscribedTelemetry);
+  if (control.subscribedListener) control.subscribedListener("session-1", subscribedTelemetry);
   cleanup();
-  subscribedListener?.("session-1", null);
+  if (control.subscribedListener) control.subscribedListener("session-1", null);
 
   assert.deepEqual(updates, [
     { ownerSessionId: "session-1", telemetry: null },
@@ -313,20 +355,30 @@ test("startSessionContextTelemetrySubscription は初回取得と対象 session 
   assert.equal(unsubscribeCount, 1);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "session telemetry購読更新後の遅い初回取得は新しいtelemetryを巻き戻さない"
+// oracle = { type = "contract", ref = "session context telemetry ordering" }
+// fault = "遅い初回nullが購読済みsession telemetryを消去する"
+// observable = "applied session telemetry sequence"
+// observation_boundary = "public-boundary"
+// scope = "session-telemetry-stale-initial"
+// lifecycle = "permanent"
+// @end-test-value
 test("startSessionContextTelemetrySubscription は購読更新後に遅い初回取得で telemetry を巻き戻さない", async () => {
   const subscribedTelemetry: SessionContextTelemetry = {
     ...sessionTelemetry,
     updatedAt: "2026-06-10T01:00:00.000Z",
   };
   const updates: SessionOwnedContextTelemetry[] = [];
-  let subscribedListener: ((sessionId: string, telemetry: SessionContextTelemetry | null) => void) | null = null;
+  const control: { subscribedListener: ((sessionId: string, telemetry: SessionContextTelemetry | null) => void) | null } = { subscribedListener: null };
   let resolveTelemetry: (telemetry: SessionContextTelemetry | null) => void = () => undefined;
   const api: SessionContextTelemetrySubscriptionApi = {
     getSessionContextTelemetry: () => new Promise((resolve) => {
       resolveTelemetry = resolve;
     }),
     subscribeSessionContextTelemetry: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => undefined;
     },
   };
@@ -337,7 +389,7 @@ test("startSessionContextTelemetrySubscription は購読更新後に遅い初回
     enabled: true,
     applySessionContextTelemetry: (state) => updates.push(state),
   });
-  subscribedListener?.("session-1", subscribedTelemetry);
+  if (control.subscribedListener) control.subscribedListener("session-1", subscribedTelemetry);
   resolveTelemetry(null);
   await flushPromises();
   cleanup();
@@ -348,20 +400,30 @@ test("startSessionContextTelemetrySubscription は購読更新後に遅い初回
   ]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "session telemetry購読更新後の遅い初回失敗は有効なtelemetryをnullへ戻さない"
+// oracle = { type = "contract", ref = "session context telemetry ordering" }
+// fault = "初回取得失敗が購読済みsession telemetryをnullで上書きする"
+// observable = "applied telemetry after failed initial fetch"
+// observation_boundary = "public-boundary"
+// scope = "session-telemetry-failed-initial"
+// lifecycle = "permanent"
+// @end-test-value
 test("startSessionContextTelemetrySubscription は購読更新後に遅い初回取得失敗で telemetry を null に戻さない", async () => {
   const subscribedTelemetry: SessionContextTelemetry = {
     ...sessionTelemetry,
     updatedAt: "2026-06-10T01:00:00.000Z",
   };
   const updates: SessionOwnedContextTelemetry[] = [];
-  let subscribedListener: ((sessionId: string, telemetry: SessionContextTelemetry | null) => void) | null = null;
+  const control: { subscribedListener: ((sessionId: string, telemetry: SessionContextTelemetry | null) => void) | null } = { subscribedListener: null };
   let rejectTelemetry: (error: Error) => void = () => undefined;
   const api: SessionContextTelemetrySubscriptionApi = {
     getSessionContextTelemetry: () => new Promise((_, reject) => {
       rejectTelemetry = reject;
     }),
     subscribeSessionContextTelemetry: (listener) => {
-      subscribedListener = listener;
+      control.subscribedListener = listener;
       return () => undefined;
     },
   };
@@ -372,7 +434,7 @@ test("startSessionContextTelemetrySubscription は購読更新後に遅い初回
     enabled: true,
     applySessionContextTelemetry: (state) => updates.push(state),
   });
-  subscribedListener?.("session-1", subscribedTelemetry);
+  if (control.subscribedListener) control.subscribedListener("session-1", subscribedTelemetry);
   rejectTelemetry(new Error("failed"));
   await flushPromises();
   cleanup();

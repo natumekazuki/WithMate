@@ -32,11 +32,13 @@ describe("Codex speed runtime option", () => {
     assert.deepEqual(getCodexSpeedOptions("copilot"), []);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "shared runtime selection projectionはCodexだけにSpeed選択肢を公開する"
   // oracle = { type = "contract", ref = "accepted behavior: shared UI" }
-  // failure_mode = "CopilotなどCodex以外のshared composerにSpeed controlが表示される"
+  // fault = "CopilotなどCodex以外のshared composerにSpeed controlが表示される"
+  // observable = "providerId別のspeedSelectOptions配列"
+  // observation_boundary = "public-boundary"
   // scope = "runtime-selection-options"
   // lifecycle = "permanent"
   // @end-test-value
@@ -49,6 +51,7 @@ describe("Codex speed runtime option", () => {
       selectedApprovalMode: "untrusted" as const,
       selectedCodexSandboxMode: "workspace-write" as const,
       selectedCodexSpeed: "fast" as const,
+      selectedCodexReviewer: "auto-review" as const,
     };
 
     assert.deepEqual(buildRuntimeSelectionOptions({ ...common, providerId: "copilot" }).speedSelectOptions, []);

@@ -179,13 +179,16 @@ it("provider execution markerにbindingがなければdispatchせずstructured a
     assert.equal((JSON.parse(output) as { code: string }).code, "GLOSSARY_SESSION_BINDING_REQUIRED");
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "dispatch済みwriteのresponse lossをeffect unknownへ分類する"
 // oracle = { type = "contract", ref = "Glossary runtime contract" }
-// failure_mode = "保存結果を成功と誤認する"
+// fault = "保存結果を成功と誤認する"
+// observable = "runtime envelopeのok/code/effect/retryableとdispatch回数"
+// observation_boundary = "public-boundary"
 // scope = "glossary-cli"
 // lifecycle = "permanent"
+// distinction = "HTTP statusだけでは検出できないresponse schema不一致のunknown分類を確認する"
 // @end-test-value
 it("dispatch済みwriteの非glossary responseはHTTP statusによらずeffect unknownにする", async () => {
     const result = await callGlossaryRuntime({
@@ -203,21 +206,26 @@ it("dispatch済みwriteの非glossary responseはHTTP statusによらずeffect u
       runtimeCall: async () => ({ ok: true, status: 200, value: {} }),
     });
 
+    assert.ok("ok" in result);
     assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.equal(result.code, "GLOSSARY_TRANSPORT_ERROR");
-      assert.equal(result.effect, "unknown");
-      assert.equal(result.retryable, false);
-    }
+    assert.ok("code" in result);
+    assert.ok("effect" in result);
+    assert.ok("retryable" in result);
+    assert.equal(result.code, "GLOSSARY_TRANSPORT_ERROR");
+    assert.equal(result.effect, "unknown");
+    assert.equal(result.retryable, false);
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "Glossary exchangeでbody拒否をdispatch前effect noneへ分類する"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "拒否されたbodyがapplicationへ到達する"
+// fault = "拒否されたbodyがapplicationへ到達する"
+// observable = "exchange path、turn capability、application call count、effect none"
+// observation_boundary = "public-boundary"
 // scope = "glossary-cli"
 // lifecycle = "permanent"
+// distinction = "通常のGlossary writeでは検出できないdispatch前body拒否境界を確認する"
 // @end-test-value
 it("Glossary専用exchangeを使い、body拒否はapplication未到達のeffect noneにする", async () => {
     let exchangePath = "";
@@ -243,11 +251,13 @@ it("Glossary専用exchangeを使い、body拒否はapplication未到達のeffect
 
     assert.equal(exchangePath, WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH);
     assert.equal(turnCapability, CLI_ENV.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY);
+    assert.ok("ok" in result);
     assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.equal(result.code, "GLOSSARY_LIMIT_EXCEEDED");
-      assert.equal(result.effect, "none");
-      assert.equal(result.retryable, false);
-    }
+    assert.ok("code" in result);
+    assert.ok("effect" in result);
+    assert.ok("retryable" in result);
+    assert.equal(result.code, "GLOSSARY_LIMIT_EXCEEDED");
+    assert.equal(result.effect, "none");
+    assert.equal(result.retryable, false);
   });
 });

@@ -155,7 +155,10 @@ function createCharacterProfile(): CharacterProfile {
   };
 }
 
-const conversationTestThemeColors = {};
+const conversationTestThemeColors = {
+  main: "#6f8cff",
+  sub: "#6fb8c7",
+};
 
 function ConversationBackedMessageColumn(props: SessionMessageColumnProps) {
   return React.createElement(ConversationMessageColumn, {
@@ -544,6 +547,13 @@ async function mountSessionMessageColumn(options: {
     isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
+    messageKeys?: SessionMessageColumnProps["messageKeys"];
+    messageCollapseTargets?: SessionMessageColumnProps["messageCollapseTargets"];
+    collapsedMessageKeys?: SessionMessageColumnProps["collapsedMessageKeys"];
+    messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
+    onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
+    onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
+    onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
     messages?: Message[];
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
@@ -2256,12 +2266,9 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       selectedCustomAgentLabel: "Agent",
       selectedCustomAgentTitle: "Agent",
       additionalDirectoryCount: 0,
-      canCollapseActionDock: true,
       showJumpToBottom: true,
       isCustomAgentListLoading: false,
-      isSkillListLoading: false,
       customAgentItems: [],
-      skillItems: [],
       attachmentItems: [],
       draft: "",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
@@ -2277,6 +2284,10 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       isComposerBlockedFeedbackActive: false,
       approvalOptions: [{ value: "untrusted", label: "untrusted" }],
       selectedApprovalMode: "untrusted",
+      reviewerOptions: [],
+      selectedCodexReviewer: "user",
+      speedOptions: [],
+      selectedCodexSpeed: "standard",
       sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
       selectedCodexSandboxMode: "workspace-write",
       modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4" }],
@@ -2291,12 +2302,9 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       onToggleSkillPicker() {},
       onAddAdditionalDirectory() {},
       onToggleAdditionalDirectoryList() {},
-      onCollapse() {},
       onJumpToBottom() {},
       onSelectCustomAgent() {},
-      onSelectSkill() {},
       onRemoveAttachment() {},
-      onRemoveAdditionalDirectory() {},
       onDraftChange() {},
       onDraftFocus() {},
       onDraftKeyDown() {},
@@ -2305,6 +2313,8 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       onDraftCompositionEnd() {},
       onSendOrCancel() {},
       onChangeApprovalMode() {},
+      onChangeCodexReviewer() {},
+      onChangeCodexSpeed() {},
       onChangeCodexSandboxMode() {},
       onChangeModel() {},
       onChangeReasoningEffort() {},
@@ -2423,12 +2433,9 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       selectedCustomAgentLabel: "Agent",
       selectedCustomAgentTitle: "Agent",
       additionalDirectoryCount: 0,
-      canCollapseActionDock: true,
       showJumpToBottom: true,
       isCustomAgentListLoading: false,
-      isSkillListLoading: false,
       customAgentItems: [],
-      skillItems: [],
       attachmentItems: [],
       draft: "実行中の下書き",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
@@ -2444,6 +2451,10 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       isComposerBlockedFeedbackActive: false,
       approvalOptions: [{ value: "untrusted", label: "untrusted" }],
       selectedApprovalMode: "untrusted",
+      reviewerOptions: [],
+      selectedCodexReviewer: "user",
+      speedOptions: [],
+      selectedCodexSpeed: "standard",
       sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
       selectedCodexSandboxMode: "workspace-write",
       modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4" }],
@@ -2458,12 +2469,9 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       onToggleSkillPicker() {},
       onAddAdditionalDirectory() {},
       onToggleAdditionalDirectoryList() {},
-      onCollapse() {},
       onJumpToBottom() {},
       onSelectCustomAgent() {},
-      onSelectSkill() {},
       onRemoveAttachment() {},
-      onRemoveAdditionalDirectory() {},
       onDraftChange() {},
       onDraftFocus() {},
       onDraftKeyDown() {},
@@ -2472,6 +2480,8 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       onDraftCompositionEnd() {},
       onSendOrCancel() {},
       onChangeApprovalMode() {},
+      onChangeCodexReviewer() {},
+      onChangeCodexSpeed() {},
       onChangeCodexSandboxMode() {},
       onChangeModel() {},
       onChangeReasoningEffort() {},
@@ -2602,6 +2612,7 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
   assert.match(html, />Cancel<\/button>/);
   const renderedDocument = new JSDOM(html).window.document;
   const actions = renderedDocument.querySelector(".session-action-dock-compact-actions");
+  assert.ok(actions);
   const cancelSlot = actions?.querySelector(":scope > .session-action-dock-cancel-slot");
   const targetSlot = actions?.querySelector(":scope > .session-action-dock-target-slot");
   assert.ok(cancelSlot);
@@ -2880,8 +2891,6 @@ test("SessionActionDockCompactRow はcontroller-only preview通知で添付件�
 test("SessionContextPane は latest command がないとき empty text を表示する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionContextPane, {
-      taskTitle: "task",
-      isHeaderExpanded: false,
       activeContextPaneTab: "latest-command",
       availableContextPaneTabs: ["latest-command"],
       contextPaneProjection: buildContextPaneProjection({
@@ -2910,7 +2919,6 @@ test("SessionContextPane は latest command がないとき empty text を表示
         conversationTokensLabel: "",
       },
       contextEmptyText: "context usage はまだありません",
-      onToggleHeaderExpanded() {},
       onCycleContextPaneTab() {},
     }),
   );

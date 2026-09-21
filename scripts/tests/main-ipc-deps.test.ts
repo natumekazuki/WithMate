@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { WebContents } from "electron";
 
 import { createMainIpcRegistrationDeps } from "../../src-electron/main-ipc-deps.js";
+import type {
+  MainIpcCatalogDepsArgs,
+  MainIpcPromptTemplateDepsArgs,
+  MainIpcSessionQueryDepsArgs,
+  MainIpcSettingsDepsArgs,
+  MainIpcWindowDepsArgs,
+} from "../../src-electron/main-ipc-deps.js";
 
 // @test-value v2
 // kind = "contract"
@@ -34,7 +42,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       resolveEventWindow: () => null,
       resolveHomeWindow: () => null,
       resolveSessionWindow: () => null,
-      async openSessionWindow(sessionId, auxiliarySessionId) {
+      async openSessionWindow(sessionId: string, auxiliarySessionId?: string) {
         calls.push(`openSession:${sessionId}:${auxiliarySessionId ?? "none"}`);
         return {} as never;
       },
@@ -82,6 +90,15 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async openDiffWindow() {
         return {} as never;
       },
+      isFilePreviewWindow: () => {
+        throw new Error("unused window fixture method");
+      },
+      getFilePreviewWindowResource: () => {
+        throw new Error("unused window fixture method");
+      },
+      isFilePreviewTokenWindow: () => {
+        throw new Error("unused window fixture method");
+      },
       async pickDirectory() {
         return null;
       },
@@ -106,14 +123,38 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async pickImageFile() {
         return null;
       },
+      copyFilesToSessionFiles: async () => {
+        throw new Error("unused window fixture method");
+      },
+      savePastedSessionFile: async () => {
+        throw new Error("unused window fixture method");
+      },
+      openSessionFilesDirectory: async () => {
+        throw new Error("unused window fixture method");
+      },
+      openSessionFilesTerminal: async () => {
+        throw new Error("unused window fixture method");
+      },
       copySessionFilePreviewImage: async () => ({ status: "copied" }),
       showSessionFilePreviewImageContextMenu: async () => ({ status: "dismissed" }),
-      async openPathTarget() {},
+      copySessionFileObject: async () => {
+        throw new Error("unused window fixture method");
+      },
+      showSessionFileObjectCopyContextMenu: async () => {
+        throw new Error("unused window fixture method");
+      },
+      showSessionFileTreeContextMenu: async () => {
+        throw new Error("unused window fixture method");
+      },
+      showMarkdownLinkContextMenu: async () => {
+        throw new Error("unused window fixture method");
+      },
+      async openPathTarget() { return { status: "opened", targetType: "local-path", target: "" }; },
       async openAppLogFolder() {},
       async openCrashDumpFolder() {},
       async openSessionTerminal() {},
       async openTerminalAtPath() {},
-    },
+    } satisfies MainIpcWindowDepsArgs,
     catalog: {
       getModelCatalog: () => null,
       importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
@@ -124,7 +165,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async exportModelCatalogToFile() {
         return null;
       },
-    },
+    } satisfies MainIpcCatalogDepsArgs,
     settings: {
       getAppSettings: () =>
         ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
@@ -139,17 +180,17 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       runMemoryV6ProtectedObjectGc: () => ({}) as never,
       searchMemoryV6Entries: () => ({ items: [] }),
       getMemoryV6Entry: () => null,
-      forgetMemoryV6Entry: (entryId) => ({ entryId, status: "not_found", reason: "user_request" }),
+      forgetMemoryV6Entry: (entryId: string) => ({ entryId, status: "not_found", reason: "user_request" }),
       async resetAppDatabase() {
         return null;
       },
-    },
+    } satisfies MainIpcSettingsDepsArgs,
     promptTemplates: {
       listPromptTemplates: () => [],
       createPromptTemplate: () => [],
       updatePromptTemplate: () => [],
       deletePromptTemplate: () => [],
-    },
+    } satisfies MainIpcPromptTemplateDepsArgs,
     sessionQuery: {
       listSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
       listSessionCharacterUsage: () => [],
@@ -165,7 +206,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async listWorkspaceCustomAgents() { return []; },
       listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextCursor: null, hasMore: false }),
       getSession: () => null,
-      getSessionGlossaryProjection: (sessionId) => ({
+      getSessionGlossaryProjection: (sessionId: string) => ({
         sessionId,
         scopeRevision: "scope",
         sequence: 1,
@@ -179,7 +220,55 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async previewComposerInput() {
         return null;
       },
-    },
+      getSessionFileExplorerOwnerSessionId: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      listSessionFileRoots: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      listSessionDirectory: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      inspectSessionFile: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      readSessionFileChunk: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      openSessionFile: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      openSessionFilePreviewWindow: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      getSessionFilePreviewWindowPayload: () => {
+        throw new Error("unused session query fixture method");
+      },
+      listFileRootChanges: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      listFileRootChangesRepositories: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      getFileRootDiff: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      listFileRootGitHistoryRepositories: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      listFileRootGitHistoryCommits: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      getFileRootGitHistoryCommitDetail: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      getFileRootGitHistoryComparison: async () => {
+        throw new Error("unused session query fixture method");
+      },
+      getFileRootGitHistoryDiff: async () => {
+        throw new Error("unused session query fixture method");
+      },
+    } satisfies MainIpcSessionQueryDepsArgs,
     sessionRuntime: {
       getLiveSessionRun: () => null,
       async getProviderQuotaTelemetry() {
@@ -197,6 +286,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         return {} as never;
       },
       cancelSessionRun: () => {},
+      setSessionPinned: () => { throw new Error("not used"); },
     },
     character: {
       async listCharacters() {
@@ -220,6 +310,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async resolveLaunchCharacter() {
         return null;
       },
+      async startCharacterAuthoringSession() { throw new Error("not used"); },
     },
     mate: {
       getMateState() {
@@ -250,7 +341,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
 
   assert.equal(await deps.openHomeWindow(), undefined);
   assert.equal(deps.acknowledgeSessionDraftFlush, acknowledgeSessionDraftFlush);
-  const sender = {};
+  const sender = {} as WebContents;
   const payload = { requestId: "flush-1", success: true };
   deps.acknowledgeSessionDraftFlush({ sender }, payload);
   assert.deepEqual(acknowledged, { sender, payload });

@@ -150,24 +150,34 @@ test("PromptTemplateWorkspace は初期表示を選択専用modeにする", asyn
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Prompt template workspaceは外部close guardを登録し、未変更状態ではcloseを許可する"
+// oracle = { type = "contract", ref = "PromptTemplateWorkspace close guard contract" }
+// fault = "close guardが登録されない、またはclean stateを不要に拒否する"
+// observable = "登録guardの存在とclean stateでの戻り値"
+// observation_boundary = "component-behavior"
+// scope = "PromptTemplateWorkspace external close guard"
+// lifecycle = "permanent"
+// @end-test-value
 test("Templateは外部close guardを登録し、clean stateでは閉じられる", async () => {
   const harness = createDomHarness();
-  let closeGuard: (() => boolean) | null = null;
+  const closeGuard: { current: (() => boolean) | null } = { current: null };
   try {
     await renderAndFlush(
       harness.root,
       <PromptTemplateWorkspace
         api={createApi([FIRST_TEMPLATE])}
         onRegisterCloseGuard={(guard) => {
-          closeGuard = guard;
+          closeGuard.current = guard;
         }}
         onBack={() => {}}
         onInsert={() => {}}
       />,
     );
 
-    assert.ok(closeGuard);
-    assert.equal(closeGuard?.(), true);
+    assert.ok(closeGuard.current);
+    assert.equal(closeGuard.current!(), true);
   } finally {
     await act(async () => harness.root.unmount());
     harness.dom.window.close();

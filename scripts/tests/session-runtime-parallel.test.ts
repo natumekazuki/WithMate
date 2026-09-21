@@ -27,6 +27,7 @@ function session(id: string, provider: string): Session {
       character: id,
       characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: "on-request",
     }),
   };
 }
@@ -57,8 +58,8 @@ function adapter(
       };
     },
     async getProviderQuotaTelemetry() { return null; },
-    invalidateSessionThread() {},
-    invalidateAllSessionThreads() {},
+    async invalidateSessionThread() {},
+    async invalidateAllSessionThreads() {},
     runSessionTurn(input) {
       onStart(input.session.id);
       const resultPromise = gates.get(input.session.id)!;
@@ -119,7 +120,7 @@ function makeRuntimeService(
   let auditId = 0;
   const liveRuns = new Map<string, any>();
   const appSettings = normalizeAppSettings({});
-  appSettings.codingProviderSettings.gemini = { enabled: true, apiKey: "" };
+  appSettings.codingProviderSettings.gemini = { enabled: true, apiKey: "", skillRootPath: "" };
   return new SessionRuntimeService({
     getSession: (id) => stored.get(id) ?? null,
     upsertSession: (next, options) => {
@@ -135,7 +136,7 @@ function makeRuntimeService(
       const provider = providerCatalog(providerId ?? "codex");
       return { provider, snapshot: { revision: 1, providers: [provider] } };
     },
-    getProviderCodingAdapter: (providerId) => adapters.get(providerId)!,
+    getProviderCodingAdapter: (providerId) => adapters.get(providerId ?? "codex")!,
     getSessionMemory: (next) => ({
       sessionId: next.id,
       workspacePath: next.workspacePath,

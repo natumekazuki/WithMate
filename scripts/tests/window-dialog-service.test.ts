@@ -4,6 +4,16 @@ import test from "node:test";
 import type { ModelCatalogDocument } from "../../src/model-catalog.js";
 import { WindowDialogService } from "../../src-electron/window-dialog-service.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "WindowDialogServiceがdirectory、file、image pickerの選択結果を対応するdialogへ委譲する"
+// oracle = { type = "contract", ref = "src-electron/window-dialog-service.ts" }
+// fault = "dialogのcancel結果や選択pathを変換・欠落させる"
+// observable = "dialog呼出し引数と各pickerの戻り値"
+// observation_boundary = "public-boundary"
+// scope = "window-dialog-service"
+// lifecycle = "permanent"
+// @end-test-value
 test("WindowDialogService は directory / file / image picker の選択結果を返す", async () => {
   const calls: Array<{ kind: "open" | "save"; options: unknown }> = [];
   const service = new WindowDialogService({
@@ -65,6 +75,16 @@ test("WindowDialogService は directory / file / image picker の選択結果を
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "model catalog import/exportはdialogで選択したfile pathとJSON内容を既存のfile I/Oおよびcatalog serviceへ接続する"
+// oracle = { type = "contract", ref = "src-electron/window-dialog-service.ts model catalog import/export" }
+// fault = "選択pathを無視する、catalog JSONを変換して保存する、またはimport/export serviceを呼ばない"
+// observable = "read/write file pathとcontent、catalog serviceへ渡されたdocument、export path"
+// observation_boundary = "public-boundary"
+// scope = "window-dialog-service-model-catalog"
+// lifecycle = "permanent"
+// @end-test-value
 test("WindowDialogService は model catalog import/export を file I/O と接続する", async () => {
   const importedDocuments: ModelCatalogDocument[] = [];
   const writtenFiles: Array<{ filePath: string; content: string }> = [];
@@ -94,7 +114,7 @@ test("WindowDialogService は model catalog import/export を file I/O と接続
     async writeTextFile(filePath, content) {
       writtenFiles.push({ filePath, content });
     },
-    importModelCatalogDocument(document) {
+    async importModelCatalogDocument(document) {
       importedDocuments.push(document);
       return { revision: 4, providers: document.providers };
     },

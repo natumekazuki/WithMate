@@ -29,14 +29,19 @@ function createSession(partial: Partial<Session> & Pick<Session, "id" | "taskTit
     },
     runState: "idle",
     approvalMode: "untrusted",
-    model: "gpt-5.4",
-    reasoningEffort: "high",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "",
     messages: [],
     stream: [],
     ...partial,
+    isPinned: partial.isPinned ?? false,
+    characterRuntimeSnapshot: partial.characterRuntimeSnapshot ?? null,
+    codexSandboxMode: partial.codexSandboxMode ?? "workspace-write",
+    model: partial.model ?? "gpt-5.4",
+    reasoningEffort: partial.reasoningEffort ?? "high",
+    codexSpeed: partial.codexSpeed ?? "standard",
+    codexReviewer: partial.codexReviewer ?? "auto-review",
   };
 }
 
@@ -59,6 +64,8 @@ function createAuxiliarySession(partial: Partial<AuxiliarySessionSummary> & Pick
     updatedAt: "2026-03-30T00:00:00.000Z",
     closedAt: "",
     ...partial,
+    codexSpeed: partial.codexSpeed ?? "standard",
+    codexReviewer: partial.codexReviewer ?? "auto-review",
   };
 }
 

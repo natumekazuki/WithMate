@@ -250,6 +250,16 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "ActionDock compact heightは展開時の外枠ではなくcompact rowの実測値から算出する"
+// oracle = { type = "contract", ref = "ActionDock compact height layout contract" }
+// fault = "expanded outer heightをcompact heightとして採用し、レイアウト余白または表示位置を壊す"
+// observable = "reported compact height"
+// observation_boundary = "component-behavior"
+// scope = "ActionDock compact height measurement"
+// lifecycle = "permanent"
+// @end-test-value
 test("ActionDock compact height は展開時の外枠高ではなく compact row から算出する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -327,7 +337,7 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
     if (previousScrollHeight) {
       Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", previousScrollHeight);
     } else {
-      delete (dom.window.HTMLElement.prototype as Partial<HTMLElement>).scrollHeight;
+      Reflect.deleteProperty(dom.window.HTMLElement.prototype, "scrollHeight");
     }
     dom.window.close();
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;

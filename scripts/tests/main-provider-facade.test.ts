@@ -18,7 +18,7 @@ import { MainProviderFacade } from "../../src-electron/main-provider-facade.js";
 test("MainProviderFacade は provider catalog を解決し adapter 無効化を委譲する", async () => {
   const calls: string[] = [];
   const codexAdapter = {
-    invalidateSessionThread(sessionId: string) {
+    async invalidateSessionThread(sessionId: string) {
       calls.push(`codex:${sessionId}`);
     },
     async invalidateAllSessionThreads() {
@@ -26,7 +26,7 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
     },
   };
   const copilotAdapter = {
-    invalidateSessionThread(sessionId: string) {
+    async invalidateSessionThread(sessionId: string) {
       calls.push(`copilot:${sessionId}`);
     },
     async invalidateAllSessionThreads() {
@@ -40,6 +40,7 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
         {
           id: "codex",
           name: "Codex",
+          label: "Codex",
           defaultModelId: "gpt-5.4-mini",
           defaultReasoningEffort: "medium",
           models: [],
@@ -47,6 +48,7 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
         {
           id: "copilot",
           name: "Copilot",
+          label: "Copilot",
           defaultModelId: "gpt-5.4-mini",
           defaultReasoningEffort: "medium",
           models: [],

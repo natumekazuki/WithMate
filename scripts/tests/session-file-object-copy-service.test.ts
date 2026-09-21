@@ -160,6 +160,17 @@ test("現在のabsolute-file preview resourceは明示Copy File操作でcopyで�
   assert.deepEqual(writes, [absoluteResource.absolutePath]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "file object copy serviceはcopy operationを直列化してread-back競合を避ける"
+// oracle = { type = "contract", ref = "src-electron/session-file-object-copy-service.ts: copy queue" }
+// fault = "並行copyがread-back順序を競合させ、後発結果で対象contentを壊す"
+// observable = "operation orderと最終copied content"
+// observation_boundary = "public-boundary"
+// scope = "session-file-object-copy-serialization"
+// lifecycle = "permanent"
+// distinction = "単一copy成功では検出できないqueue競合を確認する"
+// @end-test-value
 test("file object copy serviceはcopy operationを直列化してread-back競合を避ける", async () => {
   const order: string[] = [];
   let releaseFirst!: () => void;
@@ -174,7 +185,7 @@ test("file object copy serviceはcopy operationを直列化してread-back競合
         return { type: "file", resource: RESOURCE };
       },
       async withAuthorizedFilePath(request, operation) {
-        const targetPath = "relativePath" in request ? request.relativePath : request.previewToken;
+        const targetPath = "relativePath" in request ? request.relativePath : request.absolutePath;
         return { result: await operation(targetPath), targetStillCurrent: true };
       },
     }),
@@ -202,6 +213,17 @@ test("file object copy serviceはcopy operationを直列化してread-back競合
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Files context menuはpopup close後もcopy resultを優先して通知する"
+// oracle = { type = "contract", ref = "src-electron/session-file-object-copy-service.ts: context menu copy" }
+// fault = "popup closeを成功扱いしてcopy失敗または結果を利用者へ伝えない"
+// observable = "popup callback、copy result、close state"
+// observation_boundary = "public-boundary"
+// scope = "session-file-context-menu-copy"
+// lifecycle = "permanent"
+// distinction = "copy service直呼出では検出できないpopup lifecycle競合を確認する"
+// @end-test-value
 test("Files context menuは選択後のpopup closeよりcopy resultを優先する", async () => {
   let menuTemplate: Array<{ click?: () => void }> = [];
   let popupCallback: (() => void) | undefined;
@@ -222,7 +244,7 @@ test("Files context menuは選択後のpopup closeよりcopy resultを優先す�
       menuTemplate = template as Array<{ click?: () => void }>;
       return {
         popup(options) {
-          popupCallback = options.callback;
+          popupCallback = options?.callback;
         },
       };
     },

@@ -1047,6 +1047,18 @@ describe("MemoryV6Storage", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "security"
+  // claim = "privacy forgetは既にforgottenのentryでも本文・preview・title・tagsとfile metadataを縮退する"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#forget" }
+  // fault = "再度のprivacy forgetで残存content、tags、display name、summaryを通常取得可能なままにする"
+  // observable = "already_forgotten response、entryのredacted fields/tags、protected object state/metadata、更新時刻"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-storage.privacy-forget"
+  // lifecycle = "permanent"
+  // impact = "忘却要求後に本文とfile識別情報が再公開されることを防ぐ"
+  // distinction = "既にforgottenな状態からのprivacy redactionとprotected object投影をstorage read-backで確認する"
+  // @end-test-value
   it("privacy forget は既にforgottenのentryもcontentとtagsを縮退する", async () => {
     await withStorage(({ storage, dbPath }) => {
       storage.appendEntry(baseAppend({
@@ -1073,7 +1085,6 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-outdated-private",
         state: "active",
         summary: "late protected object",
-        displayName: "late-private.png",
         originalBytes: 10,
         storedBytes: 12,
       });

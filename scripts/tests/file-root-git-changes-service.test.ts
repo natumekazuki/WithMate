@@ -314,7 +314,9 @@ test("FileRootGitChangesService はdirectとbranch changesを固定OIDで比較�
     assert.equal(nestedDiff.status, "ok");
     if (nestedDiff.status === "ok") {
       assert.match(nestedDiff.patch, /nested feature/);
+      assert.ok("previewBeforeResource" in nestedDiff);
       assert.equal(nestedDiff.previewBeforeResource, null);
+      assert.ok("previewAfterResource" in nestedDiff);
       assert.deepEqual(nestedDiff.previewAfterResource, {
         resourceKind: "git-commit-file",
         sessionId: "session-1",
@@ -334,6 +336,7 @@ test("FileRootGitChangesService はdirectとbranch changesを固定OIDで比較�
     assert.equal(fixedDiff.status, "ok");
     if (fixedDiff.status === "ok") {
       assert.match(fixedDiff.patch, /feature-only/);
+      assert.ok("comparison" in fixedDiff);
       assert.equal(fixedDiff.comparison.targetCommitId, featureCommitId);
     }
   } finally {
@@ -424,6 +427,7 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
     if (binaryDiff.status === "ok") {
       assert.match(binaryDiff.patch, /Binary files .* differ/);
       assert.doesNotMatch(binaryDiff.patch, /GIT binary patch/);
+      assert.ok("previewResource" in binaryDiff);
       assert.deepEqual(binaryDiff.previewResource, {
         resourceKind: "git-commit-file",
         sessionId: "session-1",
@@ -454,19 +458,19 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
         },
       });
       assert.deepEqual(
-        await metadataOnlyService.resolveHistoryFilePreview(binaryDiff.previewResource!),
+        await metadataOnlyService.resolveHistoryFilePreview(binaryDiff.previewResource),
         { name: "binary.bin" },
       );
       assert.equal(blobReadAttempts, 0);
       await writeFile(path.join(repositoryPath, "binary.bin"), Buffer.from([9, 9, 9]));
       allowBlobInspection = true;
-      const descriptor = await metadataOnlyService.inspectHistoryFile(binaryDiff.previewResource!);
+      const descriptor = await metadataOnlyService.inspectHistoryFile(binaryDiff.previewResource);
       assert.equal(blobReadAttempts, 1);
       assert.equal(descriptor.revision.length, binaryCommit.id.length);
       assert.equal(descriptor.kind, "binary");
       assert.equal(descriptor.byteLength, 5);
       const chunk = await service.readHistoryFileChunk({
-        ...binaryDiff.previewResource!,
+        ...binaryDiff.previewResource,
         offset: 0,
         length: descriptor.byteLength,
         expectedRevision: descriptor.revision,
@@ -490,6 +494,7 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
     });
     assert.equal(deletedDiff.status, "ok");
     if (deletedDiff.status === "ok") {
+      assert.ok("previewResource" in deletedDiff);
       assert.equal(deletedDiff.previewResource, null);
     }
     assert.equal((await runGitForTest(repositoryPath, [
@@ -512,6 +517,7 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
     });
     assert.equal(gitlinkDiff.status, "ok");
     if (gitlinkDiff.status === "ok") {
+      assert.ok("previewResource" in gitlinkDiff);
       assert.equal(gitlinkDiff.previewResource, null);
     }
 

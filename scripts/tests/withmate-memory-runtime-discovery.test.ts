@@ -284,11 +284,13 @@ it("expired leaseはchallenge失敗ならstale、成功ならactiveとして扱�
     } finally { await runtime.publication.unpublish(); await rm(root, { recursive: true, force: true }); }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "compatibility"
 // claim = "legacy pointerとregistryは同一runtimeだけdedupeし別runtimeはambiguousにする"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "legacy pointerがregistry候補を隠す、または重複候補を作る"
+// fault = "legacy pointerがregistry候補を隠す、または同一runtimeを重複候補として扱う"
+// observable = "同一runtimeのresolve結果と、別runtime併存時のresolver kind/code"
+// observation_boundary = "public-boundary"
 // scope = "memory-runtime-legacy"
 // lifecycle = "permanent"
 // @end-test-value
@@ -308,7 +310,7 @@ it("legacy pointerの同一runtimeは重複計上せず、別runtimeならambigu
         root,
         "active",
         runtime.publication.slotName,
-        buildRuntimeDiscoveryCredentialFileName("cli"),
+        buildRuntimeDiscoveryCredentialFileName({ ...runtime.identity, runtimeKind: "memory" }, "cli"),
       ), "{}\n");
       const registryCredentialInvalid = await resolveWithMateMemoryApi({ adapter: "cli", registryRootDirectoryPath: root, env: unboundEnv, legacyDiscoveryFilePath: pointerPath, fetch: statusFetch(runtime.identity.applicationInstanceId, runtime.identity.runtimeGenerationId) });
       assert.equal(registryCredentialInvalid.kind, "selected");

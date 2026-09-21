@@ -161,6 +161,16 @@ function createLiveRunState(overrides?: Partial<LiveSessionRunState>): LiveSessi
 }
 
 describe("SessionRuntimeService stale retry helpers", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "stale classifierはnarrowなthread/session系errorだけをretry対象にする"
+  // oracle = { type = "contract", ref = "Session runtime stale classifier contract" }
+  // fault = "無関係なprovider errorをstale扱いしてretryする、またはstale errorを見逃す"
+  // observable = "classifier result for representative error codes"
+  // observation_boundary = "component-behavior"
+  // scope = "SessionRuntimeService stale error classifier"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("stale classifier は narrow な thread / session 系だけを対象にする", () => {
     assert.equal(isRetryableStaleThreadSessionError(new Error("thread not found")), true);
     assert.equal(isRetryableStaleThreadSessionError(new Error("session expired on provider side")), true);
@@ -175,6 +185,16 @@ describe("SessionRuntimeService stale retry helpers", () => {
     assert.equal(isRetryableStaleThreadSessionError(new Error("socket hang up")), false);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "meaningful partial判定はassistantText、operations、artifactのいずれかを観測する"
+  // oracle = { type = "contract", ref = "Session runtime meaningful partial classifier contract" }
+  // fault = "利用者に返せるpartial情報を空扱いし、不要なretryまたは破棄を行う"
+  // observable = "meaningful partial classifier result"
+  // observation_boundary = "component-behavior"
+  // scope = "SessionRuntimeService partial response classification"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("meaningful partial 判定は assistantText / operations / artifact を見る", () => {
     assert.equal(hasMeaningfulPartialRunResult(createPartialResult()), false);
     assert.equal(hasMeaningfulPartialRunResult(createPartialResult({ rawItemsJson: "[{\"kind\":\"trace\"}]" })), false);
@@ -213,7 +233,7 @@ describe("SessionRuntimeService", () => {
     const timingCompletionSnapshots: Array<string | null> = [];
     let lastCommittedAt: string | null = null;
     let blockCompletedAudit = false;
-    let releaseCompletedAudit: (() => void) | null = null;
+    let releaseCompletedAudit: () => void = () => undefined;
     const confirmedPreviewTexts: Array<string | null | undefined> = [];
     let terminalUpsertCount = 0;
     let terminalUpsertStarted = false;
@@ -234,8 +254,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         return {
           ...createPartialResult({ assistantText: "完了" }),
@@ -245,8 +265,6 @@ describe("SessionRuntimeService", () => {
     };
     const context = (version: number): CharacterContextResponse => ({
       schemaVersion: "withmate-character-context-v1",
-      characterId: "char-a",
-      sessionId: storedSession.id,
       baseline: { definitionSha256: "sha", snapshotAt: "2026-08-09T00:00:00.000Z" },
       affect: {
         mode: "active",
@@ -256,7 +274,6 @@ describe("SessionRuntimeService", () => {
         updatedAt: "2026-08-09T00:00:00.000Z",
       },
       memory: { items: [], updatedAt: null },
-      scope: { userId: "local-user", characterId: "char-a", sessionId: storedSession.id },
     });
 
     const service = new SessionRuntimeService({
@@ -327,8 +344,8 @@ describe("SessionRuntimeService", () => {
         await new Promise<void>(() => undefined);
       },
       createAuditLog(input) {
-        const requestMetadata = input.providerMetadata.find((entry) => entry.kind === "session_turn_request");
-        const clientRequestId = requestMetadata?.payload && "clientRequestId" in requestMetadata.payload
+        const requestMetadata = (input.providerMetadata ?? []).find((entry) => entry.kind === "session_turn_request");
+        const clientRequestId = requestMetadata?.payload && typeof requestMetadata.payload === "object" && requestMetadata.payload !== null && "clientRequestId" in requestMetadata.payload
           ? requestMetadata.payload.clientRequestId
           : null;
         if (typeof clientRequestId === "string") {
@@ -352,14 +369,14 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       waitForApprovalDecision() {
-        return "approve";
+        return "approve" as const;
       },
       waitForElicitationResponse() {
         return { action: "cancel" };
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
@@ -439,9 +456,19 @@ describe("SessionRuntimeService", () => {
     });
     assert.equal(followingResult.runState, "idle");
     blockCompletedAudit = false;
-    releaseCompletedAudit();
+releaseCompletedAudit!();
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "terminal audit fallbackはsession turn correlationだけを保持する"
+  // oracle = { type = "contract", ref = "Session runtime terminal audit correlation contract" }
+  // fault = "fallback auditへ無関係なcorrelationを混入し、turn追跡を誤る"
+  // observable = "fallback audit correlation fields"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService terminal audit fallback"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("terminal audit fallback はsession turn correlationだけを保持する", () => {
     const correlation = {
       provider: "codex",
@@ -462,6 +489,16 @@ describe("SessionRuntimeService", () => {
     ]), [correlation]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "HTTP runtime未初期化時もpendingを先に永続化し、保存失敗時はcompletedへ遷移しない"
+  // oracle = { type = "contract", ref = "Session runtime persistence ordering contract" }
+  // fault = "completed sessionを先に保存してpendingを失う、または保存失敗をcompletedとして通知する"
+  // observable = "保存順序、保存結果、最終Session runState"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService pending persistence and failure handling"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("HTTP runtime未初期化でもpendingをcompleted Sessionより先に永続化し、保存失敗時はcompletedにしない", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-mandatory-appraisal-"));
     const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "app.sqlite"));
@@ -489,8 +526,8 @@ describe("SessionRuntimeService", () => {
         async getProviderQuotaTelemetry() {
           return null;
         },
-        invalidateSessionThread() {},
-        invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
         async runSessionTurn() {
           return createPartialResult({ assistantText: "完了" });
         },
@@ -549,14 +586,14 @@ describe("SessionRuntimeService", () => {
           return null;
         },
         waitForApprovalDecision() {
-          return "approve";
+        return "approve" as const;
         },
         waitForElicitationResponse() {
           return { action: "cancel" };
         },
         setProviderQuotaTelemetry() {},
         setSessionContextTelemetry() {},
-        invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
         scheduleProviderQuotaTelemetryRefresh() {},
         broadcastLiveSessionRun() {},
         resolvePendingApprovalRequest() {},
@@ -597,7 +634,7 @@ describe("SessionRuntimeService", () => {
       );
       const pending = storage.listPending();
 
-      assert.equal(successfulResult.runState, "idle", successfulResult.messages.at(-1)?.text);
+      assert.equal(successfulResult.runState, "idle");
       assert.equal(pending.length, 1);
       assert.equal(pending[0]?.assistantMessage, "完了");
       assert.notEqual(pending[0]?.readyAt, null);
@@ -618,7 +655,7 @@ describe("SessionRuntimeService", () => {
       const readinessFailureSession = createSession();
       let appraisalCalls = 0;
       let readinessAttempts = 0;
-      let releaseReadiness = () => undefined;
+      let releaseReadiness: () => void = () => undefined;
       const readinessBarrier = new Promise<void>((resolve) => {
         releaseReadiness = resolve;
       });
@@ -712,12 +749,14 @@ describe("SessionRuntimeService", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
   // claim = "character-authoring turnの通知対象はturn開始時の最新Character snapshotを含む保存済みSessionである"
   // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
-  // failure_mode = "staleなSession snapshotを通知へ渡して誤ったCharacter iconまたはSession情報を表示する"
+  // fault = "staleなSession snapshotを通知へ渡して誤ったCharacter iconまたはSession情報を表示する"
   // scope = "session-runtime-terminal-notification-snapshot"
+  // observable = "terminal通知へ渡されたSessionのcharacterRuntimeSnapshot"
+  // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // @end-test-value
   it("character-authoring session は turn 開始時の最新 Character snapshot を使う", async () => {
@@ -772,8 +811,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       runSessionTurn(input) {
         runSessionName = input.session.characterRuntimeSnapshot?.name ?? "";
         runSessionFolderPath = input.sessionFolderPath ?? "";
@@ -826,14 +865,14 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
@@ -843,7 +882,7 @@ describe("SessionRuntimeService", () => {
         notifiedSession = notification.session;
         notifiedLastNonEmptyAssistantMessageText = notification.outcome === "completed"
           ? notification.lastNonEmptyAssistantMessageText
-          : null;
+          : "";
       },
       currentTimestampLabel,
     });
@@ -859,6 +898,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(notifiedLastNonEmptyAssistantMessageText, "完了したよ。");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "resolveSessionCharacter未提供でもprovider turnを実行できる"
+  // oracle = { type = "contract", ref = "Session runtime optional character resolver contract" }
+  // fault = "任意依存の未提供を理由にprovider turnを中断する"
+  // observable = "provider turn resultと保存されたSession state"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService provider turn setup"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("resolveSessionCharacter 未提供でも provider turn まで進む", async () => {
     const session = createSession();
     let composeCalled = false;
@@ -879,8 +928,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       runSessionTurn(input) {
         runCalled = true;
         hasCharacterKey = Object.prototype.hasOwnProperty.call(input, "character");
@@ -925,16 +974,15 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -949,6 +997,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.runState, "idle");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "turn setup失敗時もlive stateを掃除する"
+  // oracle = { type = "contract", ref = "Session runtime cleanup contract" }
+  // fault = "setup例外後にin-flight/live stateを残し、再送やUI表示を阻害する"
+  // observable = "live state、in-flight判定、cleanup呼び出し"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService setup failure cleanup"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("setup 失敗でも live state を掃除する", async () => {
     const session = createSession();
     const calls: string[] = [];
@@ -967,8 +1025,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       runSessionTurn() {
         throw new Error("provider should not run");
       },
@@ -1012,14 +1070,14 @@ describe("SessionRuntimeService", () => {
         return liveStates.at(-1) ?? null;
       },
       async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       broadcastLiveSessionRun() {
         calls.push("broadcast");
@@ -1050,6 +1108,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(liveStates.at(-1), null);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "成功turnはrunningからidleを保存し、対象外のbackground taskを起動しない"
+  // oracle = { type = "contract", ref = "Session runtime success transition contract" }
+  // fault = "成功後もrunningを残す、またはMemory/reflection taskを誤起動する"
+  // observable = "保存runStateとbackground task呼び出し"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService successful turn completion"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("成功時に running -> idle を保存し、Memory / reflection background task は起動しない", async () => {
     const session = createSession();
     const storedSessions: Session[] = [];
@@ -1071,8 +1139,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
         emitQueuedProgressDuringWrite = () => {
           void onProgress?.(createLiveRunState({
@@ -1184,18 +1252,15 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
       setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection(nextSession, options) {
-        reflectionTriggers.push({ sessionId: nextSession.id, triggerReason: options.triggerReason });
-      },
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1268,6 +1333,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(service.isRunInFlight(session.id), false);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "completed audit detail更新停止時も最小terminal状態を保存してrunを解放する"
+  // oracle = { type = "contract", ref = "Session runtime terminal audit durability contract" }
+  // fault = "detail更新待ちでrunを保持し、terminal sessionを解放しない"
+  // observable = "terminal audit update、run解放状態、保存Session"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService completed audit fallback"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("completed audit の詳細更新が停止しても最小 terminal 状態を先に保存して run を解放する", async () => {
     const session = createSession({ provider: "codex" });
     const storedSessions: Session[] = [];
@@ -1287,8 +1362,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         return createPartialResult({
           threadId: "thread-1",
@@ -1346,16 +1421,15 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
       setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1380,9 +1454,9 @@ describe("SessionRuntimeService", () => {
     assert.equal(storedSessions[0]?.runState, "running");
     assert.equal(storedSessions[1]?.runState, "idle");
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
-    assert.equal(terminalCommit?.phase, "completed");
-    assert.equal(terminalCommit?.assistantMessageSeq, 1);
-    assert.equal(terminalCommit?.threadId, "thread-1");
+    assert.equal(terminalCommit!.phase, "completed");
+    assert.equal(terminalCommit!.assistantMessageSeq, 1);
+    assert.equal(terminalCommit!.threadId, "thread-1");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
     assert.equal(auditUpdates.at(-1)?.operations.length, 0);
     assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");
@@ -1390,15 +1464,25 @@ describe("SessionRuntimeService", () => {
     assert.equal(service.isRunInFlight(session.id), false);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "pending中のrunning audit観測をterminal auditへ保持する"
+  // oracle = { type = "contract", ref = "Session runtime audit lifecycle contract" }
+  // fault = "running auditのprogressやapproval観測をterminal auditで失う"
+  // observable = "completed/failed/canceled auditのobserved fields"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService audit terminalization"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("pending中のrunning audit観測をcompleted・failed・canceledのterminal auditへ保持する", async () => {
     for (const outcome of ["completed", "failed", "canceled"] as const) {
       const session = createSession({ id: `pending-audit-${outcome}`, provider: "codex" });
       const auditUpdates: UpdateAuditLogInput[] = [];
-      let releaseRunningAudit = () => undefined;
+      let releaseRunningAudit: () => void = () => undefined;
       const runningAuditBarrier = new Promise<void>((resolve) => {
         releaseRunningAudit = resolve;
       });
-      let signalRunningAuditStarted = () => undefined;
+      let signalRunningAuditStarted: () => void = () => undefined;
       const runningAuditStarted = new Promise<void>((resolve) => {
         signalRunningAuditStarted = resolve;
       });
@@ -1416,8 +1500,8 @@ describe("SessionRuntimeService", () => {
         async getProviderQuotaTelemetry() {
           return null;
         },
-        invalidateSessionThread() {},
-        invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
         async runSessionTurn(_input, onProgress) {
           void onProgress?.(createLiveRunState({
             sessionId: session.id,
@@ -1494,16 +1578,15 @@ describe("SessionRuntimeService", () => {
           return null;
         },
         async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-          return "approve";
+        return "approve" as const;
         },
         async waitForElicitationResponse() {
           return { action: "cancel" } as const;
         },
         setProviderQuotaTelemetry() {},
         setSessionContextTelemetry() {},
-        invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
         scheduleProviderQuotaTelemetryRefresh() {},
-        runCharacterReflection() {},
         broadcastLiveSessionRun() {},
         resolvePendingApprovalRequest() {},
         resolvePendingElicitationRequest() {},
@@ -1532,6 +1615,16 @@ describe("SessionRuntimeService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "成功時のfinally処理でもcompleted sessionのthreadIdを保持する"
+  // oracle = { type = "contract", ref = "Session runtime thread ownership contract" }
+  // fault = "background task保持処理がliveまたは旧threadIdでcompleted sessionを上書きする"
+  // observable = "保存SessionのthreadIdとbackground task保持結果"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService completed thread persistence"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("成功時に backgroundTasks を保持する finally でも completed session の threadId を使う", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-old" });
     const storedSessions: Session[] = [];
@@ -1565,8 +1658,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         return createPartialResult({
           threadId: "thread-new",
@@ -1616,16 +1709,15 @@ describe("SessionRuntimeService", () => {
         return liveState;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1640,6 +1732,16 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(liveStates.at(-1)?.backgroundTasks, backgroundTasks);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "成功後のReasoningはlive stateに保持し、次のprompt用stateでは消費する"
+  // oracle = { type = "contract", ref = "Session runtime reasoning projection contract" }
+  // fault = "reasoningをlive stateから失う、または次のpromptへ古いreasoningを再送する"
+  // observable = "live reasoningTextと次回provider prompt"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService reasoning lifecycle"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("成功後も Reasoning は live state に保持し、次の prompt 用 state で空にする", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-old" });
     let liveState: LiveSessionRunState | null = null;
@@ -1658,8 +1760,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(_input, onProgress) {
         await onProgress?.(createLiveRunState({
           sessionId: session.id,
@@ -1713,16 +1815,15 @@ describe("SessionRuntimeService", () => {
         return liveState;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1736,12 +1837,14 @@ describe("SessionRuntimeService", () => {
     assert.equal(liveStates.at(-1)?.reasoningText, "既存経路を確認してから表示へ流す");
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "利用者cancelはcanceled Sessionを保存してもterminal通知を依頼しない"
   // oracle = { type = "contract", ref = "accepted contract: user cancel is not a failure notification" }
-  // failure_mode = "利用者がcancelしたturnをfailed通知として表示し、意図した中止をエラーと誤認させる"
+  // fault = "利用者がcancelしたturnをfailed通知として表示し、意図した中止をエラーと誤認させる"
   // scope = "session-runtime-terminal-cancel"
+  // observable = "保存されたrunStateとterminal通知呼び出し"
+  // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // @end-test-value
   it("provider failure 時は error session を保存し、cancel 時は idle へ戻す", async () => {
@@ -1751,11 +1854,11 @@ describe("SessionRuntimeService", () => {
     let detachedSessionId: string | null = null;
     let cleanupStartedSessionId: string | null = null;
     let notificationCount = 0;
-    let releaseInvalidation = () => undefined;
+    let releaseInvalidation: () => void = () => undefined;
     const invalidationBarrier = new Promise<void>((resolve) => {
       releaseInvalidation = resolve;
     });
-    let signalInvalidationStarted = () => undefined;
+    let signalInvalidationStarted: () => void = () => undefined;
     const invalidationStarted = new Promise<void>((resolve) => {
       signalInvalidationStarted = resolve;
     });
@@ -1788,7 +1891,7 @@ describe("SessionRuntimeService", () => {
         signalInvalidationStarted();
         await invalidationBarrier;
       },
-      invalidateAllSessionThreads() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
         await onProgress?.(createLiveRunState({
           sessionId: input.session.id,
@@ -1874,7 +1977,6 @@ describe("SessionRuntimeService", () => {
         return adapter.invalidateSessionThread(sessionId);
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1932,6 +2034,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(notificationCount, 0);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "実行中sessionはin-flightとして見え、完了後に解放される"
+  // oracle = { type = "contract", ref = "Session runtime in-flight contract" }
+  // fault = "実行中判定がfalseになる、または完了後もin-flightを保持する"
+  // observable = "hasInFlightRuns/isSessionRunInFlightの値"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService in-flight tracking"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("実行中の session は in-flight として見え、完了後に解放される", async () => {
     const session = createSession();
     let resolveRun: ((value: RunSessionTurnResult) => void) | null = null;
@@ -1949,8 +2061,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       runSessionTurn() {
         return new Promise<RunSessionTurnResult>((resolve) => {
           resolveRun = resolve;
@@ -1995,16 +2107,15 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2031,9 +2142,19 @@ describe("SessionRuntimeService", () => {
     assert.equal(service.isRunInFlight(session.id), false);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "setup dependency停止時もcancel deadlineで呼び出しを収束させ、実終了まで再送を拒否する"
+  // oracle = { type = "contract", ref = "Session runtime cancellation deadline contract" }
+  // fault = "cancelが無期限に待機する、またはdependency実行中に再送を許可する"
+  // observable = "cancel completion、再送拒否、dependency終了後のin-flight state"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService cancellation deadline"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("setup dependency が停止しても cancel deadline で呼び出しを収束させ、dependency の実終了まで再送を拒否する", async () => {
     const session = createSession();
-    let resolveComposer: ((preview: ComposerPreview) => void) | null = null;
+    let resolveComposer: (preview: ComposerPreview) => void = () => undefined;
     let providerCalled = false;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
@@ -2048,8 +2169,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         providerCalled = true;
         return createPartialResult();
@@ -2095,16 +2216,15 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2132,7 +2252,7 @@ describe("SessionRuntimeService", () => {
     if (!resolveComposer) {
       throw new Error("composer resolve が取得できていないよ。");
     }
-    resolveComposer({ attachments: [], errors: [] });
+resolveComposer!({ attachments: [], errors: [] });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(outcome, "rejected");
@@ -2163,7 +2283,7 @@ describe("SessionRuntimeService", () => {
     let releaseTerminal!: () => void;
     const terminalGate = new Promise<void>((resolve) => { releaseTerminal = resolve; });
     let terminalStored = false;
-    let resolveProvider: ((result: RunSessionTurnResult) => void) | null = null;
+    let resolveProvider: (result: RunSessionTurnResult) => void = () => undefined;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -2177,8 +2297,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       runSessionTurn(input) {
         observedAbortSignal = input.signal;
         if (!input.signal) {
@@ -2233,16 +2353,15 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest(sessionId, decision) {
         approvalResolutions.push({ sessionId, decision });
@@ -2322,7 +2441,7 @@ describe("SessionRuntimeService", () => {
     if (!resolveProvider) {
       throw new Error("provider resolve が取得できていないよ。");
     }
-    resolveProvider(createPartialResult());
+resolveProvider!(createPartialResult());
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(service.hasInFlightRuns(), false);
     assert.deepEqual(approvalResolutions, [
@@ -2331,18 +2450,20 @@ describe("SessionRuntimeService", () => {
     ]);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "regression"
   // claim = "利用者cancelとprovider成功が競合してもterminal通知を依頼しない"
   // oracle = { type = "contract", ref = "accepted contract: user cancel is not a failure notification" }
-  // failure_mode = "cancel後に到着したprovider成功をcompleted通知し、利用者の中止操作と矛盾する"
+  // fault = "cancel後に到着したprovider成功をcompleted通知し、利用者の中止操作と矛盾する"
   // scope = "session-runtime-terminal-cancel-race"
+  // observable = "terminal通知呼び出し回数と保存済みrunState"
+  // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // distinction = "通常のprovider canceled errorではなく、cancel後にproviderがgrace内で成功する競合を扱う"
   // @end-test-value
   it("cancel 後に provider が grace 内で成功しても完了通知しない", async () => {
     const session = createSession();
-    let resolveProvider: ((result: RunSessionTurnResult) => void) | null = null;
+    let resolveProvider: (result: RunSessionTurnResult) => void = () => undefined;
     let notificationCount = 0;
     let queuedAppraisalCount = 0;
     const adapter: ProviderCodingAdapter = {
@@ -2358,8 +2479,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       runSessionTurn() {
         return new Promise<RunSessionTurnResult>((resolve) => {
           resolveProvider = resolve;
@@ -2408,14 +2529,14 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
@@ -2443,18 +2564,20 @@ describe("SessionRuntimeService", () => {
     assert.equal(queuedAppraisalCount, 1);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "regression"
   // claim = "利用者cancel後にproviderがgrace内でnoncanceled errorを返してもfailed terminal通知を依頼しない"
   // oracle = { type = "contract", ref = "accepted contract: user cancel is not a failure notification" }
-  // failure_mode = "adapterがcancel前にcanceled=falseを確定して遅延rejectすると、abort済みturnをfailed通知して利用者に失敗と誤認させる"
+  // fault = "adapterがcancel前にcanceled=falseを確定して遅延rejectすると、abort済みturnをfailed通知して利用者に失敗と誤認させる"
   // scope = "session-runtime-terminal-cancel-race"
+  // observable = "failed terminal通知呼び出し回数と保存済みrunState"
+  // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // distinction = "cancel後のprovider成功ではなく、grace内にcanceled=falseのProviderTurnErrorがrejectする経路を扱う"
   // @end-test-value
   it("cancel 後に provider が grace 内で noncanceled error を返しても失敗通知しない", async () => {
     const session = createSession();
-    let rejectProvider: ((error: Error) => void) | null = null;
+    let rejectProvider: (error: Error) => void = () => undefined;
     let notificationCount = 0;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
@@ -2469,8 +2592,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       runSessionTurn() {
         return new Promise<RunSessionTurnResult>((_resolve, reject) => {
           rejectProvider = reject;
@@ -2515,14 +2638,14 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
@@ -2541,19 +2664,21 @@ describe("SessionRuntimeService", () => {
     }
 
     service.cancelRun(session.id);
-    rejectProvider(new ProviderTurnError("workspace snapshot failed", createPartialResult(), false));
+rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartialResult(), false));
     const result = await runPromise;
 
     assert.equal(result.runState, "error");
     assert.equal(notificationCount, 0);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "regression"
   // claim = "内部stale retryが成功したturnは一つのcompleted terminal通知だけを依頼する"
   // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
-  // failure_mode = "内部retryの各attemptを別turnとして通知し、同一turnで重複通知する"
+  // fault = "内部retryの各attemptを別turnとして通知し、同一turnで重複通知する"
   // scope = "session-runtime-stale-retry-terminal-notification"
+  // observable = "completed terminal通知の回数と保存済みSession"
+  // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // @end-test-value
   it("stale thread / session error で meaningful partial が無い時だけ thread reset 後に 1 回 retry する", async () => {
@@ -2596,8 +2721,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(input) {
         attempt += 1;
         seenThreadIds.push(input.session.threadId);
@@ -2683,7 +2808,7 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
@@ -2697,7 +2822,6 @@ describe("SessionRuntimeService", () => {
         reset.push({ providerId, sessionId: retrySessionId });
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2739,6 +2863,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(timingContexts[1], timingContexts[2]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "stale retry後のrunning audit logは前回attemptのprogress断片を引き継がない"
+  // oracle = { type = "contract", ref = "Session runtime stale retry audit contract" }
+  // fault = "旧attemptのprogressを新attemptへ混入し、誤った実行履歴を表示する"
+  // observable = "retry後running auditのprogress fields"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService stale retry audit reset"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("stale retry 後の running audit log は前回 progress の断片を引き継がない", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const auditUpdates: UpdateAuditLogInput[] = [];
@@ -2757,8 +2891,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
         attempt += 1;
         if (attempt === 1) {
@@ -2825,16 +2959,15 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2859,6 +2992,16 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(runningUpdates[2]?.usage, { inputTokens: 20, cachedInputTokens: 0, outputTokens: 2 });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "stale retry中は旧attemptのlate progressをlive stateとrunning auditへ反映しない"
+  // oracle = { type = "contract", ref = "Session runtime stale attempt isolation contract" }
+  // fault = "旧providerのlate progressが新attemptのUIやauditへ混入する"
+  // observable = "live progressとrunning audit entries"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService stale attempt isolation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("stale retry 中は旧 attempt の late progress を live state と running audit log へ反映しない", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const auditUpdates: UpdateAuditLogInput[] = [];
@@ -2886,8 +3029,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
         attempt += 1;
         if (attempt === 1) {
@@ -2967,16 +3110,15 @@ describe("SessionRuntimeService", () => {
         return liveStates.at(-1) ?? null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2986,7 +3128,7 @@ describe("SessionRuntimeService", () => {
     const runPromise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
     await secondAttemptStarted;
     await new Promise((resolve) => setTimeout(resolve, 0));
-    releaseSecondAttempt?.();
+releaseSecondAttempt!();
     await runPromise;
 
     const runningUpdates = auditUpdates.filter((entry) => entry.phase === "running");
@@ -3000,6 +3142,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(liveStates.some((state) => state?.assistantText === "旧 attempt の late progress"), false);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Codex stdin bootstrap errorではthread reset後に一回だけretryする"
+  // oracle = { type = "contract", ref = "Session runtime stale thread retry contract" }
+  // fault = "recoverable bootstrap errorをretryせず失敗する、または無限retryする"
+  // observable = "provider call count、thread reset、最終turn result"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService Codex stdin bootstrap retry"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Codex stdin bootstrap error でも thread reset 後に 1 回 retry する", async () => {
     const session = createSession({ provider: "codex", threadId: "" });
     const storedSessions: Session[] = [];
@@ -3021,8 +3173,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(input) {
         attempt += 1;
         seenThreadIds.push(input.session.threadId);
@@ -3081,7 +3233,7 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
@@ -3092,7 +3244,6 @@ describe("SessionRuntimeService", () => {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3114,6 +3265,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Codex stdin bootstrap errorが継続したfailed sessionに壊れたthreadIdを残さない"
+  // oracle = { type = "contract", ref = "Session runtime failed thread ownership contract" }
+  // fault = "失敗したthreadIdをfailed sessionへ永続化し、次回turnが壊れたthreadを再利用する"
+  // observable = "failed SessionのthreadIdとprovider retry回数"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService failed bootstrap cleanup"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Codex stdin bootstrap error が続く時は failed session に壊れた threadId を残さない", async () => {
     const session = createSession({ provider: "codex", threadId: "" });
     const storedSessions: Session[] = [];
@@ -3134,8 +3295,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         attempt += 1;
         throw new ProviderTurnError(
@@ -3186,7 +3347,7 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
@@ -3197,7 +3358,6 @@ describe("SessionRuntimeService", () => {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3223,10 +3383,20 @@ describe("SessionRuntimeService", () => {
     assert.equal(auditUpdates.at(-1)?.threadId, "thread-broken");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "approval request直後にprogressが無くてもrunning audit logを更新する"
+  // oracle = { type = "contract", ref = "Session runtime approval audit contract" }
+  // fault = "approval requestのみのturnをauditへ記録せず、利用者の承認待ち状態を失う"
+  // observable = "running audit entryのapproval request fields"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService approval audit update"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("approval request の直後に progress が無くても running audit log を更新する", async () => {
     const session = createSession();
     const auditUpdates: UpdateAuditLogInput[] = [];
-    let liveState = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
+    let liveState: LiveSessionRunState | null = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
     const approvalRequest: LiveApprovalRequest = {
       requestId: "approval-1",
       provider: session.provider,
@@ -3251,8 +3421,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
         await input.onApprovalRequest?.(approvalRequest);
         return createPartialResult({
@@ -3305,20 +3475,19 @@ describe("SessionRuntimeService", () => {
       },
       async waitForApprovalDecision(_sessionId, request) {
         liveState = {
-          ...liveState,
+          ...liveState!,
           approvalRequest: request,
           elicitationRequest: null,
         };
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "accept" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3348,10 +3517,20 @@ describe("SessionRuntimeService", () => {
     ]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "elicitation request直後にprogressが無くてもrunning audit logを更新する"
+  // oracle = { type = "contract", ref = "Session runtime elicitation audit contract" }
+  // fault = "elicitation requestのみのturnをauditへ記録せず、入力待ち状態を失う"
+  // observable = "running audit entryのelicitation request fields"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService elicitation audit update"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("elicitation request の直後に progress が無くても running audit log を更新する", async () => {
     const session = createSession();
     const auditUpdates: UpdateAuditLogInput[] = [];
-    let liveState = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
+    let liveState: LiveSessionRunState | null = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
     const elicitationRequest: LiveElicitationRequest = {
       requestId: "elicitation-1",
       provider: session.provider,
@@ -3385,8 +3564,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
         await input.onElicitationRequest?.(elicitationRequest);
         return createPartialResult({
@@ -3437,11 +3616,11 @@ describe("SessionRuntimeService", () => {
         return liveState;
       },
       async waitForApprovalDecision() {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse(_sessionId, request) {
         liveState = {
-          ...liveState,
+          ...liveState!,
           approvalRequest: null,
           elicitationRequest: request,
         };
@@ -3449,9 +3628,8 @@ describe("SessionRuntimeService", () => {
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3469,10 +3647,20 @@ describe("SessionRuntimeService", () => {
     assert.match(runningUpdate?.operations[0]?.details ?? "", /required:対象ブランチ/);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "completed audit logでは同じsummaryのcommand_executionを各発生分保持する"
+  // oracle = { type = "contract", ref = "Session runtime audit operation retention contract" }
+  // fault = "同一summaryのoperationをdeduplicateして実行履歴を失う"
+  // observable = "completed audit operations sequence"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService completed audit operation persistence"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("completed audit log では同じ summary の command_execution を重複保持する", async () => {
     const session = createSession();
     const auditUpdates: UpdateAuditLogInput[] = [];
-    let liveState = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
+    let liveState: LiveSessionRunState | null = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
 
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
@@ -3487,8 +3675,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         return createPartialResult({
           threadId: "thread-duplicate-commands",
@@ -3542,16 +3730,15 @@ describe("SessionRuntimeService", () => {
         return liveState;
       },
       async waitForApprovalDecision() {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "accept" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3572,10 +3759,20 @@ describe("SessionRuntimeService", () => {
     ]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "elicitation request直後にprogressが無くてもcompleted audit logへ履歴を残す"
+  // oracle = { type = "contract", ref = "Session runtime terminal elicitation audit contract" }
+  // fault = "elicitation requestの履歴をcompleted auditから欠落させる"
+  // observable = "completed audit request history"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService completed elicitation audit"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("elicitation request の直後に progress が無くても completed audit log に履歴を残す", async () => {
     const session = createSession();
     const auditUpdates: UpdateAuditLogInput[] = [];
-    let liveState = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
+    let liveState: LiveSessionRunState | null = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
     const elicitationRequest: LiveElicitationRequest = {
       requestId: "elicitation-1",
       provider: session.provider,
@@ -3609,8 +3806,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(input) {
         await input.onElicitationRequest?.(elicitationRequest);
         return createPartialResult({
@@ -3661,11 +3858,11 @@ describe("SessionRuntimeService", () => {
         return liveState;
       },
       async waitForApprovalDecision() {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse(_sessionId, request) {
         liveState = {
-          ...liveState,
+          ...liveState!,
           approvalRequest: null,
           elicitationRequest: request,
         };
@@ -3673,9 +3870,8 @@ describe("SessionRuntimeService", () => {
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3699,12 +3895,14 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(completedUpdate?.operations, [elicitationOperation]);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "非cancel failureはfailed Sessionのterminal commit後に一度だけfailed通知を依頼し、通知失敗後もprovider cleanupへ進む"
   // oracle = { type = "contract", ref = "accepted contract: failed terminal notification is post-persist and best-effort" }
-  // failure_mode = "failed保存前または複数回の通知、あるいは通知例外によるterminal保存結果やprovider cleanupの失敗"
+  // fault = "failed保存前または複数回の通知、あるいは通知例外によるterminal保存結果やprovider cleanupの失敗"
   // scope = "session-runtime-failed-terminal-notification"
+  // observable = "failed terminal通知の回数、保存結果、cleanup呼び出し"
+  // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // distinction = "completed通知やcancel除外ではなく、failed commitと通知とcleanupの順序および一回性を検証する"
   // @end-test-value
@@ -3728,8 +3926,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
         await onProgress?.(createLiveRunState({
           sessionId: input.session.id,
@@ -3792,7 +3990,7 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision() {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
@@ -3803,7 +4001,6 @@ describe("SessionRuntimeService", () => {
         terminalOrder.push("provider-cleanup");
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3832,6 +4029,16 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(terminalOrder, ["failed-upsert", "terminal-notification", "provider-cleanup"]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "usage_limit reasonはaudit logとassistant fallbackで通常失敗文言に変換しない"
+  // oracle = { type = "contract", ref = "Session runtime usage limit error contract" }
+  // fault = "usage limitを通常provider failureとして表示し、利用者の制限理由を隠す"
+  // observable = "audit error fieldsとassistant fallback text"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService usage limit failure mapping"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("usage_limit reason は audit log と assistant fallback で通常失敗文言にしない", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-before-limit" });
     const storedSessions: Session[] = [];
@@ -3852,8 +4059,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         throw new ProviderTurnError(
           usageLimitMessage,
@@ -3904,16 +4111,15 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision() {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3931,6 +4137,16 @@ describe("SessionRuntimeService", () => {
     assert.doesNotMatch(storedSessions.at(-1)?.messages.at(-1)?.text ?? "", /実行に失敗したよ。/);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "meaningful partialを伴うstale errorはinternal retryしない"
+  // oracle = { type = "contract", ref = "Session runtime meaningful partial contract" }
+  // fault = "利用者が読めるpartial responseを破棄して再実行する"
+  // observable = "provider call count、保存assistant text、最終error state"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService stale error partial handling"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("meaningful partial が出た stale error は internal retry しない", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
@@ -3950,8 +4166,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         attempt += 1;
         throw new ProviderTurnError("thread not found", createPartialResult({ assistantText: "途中まで出たよ。" }), false);
@@ -3996,7 +4212,7 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
@@ -4007,7 +4223,6 @@ describe("SessionRuntimeService", () => {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -4023,6 +4238,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(storedSessions.length, 2);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "not_found単独codeのprovider errorではinternal retryしない"
+  // oracle = { type = "contract", ref = "Session runtime provider error retry contract" }
+  // fault = "retry対象外のnot_foundを内部retryし、重複実行や誤ったthread更新を起こす"
+  // observable = "provider call countと最終Session/audit state"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService provider error classification"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("not_found 単独 code の provider error では internal retry しない", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
@@ -4042,8 +4267,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         attempt += 1;
         const error = new ProviderTurnError("resource not found", createPartialResult(), false) as ProviderTurnError & { code?: string };
@@ -4090,7 +4315,7 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
@@ -4101,7 +4326,6 @@ describe("SessionRuntimeService", () => {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -4117,6 +4341,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(storedSessions.length, 2);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "live runのprogressをrunning audit logへ段階的にupdateする"
+  // oracle = { type = "contract", ref = "Session runtime progress audit contract" }
+  // fault = "progress更新を欠落または最終状態へまとめ、実行中観測を失う"
+  // observable = "running audit update sequence"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService live progress audit updates"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("live run の progress を running audit log へ段階的に update する", async () => {
     const session = createSession();
     const auditUpdates: UpdateAuditLogInput[] = [];
@@ -4136,8 +4370,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn(_input, onProgress) {
         // 複数回の progress update をシミュレート
         await onProgress?.({
@@ -4236,16 +4470,15 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -4287,6 +4520,16 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(completedUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 100 });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "success後にbackgroundTasksを保持してもcompleted threadIdをlive runへ残す"
+  // oracle = { type = "contract", ref = "Session runtime background task thread contract" }
+  // fault = "background task保持処理でcompleted threadIdを失い、後続操作が別threadを参照する"
+  // observable = "live run threadIdとcompleted Session threadId"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService success background task retention"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("success 後に backgroundTasks を保持しても completed threadId を live run へ残す", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const liveStates: Array<LiveSessionRunState | null> = [];
@@ -4318,8 +4561,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         return createPartialResult({
           threadId: "thread-completed",
@@ -4368,16 +4611,15 @@ describe("SessionRuntimeService", () => {
         return liveState;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -4393,6 +4635,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(liveStates.at(-1)?.backgroundTasks[0]?.id, "task-1");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "既存backgroundTasksがprogress無しで完了してもcompleted audit logへ履歴を残す"
+  // oracle = { type = "contract", ref = "Session runtime background audit retention contract" }
+  // fault = "progressが無いbackground taskの完了履歴をauditから欠落させる"
+  // observable = "completed audit entriesとbackground task completion markers"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService background task audit completion"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("既存 backgroundTasks が progress 無しで完了しても completed audit log に履歴を残す", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const auditUpdates: UpdateAuditLogInput[] = [];
@@ -4424,8 +4676,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         return createPartialResult({
           threadId: "thread-completed",
@@ -4475,16 +4727,15 @@ describe("SessionRuntimeService", () => {
         return liveState;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -4504,12 +4755,14 @@ describe("SessionRuntimeService", () => {
     ]);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "completed Sessionを保存した後にその保存結果で通知し、通知の非同期failureはturn成功を変更しない"
   // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
-  // failure_mode = "永続化前snapshotを通知するか、通知Promise rejectionでcompleted turnをfailedへ変更する"
+  // fault = "永続化前snapshotを通知するか、通知Promise rejectionでcompleted turnをfailedへ変更する"
   // scope = "session-runtime-completed-terminal-notification"
+  // observable = "通知へ渡される保存済みSessionとturn結果"
+  // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // @end-test-value
   it("Session success を保存後に通知し、通知 failure は turn を失敗させない", async () => {
@@ -4529,8 +4782,8 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
       async runSessionTurn() {
         return createPartialResult({
           threadId: "thread-1",
@@ -4579,16 +4832,15 @@ describe("SessionRuntimeService", () => {
         return null;
       },
       async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-        return "approve";
+        return "approve" as const;
       },
       async waitForElicitationResponse() {
         return { action: "cancel" } as const;
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -4605,6 +4857,6 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.runState, "idle");
     assert.equal(result.messages.at(-1)?.text, "完了したよ。");
     assert.equal(notifiedSession, persistedCompletedSession);
-    assert.equal(notifiedSession?.messages.at(-1)?.text, "完了したよ。");
+    assert.equal(notifiedSession!.messages.at(-1)?.text, "完了したよ。");
   });
 });

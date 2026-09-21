@@ -30,6 +30,16 @@ function createService() {
   return { service, events };
 }
 
+// @test-value v2
+// kind = "invariant"
+// claim = "live run、provider quota、context telemetry、background activityをsession/provider単位で保持し、更新通知へ反映する"
+// oracle = { type = "contract", ref = "src-electron/session-observability-service.ts#public-state-accessors" }
+// fault = "状態を別session/providerへ混線させるか、更新通知または取得結果へ反映しない"
+// observable = "各getterの状態と更新通知イベント数"
+// observation_boundary = "public-boundary"
+// scope = "session-observability-state-notification"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionObservabilityService は live run / telemetry / background state を保持して通知する", () => {
   const { service, events } = createService();
 
@@ -58,10 +68,13 @@ test("SessionObservabilityService は live run / telemetry / background state �
     messagesLength: 4,
   };
   const background: SessionBackgroundActivityState = {
+    sessionId: "s-1",
+    title: "Memory generation",
     kind: "memory-generation",
     status: "running",
     updatedAt: new Date().toISOString(),
     summary: "memory generating",
+    errorMessage: "",
   };
 
   service.setLiveSessionRun("s-1", liveRun);
@@ -107,6 +120,16 @@ test("SessionObservabilityService は provider quota refresh を dedupe して c
   });
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "指定sessionのbackground activityだけをclearし、各kindの削除通知を発行する"
+// oracle = { type = "contract", ref = "src-electron/session-observability-service.ts#clearSessionBackgroundActivities" }
+// fault = "別sessionのactivityまで削除するか、clear後のgetterと削除通知が不整合になる"
+// observable = "指定sessionの各kind getter結果とclear通知payload"
+// observation_boundary = "public-boundary"
+// scope = "session-observability-background-clear"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionObservabilityService は background activity を session 単位で clear できる", () => {
   const { service, events } = createService();
   const updatedAt = new Date().toISOString();
@@ -114,10 +137,13 @@ test("SessionObservabilityService は background activity を session 単位で 
 
   for (const kind of kinds) {
     service.setSessionBackgroundActivity("s-1", kind, {
+      sessionId: "s-1",
+      title: kind,
       kind,
       status: "completed",
       updatedAt,
       summary: kind,
+      errorMessage: "",
     });
   }
 

@@ -348,11 +348,13 @@ test("FileRootChangesPane はRefreshでrepository discovery失敗から復旧す
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
 // claim = "repository別groupはnon-Git結果を除外し、失敗を局所表示しながら既存の変更導線と仮想化を維持する"
 // oracle = { type = "contract", ref = "MT-023D10 and MT-023D10A" }
-// failure_mode = "手動Refresh化に伴ってnon-Git除外、repository別failure、directory collapse、diff/file previewまたは大量表示が壊れる"
+// fault = "手動Refresh化に伴ってnon-Git除外、repository別failure、directory collapse、diff/file previewまたは大量表示が壊れる"
+// observable = "repository group数、failure表示、directory操作、diff/file request、virtual row数"
+// observation_boundary = "component-behavior"
 // scope = "FileRootChangesPane repository groups"
 // lifecycle = "permanent"
 // distinction = "取得開始条件ではなく、取得後の既存group操作と表示を検証する"
@@ -425,7 +427,7 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     relativePath: index === 0 ? "src/00-shared.ts" : `src/file-${index}.ts`,
     previousRelativePath: null,
     scopes: ["working-tree"],
-    kinds: { "working-tree": "modified", staged: null },
+    kinds: { "working-tree": "modified" },
   }));
   const additionalEntries: FileRootGitChangeEntry[] = [
     {
@@ -491,15 +493,16 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
   let root: Root | null = null;
   try {
     await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(FileRootChangesPane, {
+      const mountedRoot = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root = mountedRoot;
+      mountedRoot.render(React.createElement(FileRootChangesPane, {
         ...baseProps,
         sessionId: "session-1",
       }));
       await Promise.resolve();
     });
     await act(async () => {
-      root.render(React.createElement(FileRootChangesPane, {
+      root?.render(React.createElement(FileRootChangesPane, {
         ...baseProps,
         sessionId: "session-1",
         refreshRevision: 1,

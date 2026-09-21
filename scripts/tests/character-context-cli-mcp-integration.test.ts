@@ -321,8 +321,8 @@ describe("Character context CLI / MCP integration", () => {
             candidates,
           }, "lifecycle"),
           recordAppraisalFailure: (input) => settlementStorage.recordAppraisalFailure({ correlationId, ...input }),
-          runAppraisalExclusive: async (operation) => operation(),
-          markSettled: () => settlementStorage.markSettled(correlationId),
+          runAppraisalExclusive: async (operation) => await operation(),
+          markSettled: () => { settlementStorage.markSettled(correlationId); },
         });
         assert.equal(settlement.status, "settled", JSON.stringify(settlement));
         assert.equal(settlementStorage.getPending(correlationId), null);

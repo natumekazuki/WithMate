@@ -57,12 +57,23 @@ const TEST_APPLICATION_INSTANCE_B = "22222222-2222-4222-8222-222222222222";
 const TEST_APPLICATION_INSTANCE_C = "33333333-3333-4333-8333-333333333333";
 
 describe("Memory V6 runtime API", () => {
+  // @test-value v2
+  // kind = "security"
+  // claim = "runtime request生成時の同期入力失敗はdispatch済みと誤認せずpre-dispatch exchange errorへ正規化される"
+  // oracle = { type = "contract", ref = "memory-v6-runtime-exchange-error" }
+  // fault = "不正なruntime identityを検出してもrequestをdispatch済みとして扱う、またはsecret付きbodyを送信する"
+  // observable = "WithMateMemoryRuntimeExchangeErrorのdispatchedフラグ"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-runtime-transport"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("request生成時の同期失敗をpre-dispatch exchange errorへ正規化する", async () => {
     await assert.rejects(
       () => callWithMateMemoryRuntime({
         api: {
           baseUrl: "http://127.0.0.1:7777",
           apiSecret: "api-secret",
+          runtimeGenerationId: "runtime-generation",
           runtimeInstanceId: "invalid\nruntime",
         },
         credential: { adapter: "cli", adapterSecret: "operator-secret" },
@@ -895,11 +906,13 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "regression"
   // claim = "停止runtime自身のlegacy projectionが未公開でも、active集合が一意へ収束したら生存runtimeへpointerをhandoffする"
   // oracle = { type = "adr", ref = "ADR-023 legacy pointer owner-aware handoff" }
-  // failure_mode = "後発runtimeのlegacy generation準備が失敗してhandleがnullになると、停止時のreplacement解決をskipしてpointerが欠落したままになる"
+  // fault = "後発runtimeのlegacy generation準備が失敗してhandleがnullになると、停止時のreplacement解決をskipしてpointerが欠落したままになる"
+  // observable = "停止後のlegacy pointer discovery documentのruntime identityと先発runtimeのgeneration"
+  // observation_boundary = "public-boundary"
   // scope = "memory-legacy-projection-owner-cleanup"
   // lifecycle = "permanent"
   // distinction = "正常にprojectionを保持する後発runtimeの逆順終了testとは異なり、後発だけgeneration security failureを注入する"
@@ -933,10 +946,11 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         },
       });
 
-      await assert.rejects(() => stat(secondRuntime.discoveryFilePath));
-      await secondRuntime.stop();
+      const activeSecondRuntime = secondRuntime;
+      assert.ok(activeSecondRuntime);
+      await assert.rejects(() => stat(activeSecondRuntime.discoveryFilePath));
+      await activeSecondRuntime.stop();
       secondRuntime = null;
-
       const cli = (await readDiscoveryProjection(firstRuntime.discoveryFilePath, "cli")).document;
       const mcp = (await readDiscoveryProjection(firstRuntime.discoveryFilePath, "mcp")).document;
       assert.equal(cli.applicationInstanceId, TEST_APPLICATION_INSTANCE_A);
@@ -1111,11 +1125,13 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
   // claim = "legacy pointerのpublication集合検証からcommitまでregistry mutationを排他し、別runtimeを割り込ませない"
   // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }
-  // failure_mode = "Bが集合検証後にCをpublishさせ、BとCがactiveなのにBのpointerをlast-writer公開する"
+  // fault = "Bが集合検証後にCをpublishさせ、BとCがactiveなのにBのpointerをlast-writer公開する"
+  // observable = "Bのpointer commit barrier中にCがregistry publishを完了できるか、最終registry候補とlegacy pointer"
+  // observation_boundary = "public-boundary"
   // scope = "memory-legacy-projection-publish"
   // lifecycle = "permanent"
   // distinction = "集合変更後の再検証ではなく、検証完了からpointer commitまでのcross-process lock境界を直接観測する"
@@ -1130,14 +1146,14 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     let releaseRuntimeBPointerCommit = () => undefined;
     let markRuntimeBPointerCommitReady = () => undefined;
     const runtimeBPointerCommitReady = new Promise<void>((resolve) => {
-      markRuntimeBPointerCommitReady = resolve;
+      markRuntimeBPointerCommitReady = () => { resolve(); };
     });
     const runtimeBPointerCommitBarrier = new Promise<void>((resolve) => {
-      releaseRuntimeBPointerCommit = resolve;
+      releaseRuntimeBPointerCommit = () => { resolve(); };
     });
     let markRuntimeCRegistryLockAttempted = () => undefined;
     const runtimeCRegistryLockAttempted = new Promise<void>((resolve) => {
-      markRuntimeCRegistryLockAttempted = resolve;
+      markRuntimeCRegistryLockAttempted = () => { resolve(); };
     });
     let runtimeCRegistryCommitStarted = false;
     try {
@@ -1315,11 +1331,13 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
   // claim = "registry publication failureのrollbackとpointer復元は同じmutation lock内で完了し、別runtimeを割り込ませない"
   // oracle = { type = "adr", ref = "ADR-023 legacy pointer publication rollback" }
-  // failure_mode = "Bのpublish失敗後、pointer Aの復元前にCがpublishされ、AとCがactiveなのにpointer Aを公開する"
+  // fault = "Bのpublish失敗後、pointer Aの復元前にCがpublishされ、AとCがactiveなのにpointer Aを公開する"
+  // observable = "rollback barrier中のCのlock取得可否と、rollback後のregistry候補およびlegacy pointer"
+  // observation_boundary = "public-boundary"
   // scope = "memory-legacy-projection-publication-rollback"
   // lifecycle = "permanent"
   // distinction = "単独failureの復元ではなく、rollback中に別publisherがlock取得を試みる競合を同期点で観測する"
@@ -1335,14 +1353,14 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     let releaseRuntimeBRollback = () => undefined;
     let markRuntimeBRollbackReady = () => undefined;
     const runtimeBRollbackReady = new Promise<void>((resolve) => {
-      markRuntimeBRollbackReady = resolve;
+      markRuntimeBRollbackReady = () => { resolve(); };
     });
     const runtimeBRollbackBarrier = new Promise<void>((resolve) => {
-      releaseRuntimeBRollback = resolve;
+      releaseRuntimeBRollback = () => { resolve(); };
     });
     let markRuntimeCLockAttempted = () => undefined;
     const runtimeCLockAttempted = new Promise<void>((resolve) => {
-      markRuntimeCLockAttempted = resolve;
+      markRuntimeCLockAttempted = () => { resolve(); };
     });
     let runtimeCCommitStarted = false;
     try {
@@ -1408,11 +1426,13 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "compatibility"
   // claim = "legacy handoffはfreshな候補をregistry credential状態にかかわらずactive集合へ含め、複数ならpointerを公開しない"
   // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }
-  // failure_mode = "freshなCのregistry credentialが不正なためCを除外し、AとCがactiveなのにAへpointerをhandoffする"
+  // fault = "freshなCのregistry credentialが不正なためCを除外し、AとCがactiveなのにAへpointerをhandoffする"
+  // observable = "cleanup後に公開されたlegacy pointerの有無と、active候補のapplication instance集合"
+  // observation_boundary = "public-boundary"
   // scope = "memory-legacy-projection-owner-cleanup"
   // lifecycle = "permanent"
   // distinction = "operator resolverのcardinalityではなく、正常終了cleanup時のlegacy pointer handoff集合を観測する"
@@ -1447,7 +1467,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
       await writeFile(
         path.join(
           runtimeCRecord.slotDirectoryPath,
-          buildRuntimeDiscoveryCredentialFileName("cli"),
+          buildRuntimeDiscoveryCredentialFileName(runtimeCRecord.entry, "cli"),
         ),
         "{}\n",
       );
@@ -1466,11 +1486,13 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "compatibility"
   // claim = "legacy handoffはreplacement解決後にMemory publication集合が変わった場合、選択済みruntimeへpointerをcommitしない"
   // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }
-  // failure_mode = "BのcleanupがAを選択した後にCがpublishされ、AとCがactiveなのにAへpointerを暗黙handoffする"
+  // fault = "BのcleanupがAを選択した後にCがpublishされ、AとCがactiveなのにAへpointerを暗黙handoffする"
+  // observable = "replacement解決後のpublication barrierと、最終legacy pointerおよびactive候補集合"
+  // observation_boundary = "public-boundary"
   // scope = "memory-legacy-projection-owner-cleanup"
   // lifecycle = "permanent"
   // distinction = "cleanup開始時から複数候補がある場合ではなく、replacement解決後からpointer commit直前までに候補が増える競合を観測する"
@@ -1488,18 +1510,18 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     let releaseRuntimeBCleanupPointer = () => undefined;
     let markRuntimeBCleanupPointerReady = () => undefined;
     const runtimeBCleanupPointerReady = new Promise<void>((resolve) => {
-      markRuntimeBCleanupPointerReady = resolve;
+      markRuntimeBCleanupPointerReady = () => { resolve(); };
     });
     const runtimeBCleanupPointerBarrier = new Promise<void>((resolve) => {
-      releaseRuntimeBCleanupPointer = resolve;
+      releaseRuntimeBCleanupPointer = () => { resolve(); };
     });
     let releaseRuntimeCPointer = () => undefined;
     let markRuntimeCPointerReady = () => undefined;
     const runtimeCPointerReady = new Promise<void>((resolve) => {
-      markRuntimeCPointerReady = resolve;
+      markRuntimeCPointerReady = () => { resolve(); };
     });
     const runtimeCPointerBarrier = new Promise<void>((resolve) => {
-      releaseRuntimeCPointer = resolve;
+      releaseRuntimeCPointer = () => { resolve(); };
     });
     const isPointerTemporaryFile = (targetPath: string) => (
       path.basename(targetPath).startsWith("memory-v6.current.json.")

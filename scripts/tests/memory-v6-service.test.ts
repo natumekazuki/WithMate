@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION, type NormalizedMemoryTag } from "../../src/memory-v6/memory-contract.js";
+import type { MemoryErrorResponse } from "../../src/memory-v6/memory-response-contract.js";
 import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src/provider-settings-state.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { MemoryProtectedObjectImportError } from "../../src-electron/memory-protected-object-importer.js";
@@ -107,6 +108,14 @@ function createSessionBindingPrincipal(
   };
 }
 
+function assertSuccess<T extends object>(value: T | MemoryErrorResponse): asserts value is T {
+  assert.equal("error" in value, false);
+}
+
+function assertError<T extends object>(value: T | MemoryErrorResponse): asserts value is MemoryErrorResponse {
+  assert.equal("error" in value, true);
+}
+
 describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "contract"
@@ -127,7 +136,7 @@ describe("MemoryV6Service", () => {
         idempotencyKey: "local-user-project-append",
         sourceMessageId: "external-message-1",
       }));
-      assert.equal("error" in append, false);
+      assertSuccess(append);
       assert.equal(append.entry.owner.id, "project-a");
       assert.equal(append.entry.state, "active");
 
@@ -136,7 +145,7 @@ describe("MemoryV6Service", () => {
         targets: [{ owner: "project", scope: "project", project: { type: "path", path: "C:/workspace/project-a" } }],
         query: "agent payload",
       });
-      assert.equal("error" in search, false);
+      assertSuccess(search);
       assert.deepEqual(search.items.map((item) => item.id), [append.entry.id]);
 
       const detail = await service.getEntry(principal, {
@@ -144,7 +153,7 @@ describe("MemoryV6Service", () => {
         entryId: append.entry.id,
         target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
       });
-      assert.equal("error" in detail, false);
+      assertSuccess(detail);
       assert.equal(detail.entry.source.sessionId, null);
       assert.equal(detail.entry.source.providerId, "local-user");
 
@@ -152,11 +161,11 @@ describe("MemoryV6Service", () => {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
       });
-      assert.equal("error" in tags, false);
+      assertSuccess(tags);
       assert.deepEqual(tags.tags, [{ type: "topic", value: "memory" }]);
 
       const characters = await service.listCharacters(principal);
-      assert.equal("error" in characters, false);
+      assertSuccess(characters);
       assert.deepEqual(characters.characters, [{
         id: "character-a",
         name: "Character A",
@@ -176,7 +185,7 @@ describe("MemoryV6Service", () => {
         entryIds: [append.entry.id],
         reason: "user_request",
       });
-      assert.equal("error" in forget, false);
+      assertSuccess(forget);
       assert.deepEqual(forget.results, [{ entryId: append.entry.id, status: "forgotten" }]);
     });
   });
@@ -213,7 +222,7 @@ describe("MemoryV6Service", () => {
           targets: [target],
           query: "Memory",
         });
-        assert.equal("error" in result, false);
+        assertSuccess(result);
       }
 
       const otherTarget = {
@@ -225,7 +234,7 @@ describe("MemoryV6Service", () => {
         target: otherTarget,
         idempotencyKey: "session-binding-other-character",
       }));
-      assert.equal("error" in append, true);
+      assertError(append);
       assert.equal(append.error.code, "MEMORY_FORBIDDEN");
 
       const search = await service.search(principal, {
@@ -233,7 +242,7 @@ describe("MemoryV6Service", () => {
         targets: [otherTarget],
         query: "Memory",
       });
-      assert.equal("error" in search, true);
+      assertError(search);
       assert.equal(search.error.code, "MEMORY_FORBIDDEN");
 
       const missingOtherCharacter = await service.search(principal, {
@@ -245,7 +254,7 @@ describe("MemoryV6Service", () => {
         }],
         query: "Memory",
       });
-      assert.equal("error" in missingOtherCharacter, true);
+      assertError(missingOtherCharacter);
       assert.equal(missingOtherCharacter.error.code, "MEMORY_FORBIDDEN");
 
       const forget = await service.forget(principal, {
@@ -255,7 +264,7 @@ describe("MemoryV6Service", () => {
         reason: "user_request",
         idempotencyKey: "session-binding-forget-other-character",
       });
-      assert.equal("error" in forget, true);
+      assertError(forget);
       assert.equal(forget.error.code, "MEMORY_FORBIDDEN");
 
       const move = await service.moveEntry(principal, {
@@ -266,7 +275,7 @@ describe("MemoryV6Service", () => {
         reason: "move to requested target",
         idempotencyKey: "session-binding-move-other-character",
       });
-      assert.equal("error" in move, true);
+      assertError(move);
       assert.equal(move.error.code, "MEMORY_FORBIDDEN");
     });
   });
@@ -307,8 +316,8 @@ describe("MemoryV6Service", () => {
         limit: 1,
       });
 
-      assert.equal("error" in result, false);
-      assert.deepEqual(result.items.map((item) => item.target.character?.id), ["character-b"]);
+      assertSuccess(result);
+      assert.deepEqual(result.items.map((item) => "character" in item.target ? item.target.character.id : undefined), ["character-b"]);
       assert.equal(result.nextCursor, undefined);
     });
   });
@@ -349,8 +358,8 @@ describe("MemoryV6Service", () => {
         limit: 1,
       });
 
-      assert.equal("error" in result, false);
-      assert.deepEqual(result.items.map((item) => item.target.project?.id), ["project-b"]);
+      assertSuccess(result);
+      assert.deepEqual(result.items.map((item) => "project" in item.target && item.target.project.type === "id" ? item.target.project.id : undefined), ["project-b"]);
       assert.equal(result.nextCursor, undefined);
     });
   });
@@ -390,7 +399,7 @@ describe("MemoryV6Service", () => {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: "mem-project-a",
       });
-      assert.equal("error" in missingTarget, true);
+      assertError(missingTarget);
       assert.equal(missingTarget.error.code, "MEMORY_INVALID_FIELD");
       assert.equal(missingTarget.error.field, "target");
 
@@ -399,7 +408,7 @@ describe("MemoryV6Service", () => {
         entryId: "mem-project-a",
         target: { owner: "project", scope: "project", project: { type: "id", id: "project-b" } },
       });
-      assert.equal("error" in mismatchTarget, true);
+      assertError(mismatchTarget);
       assert.equal(mismatchTarget.error.code, "MEMORY_ENTRY_NOT_FOUND");
     });
   });
@@ -421,7 +430,7 @@ describe("MemoryV6Service", () => {
       const principal = createLocalUserMemoryPrincipal();
       const usage = await service.fileUsage(principal);
 
-      assert.equal("error" in usage, false);
+      assertSuccess(usage);
       assert.deepEqual(usage, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         quotaBytes: MEMORY_FILE_QUOTA_MIN_BYTES,
@@ -477,11 +486,11 @@ describe("MemoryV6Service", () => {
       });
 
       const defaultUsage = await service.fileUsage(principal);
-      assert.equal("error" in defaultUsage, false);
+      assertSuccess(defaultUsage);
       assert.equal("largestEntries" in defaultUsage, false);
 
       const usage = await service.fileUsage(principal, { includeLargestEntries: true, largestLimit: 1 });
-      assert.equal("error" in usage, false);
+      assertSuccess(usage);
       assert.deepEqual(usage.largestEntries, [{
         entryId: "mem-large-files",
         title: "容量の大きいMemory",
@@ -559,7 +568,7 @@ describe("MemoryV6Service", () => {
         largestLimit: 10,
       });
 
-      assert.equal("error" in usage, false);
+      assertSuccess(usage);
       assert.deepEqual(usage.largestEntries?.map((entry) => entry.entryId), [
         ownCharacterEntryId,
         projectEntryId,
@@ -567,6 +576,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "file付きappendは未実装契約を検証後に返し、再送でもentryを作らない"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // fault = "未実装のfile appendが成功扱いになりentryまたはfile metadataを永続化する"
+  // observable = "初回と同一idempotency keyの再送のerror code/fieldとtarget内entry検索結果"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.file-append"
+  // lifecycle = "permanent"
+  // impact = "未提供のfile appendを成功として扱わず、重複保存を防ぐ"
+  // distinction = "型検査では検出できないserviceのvalidation順序と永続副作用を実動作で確認する"
+  // @end-test-value
   it("file付きappendはcontract validation後に未実装エラーを返す", async () => {
     await withService(async ({ service, storage }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -579,7 +600,7 @@ describe("MemoryV6Service", () => {
         }],
       }));
 
-      assert.equal("error" in append, true);
+      assertError(append);
       assert.equal(append.error.code, "MEMORY_FILE_APPEND_UNIMPLEMENTED");
       assert.equal(append.error.field, "files");
       assert.deepEqual(storage.searchEntries({ targets: [projectTarget], query: "Memory service" }).items, []);
@@ -592,11 +613,23 @@ describe("MemoryV6Service", () => {
           role: "evidence",
         }],
       }));
-      assert.equal("error" in replay, true);
+      assertError(replay);
       assert.equal(replay.error.code, "MEMORY_FILE_APPEND_UNIMPLEMENTED");
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "file付きappendはquota確認後にimporter metadataを一度だけ登録し、同一keyの再送をreplayする"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // fault = "quota前にimport/prepareする、またはreplayで再度inspectしてfile usageを二重計上する"
+  // observable = "append/replayのentry identity、inspect回数、prepare entry ID、file usage"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.file-append"
+  // lifecycle = "permanent"
+  // impact = "quotaとidempotent appendの永続file metadataが一致する"
+  // distinction = "serviceからstorageのquota・importer・replay連携を同時に確認する"
+  // @end-test-value
   it("file付きappendはquota preflight後にimporter metadataをstorageへ登録する", async () => {
     const protectedObject = {
       objectId: "a".repeat(32),
@@ -626,7 +659,7 @@ describe("MemoryV6Service", () => {
         }],
       }));
 
-      assert.equal("error" in append, false);
+      assertSuccess(append);
       assert.equal(inspectCount, 1);
       assert.equal(prepareEntryId, append.entry.id);
       assert.deepEqual(storage.getFileUsage(), {
@@ -648,7 +681,7 @@ describe("MemoryV6Service", () => {
         }],
       }));
 
-      assert.equal("error" in replay, false);
+      assertSuccess(replay);
       assert.equal(replay.entry.id, append.entry.id);
       assert.equal(inspectCount, 1);
       assert.equal(prepareEntryId, append.entry.id);
@@ -680,6 +713,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "同じidempotency keyの同時file appendはcanonical entryを一件だけ確定しreplay側objectを破棄する"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE-RETRY" }
+  // fault = "並行replay側のprepared objectをcleanupせず孤立させる、またはentry/file usageを二重化する"
+  // observable = "二つのresponseのentry ID/replayed状態、discard object数、file usage"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.concurrent-file-append"
+  // lifecycle = "permanent"
+  // impact = "並行retry後もorphan protected objectと二重quota消費を残さない"
+  // distinction = "同時実行のraceとcleanup到達性をservice integrationで確認する"
+  // @end-test-value
   it("同じidempotency keyの同時file appendはreplay側の準備済みobjectを破棄する", async () => {
     const discardedObjectIds: string[] = [];
     let prepareCount = 0;
@@ -699,8 +744,8 @@ describe("MemoryV6Service", () => {
         service.append(principal, request),
       ]);
 
-      assert.equal("error" in first, false);
-      assert.equal("error" in second, false);
+      assertSuccess(first);
+      assertSuccess(second);
       assert.equal(first.entry.id, second.entry.id);
       assert.equal([first.replayed, second.replayed].filter(Boolean).length, 1);
       assert.equal(discardedObjectIds.length, 1);
@@ -748,6 +793,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "並行file appendのcleanup成功と失敗が混在しても未完了cleanupをpartialとして永続化しretryへ伝える"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE-RETRY" }
+  // fault = "cleanup成功が失敗分のpending countを消し、response loss後のretryを成功扱いにする"
+  // observable = "partial error、cleanup_pending_count、再open replayのcleanupRequired、retry error"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.concurrent-file-cleanup"
+  // lifecycle = "permanent"
+  // impact = "orphan object cleanupが未完了な状態をconsumerが見失わない"
+  // distinction = "並行実行、DB read-back、再open後retryまでを一つのservice/storage経路で確認する"
+  // @end-test-value
   it("同じidempotency keyの複数file appendでreplay cleanupの成否が混在してもpartialを永続化する", async () => {
     let prepareCount = 0;
     let discardCount = 0;
@@ -801,7 +858,7 @@ describe("MemoryV6Service", () => {
         reopenedStorage.close();
       }
       const retry = await service.append(principal, request);
-      assert.equal("error" in retry, true);
+      assertError(retry);
       assert.equal(retry.error.code, "MEMORY_FILE_CLEANUP_FAILED");
       assert.equal(retry.error.effect, "partial");
     }, {
@@ -846,6 +903,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "security"
+  // claim = "get-fileは明示targetに属するobjectだけをexporterへ渡し、target不一致をnot foundで拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // fault = "別targetのobjectをexporterへ渡す、またはexport先とmetadataのentry identityを混同する"
+  // observable = "exporter inputのentry/object/key/output pathとtarget mismatchのerror code"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.get-file"
+  // lifecycle = "permanent"
+  // impact = "protected objectのcross-target readと意図しないfile exportを防ぐ"
+  // distinction = "service target照合からexporter side effectまでを実動作で確認する"
+  // @end-test-value
   it("get-file は明示target内のobjectだけをexporterへ渡す", async () => {
     const protectedObject = {
       objectId: "a".repeat(32),
@@ -873,7 +942,7 @@ describe("MemoryV6Service", () => {
           contentType: "image/png",
         }],
       }));
-      assert.equal("error" in append, false);
+      assertSuccess(append);
 
       const getFile = await service.getFile(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -881,7 +950,7 @@ describe("MemoryV6Service", () => {
         objectId: protectedObject.objectId,
         outputPath: "C:/exports/dialog.png",
       });
-      assert.equal("error" in getFile, false);
+      assertSuccess(getFile);
       assert.equal(getFile.objectId, protectedObject.objectId);
       assert.equal(getFile.entryId, append.entry.id);
       assert.equal(getFile.bytesWritten, 128);
@@ -895,7 +964,7 @@ describe("MemoryV6Service", () => {
         objectId: protectedObject.objectId,
         outputPath: "C:/exports/dialog.png",
       });
-      assert.equal("error" in mismatch, true);
+      assertError(mismatch);
       assert.equal(mismatch.error.code, "MEMORY_FILE_NOT_FOUND");
     }, {
       protectedObjectImporter: {
@@ -918,6 +987,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "file付きappendはimporterの入力検証エラーをdomain errorへ投影しentryを作らない"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // fault = "読めないfile pathを内部例外または成功へ変換し、空のentryを永続化する"
+  // observable = "error code/field/messageとtarget内entry検索結果"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.file-append-validation"
+  // lifecycle = "permanent"
+  // impact = "不正file inputを利用者が扱えるdomain failureとして安全に拒否する"
+  // distinction = "importerの入力失敗がservice responseとstorage stateへ伝播することを確認する"
+  // @end-test-value
   it("file付きappendはimporterの入力エラーをdomain errorとして返す", async () => {
     await withService(async ({ service, storage }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -930,7 +1011,7 @@ describe("MemoryV6Service", () => {
         }],
       }));
 
-      assert.equal("error" in append, true);
+      assertError(append);
       assert.equal(append.error.code, "MEMORY_INVALID_FIELD");
       assert.equal(append.error.field, "files[0].path");
       assert.match(append.error.message, /not readable/);
@@ -951,6 +1032,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "file付きappendのprepare失敗はdomain errorになりentryを作らない"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // fault = "protected object prepareの例外を成功または未分類例外へ流し、部分entryを残す"
+  // observable = "error code/fieldとtarget内entry検索結果"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.file-append-preparation"
+  // lifecycle = "permanent"
+  // impact = "暗号化object準備失敗時に不完全なMemory entryを公開しない"
+  // distinction = "外部importer failureの公開投影とatomicityをserviceで確認する"
+  // @end-test-value
   it("file付きappendはimporter prepare失敗をdomain errorとして返しentryを作らない", async () => {
     await withService(async ({ service, storage }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -963,7 +1056,7 @@ describe("MemoryV6Service", () => {
         }],
       }));
 
-      assert.equal("error" in append, true);
+      assertError(append);
       assert.equal(append.error.code, "MEMORY_FILE_IMPORT_FAILED");
       assert.equal(append.error.field, "files[0]");
       assert.deepEqual(storage.searchEntries({ targets: [projectTarget], query: "Memory service" }).items, []);
@@ -984,6 +1077,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "複数file appendのprepare途中失敗は既に準備したobjectを破棄しentryを作らない"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#forget" }
+  // fault = "後続fileのprepare失敗後に先行prepared objectをcleanupせずorphanとして残す"
+  // observable = "error code/field、discard object IDs、target内entry検索結果"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.file-append-cleanup"
+  // lifecycle = "permanent"
+  // impact = "部分的なobject保存による容量漏れと不可視データを防ぐ"
+  // distinction = "multi-file prepare failureからcleanupと永続状態までを同時に確認する"
+  // @end-test-value
   it("file付きappendはprepare途中の失敗で準備済みobjectを破棄する", async () => {
     const preparedObject = {
       objectId: "a".repeat(32),
@@ -1017,7 +1122,7 @@ describe("MemoryV6Service", () => {
         ],
       }));
 
-      assert.equal("error" in append, true);
+      assertError(append);
       assert.equal(append.error.code, "MEMORY_FILE_IMPORT_FAILED");
       assert.equal(append.error.field, "files[1]");
       assert.deepEqual(discardedObjectIds, [preparedObject.objectId]);
@@ -1045,6 +1150,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "file付きappendのDB append失敗はprepared objectを破棄しentryを作らない"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // fault = "DB commit failure後にprepared objectを残す、または失敗entryを検索可能にする"
+  // observable = "storage error code、discard object IDs、target内entry検索結果"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.file-append-commit"
+  // lifecycle = "permanent"
+  // impact = "atomic append失敗で孤立したprotected objectを作らない"
+  // distinction = "DB失敗から外部object cleanupへのservice settlementを確認する"
+  // @end-test-value
   it("file付きappendはDB append失敗時に準備済みobjectを破棄する", async () => {
     const protectedObject = {
       objectId: "b".repeat(32),
@@ -1072,7 +1189,7 @@ describe("MemoryV6Service", () => {
         }],
       }));
 
-      assert.equal("error" in append, true);
+      assertError(append);
       assert.equal(append.error.code, "MEMORY_ENTRY_NOT_FOUND");
       assert.deepEqual(discardedObjectIds, [protectedObject.objectId]);
       assert.deepEqual(storage.searchEntries({ targets: [projectTarget], query: "Memory service" }).items, []);
@@ -1094,6 +1211,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "DB append失敗とcleanup失敗が重なる場合は元errorをdetailsへ保持したpartial errorを返す"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-EFFECT" }
+  // fault = "cleanup未完了を成功または元errorだけへ潰し、partial effectをconsumerへ伝えない"
+  // observable = "cleanup error code/effectとdetails.originalCode"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.file-cleanup-settlement"
+  // lifecycle = "permanent"
+  // impact = "orphan cleanupが未完了な事実と元のDB失敗を同時に回復経路へ渡す"
+  // distinction = "二重失敗の公開error projectionを直接確認する"
+  // @end-test-value
   it("file付きappendのDB失敗後にcleanupも失敗した場合は元errorを保持したpartial errorを返す", async () => {
     const protectedObject = {
       objectId: "9".repeat(32),
@@ -1114,7 +1243,7 @@ describe("MemoryV6Service", () => {
         supersedes: ["missing-entry"],
         files: [{ path: "C:/trace/dialog.png", summary: "Screenshot.", role: "evidence" }],
       }));
-      assert.equal("error" in append, true);
+      assertError(append);
       assert.equal(append.error.code, "MEMORY_FILE_CLEANUP_FAILED");
       assert.equal(append.error.effect, "partial");
       assert.equal(append.error.details?.originalCode, "MEMORY_ENTRY_NOT_FOUND");
@@ -1136,6 +1265,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "generic DB失敗とcleanup失敗が重なる場合はstorage errorを元errorとして保持したpartial errorを返す"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-EFFECT" }
+  // fault = "generic storage failureを隠す、またはcleanup失敗をpartialへ投影しない"
+  // observable = "cleanup error code/effectとdetails.originalCode"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.file-cleanup-settlement"
+  // lifecycle = "permanent"
+  // impact = "利用者とoperatorがstorage failureと未完了cleanupを区別して復旧できる"
+  // distinction = "既知domain errorでないDB failureの二重失敗投影を確認する"
+  // @end-test-value
   it("file付きappendのgeneric DB失敗後にcleanupも失敗した場合はstorage errorを保持したpartial errorを返す", async () => {
     const protectedObject = {
       objectId: "f".repeat(32),
@@ -1160,7 +1301,7 @@ describe("MemoryV6Service", () => {
         idempotencyKey: "file-append-generic-db-cleanup-error-key",
         files: [{ path: "C:/trace/dialog.png", summary: "Screenshot.", role: "evidence" }],
       }));
-      assert.equal("error" in append, true);
+      assertError(append);
       assert.equal(append.error.code, "MEMORY_FILE_CLEANUP_FAILED");
       assert.equal(append.error.effect, "partial");
       assert.equal(append.error.details?.originalCode, "MEMORY_STORAGE_UNAVAILABLE");
@@ -1182,6 +1323,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "prepare途中失敗とcleanup失敗が重なる場合は元のimport errorを保持したpartial errorを返す"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-EFFECT" }
+  // fault = "先行prepared objectのcleanup失敗を成功または単一import errorへ投影する"
+  // observable = "cleanup error code/effectとdetails.originalCode"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.file-cleanup-settlement"
+  // lifecycle = "permanent"
+  // impact = "partial object cleanupと元のprepare failureを回復処理へ渡す"
+  // distinction = "prepare failure起点の二重失敗をservice public errorで確認する"
+  // @end-test-value
   it("file付きappendのprepare途中失敗後にcleanupも失敗した場合はpartial errorを返す", async () => {
     let prepareCount = 0;
     await withService(async ({ service }) => {
@@ -1192,7 +1345,7 @@ describe("MemoryV6Service", () => {
           { path: "C:/trace/second.png", summary: "Second.", role: "evidence" },
         ],
       }));
-      assert.equal("error" in append, true);
+      assertError(append);
       assert.equal(append.error.code, "MEMORY_FILE_CLEANUP_FAILED");
       assert.equal(append.error.effect, "partial");
       assert.equal(append.error.details?.originalCode, "MEMORY_FILE_IMPORT_FAILED");
@@ -1231,6 +1384,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "file付きappendのprepareは一件ずつ実行され、同時read/encryptを発生させない"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // fault = "複数fileを並行prepareしてresource concurrencyを一時に超える"
+  // observable = "append成功時のfile countと観測した最大prepare concurrency"
+  // observation_boundary = "component-behavior"
+  // scope = "memory-v6-service.file-append-preparation"
+  // lifecycle = "permanent"
+  // impact = "file importの同時resource負荷を一件に制限する"
+  // distinction = "外部importer mockの同時実行数を実測し、型や静的規約では代替できない"
+  // @end-test-value
   it("file付きappendのprepareは順次実行して同時read/encryptを避ける", async () => {
     const protectedObjects = [0, 1, 2].map((index) => ({
       objectId: `${index}`.repeat(32),
@@ -1259,7 +1424,8 @@ describe("MemoryV6Service", () => {
           contentType: object.contentType,
         })),
       }));
-      assert.equal("error" in append, false);
+      assertSuccess(append);
+      assert.ok(append.entry.files);
       assert.equal(append.entry.files.length, 3);
       assert.equal(maxPrepareConcurrency, 1);
     }, {
@@ -1289,6 +1455,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "export-filesは明示targetのentryに属するactive objectsをまとめてexporterへ渡す"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // fault = "inactive/別entryのobjectを含める、対象外targetをexportする、またはmetadataを欠落させる"
+  // observable = "export responseのentry/output/count/object IDsとexporter input metadata"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.export-files"
+  // lifecycle = "permanent"
+  // impact = "複数protected objectのexport結果とtarget境界を一致させる"
+  // distinction = "service target validation、active filtering、外部export inputを一つの経路で確認する"
+  // @end-test-value
   it("export-files はentry内のactive objectsをまとめてexporterへ渡す", async () => {
     const protectedObjects = [
       {
@@ -1316,7 +1494,7 @@ describe("MemoryV6Service", () => {
         keyId: "f".repeat(32),
       },
     ] satisfies MemoryV6AppendProtectedObjectInput[];
-    let exportInput: Parameters<NonNullable<MemoryV6ServiceDeps["protectedObjectExporter"]>["exportFiles"]>[0] | null = null;
+    let exportInput: Parameters<NonNullable<NonNullable<MemoryV6ServiceDeps["protectedObjectExporter"]>["exportFiles"]>>[0] | null = null;
 
     await withService(async ({ service }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -1330,7 +1508,7 @@ describe("MemoryV6Service", () => {
           contentType: object.contentType,
         })),
       }));
-      assert.equal("error" in append, false);
+      assertSuccess(append);
 
       const exported = await service.exportFiles(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -1339,7 +1517,7 @@ describe("MemoryV6Service", () => {
         outputDirectoryPath: "C:/exports",
       });
 
-      assert.equal("error" in exported, false);
+      assertSuccess(exported);
       assert.equal(exported.entryId, append.entry.id);
       assert.equal(exported.outputDirectoryPath, "C:/exports");
       assert.equal(exported.exportedCount, 2);
@@ -1354,7 +1532,7 @@ describe("MemoryV6Service", () => {
         entryId: append.entry.id,
         outputDirectoryPath: "C:/exports",
       });
-      assert.equal("error" in mismatch, true);
+      assertError(mismatch);
       assert.equal(mismatch.error.code, "MEMORY_ENTRY_NOT_FOUND");
     }, {
       protectedObjectImporter: {
@@ -1396,6 +1574,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "file付きappendはquota超過をprepare前に拒否しentryを作らない"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#quota" }
+  // fault = "quota preflightを省略してfileをprepareする、または超過appendをentryとして保存する"
+  // observable = "quota errorのbytes内訳、prepare呼出有無、target内entry検索結果"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service.file-quota"
+  // lifecycle = "permanent"
+  // impact = "quota超過による容量上限逸脱と不要な暗号化副作用を防ぐ"
+  // distinction = "quota判定、外部prepare抑止、永続状態を同時に確認する"
+  // @end-test-value
   it("file付きappendはquota超過時にimporter prepareを呼ばずentryを作らない", async () => {
     let prepareCalled = false;
     await withService(async ({ service, storage }) => {
@@ -1409,7 +1599,7 @@ describe("MemoryV6Service", () => {
         }],
       }));
 
-      assert.equal("error" in append, true);
+      assertError(append);
       assert.equal(append.error.code, "MEMORY_FILE_QUOTA_EXCEEDED");
       assert.equal(append.error.quotaBytes, MEMORY_FILE_QUOTA_MIN_BYTES);
       assert.equal(append.error.usedBytes, 0);
@@ -1468,7 +1658,7 @@ describe("MemoryV6Service", () => {
         },
         idempotencyKey: "character-id-append",
       }));
-      assert.equal("error" in append, false);
+      assertSuccess(append);
       assert.equal(append.entry.owner.type, "character");
       assert.equal(append.entry.owner.id, "character-a");
 
@@ -1477,7 +1667,7 @@ describe("MemoryV6Service", () => {
         targets: [{ owner: "character", scope: "character", character: { type: "current" } }],
         query: "memory",
       });
-      assert.equal("error" in currentCharacter, true);
+      assertError(currentCharacter);
       assert.equal(currentCharacter.error.code, "MEMORY_INVALID_FIELD");
       assert.equal(currentCharacter.error.field, "targets[0].character.type");
     });
@@ -1514,7 +1704,7 @@ describe("MemoryV6Service", () => {
         targets: [{ owner: "project", scope: "project", project: { type: "path", path: workspacePath } }],
         query: "agent payload",
       });
-      assert.equal("error" in searchBeforeAppend, false);
+      assertSuccess(searchBeforeAppend);
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
 
       const forgetDryRun = await service.forget(principal, {
@@ -1524,7 +1714,7 @@ describe("MemoryV6Service", () => {
         reason: "user_request",
         dryRun: true,
       });
-      assert.equal("error" in forgetDryRun, false);
+      assertSuccess(forgetDryRun);
       assert.equal(forgetDryRun.writeOccurred, false);
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
 
@@ -1536,7 +1726,7 @@ describe("MemoryV6Service", () => {
         },
         supersedes: ["missing-entry"],
       }));
-      assert.equal("error" in failedAppend, true);
+      assertError(failedAppend);
       assert.equal(failedAppend.error.code, "MEMORY_ENTRY_NOT_FOUND");
       assert.equal(failedAppend.error.effect, "none");
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
@@ -1549,7 +1739,7 @@ describe("MemoryV6Service", () => {
         reason: "move to project scope",
         idempotencyKey: "missing-move",
       });
-      assert.equal("error" in failedMove, true);
+      assertError(failedMove);
       assert.equal(failedMove.error.code, "MEMORY_ENTRY_NOT_FOUND");
       assert.equal(failedMove.error.effect, "none");
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
@@ -1561,7 +1751,7 @@ describe("MemoryV6Service", () => {
         reason: "user_request",
         idempotencyKey: "forget-missing-project",
       });
-      assert.equal("error" in forgetMissing, false);
+      assertSuccess(forgetMissing);
       assert.equal(forgetMissing.results[0].status, "not_found");
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
 
@@ -1572,7 +1762,7 @@ describe("MemoryV6Service", () => {
           project: { type: "path", path: workspacePath },
         },
       }));
-      assert.equal("error" in append, false);
+      assertSuccess(append);
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 1);
 
       const moved = await service.moveEntry(principal, {
@@ -1583,7 +1773,7 @@ describe("MemoryV6Service", () => {
         reason: "move to destination project",
         idempotencyKey: "move-to-new-project",
       });
-      assert.equal("error" in moved, false);
+      assertSuccess(moved);
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 2);
 
       const search = await service.search(principal, {
@@ -1591,7 +1781,7 @@ describe("MemoryV6Service", () => {
         targets: [{ owner: "project", scope: "project", project: { type: "path", path: destinationWorkspacePath } }],
         query: "agent payload",
       });
-      assert.equal("error" in search, false);
+      assertSuccess(search);
       assert.deepEqual(search.items.map((item) => item.id), [append.entry.id]);
     } finally {
       storage.close();
@@ -1627,7 +1817,7 @@ describe("MemoryV6Service", () => {
       });
 
       const targets = await service.listTargets(principal, { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
-      assert.equal("error" in targets, false);
+      assertSuccess(targets);
       assert.equal(targets.items[0].entryCount, 1);
 
       const listed = await service.listEntries(principal, {
@@ -1635,14 +1825,14 @@ describe("MemoryV6Service", () => {
         target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
         limit: 100,
       });
-      assert.equal("error" in listed, false);
+      assertSuccess(listed);
       assert.equal("body" in listed.items[0], false);
       const listedWithBody = await service.listEntries(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
         includeBody: true,
       });
-      assert.equal("error" in listedWithBody, false);
+      assertSuccess(listedWithBody);
       assert.equal(listedWithBody.items[0].body, "full body must stay hidden by default");
 
       const tags = await service.listTags(principal, {
@@ -1651,7 +1841,7 @@ describe("MemoryV6Service", () => {
         withCounts: true,
         sampleLimit: 1,
       });
-      assert.equal("error" in tags, false);
+      assertSuccess(tags);
       assert.equal(tags.tags[0].entryCount, 1);
       assert.deepEqual(tags.tags[0].samples?.map((sample) => sample.id), ["mem-maintenance"]);
 
@@ -1660,7 +1850,7 @@ describe("MemoryV6Service", () => {
         allTargets: true,
         staleBefore: "2026-06-01T00:00:00.000Z",
       });
-      assert.equal("error" in audit, false);
+      assertSuccess(audit);
       assert.equal(audit.targets[0].staleOrProgressCandidates[0].id, "mem-maintenance");
       assert.equal(JSON.stringify(audit).includes("full body must stay hidden"), false);
     });
@@ -1696,7 +1886,7 @@ describe("MemoryV6Service", () => {
       }
       const target = [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }];
       const first = await service.listTags(principal, { schemaVersion: MEMORY_V6_SCHEMA_VERSION, targets: target, limit: 2 });
-      assert.equal("error" in first, false);
+      assertSuccess(first);
       assert.equal(first.tags.length, 2);
       assert.ok(first.nextCursor);
       const second = await service.listTags(principal, {
@@ -1705,7 +1895,7 @@ describe("MemoryV6Service", () => {
         limit: 2,
         cursor: first.nextCursor,
       });
-      assert.equal("error" in second, false);
+      assertSuccess(second);
       assert.equal(second.tags.length, 1);
       assert.equal(second.nextCursor, undefined);
       assert.equal(new Set([...first.tags, ...second.tags].map((item) => item.value)).size, 3);
@@ -1714,7 +1904,7 @@ describe("MemoryV6Service", () => {
         targets: target,
         cursor: "cursor-a",
       });
-      assert.equal("error" in invalidCursor, true);
+      assertError(invalidCursor);
       assert.equal(invalidCursor.error.code, "MEMORY_INVALID_FIELD");
       assert.equal(invalidCursor.error.field, "cursor");
     });
@@ -1754,12 +1944,12 @@ describe("MemoryV6Service", () => {
         idempotencyKey: "forget-source-key",
       };
       const first = await service.forget(principal, request);
-      assert.equal("error" in first, false);
+      assertSuccess(first);
       const replay = await service.forget(principal, request);
-      assert.equal("error" in replay, false);
+      assertSuccess(replay);
       assert.equal(replay.results[0].replayed, true);
       const conflict = await service.forget(principal, { ...request, sourceMessageId: "message-b" });
-      assert.equal("error" in conflict, true);
+      assertError(conflict);
       assert.equal(conflict.error.code, "MEMORY_IDEMPOTENCY_CONFLICT");
       const db = new (await import("node:sqlite")).DatabaseSync(dbPath, { readOnly: true });
       try {
@@ -1802,7 +1992,7 @@ describe("MemoryV6Service", () => {
         entryIds: ["mem-move", "missing"],
         dryRun: true,
       });
-      assert.equal("error" in dryRun, false);
+      assertSuccess(dryRun);
       assert.equal(dryRun.dryRun, true);
       assert.equal(dryRun.writeOccurred, false);
       assert.equal(dryRun.results[0].entry?.title, "CLI-wide note");
@@ -1814,7 +2004,7 @@ describe("MemoryV6Service", () => {
         entryIds: ["mem-move"],
         idempotencyKey: "forget-after-move",
       });
-      assert.equal("error" in replaySeed, false);
+      assertSuccess(replaySeed);
       assert.equal(replaySeed.results[0].status, "not_found");
 
       const request = {
@@ -1826,7 +2016,7 @@ describe("MemoryV6Service", () => {
         idempotencyKey: "move-cli-note",
       };
       const moved = await service.moveEntry(principal, request);
-      assert.equal("error" in moved, false);
+      assertSuccess(moved);
       assert.equal(moved.entry.owner.type, "user");
       const replayPreview = await service.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -1835,12 +2025,12 @@ describe("MemoryV6Service", () => {
         idempotencyKey: "forget-after-move",
         dryRun: true,
       });
-      assert.equal("error" in replayPreview, false);
+      assertSuccess(replayPreview);
       assert.equal(replayPreview.results[0].status, "not_found");
       assert.equal(replayPreview.results[0].entry, undefined);
       assert.equal(storage.getEntry("mem-move")?.state, "active");
       const replay = await service.moveEntry(principal, request);
-      assert.equal("error" in replay, false);
+      assertSuccess(replay);
       assert.equal(replay.entry.id, "mem-move");
       assert.equal(replay.replayed, true);
 
@@ -1848,13 +2038,13 @@ describe("MemoryV6Service", () => {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: request.from,
       });
-      assert.equal("error" in oldTarget, false);
+      assertSuccess(oldTarget);
       assert.deepEqual(oldTarget.items, []);
       const newTarget = await service.listEntries(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: request.to,
       });
-      assert.equal("error" in newTarget, false);
+      assertSuccess(newTarget);
       assert.deepEqual(newTarget.items.map((entry) => entry.id), ["mem-move"]);
     });
   });

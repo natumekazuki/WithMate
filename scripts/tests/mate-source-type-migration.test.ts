@@ -181,7 +181,9 @@ describe("mate-source-type-migration", () => {
 
       assert.equal(tableSql(db).includes("source_type IN ('session', 'manual', 'system', 'mate_talk')"), true);
       ensureMigrationTempTableNotExists(db);
-      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'index' AND tbl_name = ?").get(TABLE_NAME).count >= 4, true);
+      const indexRow = db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'index' AND tbl_name = ?").get(TABLE_NAME);
+      assert.ok(indexRow && typeof indexRow === "object" && "count" in indexRow && typeof indexRow.count === "number");
+      assert.ok(indexRow.count >= 4);
       insertGrowthEvent(db, { id: "legacy-mate-talk", sourceType: "mate_talk" });
       assert.equal(rowCount(db, "session"), 1);
       assert.equal(rowCount(db, "mate_talk"), 1);

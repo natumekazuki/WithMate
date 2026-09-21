@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { Session } from "../../src/app-state.js";
+import type { SessionTurnTerminalCommit } from "../../src-electron/session-turn-terminal-commit.js";
 import { MainSessionPersistenceFacade } from "../../src-electron/main-session-persistence-facade.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "MainSessionPersistenceFacadeがsession persistence操作を対応するserviceへ委譲する"
+// oracle = { type = "contract", ref = "src-electron/main-session-persistence-facade.ts" }
+// fault = "upsert、terminal commit、replaceAllの入力または順序がfacade境界で失われる"
+// observable = "persistence serviceへ渡されたsessionとterminal commit"
+// observation_boundary = "public-boundary"
+// scope = "main-session-persistence-facade"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceService へ委譲する", async () => {
   const calls: string[] = [];
   const facade = new MainSessionPersistenceFacade({
@@ -10,19 +22,19 @@ test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceS
     setSessions: () => undefined,
     getSessionPersistenceService: () =>
       ({
-        upsertSession(session) {
+        upsertSession(session: Session) {
           calls.push(`upsert:${session.id}`);
           return session as never;
         },
-        upsertTerminalSession(session, terminalCommit) {
+        upsertTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit) {
           calls.push(`terminal:${session.id}:${terminalCommit.auditLogId}`);
           return session as never;
         },
-        upsertSessionPreservingPin(session) {
+        upsertSessionPreservingPin(session: Session) {
           calls.push(`preserve-pin:${session.id}`);
           return session as never;
         },
-        replaceAllSessions(sessions) {
+        replaceAllSessions(sessions: Session[]) {
           calls.push(`replace:${sessions.length}`);
           return sessions as never;
         },
@@ -46,6 +58,16 @@ test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceS
   assert.deepEqual(calls, ["upsert:s-1", "terminal:s-1:4", "preserve-pin:s-1", "replace:1"]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "running sessionの復旧時に詳細hydrateとinterrupted message追加を一度だけ行う"
+// oracle = { type = "contract", ref = "src-electron/main-session-persistence-facade.ts#recoverInterruptedSessions" }
+// fault = "保存済みsummaryとdetailの対応を誤り、復旧状態または通知messageを失う"
+// observable = "hydrateされたsessionのupsert結果とsetSessions投影"
+// observation_boundary = "public-boundary"
+// scope = "session-recovery"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionPersistenceFacade は running session を詳細 hydrate して interrupted に変換する", async () => {
   const storedSessionSummaries = [
     {
@@ -97,14 +119,14 @@ test("MainSessionPersistenceFacade は running session を詳細 hydrate して 
     },
     getSessionPersistenceService: () =>
       ({
-        upsertSession(session) {
+        upsertSession(session: Session) {
           upserted.push(`${session.id}:${session.runState}:${session.messages.length}:${session.messages.at(-1)?.text}`);
           return session as never;
         },
       }) as never,
     getSessionStorage: () =>
       ({
-        getSession(sessionId) {
+        getSession(sessionId: string) {
           return sessionId === "s-1" ? hydratedSession : null;
         },
         listSessionSummaries() {
@@ -119,6 +141,16 @@ test("MainSessionPersistenceFacade は running session を詳細 hydrate して 
   assert.deepEqual(setSessionsPayload, expectedSetSessionsPayload);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "既存のinterrupted messageを復旧処理で重複追加しない"
+// oracle = { type = "contract", ref = "src-electron/main-session-persistence-facade.ts#recoverInterruptedSessions" }
+// fault = "再起動のたびに同一の中断通知がsessionへ蓄積する"
+// observable = "upsertされたmessage数と最終message"
+// observation_boundary = "public-boundary"
+// scope = "session-recovery"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionPersistenceFacade は既存 interrupted message を重複追加しない", async () => {
   const interruptedMessage = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
   const hydratedSession = {
@@ -147,14 +179,14 @@ test("MainSessionPersistenceFacade は既存 interrupted message を重複追加
     setSessions: () => undefined,
     getSessionPersistenceService: () =>
       ({
-        upsertSession(session) {
+        upsertSession(session: Session) {
           upserted.push(`${session.id}:${session.runState}:${session.messages.length}`);
           return session as never;
         },
       }) as never,
     getSessionStorage: () =>
       ({
-        getSession(sessionId) {
+        getSession(sessionId: string) {
           return sessionId === "s-1" ? hydratedSession : null;
         },
         listSessionSummaries() {
@@ -168,6 +200,16 @@ test("MainSessionPersistenceFacade は既存 interrupted message を重複追加
   assert.deepEqual(upserted, ["s-1:interrupted:2"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "detail hydrateできないrunning sessionを保存更新せずskipする"
+// oracle = { type = "contract", ref = "src-electron/main-session-persistence-facade.ts#recoverInterruptedSessions" }
+// fault = "存在しないdetailを成功扱いし、壊れたsessionを上書きする"
+// observable = "persistence serviceのupsert呼出し不在"
+// observation_boundary = "public-boundary"
+// scope = "session-recovery"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionPersistenceFacade は hydrate できない running session を skip する", async () => {
   const upserted: string[] = [];
   const facade = new MainSessionPersistenceFacade({
@@ -184,7 +226,7 @@ test("MainSessionPersistenceFacade は hydrate できない running session を 
     setSessions: () => undefined,
     getSessionPersistenceService: () =>
       ({
-        upsertSession(session) {
+        upsertSession(session: Session) {
           upserted.push(session.id);
           return session as never;
         },
@@ -205,6 +247,16 @@ test("MainSessionPersistenceFacade は hydrate できない running session を 
   assert.deepEqual(upserted, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "running sessionがない場合は詳細storageを読まず復旧処理を終了する"
+// oracle = { type = "contract", ref = "src-electron/main-session-persistence-facade.ts#recoverInterruptedSessions" }
+// fault = "不要なstorage readを行い、通常sessionの復旧状態を変える"
+// observable = "storage getSession呼出しとupsert呼出しの不在"
+// observation_boundary = "public-boundary"
+// scope = "session-recovery"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionPersistenceFacade は running session がなければ storage を読まない", async () => {
   const facade = new MainSessionPersistenceFacade({
     getSessions: () =>

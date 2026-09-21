@@ -69,6 +69,9 @@ function seedSession(dbPath: string): void {
       threadId: "thread-v6",
       messages: [],
       stream: [],
+      isPinned: false,
+      codexSpeed: "standard",
+      codexReviewer: "user",
     });
   } finally {
     sessionStorage.close();
@@ -94,6 +97,8 @@ function seedAuxiliarySession(dbPath: string): void {
       allowedAdditionalDirectories: [],
       threadId: "",
       composerDraft: "",
+      codexSpeed: "standard",
+      codexReviewer: "user",
       messages: [],
       displayAfterMessageIndex: -1,
       createdAt: "2026-06-28T00:00:00.000Z",

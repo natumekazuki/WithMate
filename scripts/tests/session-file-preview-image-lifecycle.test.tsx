@@ -9,6 +9,7 @@ import { SessionDiffPreview, SessionFilePreview } from "../../src/file-explorer/
 import type {
   SessionFileDescriptor,
   SessionFileGitCommitResourceRequest,
+  SessionFileRootResourceRequest,
   SessionFileResourceRequest,
 } from "../../src/file-explorer/file-explorer-contract.js";
 import { STRUCTURED_TEXT_PREVIEW_MAX_BYTES } from "../../src/file-explorer/structured-text-preview.js";
@@ -47,13 +48,17 @@ const DEFAULT_IMAGE_COPY_API: Pick<
   },
 };
 
-const MARKDOWN_REQUEST: SessionFileResourceRequest = {
+const MARKDOWN_REQUEST: SessionFileRootResourceRequest = {
   sessionId: "session-1",
   rootId: "workspace",
   relativePath: "docs/readme.md",
 };
 const MARKDOWN_BYTES = new TextEncoder().encode("![sample](./image.png)");
 const IMAGE_BYTES = Uint8Array.of(137, 80, 78, 71);
+
+function resourcePath(resource: { relativePath: string } | { absolutePath: string }): string {
+  return "relativePath" in resource ? resource.relativePath : resource.absolutePath;
+}
 
 const MARKDOWN_DESCRIPTOR: SessionFileDescriptor = {
   ...MARKDOWN_REQUEST,
@@ -192,14 +197,14 @@ function createPreviewApi(
       }];
     },
     async inspectSessionFile(request) {
-      if (request.relativePath === MARKDOWN_REQUEST.relativePath) {
+      if (resourcePath(request) === MARKDOWN_REQUEST.relativePath) {
         return MARKDOWN_DESCRIPTOR;
       }
       imageInspectCount += 1;
       return inspectImage(imageInspectCount);
     },
     async readSessionFileChunk(request) {
-      const source = request.relativePath === MARKDOWN_REQUEST.relativePath
+      const source = resourcePath(request) === MARKDOWN_REQUEST.relativePath
         ? MARKDOWN_BYTES
         : IMAGE_BYTES;
       const chunk = source.slice(request.offset, request.offset + request.length);
@@ -214,7 +219,7 @@ function createPreviewApi(
       };
     },
     async openSessionFile(request) {
-      return { status: "opened", targetType: "local-path", target: request.relativePath };
+      return { status: "opened", targetType: "local-path", target: resourcePath(request) };
     },
     async openPath(target) {
       return { status: "opened", targetType: "local-path", target };
@@ -259,7 +264,7 @@ function createTextPreviewApi(
       };
     },
     async openSessionFile() {
-      return { status: "opened", targetType: "local-path", target: request.relativePath };
+      return { status: "opened", targetType: "local-path", target: resourcePath(request) };
     },
     async openPath(target) {
       return { status: "opened", targetType: "local-path", target };
@@ -300,7 +305,6 @@ async function renderPreview(
     root.render(React.createElement(SessionFilePreview, {
       api,
       request,
-      onClose() {},
       onCopyText() {},
       onQuoteText() {},
       ...extraProps,
@@ -309,6 +313,17 @@ async function renderPreview(
   return root;
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "File Previewはheaderを維持したままinspection/content読込中のbusy状態とprogressを本文へ表示する"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "loading中にheaderを消す、aria-busy/statusを欠落させる、またはprogress上限を誤る"
+// observable = "previewのaria-busy、title、status text、spinner、progress max"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.loading"
+// lifecycle = "permanent"
+// distinction = "jsdom上の利用者向けDOM/ARIA projectionを直接確認する"
+// @end-test-value
 test("File Preview はheaderを維持し本文だけをinspectionとcontent読込の状態表示へ切り替える", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -354,7 +369,7 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
       };
     },
     async openSessionFile() {
-      return { status: "opened", targetType: "local-path", target: request.relativePath };
+      return { status: "opened", targetType: "local-path", target: resourcePath(request) };
     },
     async openPath(target) {
       return { status: "opened", targetType: "local-path", target };
@@ -483,7 +498,6 @@ test("File Preview はWindowsだけCopy Fileを表示しCopy Imageと別contract
       root?.render(React.createElement(SessionFilePreview, {
         api: unavailableApi,
         request: IMAGE_DESCRIPTOR,
-        onClose() {},
         onCopyText() {},
         onQuoteText() {},
       }));
@@ -758,6 +772,17 @@ test("Text preview の選択範囲は Copy と Quote の共通 action を表示�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Text previewのCtrl+Aは仮想化された全文を選択対象にし、Copy/Quoteの操作対象をその範囲へ限定する"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "全行をDOMへ展開する、selectionを未仮想化内容へ広げる、またはCopy/Quote対象を失う"
+// observable = "Ctrl+AのdefaultPrevented、activeElement、rendered line count"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.text-selection"
+// lifecycle = "permanent"
+// distinction = "仮想化surfaceのキーボード操作とDOM量を実描画で確認する"
+// @end-test-value
 test("Text preview の Ctrl+A は仮想化された全文だけを Copy と Quote の対象にする", async () => {
   const dom = new JSDOM("<!doctype html><p>outside preview</p><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -777,15 +802,15 @@ test("Text preview の Ctrl+A は仮想化された全文だけを Copy と Quot
   });
   const restoreGlobals = installDomGlobals(dom);
   const restoreElementSize = installElementSize(dom);
-  const rangePrototype = dom.window.Range.prototype as Range & {
-    getBoundingClientRect?: () => DOMRect;
-    getClientRects?: () => DOMRect[];
-  };
+  const rangePrototype = dom.window.Range.prototype;
   const previousGetBoundingClientRect = rangePrototype.getBoundingClientRect;
   const previousGetClientRects = rangePrototype.getClientRects;
   const selectionRect = createRect({ left: 40, top: 40, width: 400, height: 300 });
   rangePrototype.getBoundingClientRect = () => selectionRect;
-  rangePrototype.getClientRects = () => [selectionRect];
+  Object.defineProperty(rangePrototype, "getClientRects", {
+    configurable: true,
+    value: () => [selectionRect],
+  });
   const request: SessionFileResourceRequest = {
     sessionId: "session-1",
     rootId: "workspace",
@@ -875,7 +900,10 @@ test("Text preview の Ctrl+A は仮想化された全文だけを Copy と Quot
       Reflect.deleteProperty(rangePrototype, "getBoundingClientRect");
     }
     if (previousGetClientRects) {
-      rangePrototype.getClientRects = previousGetClientRects;
+      Object.defineProperty(rangePrototype, "getClientRects", {
+        configurable: true,
+        value: previousGetClientRects,
+      });
     } else {
       Reflect.deleteProperty(rangePrototype, "getClientRects");
     }
@@ -968,7 +996,9 @@ test("Markdown File Preview のReloadは同一画像を現行generationへ再登
   const createdBlobs: Blob[] = [];
   let objectUrlSequence = 0;
   URL.createObjectURL = (value) => {
-    createdBlobs.push(value);
+    if (value instanceof Blob) {
+      createdBlobs.push(value);
+    }
     return `blob:reload-preview-${++objectUrlSequence}`;
   };
   URL.revokeObjectURL = (value) => revoked.push(value);
@@ -986,12 +1016,12 @@ test("Markdown File Preview のReloadは同一画像を現行generationへ再登
   const api: PreviewApi = {
     ...harness.api,
     async readSessionFileChunk(request) {
-      const source = request.relativePath === MARKDOWN_REQUEST.relativePath
+      const source = resourcePath(request) === MARKDOWN_REQUEST.relativePath
         ? MARKDOWN_BYTES
         : request.expectedRevision === changedImageDescriptor.revision
           ? changedImageBytes
           : IMAGE_BYTES;
-      if (request.relativePath === IMAGE_DESCRIPTOR.relativePath) {
+      if (resourcePath(request) === IMAGE_DESCRIPTOR.relativePath) {
         imageReadRevisions.push(request.expectedRevision ?? "");
       }
       const chunk = source.slice(request.offset, request.offset + request.length);
@@ -1048,15 +1078,26 @@ test("Markdown File Preview のReloadは同一画像を現行generationへ再登
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "encoding切替中でも同一local imageを現行generationへ再登録し表示を継続する"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "旧generationの画像を表示し続ける、または切替中画像の再登録を落とす"
+// observable = "previewのimg srcがblob URLへ切り替わることと現行generationの登録callback"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.local-image-generation"
+// lifecycle = "permanent"
+// distinction = "非同期encoding切替中のresource lifecycleをDOMとcallbackで確認する"
+// @end-test-value
 test("encoding 切替は実行中の同一 local image も現行 generation へ再登録する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
     url: "http://localhost/",
   });
   const restoreGlobals = installDomGlobals(dom);
-  let resolveFirstInspect: ((descriptor: SessionFileDescriptor) => void) | null = null;
+  const firstInspectResolver: { resolve: ((descriptor: SessionFileDescriptor) => void) | null } = { resolve: null };
   const firstInspect = new Promise<SessionFileDescriptor>((resolve) => {
-    resolveFirstInspect = resolve;
+    firstInspectResolver.resolve = resolve;
   });
   const { api, getImageInspectCount } = createPreviewApi(async (callCount) => (
     callCount === 1 ? firstInspect : IMAGE_DESCRIPTOR
@@ -1071,7 +1112,7 @@ test("encoding 切替は実行中の同一 local image も現行 generation へ�
 
     await changeEncoding(container, dom, "shift_jis");
     await waitFor(() => getImageInspectCount() === 2);
-    resolveFirstInspect?.(IMAGE_DESCRIPTOR);
+    firstInspectResolver.resolve?.(IMAGE_DESCRIPTOR);
     await waitFor(() => container.querySelector("img")?.getAttribute("src")?.startsWith("blob:") ?? false);
   } finally {
     if (root) {
@@ -1082,6 +1123,18 @@ test("encoding 切替は実行中の同一 local image も現行 generation へ�
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "inspection prefix後にbinaryと判明したMarkdownはrich rendererへ渡さず利用不可表示にする"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "binary contentをMarkdownとしてrenderし、誤った本文やunsafe previewを表示する"
+// observable = "Markdown rendererの不在とbinary unavailable message"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.binary-detection"
+// lifecycle = "permanent"
+// impact = "binary fileの誤解釈とpreview経路への不適切な入力を防ぐ"
+// distinction = "inspection後のrender選択と利用者向け表示を実DOMで確認する"
+// @end-test-value
 test("inspection prefix より後ろで binary と判明した Markdown は rich renderer へ渡さない", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -1116,7 +1169,7 @@ test("inspection prefix より後ろで binary と判明した Markdown は rich
       };
     },
     async openSessionFile(request) {
-      return { status: "opened", targetType: "local-path", target: request.relativePath };
+      return { status: "opened", targetType: "local-path", target: resourcePath(request) };
     },
     async openPath(target) {
       return { status: "opened", targetType: "local-path", target };
@@ -1257,6 +1310,17 @@ test("上限を超える JSON preview はformatせず既存Raw表示へ戻す", 
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "寸法情報のあるSVGも初回画像表示ではFit modeを選択する"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "SVGだけ初回Fitを適用せず、画像がviewport外へはみ出す"
+// observable = "image elementのis-fit classと初回表示状態"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.image-fit"
+// lifecycle = "permanent"
+// distinction = "SVG metadataを含む実previewの初期表示classを確認する"
+// @end-test-value
 test("寸法情報のあるSVGも初回はFitで表示する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -1304,7 +1368,7 @@ test("寸法情報のあるSVGも初回はFitで表示する", async () => {
       };
     },
     async openSessionFile(openRequest) {
-      return { status: "opened", targetType: "local-path", target: openRequest.relativePath };
+      return { status: "opened", targetType: "local-path", target: resourcePath(openRequest) };
     },
     async openPath(target) {
       return { status: "opened", targetType: "local-path", target };
@@ -1514,7 +1578,6 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
       root?.render(React.createElement(SessionFilePreview, {
         api,
         request: contextMenuRequest,
-        onClose() {},
         onCopyText() {},
         onQuoteText() {},
       }));
@@ -1654,6 +1717,17 @@ test("画像previewは初回Fitの実効倍率を表示しZoom Inの基準にす
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "file切替後に旧fileの完了したOpen/Open Diff結果を新previewへ表示しない"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "stale async resultが新fileのpreviewへ混入する"
+// observable = "切替後のpreview DOMとopen/open-diff feedback"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.async-generation"
+// lifecycle = "permanent"
+// distinction = "旧promiseの完了順を制御し、generation guardの利用者向け結果を確認する"
+// @end-test-value
 test("file切替後に完了したOpenとOpen Diffの結果を新しいpreviewへ表示しない", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -1677,13 +1751,13 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
     async inspectSessionFile(inspectRequest) {
       return {
         ...inspectRequest,
-        name: inspectRequest.relativePath,
+        name: resourcePath(inspectRequest),
         kind: "text",
         byteLength: bytes.byteLength,
         modifiedAt: "2026-08-02T00:00:00.000Z",
         mimeType: "text/plain",
         suggestedEncoding: "utf-8",
-        revision: `${inspectRequest.relativePath}-r1`,
+        revision: `${resourcePath(inspectRequest)}-r1`,
       };
     },
     async readSessionFileChunk(chunkRequest) {
@@ -1710,7 +1784,6 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
       root?.render(React.createElement(SessionFilePreview, {
         api,
         request,
-        onClose() {},
         onCopyText() {},
         onQuoteText() {},
         diffScopes: ["working-tree"],
@@ -1740,7 +1813,12 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
     await render(secondRequest);
     await waitFor(() => container.textContent?.includes("second.txt") ?? false);
     await act(async () => {
-      openResult.resolve({ status: "failed", message: "first open failed" });
+      openResult.resolve({
+        status: "failed",
+        targetType: "local-path",
+        target: "docs/image.png",
+        message: "first open failed",
+      });
       diffResult.resolve("first diff failed");
       await Promise.all([openResult.promise, diffResult.promise]);
     });
@@ -1755,6 +1833,17 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "操作feedbackと後着したGit Diff利用不可理由を同時に表示し、後続operationで前者だけを更新する"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "後着のgit diff reasonが操作feedbackを消す、または同じerror表示へ混ぜる"
+// observable = "Open failure textとGit Diff unsupported textの同時表示"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.feedback"
+// lifecycle = "permanent"
+// distinction = "独立したasync feedback laneの同時表示を実DOMで確認する"
+// @end-test-value
 test("操作feedbackと後着するGit Diff利用不可理由を両方表示する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -1768,7 +1857,12 @@ test("操作feedbackと後着するGit Diff利用不可理由を両方表示す�
     ...baseApi,
     async openSessionFile() {
       openCount += 1;
-      return { status: "failed", message: `Open failed ${openCount}` };
+      return {
+        status: "failed",
+        targetType: "local-path",
+        target: "docs/image.png",
+        message: `Open failed ${openCount}`,
+      };
     },
   };
   const container = dom.window.document.getElementById("root");
@@ -1778,7 +1872,6 @@ test("操作feedbackと後着するGit Diff利用不可理由を両方表示す�
       root?.render(React.createElement(SessionFilePreview, {
         api,
         request: MARKDOWN_REQUEST,
-        onClose() {},
         onCopyText() {},
         onQuoteText() {},
         diffAvailabilityMessage,
@@ -1817,6 +1910,17 @@ test("操作feedbackと後着するGit Diff利用不可理由を両方表示す�
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Git Diff世代切替後の古いReload完了は現在世代のfeedbackを消さない"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "旧世代promiseが新世代のerror feedbackを消す、または誤って再表示する"
+// observable = "second reload failureの表示と旧reload完了後の表示状態"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.git-diff-generation"
+// lifecycle = "permanent"
+// distinction = "世代を跨ぐ非同期完了順とfeedback projectionを直接確認する"
+// @end-test-value
 test("Git Diff世代切替後に古いReloadが完了しても現在のfeedbackを消さない", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -1833,7 +1937,6 @@ test("Git Diff世代切替後に古いReloadが完了しても現在のfeedback�
         title,
         previewRevision,
         patch: "@@ -1 +1 @@\n-old\n+new\n",
-        onClose() {},
         onCopyText() {},
         onQuoteText() {},
         onReload,
@@ -1944,6 +2047,17 @@ test("Git Diffは新しい対象の初回取得だけ本文spinnerへ切り替�
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Git Diff reloadで一致件数が減ってもfind current indexを有効範囲へclampする"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "削減後の存在しないmatch indexを表示し、find navigationが範囲外になる"
+// observable = "find count表示の2/2から1/1への更新"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.git-diff-find"
+// lifecycle = "permanent"
+// distinction = "reload後のfind projectionをinput/button操作とDOM表示で確認する"
+// @end-test-value
 test("Git Diff検索はReloadで一致件数が減っても現在位置を有効範囲へ収める", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -1970,7 +2084,6 @@ test("Git Diff検索はReloadで一致件数が減っても現在位置を有効
         title: "same.txt · Working Tree",
         previewRevision,
         patch,
-        onClose() {},
         onCopyText() {},
         onQuoteText() {},
       }));
@@ -2014,6 +2127,17 @@ test("Git Diff検索はReloadで一致件数が減っても現在位置を有効
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Git DiffはSplitを既定表示し、Inline切替でdiff surfaceとactive controlを更新する"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "既定modeがInline、切替後に両方のsurfaceを表示する、またはOpen Preview callbackを失う"
+// observable = "Split/Inline surfaceの存在、active button、Open Preview callback count"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.git-diff-mode"
+// lifecycle = "permanent"
+// distinction = "mode切替と外部preview操作をDOM eventから確認する"
+// @end-test-value
 test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -2032,7 +2156,6 @@ test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", a
         title: "same.txt · Working Tree",
         previewRevision: 1,
         patch: "@@ -1 +1 @@\n-old\n+new\n",
-        onClose() {},
         onCopyText() {},
         onQuoteText() {},
         async onOpenPreview() {

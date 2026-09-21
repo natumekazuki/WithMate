@@ -30,6 +30,7 @@ import { SessionStorageV3 } from "../../src-electron/session-storage-v3.js";
 import {
   PersistentStoreLifecycleService,
   createPersistentStoreLifecycleService,
+  type CharacterStorageAccess,
   type PersistentStoreBundleLike,
 } from "../../src-electron/persistent-store-lifecycle-service.js";
 
@@ -39,6 +40,27 @@ function createClosableStore(name: string, closeCalls: string[]) {
     close() {
       closeCalls.push(name);
     },
+  };
+}
+
+function createCharacterStorageStub(onClose: () => void = () => undefined): CharacterStorageAccess {
+  const unavailable = (): never => {
+    throw new Error("このテストでは character storage の操作を実行しない");
+  };
+
+  return {
+    getCharacterDirectory: unavailable,
+    listCharacters: unavailable,
+    getCharacterCatalogEntry: unavailable,
+    getCharacter: unavailable,
+    createCharacter: unavailable,
+    updateCharacterMetadata: unavailable,
+    updateCharacterDefinition: unavailable,
+    archiveCharacter: unavailable,
+    resolveLaunchCharacter: unavailable,
+    createRuntimeSnapshot: unavailable,
+    deleteCharacterRootDirectory: unavailable,
+    close: onClose,
   };
 }
 
@@ -209,6 +231,8 @@ function createAuxiliarySessionFixture(overrides: Partial<AuxiliarySession> = {}
     reasoningEffort: "medium",
     approvalMode: "untrusted",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "",
@@ -222,6 +246,16 @@ function createAuxiliarySessionFixture(overrides: Partial<AuxiliarySession> = {}
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "initialize は model catalog と session summary を bundle に反映する"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
+// fault = "初期化後の bundle が model catalog または session summary を失う"
+// observable = "activeModelCatalog、sessions、listSessionSummaries の呼出し回数"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-initialize-close"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は store を初期化して session dependency を同期する", async () => {
   const closeCalls: string[] = [];
   const sessionSummaries = [
@@ -262,7 +296,7 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
       }) as never,
     createSessionMemoryStorage: () => createClosableStore("session-memory", closeCalls) as never,
     createProjectMemoryStorage: () => createClosableStore("project-memory", closeCalls) as never,
-    createCharacterMemoryStorage: () => createClosableStore("character-memory", closeCalls) as never,
+    createCharacterStorage: () => createCharacterStorageStub(() => closeCalls.push("character-memory")),
     createAuditLogStorage: () => createClosableStore("audit", closeCalls) as never,
     createAppSettingsStorage: () => createClosableStore("settings", closeCalls) as never,
     createMateStorage: () => createClosableStore("mate", closeCalls) as never,
@@ -288,6 +322,16 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
   assert.equal(listSessionsCallCount, 0);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "起動時の Mate projection 復元は mismatch を警告し、保存された profile を失わない"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#recoverActiveMateProfileProjection" }
+// fault = "projection mismatch を黙って無視する、または起動時に profile を上書きする"
+// observable = "復元後の Mate profile と console.warn の mismatch 内容"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-mate-projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は起動時に Mate projection を復元し、残存 mismatch を警告ログに残す", async () => {
   const warnCalls: unknown[][] = [];
   const originalWarn = console.warn;
@@ -310,7 +354,7 @@ test("PersistentStoreLifecycleService は起動時に Mate projection を復元�
         }) as never,
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: () =>
@@ -357,6 +401,16 @@ test("PersistentStoreLifecycleService は起動時に Mate projection を復元�
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "V4 DB の initialize は Mate schema hook を一度だけ呼ぶ"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
+// fault = "V4 DB 起動で Mate schema を初期化しない、または重複初期化する"
+// observable = "ensureMateSchema の呼出し回数と db path"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v4-schema"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初期化する", async () => {
   await withTempDatabaseAndUserData(async (dbPath, userDataPath) => {
     const service = new PersistentStoreLifecycleService({
@@ -373,7 +427,7 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初�
         }) as never,
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
@@ -406,6 +460,16 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初�
   });
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "legacy DB の initialize は V4 専用の Mate schema hook を呼ばない"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
+// fault = "legacy DB 起動時に V4 schema を追加作成する"
+// observable = "ensureMateSchema の呼出し回数"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-legacy-schema"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は legacy DB 起動時に Mate schema を初期化しない", async () => {
   await withTempLegacyDatabase(async (dbPath, userDataPath) => {
     const service = new PersistentStoreLifecycleService({
@@ -422,7 +486,7 @@ test("PersistentStoreLifecycleService は legacy DB 起動時に Mate schema を
         }) as never,
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
@@ -454,6 +518,16 @@ test("PersistentStoreLifecycleService は legacy DB 起動時に Mate schema を
   });
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "V3 legacy DB の initialize は V4 専用の Mate schema hook を呼ばない"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
+// fault = "V3 DB 起動時に V4 schema を追加作成する"
+// observable = "ensureMateSchema の呼出し回数"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v3-schema"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は V3 legacy DB 起動時に Mate schema を初期化しない", async () => {
   await withTempV3Database(async (dbPath) => {
     const userDataPath = path.join(path.dirname(dbPath), "user-data");
@@ -471,7 +545,7 @@ test("PersistentStoreLifecycleService は V3 legacy DB 起動時に Mate schema 
         }) as never,
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () =>
         ({
@@ -514,6 +588,16 @@ test("PersistentStoreLifecycleService は V3 legacy DB 起動時に Mate schema 
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "V4 DB 起動時の Mate projection は active revision snapshot から復元される"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#recoverActiveMateProfileProjection" }
+// fault = "active revision の profile を復元せず、古い projection を残す"
+// observable = "initialize 後に読み出した Mate profile の revision と内容"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v4-mate-projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を active revision snapshot から復元する", async () => {
   await withTempDatabaseAndUserData(async (dbPath, userDataPath) => {
     const service = new PersistentStoreLifecycleService({
@@ -530,7 +614,7 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を
         }) as never,
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
@@ -566,6 +650,16 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "close は before-close hook の後に bundle の各 store を定義済み順で閉じる"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#close" }
+// fault = "store を閉じ忘れる、または hook より先に close する"
+// observable = "closeCalls の全要素と順序"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-close-order"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は close 時に hook と各 store close を呼ぶ", () => {
   const closeCalls: string[] = [];
   const service = new PersistentStoreLifecycleService({
@@ -573,8 +667,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     createSessionStorage: () => null as never,
     createSessionMemoryStorage: () => null as never,
     createProjectMemoryStorage: () => null as never,
-    createCharacterStorage: () => null as never,
-    createCharacterMemoryStorage: () => null as never,
+    createCharacterStorage: () => createCharacterStorageStub(),
     createAuditLogStorage: () => null as never,
     createAppSettingsStorage: () => null as never,
     createMateStorage: () => null as never,
@@ -590,7 +683,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
   const bundle: PersistentStoreBundleLike = {
     modelCatalogStorage: createClosableStore("model", closeCalls) as never,
     sessionStorage: createClosableStore("session", closeCalls) as never,
-    characterStorage: createClosableStore("character", closeCalls) as never,
+    characterStorage: createCharacterStorageStub(() => closeCalls.push("character")),
     sessionMemoryStorage: createClosableStore("session-memory", closeCalls) as never,
     projectMemoryStorage: createClosableStore("project-memory", closeCalls) as never,
     auditLogStorage: createClosableStore("audit", closeCalls) as never,
@@ -666,6 +759,16 @@ test("PersistentStoreLifecycleService は V6 WAL の終了処理を Worker の�
   assert.deepEqual(calls, ["before-close", "worker-wal", "checkpoint-complete", "worker-close"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "WAL truncate の失敗は警告に記録されるが close の呼び出し元へは伝播しない"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#close" }
+// fault = "終了処理の WAL 失敗で close が例外終了する"
+// observable = "doesNotThrow、before-close 呼出し、console.warn の内容"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-wal-error"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は WAL truncate 失敗を close 呼び出し元へ伝播しない", () => {
   const closeCalls: string[] = [];
   const warnCalls: unknown[][] = [];
@@ -680,7 +783,7 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗を close 呼び出
       createSessionStorage: () => null as never,
       createSessionMemoryStorage: () => null as never,
       createProjectMemoryStorage: () => null as never,
-      createCharacterMemoryStorage: () => null as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => null as never,
       createAppSettingsStorage: () => null as never,
       createMateStorage: () => null as never,
@@ -702,6 +805,16 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗を close 呼び出
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "WAL truncate が失敗しても recreate は WAL/SHM/DB を削除して再初期化する"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#recreate" }
+// fault = "WAL 失敗を理由に DB 再生成を中断する"
+// observable = "active model catalog と削除された3つの path"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-recreate-wal-error"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は WAL truncate 失敗後も DB 再生成へ進む", async () => {
   const removedPaths: string[] = [];
   const service = new PersistentStoreLifecycleService({
@@ -718,7 +831,7 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗後も DB 再生成
       }) as never,
     createSessionMemoryStorage: () => ({ close() {} }) as never,
     createProjectMemoryStorage: () => ({ close() {} }) as never,
-    createCharacterMemoryStorage: () => ({ close() {} }) as never,
+    createCharacterStorage: () => createCharacterStorageStub(),
     createAuditLogStorage: () => ({ close() {} }) as never,
     createAppSettingsStorage: () => ({ close() {} }) as never,
     createMateStorage: () => ({ close() {} }) as never,
@@ -746,6 +859,16 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗後も DB 再生成
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "recreate は既存 DB を削除し、指定された依存関係で新しい bundle を初期化する"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#recreate" }
+// fault = "再生成前の DB を残す、または新 bundle を初期化しない"
+// observable = "truncate path、removeFile path、active model catalog"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-recreate"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は DB を再生成して再初期化する", async () => {
   const removedPaths: string[] = [];
   const truncateWalCalls: string[] = [];
@@ -763,7 +886,7 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
       }) as never,
     createSessionMemoryStorage: () => ({ close() {} }) as never,
     createProjectMemoryStorage: () => ({ close() {} }) as never,
-    createCharacterMemoryStorage: () => ({ close() {} }) as never,
+    createCharacterStorage: () => createCharacterStorageStub(),
     createAuditLogStorage: () => ({ close() {} }) as never,
     createAppSettingsStorage: () => ({ close() {} }) as never,
     createMateStorage: () => ({ close() {} }) as never,
@@ -787,6 +910,16 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
   assert.equal(bundle.activeModelCatalog.revision, 2);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "V2 DB の recreate は V2 schema を確保してから bundle を初期化する"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#recreate" }
+// fault = "V2 schema hook を呼ばず、空 DB を V2 storage として開く"
+// observable = "ensureV2Schema の path と再初期化後の bundle"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v2-recreate"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作成して再初期化する", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "withmate-v2-recreate-"));
   const dbPath = path.join(dir, APP_DATABASE_V2_FILENAME);
@@ -803,7 +936,7 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
       },
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => {
         throw new Error("V2 DB では V1 audit log storage を生成しない");
       },
@@ -846,6 +979,16 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "V3 DB の recreate は DB と関連 blob root を削除して再初期化する"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#recreate" }
+// fault = "V3 blob root を残したまま DB だけ再生成する"
+// observable = "removedDirectories と再初期化 bundle"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v3-recreate"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削除する", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "withmate-v3-recreate-"));
   const dbPath = path.join(dir, APP_DATABASE_V3_FILENAME);
@@ -866,7 +1009,7 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
         }) as never,
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: () => ({ close() {} }) as never,
@@ -903,6 +1046,16 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "V4 DB の recreate は blob root と Character root を削除して再初期化する"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#recreate" }
+// fault = "V4 に紐づく character data を残したまま DB を再生成する"
+// observable = "removedDirectories の blob と characters path"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v4-recreate"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は V4 DB 再生成時に blob root と Character root を削除する", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "withmate-v4-recreate-"));
   const dbPath = path.join(dir, APP_DATABASE_V4_FILENAME);
@@ -924,7 +1077,7 @@ test("PersistentStoreLifecycleService は V4 DB 再生成時に blob root と Ch
         }) as never,
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: () => ({ close() {} }) as never,
@@ -952,6 +1105,16 @@ test("PersistentStoreLifecycleService は V4 DB 再生成時に blob root と Ch
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "required V2 tables がない withmate-v2.db は injected V1-compatible storages を選択する"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
+// fault = "不完全な V2 DB に V2 storage を誤選択する"
+// observable = "SessionStorageV2/AuditLogStorageV2 の非使用と injected factory の呼出し回数"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v2-compatibility"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は required V2 tables がない withmate-v2.db では V1-compatible injected storages を使う", async () => {
   const activeModelCatalog = { revision: 5, providers: [] } as ModelCatalogSnapshot;
   let createSessionStorageCallCount = 0;
@@ -974,7 +1137,7 @@ test("PersistentStoreLifecycleService は required V2 tables がない withmate-
       },
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => {
         createAuditLogStorageCallCount += 1;
         return {
@@ -998,11 +1161,21 @@ test("PersistentStoreLifecycleService は required V2 tables がない withmate-
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "有効な V2 DB の initialize は SessionStorageV2 を選択し、その session summary を読む"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
+// fault = "V2 DB で V1 session storage を開く、または summary を失う"
+// observable = "sessionStorage の実型と bundle.sessions"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v2-session-read"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使ってセッション要約を読む", async () => {
   const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
 
   await withTempV2Database(async (dbPath) => {
-    let v1SessionStorage: { close(): void } | null = null;
+    const v1SessionStorageControl = { value: undefined as { close(): void } | undefined };
 
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
@@ -1012,12 +1185,12 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
         }) as never,
       createSessionStorage: () => {
         const storage = new SessionStorage(dbPath);
-        v1SessionStorage = storage;
+        v1SessionStorageControl.value = storage;
         return storage as never;
       },
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: () => ({ close() {} }) as never,
@@ -1035,11 +1208,21 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
       if (bundle) {
         service.close(bundle, dbPath);
       }
-      v1SessionStorage?.close();
+      v1SessionStorageControl.value?.close();
     }
   });
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "有効な V2 DB の initialize は V1 write-capable session/audit factory を呼ばず V2 storages を返す"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
+// fault = "V2 DB に V1 writer を接続し、旧 schema へ書き込む"
+// observable = "returned storage の実型と V1 factory 呼出し回数"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v2-writer-boundary"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages を生成せず V2 storages を返す", async () => {
   const activeModelCatalog = { revision: 2, providers: [] } as ModelCatalogSnapshot;
   let createSessionStorageCallCount = 0;
@@ -1062,7 +1245,7 @@ test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages
       },
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterStorage: () => createCharacterStorageStub(),
       createAuditLogStorage: () => {
         createAuditLogStorageCallCount += 1;
         return {
@@ -1088,11 +1271,21 @@ test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages
   });
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "V2 DB の initialize は legacy memory storage factory を呼ばず legacy memory table を作成しない"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
+// fault = "V2 DB に legacy memory table を追加し、旧 storage を接続する"
+// observable = "factory 呼出し回数と sqlite_master の table 一覧"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v2-memory-boundary"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作成しない", async () => {
   const activeModelCatalog = { revision: 3, providers: [] } as ModelCatalogSnapshot;
   let createSessionMemoryStorageCallCount = 0;
   let createProjectMemoryStorageCallCount = 0;
-  let createCharacterMemoryStorageCallCount = 0;
+  let createCharacterStorageCallCount = 0;
 
   await withTempV2Database(async (dbPath) => {
     const service = new PersistentStoreLifecycleService({
@@ -1112,9 +1305,9 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
         createProjectMemoryStorageCallCount += 1;
         return { close() {} } as never;
       },
-      createCharacterMemoryStorage: () => {
-        createCharacterMemoryStorageCallCount += 1;
-        return { close() {} } as never;
+      createCharacterStorage: () => {
+        createCharacterStorageCallCount += 1;
+        return createCharacterStorageStub();
       },
       createAuditLogStorage: () => {
         throw new Error("V2 DB では V1 audit log storage を生成しない");
@@ -1150,7 +1343,7 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
 
       assert.equal(createSessionMemoryStorageCallCount, 0);
       assert.equal(createProjectMemoryStorageCallCount, 0);
-      assert.equal(createCharacterMemoryStorageCallCount, 0);
+      assert.equal(createCharacterStorageCallCount, 0);
     } finally {
       service.close(bundle, dbPath);
     }
@@ -1221,6 +1414,16 @@ test("PersistentStoreLifecycleService は V6 DB に legacy session/audit/memory/
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "V3 DB の initialize は V3 session/audit storage と schema hook を選択し、V1 factory を呼ばない"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
+// fault = "V3 DB に V1 storage を接続する、または V3 schema hook を省略する"
+// observable = "returned storage の実型、audit artifact、schema hook と V1 factory の呼出し回数"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-v3-storage-boundary"
+// lifecycle = "permanent"
+// @end-test-value
 test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せず V3 storages を返して schema hook を呼ぶ", async () => {
   const activeModelCatalog = { revision: 6, providers: [] } as ModelCatalogSnapshot;
   let ensureV3SchemaCallCount = 0;
@@ -1228,7 +1431,7 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
   let createAuditLogStorageCallCount = 0;
   let createSessionMemoryStorageCallCount = 0;
   let createProjectMemoryStorageCallCount = 0;
-  let createCharacterMemoryStorageCallCount = 0;
+  let createCharacterStorageCallCount = 0;
 
   await withTempV3Database(async (dbPath) => {
     const service = new PersistentStoreLifecycleService({
@@ -1249,9 +1452,9 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
         createProjectMemoryStorageCallCount += 1;
         return { close() {} } as never;
       },
-      createCharacterMemoryStorage: () => {
-        createCharacterMemoryStorageCallCount += 1;
-        return { close() {} } as never;
+      createCharacterStorage: () => {
+        createCharacterStorageCallCount += 1;
+        return createCharacterStorageStub();
       },
       createAuditLogStorage: () => {
         createAuditLogStorageCallCount += 1;
@@ -1275,7 +1478,7 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
       assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV3, true);
       assert.deepEqual(bundle.sessions, []);
       insertV3SessionHeader(dbPath, "session-v3-lifecycle");
-      const createdAuditLog = await bundle.auditLogStorage.createAuditLog({
+      const createdAuditLog = await (bundle.auditLogStorage as AuditLogStorageV3).createAuditLog({
         sessionId: "session-v3-lifecycle",
         createdAt: "2026-04-27T10:00:00.000Z",
         phase: "completed",
@@ -1305,7 +1508,7 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
       assert.equal(createAuditLogStorageCallCount, 0);
       assert.equal(createSessionMemoryStorageCallCount, 0);
       assert.equal(createProjectMemoryStorageCallCount, 0);
-      assert.equal(createCharacterMemoryStorageCallCount, 0);
+      assert.equal(createCharacterStorageCallCount, 0);
     } finally {
       service.close(bundle, dbPath);
     }

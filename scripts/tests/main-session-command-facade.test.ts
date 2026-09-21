@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
+import type { Session } from "../../src/session-state.js";
+import type { DeleteSessionsLastActiveBeforeCutoff } from "../../src/withmate-window-types.js";
 import { MainSessionCommandFacade } from "../../src-electron/main-session-command-facade.js";
 import {
   ProviderRuntimeOperationCoordinator,
   type RunProviderRuntimeOperationExclusive,
 } from "../../src-electron/provider-runtime-operation-coordinator.js";
 import type { SessionLaunchSelection } from "../../src-electron/session-launch-selection-service.js";
+import type { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
 import { SettingsCatalogService } from "../../src-electron/settings-catalog-service.js";
 
 const runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive =
@@ -57,15 +60,15 @@ function createSessionRequest(workspace: Record<string, unknown>): Record<string
   };
 }
 
+type MainSessionCommandFacadeDeps = ConstructorParameters<typeof MainSessionCommandFacade>[0];
+type DefaultMainSessionCommandFacadeDep =
+  | "dismissSessionTurnNotification"
+  | "validateWorkspaceDirectory"
+  | "initializeCreatedSession"
+  | "getSessionStorageIdentity";
 type MainSessionCommandFacadeTestDeps =
-  Omit<
-    ConstructorParameters<typeof MainSessionCommandFacade>[0],
-    "dismissSessionTurnNotification" | "validateWorkspaceDirectory" | "initializeCreatedSession" | "getSessionStorageIdentity"
-  >
-  & Partial<Pick<
-    ConstructorParameters<typeof MainSessionCommandFacade>[0],
-    "dismissSessionTurnNotification" | "validateWorkspaceDirectory" | "initializeCreatedSession" | "getSessionStorageIdentity"
-  >>;
+  Omit<MainSessionCommandFacadeDeps, DefaultMainSessionCommandFacadeDep>
+  & Partial<Pick<MainSessionCommandFacadeDeps, DefaultMainSessionCommandFacadeDep>>;
 
 function createMainSessionCommandFacade(
   deps: MainSessionCommandFacadeTestDeps,
@@ -78,6 +81,42 @@ function createMainSessionCommandFacade(
     getSessionStorageIdentity: () => defaultStorageIdentity,
     ...deps,
   });
+}
+
+function createSessionFixture(overrides: Partial<Session> = {}): Session {
+  return {
+    id: "session-1",
+    taskTitle: "task",
+    status: "idle",
+    updatedAt: "2026-09-21T00:00:00.000Z",
+    isPinned: false,
+    provider: "codex",
+    catalogRevision: 1,
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    branch: "main",
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 5,
+    characterId: "character-1",
+    character: "Character",
+    characterIconPath: "",
+    characterThemeColors: { main: "#112233", sub: "#445566" },
+    characterRuntimeSnapshot: null,
+    runState: "idle",
+    approvalMode: "untrusted",
+    codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
+    model: "gpt-5.6",
+    reasoningEffort: "high",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
+    threadId: "thread-1",
+    messages: [],
+    stream: [],
+    ...overrides,
+  };
 }
 
 // @test-value v2
@@ -123,6 +162,16 @@ test("MainSessionCommandFacade は削除結果に含まれるAuxiliary通知も�
   assert.deepEqual(dismissedIds, ["session-1", "auxiliary-1"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "MainSessionCommandFacadeはcreate、update、pin、delete、cancelを対応serviceへ委譲し、delete成功時だけnotificationとSessionFolder cleanupを実行する"
+// oracle = { type = "contract", ref = "src-electron/main-session-command-facade.ts" }
+// fault = "操作を誤ったserviceへ送る、delete失敗後にcleanupを実行する、またはcancelをruntime serviceへ渡さない"
+// observable = "各service mockへ記録された呼出し順と引数"
+// observation_boundary = "public-boundary"
+// scope = "main-session-command-facade-command-routing"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は create/update/delete/cancel を各 service に委譲する", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
@@ -133,19 +182,19 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
-        createSession(input) {
+        createSession(input: Parameters<SessionPersistenceService["createSession"]>[0]) {
           calls.push(`create:${input.id}`);
           return input as never;
         },
-        updateSession(session) {
+        updateSession(session: Parameters<SessionPersistenceService["updateSession"]>[0]) {
           calls.push(`update:${session.id}`);
           return session as never;
         },
-        setSessionPinned(sessionId, isPinned) {
+        setSessionPinned(sessionId: string, isPinned: boolean) {
           calls.push(`pin:${sessionId}:${isPinned}`);
           return { id: sessionId, isPinned } as never;
         },
-        deleteSession(sessionId) {
+        deleteSession(sessionId: string) {
           calls.push(`delete:${sessionId}`);
           return {
             deletedSessionIds: [sessionId],
@@ -162,7 +211,7 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
       }) as never,
     getSessionRuntimeService: () =>
       ({
-        cancelRun(sessionId) {
+        cancelRun(sessionId: string) {
           calls.push(`cancel:${sessionId}`);
         },
         isRunInFlight() {
@@ -213,6 +262,16 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
   ]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Session削除が失敗した場合、通知撤去などの削除後副作用を実行しない"
+// oracle = { type = "contract", ref = "src-electron/main-session-command-facade.ts deleteSession" }
+// fault = "永続化deleteの例外を握り潰す、または削除未成立なのにnotificationを撤去する"
+// observable = "delete errorと、notification serviceの呼出し記録"
+// observation_boundary = "public-boundary"
+// scope = "main-session-command-facade-delete-failure"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は Session 削除失敗時に通知を撤去しない", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
@@ -223,7 +282,7 @@ test("MainSessionCommandFacade は Session 削除失敗時に通知を撤去し�
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
-        deleteSession(sessionId) {
+        deleteSession(sessionId: string) {
           calls.push(`delete:${sessionId}`);
           throw new Error("delete failed");
         },
@@ -256,7 +315,7 @@ test("MainSessionCommandFacade は Session 削除失敗時に通知を撤去し�
 // @end-test-value
 test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID の session を永続化する", async () => {
   const calls: string[] = [];
-  let persistedInput: Record<string, unknown> | null = null;
+  const persisted = { input: null as Parameters<SessionPersistenceService["createSession"]>[0] | null };
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
@@ -274,9 +333,9 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
     },
     getSessionPersistenceService: () =>
       ({
-        createSession(input) {
+        createSession(input: Parameters<SessionPersistenceService["createSession"]>[0]) {
           calls.push(`persist:${input.id}`);
-          persistedInput = input as unknown as Record<string, unknown>;
+          persisted.input = input;
           return input as never;
         },
       }) as never,
@@ -306,16 +365,16 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
   ]);
   assert.deepEqual(
     {
-      id: persistedInput?.id,
-      workspaceLabel: persistedInput?.workspaceLabel,
-      workspacePath: persistedInput?.workspacePath,
-      branch: persistedInput?.branch,
-      workspace: persistedInput?.workspace,
-      model: persistedInput?.model,
-      reasoningEffort: persistedInput?.reasoningEffort,
-      approvalMode: persistedInput?.approvalMode,
-      codexSandboxMode: persistedInput?.codexSandboxMode,
-      customAgentName: persistedInput?.customAgentName,
+      id: persisted.input?.id,
+      workspaceLabel: persisted.input?.workspaceLabel,
+      workspacePath: persisted.input?.workspacePath,
+      branch: persisted.input?.branch,
+      workspace: persisted.input ? Reflect.get(persisted.input, "workspace") : undefined,
+      model: persisted.input?.model,
+      reasoningEffort: persisted.input?.reasoningEffort,
+      approvalMode: persisted.input?.approvalMode,
+      codexSandboxMode: persisted.input?.codexSandboxMode,
+      customAgentName: persisted.input?.customAgentName,
     },
     {
       id: "launch-managed",
@@ -353,7 +412,7 @@ test("MainSessionCommandFacade は Main Session 作成後の初期化を provide
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
-        createSession(input) {
+        createSession(input: Parameters<SessionPersistenceService["createSession"]>[0]) {
           events.push(`persist:${input.id}`);
           return input as never;
         },
@@ -399,14 +458,11 @@ test("MainSessionCommandFacade は Main Session 作成後の初期化を provide
 // @end-test-value
 test("MainSessionCommandFacade は保存後の初期化失敗時に Main Session と SessionFolder を保持する", async () => {
   const calls: string[] = [];
-  const existingSession = { id: "existing-session", workspacePath: "C:/existing" } as never;
-  const createdSession = {
-    id: "launch-initialize-failed",
-    workspacePath: "C:/WithMate/session-files/launch-initialize-failed",
-  } as never;
+  const existingSession = createSessionFixture({ id: "existing-session", workspacePath: "C:/existing" });
+  const createdSession = createSessionFixture({ id: "launch-initialize-failed", workspacePath: "C:/WithMate/session-files/launch-initialize-failed" });
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
-    getSessions: () => [existingSession, createdSession],
+    getSessions: () => [existingSession],
     getStoredSessionSummaries: () => [existingSession],
     runProviderRuntimeOperationExclusive,
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
@@ -416,7 +472,7 @@ test("MainSessionCommandFacade は保存後の初期化失敗時に Main Session
           calls.push("persist");
           return createdSession;
         },
-        deleteSession(sessionId) {
+        deleteSession(sessionId: string) {
           calls.push(`delete:${sessionId}`);
           return { deletedSessionIds: [sessionId], skippedRunningSessionIds: [] };
         },
@@ -474,10 +530,7 @@ test("MainSessionCommandFacade は並行操作中の初期化失敗でも保存�
   const initializationStarted = createDeferred<void>();
   const releaseInitialization = createDeferred<never>();
   const calls: string[] = [];
-  const createdSession = {
-    id: "launch-cleanup-failed",
-    workspacePath: "C:/WithMate/session-files/launch-cleanup-failed",
-  } as never;
+  const createdSession = createSessionFixture({ id: "launch-cleanup-failed", workspacePath: "C:/WithMate/session-files/launch-cleanup-failed" });
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [createdSession],
@@ -583,8 +636,18 @@ test("MainSessionCommandFacade は空の Character ID を SessionFolder 作成�
   assert.deepEqual(calls, []);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Session作成時のcharacterIdとruntime snapshotのowner IDはtrim後に同じ値として永続化される"
+// oracle = { type = "contract", ref = "character runtime snapshot ownership" }
+// fault = "入力の空白を含むowner IDをそのまま保存し、Sessionとsnapshotのowner identityを不一致にする"
+// observable = "createSessionへ渡されたcharacterIdとcharacterRuntimeSnapshot.characterId"
+// observation_boundary = "public-boundary"
+// scope = "main-session-command-facade-character-owner"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は Character owner ID と snapshot owner ID を trim 後の値で保存する", async () => {
-  let persistedInput: Record<string, unknown> | null = null;
+  const persisted = { input: null as Parameters<SessionPersistenceService["createSession"]>[0] | null };
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
@@ -593,8 +656,8 @@ test("MainSessionCommandFacade は Character owner ID と snapshot owner ID を 
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
-        createSession(input) {
-          persistedInput = input as unknown as Record<string, unknown>;
+        createSession(input: Parameters<SessionPersistenceService["createSession"]>[0]) {
+          persisted.input = input;
           return input as never;
         },
       }) as never,
@@ -622,9 +685,9 @@ test("MainSessionCommandFacade は Character owner ID と snapshot owner ID を 
 
   await facade.createSessionFromRequest(request as never);
 
-  assert.equal(persistedInput?.characterId, "character-1");
+  assert.equal(persisted.input?.characterId, "character-1");
   assert.equal(
-    (persistedInput?.characterRuntimeSnapshot as { characterId?: unknown } | undefined)?.characterId,
+    (persisted.input?.characterRuntimeSnapshot as { characterId?: unknown } | undefined)?.characterId,
     "character-1",
   );
 });
@@ -703,7 +766,7 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
   const settingsService = new SettingsCatalogService({
     runProviderRuntimeOperationExclusive: runExclusive,
     getAppSettings: () => settings,
-    updateAppSettings: (nextSettings) => {
+    updateAppSettings: (nextSettings: AppSettings) => {
       events.push("settings:update");
       settings = nextSettings;
       return settings;
@@ -726,7 +789,7 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
     },
     getSessionPersistenceService: () =>
       ({
-        async createSession(input) {
+        async createSession(input: Parameters<SessionPersistenceService["createSession"]>[0]) {
           persistenceEntered.resolve();
           await releasePersistence.promise;
           events.push("session:persist");
@@ -897,8 +960,18 @@ test("SessionFolder のcommit前再検証は selection と storage の変更を�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "directory launch selectionで選択されたworkspace pathとbranchを加工せずSession persistenceへ渡す"
+// oracle = { type = "contract", ref = "session launch selection workspace" }
+// fault = "Browseで選択したdirectoryを別pathへ置換する、またはworkspace label/path/branchを欠落させる"
+// observable = "createSessionへ渡されたid、workspaceLabel、workspacePath、branch"
+// observation_boundary = "public-boundary"
+// scope = "main-session-command-facade-directory-launch"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は Browse で選んだ directory をそのまま session に使う", async () => {
-  let persistedInput: Record<string, unknown> | null = null;
+  const persisted = { input: null as Parameters<SessionPersistenceService["createSession"]>[0] | null };
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
@@ -907,8 +980,8 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
-        createSession(input) {
-          persistedInput = input as unknown as Record<string, unknown>;
+        createSession(input: Parameters<SessionPersistenceService["createSession"]>[0]) {
+          persisted.input = input;
           return input as never;
         },
       }) as never,
@@ -934,10 +1007,10 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
 
   assert.deepEqual(
     {
-      id: persistedInput?.id,
-      workspaceLabel: persistedInput?.workspaceLabel,
-      workspacePath: persistedInput?.workspacePath,
-      branch: persistedInput?.branch,
+      id: persisted.input?.id,
+      workspaceLabel: persisted.input?.workspaceLabel,
+      workspacePath: persisted.input?.workspacePath,
+      branch: persisted.input?.branch,
     },
     {
       id: "launch-directory",
@@ -959,7 +1032,7 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
 // lifecycle = "permanent"
 // @end-test-value
 test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視する", async () => {
-  let persistedInput: Record<string, unknown> | null = null;
+  const persisted = { input: null as Parameters<SessionPersistenceService["createSession"]>[0] | null };
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
@@ -976,8 +1049,8 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
     }),
     getSessionPersistenceService: () =>
       ({
-        createSession(input) {
-          persistedInput = input as unknown as Record<string, unknown>;
+        createSession(input: Parameters<SessionPersistenceService["createSession"]>[0]) {
+          persisted.input = input;
           return input as never;
         },
       }) as never,
@@ -1017,17 +1090,17 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
 
   assert.deepEqual(
     {
-      id: persistedInput?.id,
-      workspaceLabel: persistedInput?.workspaceLabel,
-      workspacePath: persistedInput?.workspacePath,
-      branch: persistedInput?.branch,
-      model: persistedInput?.model,
-      reasoningEffort: persistedInput?.reasoningEffort,
-      approvalMode: persistedInput?.approvalMode,
-      codexSandboxMode: persistedInput?.codexSandboxMode,
-      codexSpeed: persistedInput?.codexSpeed,
-      codexReviewer: persistedInput?.codexReviewer,
-      customAgentName: persistedInput?.customAgentName,
+      id: persisted.input?.id,
+      workspaceLabel: persisted.input?.workspaceLabel,
+      workspacePath: persisted.input?.workspacePath,
+      branch: persisted.input?.branch,
+      model: persisted.input?.model,
+      reasoningEffort: persisted.input?.reasoningEffort,
+      approvalMode: persisted.input?.approvalMode,
+      codexSandboxMode: persisted.input?.codexSandboxMode,
+      codexSpeed: persisted.input?.codexSpeed,
+      codexReviewer: persisted.input?.codexReviewer,
+      customAgentName: persisted.input?.customAgentName,
     },
     {
       id: "launch-directory",
@@ -1085,6 +1158,16 @@ test("MainSessionCommandFacade は起動設定の取得失敗時に ID 発行・
   assert.deepEqual(calls, ["resolve"]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "SessionFolderの作成に失敗した場合、対応するSessionを永続化しない"
+// oracle = { type = "contract", ref = "src-electron/main-session-command-facade.ts session-folder creation" }
+// fault = "folder作成例外後もSession persistenceを実行し、folderなしのSessionを残す"
+// observable = "folder作成errorとcreateSession呼出し回数"
+// observation_boundary = "public-boundary"
+// scope = "main-session-command-facade-session-folder-failure"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を永続化しない", async () => {
   let persistCount = 0;
   const facade = createMainSessionCommandFacade({
@@ -1095,7 +1178,7 @@ test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を�
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
-        createSession(input) {
+        createSession(input: Parameters<SessionPersistenceService["createSession"]>[0]) {
           persistCount += 1;
           return input as never;
         },
@@ -1158,6 +1241,16 @@ test("MainSessionCommandFacade は session 永続化失敗後に作成済み Ses
   assert.deepEqual(calls, ["issue-id", "mkdir", "persist"]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "cutoff deleteは削除済みSessionだけのnotification撤去とSessionFolder cleanupを行い、skipped running Sessionには触れない"
+// oracle = { type = "contract", ref = "session persistence cutoff deletion" }
+// fault = "skipped running Sessionをcleanupする、削除済みSessionのcleanupを漏らす、またはcutoff resultを改変する"
+// observable = "delete resultとdismiss/cleanup serviceへ渡されたSession ID"
+// observation_boundary = "public-boundary"
+// scope = "main-session-command-facade-cutoff-delete"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は cutoff delete の削除済み session だけ cleanup する", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
@@ -1168,7 +1261,7 @@ test("MainSessionCommandFacade は cutoff delete の削除済み session だけ 
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
-        deleteSessionsLastActiveBefore(cutoff) {
+        deleteSessionsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff) {
           calls.push(`delete-before:${cutoff.cutoffDate}`);
           return {
             cutoffDate: cutoff.cutoffDate,
@@ -1369,6 +1462,16 @@ test("MainSessionCommandFacade は実在しない cutoff delete 日付を拒否�
   assert.deepEqual(calls, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "staleなCopilot quotaはrun開始前に非同期refreshされ、その後Session turnがruntime serviceへ委譲される"
+// oracle = { type = "contract", ref = "provider quota telemetry refresh" }
+// fault = "stale quotaを更新せずrunする、Copilot以外を更新する、またはruntime turnを委譲しない"
+// observable = "refreshProviderQuotaTelemetryのprovider ID、runtime run call、返却Session ID"
+// observation_boundary = "public-boundary"
+// scope = "main-session-command-facade-copilot-quota"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は stale な Copilot quota を非同期更新して run を委譲する", async () => {
   const calls: string[] = [];
   let refreshedProviderId: string | null = null;
@@ -1381,7 +1484,7 @@ test("MainSessionCommandFacade は stale な Copilot quota を非同期更新し
     getSessionPersistenceService: () => ({} as never),
     getSessionRuntimeService: () =>
       ({
-        async runSessionTurn(sessionId) {
+        async runSessionTurn(sessionId: string) {
           calls.push(`run:${sessionId}`);
           return { id: sessionId } as never;
         },
@@ -1407,6 +1510,16 @@ test("MainSessionCommandFacade は stale な Copilot quota を非同期更新し
   assert.deepEqual(calls, ["run:s-1"]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "non-Copilot SessionのrunではCopilot quota refreshを実行しない"
+// oracle = { type = "contract", ref = "provider quota telemetry refresh" }
+// fault = "provider種別を無視してquota refreshを実行し、不要な外部更新を発生させる"
+// observable = "refreshProviderQuotaTelemetryが呼ばれたかどうか"
+// observation_boundary = "public-boundary"
+// scope = "main-session-command-facade-non-copilot-quota"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は non-Copilot session では quota refresh を行わない", async () => {
   let refreshed = false;
   const facade = createMainSessionCommandFacade({
@@ -1418,7 +1531,7 @@ test("MainSessionCommandFacade は non-Copilot session では quota refresh を�
     getSessionPersistenceService: () => ({} as never),
     getSessionRuntimeService: () =>
       ({
-        async runSessionTurn(sessionId) {
+        async runSessionTurn(sessionId: string) {
           return { id: sessionId } as never;
         },
         isRunInFlight() {
