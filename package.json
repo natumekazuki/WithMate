@@ -23,7 +23,7 @@
     "test": "node --import tsx scripts/checks/run-tests.ts",
     "test:shard": "node --import tsx scripts/checks/run-tests.ts",
     "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.test-runner.json --noEmit && npm run check:sqlite-owner-boundary && npm run check:dependency-boundaries",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit && npm run typecheck:tests && npm run check:sqlite-owner-boundary && npm run check:dependency-boundaries",
     "check:dependency-boundaries": "tsx scripts/checks/check-dependency-boundaries.ts",
     "check:sqlite-owner-boundary": "tsx scripts/check-sqlite-owner-boundary.ts",
     "affect:settlement-recovery": "tsx scripts/character-affect-turn-settlement-recovery.ts",

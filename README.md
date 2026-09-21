@@ -136,7 +136,7 @@ npm run typecheck:tests
 
 Windows PowerShellで`--`以降の引数を渡す場合は、`npm.ps1`による区切りの消費を避けるため、`npm.cmd test -- --list`、`npm.cmd run test:shard -- --shard=1/3`のように`npm.cmd`を使います。Windows CIも同じ呼び方です。
 
-`typecheck`はproduction・階層化した開発script・test runnerのtest、`typecheck:tests`はtest全体を検査します。型検査用の不正入力を含むfixtureは、期待する型エラーをその箇所で明示してください。
+`typecheck`はproduction・階層化した開発scriptに加え、`typecheck:tests`によるtest全体とhelper/fixtureの型検査も実行します。runtime validationを確認する意図的な不正入力は、通常のfixtureと区別し、検査対象を除外したり型検査の抑止で不整合を隠したりしないでください。
 
 ### 本番向けbuild
 

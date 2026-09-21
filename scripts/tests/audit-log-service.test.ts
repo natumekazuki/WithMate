@@ -31,7 +31,17 @@ function createInput(overrides: Partial<CreateAuditLogInput> = {}): CreateAuditL
   };
 }
 
-test("AuditLogService は storage の CRUD を委譲する", () => {
+// @test-value v2
+// kind = "contract"
+// claim = "AuditLogServiceのCRUDはstorageへ委譲し、返却値と呼び出し順を保持する"
+// oracle = { type = "contract", ref = "audit log service storage boundary" }
+// fault = "CRUDの引数・返却値・順序が変わり監査記録の保存または更新が欠落する"
+// observable = "storage calls and awaited CRUD results"
+// observation_boundary = "public-boundary"
+// scope = "audit-log-service-crud"
+// lifecycle = "permanent"
+// @end-test-value
+test("AuditLogService は storage の CRUD を委譲する", async () => {
   const calls: Array<{ type: string; payload: unknown }> = [];
   const createdEntry: AuditLogEntry = { id: 1, ...createInput() };
   const updatedEntry: AuditLogEntry = { id: 1, ...createInput({ phase: "completed" }) };
@@ -54,9 +64,9 @@ test("AuditLogService は storage の CRUD を委譲する", () => {
     },
   } as unknown as { listSessionAuditLogs(sessionId: string): AuditLogEntry[]; createAuditLog(input: CreateAuditLogInput): AuditLogEntry; updateAuditLog(id: number, input: CreateAuditLogInput): AuditLogEntry; clearAuditLogs(): void });
 
-  assert.deepEqual(service.listSessionAuditLogs("session-1"), [createdEntry]);
-  assert.equal(service.createAuditLog(createInput()).id, 1);
-  assert.equal(service.updateAuditLog(1, createInput({ phase: "completed" })).phase, "completed");
+  assert.deepEqual(await service.listSessionAuditLogs("session-1"), [createdEntry]);
+  assert.equal((await service.createAuditLog(createInput())).id, 1);
+  assert.equal((await service.updateAuditLog(1, createInput({ phase: "completed" }))).phase, "completed");
   service.clearAuditLogs();
 
   assert.deepEqual(calls.map((call) => call.type), ["list", "create", "update", "clear"]);
