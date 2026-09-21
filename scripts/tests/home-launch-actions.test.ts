@@ -76,7 +76,6 @@ function createSessionSummary(overrides: Partial<SessionSummary> = {}): SessionS
     id: "session-1",
     taskTitle: "Task",
     status: "idle",
-    isPinned: false,
     updatedAt: "2026-01-01T00:00:00.000Z",
     isPinned: false,
     provider: "codex",
