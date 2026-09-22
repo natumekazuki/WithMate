@@ -278,9 +278,13 @@
 
 .boot-page-shell {
   display: grid;
+  place-items: center;
+  min-height: 0;
+}
+
+.boot-page.failed .boot-page-shell {
   align-content: start;
   justify-items: start;
-  min-height: 0;
 }
 
 .boot-status-panel {
@@ -316,8 +320,16 @@
 .boot-progress {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 12px;
   color: var(--ink);
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.boot-progress .home-session-list-load-spinner {
+  width: 22px;
+  height: 22px;
 }
 
 .session-page .panel {

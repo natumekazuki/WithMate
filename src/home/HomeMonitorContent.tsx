@@ -267,7 +267,7 @@ export function HomeMonitorContent({
           <span className="sr-only">{loadingMessage}</span>
         </div>
       ) : null}
-      <section className="home-monitor-section" aria-labelledby="home-monitor-running">
+      <section className={`home-monitor-section${runningEntries.length === 0 ? " is-empty" : ""}`} aria-labelledby="home-monitor-running">
         <div className="home-monitor-section-head">
           <h3 id="home-monitor-running">Running</h3>
           <span className="home-monitor-count">{runningEntries.length}</span>
@@ -281,7 +281,7 @@ export function HomeMonitorContent({
         </div>
       </section>
 
-      <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
+      <section className={`home-monitor-section${nonRunningEntries.length === 0 ? " is-empty" : ""}`} aria-labelledby="home-monitor-inactive">
         <div className="home-monitor-section-head">
           <h3 id="home-monitor-inactive">Stopped</h3>
           <span className="home-monitor-count">{nonRunningEntries.length}</span>

@@ -142,7 +142,7 @@ test("Home Characters は一覧だけをスクロールする", async () => {
   assert.match(componentSource, /className="home-character-toolbar"/);
   assert.match(componentSource, /className="home-character-list"/);
   assert.match(paneSource, /className="home-monitor-panel home-characters-panel"/);
-  assert.match(readCssRule(stylesSource, ".home-page .home-characters-panel .home-monitor-body"), /overflow:\s*hidden;/);
+  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-body"), /overflow:\s*hidden;/);
   const sectionRule = readCssRule(stylesSource, ".home-page .home-characters-panel .home-monitor-section");
   assert.match(sectionRule, /flex:\s*1 1 auto;/);
   assert.match(sectionRule, /min-height:\s*0;/);

@@ -69,7 +69,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 ## Home Window startup
 
 - 通常起動ではHomeと同じ大きさのWindowを最初に開き、起動用entryからHome entryへ同じBrowserWindow内で切り替える。`--background`ではWindowを出さない。
-- 起動中はHomeの未準備な操作を表示せず、枠のない小さな待機表示をWindowの左上に置く。stage一覧や完了説明は表示せず、詳細statusをaccessible statusへ集約する。spinnerと`Starting WithMate`を表示し、対象領域の`aria-busy`で処理中を示す。
+- 起動中はHomeの未準備な操作を表示せず、枠のない待機表示をWindowの中央に置く。stage一覧や完了説明は表示せず、詳細statusをaccessible statusへ集約する。spinnerと`Starting WithMate`を表示し、対象領域の`aria-busy`で処理中を示す。
 - 起動失敗時はstatusのtitleを見出しとするalertへdetailとerror detailを残し、成功や通常完了へ読み替えない。
 
 ## Home Window
@@ -90,6 +90,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - section
     - `Running`: `running`
     - `Stopped`: `interrupted` / `error` / `neutral` を含む non-running
+  - `Running` と `Stopped` の一覧はそれぞれ独立してスクロールする。両方に項目がある場合は表示領域を等分し、一方が空ならその見出しだけを残してもう一方へ領域を渡す
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
@@ -368,7 +369,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - approval chip は `AutoRun / ProviderControlled / SafetyFocused`
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`
-- assistant / pending bubble は `sub` ベースの薄い accent を持つ
+- assistant本文は装飾cardで囲まず、`sub` の細い左アクセントで区別する。user本文は控えめなsurfaceで区別し、pendingとAuxiliary groupの状態表現は維持する
 - `composer settings` の背景は `sub` ベースの薄い accent を持つ
 - `Send / Cancel` は mate `main`
 - sendability 判定は共通resolverへ寄せ、Composer内の購読と送信shortcutで最新draft・preview・強制feedback条件を使う。入力のたびにSession shellを更新せず、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う

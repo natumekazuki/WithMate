@@ -284,13 +284,17 @@
   flex-direction: column;
   gap: 14px;
   min-height: 0;
-  overflow-y: auto;
-  padding-right: 6px;
+  overflow: hidden;
 }
 
-.home-page .home-characters-panel .home-monitor-body {
-  overflow: hidden;
-  padding-right: 0;
+.home-page .home-monitor-panel:not(.home-characters-panel) .home-monitor-section {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+}
+
+.home-page .home-monitor-panel:not(.home-characters-panel) .home-monitor-section.is-empty {
+  flex: 0 0 auto;
 }
 
 .home-page .home-characters-panel .home-monitor-section {
@@ -363,6 +367,7 @@
   display: grid;
   flex: 1 1 auto;
   gap: 10px;
+  grid-auto-rows: max-content;
   min-height: 0;
   overflow-y: auto;
   align-content: start;
@@ -370,27 +375,37 @@
 }
 
 .home-page .home-character-card {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   width: 100%;
+  overflow: hidden;
   padding: 12px;
   border: 1px solid var(--card-border, rgba(203, 213, 225, 0.14));
   border-radius: 14px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--card-main, #1a2230) 24%, rgba(255, 255, 255, 0.04) 76%), rgba(255, 255, 255, 0.035)),
-    rgba(10, 14, 20, 0.74);
-  color: var(--ink);
+  background: var(--card-main, #1a2230);
+  color: var(--card-ink, var(--ink));
   text-align: left;
   box-shadow: 0 10px 24px color-mix(in srgb, var(--card-shadow, rgba(0, 0, 0, 0.28)) 36%, transparent);
 }
 
+.home-page .home-character-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--card-sub, #6f8cff);
+}
+
 .home-page .home-character-card:hover {
-  border-color: color-mix(in srgb, var(--card-sub, #6f8cff) 44%, rgba(255, 255, 255, 0.18) 56%);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--card-main, #1a2230) 32%, rgba(255, 255, 255, 0.06) 68%), rgba(255, 255, 255, 0.055)),
-    rgba(10, 14, 20, 0.8);
+  border-color: var(--card-sub, #6f8cff);
+}
+
+.home-page .home-character-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--card-ink, var(--ink)) 72%, transparent);
+  outline-offset: -3px;
 }
 
 .home-page .home-character-card-copy {
@@ -410,13 +425,13 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--ink);
+  color: var(--card-ink, var(--ink));
   font-size: 0.92rem;
   font-weight: 800;
 }
 
 .home-page .home-character-card-copy > span:not(.home-character-card-title) {
-  color: var(--muted);
+  color: var(--card-muted, var(--muted));
   font-size: 0.78rem;
   line-height: 1.35;
 }
@@ -437,8 +452,13 @@
 
 .home-page .home-monitor-list {
   display: grid;
+  flex: 1 1 auto;
   gap: 8px;
+  grid-auto-rows: max-content;
+  min-height: 0;
+  overflow-y: auto;
   align-content: start;
+  padding-right: 6px;
 }
 
 .home-page .home-monitor-card {
