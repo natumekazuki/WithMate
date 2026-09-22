@@ -130,7 +130,7 @@ import {
   StateMutationRevision,
   createSessionTurnClientRequestId,
 } from "../chat/runtime/session-submit-coordinator.js";
-import { buildSessionChatConversationFeature } from "../chat/conversation/session-chat-conversation-feature.js";
+import { useSessionChatConversationFeature } from "../chat/conversation/session-chat-conversation-feature.js";
 import { buildSessionChatRuntimeFeature } from "../chat/runtime/session-chat-runtime-feature.js";
 import { useSessionContextPaneFeature } from "../chat/runtime/use-session-context-pane-feature.js";
 import { composeAgentSessionChatWindow } from "../chat/session-chat-window-composition.js";
@@ -195,7 +195,6 @@ import {
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   createAgentPickerCloseHandler,
-  createExpandedArtifactToggleHandler,
   createPathReferenceRemovalHandler,
   createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
@@ -368,7 +367,7 @@ export default function AgentSessionWindowApp() {
     runMainSessionTurn: runMainSessionTurnFromRuntime,
   } = mainSessionRuntime;
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
-  const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
+  const conversationFeature = useSessionChatConversationFeature();
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [isPromptTemplateWorkspaceOpen, setIsPromptTemplateWorkspaceOpen] = useState(false);
   const promptTemplateCloseGuardRef = useRef<(() => boolean) | null>(null);
@@ -2005,10 +2004,6 @@ export default function AgentSessionWindowApp() {
     cancelTitleEdit: handleCancelTitleEdit,
   });
 
-  const toggleArtifact = createExpandedArtifactToggleHandler({
-    setExpandedArtifacts,
-  });
-
   const scrollActivityMonitorToBottom = () => {
     const activityMonitorElement = activityMonitorRef.current;
     if (!activityMonitorElement) {
@@ -2336,7 +2331,7 @@ export default function AgentSessionWindowApp() {
       retryComposerSave: handleRetryAuxiliaryDraftSave,
     },
   });
-  const chatConversationFeature = buildSessionChatConversationFeature({
+  const chatConversationFeature = conversationFeature.buildSurface({
     sessionId: renderedSession.id,
     character: selectedSessionCharacter,
     messages: renderedMessages,
@@ -2359,9 +2354,7 @@ export default function AgentSessionWindowApp() {
     isMessageListFollowing,
     messageListRef,
     onMessageListScroll: handleMessageListScroll,
-    expandedArtifacts,
     onToggleMessageBookmark: handleToggleMessageBookmark,
-    onToggleArtifact: toggleArtifact,
     onLoadArtifactDetail: (messageIndex) =>
       Promise.resolve(withmateApi?.getSessionMessageArtifact(selectedSession.id, messageIndex) ?? null),
     onOpenDiff: (title, file) =>

@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
 import type { Message } from "../../../src-shared/session/session-state.js";
 import type { ChatWindowProps } from "../chat-window.js";
+import { createExpandedArtifactToggleHandler } from "../session-shell-handlers.js";
 import {
   buildLiveSessionMessageColumnProps,
 } from "../chat-window-adapter.js";
@@ -13,7 +14,7 @@ import {
 
 export type SessionChatConversationFeatureInput = Omit<
   LiveSessionCommonMessageColumnInput,
-  "sessionId" | "character" | "messages" | "isContentActive"
+  "sessionId" | "character" | "messages" | "isContentActive" | "expandedArtifacts" | "onToggleArtifact"
 > & {
   sessionId: string;
   character: CharacterProfile;
@@ -23,14 +24,24 @@ export type SessionChatConversationFeatureInput = Omit<
 
 export type SessionChatConversationFeature = ChatWindowProps["messageColumnProps"];
 
-/** The conversation owner projects messages and live requests for ChatWindow. */
-export function buildSessionChatConversationFeature(
-  input: SessionChatConversationFeatureInput,
-): SessionChatConversationFeature {
-  return buildLiveSessionMessageColumnProps(
-    buildLiveSessionCommonMessageColumnProps({
-      ...input,
-      isContentActive: input.mainContent === undefined,
-    }),
+/** Owns artifact expansion and projects messages and live requests for ChatWindow. */
+export function useSessionChatConversationFeature() {
+  const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
+  const onToggleArtifact = useMemo(
+    () => createExpandedArtifactToggleHandler({ setExpandedArtifacts }),
+    [setExpandedArtifacts],
   );
+
+  return {
+    buildSurface(input: SessionChatConversationFeatureInput): SessionChatConversationFeature {
+      return buildLiveSessionMessageColumnProps(
+        buildLiveSessionCommonMessageColumnProps({
+          ...input,
+          expandedArtifacts,
+          onToggleArtifact,
+          isContentActive: input.mainContent === undefined,
+        }),
+      );
+    },
+  };
 }

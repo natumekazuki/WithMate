@@ -13,6 +13,11 @@ import {
 import { ComposerControllerRegistry, type ComposerOwner } from "../../src/chat/composer-controller.js";
 import { buildSessionChatRuntimeFeature } from "../../src/chat/runtime/session-chat-runtime-feature.js";
 import {
+  useSessionChatConversationFeature,
+  type SessionChatConversationFeature,
+  type SessionChatConversationFeatureInput,
+} from "../../src/chat/conversation/session-chat-conversation-feature.js";
+import {
   useSessionHeaderOperations,
   type SessionHeaderOperations,
 } from "../../src/chat/shell/use-session-header-operations.js";
@@ -504,5 +509,78 @@ test("session composer feature は凍結中のskill挿入を拒否し authoring 
     assert.equal(authoringSurface.composer.showSkillPicker, false);
     assert.equal(authoringSurface.composer.canSelectCustomAgent, false);
     assert.equal(authoringSurface.skillPickerProps.isOpen, false);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "conversation featureのartifact開閉操作は対象message keyだけを変更し、会話を切り替えても展開状態を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#ui-implementation-boundary" }
+// fault = "開閉callbackがfeatureの状態へ接続されない、別messageの状態も変わる、または会話切替で展開状態が失われる"
+// observable = "同一hookの再renderと会話切替後に返るmessageColumn surfaceのexpandedArtifacts"
+// observation_boundary = "component-behavior"
+// scope = "session-conversation-artifact-expansion"
+// lifecycle = "permanent"
+// impact = "Detailsを開閉できなくなる、または別会話へ移動して戻るたびに閲覧状態が失われる"
+// distinction = "toggle helper単体や固定propsの描画では検出できない、featureのReact stateと実callback・投影の接続を確認する"
+// @end-test-value
+test("session conversation feature はartifact開閉状態をmessage keyごとに保持する", async () => {
+  await withReactDom(async (root) => {
+    let surface: SessionChatConversationFeature | null = null;
+    const getSurface = () => {
+      assert.ok(surface);
+      return surface;
+    };
+    const input: SessionChatConversationFeatureInput = {
+      sessionId: "main",
+      character: {
+        id: "character",
+        name: "Mate",
+        iconPath: "",
+        description: "",
+        roleMarkdown: "",
+        notesMarkdown: "",
+        updatedAt: "",
+        themeColors: {},
+      } as SessionChatConversationFeatureInput["character"],
+      messages: [],
+      messageListRef: { current: null },
+      isRunning: false,
+      liveApprovalRequest: null,
+      approvalActionRequestId: null,
+      liveElicitationRequest: null,
+      elicitationActionRequestId: null,
+      liveRunAssistantText: "",
+      liveRunErrorMessage: "",
+      isMessageListFollowing: true,
+      onMessageListScroll: noop,
+      onLoadArtifactDetail: async () => null,
+      onOpenDiff: noop,
+      onResolveLiveApproval: noop,
+      onResolveLiveElicitation: noop,
+      onOpenPath: noop,
+      getChangedFilesEmptyText: () => "",
+    };
+    function Harness({ sessionId }: { sessionId: string }) {
+      const feature = useSessionChatConversationFeature();
+      surface = feature.buildSurface({ ...input, sessionId });
+      return null;
+    }
+
+    await act(async () => root.render(React.createElement(Harness, { sessionId: "main" })));
+    assert.deepEqual(getSurface().expandedArtifacts, {});
+    await act(async () => getSurface().onToggleArtifact("main-0"));
+    assert.deepEqual(getSurface().expandedArtifacts, { "main-0": true });
+
+    await act(async () => root.render(React.createElement(Harness, { sessionId: "auxiliary" })));
+    assert.equal(getSurface().sessionId, "auxiliary");
+    await act(async () => getSurface().onToggleArtifact("auxiliary-0"));
+    assert.deepEqual(getSurface().expandedArtifacts, { "main-0": true, "auxiliary-0": true });
+
+    await act(async () => root.render(React.createElement(Harness, { sessionId: "main" })));
+    assert.equal(getSurface().sessionId, "main");
+    assert.deepEqual(getSurface().expandedArtifacts, { "main-0": true, "auxiliary-0": true });
+    await act(async () => getSurface().onToggleArtifact("main-0"));
+    assert.deepEqual(getSurface().expandedArtifacts, { "main-0": false, "auxiliary-0": true });
   });
 });
