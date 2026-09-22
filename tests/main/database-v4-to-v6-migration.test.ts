@@ -79,6 +79,11 @@ function createV4FixtureDatabase(dbPath: string): void {
       "true",
       "2026-06-28T00:00:00.000Z",
     );
+    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
+      "user_microcopy_catalog_json",
+      JSON.stringify({ legacy: true }),
+      "2026-06-28T00:00:00.000Z",
+    );
     db.prepare("INSERT INTO model_catalog_revisions (revision, source, imported_at, is_active) VALUES (?, ?, ?, ?)").run(
       12,
       "fixture",
@@ -156,6 +161,18 @@ function readAppSetting(dbPath: string, settingKey: string): string | null {
 }
 
 describe("migrate-database-v4-to-v6", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V4 to V6 release-data migrationは廃止microcopy設定を移送せず、現行release設定だけを計画する"
+  // oracle = { type = "contract", ref = "src-electron/storage/migrations/migrate-database-v4-to-v6.ts#MIGRATED_APP_SETTING_KEYS" }
+  // fault = "廃止済みuser_microcopy_catalog_jsonがV6へ再生成されるか、移送対象数とskip数が不整合になる"
+  // observable = "dry-runのappSettings/skippedAppSettings counts"
+  // observation_boundary = "public-boundary"
+  // scope = "database-v4-to-v6-retired-microcopy-boundary"
+  // lifecycle = "permanent"
+  // impact = "廃止設定が新DBへ持ち越され、削除契約に反して再利用される"
+  // distinction = "V4 fixtureに廃止keyを含め、migration filterの結果を件数として確認する"
+  // @end-test-value
   it("dry-run で V6 移行対象と skip 対象を分けて返す", () => {
     const fixture = createFixture();
     try {
@@ -166,7 +183,7 @@ describe("migrate-database-v4-to-v6", () => {
       assert.equal(report.plannedV6Counts.appSettings, 4);
       assert.equal(report.plannedV6Counts.modelCatalogModels, 1);
       assert.equal(report.plannedV6Counts.characters, 1);
-      assert.equal(report.v4Counts.skippedAppSettings, 1);
+      assert.equal(report.v4Counts.skippedAppSettings, 2);
       assert.equal(report.v4Counts.skippedSessions, 1);
       assert.equal(report.v4Counts.skippedMateRows, 1);
       assert.equal(report.plannedV6Counts.skippedSessions, 0);
@@ -175,6 +192,18 @@ describe("migrate-database-v4-to-v6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V4 to V6 writeは廃止microcopy設定をV6へコピーせず、現行settings/catalog/charactersだけを移行する"
+  // oracle = { type = "contract", ref = "src-electron/storage/migrations/migrate-database-v4-to-v6.ts#copyReleaseData" }
+  // fault = "write後のV6 DBにuser_microcopy_catalog_jsonが残るか、廃止行を含む件数を成功扱いする"
+  // observable = "migrated countsとV6 app_settingsの廃止key値"
+  // observation_boundary = "public-boundary"
+  // scope = "database-v4-to-v6-retired-microcopy-write"
+  // lifecycle = "permanent"
+  // impact = "V6起動後に廃止customデータが復活し、削除済み設定が再生される"
+  // distinction = "dry-runの計画件数に加えて実write後のV6行を確認する"
+  // @end-test-value
   it("write で settings/catalog/characters だけを V6 DB へ移行する", async () => {
     const fixture = createFixture();
     try {
@@ -192,6 +221,7 @@ describe("migrate-database-v4-to-v6", () => {
       assert.equal(readCount(fixture.v6Path, "app_settings"), 5);
       assert.equal(readAppSetting(fixture.v6Path, "launch_at_login_enabled"), "true");
       assert.equal(readAppSetting(fixture.v6Path, "session_right_pane_visible"), "true");
+      assert.equal(readAppSetting(fixture.v6Path, "user_microcopy_catalog_json"), null);
       assert.equal(hasV4ToV6ReleaseDataMigrationMarker(fixture.v6Path), true);
       assert.equal(readCount(fixture.v6Path, "model_catalog_models"), 1);
       assert.equal(readCount(fixture.v6Path, "characters"), 1);

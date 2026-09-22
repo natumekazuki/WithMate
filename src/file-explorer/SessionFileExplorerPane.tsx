@@ -415,7 +415,7 @@ export function SessionFileExplorerPane({
         aria-busy={rootsLoadState === "loading"}
         hidden={activeTab !== "files"}
       >
-        {errorMessage ? <p className="session-file-tree-error">{errorMessage}</p> : null}
+        {errorMessage ? <p className="session-file-tree-error" role="alert">{errorMessage}</p> : null}
         {feedbackMessage ? (
           <p className="session-file-tree-feedback" role="status" aria-live="polite">{feedbackMessage}</p>
         ) : null}

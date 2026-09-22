@@ -2,6 +2,7 @@ import type { CharacterCatalogEntry } from "../../src-shared/character/character
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
+import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import {
   resolveLaunchCharacterId,
   type HomeCharacterLoadStatus,
@@ -18,6 +19,8 @@ export type { LaunchWorkspace, LaunchWorkspaceSelection } from "./home-launch-wo
 
 export type HomeLaunchProjection = {
   enabledLaunchProviders: ModelCatalogProvider[];
+  providerLoadStatus: ProviderLaunchLoadStatus;
+  providerLoadError: string;
   selectedLaunchProvider: ModelCatalogProvider | null;
   characterOptions: CharacterCatalogEntry[];
   selectedCharacter: CharacterCatalogEntry | null;
@@ -47,6 +50,8 @@ export function buildHomeLaunchProjection({
   characterLoadStatus,
   appSettings,
   modelCatalog,
+  providerLoadStatus,
+  providerLoadError,
 }: {
   launchProviderId: string;
   launchTitle: string;
@@ -61,6 +66,8 @@ export function buildHomeLaunchProjection({
   characterLoadStatus?: HomeCharacterLoadStatus;
   appSettings: AppSettings;
   modelCatalog: ModelCatalogSnapshot | null;
+  providerLoadStatus?: ProviderLaunchLoadStatus;
+  providerLoadError?: string;
 }): HomeLaunchProjection {
   const enabledLaunchProviders = (modelCatalog?.providers ?? []).filter(
     (provider) => getProviderAppSettings(appSettings, provider.id).enabled,
@@ -76,9 +83,12 @@ export function buildHomeLaunchProjection({
   const validCharacterSelection = launchCharacterSelectionMode === "random" || selectedCharacter !== null;
   const sessionFolderSelected = isSessionFolderLaunchWorkspace(launchWorkspace);
   const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
+  const resolvedProviderLoadStatus = providerLoadStatus ?? "loaded";
 
   return {
     enabledLaunchProviders,
+    providerLoadStatus: resolvedProviderLoadStatus,
+    providerLoadError: providerLoadError ?? "",
     selectedLaunchProvider,
     characterOptions: [...activeCharacterEntries],
     selectedCharacter,
@@ -94,6 +104,7 @@ export function buildHomeLaunchProjection({
     sessionFolderSelected,
     workspaceSelected: !!launchWorkspace,
     canStartSession:
+      resolvedProviderLoadStatus === "loaded" &&
       charactersLoaded &&
       resolvedCharacterLoadStatus === "loaded" &&
       !!launchTitle.trim() &&

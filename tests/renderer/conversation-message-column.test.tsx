@@ -34,7 +34,6 @@ function createBaseProps(id: string): SessionMessageColumnProps {
     onOpenDiff() {},
     onResolveLiveApproval() {},
     onResolveLiveElicitation() {},
-    getChangedFilesEmptyText: () => "",
   };
 }
 

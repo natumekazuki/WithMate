@@ -5,7 +5,6 @@ import { useSessionMessageListFollowing } from "./shell/session-chat-layout-hook
 import { StableSessionMessageColumn } from "./stable-session-message-column.js";
 import { buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "./auxiliary/auxiliary-session-message-projection.js";
 import { buildMessageCollapseTargets, buildMessageNavigatorEntries, type MessageCollapseStateEntry, type MessageJumpRequest, type MessageNavigatorEntry } from "./conversation/session-message-collapse.js";
-import { DEFAULT_CHARACTER_SESSION_COPY } from "../../src-shared/character/character-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
@@ -140,7 +139,6 @@ export function useConversationMessageColumn({
     notesMarkdown: "",
     updatedAt: "",
     themeColors: session.characterThemeColors ?? baseProps.character.themeColors,
-    sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
   } : baseProps.character, [
     baseProps.character,
     session?.character,

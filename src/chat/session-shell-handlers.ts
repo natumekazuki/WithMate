@@ -10,7 +10,6 @@ import {
 import { createQuotedMessageInsertionFromComposer } from "./message-text-actions.js";
 import {
   buildComposerReferenceInsertionState,
-  buildPathReferenceRemovalState,
   buildSelectedPathReferenceInsertionState,
   resolvePickedPathBaseDirectory,
   toDirectoryPath,
@@ -499,35 +498,6 @@ export function createQuoteMessageTextHandler(input: {
       ...composerState,
       applyInsertion: input.applyInsertion,
       restoreComposerTextareaFocusAndCaret: input.restoreComposerTextareaFocusAndCaret,
-    });
-  };
-}
-
-export function applyPathReferenceRemovalCommand(input: {
-  draft: string;
-  attachmentPathCandidates: string[];
-  applyRemoval: (state: PathReferenceInsertionState) => void;
-}): void {
-  input.applyRemoval(
-    buildPathReferenceRemovalState(
-      input.draft,
-      input.attachmentPathCandidates,
-    ),
-  );
-}
-
-export function createPathReferenceRemovalHandler(input: {
-  getDraft: () => string;
-  normalizeAttachmentPathCandidates?: (attachmentPathCandidates: string[]) => string[];
-  applyRemoval: (state: PathReferenceInsertionState, attachmentPathCandidates: string[]) => void;
-}): (attachmentPathCandidates: string[]) => void {
-  return (attachmentPathCandidates) => {
-    const removalCandidates = input.normalizeAttachmentPathCandidates?.(attachmentPathCandidates)
-      ?? attachmentPathCandidates;
-    applyPathReferenceRemovalCommand({
-      draft: input.getDraft(),
-      attachmentPathCandidates: removalCandidates,
-      applyRemoval: (state) => input.applyRemoval(state, removalCandidates),
     });
   };
 }

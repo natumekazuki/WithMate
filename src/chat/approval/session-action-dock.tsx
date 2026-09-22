@@ -1,15 +1,10 @@
 import { type ReactNode } from "react";
-import type { SessionComposerExpandedProps } from "../composer/session-composer.js";
 
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
-
-import { useComposerController } from "../../chat/composer-controller.js";
 
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 
 export type SessionActionDockCompactRowProps = {
-  attachmentCount: number;
-  composerController?: SessionComposerExpandedProps["composerController"];
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
@@ -28,8 +23,6 @@ export type SessionActionDockCompactRowProps = {
 };
 
 export function SessionActionDockCompactRow({
-  attachmentCount,
-  composerController,
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
@@ -45,16 +38,6 @@ export function SessionActionDockCompactRow({
   onCancel,
   onMessageViewModeChange = () => {},
 }: SessionActionDockCompactRowProps) {
-  const controllerOwner = composerController?.owner ?? { kind: "main" as const, id: "__legacy__" };
-  const composerControllerState = useComposerController(
-    controllerOwner,
-    composerController?.initialDraft,
-    composerController?.registry,
-  );
-  const displayedAttachmentCount = composerController
-    ? composerControllerState.preview.attachments.length
-    : attachmentCount;
-
   return (
     <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}`}>
       {isRunning ? (
@@ -81,9 +64,6 @@ export function SessionActionDockCompactRow({
           title="Expand action dock"
         >
           {chatNotice ? <span className="session-action-dock-compact-badge attention">{chatNotice}</span> : null}
-          {displayedAttachmentCount > 0 ? (
-            <span className="session-action-dock-compact-badge">{`Attachments${displayedAttachmentCount}`}</span>
-          ) : null}
         </button>
       )}
       <div className="session-action-dock-compact-actions">

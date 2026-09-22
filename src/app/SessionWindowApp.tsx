@@ -17,18 +17,13 @@ import {
   runAdditionalDirectoryRemovalOperation,
   runPickedAdditionalDirectoryOperation,
 } from "../../src-shared/settings/additional-directory-state.js";
-import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "../../src-shared/character/character-state.js";
+import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import { startAppSettingsSubscription } from "../settings/app-settings-subscription.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
   type AppSettings,
 } from "../../src-shared/settings/provider-settings-state.js";
-import {
-  hasCustomMicrocopyVariants,
-  resolveMicrocopy,
-  type MicrocopySlot,
-} from "../../src-shared/settings/microcopy-state.js";
 import {
   type DiffPreviewPayload,
   type Message,
@@ -43,6 +38,7 @@ import {
   type ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
 import { startModelCatalogSubscription } from "../settings/model-catalog-subscription.js";
+import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import {
   buildAuxiliarySessionCancelTarget,
@@ -74,6 +70,7 @@ import {
   createAuxiliaryLaunchProviderSelectHandler,
   canCancelAuxiliaryLaunchCreation,
   resolveAuxiliaryLaunchCreationFeedback,
+  resolveAuxiliaryLaunchProviderId,
   resolveAuxiliaryLaunchStartProvider,
 } from "../chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "../chat/AuxiliaryLaunchProviderDialog.js";
@@ -199,7 +196,6 @@ import {
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   createAgentPickerCloseHandler,
-  createPathReferenceRemovalHandler,
   createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
   createSkillPromptInsertionHandler,
@@ -371,6 +367,8 @@ export default function AgentSessionWindowApp() {
     runMainSessionTurn: runMainSessionTurnFromRuntime,
   } = mainSessionRuntime;
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
+  const [modelCatalogLoadStatus, setModelCatalogLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
+  const [modelCatalogLoadError, setModelCatalogLoadError] = useState("");
   const conversationFeature = useSessionChatConversationFeature();
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [isPromptTemplateWorkspaceOpen, setIsPromptTemplateWorkspaceOpen] = useState(false);
@@ -387,6 +385,8 @@ export default function AgentSessionWindowApp() {
   const inlinePathOperationRevisionRef = useRef(new StateMutationRevision());
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
+  const [appSettingsLoadStatus, setAppSettingsLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
+  const [appSettingsLoadError, setAppSettingsLoadError] = useState("");
   const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
   const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
@@ -472,6 +472,7 @@ export default function AgentSessionWindowApp() {
   const auxiliarySessionMutationRevisionRef = auxiliaryBinding.mutationRevision;
   const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
   const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
+  const auxiliarySendInFlightIdsRef = useRef<Set<string>>(new Set());
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
     [selectedId, sessions],
@@ -686,7 +687,6 @@ export default function AgentSessionWindowApp() {
             notesMarkdown: "",
             updatedAt: displayedSession.updatedAt,
             themeColors: displayedSession.characterThemeColors,
-            sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
           }
         : null,
     [displayedSession],
@@ -732,27 +732,6 @@ export default function AgentSessionWindowApp() {
     () => (selectedDiff ? buildCharacterThemeStyle(selectedDiff.themeColors) : {}),
     [selectedDiff],
   );
-  const resolveSessionMicrocopy = (
-    slot: MicrocopySlot,
-    seedParts: Array<string | number | null | undefined>,
-  ) => resolveMicrocopy({
-    slot,
-    userCatalog: appSettings.userMicrocopyCatalog,
-    seedParts,
-    replacements: { name: selectedSessionCharacter?.name || DEFAULT_SESSION_RUNTIME_NAME },
-  });
-  const getChangedFilesEmptyText = useCallback(
-    (artifactKey: string, artifactHasSnapshotRisk: boolean) =>
-      artifactHasSnapshotRisk
-        ? "No differences were found. Snapshot limits or truncation may have omitted some changes."
-        : resolveMicrocopy({
-            slot: "empty.changed_files",
-            userCatalog: appSettings.userMicrocopyCatalog,
-            seedParts: ["changed-files-empty", artifactKey],
-            replacements: { name: selectedSessionCharacter?.name || DEFAULT_SESSION_RUNTIME_NAME },
-          }),
-    [appSettings.userMicrocopyCatalog, selectedSessionCharacter?.name],
-  );
   const isSelectedProviderEnabled = useMemo(
     () => !!displayedSession && getProviderAppSettings(appSettings, displayedSession.provider).enabled,
     [appSettings, displayedSession],
@@ -764,6 +743,17 @@ export default function AgentSessionWindowApp() {
     ),
     [appSettings, modelCatalog],
   );
+  const auxiliaryProviderLoadStatus: ProviderLaunchLoadStatus = modelCatalogLoadStatus === "error"
+    || appSettingsLoadStatus === "error"
+    ? "error"
+    : modelCatalogLoadStatus === "loading" || appSettingsLoadStatus === "loading"
+      ? "loading"
+      : "loaded";
+  const auxiliaryProviderLoadError = modelCatalogLoadStatus === "error"
+    ? modelCatalogLoadError
+    : appSettingsLoadStatus === "error"
+      ? appSettingsLoadError
+      : "";
   const workspaceExecutionGate = useMemo(
     () => selectedSession
       ? resolveSessionWorkspaceExecutionGate(
@@ -800,7 +790,7 @@ export default function AgentSessionWindowApp() {
     }
 
     if (auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession) {
-      return auxiliaryWorkspace.detailError?.message ?? auxiliaryWorkspace.error?.message ?? "Loading the Auxiliary conversation.";
+      return auxiliaryWorkspace.detailError?.message ?? auxiliaryWorkspace.error?.message ?? "";
     }
 
     if (!isSelectedProviderEnabled) {
@@ -870,7 +860,16 @@ export default function AgentSessionWindowApp() {
       api: withmateApi,
       enabled: true,
       subscribe: true,
-      applyModelCatalog: setModelCatalog,
+      applyModelCatalog: (snapshot) => {
+        setModelCatalog(snapshot);
+        setModelCatalogLoadStatus("loaded");
+        setModelCatalogLoadError("");
+      },
+      onInitialLoadError: (error) => {
+        setModelCatalog(null);
+        setModelCatalogLoadStatus("error");
+        setModelCatalogLoadError(error instanceof Error ? error.message : "Could not load model catalog.");
+      },
     });
   }, [selectedSession?.id, withmateApi]);
 
@@ -881,6 +880,12 @@ export default function AgentSessionWindowApp() {
       applyAppSettings: (settings) => {
         setAppSettings(settings);
         setIsAppSettingsLoaded(true);
+        setAppSettingsLoadStatus("loaded");
+        setAppSettingsLoadError("");
+      },
+      onInitialLoadError: (error) => {
+        setAppSettingsLoadStatus("error");
+        setAppSettingsLoadError(error instanceof Error ? error.message : "Could not load app state.");
       },
     });
   }, [withmateApi]);
@@ -1004,15 +1009,12 @@ export default function AgentSessionWindowApp() {
     selectedProviderQuotaTelemetry,
     availableReasoningEfforts,
     renderedIsRunning: contextRenderedIsRunning,
-    visibleRunState: visibleSessionRunState,
     glossaryPaneProps: sessionGlossaryPaneProps,
-    resolveSessionMicrocopy,
     onShowContextRail: handleShowContextRail,
   });
   const {
     rightPaneProps: contextPaneProps,
     hasInProgressLiveRunStep,
-    liveRunStepStatusSignature,
   } = contextPaneFeature;
   const retryBanner = useMemo<RetryBannerState | null>(() => {
     if (!selectedSession || !shouldShowRetryBanner({
@@ -1034,56 +1036,28 @@ export default function AgentSessionWindowApp() {
       return null;
     }
 
-    const { kind, lastRequestText, terminalAuditLog } = source;
+    const { kind, lastRequestText } = source;
 
     switch (kind) {
       case "interrupted":
         return {
           kind,
           badge: "Interrupted",
-          title: resolveSessionMicrocopy("retry.interrupted.title", [
-            "retry",
-            "interrupted",
-            selectedSession.id,
-            lastRequestText,
-          ]),
-          titleVisible: hasCustomMicrocopyVariants(
-            appSettings.userMicrocopyCatalog,
-            "retry.interrupted.title",
-          ),
+          title: "The previous request was interrupted",
           lastRequestText,
         };
       case "failed":
         return {
           kind,
           badge: "Failed",
-          title: resolveSessionMicrocopy("retry.failed.title", [
-            "retry",
-            "failed",
-            selectedSession.id,
-            lastRequestText,
-          ]),
-          titleVisible: hasCustomMicrocopyVariants(
-            appSettings.userMicrocopyCatalog,
-            "retry.failed.title",
-          ),
+          title: "The previous request could not be completed",
           lastRequestText,
         };
       case "canceled":
         return {
           kind,
           badge: "Canceled",
-          title: resolveSessionMicrocopy("retry.canceled.title", [
-            "retry",
-            "canceled",
-            selectedSession.id,
-            lastRequestText,
-            terminalAuditLog?.id,
-          ]),
-          titleVisible: hasCustomMicrocopyVariants(
-            appSettings.userMicrocopyCatalog,
-            "retry.canceled.title",
-          ),
+          title: "This request was stopped",
           lastRequestText,
         };
       default:
@@ -1091,10 +1065,8 @@ export default function AgentSessionWindowApp() {
     }
   }, [
     lastUserMessage,
-    appSettings.userMicrocopyCatalog,
     selectedSession,
     selectedSessionAuditLogs,
-    selectedSessionCharacter?.name,
     selectedSessionRunState,
     isSelectedSessionReadOnly,
     activeAuxiliarySession,
@@ -1181,7 +1153,6 @@ export default function AgentSessionWindowApp() {
       selectedSessionRunState,
       blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly,
-      userMicrocopyCatalog: appSettings.userMicrocopyCatalog,
       currentTimestamp: currentTimestampLabel(),
       validateWorkspace: () => validateSessionWorkspace(selectedSession, true),
       liveRun: { getRevision: getLiveRunRevision, setState: setLiveRunState },
@@ -1199,7 +1170,12 @@ export default function AgentSessionWindowApp() {
     }
     if (activeAuxiliarySession) {
       const auxiliaryDraft = composerState.capture().draft;
-      if (composerRegistry.get(composerOwner).saveState === "error") {
+      const currentComposerState = composerRegistry.get(composerOwner);
+      const auxiliarySessionId = activeAuxiliarySession.id;
+      if (auxiliarySendInFlightIdsRef.current.has(auxiliarySessionId) || composerBusyReason) {
+        return;
+      }
+      if (currentComposerState.saveState === "error" || currentComposerState.preview.errors.length > 0) {
         triggerComposerBlockedFeedback();
         return;
       }
@@ -1208,11 +1184,14 @@ export default function AgentSessionWindowApp() {
         return;
       }
 
+      auxiliarySendInFlightIdsRef.current.add(auxiliarySessionId);
       try {
         setForceComposerBlockedFeedback(false);
         await sendAuxiliaryMessage(auxiliaryDraft);
       } catch (error) {
         window.alert(resolveSessionRunErrorMessage(error, "Could not send the message."));
+      } finally {
+        auxiliarySendInFlightIdsRef.current.delete(auxiliarySessionId);
       }
       return;
     }
@@ -1563,8 +1542,15 @@ export default function AgentSessionWindowApp() {
   });
 
   const handleStartAuxiliarySession = async () => {
-    if (!selectedSession || isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable) return;
-    const startProvider = resolveAuxiliaryLaunchStartProvider({ providerId: auxiliaryLaunchProviderId });
+    if (
+      !selectedSession
+      || isSelectedSessionReadOnly
+      || !isSelectedWorkspaceAvailable
+      || auxiliaryProviderLoadStatus !== "loaded"
+    ) return;
+    const startProvider = resolveAuxiliaryLaunchStartProvider({
+      providerId: resolveAuxiliaryLaunchProviderId(auxiliaryLaunchProviderItems, auxiliaryLaunchProviderId),
+    });
     if (startProvider.status === "blocked") {
       setAuxiliaryLaunchStartError(startProvider.error);
       return;
@@ -1623,7 +1609,7 @@ export default function AgentSessionWindowApp() {
     let clearedRevision: number | null = null;
     const result = await runAuxiliarySessionSendOperationWithApi({
       activeSession: activeAuxiliarySession,
-      composerBlockedReason,
+      composerBlockedReason: sessionExecutionBlockedReason,
       messageText,
       auxiliaryDraftIncarnation: durableDraft.incarnation,
       auxiliaryDraftDurableRevision: durableDraft.durableRevision,
@@ -1793,28 +1779,6 @@ export default function AgentSessionWindowApp() {
       restoreComposerTextareaFocusAndCaret,
     });
   };
-
-  const handleRemoveAttachmentReference = createPathReferenceRemovalHandler({
-    getDraft: () => getComposerDraft(),
-    applyRemoval: (nextState) => {
-      if (composerRegistry.isFrozen) return;
-      const { draft: nextDraft, caret: nextCaret } = nextState;
-      if (activeAuxiliarySession) {
-        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-        setComposerCaret(nextCaret);
-      } else {
-        applyComposerDraftChangeCommand({
-          value: nextDraft,
-          selectionStart: nextCaret,
-          setDraft,
-          setComposerCaret,
-          syncMainComposerCaret: (selectionStart) => {
-            mainComposerCaretRef.current = selectionStart;
-          },
-        });
-      }
-    },
-  });
 
   const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {
     if (composerRegistry.isFrozen || !withmateApi || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
@@ -2094,50 +2058,16 @@ export default function AgentSessionWindowApp() {
     scrollActivityMonitorToBottom();
   };
 
-  const pendingRunIndicatorSlot: MicrocopySlot = isApprovalRequestPending || isElicitationRequestPending
-    ? "dock.status.approval"
+  const pendingRunIndicatorText = isApprovalRequestPending || isElicitationRequestPending
+    ? "Waiting for approval"
     : hasInProgressLiveRunStep
-      ? "dock.status.working"
+      ? "Working"
       : hasLiveRunAssistantText
-        ? "dock.status.responding"
-        : "dock.status.preparing";
-  const pendingRunIndicatorText = pendingRunIndicatorSlot === "dock.status.approval"
-    ? resolveSessionMicrocopy(pendingRunIndicatorSlot, [
-      "pending",
-      "approval",
-      selectedSession?.id,
-      liveApprovalRequest?.requestId,
-      liveElicitationRequest?.requestId,
-    ])
-    : pendingRunIndicatorSlot === "dock.status.working"
-      ? resolveSessionMicrocopy(pendingRunIndicatorSlot, [
-        "pending",
-        "working",
-        selectedSession?.id,
-        selectedSessionLiveRun?.threadId,
-        liveRunStepStatusSignature,
-      ])
-      : pendingRunIndicatorSlot === "dock.status.responding"
-        ? resolveSessionMicrocopy(pendingRunIndicatorSlot, [
-          "pending",
-          "responding",
-          selectedSession?.id,
-          selectedSessionLiveRun?.threadId,
-        ])
-        : resolveSessionMicrocopy(pendingRunIndicatorSlot, [
-          "pending",
-          "preparing",
-          selectedSession?.id,
-          selectedSessionLiveRun?.threadId,
-        ]);
+        ? "Generating a response"
+        : "Preparing a response";
   const pendingRunIndicatorTextVisible = false;
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
-  const pendingMessageText = resolveSessionMicrocopy("chat.pending.response_waiting", [
-    "chat",
-    "pending",
-    selectedSession?.id,
-    selectedSessionLiveRun?.threadId,
-  ]);
+  const pendingMessageText = "Preparing a response";
   const isSelectedSessionRunning = resolveSelectedSessionIsRunning({
     runState: selectedSessionRunState,
   });
@@ -2217,14 +2147,14 @@ export default function AgentSessionWindowApp() {
       : renderedIsRunning
         ? "Running"
         : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
-          ? "New messages"
+          ? "NewMessages"
           : "";
   const actionDockChatNotice = liveApprovalRequest
     ? "Approval required"
     : liveElicitationRequest
       ? "Input required"
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
-        ? "New messages"
+        ? "NewMessages"
         : "";
   const filePreviewContent = isPromptTemplateWorkspaceOpen && withmateApi ? (
     <PromptTemplateWorkspace
@@ -2268,7 +2198,7 @@ export default function AgentSessionWindowApp() {
       selectedRunState: selectedSessionRunState,
       auxiliaryRunState: activeAuxiliarySession?.runState ?? null,
       busyReason: composerBusyReason,
-      blockedReason: composerBlockedReason,
+      blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly,
       forceBlockedFeedback: forceComposerBlockedFeedback,
       pendingRunIndicatorAnnouncement,
@@ -2337,7 +2267,6 @@ export default function AgentSessionWindowApp() {
         pickSessionFiles: handlePickSessionFiles,
         pickSessionFolder: handlePickSessionFolder,
         pickSessionImage: handlePickSessionImage,
-        removeAttachment: handleRemoveAttachmentReference,
       },
       layout: {
         beforeOpenSkillPicker: requestCentralSurfaceClose,
@@ -2392,7 +2321,6 @@ export default function AgentSessionWindowApp() {
     onResolveLiveApproval: (request, decision) => void resolveLiveApproval(request, decision),
     onResolveLiveElicitation: (request, response) => void resolveLiveElicitation(request, response),
     onOpenPath: handleOpenInlinePath,
-    getChangedFilesEmptyText,
     onCopyMessageText: handleCopyMessageText,
     onQuoteMessageText: handleQuoteMessageText,
     glossaryAnnotationMatcher,
@@ -2495,6 +2423,8 @@ export default function AgentSessionWindowApp() {
         open={auxiliaryLaunchDialogOpen}
         providers={auxiliaryLaunchProviderItems}
         selectedProviderId={auxiliaryLaunchProviderId}
+        providerLoadStatus={auxiliaryProviderLoadStatus}
+        providerLoadError={auxiliaryProviderLoadError}
         feedback={auxiliaryLaunchFeedback}
         starting={auxiliaryCreationStarting}
         creationInFlight={auxiliaryCreation.inFlight}

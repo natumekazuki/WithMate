@@ -476,6 +476,18 @@ test("createStaticChatHeaderProps は操作を隠す header 既定値を補う",
   assert.equal(headerProps.showDeleteButton, false);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "idle message column adapterはapproval・diffのない共通既定値を構成する"
+// oracle = { type = "contract", ref = "src/chat/chat-window-adapter.ts#createIdleChatMessageColumnProps" }
+// fault = "静的message columnへ不要なapproval・diff状態またはlive run状態が混入する"
+// observable = "expandedArtifactsとapproval/diff/live stateの返却props"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-adapter.idle-message-column"
+// lifecycle = "permanent"
+// distinction = "idle adapterの空状態投影を共通message column境界で確認する"
+// impact = "静的会話に実行中操作の表示や不正なmessage actionが現れる"
+// @end-test-value
 test("createIdleChatMessageColumnProps は approval や diff のない message column 既定値を補う", () => {
   const messageListRef = React.createRef<HTMLDivElement>();
   const messageColumnProps = createIdleChatMessageColumnProps({
@@ -494,7 +506,6 @@ test("createIdleChatMessageColumnProps は approval や diff のない message c
   assert.equal(messageColumnProps.hasLiveRunAssistantText, false);
   assert.equal(messageColumnProps.liveRunErrorMessage, "");
   assert.equal(messageColumnProps.isMessageListFollowing, true);
-  assert.equal(messageColumnProps.getChangedFilesEmptyText("artifact-1", false), "");
 });
 
 // @test-value v2
@@ -579,7 +590,6 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
     onResolveLiveApproval: () => {},
     onResolveLiveElicitation: () => {},
     onOpenPath: () => {},
-    getChangedFilesEmptyText: () => "",
     onCopyMessageText,
     onQuoteMessageText,
     onToggleMessageBookmark,
@@ -605,7 +615,7 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
 // kind = "contract"
 // claim = "live session composer propsは表示可能な共通操作を既定値として保持する"
 // oracle = { type = "contract", ref = "src/chat/chat-window-adapter.ts" }
-// fault = "attachment、directory、execution mode、custom agent操作を誤って非表示にする"
+// fault = "directory、execution mode、custom agent操作を誤って非表示にする"
 // observable = "composer propsのshowAttachmentControls/showAdditionalDirectoryControls/showExecutionModeControls/showCustomAgentPicker"
 // observation_boundary = "component-behavior"
 // scope = "chat-window-adapter.live-composer"
@@ -627,7 +637,6 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     showJumpToBottom: false,
     isCustomAgentListLoading: false,
     customAgentItems: [],
-    attachmentItems: [],
     draft: "",
     composerTextareaRef,
     isComposerDisabled: false,
@@ -662,7 +671,6 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     onToggleAdditionalDirectoryList: () => {},
     onJumpToBottom: () => {},
     onSelectCustomAgent: () => {},
-    onRemoveAttachment: () => {},
     onDraftChange: () => {},
     onDraftFocus: () => {},
     onDraftKeyDown: () => {},
@@ -707,8 +715,8 @@ test("staticTextChatRuntimeComposerCapabilityDefaults は runtime controls だ�
 // kind = "contract"
 // claim = "buildLiveSessionComposerDockPropsはcomposerとcompact ActionDockへ共通のjump・send・cancel情報を投影する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "composerとcompact ActionDockで末尾移動、送信・cancel、noticeまたは添付数のpropsが不一致になる"
-// observable = "composer.showJumpToBottom/chatNoticeとcompactActionDockのattachmentCount・showJumpToBottom・cancelButtonTitle・callback identity"
+// fault = "composerとcompact ActionDockで末尾移動、送信・cancel、noticeのpropsが不一致になる"
+// observable = "composer.showJumpToBottom/chatNoticeとcompactActionDockのshowJumpToBottom・cancelButtonTitle・callback identity"
 // observation_boundary = "public-boundary"
 // scope = "live-session-composer-dock-adapter"
 // lifecycle = "permanent"
@@ -734,7 +742,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     isMessageListFollowing: false,
     isCustomAgentListLoading: false,
     customAgentItems: [],
-    attachmentItems: [],
     draft: "draft",
     composerTextareaRef,
     isComposerDisabled: false,
@@ -760,7 +767,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     selectedModelFallbackLabel: "GPT Test",
     reasoningOptions: [{ value: "low", label: "low" }],
     selectedReasoningEffort: "low",
-    attachmentCount: 1,
     onPickFile: () => {},
     onPickFolder: () => {},
     onPickImage: () => {},
@@ -771,7 +777,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     onExpandActionDock,
     onJumpToBottom,
     onSelectCustomAgent: () => {},
-    onRemoveAttachment: () => {},
     onDraftChange: () => {},
     onDraftFocus: () => {},
     onDraftKeyDown: () => {},
@@ -790,7 +795,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
   assert.equal(props.composer.showJumpToBottom, true);
   assert.equal(props.composer.chatNotice, "New messages");
   assert.equal("onCollapse" in props.composer, false);
-  assert.equal(props.compactActionDock.attachmentCount, 1);
   assert.equal(props.compactActionDock.chatNotice, "New messages");
   assert.equal(props.compactActionDock.showJumpToBottom, true);
   assert.equal(props.compactActionDock.cancelButtonTitle, "Stop");
@@ -889,8 +893,6 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
       systemTokensLabel: "",
       conversationTokensLabel: "",
     },
-    contextEmptyText: "context empty",
-    latestCommandEmptyText: "latest command empty",
     onCycleContextPaneTab: noop,
   });
 
@@ -988,7 +990,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       onResolveLiveApproval: () => {},
       onResolveLiveElicitation: () => {},
       onOpenPath: () => {},
-      getChangedFilesEmptyText: () => "",
     },
     composer: {
       isRunning: true,
@@ -1007,7 +1008,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       showJumpToBottom: true,
       isCustomAgentListLoading: false,
       customAgentItems: [],
-      attachmentItems: [],
       draft: "draft",
       composerTextareaRef,
       isComposerDisabled: false,
@@ -1042,7 +1042,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       onToggleAdditionalDirectoryList: () => {},
       onJumpToBottom: () => {},
       onSelectCustomAgent: () => {},
-      onRemoveAttachment: () => {},
       onDraftChange: () => {},
       onDraftFocus: () => {},
       onDraftKeyDown: () => {},
@@ -1058,7 +1057,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       onChangeReasoningEffort: () => {},
     },
     compactActionDock: {
-      attachmentCount: 1,
       isRunning: true,
       pendingRunIndicatorAnnouncement: "実行中",
       pendingRunIndicatorText: "応答を生成中",
@@ -1130,47 +1128,13 @@ test("buildLiveSessionContextPaneProps は right pane props を共通形式で�
       systemTokensLabel: "",
       conversationTokensLabel: "",
     },
-    contextEmptyText: "context empty",
-    latestCommandEmptyText: "latest command empty",
     onCycleContextPaneTab,
   });
 
-  assert.equal(props.contextEmptyText, "context empty");
-  assert.equal(props.latestCommandEmptyText, "latest command empty");
   assert.equal(props.activeContextPaneTab, "latest-command");
   assert.deepEqual(props.availableContextPaneTabs, ["latest-command"]);
   assert.equal(props.contextPaneProjection.activeTab, "latest-command");
   assert.equal(props.onCycleContextPaneTab, onCycleContextPaneTab);
-});
-
-// @test-value v2
-// kind = "invariant"
-// claim = "静的chat adapterはcharacter session copyのbuilt-in英語既定を保持する"
-// oracle = { type = "contract", ref = "Chat window adapter default CharacterProfile" }
-// fault = "adapterが古い既定文を注入して静的chat表示だけ別言語になる"
-// observable = "character.sessionCopy.pendingResponding"
-// observation_boundary = "public-boundary"
-// scope = "static-chat-character-profile-defaults"
-// lifecycle = "permanent"
-// impact = "共通chat surfaceの既定microcopyが不整合になる"
-// distinction = "shared catalog testとは別にadapterのdefault projectionを確認する"
-// @end-test-value
-test("createStaticChatCharacterProfile は静的 chat 用 CharacterProfile 既定値を補う", () => {
-  const character = createStaticChatCharacterProfile({
-    id: "static-chat",
-    name: "Static Mate",
-  });
-
-  assert.equal(character.id, "static-chat");
-  assert.equal(character.name, "Static Mate");
-  assert.equal(character.iconPath, "");
-  assert.equal(character.description, "");
-  assert.equal(character.roleMarkdown, "");
-  assert.equal(character.notesMarkdown, "");
-  assert.equal(character.updatedAt, "");
-  assert.equal(character.themeColors.main, "#6f8cff");
-  assert.equal(character.themeColors.sub, "#6fb8c7");
-  assert.deepEqual(character.sessionCopy.pendingResponding, ["Generating a response"]);
 });
 
 test("toConversationMessages は user 以外を assistant として共通 message に変換する", () => {
@@ -1186,6 +1150,18 @@ test("toConversationMessages は user 以外を assistant として共通 messag
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "hidden-controls composer adapterは非対応操作を隠し共通送信propsを保持する"
+// oracle = { type = "contract", ref = "src/chat/chat-window-adapter.ts#createHiddenControlsChatComposerProps" }
+// fault = "添付・agent・skill・directory・execution controlsが静的composerへ表示されるか必要な共通値が欠落する"
+// observable = "非対応control flags/itemsとselectedCustomAgentLabelの返却props"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-adapter.hidden-controls-composer"
+// lifecycle = "permanent"
+// distinction = "hidden controlsのprojectionと送信可能な共通composer境界を同時に確認する"
+// impact = "対応しない操作がユーザーへ提示されるかcomposerの入力操作が壊れる"
+// @end-test-value
 test("createHiddenControlsChatComposerProps は composer の非対応操作を隠す", () => {
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
   const composerProps = createHiddenControlsChatComposerProps({
@@ -1218,7 +1194,6 @@ test("createHiddenControlsChatComposerProps は composer の非対応操作を�
   assert.equal(composerProps.showExecutionModeControls, false);
   assert.equal(composerProps.canSelectCustomAgent, false);
   assert.deepEqual(composerProps.customAgentItems, []);
-  assert.deepEqual(composerProps.attachmentItems, []);
   assert.equal("additionalDirectoryItems" in composerProps, false);
   assert.equal(composerProps.selectedCustomAgentLabel, "Agent");
 });
@@ -1339,13 +1314,24 @@ test("static chat sendability helper は running と空白 draft を送信不可
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "static compact action dock adapterは未指定時の静的表示既定値を補う"
+// oracle = { type = "contract", ref = "src/chat/chat-window-adapter.ts#createStaticChatCompactActionDockProps" }
+// fault = "静的compact dockが実行中操作のjump affordanceを誤って表示するかcancel callbackを失う"
+// observable = "showJumpToBottomとonCancelを含むcompact dock props"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-adapter.static-compact-dock"
+// lifecycle = "permanent"
+// distinction = "静的dockの既定投影を共通compact action dock境界で確認する"
+// impact = "静的会話に不要な操作が現れ、実行キャンセル導線の契約が崩れる"
+// @end-test-value
 test("createStaticChatCompactActionDockProps は静的 compact dock の既定値を補う", () => {
   const compactProps = createStaticChatCompactActionDockProps({
     isRunning: false,
     onCancel: noop,
   });
 
-  assert.equal(compactProps.attachmentCount, 0);
   assert.equal(compactProps.showJumpToBottom, false);
 });
 

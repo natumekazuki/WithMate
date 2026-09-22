@@ -598,8 +598,8 @@ export function useAuxiliaryWorkspace(input: {
       selectedAuxiliaryId: selectedId,
       auxiliaryItems: summaries.map((summary) => ({
         id: summary.id,
-        label: summary.preview?.trim() || "New conversation",
-        searchText: summary.preview?.trim() || "New conversation",
+        label: summary.preview?.trim() ?? "",
+        searchText: summary.preview?.trim() ?? "",
         icon: createElement(CharacterAvatar, {
           character: { name: "", iconPath: summary.characterIconPath ?? "" },
           size: "tiny",

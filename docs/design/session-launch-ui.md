@@ -128,6 +128,8 @@ React モックでは次の形がよい。
 - Agent Mode の `SessionFolder` は path を事前確定せず、WithMate 管理下の SessionFolder を workspace にする選択として扱う
 - title は空文字で開き、入力必須
 - provider は launch dialog 内で chip 選択し、enabled provider が 0 件なら start できない
+- Home の `NewSession`、Character authoring、Auxiliary の provider picker は同じ状態境界を使う。取得中は picker 内の spinner と busy / accessible statusだけを表示して開始buttonをdisabledにし、取得失敗はprovider errorだけをalertで示して開始不可にする。取得成功後の0件だけ作成不可の説明を表示し、loading / error / ready 0 件を同じ空状態として扱わない。開始処理中は各確定button内のspinnerとbusyだけを示し、busyをalertへ変換しない
+- Home `NewSession`、Character authoring、Auxiliary の launch-section は意味上のgroupとして維持するが、装飾用のnested cardを描画しない
 - `Character` は意味のあるoption cardで切り替える。必要な識別情報は残すが、入れ子の装飾cardは作らない
 - `Character` はportrait付きoption cardで切り替える
 - Character一覧の先頭にランダム選択cardを置く。ランダム選択時は、通常Sessionの最終利用順を使い、最近使っていないactive Characterほど高い重みで抽選する
@@ -142,7 +144,7 @@ React モックでは次の形がよい。
   - left accent bar = character `sub`
   - foreground = background から自動コントラスト決定
 - model / depth / approval / sandbox / custom agent は launch dialog には出さず、Main Process が選択中 provider の直近 Session 一件から解決する。Home の履歴キャッシュは実行設定の正本にせず、最終選択の検証から永続化までは Settings / model catalog の変更と直列化する。SessionFolder の準備は排他の外で行い、準備中の storage または選択の変更は保存前に検出して作成を拒否する。詳細は ADR 007 を参照する
-- session 作成直後の UI 表示も `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording に揃える
+- session 作成直後の UI 表示も `AutoRun / ProviderControlled / SafetyFocused` の provider-neutral wording に揃える
 - ランダム選択の補足説明は表示せず、選択結果だけを示す
 - `provider` は session 作成時に明示保存する
 - `StartNewSession`を押すと、入力したtitleを持つ新規session recordを作って`SessionWindow`を開く。作成中は同じ確定button内のspinnerとbusy/accessibility statusだけで待機を示し、別の重複状態文を出さない

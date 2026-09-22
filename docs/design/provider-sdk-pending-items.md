@@ -12,7 +12,7 @@
 
 | 項目 | 状況 | メモ |
 | --- | --- | --- |
-| permission request | 実装済み | `provider-controlled` で approval card を出し、`approve / deny` を返す |
+| permission request | 実装済み | `ProviderControlled` で approval card を出し、`approve / deny` を返す |
 | pending elicitation | 実装済み | `elicitation.requested` を Session pending bubble の form / url UI に変換し、`accept / decline / cancel` を返す |
 | quota telemetry | 実装済み | `assistant.usage.quotaSnapshots` と `client.rpc.account.getQuota()` を併用する |
 | context telemetry | 実装済み | `session.usage_info` を session local telemetry として保持する |

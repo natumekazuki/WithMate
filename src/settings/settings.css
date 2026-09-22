@@ -98,6 +98,10 @@
   box-shadow: 0 -18px 34px rgba(0, 0, 0, 0.24);
 }
 
+.settings-keyboard-shortcuts-dialog > .launch-dialog-foot:empty {
+  display: none;
+}
+
 .settings-panel,
 .settings-section {
   display: grid;

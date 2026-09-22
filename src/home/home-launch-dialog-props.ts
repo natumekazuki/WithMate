@@ -43,6 +43,8 @@ export function buildHomeLaunchDialogProps({
     workspaceValidation: projection.workspaceValidation,
     workspaceValidationMessage: projection.workspaceValidationMessage,
     enabledLaunchProviders: projection.enabledLaunchProviders,
+    providerLoadStatus: projection.providerLoadStatus,
+    providerLoadError: projection.providerLoadError,
     selectedLaunchProviderId: projection.selectedLaunchProvider?.id ?? null,
     characterOptions: projection.characterOptions,
     selectedCharacterId: projection.selectedCharacter?.id ?? null,

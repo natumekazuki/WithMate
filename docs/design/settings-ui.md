@@ -13,7 +13,7 @@
 - app 共通 system prompt を編集する旧設定項目は廃止する
 - V5 current では Character 定義は `Characters` editor で管理し、session 開始時の `CharacterRuntimeSnapshot` を runtime prompt の主経路にする
 - provider instruction sync は V5 Character 注入の主経路ではなく、Settings current UI には置かない
-- current 実装では `App`、`PromptContext`、`CodingAgentProviders`、`Diagnostics`、`ModelCatalog`、`RepositoryGlossary`、`StorageMaintenance` を置く。`DefaultMicrocopy` の編集面は提供しないが、既存のmicrocopy catalogとslot値はリリース済み形式の互換性契約として恒久保持する
+- current 実装では `App`、`PromptContext`、`CodingAgentProviders`、`Diagnostics`、`ModelCatalog`、`RepositoryGlossary`、`StorageMaintenance` を置く。microcopy catalogの編集面や保存設定は提供せず、既存のmicrocopy保存キーもcurrent `AppSettings`へ読み戻さない
 - Settings のsectionとprovider rowは意味上のgroupを保つが、入れ子の装飾card、重複するsection見出し、説明だけの空行は置かない
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
@@ -66,7 +66,6 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - `RepositoryGlossary`
   - `GlossaryProactiveCreateLimit`
 - `StorageMaintenance`
-  - `ResetDatabase`
   - `DeleteOldSessions`
   - 指定日より前に最後に使われた Session の削除
   - 実行中の Session は削除せず、結果フィードバックで skip 件数を返す
@@ -76,12 +75,12 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 ## Current Scope
 
 - `App` の `CloseActionDockAfterSend` を含む表示設定の保存
-- `PromptContext` の4項目を個別に保存し、既定値はすべて有効とする。表示名は注入section名を使い、補足説明やHelp iconは表示しない。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
-  - `Character definition snapshot` は Character の名前・説明・`character.md` 本文を切り替える。OFFでも通常 session の Character snapshot に対する `Output Boundary` は残す
-  - `Character affect context` は system 側の該当 section と通常 session の context 取得を切り替える。turn後のBackground Affect評価・保存には影響しない
-  - `Conversation timing` は input 側の該当 section と通常 session の timing 取得を切り替える
-  - `Tool call presence` は既存の通常 session の character snapshot 境界内で該当 section を切り替える。`character-authoring` には注入しない
-- `Conversation timing` は Copilot の system session cache を変えず、system 側の3項目は合成された system message の変更として扱う
+- `PromptContext` の4項目を個別に保存し、既定値はすべて有効とする。表示labelは `CharacterDefinitionSnapshot` / `CharacterAffectContext` / `ConversationTiming` / `ToolCallPresence` とし、補足説明やHelp iconは表示しない。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
+  - `Character Definition Snapshot` は Character の名前・説明・`character.md` 本文を切り替える。OFFでも通常 session の Character snapshot に対する `Output Boundary` は残す
+  - `Character Affect Context` は system 側の該当 section と通常 session の context 取得を切り替える。turn後のBackground Affect評価・保存には影響しない
+  - `Conversation Timing` は input 側の該当 section と通常 session の timing 取得を切り替える
+  - `Tool Call Presence` は既存の通常 session の character snapshot 境界内で該当 section を切り替える。`character-authoring` には注入しない
+- `Conversation Timing` は Copilot の system session cache を変えず、system 側の3項目は合成された system message の変更として扱う
 - `LaunchAtLogin` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
 - coding provider ごとの `ProviderFileSettings`
@@ -94,7 +93,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
   - runtime API は `running` / `stopped` / `failed` と、application instance、runtime generation、build channel、discovery publish状態を表示する
   - CLI shimはplatform、support、install状態、PATH状態を表示する
   - credential、binding reference、Memory本文、個人path、provider別状態、managed Skill同期状態はdiagnostics stateへ含めない
-- Memory Review は active Memory entries の検索、raw body の read-only 表示、entry files の export、forget、protected object GC を提供する。Forget と GC の確認では対象と削除影響を明示し、diagnostics の raw status / code と Memory の internal enum は翻訳しない
+- Memory Review は active Memory entries の検索、raw body の read-only 表示、entry files の export、forget、protected object GC を提供する。`Kind` filter と `ForgetReason` selectorは`AllKinds` / `Decision` / `UserRequest`などのローカルPascalCase labelを使い、検索・forget payloadのkind / reason raw valueは変更しない。Forget と GC の確認では対象と削除影響を明示し、diagnostics の raw status / code と Memory の internal enum は翻訳しない
 - `ModelCatalog` の import
 - `ModelCatalog` の export
 - `StorageMaintenance` の古い Session 削除

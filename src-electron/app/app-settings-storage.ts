@@ -5,7 +5,6 @@ import {
   isChatHeaderVisibility,
   type ChatLayoutPreferenceUpdate,
 } from "../../src-shared/settings/chat-layout-preference.js";
-import { migratePersistedUserMicrocopyCatalog } from "../../src-shared/settings/microcopy-state.js";
 import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { normalizeSessionSidePane, type SessionSidePane } from "../../src-shared/settings/session-side-pane.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL } from "../storage/database-schema-v1.js";
@@ -34,8 +33,10 @@ const GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY = "glossary_proactive_crea
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
-const USER_MICROCOPY_CATALOG_KEY = "user_microcopy_catalog_json";
-const USER_MICROCOPY_CATALOG_ENGLISH_MIGRATED_KEY = "user_microcopy_catalog_english_migrated";
+const OBSOLETE_MICROCOPY_SETTING_KEYS = [
+  "user_microcopy_catalog_json",
+  "user_microcopy_catalog_english_migrated",
+] as const;
 
 type AppSettingRow = {
   setting_key: string;
@@ -48,8 +49,15 @@ export class AppSettingsStorage {
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
     this.db.exec(CREATE_APP_SETTINGS_TABLE_SQL);
+    this.removeObsoleteMicrocopySettings();
     this.ensureSessionSidePaneDefault();
     this.ensureDefaults();
+  }
+
+  private removeObsoleteMicrocopySettings(): void {
+    this.db
+      .prepare(`DELETE FROM app_settings WHERE setting_key IN (${OBSOLETE_MICROCOPY_SETTING_KEYS.map(() => "?").join(", ")})`)
+      .run(...OBSOLETE_MICROCOPY_SETTING_KEYS);
   }
 
   private ensureSessionSidePaneDefault(): void {
@@ -72,7 +80,7 @@ export class AppSettingsStorage {
       .run(SESSION_SIDE_PANE_KEY, initialSidePane, new Date().toISOString());
   }
 
-  private ensureDefaults(withinTransaction = false): void {
+  private ensureDefaults(): void {
     const updatedAt = new Date().toISOString();
     this.db
       .prepare(`
@@ -256,74 +264,6 @@ export class AppSettingsStorage {
         JSON.stringify(DEFAULT_APP_SETTINGS.mateMemoryGenerationSettings),
         updatedAt,
       );
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
-      .run(
-        USER_MICROCOPY_CATALOG_KEY,
-        JSON.stringify(DEFAULT_APP_SETTINGS.userMicrocopyCatalog),
-        updatedAt,
-      );
-    this.migratePersistedUserMicrocopyCatalog(updatedAt, withinTransaction);
-  }
-
-  private migratePersistedUserMicrocopyCatalog(updatedAt: string, withinTransaction: boolean): void {
-    const persistMigration = (): void => {
-      const migrationMarker = this.db
-        .prepare("SELECT 1 FROM app_settings WHERE setting_key = ?")
-        .get(USER_MICROCOPY_CATALOG_ENGLISH_MIGRATED_KEY);
-      if (migrationMarker) {
-        return;
-      }
-
-      const catalogRow = this.db
-        .prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
-        .get(USER_MICROCOPY_CATALOG_KEY) as { setting_value: string } | undefined;
-      let parsedCatalog: unknown;
-      if (catalogRow) {
-        try {
-          parsedCatalog = JSON.parse(catalogRow.setting_value) as unknown;
-        } catch {
-          // The regular settings loader owns invalid JSON fallback behavior.
-        }
-      }
-
-      const migrated = migratePersistedUserMicrocopyCatalog(parsedCatalog);
-      if (migrated.changed) {
-        this.db
-          .prepare(`
-            UPDATE app_settings
-            SET setting_value = ?, updated_at = ?
-            WHERE setting_key = ?
-          `)
-          .run(JSON.stringify(migrated.value), updatedAt, USER_MICROCOPY_CATALOG_KEY);
-      }
-
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO NOTHING
-        `)
-        .run(USER_MICROCOPY_CATALOG_ENGLISH_MIGRATED_KEY, "true", updatedAt);
-    };
-
-    if (withinTransaction) {
-      persistMigration();
-      return;
-    }
-
-    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
-    try {
-      persistMigration();
-      this.db.exec("COMMIT");
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
   }
 
   getSettings(): AppSettings {
@@ -472,18 +412,6 @@ export class AppSettingsStorage {
         }).keyboardShortcuts;
       } catch {
         settings.keyboardShortcuts = createDefaultAppSettings().keyboardShortcuts;
-      }
-    }
-
-    const userMicrocopyCatalogJson = rows.find((row) => row.setting_key === USER_MICROCOPY_CATALOG_KEY)?.setting_value;
-    if (userMicrocopyCatalogJson) {
-      try {
-        settings.userMicrocopyCatalog = normalizeAppSettings({
-          ...settings,
-          userMicrocopyCatalog: JSON.parse(userMicrocopyCatalogJson),
-        }).userMicrocopyCatalog;
-      } catch {
-        settings.userMicrocopyCatalog = createDefaultAppSettings().userMicrocopyCatalog;
       }
     }
 
@@ -683,19 +611,6 @@ export class AppSettingsStorage {
           JSON.stringify(normalized.mateMemoryGenerationSettings),
           updatedAt,
         );
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            updated_at = excluded.updated_at
-        `)
-        .run(
-          USER_MICROCOPY_CATALOG_KEY,
-          JSON.stringify(normalized.userMicrocopyCatalog),
-          updatedAt,
-        );
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -735,7 +650,7 @@ export class AppSettingsStorage {
     try {
       this.db.exec("DELETE FROM app_settings;");
       this.ensureSessionSidePaneDefault();
-      this.ensureDefaults(true);
+      this.ensureDefaults();
       this.db.exec("COMMIT");
       return this.getSettings();
     } catch (error) {

@@ -193,7 +193,6 @@ export function useMainSessionRuntime({
       selectedSessionRunState: Session["runState"] | null;
       blockedReason: string | null;
       isReadOnly: boolean;
-      userMicrocopyCatalog: import("../../../src-shared/settings/provider-settings-state.js").AppSettings["userMicrocopyCatalog"];
       currentTimestamp: string;
       validateWorkspace: () => Promise<unknown>;
       liveRun: LiveRunPort;
@@ -219,7 +218,6 @@ export function useMainSessionRuntime({
         selectedSessionRunState: input.selectedSessionRunState,
         blockedReason: input.blockedReason,
         isReadOnly: input.isReadOnly,
-        userMicrocopyCatalog: input.userMicrocopyCatalog,
         currentTimestamp: input.currentTimestamp,
         validateWorkspace: input.validateWorkspace,
         state: {

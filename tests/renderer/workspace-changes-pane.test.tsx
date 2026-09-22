@@ -360,7 +360,7 @@ test("FileRootChangesPane はRefreshでrepository discovery失敗から復旧す
 // claim = "repository別groupはnon-Git結果を除外し、失敗を局所表示しながら既存の変更導線と仮想化を維持する"
 // oracle = { type = "contract", ref = "MT-023D10 and MT-023D10A" }
 // fault = "手動Refresh化に伴ってnon-Git除外、repository別failure、directory collapse、diff/file previewまたは大量表示が壊れる"
-// observable = "repository group数、failure表示、directory操作、diff/file request、virtual row数"
+// observable = "repository group数、failure alert表示、directory操作、diff/file request、virtual row数"
 // observation_boundary = "component-behavior"
 // scope = "FileRootChangesPane repository groups"
 // lifecycle = "permanent"
@@ -540,6 +540,10 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     assert.deepEqual(requestedRootIds, ["additional:broken", "additional:repo", "workspace"]);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Session Folder/);
     assert.match(dom.window.document.body.textContent ?? "", /Git status failed for broken root/);
+    assert.equal(
+      groups.find((group) => group.dataset.rootId === "additional:broken")?.querySelector('[role="alert"]')?.textContent,
+      "Git status failed for broken root.",
+    );
     assert.match(dom.window.document.body.textContent ?? "", /repo/);
     assert.match(dom.window.document.body.textContent ?? "", /Workspace/);
     assert.ok(rows.length > 0, dom.window.document.body.innerHTML);

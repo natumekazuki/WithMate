@@ -2737,7 +2737,6 @@
 .session-page .summary-list li,
 .session-page .artifact-operation-item,
 .session-page .composer-box,
-.session-page .composer-attachment-chip,
 .session-page .composer-setting-field input,
 .session-page .composer-setting-field select {
   border-color: rgba(203, 213, 225, 0.12);
@@ -2770,8 +2769,6 @@
 .session-page .check-item,
 .session-page .check-item strong,
 .session-page .session-window-title,
-.session-page .composer-attachment-primary,
-.session-page .composer-attachment-secondary,
 .session-page .composer-path-match-primary,
 .session-page .composer-path-match-secondary,
 .session-page .composer-sendability-feedback,
@@ -2811,8 +2808,6 @@
 .session-page .artifact-fold-summary-copy span,
 .session-page .check-item span,
 .session-page .artifact-operation-type,
-.session-page .composer-attachment-kind,
-.session-page .composer-attachment-location,
 .session-page .composer-setting-field span,
 .session-page .audit-log-time,
 .session-page .audit-log-meta,
@@ -3336,6 +3331,8 @@
 }
 
 .concurrent-chat-loading-spinner {
+  display: inline-block;
+  flex-shrink: 0;
   width: 24px;
   height: 24px;
   box-sizing: border-box;
@@ -3488,32 +3485,29 @@
 }
 
 .composer-toolbar-progress {
+  display: inline-flex;
   flex: 0 0 auto;
   min-width: 0;
+  width: max-content;
+  max-width: max-content;
 }
 
 .composer-toolbar-progress .pending-run-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
   min-height: 0;
+  min-width: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
+  box-shadow: none;
+  width: max-content;
+  max-width: max-content;
 }
 
 .composer-hide-button {
   margin-left: auto;
-}
-
-.composer-attachment-list {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-  max-height: min(24vh, 176px);
-  overflow: auto;
-  align-content: flex-start;
-  padding-right: 4px;
-  scrollbar-gutter: stable;
 }
 
 .chat-additional-directory-surface {
@@ -3629,83 +3623,6 @@
   flex: 0 0 auto;
   color: var(--muted);
   font-size: 0.72rem;
-}
-
-.composer-attachment-chip {
-  display: inline-flex;
-  align-items: flex-start;
-  gap: 8px;
-  max-width: 100%;
-  padding: 8px 10px;
-  border: 1px solid rgba(32, 36, 55, 0.08);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.82);
-  color: var(--ink);
-}
-
-.composer-attachment-chip.file {
-  background: rgba(15, 139, 141, 0.1);
-}
-
-.composer-attachment-chip.folder {
-  background: rgba(255, 196, 107, 0.18);
-}
-
-.composer-attachment-chip.image {
-  background: rgba(255, 124, 124, 0.12);
-}
-
-.composer-attachment-kind,
-.composer-attachment-location {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(32, 36, 55, 0.1);
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--muted);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.composer-attachment-copy {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-}
-
-.composer-attachment-primary {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 700;
-}
-
-.composer-attachment-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.composer-attachment-secondary {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.composer-attachment-chip button {
-  flex: 0 0 auto;
-  padding: 0;
-  min-width: auto;
-  background: transparent;
-  color: var(--ink);
 }
 
 .composer-sendability-feedback {
@@ -3929,18 +3846,6 @@
   background: rgba(111, 140, 255, 0.18);
 }
 
-.session-page .composer-attachment-chip.file {
-  background: rgba(111, 184, 199, 0.14);
-}
-
-.session-page .composer-attachment-chip.folder {
-  background: rgba(255, 196, 107, 0.16);
-}
-
-.session-page .composer-attachment-chip.image {
-  background: rgba(255, 124, 124, 0.14);
-}
-
 .session-page .choice-chip {
   border-color: rgba(203, 213, 225, 0.12);
   background: rgba(255, 255, 255, 0.06);
@@ -4004,6 +3909,10 @@
 }
 
 .composer-control-row > .session-send-button.loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   min-width: 82px;
 }
 

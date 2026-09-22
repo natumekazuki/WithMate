@@ -41,10 +41,11 @@ export function HomeMateSetupPanel({
   return (
     <section className="home-mate-setup-panel">
       <h2 className="home-mate-setup-head">
-        {isUnavailableMode ? "Mate プロフィール" : isEditMode ? "Mate プロフィール" : "Mate 作成"}
+        {isUnavailableMode ? "MateProfile" : isEditMode ? "MateProfile" : "CreateMate"}
       </h2>
       <form
         className="home-mate-setup-form"
+        aria-busy={creating || avatarUpdating}
         onSubmit={(event) => {
           event.preventDefault();
           onSubmit();
@@ -57,16 +58,22 @@ export function HomeMateSetupPanel({
             className="home-mate-avatar-preview"
           />
           <div className="home-mate-avatar-copy">
-            <span className="home-mate-avatar-label">アイコン</span>
-            {canEditAvatar ? <p className="home-mate-avatar-help">画像を選択できます。</p> : null}
+            <span className="home-mate-avatar-label">Avatar</span>
             {canEditAvatar ? (
               <div className="home-mate-avatar-actions">
-                <button className="launch-toggle" type="button" onClick={onSelectAvatar} disabled={avatarBusy}>
-                  {avatarUpdating ? "更新中..." : "画像を選択"}
+                <button
+                  className="launch-toggle"
+                  type="button"
+                  onClick={onSelectAvatar}
+                  disabled={avatarBusy}
+                  aria-busy={avatarUpdating}
+                  aria-label={avatarUpdating ? "UpdatingAvatar" : "SelectImage"}
+                >
+                  {avatarUpdating ? <span className="home-mate-spinner" aria-hidden="true" /> : "SelectImage"}
                 </button>
                 {canClearAvatar ? (
-                  <button className="launch-toggle" type="button" onClick={onClearAvatar} disabled={avatarBusy}>
-                    解除
+                  <button className="launch-toggle" type="button" onClick={onClearAvatar} disabled={avatarBusy} aria-label="ClearAvatar">
+                    Clear
                   </button>
                 ) : null}
               </div>
@@ -74,7 +81,7 @@ export function HomeMateSetupPanel({
           </div>
         </div>
         <label className="settings-field" htmlFor="mate-display-name">
-          <span>表示名</span>
+          <span>DisplayName</span>
           <input
             id="mate-display-name"
             type="text"
@@ -82,29 +89,33 @@ export function HomeMateSetupPanel({
             onChange={(event) => onChangeDisplayName(event.target.value)}
             autoComplete="off"
             spellCheck={false}
-            placeholder="あなたの Mate"
             disabled={creating || isUnavailableMode}
           />
         </label>
-        {mateDisplayName ? <p className="home-mate-current-name">現在の Mate: {mateDisplayName}</p> : null}
         {isUnavailableMode ? (
           <p className="settings-feedback home-mate-feedback">
-            V6 Memory foundation では Mate Profile はまだ利用できません。
+            MateProfile is unavailable.
           </p>
         ) : feedback ? <p className="settings-feedback home-mate-feedback">{feedback}</p> : null}
         <div className="home-mate-setup-actions">
           {isUnavailableMode ? null : (
-            <button className="start-session-button" type="submit" disabled={creating}>
-              {creating ? (isEditMode ? "保存中..." : "作成中...") : isEditMode ? "Mate を保存" : "Mate を作成"}
+            <button
+              className="start-session-button"
+              type="submit"
+              disabled={creating}
+              aria-busy={creating}
+              aria-label={creating ? (isEditMode ? "Saving" : "CreatingMate") : isEditMode ? "Save" : "CreateMate"}
+            >
+              {creating ? <span className="home-mate-spinner" aria-hidden="true" /> : isEditMode ? "Save" : "CreateMate"}
             </button>
           )}
           {onCancel ? (
             <button className="launch-toggle" type="button" onClick={onCancel} disabled={creating}>
-              戻る
+              Cancel
             </button>
           ) : null}
           <button className="launch-toggle" type="button" onClick={onOpenSettings}>
-            設定
+            Settings
           </button>
         </div>
       </form>

@@ -9,15 +9,15 @@ import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Session Windowは入力と送信revisionをowner別に保ち、quitでは未確定送信と失敗復元の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは実行完了を待たず、凍結後の送信前保存からのrun開始と添付を止める"
+// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryの送信を相互にbusy扱いせず、同一Auxiliaryの重複送信を一度に抑止する。quitでは未確定送信と失敗復元の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは実行完了を待たず、凍結後の送信前保存からのrun開始と添付を止める"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
-// fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、凍結中の失敗復元を表示しない、復元を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
-// observable = "textarea/feedback/Sendの状態、summaryアイコン参照回数、保存要求・永続draft・送信対象・flush ACK、picker後のコピー回数"
+// fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの重複runを発行する、凍結中の失敗復元を表示しない、復元を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
+// observable = "textarea/feedback/Sendの状態、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数"
 // observation_boundary = "component-behavior"
 // scope = "composer-window-input-wiring"
 // lifecycle = "permanent"
 // impact = "多数会話での入力遅延、切替による下書き消失、古い入力や別会話への誤送信を防ぐ"
-// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証し、送信pending→quit待機→失敗復元保存→ACKの順序、非選択owner、closeとの違いも確認する。壁時計の性能値をCI合否にしない"
+// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証し、A送信pending中のB送信、同一Aの重複入力、送信pending→quit待機→失敗復元保存→ACKの順序、非選択owner、closeとの違いも確認する。壁時計の性能値をCI合否にしない"
 // @end-test-value
 test("Session Windowの入力境界と切替後の最新値送信を実配線で守る", { timeout: 8000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
@@ -109,6 +109,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
   const sent: Array<{ id: string; text: string }> = [];
   let heldRun: Promise<void> | null = null;
   let notifyRunStarted: (() => void) | undefined;
+  let notifyRunCompleted: ((id: string) => void) | undefined;
   let rejectRun = false;
   let failRunRestore = false;
   let notifyRunFailed: (() => void) | undefined;
@@ -139,6 +140,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     }
     const session = await api.getAuxiliarySession(id);
     assert.ok(session);
+    notifyRunCompleted?.(id);
     return { ...session, composerDraft: "", messages: [...session.messages, { role: "assistant", text: "Auxiliary response" }] };
   };
   api.previewComposerInput = async (_id, text) => ({ text, attachments: [], errors: text === "invalid reference" ? ["Invalid attachment"] : [] } as Awaited<ReturnType<WithMateWindowApi["previewComposerInput"]>>);
@@ -227,6 +229,81 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
     assert.equal(sent.length, 4);
     assert.equal(sent.at(-1)?.text, "ABA draft");
+
+    let releaseParallelA!: () => void;
+    let parallelAuxiliaryAId: string | null = null;
+    let parallelAuxiliaryBId: string | null = null;
+    let resolveParallelACompleted!: () => void;
+    let resolveParallelBCompleted!: () => void;
+    const parallelACompleted = new Promise<void>((resolve) => {
+      resolveParallelACompleted = resolve;
+    });
+    const parallelBCompleted = new Promise<void>((resolve) => { resolveParallelBCompleted = resolve; });
+    notifyRunCompleted = (id) => {
+      if (id === parallelAuxiliaryAId) resolveParallelACompleted();
+      if (id === parallelAuxiliaryBId) resolveParallelBCompleted();
+    };
+    heldRun = new Promise<void>((resolve) => { releaseParallelA = resolve; });
+    const parallelARunStarted = new Promise<void>((resolve) => { notifyRunStarted = resolve; });
+    await input("Auxiliary A pending");
+    const parallelSentStart = sent.length;
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
+      await parallelARunStarted;
+    });
+    parallelAuxiliaryAId = sent.at(-1)!.id;
+    parallelAuxiliaryBId = ["benchmark-aux-1", "benchmark-aux-2", "benchmark-aux-3"]
+      .find((id) => id !== parallelAuxiliaryAId) ?? null;
+    assert.ok(parallelAuxiliaryBId);
+    await act(async () => {
+      navigateAuxiliary?.({ parentSessionId: "benchmark-main", auxiliarySessionId: parallelAuxiliaryBId });
+    });
+    assert.equal(textarea().value, "restored auxiliary draft");
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
+      await parallelBCompleted;
+    });
+    assert.deepEqual(sent.slice(parallelSentStart), [
+      { id: parallelAuxiliaryAId, text: "Auxiliary A pending" },
+      { id: parallelAuxiliaryBId, text: "restored auxiliary draft" },
+    ], "a pending Auxiliary A run must not block a distinct Auxiliary B run");
+    await act(async () => {
+      releaseParallelA();
+      await parallelACompleted;
+    });
+    notifyRunCompleted = undefined;
+
+    const duplicateAuxiliaryId = ["benchmark-aux-1", "benchmark-aux-2", "benchmark-aux-3"]
+      .find((id) => id !== parallelAuxiliaryAId && id !== parallelAuxiliaryBId);
+    assert.ok(duplicateAuxiliaryId);
+    await act(async () => {
+      navigateAuxiliary?.({ parentSessionId: "benchmark-main", auxiliarySessionId: duplicateAuxiliaryId });
+    });
+    assert.equal(textarea().value, "restored auxiliary draft");
+    let releaseDuplicate!: () => void;
+    heldRun = new Promise<void>((resolve) => { releaseDuplicate = resolve; });
+    const duplicateRunStarted = new Promise<void>((resolve) => { notifyRunStarted = resolve; });
+    const duplicateCompleted = new Promise<void>((resolve) => {
+      notifyRunCompleted = (id) => {
+        if (id === duplicateAuxiliaryId) resolve();
+      };
+    });
+    const duplicateSentStart = sent.length;
+    await act(async () => {
+      const button = dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button");
+      assert.ok(button);
+      const click = () => button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      click();
+      click();
+      await duplicateRunStarted;
+    });
+    assert.equal(sent.length, duplicateSentStart + 1, "the same Auxiliary ID must admit one in-flight send");
+    assert.equal(sent.at(-1)?.id, duplicateAuxiliaryId);
+    await act(async () => {
+      releaseDuplicate();
+      await duplicateCompleted;
+    });
+    notifyRunCompleted = undefined;
 
     let releaseRun!: () => void;
     heldRun = new Promise<void>((resolve) => { releaseRun = resolve; });

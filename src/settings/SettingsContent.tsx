@@ -44,7 +44,6 @@ import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
-  providerCatalogLoaded: boolean;
   modelCatalogRevisionLabel: string;
   memoryV6Diagnostics: MemoryV6Diagnostics | null;
   settingsDirty: boolean;
@@ -140,7 +139,6 @@ function SettingsActionContent({ busy, label, busyLabel }: SettingsActionContent
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
-  providerCatalogLoaded,
   modelCatalogRevisionLabel,
   memoryV6Diagnostics,
   settingsDirty,
@@ -387,9 +385,7 @@ export function HomeSettingsContent({
                     </section>
                   ))}
                 </div>
-              ) : (
-                providerCatalogLoaded ? null : <p className="settings-note">Could not load the model catalog.</p>
-              )}
+              ) : null}
             </div>
           </section>
 

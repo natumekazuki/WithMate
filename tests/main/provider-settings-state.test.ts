@@ -263,27 +263,4 @@ describe("provider-settings-state", () => {
     );
   });
 
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "normalizeAppSettings は複数custom候補を保持し、空slotだけを現在のbuilt-inへfallbackする"
-  // oracle = { type = "contract", ref = "AppSettings microcopy normalization" }
-  // fault = "custom候補を削除するか、空slotを旧日本語/不正値へfallbackする"
-  // observable = "settings.userMicrocopyCatalog"
-  // observation_boundary = "public-boundary"
-  // scope = "app-settings-microcopy-normalization"
-  // lifecycle = "permanent"
-  // impact = "設定済みmicrocopyとbuilt-in defaultの契約が崩れる"
-  // distinction = "storage migration testとは異なり、settings normalizationのshape/fallbackだけを確認する"
-  // @end-test-value
-  it("user microcopy catalog は複数 copy を保持し、空 slot は default に戻す", () => {
-    const settings = normalizeAppSettings({
-      userMicrocopyCatalog: {
-        "chat.pending.response_waiting": ["応答待機中", "出力待機中"],
-        "dock.status.preparing": [],
-      },
-    });
-
-    assert.deepEqual(settings.userMicrocopyCatalog["chat.pending.response_waiting"], ["応答待機中", "出力待機中"]);
-    assert.deepEqual(settings.userMicrocopyCatalog["dock.status.preparing"], ["Preparing a response"]);
-  });
 });

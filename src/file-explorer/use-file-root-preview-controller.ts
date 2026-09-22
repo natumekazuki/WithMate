@@ -101,10 +101,10 @@ export function useFileRootPreviewController({
         setSelectedFileDiffScopes(availability.scopes);
         setSelectedFileDiffAvailabilityMessage(availability.message);
       }
-    }).catch(() => {
+    }).catch((error) => {
       if (active) {
         setSelectedFileDiffScopes([]);
-        setSelectedFileDiffAvailabilityMessage("");
+        setSelectedFileDiffAvailabilityMessage(error instanceof Error && error.message ? error.message : "Git diff availability could not be loaded.");
       }
     });
     return () => {

@@ -128,7 +128,7 @@ function resultFor(name, args) {
     autoCollapseActionDockOnSend: false, scrollToLatestOnSend: true,
     chatLayoutPreference: { header: "visible", sidePane: "visible", actionDock: "expanded" },
     keyboardShortcuts: { overrides: {} }, memoryFileQuotaBytes: 0, glossaryProactiveCreateLimit: 0,
-    userMicrocopyCatalog: {}, mateMemoryGenerationSettings: { priorityList: [], triggerIntervalMinutes: 60 },
+    mateMemoryGenerationSettings: { priorityList: [], triggerIntervalMinutes: 60 },
     codingProviderSettings: {}, memoryExtractionProviderSettings: {},
   };
   if (name === "getModelCatalog") return { revision: 1, providers: [] };

@@ -952,6 +952,48 @@ test("SessionChatScreen は左ペインのCollapse後もchild stateを保持す�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "未選択Auxiliaryの通常空labelはblankを保ちつつ、switcherと作成入口のaccessible nameを維持する"
+// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: auxiliary session switcher" }
+// fault = "Auxiliary未選択時に通常空の可視labelを表示するか、switcherまたはAdd Auxiliaryの識別名を失う"
+// observable = "未選択switcherの可視text、current buttonのaria-label、Add Auxiliary buttonのaria-labelと表示記号"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-auxiliary-empty-switcher"
+// lifecycle = "permanent"
+// impact = "空のAuxiliary paneが説明文で埋まり、または支援技術から作成操作を識別できなくなる"
+// distinction = "空labelの表示だけでなく、同じDOM上のswitcher識別名と作成入口を同時に確認する"
+// @end-test-value
+test("ChatWindow は未選択Auxiliaryの可視labelを空にして作成入口の識別名を保つ", () => {
+  const props = createChatWindowProps({ messages: [] });
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, {
+    ...props,
+    concurrentChats: {
+      main: props.messageColumnProps,
+      auxiliary: null,
+      selectedAuxiliaryId: null,
+      auxiliaryItems: [],
+      target: "main",
+      widthRatio: 0.45,
+      onAddAuxiliary() {},
+      onSelectAuxiliary() {},
+      onTargetChange() {},
+      onWidthRatioChange() {},
+    },
+  }));
+  const dom = new JSDOM(html);
+  const switcher = dom.window.document.querySelector<HTMLElement>(".concurrent-chat-session-switcher");
+  assert.ok(switcher);
+  const current = switcher.querySelector<HTMLButtonElement>(".session-switcher-current");
+  assert.ok(current);
+  assert.equal(current.textContent, "");
+  assert.equal(current.getAttribute("aria-label"), "Auxiliary conversation");
+  const addButton = switcher.querySelector<HTMLButtonElement>("button[aria-label='Add Auxiliary']");
+  assert.ok(addButton);
+  assert.equal(addButton.textContent, "+");
+  dom.window.close();
+});
+
 test("ChatDockSplitter は pointer と keyboard click の操作軸を通知する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -1126,7 +1168,6 @@ test("SessionChatScreen はConcurrent columnsの実幅不足を補正する", as
 test("SessionActionDockCompactRow は通常時の chat notice を下書き表示なしで維持する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
-      attachmentCount: 0,
       isRunning: false,
       chatNotice: "New messages",
       showJumpToBottom: false,

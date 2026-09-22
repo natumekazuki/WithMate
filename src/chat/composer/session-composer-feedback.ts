@@ -58,7 +58,8 @@ export function buildComposerSendabilityState({
 
   const primaryFeedback =
     normalizedBlockedReason
-    || normalizedInputErrors[0];
+    || normalizedInputErrors[0]
+    || "";
   const secondaryFeedback = normalizedBlockedReason ? normalizedInputErrors : normalizedInputErrors.slice(1);
   const feedbackTone = primaryFeedback
     ? normalizedBlockedReason || normalizedInputErrors.length > 0
@@ -90,13 +91,7 @@ export function withForcedComposerBlockedFeedback(
   }
 
   if (state.isBusy) {
-    return {
-      ...state,
-      primaryFeedback: state.busyReason,
-      secondaryFeedback: [],
-      feedbackTone: "helper",
-      shouldShowFeedback: true,
-    };
+    return state;
   }
 
   return {
@@ -144,8 +139,11 @@ export function getComposerSendButtonTitle(state: ComposerSendabilityState): str
     return "Send message";
   }
 
+  if (state.isBusy && !state.primaryFeedback && state.inputErrors.length === 0 && !state.blockedReason) {
+    return undefined;
+  }
+
   return state.primaryFeedback
-    || state.busyReason
     || (state.isBlankDraft ? BLANK_DRAFT_FEEDBACK : COMPOSER_SEND_BLOCKED_FALLBACK);
 }
 

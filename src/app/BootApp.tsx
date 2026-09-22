@@ -1,18 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import type { AppBootStatus, AppBootStage } from "../../src-shared/window/app-boot-state.js";
+import type { AppBootStatus } from "../../src-shared/window/app-boot-state.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 
-const STAGES: AppBootStage[] = [
-  "starting",
-  "database",
-  "diagnostics",
-  "workspace-cleanup",
-  "stores",
-  "home",
-];
-
-const STAGE_LABELS: Record<AppBootStage, string> = {
+const BOOT_STAGE_LABELS: Record<AppBootStatus["stage"], string> = {
   starting: "PreparingStartup",
   database: "CheckingDatabase",
   diagnostics: "CheckingDiagnostics",
@@ -25,17 +16,11 @@ const STAGE_LABELS: Record<AppBootStage, string> = {
 const INITIAL_STATUS: AppBootStatus = {
   kind: "running",
   stage: "starting",
-  title: "Starting WithMate",
+  title: "PreparingStartup",
 };
 
 export default function BootApp() {
   const [status, setStatus] = useState<AppBootStatus>(INITIAL_STATUS);
-  const activeIndex = useMemo(() => {
-    if (status.stage === "failed") {
-      return -1;
-    }
-    return STAGES.indexOf(status.stage);
-  }, [status.stage]);
 
   useEffect(() => {
     const api = getWithMateApi();
@@ -59,33 +44,26 @@ export default function BootApp() {
     };
   }, []);
 
+  const statusLabel = status.kind === "completed"
+    ? "StartupComplete"
+    : BOOT_STAGE_LABELS[status.stage];
+
   return (
     <div className={`page-shell home-page boot-page${status.kind === "failed" ? " failed" : ""}`}>
       <main className="home-layout home-layout-minimal boot-page-shell">
-        <section className="boot-status-panel rise-1">
-          <div className="home-panel-head boot-status-head">
-            <div className="home-panel-copy">
-              <p className="kicker">WithMate</p>
-              <h1><span role="status" aria-atomic="true">{status.title}</span></h1>
+        <section className="boot-status-panel rise-1" aria-busy={status.kind === "running"}>
+          {status.kind === "failed" ? (
+            <div role="alert">
+              <h1 className="boot-error-title">{status.title}</h1>
+              {status.detail ? <p className="boot-status-detail">{status.detail}</p> : null}
+              {status.error ? <pre className="boot-error-message">{status.error.message}</pre> : null}
             </div>
-          </div>
-          {status.detail ? <p className="boot-status-detail">{status.detail}</p> : null}
-          {status.kind === "failed" && status.error ? (
-            <pre className="boot-error-message">{status.error.message}</pre>
-          ) : null}
-          {status.kind !== "failed" ? <ol className="boot-stage-list" aria-label="Startup progress">
-            {STAGES.map((stage, index) => {
-              const isDone = activeIndex > index || status.kind === "completed";
-              const isActive = status.stage === stage && status.kind === "running";
-              return (
-                <li key={stage} className={isDone ? "done" : isActive ? "active" : ""} aria-current={isActive ? "step" : undefined}>
-                  <span className="boot-stage-dot" aria-hidden="true">{isDone ? "✓" : null}</span>
-                  <span>{STAGE_LABELS[stage]}</span>
-                  <span className="visually-hidden">{isDone ? "Completed" : isActive ? "In progress" : "Not started"}</span>
-                </li>
-              );
-            })}
-          </ol> : null}
+          ) : (
+            <div className="boot-progress" role="status" aria-atomic="true">
+              {status.kind === "running" ? <span className="home-session-list-load-spinner" aria-hidden="true" /> : null}
+              <span className="sr-only">{statusLabel}{status.detail ? `. ${status.detail}` : ""}</span>
+            </div>
+          )}
         </section>
       </main>
     </div>

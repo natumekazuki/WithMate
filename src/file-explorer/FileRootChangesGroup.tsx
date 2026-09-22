@@ -269,7 +269,7 @@ export function FileRootChangesGroup({
                 {row.type === "header" ? (
                   <div className="workspace-changes-group-header"><strong>{row.label}</strong><span>{row.count}</span></div>
                 ) : row.type === "error" ? (
-                  <p className="workspace-changes-root-error">{row.label}</p>
+                  <p className="workspace-changes-root-error" role="alert">{row.label}</p>
                 ) : row.type === "directory" ? (
                   <button
                     className="workspace-change-directory-row"

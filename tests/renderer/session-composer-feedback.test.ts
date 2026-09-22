@@ -63,7 +63,19 @@ describe("session composer feedback", () => {
     assert.equal(afterDraftClear.feedbackTone, "helper");
   });
 
-  it("submit pending は通常状態では error feedback を出さず、重複操作時だけ helper として表示する", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "busy状態は送信を抑止しつつvisible helper feedbackへ昇格せず、spinner/status表示へ委ねる"
+  // oracle = { type = "contract", ref = "src/chat/composer/session-composer-feedback.ts" }
+  // fault = "busy reasonがhelper/error表示またはSend button titleへ再表示され、送信抑止まで失われる"
+  // observable = "isSendDisabled、shouldShowFeedback、feedbackTone、primaryFeedback、send button title"
+  // observation_boundary = "public-boundary"
+  // scope = "composer busy sendability feedback"
+  // lifecycle = "permanent"
+  // impact = "通常待機文を重複表示せず、busy中の送信抑止とaccessible statusを両立する"
+  // distinction = "busy単独ではfeedbackを出さず、実際のinput error併存は別契約で確認する"
+  // @end-test-value
+  it("submit pending は送信を抑止するが helper feedback と button title を表示しない", () => {
     const pending = buildComposerSendabilityState({
       runState: "idle",
       busyReason: "Message submission is in progress.",
@@ -75,14 +87,29 @@ describe("session composer feedback", () => {
     assert.equal(pending.isSendDisabled, true);
     assert.equal(pending.shouldShowFeedback, false);
     assert.equal(pending.feedbackTone, null);
-    assert.equal(getComposerSendButtonTitle(pending), "Message submission is in progress.");
+    assert.equal(pending.primaryFeedback, "");
+    assert.equal(getComposerSendButtonTitle(pending), undefined);
 
     const afterDuplicateSubmit = withForcedComposerBlockedFeedback(pending, true);
-    assert.equal(afterDuplicateSubmit.primaryFeedback, "Message submission is in progress.");
-    assert.equal(afterDuplicateSubmit.feedbackTone, "helper");
-    assert.equal(afterDuplicateSubmit.shouldShowFeedback, true);
+    assert.equal(afterDuplicateSubmit.isSendDisabled, true);
+    assert.equal(afterDuplicateSubmit.primaryFeedback, "");
+    assert.equal(afterDuplicateSubmit.feedbackTone, null);
+    assert.equal(afterDuplicateSubmit.shouldShowFeedback, false);
+    assert.equal(getComposerSendButtonTitle(afterDuplicateSubmit), undefined);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "busy状態でも実際のinput errorはblocked feedbackと送信抑止を維持する"
+  // oracle = { type = "contract", ref = "src/chat/composer/session-composer-feedback.ts" }
+  // fault = "busy表示整理で実際のinput errorが消える、またはerrorとbusyの併存時に送信が許可される"
+  // observable = "primaryFeedback、feedbackTone、shouldShowFeedback、isSendDisabled、send button title"
+  // observation_boundary = "public-boundary"
+  // scope = "composer busy and input error feedback"
+  // lifecycle = "permanent"
+  // impact = "待機表示を抑えながらpath等の実エラーを利用者へ通知する"
+  // distinction = "busy単独のspinner/status契約と、busyに実errorを併存させたblocked契約を分離して確認する"
+  // @end-test-value
   it("submit pending 中も実際の input error は blocked feedback を維持する", () => {
     const state = buildComposerSendabilityState({
       runState: "idle",
@@ -95,6 +122,14 @@ describe("session composer feedback", () => {
     assert.equal(state.primaryFeedback, "Path not found: C:/missing");
     assert.equal(state.feedbackTone, "blocked");
     assert.equal(state.shouldShowFeedback, true);
+    assert.equal(state.isSendDisabled, true);
+
+    const afterForcedSubmit = withForcedComposerBlockedFeedback(state, true);
+    assert.equal(afterForcedSubmit.primaryFeedback, "Path not found: C:/missing");
+    assert.equal(afterForcedSubmit.feedbackTone, "blocked");
+    assert.equal(afterForcedSubmit.shouldShowFeedback, true);
+    assert.equal(afterForcedSubmit.isSendDisabled, true);
+    assert.equal(getComposerSendButtonTitle(afterForcedSubmit), "Path not found: C:/missing");
   });
 
   it("既存の blocked reason がある時は forced feedback で上書きしない", () => {

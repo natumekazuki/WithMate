@@ -11,7 +11,7 @@ export function resolveAgentSessionDocumentTitle(input: {
   sessionId: string | null | undefined;
 }): string | null {
   const normalizedSessionId = input.sessionId?.trim() ?? "";
-  const fallbackTitle = normalizedSessionId ? `WithMate Session - ${normalizedSessionId}` : "";
+  const fallbackTitle = normalizedSessionId ? `WithMateSession - ${normalizedSessionId}` : "";
   if (!fallbackTitle && !input.sessionTitle?.trim()) {
     return null;
   }

@@ -2,20 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
-  buildComposerAttachmentItems,
   buildComposerReferenceInsertionState,
-  buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
-  buildPathReferenceRemovalState,
   buildSelectedPathReferenceInsertionState,
   pickComposerReferencePath,
-  removePathReferenceAttachments,
-  removePathReferenceTokensFromDraft,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
-  resolvePathReferenceRemovalTargets,
   type ComposerPathPickerKind,
 } from "../../src/chat/composer/session-composer-paths.js";
 
@@ -94,160 +87,6 @@ test("buildSelectedPathReferenceInsertionState は選択 path を解決して挿
 });
 
 // @test-value v2
-// kind = "contract"
-// claim = "composer attachment表示はkind/locationを保持し正規化済みremove targetsを生成する"
-// oracle = { type = "contract", ref = "src/chat/composer/session-composer-paths.ts" }
-// fault = "添付表示または削除対象pathが欠落し別添付を削除する"
-// observable = "attachment display items and removal targets"
-// observation_boundary = "public-boundary"
-// scope = "composer-attachment-display"
-// lifecycle = "permanent"
-// @end-test-value
-test("buildComposerAttachmentItems は attachment display と remove targets を作る", () => {
-  const attachments = [
-    {
-      id: "att-1",
-      kind: "file" as const,
-      source: "text" as const,
-      absolutePath: "C:\\workspace\\project\\src\\App.tsx",
-      displayPath: "src/App.tsx",
-      workspaceRelativePath: "src/App.tsx",
-      isOutsideWorkspace: false,
-    },
-    {
-      id: "att-2",
-      kind: "image" as const,
-      source: "markdown-image" as const,
-      absolutePath: "D:\\assets\\cover image.png",
-      displayPath: "  ",
-      workspaceRelativePath: null,
-      isOutsideWorkspace: true,
-    },
-  ];
-
-  assert.deepEqual(buildComposerAttachmentItems(attachments, { trimRemoveTargets: true }), [
-    {
-      key: "att-1",
-      kind: "file",
-      kindLabel: "File",
-      locationLabel: "InWorkspace",
-      primaryLabel: "App.tsx",
-      secondaryLabel: "src",
-      title: "src/App.tsx",
-      removeTargets: ["src/App.tsx", "src/App.tsx", "C:/workspace/project/src/App.tsx"],
-    },
-    {
-      key: "att-2",
-      kind: "image",
-      kindLabel: "Image",
-      locationLabel: "OutsideWorkspace",
-      primaryLabel: "cover image.png",
-      secondaryLabel: "D:/assets",
-      title: "D:/assets/cover image.png",
-      removeTargets: ["D:/assets/cover image.png"],
-    },
-  ]);
-
-  assert.deepEqual(
-    buildComposerAttachmentItems([attachments[1]], { trimRemoveTargets: false })[0]?.removeTargets,
-    ["  ", "D:/assets/cover image.png"],
-  );
-});
-
-// @test-value v2
-// kind = "invariant"
-// claim = "path reference attachment itemはfile/folder/imageのkind、Reference location、表示名、削除対象を一貫して生成する"
-// oracle = { type = "contract", ref = "src/chat/composer/session-composer-paths.ts: buildPathReferenceAttachmentItems" }
-// fault = "kind・location・basenameまたはremove targetを取り違え、別referenceの削除対象を作る"
-// observable = "3種類のattachment itemのkey、labels、title、removeTargets"
-// observation_boundary = "public-boundary"
-// scope = "composer-path-reference-items"
-// lifecycle = "permanent"
-// impact = "path referenceの表示と削除操作が対象pathからずれる"
-// distinction = "単一fileだけでなくfolder/imageを含む異種item列で同じmapping契約を確認する"
-// @end-test-value
-test("buildPathReferenceAttachmentItems は MateTalk path reference item を作る", () => {
-  assert.deepEqual(
-    buildPathReferenceAttachmentItems([
-      { path: "src/App.tsx", kind: "file" },
-      { path: "docs/specs", kind: "folder" },
-      { path: "assets/cover image.png", kind: "image" },
-    ]),
-    [
-      {
-        key: "file:src/App.tsx",
-        kind: "file",
-        kindLabel: "File",
-        locationLabel: "Reference",
-        primaryLabel: "App.tsx",
-        secondaryLabel: "src",
-        title: "src/App.tsx",
-        removeTargets: ["src/App.tsx"],
-      },
-      {
-        key: "folder:docs/specs",
-        kind: "folder",
-        kindLabel: "Folder",
-        locationLabel: "Reference",
-        primaryLabel: "specs",
-        secondaryLabel: "docs",
-        title: "docs/specs",
-        removeTargets: ["docs/specs"],
-      },
-      {
-        key: "image:assets/cover image.png",
-        kind: "image",
-        kindLabel: "Image",
-        locationLabel: "Reference",
-        primaryLabel: "cover image.png",
-        secondaryLabel: "assets",
-        title: "assets/cover image.png",
-        removeTargets: ["assets/cover image.png"],
-      },
-    ],
-  );
-});
-
-test("appendMissingPathReferenceAttachments は既存にない path reference を追加する", () => {
-  assert.deepEqual(
-    appendMissingPathReferenceAttachments(
-      [
-        { path: "src/App.tsx", kind: "file" },
-        { path: "docs", kind: "folder" },
-      ],
-      ["src/App.tsx", "assets/cover.png"],
-      "image",
-    ),
-    [
-      { path: "src/App.tsx", kind: "file" },
-      { path: "docs", kind: "folder" },
-      { path: "assets/cover.png", kind: "image" },
-    ],
-  );
-});
-
-test("resolvePathReferenceRemovalTargets は削除対象 path を正規化して重複を除く", () => {
-  assert.deepEqual(
-    resolvePathReferenceRemovalTargets(["src\\App.tsx", "src/App.tsx", "docs/spec.md"]),
-    ["src/App.tsx", "docs/spec.md"],
-  );
-});
-
-test("removePathReferenceAttachments は削除対象以外の path reference を残す", () => {
-  assert.deepEqual(
-    removePathReferenceAttachments(
-      [
-        { path: "src\\App.tsx", kind: "file" },
-        { path: "docs", kind: "folder" },
-        { path: "assets/cover.png", kind: "image" },
-      ],
-      ["src\\App.tsx", "assets/cover.png"],
-    ),
-    [{ path: "docs", kind: "folder" }],
-  );
-});
-
-// @test-value v2
 // kind = "invariant"
 // claim = "additional directoryは正規化されたdisplay pathとroot/relative labelを作り、削除可否を保持する"
 // oracle = { type = "contract", ref = "src/chat/composer/session-composer-paths.ts: buildAdditionalDirectoryItems" }
@@ -321,67 +160,6 @@ test("resolveReferencePathsForInsertion は空 workspace path を旧 workspace-r
   assert.deepEqual(
     resolveReferencePathsForInsertion(["/workspace/project/src/App.tsx"], ""),
     ["workspace/project/src/App.tsx"],
-  );
-});
-
-test("removePathReferenceTokensFromDraft は path reference token を draft から削除する", () => {
-  assert.equal(
-    removePathReferenceTokensFromDraft("確認 @src/App.tsx して", ["src/App.tsx"]),
-    "確認 して",
-  );
-});
-
-test("removePathReferenceTokensFromDraft は同じ token の複数出現をすべて削除する", () => {
-  assert.equal(
-    removePathReferenceTokensFromDraft(
-      "確認 @src/App.tsx と @src/App.tsx して",
-      ["src/App.tsx"],
-    ),
-    "確認 と して",
-  );
-});
-
-test("removePathReferenceTokensFromDraft は quote された path reference token を削除する", () => {
-  assert.equal(
-    removePathReferenceTokensFromDraft("確認 @\"docs/my note.md\" して", ["docs/my note.md"]),
-    "確認 して",
-  );
-});
-
-test("removePathReferenceTokensFromDraft は複数空白と連続改行を整理する", () => {
-  assert.equal(
-    removePathReferenceTokensFromDraft("確認  @src/App.tsx\n\n\nして", ["src/App.tsx"]),
-    "確認 \n\nして",
-  );
-});
-
-test("removePathReferenceTokensFromDraft は複数 token と句読点境界を削除する", () => {
-  assert.equal(
-    removePathReferenceTokensFromDraft(
-      "確認 (@src/App.tsx), @" + "\"docs/my note.md\"" + "!",
-      ["src/App.tsx", "docs/my note.md"],
-    ),
-    "確認 (), !",
-  );
-});
-
-test("removePathReferenceTokensFromDraft は対応するMarkdown画像全体を削除する", () => {
-  assert.equal(
-    removePathReferenceTokensFromDraft(
-      "確認 ![cover image.png](C:/session-files/cover%20image.png) して",
-      ["C:\\session-files\\cover image.png"],
-    ),
-    "確認 して",
-  );
-});
-
-test("buildPathReferenceRemovalState は path reference 削除後の draft と末尾 caret を返す", () => {
-  assert.deepEqual(
-    buildPathReferenceRemovalState("確認 @src/App.tsx して", ["src/App.tsx"]),
-    {
-      draft: "確認 して",
-      caret: "確認 して".length,
-    },
   );
 });
 

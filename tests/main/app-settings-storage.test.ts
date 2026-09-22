@@ -49,18 +49,18 @@ describe("AppSettingsStorage", () => {
   });
 
   // @test-value v2
-  // kind = "invariant"
-  // claim = "保存済みの旧同梱microcopyは初回起動でexact migrationされ、後続の明示custom設定は再移行されない"
-  // oracle = { type = "contract", ref = "docs/design/session-character-copy.md#storage-policy" }
-  // fault = "起動ごとに保存値を旧既定と誤認して明示customを英語既定へ上書きする"
-  // observable = "migrated/reopened AppSettings.userMicrocopyCatalog"
+  // kind = "contract"
+  // claim = "AppSettingsStorageの起動時cleanupは廃止microcopy行だけを削除し、他の設定値を保持する"
+  // oracle = { type = "contract", ref = "src-electron/app/app-settings-storage.ts#AppSettingsStorage" }
+  // fault = "廃止行が残るか、起動時cleanupが無関係なAppSettingsまで削除する"
+  // observable = "仮DBの廃止key行とlaunchAtLoginEnabled"
   // observation_boundary = "public-boundary"
-  // scope = "app-settings-microcopy-migration"
+  // scope = "app-settings-obsolete-microcopy-cleanup"
   // lifecycle = "permanent"
-  // impact = "保存済みcustom microcopyが失われる"
-  // distinction = "pure helperのslot判定とは別にDB ownerの永続化・one-time markerを確認する"
+  // impact = "削除対象の旧設定が再利用されるか、他のユーザー設定が失われる"
+  // distinction = "廃止値の不在だけでなく、同じDB起動後の既存設定保持を同時に確認する"
   // @end-test-value
-  it("保存済みの旧同梱 microcopy 既定値を一度だけ現在の既定値へ移行する", async () => {
+  it("起動時に廃止microcopy設定だけを削除する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
 
@@ -69,62 +69,27 @@ describe("AppSettingsStorage", () => {
       initialStorage.close();
 
       const legacyDatabase = new DatabaseSync(dbPath);
-      const legacyCatalog = createDefaultAppSettings().userMicrocopyCatalog;
-      legacyCatalog["chat.pending.response_waiting"] = ["応答を準備しています", "出力を待機しています"];
-      legacyCatalog["dock.status.working"] = ["処理を実行中"];
-      legacyCatalog["dock.status.responding"] = ["独自の応答待機文"];
-      legacyCatalog["composer.error.path_not_found"] = ["指定したパスが見つかりません: {path}"];
-      const seeded = legacyDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
-        .run(JSON.stringify(legacyCatalog), "user_microcopy_catalog_json");
-      assert.equal(seeded.changes, 1);
+      const insert = legacyDatabase.prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+      `);
+      insert.run("user_microcopy_catalog_json", JSON.stringify({ legacy: true }), new Date().toISOString());
+      insert.run("user_microcopy_catalog_english_migrated", "true", new Date().toISOString());
       legacyDatabase
-        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
-        .run("user_microcopy_catalog_english_migrated");
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("true", "launch_at_login_enabled");
       legacyDatabase.close();
 
-      const migratedStorage = new AppSettingsStorage(dbPath);
-      const migratedSettings = migratedStorage.getSettings();
-      assert.deepEqual(migratedSettings.userMicrocopyCatalog["chat.pending.response_waiting"], [
-        "Preparing a response",
-        "Waiting for output",
-      ]);
-      assert.deepEqual(migratedSettings.userMicrocopyCatalog["dock.status.working"], ["Working"]);
-      assert.deepEqual(migratedSettings.userMicrocopyCatalog["dock.status.responding"], ["独自の応答待機文"]);
-      assert.deepEqual(migratedSettings.userMicrocopyCatalog["composer.error.path_not_found"], [
-        "Path not found: {path}",
-      ]);
-      migratedStorage.close();
-
-      const persistedStorage = new AppSettingsStorage(dbPath);
-      const persistedCatalog = persistedStorage.getSettings().userMicrocopyCatalog;
-      assert.deepEqual(persistedCatalog["chat.pending.response_waiting"], [
-        "Preparing a response",
-        "Waiting for output",
-      ]);
-      assert.deepEqual(persistedCatalog["dock.status.working"], ["Working"]);
-      assert.deepEqual(persistedCatalog["dock.status.responding"], ["独自の応答待機文"]);
-      assert.deepEqual(persistedCatalog["composer.error.path_not_found"], [
-        "Path not found: {path}",
-      ]);
-      persistedStorage.close();
-
-      const customStorage = new AppSettingsStorage(dbPath);
-      customStorage.updateSettings({
-        ...customStorage.getSettings(),
-        userMicrocopyCatalog: {
-          ...customStorage.getSettings().userMicrocopyCatalog,
-          "composer.error.path_not_found": ["指定したパスが見つかりません: {path}"],
-        },
-      });
-      customStorage.close();
-
       const reopenedStorage = new AppSettingsStorage(dbPath);
-      assert.deepEqual(
-        reopenedStorage.getSettings().userMicrocopyCatalog["composer.error.path_not_found"],
-        ["指定したパスが見つかりません: {path}"],
-      );
+      assert.equal(reopenedStorage.getSettings().launchAtLoginEnabled, true);
       reopenedStorage.close();
+
+      const inspectedDatabase = new DatabaseSync(dbPath);
+      const obsoleteRows = inspectedDatabase
+        .prepare("SELECT setting_key FROM app_settings WHERE setting_key LIKE 'user_microcopy_catalog_%'")
+        .all() as Array<{ setting_key: string }>;
+      inspectedDatabase.close();
+      assert.deepEqual(obsoleteRows, []);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
@@ -425,10 +390,6 @@ describe("AppSettingsStorage", () => {
           },
         },
         memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
-        userMicrocopyCatalog: {
-          ...createDefaultAppSettings().userMicrocopyCatalog,
-          "chat.pending.response_waiting": ["応答待機中", "出力待機中"],
-        },
         codingProviderSettings: {
           codex: {
             enabled: false,
@@ -725,10 +686,6 @@ describe("AppSettingsStorage", () => {
           header: "visible",
           actionDock: "expanded",
           sidePane: "context",
-        },
-        userMicrocopyCatalog: {
-          ...createDefaultAppSettings().userMicrocopyCatalog,
-          "dock.status.preparing": ["準備中"],
         },
         codingProviderSettings: {
           codex: {

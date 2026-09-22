@@ -8,15 +8,15 @@ const noop = () => {};
 
 // @test-value v2
 // kind = "contract"
-// claim = "retry banner adapterはretry状態、custom title、resend/edit actionをmode-neutralなUIへ投影する"
+// claim = "retry banner adapterはretry状態、固定説明、resend/edit actionをmode-neutralなUIへ投影する"
 // oracle = { type = "contract", ref = "docs/design/session-character-copy.md#rendering-policy" }
-// fault = "retry titleを一律で隠すか、action label・accessible label・custom copyを失う"
-// observable = "retry class、aria label、visible custom title、resend/edit buttons、draft conflict actionsのrender結果"
+// fault = "retry説明、action label、accessible label、draft conflict actionsのいずれかを失う"
+// observable = "retry class、aria label、固定説明、resend/edit buttons、draft conflict actionsのrender結果"
 // observation_boundary = "component-behavior"
 // scope = "session-retry-banner"
 // lifecycle = "permanent"
-// impact = "中断・失敗したrequestを再送または編集できず、custom microcopyも利用者へ届かなくなる"
-// distinction = "built-in重複省略の経路とcustom title可視経路を別testで確認する"
+// impact = "中断・失敗したrequestを再送または編集できず、状態説明も利用者へ届かなくなる"
+// distinction = "固定説明をbadgeのaccessible nameへ保持し、操作とdraft保護を同時に確認する"
 // @end-test-value
 test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み立てる", () => {
   const html = renderToStaticMarkup(buildLiveSessionRetryBanner({
@@ -24,7 +24,6 @@ test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み
       kind: "failed",
       badge: "失敗",
       title: "前回の依頼は完了できませんでした",
-      titleVisible: true,
       lastRequestText: "直して",
     },
     isRetryActionDisabled: false,
@@ -41,7 +40,7 @@ test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み
   assert.match(html, />Resend<\/button>/);
   assert.match(html, />Edit<\/button>/);
   assert.match(html, /title="前回の依頼は完了できませんでした"/);
-  assert.match(html, /class="resume-banner-title">前回の依頼は完了できませんでした<\/span>/);
+  assert.match(html, /class="sr-only">: 前回の依頼は完了できませんでした<\/span>/);
   assert.match(html, /Your current draft is preserved\.<\/p>/);
   assert.match(html, />ReplacePreviousRequest<\/button>/);
   assert.match(html, />KeepCurrentDraft<\/button>/);
@@ -66,7 +65,6 @@ test("SessionRetryBanner は既定説明を短縮しても状態と回復操作�
       kind: "failed",
       badge: "Failed",
       title: "The previous request could not be completed",
-      titleVisible: false,
       lastRequestText: "Fix it",
     },
     isRetryActionDisabled: false,

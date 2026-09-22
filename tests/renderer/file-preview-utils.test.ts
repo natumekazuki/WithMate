@@ -67,7 +67,7 @@ test("PreviewByteAccumulator は破棄時に未完了世代の保持bytesを直�
 
 // @test-value v2
 // kind = "contract"
-// claim = "projectFileRootDiffAvailabilityはcleanまたはGit失敗ではdiff availabilityを返さず、対象pathのtracked変更entryだけscopeを返す"
+// claim = "projectFileRootDiffAvailabilityはcleanまたはGit失敗ではdiff scopeを返さず、真のGit失敗messageだけを保持し、対象pathのtracked変更entryだけscopeを返す"
 // oracle = { type = "contract", ref = "src/file-explorer/file-preview-utils.ts" }
 // fault = "Git failureまたは空diffを変更ありとして表示する、または対象pathの変更scopeを欠落させる"
 // observable = "statusとentries入力に対するscopes・message projection"
@@ -83,6 +83,10 @@ test("projectFileRootDiffAvailability は変更なしとGit失敗を区別する
   assert.deepEqual(projectFileRootDiffAvailability({ status: "not-git", message: "Not a Git repository." }, "src/app/SessionWindowApp.tsx"), {
     scopes: [],
     message: "",
+  });
+  assert.deepEqual(projectFileRootDiffAvailability({ status: "failed", message: "Git status failed." }, "src/app/SessionWindowApp.tsx"), {
+    scopes: [],
+    message: "Git status failed.",
   });
   assert.deepEqual(projectFileRootDiffAvailability({
     status: "ok",

@@ -251,7 +251,7 @@ approval mode は WithMate が対応する Codex policy 値を正本にする。
   - `provider-controlled -> on-request`
 - CodexAdapter は `approvalMode` を SDK `approvalPolicy` へそのまま渡す
 - CopilotAdapter は `never` を自動許可、`untrusted` を read-only 以外 rules deny、`on-request` を Session UI の approval card 中継として扱う
-- UI wording は SDK 値をそのまま使い、provider ごとに出す choices を分ける
+- UIはSDK値をそのまま表示せず、`AutoRun` / `ProviderControlled` / `SafetyFocused` のdisplay labelへ変換する。保存・API・adapter境界ではSDK policy値をrawのまま保持し、providerごとに出すchoicesを分ける
 
 これにより、session 作成、永続化、監査、artifact 表示、resume 復元では SDK 値を追跡しつつ、provider ごとの差異は provider-specific choices と adapter 実装で吸収する。
 

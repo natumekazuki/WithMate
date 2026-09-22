@@ -9,7 +9,6 @@ export type RetryBannerState = {
   kind: RetryBannerKind;
   badge: string;
   title: string;
-  titleVisible?: boolean;
   lastRequestText: string;
 };
 

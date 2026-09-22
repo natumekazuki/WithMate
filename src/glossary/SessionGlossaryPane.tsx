@@ -104,7 +104,7 @@ export function SessionGlossaryPane({
         </div>
       ) : selectedEntry ? (
         <article className="glossary-entry-detail">
-          <BackNavigationButton label="Back to glossary entries" onBack={onBackToList} />
+          <BackNavigationButton label="BackToEntries" onBack={onBackToList} />
           <header>
             <h3>{selectedEntry.term}</h3>
             {selectedEntry.aliases.length > 0 ? (

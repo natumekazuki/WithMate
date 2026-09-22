@@ -101,7 +101,7 @@ export class MainWindowRuntime {
     this.sessionWindowBridge = new SessionWindowBridge({
       createWindow: (sessionId) => deps.composition.createCursorPlacedWindow({
         ...SESSION_WINDOW_DEFAULT_BOUNDS,
-        title: deps.getSession(sessionId)?.taskTitle?.trim() || `WithMate Session - ${sessionId}`,
+        title: deps.getSession(sessionId)?.taskTitle?.trim() || `WithMateSession - ${sessionId}`,
       }),
       loadChatEntry: (window, mode) => this.windowEntryLoader.loadChatEntry(window, mode),
       sendAuxiliarySessionNavigation: (window, payload) => {

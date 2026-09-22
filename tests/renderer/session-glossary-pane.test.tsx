@@ -90,7 +90,7 @@ test("SessionGlossaryPaneは検索失敗を空結果として表示しない", (
 // claim = "Glossary definitionはMarkdownやHTMLとして解釈せず、aliasを表示してtextとして安全に完全表示する"
 // oracle = { type = "contract", ref = "src/glossary/SessionGlossaryPane.tsx: definition rendering" }
 // fault = "definitionをHTML化してmarkup injectionを許すか、aliasとback navigationを失う"
-// observable = "escaped definition、literal markdown、alias、Back to glossary entries label"
+// observable = "escaped definition、literal markdown、alias、BackToEntries label"
 // observation_boundary = "component-behavior"
 // scope = "session-glossary-definition-rendering"
 // lifecycle = "permanent"
@@ -103,7 +103,7 @@ test("SessionGlossaryPaneはdefinitionをMarkdownやHTMLとして解釈せず完
   assert.doesNotMatch(html, /<strong>plain<\/strong>/);
   assert.match(html, />RT</);
   assert.doesNotMatch(html, /Aliases:/);
-  assert.match(html, /aria-label="Back to glossary entries"/);
+  assert.match(html, /aria-label="BackToEntries"/);
 });
 
 // @test-value v2

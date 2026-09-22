@@ -678,10 +678,6 @@ character は SQLite ではなく file system に保存する。
     "main": "#6f8cff",
     "sub": "#6fb8c7"
   },
-  "sessionCopy": {
-    "pendingApproval": ["確認中"],
-    "pendingWorking": ["処理中"]
-  },
   "iconFile": "character.png",
   "roleFile": "character.md",
   "createdAt": "2026-03-27T10:00:00.000Z",

@@ -35,7 +35,6 @@ export function KeyboardShortcutsHelpSection({
     <section className="settings-section-card settings-help-section">
       <div className="settings-field">
         <strong>Help</strong>
-        <p className="settings-help">Review shortcuts and the windows where they are active.</p>
         <button className="launch-toggle" type="button" onClick={() => setOpen(true)}>
           KeyboardShortcuts
         </button>
@@ -57,13 +56,13 @@ export function KeyboardShortcutsDialog({
   settings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
   onChange,
 }: KeyboardShortcutsDialogProps) {
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const firstActionButtonRef = useRef<HTMLButtonElement | null>(null);
   const [capturingCommandId, setCapturingCommandId] = useState<string | null>(null);
   const [captureError, setCaptureError] = useState("");
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
     open,
     onClose,
-    initialFocusRef: closeButtonRef,
+    initialFocusRef: firstActionButtonRef,
   });
 
   useEffect(() => {
@@ -108,6 +107,11 @@ export function KeyboardShortcutsDialog({
   const effectiveSettings = normalizeKeyboardShortcutSettings(settings);
   const groups = getShortcutHelpProjection(platform, effectiveSettings);
   const isEditable = onChange !== undefined;
+  const firstActionId = isEditable
+    ? groups
+      .flatMap((group) => group.items)
+      .find((item) => getShortcutEntry(item.id).customizable)?.id
+    : undefined;
   return (
     <LaunchDialogShell
       onClose={onClose}
@@ -116,19 +120,11 @@ export function KeyboardShortcutsDialog({
       ariaLabel="Keyboard shortcuts"
       showDismissControl={false}
       dialogClassName="settings-keyboard-shortcuts-dialog"
-      footer={
-        <button ref={closeButtonRef} className="launch-toggle" type="button" onClick={onClose}>
-          Close
-        </button>
-      }
     >
       <div className="settings-keyboard-shortcuts-content">
         <div className="settings-keyboard-shortcuts-head">
           <h2>KeyboardShortcuts</h2>
-          <p>
-            Shortcuts are active while this WithMate window is focused.
-            {isEditable ? " Select Change, then press the keys to register." : ""}
-          </p>
+          <p>Shortcuts are active while this WithMate window is focused.</p>
           {captureError ? <p className="settings-feedback settings-keyboard-shortcuts-error" role="alert">{captureError}</p> : null}
         </div>
         <div className="settings-keyboard-shortcuts-groups">
@@ -144,6 +140,7 @@ export function KeyboardShortcutsDialog({
                       {isEditable && getShortcutEntry(item.id).customizable ? (
                         <span className="settings-keyboard-shortcut-actions">
                           <button
+                            ref={item.id === firstActionId ? firstActionButtonRef : undefined}
                             className="launch-toggle compact"
                             type="button"
                             aria-pressed={capturingCommandId === item.id}

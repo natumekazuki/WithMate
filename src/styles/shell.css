@@ -8,6 +8,7 @@
 
 .home-page {
   grid-template-rows: minmax(0, 1fr);
+  color: var(--ink);
   --surface: rgba(25, 29, 38, 0.94);
   --surface-strong: rgba(28, 33, 43, 0.98);
   --surface-deep: rgba(18, 22, 30, 0.98);
@@ -42,6 +43,7 @@
 .session-page {
   gap: 0;
   padding: 10px 12px 12px;
+  color: var(--ink);
   background:
     radial-gradient(circle at top left, rgba(111, 140, 255, 0.12), transparent 28%),
     linear-gradient(180deg, #0f131a 0%, #151a22 100%);
@@ -248,8 +250,7 @@
 }
 
 .session-action-dock-slot.is-expanded .composer > :is(
-  .composer-path-match-list,
-  .composer-attachment-list
+  .composer-path-match-list
 ) {
   flex-shrink: 0;
   min-height: 0;
@@ -290,12 +291,8 @@
   padding: 22px;
 }
 
-.boot-status-head {
-  margin: 4px 6px 0;
-}
-
-.boot-status-head h1 {
-  color: #f4f7fb;
+.boot-error-title {
+  color: var(--ink);
   font-size: 1.08rem;
 }
 
@@ -316,67 +313,10 @@
   white-space: pre-wrap;
 }
 
-.boot-stage-list {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.boot-stage-list li {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
-  align-items: center;
-  min-height: 38px;
-  padding: 8px 10px;
-  border: 1px solid rgba(203, 213, 225, 0.1);
-  border-radius: 12px;
-  background: rgba(15, 19, 26, 0.72);
-  color: #8fa0b8;
-  font-size: 0.88rem;
-  font-weight: 700;
-}
-
-.boot-stage-dot {
-  display: inline-grid;
-  place-items: center;
-  width: 14px;
-  height: 14px;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  background: transparent;
-  font-size: 12px;
-  line-height: 1;
-}
-
-.boot-stage-list li.done,
-.boot-stage-list li.active {
-  border-color: color-mix(in srgb, var(--character-sub) 22%, rgba(203, 213, 225, 0.16));
-  color: #edf2fb;
-}
-
-.boot-stage-list li.done .boot-stage-dot {
-  border-color: transparent;
-}
-
-.boot-stage-list li.active .boot-stage-dot {
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  animation: boot-stage-spin 900ms linear infinite;
-}
-
-@keyframes boot-stage-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .boot-stage-list li.active .boot-stage-dot {
-    animation: none;
-  }
+.boot-progress {
+  display: flex;
+  justify-content: center;
+  color: var(--ink);
 }
 
 .session-page .panel {

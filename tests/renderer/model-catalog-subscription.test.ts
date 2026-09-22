@@ -336,7 +336,7 @@ test("App は model catalog subscription を有効にする", async () => {
 // claim = "Homeはmodel catalogの初期取得と購読更新を共通helperへ委譲し、直接取得を行わない"
 // oracle = { type = "contract", ref = "src/home/HomeApp.tsx model catalog subscription" }
 // fault = "Homeがmodel catalogを直接取得する、または購読更新後のsettled・feedback stateを反映しない"
-// observable = "HomeApp source内のsubscription設定と直接getModelCatalog呼び出しの不在"
+// observable = "HomeApp source内のsubscription設定、provider load error state、Settings feedback、直接getModelCatalog呼び出しの不在"
 // observation_boundary = "declaration"
 // scope = "model-catalog-subscription HomeApp integration"
 // lifecycle = "permanent"
@@ -344,11 +344,15 @@ test("App は model catalog subscription を有効にする", async () => {
 test("Home は model catalog 初期取得と購読更新を helper に通す", async () => {
   const homeSource = await readFile(new URL("../../src/home/HomeApp.tsx", import.meta.url), "utf8");
   const homeSubscriptionIndex = homeSource.indexOf("startModelCatalogSubscription({");
-  const subscriptionSnippet = homeSource.slice(homeSubscriptionIndex, homeSubscriptionIndex + 520);
+  const appSettingsSubscriptionIndex = homeSource.indexOf("const unsubscribeAppSettings", homeSubscriptionIndex);
+  const subscriptionSnippet = homeSource.slice(homeSubscriptionIndex, appSettingsSubscriptionIndex);
 
   assert.notEqual(homeSubscriptionIndex, -1);
+  assert.notEqual(appSettingsSubscriptionIndex, -1);
   assert.match(subscriptionSnippet, /subscribe: true/);
   assert.match(subscriptionSnippet, /setModelCatalogLoadSettled\(true\)/);
-  assert.match(subscriptionSnippet, /setSettingsFeedback/);
+  assert.match(subscriptionSnippet, /setModelCatalogLoadStatus\("error"\)/);
+  assert.match(subscriptionSnippet, /setModelCatalogLoadError\(message\)/);
+  assert.match(subscriptionSnippet, /setSettingsFeedback\(message\)/);
   assert.doesNotMatch(homeSource, /withmateApi\.getModelCatalog\(null\),/);
 });

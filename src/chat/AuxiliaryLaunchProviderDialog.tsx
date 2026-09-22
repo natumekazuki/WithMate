@@ -2,12 +2,18 @@ import { useRef } from "react";
 
 import { useDialogA11y } from "../ui/a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
-import { ProviderLaunchPicker } from "../launch/provider-launch-picker.js";
+import { ProviderLaunchPicker, type ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
+import {
+  AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
+  resolveAuxiliaryLaunchProviderId,
+} from "./auxiliary-launch-state.js";
 
 type AuxiliaryLaunchProviderDialogProps = {
   open: boolean;
   providers: Array<{ id: string; label: string }>;
   selectedProviderId: string | null;
+  providerLoadStatus?: ProviderLaunchLoadStatus;
+  providerLoadError?: string;
   feedback: string;
   starting: boolean;
   creationInFlight?: boolean;
@@ -23,6 +29,8 @@ export function AuxiliaryLaunchProviderDialog({
   open,
   providers,
   selectedProviderId,
+  providerLoadStatus = "loaded",
+  providerLoadError = "",
   feedback,
   starting,
   creationInFlight = false,
@@ -44,18 +52,26 @@ export function AuxiliaryLaunchProviderDialog({
     return null;
   }
 
+  const resolvedSelectedProviderId = resolveAuxiliaryLaunchProviderId(providers, selectedProviderId);
+  const providerLoadReady = providerLoadStatus === "loaded";
+  const visibleFeedback = providerLoadReady && feedback !== AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK
+    ? feedback
+    : "";
+
   return (
     <LaunchDialogShell
       onClose={onClose}
       dialogRef={dialogRef}
       onKeyDown={handleDialogKeyDown}
+      ariaLabel="Start Auxiliary"
       dialogClassName="auxiliary-provider-dialog"
       showDismissControl={false}
       footer={
         <LaunchDialogFooter
-          feedback={feedback}
+          feedback={visibleFeedback}
           startButtonLabel="StartAuxiliary"
-          startButtonDisabled={!selectedProviderId || starting || creationInFlight}
+          startButtonDisabled={!resolvedSelectedProviderId || !providerLoadReady || starting || creationInFlight}
+          startButtonAriaDisabled={!resolvedSelectedProviderId || !providerLoadReady || starting || creationInFlight}
           startButtonBusy={starting || creationInFlight}
           startButtonLoadingText="StartingAuxiliary"
           onStart={onStart}
@@ -73,8 +89,10 @@ export function AuxiliaryLaunchProviderDialog({
         <ProviderLaunchPicker
           id="auxiliary-provider-picker"
           providers={providers}
-          selectedProviderId={selectedProviderId}
+          selectedProviderId={resolvedSelectedProviderId}
           onSelectProvider={onSelectProvider}
+          loadStatus={providerLoadStatus}
+          loadError={providerLoadError}
         />
       </div>
     </LaunchDialogShell>

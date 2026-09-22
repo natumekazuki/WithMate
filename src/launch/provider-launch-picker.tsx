@@ -6,12 +6,16 @@ type Provider = {
   label: string;
 };
 
+export type ProviderLaunchLoadStatus = "loading" | "loaded" | "error";
+
 export type ProviderLaunchPickerProps = {
   id: string;
   providers: Array<Provider>;
   selectedProviderId: string | null;
   onSelectProvider: (providerId: string) => void;
   ariaLabel?: string;
+  loadStatus?: ProviderLaunchLoadStatus;
+  loadError?: string;
 };
 
 export function ProviderLaunchPicker({
@@ -20,7 +24,32 @@ export function ProviderLaunchPicker({
   selectedProviderId,
   onSelectProvider,
   ariaLabel = "CodingProvider",
+  loadStatus = "loaded",
+  loadError = "",
 }: ProviderLaunchPickerProps) {
+  if (loadStatus === "loading") {
+    return (
+      <div
+        id={id}
+        className="chat-skill-picker-state"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <span className="chat-skill-picker-spinner" aria-hidden="true" />
+        <span className="visually-hidden">Loading coding providers.</span>
+      </div>
+    );
+  }
+
+  if (loadStatus === "error") {
+    return (
+      <p id={id} className="chat-skill-picker-state error" role="alert" aria-live="assertive">
+        {loadError || "Could not load coding providers."}
+      </p>
+    );
+  }
+
   if (providers.length === 0) {
     return (
       <article className="empty-list-card compact">
@@ -67,6 +96,8 @@ export function ProviderLaunchField({
   selectedProviderId,
   onSelectProvider,
   ariaLabel,
+  loadStatus,
+  loadError,
 }: ProviderLaunchFieldProps) {
   return (
     <section className="launch-section minimal">
@@ -80,6 +111,8 @@ export function ProviderLaunchField({
           selectedProviderId={selectedProviderId}
           onSelectProvider={onSelectProvider}
           ariaLabel={ariaLabel}
+          loadStatus={loadStatus}
+          loadError={loadError}
         />
       </div>
     </section>

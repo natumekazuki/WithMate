@@ -54,15 +54,15 @@ function installDomGlobals(dom: JSDOM): () => void {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Keyboard shortcuts dialogはregistry由来のPascalCase labelを表示し、Escapeで閉じられる"
+// claim = "Keyboard shortcuts dialogはregistry由来のPascalCase labelを表示し、最初のChange操作へfocusしてEscapeで閉じられる"
 // oracle = { type = "contract", ref = "src/settings/KeyboardShortcutsDialog.tsx#KeyboardShortcutsDialog" }
-// fault = "registry labelがdialogへ投影されないか、Escapeでdialogを閉じられない"
-// observable = "dialog textContent、Close callback回数、Escape eventのdefaultPrevented"
+// fault = "registry labelがdialogへ投影されない、最初の操作へfocusしない、またはEscapeでdialogを閉じられない"
+// observable = "dialog textContent、最初のChange buttonへのfocus、Close callback回数、Escape eventのdefaultPrevented"
 // observation_boundary = "component-behavior"
 // scope = "keyboard-shortcuts-dialog-projection"
 // lifecycle = "permanent"
-// impact = "利用者がshortcutの対象を識別できず、dialogをキーボードで閉じられない"
-// distinction = "registryの表示labelとdialog固有のEscape closeを同じ描画経路で確認する"
+// impact = "利用者がshortcutの対象を識別できず、最初の編集操作へ到達できないか、dialogをキーボードで閉じられない"
+// distinction = "registryの表示label、初期focus、dialog固有のEscape closeを同じ描画経路で確認する"
 // @end-test-value
 test("Keyboard shortcuts dialogはregistry projectionを表示し、Escapeで閉じる", async () => {
   const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
@@ -81,6 +81,7 @@ test("Keyboard shortcuts dialogはregistry projectionを表示し、Escapeで閉
           onClose={() => {
             closeCount += 1;
           }}
+          onChange={() => undefined}
         />,
       );
     });
@@ -96,10 +97,10 @@ test("Keyboard shortcuts dialogはregistry projectionを表示し、Escapeで閉
     await act(async () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     });
-    const closeButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "Close");
-    assert.ok(closeButton);
-    assert.equal(dom.window.document.activeElement, closeButton);
+    const firstChangeButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Change");
+    assert.ok(firstChangeButton);
+    assert.equal(dom.window.document.activeElement, firstChangeButton);
 
     const dialogContent = container.querySelector<HTMLElement>(".settings-keyboard-shortcuts-dialog");
     assert.ok(dialogContent);

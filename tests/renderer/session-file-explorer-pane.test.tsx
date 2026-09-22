@@ -99,7 +99,7 @@ test("File Explorer root revisionはworkspace path変更を検出する", () => 
 // claim = "Files treeはroot・directory・regular fileだけを同じpath context menu契約へ渡し、通常clickとload identityを維持し、empty/unavailable rootsをloading状態で残さない"
 // oracle = { type = "contract", ref = "accepted behavior: File Explorer tree path context menu siblings" }
 // fault = "rootまたはdirectoryでpath操作できない、対象外rowに操作が出る、context menu追加で通常clickと非同期loadが回帰する、または確定empty/unavailable rootsのpanelがbusy/loading状態で残る"
-// observable = "path menu callback、通常click callback、tree load identity、roots panelのaria-busyとloading status"
+// observable = "path menu callback、通常click callback、tree load identity、roots panelのaria-busy/loading statusとfailure alert"
 // observation_boundary = "component-behavior"
 // scope = "SessionFileExplorerPane Files tree interaction and roots state"
 // lifecycle = "permanent"
@@ -177,6 +177,7 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
     label: "Workspace",
     displayPath: "C:\\workspace",
   }];
+  let rejectRoots = false;
   let directoryCalls = 0;
   const api = {
     async showSessionFileTreeContextMenu(request: unknown) {
@@ -186,6 +187,9 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
         : { status: "dismissed" as const };
     },
     async listSessionFileRoots() {
+      if (rejectRoots) {
+        throw new Error("File roots failed.");
+      }
       return listedRoots;
     },
     listSessionDirectory() {
@@ -383,6 +387,26 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
     const filesPanel = dom.window.document.querySelector<HTMLElement>(".session-file-explorer-body");
     await waitFor(() => filesPanel?.getAttribute("aria-busy") === "false");
     assert.equal(filesPanel?.querySelector(".session-file-tree-status"), null);
+
+    rejectRoots = true;
+    await act(async () => {
+      root?.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-error",
+        selectedFile: null,
+        activeTab: "files",
+        onActiveTabChange() {},
+        onRefreshChanges() {},
+        onOpenFile() {},
+        canInsertPathReference: false,
+        onInsertPathReference() {},
+      }));
+      await Promise.resolve();
+    });
+    await waitFor(() => filesPanel?.querySelector(".session-file-tree-error")?.textContent === "File roots failed.");
+    assert.equal(filesPanel?.querySelector(".session-file-tree-error")?.getAttribute("role"), "alert");
 
     await act(async () => {
       root?.render(React.createElement(SessionFileExplorerPane, {

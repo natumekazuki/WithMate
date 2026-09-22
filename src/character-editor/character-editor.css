@@ -969,11 +969,6 @@
   background: rgba(244, 63, 94, 0.26);
 }
 
-.character-editor-page .launch-section {
-  background: rgba(10, 14, 20, 0.82);
-  border-color: rgba(203, 213, 225, 0.12);
-}
-
 .character-editor-page .launch-field-label {
   color: #a8b4ca;
 }

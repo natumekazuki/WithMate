@@ -2,7 +2,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.j
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { DEFAULT_CODEX_SPEED } from "../../src-shared/settings/codex-speed.js";
 import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer.js";
-import { DEFAULT_CHARACTER_SESSION_COPY, DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
+import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { Message, MessageArtifact } from "../../src-shared/session/session-state.js";
 import {
@@ -13,6 +13,7 @@ import {
 } from "react";
 import type { SessionContextPaneProps } from "./shell/session-context-pane.js";
 import type { ChatWindowProps } from "./chat-window.js";
+import { approvalModeLabel } from "../ui/ui-utils.js";
 
 export const chatWindowNoop = () => {};
 
@@ -190,7 +191,6 @@ export type LiveSessionMessageColumnProps = {
   onResolveLiveApproval: ChatMessageColumnProps["onResolveLiveApproval"];
   onResolveLiveElicitation: ChatMessageColumnProps["onResolveLiveElicitation"];
   onOpenPath: (target: string) => void;
-  getChangedFilesEmptyText: ChatMessageColumnProps["getChangedFilesEmptyText"];
   onCopyMessageText?: ChatMessageColumnProps["onCopyMessageText"];
   onQuoteMessageText?: ChatMessageColumnProps["onQuoteMessageText"];
   glossaryAnnotationMatcher?: ChatMessageColumnProps["glossaryAnnotationMatcher"];
@@ -261,7 +261,6 @@ export type LiveSessionComposerDockPropsInput = Omit<
   LiveSessionComposerProps,
   "showJumpToBottom"
 > & {
-  attachmentCount: number;
   isMessageListFollowing: boolean;
   onExpandActionDock: () => void;
 };
@@ -304,7 +303,6 @@ export function buildLiveSessionComposerDockProps(
   compactActionDock: LiveSessionCompactActionDockProps;
 } {
   const {
-    attachmentCount,
     isMessageListFollowing,
     onExpandActionDock,
     ...composerInput
@@ -317,8 +315,6 @@ export function buildLiveSessionComposerDockProps(
       showJumpToBottom,
     },
     compactActionDock: {
-      attachmentCount,
-      composerController: input.composerController,
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
@@ -374,7 +370,6 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     onResolveLiveApproval: input.onResolveLiveApproval,
     onResolveLiveElicitation: input.onResolveLiveElicitation,
     onOpenPath: input.onOpenPath,
-    getChangedFilesEmptyText: input.getChangedFilesEmptyText,
     onCopyMessageText: input.onCopyMessageText,
     onQuoteMessageText: input.onQuoteMessageText,
     glossaryAnnotationMatcher: input.glossaryAnnotationMatcher,
@@ -466,7 +461,6 @@ export function createStaticChatCharacterProfile({
   notesMarkdown = "",
   updatedAt = "",
   themeColors = { ...DEFAULT_CHARACTER_THEME_COLORS },
-  sessionCopy = DEFAULT_CHARACTER_SESSION_COPY,
 }: StaticChatCharacterInput): CharacterProfile {
   return {
     id,
@@ -477,7 +471,6 @@ export function createStaticChatCharacterProfile({
     notesMarkdown,
     updatedAt,
     themeColors,
-    sessionCopy,
   };
 }
 
@@ -504,7 +497,6 @@ export function createIdleChatMessageColumnProps(props: IdleChatMessageColumnPro
     onOpenDiff: chatWindowNoop,
     onResolveLiveApproval: chatWindowNoop,
     onResolveLiveElicitation: chatWindowNoop,
-    getChangedFilesEmptyText: () => "",
     ...props,
   };
 }
@@ -548,10 +540,9 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     showJumpToBottom: false,
     isCustomAgentListLoading: false,
     customAgentItems: [],
-    attachmentItems: [],
     placeholder: undefined,
     isComposerBlockedFeedbackActive: false,
-    approvalOptions: [{ value: DEFAULT_APPROVAL_MODE, label: DEFAULT_APPROVAL_MODE }],
+    approvalOptions: [{ value: DEFAULT_APPROVAL_MODE, label: approvalModeLabel(DEFAULT_APPROVAL_MODE) }],
     selectedApprovalMode: DEFAULT_APPROVAL_MODE,
     reviewerOptions: [],
     selectedCodexReviewer: DEFAULT_CODEX_REVIEWER,
@@ -568,7 +559,6 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     onToggleAdditionalDirectoryList: chatWindowNoop,
     onJumpToBottom: chatWindowNoop,
     onSelectCustomAgent: chatWindowNoop,
-    onRemoveAttachment: chatWindowNoop,
     onDraftFocus: chatWindowNoop,
     onDraftSelect: chatWindowNoop,
     onDraftCompositionStart: chatWindowNoop,
@@ -620,7 +610,6 @@ export function createStaticChatCompactActionDockProps(
   props: StaticChatCompactActionDockProps,
 ): ChatCompactActionDockProps {
   return {
-    attachmentCount: 0,
     showJumpToBottom: false,
     onExpand: chatWindowNoop,
     onJumpToBottom: chatWindowNoop,

@@ -84,19 +84,6 @@ function createCharacter(): CharacterProfile {
     description: "",
     notesMarkdown: "",
     themeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-    sessionCopy: {
-      pendingApproval: [],
-      pendingWorking: [],
-      pendingResponding: [],
-      pendingPreparing: [],
-      retryInterruptedTitle: [],
-      retryFailedTitle: [],
-      retryCanceledTitle: [],
-      latestCommandWaiting: [],
-      latestCommandEmpty: [],
-      changedFilesEmpty: [],
-      contextEmpty: [],
-    },
     updatedAt: new Date().toISOString(),
   };
 }

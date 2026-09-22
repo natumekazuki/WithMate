@@ -13,7 +13,6 @@ import { useShortcutSettings } from "../../settings/shortcut-settings-context.js
 
 import { ComposerAttachmentMenu } from "../../chat/composer-attachment-menu.js";
 import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "../../chat/composer-controller.js";
-import { buildComposerAttachmentItems } from "./session-composer-paths.js";
 import {
   getComposerSendButtonTitle,
   resolveComposerSendabilityState,
@@ -44,17 +43,6 @@ export type SessionSkillItem = {
   secondaryLabel: string;
   title: string;
   searchText?: string;
-};
-
-type SessionAttachmentItem = {
-  key: string;
-  kind: string;
-  kindLabel: string;
-  locationLabel: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-  removeTargets: string[];
 };
 
 type SessionComposerSendabilityView = {
@@ -96,7 +84,6 @@ export type SessionComposerExpandedProps = {
   showJumpToBottom: boolean;
   isCustomAgentListLoading: boolean;
   customAgentItems: SessionCustomAgentItem[];
-  attachmentItems: SessionAttachmentItem[];
   draft: string;
   placeholder?: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -135,7 +122,6 @@ export type SessionComposerExpandedProps = {
   onToggleAdditionalDirectoryList: () => void;
   onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
-  onRemoveAttachment: (targets: string[]) => void;
   onDraftChange: (value: string, selectionStart: number) => void;
   onDraftFocus: () => void;
   onDraftKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
@@ -182,7 +168,6 @@ export function SessionComposerExpanded({
   showJumpToBottom,
   isCustomAgentListLoading,
   customAgentItems,
-  attachmentItems,
   draft,
   placeholder,
   composerTextareaRef,
@@ -221,7 +206,6 @@ export function SessionComposerExpanded({
   onToggleAdditionalDirectoryList,
   onJumpToBottom,
   onSelectCustomAgent,
-  onRemoveAttachment,
   onDraftChange,
   onDraftFocus,
   onDraftKeyDown,
@@ -258,9 +242,6 @@ export function SessionComposerExpanded({
       })
     : null;
   const displayedComposerSendability = projectedComposerSendability ?? composerSendability;
-  const displayedAttachmentItems = composerController
-    ? buildComposerAttachmentItems(composerControllerState.preview.attachments, { trimRemoveTargets: true })
-    : attachmentItems;
   const displayedIsSendDisabled = composerController
     ? isComposerDisabled || projectedComposerSendability!.isSendDisabled || composerSaveFailed
     : isSendDisabled;
@@ -269,6 +250,7 @@ export function SessionComposerExpanded({
     : projectedComposerSendability
       ? getComposerSendButtonTitle(projectedComposerSendability)
       : sendButtonTitle;
+  const showBusySendState = !isRunning && displayedComposerSendability.isBusy === true;
   const composerDescriptionIds = [
     externalErrorDescriptionIds,
     composerSaveFailed ? "composer-save-feedback" : undefined,
@@ -553,36 +535,6 @@ export function SessionComposerExpanded({
         </div>
       ) : null}
 
-      {displayedAttachmentItems.length > 0 ? (
-        <div className="composer-attachment-list">
-          {displayedAttachmentItems.map((item) => (
-            <div
-              key={item.key}
-              className={`composer-attachment-chip ${item.kind}`}
-              title={item.title}
-            >
-              <span className="composer-attachment-kind">{item.kindLabel}</span>
-              <span className="composer-attachment-copy">
-                <span className="composer-attachment-primary">{item.primaryLabel}</span>
-                <span className="composer-attachment-meta">
-                  <span className="composer-attachment-location">{item.locationLabel}</span>
-                  <span className="composer-attachment-secondary">{item.secondaryLabel}</span>
-                </span>
-              </span>
-              <button
-                type="button"
-                onClick={() => onRemoveAttachment(item.removeTargets)}
-                disabled={isRunning || composerBlocked || composerFrozen}
-                aria-label={`Remove ${item.primaryLabel} attachment`}
-                title={`Remove ${item.primaryLabel} attachment`}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
       <div className="composer-input-row">
         <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
           <textarea
@@ -757,12 +709,15 @@ export function SessionComposerExpanded({
         </div>
 
         <button
-          className="session-send-button"
+          className={`session-send-button${showBusySendState ? " loading" : ""}`}
           type="button"
           onClick={onSendOrCancel}
           disabled={isRunning || displayedIsSendDisabled || composerFrozen}
+          aria-busy={showBusySendState || undefined}
           title={
-            isRunning
+            showBusySendState
+              ? undefined
+              : isRunning
               ? "Cannot send while a run is active"
               : appendShortcutLabel(
                   displayedSendButtonTitle,
@@ -772,7 +727,8 @@ export function SessionComposerExpanded({
                 )
           }
         >
-          Send
+          {showBusySendState ? <span className="concurrent-chat-loading-spinner" aria-hidden="true" /> : null}
+          <span>Send</span>
         </button>
       </div>
     </div>

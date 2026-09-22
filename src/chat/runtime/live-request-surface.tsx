@@ -175,6 +175,15 @@ type LiveElicitationCardProps = {
   onOpenPath?: (target: string) => void;
 };
 
+function LiveRequestBusyIndicator({ label }: { label: string }) {
+  return (
+    <span className="settings-loading-inline" role="status" aria-label={label}>
+      <span className="settings-action-spinner" aria-hidden="true" />
+      <span className="visually-hidden">{label}</span>
+    </span>
+  );
+}
+
 function LiveElicitationCard({
   request,
   elicitationActionRequestId,
@@ -217,7 +226,12 @@ function LiveElicitationCard({
   };
 
   return (
-    <section className="live-elicitation-card" role="group" aria-label="Input required">
+    <section
+      className="live-elicitation-card"
+      role="group"
+      aria-label="Input required"
+      aria-busy={isSubmitting || undefined}
+    >
       <div className="live-approval-head">
         <div className="live-approval-copy">
           <span className="live-approval-badge">InputRequired</span>
@@ -339,6 +353,7 @@ function LiveElicitationCard({
       ) : null}
       {validationMessage ? <p className="live-approval-warning" role="alert">{validationMessage}</p> : null}
       <div className="live-approval-actions">
+        {isSubmitting ? <LiveRequestBusyIndicator label="Processing input request" /> : null}
         <button type="button" onClick={() => handleSubmit("accept")} disabled={isSubmitting}>
           {request.mode === "url" ? "Complete" : "Submit"}
         </button>
@@ -382,10 +397,19 @@ export function LiveRequestSurface({
   onResolveLiveElicitation,
   onOpenPath,
 }: LiveRequestSurfaceProps) {
+  const isApprovalSubmitting = liveApprovalRequest
+    ? approvalActionRequestId === liveApprovalRequest.requestId
+    : false;
+
   return (
     <>
       {liveApprovalRequest ? (
-        <section className="live-approval-card" role="group" aria-label="Approval required">
+        <section
+          className="live-approval-card"
+          role="group"
+          aria-label="Approval required"
+          aria-busy={isApprovalSubmitting || undefined}
+        >
           <div className="live-approval-head">
             <div className="live-approval-copy">
               <span className="live-approval-badge">ApprovalRequired</span>
@@ -404,10 +428,11 @@ export function LiveRequestSurface({
             </details>
           ) : null}
           <div className="live-approval-actions">
+            {isApprovalSubmitting ? <LiveRequestBusyIndicator label="Processing approval request" /> : null}
             <button
               type="button"
               onClick={() => onResolveLiveApproval(liveApprovalRequest, "approve")}
-              disabled={approvalActionRequestId === liveApprovalRequest.requestId}
+              disabled={isApprovalSubmitting}
             >
               AllowOnce
             </button>
@@ -415,7 +440,7 @@ export function LiveRequestSurface({
               className="drawer-toggle secondary"
               type="button"
               onClick={() => onResolveLiveApproval(liveApprovalRequest, "deny")}
-              disabled={approvalActionRequestId === liveApprovalRequest.requestId}
+              disabled={isApprovalSubmitting}
             >
               Reject
             </button>

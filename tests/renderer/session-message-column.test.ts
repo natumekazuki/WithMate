@@ -59,16 +59,6 @@ function createComposerTestProps(
       title: "Agent",
       isSelected: true,
     }],
-    attachmentItems: [{
-      key: "file-1",
-      kind: "file",
-      kindLabel: "File",
-      locationLabel: "workspace",
-      primaryLabel: "README.md",
-      secondaryLabel: "",
-      title: "README.md",
-      removeTargets: ["README.md"],
-    }],
     draft: "",
     composerTextareaRef: createRef<HTMLTextAreaElement>(),
     isComposerDisabled: false,
@@ -108,7 +98,6 @@ function createComposerTestProps(
     onToggleAdditionalDirectoryList() {},
     onJumpToBottom() {},
     onSelectCustomAgent() {},
-    onRemoveAttachment() {},
     onDraftChange() {},
     onDraftFocus() {},
     onDraftKeyDown() {},
@@ -139,19 +128,6 @@ function createCharacterProfile(): CharacterProfile {
     themeColors: {
       main: "#6f8cff",
       sub: "#6fb8c7",
-    },
-    sessionCopy: {
-      pendingApproval: ["承認を待機中"],
-      pendingWorking: ["処理を実行中"],
-      pendingResponding: ["応答を生成中"],
-      pendingPreparing: ["応答を準備中"],
-      retryInterruptedTitle: ["前回の依頼は中断されたままです"],
-      retryFailedTitle: ["前回の依頼は完了できませんでした"],
-      retryCanceledTitle: ["この依頼は途中で停止しました"],
-      latestCommandWaiting: ["最初の command を待機中"],
-      latestCommandEmpty: ["直近 run の command 記録はありません"],
-      changedFilesEmpty: ["ファイル変更はありません"],
-      contextEmpty: ["context usage はまだありません"],
     },
   };
 }
@@ -319,9 +295,6 @@ function renderSessionMessageColumn(options: {
       onResolveLiveApproval() {},
       onResolveLiveElicitation() {},
       onOpenPath: undefined,
-      getChangedFilesEmptyText() {
-        return "変更ファイルはありません";
-      },
       onCopyMessageText: options.withResponseActions ? () => {} : undefined,
       onQuoteMessageText: options.withResponseActions ? () => {} : undefined,
       onToggleMessageBookmark: options.onToggleMessageBookmark,
@@ -359,7 +332,6 @@ type MountedSessionMessageColumn = {
   messageListRef: React.RefObject<HTMLDivElement | null>;
   root: Root;
   rerender: (callbacks: {
-    getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
     isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
@@ -386,7 +358,6 @@ async function mountSessionMessageColumn(options: {
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
   expandedArtifacts?: Record<string, boolean>;
-  getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
   isContentActive?: boolean;
   component?: ComponentType<SessionMessageColumnProps>;
   isRunning?: boolean;
@@ -545,9 +516,7 @@ async function mountSessionMessageColumn(options: {
   const MessageColumn = options.component ?? SessionMessageColumn;
   const character = createCharacterProfile();
   const expandedArtifacts = options.expandedArtifacts ?? {};
-  const defaultGetChangedFilesEmptyText = () => "変更ファイルはありません";
   const renderMessageColumn = async (callbacks: {
-    getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
     isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
@@ -600,7 +569,6 @@ async function mountSessionMessageColumn(options: {
           onResolveLiveApproval() {},
           onResolveLiveElicitation() {},
           onOpenPath: undefined,
-          getChangedFilesEmptyText: callbacks.getChangedFilesEmptyText ?? defaultGetChangedFilesEmptyText,
           onCopyMessageText: callbacks.onCopyMessageText,
           onQuoteMessageText: callbacks.onQuoteMessageText,
           messageViewMode: callbacks.messageViewMode ?? options.messageViewMode,
@@ -2368,7 +2336,6 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       showJumpToBottom: true,
       isCustomAgentListLoading: false,
       customAgentItems: [],
-      attachmentItems: [],
       draft: "",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
       isComposerDisabled: false,
@@ -2403,7 +2370,6 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       onToggleAdditionalDirectoryList() {},
       onJumpToBottom() {},
       onSelectCustomAgent() {},
-      onRemoveAttachment() {},
       onDraftChange() {},
       onDraftFocus() {},
       onDraftKeyDown() {},
@@ -2535,7 +2501,6 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       showJumpToBottom: true,
       isCustomAgentListLoading: false,
       customAgentItems: [],
-      attachmentItems: [],
       draft: "実行中の下書き",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
       isComposerDisabled: false,
@@ -2570,7 +2535,6 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       onToggleAdditionalDirectoryList() {},
       onJumpToBottom() {},
       onSelectCustomAgent() {},
-      onRemoveAttachment() {},
       onDraftChange() {},
       onDraftFocus() {},
       onDraftKeyDown() {},
@@ -2646,6 +2610,55 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
 
 // @test-value v2
 // kind = "contract"
+// claim = "SessionComposerExpandedのbusy送信buttonはbusy reasonを可視文言へ昇格せず、spinnerとaria-busyを主表示にして送信を抑止する"
+// oracle = { type = "contract", ref = "src/chat/composer/session-composer.tsx" }
+// fault = "busy中のSendが通常titleやhelper feedbackを表示する、spinnerまたはaria-busyが欠ける、または送信を許可する"
+// observable = "Send buttonのdisabled・aria-busy・title・spinner、textareaのaria-busy、status announcement、feedback DOM"
+// observation_boundary = "component-behavior"
+// scope = "expanded composer busy send action"
+// lifecycle = "permanent"
+// impact = "送信直後の待機状態を簡潔な視覚表示とaccessible statusで示し、同じbusy説明の重複表示を防ぐ"
+// distinction = "sendability state testはbusy/error併存判定を確認し、このtestはSessionComposerExpandedへの表示投影を確認する"
+// @end-test-value
+test("SessionComposerExpanded は busy 中の Send を spinner と status にする", () => {
+  const busyReason = "Message submission is in progress.";
+  const html = renderToStaticMarkup(
+    React.createElement(SessionComposerExpanded, createComposerTestProps({
+      draft: "hello",
+      isSendDisabled: true,
+      composerSendability: {
+        isBusy: true,
+        busyReason,
+        primaryFeedback: "",
+        secondaryFeedback: [],
+        feedbackTone: null,
+        shouldShowFeedback: false,
+      },
+      sendButtonTitle: busyReason,
+    })),
+  );
+
+  const renderedDocument = new JSDOM(html).window.document;
+  const sendButton = renderedDocument.querySelector<HTMLButtonElement>(
+    ".composer-control-row > button.session-send-button",
+  );
+  const textarea = renderedDocument.querySelector<HTMLTextAreaElement>(".composer-input-row textarea");
+  const status = renderedDocument.querySelector('[role="status"]');
+  assert.ok(sendButton);
+  assert.ok(textarea);
+  assert.ok(status);
+  assert.equal(sendButton.disabled, true);
+  assert.equal(sendButton.getAttribute("aria-busy"), "true");
+  assert.equal(sendButton.getAttribute("title"), null);
+  assert.ok(sendButton.querySelector(".concurrent-chat-loading-spinner"));
+  assert.equal(sendButton.textContent, "Send");
+  assert.equal(textarea.getAttribute("aria-busy"), "true");
+  assert.equal(status.textContent, busyReason);
+  assert.equal(renderedDocument.querySelector(".composer-sendability-feedback"), null);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "PendingRunIndicatorはconsumerが実行中microcopyを非表示にしてもdot motion・accessible statusを保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 状態の形・動き・テキスト" }
 // fault = "実行中microcopyの整理でdot motionまたはstatus通知が消える、あるいは保存済みcustom microcopyがvisual DOMへ再表示される"
@@ -2692,7 +2705,6 @@ test("PendingRunIndicator は実行中microcopyを省略しても状態表示と
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
-      attachmentCount: 0,
       isRunning: false,
       showJumpToBottom: true,
       showMessageViewModeControls: true,
@@ -2728,7 +2740,6 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 test("SessionActionDockCompactRow は実行中の compact 表示から展開でき、jump button と Cancel を描画する", () => {
   const expansionProbe = { calls: 0 },
     compactProps = {
-      attachmentCount: 2,
       isRunning: true,
       pendingRunIndicatorAnnouncement: "処理を実行中",
       pendingRunIndicatorText: "処理を実行中",
@@ -2838,7 +2849,6 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
     setRunning = updateRunning;
     setTargetLabel = updateTargetLabel;
     return React.createElement(SessionActionDockCompactRow, {
-      attachmentCount: 0,
       isRunning,
       targetDock: React.createElement("span", { className: "test-target-dock" }, targetLabel),
       showJumpToBottom: true,
@@ -2905,14 +2915,14 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
 
 // @test-value v2
 // kind = "contract"
-// claim = "Composerがfreezeされたとき、入力を変更するtrigger・候補・添付削除をdisabledにし、空欄shortcutの強制feedbackを表示する"
+// claim = "Composerがfreezeされたとき、入力を変更するtrigger・候補をdisabledにし、空欄shortcutの強制feedbackを表示する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: close/app quit flush; docs/design/desktop-ui.md: composer feedback" }
-// fault = "終了flush中にpicker・template・directory・添付操作が実行可能なまま残る、添付削除が実行できる、または空欄shortcutのMessage is empty表示が失われる"
+// fault = "終了flush中にpicker・template・directory操作が実行可能なまま残る、または空欄shortcutのMessage is empty表示が失われる"
 // observable = "freeze済みComposerの各操作buttonのdisabled属性と、forceComposerBlockedFeedback=trueで描画されたcomposer-sendability-feedbackの本文・textarea aria-describedby"
 // observation_boundary = "component-behavior"
 // scope = "frozen composer mutation controls and forced sendability feedback"
 // lifecycle = "permanent"
-// impact = "flush中に捨てられる入力・添付操作を利用者へ実行可能と見せず、keyboard送信を抑止した理由を表示する"
+// impact = "flush中に捨てられる入力操作を利用者へ実行可能と見せず、keyboard送信を抑止した理由を表示する"
 // distinction = "これは実Appのflush開始・非同期picker適用ではなく、共通ComposerのUI契約を確認する。controller通知・main handlerの統合挙動はintegration testで確認する"
 // @end-test-value
 test("SessionComposerExpanded はfreeze中の変更操作を無効化し、強制blocked feedbackを表示する", () => {
@@ -2941,7 +2951,7 @@ test("SessionComposerExpanded はfreeze中の変更操作を無効化し、強�
   const renderedDocument = new JSDOM(html).window.document;
   for (const selector of [
     ".composer-attachments-toolbar button", ".composer-agent-toolbar button",
-    ".composer-path-match-list button", ".composer-attachment-list button",
+    ".composer-path-match-list button",
   ]) {
     const controls = Array.from(renderedDocument.querySelectorAll<HTMLButtonElement>(selector));
     assert.ok(controls.length > 0, selector);
@@ -2951,75 +2961,6 @@ test("SessionComposerExpanded はfreeze中の変更操作を無効化し、強�
   const textarea = renderedDocument.querySelector("textarea");
   assert.equal(feedback?.textContent, "Message is empty.");
   assert.match(textarea?.getAttribute("aria-describedby") ?? "", /composer-sendability-feedback/);
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "compact ActionDockの添付badgeはcontrollerのpreview通知だけでも最新の添付件数へ更新される"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "rootの別state更新を伴わないcontroller.setPreviewでcompact rowの添付badgeが古い件数のまま残る"
-// observable = "controller-only setPreview後のcompact row attachment badgeの表示件数"
-// observation_boundary = "component-behavior"
-// scope = "compact attachment preview projection"
-// lifecycle = "permanent"
-// impact = "折りたたみ中にも現在の添付状態を正しく示し、展開前の判断材料を欠落させない"
-// distinction = "これはAppのpreview requestや送信統合ではなく、compact rowがcontroller外部通知を購読する境界だけを確認する"
-// @end-test-value
-test("SessionActionDockCompactRow はcontroller-only preview通知で添付件数を更新する", async () => {
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  const previousHTMLElement = globalThis.HTMLElement;
-  const previousNode = globalThis.Node;
-  const previousNavigator = globalThis.navigator;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    pretendToBeVisual: true,
-  });
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
-  const registry = new ComposerControllerRegistry();
-  const owner = { kind: "auxiliary" as const, id: "aux-1" };
-  let root: Root | null = null;
-  try {
-    await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(SessionActionDockCompactRow, {
-        attachmentCount: 0,
-        composerController: { owner, registry },
-        isRunning: false,
-        showJumpToBottom: false,
-        onExpand() {},
-        onJumpToBottom() {},
-        onCancel() {},
-      }));
-    });
-    assert.equal(dom.window.document.querySelector(".session-action-dock-compact-badge"), null);
-    await act(async () => {
-      registry.setPreview(owner, {
-        attachments: [{
-          id: "attachment-1",
-          kind: "file",
-          source: "text",
-          absolutePath: "C:/workspace/README.md",
-          displayPath: "README.md",
-          workspaceRelativePath: "README.md",
-          isOutsideWorkspace: false,
-        }],
-        errors: [],
-      });
-    });
-    assert.equal(dom.window.document.querySelector(".session-action-dock-compact-badge")?.textContent, "Attachments1");
-  } finally {
-    await act(async () => root?.unmount());
-    dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-  }
 });
 
 // @test-value v2
@@ -3061,7 +3002,6 @@ test("SessionContextPane は latest command がないとき empty shell を維�
         systemTokensLabel: "",
         conversationTokensLabel: "",
       },
-      contextEmptyText: "context usage はまだありません",
       onCycleContextPaneTab() {},
     }),
   );

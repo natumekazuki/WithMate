@@ -1101,7 +1101,7 @@ export function FileRootGitHistoryPane({
               ) : null}
               {selectedRepository.branches.map((branch) => (
                 <option key={branch} value={branch}>
-                  {branch}{branch === selectedRepository.currentBranch ? " (current)" : ""}
+                  {branch}{branch === selectedRepository.currentBranch ? " (Current)" : ""}
                 </option>
               ))}
             </select>

@@ -580,7 +580,7 @@ test("History repository一覧の再読込開始時に旧Diffを即座に失効�
 // claim = "Historyは対象rootのcurrent branchを初期選択し、明示したbranchの選択を同一rootのrefreshで保持し、root変更で新repositoryのcurrent branchへ戻す"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
 // fault = "全branchの履歴を表示する、normal refreshや再描画で選択branchをcurrent branchへ戻す、root変更でbranches先頭を誤選択する、または削除された選択branchを別branchとして成功表示する"
-// observable = "History branch selectのvalue、commit list、listFileRootGitHistoryCommits request"
+// observable = "History branch selectのvalue・current branch label、commit list、listFileRootGitHistoryCommits request"
 // observation_boundary = "consumer"
 // scope = "FileRootGitHistoryPane branch selection"
 // lifecycle = "permanent"
@@ -662,6 +662,7 @@ test("History branch選択は同一rootのrefreshで保持しroot変更でcurren
     const branchSelect = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='History branch']");
     assert.ok(branchSelect);
     assert.equal(branchSelect.value, "main");
+    assert.ok([...branchSelect.options].some((option) => option.textContent === "main (Current)"));
     assert.deepEqual(pageRequests, [{ sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, branch: "main", cursor: null }]);
 
     await act(async () => {

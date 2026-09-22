@@ -316,10 +316,6 @@
   .diff-split-view {
     grid-template-columns: 1fr;
   }
-
-  .composer-attachment-list {
-    max-height: min(20vh, 144px);
-  }
 }
 
 .session-chat-layout.is-central-collapsed {

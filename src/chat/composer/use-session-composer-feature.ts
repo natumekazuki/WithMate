@@ -48,7 +48,6 @@ import {
   type LiveSessionComposerDockPropsInput,
 } from "../chat-window-adapter.js";
 import {
-  buildComposerAttachmentItems,
   buildAdditionalDirectoryItems,
   type ComposerPathPickerKind,
   type ComposerReferenceInput,
@@ -145,7 +144,6 @@ export type SessionComposerFeatureBridge = {
       pickSessionFiles?: SessionComposerOperation;
       pickSessionFolder?: SessionComposerOperation;
       pickSessionImage?: SessionComposerOperation;
-      removeAttachment: (targets: string[]) => void;
     };
     layout: {
       beforeOpenSkillPicker?: () => boolean;
@@ -499,7 +497,6 @@ export function useSessionComposerFeature(input: {
           }
         : undefined,
     });
-    const attachmentItems = buildComposerAttachmentItems(composerPreview.attachments, { trimRemoveTargets: true });
     const isComposerBlockedFeedbackActive = bridge.runtime.forceBlockedFeedback
       && composerSendability.feedbackTone === "blocked";
     const sendButtonTitle = getComposerSendButtonTitle(composerSendability);
@@ -520,7 +517,6 @@ export function useSessionComposerFeature(input: {
       isMessageListFollowing: bridge.runtime.isMessageListFollowing,
       isCustomAgentListLoading: bridge.resources.isCustomAgentListLoading,
       customAgentItems,
-      attachmentItems,
       draft,
       composerController: {
         owner: input.composerOwner,
@@ -551,7 +547,6 @@ export function useSessionComposerFeature(input: {
       reasoningOptions: runtimeOptions.reasoningSelectOptions,
       selectedReasoningEffort: bridge.session.reasoningEffort,
       chatNotice: bridge.runtime.chatNotice,
-      attachmentCount: composerPreview.attachments.length,
       onPickFile: () => void bridge.operations.files.pick("file"),
       onPickFolder: () => void bridge.operations.files.pick("folder"),
       onPickImage: () => void bridge.operations.files.pick("image"),
@@ -577,7 +572,6 @@ export function useSessionComposerFeature(input: {
       onExpandActionDock: bridge.operations.layout.expandActionDock,
       onJumpToBottom: bridge.operations.layout.jumpToBottom,
       onSelectCustomAgent,
-      onRemoveAttachment: bridge.operations.files.removeAttachment,
       onDraftChange,
       onDraftFocus: bridge.operations.draft.focus,
       onDraftKeyDown: undefined as KeyboardEventHandler<HTMLTextAreaElement> | undefined,

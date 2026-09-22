@@ -27,6 +27,18 @@ const MEMORY_KIND_OPTIONS: MemoryEntryKind[] = [
   "note",
 ];
 
+const MEMORY_KIND_LABELS: Record<MemoryEntryKind, string> = {
+  decision: "Decision",
+  constraint: "Constraint",
+  convention: "Convention",
+  context: "Context",
+  deferred: "Deferred",
+  preference: "Preference",
+  relationship: "Relationship",
+  boundary: "Boundary",
+  note: "Note",
+};
+
 const FORGET_REASON_OPTIONS: MemoryForgetReason[] = [
   "user_request",
   "incorrect",
@@ -35,14 +47,19 @@ const FORGET_REASON_OPTIONS: MemoryForgetReason[] = [
   "other",
 ];
 
+const FORGET_REASON_LABELS: Record<MemoryForgetReason, string> = {
+  user_request: "UserRequest",
+  incorrect: "Incorrect",
+  outdated: "Outdated",
+  privacy: "Privacy",
+  other: "Other",
+};
+
 function ownerLabel(entry: Pick<MemoryV6ReviewSearchHit, "owner" | "scope">): string {
   return `${entry.owner.type}:${entry.owner.id} / ${entry.scope.type}:${entry.scope.id}`;
 }
 
 function formatTags(entry: Pick<MemoryV6ReviewSearchHit, "tags">): string {
-  if (entry.tags.length === 0) {
-    return "no tags";
-  }
   return entry.tags.map((tag) => `${tag.type}:${tag.value}`).join(" / ");
 }
 
@@ -323,7 +340,6 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
           <header className="memory-review-header">
             <div>
               <h1>MemoryReview</h1>
-              <p>Review active Memory entries and remove entries from search when they are no longer needed.</p>
             </div>
             <button
               className="launch-toggle"
@@ -356,7 +372,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               <span>Kind</span>
               <select value={selectedKind} onChange={(event) => setSelectedKind(event.target.value as MemoryEntryKind | "")}>
                 <option value="">AllKinds</option>
-                {MEMORY_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+                {MEMORY_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{MEMORY_KIND_LABELS[kind]}</option>)}
               </select>
             </label>
           </div>
@@ -458,12 +474,13 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   key={item.id}
                   className={`memory-review-item ${selectedEntryId === item.id ? "active" : ""}`.trim()}
                   type="button"
+                  aria-pressed={selectedEntryId === item.id}
                   onClick={() => void selectEntry(item.id)}
                 >
                   <span className="memory-review-item-title">{item.title || "(untitled)"}</span>
                   <span className="memory-review-item-preview">{item.preview}</span>
                   <span className="memory-review-item-meta">{item.kind} / {ownerLabel(item)}</span>
-                  <span className="memory-review-item-meta">{formatTags(item)}</span>
+                  {item.tags.length > 0 ? <span className="memory-review-item-meta">{formatTags(item)}</span> : null}
                 </button>
               ))}
               {nextCursor ? (
@@ -501,10 +518,12 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                       <dt>Source</dt>
                       <dd>{selectedEntry.source.sessionId ?? "none"} / {selectedEntry.source.providerId ?? "none"}</dd>
                     </div>
-                    <div>
-                      <dt>Tags</dt>
-                      <dd>{formatTags(selectedEntry)}</dd>
-                    </div>
+                    {selectedEntry.tags.length > 0 ? (
+                      <div>
+                        <dt>Tags</dt>
+                        <dd>{formatTags(selectedEntry)}</dd>
+                      </div>
+                    ) : null}
                   </dl>
                   {selectedEntry.files && selectedEntry.files.length > 0 ? (
                     <section className="memory-review-files" aria-label="Protected files">
@@ -546,7 +565,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                     <label className="settings-provider-input">
                       <span>ForgetReason</span>
                       <select value={forgetReason} onChange={(event) => setForgetReason(event.target.value as MemoryForgetReason)}>
-                        {FORGET_REASON_OPTIONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+                        {FORGET_REASON_OPTIONS.map((reason) => <option key={reason} value={reason}>{FORGET_REASON_LABELS[reason]}</option>)}
                       </select>
                     </label>
                     <button

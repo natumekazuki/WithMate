@@ -116,7 +116,6 @@ function createTurnOperationHarness() {
     selectedSessionRunState: selectedSession.runState,
     blockedReason: null,
     isReadOnly: false,
-    userMicrocopyCatalog: {},
     currentTimestamp: "2026-08-13T01:00:01.000Z",
     validateWorkspace: async () => true,
     state: {

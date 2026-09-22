@@ -102,6 +102,7 @@ export default function FilePreviewApp() {
   ));
   const [payloadLoadMessage, setPayloadLoadMessage] = useState("");
   const [diffScopes, setDiffScopes] = useState<FileRootGitDiffScope[]>([]);
+  const [diffAvailabilityMessage, setDiffAvailabilityMessage] = useState("");
   const [diffState, setDiffState] = useState<DiffState | null>(null);
   const [diffLoadingScope, setDiffLoadingScope] = useState<FileRootGitDiffScope | null>(null);
   const [navigationMessage, setNavigationMessage] = useState("");
@@ -157,6 +158,7 @@ export default function FilePreviewApp() {
 
   useEffect(() => {
     let active = true;
+    setDiffAvailabilityMessage("");
     if (!api || !payload || "historyDiff" in payload || !isSessionFileRootResource(payload.resource)) {
       setDiffScopes([]);
       return () => {
@@ -169,11 +171,14 @@ export default function FilePreviewApp() {
       rootId: resource.rootId,
     }).then((result) => {
       if (active) {
-        setDiffScopes(projectFileRootDiffAvailability(result, resource.relativePath).scopes);
+        const availability = projectFileRootDiffAvailability(result, resource.relativePath);
+        setDiffScopes(availability.scopes);
+        setDiffAvailabilityMessage(availability.message);
       }
-    }).catch(() => {
+    }).catch((error) => {
       if (active) {
         setDiffScopes([]);
+        setDiffAvailabilityMessage(error instanceof Error && error.message ? error.message : "Git diff availability could not be loaded.");
       }
     });
     return () => {
@@ -325,7 +330,7 @@ export default function FilePreviewApp() {
           request={payload.resource}
           onCopyText={(text) => void navigator.clipboard.writeText(text)}
           diffScopes={diffScopes}
-          diffAvailabilityMessage={navigationMessage}
+          diffAvailabilityMessage={[diffAvailabilityMessage, navigationMessage].filter(Boolean).join(" ")}
           onOpenDiff={loadDiff}
           diffLoadingScope={diffLoadingScope}
         />

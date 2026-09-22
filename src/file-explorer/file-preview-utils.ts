@@ -58,6 +58,9 @@ export function projectFileRootDiffAvailability(
   result: FileRootChangesResult,
   relativePath: string,
 ): { scopes: FileRootGitDiffScope[]; message: string } {
+  if (result.status === "failed") {
+    return { scopes: [], message: result.message || "Git status failed." };
+  }
   if (result.status !== "ok") {
     return { scopes: [], message: "" };
   }

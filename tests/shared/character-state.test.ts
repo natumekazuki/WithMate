@@ -19,32 +19,29 @@ function createCharacter(partial?: Partial<CharacterProfile>): CharacterProfile 
       main: "#111111",
       sub: "#222222",
     },
-    sessionCopy: {
-      pendingApproval: ["a"],
-      pendingWorking: ["b"],
-      pendingResponding: ["c"],
-      pendingPreparing: ["d"],
-      retryInterruptedTitle: ["e"],
-      retryFailedTitle: ["f"],
-      retryCanceledTitle: ["g"],
-      latestCommandWaiting: ["h"],
-      latestCommandEmpty: ["i"],
-      changedFilesEmpty: ["j"],
-      contextEmpty: ["k"],
-    },
     ...partial,
   };
 }
 
 describe("character-state", () => {
-  it("cloneCharacterProfiles は sessionCopy を保持して deep clone する", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "cloneCharacterProfilesはcharacter profileの値を保持し、themeColorsをdeep cloneする"
+  // oracle = { type = "contract", ref = "src-shared/character/character-state.ts#cloneCharacterProfiles" }
+  // fault = "character profileの複製が元profileを共有するか、表示テーマの変更が元値へ伝播する"
+  // observable = "cloneCharacterProfilesの値同一性とthemeColors参照分離"
+  // observation_boundary = "public-boundary"
+  // scope = "character-profile-clone"
+  // lifecycle = "permanent"
+  // impact = "character表示値またはテーマが別sessionの操作で汚染される"
+  // distinction = "microcopy廃止後も有効なcharacter profile/themeのclone契約を確認する"
+  // @end-test-value
+  it("cloneCharacterProfiles は profile を保持して themeColors を deep clone する", () => {
     const source = [createCharacter()];
     const cloned = cloneCharacterProfiles(source);
 
     assert.deepEqual(cloned, source);
     assert.notEqual(cloned[0], source[0]);
     assert.notEqual(cloned[0]?.themeColors, source[0]?.themeColors);
-    assert.notEqual(cloned[0]?.sessionCopy, source[0]?.sessionCopy);
-    assert.notEqual(cloned[0]?.sessionCopy.pendingApproval, source[0]?.sessionCopy.pendingApproval);
   });
 });

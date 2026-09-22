@@ -618,7 +618,7 @@ export function ChatWindow({
           className="concurrent-chat-session-switcher"
           options={concurrentChats.auxiliaryItems}
           selectedId={concurrentChats.selectedAuxiliaryId ?? ""}
-          emptyLabel="Auxiliary"
+          emptyLabel=""
           currentAction={concurrentChats.onAddAuxiliary ? (
             <button
               type="button"

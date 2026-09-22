@@ -53,8 +53,6 @@ export type SessionContextPaneProps = {
   selectedCopilotQuotaResetLabel: string;
   selectedSessionContextTelemetry: SessionContextTelemetry | null;
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
-  contextEmptyText: string;
-  latestCommandEmptyText?: string;
   messageNavigatorEntries?: readonly MessageNavigatorEntry[];
   messageNavigatorSessionId?: string;
   messageNavigatorCharacter?: CharacterProfile;
@@ -174,7 +172,6 @@ export function SessionContextPane({
   selectedCopilotQuotaResetLabel,
   selectedSessionContextTelemetry,
   selectedSessionContextTelemetryProjection,
-  contextEmptyText,
   messageNavigatorEntries = [],
   messageNavigatorSessionId,
   messageNavigatorCharacter,

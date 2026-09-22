@@ -69,6 +69,119 @@ function createModelCatalog(): ModelCatalogSnapshot {
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Character Editorのauthoring provider pickerは取得中と取得失敗を有効providerゼロと区別し、editor本体の初期読み込みをbusyとして公開する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
+// fault = "provider catalogのloading/errorを空一覧へfallbackする、loading中のeditorをbusyとして公開しない、または実エラーを失う"
+// observable = "editor main aria-busy、provider picker spinner/aria-busy、error feedback、No enabled coding providers.の不在"
+// observation_boundary = "component-behavior"
+// scope = "CharacterEditorApp authoring provider loading and error states"
+// lifecycle = "permanent"
+// impact = "provider取得中の誤操作と失敗時の誤った正常空状態表示を防ぐ"
+// distinction = "settled empty provider stateと非settled loading/error stateを同じ描画結果にしない"
+// @end-test-value
+test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区別する", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "https://withmate.local/character-editor.html?characterId=char-1",
+  });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousNavigator = globalThis.navigator;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousTextEncoder = globalThis.TextEncoder;
+  const previousTextDecoder = globalThis.TextDecoder;
+  const previousWithMate = (globalThis.window as typeof window | undefined)?.withmate;
+  const characterDeferred = createDeferred<CharacterDetail>();
+  const catalogDeferred = createDeferred<ModelCatalogSnapshot>();
+
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+  Object.defineProperty(globalThis, "TextEncoder", { value: TextEncoder, configurable: true });
+  Object.defineProperty(globalThis, "TextDecoder", { value: TextDecoder, configurable: true });
+
+  const rootElement = dom.window.document.getElementById("root");
+  assert.ok(rootElement);
+  let root: Root | null = null;
+
+  dom.window.withmate = {
+    async getModelCatalog() {
+      return catalogDeferred.promise;
+    },
+    async getAppSettings() {
+      return createDefaultAppSettings();
+    },
+    async getCharacter(characterId: string) {
+      assert.equal(characterId, "char-1");
+      return characterDeferred.promise;
+    },
+  } as Partial<WithMateWindowApi> as WithMateWindowApi;
+
+  try {
+    await act(async () => {
+      root = createRoot(rootElement);
+      root.render(<CharacterEditorApp />);
+    });
+    const editorBody = rootElement.querySelector("main.character-editor-window-body");
+    assert.equal(editorBody?.getAttribute("aria-busy"), "true");
+
+    await act(async () => {
+      characterDeferred.resolve(createCharacterDetail());
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const improveButton = findButtonByText(rootElement, "ImproveWithAgent");
+    await act(async () => {
+      improveButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.match(rootElement.textContent ?? "", /Loading coding providers\./);
+    assert.doesNotMatch(rootElement.textContent ?? "", /No enabled coding providers\./);
+    assert.equal(
+      rootElement.querySelector(".chat-skill-picker-state[aria-busy=\"true\"]") !== null,
+      true,
+    );
+
+    await act(async () => {
+      catalogDeferred.reject(new Error("catalog request failed"));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    assert.match(rootElement.textContent ?? "", /catalog request failed/);
+    assert.doesNotMatch(rootElement.textContent ?? "", /No enabled coding providers\./);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+    Object.defineProperty(globalThis, "navigator", { value: previousNavigator, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+    Object.defineProperty(globalThis, "TextEncoder", { value: previousTextEncoder, configurable: true });
+    Object.defineProperty(globalThis, "TextDecoder", { value: previousTextDecoder, configurable: true });
+    if (previousWindow) {
+      previousWindow.withmate = previousWithMate;
+    }
+  }
+});
+
 // @test-value v2
 // kind = "contract"
 // claim = "Character EditorのImprove with Agent操作はauthoring session開始要求をcharacter metadataへ結び付ける"

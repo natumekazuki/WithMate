@@ -31,7 +31,6 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const onResolveLiveApproval = useStableOptionalCallback(props.onResolveLiveApproval);
   const onResolveLiveElicitation = useStableOptionalCallback(props.onResolveLiveElicitation);
   const onOpenPath = useStableOptionalCallback(props.onOpenPath);
-  const getChangedFilesEmptyText = useStableOptionalCallback(props.getChangedFilesEmptyText);
   const onCopyMessageText = useStableOptionalCallback(props.onCopyMessageText);
   const onQuoteMessageText = useStableOptionalCallback(props.onQuoteMessageText);
   const onActivateGlossaryEntry = useStableOptionalCallback(props.onActivateGlossaryEntry);
@@ -50,7 +49,6 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
       onResolveLiveApproval={onResolveLiveApproval!}
       onResolveLiveElicitation={onResolveLiveElicitation!}
       onOpenPath={onOpenPath}
-      getChangedFilesEmptyText={getChangedFilesEmptyText!}
       onCopyMessageText={onCopyMessageText}
       onQuoteMessageText={onQuoteMessageText}
       onActivateGlossaryEntry={onActivateGlossaryEntry}

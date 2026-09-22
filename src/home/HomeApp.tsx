@@ -39,6 +39,7 @@ import {
   type HomeLaunchWorkspaceValidationController,
 } from "./home-launch-workspace-validation.js";
 import { resolveSelectedLaunchProviderDraftId } from "../launch/launch-provider-selection.js";
+import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildHomeMateProfileHandlers } from "./home-mate-profile-handlers.js";
 import {
   buildHomeSessionProjection,
@@ -203,6 +204,10 @@ export default function HomeApp() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [memoryV6Diagnostics, setMemoryV6Diagnostics] = useState<MemoryV6Diagnostics | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
+  const [modelCatalogLoadStatus, setModelCatalogLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
+  const [modelCatalogLoadError, setModelCatalogLoadError] = useState("");
+  const [appSettingsLoadStatus, setAppSettingsLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
+  const [appSettingsLoadError, setAppSettingsLoadError] = useState("");
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
   const [characterListFeedback, setCharacterListFeedback] = useState("");
   const [charactersLoaded, setCharactersLoaded] = useState(false);
@@ -520,22 +525,32 @@ export default function HomeApp() {
       subscribe: true,
       applyModelCatalog: (snapshot) => {
         setModelCatalog(snapshot);
+        setModelCatalogLoadStatus("loaded");
+        setModelCatalogLoadError("");
         setModelCatalogLoadSettled(true);
       },
       onInitialLoadError: (error) => {
+        const message = error instanceof Error ? error.message : "Could not load model catalog.";
         setModelCatalog(null);
+        setModelCatalogLoadStatus("error");
+        setModelCatalogLoadError(message);
         setModelCatalogLoadSettled(true);
-        setSettingsFeedback(error instanceof Error ? error.message : "Could not load model catalog.");
+        setSettingsFeedback(message);
       },
     });
     const unsubscribeAppSettings = startAppSettingsSubscription({
       api: withmateApi,
       loadInitial: true,
       applyAppSettings: (settings) => {
+        setAppSettingsLoadStatus("loaded");
+        setAppSettingsLoadError("");
         applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
       },
       onInitialLoadError: (error) => {
-        setMateCreationFeedback(error instanceof Error ? error.message : "Could not load app state.");
+        const message = error instanceof Error ? error.message : "Could not load app state.";
+        setAppSettingsLoadStatus("error");
+        setAppSettingsLoadError(message);
+        setMateCreationFeedback(message);
       },
     });
 
@@ -745,8 +760,29 @@ export default function HomeApp() {
       characterLoadStatus,
       appSettings,
       modelCatalog,
+      providerLoadStatus: modelCatalogLoadStatus === "error" || appSettingsLoadStatus === "error"
+        ? "error"
+        : modelCatalogLoadStatus === "loading" || appSettingsLoadStatus === "loading"
+          ? "loading"
+          : "loaded",
+      providerLoadError: modelCatalogLoadStatus === "error"
+        ? modelCatalogLoadError
+        : appSettingsLoadStatus === "error"
+          ? appSettingsLoadError
+          : "",
     }),
-    [appSettings, characterEntries, characterLoadStatus, charactersLoaded, launchDraft, modelCatalog],
+    [
+      appSettings,
+      appSettingsLoadError,
+      appSettingsLoadStatus,
+      characterEntries,
+      characterLoadStatus,
+      charactersLoaded,
+      launchDraft,
+      modelCatalog,
+      modelCatalogLoadError,
+      modelCatalogLoadStatus,
+    ],
   );
   const { enabledLaunchProviders, selectedLaunchProvider } = launchProjection;
 
@@ -887,7 +923,6 @@ export default function HomeApp() {
   const baseSettingsContentProps: HomeSettingsContentBaseProps = {
     settingsDraft,
     providerSettingRows,
-    providerCatalogLoaded: modelCatalog !== null,
     modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
     memoryV6Diagnostics,
     settingsDirty,

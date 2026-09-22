@@ -324,7 +324,13 @@ export function SessionAuditLogModal({
   }
 
   return (
-    <div className="diff-modal" role="dialog" aria-modal="true" onClick={onClose}>
+    <div
+      className="diff-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="session-audit-log-title"
+      onClick={onClose}
+    >
       <section
         ref={dialogRef}
         className="audit-log-panel panel"
@@ -332,7 +338,7 @@ export function SessionAuditLogModal({
         onKeyDown={handleDialogKeyDown}
       >
         <div className="diff-titlebar">
-          <h2>AuditLog</h2>
+          <h2 id="session-audit-log-title">AuditLog</h2>
         </div>
 
         <div className="audit-log-toolbar">
@@ -340,6 +346,7 @@ export function SessionAuditLogModal({
             <button
               type="button"
               className={`audit-log-segmented-button${activeSection === "main" ? " is-active" : ""}`}
+              aria-pressed={activeSection === "main"}
               onClick={() => setActiveSection("main")}
             >
               Main
@@ -347,6 +354,7 @@ export function SessionAuditLogModal({
             <button
               type="button"
               className={`audit-log-segmented-button${activeSection === "background" ? " is-active" : ""}`}
+              aria-pressed={activeSection === "background"}
               onClick={() => setActiveSection("background")}
             >
               Background
@@ -360,7 +368,7 @@ export function SessionAuditLogModal({
                 <span className="visually-hidden">Refreshing audit log.</span>
               </span>
             ) : null}
-            {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
+            {errorMessage ? <span className="audit-log-page-error" role="alert">{errorMessage}</span> : null}
           </div>
         </div>
 

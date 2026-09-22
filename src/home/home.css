@@ -157,13 +157,6 @@
   font-size: 1.06rem;
 }
 
-.home-mate-setup-description,
-.home-mate-current-name {
-  margin: 0;
-  color: #c0cadb;
-  line-height: 1.45;
-}
-
 .home-mate-setup-form {
   display: grid;
   gap: 12px;
@@ -173,10 +166,6 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: rgba(11, 16, 24, 0.74);
 }
 
 .home-mate-avatar-preview {
@@ -200,13 +189,6 @@
   font-weight: 700;
 }
 
-.home-mate-avatar-help {
-  margin: 0;
-  color: #c0cadb;
-  font-size: 0.82rem;
-  line-height: 1.4;
-}
-
 .home-mate-avatar-actions {
   display: flex;
   flex-wrap: wrap;
@@ -220,8 +202,25 @@
   gap: 10px;
 }
 
+.home-page .home-mate-setup-actions button[aria-busy="true"],
+.home-page .home-mate-avatar-actions button[aria-busy="true"] {
+  opacity: 1;
+  pointer-events: none;
+}
+
 .home-mate-feedback {
   margin: 0;
+}
+
+.home-mate-spinner {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: home-session-list-load-spin 760ms linear infinite;
+  vertical-align: -0.15em;
 }
 
 .home-page .home-pane-toggle {
@@ -1024,11 +1023,6 @@
   border-color: rgba(203, 213, 225, 0.1);
 }
 
-.home-page .launch-section {
-  background: rgba(10, 14, 20, 0.82);
-  border-color: rgba(203, 213, 225, 0.12);
-}
-
 .home-page .launch-field-label {
   color: #cbd5e1;
   letter-spacing: 0.01em;
@@ -1113,6 +1107,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .workspace-validation-spinner,
+  .home-mate-spinner,
   .home-page .home-session-list-load-spinner,
   .home-page .home-session-pin-icon.pending,
   .home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark,
@@ -1413,14 +1408,10 @@
 }
 
 .launch-section {
-  padding: 14px;
-  border: 1px solid rgba(203, 213, 225, 0.12);
-  border-radius: 18px;
-  background: rgba(10, 14, 20, 0.82);
-}
-
-.launch-section.minimal {
-  padding: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .launch-field {

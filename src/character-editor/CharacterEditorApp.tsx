@@ -22,7 +22,7 @@ import {
 } from "./character-editor-state.js";
 import { useDialogA11y } from "../ui/a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
-import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
+import { ProviderLaunchField, type ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import {
   DEFAULT_PROVIDER_ID,
   type ModelCatalogProvider,
@@ -84,6 +84,8 @@ export default function CharacterEditorApp() {
   const [draft, setDraft] = useState<CharacterEditorDraft>(() => createNewCharacterEditorDraft());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const [authoringProviderLoadStatus, setAuthoringProviderLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
+  const [authoringProviderLoadError, setAuthoringProviderLoadError] = useState("");
   const [authoringProviderId, setAuthoringProviderId] = useState(DEFAULT_PROVIDER_ID);
   const [authoringLaunchOpen, setAuthoringLaunchOpen] = useState(false);
   const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false);
@@ -117,13 +119,15 @@ export default function CharacterEditorApp() {
     () => resolveAuthoringProvider(enabledAuthoringProviders, authoringProviderId),
     [authoringProviderId, enabledAuthoringProviders],
   );
-  const authoringProviderSelectionReady = !desktopRuntime || (!!modelCatalog && !!appSettings);
+  const authoringProviderSelectionReady = !desktopRuntime || authoringProviderLoadStatus === "loaded";
   const authoringProviderBlocked = desktopRuntime && authoringProviderSelectionReady && enabledAuthoringProviders.length === 0;
-  const authoringLaunchFeedback = !authoringProviderSelectionReady
+  const authoringLaunchFeedback = authoringProviderLoadStatus === "error"
     ? ""
-    : authoringProviderBlocked
-      ? "Enable a coding agent provider in Settings."
-      : feedback;
+    : !authoringProviderSelectionReady
+      ? ""
+      : authoringProviderBlocked
+        ? "Enable a coding agent provider in Settings."
+        : feedback;
   const {
     dialogRef: authoringDialogRef,
     handleDialogKeyDown: handleAuthoringDialogKeyDown,
@@ -190,6 +194,11 @@ export default function CharacterEditorApp() {
     let active = true;
     const api = getWithMateApi();
     if (!api) {
+      if (desktopRuntime) {
+        const message = "Open Character Editor in Electron.";
+        setAuthoringProviderLoadStatus("error");
+        setAuthoringProviderLoadError(message);
+      }
       return () => {
         active = false;
       };
@@ -205,9 +214,14 @@ export default function CharacterEditorApp() {
 
       setModelCatalog(catalog);
       setAppSettings(settings);
+      setAuthoringProviderLoadStatus("loaded");
+      setAuthoringProviderLoadError("");
     }).catch((error) => {
       if (active) {
-        setFeedback(formatCharacterEditorError(error, "Could not load authoring provider settings."));
+        const message = formatCharacterEditorError(error, "Could not load authoring provider settings.");
+        setAuthoringProviderLoadStatus("error");
+        setAuthoringProviderLoadError(message);
+        setFeedback(message);
       }
     });
 
@@ -548,9 +562,9 @@ export default function CharacterEditorApp() {
             </div>
           </div>
           <div className="character-editor-header-actions">
-            {archived || saving || authoringStarting || dirty ? (
+            {archived || dirty ? (
               <span className="settings-character-badge">
-                {archived ? "Archived" : saving ? "Saving" : authoringStarting ? "Authoring" : "Unsaved"}
+                {archived ? "Archived" : "Unsaved"}
               </span>
             ) : null}
           </div>
@@ -575,7 +589,10 @@ export default function CharacterEditorApp() {
           ))}
         </nav>
 
-        <main className={`character-editor-window-body ${denseEditorBody ? "character-editor-window-body-dense" : ""}`.trim()}>
+        <main
+          className={`character-editor-window-body ${denseEditorBody ? "character-editor-window-body-dense" : ""}`.trim()}
+          aria-busy={loading || undefined}
+        >
           {loading ? (
             <div
               className="character-editor-loading-state"
@@ -768,6 +785,7 @@ export default function CharacterEditorApp() {
             onClose={() => setAuthoringLaunchOpen(false)}
             dialogRef={authoringDialogRef}
             onKeyDown={handleAuthoringDialogKeyDown}
+            ariaLabel="Character authoring provider"
             dialogClassName="auxiliary-provider-dialog"
             footer={
               <LaunchDialogFooter
@@ -789,6 +807,8 @@ export default function CharacterEditorApp() {
             <ProviderLaunchField
               fieldId="character-authoring-provider-picker"
               providers={enabledAuthoringProviders}
+              loadStatus={authoringProviderLoadStatus}
+              loadError={authoringProviderLoadError}
               selectedProviderId={selectedAuthoringProvider?.id ?? null}
               onSelectProvider={changeAuthoringProvider}
             />

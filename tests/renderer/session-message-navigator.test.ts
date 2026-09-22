@@ -24,19 +24,6 @@ function createCharacterProfile(): CharacterProfile {
       main: "#6f8cff",
       sub: "#6fb8c7",
     },
-    sessionCopy: {
-      pendingApproval: ["承認を待機中"],
-      pendingWorking: ["処理を実行中"],
-      pendingResponding: ["応答を生成中"],
-      pendingPreparing: ["応答を準備中"],
-      retryInterruptedTitle: ["前回の依頼は中断されたままです"],
-      retryFailedTitle: ["前回の依頼は完了できませんでした"],
-      retryCanceledTitle: ["この依頼は途中で停止しました"],
-      latestCommandWaiting: ["最初の command を待機中"],
-      latestCommandEmpty: ["直近 run の command 記録はありません"],
-      changedFilesEmpty: ["ファイル変更はありません"],
-      contextEmpty: ["context usage はまだありません"],
-    },
   };
 }
 
@@ -102,7 +89,6 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
       systemTokensLabel: "",
       conversationTokensLabel: "",
     },
-    contextEmptyText: "",
     messageNavigatorCharacter: createCharacterProfile(),
     messageNavigatorEntries: [
       {

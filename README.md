@@ -61,7 +61,6 @@ Characterのprofile、icon、theme、`character.md`、`character-notes.md`を編
 次のapp共通設定を管理します。
 
 - app起動、turn完了通知、Session Windowの表示動作
-- 保存済みの microcopy catalog は互換性のため保持するが、Settings から編集する UI は提供しない
 - coding agent providerの有効化とprovider file settings
 - Memory API、managed Skill、CLI shim、logのdiagnostics
 - model catalogのimport、export

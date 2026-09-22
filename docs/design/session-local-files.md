@@ -48,7 +48,7 @@ UI の `Dirs {N}` はユーザー追加分だけを数え、session local files 
 
 attachment popover の `Attach` sectionにある `File`、`Folder`、`Image` は「元の path をそのまま参照する」操作とする。
 
-attachment popover の `Session files` sectionにある `Copy` action は次のように扱う。
+attachment popover の `SessionFiles` sectionにある `Copy` action は次のように扱う。
 
 - picker で選んだ file を session local files directory へコピーする
 - 複数 file を選んだ場合は選択順にまとめてコピーする
@@ -56,7 +56,7 @@ attachment popover の `Session files` sectionにある `Copy` action は次の�
 - 複数 file を選んだ場合は複数 reference を挿入する
 - repo 内 file でも `Session` action ではコピーする
 
-attachment popover の `Session files` sectionにある `File` action は session local files directory を初期位置にして picker を開く。
+attachment popover の `SessionFiles` sectionにある `File` action は session local files directory を初期位置にして picker を開く。
 選択された file はコピーせず、その path を composer の caret 位置へ `@path` として挿入する。
 選択結果は session local files directory 配下に限定し、dialog から外部 directory へ移動して選んだ file は参照として採用しない。
 

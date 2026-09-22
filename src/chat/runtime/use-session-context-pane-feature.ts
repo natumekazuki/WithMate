@@ -8,7 +8,6 @@ import type {
 } from "../../../src-shared/session/runtime-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
-import type { MicrocopySlot } from "../../../src-shared/settings/microcopy-state.js";
 
 import type { SessionGlossaryPaneProps } from "../../glossary/SessionGlossaryPane.js";
 import {
@@ -45,12 +44,7 @@ export type SessionContextPaneFeatureInput = {
   selectedProviderQuotaTelemetry: ProviderQuotaTelemetry | null;
   availableReasoningEfforts: readonly string[];
   renderedIsRunning: boolean;
-  visibleRunState: Session["runState"] | null;
   glossaryPaneProps?: SessionGlossaryPaneProps;
-  resolveSessionMicrocopy: (
-    slot: MicrocopySlot,
-    seedParts: Array<string | number | null | undefined>,
-  ) => string;
   onShowContextRail: () => void;
 };
 
@@ -58,7 +52,6 @@ export type SessionContextPaneFeature = {
   rightPaneProps: ReturnType<typeof buildLiveSessionCommonContextPaneProps>;
   showGlossary: () => void;
   hasInProgressLiveRunStep: boolean;
-  liveRunStepStatusSignature: string;
 };
 
 function liveRunStepBucketPriority(status: string): number {
@@ -87,9 +80,7 @@ export function useSessionContextPaneFeature({
   selectedProviderQuotaTelemetry,
   availableReasoningEfforts,
   renderedIsRunning,
-  visibleRunState,
   glossaryPaneProps,
-  resolveSessionMicrocopy,
   onShowContextRail,
 }: SessionContextPaneFeatureInput): SessionContextPaneFeature {
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
@@ -168,35 +159,6 @@ export function useSessionContextPaneFeature({
     () => orderedLiveRunSteps.some((step) => step.status === "in_progress"),
     [orderedLiveRunSteps],
   );
-  const liveRunStepStatusSignature = useMemo(
-    () => orderedLiveRunSteps.map((step) => `${step.id}:${step.status}`).join("|"),
-    [orderedLiveRunSteps],
-  );
-  const selectedContextEmptyText = useMemo(
-    () => resolveSessionMicrocopy("empty.context", [
-      "context-empty",
-      selectedSession?.id,
-      selectedSession?.updatedAt,
-    ]),
-    [resolveSessionMicrocopy, selectedSession?.id, selectedSession?.updatedAt],
-  );
-  const latestCommandEmptyText = useMemo(
-    () => resolveSessionMicrocopy(
-      visibleRunState === "running" ? "empty.latest_command.waiting" : "empty.latest_command",
-      [
-        "latest-command-empty",
-        selectedSession?.id,
-        visibleRunState,
-        latestTerminalAuditLog?.id,
-      ],
-    ),
-    [
-      latestTerminalAuditLog?.id,
-      resolveSessionMicrocopy,
-      selectedSession?.id,
-      visibleRunState,
-    ],
-  );
   const contextPaneProjection = useMemo(
     () => buildContextPaneProjection({
       activeContextPaneTab,
@@ -249,8 +211,6 @@ export function useSessionContextPaneFeature({
     selectedCopilotQuotaResetLabel,
     selectedSessionContextTelemetry,
     selectedSessionContextTelemetryProjection,
-    contextEmptyText: selectedContextEmptyText,
-    latestCommandEmptyText,
     messageNavigatorSessionId: displayedSession?.id ?? undefined,
     messageNavigatorCharacter: character ?? undefined,
     glossaryPaneProps: includeGlossaryContextPane ? glossaryPaneProps : undefined,
@@ -262,6 +222,5 @@ export function useSessionContextPaneFeature({
     rightPaneProps,
     showGlossary,
     hasInProgressLiveRunStep,
-    liveRunStepStatusSignature,
   };
 }

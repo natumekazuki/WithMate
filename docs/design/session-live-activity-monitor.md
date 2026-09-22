@@ -82,8 +82,7 @@ current UI では表示しない。legacy v1 では `character reflection cycle`
 
 - SessionWindow 下端の full-width 操作面
 - 次を内包する
-  - attachment / skill toolbar
-  - attachment chips
+  - attachment / skill toolbar（添付はpopoverから選択し、独立したtray / chip listは置かない）
   - textarea と `Send / Cancel`
   - `Approval / Model / Depth`
   - sendability feedback

@@ -3,7 +3,6 @@ export type SessionRetryBannerProps = {
     kind: "interrupted" | "failed" | "canceled";
     badge: string;
     title: string;
-    titleVisible?: boolean;
     lastRequestText: string;
   } | null;
   isRetryActionDisabled: boolean;
@@ -31,13 +30,8 @@ export function SessionRetryBanner({
       <div className="resume-banner-head"><div className="resume-banner-copy">
         <span className={`resume-banner-badge ${retryBanner.kind}`} title={retryBanner.title}>
           {retryBanner.badge}
-          {retryBanner.titleVisible === false
-            ? <span className="sr-only">: {retryBanner.title}</span>
-            : null}
+          <span className="sr-only">: {retryBanner.title}</span>
         </span>
-        {retryBanner.titleVisible !== false
-          ? <span className="resume-banner-title">{retryBanner.title}</span>
-          : null}
       </div></div>
       <div className="resume-banner-actions">
         <button type="button" onClick={onResendLastMessage} disabled={isRetryActionDisabled}>Resend</button>

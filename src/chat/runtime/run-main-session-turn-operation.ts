@@ -10,7 +10,6 @@ import type {
   ComposerOwner,
 } from "../../chat/composer-controller.js";
 import { createComposerPreviewRequest } from "../use-composer-preview-resolution.js";
-import { resolveComposerPreviewDisplay } from "../composer/composer-preview-config.js";
 import {
   applyOptimisticSessionRunUpdate,
   type OwnedLiveSessionRunState,
@@ -25,7 +24,6 @@ import {
   type SessionSubmitCoordinator,
 } from "./session-submit-coordinator.js";
 import { resolveComposerSendPreflight } from "../composer/session-composer-feedback.js";
-import type { AppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 
 type RevisionPort = { capture(): number; isCurrent(revision: number): boolean };
 type SessionRunApi = Pick<
@@ -43,7 +41,7 @@ type StatePorts = {
     update: (current: OwnedLiveSessionRunState) => OwnedLiveSessionRunState,
   ) => void;
   setComposerPreview: (
-    preview: ReturnType<typeof resolveComposerPreviewDisplay>,
+    preview: ComposerPreview,
   ) => void;
   acknowledgePreviewChatMessageCount: (
     sessionId: string,
@@ -71,7 +69,6 @@ export async function runMainSessionTurnOperation(input: {
   selectedSessionRunState: Session["runState"] | null;
   blockedReason: string | null;
   isReadOnly: boolean;
-  userMicrocopyCatalog: AppSettings["userMicrocopyCatalog"];
   currentTimestamp: string;
   validateWorkspace: () => Promise<unknown>;
   state: StatePorts;
@@ -96,7 +93,6 @@ export async function runMainSessionTurnOperation(input: {
     selectedSessionRunState,
     blockedReason,
     isReadOnly,
-    userMicrocopyCatalog,
     validateWorkspace,
     state,
     revisions,
@@ -144,10 +140,7 @@ export async function runMainSessionTurnOperation(input: {
     if (!previewRequest) return null;
     const nextMessage = messageText.trim();
     const preview: ComposerPreview = await previewRequest(messageText);
-    const displayPreview = resolveComposerPreviewDisplay(
-      preview,
-      userMicrocopyCatalog,
-    );
+    const displayPreview = preview;
     log("renderer.composer-preview.done", {
       sessionId,
       clientRequestId,

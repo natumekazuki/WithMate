@@ -1,27 +1,4 @@
-import type { ComposerAttachment } from "../../../src-shared/session/runtime-state.js";
-import {
-  formatMarkdownImageReference,
-  removeLocalMarkdownImageReferences,
-} from "../../../src-shared/files/composer-image-reference.js";
-
-export type ComposerAttachmentDisplay = {
-  kindLabel: string;
-  locationLabel: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-export type ComposerAttachmentItem = ComposerAttachmentDisplay & {
-  key: string;
-  kind: ComposerAttachment["kind"];
-  removeTargets: string[];
-};
-
-export type PathReferenceAttachmentInput = {
-  kind: ComposerAttachment["kind"];
-  path: string;
-};
+import { formatMarkdownImageReference } from "../../../src-shared/files/composer-image-reference.js";
 
 export type AdditionalDirectoryDisplay = {
   primaryLabel: string;
@@ -55,10 +32,6 @@ export type ComposerReferencePathPicker = {
 
 export function formatPathReference(path: string): string {
   return /\s/.test(path) ? `@"${path}"` : `@${path}`;
-}
-
-function escapeRegExpPattern(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function buildPathReferenceInsertionState(
@@ -103,43 +76,8 @@ export function buildComposerReferenceInsertionState(
   };
 }
 
-export function removePathReferenceTokensFromDraft(
-  draft: string,
-  referencePaths: readonly string[],
-): string {
-  let nextDraft = removeLocalMarkdownImageReferences(draft, referencePaths);
-  const escapedTokens = referencePaths
-    .map((referencePath) => formatPathReference(referencePath))
-    .map(escapeRegExpPattern);
-  for (const escapedToken of escapedTokens) {
-    nextDraft = nextDraft.replace(
-      new RegExp(`(^|[\\s(])${escapedToken}(?=\\s|$|[),.;:!?])`, "g"),
-      (_match, leadingWhitespace: string) => leadingWhitespace || "",
-    );
-  }
-
-  return nextDraft
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n");
-}
-
-export function buildPathReferenceRemovalState(
-  draft: string,
-  referencePaths: readonly string[],
-): PathReferenceInsertionState {
-  const nextDraft = removePathReferenceTokensFromDraft(draft, referencePaths);
-  return {
-    draft: nextDraft,
-    caret: nextDraft.length,
-  };
-}
-
 export function normalizePathForReference(filePath: string): string {
   return filePath.replace(/\\/g, "/");
-}
-
-export function resolvePathReferenceRemovalTargets(targets: readonly string[]): string[] {
-  return Array.from(new Set(targets.map((target) => normalizePathForReference(target))));
 }
 
 export function splitPathForDisplay(filePath: string): { basename: string; parentPath: string } {
@@ -170,111 +108,6 @@ export function compactPathForDisplay(filePath: string, maxLength = 40): string 
   const headLength = Math.max(10, Math.floor((maxLength - 1) * 0.4));
   const tailLength = Math.max(14, maxLength - headLength - 1);
   return `${filePath.slice(0, headLength)}...${filePath.slice(-tailLength)}`;
-}
-
-function attachmentKindLabel(kind: ComposerAttachment["kind"]): string {
-  switch (kind) {
-    case "folder":
-      return "Folder";
-    case "image":
-      return "Image";
-    case "file":
-    default:
-      return "File";
-  }
-}
-
-export function buildComposerAttachmentDisplay(attachment: ComposerAttachment): ComposerAttachmentDisplay {
-  const preferredPath = attachment.workspaceRelativePath ?? attachment.displayPath ?? normalizePathForReference(attachment.absolutePath);
-  const title = attachment.isOutsideWorkspace
-    ? normalizePathForReference(attachment.absolutePath)
-    : preferredPath;
-  const { basename, parentPath } = splitPathForDisplay(title);
-  const secondaryPath = attachment.isOutsideWorkspace
-    ? parentPath
-      ? compactPathForDisplay(parentPath, 48)
-      : compactPathForDisplay(title, 48)
-    : parentPath
-      ? compactPathForDisplay(parentPath, 42)
-      : "WorkspaceRoot";
-
-  return {
-    kindLabel: attachmentKindLabel(attachment.kind),
-    locationLabel: attachment.isOutsideWorkspace ? "OutsideWorkspace" : "InWorkspace",
-    primaryLabel: basename || title,
-    secondaryLabel: secondaryPath,
-    title,
-  };
-}
-
-export function buildComposerAttachmentItems(
-  attachments: readonly ComposerAttachment[],
-  options: { trimRemoveTargets: boolean },
-): ComposerAttachmentItem[] {
-  return attachments.map((attachment) => {
-    const attachmentDisplay = buildComposerAttachmentDisplay(attachment);
-    const removeTargetCandidates = [
-      attachment.workspaceRelativePath,
-      attachment.displayPath,
-      normalizePathForReference(attachment.absolutePath),
-    ];
-    const removeTargets = options.trimRemoveTargets
-      ? removeTargetCandidates.filter(
-          (candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0,
-        )
-      : removeTargetCandidates.filter((candidate): candidate is string => !!candidate);
-    return {
-      key: attachment.id,
-      kind: attachment.kind,
-      kindLabel: attachmentDisplay.kindLabel,
-      locationLabel: attachmentDisplay.locationLabel,
-      primaryLabel: attachmentDisplay.primaryLabel,
-      secondaryLabel: attachmentDisplay.secondaryLabel,
-      title: attachmentDisplay.title,
-      removeTargets,
-    };
-  });
-}
-
-export function buildPathReferenceAttachmentItems(
-  pathReferences: readonly PathReferenceAttachmentInput[],
-): ComposerAttachmentItem[] {
-  return pathReferences.map((entry) => {
-    const { basename, parentPath } = splitPathForDisplay(entry.path);
-    return {
-      key: `${entry.kind}:${entry.path}`,
-      kind: entry.kind,
-      kindLabel: attachmentKindLabel(entry.kind),
-      locationLabel: "Reference",
-      primaryLabel: basename || entry.path,
-      secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "Root",
-      title: entry.path,
-      removeTargets: [entry.path],
-    };
-  });
-}
-
-export function appendMissingPathReferenceAttachments(
-  current: readonly PathReferenceAttachmentInput[],
-  referencePaths: readonly string[],
-  kind: ComposerAttachment["kind"],
-): PathReferenceAttachmentInput[] {
-  const existing = new Set(current.map((entry) => entry.path));
-  const next = [...current];
-  for (const referencePath of referencePaths) {
-    if (!existing.has(referencePath)) {
-      next.push({ path: referencePath, kind });
-    }
-  }
-  return next;
-}
-
-export function removePathReferenceAttachments(
-  current: readonly PathReferenceAttachmentInput[],
-  referencePaths: readonly string[],
-): PathReferenceAttachmentInput[] {
-  const removablePaths = new Set(resolvePathReferenceRemovalTargets(referencePaths));
-  return current.filter((entry) => !removablePaths.has(normalizePathForReference(entry.path)));
 }
 
 export function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {

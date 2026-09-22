@@ -322,7 +322,6 @@ function createComposerBridge(
       },
       files: {
         pick: noop,
-        removeAttachment: noop,
       },
       layout: {
         beforeOpenSkillPicker: () => true,
@@ -559,7 +558,6 @@ test("session conversation feature はartifact開閉状態をmessage keyごと�
       onResolveLiveApproval: noop,
       onResolveLiveElicitation: noop,
       onOpenPath: noop,
-      getChangedFilesEmptyText: () => "",
     };
     function Harness({ sessionId }: { sessionId: string }) {
       const feature = useSessionChatConversationFeature();

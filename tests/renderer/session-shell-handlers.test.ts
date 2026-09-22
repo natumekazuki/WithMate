@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { resolvePathReferenceRemovalTargets } from "../../src/chat/composer/session-composer-paths.js";
 import {
   applyAdditionalDirectoryListToggle,
   applyAgentPickerToggleCommand,
@@ -16,7 +15,6 @@ import {
   applyExpandedArtifactToggleCommand,
   applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
-  applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
@@ -38,7 +36,6 @@ import {
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
-  createPathReferenceRemovalHandler,
   createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
   createSkillPickerToggleHandler,
@@ -1101,133 +1098,6 @@ describe("createQuoteMessageTextHandler", () => {
        "apply:34:updated composer state\n\n> quoted\n\n",
       "focus",
        "selection:34:34",
-    ]);
-  });
-});
-
-describe("applyPathReferenceRemovalCommand", () => {
-  // @test-value v2
-  // kind = "contract"
-  // claim = "path reference削除handlerは削除後のdraftを反映する"
-  // oracle = { type = "contract", ref = "src/chat/composer/session-composer-paths.ts" }
-  // fault = "referenceを残す、または削除後draftを適用callbackへ渡さない"
-  // observable = "apply callbackへ渡るdraft"
-  // observation_boundary = "component-behavior"
-  // scope = "session-shell-handlers.path-reference"
-  // lifecycle = "permanent"
-  // distinction = "path normalizationではなくhandlerの実際の反映値を確認する"
-  // @end-test-value
-  it("path reference 削除後の draft を反映する", () => {
-    const events = new Array<string>();
-
-    applyPathReferenceRemovalCommand({
-      draft: "確認 @src/App.tsx して",
-      attachmentPathCandidates: ["src/App.tsx"],
-      applyRemoval: (state) => {
-        events.push(`apply:${state.caret}:${state.draft}`);
-      },
-    });
-
-    assert.deepEqual(events, ["apply:5:確認 して"]);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "path reference削除はWindows separatorを正規化した削除対象にも適用する"
-  // oracle = { type = "contract", ref = "src/chat/composer/session-composer-paths.ts" }
-  // fault = "separator差分で同一pathを削除対象と認識しない"
-  // observable = "apply callbackへ渡るnormalized draft"
-  // observation_boundary = "component-behavior"
-  // scope = "session-shell-handlers.path-reference"
-  // lifecycle = "permanent"
-  // distinction = "Windows path入力を実handlerへ渡し、結果draftを確認する"
-  // @end-test-value
-  it("正規化済みの削除対象で Windows separator の path reference も削除する", () => {
-    let events: string[] = [];
-    const removalTargets = resolvePathReferenceRemovalTargets(["src\\App.tsx"]);
-
-    applyPathReferenceRemovalCommand({
-      draft: "確認 @src/App.tsx して",
-      attachmentPathCandidates: removalTargets,
-      applyRemoval: (state) => {
-        events.push(`apply:${state.caret}:${state.draft}`);
-      },
-    });
-
-    assert.deepEqual(events, ["apply:5:確認 して"]);
-  });
-});
-
-describe("createPathReferenceRemovalHandler", () => {
-  // @test-value v2
-  // kind = "contract"
-  // claim = "path reference削除handlerはgetterから取得したdraftを削除処理へ渡す"
-  // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts#createPathReferenceRemovalHandler" }
-  // fault = "getterから取得したdraftまたは削除対象候補をapply callbackへ渡さない"
-  // observable = "apply callbackへ渡る削除後draftと削除対象候補"
-  // observation_boundary = "component-behavior"
-  // scope = "session-shell-handlers.path-reference"
-  // lifecycle = "permanent"
-  // distinction = "固定getterから取得したdraftとhandler引数の候補が削除結果へ反映されることを確認する（生成後の値変化は別testで扱う）"
-  // @end-test-value
-  it("現在の draft getter を使って path reference 削除 handler を作る", () => {
-    let events: string[] = [];
-    const removeAttachmentReference = createPathReferenceRemovalHandler({
-      getDraft: () => "確認 @src/App.tsx して",
-      applyRemoval: (state, candidates) => {
-        events.push(`apply:${state.caret}:${state.draft}`);
-        events.push(`candidates:${candidates.join(",")}`);
-      },
-    });
-
-    removeAttachmentReference(["src/App.tsx"]);
-
-    assert.deepEqual(events, [
-      "apply:5:確認 して",
-      "candidates:src/App.tsx",
-    ]);
-  });
-
-  it("handler 実行時の draft と反映先 state を使う", () => {
-    const events: string[] = [];
-    let target: "main" | "auxiliary" = "main";
-    const drafts = {
-      main: "main @src/App.tsx",
-      auxiliary: "aux @src/App.tsx",
-    };
-    const removeAttachmentReference = createPathReferenceRemovalHandler({
-      getDraft: () => drafts[target],
-      applyRemoval: (state) => {
-        events.push(`${target}:${state.caret}:${state.draft}`);
-      },
-    });
-
-    removeAttachmentReference(["src/App.tsx"]);
-    target = "auxiliary";
-    removeAttachmentReference(["src/App.tsx"]);
-
-    assert.deepEqual(events, [
-      "main:5:main ",
-      "auxiliary:4:aux ",
-    ]);
-  });
-
-  it("正規化済み candidates を draft 削除と反映 callback の両方に使う", () => {
-    const events: string[] = [];
-    const removeAttachmentReference = createPathReferenceRemovalHandler({
-      getDraft: () => "確認 @src/App.tsx して",
-      normalizeAttachmentPathCandidates: resolvePathReferenceRemovalTargets,
-      applyRemoval: (state, candidates) => {
-        events.push(`apply:${state.caret}:${state.draft}`);
-        events.push(`candidates:${candidates.join(",")}`);
-      },
-    });
-
-    removeAttachmentReference(["src\\App.tsx"]);
-
-    assert.deepEqual(events, [
-      "apply:5:確認 して",
-      "candidates:src/App.tsx",
     ]);
   });
 });

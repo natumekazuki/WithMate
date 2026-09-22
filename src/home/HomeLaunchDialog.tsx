@@ -2,7 +2,7 @@ import { useRef } from "react";
 
 import { focusRovingItemByKey, useDialogA11y } from "../ui/a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
-import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
+import { ProviderLaunchField, type ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
@@ -17,6 +17,8 @@ export type HomeLaunchDialogProps = {
   workspaceValidation: HomeLaunchWorkspaceValidationState;
   workspaceValidationMessage: string;
   enabledLaunchProviders: Array<{ id: string; label: string }>;
+  providerLoadStatus?: ProviderLaunchLoadStatus;
+  providerLoadError?: string;
   selectedLaunchProviderId: string | null;
   characterOptions: CharacterCatalogEntry[];
   selectedCharacterId: string | null;
@@ -45,6 +47,8 @@ export function HomeLaunchDialog({
   workspaceValidation,
   workspaceValidationMessage,
   enabledLaunchProviders,
+  providerLoadStatus = "loaded",
+  providerLoadError = "",
   selectedLaunchProviderId,
   characterOptions,
   selectedCharacterId,
@@ -77,6 +81,7 @@ export function HomeLaunchDialog({
 
   const workspaceValidationActive = workspaceValidation === "debouncing" || workspaceValidation === "pending";
   const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
+  const providerLoadReady = providerLoadStatus === "loaded";
 
   return (
     <LaunchDialogShell
@@ -90,8 +95,8 @@ export function HomeLaunchDialog({
         <LaunchDialogFooter
           feedback={launchStarting ? "" : launchFeedback}
           startButtonLabel="StartNewSession"
-          startButtonDisabled={!canStartSession || launchStarting}
-          startButtonAriaDisabled={!canStartSession || launchStarting}
+          startButtonDisabled={!canStartSession || !providerLoadReady || launchStarting}
+          startButtonAriaDisabled={!canStartSession || !providerLoadReady || launchStarting}
           startButtonBusy={launchStarting}
           startButtonLoadingText="Starting session"
           onStart={onStartSession}
@@ -170,6 +175,8 @@ export function HomeLaunchDialog({
       <ProviderLaunchField
         fieldId="launch-provider-picker"
         providers={enabledLaunchProviders}
+        loadStatus={providerLoadStatus}
+        loadError={providerLoadError}
         selectedProviderId={selectedLaunchProviderId}
         onSelectProvider={onSelectProvider}
       />

@@ -7,11 +7,6 @@ import {
   type ModelReasoningEffort,
 } from "./model-catalog.js";
 import {
-  createDefaultUserMicrocopyCatalog,
-  normalizeUserMicrocopyCatalog,
-  type MicrocopyCatalog,
-} from "./microcopy-state.js";
-import {
   DEFAULT_CHAT_LAYOUT_PREFERENCE,
   normalizeChatLayoutPreference,
   type ChatLayoutPreference,
@@ -37,7 +32,6 @@ export type AppSettings = {
   keyboardShortcuts: KeyboardShortcutSettings;
   memoryFileQuotaBytes: number;
   glossaryProactiveCreateLimit: number | null;
-  userMicrocopyCatalog: MicrocopyCatalog;
   mateMemoryGenerationSettings: MateMemoryGenerationSettings;
   codingProviderSettings: Record<string, ProviderAppSettings>;
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
@@ -127,7 +121,6 @@ export function createDefaultAppSettings(): AppSettings {
     keyboardShortcuts: createDefaultKeyboardShortcutSettings(),
     memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
     glossaryProactiveCreateLimit: DEFAULT_GLOSSARY_PROACTIVE_CREATE_LIMIT,
-    userMicrocopyCatalog: createDefaultUserMicrocopyCatalog(),
     mateMemoryGenerationSettings: {
       ...DEFAULT_MATE_MEMORY_GENERATION_SETTINGS,
       priorityList: [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
@@ -376,7 +369,6 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     glossaryProactiveCreateLimit: normalizeGlossaryProactiveCreateLimit(
       candidate.glossaryProactiveCreateLimit,
     ),
-    userMicrocopyCatalog: normalizeUserMicrocopyCatalog(candidate.userMicrocopyCatalog),
     mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),
     codingProviderSettings,
     memoryExtractionProviderSettings,

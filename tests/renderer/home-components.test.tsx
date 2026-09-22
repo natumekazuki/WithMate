@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { HomeLaunchDialog } from "../../src/home/HomeLaunchDialog.js";
 import type { HomeLaunchWorkspaceValidationState } from "../../src/home/home-launch-state.js";
+import type { ProviderLaunchLoadStatus } from "../../src/launch/provider-launch-picker.js";
 import { filterCharactersByName } from "../../src/home/HomeCharactersPanel.js";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { formatHomeSessionUpdatedAt, HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
@@ -58,7 +59,7 @@ describe("HomeSettingsContent", () => {
   type RenderSettingsParams = {
     settingsDraft?: typeof settingsDraft;
     providerSettingRows?: typeof providerSettingRows;
-    providerCatalogLoaded?: boolean;
+    settingsFeedback?: string;
     memoryV6Diagnostics?: MemoryV6Diagnostics | null;
   };
 
@@ -66,11 +67,10 @@ describe("HomeSettingsContent", () => {
     <HomeSettingsContent
       settingsDraft={params?.settingsDraft ?? settingsDraft}
       providerSettingRows={params?.providerSettingRows ?? providerSettingRows}
-      providerCatalogLoaded={params?.providerCatalogLoaded ?? true}
       modelCatalogRevisionLabel={String(modelCatalog.revision)}
       memoryV6Diagnostics={params?.memoryV6Diagnostics ?? null}
       settingsDirty={false}
-      settingsFeedback=""
+      settingsFeedback={params?.settingsFeedback ?? ""}
       sessionCleanupCutoffDate=""
       deletingOldSessions={false}
       onChangeAutoCollapseActionDockOnSend={noOp}
@@ -361,19 +361,25 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "model catalog未読込時はCodingAgentProviders sectionを残し、catalog取得失敗を表示する"
+  // claim = "model catalog取得失敗はCodingAgentProviders section内へ重複表示せず、Settings footerのfeedbackへ1箇所で表示する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
-  // fault = "未読込をproviderなしと表示してcatalog取得失敗を隠すか、sectionを削除する"
-  // observable = "CodingAgentProviders headingとCould not load the model catalog."
+  // fault = "catalog取得失敗をprovider sectionとfooterへ重複表示するか、Settingsから失敗理由を隠す"
+  // observable = "CodingAgentProviders heading、provider section内のerror不在、Settings footerのCould not load the model catalog."
   // observation_boundary = "component-behavior"
-  // scope = "home-settings-provider-catalog-loading-state"
+  // scope = "home-settings-provider-catalog-error-feedback"
   // lifecycle = "permanent"
   // @end-test-value
-  it("provider catalog 読み込み前は catalog unavailable empty state を表示する", () => {
-    const html = renderSettings({ providerSettingRows: [], providerCatalogLoaded: false });
+  it("provider catalog error は Settings footer に一度だけ表示する", () => {
+    const html = renderSettings({
+      providerSettingRows: [],
+      settingsFeedback: "Could not load the model catalog.",
+    });
+    const document = new JSDOM(html).window.document;
 
     assert.ok(html.includes("CodingAgentProviders"));
-    assert.ok(html.includes("Could not load the model catalog."));
+    assert.equal(document.querySelectorAll(".settings-provider-card").length, 0);
+    assert.equal(document.querySelectorAll(".settings-feedback").length, 1);
+    assert.equal(document.querySelector(".settings-dialog-foot .settings-feedback")?.textContent, "Could not load the model catalog.");
   });
 });
 
@@ -437,21 +443,31 @@ describe("HomeMateSetupPanel", () => {
     });
   };
 
-  it("表示名 input / Mate 作成ボタン / 設定ボタン / feedback が render される", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Mate setup create modeはDisplayName入力とCreateMate、Settingsの操作を表示する"
+  // oracle = { type = "contract", ref = "HomeMateSetupPanel create mode controls" }
+  // fault = "作成画面の主要入力または作成・設定操作が欠落する"
+  // observable = "rendered input and button labels"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMateSetupPanel create mode controls"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("display name input / create button / settings button / feedback が render される", () => {
     const panel = renderPanel({ feedback: "作成完了まで少し待ってね。" });
     const html = renderToStaticMarkup(panel);
     const input = collectElements(panel, (element) => element.type === "input" && element.props.id === "mate-display-name")[0];
     const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
     const settingsButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "設定",
+      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Settings",
     )[0];
 
     assert.ok(input);
     assert.ok(submitButton);
     assert.ok(settingsButton);
     assert.ok(input.props.value === "Your Mate");
-    assert.ok(submitButton.props.children === "Mate を作成");
+    assert.ok(submitButton.props.children === "CreateMate");
     assert.ok(html.includes("作成完了まで少し待ってね。"));
   });
 
@@ -507,7 +523,7 @@ describe("HomeMateSetupPanel", () => {
     });
     const buttons = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "設定",
+      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Settings",
     );
     const settingsButton = buttons.find((button) => button.props.type === "button" && button.props.onClick);
     if (!settingsButton) {
@@ -518,8 +534,18 @@ describe("HomeMateSetupPanel", () => {
     assert.equal(settingsOpened, 1);
   });
 
-  it("creating=true で input / submit button が disabled になり、作成中表示になる", () => {
-    const panel = renderPanel({ creating: true, feedback: "作成中..." });
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Mate setupの作成中は入力を無効化しsubmitボタンをspinner表示にする"
+  // oracle = { type = "contract", ref = "HomeMateSetupPanel busy state" }
+  // fault = "作成中に入力を変更できるか、busy状態がテキストだけでspinnerを表示しない"
+  // observable = "input and submit disabled state plus spinner element"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMateSetupPanel creating state"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("creating=true で input / submit button が disabled になり、spinner 表示になる", () => {
+    const panel = renderPanel({ creating: true, feedback: "CreatingMate" });
     const input = collectElements(panel, (element) => element.type === "input" && element.props.id === "mate-display-name")[0];
     const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
     if (!input || !submitButton) {
@@ -528,7 +554,7 @@ describe("HomeMateSetupPanel", () => {
 
     assert.ok(input.props.disabled);
     assert.ok(submitButton.props.disabled);
-    assert.equal(submitButton.props.children, "作成中...");
+    assert.equal(collectElements(panel, (element) => element.type === "span" && element.props.className === "home-mate-spinner").length, 1);
   });
 
   // @test-value v2
@@ -541,7 +567,7 @@ describe("HomeMateSetupPanel", () => {
   // scope = "HomeMateSetupPanel edit mode controls"
   // lifecycle = "permanent"
   // @end-test-value
-  it("edit mode では Mate プロフィール保存と戻る導線を表示する", () => {
+  it("edit mode では MateProfile の保存とキャンセル導線を表示する", () => {
     let canceled = 0;
     const panel = renderPanel({
       mode: "edit",
@@ -555,16 +581,26 @@ describe("HomeMateSetupPanel", () => {
     const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
     const cancelButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "戻る",
+      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Cancel",
     )[0];
 
-    assert.ok(html.includes("Mate プロフィール"));
-    assert.equal(submitButton?.props.children, "Mate を保存");
+    assert.ok(html.includes("MateProfile"));
+    assert.equal(submitButton?.props.children, "Save");
     assert.ok(cancelButton);
     (cancelButton.props.onClick as () => void)();
     assert.equal(canceled, 1);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "MateProfile unavailable modeは編集操作を無効化し利用不可状態を表示する"
+  // oracle = { type = "contract", ref = "HomeMateSetupPanel unavailable mode" }
+  // fault = "利用不可状態で作成・保存操作を許可するか、利用不可理由を表示しない"
+  // observable = "disabled input, absent submit button, and unavailable feedback"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMateSetupPanel unavailable mode"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("unavailable mode では Mate 作成/保存ボタンを表示しない", () => {
     const panel = renderPanel({
       mode: "unavailable",
@@ -575,11 +611,11 @@ describe("HomeMateSetupPanel", () => {
     const input = collectElements(panel, (element) => element.type === "input" && element.props.id === "mate-display-name")[0];
     const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
 
-    assert.ok(html.includes("V6 Memory foundation では Mate Profile はまだ利用できません。"));
+    assert.ok(html.includes("MateProfile is unavailable."));
     assert.equal(input?.props.disabled, true);
     assert.equal(submitButton, undefined);
-    assert.equal(html.includes("Mate を作成"), false);
-    assert.equal(html.includes("Mate を保存"), false);
+    assert.equal(html.includes("CreateMate"), false);
+    assert.equal(html.includes("Save"), false);
   });
 
   // @test-value v2
@@ -610,15 +646,14 @@ describe("HomeMateSetupPanel", () => {
     const html = renderToStaticMarkup(panel);
     const selectButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "画像を選択",
+      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "SelectImage",
     )[0];
     const clearButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "解除",
+      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Clear",
     )[0];
 
-    assert.ok(html.includes("アイコン"));
-    assert.ok(html.includes("画像を選択できます。"));
+    assert.ok(html.includes("Avatar"));
     assert.ok(selectButton);
     assert.ok(clearButton);
     (selectButton.props.onClick as () => void)();
@@ -627,16 +662,25 @@ describe("HomeMateSetupPanel", () => {
     assert.equal(cleared, 1);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Mate未作成のcreate modeではアバター変更操作を表示しない"
+  // oracle = { type = "contract", ref = "HomeMateSetupPanel create mode avatar controls" }
+  // fault = "Mate作成前に存在しないアバターを変更または解除する操作を提供する"
+  // observable = "avatar action button count"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMateSetupPanel create mode avatar controls"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("create mode では Mate アイコンの補足説明と編集操作を表示しない", () => {
     const panel = renderPanel({ mode: "create" });
     const html = renderToStaticMarkup(panel);
     const avatarButtons = collectElements(
       panel,
-      (element) => element.type === "button" && ["画像を選択", "解除"].includes(String(element.props.children)),
+      (element) => element.type === "button" && ["SelectImage", "Clear"].includes(String(element.props.children)),
     );
 
-    assert.ok(html.includes("アイコン"));
-    assert.ok(!html.includes("Mate 作成後に設定できます。"));
+    assert.ok(html.includes("Avatar"));
     assert.equal(avatarButtons.length, 0);
   });
 });
@@ -662,6 +706,8 @@ describe("HomeLaunchDialog", () => {
     randomCharacterSelected = false,
     workspaceValidation: HomeLaunchWorkspaceValidationState = "idle",
     characterLoadStatus?: "loading" | "loaded" | "error",
+    providerLoadStatus?: ProviderLaunchLoadStatus,
+    providerLoadError = "",
   ) => renderToStaticMarkup(
     <HomeLaunchDialog
       open={true}
@@ -671,6 +717,8 @@ describe("HomeLaunchDialog", () => {
       workspaceValidation={workspaceValidation}
       workspaceValidationMessage={workspaceValidation === "invalid" ? "Path not found." : ""}
       enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
+      providerLoadStatus={providerLoadStatus}
+      providerLoadError={providerLoadError}
       selectedLaunchProviderId="codex"
       characterOptions={options}
       selectedCharacterId={randomCharacterSelected ? null : options[0]?.id ?? null}
@@ -844,6 +892,47 @@ describe("HomeLaunchDialog", () => {
     assert.ok(html.includes("Could not load characters."));
     assert.ok(!html.includes("Loading characters…"));
     assert.ok(!html.includes("Neutral"));
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "New sessionのProvider catalogは取得中・取得失敗・正常な有効provider 0件を別状態として表示し、未確定中は開始を無効化する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+  // fault = "Provider catalogの取得中または失敗をNo enabled coding providersへ投影し、開始条件と実エラーを混同する"
+  // observable = "Provider pickerのspinner/aria-busy、実エラー、StartNewSession disabled、No enabled coding providers.の相互排他"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeLaunchDialog provider catalog state"
+  // lifecycle = "permanent"
+  // impact = "Session開始可否とcatalog取得失敗の理由を利用者が識別できる"
+  // distinction = "候補配列の長さではなく、catalog request stateをpickerの表示へ投影する境界を確認する"
+  // @end-test-value
+  it("Provider catalog の loading と error は正常な空状態と区別する", () => {
+    const loading = renderHomeLaunchDialog(
+      characterOptions,
+      true,
+      false,
+      "idle",
+      "loaded",
+      "loading",
+    );
+    const error = renderHomeLaunchDialog(
+      characterOptions,
+      true,
+      false,
+      "idle",
+      "loaded",
+      "error",
+      "Could not load model catalog.",
+    );
+
+    assert.ok(loading.includes("chat-skill-picker-spinner"));
+    assert.ok(loading.includes("Loading coding providers."));
+    assert.ok(loading.includes('aria-busy="true"'));
+    assert.ok(!loading.includes("No enabled coding providers."));
+    assert.equal(new JSDOM(loading).window.document.querySelector(".start-session-button")?.hasAttribute("disabled"), true);
+    assert.ok(error.includes("Could not load model catalog."));
+    assert.ok(!error.includes("No enabled coding providers."));
+    assert.equal(new JSDOM(error).window.document.querySelector(".start-session-button")?.hasAttribute("disabled"), true);
   });
 
 });
