@@ -1,8 +1,3 @@
-.session-page .session-action-dock {
-  border-color: color-mix(in srgb, var(--character-sub) 18%, rgba(203, 213, 225, 0.14));
-  background: color-mix(in srgb, var(--character-sub-soft) 10%, rgba(8, 12, 20, 0.96));
-}
-
 .session-action-dock.compact {
   gap: 0;
 }

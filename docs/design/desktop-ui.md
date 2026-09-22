@@ -229,7 +229,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
 - wide desktop (`1920x1080` baseline) では Session 本体を、中央の `message list または preview` と上下左右の dock に分ける
-  - HeaderとActionDockは常に全幅を使う。左右paneはその間で中央surfaceと並び、splitter操作やdockの開閉で配置を変更しない
+  - HeaderとActionDockは常に全幅を使い、外側をカードの枠・背景で囲まない。左右paneはその間で中央surfaceと並び、splitter操作やdockの開閉で配置を変更しない
   - HeaderとActionDockはclickで開閉する。左右paneは排他表示とし、clickで開閉する。閉じた領域からのdrag展開は行わない。開いた領域のdragと矢印キーによる調整は、領域側が定義する最小サイズと中央領域に必要なサイズを守る。ActionDockはHeaderとsplitter以外の残余高を使い、中央領域が160px未満になる場合は中央を高さ0で非表示にし、160px以上に戻ると会話stateとスクロール位置を保って再表示する
   - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
   - Header、ActionDock、side pane の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない

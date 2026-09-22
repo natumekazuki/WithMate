@@ -334,7 +334,8 @@
 }
 
 .session-page .session-top-bar {
-  border-radius: 16px;
+  border-radius: 0;
+  background: transparent;
 }
 
 .session-page .drawer-toggle,
