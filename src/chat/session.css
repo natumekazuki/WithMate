@@ -293,12 +293,17 @@
 }
 
 .command-monitor-shell.messages.has-message-filter-toolbar {
-  grid-template-rows: auto auto minmax(0, 1fr);
-  row-gap: 6px;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .command-monitor-shell.messages.has-message-filter-toolbar .messages-navigator-filter-toolbar {
-  margin-top: 8px;
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  flex: 0 0 auto;
+  margin-bottom: 6px;
+  padding: 8px 0 6px;
+  background: #12161e;
 }
 
 .command-monitor-shell.messages.has-message-filter-toolbar .command-monitor-content {
@@ -306,19 +311,18 @@
 }
 
 .command-monitor-stack.glossary {
-  align-content: start;
-  height: 100%;
-  min-height: 0;
+  display: block;
+  min-height: 100%;
   margin-top: 0;
 }
 
-.command-monitor-shell.glossary,
-.command-monitor-shell.glossary .command-monitor-content {
+.command-monitor-shell.glossary {
   height: 100%;
 }
 
 .command-monitor-shell.glossary .command-monitor-content {
-  overflow: hidden;
+  overflow-y: auto;
+  padding-top: 0;
 }
 
 .glossary-pane,
@@ -331,16 +335,18 @@
 
 .glossary-pane,
 .glossary-list-view {
-  height: 100%;
+  display: block;
   min-height: 0;
 }
 
-.glossary-pane {
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.glossary-list-view {
-  grid-template-rows: auto minmax(0, 1fr);
+.glossary-pane-controls {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: grid;
+  gap: 10px;
+  padding-bottom: 10px;
+  background: #12161e;
 }
 
 .glossary-pane-checkout {
@@ -430,10 +436,7 @@
   display: grid;
   align-content: start;
   gap: 2px;
-  height: 100%;
   min-height: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
 }
 
 .glossary-entry-row {

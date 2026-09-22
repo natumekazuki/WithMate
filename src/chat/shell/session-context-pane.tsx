@@ -192,12 +192,6 @@ export function SessionContextPane({
       : messageNavigatorEntries,
     [messageNavigatorBookmarksEnabled, messageNavigatorEntries, messageNavigatorFilter],
   );
-  const glossaryContentSignature = [
-    glossaryPaneProps?.projection?.scopeRevision ?? "",
-    glossaryPaneProps?.projection?.state.revision ?? "",
-    glossaryPaneProps?.searchQuery ?? "",
-    glossaryPaneProps?.selectedTerm ?? "",
-  ].join("|");
   const contentScrollKey = useMemo(() => {
     switch (activeContextPaneTab) {
       case "latest-command":
@@ -221,7 +215,7 @@ export function SessionContextPane({
           .map((entry) => `${entry.key}:${entry.preview}:${entry.isCollapsed ? "collapsed" : "expanded"}:${entry.isBookmarked ? "bookmarked" : "unbookmarked"}`)
           .join("|");
       case "glossary":
-        return glossaryContentSignature;
+        return "glossary";
       default:
         return "";
     }
@@ -231,7 +225,6 @@ export function SessionContextPane({
     liveRunReasoningText,
     runningDetailsEntries,
     isSelectedSessionRunning,
-    glossaryContentSignature,
     messageNavigatorEntries,
     visibleMessageNavigatorEntries,
     taskEntries,
@@ -325,28 +318,27 @@ export function SessionContextPane({
           />
         </div>
 
-        {activeContextPaneTab === "messages" && messageNavigatorBookmarksEnabled ? (
-          <div className="messages-navigator-filter-toolbar" role="group" aria-label="Messages filter">
-            <button
-              className={`messages-navigator-filter${messageNavigatorFilter === "all" ? " is-active" : ""}`}
-              type="button"
-              aria-pressed={messageNavigatorFilter === "all"}
-              onClick={() => setMessageNavigatorFilter("all")}
-            >
-              All
-            </button>
-            <button
-              className={`messages-navigator-filter${messageNavigatorFilter === "bookmarks" ? " is-active" : ""}`}
-              type="button"
-              aria-pressed={messageNavigatorFilter === "bookmarks"}
-              onClick={() => setMessageNavigatorFilter("bookmarks")}
-            >
-              Bookmark
-            </button>
-          </div>
-        ) : null}
-
         <div ref={contentRef} className="command-monitor-content">
+          {activeContextPaneTab === "messages" && messageNavigatorBookmarksEnabled ? (
+            <div className="messages-navigator-filter-toolbar" role="group" aria-label="Messages filter">
+              <button
+                className={`messages-navigator-filter${messageNavigatorFilter === "all" ? " is-active" : ""}`}
+                type="button"
+                aria-pressed={messageNavigatorFilter === "all"}
+                onClick={() => setMessageNavigatorFilter("all")}
+              >
+                All
+              </button>
+              <button
+                className={`messages-navigator-filter${messageNavigatorFilter === "bookmarks" ? " is-active" : ""}`}
+                type="button"
+                aria-pressed={messageNavigatorFilter === "bookmarks"}
+                onClick={() => setMessageNavigatorFilter("bookmarks")}
+              >
+                Bookmark
+              </button>
+            </div>
+          ) : null}
           <div className={`command-monitor-stack ${activeContextPaneTab}`}>
             {activeContextPaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
               <div className="command-monitor-card">
@@ -541,7 +533,7 @@ export function SessionContextPane({
             ) : null}
 
             {activeContextPaneTab === "glossary" && glossaryPaneProps ? (
-              <SessionGlossaryPane {...glossaryPaneProps} />
+              <SessionGlossaryPane {...glossaryPaneProps} scrollContainerRef={contentRef} />
             ) : null}
 
           </div>

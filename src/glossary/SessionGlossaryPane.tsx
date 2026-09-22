@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 
 import type {
   GlossaryEntry,
@@ -7,6 +7,7 @@ import type {
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
 
 export type SessionGlossaryPaneProps = {
+  scrollContainerRef?: RefObject<HTMLDivElement | null>;
   projection: SessionGlossaryProjection | null;
   searchQuery: string;
   searchEntries: readonly GlossaryEntry[];
@@ -47,6 +48,7 @@ function stateMessage(projection: SessionGlossaryProjection): { title: string; d
 }
 
 export function SessionGlossaryPane({
+  scrollContainerRef,
   projection,
   searchQuery,
   searchEntries,
@@ -59,7 +61,6 @@ export function SessionGlossaryPane({
   onSelectTerm,
   onBackToList,
 }: SessionGlossaryPaneProps) {
-  const listRef = useRef<HTMLDivElement | null>(null);
   const savedListScrollTopRef = useRef(0);
   const entries = projection?.state.status === "valid" ? projection.state.entries : [];
   const selectedEntry = useMemo(
@@ -70,10 +71,16 @@ export function SessionGlossaryPane({
   const visibleTotal = searchQuery.trim() ? searchTotal : entries.length;
 
   useLayoutEffect(() => {
-    if (!selectedEntry && listRef.current) {
-      listRef.current.scrollTop = savedListScrollTopRef.current;
+    if (scrollContainerRef?.current) {
+      scrollContainerRef.current.scrollTop = selectedEntry ? 0 : savedListScrollTopRef.current;
     }
-  }, [selectedEntry]);
+  }, [scrollContainerRef, selectedEntry]);
+
+  useLayoutEffect(() => {
+    if (!selectedEntry && scrollContainerRef?.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+  }, [scrollContainerRef, searchQuery]);
 
   if (!projection) {
     return (
@@ -93,9 +100,27 @@ export function SessionGlossaryPane({
     projection.checkout.pathLabel,
   ].filter(Boolean).join(" / ");
   const isNotApplicable = projection.state.status === "not-applicable";
+  const showList = projection.state.status === "valid" && !selectedEntry;
   return (
     <section className="glossary-pane" aria-label="Repository glossary">
-      {isNotApplicable ? null : <p className="glossary-pane-checkout" title={checkoutTitle}>{checkoutLabel}</p>}
+      {isNotApplicable ? null : (
+        <div className="glossary-pane-controls">
+          <p className="glossary-pane-checkout" title={checkoutTitle}>{checkoutLabel}</p>
+          {showList ? (
+            <>
+              <label className="glossary-search-field">
+                <span className="sr-only">SearchGlossary</span>
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => onSearchQueryChange(event.target.value)}
+                />
+              </label>
+              {searchError ? <p className="glossary-search-error" role="alert">{searchError}</p> : null}
+            </>
+          ) : null}
+        </div>
+      )}
 
       {projection.state.status === "missing" || isNotApplicable ? null : unavailable ? (
         <div className={`glossary-pane-status ${projection.state.status}`} role={projection.state.status === "invalid" ? "alert" : "status"}>
@@ -115,24 +140,14 @@ export function SessionGlossaryPane({
         </article>
       ) : (
         <div className="glossary-list-view">
-          <label className="glossary-search-field">
-            <span className="sr-only">SearchGlossary</span>
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(event) => onSearchQueryChange(event.target.value)}
-            />
-          </label>
-
-          {searchError ? <p className="glossary-search-error" role="alert">{searchError}</p> : null}
-          <div ref={listRef} className="glossary-entry-list" aria-busy={searchLoading}>
+          <div className="glossary-entry-list" aria-busy={searchLoading}>
             {visibleEntries.map((entry) => (
               <button
                 key={entry.term}
                 className="glossary-entry-row"
                 type="button"
                 onClick={() => {
-                  savedListScrollTopRef.current = listRef.current?.scrollTop ?? 0;
+                  savedListScrollTopRef.current = scrollContainerRef?.current?.scrollTop ?? 0;
                   onSelectTerm(entry.term);
                 }}
               >

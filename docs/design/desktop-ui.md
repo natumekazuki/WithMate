@@ -315,6 +315,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - right pane は `LatestCommand` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
 - right pane 上部には collapsed state の `title handle` を置く
 - right pane shell は Agent で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
+- right pane の本文scrollbarはtab直下からpane下端まで共通の高さにし、`Messages`のfilterと`Glossary`の検索欄は本文の上端へ固定して一覧だけを流す
 - `Generate Memory` は current UI では表示しない
 - command 実行中は `LatestCommand` を最優先で自動表示する
 - MemoryGeneration / 独り言の right pane 自動切り替えは行わない
