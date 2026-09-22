@@ -439,3 +439,87 @@ test("conversation column は親snapshotを優先し、snapshot未提供Column�
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
   }
 });
+
+// @test-value v2
+// kind = "invariant"
+// claim = "親から渡されたlive snapshotはcache同期effectより先のrenderでも投影され、送信開始時に旧runのerrorを表示しない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md:61" }
+// fault = "live snapshot更新時にcacheの旧errorを先にColumnへ投影し、送信直後に旧runの失敗表示が一瞬現れる"
+// observable = "passive effect前のrenderでColumn propsから取得したliveRunErrorMessage"
+// observation_boundary = "component-behavior"
+// scope = "conversation-message-column"
+// lifecycle = "permanent"
+// impact = "旧runのエラーが新しい送信の会話中央へ誤表示され、利用者が新しい送信の失敗と誤認する"
+// distinction = "既存の親snapshot testはpassive effect後の最終値だけを確認し、render間の旧cache投影を観測しない"
+// @end-test-value
+test("conversation column はsnapshot更新直後に旧live errorを投影しない", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const api: ConversationMessageColumnApi = {};
+  const renderedErrors: string[] = [];
+  const createRun = (errorMessage: string): LiveSessionRunState => ({
+    sessionId: "main",
+    threadId: "main-thread",
+    assistantText: "",
+    steps: [],
+    backgroundTasks: [],
+    usage: null,
+    errorMessage,
+    approvalRequest: null,
+    elicitationRequest: null,
+  });
+  let root: Root | null = null;
+  try {
+    function Probe({ liveRun }: { liveRun: LiveSessionRunState }) {
+      const column = useConversationMessageColumn({
+        session: { id: "main" },
+        baseProps: createBaseProps("main"),
+        enabled: true,
+        api,
+        liveRun,
+      });
+      React.useLayoutEffect(() => {
+        renderedErrors.push(column?.liveRunErrorMessage ?? "");
+      });
+      return null;
+    }
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Probe, { liveRun: createRun("Previous run failed") }));
+    });
+    assert.equal(renderedErrors.at(-1), "Previous run failed");
+    renderedErrors.length = 0;
+
+    await act(async () => {
+      root?.render(React.createElement(Probe, { liveRun: createRun("") }));
+    });
+    assert.equal(renderedErrors[0], "");
+
+    renderedErrors.length = 0;
+    await act(async () => {
+      root?.render(React.createElement(Probe, { liveRun: createRun("Current run failed") }));
+    });
+    assert.equal(renderedErrors[0], "Current run failed");
+    assert.equal(renderedErrors.at(-1), "Current run failed");
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});

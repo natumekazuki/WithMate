@@ -106,7 +106,7 @@ export function useConversationMessageColumn({
   }, [api, enabled, liveRunOverride, sessionId, refresh]);
 
   const messages = session?.messages ?? baseProps.messages;
-  const liveRun = conversation.liveRun;
+  const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
   const assistantText = api ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
   const currentBridge = assistantText ? {
     sessionId,
