@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Partially superseded by [ADR 032](032-role-session-async-collaboration.md)（2026-09-22、実装適用待ち）。Role関連注入はロール名のみとし、作成経路と保存済み関係は維持する。以下は採用当時の判断であり、新方針で撤回した権限管理の復活根拠にしない。
 
 実効権限をRoleで制限する判断はADR 029で置き換えた。immutable bindingの構造契約は維持する。
 

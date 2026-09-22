@@ -1,5 +1,9 @@
 # ADR 030: Root 単位の資源予算
 
+## Status
+
+Superseded by [ADR 032](032-role-session-async-collaboration.md)（2026-09-22、実装適用待ち）。ユーザー指定由来の初期policyを含め、協同予算管理を機能として全撤去する判断へ置換した。以下は採用当時の判断であり、Provider使用量・quota観測やMemory固有の保存契約まで廃止する根拠にはしない。
+
 ## 決定
 
 Session Runtime の有限資源は、canonical な `session_role_bindings_v6.root_session_id` に属する budget ledger で管理する。初期 policy は2026-09-07のユーザー指定を由来とし、値と対象は `src/resource-budget.ts` を正本とする。tokenと費用は計測のみで、上限値を持たせない。

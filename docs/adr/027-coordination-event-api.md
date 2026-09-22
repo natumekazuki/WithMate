@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Partially superseded by [ADR 032](032-role-session-async-collaboration.md)（2026-09-22、実装適用待ち）。業務報告管理は撤去し、ユーザーへの質問・確認・承認と状態観測は維持する。以下は採用当時の判断であり、Coordination全体の一括撤去や業務報告台帳の再導入の根拠にしない。
 
 ## Context
 

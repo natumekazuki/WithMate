@@ -1,5 +1,9 @@
 # ADR 031: Work Itemの再開と移動で旧結果・判断を保持する
 
+## Status
+
+Superseded by [ADR 032](032-role-session-async-collaboration.md)（2026-09-22、実装適用待ち）。WorkItemと結果集約を機能として撤去する判断へ置換した。以下は採用当時の判断であり、会話・execution結果・成果物等の実データを無断破棄する許可ではない。
+
 ## 決定
 
 Work Itemの再開は、新しいstable IDを持つsuccessorを作成する。Root Work ItemにはSlice 3で導入したsuccessor処理を再利用する。delegated Work Itemも同じ方針とし、predecessorのterminal state、result、execution association、aggregation decisionを新しい実行へ付け替えない。

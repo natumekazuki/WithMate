@@ -1,5 +1,7 @@
 # Grants、routing、ownership transfer
 
+2026-09-22の[ADR 032](../../../adr/032-role-session-async-collaboration.md)／[#734](https://github.com/natumekazuki/WithMate/issues/734)が、以下の旧設計と衝突する箇所に優先する。管理機能の撤去は採用済み・実装適用待ちであり、本書の旧操作・grant・予算・仕事手順を新規実装や統合の必須条件にしない。旧計画の整理は親planの冒頭を参照する。
+
 ## 担当する能力
 
 - grantのcreate、list、get、revoke、expire
@@ -34,11 +36,11 @@ Roleは次だけを提供する。
 
 ## Same-root routing
 
-### 2026-09-18 の方針更新（実装追従前）
+### 自己宛direct Turnとscheduleの分離（2026-09-22の判断に照合済み・実装追従前）
 
-自己宛のAgent-origin `turn.run / turn.enqueue`は禁止し、将来の自己実行は別権限のスケジュールで扱う。結果待ちの再開は依頼先Agentから返却先への明示Turnで行い、返送のauthorityも検証する。詳細とAuxiliaryの未決定事項は`docs/design/session-external-runtime.md`の「v6.4 方針更新: 自己宛Turnとスケジュールの分離」を正本とする。以下の任意Sessionへのroutingは、更新後には自己宛direct Turnを含まない。
+自己宛のAgent-origin `turn.run / turn.enqueue`禁止と外部要因を待つスケジュールの分離は維持する。結果待ちの再開は依頼先Agentから返却先への通常Turnで行う。#734により返送のWorkItem／consultation関連付けやgrant・予算条件は撤回するが、actor・宛先・executionの取り違え防止は維持する。採否の正本はADR 032とする。
 
-実装時は自己宛baselineの見直し、明示grantでも迂回できない対象検証、CLI/MCP/HTTPとcatalog・testの追従、schedule作成と発火の認可分離を確認する。既存保存grant・queued executionの扱いは実装前に整理し、文書更新だけを理由に削除・取消しない。GUI送信、他Sessionからの受付、既存失敗通知は維持する。本更新でruntimeの挙動は変更していない。
+実装時は公開adapterと実行ownerの具体的なactor／対象条件、GUIとAgentのschedule経路の区別を確認する。代替grantや予算管理を作らない。GUI送信、他Sessionからの受付、既存失敗通知、受け付けたexecutionの保存・直列実行は維持する。本更新でruntimeの挙動や既存データは変更していない。以下は置換前のgrant／routing／移管設計であり、撤去対象を維持する要件ではない。
 
 same-root内では、active communication grantを持つAgentが任意のSessionへTurnまたは一時委譲を送れるようにする。固定parent／sibling／grandchild matrixはdefault grant templateへ移す。
 

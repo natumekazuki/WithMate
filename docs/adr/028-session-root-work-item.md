@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 032](032-role-session-async-collaboration.md)（2026-09-22、実装適用待ち）。RootWorkItemを機能として撤去する判断へ置換した。以下は採用当時の判断であり、通常Session作成へRootWorkItemを再び必須化する根拠にしない。実データの破棄許可とは別である。
 
 Roleとcommunication policyを実効権限の根拠とする判断はADR 029で置き換えた。Root Work Itemの一意性、自己所有、履歴とSession作成の原子性は維持する。
 

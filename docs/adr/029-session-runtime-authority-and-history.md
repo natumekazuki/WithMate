@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Partially superseded by [ADR 032](032-role-session-async-collaboration.md)（2026-09-22、実装適用待ち）。grantと撤去機能専用の履歴管理を置換する。runtime bindingによるactor確認、個別操作の保存・冪等性・副作用の区別は維持する。以下は採用当時の判断であり、grantを別名で再導入する根拠にしない。
 
 ADR 026とADR 028のうち、Roleとcommunication policyを実効権限の上限とする判断を置き換える。Sessionのimmutableな親子関係とRoot Work Itemの一意性は維持する。
 

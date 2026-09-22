@@ -1,5 +1,7 @@
 # Delegation transaction
 
+2026-09-22の[ADR 032](../../../adr/032-role-session-async-collaboration.md)／[#734](https://github.com/natumekazuki/WithMate/issues/734)が、以下の旧設計と衝突する箇所に優先する。管理機能の撤去は採用済み・実装適用待ちであり、本書の旧操作・grant・予算・仕事手順を新規実装や統合の必須条件にしない。旧計画の整理は親planの冒頭を参照する。
+
 ## 目的
 
 Delegationは、Session、Work Item、Turnの既存操作を一つの依頼として相関させる通常のdomain resourceである。Delegation固有のrowにはstable ID、actor Session、request、revision、itemごとのresource IDと状態、未完了stepの入力、直近mutation応答と過去mutationの入力、recovery actionを保存する。

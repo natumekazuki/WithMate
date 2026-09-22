@@ -1,5 +1,7 @@
 # Session lifecycle
 
+2026-09-22の[ADR 032](../../../adr/032-role-session-async-collaboration.md)／[#734](https://github.com/natumekazuki/WithMate/issues/734)が、以下の旧設計と衝突する箇所に優先する。管理機能の撤去は採用済み・実装適用待ちであり、本書の旧操作・grant・予算・仕事手順を新規実装や統合の必須条件にしない。旧計画の整理は親planの冒頭を参照する。
+
 ## 担当する能力
 
 - Agent による root Session と child Session の作成
@@ -32,13 +34,13 @@ Character変更は会話履歴の所有者を偽装しない。過去messageとa
 
 ## 初期Auxiliaryを含むSession作成の統合方針（詳細検討保留）
 
-通常Sessionの作成はGUI・MCP・CLIで基本的に同じ動作とし、初期Auxiliaryを必須とする。入口ごとの後処理ではなく、共通lifecycleでSession本体、Role・権限・予算と初期Auxiliaryの確定、失敗処理、冪等な再試行を扱う方針とする。共通化は呼出元ごとの認可の違いをなくすことを意味しない。
+通常Sessionの作成はGUI・MCP・CLIで基本的に同じ動作とし、初期Auxiliaryを必須とする。入口ごとの後処理ではなく、共通lifecycleでSession本体、Role・作成関係と初期Auxiliaryの確定、失敗処理、冪等な再試行を扱う方針とする。#734によりRootWorkItem・grant・予算の同時作成要求は撤回するが、実際のactorと対象の検証やユーザー専用承認は維持する。
 
-ただし、[Issue #726](https://github.com/natumekazuki/WithMate/issues/726)でSession操作の排他・取消・永続化とAuxiliary作成処理の改修が進められているため、本統合の詳細設計・実装には着手しない。同Issueの実装・検証が片付いた後、変更後の作成経路と操作lifecycleを確認して再検討する。
+ただし、[Issue #726](https://github.com/natumekazuki/WithMate/issues/726)のSession操作の排他・取消・永続化とAuxiliary作成処理はfeat/v6.3.29側の変更であり、本統合の詳細設計・実装は引き続き保留する。同branchがmasterへ入った後に取り込み、変更後の作成経路と操作lifecycleを確認して再検討する。別branchでの完了と本branchへの適用を混同しない。
 
 - 通常Sessionの作成成功は、必須の初期Auxiliaryが揃った状態とする。Mainだけの作成を成功扱いし、Auxiliary失敗時に後から親を削除する方式をそのまま移植しない。
 - transaction／commit境界、準備・取消・失敗時の後始末、回復と冪等性の接続、各作成経路への具体的な配置は、着手時まで検討中とする。旧masterの後処理や今回の会話上の候補を、確定した実装手順として扱わない。
-- 下記の既存Root作成契約を維持しつつ、初期Auxiliaryとの接続は#726完了後に確認する。本節は方針の記録であり、統合実装の完了を示さない。
+- 下記の既存Root作成契約のうち撤去機能への依存は維持しない。残すidentity・保存・冪等性等と初期Auxiliaryの接続は統合後に確認する。本節は方針の記録であり、統合実装の完了を示さない。
 
 ## Root 作成
 

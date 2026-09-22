@@ -8,7 +8,9 @@
 
 この文書は、Session CLI、Session MCP、Electron Main Process、操作対象Sessionの関係を示す。特に、MCPを呼び出すagentのSessionと操作対象のWithMate Sessionを区別する。
 
-runtime bindingのauthority境界はADR 021、通常SessionのRole bindingはADR 026、grantとresource historyへの切り替えはADR 029を正本とする。exact request、response、error、状態遷移、limitは、実装時に追加するtype、JSON schema、shared validation、executable contractを正本とする。この文書はそれらのfieldを網羅しない。
+runtime bindingのauthority境界はADR 021を参照する。通常SessionのRole binding、grantとresource historyについて、本branchに残る実装の判断経緯はADR 026・029を参照する。2026-09-22に採用した[ADR 032](../adr/032-role-session-async-collaboration.md)は、WorkItem・集約・複合Delegation・業務報告管理・予算・grantの撤去とRole付きSessionの非同期協同を定める。実装適用は未完了であり、以下の旧操作・grant条件の説明を新方針の必須要件や復活根拠にしない。
+
+exact request、response、error、状態遷移、limitは、本branchのtype、JSON schema、shared validation、executable contractを正本とする。この文書はそれらのfieldを網羅しない。公開操作・配布Skillの更新は実装と同じ論理変更で行い、文書だけで新契約へ対応済みとしない。
 
 ADR 021で確定した非局所的な境界を本文に置き、未確定事項は末尾へ分離する。
 
@@ -148,29 +150,9 @@ Sessionごとのqueueは、待機中のqueued executionを最大10件まで保�
 
 `turn.run`と`turn.enqueue`は別operationとしてidempotency scopeを分ける。同じkeyを使って一方を他方へ変更しても、既存executionへ合流させない。
 
-### Session移管・削除と複数Auxiliary（2026-09-18 方針更新）
-
-本節は採用した設計方針であり、実装追従は`docs/plans/20260830-agent-autonomy-capability-expansion/plan.md`の「設計更新・統合の追従管理」で管理する。この文書更新ではruntimeの挙動を変更していない。
-
-- Session移管・削除の確認対象は、処理対象の各Mainに所属するAuxiliary全件とする。選択中の一件、表示中のWindow、paneの開閉を対象集合の根拠にしない。通常Sessionのdescendantまで対象となる操作では、それぞれに所属するAuxiliaryも含める。
-- 移管では全Auxiliaryの実行状態を既存の移管可否判定へ含め、非表示の実行を見落として移管しない。移管可能な場合は、全Auxiliaryについて所属に依存する情報を既存の移管境界と整合させる。Auxiliary自身のstable ID、会話、provider thread、Character snapshotを作り直さず、親Mainへの紐づきを維持する。
-- 削除では既存の認可・実行中拒否等の削除条件を維持する。停止を伴う削除経路では全Auxiliaryを停止対象とし、保存データ・所有resourceのcleanupも全件へ適用する。全件化を理由に既存の拒否を強制停止へ変更せず、遅延callbackによる削除済みデータの復活を防ぐ。共有Workspaceを削除対象へ広げない。
-- 確認から移管・削除の確定までにAuxiliaryの作成・実行開始が競合しても判定をすり抜けないよう、既存のadmission・draining・削除境界へ接続する。確認時点の一覧を取得するだけで競合対策が完了したとは扱わない。
-- 新しい移管ルールやAuxiliary専用のgrant・budget体系を追加する判断ではない。既存の安全条件と後続処理を所属全件へ揃える。Main／Auxiliaryの送信方式・MCP公開権限は引き続き別途検討し、本変更の前提にしない。
-
 ### Session間Turn authorityと送信元projection
 
-#### v6.4 方針更新: 自己宛Turnとスケジュールの分離（2026-09-18）
-
-以下は採用した設計方針であり、この文書更新では実装・schema・grant migrationを変更していない。後掲のbaseline表にある自己宛許可は更新前の実装契約を示し、下記方針への実装追従が必要である。
-
-- Agentが自分へ直接`turn.run`または`turn.enqueue`を発行して次Turnを作る経路は許可しない。通常Sessionの自己宛baseline grantを見直し、明示grantによってこの禁止を迂回できないよう、Agent-origin direct Turnの対象条件として扱う。これは自己参照や他の自己管理操作を禁止する判断ではない。
-- ユーザーの追加入力を受け付けるGUIの永続FIFOと、認可された他SessionからのTurn受付は維持する。
-- 他Sessionの結果待ちからの再開は、依頼時に返却先と返送指示を伝え、結果を得たAgentが待機側へTurnを送る方式とする。往路の許可だけで復路を許可せず、返送側のactive grantとWork Itemまたはconsultationとの関連を検証する。返却先が実行中の場合は`turn.enqueue`を使う。成功結果のシステム自動配送は追加せず、既存のterminal failure notificationは別契約として維持する。
-- 外部要因の作業を後で確認する等の自己予約は、スケジュール機能として残す。スケジュール作成・管理とdirect Turn発行の権限は分離する。内部で同じexecution queueを使うことを、Agentへのdirect enqueue権限の付与または要求の理由にしない。
-- Agentが作成したスケジュールの発火は、その予約の認可根拠と適用時点の失効・期限・予算条件を検証する設計とする。既存GUI scheduleのtrusted user invocationへAgent作成を混同しない。公開APIの対応範囲、認可根拠の保持方法、作成・発火双方の認可実装は別途確認して実装へ反映する。本更新はAgent向けschedule APIの実装済み宣言ではない。
-
-Auxiliaryについては、外部から操作される対象としての公開と、他Sessionを操作する主体としての利用を分けて検討する。外部非公開・操作主体としては許可する案は未確定であり、返送Turnの受信を必要とする場合の公開範囲も未決定である。Auxiliaryのgrant付与元・初期scope・予算・階層への所属・schedule対応は確定していない。親Mainのidentityや権限を暗黙に代理利用する実装は導入しない。Main / Auxiliaryの送信方式をMCP公開可否だけから決めない。
+自己宛direct Turnとscheduleの分離、Auxiliary全件の移管・削除、およびMain／Auxiliaryへの返送についての採用判断は[ADR 032](../adr/032-role-session-async-collaboration.md)を参照する。旧grant・WorkItem・予算への接続要求は撤回されている。以下のbaseline表と関連付け条件は変更前の実装説明であり、採用判断の実装完了を表さない。
 
 Agent起点の`turn.run`と`turn.enqueue`は、runtime bindingで確定したactor Sessionと、保存済みRole bindingから解決したtarget Sessionの関係をshared application serviceで検証する。authority入力はSQLiteからSession ID、title、canonical hierarchyとactive grantを取得する専用queryで解決し、公開用Session CRUDやworkspaceのGit branch取得を経由しない。request bodyからRole、root、parent、depthを受け取らず、CLI、MCP、raw HTTPで別の判定を持たない。baseline grantのTurn関係は次のとおりである。Role自体をlive authorityの上限にはしない。
 
