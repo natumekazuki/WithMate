@@ -286,8 +286,8 @@
   display: grid;
   gap: 18px;
   width: min(640px, 100%);
+  min-height: 0;
   padding: 22px;
-  background: rgba(21, 26, 35, 0.92);
 }
 
 .boot-status-head {

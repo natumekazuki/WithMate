@@ -65,6 +65,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 
 ## Boot Window
 
+- 起動状況は画面へ直接配置し、全体を囲むカードの背景・枠線・影は設けない。内容の余白とstage行の区別は維持する。
 - 起動中は現在の処理名を一つのstatusとして通知し、stage一覧で対象と順序を示す。同義の初期待機説明を重ねない。
 - 現在のstageは欠けた円形のspinnerと`aria-current="step"`、通過済みstageはcheckmark、未開始は中空円で区別する。reduced motionでは回転だけを止め、状態名と形状は残す。
 - 起動失敗の説明とerror detailは保持し、stageを成功へ読み替えない。

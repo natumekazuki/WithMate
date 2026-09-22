@@ -43,7 +43,7 @@ npm run electron:start
 | --- | --- | --- | --- |
 | MT-001 | Home 起動 | `npm run electron:start` でアプリを起動する | Home Window が表示される |
 | MT-001B | 英語shellと内容保全 | 現役6 entry、Home / Monitor、Settings全section、Main / Auxiliary、Memory / Glossary、Templates、Character、Diff / Preview、native menuを開く。日本語のtitle・Character・会話・custom microcopy・ファイルを含める | アプリ所有の表示・tooltip・accessible name・自前titleは英語で、shellは`lang="en"`。原文内容、内部値、raw copyは変わらず、表示日時は英語localeとローカルtime zoneを使う |
-| MT-001C | Boot進捗と失敗 | 分離した検証環境で通常起動と起動失敗を確認し、reduced motionも切り替える | 現在stageはspinnerと状態名、通過済みはcheckmark、未開始は中空円。motion停止時も識別でき、失敗理由が読める。起動通知はstage一覧全体を重複して読み上げない |
+| MT-001C | Boot進捗と失敗 | 分離した検証環境で通常起動と起動失敗を確認し、reduced motionも切り替える | 全体を囲むカードの背景・枠線・影を付けず、内容の余白とstage行の区別を保つ。現在stageはspinnerと状態名、通過済みはcheckmark、未開始は中空円。motion停止時も識別でき、失敗理由が読める。起動通知はstage一覧全体を重複して読み上げない |
 | MT-001D | 操作・状態の横断確認 | 変更controlをkeyboardで操作し、狭幅・拡大・theme / Character色・forced colors・reduced motionで確認する。短い処理、遅延、取消、対象切替、二重押しも試す | icon-onlyにも対象付き操作名とfocus、selected / expanded / pressedがある。busyは実requestの対象だけへ表示し、空・利用不可・失敗を混同しない。古い成功や状態が別対象へ残らず、必要な安全・回復操作へ到達できる |
 | MT-001A | Home narrow width guardrail | Home Window を最小幅近くまで縮める | single-column layout へ倒れても `Recent sessions` と right pane toggle / `Settings` 導線が残り、操作不能にならない |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 空状態メッセージが表示される |

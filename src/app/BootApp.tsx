@@ -62,7 +62,7 @@ export default function BootApp() {
   return (
     <div className={`page-shell home-page boot-page${status.kind === "failed" ? " failed" : ""}`}>
       <main className="home-layout home-layout-minimal boot-page-shell">
-        <section className="panel boot-status-panel rise-1">
+        <section className="boot-status-panel rise-1">
           <div className="home-panel-head boot-status-head">
             <div className="home-panel-copy">
               <p className="kicker">WithMate</p>
