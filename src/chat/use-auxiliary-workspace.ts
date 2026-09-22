@@ -614,10 +614,10 @@ export function useAuxiliaryWorkspace(input: {
       onSelectAuxiliary: selectSession,
       onTargetChange: setTarget,
       onWidthRatioChange: setWidthRatio,
-      loading,
-      error: error?.message ?? null,
+      loading: loading || detailLoading,
+      error: detailError?.message ?? error?.message ?? null,
     };
-  }, [error, loading, selectSession, selectedId, setTarget, setWidthRatio, summaries, target, widthRatio]);
+  }, [detailError, detailLoading, error, loading, selectSession, selectedId, setTarget, setWidthRatio, summaries, target, widthRatio]);
 
   return useMemo(() => ({
     summaries,
