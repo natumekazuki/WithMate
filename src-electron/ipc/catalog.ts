@@ -8,8 +8,29 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
 } from "../../src-shared/ipc/withmate-ipc-channels.js";
 
-import type { IpcHandleRegistrar, MainIpcCatalogDeps } from "./contracts.js";
+import type {
+  IpcHandleRegistrar,
+  MainIpcCatalogDeps,
+  MainIpcEventWindowDeps,
+  MainIpcHomeWindowDeps,
+} from "./contracts.js";
 import { resolveTargetWindow } from "./shared.js";
+
+export type MainIpcCatalogServiceDeps = Pick<
+  MainIpcCatalogDeps,
+  | "getModelCatalog"
+  | "importModelCatalogDocument"
+  | "importModelCatalogFromFile"
+  | "exportModelCatalogDocument"
+  | "exportModelCatalogToFile"
+>;
+
+export function createCatalogIpcDeps(
+  services: MainIpcCatalogServiceDeps,
+  context: MainIpcEventWindowDeps & MainIpcHomeWindowDeps,
+): MainIpcCatalogDeps {
+  return { ...context, ...services };
+}
 
 export function registerCatalogHandlers(
   ipcMain: IpcHandleRegistrar,

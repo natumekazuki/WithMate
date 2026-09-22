@@ -80,7 +80,11 @@ import {
 
 import type {
   IpcHandleRegistrar,
+  MainIpcEventWindowDeps,
+  MainIpcFilePreviewWindowDeps,
   MainIpcSessionQueryDeps,
+  MainIpcSessionWindowDeps,
+  MainIpcWorkspaceValidationDeps,
 } from "./contracts.js";
 import {
   assertOwningSessionWindowSender,
@@ -104,6 +108,22 @@ import {
   parseSessionFileTreeContextMenuRequest,
   parseMarkdownLinkContextMenuRequest,
 } from "./shared.js";
+
+export type MainIpcSessionQueryServiceDeps = Omit<
+  MainIpcSessionQueryDeps,
+  keyof MainIpcEventWindowDeps | keyof MainIpcSessionWindowDeps |
+    keyof MainIpcWorkspaceValidationDeps | keyof MainIpcFilePreviewWindowDeps
+>;
+
+export function createSessionQueryIpcDeps(
+  services: MainIpcSessionQueryServiceDeps,
+  context: MainIpcEventWindowDeps &
+    MainIpcSessionWindowDeps &
+    MainIpcWorkspaceValidationDeps &
+    MainIpcFilePreviewWindowDeps,
+): MainIpcSessionQueryDeps {
+  return { ...context, ...services };
+}
 
 export function registerSessionQueryHandlers(
   ipcMain: IpcHandleRegistrar,

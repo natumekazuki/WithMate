@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
+import type { RendererLogInput } from "../../src-shared/window/app-log-types.js";
 
 import type { AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogOperationDetailFragment, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
@@ -121,7 +122,16 @@ import type {
   PromptTemplate,
   UpdatePromptTemplateInput,
 } from "../../src-shared/prompt-template.js";
-import type { MainIpcRegistrationDeps } from "../ipc/contracts.js";
+import type {
+  LogIpcErrorInput,
+  MainIpcRegistrationDeps,
+} from "../ipc/contracts.js";
+import { createAuxiliaryIpcDeps } from "../ipc/auxiliary.js";
+import { createCatalogIpcDeps } from "../ipc/catalog.js";
+import { createSessionQueryIpcDeps } from "../ipc/session-query.js";
+import { createSessionRuntimeIpcDeps } from "../ipc/session-runtime.js";
+import { createSettingsIpcDeps } from "../ipc/settings.js";
+import { createWindowIpcDeps } from "../ipc/window.js";
 import type { SessionWindowRestoreResult } from "../../src-shared/window/session-window-restore.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
@@ -195,8 +205,8 @@ export type MainIpcWindowDepsArgs = {
   openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
   openTerminalAtPath(target: string): Promise<void>;
-  logIpcError?: MainIpcRegistrationDeps["logIpcError"];
-  reportRendererLog?: MainIpcRegistrationDeps["reportRendererLog"];
+  logIpcError?: (input: LogIpcErrorInput) => void;
+  reportRendererLog?: (input: RendererLogInput, windowId?: number) => void;
 };
 
 export type MainIpcCatalogDepsArgs = {
@@ -403,168 +413,82 @@ export function createMainIpcRegistrationDeps(
   args: CreateMainIpcRegistrationDepsArgs,
 ): MainIpcRegistrationDeps {
   const auxiliary = args.auxiliary ?? createUnavailableAuxiliaryDeps();
-
-  return {
-    acknowledgeSessionDraftFlush: args.window.acknowledgeSessionDraftFlush,
+  const eventWindow = {
     resolveEventWindow: args.window.resolveEventWindow,
+  };
+  const homeWindow = {
     resolveHomeWindow: args.window.resolveHomeWindow,
+  };
+  const sessionWindow = {
     resolveSessionWindow: args.window.resolveSessionWindow,
-    openSessionWindow: async (sessionId, auxiliarySessionId) => {
-      await args.window.openSessionWindow(sessionId, auxiliarySessionId);
-    },
-    showSessionMonitorContextMenu: args.window.showSessionMonitorContextMenu,
-    getSessionWindowRestoreSet: () => args.window.getSessionWindowRestoreSet(),
-    restoreSessionWindows: () => args.window.restoreSessionWindows(),
-    openHomeWindow: async () => {
-      await args.window.openHomeWindow();
-    },
-    openSessionMonitorWindow: async () => {
-      await args.window.openSessionMonitorWindow();
-    },
-    openSettingsWindow: async () => {
-      await args.window.openSettingsWindow();
-    },
-    openMemoryV6ReviewWindow: async () => {
-      await args.window.openMemoryV6ReviewWindow();
-    },
+  };
+  const windowContext = {
+    ...eventWindow,
+    ...homeWindow,
+    ...sessionWindow,
     isSessionMonitorWindow: args.window.isSessionMonitorWindow,
+    validateWorkspaceDirectory: args.window.validateWorkspaceDirectory,
+    getAuxiliarySession: auxiliary.getAuxiliarySession,
+  };
+  const settingsContext = {
+    ...eventWindow,
+    ...homeWindow,
     isSettingsWindow: args.window.isSettingsWindow,
     isMemoryV6ReviewWindow: args.window.isMemoryV6ReviewWindow,
-    openCharacterEditorWindow: async (characterId) => {
-      await args.window.openCharacterEditorWindow(characterId);
-    },
-    openDiffWindow: async (diffPreview) => {
-      await args.window.openDiffWindow(diffPreview);
-    },
-    isFilePreviewWindow: args.window.isFilePreviewWindow,
+  };
+  const sessionQueryContext = {
+    ...eventWindow,
+    ...sessionWindow,
+    validateWorkspaceDirectory: args.window.validateWorkspaceDirectory,
     getFilePreviewWindowResource: args.window.getFilePreviewWindowResource,
     isFilePreviewTokenWindow: args.window.isFilePreviewTokenWindow,
-    pickDirectory: args.window.pickDirectory,
+  };
+  const sessionRuntimeContext = {
+    ...eventWindow,
+    ...homeWindow,
+    ...sessionWindow,
     validateWorkspaceDirectory: args.window.validateWorkspaceDirectory,
-    pickFile: args.window.pickFile,
-    pickFiles: args.window.pickFiles,
-    pickSessionFiles: args.window.pickSessionFiles,
-    pickSessionFolder: args.window.pickSessionFolder,
-    pickSessionImageFile: args.window.pickSessionImageFile,
-    pickImageFile: args.window.pickImageFile,
-    copyFilesToSessionFiles: args.window.copyFilesToSessionFiles,
-    savePastedSessionFile: args.window.savePastedSessionFile,
-    openSessionFilesDirectory: args.window.openSessionFilesDirectory,
-    openSessionFilesTerminal: args.window.openSessionFilesTerminal,
-    copySessionFilePreviewImage: args.window.copySessionFilePreviewImage,
-    showSessionFilePreviewImageContextMenu: args.window.showSessionFilePreviewImageContextMenu,
-    copySessionFileObject: args.window.copySessionFileObject,
-    showSessionFileObjectCopyContextMenu: args.window.showSessionFileObjectCopyContextMenu,
-    showSessionFileTreeContextMenu: args.window.showSessionFileTreeContextMenu,
-    showMarkdownLinkContextMenu: args.window.showMarkdownLinkContextMenu,
-    openPathTarget: args.window.openPathTarget,
-    openAppLogFolder: args.window.openAppLogFolder,
-    openCrashDumpFolder: args.window.openCrashDumpFolder,
-    openSessionTerminal: args.window.openSessionTerminal,
-    openTerminalAtPath: args.window.openTerminalAtPath,
-    logIpcError: args.window.logIpcError,
-    reportRendererLog: args.window.reportRendererLog,
-    getModelCatalog: args.catalog.getModelCatalog,
-    importModelCatalogDocument: args.catalog.importModelCatalogDocument,
-    importModelCatalogFromFile: args.catalog.importModelCatalogFromFile,
-    exportModelCatalogDocument: args.catalog.exportModelCatalogDocument,
-    exportModelCatalogToFile: args.catalog.exportModelCatalogToFile,
-    getAppSettings: args.settings.getAppSettings,
-    updateAppSettings: args.settings.updateAppSettings,
-    updateChatLayoutPreference: args.settings.updateChatLayoutPreference,
-    getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
-    getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
-    installMemoryV6CliShim: args.settings.installMemoryV6CliShim,
-    uninstallMemoryV6CliShim: args.settings.uninstallMemoryV6CliShim,
-    getMemoryV6FileUsage: args.settings.getMemoryV6FileUsage,
-    exportMemoryV6EntryFiles: args.settings.exportMemoryV6EntryFiles,
-    runMemoryV6ProtectedObjectGc: args.settings.runMemoryV6ProtectedObjectGc,
-    searchMemoryV6Entries: args.settings.searchMemoryV6Entries,
-    getMemoryV6Entry: args.settings.getMemoryV6Entry,
-    forgetMemoryV6Entry: args.settings.forgetMemoryV6Entry,
-    resetAppDatabase: args.settings.resetAppDatabase,
-    listPromptTemplates: args.promptTemplates.listPromptTemplates,
-    createPromptTemplate: args.promptTemplates.createPromptTemplate,
-    updatePromptTemplate: args.promptTemplates.updatePromptTemplate,
-    deletePromptTemplate: args.promptTemplates.deletePromptTemplate,
-    listSessionSummaryPage: args.sessionQuery.listSessionSummaryPage,
-    listSessionCharacterUsage: args.sessionQuery.listSessionCharacterUsage,
-    listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
-    listSessionAuditLogSummaries: args.sessionQuery.listSessionAuditLogSummaries,
-    listSessionAuditLogSummaryPage: args.sessionQuery.listSessionAuditLogSummaryPage,
-    getSessionAuditLogDetail: args.sessionQuery.getSessionAuditLogDetail,
-    getSessionAuditLogDetailSection: args.sessionQuery.getSessionAuditLogDetailSection,
-    getSessionAuditLogOperationDetail: args.sessionQuery.getSessionAuditLogOperationDetail,
-    listSessionSkills: args.sessionQuery.listSessionSkills,
-    listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
-    listWorkspaceSkills: args.sessionQuery.listWorkspaceSkills,
-    listWorkspaceCustomAgents: args.sessionQuery.listWorkspaceCustomAgents,
-    listOpenSessionWindowIdsPage: args.sessionQuery.listOpenSessionWindowIdsPage,
-    getSession: args.sessionQuery.getSession,
-    getSessionGlossaryProjection: args.sessionQuery.getSessionGlossaryProjection,
-    searchSessionGlossary: args.sessionQuery.searchSessionGlossary,
-    ensureSessionGlossarySubscription: args.sessionQuery.ensureSessionGlossarySubscription,
-    getSessionFileExplorerOwnerSessionId: args.sessionQuery.getSessionFileExplorerOwnerSessionId,
-    listSessionFileRoots: args.sessionQuery.listSessionFileRoots,
-    listSessionDirectory: args.sessionQuery.listSessionDirectory,
-    inspectSessionFile: args.sessionQuery.inspectSessionFile,
-    readSessionFileChunk: args.sessionQuery.readSessionFileChunk,
-    openSessionFile: args.sessionQuery.openSessionFile,
-    openSessionFilePreviewWindow: args.sessionQuery.openSessionFilePreviewWindow,
-    getSessionFilePreviewWindowPayload: args.sessionQuery.getSessionFilePreviewWindowPayload,
-    listFileRootChanges: args.sessionQuery.listFileRootChanges,
-    listFileRootChangesRepositories: args.sessionQuery.listFileRootChangesRepositories,
-    getFileRootDiff: args.sessionQuery.getFileRootDiff,
-    listFileRootGitHistoryRepositories: args.sessionQuery.listFileRootGitHistoryRepositories,
-    listFileRootGitHistoryCommits: args.sessionQuery.listFileRootGitHistoryCommits,
-    getFileRootGitHistoryCommitDetail: args.sessionQuery.getFileRootGitHistoryCommitDetail,
-    getFileRootGitHistoryComparison: args.sessionQuery.getFileRootGitHistoryComparison,
-    getFileRootGitHistoryDiff: args.sessionQuery.getFileRootGitHistoryDiff,
-    getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,
-    getDiffPreview: args.sessionQuery.getDiffPreview,
-    previewComposerInput: args.sessionQuery.previewComposerInput,
-    listAuxiliarySessions: auxiliary.listAuxiliarySessions,
-    listOpenActiveAuxiliarySessionSummaries: auxiliary.listOpenActiveAuxiliarySessionSummaries,
-    listOpenAuxiliarySessionSummaries: auxiliary.listOpenAuxiliarySessionSummaries,
-    getActiveAuxiliarySession: auxiliary.getActiveAuxiliarySession,
-    getAuxiliarySession: auxiliary.getAuxiliarySession,
-    getAuxiliaryDraft: auxiliary.getAuxiliaryDraft,
-    saveAuxiliaryDraft: auxiliary.saveAuxiliaryDraft,
-    getAuxiliarySessionStatus: auxiliary.getAuxiliarySessionStatus,
-    createAuxiliarySession: auxiliary.createAuxiliarySession,
-    getAuxiliaryCreationContext: auxiliary.getAuxiliaryCreationContext,
-    cancelAuxiliaryCreation: auxiliary.cancelAuxiliaryCreation,
-    getAuxiliaryCreation: auxiliary.getAuxiliaryCreation,
-    updateAuxiliarySession: auxiliary.updateAuxiliarySession,
-    closeAuxiliarySession: auxiliary.closeAuxiliarySession,
-    runAuxiliarySessionTurn: auxiliary.runAuxiliarySessionTurn,
-    cancelAuxiliarySessionRun: auxiliary.cancelAuxiliarySessionRun,
-    getLiveSessionRun: args.sessionRuntime.getLiveSessionRun,
-    getProviderQuotaTelemetry: args.sessionRuntime.getProviderQuotaTelemetry,
-    getSessionContextTelemetry: args.sessionRuntime.getSessionContextTelemetry,
-    getSessionBackgroundActivity: args.sessionRuntime.getSessionBackgroundActivity,
-    resolveLiveApproval: args.sessionRuntime.resolveLiveApproval,
-    resolveLiveElicitation: args.sessionRuntime.resolveLiveElicitation,
-    createSession: args.sessionRuntime.createSession,
-    updateSession: args.sessionRuntime.updateSession,
-    setSessionPinned: args.sessionRuntime.setSessionPinned,
-    deleteSession: args.sessionRuntime.deleteSession,
-    deleteSessionsLastActiveBefore: args.sessionRuntime.deleteSessionsLastActiveBefore,
-    runSessionTurn: args.sessionRuntime.runSessionTurn,
-    cancelSessionRun: args.sessionRuntime.cancelSessionRun,
-    getMateState: args.mate.getMateState,
-    getMateProfile: args.mate.getMateProfile,
-    createMate: args.mate.createMate,
-    updateMate: args.mate.updateMate,
-    setMateAvatar: args.mate.setMateAvatar,
-    resetMate: args.mate.resetMate,
-    listCharacters: args.character.listCharacters,
-    getCharacter: args.character.getCharacter,
-    createCharacter: args.character.createCharacter,
-    updateCharacterMetadata: args.character.updateCharacterMetadata,
-    updateCharacterDefinition: args.character.updateCharacterDefinition,
-    archiveCharacter: args.character.archiveCharacter,
-    resolveLaunchCharacter: args.character.resolveLaunchCharacter,
-    startCharacterAuthoringSession: args.character.startCharacterAuthoringSession,
+    isSettingsWindow: args.window.isSettingsWindow,
+  };
+
+  return {
+    common: {
+      acknowledgeSessionDraftFlush: args.window.acknowledgeSessionDraftFlush,
+      resolveEventWindow: args.window.resolveEventWindow,
+      logIpcError: args.window.logIpcError,
+      reportRendererLog: args.window.reportRendererLog,
+    },
+    window: createWindowIpcDeps(args.window, windowContext),
+    catalog: createCatalogIpcDeps(args.catalog, {
+      ...eventWindow,
+      ...homeWindow,
+    }),
+    settings: createSettingsIpcDeps(args.settings, settingsContext),
+    promptTemplates: args.promptTemplates,
+    sessionQuery: createSessionQueryIpcDeps(
+      {
+        ...args.sessionQuery,
+        copySessionFilePreviewImage: args.window.copySessionFilePreviewImage,
+        showSessionFilePreviewImageContextMenu:
+          args.window.showSessionFilePreviewImageContextMenu,
+        copySessionFileObject: args.window.copySessionFileObject,
+        showSessionFileObjectCopyContextMenu:
+          args.window.showSessionFileObjectCopyContextMenu,
+        showSessionFileTreeContextMenu:
+          args.window.showSessionFileTreeContextMenu,
+        showMarkdownLinkContextMenu: args.window.showMarkdownLinkContextMenu,
+      },
+      sessionQueryContext,
+    ),
+    auxiliary: createAuxiliaryIpcDeps(auxiliary, {
+      ...eventWindow,
+      ...sessionWindow,
+    }),
+    sessionRuntime: createSessionRuntimeIpcDeps(
+      args.sessionRuntime,
+      sessionRuntimeContext,
+    ),
+    mate: args.mate,
+    character: args.character,
   };
 }

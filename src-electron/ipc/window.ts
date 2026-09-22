@@ -1,3 +1,4 @@
+import type { BrowserWindow } from "electron";
 import type { DiffPreviewPayload } from "../../src-shared/session/session-state.js";
 
 import {
@@ -36,13 +37,95 @@ import {
   type SavePastedSessionFileRequest,
 } from "../../src-shared/window/withmate-window-types.js";
 
-import type { IpcHandleRegistrar, MainIpcWindowDeps } from "./contracts.js";
+import type {
+  IpcHandleRegistrar,
+  MainIpcAuxiliaryLookupDeps,
+  MainIpcEventWindowDeps,
+  MainIpcHomeWindowDeps,
+  MainIpcSessionMonitorWindowDeps,
+  MainIpcSessionWindowDeps,
+  MainIpcWindowDeps,
+  MainIpcWorkspaceValidationDeps,
+} from "./contracts.js";
 import { resolveWindowAuxiliarySessionId } from "./shared.js";
 import {
   resolveTargetWindow,
   assertHomeWindowSender,
   assertSessionMonitorContextMenuSender,
 } from "./shared.js";
+
+export type MainIpcWindowAssemblyContext = MainIpcEventWindowDeps &
+  MainIpcHomeWindowDeps &
+  MainIpcSessionWindowDeps &
+  MainIpcSessionMonitorWindowDeps &
+  MainIpcWorkspaceValidationDeps &
+  MainIpcAuxiliaryLookupDeps;
+
+/** Main-process window service ports owned by the window feature. */
+export type MainIpcWindowServiceDeps = {
+  openSessionWindow(
+    sessionId: string,
+    auxiliarySessionId?: string,
+  ): Promise<BrowserWindow>;
+  showSessionMonitorContextMenu: MainIpcWindowDeps["showSessionMonitorContextMenu"];
+  getSessionWindowRestoreSet: MainIpcWindowDeps["getSessionWindowRestoreSet"];
+  restoreSessionWindows: MainIpcWindowDeps["restoreSessionWindows"];
+  openHomeWindow(): Promise<BrowserWindow>;
+  openSessionMonitorWindow(): Promise<BrowserWindow>;
+  openSettingsWindow(): Promise<BrowserWindow>;
+  openMemoryV6ReviewWindow(): Promise<BrowserWindow>;
+  openCharacterEditorWindow(
+    characterId?: string | null,
+  ): Promise<BrowserWindow>;
+  openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
+  pickDirectory: MainIpcWindowDeps["pickDirectory"];
+  pickFile: MainIpcWindowDeps["pickFile"];
+  pickFiles: MainIpcWindowDeps["pickFiles"];
+  pickSessionFiles: MainIpcWindowDeps["pickSessionFiles"];
+  pickSessionFolder: MainIpcWindowDeps["pickSessionFolder"];
+  pickSessionImageFile: MainIpcWindowDeps["pickSessionImageFile"];
+  pickImageFile: MainIpcWindowDeps["pickImageFile"];
+  copyFilesToSessionFiles: MainIpcWindowDeps["copyFilesToSessionFiles"];
+  savePastedSessionFile: MainIpcWindowDeps["savePastedSessionFile"];
+  openSessionFilesDirectory: MainIpcWindowDeps["openSessionFilesDirectory"];
+  openSessionFilesTerminal: MainIpcWindowDeps["openSessionFilesTerminal"];
+  openPathTarget: MainIpcWindowDeps["openPathTarget"];
+  openAppLogFolder: MainIpcWindowDeps["openAppLogFolder"];
+  openCrashDumpFolder: MainIpcWindowDeps["openCrashDumpFolder"];
+  openSessionTerminal: MainIpcWindowDeps["openSessionTerminal"];
+  openTerminalAtPath: MainIpcWindowDeps["openTerminalAtPath"];
+};
+
+export function createWindowIpcDeps(
+  services: MainIpcWindowServiceDeps,
+  context: MainIpcWindowAssemblyContext,
+): MainIpcWindowDeps {
+  return {
+    ...context,
+    ...services,
+    openSessionWindow: async (sessionId, auxiliarySessionId) => {
+      await services.openSessionWindow(sessionId, auxiliarySessionId);
+    },
+    openHomeWindow: async () => {
+      await services.openHomeWindow();
+    },
+    openSessionMonitorWindow: async () => {
+      await services.openSessionMonitorWindow();
+    },
+    openSettingsWindow: async () => {
+      await services.openSettingsWindow();
+    },
+    openMemoryV6ReviewWindow: async () => {
+      await services.openMemoryV6ReviewWindow();
+    },
+    openCharacterEditorWindow: async (characterId) => {
+      await services.openCharacterEditorWindow(characterId);
+    },
+    openDiffWindow: async (diffPreview) => {
+      await services.openDiffWindow(diffPreview);
+    },
+  };
+}
 
 export function registerWindowHandlers(
   ipcMain: IpcHandleRegistrar,

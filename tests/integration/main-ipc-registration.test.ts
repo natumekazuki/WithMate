@@ -100,7 +100,7 @@ function createIpcMainStub() {
 
 function createDeps(overrides: Record<string, unknown> = {}) {
   const calls: string[] = [];
-  const deps = new Proxy({
+  const featureDeps = new Proxy({
     resolveEventWindow: () => null,
     resolveHomeWindow: () => null,
     isSettingsWindow: () => false,
@@ -122,6 +122,19 @@ function createDeps(overrides: Record<string, unknown> = {}) {
       };
     },
   });
+
+  const deps = {
+    common: featureDeps,
+    window: featureDeps,
+    catalog: featureDeps,
+    settings: featureDeps,
+    promptTemplates: featureDeps,
+    sessionQuery: featureDeps,
+    auxiliary: featureDeps,
+    sessionRuntime: featureDeps,
+    mate: featureDeps,
+    character: featureDeps,
+  };
 
   return { deps: deps as never, calls };
 }

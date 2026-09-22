@@ -32,7 +32,7 @@ function createDeps(requests: unknown[], senderKind: "home" | "monitor" | "unaut
       ? monitorSender
       : externalSender;
   const event = { sender };
-  const deps = new Proxy({
+  const featureDeps = new Proxy({
     resolveEventWindow: (currentEvent: { sender: unknown }) => {
       if (currentEvent.sender === homeSender) {
         return homeWindow;
@@ -63,7 +63,19 @@ function createDeps(requests: unknown[], senderKind: "home" | "monitor" | "unaut
       }
       return async () => null;
     },
-  }) as never;
+  });
+  const deps = {
+    common: featureDeps,
+    window: featureDeps,
+    catalog: featureDeps,
+    settings: featureDeps,
+    promptTemplates: featureDeps,
+    sessionQuery: featureDeps,
+    auxiliary: featureDeps,
+    sessionRuntime: featureDeps,
+    mate: featureDeps,
+    character: featureDeps,
+  } as never;
   return { deps, event };
 }
 

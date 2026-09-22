@@ -264,9 +264,19 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
   await deps.createHomeWindow();
   deps.broadcastModelCatalog(snapshot);
 
-  assert.equal((receivedDeps as { openHomeWindow(): Promise<void> }).openHomeWindow instanceof Function, true);
   assert.equal(
-    (receivedDeps as { showSessionMonitorContextMenu: typeof showSessionMonitorContextMenu }).showSessionMonitorContextMenu,
+    (receivedDeps as { window: { openHomeWindow(): Promise<void> } }).window
+      .openHomeWindow instanceof Function,
+    true,
+  );
+  assert.equal(
+    (
+      receivedDeps as {
+        window: {
+          showSessionMonitorContextMenu: typeof showSessionMonitorContextMenu;
+        };
+      }
+    ).window.showSessionMonitorContextMenu,
     showSessionMonitorContextMenu,
   );
   assert.deepEqual(calls, ["initialize", "registerIpcHandlers", "openHome", "broadcast:1"]);

@@ -104,6 +104,7 @@ Main Process は `app.requestSingleInstanceLock()` を取得し、2 つ目以降
 ### MainIpcRegistration
 
 - `window.withmate` に対応する IPC を domain ごとに登録する
+- `src-electron/ipc/register-main-ipc.ts` は共通の error logging、renderer log、draft flush ACK と feature assembly の登録接続だけを担当する。各 IPC feature (`window`、`catalog`、`settings`、`session-query`、`session-runtime`、`auxiliary`、`mate`、`character`、`prompt-template`) が必要な sender identity、認可 resolver、サービス port を組み合わせた handler dependency を所有し、`src-electron/app/main-ipc-deps.ts` は Main service をその assembly へ接続する
 
 ## Preload Boundary
 

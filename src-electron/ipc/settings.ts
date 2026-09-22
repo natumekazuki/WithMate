@@ -25,12 +25,35 @@ import {
 } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import { type ResetAppDatabaseRequest } from "../../src-shared/window/withmate-window-types.js";
 
-import type { IpcHandleRegistrar, MainIpcSettingsDeps } from "./contracts.js";
+import type {
+  IpcHandleRegistrar,
+  MainIpcEventWindowDeps,
+  MainIpcHomeWindowDeps,
+  MainIpcMemoryReviewWindowDeps,
+  MainIpcSettingsDeps,
+  MainIpcSettingsWindowDeps,
+} from "./contracts.js";
 import {
   resolveTargetWindow,
   assertSettingsWindowSender,
   assertMemoryV6ReviewSender,
 } from "./shared.js";
+
+export type MainIpcSettingsServiceDeps = Omit<
+  MainIpcSettingsDeps,
+  keyof MainIpcEventWindowDeps | keyof MainIpcHomeWindowDeps |
+    keyof MainIpcSettingsWindowDeps | keyof MainIpcMemoryReviewWindowDeps
+>;
+
+export function createSettingsIpcDeps(
+  services: MainIpcSettingsServiceDeps,
+  context: MainIpcEventWindowDeps &
+    MainIpcHomeWindowDeps &
+    MainIpcSettingsWindowDeps &
+    MainIpcMemoryReviewWindowDeps,
+): MainIpcSettingsDeps {
+  return { ...context, ...services };
+}
 
 export function registerSettingsHandlers(
   ipcMain: IpcHandleRegistrar,

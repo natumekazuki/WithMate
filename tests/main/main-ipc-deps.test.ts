@@ -339,28 +339,46 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     },
   });
 
-  assert.equal(await deps.openHomeWindow(), undefined);
-  assert.equal(deps.acknowledgeSessionDraftFlush, acknowledgeSessionDraftFlush);
+  assert.equal(await deps.window.openHomeWindow(), undefined);
+  assert.equal(
+    deps.common.acknowledgeSessionDraftFlush,
+    acknowledgeSessionDraftFlush,
+  );
   const sender = {} as WebContents;
   const payload = { requestId: "flush-1", success: true };
-  deps.acknowledgeSessionDraftFlush({ sender }, payload);
+  deps.common.acknowledgeSessionDraftFlush({ sender }, payload);
   assert.deepEqual(acknowledged, { sender, payload });
-  assert.equal(await deps.openMemoryV6ReviewWindow(), undefined);
-  assert.equal(deps.isMemoryV6ReviewWindow({} as never), true);
-  assert.equal(deps.isSettingsWindow({} as never), true);
-  assert.equal(await deps.openSessionWindow("session-1", "aux-1"), undefined);
-  assert.deepEqual(await deps.getSessionWindowRestoreSet(), ["session-1"]);
-  assert.deepEqual((await deps.restoreSessionWindows()).openedSessionIds, ["session-1"]);
+  assert.equal(await deps.window.openMemoryV6ReviewWindow(), undefined);
+  assert.equal(deps.settings.isMemoryV6ReviewWindow({} as never), true);
+  assert.equal(deps.settings.isSettingsWindow({} as never), true);
+  assert.equal(
+    await deps.window.openSessionWindow("session-1", "aux-1"),
+    undefined,
+  );
+  assert.deepEqual(
+    await deps.window.getSessionWindowRestoreSet(),
+    ["session-1"],
+  );
+  assert.deepEqual(
+    (await deps.window.restoreSessionWindows()).openedSessionIds,
+    ["session-1"],
+  );
   const contextMenuEvent = { sender: "monitor" };
   const contextMenuRequest = { sessionId: "session-1", point: { x: 12, y: 34 } };
-  assert.deepEqual(await deps.showSessionMonitorContextMenu(contextMenuEvent as never, contextMenuRequest as never), { status: "dismissed" });
+  assert.deepEqual(
+    await deps.window.showSessionMonitorContextMenu(
+      contextMenuEvent as never,
+      contextMenuRequest as never,
+    ),
+    { status: "dismissed" },
+  );
   assert.deepEqual(contextMenuArgs, [[contextMenuEvent, contextMenuRequest]]);
-  await deps.getMateState();
-  await deps.getMateProfile();
-  await deps.createMate({ displayName: "Buddy" });
-  await deps.updateMate({ displayName: "Buddy 2" });
-  await deps.setMateAvatar({ avatarFilePath: "C:/avatar.png" });
-  await deps.resetMate();
+  await deps.mate.getMateState();
+  await deps.mate.getMateProfile();
+  await deps.mate.createMate({ displayName: "Buddy" });
+  await deps.mate.updateMate({ displayName: "Buddy 2" });
+  await deps.mate.setMateAvatar({ avatarFilePath: "C:/avatar.png" });
+  await deps.mate.resetMate();
   assert.deepEqual(calls, [
     "openHome",
     "openMemoryReview",

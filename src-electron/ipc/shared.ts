@@ -30,10 +30,11 @@ import {
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 import { resolveWorkspaceDirectoryValidationMessage } from "../../src-shared/window/workspace-directory-validation.js";
+import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 
 export async function assertUsableWorkspaceDirectory(
   targetPath: unknown,
-  deps: Pick<MainIpcRegistrationDeps, "validateWorkspaceDirectory">,
+  deps: MainIpcWorkspaceValidationDeps,
 ): Promise<void> {
   const result = await deps.validateWorkspaceDirectory(targetPath);
   if (!result.valid) {
@@ -43,10 +44,7 @@ export async function assertUsableWorkspaceDirectory(
 
 export function resolveTargetWindow(
   event: IpcMainInvokeEvent,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    "resolveEventWindow" | "resolveHomeWindow"
-  >,
+  deps: MainIpcEventWindowDeps & MainIpcHomeWindowDeps,
 ): BrowserWindow | undefined {
   return (
     deps.resolveEventWindow(event) ?? deps.resolveHomeWindow() ?? undefined
@@ -55,10 +53,7 @@ export function resolveTargetWindow(
 
 export function assertMemoryV6ReviewSender(
   event: IpcMainInvokeEvent,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    "resolveEventWindow" | "isMemoryV6ReviewWindow"
-  >,
+  deps: MainIpcEventWindowDeps & MainIpcMemoryReviewWindowDeps,
 ): void {
   const window = deps.resolveEventWindow(event);
   if (window && deps.isMemoryV6ReviewWindow(window)) {
@@ -71,10 +66,7 @@ export function assertMemoryV6ReviewSender(
 
 export function assertSettingsWindowSender(
   event: IpcMainInvokeEvent,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    "resolveEventWindow" | "isSettingsWindow"
-  >,
+  deps: MainIpcEventWindowDeps & MainIpcSettingsWindowDeps,
 ): void {
   const window = deps.resolveEventWindow(event);
   if (window && deps.isSettingsWindow(window)) {
@@ -85,10 +77,7 @@ export function assertSettingsWindowSender(
 
 export function assertHomeWindowSender(
   event: IpcMainInvokeEvent,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    "resolveEventWindow" | "resolveHomeWindow"
-  >,
+  deps: MainIpcEventWindowDeps & MainIpcHomeWindowDeps,
 ): void {
   const window = deps.resolveEventWindow(event);
   if (window && deps.resolveHomeWindow() === window) {
@@ -101,10 +90,9 @@ export function assertHomeWindowSender(
 
 export function assertSessionMonitorContextMenuSender(
   event: IpcMainInvokeEvent,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    "resolveEventWindow" | "resolveHomeWindow" | "isSessionMonitorWindow"
-  >,
+  deps: MainIpcEventWindowDeps &
+    MainIpcHomeWindowDeps &
+    MainIpcSessionMonitorWindowDeps,
 ): void {
   const window = deps.resolveEventWindow(event);
   if (
@@ -121,13 +109,10 @@ export function assertSessionMonitorContextMenuSender(
 export function assertSessionDeleteSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    | "resolveEventWindow"
-    | "resolveHomeWindow"
-    | "resolveSessionWindow"
-    | "isSettingsWindow"
-  >,
+  deps: MainIpcEventWindowDeps &
+    MainIpcHomeWindowDeps &
+    MainIpcSessionWindowDeps &
+    MainIpcSettingsWindowDeps,
 ): void {
   const window = deps.resolveEventWindow(event);
   if (!window) {
@@ -152,10 +137,7 @@ export function assertSessionDeleteSender(
 export function assertOwningSessionWindowSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    "resolveEventWindow" | "resolveSessionWindow"
-  >,
+  deps: MainIpcEventWindowDeps & MainIpcSessionWindowDeps,
 ): void {
   const window = deps.resolveEventWindow(event);
   if (!window || deps.resolveSessionWindow(sessionId) !== window) {
@@ -168,13 +150,13 @@ export function assertOwningSessionWindowSender(
 export async function assertSessionFileExplorerSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    | "resolveEventWindow"
-    | "resolveSessionWindow"
-    | "getSessionFileExplorerOwnerSessionId"
-    | "getFilePreviewWindowResource"
-  >,
+  deps: MainIpcEventWindowDeps &
+    MainIpcSessionWindowDeps &
+    MainIpcFilePreviewWindowDeps & {
+      getSessionFileExplorerOwnerSessionId(
+        sessionId: string,
+      ): Awaitable<string | null>;
+    },
 ): Promise<SessionFilePreviewResourceRequest | null> {
   const ownerSessionId =
     await deps.getSessionFileExplorerOwnerSessionId(sessionId);
@@ -200,12 +182,12 @@ export async function assertSessionFileExplorerSender(
 export async function assertOwningSessionFileExplorerSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    | "resolveEventWindow"
-    | "resolveSessionWindow"
-    | "getSessionFileExplorerOwnerSessionId"
-  >,
+  deps: MainIpcEventWindowDeps &
+    MainIpcSessionWindowDeps & {
+      getSessionFileExplorerOwnerSessionId(
+        sessionId: string,
+      ): Awaitable<string | null>;
+    },
 ): Promise<void> {
   const ownerSessionId =
     await deps.getSessionFileExplorerOwnerSessionId(sessionId);
@@ -225,13 +207,13 @@ export async function assertOwningSessionFileExplorerSender(
 export async function assertSessionFileResourceSender(
   event: IpcMainInvokeEvent,
   resource: SessionFilePreviewResourceRequest,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    | "resolveEventWindow"
-    | "resolveSessionWindow"
-    | "getSessionFileExplorerOwnerSessionId"
-    | "getFilePreviewWindowResource"
-  >,
+  deps: MainIpcEventWindowDeps &
+    MainIpcSessionWindowDeps &
+    MainIpcFilePreviewWindowDeps & {
+      getSessionFileExplorerOwnerSessionId(
+        sessionId: string,
+      ): Awaitable<string | null>;
+    },
 ): Promise<void> {
   const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(
     resource.sessionId,
@@ -263,13 +245,13 @@ export async function assertSessionFileLinkSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
   baseResource: SessionFilePreviewResourceRequest | undefined,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    | "resolveEventWindow"
-    | "resolveSessionWindow"
-    | "getSessionFileExplorerOwnerSessionId"
-    | "getFilePreviewWindowResource"
-  >,
+  deps: MainIpcEventWindowDeps &
+    MainIpcSessionWindowDeps &
+    MainIpcFilePreviewWindowDeps & {
+      getSessionFileExplorerOwnerSessionId(
+        sessionId: string,
+      ): Awaitable<string | null>;
+    },
 ): Promise<void> {
   const ownerSessionId =
     await deps.getSessionFileExplorerOwnerSessionId(sessionId);
@@ -741,10 +723,7 @@ type AuxiliaryOwnerWindowKind = "session";
 export function resolveAuxiliaryOwnerWindowSender(
   event: IpcMainInvokeEvent,
   parentSessionId: string,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    "resolveEventWindow" | "resolveSessionWindow"
-  >,
+  deps: MainIpcEventWindowDeps & MainIpcSessionWindowDeps,
 ): AuxiliaryOwnerWindowKind {
   const window = deps.resolveEventWindow(event);
   if (!window) {
@@ -763,10 +742,7 @@ export function resolveAuxiliaryOwnerWindowSender(
 export function assertAuxiliaryOwnerWindowSender(
   event: IpcMainInvokeEvent,
   parentSessionId: string,
-  deps: Pick<
-    MainIpcRegistrationDeps,
-    "resolveEventWindow" | "resolveSessionWindow"
-  >,
+  deps: MainIpcEventWindowDeps & MainIpcSessionWindowDeps,
 ): void {
   resolveAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
 }
@@ -807,7 +783,7 @@ export async function getAuxiliarySessionForMutation(
 }
 
 export async function resolveWindowAuxiliarySessionId(
-  deps: Pick<MainIpcRegistrationDeps, "getAuxiliarySession">,
+  deps: MainIpcAuxiliaryLookupDeps,
   parentSessionId: string,
   value: unknown,
 ): Promise<string | undefined> {
@@ -829,6 +805,14 @@ export async function resolveWindowAuxiliarySessionId(
 }
 
 import type {
-  MainIpcRegistrationDeps,
   MainIpcAuxiliaryDepsRequired,
+  MainIpcAuxiliaryLookupDeps,
+  MainIpcEventWindowDeps,
+  MainIpcFilePreviewWindowDeps,
+  MainIpcHomeWindowDeps,
+  MainIpcMemoryReviewWindowDeps,
+  MainIpcSessionMonitorWindowDeps,
+  MainIpcSessionWindowDeps,
+  MainIpcSettingsWindowDeps,
+  MainIpcWorkspaceValidationDeps,
 } from "./contracts.js";

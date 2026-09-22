@@ -32,7 +32,12 @@ import { type DeleteSessionsLastActiveBeforeRequest } from "../../src-shared/win
 
 import type {
   IpcHandleRegistrar,
+  MainIpcEventWindowDeps,
+  MainIpcHomeWindowDeps,
   MainIpcSessionRuntimeDeps,
+  MainIpcSessionWindowDeps,
+  MainIpcSettingsWindowDeps,
+  MainIpcWorkspaceValidationDeps,
 } from "./contracts.js";
 import {
   assertHomeWindowSender,
@@ -40,6 +45,24 @@ import {
   assertSettingsWindowSender,
   assertUsableWorkspaceDirectory,
 } from "./shared.js";
+
+export type MainIpcSessionRuntimeServiceDeps = Omit<
+  MainIpcSessionRuntimeDeps,
+  keyof MainIpcEventWindowDeps | keyof MainIpcHomeWindowDeps |
+    keyof MainIpcSessionWindowDeps | keyof MainIpcSettingsWindowDeps |
+    keyof MainIpcWorkspaceValidationDeps
+>;
+
+export function createSessionRuntimeIpcDeps(
+  services: MainIpcSessionRuntimeServiceDeps,
+  context: MainIpcEventWindowDeps &
+    MainIpcHomeWindowDeps &
+    MainIpcSessionWindowDeps &
+    MainIpcSettingsWindowDeps &
+    MainIpcWorkspaceValidationDeps,
+): MainIpcSessionRuntimeDeps {
+  return { ...context, ...services };
+}
 
 export function registerSessionRuntimeHandlers(
   ipcMain: IpcHandleRegistrar,

@@ -25,9 +25,11 @@ import {
 } from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 import type {
+  MainIpcEventWindowDeps,
   IpcHandleRegistrar,
   MainIpcAuxiliaryDeps,
   MainIpcAuxiliaryDepsRequired,
+  MainIpcSessionWindowDeps,
 } from "./contracts.js";
 import {
   resolveAuxiliaryOwnerWindowSender,
@@ -35,6 +37,18 @@ import {
   assertAuxiliaryCreateModeForOwner,
   getAuxiliarySessionForMutation,
 } from "./shared.js";
+
+export type MainIpcAuxiliaryServiceDeps = Omit<
+  MainIpcAuxiliaryDeps,
+  keyof MainIpcEventWindowDeps | keyof MainIpcSessionWindowDeps
+>;
+
+export function createAuxiliaryIpcDeps(
+  services: MainIpcAuxiliaryServiceDeps,
+  context: MainIpcEventWindowDeps & MainIpcSessionWindowDeps,
+): MainIpcAuxiliaryDeps {
+  return { ...context, ...services };
+}
 
 export function registerAuxiliaryHandlers(
   ipcMain: IpcHandleRegistrar,
