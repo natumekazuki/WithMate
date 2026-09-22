@@ -12,20 +12,24 @@ import type {
 
 // @test-value v2
 // kind = "contract"
-// claim = "main bootstrapのgrouped window IPC depsはSession Monitor context menu delegateをregistration depsへ渡す"
-// oracle = { type = "contract", ref = "createMainBootstrapDeps grouped window dependencies" }
-// fault = "Session Monitor context menu delegateがbootstrap境界で欠落し、Main IPC registrationへ到達しない"
-// observable = "registerMainIpcHandlersへ渡されたwindow registration depsのdelegate"
-// observation_boundary = "public-boundary"
+// claim = "main bootstrapはHome起動とSession Monitor context menuのdelegateを取り違えずwindow IPC registration depsへ渡す"
+// oracle = { type = "contract", ref = "src-electron/ipc/window.ts: registerWindowHandlersのopenHomeWindow/showSessionMonitorContextMenu consumer" }
+// fault = "Home IPCにbootstrap用の起動を誤配線する、またはSession Monitor context menu delegateを欠落・置換する"
+// observable = "window registration depsのHome IPC呼び出しlogとSession Monitor delegate identity"
+// observation_boundary = "implementation"
 // scope = "main bootstrap grouped window IPC deps"
 // lifecycle = "permanent"
-// impact = "Session Monitorの右クリック操作をMain IPCへ配線する"
+// impact = "Homeの表示またはSession Monitorの右クリック操作が対応するMain処理へ届かなくなる"
 // distinction = "window delegateのgroupingだけを検証し、IPC channel登録とnative menu selectionは別testで扱う"
 // @end-test-value
 test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMainIpcHandlers に渡す", async () => {
   const calls: string[] = [];
   let receivedDeps: unknown = null;
   const showSessionMonitorContextMenu = async () => ({ status: "dismissed" as const });
+  const openHomeWindow = async () => {
+    calls.push("openHomeIpc");
+    return {} as never;
+  };
 
   const deps = createMainBootstrapDeps({
     ipcMain: {} as never,
@@ -62,7 +66,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         restoreSessionWindows: async () => {
           throw new Error("unused window fixture method");
         },
-        openHomeWindow: async () => ({}) as never,
+        openHomeWindow,
         openSessionMonitorWindow: async () => ({}) as never,
         isSessionMonitorWindow: () => false,
         showSessionMonitorContextMenu,
@@ -264,11 +268,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
   await deps.createHomeWindow();
   deps.broadcastModelCatalog(snapshot);
 
-  assert.equal(
-    (receivedDeps as { window: { openHomeWindow(): Promise<void> } }).window
-      .openHomeWindow instanceof Function,
-    true,
-  );
+  await (receivedDeps as { window: { openHomeWindow: () => Promise<void> } }).window.openHomeWindow();
   assert.equal(
     (
       receivedDeps as {
@@ -279,5 +279,5 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     ).window.showSessionMonitorContextMenu,
     showSessionMonitorContextMenu,
   );
-  assert.deepEqual(calls, ["initialize", "registerIpcHandlers", "openHome", "broadcast:1"]);
+  assert.deepEqual(calls, ["initialize", "registerIpcHandlers", "openHome", "broadcast:1", "openHomeIpc"]);
 });
