@@ -19,6 +19,7 @@ import {
   convergeRejectedLiveRunState,
   convergeRejectedSessionSnapshot,
   convergeResolvedSessionProjection,
+  recoverRejectedSessionSnapshot,
   mergeRejectedSessionDraft,
   fingerprintSessionDraft,
   type SessionSubmitCoordinator,
@@ -262,13 +263,11 @@ export async function runMainSessionTurnOperation(input: {
           refreshedLiveRunResult.value === null)
       ) {
         state.setAuthoritativeSessions((current) => {
-          const recovered = convergeRejectedSessionSnapshot(
+          const recovered = recoverRejectedSessionSnapshot(
             current.find((session) => session.id === sessionId) ??
               selectedSession,
             updatedSession,
-            null,
             true,
-            preserveCurrentPin,
           );
           return recovered ? [recovered] : current;
         });

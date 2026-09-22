@@ -20,6 +20,7 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - window 構成全体は `docs/design/window-architecture.md` を参照する
 - Rendererの承認・質問への応答、処理中request ID、取消操作は `src/chat/runtime/session-run-actions.ts` が所有し、Session Windowは対象会話とlive run投影を接続する。実行の正本はMainに置く。
 - Main Sessionの送信操作（preview、preflight、Composer draft clear/restore、optimistic running、turn実行、失敗時の再取得・収束、submit leaseの解放）は `src/chat/runtime/run-main-session-turn-operation.ts` が所有する。Session Windowは既存のComposer Registry、revision、projection/live state、preview/activityの狭いportを渡し、表示・選択対象とAuxiliary dispatchだけを保持する。
+- Main送信失敗後、Session再取得も失敗しlive runを取得できない場合は、楽観更新がまだ現行のときだけ`idle` / `error`へ復旧し、draftを復元して再試行可能にする。新しい本体・live購読更新とpin変更は巻き戻さない。Session再取得が正常に`null`を返す削除結果と、再取得の失敗は区別し、削除済みSessionを復元しない。live runを取得できた場合は実行中状態を維持する。
 - Sessionのsnapshot/subscription、authoritative/projection mutation revision、submit pending/blocked state、submit coordinatorのlifetimeは `src/chat/runtime/use-main-session-runtime.ts` が所有する。Session Windowはselected ID、layout、feature hookの接続と、既存Composer Registryのshell lifetimeを保持する。
 
 ## Decision
