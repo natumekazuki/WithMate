@@ -1,6 +1,6 @@
 import { useRef } from "react";
 
-import { useDialogA11y } from "../a11y.js";
+import { useDialogA11y } from "../ui/a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
 import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
 

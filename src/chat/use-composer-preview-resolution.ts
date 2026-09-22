@@ -1,5 +1,5 @@
-import type { ComposerPreview } from "../app-state.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+import type { ComposerPreview } from "../../src-shared/session/runtime-state.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 export type ComposerPreviewRequest = (message: string) => Promise<ComposerPreview>;
 export type ComposerPreviewRequestApi = Pick<WithMateWindowApi, "previewComposerInput">;

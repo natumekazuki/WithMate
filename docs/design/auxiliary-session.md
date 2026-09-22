@@ -76,6 +76,8 @@ Auxiliary の永続 draft は会話 payload と独立した保存単位を唯一
 
 保存は owner ごとに進行中 1 件と未送信の最新値 1 件へ集約する。表示値と IME は即時更新し、永続化・preview のみ遅延可能とする。保存失敗・結果不明は local draft を保持し、Composer 内に英語の簡潔な失敗表示と明示的な再試行を用意する。異なる owner の ack や、古い load / preview は現在の編集を変更しない。
 
+renderer の `src/chat/auxiliary/use-auxiliary-draft-persistence.ts` が Auxiliary draft owner のMap、送信待ち、quit flushを一つのlifecycle ownerとして管理し、Session windowはComposer表示とturn処理を委譲する。
+
 送信は controller の最新値と編集 revision を捕捉し、当該 owner の保存を確定してから durable revision を指定する。送信時の明示 consume と通常 runtime 保存を区別し、古い save / terminal が入力を復活・消去させない。送信拒否・失敗時の復元は捕捉した編集 revision と照合し、後続の新しい入力を上書きしない。正常な Window close / app quit は未保存 owner の flush を待ち、失敗時は閉じずに入力と再試行導線を保持する。強制終了では最後の ack 後の未保存範囲を失い得る。
 
 送信失敗でlocal draftを復元した場合は、その場で保存ownerのpendingへ戻す。終了待ちの入力凍結中も、編集revisionが一致する内部復元は表示へ反映する。復元では凍結を解除せず、終了中止後に復元本文を編集できるようにする。Main側の復元にも失敗した値を終了flushから漏らさず、保存障害ではRetryを表示する。永続値を再取得し、同じownerの復元済本文なら追加書込みせず受理する。空のconsume直後のrevisionにだけ復元を書き込み、後続の永続編集や別incarnationは上書きしない。Retryでもこの条件を維持する。

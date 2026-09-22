@@ -1,21 +1,17 @@
-import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
-import { DEFAULT_CODEX_SANDBOX_MODE } from "../codex-sandbox-mode.js";
-import { DEFAULT_CODEX_SPEED } from "../codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER } from "../codex-reviewer.js";
-import {
-  DEFAULT_CHARACTER_SESSION_COPY,
-  DEFAULT_CHARACTER_THEME_COLORS,
-  type CharacterProfile,
-  type Message,
-  type MessageArtifact,
-} from "../app-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED } from "../../src-shared/settings/codex-speed.js";
+import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer.js";
+import { DEFAULT_CHARACTER_SESSION_COPY, DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
+import type { CharacterProfile } from "../../src-shared/character/character-state.js";
+import type { Message, MessageArtifact } from "../../src-shared/session/session-state.js";
 import {
   type MouseEventHandler,
   type PointerEventHandler,
   type RefObject,
   type UIEventHandler,
 } from "react";
-import type { SessionContextPaneProps } from "../session-components.js";
+import type { SessionContextPaneProps } from "./shell/session-context-pane.js";
 import type { ChatWindowProps } from "./chat-window.js";
 
 export const chatWindowNoop = () => {};

@@ -5,13 +5,13 @@ import {
   type AppSettings,
   type MemoryExtractionProviderSettings,
   type ProviderAppSettings,
-} from "../provider-settings-state.js";
+} from "../../src-shared/settings/provider-settings-state.js";
 import {
   coerceModelSelection,
   getReasoningEffortOptionsForModel,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
-} from "../model-catalog.js";
+} from "../../src-shared/settings/model-catalog.js";
 
 function normalizeSelectablePath(filePath: string): string {
   return filePath.trim().replace(/\\/g, "/").replace(/\/+$/g, "");

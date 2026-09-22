@@ -1,9 +1,7 @@
 # Character Authoring And Improvement
-
 - 作成日: 2026-06-16
 - 更新日: 2026-09-12
 - 対象: 保存済み Character の agent authoring
-
 ## Goal
 
 通常 Session の UI と provider adapter を再利用し、保存済み `character.md` と optional な `character-notes.md` を固定 authoring Skill で作成・改善する。
@@ -93,7 +91,7 @@ full authoring の新しい runtime 定義は、完成返答の `Examples` や�
 - 標準用途は会話と実作業の併用とし、作業中の着眼、見立ての修正、部分成功、途中の質問・変更・中止、会話への復帰にも既存の声と距離を残す。会話専用の明示指定だけを作業testの非該当とする。
 - 作業eventのsynthetic-event / recorded-tool-replay / live-tool-executionを環境とは独立に記録し、Work Likeness / Task Integrity / Collaboration Comfortと実際の機能検証を分ける。シミュレーションやreplayだけでは実編集・実行の成功を主張しない。
 - ユーザー向けの作業報告と、納品コード・設定・文書の形式・文体を分ける。作業用の別人格、毎toolの実況、Character性を理由にした検証省略は導入しない。
-- authoring runtime は stable owner を維持し、各 turn で canonical definition から snapshot を再解決する。invalid 遷移時の failure timing は `src-electron/session-runtime-service.ts` と対応 test を正本とする。
+- authoring runtime は stable owner を維持し、各 turn で canonical definition から snapshot を再解決する。invalid 遷移時の failure timing は `src-electron/session/session-runtime-service.ts` と対応 test を正本とする。
 - 汎用 Session の owner と immutable snapshot 契約は `docs/design/character-storage.md` と ADR 009 を参照する。
 - Editor save、storage create/update、direct file runtime snapshot は共通 format validator を使う。
 
@@ -109,7 +107,7 @@ full authoring の新しい runtime 定義は、完成返答の `Examples` や�
 
 ## Executable Contracts
 
-- `scripts/tests/character-authoring-service.test.ts`: fixed Skill、provider root、file preservation、saved metadata projection
-- `scripts/tests/character-editor-app.test.tsx`: unsaved draft gate、provider selection、minimal launch input
-- `scripts/tests/character-definition-format.test.ts`: normalized 8,000 character boundary
-- `scripts/tests/character-storage.test.ts`: create/update/direct runtime snapshot boundary
+- `tests/main/character-authoring-service.test.ts`: fixed Skill、provider root、file preservation、saved metadata projection
+- `tests/renderer/character-editor-app.test.tsx`: unsaved draft gate、provider selection、minimal launch input
+- `tests/shared/character-definition-format.test.ts`: normalized 8,000 character boundary
+- `tests/main/character-storage.test.ts`: create/update/direct runtime snapshot boundary

@@ -1,7 +1,7 @@
 import {
   normalizeGlossaryLookup,
   type GlossaryEntry,
-} from "../glossary-contract.js";
+} from "../../src-shared/glossary/glossary-contract.js";
 
 export const GLOSSARY_ANNOTATION_LIMITS = {
   maxLookupValues: 10_000,

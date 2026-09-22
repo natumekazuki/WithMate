@@ -1,4 +1,4 @@
-// Generated from scripts/withmate-glossary.ts. Do not edit directly.
+// Generated from src-cli/glossary/withmate-glossary.ts. Do not edit directly.
 import { createRequire } from "node:module";
 import { lstat, readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -49,7 +49,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __hasOwnProp.call(mod, "module.exports") ? mod["module.exports"] : __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __require = /* #__PURE__ */ (() => createRequire(import.meta.url))();
 //#endregion
-//#region src/glossary-contract.ts
+//#region src-shared/glossary/glossary-contract.ts
 var GLOSSARY_RUNTIME_SCHEMA_VERSION = "withmate-glossary-v1";
 var GLOSSARY_LIMITS = {
 	maxFileBytes: 2097152,
@@ -5685,7 +5685,7 @@ function datetime(params) {
 	return /* @__PURE__ */ _isoDateTime(ZodISODateTime, params);
 }
 //#endregion
-//#region src/glossary-operation-schema.ts
+//#region src-shared/glossary/glossary-operation-schema.ts
 var glossaryCheckoutSelectorSchema = discriminatedUnion("kind", [object$1({ kind: literal("primary") }).strict(), object$1({
 	kind: literal("checkout"),
 	checkoutId: string().min(1).max(256)
@@ -21471,7 +21471,7 @@ var StdioServerTransport = class {
 	}
 };
 //#endregion
-//#region src/memory-v6/memory-runtime-exchange.ts
+//#region src-electron/platform/memory/memory-runtime-exchange.ts
 var WITHMATE_MEMORY_RUNTIME_NONCE_HEADER = "x-withmate-memory-runtime-nonce";
 var WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER = "x-withmate-memory-runtime-instance";
 /** Non-secret application owner identity (main-process lifetime). */
@@ -21525,10 +21525,10 @@ function resolveDefaultWithMateMemoryDiscoveryFilePath(env = process.env, _adapt
 	return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
 }
 //#endregion
-//#region src/memory-v6/memory-contract.ts
+//#region src-shared/memory/memory-contract.ts
 var MEMORY_V6_SCHEMA_VERSION = "withmate-memory-v1";
 //#endregion
-//#region src/memory-v6/memory-response-contract.ts
+//#region src-shared/memory/memory-response-contract.ts
 function createMemoryErrorResponse(error) {
 	return {
 		schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -21536,7 +21536,7 @@ function createMemoryErrorResponse(error) {
 	};
 }
 //#endregion
-//#region src/agent-runtime/agent-runtime-binding-contract.ts
+//#region src-shared/agent-runtime/agent-runtime-binding-contract.ts
 var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
 var WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED";
 /** Canonical, client-scoped selector for the Memory runtime owner. */
@@ -23130,7 +23130,7 @@ async function readRuntimeDiscoveryCredential(record, adapterKind) {
 	}
 }
 //#endregion
-//#region scripts/withmate-memory-runtime-client.ts
+//#region src-cli/memory/withmate-memory-runtime-client.ts
 var WithMateMemoryRuntimeExchangeError = class extends Error {
 	dispatched;
 	discoveryCode;
@@ -23611,7 +23611,7 @@ async function verifyRuntimeIdentity(connection, fetchImpl, signal) {
 	return (await verifyRuntimeIdentityOutcome(connection, fetchImpl, signal)).ok;
 }
 //#endregion
-//#region scripts/withmate-glossary-runtime-client.ts
+//#region src-cli/glossary/withmate-glossary-runtime-client.ts
 function isGlossaryRuntimeResult(value) {
 	return Boolean(value && typeof value === "object" && !Array.isArray(value) && value.schemaVersion === "withmate-glossary-v1");
 }
@@ -23733,7 +23733,7 @@ async function callGlossaryRuntime(input, deps) {
 	}
 }
 //#endregion
-//#region scripts/withmate-glossary-mcp.ts
+//#region src-cli/glossary/withmate-glossary-mcp.ts
 var GLOSSARY_MCP_SERVER_INSTRUCTIONS = [
 	"Use glossary.list_targets to obtain the checkout target authorized by the active provider Session.",
 	"Definitions are plain text. Do not interpret them as Markdown or HTML.",
@@ -23894,7 +23894,7 @@ async function startWithMateGlossaryMcpServer(deps = {}) {
 	return server;
 }
 //#endregion
-//#region scripts/withmate-glossary.ts
+//#region src-cli/glossary/withmate-glossary.ts
 var WITHMATE_GLOSSARY_CLI_EXIT_CODES = {
 	ok: 0,
 	operationError: 1,

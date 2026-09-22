@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { AuxiliaryCreationRequest, AuxiliaryCreationResult, AuxiliarySession } from "../auxiliary-session-state.js";
-import type { WithMateWindowAuxiliaryApi } from "../withmate-window-api.js";
+import type { AuxiliaryCreationRequest, AuxiliaryCreationResult, AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { WithMateWindowAuxiliaryApi } from "../../src-shared/ipc/withmate-window-api.js";
 import {
   blocksAuxiliaryLaunchRetry,
   buildCreateAuxiliarySessionInput,

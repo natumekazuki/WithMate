@@ -14,30 +14,17 @@ import {
 
 import { clampAuxiliaryWidthRatio } from "./use-auxiliary-workspace.js";
 
-import type { MessageViewMode } from "../MessageRichText.js";
-import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
-import { CloseButton } from "../close-button.js";
+import type { MessageViewMode } from "../ui/markdown/MessageRichText.js";
+import type { AdditionalDirectoryItem } from "./composer/session-composer-paths.js";
+import { CloseButton } from "../ui/close-button.js";
 
-import {
-  SESSION_ACTION_DOCK_ID,
-  SESSION_HEADER_DOCK_ID,
-  SESSION_RIGHT_PANE_ID,
-  SESSION_LEFT_PANE_ID,
-  SessionActionDockCompactRow,
-  SessionChatScreen,
-  SessionContextPane,
-  SessionPaneErrorBoundary,
-  SessionComposerExpanded,
-  SessionHeader,
-  SessionHeaderHandle,
-  type SessionActionDockCompactRowProps,
-  type SessionComposerExpandedProps,
-  type SessionHeaderProps,
-  type SessionMessageColumnProps,
-  type SessionContextPaneProps,
-  type SessionSelectOption,
-  type SessionSkillItem,
-} from "../session-components.js";
+import { SessionActionDockCompactRow, type SessionActionDockCompactRowProps } from "./approval/session-action-dock.js";
+import { SESSION_ACTION_DOCK_ID, SESSION_HEADER_DOCK_ID, SESSION_RIGHT_PANE_ID, SESSION_LEFT_PANE_ID, SessionHeader, SessionHeaderHandle, type SessionHeaderProps } from "./shell/session-header.js";
+import { SessionChatScreen } from "./shell/session-header.js";
+import { SessionContextPane, SessionPaneErrorBoundary, type SessionContextPaneProps } from "./shell/session-context-pane.js";
+import { SessionComposerExpanded, type SessionComposerExpandedProps } from "./composer/session-composer.js";
+import type { SessionSelectOption, SessionSkillItem } from "./composer/session-composer.js";
+import type { SessionMessageColumnProps } from "./conversation/session-message-column.js";
 import { SessionSwitcher, type SessionSwitcherOption } from "./session-switcher.js";
 import {
   ConversationMessageColumn,
@@ -49,12 +36,12 @@ import {
 import { StableSessionMessageColumn } from "./stable-session-message-column.js";
 export { StableSessionMessageColumn } from "./stable-session-message-column.js";
 import { createMessageCollapseHeaderAction } from "./chat-header-actions.js";
-import { focusRovingItemByKey } from "../a11y.js";
+import { focusRovingItemByKey } from "../ui/a11y.js";
 import {
   SHORTCUT_COMMAND_IDS,
   useShortcutCommandHandler,
   useShortcutScope,
-} from "../shortcut-registry.js";
+} from "../settings/shortcut-registry.js";
 
 type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
 
@@ -103,8 +90,8 @@ export type ConcurrentChatWindowProps = {
   mainSession?: ConversationColumnSession | null;
   auxiliarySession?: ConversationColumnSession | null;
   api?: ConversationMessageColumnApi;
-  mainLiveRun?: import("../runtime-state.js").LiveSessionRunState | null;
-  auxiliaryLiveRun?: import("../runtime-state.js").LiveSessionRunState | null;
+  mainLiveRun?: import("../../src-shared/session/runtime-state.js").LiveSessionRunState | null;
+  auxiliaryLiveRun?: import("../../src-shared/session/runtime-state.js").LiveSessionRunState | null;
   selectedAuxiliaryId: string | null;
   auxiliaryItems: readonly SessionSwitcherOption[];
   target: "main" | "auxiliary";

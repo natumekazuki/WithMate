@@ -10,7 +10,7 @@ import type {
   FileRootGitChangeEntry,
   FileRootGitChangeScope,
   SessionFileRoot,
-} from "./file-explorer-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 const ROOT_HEADER_ESTIMATED_HEIGHT = 48;
 const ROOT_GROUP_MIN_HEIGHT = 168;

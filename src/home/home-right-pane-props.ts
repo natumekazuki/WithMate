@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import type { HomeRightPaneProps } from "./HomeRightPane.js";
 import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
-} from "../withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 type HomeRightPaneHandlers = {
   onChangeRightPaneView: (view: HomeRightPaneProps["rightPaneView"]) => void;

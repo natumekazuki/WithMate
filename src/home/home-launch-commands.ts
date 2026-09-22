@@ -1,4 +1,4 @@
-import { withWithMateApi } from "../renderer-withmate-api.js";
+import { withWithMateApi } from "../app/renderer-withmate-api.js";
 
 export async function openSessionWindow(sessionId: string, auxiliarySessionId?: string) {
   await withWithMateApi((api) =>

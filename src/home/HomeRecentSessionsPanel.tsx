@@ -1,8 +1,9 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { isReadOnlySession, type HomeSessionSummary } from "../app-state.js";
+import { isReadOnlySession } from "../../src-shared/session/session-state.js";
+import type { HomeSessionSummary } from "../../src-shared/session/session-state.js";
 import type { HomeSessionState } from "./home-session-projection.js";
-import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
+import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
 
 export type HomeRecentSessionsPanelProps = {
   filteredSessionEntries: Array<{ session: HomeSessionSummary; state: HomeSessionState }>;

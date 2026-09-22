@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
-import { focusRovingItemByKey } from "../a11y.js";
-import { BackNavigationButton } from "../back-navigation-button.js";
-import { CloseButton } from "../close-button.js";
-import type { PromptTemplate } from "../prompt-template.js";
-import type { WithMateWindowPromptTemplateApi } from "../withmate-window-api.js";
+import { focusRovingItemByKey } from "../ui/a11y.js";
+import { BackNavigationButton } from "../ui/back-navigation-button.js";
+import { CloseButton } from "../ui/close-button.js";
+import type { PromptTemplate } from "../../src-shared/prompt-template.js";
+import type { WithMateWindowPromptTemplateApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 type PromptTemplateWorkspaceProps = {
   api: WithMateWindowPromptTemplateApi;

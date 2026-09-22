@@ -1,7 +1,5 @@
 # Character Storage
-
 ## Auxiliary Character Snapshot (Issue #710)
-
 新規AuxiliaryはMain Processでactive候補からMainのstable IDを除外してCharacterをweighted random選択し、`characterId`と`CharacterRuntimeSnapshot`を会話作成時に固定保存する。他Auxiliaryとの同一Characterは許容する。既存会話の切り替え、再表示、retry、再起動で再抽選・catalog再生成を行わない。snapshotがない旧形式行だけは親の保存済みidentityを互換利用し、不正な新形式snapshotは親へfallbackせず失敗として扱う。
 
 - 作成日: 2026-03-12
@@ -136,7 +134,7 @@ V6 の既存 row で stable owner と snapshot owner が一致しない場合は
 
 relational owner と runtime policy owner のどちらもない legacy row は、表示名や snapshot から Character ID を推測せず、Character ID の生成領域外にある予約 ID `withmate:unresolved-character-owner` へ回復する。この ID は public create と runtime snapshot 解決では拒否し、実 Character を再解決しない。
 
-snapshot の field shape は `src/character/character-catalog.ts`、normalization と prompt projection は `src/character/character-runtime-snapshot.ts`、authoring turn の再解決は `src-electron/character-authoring-service.ts` を正本とする。stable owner の判断理由は `docs/adr/009-stable-character-runtime-owner.md`、authoring 例外は `docs/adr/010-character-authoring-project-contract.md` を参照する。
+snapshot の field shape は `src-shared/character/character-catalog.ts`、normalization と prompt projection は `src-shared/character/character-runtime-snapshot.ts`、authoring turn の再解決は `src-electron/character/character-authoring-service.ts` を正本とする。stable owner の判断理由は `docs/adr/009-stable-character-runtime-owner.md`、authoring 例外は `docs/adr/010-character-authoring-project-contract.md` を参照する。
 
 ## Data Safety
 

@@ -4,26 +4,26 @@ import {
   DEFAULT_CHARACTER_THEME,
   type CharacterDetail,
   type CharacterTheme,
-} from "../character/character-catalog.js";
+} from "../../src-shared/character/character-catalog.js";
 import {
   parseCharacterDefinitionMarkdown,
   validateCharacterDefinitionMarkdown,
   validateCharacterNotesMarkdown,
   type CharacterDefinitionValidationIssue,
-} from "../character/character-definition.js";
+} from "../../src-shared/character/character-definition.js";
 import {
   areCharacterIconPathReferencesEquivalent,
   validateCharacterIconRegistrationPath,
-} from "../character/character-icon.js";
+} from "../../src-shared/character/character-icon.js";
 import {
   buildDefaultCharacterDefinition,
   buildDefaultCharacterNotes,
-} from "../character/character-definition-template.js";
+} from "../../src-shared/character/character-definition-template.js";
 
 export {
   buildDefaultCharacterDefinition,
   buildDefaultCharacterNotes,
-} from "../character/character-definition-template.js";
+} from "../../src-shared/character/character-definition-template.js";
 
 export type CharacterEditorTab = "profile" | "definition" | "notes" | "preview";
 

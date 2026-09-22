@@ -1,4 +1,4 @@
-import type { WorkspaceDirectoryValidationResult } from "../workspace-directory-validation.js";
+import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window/workspace-directory-validation.js";
 
 export const HOME_LAUNCH_WORKSPACE_VALIDATION_DEBOUNCE_MS = 300;
 

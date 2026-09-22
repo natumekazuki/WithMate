@@ -13,7 +13,7 @@ WithMate は Electron + React + TypeScript のデスクトップアプリであ�
 - `src/`: renderer 側の React UI、状態管理、window API 型。
 - `src-electron/`: main process、preload、IPC、永続化、provider 連携。
 - `scripts/`: 生成、migration、検証用スクリプト。
-- `scripts/tests/`: Node test runner 用の `*.test.ts` / `*.test.tsx`。
+- `tests/`: Node test runner 用の `*.test.ts` / `*.test.tsx`。
 - `docs/design/`: 現行設計の正本。
 - `docs/features/`: 現在利用できる機能のガイド。
 - `docs/runbooks/`: 現在の運用・診断・復旧手順。
@@ -85,7 +85,7 @@ WithMate は Electron + React + TypeScript のデスクトップアプリであ�
 - `npm run electron:dev`: Electron main を build して開発起動する。
 - `npm run build`: renderer と Electron main を本番向けに build する。
 - `npm run typecheck`: renderer と Electron の TypeScript 型検査を実行する。
-- `npm test`: `scripts/tests/*.test.ts(x)` を `tsx --test` で実行する。
+- `npm test`: `tests/` 配下を再帰列挙し、`scripts/checks/run-tests.ts` 経由で `node --import tsx --test` を実行する。
 - `npm run dist:win`: Windows installer を作成する。
 - `& .\scripts\start-withmate-visual-check.ps1`: 現在の Worktree を build し、`%APPDATA%\WithMate-visual-check` を使う検証用 Electron を起動する。既存の検証用プロセスは安全に識別できる場合だけ差し替え、インストール版 WithMate は停止しない。
 

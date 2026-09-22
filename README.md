@@ -1,7 +1,5 @@
 # WithMate
-
 WithMate は、Codex と GitHub Copilot の coding agent を、キャラクターと一緒に使う Electron デスクトップアプリです。ワークスペースを選んでセッションを開始し、チャット、コマンド実行の確認、ファイル参照、差分確認までを一つのアプリで扱います。
-
 対応 runtime は Electron です。Vite の画面をブラウザーだけで利用する構成はサポートしていません。
 
 ## 主な機能
@@ -105,6 +103,8 @@ npm run electron:dev
 
 `electron:dev`はElectron mainとMemory CLIをbuildしてから、開発用Electronを起動します。
 
+Windowsで作業branchのsmoke / 目視確認を行う場合は、下記の[分離したvisual check](#分離したvisual-check)の起動手順を使用してください。
+
 ## 開発と検証
 
 ### 型チェック
@@ -113,13 +113,31 @@ npm run electron:dev
 npm run typecheck
 ```
 
+`typecheck`はSQLite実行ownerと依存方向のcheckも実行します。依存方向checkは`src/`、`src-shared/`、`src-electron/`、`src-cli/`全体のimport・re-export・dynamic importをtype-onlyも含めて検査します。RendererとsharedからNode/Electron/Provider SDKへの依存、sharedからReactへの依存、および実行環境の境界を逆流する相対importを拒否します。preloadはpreload内とshared、CLIはCLI内とsharedおよび限定したMainのplatform adapterを参照できます。Storage Workerの検証済みhandler entryだけは動的解決を許可し、実際のentry解決をWorker testで確認します。
+
 ### テスト
 
 ```bash
 npm test
 ```
 
-テストは`scripts/tests/*.test.ts`と`scripts/tests/*.test.tsx`をNode test runnerで実行します。
+テストは`tests/`内の`*.test.ts`・`*.test.tsx`を再帰列挙し、Node test runnerで実行します。helperやfixtureはテストファイルのsuffixを持たないため、実行対象には含まれません。通常実行とshardは同じ列挙・選択経路を使います。
+test失敗、空の実行対象、不正なshard指定は非zero終了となり、CIで成功扱いにしません。
+
+```bash
+# 実行対象の一覧（testは実行しない）
+npm test -- --list
+# CIと同じ3分割のうち1番目
+npm run test:shard -- --shard=1/3
+# 対象を絞った実行
+node --import tsx --test tests/main/session-storage.test.ts
+# testとhelper/fixtureを含む型検査（実行時transpileとは別）
+npm run typecheck:tests
+```
+
+Windows PowerShellで`--`以降の引数を渡す場合は、`npm.ps1`による区切りの消費を避けるため、`npm.cmd test -- --list`、`npm.cmd run test:shard -- --shard=1/3`のように`npm.cmd`を使います。Windows CIも同じ呼び方です。
+
+`typecheck`はproduction・階層化した開発scriptに加え、`typecheck:tests`によるtest全体とhelper/fixtureの型検査も実行します。runtime validationを確認する意図的な不正入力は、通常のfixtureと区別し、検査対象を除外したり型検査の抑止で不整合を隠したりしないでください。
 
 ### 本番向けbuild
 
@@ -135,13 +153,20 @@ npm run electron:start
 
 ### 分離したvisual check
 
-Windowsで現在のWorktreeをbuildし、専用のuser dataでElectronを起動します。
+Windowsで作業branchのsmoke / 目視確認を行う場合は、対象Worktreeのrootから次のスクリプトで起動します。現在のWorktreeをbuildし、専用のuser dataでElectronを起動します。
 
 ```powershell
 & .\scripts\start-withmate-visual-check.ps1
 ```
 
-このスクリプトは`%APPDATA%\WithMate-visual-check`を使用します。安全に識別できる既存のvisual check processがある場合は差し替えますが、インストール版WithMateは停止しません。
+このスクリプトは`%APPDATA%\WithMate-visual-check`を使用します。安全に識別できる既存のvisual check processがある場合は差し替えますが、インストール版WithMateは停止しません。検証用user dataは、起動のたびに`%APPDATA%\WithMate`からコピーし直します。既存の検証用データは置き換わるため、残す必要があるデータは実行前に退避してください。agentが実行する場合も、プロセスの差し替えと検証用データの再作成を事前に明示します。
+
+起動・終了時は次のルールを守ってください。
+
+- 検証用環境の起動はスクリプト経由に統一し、Electronや`release/win-unpacked/WithMate.exe`の直接起動で代替しません。手動で`WITHMATE_USER_DATA_PATH`や`--withmate-visual-check`を付けても、同じ管理対象になるとは限りません。配布物自体の検証は別目的として扱い、この検証用user dataを共用しません。
+- Electronが見つからない場合も別の実行ファイルへ独断で切り替えません。スクリプトは`package-lock.json`指定versionのElectronを探索・準備します。失敗した場合はその原因を確認し、既存データの保持が必要でスクリプトを使えない場合は、その制約を報告して起動方法を確認します。
+- ロックが残って停止した場合は、使用中のプロセスの実行ファイルpath、引数、user dataを照合し、対象を安全に特定できた場合だけ終了します。アプリ名だけで一括終了したり、`lockfile`を削除して起動を強行したりしません。対象を特定できない場合は停止したまま確認を依頼します。
+- 検証終了時は、自分が起動した検証用アプリだけを終了し、ロック解放を確認します。ユーザーが継続利用するために残す場合は、起動中であることと終了対象を引き継ぎます。インストール版WithMateには触れません。
 
 ## 配布物をbuildする
 
@@ -175,16 +200,22 @@ WithMateのソースコードは[ISC License](LICENSE)で提供します。
 
 ## Repository構成
 
-- `src/`: React renderer、UI state、Window API型
+- `src/`: React renderer、UI state
+- `src-shared/`: Main、preload、renderer、CLIで共有する副作用のない契約・正規化・定数
 - `src-electron/`: Electron main、preload、IPC、永続化、provider連携
+- `src-cli/`: 配布物に含めるMemory／Glossary CLIの入力ソース
 - `scripts/`: build、生成、migration、検証用script
-- `scripts/tests/`: Node test runner用test
+- `tests/`: Node test runner用test
 - `docs/design/`: 現行設計の正本とdomain detail
 - `docs/features/`: 利用者向けの機能別ガイド
 - `docs/runbooks/`: 現在の運用・診断・復旧手順
 - `docs/adr/`: 過去の判断や置換関係を含む設計判断の履歴
 - `docs/releases/`: ADRとは別枠で恒久保存するリリースノートと索引
 - `build/`: icon、installer、CLIなどのpackaging入力
+
+Main、preload、renderer、CLIの境界をまたぐ型・定数・正規化処理は、`src-shared/`のIPC、session、settings、character、memoryなどのdomainを正本とします。利用側は必要なdomainから直接importし、共有層へReact・DOM・Electron・filesystem・DBの実装を持ち込みません。
+
+Chat layout preferenceの型・既定値・検証は`src-shared/settings/chat-layout-preference.ts`に置き、保存APIを呼ぶrenderer adapterは`src/chat/chat-layout-preference.ts`に置きます。URLからsessionやdiffの識別子を読む処理は`src/app/session-location.ts`が担当します。
 
 一般文書には、現行実装について正しく、現在の利用・開発・保守に必要な情報だけを残します。設計判断の履歴はADR、リリースの履歴はリリースノートと索引に分け、古い判断や当時のリリース内容を現在の仕様で上書きしません。それ以外の過去情報はGit履歴、課題・作業計画はGitHub Issue／PR、一時的な棚卸しや検証記録はSessionFolder等のrepository外で扱います。
 

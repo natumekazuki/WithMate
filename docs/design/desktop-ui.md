@@ -1,7 +1,5 @@
 # Desktop UI
-
 ## Auxiliary Session (Issue #710)
-
 Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、中央のタイトル枠内にある`＋`から既存会話を閉じず最終使用順の一覧へ反映する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。実行中のAuxiliaryはicon内にcompactなprocessing indicatorを重ね、行高とpreviewの幅を変えない。折りたたみ時はAuxiliary面・内部境界・タイトル枠内の操作を隠し、splitterだけを再展開導線として残す。折りたたみでActionDock対象や選択中Sessionを変更しない。
 
 - 作成日: 2026-03-14
@@ -40,6 +38,11 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - Character catalog は `character` / `character-editor` domain を正本にし、Home には一覧と editor window 起動だけを置く
 - chat layout の実装は 1 系統だけとし、`chat` domain を正本にする
 - Agent は chat layout に乗せ、機能側には state / service / adapter だけを置く
+- `chat/conversation/session-message-column.tsx` は会話本文、artifact、検索、仮想スクロールと pending row の配置を担当する。pending row 内の承認・入力要求は `chat/runtime/live-request-surface.tsx` が所有し、フォーム状態、validation、応答 payload、送信中の操作制御を conversation 列へ戻さない
+- artifact の展開状態と開閉操作は `chat/conversation/session-chat-conversation-feature.ts` が Window 内の message key ごとに所有する。会話の切り替えで展開状態を失わず、App は状態・setter・開閉 callback を構築しない
+- File Explorer と中央 file / Git preview の接続は `file-explorer/use-session-files-feature.tsx` が所有する。タブ、再読込、preview の選択と表示分岐を機能内へ閉じ、Session Window には表示面、開閉状態、composer への挿入接続だけを公開する
+- Glossary の検索・選択状態と pane props は `glossary/use-session-glossary.ts`、Audit Log の取得状態と modal props は `chat/runtime/session-audit-log-state.ts` がそれぞれ組み立てる。Window 側で個別フィールドへ展開して再構築しない
+- Session Window は機能間の接続を担当し、Composer の入力・picker・表示 props、Context Pane の選択・表示投影、Shell の dock 操作・resize props は各機能 owner が組み立てる。`chat/session-chat-window-composition.tsx` は owner が返す表示面を共通 ChatWindow へ接続し、全機能の詳細状態を受け取る projection は持たない
 - `Session` という名前の UI 実装に provider 固有処理を詰め込まない。必要な差分は capability / adapter として注入する
 - Session context pane の `Messages` tab は session window が明示的に capability を有効化した場合だけ表示し、既存の `LatestCommand → Messages → Glossary → Reasoning → Tasks` 順を保つ
 - right pane に表示する情報がない mode では、説明文や誘導文で埋めず、空の pane shell として扱う
@@ -64,7 +67,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
   - 初期表示は `Session Monitor`
   - 親Session単位の2行集約カードを表示する。1行目はdisclosure、avatar、親title、2行目は`Main`と、Auxiliaryが存在する場合だけ`Aux`の状態アイコンを表示する
-  - source は `src-electron/main.ts` の `sessionWindows: Map<string, BrowserWindow>` を truth source にした open session ids と、`Recent Sessions` と同じ filtered session list の交差集合を使う
+  - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`Recent Sessions` と同じ filtered session list の交差集合を使う
   - section
     - `実行中`: `running`
     - `停止・完了`: `interrupted` / `error` / `neutral` を含む non-running
@@ -402,24 +405,26 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 
 ## Deliverables
 
-- `src/HomeApp.tsx`
-- `src/withmate-window.ts`
-- `src/App.tsx`
-- `src/MessageRichText.tsx`
-- `src/CharacterEditorApp.tsx`
-- `src/DiffApp.tsx`
-- `src/DiffViewer.tsx`
-- `src/app-state.ts`
-- `src/ui-utils.tsx`
+- `src/home/HomeApp.tsx`
+- `src-shared/ipc/withmate-window.ts`
+- `src/app/SessionWindowApp.tsx`
+- `src/ui/markdown/MessageRichText.tsx`
+- `src/character-editor/CharacterEditorApp.tsx`
+- `src/file-explorer/DiffApp.tsx`
+- `src/ui/DiffViewer.tsx`
+- `src-shared/session/session-state.ts`
+- `src-shared/settings/provider-settings-state.ts`
+- `src-shared/window/withmate-window-types.ts`
+- `src/ui/ui-utils.tsx`
 - `docs/design/message-rich-text.md`
 - `src-electron/main.ts`
 - `src-electron/preload.ts`
-- `src-electron/composer-attachments.ts`
-- `src-electron/session-storage.ts`
-- `src-electron/audit-log-storage.ts`
-- `src-electron/app-settings-storage.ts`
-- `src-electron/character-storage.ts`
-- `src-electron/model-catalog-storage.ts`
+- `src-electron/files/composer-attachments.ts`
+- `src-electron/session/session-storage.ts`
+- `src-electron/session/audit-log-storage.ts`
+- `src-electron/app/app-settings-storage.ts`
+- `src-electron/character/character-storage.ts`
+- `src-electron/settings/model-catalog-storage.ts`
 - `docs/manual-test-checklist.md`
 
 ## Runbook

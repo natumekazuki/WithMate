@@ -4,7 +4,7 @@
 
 Memory CLIとMCP serverは、起動中のWithMateが公開するloopback runtime APIへ接続する。どちらもSQLiteを直接開かず、WithMateが停止中の場合は別状態へ書き込まずに失敗する。
 
-設計判断は`docs/adr/020-memory-affect-mcp-application-boundary.md`を参照する。一般Memoryのcontractとvalidationは`src/memory-v6/`、Character系contractは`src/character-context/`と`src/character-affect/`を正本とする。
+設計判断は`docs/adr/020-memory-affect-mcp-application-boundary.md`を参照する。一般Memoryのcontractとvalidationは`src-shared/memory/`、Character系contractは`src-shared/character-context/`と`src-shared/character-affect/`を正本とする。
 
 ## MCP serverの起動
 
@@ -102,7 +102,7 @@ $request = @{
 $request | withmate-memory affect-inspect --stdin
 ```
 
-主なoperator commandは`affect-inspect`、`affect-correct`、`affect-reset`、`character-metrics`、一般Memoryの`audit`である。`withmate-memory schema`はcommand、入力方法、enumの一覧であり、完全なrequest schemaは返さない。MCP toolの完全なinput/output shapeは`tools/list`で確認する。CLIとapplication boundaryのcanonical validationは一般Memoryが`src/memory-v6/memory-validation.ts`、Character系が`src/character-context/character-context-validation.ts`にある。
+主なoperator commandは`affect-inspect`、`affect-correct`、`affect-reset`、`character-metrics`、一般Memoryの`audit`である。`withmate-memory schema`はcommand、入力方法、enumの一覧であり、完全なrequest schemaは返さない。MCP toolの完全なinput/output shapeは`tools/list`で確認する。CLIとapplication boundaryのcanonical validationは一般Memoryが`src-shared/memory/memory-validation.ts`、Character系が`src-shared/character-context/character-context-validation.ts`にある。
 
 `character-memory-correct`の自由記述reasonは訂正監査とidempotency判定に使われる。`character-memory-forget`のreasonは`user_request`、`incorrect`、`outdated`、`privacy`、`other`のいずれかを指定する。
 

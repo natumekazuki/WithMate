@@ -1,6 +1,6 @@
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../model-catalog.js";
-import { getProviderAppSettings, type AppSettings } from "../provider-settings-state.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
+import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 import {
   resolveLaunchCharacterId,

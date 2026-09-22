@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode, RefObject } from "react";
 import { ChatDockSplitter, type ChatWindowProps } from "./chat-window.js";
-import type { SessionContextPaneProps } from "../session-components.js";
+import type { SessionContextPaneProps } from "./shell/session-context-pane.js";
 
 type LiveSessionWindowShellPropsInput = {
   mode: ChatWindowProps["mode"];

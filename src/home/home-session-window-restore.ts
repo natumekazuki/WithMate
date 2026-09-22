@@ -1,4 +1,4 @@
-import type { SessionWindowRestoreResult } from "../session-window-restore.js";
+import type { SessionWindowRestoreResult } from "../../src-shared/window/session-window-restore.js";
 
 const FAILURE_LABELS = {
   missing: "削除済み",

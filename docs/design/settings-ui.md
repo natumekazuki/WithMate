@@ -1,9 +1,7 @@
 # Settings UI
-
 - 作成日: 2026-03-14
 - 更新日: 2026-09-19
 - 対象: 独立した `Settings Window`
-
 ## Goal
 
 設定系の要素を `Home Window` から分離し、独立した `Settings Window` に集約する。
@@ -19,7 +17,7 @@
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
-- current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
+- current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
 
 ## Interaction
 

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import type { HomeRecentSessionsPanelProps } from "./HomeRecentSessionsPanel.js";
 import type { HomeSessionState } from "./home-session-projection.js";
-import type { HomeSessionSummary } from "../app-state.js";
+import type { HomeSessionSummary } from "../../src-shared/session/session-state.js";
 
 type HomeRecentSessionsPanelHandlers = {
   onChangeSearchText: (value: string) => void;

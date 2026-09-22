@@ -1,0 +1,541 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import {
+  openLocalPathWithDefaultApp,
+  revealLocalPathInFileManager,
+  resolveForwardSlashUncPathCandidate,
+  resolveMarkdownLinkCopyTarget,
+  resolveOpenPathTarget,
+  resolveProtocolRelativeExternalFallback,
+  resolveProtocolRelativeExternalFallbackAfterLocalOpen,
+} from "../../src-electron/files/open-path.js";
+
+function localPathStat(kind: "file" | "directory") {
+  return {
+    isDirectory: () => kind === "directory",
+    isFile: () => kind === "file",
+  };
+}
+
+describe("resolveOpenPathTarget", () => {
+  it("http url はそのまま外部 URL として扱う", () => {
+    assert.deepEqual(resolveOpenPathTarget("https://example.com/docs#intro"), {
+      type: "external-url",
+      target: "https://example.com/docs#intro",
+    });
+  });
+
+  it("protocol-relative URL は https の外部 URL として扱う", () => {
+    assert.deepEqual(resolveOpenPathTarget("//example.com/docs"), {
+      type: "external-url",
+      target: "https://example.com/docs",
+    });
+  });
+
+  it("複数階層の protocol-relative URL も query と fragment を保った外部 URL として扱う", () => {
+    assert.deepEqual(resolveOpenPathTarget("//example.com/docs/page?x=a%20b#top"), {
+      type: "external-url",
+      target: "https://example.com/docs/page?x=a%20b#top",
+    });
+  });
+
+  it("拡張子付きの protocol-relative URL も UNC 候補にしない", () => {
+    assert.deepEqual(resolveOpenPathTarget("//example.com/docs/page.html"), {
+      type: "external-url",
+      target: "https://example.com/docs/page.html",
+    });
+    assert.equal(resolveForwardSlashUncPathCandidate("//example.com/docs/page.html"), null);
+  });
+
+  it("先頭空白付きの protocol-relative URL も UNC 候補にしない", () => {
+    assert.deepEqual(resolveOpenPathTarget(" //example.com/docs/page.html"), {
+      type: "external-url",
+      target: "https://example.com/docs/page.html",
+    });
+    assert.equal(resolveForwardSlashUncPathCandidate(" //example.com/docs/page.html"), null);
+  });
+
+  it("複数階層の protocol-relative URL は UNC 候補にしない", () => {
+    assert.equal(resolveForwardSlashUncPathCandidate("//example.com/docs/page?x=a%20b#top"), null);
+  });
+
+  it("ポート付き protocol-relative URL は external URL として扱う", () => {
+    assert.deepEqual(resolveOpenPathTarget("//localhost:5173/docs"), {
+      type: "external-url",
+      target: "https://localhost:5173/docs",
+    });
+    assert.equal(resolveForwardSlashUncPathCandidate("//localhost:5173/docs"), null);
+  });
+
+  it("localhost の protocol-relative URL は port なしでも external URL として扱う", () => {
+    assert.deepEqual(resolveOpenPathTarget("//localhost/docs"), {
+      type: "external-url",
+      target: "https://localhost/docs",
+    });
+    assert.equal(resolveForwardSlashUncPathCandidate("//localhost/docs"), null);
+  });
+
+  it("single-label host の protocol-relative URL は 1 segment path なら external URL として扱う", () => {
+    assert.deepEqual(resolveOpenPathTarget("//intranet/app"), {
+      type: "external-url",
+      target: "https://intranet/app",
+    });
+    assert.equal(resolveForwardSlashUncPathCandidate("//intranet/app"), null);
+  });
+
+  it("forward-slash UNC path は local path として扱う", () => {
+    assert.deepEqual(resolveOpenPathTarget("//server/share/file.txt"), {
+      type: "local-path",
+      targetPath: "//server/share/file.txt",
+    });
+  });
+
+  it("forward-slash UNC path は local open 失敗時の external fallback も持つ", () => {
+    assert.equal(resolveProtocolRelativeExternalFallback("//server/share/file.txt"), "https://server/share/file.txt");
+  });
+
+  it("single-label host の複数 segment protocol-relative URL は local open 失敗時の external fallback を持つ", () => {
+    assert.deepEqual(resolveOpenPathTarget("//intranet/app/page"), {
+      type: "local-path",
+      targetPath: "//intranet/app/page",
+    });
+    assert.equal(resolveForwardSlashUncPathCandidate("//intranet/app/page"), "//intranet/app/page");
+    assert.equal(resolveProtocolRelativeExternalFallback("//intranet/app/page"), "https://intranet/app/page");
+  });
+
+  it("FQDN の protocol-relative URL は UNC 候補にしない", () => {
+    assert.deepEqual(resolveOpenPathTarget("//fileserver.example.com/share/file.txt"), {
+      type: "external-url",
+      target: "https://fileserver.example.com/share/file.txt",
+    });
+    assert.equal(resolveForwardSlashUncPathCandidate("//fileserver.example.com/share/file.txt"), null);
+  });
+
+  it("IP address の protocol-relative URL は UNC 候補にしない", () => {
+    assert.deepEqual(resolveOpenPathTarget("//192.168.1.10/share/file.txt"), {
+      type: "external-url",
+      target: "https://192.168.1.10/share/file.txt",
+    });
+    assert.equal(resolveForwardSlashUncPathCandidate("//192.168.1.10/share/file.txt"), null);
+  });
+
+  it("mailto URL は外部 URL として扱う", () => {
+    assert.deepEqual(resolveOpenPathTarget("mailto:alice@example.test"), {
+      type: "external-url",
+      target: "mailto:alice@example.test",
+    });
+  });
+
+  it("encoded mailto URL は decode せず外部 URL として扱う", () => {
+    assert.deepEqual(resolveOpenPathTarget("mailto:alice@example.test?subject=hello%20world%0D%0A"), {
+      type: "external-url",
+      target: "mailto:alice@example.test?subject=hello%20world%0D%0A",
+    });
+  });
+
+  it("workspace 相対 path は baseDirectory 基準で解決する", () => {
+    assert.deepEqual(resolveOpenPathTarget("src/App.tsx#L10", { baseDirectory: "C:/workspace/project" }), {
+      type: "local-path",
+      targetPath: "C:\\workspace\\project\\src\\App.tsx",
+    });
+  });
+
+  it("encoded workspace 相対 path は fragment を外してから decode する", () => {
+    assert.deepEqual(resolveOpenPathTarget("docs/a%23b%3Fv.txt#section", { baseDirectory: "C:/workspace/project" }), {
+      type: "local-path",
+      targetPath: "C:\\workspace\\project\\docs\\a#b?v.txt",
+    });
+  });
+
+  it("encoded workspace 相対 path の空白と非 ASCII を decode する", () => {
+    assert.deepEqual(resolveOpenPathTarget("docs/my%20file-%E4%BB%95%E6%A7%98.md", { baseDirectory: "C:/workspace/project" }), {
+      type: "local-path",
+      targetPath: "C:\\workspace\\project\\docs\\my file-仕様.md",
+    });
+  });
+
+  it("percent-encoded backslash 形式の Windows absolute path を local path に戻す", () => {
+    assert.deepEqual(resolveOpenPathTarget("C:%5Cworkspace%5Csession-files%5Creport.txt"), {
+      type: "local-path",
+      targetPath: "C:\\workspace\\session-files\\report.txt",
+    });
+  });
+
+  it("absolute path の fragment は外して開く path にする", () => {
+    assert.deepEqual(resolveOpenPathTarget("C:/workspace/project/src/App.tsx#L10"), {
+      type: "local-path",
+      targetPath: "C:/workspace/project/src/App.tsx",
+    });
+  });
+
+  it("leading slash 付き Windows absolute path は drive path に正規化する", () => {
+    assert.deepEqual(resolveOpenPathTarget("/C:/workspace/project/src/App.tsx"), {
+      type: "local-path",
+      targetPath: "C:/workspace/project/src/App.tsx",
+    });
+    assert.deepEqual(resolveOpenPathTarget("/C:/workspace/project/src/App.tsx:12:4"), {
+      type: "local-path",
+      targetPath: "C:/workspace/project/src/App.tsx:12:4",
+    });
+  });
+
+  it("file url の fragment も外して local path に変換する", () => {
+    assert.deepEqual(resolveOpenPathTarget("file:///C:/workspace/project/docs/spec.md#intro"), {
+      type: "local-path",
+      targetPath: "C:\\workspace\\project\\docs\\spec.md",
+    });
+  });
+
+  it("file url の encoded local path は fragment を外してから decode する", () => {
+    assert.deepEqual(resolveOpenPathTarget("file:///C:/workspace/docs/a%23b.txt#intro"), {
+      type: "local-path",
+      targetPath: "C:\\workspace\\docs\\a#b.txt",
+    });
+  });
+
+  it("file UNC url は host を含む local UNC path に変換する", () => {
+    assert.deepEqual(resolveOpenPathTarget("file://server/share/file.txt"), {
+      type: "local-path",
+      targetPath: "\\\\server\\share\\file.txt",
+    });
+  });
+
+});
+
+describe("resolveMarkdownLinkCopyTarget", () => {
+  it("local linkをdecodeしてfragmentを除いたfilesystem pathにする", () => {
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("docs/my%20file-%E4%BB%95%E6%A7%98.md#intro"),
+      "docs/my file-仕様.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("C:%5Cworkspace%5Csession-files%5Creport%20%E4%BB%95%E6%A7%98.md#intro"),
+      "C:\\workspace\\session-files\\report 仕様.md",
+    );
+  });
+
+  it("file URLとUNCをfilesystem pathにする", () => {
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("file:///C:/workspace/my%20file.md#intro"),
+      "C:\\workspace\\my file.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("file://server/share/my%20file.md#intro"),
+      "\\\\server\\share\\my file.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("%5C%5Cserver%5Cshare%5C%E4%BB%95%E6%A7%98%20file.md#intro"),
+      "\\\\server\\share\\仕様 file.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("file:/C:/workspace/my%20file.md#intro"),
+      "C:\\workspace\\my file.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("FILE:/C:/workspace/my%20file.md#intro"),
+      "C:\\workspace\\my file.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("file:////server/share/my%20file.md#intro"),
+      "\\\\server\\share\\my file.md",
+    );
+  });
+
+  it("decode後のlocal pathに制御文字があれば拒否する", () => {
+    for (const target of [
+      "docs/report%00.txt",
+      "docs/report%09.txt",
+      "docs/report%0D%0Apowershell.txt",
+      "docs/report%7F.txt",
+      "file:/C:/workspace/report%0A.txt",
+    ]) {
+      assert.throws(
+        () => resolveMarkdownLinkCopyTarget(target),
+        /control characters/i,
+      );
+    }
+  });
+
+  it("外部URLはencodeとquery・fragmentを保つ", () => {
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("//example.test/docs/my%20file.md?raw=%2F#intro"),
+      "//example.test/docs/my%20file.md?raw=%2F#intro",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("https://example.test/docs/my%20file.md?raw=%2F#intro"),
+      "https://example.test/docs/my%20file.md?raw=%2F#intro",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("mailto:alice+docs@example.test?subject=%E4%BB%95%E6%A7%98"),
+      "mailto:alice+docs@example.test?subject=%E4%BB%95%E6%A7%98",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("https://example.test/report%0D%0Apowershell.exe"),
+      "https://example.test/report%0D%0Apowershell.exe",
+    );
+    assert.throws(
+      () => resolveMarkdownLinkCopyTarget("https://example.test/report\r\npowershell.exe"),
+      /control characters/i,
+    );
+  });
+});
+
+describe("openLocalPathWithDefaultApp", () => {
+  it("存在する数字suffix付き path は行番号と解釈せずそのまま開く", async () => {
+    const inspected: string[] = [];
+    const opened: string[] = [];
+    const result = await openLocalPathWithDefaultApp("/workspace/report:12", {
+      statTarget: async (targetPath) => {
+        inspected.push(targetPath);
+        return localPathStat("file");
+      },
+      openWithDefaultApp: async (targetPath) => {
+        opened.push(targetPath);
+        return "";
+      },
+    });
+
+    assert.equal(result.status, "opened");
+    assert.deepEqual(inspected, ["/workspace/report:12"]);
+    assert.deepEqual(opened, ["/workspace/report:12"]);
+  });
+
+  it("存在しない :line suffix は外した file を開く", async () => {
+    const inspected: string[] = [];
+    const opened: string[] = [];
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\notes.md:12", {
+      statTarget: async (targetPath) => {
+        inspected.push(targetPath);
+        if (targetPath.endsWith(":12")) {
+          throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
+        }
+        return localPathStat("file");
+      },
+      openWithDefaultApp: async (targetPath) => {
+        opened.push(targetPath);
+        return "";
+      },
+    });
+
+    assert.equal(result.status, "opened");
+    assert.deepEqual(inspected, ["C:\\workspace\\notes.md:12", "C:\\workspace\\notes.md"]);
+    assert.deepEqual(opened, ["C:\\workspace\\notes.md"]);
+  });
+
+  it("存在しない :line:column suffix は外した file を開く", async () => {
+    const opened: string[] = [];
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\notes.md:12:4", {
+      statTarget: async (targetPath) => {
+        if (targetPath.endsWith(":12:4")) {
+          throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
+        }
+        return localPathStat("file");
+      },
+      openWithDefaultApp: async (targetPath) => {
+        opened.push(targetPath);
+        return "";
+      },
+    });
+
+    assert.equal(result.status, "opened");
+    assert.deepEqual(opened, ["C:\\workspace\\notes.md"]);
+  });
+
+  it("数字suffix付き path と fallback path が存在しない場合は元の path を not-found として返す", async () => {
+    let openCalls = 0;
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\missing.md:12", {
+      statTarget: async () => {
+        throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
+      },
+      openWithDefaultApp: async () => {
+        openCalls += 1;
+        return "";
+      },
+    });
+
+    assert.deepEqual(result, {
+      status: "not-found",
+      targetType: "local-path",
+      target: "C:\\workspace\\missing.md:12",
+      message: "The local path was not found.",
+    });
+    assert.equal(openCalls, 0);
+  });
+
+  it("数字suffix付き path の permission error は fallback せず failed を返す", async () => {
+    const inspected: string[] = [];
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\protected.md:12", {
+      statTarget: async (targetPath) => {
+        inspected.push(targetPath);
+        throw Object.assign(new Error("EACCES: access denied"), { code: "EACCES" });
+      },
+      openWithDefaultApp: async () => "",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.deepEqual(inspected, ["C:\\workspace\\protected.md:12"]);
+  });
+
+  it("既定アプリで file を開けない場合は自動で Explorer に切り替えず failed を返す", async () => {
+    const revealed: string[] = [];
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\notes.md", {
+      statTarget: async () => localPathStat("file"),
+      openWithDefaultApp: async () => "No application is associated with the specified file.",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.deepEqual(revealed, []);
+    assert.match(result.message, /No application is associated/i);
+  });
+
+  it("scheme が大文字の file URL も local path に変換する", () => {
+    assert.deepEqual(resolveOpenPathTarget("FILE:///C:/workspace/docs/a%23b.txt#intro"), {
+      type: "local-path",
+      targetPath: "C:\\workspace\\docs\\a#b.txt",
+    });
+  });
+
+  it("directory も既定アプリで開く", async () => {
+    const result = await openLocalPathWithDefaultApp("C:\\workspace", {
+      statTarget: async () => localPathStat("directory"),
+      openWithDefaultApp: async () => "",
+    });
+
+    assert.equal(result.status, "opened");
+  });
+
+  it("file / directory 以外の filesystem object は既定アプリへ渡さない", async () => {
+    let openCalls = 0;
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\special", {
+      statTarget: async () => ({
+        isDirectory: () => false,
+        isFile: () => false,
+      }),
+      openWithDefaultApp: async () => {
+        openCalls += 1;
+        return "";
+      },
+    });
+
+    assert.equal(result.status, "failed");
+    assert.equal(openCalls, 0);
+  });
+
+  it("存在しない path は既定アプリを呼ばず not-found を返す", async () => {
+    let openCalls = 0;
+    const result = await openLocalPathWithDefaultApp("C:\\missing.txt", {
+      statTarget: async () => {
+        throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
+      },
+      openWithDefaultApp: async () => {
+        openCalls += 1;
+        return "";
+      },
+    });
+
+    assert.equal(result.status, "not-found");
+    assert.equal(openCalls, 0);
+  });
+
+  it("stat の permission error は not-found にせず failed と診断する", async () => {
+    const result = await openLocalPathWithDefaultApp("C:\\protected.txt", {
+      statTarget: async () => {
+        throw Object.assign(new Error("EACCES: access denied"), { code: "EACCES" });
+      },
+      openWithDefaultApp: async () => "",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(result.message, /EACCES: access denied/);
+  });
+
+  it("permission error は protocol-relative URL の外部 fallback を起動しない", () => {
+    assert.equal(resolveProtocolRelativeExternalFallbackAfterLocalOpen("//intranet/app/page", {
+      status: "failed",
+      targetType: "local-path",
+      target: "\\\\intranet\\app\\page",
+      message: "EACCES: access denied",
+    }), null);
+  });
+
+  it("存在しない UNC 候補だけを protocol-relative URL として再解釈できる", () => {
+    assert.equal(resolveProtocolRelativeExternalFallbackAfterLocalOpen("//intranet/app/page", {
+      status: "not-found",
+      targetType: "local-path",
+      target: "\\\\intranet\\app\\page",
+      message: "The local path was not found.",
+    }), "https://intranet/app/page");
+  });
+});
+
+describe("revealLocalPathInFileManager", () => {
+  it("存在しない :line suffix は外した file を Explorer に表示する", async () => {
+    const revealed: string[] = [];
+    const result = await revealLocalPathInFileManager("C:\\workspace\\notes.md:12", {
+      statTarget: async (targetPath) => {
+        if (targetPath.endsWith(":12")) {
+          throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
+        }
+        return localPathStat("file");
+      },
+      openWithDefaultApp: async () => "",
+      revealInFileManager: (targetPath) => revealed.push(targetPath),
+    });
+
+    assert.equal(result.status, "revealed");
+    assert.deepEqual(revealed, ["C:\\workspace\\notes.md"]);
+  });
+
+  it("file は明示操作のときだけ file manager に表示する", async () => {
+    const revealed: string[] = [];
+    const result = await revealLocalPathInFileManager("C:\\workspace\\notes.md", {
+      statTarget: async () => localPathStat("file"),
+      openWithDefaultApp: async () => "",
+      revealInFileManager: (targetPath) => revealed.push(targetPath),
+    });
+
+    assert.equal(result.status, "revealed");
+    assert.deepEqual(revealed, ["C:\\workspace\\notes.md"]);
+  });
+
+  it("directory の明示 reveal は既定の file manager で開く", async () => {
+    const opened: string[] = [];
+    const result = await revealLocalPathInFileManager("C:\\workspace", {
+      statTarget: async () => localPathStat("directory"),
+      openWithDefaultApp: async (targetPath) => {
+        opened.push(targetPath);
+        return "";
+      },
+      revealInFileManager: () => undefined,
+    });
+
+    assert.equal(result.status, "opened");
+    assert.deepEqual(opened, ["C:\\workspace"]);
+  });
+
+  it("reveal 前の permission error は not-found にせず failed と診断する", async () => {
+    const result = await revealLocalPathInFileManager("C:\\protected.txt", {
+      statTarget: async () => {
+        throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+      },
+      openWithDefaultApp: async () => "",
+      revealInFileManager: () => undefined,
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(result.message, /EPERM: operation not permitted/);
+  });
+
+  it("reveal 前の ENOTDIR は not-found を返す", async () => {
+    const result = await revealLocalPathInFileManager("C:\\missing\\file.txt", {
+      statTarget: async () => {
+        throw Object.assign(new Error("ENOTDIR"), { code: "ENOTDIR" });
+      },
+      openWithDefaultApp: async () => "",
+      revealInFileManager: () => undefined,
+    });
+
+    assert.equal(result.status, "not-found");
+  });
+});

@@ -1,9 +1,7 @@
 # Database V3 Blob Storage
-
 - 作成日: 2026-05-02
 - 対象: V3 DB と DB 外 compressed blob store
 - 関連: `docs/design/database-schema.md`, `docs/design/database-v2-migration.md`, `docs/design/audit-log.md`
-
 ## Goal
 
 V3 では、一覧・検索・削除判定に必要な軽量 metadata は SQLite に残し、prompt / provider response / raw items / diff rows / artifact detail のような重い文字 payload は DB 外の compressed blob として保存する。
@@ -235,8 +233,8 @@ GC は DB を正本として file store を掃除する。
 
 V3 migration は専用 script にする。
 
-- `scripts/migrate-database-v2-to-v3.ts --dry-run --v2 <path>`
-- `scripts/migrate-database-v2-to-v3.ts --write --v2 <path> --v3 <path> --blob-root <path> [--overwrite]`
+- `scripts/migrations/migrate-database-v2-to-v3.ts --dry-run --v2 <path>`
+- `scripts/migrations/migrate-database-v2-to-v3.ts --write --v2 <path> --v3 <path> --blob-root <path> [--overwrite]`
 
 ### Dry Run Report
 

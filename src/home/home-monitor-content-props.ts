@@ -3,7 +3,7 @@ import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-ses
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
-} from "../withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 export type HomeMonitorContentInput = {
   runningEntries: HomeMonitorEntry[];

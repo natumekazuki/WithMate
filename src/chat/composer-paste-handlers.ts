@@ -1,6 +1,6 @@
-import type { WithMateWindowPickerApi } from "../withmate-window-api.js";
-import { isSupportedComposerImagePath } from "../composer-image-reference.js";
-import type { ComposerReferenceInput } from "../session-composer-paths.js";
+import type { WithMateWindowPickerApi } from "../../src-shared/ipc/withmate-window-api.js";
+import { isSupportedComposerImagePath } from "../../src-shared/files/composer-image-reference.js";
+import type { ComposerReferenceInput } from "./composer/session-composer-paths.js";
 
 const SUPPORTED_IMAGE_MIME_EXTENSIONS = new Map([
   ["image/png", "png"],

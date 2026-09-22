@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { useDialogA11y } from "../a11y.js";
+import { useDialogA11y } from "../ui/a11y.js";
 import {
   captureShortcutAccelerator,
   DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
@@ -12,7 +12,7 @@ import {
   updateShortcutBinding,
   type KeyboardShortcutSettings,
   type ShortcutPlatform,
-} from "../shortcut-registry.js";
+} from "./shortcut-registry.js";
 import { LaunchDialogShell } from "../launch/launch-dialog-shell.js";
 
 export type KeyboardShortcutsDialogProps = {

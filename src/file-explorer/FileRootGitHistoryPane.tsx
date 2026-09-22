@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import {
   FileRootChangesGroup,
   type GitRootChanges,
@@ -29,7 +29,7 @@ import type {
   FileRootGitHistoryRef,
   FileRootGitHistoryRepositoriesResult,
   FileRootGitHistoryRepository,
-} from "./file-explorer-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 type FileRootGitHistoryApi = Pick<
   WithMateWindowApi,

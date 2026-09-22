@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 
-import AgentSessionWindowApp from "../App.js";
+import AgentSessionWindowApp from "../app/SessionWindowApp.js";
 import { resolveChatWindowModeFromSearch, resolveChatWindowModeTarget } from "./chat-window-mode.js";
 
 const chatWindowApps = {

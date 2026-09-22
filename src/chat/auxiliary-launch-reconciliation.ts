@@ -2,7 +2,7 @@ import type {
   AuxiliaryCreationResult,
   AuxiliaryCreationRequest,
   AuxiliarySession,
-} from "../auxiliary-session-state.js";
+} from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { matchesAuxiliaryLaunchCreationRequest } from "./auxiliary-launch-state.js";
 
 export type AuxiliaryLaunchReconciliationResult = {

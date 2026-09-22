@@ -1,4 +1,4 @@
-import type { AuxiliarySessionSummary } from "../auxiliary-session-state.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 
 export type HomeAuxiliarySessionRefresherInput = {
   fetchAuxiliarySessionSummaries: () => Promise<AuxiliarySessionSummary[]>;

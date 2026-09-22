@@ -37,6 +37,7 @@ SQLite-backed store により window 間整合と再起動後の復元を両立�
 - session summary の変更通知は `scope: "ids"` または `scope: "all"` のinvalidationを `WindowBroadcastService` からHome / Session windowへ配信する。IDは最大256件で、超過時に切り捨てず `all` へ切り替える
 - Session windowはinvalidationを受けた対象だけ `getSession()` で再 hydrateする。Homeはquery generationで古いresponseを失効させ、検索条件変更時だけcursor chainを初期化する。focus、open Session ID変更、invalidationでは読み込み済みrecent / pinned pageとopen special entryを保持したままboundedに再同期する
 - session CRUD と bulk write path は `SessionPersistenceService` に集約する
+- `SessionPersistenceService` の owner-guarded storage command、cache projection、window side effect の組み立ては `src-electron/session/session-persistence-assembly.ts` が担い、`main.ts` は captured store と narrow domain port を接続する
 - turn 実行は `SessionRuntimeService`、window lifecycle hook は `SessionWindowBridge` が担う
 - Session / Project / Character Memory の session 起点補助は `SessionMemorySupportService` が担う
 - Session Memory / Character Reflection の background orchestration は `MemoryOrchestrationService` が担う

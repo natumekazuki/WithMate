@@ -11,25 +11,25 @@ import {
   type ReactNode,
 } from "react";
 
-import { MessageRichText } from "../MessageRichText.js";
-import { AppNotification, type AppNotificationState } from "../app-notification.js";
-import { BackNavigationButton } from "../back-navigation-button.js";
-import { ImageViewport, ImageZoomControls, useImageViewport } from "../image-viewport.js";
-import { SelectionTextActionSurface } from "../session-components.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+import { MessageRichText } from "../ui/markdown/MessageRichText.js";
+import { AppNotification, type AppNotificationState } from "../ui/app-notification.js";
+import { BackNavigationButton } from "../ui/back-navigation-button.js";
+import { ImageViewport, ImageZoomControls, useImageViewport } from "../ui/image-viewport.js";
+import { SelectionTextActionSurface } from "../chat/conversation/session-message-column.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type {
   SessionFileDescriptor,
   SessionFilePreviewResourceRequest,
   SessionFileRoot,
   FileRootGitDiffScope,
-} from "./file-explorer-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
 import {
   getSessionFileResourceDisplayPath,
   isSessionFileAbsoluteResource,
   isSessionFileGitCommitResource,
   isSessionFileRootResource,
-} from "./file-explorer-contract.js";
-import { getSessionFileObjectCopyFeedbackTone } from "./session-file-object-copy-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
+import { getSessionFileObjectCopyFeedbackTone } from "../../src-shared/file-explorer/session-file-object-copy-contract.js";
 import {
   decodeSessionFileBytes,
   findPreviewTextMatches,
@@ -42,9 +42,9 @@ import {
   type SessionFileEncodingSelection,
   type PreviewTextMatch,
 } from "./file-preview-utils.js";
-import { isLikelyBinarySessionFile } from "./file-content-detection.js";
-import { SessionContentFindBar } from "../session-content-find-bar.js";
-import { useShortcutSettings } from "../shortcut-settings-context.js";
+import { isLikelyBinarySessionFile } from "../../src-shared/file-explorer/file-content-detection.js";
+import { SessionContentFindBar } from "../chat/conversation/session-content-find-bar.js";
+import { useShortcutSettings } from "../settings/shortcut-settings-context.js";
 import {
   applyRenderedTextHighlights,
   clearRenderedTextHighlights,
@@ -58,13 +58,13 @@ import {
   type RenderedTextSearchIndex,
 } from "./rendered-text-search.js";
 import { PreviewResourceQueue } from "./preview-resource-queue.js";
-import { clampFindMatchIndex } from "../find-text-matches.js";
+import { clampFindMatchIndex } from "../ui/find-text-matches.js";
 import {
   getShortcutTooltip,
   SHORTCUT_COMMAND_IDS,
   useShortcutCommandHandler,
   useShortcutScope,
-} from "../shortcut-registry.js";
+} from "../settings/shortcut-registry.js";
 import {
   parseUnifiedDiff,
   type UnifiedDiffContentRow,

@@ -1,8 +1,6 @@
 # Distribution Packaging
-
 - 作成日: 2026-04-04
 - 対象: Electron アプリの配布ビルド
-
 ## Goal
 
 WithMate を開発用の `electron:start` 実行だけでなく、Windows と macOS 向けに配布可能な形へまとめる。  
@@ -57,8 +55,8 @@ current milestone では、署名や notarization まで確定せず、まず未
   - `package.json`
 - provider native package 本体は `files` の除外規則で app bundle 側から外し、`resources/provider-binaries/` 側だけを runtime の正本にする
 - `asar` は有効化する
-- provider native package は `scripts/stage-provider-binaries.ts` で `build/provider-binaries/` へ stage し、`extraResources` で `resources/provider-binaries/` 配下へ配布する
-- packaged runtime の binary path 解決は `src-electron/provider-binary-paths.ts` を正本にする
+- provider native package は `scripts/build/stage-provider-binaries.ts` で `build/provider-binaries/` へ stage し、`extraResources` で `resources/provider-binaries/` 配下へ配布する
+- packaged runtime の binary path 解決は `src-electron/providers/provider-binary-paths.ts` を正本にする
 - `Codex` は `codexPathOverride` で staged binary を明示し、`Copilot` は `cliPath` に staged binary を渡す
 
 ## Platform Constraint
@@ -80,7 +78,7 @@ current milestone では、署名や notarization まで確定せず、まず未
 ## Asset Policy
 
 - packaging icon は `build/` 配下で管理する
-- source asset は `scripts/generate-app-icon.ts`
+- source asset は `scripts/build/generate-app-icon.ts`
 - `build/icon.svg` は生成物として扱い、Git 管理しない
 - Windows packaging は `build/icon.ico` を使う
 - macOS packaging は `build/icon.png` を source asset として使う
