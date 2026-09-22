@@ -38,6 +38,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - Character catalog は `character` / `character-editor` domain を正本にし、Home には一覧と editor window 起動だけを置く
 - chat layout の実装は 1 系統だけとし、`chat` domain を正本にする
 - Agent は chat layout に乗せ、機能側には state / service / adapter だけを置く
+- `chat/conversation/session-message-column.tsx` は会話本文、artifact、検索、仮想スクロールと pending row の配置を担当する。pending row 内の承認・入力要求は `chat/runtime/live-request-surface.tsx` が所有し、フォーム状態、validation、応答 payload、送信中の操作制御を conversation 列へ戻さない
 - `Session` という名前の UI 実装に provider 固有処理を詰め込まない。必要な差分は capability / adapter として注入する
 - Session context pane の `Messages` tab は session window が明示的に capability を有効化した場合だけ表示し、既存の `LatestCommand → Messages → Glossary → Reasoning → Tasks` 順を保つ
 - right pane に表示する情報がない mode では、説明文や誘導文で埋めず、空の pane shell として扱う
