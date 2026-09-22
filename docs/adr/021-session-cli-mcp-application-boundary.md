@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Partially superseded by [ADR 032](032-role-session-async-collaboration.md)（#735の追加判断は2026-09-23 JST採用、実装適用待ち）。metadata変更をrenameだけに限定する判断を、通常Session／Auxiliary自身のTitle／Description更新・参照へ拡張する。Role・実行設定変更とは分け、Auxiliaryを任意の仕事先にしない。以下は採用当時の判断であり、不要なWorkItem・grant・予算の扱いもADR 032を優先する。共通application境界と実際のactor・対象の確認は維持する。
 
 ## Context
 

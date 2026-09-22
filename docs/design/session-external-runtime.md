@@ -12,6 +12,8 @@ runtime bindingのauthority境界はADR 021を参照する。通常SessionのRol
 
 exact request、response、error、状態遷移、limitは、本branchのtype、JSON schema、shared validation、executable contractを正本とする。この文書はそれらのfieldを網羅しない。公開操作・配布Skillの更新は実装と同じ論理変更で行い、文書だけで新契約へ対応済みとしない。
 
+2026-09-23 JSTの[Issue #735](https://github.com/natumekazuki/WithMate/issues/735)で採用したTitle／Descriptionは、通常SessionとAuxiliaryの宛先探索用metadataとしてv6.4.0へ追加する。各Sessionのエージェントによる実行中の自己更新、関連一覧で両方の現在値を返すこと、毎Turnに短い共通保守指示と自分の現在値を渡すことをADR 032へ記録した。実装適用は未完了であり、Role変更や実行設定変更、WorkItem・履歴管理とは区別する。指示のProvider実入力への反映と、独立systemメッセージによる配送は同一視しない。
+
 ADR 021で確定した非局所的な境界を本文に置き、未確定事項は末尾へ分離する。
 
 ## 用語
@@ -102,6 +104,8 @@ CLIとMCPの`session.create`は、binding actorのchildとなる通常Sessionを
 GUIは通常Sessionのrootだけを作成する。用途は左から`standalone`、`overall-coordinator`の順で表示し、既定を`standalone`とする。GUI、CLI、MCPはRoleごとに別の作成経路を持たず、同じSession作成ownerでRole bindingをSession rowと同じtransactionへ保存する。
 
 Provider、Character、Workspace、Session kind、Role bindingは作成時に確定し、作成後は不変とする。外部surfaceでのmetadata変更はtitleのrenameだけを提供する。既存の通常Sessionはmigrationで`standalone` rootへ変換し、現行schemaの欠落、未知Role、unsupported revision、壊れたtupleは明示的に拒否する。
+
+上記は変更前の実装説明である。採用済み・未適用のADR 032では、Role変更はGUI限定のStandalone→全体統括、Title／Descriptionだけの更新は#735のagent向けmetadata操作として区別する。metadata更新のために実行設定のガードを外したり、会話全体を置換したりしない。
 
 Character selectorはCLIとMCPへ公開しない。CharacterはGUIのランダム起動と同じpolicyで解決し、作成resultへ解決済みidentityを返す。同じidempotency keyの再送では再抽選しない。
 

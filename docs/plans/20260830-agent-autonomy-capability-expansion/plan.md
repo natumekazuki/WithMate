@@ -2,7 +2,7 @@
 
 2026-09-22の[Issue #734](https://github.com/natumekazuki/WithMate/issues/734)と[ADR 032](../../adr/032-role-session-async-collaboration.md)により、本計画のWorkItem・集約・複合Delegation・予算・grantの維持／拡張方針は撤回された。Coordinationの報告・相談・回答反映は維持する。v6.4.0は5種類のRole、GUI限定のStandalone→全体統括変更、通常Session／Auxiliaryの関連一覧と通常Session間の非同期協同を対象とし、WithMate管理Subagentはv6.5.0へ分離する。実装適用は未完了であり、個別設計を含む以下の旧contract・Slice・完了条件を、新しい実装や統合の必須条件にしない。
 
-新方針の作業範囲・受入条件は#734、採否と維持境界はADR 032を参照する。旧計画へ新しいSliceや検証ログを追加しない。旧plan等の削除・現行説明への整理は#728／#734に従い、Archiveや別名の作業文書として温存しない。
+新方針の作業範囲・受入条件は#734と[Issue #735](https://github.com/natumekazuki/WithMate/issues/735)、採否と維持境界はADR 032を参照する。#735のエージェント管理Title／Descriptionはv6.4.0の追加合意・実装適用待ちであり、宛先探索用の現在値・関連一覧・毎Turn入力を接続する。WorkItemや専用メモ管理の復活と混同しない。旧計画へ新しいSliceや検証ログを追加しない。旧plan等の削除・現行説明への整理は#728／#734に従い、Archiveや別名の作業文書として温存しない。
 
 ## 置換前の目的
 

@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted — 2026-09-22。`feat/v6.4.0`への実装適用は未完了。
+Accepted — 2026-09-22。2026-09-23 JSTにTitle／Descriptionの判断を追加。`feat/v6.4.0`への実装適用は未完了。
 
-[Issue #734](https://github.com/natumekazuki/WithMate/issues/734)のユーザー決定を記録する。同日の本文更新によるCoordination維持、GUI限定のRole変更、関連一覧の範囲、v6.4.0／v6.5.0のリリース分離を反映する。コード、公開schema、配布Skill、保存構造が変更済みであることを意味しない。衝突する旧v6.4.0の設計・plan・配布説明より、この判断を優先する。実装の作業範囲・受入条件は同Issueで追跡する。
+[Issue #734](https://github.com/natumekazuki/WithMate/issues/734)のユーザー決定を記録する。Coordination維持、GUI限定のRole変更、関連一覧の範囲、v6.4.0／v6.5.0のリリース分離、および[Issue #735](https://github.com/natumekazuki/WithMate/issues/735)のTitle／Descriptionを反映する。コード、公開schema、配布Skill、保存構造が変更済みであることを意味しない。衝突する旧v6.4.0の設計・plan・配布説明より、この判断を優先する。実装の作業範囲・受入条件は#734と#735で追跡する。
 
 ## Context
 
@@ -23,6 +23,8 @@ Accepted — 2026-09-22。`feat/v6.4.0`への実装適用は未完了。
 
 UI非表示、任意化、全許可stub、固定grant、Roleからの権限表再生成、「軽量WorkItem」や代替の専用メモ管理による温存はしない。専用UIがあることだけをRootWorkItemの維持・再判断理由にしない。削除対象専用のAPI、型、保存、UI、テスト、配布説明と依存も整理する。複合Delegationを残したまま途中失敗の安全処理だけを削る方法は採らない。
 
+#735のTitle／Descriptionは、会話履歴を読まずに宛先を選ぶためのSession自身の現在値であり、この撤去対象ではない。独立した仕事ID、構造化された進捗・完了条件、採否、変更履歴を追加せず、metadataを理由に旧WorkItemの保存・UI・集約を温存しない。
+
 ### Coordinationはユーザー向け報告・相談・介入として維持する
 
 複数Sessionの報告を読み、相談に答え、判断を作業へ反映するユーザー体験を維持する。通常会話にも書けることを撤去理由にせず、WorkItemの正式な結果確定・集約やSession間Turnの配送とは責務を分ける。
@@ -37,7 +39,7 @@ UI非表示、任意化、全許可stub、固定grant、Roleからの権限表�
 
 ### リリース範囲
 
-v6.4.0の#734は、5種類のRole、通常Session間の非同期協同、通常SessionとAuxiliaryの関連一覧、Coordination維持と不要管理の撤去を扱う。WithMate管理Subagentはv6.5.0の[#716](https://github.com/natumekazuki/WithMate/issues/716)へ分離し、6つ目のRoleとして作成・実行・返送・専用Window・保存・lifecycle・共通関連一覧への接続をまとめて追加する。
+v6.4.0の#734は、5種類のRole、通常Session間の非同期協同、通常SessionとAuxiliaryの関連一覧、Coordination維持と不要管理の撤去を扱う。#735のエージェント管理Title／Descriptionもv6.4.0で同じSessionの保存・公開操作・一覧・Turn入力へ接続し、共通APIを二重設計しない。WithMate管理Subagentはv6.5.0の[#716](https://github.com/natumekazuki/WithMate/issues/716)へ分離し、6つ目のRoleとして作成・実行・返送・専用Window・保存・lifecycle・共通関連一覧への接続をまとめて追加する。
 
 #716の完了をv6.4.0の条件にせず、通常Session間の非同期協同をSubagentと一緒に延期しない。v6.5.0のためだけの未使用公開操作・仮実装・空の一覧・専用保存構造を先行追加しない。Provider内蔵subagentとその既存表示は、このリリース分離の対象ではない。
 
@@ -51,8 +53,34 @@ v6.4.0の#734は、5種類のRole、通常Session間の非同期協同、通常S
 - Character、Workspace／SessionFolder、Memory／Affect、runtime接続情報、ツール入力契約の説明は、Role説明とは区別して維持する。
 - 同じStandalone／全体統括を起点とする通常Sessionと各MainのAuxiliaryを関連一覧に含め、Workerから別枝も発見できる。「関連Session全体」「Role」「直接作成したSession」「直接の作成元」で絞り込めるようにする。
 - 起点、所属Main、作成主体・作成元、Role・会話種別を区別する。ユーザー作成の起点やAuxiliaryは作成元Sessionなしとして扱い、Auxiliaryの所属MainのAIを作成者と捏造しない。保存関係を正本とし、callerの申告、画面選択、同じcwdから推測しない。
-- 一覧は選択に必要な情報を返し、応答・成果物・詳細設定は必要時に取得する。毎Turnへの全件注入や、検索scopeをgrant代替ACLへ拡張することはしない。
+- 一覧は選択に必要な情報として、#735の現在のTitle／Descriptionを一緒に返す。通常の説明をpreviewだけに切り詰め、担当確認のために全候補の詳細・会話取得を要求しない。応答・成果物・詳細設定は相手を絞った後に必要時に取得する。既存の入力検証・ページング・応答サイズ境界を使い、超過による欠落を隠さない。毎Turnへの他Session全件注入や、検索scopeをgrant代替ACLへ拡張することはしない。
 - 共通関連一覧への包含は、手動Auxiliaryへの任意送信許可でもWindow内の一覧統合でもない。Auxiliary切替にはAuxiliaryだけを表示し、Subagentの一覧接続はv6.5.0で行う。
+
+### Title／Descriptionを宛先探索用の現在値として持つ
+
+関連一覧だけで追加指示・相談の相手を選べるよう、#735で通常SessionとAuxiliaryへ説明metadataを接続する。ユーザーの記入・保守を前提にせず、意味上の管理は各Session自身のエージェントが担う。アプリによる担当割当・自動routing・完了判定や、誤選択ゼロの保証は追加しない。
+
+- Titleは短い名称として既存の通常Sessionの`taskTitle`／Auxiliaryの`title`を使い、重複プロパティや呼称のためのrenameは不要とする。Descriptionは担当対象・範囲・現在の状況を記す複数行の自由文で、通常は数文にまとめる。ログを追記せず現在値を置き換え、終了後も何を扱ったかを残す。Auxiliaryの既存previewとは別である。
+- 現在値の正本はそのSessionの保存情報とし、WorkItem・Memory・Coordination eventを代用しない。実行中・失敗等の確定状態はruntimeを正本とし、Descriptionから判定しない。Title変更後も対象はstable IDで指定する。
+- AIが通常の子Sessionを作る際は作成元が初期Title／Descriptionを渡せ、その後は子自身が保守する。ユーザー作成の起点／AuxiliaryはDescriptionが空でも開始でき、依頼を理解した通常Turnで必要な初期化を行う。ユーザー記入フォームや説明生成専用Turnは作らない。
+- Titleのみ・Descriptionのみ・両方を小さいmetadata更新で扱い、両方は一つの更新として保存できるようにする。自身のTurn実行中も更新できるが、実行設定・Role変更のガードを解除したり会話・設定全体の再送を要求したりしない。必要性があるときだけ更新し、毎Turn・毎toolの必須保存や親による定期巡回は要求しない。
+
+毎Turnの入力:
+
+- 実際の更新操作に合った短い共通保守指示と、その会話自身の保存済みTitle／Descriptionを各通常Turn開始時に渡す。他Sessionの説明は関連一覧を明示取得したときだけ返し、全件を常設注入しない。
+- 保守指示は共通のアプリ操作案内であり、Role説明の複製ではない。Role関連注入は引き続き自身のロール名だけとし、グローバル`AGENTS.md`の同期・自動編集は行わない。
+- Title／Descriptionは区切られたmetadataとして示し、命令・Role・権限・新しい依頼へ昇格させない。古い説明を守るために最新の依頼を拒否せず、依頼を理解して説明を更新する。
+- 再開・Compact後の次Turnにも開始時点の現在値を取得する。初回値を固定し続けず、一つの長時間Turn内のCompact再注入hookや追加モデル呼び出しは要求しない。保存後の新しい一覧・自己情報取得と次Turnには新しい値を反映するが、進行中のProvider contextを遡って変更したとは扱わない。
+- 実際のProvider入力への反映を確認し、アプリ内部のsystem区分を独立したProvider system／developerメッセージと同一視しない。この機能のために#721のApp Server移行やProvider接続方式の変更を先行要求しない。
+
+更新の安全境界:
+
+- callerと対象をruntime binding・保存済みidentityから解決し、Auxiliaryの自己更新を所属Mainへ誤適用しない。metadata更新はRole・権限変更や完了宣言ではなく、会話・thread・Character・Workspace・設定・実行・queueをresetせず、Turnや子Sessionを起動しない。
+- 既存の手動タイトル変更・実行開始／終了・遅延保存との競合で古い値へ巻き戻さない。既存の更新整合性と必要な競合検証を使い、競合用revisionを変更履歴管理へ拡張しない。履歴・diff・restore API・専用履歴tableは作らない。
+- 既存の保持・削除契約と手動タイトル変更・表示を維持する。WorkItem本文の自動移植や過去会話の一括要約、Description専用エディター、Home全面改修、検索・embedding基盤は追加しない。
+- アプリが保証するのは保存・参照・入力への反映であり、AIが必ず最新化することではない。未設定・更新漏れを理由に作業を止めず、更新失敗は失敗として返す。保存失敗を作業再実行・無制限retry・補完AIへ変換せず、更新漏れ監視や更新必須の終端条件も追加しない。
+
+Subagent固有のmetadata接続はv6.5.0の#716側で扱い、#735の完成条件にしない。Auxiliaryの説明取得・自己更新を、他AIの任意の仕事先への転用許可へ広げない。
 
 ### Standaloneから全体統括への変更はGUIのユーザー操作に限定する
 
@@ -99,12 +127,14 @@ v6.4.0の#734は、5種類のRole、通常Session間の非同期協同、通常S
 
 | 対象 | 今回の扱い |
 | --- | --- |
+| ADR 021（Session CLI／MCP application boundary） | 共通application境界を維持し、metadata変更をrenameだけに限定する旧判断を#735のTitle／Description更新へ拡張。Auxiliaryの参照・自己更新も扱うが、任意の仕事送信許可へ広げない |
 | ADR 026 | 保存関係・actor identityを維持し、5種類のRoleとロール名のみの注入、GUI限定のStandalone→全体統括変更を採用。Roleの全面immutable扱いをこの明示変更に限って置換し、汎用Role権限管理へ広げない |
 | ADR 027 | Coordinationの報告・相談・解決・訂正・横断閲覧・回答反映は維持。旧業務報告撤去判断を撤回し、不要なWorkItem・grant・予算への依存だけを外す。ユーザー専用回答と保存・競合境界は維持 |
 | ADR 028・031 | WorkItem／RootWorkItemと結果集約を機能ごと撤去する判断へ置換 |
 | ADR 029 | grantと撤去機能専用の履歴管理を置換。actor確認、個別操作の保存・冪等性・副作用の区別まで一括撤去しない |
 | ADR 030 | ユーザー指定由来の旧初期policyを含め、協同予算管理を全撤去する判断へ置換 |
 | #724 | 専用成功結果通知は不採用としてClose。実装完了ではない |
+| #735 | v6.4.0でSession自身のTitle／Descriptionを保存・自己更新・関連一覧・毎Turn入力へ接続。WorkItemの復活ではなく、変更履歴や補完AIは追加しない |
 | #716 | 更新済み本文を正本とし、WithMate管理Subagent関連はv6.5.0へ分離。過去コメントによる旧本文の読み替えは不要 |
 
 WithMate管理Subagentは通常のRole付きSessionのWorkerと同一視しない。v6.5.0ではStandaloneを含むMainの4Role／手動Auxiliaryから依頼でき、Subagent利用だけのための全体統括への変更は要求しない。再委譲禁止、親会話・要約の自動継承なし・プロンプトと明示添付、Provider・Model等の明示指定、独立したCharacter／会話／execution、作成＋初回依頼の入口、所属Mainごとに一つの専用Window・共通chat、表示やWindow closeに依存しない実行、手動介入・取消を維持する。
@@ -131,5 +161,6 @@ Subagentは同じ起点配下の共通関連一覧・状態／結果参照へ接
 ## References
 
 - [#734: v6.4.0の非同期協同基盤への整理](https://github.com/natumekazuki/WithMate/issues/734)
+- [#735: エージェント管理のTitle／Description](https://github.com/natumekazuki/WithMate/issues/735)
 - [#724: 専用完了通知を採用しない結論](https://github.com/natumekazuki/WithMate/issues/724#issuecomment-5772973699)
 - [#716: v6.5.0のWithMate管理Subagent](https://github.com/natumekazuki/WithMate/issues/716)
