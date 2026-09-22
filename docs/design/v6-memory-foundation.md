@@ -406,7 +406,7 @@ Memoryの明示的な保守作業では、`memory.list_targets`、`memory.list_e
 - `list_targets`はactive entryを持つtargetを列挙し、`includeEmpty`指定時だけ既知のproject、Character、user-globalのempty targetを加える。Character×projectの空組合せは生成しない。
 - `list_entries`は単一の明示targetをqueryなしでpaginationする。既定はactive entryで、bodyは`includeBody`指定時だけ投影する。
 - `audit`はtarget単位のkind/tag集計と保守候補を返す。候補はheuristicであり、forgetやmoveのauthorityにはしない。bodyは返さない。
-- pagination、owner/scope filter、public projectionの実行契約は`src/memory-v6/memory-validation.ts`、`src-electron/memory/memory-v6-storage.ts`、`src/memory-v6/memory-response-contract.ts`を正本とする。
+- pagination、owner/scope filter、public projectionの実行契約は`src-shared/memory/memory-validation.ts`、`src-electron/memory/memory-v6-storage.ts`、`src-shared/memory/memory-response-contract.ts`を正本とする。
 
 ### `memory.append`
 
@@ -871,7 +871,7 @@ search監査は件数・latency・strategy程度に抑え、private query全文�
 ## Agent InterfaceとCLI Distribution
 
 - Agent向けMemory contractはprovider共通MCPのinitialize instructionsと`tools/list`が所有する。WithMateは`withmate-memory` Skillを新規配布せず、起動、upgrade、Settings操作でprovider側の既存Skill directoryを削除、更新、検査しない。
-- CLI/MCP artifactはbuild時に`scripts/withmate-memory.ts`から生成し、repositoryでは`resources/cli/withmate-memory.mjs`をcanonical pathとする。生成artifactをcanonical CLIと別実装として保守しない。
+- CLI/MCP artifactはbuild時に`src-cli/memory/withmate-memory.ts`から生成し、repositoryでは`resources/cli/withmate-memory.mjs`をcanonical pathとする。生成artifactをcanonical CLIと別実装として保守しない。
 - Windowsではinstall rootの`withmate-memory.cmd`と`Microsoft\WindowsApps\withmate-memory.cmd` aliasをinstallerが作成する。installerはuser `Path` registry値を直接編集しない。
 - macOS / LinuxではSettings > Diagnosticsから`~/.local/bin/withmate-memory` shimをinstall / uninstallできる。shimが未導入または`PATH`外でもprovider Skill directoryへCLIを同期しない。
 - operator CLIは明示target、operator credential、接続先selectorを扱える。agent-bound CLI fallbackはMCPのinitializeと`tools/list`取得後のtransport availability failureだけで使い、bound runtime、MCP credential、actor-relative schemaを維持する。

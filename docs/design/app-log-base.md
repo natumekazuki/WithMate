@@ -46,7 +46,7 @@ flowchart LR
 
 ## Log Format
 
-ログは 1 行 1 イベントの JSONL とする。型定義は `src/app-log-types.ts` に置く。
+ログは 1 行 1 イベントの JSONL とする。型定義は `src-shared/window/app-log-types.ts` に置く。
 
 共通項目:
 

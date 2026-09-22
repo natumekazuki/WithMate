@@ -37,7 +37,7 @@
 
 - `src-electron/main.ts`
 - `src-electron/providers/codex/codex-adapter.ts`
-- `src/model-catalog.ts`
+- `src-shared/settings/model-catalog.ts`
 
 ### 2. Session lifecycle
 
@@ -117,9 +117,9 @@
 
 主な実装:
 
-- `src/approval-mode.ts`
-- `src/codex-sandbox-mode.ts`
-- `src/provider-runtime-options.ts`
+- `src-shared/settings/approval-mode.ts`
+- `src-shared/settings/codex-sandbox-mode.ts`
+- `src-shared/settings/provider-runtime-options.ts`
 - `src-electron/providers/codex/codex-adapter.ts`
 - `src-electron/main.ts`
 

@@ -216,13 +216,13 @@ npm run electron:start
 
 ```powershell
 npm run build:renderer
-npx electron scripts/run-composer-input-benchmark.cjs
+npx electron scripts/benchmarks/run-composer-input-benchmark.cjs
 ```
 
 変更前rendererの比較は `--renderer-dir` で展開済みbaselineの `dist` を指定する。
 
 ```powershell
-npx electron scripts/run-composer-input-benchmark.cjs --renderer-dir C:\path\to\composer-input-baseline\source\dist
+npx electron scripts/benchmarks/run-composer-input-benchmark.cjs --renderer-dir C:\path\to\composer-input-baseline\source\dist
 ```
 
 Auxiliary件数1/10/100、short/long履歴、Main/Auxiliary owner、通常入力/delete、synthetic pasteを出力する。各条件は先頭5入力をwarmupとして除き、24入力のmedian/p95を計算する。測定区間はinput eventから2回目のrequestAnimationFrameまでで、実paint時間ではない。hidden Windowのbackground throttlingを無効にしたrenderer比較値として扱う。pasteはユーザーclipboardを読み書きせず、合成ClipboardEventとInputEventである。実clipboardと日本語IMEは別途Electron手動確認とし、実行環境・commit・build種別・fixture・入力方法を結果へ記録する。`GIT_COMMIT`へ比較対象のcommitを設定し、同じbuild種別・条件でbaselineと変更後を比較する。
