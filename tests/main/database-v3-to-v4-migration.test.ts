@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -60,6 +60,43 @@ function tableExists(db: DatabaseSync, tableName: string): boolean {
   return db
     .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1")
     .get(tableName) !== undefined;
+}
+
+function readDatabaseSnapshot(dbPath: string): {
+  bytes: Buffer;
+  journalMode: string;
+  schema: Array<Record<string, unknown>>;
+  rows: Record<string, Array<Record<string, unknown>>>;
+} {
+  const bytes = readFileSync(dbPath);
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const schema = db.prepare(
+      "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type, name",
+    ).all() as Array<Record<string, unknown>>;
+    const tableNames = (db.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    ).all() as Array<{ name: string }>).map((row) => row.name);
+    const rows = Object.fromEntries(tableNames.map((tableName) => {
+      const columns = (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((row) => row.name);
+      return [tableName, db.prepare(`SELECT ${columns.join(", ")} FROM ${tableName} ORDER BY rowid`).all() as Array<Record<string, unknown>>];
+    }));
+    const journalMode = (db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode;
+    return { bytes, journalMode, schema, rows };
+  } finally {
+    db.close();
+  }
+}
+
+function prepareLegacyV3Source(dbPath: string): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec("PRAGMA journal_mode = DELETE;");
+    db.exec("ALTER TABLE sessions DROP COLUMN character_runtime_snapshot_json;");
+    db.exec("ALTER TABLE session_messages DROP COLUMN is_bookmarked;");
+  } finally {
+    db.close();
+  }
 }
 
 function removeBlobFiles(blobRootPath: string, blobId: string): void {
@@ -265,6 +302,46 @@ describe("migrate-database-v3-to-v4", () => {
         sessionStorage.close();
         auditLogStorage.close();
       }
+    } finally {
+      fixture.cleanup();
+      rmSync(targetDirPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "旧V3任意列が不足していてもV3からV4へのwriteはsource DBを変更しない"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md:108" }
+  // fault = "V3 sourceの不足列を補うためALTER TABLEやWAL設定を実行し、sourceのschema・rows・bytesを変更する"
+  // observable = "migration前後のsource DB raw bytes、schema、rows、journal mode"
+  // observation_boundary = "public-boundary"
+  // scope = "database-v3-to-v4 source preservation"
+  // lifecycle = "permanent"
+  // risk_tags = ["irreversible-data-loss"]
+  // @end-test-value
+  it("旧V3任意列が不足していても source DB を変更しない", async () => {
+    const fixture = createV3FixtureDatabase();
+    const targetDirPath = mkdtempSync(join(tmpdir(), "withmate-v3-to-v4-read-only-source-"));
+    const targetDbPath = join(targetDirPath, "withmate-v4.db");
+    try {
+      await seedV3Fixture(fixture);
+      prepareLegacyV3Source(fixture.dbPath);
+      const sourceBefore = readDatabaseSnapshot(fixture.dbPath);
+      assert.equal(sourceBefore.journalMode, "delete");
+
+      const report = await createMigrationWriteReport({
+        sourceDatabaseFile: fixture.dbPath,
+        targetDatabaseFile: targetDbPath,
+        blobRootPath: fixture.blobRootPath,
+      });
+
+      assert.equal(report.mode, "write");
+      assert.equal(report.migratedV4Counts.sessions, 1);
+      const sourceAfter = readDatabaseSnapshot(fixture.dbPath);
+      assert.deepEqual(sourceAfter.bytes, sourceBefore.bytes);
+      assert.deepEqual(sourceAfter.schema, sourceBefore.schema);
+      assert.deepEqual(sourceAfter.rows, sourceBefore.rows);
+      assert.equal(sourceAfter.journalMode, sourceBefore.journalMode);
     } finally {
       fixture.cleanup();
       rmSync(targetDirPath, { recursive: true, force: true });

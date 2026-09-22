@@ -14,7 +14,7 @@ import {
   V3_OPERATION_SUMMARY_MAX_LENGTH,
   V3_TEXT_PREVIEW_MAX_LENGTH,
 } from "../storage/database-schema-v3.js";
-import { openAppDatabase } from "../storage/sqlite-connection.js";
+import { openAppDatabase, openAppDatabaseReadOnly } from "../storage/sqlite-connection.js";
 import { type BlobRef, TextBlobStore } from "../storage/text-blob-store.js";
 
 type AuditLogSummaryRow = {
@@ -677,14 +677,16 @@ async function storeAuditPayload(blobStore: TextBlobStore, input: CreateAuditLog
 export class AuditLogStorageV3 {
   private readonly dbPath: string;
   private readonly blobStore: TextBlobStore;
+  private readonly readOnly: boolean;
 
-  constructor(dbPath: string, blobRootPath: string) {
+  constructor(dbPath: string, blobRootPath: string, options: { readOnly?: boolean } = {}) {
     this.dbPath = dbPath;
     this.blobStore = new TextBlobStore(blobRootPath);
+    this.readOnly = options.readOnly === true;
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
-    const db = openAppDatabase(this.dbPath);
+    const db = this.readOnly ? openAppDatabaseReadOnly(this.dbPath) : openAppDatabase(this.dbPath);
     try {
       return runner(db);
     } finally {

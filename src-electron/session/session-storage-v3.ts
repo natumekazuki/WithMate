@@ -29,7 +29,7 @@ import {
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
 } from "./session-provider-id-sql.js";
 import { V3_SUMMARY_JSON_MAX_LENGTH, V3_TEXT_PREVIEW_MAX_LENGTH } from "../storage/database-schema-v3.js";
-import { openAppDatabase } from "../storage/sqlite-connection.js";
+import { openAppDatabase, openAppDatabaseReadOnly } from "../storage/sqlite-connection.js";
 import { type BlobRef, TextBlobStore } from "../storage/text-blob-store.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../../src-shared/window/withmate-window-types.js";
 import {
@@ -364,6 +364,10 @@ const LIST_SESSION_MESSAGES_SQL = `
   WHERE m.session_id = ?
   ORDER BY m.seq ASC
 `;
+
+function replaceOptionalReadColumn(query: string, column: string, expression: string): string {
+  return query.replace(`${column},`, `${expression},`);
+}
 
 const GET_SESSION_MESSAGE_ARTIFACT_SQL = `
   SELECT a.artifact_blob_id AS blob_id
@@ -929,12 +933,36 @@ async function storeMessagePayloads(
 export class SessionStorageV3 {
   private db: DatabaseSync | null;
   private readonly blobStore: TextBlobStore;
+  private readonly getSessionHeaderSql: string;
+  private readonly listSessionMessagesSql: string;
 
-  constructor(dbPath: string, blobRootPath: string) {
-    this.db = openAppDatabase(dbPath);
+  constructor(dbPath: string, blobRootPath: string, options: { readOnly?: boolean } = {}) {
+    const readOnly = options.readOnly === true;
+    this.db = readOnly ? openAppDatabaseReadOnly(dbPath) : openAppDatabase(dbPath);
     registerSessionProviderIdNormalizer(this.db);
     this.blobStore = new TextBlobStore(blobRootPath);
-    this.ensureSchema();
+    if (!readOnly) {
+      this.ensureSchema();
+    }
+
+    const sessionColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(sessions)").all() as TableColumnRow[]).map((column) => column.name),
+    );
+    const messageColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(session_messages)").all() as TableColumnRow[]).map((column) => column.name),
+    );
+    this.getSessionHeaderSql = replaceOptionalReadColumn(
+      GET_SESSION_HEADER_SQL,
+      "character_runtime_snapshot_json",
+      sessionColumns.has("character_runtime_snapshot_json")
+        ? "character_runtime_snapshot_json"
+        : "'' AS character_runtime_snapshot_json",
+    );
+    this.listSessionMessagesSql = replaceOptionalReadColumn(
+      LIST_SESSION_MESSAGES_SQL,
+      "m.is_bookmarked",
+      messageColumns.has("is_bookmarked") ? "m.is_bookmarked" : "0 AS is_bookmarked",
+    );
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
@@ -1092,12 +1120,12 @@ export class SessionStorageV3 {
 
   async getSession(sessionId: string): Promise<Session | null> {
     const result = this.withDb((db) => {
-      const row = db.prepare(GET_SESSION_HEADER_SQL).get(sessionId) as SessionHeaderRow | undefined;
+      const row = db.prepare(this.getSessionHeaderSql).get(sessionId) as SessionHeaderRow | undefined;
       if (!row) {
         return null;
       }
 
-      const messageRows = db.prepare(LIST_SESSION_MESSAGES_SQL).all(sessionId) as SessionMessageRow[];
+      const messageRows = db.prepare(this.listSessionMessagesSql).all(sessionId) as SessionMessageRow[];
       return { row, messageRows };
     });
     if (!result) {

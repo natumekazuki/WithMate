@@ -355,8 +355,8 @@ export async function createMigrationWriteReport(input: {
     backups = overwrite ? backupExistingSqliteDatabaseFiles(input.targetDatabaseFile) : [];
     createV4BaseSchema(tempTargetDatabaseFile, userDataPath);
 
-    sourceSessionStorage = new SessionStorageV3(input.sourceDatabaseFile, sourceBlobRootPath);
-    sourceAuditStorage = new AuditLogStorageV3(input.sourceDatabaseFile, sourceBlobRootPath);
+    sourceSessionStorage = new SessionStorageV3(input.sourceDatabaseFile, sourceBlobRootPath, { readOnly: true });
+    sourceAuditStorage = new AuditLogStorageV3(input.sourceDatabaseFile, sourceBlobRootPath, { readOnly: true });
     targetSessionStorage = new SessionStorage(tempTargetDatabaseFile);
     targetAuditStorage = new AuditLogStorage(tempTargetDatabaseFile);
 

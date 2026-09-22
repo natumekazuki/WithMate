@@ -42,7 +42,7 @@ V6 Session は `sessions_v6.incarnation_id` で同じ ID の削除・再作成�
 V6ではSQLite DB定義全体を再設計し、V5以前のsession履歴やlegacy Memory互換を保持要件にしない。
 V6 DB再設計の正本は`docs/design/v6-database-foundation.md`とし、この文書のV1〜V4 schema説明をV6設計へ持ち込まない。
 
-2026-05-19 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。`withmate-v4.db` が存在しない状態で既存の V3 / V2 / V1 DB がある場合は、起動時に同じ `<userData>` 配下へ V4 DB を自動作成する。個別の migration import は source DB と blob / character file を変更しない。起動時の退役データ cleanup は、管理下の旧DB・migration backupに含まれるCompanion専用table / 行と、それらだけが参照する専有blob / fileだけを対象とし、通常Session / Audit、共有blob、その他の通常データは保持する。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
+2026-05-19 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。`withmate-v4.db` が存在しない状態で既存の V3 / V2 / V1 DB がある場合は、起動時に同じ `<userData>` 配下へ V4 DB を自動作成する。個別の migration import は read-only source reader を使い、source DB の schema / row / journal mode、blob、character file を変更しない。起動時の退役データ cleanup は、管理対象の現行V6・legacy DB・migration backupの各コピーからCompanion専用table / 行、Companion専有のSession / Auxiliary / Memory関連行、専有blob / file / SessionFolderを撤去する。共有Memory / Affectの本文、通常Session / Audit、共有blob / fileは保持するが、退役Sessionをsourceとする共有データのsource linkageとCompanion専用の実行履歴は撤去またはNULL化する。Companion専用namespaceのworktree・branch・base refだけを削除し、target branch・他worktree・stashは保持する。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
 
 V1 schema の SQL 正本は `src-electron/storage/database-schema-v1.ts`、V2 schema の SQL 正本は `src-electron/storage/database-schema-v2.ts`、V3 schema の SQL 正本は `src-electron/storage/database-schema-v3.ts`、V4 schema の SQL 正本は `src-electron/storage/database-schema-v4.ts` に置く。
 V6 schema の SQL 正本は `src-electron/storage/database-schema-v6.ts` に置き、current runtime の active DB path selection は `withmate-v6.db` を最終 migration target とする。Memory V6 runtime API は app ready 時に V6 DB を best-effort で作成または検証する。V6 DB の設計判断は `docs/design/v6-database-foundation.md` を優先する。
@@ -105,7 +105,7 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - V1 / V2 から V4 へ上げる場合は、既存の `scripts/migrations/migrate-database-v1-to-v2.ts`、`scripts/migrations/migrate-database-v2-to-v3.ts` で V3 へ上げた後、V3 -> V4 import を実行する
   - V3 -> V4 import は `session`、`audit log`、`app_settings`、`model_catalog_*` を V4 DB 内の runtime 互換 table へ取り込む。Mate profile / growth / provider instruction targets は V4 側で新規開始する
   - V4 import target では、V3 の分割 payload table で V4 runtime が参照しないものを作成後に削除する
-  - 個別の V4 import は migration 元の V3 / V2 / V1 DB、`<userData>/blobs/v3/`、`<userData>/characters/` を変更しない。起動時の退役データ cleanup が変更できるのはCompanion専用table / 行と専有blob / fileに限り、通常Session / Auditと共有blobは保持する
+  - 個別の V4 import は read-only source reader で migration 元の V3 / V2 / V1 DB の schema / row / journal mode、`<userData>/blobs/v3/`、`<userData>/characters/` を変更しない。旧V3で任意列が不足する場合も source に列を追加せず、読み取り時の既定値でV4へ取り込む。起動時の退役データ cleanup は管理対象の現行V6・legacy DB・migration backupの各コピーを対象にし、Companion専用table / 行、専有blob / file / SessionFolder、専用Git namespaceのworktree・branch・base refだけを撤去する。共有Memory / Affectの本文、通常Session / Audit、共有blob / file、target branch・他worktree・stashは保持し、退役Sessionをsourceとする共有データのsource linkageとCompanion専用の実行履歴は撤去またはNULL化する
   - dry-run: `npx tsx scripts/migrations/migrate-database-v3-to-v4.ts --dry-run --v3 <userData>/withmate-v3.db [--blob-root <userData>/blobs/v3]`
   - write: `npx tsx scripts/migrations/migrate-database-v3-to-v4.ts --write --v3 <userData>/withmate-v3.db --v4 <userData>/withmate-v4.db [--blob-root <userData>/blobs/v3] [--overwrite]`
   - `--overwrite` を指定した場合、既存 `withmate-v4.db` / `-wal` / `-shm` は rename backup してから import し、成功後に backup を破棄する
@@ -746,7 +746,7 @@ V4 DB 内の既存 runtime table:
 - 3.x character catalog: `<userData>/characters/` は legacy source として残る場合があるが、V4 migration では読み込まない
 
 runtime 起動時の自動 migration は V3 -> V4、V2 -> V3 -> V4、V1 -> V2 -> V3 -> V4 の順で実行する。
-個別 migration の実行中は migration 元の legacy DB と file storage を削除しない。起動時の退役データ cleanup は管理下の旧DB・backupに含まれるCompanion専用table / 行と専有fileだけを撤去し、通常Session / Auditと共有blobを保持する。
+個別 migration の実行中は read-only source reader を使い、migration 元の legacy DB の schema / row / journal mode と file storage を変更しない。起動時の退役データ cleanup は管理対象の現行V6・legacy DB・migration backupの各コピーからCompanion専用table / 行、専有blob / file / SessionFolder、専用Git namespaceのworktree・branch・base refだけを撤去する。共有Memory / Affectの本文、通常Session / Audit、共有blob / file、target branch・他worktree・stashは保持し、退役Sessionをsourceとする共有データのsource linkageとCompanion専用の実行履歴は撤去またはNULL化する。
 V4 Mate table は legacy DB へ作成せず、新規 `withmate-v4.db` にだけ作成する。
 
 ### V2 migration target
@@ -793,8 +793,9 @@ V4 import target の資源棚卸:
 | --- | --- | --- |
 | `session_messages` / `session_message_artifacts` | 削除 | V4 runtime は `sessions.messages_json` を正本にする |
 | `audit_log_details` / `audit_log_operations` | 削除 | V4 runtime は `audit_logs` の inline JSON を正本にする |
-| migration 元の `withmate-v3.db` / `withmate-v2.db` / `withmate.db` | import中は変更なし | 個別 import は source data を破壊しない。起動時cleanupでもCompanion専用table / 行だけを撤去し、通常Session / Auditを保持する |
-| migration 元の `blobs/v3/` / `characters/` | import中は変更なし | 個別 import は legacy source data とユーザー管理 file を削除しない。起動時cleanupでもCompanion専有blob / file以外を削除しない |
+| migration 元の `withmate-v3.db` / `withmate-v2.db` / `withmate.db` | import中は read-only・変更なし | 個別 import は source DB の schema / row / journal mode を変更せず、旧V3任意列もsourceへ追加しない。起動時cleanupは管理対象の現行V6・legacy DB・migration backupの各コピーに含まれるCompanion専用table / 行だけを撤去し、通常Session / Auditと共有Memory / Affect本文を保持する |
+| migration 元の `blobs/v3/` / `characters/` | import中は変更なし | 個別 import は legacy source data とユーザー管理 file を削除しない。起動時cleanupでもCompanion専有blob / file / SessionFolder以外を削除しない |
+| Companion専用Git namespace | import中は変更なし | 起動時cleanupでも専用worktree・branch・base refだけを撤去し、target branch・他worktree・stashを保持する |
 
 ### Future design only
 
