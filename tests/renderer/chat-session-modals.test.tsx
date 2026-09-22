@@ -28,15 +28,16 @@ function createAuditLogSummary(): AuditLogSummary {
 
 // @test-value v2
 // kind = "contract"
-// claim = "共有modalは呼び出し側の追加表示を同じfragmentへ描画する"
+// claim = "共有modalは共有表示と呼び出し側の追加表示を欠落・重複なく描画する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
-// fault = "共有modalまたは追加childrenが描画結果から欠落する"
-// observable = "Audit Log見出し、監査カード、呼び出し側の追加表示"
+// fault = "共有modalまたは追加childrenが描画結果から欠落する、または同じ表示が重複する"
+// observable = "HTML文字列に含まれるAudit Log見出し、監査カード、呼び出し側の追加表示の出現回数"
 // observation_boundary = "component-behavior"
 // scope = "chat-session-modals-shared-content"
 // lifecycle = "permanent"
+// distinction = "HTML観測ではfragmentの親子構造を保証せず、利用者向け表示の欠落・重複だけを確認する"
 // @end-test-value
-test("ChatSessionModals は共有 modal と呼び出し側の追加表示を同じ fragment に描画する", () => {
+test("ChatSessionModals は共有 modal と追加表示を欠落・重複なく描画する", () => {
   const html = renderToStaticMarkup(
     <ChatSessionModals
       selectedDiff={null}
@@ -62,9 +63,9 @@ test("ChatSessionModals は共有 modal と呼び出し側の追加表示を同�
     </ChatSessionModals>,
   );
 
-  assert.match(html, /<h2>Audit Log<\/h2>/);
-  assert.match(html, /audit-log-card completed/);
-  assert.match(html, /session-toast success/);
+  assert.equal((html.match(/<h2>Audit Log<\/h2>/g) ?? []).length, 1);
+  assert.equal((html.match(/audit-log-card completed/g) ?? []).length, 1);
+  assert.equal((html.match(/class="session-toast success"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /diff-editor panel/);
 });
 
