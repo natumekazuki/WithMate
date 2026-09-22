@@ -83,19 +83,19 @@ describe("approval mode helpers", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "default approval modeはprovider-neutralなsentence-caseの英語表示labelを返す"
-  // oracle = { type = "contract", ref = "src-shared/settings/approval-mode.ts#approvalModeLabel" }
+  // claim = "default approval modeは保存enumを維持してprovider-neutralなPascalCaseの英語表示labelを返す"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
   // fault = "保存用approval enumやprovider固有literalをそのまま表示し、利用者向けlabelを提供しない"
   // observable = "approvalModeLabel(DEFAULT_APPROVAL_MODE)"
   // observation_boundary = "public-boundary"
   // scope = "approval mode display label"
   // lifecycle = "permanent"
   // impact = "Settingsや確認UIでapprovalの意味がprovider固有値のまま表示される"
-  // distinction = "保存enumがuntrustedのまま保持されることと、表示labelがSafety-focusedへ投影されることを分けて確認する"
+  // distinction = "保存enumがuntrustedのまま保持されることと、表示labelがSafetyFocusedへ投影されることを分けて確認する"
   // @end-test-value
   it("default approval label は provider-neutral な英語表示を返す", () => {
     assert.equal(DEFAULT_APPROVAL_MODE, "untrusted");
-    assert.equal(approvalModeLabel(DEFAULT_APPROVAL_MODE), "Safety-focused");
+    assert.equal(approvalModeLabel(DEFAULT_APPROVAL_MODE), "SafetyFocused");
   });
 
   it("provider settings は skill root path を保持できる", () => {

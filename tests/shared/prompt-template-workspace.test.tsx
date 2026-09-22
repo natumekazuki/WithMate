@@ -300,8 +300,8 @@ test("編集modeのTemplate選択はeditorだけを切り替え、挿入導線�
     assert.ok(harness.container.querySelector("input[aria-label=\"Template name\"]"));
     assert.equal(harness.container.textContent?.includes("Name"), false);
     assert.ok(harness.container.querySelector("textarea[aria-label=\"Prompt\"]"));
-    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Save"));
-    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Delete"));
+    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "SaveTemplate"));
+    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "DeleteTemplate"));
     assert.equal(
       Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Insert"),
       false,
@@ -437,10 +437,10 @@ test("canInsert=false の選択項目は挿入せず、編集modeへの導線を
 
 // @test-value v2
 // kind = "contract"
-// claim = "Templateが0件でもempty stateのNew template操作から名前・本文の編集modeへ進める"
+// claim = "Templateが0件でもempty stateの新規作成iconから名前・本文の編集modeへ進める"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
-// fault = "empty stateから新規作成へ進めない、作成操作のlabelが見つからない、または編集fieldを描画しない"
-// observable = "No templates yet. text、New template button、Template name input、Prompt textarea"
+// fault = "empty stateから新規作成へ進めない、accessible nameが見つからない、または編集fieldを描画しない"
+// observable = "New template accessible name、Template name input、Prompt textarea"
 // observation_boundary = "component-behavior"
 // scope = "PromptTemplateWorkspace empty template creation"
 // lifecycle = "permanent"
@@ -459,9 +459,7 @@ test("Templateが0件でも選択modeから新規作成へ進める", async () =
       />,
     );
 
-    assert.match(harness.container.textContent ?? "", /No templates yet\./);
-    const createButton = Array.from(harness.container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent?.trim() === "New template");
+    const createButton = harness.container.querySelector<HTMLButtonElement>('button[aria-label="New template"]');
     assert.ok(createButton);
     assert.equal(harness.container.querySelector("input"), null);
 

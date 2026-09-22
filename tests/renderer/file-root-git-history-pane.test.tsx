@@ -387,76 +387,6 @@ test("History 追加pageの失敗は既存一覧を維持し、sentinelから再
 
 // @test-value v2
 // kind = "contract"
-// claim = "HistoryはGit repositoryが0件の状態とrepository内のcommitが0件の状態を別のempty stateで表示する"
-// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
-// fault = "repository未取得、commit 0件、sentinel表示を同じempty stateへ混同し、利用者がGit repository不在と履歴空を区別できない"
-// observable = "No Git repositories/No commitsのDOM textとsentinelの不在"
-// observation_boundary = "component-behavior"
-// scope = "FileRootGitHistoryPane empty states"
-// lifecycle = "permanent"
-// distinction = "repository listが空のrenderとrepository存在・commit page空のrenderを同じpaneで切り替えて、表示文言とsentinelを別々に観測する"
-// @end-test-value
-test("History はrepository 0件とcommit 0件を別のempty stateで表示する", async () => {
-  const { dom, restore } = installDom();
-  let root: Root | null = null;
-  try {
-    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
-    const noRepositoryApi = {
-      listFileRootGitHistoryRepositories: async () => ({ status: "ok" as const, repositories: [] }),
-      listFileRootGitHistoryCommits: async () => ({
-        status: "ok" as const,
-        page: { entries: [], nextCursor: null, hasMore: false },
-      }),
-      getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "none" }),
-      getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "none" }),
-      getFileRootGitHistoryComparison: unusedHistoryComparison,
-    };
-    await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(FileRootGitHistoryPane, {
-        api: noRepositoryApi,
-        sessionId: "session-1",
-        enabled: true,
-        rootsRevision: "roots-1",
-        refreshRevision: 0,
-        onOpenDiff: async () => null,
-      }));
-      await Promise.resolve();
-    });
-    await flush();
-    assert.match(dom.window.document.body.textContent ?? "", /No Git repositories/);
-    assert.equal(dom.window.document.querySelector(".file-history-list-sentinel"), null);
-    await act(async () => {
-      root?.render(React.createElement(FileRootGitHistoryPane, {
-        api: {
-          ...noRepositoryApi,
-          listFileRootGitHistoryRepositories: async () => ({ status: "ok" as const, repositories: [repositoryA] }),
-          listFileRootGitHistoryCommits: async () => ({
-            status: "ok" as const,
-            page: { entries: [], nextCursor: null, hasMore: false },
-          }),
-        },
-        sessionId: "session-1",
-        enabled: true,
-        rootsRevision: "roots-2",
-        refreshRevision: 0,
-        onOpenDiff: async () => null,
-      }));
-      await Promise.resolve();
-    });
-    await flush();
-    assert.match(dom.window.document.body.textContent ?? "", /No commits/);
-    assert.equal(dom.window.document.querySelector(".file-history-list-sentinel"), null);
-  } finally {
-    if (root) {
-      await act(async () => root?.unmount());
-    }
-    restore();
-  }
-});
-
-// @test-value v2
-// kind = "contract"
 // claim = "History repository切替は古いpageを破棄し、選択repositoryのcurrent branchから取得する"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
 // fault = "古い非同期pageが新repository一覧に混入する、またはrepository切替後も古い一覧を表示する"
@@ -968,7 +898,7 @@ test("History detail はref種別、commit metadata、changed file tree、file d
     assert.equal(fileDiffRequest.relativePath, "src/example.ts");
     assert.equal(fileDiffRequest.commitId, targetCommit.id);
     const openChanges = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "Open all changes");
+      .find((button) => button.textContent === "OpenAllChanges");
     assert.ok(openChanges);
     await act(async () => openChanges.click());
     await flush();
@@ -1060,7 +990,7 @@ test("History Compareはentryとtoolbarから起動し、固定comparisonをdeta
     await flush();
     assert.equal(
       dom.window.document.querySelector<HTMLButtonElement>(".file-history-comparison-picker-trigger")?.textContent?.trim(),
-      "Commit " + targetCommit.id.slice(0, 7),
+      "Commit" + targetCommit.id.slice(0, 7),
     );
     const comparisonBack = dom.window.document.querySelector<HTMLButtonElement>(".file-history-back");
     assert.ok(comparisonBack);
@@ -1138,9 +1068,9 @@ test("History Compareはentryとtoolbarから起動し、固定comparisonをdeta
     const resultHeader = dom.window.document.querySelector<HTMLElement>(".file-history-comparison-result-header");
     assert.equal(resultHeader?.dataset.baseCommitId, "a".repeat(40));
     assert.equal(resultHeader?.dataset.targetCommitId, "b".repeat(40));
-    assert.match(resultHeader?.textContent ?? "", /Direct comparison/);
+    assert.match(resultHeader?.textContent ?? "", /DirectComparison/);
     const openAllChanges = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "Open all changes");
+      .find((button) => button.textContent === "OpenAllChanges");
     assert.ok(openAllChanges);
     await act(async () => openAllChanges.click());
     await flush();

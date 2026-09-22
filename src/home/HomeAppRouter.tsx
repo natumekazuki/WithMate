@@ -61,7 +61,7 @@ export function HomeAppRouter({
   }
 
   if (isMateStateLoading) {
-    return <HomeStatusScreen homePageClassName={homePageClassName} message="Loading app state…" />;
+    return <HomeStatusScreen homePageClassName={homePageClassName} message="Loading app state…" loading />;
   }
 
   if (mateProfileEditorOpen) {

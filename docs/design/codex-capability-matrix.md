@@ -113,7 +113,7 @@
 - Codex session は Sandbox dropdown で `read-only` / `workspace-write` / `workspace-write + network` / `danger-full-access` を選べる
 - `workspace-write + network` は SDK へ `sandboxMode: "workspace-write"` と `networkAccessEnabled: true` の組み合わせで渡す
 - Copilot session は provider-specific approval choices だけを出し、Codex sandbox choices は出さない
-- model / depth は catalog から選択し、実行前に provider catalog で検証する。Depth の表示文言は SDK 値をそのまま使う
+- model / depth は catalog から選択し、実行前に provider catalog で検証する。保存・APIへ渡す raw ID は変更せず、Depth の表示は catalog の表示label（`Minimal` / `Low` / `Medium` / `High` / `XHigh` / `Max` / `Ultra`）へ変換する
 
 主な実装:
 
@@ -132,7 +132,7 @@
 
 - `対応済み`
 - `runStreamed()` を使い、assistant text・live steps・usage・error を Session Window へ中継する
-- message area には会話本文を、右 pane には `Latest Command` を表示する
+- message area には会話本文を、右 pane には `LatestCommand` を表示する
 - command は raw text を優先して 1 件だけ見せ、情報過多を避ける
 - pending indicator、recovery action surface、scroll follow mode も入っている
 

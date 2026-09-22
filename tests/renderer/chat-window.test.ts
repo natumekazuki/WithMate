@@ -374,17 +374,17 @@ test("Skill候補panelはchat work surfaceのほぼ全体を使う", async () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "Skill pickerはloading・empty・errorを別の状態表示として描画する"
+// claim = "Skill pickerはloadingとerrorを別の状態表示として描画する"
 // oracle = { type = "contract", ref = "src/chat/chat-window.tsx: ChatSkillPickerPanel" }
 // fault = "読み込み中を空状態またはerrorと誤表示し、spinner・busy state・error labelを失う"
-// observable = "status aria-busy、spinner、empty copy、error state classのDOM"
+// observable = "status aria-busy、spinner、error state classのDOM"
 // observation_boundary = "component-behavior"
 // scope = "chat-skill-picker-state"
 // lifecycle = "permanent"
 // impact = "候補取得の進行状況と失敗理由を利用者へ正しく伝えられなくなる"
-// distinction = "同一panelの三状態をそれぞれrenderして状態境界を確認する"
+// distinction = "同一panelのloadingとerrorをrenderして状態境界を確認する"
 // @end-test-value
-test("ChatSkillPickerPanel は loading・empty・error状態を区別する", () => {
+test("ChatSkillPickerPanel は loading・error状態を区別する", () => {
   const commonProps = {
     isOpen: true,
     items: [],
@@ -394,10 +394,6 @@ test("ChatSkillPickerPanel は loading・empty・error状態を区別する", ()
   const loadingHtml = renderToStaticMarkup(React.createElement(ChatSkillPickerPanel, {
     ...commonProps,
     isLoading: true,
-  }));
-  const emptyHtml = renderToStaticMarkup(React.createElement(ChatSkillPickerPanel, {
-    ...commonProps,
-    isLoading: false,
   }));
   const errorHtml = renderToStaticMarkup(React.createElement(ChatSkillPickerPanel, {
     ...commonProps,
@@ -410,7 +406,6 @@ test("ChatSkillPickerPanel は loading・empty・error状態を区別する", ()
   assert.match(loadingHtml, /chat-skill-picker-spinner/);
   assert.match(loadingHtml, /class="surface-close-button"/);
   assert.match(loadingHtml, /aria-label="Close skill picker"/);
-  assert.match(emptyHtml, /No skills are available/);
   assert.match(errorHtml, /class="chat-skill-picker-state error">Skill error/);
 });
 
@@ -1310,7 +1305,7 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
 // @test-value v2
 // kind = "contract"
 // claim = "Concurrent ChatのCollapseは折りたたみ対象がない間はdisabledで、Auxiliary追加は切り替えUI内に表示され既存Auxiliaryの有無に関係なく作成不可ならdisabledになり、対象messageが追加されるとCollapseがenabledになって対象messageを縮小する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 表示言語・操作・状態; Home Window" }
 // fault = "対象messageがない状態でCollapseを操作できる、Auxiliary追加が切り替えUIから欠落する、作成不可でも追加buttonが有効になる、対象追加後もCollapseがdisabledのままになる、またはクリックしても対象messageが縮小されない"
 // observable = "Collapse buttonのdisabled状態、Auxiliary切り替えUI内の追加buttonの表示・disabled状態とclick callback、click後のmessage card縮小状態とExpand label"
 // observation_boundary = "component-behavior"
@@ -2120,10 +2115,10 @@ test("ConcurrentChatSplitter は幅0をclickだけで既定幅へ戻す", async 
 
 // @test-value v2
 // kind = "contract"
-// claim = "共通switcherは中央triggerから検索一覧を開き、処理中候補を一覧optionのindicatorで示し、検索中の矢印・IME入力を壊さず、候補確定・outside click・Escape後のfocus復帰と候補消滅時のpopover閉鎖を扱う"
+// claim = "共通switcherは中央triggerから検索一覧を開き、処理中候補を一覧optionのindicatorで示し、検索中の矢印・IME入力を壊さず、検索0件では本文を追加せず、候補確定・outside click・Escape後のfocus復帰と候補消滅時のpopover閉鎖を扱う"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "処理中候補のindicatorがDOMから欠落する、検索中のArrowDownで候補を飛ばす、IMEのEscapeで一覧を閉じる、候補を選べない、候補がなくなってもpopoverが残る、または閉じた後にtriggerへfocusが戻らない"
-// observable = "候補一覧、処理中候補のindicator、選択callback、options空化後を含むpopoverの表示状態、document.activeElement"
+// fault = "処理中候補のindicatorがDOMから欠落する、検索中のArrowDownで候補を飛ばす、IMEのEscapeで一覧を閉じる、検索0件で説明文を追加する、候補を選べない、候補がなくなってもpopoverが残る、または閉じた後にtriggerへfocusが戻らない"
+// observable = "候補一覧、処理中候補のindicator、検索0件時にempty文言を描画しないこと、空label候補のaccessible name、選択callback、options空化後を含むpopoverの表示状態、document.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "session-switcher"
 // lifecycle = "permanent"
@@ -2188,6 +2183,20 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     assert.equal(filteredOptions.length, 1);
     assert.equal(filteredOptions[0]?.querySelector(".session-switcher-option-label")?.textContent, "Beta");
     assert.equal(filteredOptions[0]?.querySelector(".session-switcher-processing-indicator"), null);
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(search, "missing");
+      search.dispatchEvent(new dom.window.InputEvent("input", { bubbles: true, inputType: "insertText", data: "missing" }));
+      await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    });
+    assert.equal(dom.window.document.querySelectorAll('[role="option"]').length, 0);
+    assert.equal(dom.window.document.querySelector(".session-switcher-empty"), null);
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(search, "beta");
+      search.dispatchEvent(new dom.window.InputEvent("input", { bubbles: true, inputType: "insertText", data: "beta" }));
+      await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    });
     await act(async () => search.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
     assert.equal(dom.window.document.activeElement, dom.window.document.querySelector('[role="option"]'));
     await act(async () => trigger.click());
@@ -2208,8 +2217,26 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     await act(async () => trigger.click());
     await act(async () => dom.window.document.getElementById("outside")?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true })));
     assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
-    await act(async () => trigger.click());
-    assert.ok(dom.window.document.querySelector('[role="listbox"]'));
+
+    await act(async () => {
+      root?.render(React.createElement(SessionSwitcher, {
+        ariaLabel: "Auxiliary conversation",
+        options: [{ id: "unnamed", label: "" }],
+        selectedId: "unnamed",
+        onMove() {},
+        onSelect() {},
+      }));
+    });
+    const unnamedTrigger = dom.window.document.querySelector<HTMLButtonElement>(".session-switcher-current");
+    assert.ok(unnamedTrigger);
+    assert.equal(unnamedTrigger.getAttribute("aria-label"), "Auxiliary conversation");
+    await act(async () => unnamedTrigger.click());
+    const unnamedOption = dom.window.document.querySelector<HTMLButtonElement>('[role="option"]');
+    assert.ok(unnamedOption);
+    assert.equal(unnamedOption.getAttribute("aria-label"), "Auxiliary conversation");
+
+    await act(async () => unnamedTrigger.click());
+    assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
     await act(async () => {
       root?.render(React.createElement(SessionSwitcher, {
         ariaLabel: "Auxiliary conversation",

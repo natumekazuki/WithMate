@@ -144,6 +144,37 @@ describe("GLOSSARY-SOURCE-OF-TRUTH parser and projection", () => {
 });
 
 describe("GLOSSARY-ATOMIC-MUTATION file service", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "projection用の非Git state追加後もGlossary operationのtarget invalid codeを維持する"
+  // oracle = { type = "contract", ref = "src-electron/glossary/glossary-application-service.ts: safeOperation" }
+  // fault = "非Git checkoutの再検証をGLOSSARY_IO_ERRORへ変換し、既存MCP operation error契約を変える"
+  // observable = "list operation error codeとmessage"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-non-git-operation-error-compatibility"
+  // lifecycle = "permanent"
+  // distinction = "projection stateのnot-applicableとoperation-level target invalid errorを同じ非Git条件で分離する"
+  // @end-test-value
+  it("非Git再検証はoperation-levelで従来のtarget invalid errorを返す", async () => {
+    const { root, target } = await createRepository();
+    await rm(path.join(root, ".git"), { recursive: true, force: true });
+    const service = new GlossaryApplicationService({
+      runGit: async () => {
+        throw Object.assign(new Error("fatal: not a git repository (or any of the parent directories): .git"), {
+          code: 128,
+          stderr: "fatal: not a git repository (or any of the parent directories): .git",
+        });
+      },
+    });
+
+    const result = await service.list(target);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "GLOSSARY_TARGET_INVALID");
+      assert.equal(result.message, "Primary workspace is not a supported Git checkout.");
+    }
+  });
+
   it("missing readは.withmateを作らず、explicit createだけがfileを作る", async () => {
     const { root, target } = await createRepository();
     const service = new GlossaryApplicationService();

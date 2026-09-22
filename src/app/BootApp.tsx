@@ -13,13 +13,13 @@ const STAGES: AppBootStage[] = [
 ];
 
 const STAGE_LABELS: Record<AppBootStage, string> = {
-  starting: "Preparing startup",
-  database: "Checking database",
-  diagnostics: "Checking diagnostics",
-  "workspace-cleanup": "Cleaning workspace",
-  stores: "Initializing storage",
-  home: "Preparing Home",
-  failed: "Startup failed",
+  starting: "PreparingStartup",
+  database: "CheckingDatabase",
+  diagnostics: "CheckingDiagnostics",
+  "workspace-cleanup": "CleaningWorkspace",
+  stores: "InitializingStorage",
+  home: "PreparingHome",
+  failed: "StartupFailed",
 };
 
 const INITIAL_STATUS: AppBootStatus = {

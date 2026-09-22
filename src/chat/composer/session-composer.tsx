@@ -159,7 +159,6 @@ export function SessionComposerExpanded({
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
-  pendingRunIndicatorTextVisible = true,
   pendingRunIndicatorAnnounce = true,
   targetDock = null,
   chatNotice,
@@ -430,7 +429,7 @@ export function SessionComposerExpanded({
                 }}
                 disabled={isRunning || composerBlocked || composerFrozen}
               >
-                Add Directory
+                AddDirectory
               </button>
               <button
                 className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
@@ -448,7 +447,7 @@ export function SessionComposerExpanded({
                 disabled={additionalDirectoryCount === 0 || composerFrozen}
                 aria-expanded={isAdditionalDirectoryListOpen}
               >
-                {`Dirs ${additionalDirectoryCount}`}
+                {`Dirs${additionalDirectoryCount}`}
               </button>
             </div>
           ) : null}
@@ -457,7 +456,7 @@ export function SessionComposerExpanded({
               <PendingRunIndicator
                 announcement={pendingRunIndicatorAnnouncement}
                 text={pendingRunIndicatorText}
-                showText={pendingRunIndicatorTextVisible}
+                showText={false}
                 announce={pendingRunIndicatorAnnounce}
               />
             </div>
@@ -486,7 +485,7 @@ export function SessionComposerExpanded({
                   type="button"
                   onClick={onJumpToBottom}
                 >
-                  Jump to latest
+                  JumpToLatest
                 </button>
               ) : null}
               {showMessageViewModeControls ? (
@@ -521,13 +520,17 @@ export function SessionComposerExpanded({
           className="composer-path-match-list composer-skill-picker-list"
           role="listbox"
           aria-label="Custom Agent options"
+          aria-busy={isCustomAgentListLoading || undefined}
           aria-orientation="vertical"
           onKeyDown={(event) => {
             focusRovingItemByKey(event, { orientation: "vertical" });
           }}
         >
           {isCustomAgentListLoading ? (
-            <p className="composer-skill-empty">Loading custom agents.</p>
+            <div className="chat-skill-picker-state" role="status" aria-label="Loading custom agents">
+              <span className="chat-skill-picker-spinner" aria-hidden="true" />
+              <span className="visually-hidden">LoadingCustomAgents</span>
+            </div>
           ) : customAgentItems.length > 0 ? (
             customAgentItems.map((item) => (
               <button
@@ -546,11 +549,7 @@ export function SessionComposerExpanded({
                 <span className="composer-path-match-secondary">{item.secondaryLabel}</span>
               </button>
             ))
-          ) : (
-            <p className="composer-skill-empty">
-              No custom agents are available yet. Check `~/.copilot/agents` or `.github/agents` in the workspace.
-            </p>
-          )}
+          ) : null}
         </div>
       ) : null}
 

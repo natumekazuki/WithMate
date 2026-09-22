@@ -37,7 +37,7 @@ export function KeyboardShortcutsHelpSection({
         <strong>Help</strong>
         <p className="settings-help">Review shortcuts and the windows where they are active.</p>
         <button className="launch-toggle" type="button" onClick={() => setOpen(true)}>
-          Keyboard shortcuts
+          KeyboardShortcuts
         </button>
       </div>
       <KeyboardShortcutsDialog
@@ -124,7 +124,7 @@ export function KeyboardShortcutsDialog({
     >
       <div className="settings-keyboard-shortcuts-content">
         <div className="settings-keyboard-shortcuts-head">
-          <h2>Keyboard shortcuts</h2>
+          <h2>KeyboardShortcuts</h2>
           <p>
             Shortcuts are active while this WithMate window is focused.
             {isEditable ? " Select Change, then press the keys to register." : ""}
@@ -152,7 +152,7 @@ export function KeyboardShortcutsDialog({
                               setCaptureError("");
                             }}
                           >
-                            {capturingCommandId === item.id ? "Press keys..." : "Change"}
+                            {capturingCommandId === item.id ? "PressKeys..." : "Change"}
                           </button>
                           {effectiveSettings.overrides[item.id]?.[platform] ? (
                             <button

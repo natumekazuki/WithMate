@@ -245,7 +245,7 @@ test("FileRootChangesPane はrepository discovery中をspinnerで示す", async 
     assert.equal(spinnerStyle.width, "24px");
     assert.equal(spinnerStyle.height, "24px");
     assert.equal(spinnerStyle.borderTopStyle, "solid");
-    assert.equal(status.querySelector(".visually-hidden")?.textContent, "Discovering Git repositories");
+    assert.equal(status.getAttribute("aria-label"), "Discovering Git repositories");
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -263,14 +263,14 @@ test("FileRootChangesPane はrepository discovery中をspinnerで示す", async 
 
 // @test-value v2
 // kind = "regression"
-// claim = "repository discovery失敗後の明示Refreshはdiscoveryを再試行し、成功した現行世代のChanges取得を開始する"
+// claim = "repository discovery失敗後の明示Refreshはdiscoveryを再試行し、成功した現行世代のChanges取得を開始して正常空をblankで保つ"
 // oracle = { type = "contract", ref = "accepted behavior: explicit Refresh recovers transient repository discovery failures" }
 // fault = "一時的なdiscovery失敗後にRefreshしても空のrepository集合だけを処理し、Changesを再取得できない"
-// observable = "failedからRefresh後のdiscovery successとrepository-local Changes取得の表示・呼び出し結果"
+// observable = "failedからRefresh後のdiscovery success、repository-local Changes取得、および正常空のblank表示"
 // observation_boundary = "component-behavior"
 // scope = "FileRootChangesPane discovery retry transition"
 // lifecycle = "permanent"
-// distinction = "初回discoveryのloading表示ではなく、failedから利用者操作でsuccessへ復旧する遷移を検証する"
+// distinction = "初回discoveryのloading表示ではなく、failedから利用者操作でsuccessへ復旧し正常空に余計な説明を出さない遷移を検証する"
 // @end-test-value
 test("FileRootChangesPane はRefreshでrepository discovery失敗から復旧する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -339,7 +339,7 @@ test("FileRootChangesPane はRefreshでrepository discovery失敗から復旧す
     assert.equal(discoveryCalls, 2);
     assert.deepEqual(changesRequests, [{ sessionId: "session-1", rootId: "workspace" }]);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Repository discovery timed out/);
-    assert.match(dom.window.document.querySelector("[data-root-id='workspace']")?.textContent ?? "", /No changes/);
+    assert.equal(dom.window.document.querySelector("[data-root-id='workspace']"), null);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -535,7 +535,7 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
       String(entries.length),
     );
     assert.equal(groups.find((group) => group.dataset.rootId === "additional:broken")?.style.minHeight, "78px");
-    assert.equal(groups.find((group) => group.dataset.rootId === "additional:repo")?.style.maxHeight, "260px");
+    assert.equal(groups.find((group) => group.dataset.rootId === "additional:repo")?.style.maxHeight, "199px");
     assert.equal(groups.find((group) => group.dataset.rootId === "workspace")?.style.maxHeight, "408px");
     assert.deepEqual(requestedRootIds, ["additional:broken", "additional:repo", "workspace"]);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Session Folder/);
@@ -781,10 +781,10 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Refreshはrepositoryごとに並行開始し、完了済みgroupを即時反映しながら古いrequest結果を無視する"
+// claim = "Refreshはrepositoryごとに並行開始し、完了済みgroupを即時反映しながら古いrequest結果を無視し、正常空groupを描画しない"
 // oracle = { type = "contract", ref = "accepted behavior: per-repository concurrent refresh" }
 // fault = "遅いrepositoryが他groupの表示を止める、または再RefreshやSession切替後の古い結果が現行stateを上書きする"
-// observable = "repository groupの完了順表示とrequest世代によるstale結果の無視"
+// observable = "repository groupの完了順表示、正常空groupのblank、およびrequest世代によるstale結果の無視"
 // observation_boundary = "component-behavior"
 // scope = "FileRootChangesPane repository request generation"
 // lifecycle = "permanent"
@@ -909,7 +909,7 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
       pendingRequests[5]?.reject(new Error("Fast repository failed."));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    assert.match(dom.window.document.querySelector("[data-root-id='slow']")?.textContent ?? "", /No changes/);
+    assert.equal(dom.window.document.querySelector("[data-root-id='slow']"), null);
     assert.match(dom.window.document.querySelector("[data-root-id='fast']")?.textContent ?? "", /Fast repository failed/);
     assert.equal(dom.window.document.querySelector("[data-root-id='fast']")?.getAttribute("aria-busy"), "false");
 

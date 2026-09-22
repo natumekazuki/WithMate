@@ -1,5 +1,4 @@
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
-import type { MicrocopySlot } from "../../src-shared/settings/microcopy-state.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
@@ -31,7 +30,6 @@ import {
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
   updateToolCallPresenceEnabled,
-  updateUserMicrocopySlotDraft,
 } from "./settings-draft.js";
 
 type SetSettingsDraft = (updater: (current: AppSettings) => AppSettings) => void;
@@ -155,13 +153,6 @@ export function handleChangeGlossaryProactiveCreateLimit(input: SettingsDraftAct
   value: string;
 }): void {
   input.setSettingsDraft((current) => updateGlossaryProactiveCreateLimitDraft(current, input.value));
-}
-
-export function handleChangeUserMicrocopySlot(input: SettingsDraftActionInput & {
-  slot: MicrocopySlot;
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateUserMicrocopySlotDraft(current, input.slot, input.value));
 }
 
 export function handleChangeMemoryExtractionModel(input: ModelCatalogActionInput & {

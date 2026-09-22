@@ -191,7 +191,7 @@ describe("home-launch-actions", () => {
   // claim = "startHomeLaunchの成功経路は選択CharacterでSessionを作成し、summaryを保存してwindowを開き、dialogを閉じる"
   // oracle = { type = "contract", ref = "Issue #731 Home/New session launch flow" }
   // fault = "Session作成後にsummary登録・window open・dialog closeのいずれかを省略するか、選択Characterを取り違える"
-  // observable = "createSession入力のcharacterId、Starting session… feedback、starting states、close count、summary/opened session IDs"
+  // observable = "createSession入力のcharacterId、空のfeedback、starting states、close count、summary/opened session IDs"
   // observation_boundary = "public-boundary"
   // scope = "startHomeLaunch successful launch flow"
   // lifecycle = "permanent"
@@ -209,7 +209,7 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(capturedCharacterId, "mia");
-    assert.deepEqual(harness.feedback, ["Starting session…"]);
+    assert.deepEqual(harness.feedback, [""]);
     assert.deepEqual(harness.startingStates, [true, false]);
     assert.equal(harness.closeCount, 1);
     assert.deepEqual(harness.sessionSummaries, ["session-1"]);
@@ -290,7 +290,7 @@ describe("home-launch-actions", () => {
   // claim = "Character usage履歴がloading中のrandom launchはSession作成を保留し、再試行可能なpending feedbackを返す"
   // oracle = { type = "contract", ref = "Issue #731 New session random selection data-state distinction" }
   // fault = "履歴が未取得のままrandom候補を確定してSessionを作成するか、loading理由を表示しない"
-  // observable = "createSession call count、feedback message、launchStarting callback state"
+  // observable = "createSession call count、Session history is not ready yet feedback、launchStarting callback state"
   // observation_boundary = "public-boundary"
   // scope = "startHomeLaunch random launch usage loading"
   // lifecycle = "permanent"
@@ -314,7 +314,7 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(createCount, 0);
-    assert.deepEqual(harness.feedback, ["Loading session history. Try again when it finishes."]);
+    assert.deepEqual(harness.feedback, ["Session history is not ready yet. Try again when it finishes."]);
     assert.deepEqual(harness.startingStates, []);
   });
 
@@ -356,7 +356,7 @@ describe("home-launch-actions", () => {
   // claim = "open Session Window一覧がloading中のrandom launchはSession作成を保留し、確認中feedbackを返す"
   // oracle = { type = "contract", ref = "Issue #731 New session random selection open-window state" }
   // fault = "open window情報が未取得のまま候補を確定してSessionを作成するか、確認中状態を利用者へ伝えない"
-  // observable = "createSession call count、Checking open session windows feedback、launchStarting callback state"
+  // observable = "createSession call count、Open session windows are not ready yet feedback、launchStarting callback state"
   // observation_boundary = "public-boundary"
   // scope = "startHomeLaunch random launch open-window loading"
   // lifecycle = "permanent"
@@ -381,7 +381,7 @@ describe("home-launch-actions", () => {
 
     assert.equal(createCount, 0);
     assert.deepEqual(harness.feedback, [
-      "Checking open session windows. Try again when it finishes.",
+      "Open session windows are not ready yet. Try again when the check finishes.",
     ]);
     assert.deepEqual(harness.startingStates, []);
   });
@@ -423,7 +423,7 @@ describe("home-launch-actions", () => {
   // claim = "Character未作成かつMate未作成でもrandom launchはneutral CharacterでSession作成を完了する"
   // oracle = { type = "contract", ref = "Issue #731 New session neutral Character fallback" }
   // fault = "候補catalogが空の初回状態でSession作成を停止するか、neutral Characterを選択せず不正なIDを渡す"
-  // observable = "createSession入力のneutral characterId、Starting session… feedback、opened session ID"
+  // observable = "createSession入力のneutral characterId、空のfeedback、opened session ID"
   // observation_boundary = "public-boundary"
   // scope = "startHomeLaunch neutral Character fallback"
   // lifecycle = "permanent"
@@ -449,7 +449,7 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(capturedCharacterId, "withmate-neutral-character");
-    assert.deepEqual(harness.feedback, ["Starting session…"]);
+    assert.deepEqual(harness.feedback, [""]);
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 

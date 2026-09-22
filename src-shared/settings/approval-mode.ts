@@ -5,9 +5,9 @@ export type ApprovalMode = (typeof APPROVAL_MODE_VALUES)[number];
 export const DEFAULT_APPROVAL_MODE: ApprovalMode = "untrusted";
 
 export const approvalModeOptions = [
-  { id: "never", label: "Auto-run" },
-  { id: "on-request", label: "Provider-controlled" },
-  { id: "untrusted", label: "Safety-focused" },
+  { id: "never", label: "AutoRun" },
+  { id: "on-request", label: "ProviderControlled" },
+  { id: "untrusted", label: "SafetyFocused" },
 ] as const satisfies Array<{ id: ApprovalMode; label: string }>;
 
 const LEGACY_APPROVAL_MODE_MAP = {

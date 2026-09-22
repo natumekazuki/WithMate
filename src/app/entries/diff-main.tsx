@@ -7,7 +7,7 @@ import "../../styles.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <WindowErrorBoundary pageClassName="diff-page" windowLabel="Diff Viewer">
+    <WindowErrorBoundary pageClassName="diff-page" windowLabel="DiffViewer">
       <DiffApp />
     </WindowErrorBoundary>
   </React.StrictMode>,

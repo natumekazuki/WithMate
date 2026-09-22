@@ -2130,10 +2130,7 @@ export default function AgentSessionWindowApp() {
           selectedSession?.id,
           selectedSessionLiveRun?.threadId,
         ]);
-  const pendingRunIndicatorTextVisible = hasCustomMicrocopyVariants(
-    appSettings.userMicrocopyCatalog,
-    pendingRunIndicatorSlot,
-  );
+  const pendingRunIndicatorTextVisible = false;
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
   const pendingMessageText = resolveSessionMicrocopy("chat.pending.response_waiting", [
     "chat",
@@ -2378,10 +2375,7 @@ export default function AgentSessionWindowApp() {
     hasLiveRunAssistantText,
     liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
     pendingMessageText,
-    pendingMessageTextVisible: hasCustomMicrocopyVariants(
-      appSettings.userMicrocopyCatalog,
-      "chat.pending.response_waiting",
-    ),
+    pendingMessageTextVisible: false,
     pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
     isMessageListFollowing,
     messageListRef,

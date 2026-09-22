@@ -11,7 +11,7 @@ const noop = () => {};
 // claim = "retry banner adapterはretry状態、custom title、resend/edit actionをmode-neutralなUIへ投影する"
 // oracle = { type = "contract", ref = "docs/design/session-character-copy.md#rendering-policy" }
 // fault = "retry titleを一律で隠すか、action label・accessible label・custom copyを失う"
-// observable = "retry class、aria label、visible custom title、resend/edit buttonsのrender結果"
+// observable = "retry class、aria label、visible custom title、resend/edit buttons、draft conflict actionsのrender結果"
 // observation_boundary = "component-behavior"
 // scope = "session-retry-banner"
 // lifecycle = "permanent"
@@ -29,7 +29,7 @@ test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み
     },
     isRetryActionDisabled: false,
     isRetryEditDisabled: false,
-    isRetryDraftReplacePending: false,
+    isRetryDraftReplacePending: true,
     onResendLastMessage: noop,
     onEditLastMessage: noop,
     onConfirmRetryDraftReplace: noop,
@@ -42,6 +42,9 @@ test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み
   assert.match(html, />Edit<\/button>/);
   assert.match(html, /title="前回の依頼は完了できませんでした"/);
   assert.match(html, /class="resume-banner-title">前回の依頼は完了できませんでした<\/span>/);
+  assert.match(html, /Your current draft is preserved\.<\/p>/);
+  assert.match(html, />ReplacePreviousRequest<\/button>/);
+  assert.match(html, />KeepCurrentDraft<\/button>/);
   assert.doesNotMatch(html, /停止地点|>Details<|>Hide</);
 });
 

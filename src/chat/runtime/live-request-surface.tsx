@@ -10,17 +10,17 @@ import type {
 function liveApprovalKindLabel(kind: string): string {
   switch (kind) {
     case "shell":
-      return "Shell command";
+      return "ShellCommand";
     case "write":
-      return "File change";
+      return "FileChange";
     case "mcp":
-      return "MCP tool";
+      return "McpTool";
     case "custom-tool":
-      return "Custom tool";
+      return "CustomTool";
     case "url":
-      return "URL fetch";
+      return "UrlFetch";
     case "read":
-      return "File read";
+      return "FileRead";
     default:
       return kind;
   }
@@ -220,7 +220,7 @@ function LiveElicitationCard({
     <section className="live-elicitation-card" role="group" aria-label="Input required">
       <div className="live-approval-head">
         <div className="live-approval-copy">
-          <span className="live-approval-badge">Input required</span>
+          <span className="live-approval-badge">InputRequired</span>
           <p className="live-approval-title">{request.message}</p>
         </div>
         <span className="live-approval-kind">{liveElicitationModeLabel(request.mode)}</span>
@@ -296,7 +296,7 @@ function LiveElicitationCard({
                   onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                   disabled={isSubmitting}
                 >
-                  {!field.required ? <option value="">No selection</option> : null}
+                  {!field.required ? <option value="">NoSelection</option> : null}
                   {field.options.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -388,7 +388,7 @@ export function LiveRequestSurface({
         <section className="live-approval-card" role="group" aria-label="Approval required">
           <div className="live-approval-head">
             <div className="live-approval-copy">
-              <span className="live-approval-badge">Approval required</span>
+              <span className="live-approval-badge">ApprovalRequired</span>
               <p className="live-approval-title">{liveApprovalRequest.title}</p>
             </div>
             <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
@@ -409,7 +409,7 @@ export function LiveRequestSurface({
               onClick={() => onResolveLiveApproval(liveApprovalRequest, "approve")}
               disabled={approvalActionRequestId === liveApprovalRequest.requestId}
             >
-              Allow once
+              AllowOnce
             </button>
             <button
               className="drawer-toggle secondary"

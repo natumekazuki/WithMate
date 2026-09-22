@@ -33,7 +33,7 @@ function formatHistoryDiffSelector(selector: FileRootGitHistoryComparisonSelecto
     return "HEAD";
   }
   if (selector.kind === "commit") {
-    return `Commit ${selector.objectId.slice(0, 7)}`;
+    return `Commit${selector.objectId.slice(0, 7)}`;
   }
   return selector.name;
 }
@@ -43,7 +43,7 @@ function formatHistoryDiffTitle(request: FileRootGitHistoryDiffRequest): string 
     return request.relativePath
       ?? `${formatHistoryDiffSelector(request.comparison.base)} → ${formatHistoryDiffSelector(request.comparison.target)}`;
   }
-  return request.relativePath ?? `Commit ${request.commitId.slice(0, 7)}`;
+  return request.relativePath ?? `Commit${request.commitId.slice(0, 7)}`;
 }
 
 function formatHistoryDiffContext(request: FileRootGitHistoryDiffRequest): string | undefined {
@@ -51,9 +51,9 @@ function formatHistoryDiffContext(request: FileRootGitHistoryDiffRequest): strin
     return undefined;
   }
   const mergeBase = request.comparison.mergeBaseCommitId
-    ? ` · merge-base ${request.comparison.mergeBaseCommitId.slice(0, 7)}`
+    ? ` · MergeBase ${request.comparison.mergeBaseCommitId.slice(0, 7)}`
     : "";
-  return `${request.comparison.mode === "branch" ? "Branch changes" : "Direct comparison"} · ${request.comparison.baseCommitId.slice(0, 7)} → ${request.comparison.targetCommitId.slice(0, 7)}${mergeBase}`;
+  return `${request.comparison.mode === "branch" ? "BranchChanges" : "DirectComparison"} · ${request.comparison.baseCommitId.slice(0, 7)} → ${request.comparison.targetCommitId.slice(0, 7)}${mergeBase}`;
 }
 
 function areFilePreviewPayloadsEqual(
@@ -71,8 +71,12 @@ function areFilePreviewPayloadsEqual(
 function FilePreviewWindowLoading({ label }: { label: string }) {
   return (
     <main className="file-preview-window-page" aria-busy="true">
-      <section className="session-file-preview file-preview-window-loading" aria-label="File preview">
-        <span className="visually-hidden" role="status" aria-live="polite">{label}</span>
+      <section
+        className="session-file-preview file-preview-window-loading"
+        role="status"
+        aria-live="polite"
+        aria-label={label}
+      >
         <header className="session-file-preview-header" aria-hidden="true">
           <span className="file-preview-loading-title" />
           <span className="file-preview-loading-actions" />
@@ -286,7 +290,7 @@ export default function FilePreviewApp() {
           previewRevision={0}
           patch=""
           loading
-          backNavigation={{ label: "Back to preview", onBack: showPreview }}
+          backNavigation={{ label: "BackToPreview", onBack: showPreview }}
           onCopyText={(text) => void navigator.clipboard.writeText(text)}
           onOpenPreview={async () => {
             showPreview();
@@ -306,7 +310,7 @@ export default function FilePreviewApp() {
           title={getSessionFileResourceDisplayPath(payload.resource)}
           previewRevision={diffState.revision}
           patch={diffState.patch}
-          backNavigation={{ label: "Back to preview", onBack: showPreview }}
+          backNavigation={{ label: "BackToPreview", onBack: showPreview }}
           onCopyText={(text) => void navigator.clipboard.writeText(text)}
           onOpenPreview={async () => {
             showPreview();

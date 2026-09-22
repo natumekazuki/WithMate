@@ -16,7 +16,7 @@
 | pending elicitation | 実装済み | `elicitation.requested` を Session pending bubble の form / url UI に変換し、`accept / decline / cancel` を返す |
 | quota telemetry | 実装済み | `assistant.usage.quotaSnapshots` と `client.rpc.account.getQuota()` を併用する |
 | context telemetry | 実装済み | `session.usage_info` を session local telemetry として保持する |
-| rich command timeline | 未対応 | current UI は `Latest Command` + `CONFIRMED Details` までに留める |
+| rich command timeline | 未対応 | current UI は `LatestCommand` + `ConfirmedDetails` までに留める |
 | slash command 吸収 | 未対応 | `#10` と `copilot-rollout` で継続検討する |
 | background task parity | 一部実装 | Copilot は `session.idle.backgroundTasks` と `system.notification` を `LiveSessionRunState.backgroundTasks` へ取り込み、Session 右ペインの Copilot 専用 `Tasks` tab で snapshot を見せる。Codex は current SDK に同等 surface が無いため未対応 |
 
@@ -31,7 +31,7 @@
 
 - pending item は provider-native wording を直接 UI へ露出せず、WithMate の `LiveSessionRunState` へ正規化して扱う
 - `approvalRequest` と `elicitationRequest` は別 state とし、pending bubble 内で同居できる形を維持する
-- provider SDK 側で richer event が増えても、右 pane は `Latest Command` 中心の compact UI を維持する
+- provider SDK 側で richer event が増えても、右 pane は `LatestCommand` 中心の compact UI を維持する
 
 ## 接続先
 

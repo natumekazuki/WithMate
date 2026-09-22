@@ -83,15 +83,17 @@ export function HomeLaunchDialog({
       onClose={onClose}
       dialogRef={dialogRef}
       onKeyDown={handleDialogKeyDown}
-      ariaLabel="New session"
+      ariaLabel="NewSession"
       showDismissControl={false}
       dialogClassName="home-launch-dialog"
       footer={
         <LaunchDialogFooter
-          feedback={launchFeedback}
-          startButtonLabel={launchStarting ? "Starting…" : "Start new session"}
+          feedback={launchStarting ? "" : launchFeedback}
+          startButtonLabel="StartNewSession"
           startButtonDisabled={!canStartSession || launchStarting}
           startButtonAriaDisabled={!canStartSession || launchStarting}
+          startButtonBusy={launchStarting}
+          startButtonLoadingText="Starting session"
           onStart={onStartSession}
         />
       }
@@ -99,7 +101,7 @@ export function HomeLaunchDialog({
       <section className="launch-section minimal">
         <div className="launch-field">
           <label className="launch-field-label" htmlFor="launch-session-title">
-            Session title
+            SessionTitle
           </label>
           <input
             id="launch-session-title"
@@ -176,12 +178,9 @@ export function HomeLaunchDialog({
         <div className="launch-field">
           <span className="launch-field-label">Character</span>
           {resolvedCharacterLoadStatus === "loading" ? (
-            <div className="launch-character-neutral">
-              <span className="character-avatar tiny" aria-hidden="true">W</span>
-              <div className="launch-character-copy">
-                <strong>Loading</strong>
-                <span>Loading characters…</span>
-              </div>
+            <div className="launch-character-neutral" role="status" aria-live="polite" aria-busy="true">
+              <span className="home-session-list-load-spinner" aria-hidden="true" />
+              <span className="sr-only">Loading characters…</span>
             </div>
           ) : resolvedCharacterLoadStatus === "error" ? (
             <div className="launch-character-neutral" role="status">
@@ -220,7 +219,6 @@ export function HomeLaunchDialog({
                 <span className="character-avatar tiny" aria-hidden="true">R</span>
                 <span className="launch-character-copy">
                   <strong>Random</strong>
-                  <span>Prefer characters used less recently</span>
                 </span>
               </button>
               {characterOptions.map((character) => (

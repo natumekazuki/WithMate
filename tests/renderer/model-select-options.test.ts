@@ -44,13 +44,23 @@ test("buildModelSelectOptions は catalog にない選択中 model を先頭に�
   ]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "reasoning effort選択肢は保存用IDを保持してPascalCaseの表示名を返す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+// fault = "表示名の変換で選択valueも変わるか、未変換の表示名がselectに露出する"
+// observable = "buildReasoningEffortSelectOptionsが返すvalueとlabelの対応"
+// observation_boundary = "public-boundary"
+// scope = "reasoning effort select options"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildReasoningEffortSelectOptions は reasoning effort を select option に変換する", () => {
   assert.deepEqual(buildReasoningEffortSelectOptions(["low", "medium", "xhigh", "max", "ultra"]), [
-    { value: "low", label: "low" },
-    { value: "medium", label: "medium" },
-    { value: "xhigh", label: "xhigh" },
-    { value: "max", label: "max" },
-    { value: "ultra", label: "ultra" },
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "xhigh", label: "XHigh" },
+    { value: "max", label: "Max" },
+    { value: "ultra", label: "Ultra" },
   ]);
 });
 

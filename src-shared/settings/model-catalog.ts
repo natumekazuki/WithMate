@@ -48,13 +48,13 @@ export const DEFAULT_REASONING_EFFORT: ModelReasoningEffort = "high";
 export const DEFAULT_CATALOG_REVISION = 1;
 
 export const reasoningEffortOptions = [
-  { id: "minimal", label: "minimal" },
-  { id: "low", label: "low" },
-  { id: "medium", label: "medium" },
-  { id: "high", label: "high" },
-  { id: "xhigh", label: "xhigh" },
-  { id: "max", label: "max" },
-  { id: "ultra", label: "ultra" },
+  { id: "minimal", label: "Minimal" },
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "xhigh", label: "XHigh" },
+  { id: "max", label: "Max" },
+  { id: "ultra", label: "Ultra" },
 ] as const satisfies ReadonlyArray<{ id: ModelReasoningEffort; label: string }>;
 
 export function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {

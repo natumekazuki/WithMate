@@ -13,7 +13,7 @@ WithMate の Session ごとに、repo へ入れない一時資料を置ける ma
 - この機能は provider 内部の session-state や log directory を使わない
 - 保存先は WithMate app data 配下の managed directory とする
 - session local files は user-managed additional directories ではなく、runtime が常に暗黙許可する directory として扱う
-- New Session で `SessionFolder` を選んだ場合は、この managed directory 自体を Session の `workspacePath` として扱う
+- `NewSession` で `SessionFolder` を選んだ場合は、この managed directory 自体を Session の `workspacePath` として扱う
 - prompt 本文には保存済み file path の reference だけを入れ、file 内容の常設 inline 展開はしない
 - V5 preview では legacy MateTalk runtime / window を current runtime として提供しない。本文中の MateTalk 記述は stale `mate-talk-*` directory cleanup などの legacy compatibility として扱う
 
@@ -27,7 +27,7 @@ session-files/{sessionId}/
 
 `sessionId` は path segment として安全な文字だけへ正規化する。既存 ID は UUID 形式だが、将来の prefix 付き ID でも directory traversal を起こさないことを優先する。
 
-New Session の `SessionFolder` 選択は directory を作成しない。`Start New Session` 時に Main Process が Session ID を発行し、同じ ID の既存 directory を再利用しない排他的な作成を行った後、その absolute path を持つ Session を永続化する。
+`NewSession` の `SessionFolder` 選択は directory を作成しない。`StartNewSession` 時に Main Process が Session ID を発行し、同じ ID の既存 directory を再利用しない排他的な作成を行った後、その absolute path を持つ Session を永続化する。
 
 ## Access Contract
 

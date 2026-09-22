@@ -24,7 +24,6 @@ export function PendingRunIndicator({
         </span>
       ) : null}
       <div className={`live-run-shell-status pending-run-indicator${className ? ` ${className}` : ""}`} aria-hidden="true">
-        <span className="live-run-shell-status-badge">Running</span>
         {showText ? <span className="live-run-shell-status-text">{indicatorText}</span> : null}
         <span className="typing-dots pending-run-indicator-dots">
           <span />

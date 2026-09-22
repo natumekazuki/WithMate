@@ -80,13 +80,12 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const [forgetReason, setForgetReason] = useState<MemoryForgetReason>("user_request");
   const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(true);
-  const [hasLoaded, setHasLoaded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [entryLoading, setEntryLoading] = useState(false);
   const [forgetting, setForgetting] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [runningGc, setRunningGc] = useState(false);
+  const [runningGc, setRunningGc] = useState<"dry-run" | "cleanup" | null>(null);
   const [confirmForgetOpen, setConfirmForgetOpen] = useState(false);
   const cancelForgetButtonRef = useRef<HTMLButtonElement | null>(null);
   const entryRequestIdRef = useRef(0);
@@ -145,9 +144,6 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       }
       setItems((currentItems) => append ? [...currentItems, ...result.items] : result.items);
       setNextCursor(result.nextCursor ?? "");
-      if (!append) {
-        setHasLoaded(true);
-      }
       setFeedback("");
       if (!append && selectedEntryId && !result.items.some((item) => item.id === selectedEntryId)) {
         ++entryRequestIdRef.current;
@@ -294,7 +290,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     if (runningGc) {
       return;
     }
-    if (!dryRun && !window.confirm("Delete pending Memory files and orphan protected object files?")) {
+    if (!dryRun && !window.confirm("Delete pending Memory files, orphan protected object files, and stale staging files? This permanently removes files that are no longer referenced by active Memory entries.")) {
       return;
     }
     const api = getApi();
@@ -302,7 +298,8 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       setFeedback("Memory review requires the desktop runtime.");
       return;
     }
-    setRunningGc(true);
+    const gcAction = dryRun ? "dry-run" : "cleanup";
+    setRunningGc(gcAction);
     setFeedback("");
     try {
       const report = await api.runMemoryV6ProtectedObjectGc({ dryRun, limit: 100 });
@@ -315,7 +312,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not run Memory file GC.");
     } finally {
-      setRunningGc(false);
+      setRunningGc(null);
     }
   };
 
@@ -325,7 +322,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
         <section className="memory-review-shell">
           <header className="memory-review-header">
             <div>
-              <h1>Memory Review</h1>
+              <h1>MemoryReview</h1>
               <p>Review active Memory entries and remove entries from search when they are no longer needed.</p>
             </div>
             <button
@@ -334,8 +331,15 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               onClick={() => void refreshReview()}
               disabled={refreshing || loading || loadingMore}
               aria-busy={refreshing}
+              aria-label={refreshing ? "Refreshing Memory review" : "Refresh Memory review"}
             >
-              {refreshing ? <><span className="settings-action-spinner" aria-hidden="true" />Refreshing…</> : "Refresh"}
+              {refreshing ? (
+                <>
+                  <span className="settings-action-spinner" aria-hidden="true" />
+                  <span>Refresh</span>
+                  <span className="visually-hidden">Refreshing Memory review.</span>
+                </>
+              ) : "Refresh"}
             </button>
           </header>
 
@@ -346,13 +350,12 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="title, body, tag, owner"
               />
             </label>
             <label className="settings-provider-input">
               <span>Kind</span>
               <select value={selectedKind} onChange={(event) => setSelectedKind(event.target.value as MemoryEntryKind | "")}>
-                <option value="">All kinds</option>
+                <option value="">AllKinds</option>
                 {MEMORY_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
               </select>
             </label>
@@ -374,14 +377,14 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   <small>{fileUsage.objectCount} active objects</small>
                 </div>
                 <div>
-                  <span>Pending delete</span>
+                  <span>PendingDelete</span>
                   <strong>{formatBytes(fileUsage.pendingDeleteBytes)}</strong>
                   <small>{fileUsage.pendingDeleteCount} objects</small>
                 </div>
               </div>
               {fileUsage.largestEntries && fileUsage.largestEntries.length > 0 ? (
                 <div className="memory-review-largest-entries">
-                  <span>Largest entries</span>
+                  <span>LargestEntries</span>
                   <div>
                     {fileUsage.largestEntries.map((entry) => (
                       <button key={entry.entryId} type="button" onClick={() => void selectEntry(entry.entryId)}>
@@ -393,16 +396,40 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                 </div>
               ) : null}
               <div className="memory-review-gc-actions">
-                <button type="button" onClick={() => void runProtectedObjectGc(true)} disabled={runningGc || refreshing} aria-busy={runningGc}>
-                  {runningGc ? <><span className="settings-action-spinner" aria-hidden="true" />Running…</> : "GC dry run"}
+                <button
+                  type="button"
+                  onClick={() => void runProtectedObjectGc(true)}
+                  disabled={runningGc !== null || refreshing}
+                  aria-busy={runningGc === "dry-run"}
+                  aria-label={runningGc === "dry-run" ? "Running Memory file GC dry run" : "Run Memory file GC dry run"}
+                >
+                  {runningGc === "dry-run" ? (
+                    <>
+                      <span className="settings-action-spinner" aria-hidden="true" />
+                      <span>GCDryRun</span>
+                      <span className="visually-hidden">Running Memory file GC dry run.</span>
+                    </>
+                  ) : "GCDryRun"}
                 </button>
-                <button type="button" onClick={() => void runProtectedObjectGc(false)} disabled={runningGc || refreshing} aria-busy={runningGc}>
-                  {runningGc ? <><span className="settings-action-spinner" aria-hidden="true" />Running…</> : "Run GC cleanup"}
+                <button
+                  type="button"
+                  onClick={() => void runProtectedObjectGc(false)}
+                  disabled={runningGc !== null || refreshing}
+                  aria-busy={runningGc === "cleanup"}
+                  aria-label={runningGc === "cleanup" ? "Running Memory file GC cleanup" : "Run Memory file GC cleanup"}
+                >
+                  {runningGc === "cleanup" ? (
+                    <>
+                      <span className="settings-action-spinner" aria-hidden="true" />
+                      <span>RunGCCleanup</span>
+                      <span className="visually-hidden">Running Memory file GC cleanup.</span>
+                    </>
+                  ) : "RunGCCleanup"}
                 </button>
               </div>
               {gcReport ? (
                 <div className="memory-review-gc-report" aria-label="Memory file GC report">
-                  <span>{gcReport.dryRun ? "Dry-run" : "Cleanup"}</span>
+                  <span>{gcReport.dryRun ? "DryRun" : "Cleanup"}</span>
                   <small>
                     Pending {gcReport.deletePending.candidates} / deleted {gcReport.deletePending.deleted} / missing {gcReport.deletePending.missing ?? 0} / failed {gcReport.deletePending.failed}
                   </small>
@@ -419,7 +446,13 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
           ) : null}
 
           <div className="memory-review-grid">
-            <section className="memory-review-list" aria-label="Memory entries">
+            <section className="memory-review-list" aria-label="Memory entries" aria-busy={loading || loadingMore || undefined}>
+              {loading && items.length === 0 ? (
+                <div className="settings-loading-inline" role="status" aria-label="Loading Memory entries">
+                  <span className="settings-action-spinner" aria-hidden="true" />
+                  <span className="visually-hidden">Loading Memory entries.</span>
+                </div>
+              ) : null}
               {items.map((item) => (
                 <button
                   key={item.id}
@@ -439,14 +472,17 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   type="button"
                   onClick={() => void runSearch({ cursor: nextCursor, append: true })}
                   disabled={loading || loadingMore}
+                  aria-busy={loadingMore || undefined}
+                  aria-label={loadingMore ? "Loading more Memory entries" : "Load more Memory entries"}
                 >
-                  {loadingMore ? "Loading more" : "Load more"}
+                  {loadingMore ? (
+                    <>
+                      <span className="settings-action-spinner" aria-hidden="true" />
+                      <span>LoadMore</span>
+                      <span className="visually-hidden">Loading more Memory entries.</span>
+                    </>
+                  ) : "LoadMore"}
                 </button>
-              ) : null}
-              {hasLoaded && items.length === 0 && !loading ? (
-                <p className="settings-note">
-                  {query.trim() || selectedKind ? "No active Memory entries match the search." : "No active Memory entries."}
-                </p>
               ) : null}
             </section>
 
@@ -473,9 +509,21 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   {selectedEntry.files && selectedEntry.files.length > 0 ? (
                     <section className="memory-review-files" aria-label="Protected files">
                       <div className="memory-review-files-head">
-                        <h3>Protected files</h3>
-                        <button type="button" onClick={() => void exportSelectedEntryFiles()} disabled={exporting || refreshing} aria-busy={exporting}>
-                          {exporting ? <><span className="settings-action-spinner" aria-hidden="true" />Exporting…</> : "Export files"}
+                        <h3>ProtectedFiles</h3>
+                        <button
+                          type="button"
+                          onClick={() => void exportSelectedEntryFiles()}
+                          disabled={exporting || refreshing}
+                          aria-busy={exporting || undefined}
+                          aria-label={exporting ? "Exporting Memory files" : "Export Memory files"}
+                        >
+                          {exporting ? (
+                            <>
+                              <span className="settings-action-spinner" aria-hidden="true" />
+                              <span>ExportFiles</span>
+                              <span className="visually-hidden">Exporting Memory files.</span>
+                            </>
+                          ) : "ExportFiles"}
                         </button>
                       </div>
                       <ul>
@@ -496,7 +544,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   </div>
                   <div className="memory-review-forget-row">
                     <label className="settings-provider-input">
-                      <span>Forget reason</span>
+                      <span>ForgetReason</span>
                       <select value={forgetReason} onChange={(event) => setForgetReason(event.target.value as MemoryForgetReason)}>
                         {FORGET_REASON_OPTIONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
                       </select>
@@ -506,12 +554,25 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                       type="button"
                       onClick={() => setConfirmForgetOpen(true)}
                       disabled={forgetting}
+                      aria-busy={forgetting || undefined}
+                      aria-label={forgetting ? "Forgetting Memory entry" : "Forget Memory entry"}
                     >
-                      {forgetting ? <><span className="settings-action-spinner" aria-hidden="true" />Forgetting…</> : "Forget entry"}
+                      {forgetting ? (
+                        <>
+                          <span className="settings-action-spinner" aria-hidden="true" />
+                          <span>ForgetEntry</span>
+                          <span className="visually-hidden">Forgetting Memory entry.</span>
+                        </>
+                      ) : "ForgetEntry"}
                     </button>
                   </div>
                 </>
-              ) : entryLoading ? <p className="settings-note">Loading Memory entry…</p> : null}
+              ) : entryLoading ? (
+                <div className="settings-loading-inline" role="status" aria-label="Loading Memory entry">
+                  <span className="settings-action-spinner" aria-hidden="true" />
+                  <span className="visually-hidden">Loading Memory entry.</span>
+                </div>
+              ) : null}
             </section>
           </div>
         </section>
@@ -528,7 +589,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
             onKeyDown={handleForgetDialogKeyDown}
           >
             <header>
-              <h2 id="memory-review-forget-title">Forget this Memory entry</h2>
+              <h2 id="memory-review-forget-title">ForgetMemoryEntry</h2>
               <button
                 className="diff-close"
                 type="button"
@@ -542,6 +603,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
             <div className="memory-review-modal-body">
               <p>Remove this Memory entry from search?</p>
               <strong>{selectedEntry.title || selectedEntry.id}</strong>
+              <span>{selectedEntry.kind} / {ownerLabel(selectedEntry)}</span>
               <span>Reason: {forgetReason}</span>
               {forgetReason === "privacy" ? (
                 <span>For privacy requests, the title, body, preview, and tags are also deleted.</span>
@@ -557,8 +619,21 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               >
                 Cancel
               </button>
-              <button className="launch-toggle danger-button" type="button" onClick={() => void forgetSelectedEntry()} disabled={forgetting}>
-                {forgetting ? <><span className="settings-action-spinner" aria-hidden="true" />Forgetting…</> : "Forget entry"}
+              <button
+                className="launch-toggle danger-button"
+                type="button"
+                onClick={() => void forgetSelectedEntry()}
+                disabled={forgetting}
+                aria-busy={forgetting || undefined}
+                aria-label={forgetting ? "Forgetting Memory entry" : "Forget Memory entry"}
+              >
+                {forgetting ? (
+                  <>
+                    <span className="settings-action-spinner" aria-hidden="true" />
+                    <span>ForgetEntry</span>
+                    <span className="visually-hidden">Forgetting Memory entry.</span>
+                  </>
+                ) : "ForgetEntry"}
               </button>
             </footer>
           </section>

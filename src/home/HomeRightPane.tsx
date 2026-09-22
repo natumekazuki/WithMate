@@ -47,8 +47,8 @@ export function HomeRightPane({
   nonRunningMonitorEntries,
   auxiliaryDataState,
   sessionWindowsDataState = "loaded",
-  monitorRunningEmptyMessage = "No running sessions.",
-  monitorNonRunningEmptyMessage = "No stopped or completed sessions.",
+  monitorRunningEmptyMessage = "",
+  monitorNonRunningEmptyMessage = "",
   sessionMonitorFeedback = "",
   monitorWindowIcon,
   characterEntries,
@@ -108,7 +108,7 @@ export function HomeRightPane({
             {sessionWindowRestorePending ? (
               <span className="restore-session-windows-spinner" aria-hidden="true" />
             ) : null}
-            <span>Restore sessions</span>
+            <span>RestoreSessions</span>
           </button>
           <button
             className="launch-toggle home-monitor-window-button"

@@ -178,7 +178,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     const window = this.deps.createWindow({
       width: 0,
       height: 0,
-      title: "WithMate Home",
+      title: "WithMateHome",
       homeBounds: true,
     });
     this.homeWindow = window;
@@ -203,7 +203,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       minWidth: 300,
       minHeight: 520,
       maxWidth: 460,
-      title: "WithMate Monitor",
+      title: "WithMateMonitor",
       alwaysOnTop: true,
     });
     this.sessionMonitorWindow = window;
@@ -227,7 +227,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       height: 960,
       minWidth: 760,
       minHeight: 720,
-      title: "WithMate Settings",
+      title: "WithMateSettings",
     });
     this.settingsWindow = window;
     window.once("ready-to-show", () => window.show());
@@ -249,7 +249,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       height: 880,
       minWidth: 860,
       minHeight: 680,
-      title: "WithMate Memory Review",
+      title: "WithMateMemoryReview",
     });
     this.memoryV6ReviewWindow = window;
     window.once("ready-to-show", () => window.show());
@@ -270,7 +270,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
 
     const window = this.deps.createWindow({
       ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
-      title: normalizedCharacterId ? "WithMate Character Editor" : "WithMate New Character",
+      title: normalizedCharacterId ? "WithMateCharacterEditor" : "WithMateNewCharacter",
     });
     this.characterEditorWindows.set(windowKey, window);
     window.once("ready-to-show", () => window.show());

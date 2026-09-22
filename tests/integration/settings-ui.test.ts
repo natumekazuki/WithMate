@@ -22,7 +22,7 @@ import { ALL_RESET_APP_DATABASE_TARGETS } from "../../src-shared/window/withmate
 describe("Settings UI constants", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "Coding AgentのAPI key label、placeholder、helpは資格情報の適用範囲をcoding planeとして示す"
+  // claim = "Coding AgentのAPI key labelはPascalCaseを使い、placeholderとhelpは資格情報の適用範囲をcoding planeとして示す"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
   // fault = "API keyを汎用またはCharacter側の資格情報として表示し、適用範囲を誤認させる"
   // observable = "API key label、placeholder、Character Streamを除外したfuture scope note"
@@ -31,7 +31,7 @@ describe("Settings UI constants", () => {
   // lifecycle = "permanent"
   // @end-test-value
   it("coding credential の API key 文言は coding plane 専用だと分かる", () => {
-    assert.equal(SETTINGS_API_KEY_LABEL, "OpenAI API key (coding agent)");
+    assert.equal(SETTINGS_API_KEY_LABEL, "OpenAIApiKey");
     assert.equal(SETTINGS_API_KEY_PLACEHOLDER, "Enter the OpenAI API key for the coding agent");
     assert.match(SETTINGS_CODING_CREDENTIALS_HELP, /Character Stream/);
     assert.match(SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE, /future scope/);
@@ -68,26 +68,26 @@ describe("Settings UI constants", () => {
   // lifecycle = "permanent"
   // @end-test-value
   it("Memory file quota は Protected Object の append 制約として説明する", () => {
-    assert.equal(SETTINGS_MEMORY_FILE_QUOTA_LABEL, "Memory file quota");
+    assert.equal(SETTINGS_MEMORY_FILE_QUOTA_LABEL, "MemoryFileQuota");
     assert.match(SETTINGS_MEMORY_FILE_QUOTA_HELP, /protected objects/);
     assert.match(SETTINGS_MEMORY_FILE_QUOTA_HELP, /file append/);
   });
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Session turn notificationのlabelはWindows通知であることとresponse previewの範囲を示す"
+  // claim = "Session turn notificationのapp-owned labelはPascalCaseで設定対象を識別し、response preview labelも同じ規則を使う"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
-  // fault = "通知対象OSまたはresponse previewの意味を隠し、別の通知設定と誤認させる"
+  // fault = "通知設定とresponse preview設定のlabelを取り違え、別の設定対象と誤認させる"
   // observable = "Session turn notification labelとresponse preview label"
   // observation_boundary = "public-boundary"
   // scope = "settings-ui session notification wording"
   // lifecycle = "permanent"
   // @end-test-value
-  it("Session turn notification は Windows 通知だと分かる", () => {
-    assert.equal(SETTINGS_SESSION_TURN_NOTIFICATION_LABEL, "Show a Windows notification when a session turn finishes");
+  it("Session turn notification はPascalCase labelで設定対象を識別する", () => {
+    assert.equal(SETTINGS_SESSION_TURN_NOTIFICATION_LABEL, "SessionTurnNotification");
     assert.equal(
       SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
-      "Show the start of the response in the Windows notification",
+      "NotificationResponsePreview",
     );
   });
 

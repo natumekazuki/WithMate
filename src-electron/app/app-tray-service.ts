@@ -46,7 +46,7 @@ export class AppTrayService {
     tray.setToolTip("WithMate");
     tray.setContextMenu(this.deps.buildMenu([
       {
-        label: "Show WithMate",
+        label: "ShowWithMate",
         click: () => {
           void this.showHomeWindow();
         },

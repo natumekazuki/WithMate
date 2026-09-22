@@ -386,7 +386,7 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
     assert.ok(preview);
     assert.equal(preview.getAttribute("aria-busy"), "true");
     assert.equal(preview.querySelector(".session-file-preview-title strong")?.textContent, "notes.txt");
-    assert.equal(preview.querySelector("[role='status']")?.textContent, "Inspecting file");
+    assert.equal(preview.querySelector("[role='status']")?.getAttribute("aria-label"), "Inspecting file");
     assert.ok(preview.querySelector(".session-file-preview-spinner[aria-hidden='true']"));
 
     await act(async () => inspectGate.resolve(descriptor));
@@ -398,7 +398,7 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
     assert.equal(preview.querySelector(".session-file-preview-title strong")?.textContent, "notes.txt");
     assert.equal(progress.max, bytes.byteLength);
     assert.equal(progress.value, 0);
-    assert.equal(preview.querySelector("[role='status'] .visually-hidden")?.textContent, "Loading file content");
+    assert.equal(preview.querySelector("[role='status']")?.getAttribute("aria-label"), "Loading file content");
 
     await act(async () => readGate.resolve());
     await waitFor(() => preview.querySelector(".session-file-text-scroll") !== null);
@@ -458,13 +458,14 @@ test("File Previewのtoolbar actionは実行中operationを直列化する", asy
     const openButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent === "Open");
     const revealButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent === "Show in Explorer");
+      .find((button) => button.textContent === "ShowInExplorer");
     assert.ok(preview);
     assert.ok(openButton);
     assert.ok(revealButton);
 
     await act(async () => openButton.click());
-    assert.equal(openButton.textContent, "Opening…");
+    assert.ok(openButton.querySelector(".session-file-preview-action-spinner"));
+    assert.equal(openButton.querySelector(".visually-hidden")?.textContent, "Opening file");
     assert.equal(openButton.disabled, true);
     assert.equal(revealButton.disabled, true);
     assert.equal(preview.getAttribute("aria-busy"), "true");
@@ -486,7 +487,8 @@ test("File Previewのtoolbar actionは実行中operationを直列化する", asy
 
     await act(async () => revealButton.click());
     assert.equal(revealCalls, 1);
-    assert.equal(revealButton.textContent, "Showing…");
+    assert.ok(revealButton.querySelector(".session-file-preview-action-spinner"));
+    assert.equal(revealButton.querySelector(".visually-hidden")?.textContent, "Showing file in Explorer");
     await act(async () => {
       revealResult.resolve({
         status: "revealed",
@@ -496,7 +498,7 @@ test("File Previewのtoolbar actionは実行中operationを直列化する", asy
       });
       await revealResult.promise;
     });
-    await waitFor(() => revealButton.textContent === "Show in Explorer");
+    await waitFor(() => revealButton.textContent === "ShowInExplorer");
     assert.equal(preview.getAttribute("aria-busy"), null);
   } finally {
     if (root) {
@@ -548,10 +550,10 @@ test("File Preview はcopy availability APIが有効な場合だけCopy Fileを�
     assert.ok(container);
     root = await renderPreview(api, container, IMAGE_DESCRIPTOR);
     await waitFor(() => Array.from(container.querySelectorAll("button"))
-      .some((button) => button.textContent === "Copy image"));
+      .some((button) => button.textContent === "CopyImage"));
     const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
-    assert.ok(buttons.some((button) => button.textContent === "Copy image"));
-    const copyFile = buttons.find((button) => button.textContent === "Copy file");
+    assert.ok(buttons.some((button) => button.textContent === "CopyImage"));
+    const copyFile = buttons.find((button) => button.textContent === "CopyFile");
     assert.ok(copyFile);
     await act(async () => {
       copyFile.click();
@@ -598,7 +600,7 @@ test("File Preview はcopy availability APIが有効な場合だけCopy Fileを�
       }));
     });
     assert.equal(Array.from(container.querySelectorAll("button"))
-      .some((button) => button.textContent === "Copy file"), false);
+      .some((button) => button.textContent === "CopyFile"), false);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -739,11 +741,11 @@ test("commit file preview は通常previewを再利用しworking tree操作を�
     assert.ok(container);
     root = await renderPreview(api, container, request);
     await waitFor(() => container.textContent?.includes("const version = 'commit';") === true);
-    assert.match(container.querySelector(".session-file-preview-title")?.textContent ?? "", /current\.tsCommit aaaaaaa/);
+    assert.match(container.querySelector(".session-file-preview-title")?.textContent ?? "", /current\.tsCommitaaaaaaa/);
     const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
     assert.equal(labels.includes("Open"), false);
-    assert.equal(labels.includes("Show in Explorer"), false);
-    assert.equal(labels.includes("Copy file"), false);
+    assert.equal(labels.includes("ShowInExplorer"), false);
+    assert.equal(labels.includes("CopyFile"), false);
     assert.equal(labels.includes("Reload"), true);
   } finally {
     if (root) {
@@ -820,9 +822,9 @@ test("binary commit file preview はmetadata内にもworking tree操作を表示
     await waitFor(() => container.querySelector(".session-file-preview-metadata") !== null);
     const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
     assert.equal(labels.includes("Open"), false);
-    assert.equal(labels.includes("Open in default app"), false);
-    assert.equal(labels.includes("Show in Explorer"), false);
-    assert.equal(labels.includes("Copy file"), false);
+    assert.equal(labels.includes("OpenInDefaultApp"), false);
+    assert.equal(labels.includes("ShowInExplorer"), false);
+    assert.equal(labels.includes("CopyFile"), false);
     assert.equal(labels.includes("Reload"), true);
   } finally {
     if (root) {
@@ -1250,7 +1252,8 @@ test("File PreviewのReload busyはrequest完了まで保持される", async ()
     assert.ok(reload);
 
     await act(async () => reload.click());
-    await waitFor(() => reload.textContent === "Reloading…");
+    await waitFor(() => reload.querySelector(".session-file-preview-action-spinner") !== null);
+    assert.equal(reload.querySelector(".visually-hidden")?.textContent, "Reloading");
     assert.equal(reload.disabled, true);
     assert.equal(preview.getAttribute("aria-busy"), "true");
 
@@ -1770,7 +1773,7 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
       toJSON() {},
     });
     const copyButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent === "Copy image");
+      .find((button) => button.textContent === "CopyImage");
     assert.ok(copyButton);
 
     await act(async () => copyButton.click());
@@ -2018,10 +2021,10 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
       onOpenDiff: () => diffResult.promise,
     });
     await waitFor(() => Array.from(container.querySelectorAll("button"))
-      .some((button) => button.textContent === "Open diff"));
+      .some((button) => button.textContent === "OpenDiff"));
     const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
     const openButton = buttons.find((button) => button.textContent === "Open");
-    const diffButton = buttons.find((button) => button.textContent === "Open diff");
+    const diffButton = buttons.find((button) => button.textContent === "OpenDiff");
     assert.ok(openButton);
     assert.ok(diffButton);
     await act(async () => {
@@ -2266,7 +2269,7 @@ test("Git Diffは新しい対象の初回取得だけ本文spinnerへ切り替�
     assert.equal(preview.querySelector(".session-file-preview-spinner"), null);
     assert.ok(preview.querySelector(".session-live-diff-split"));
     const pendingReload = [...preview.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "Reloading…");
+      .find((button) => button.querySelector(".session-file-preview-action-spinner") !== null);
     assert.equal(pendingReload?.disabled, true);
   } finally {
     if (root) {
@@ -2418,7 +2421,7 @@ test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", a
     assert.equal(container.querySelector("button.is-active")?.textContent, "Split");
 
     const openPreviewButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent === "Open preview");
+      .find((button) => button.textContent === "OpenPreview");
     assert.ok(openPreviewButton);
     await act(async () => {
       openPreviewButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));

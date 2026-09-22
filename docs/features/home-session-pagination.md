@@ -2,7 +2,7 @@
 
 ## 概要
 
-Home WindowのRecent Sessionsは、Session本文を含む全件読込ではなく、一覧表示に必要なsummaryをpage単位で取得します。Session数が増えても、Home起動時のdatabase読込とrendererへの転送量を一定範囲へ抑えます。
+Home Windowの`RecentSessions`は、Session本文を含む全件読込ではなく、一覧表示に必要なsummaryをpage単位で取得します。Session数が増えても、Home起動時のdatabase読込とrendererへの転送量を一定範囲へ抑えます。
 
 ## 一覧の読込
 

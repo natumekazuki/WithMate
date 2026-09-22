@@ -68,7 +68,7 @@ export type ShortcutHandler = (context: ShortcutHandlerContext) => boolean | voi
 
 const SHORTCUT_SCOPE_LABELS: Record<string, string> = {
   "message-list": "Messages",
-  "file-preview": "File preview",
+  "file-preview": "FilePreview",
   composer: "Composer",
   session: "Session",
   settings: "Settings",
@@ -119,7 +119,7 @@ function getKeyboardShortcutPolicyEntries(
 export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.messageFind),
-    label: "Find messages",
+    label: "FindMessages",
     kind: "standard",
     allowInEditingTarget: true,
     allowRepeat: false,
@@ -129,7 +129,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   },
   {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.messageCloseFind),
-    label: "Close message search",
+    label: "CloseMessageSearch",
     kind: "standard",
     allowInEditingTarget: true,
     allowRepeat: false,
@@ -139,7 +139,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   },
   {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.messageToggleCollapse),
-    label: "Toggle message collapse",
+    label: "ToggleMessageCollapse",
     kind: "withmate",
     allowInEditingTarget: true,
     allowRepeat: false,
@@ -149,7 +149,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   },
   {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.messageToggleViewMode),
-    label: "Toggle Preview / Source",
+    label: "TogglePreviewSource",
     kind: "withmate",
     allowInEditingTarget: false,
     allowRepeat: false,
@@ -159,7 +159,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   },
   {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.conversationToggleTarget),
-    label: "Toggle Main / Auxiliary",
+    label: "ToggleMainAuxiliary",
     kind: "withmate",
     allowInEditingTarget: false,
     allowRepeat: false,
@@ -169,7 +169,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   },
   {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.filePreviewFind),
-    label: "Find in file preview",
+    label: "FindInFilePreview",
     kind: "standard",
     allowInEditingTarget: true,
     allowRepeat: false,
@@ -179,7 +179,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   },
   {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.filePreviewClose),
-    label: "Close file preview or search",
+    label: "CloseFilePreviewOrSearch",
     kind: "standard",
     allowInEditingTarget: true,
     allowRepeat: false,
@@ -189,7 +189,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   },
   {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.filePreviewSelectAll),
-    label: "Select all preview text",
+    label: "SelectAllPreviewText",
     kind: "standard",
     allowInEditingTarget: false,
     allowRepeat: false,
@@ -199,7 +199,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   },
   {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.composerSubmit),
-    label: "Send message",
+    label: "SendMessage",
     kind: "withmate",
     allowInEditingTarget: true,
     editingTargetScope: "composer",

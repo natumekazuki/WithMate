@@ -9,6 +9,14 @@ export function renderHomeSearchIcon() {
   );
 }
 
+export function renderHomePlusIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M9 3h2v6h6v2h-6v6H9v-6H3V9h6V3Z" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function renderHomeMonitorWindowIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">

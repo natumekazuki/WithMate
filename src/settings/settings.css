@@ -39,13 +39,21 @@
 .settings-loading-state {
   display: grid;
   place-items: center;
-  gap: 10px;
   min-height: 240px;
   padding: 24px;
   color: var(--muted);
 }
 
+.settings-loading-inline {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1rem;
+  color: var(--muted);
+}
+
 .settings-action-spinner {
+  display: inline-block;
+  flex: 0 0 auto;
   width: 1rem;
   height: 1rem;
   border: 2px solid currentColor;
@@ -93,7 +101,7 @@
 .settings-panel,
 .settings-section {
   display: grid;
-  gap: 18px;
+  gap: 24px;
   min-height: 0;
 }
 
@@ -139,21 +147,28 @@
 
 .settings-section-card {
   display: grid;
-  gap: 14px;
-  padding: 16px;
-  border: 1px solid rgba(203, 213, 225, 0.12);
-  border-radius: 18px;
-  background: rgba(10, 14, 20, 0.72);
+  gap: 16px;
+  padding: 24px 0 0;
+  border: 0;
+  border-top: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-section > .settings-section-card:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .settings-section-card.danger-zone {
   border-color: rgba(255, 124, 124, 0.22);
-  background: rgba(65, 22, 29, 0.34);
+  background: transparent;
 }
 
 .settings-field strong {
-  font-size: 0.82rem;
-  color: var(--muted);
+  color: var(--ink);
+  font-size: 0.98rem;
+  line-height: 1.3;
 }
 
 .settings-field textarea {
@@ -167,10 +182,6 @@
   color: var(--ink);
   font: inherit;
   line-height: 1.55;
-}
-
-.settings-field textarea.settings-microcopy-textarea {
-  min-height: 86px;
 }
 
 .settings-field input {
@@ -309,7 +320,7 @@
 
 .settings-provider-list {
   display: grid;
-  gap: 12px;
+  gap: 20px;
 }
 
 .settings-memory-actions {
@@ -512,11 +523,17 @@
 
 .settings-provider-card {
   display: grid;
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid rgba(203, 213, 225, 0.12);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.04);
+  gap: 16px;
+  padding: 0 0 20px;
+  border: 0;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.1);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-provider-card:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .settings-provider-toggle-card {
@@ -525,8 +542,8 @@
 
 .settings-provider-file-settings {
   display: grid;
-  gap: 10px;
-  padding-top: 12px;
+  gap: 12px;
+  padding-top: 16px;
   border-top: 1px solid rgba(203, 213, 225, 0.1);
 }
 
@@ -718,22 +735,11 @@
   gap: 8px;
 }
 
-.settings-action-busy::before {
-  width: 0.8em;
-  height: 0.8em;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  content: "";
-  animation: settings-action-spin 720ms linear infinite;
-}
-
 @keyframes settings-action-spin {
   to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-action-busy::before,
   .settings-action-spinner {
     animation: none;
     border-right-color: currentColor;

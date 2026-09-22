@@ -286,7 +286,7 @@ export function DiffViewer({ file }: DiffViewerProps) {
             type="button"
             onClick={() => setViewMode("split")}
           >
-            Side by side
+            SideBySide
           </button>
           <button
             className={viewMode === "inline" ? "active" : ""}

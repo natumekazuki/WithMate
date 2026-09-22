@@ -114,6 +114,68 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
   });
 
   // @test-value v2
+  // kind = "contract"
+  // claim = "Git checkout解決の非適用と真の解決失敗をGlossary projectionの別stateへ投影する"
+  // oracle = { type = "contract", ref = "src-shared/glossary/glossary-contract.ts; src-electron/glossary/glossary-session-projection-service.ts" }
+  // fault = "非Git workspaceをwatch-errorとして表示するか、Git解決の真の失敗を正常な非適用として隠す"
+  // observable = "projection state status、not-applicable reason、watch-error message"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-not-applicable-checkout"
+  // lifecycle = "permanent"
+  // distinction = "Git rev-parseの固定locale診断と、同じexit codeの真の解決失敗を同じprojection入力で比較する"
+  // @end-test-value
+  it("非Git checkoutはnot-applicableへ、別のGit解決失敗はwatch-errorへ投影する", async () => {
+    const nonGitRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-glossary-non-git-"));
+    temporaryDirectories.push(nonGitRoot);
+    const session = {
+      id: "session-non-git",
+      provider: "codex",
+      workspacePath: nonGitRoot,
+      workspaceLabel: "non-git-workspace",
+      branch: "",
+    };
+    const createService = (runGit: (cwd: string, args: readonly string[]) => Promise<string>) => new GlossarySessionProjectionService({
+      applicationService: new GlossaryApplicationService({
+        runGit,
+      }),
+      getSession: () => session,
+      getBindingGeneration: () => null,
+      subscribeBindingChanges: () => () => undefined,
+    });
+
+    const notApplicable = await new GlossarySessionProjectionService({
+      applicationService: new GlossaryApplicationService(),
+      getSession: () => session,
+      getBindingGeneration: () => null,
+      subscribeBindingChanges: () => () => undefined,
+    }).load(session.id);
+    assert.equal(notApplicable.state.status, "not-applicable");
+    if (notApplicable.state.status === "not-applicable") {
+      assert.equal(notApplicable.state.reason, "not-git");
+    }
+
+    const failed = await createService(async () => {
+      throw Object.assign(new Error("fatal: detected dubious ownership in repository"), {
+        code: 128,
+        stderr: "fatal: detected dubious ownership in repository",
+      });
+    }).load(session.id);
+    assert.equal(failed.state.status, "watch-error");
+    if (failed.state.status === "watch-error") {
+      assert.equal(failed.state.message, "fatal: detected dubious ownership in repository");
+    }
+
+    await mkdir(path.join(nonGitRoot, ".git"));
+    const malformedCheckout = await new GlossarySessionProjectionService({
+      applicationService: new GlossaryApplicationService(),
+      getSession: () => session,
+      getBindingGeneration: () => null,
+      subscribeBindingChanges: () => () => undefined,
+    }).load(session.id);
+    assert.equal(malformedCheckout.state.status, "watch-error");
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "並行watch deliveryは新しいeventを優先し遅れて完了した古いstateを破棄する"
   // oracle = { type = "contract", ref = "src-electron/glossary/glossary-session-projection-service.ts: watch delivery" }

@@ -12,7 +12,6 @@ import {
   type ProviderAppSettings,
 } from "../../src-shared/settings/provider-settings-state.js";
 import { coerceModelSelection, type ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
-import type { MicrocopySlot } from "../../src-shared/settings/microcopy-state.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 
 export function updateMemoryGenerationEnabled(
@@ -155,20 +154,6 @@ export function updateGlossaryProactiveCreateLimitDraft(
       )
     : null;
   return { ...draft, glossaryProactiveCreateLimit: limit };
-}
-
-export function updateUserMicrocopySlotDraft(
-  draft: AppSettings,
-  slot: MicrocopySlot,
-  rawValue: string,
-): AppSettings {
-  return {
-    ...draft,
-    userMicrocopyCatalog: {
-      ...draft.userMicrocopyCatalog,
-      [slot]: rawValue,
-    },
-  };
 }
 
 export function updateCodingProviderEnabledDraft(

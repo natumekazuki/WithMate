@@ -6,7 +6,7 @@ Session数やmessage数が増えた場合の操作遅延を抑えるため、Hom
 
 ## Home Session一覧
 
-Recent Sessionsはsummary page単位で取得します。Home起動や一覧更新のたびに、全Sessionのmessage本文とJSON columnを展開しません。
+`RecentSessions`はsummary page単位で取得します。Home起動や一覧更新のたびに、全Sessionのmessage本文とJSON columnを展開しません。
 
 詳細は[Home Session一覧のpagination](home-session-pagination.md)を参照してください。
 

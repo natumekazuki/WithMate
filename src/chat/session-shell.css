@@ -1003,12 +1003,38 @@
 }
 
 .chat-skill-picker-spinner {
+  display: inline-block;
+  flex-shrink: 0;
   width: 24px;
   height: 24px;
   border: 3px solid color-mix(in srgb, var(--ink) 24%, transparent);
   border-top-color: var(--ink);
   border-radius: 50%;
   animation: workspace-changes-spin 720ms linear infinite;
+}
+
+/* A compact running dock keeps only motion and controls visible. The
+   visually-hidden status announcement remains available to assistive tech. */
+.session-page .session-action-dock-compact-row.running {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.session-page .session-action-dock-compact-row.running .session-action-dock-compact-actions {
+  justify-content: flex-end;
+}
+
+.session-page .session-action-dock-compact-row.running
+  .session-action-dock-compact-progress .pending-run-indicator {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+@media (max-width: 760px) {
+  .session-page .session-action-dock-compact-row.running {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .prompt-template-picker {
@@ -1223,9 +1249,6 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 16px;
-  background: rgba(8, 12, 20, 0.82);
   overflow: hidden;
 }
 
@@ -1383,6 +1406,12 @@
   border-radius: 16px;
   background: rgba(8, 12, 20, 0.88);
   color: var(--ink);
+}
+
+.session-page .session-file-preview {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .session-file-preview-header {

@@ -338,13 +338,15 @@ export function FileRootChangesPane({
     }
   };
 
+  const visibleRootChanges = rootChanges.filter((rootChange) => rootChange.status !== "empty");
+
   return (
     <div className="workspace-changes-pane">
       {repositoryMessage ? <p className="workspace-changes-message" role="alert">{repositoryMessage}</p> : null}
       {message ? <p className="workspace-changes-message" role="alert">{message}</p> : null}
-      {rootChanges.length > 0 ? (
+      {visibleRootChanges.length > 0 ? (
         <div className="workspace-changes-groups" role="list" aria-label="File root changes">
-          {rootChanges.map((rootChange) => (
+          {visibleRootChanges.map((rootChange) => (
             <FileRootChangesGroup
               key={`${sessionId ?? ""}:${rootChange.root.id}`}
               rootChange={rootChange}
@@ -357,16 +359,16 @@ export function FileRootChangesPane({
           ))}
         </div>
       ) : repositoriesLoading || repositoryDiscoveryState === "pending" ? (
-        <div className="workspace-changes-discovery-loading" role="status" aria-live="polite">
+        <div
+          className="workspace-changes-discovery-loading"
+          role="status"
+          aria-live="polite"
+          aria-label="Discovering Git repositories"
+        >
           <span className="workspace-changes-spinner" aria-hidden="true" />
-          <span className="visually-hidden">Discovering Git repositories</span>
         </div>
-      ) : repositoryDiscoveryState === "unavailable" ? (
-        <p className="workspace-changes-empty">Changes are not available.</p>
       ) : repositoryDiscoveryState === "error" && !message && !repositoryMessage ? (
         <p className="workspace-changes-message" role="alert">Changes could not be loaded.</p>
-      ) : !message && !repositoryMessage ? (
-        <p className="workspace-changes-empty">No Git repositories.</p>
       ) : null}
     </div>
   );

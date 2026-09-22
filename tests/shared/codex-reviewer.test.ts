@@ -10,11 +10,13 @@ import {
 } from "../../src-shared/settings/codex-reviewer.js";
 import { buildSessionWithApprovalMode } from "../../src/settings/runtime-option-state.js";
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "Reviewerの未知値はUserへ正規化され、SDK値とCodex限定の選択肢へ一意に変換される"
-// oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-1" }
-// failure_mode = "未知値がAuto-reviewへ昇格する、SDKへ誤った値を渡す、または非Codex providerにReviewerを表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+// fault = "未知値がAutoReviewへ昇格する、SDKへ誤った値を渡す、または非Codex providerにReviewerを表示する"
+// observable = "normalizeCodexReviewerの正規化値、SDKへの変換値、provider別選択肢"
+// observation_boundary = "public-boundary"
 // scope = "codex-reviewer"
 // lifecycle = "permanent"
 // @end-test-value
@@ -26,7 +28,7 @@ test("Reviewerを正規化してSDK値とprovider別選択肢へ写像する", (
   assert.equal(mapCodexReviewerToApprovalsReviewer("auto-review"), "auto_review");
   assert.deepEqual(getCodexReviewerOptions("codex"), [
     { value: "user", label: "User" },
-    { value: "auto-review", label: "Auto-review" },
+    { value: "auto-review", label: "AutoReview" },
   ]);
   assert.deepEqual(getCodexReviewerOptions("copilot"), []);
 });

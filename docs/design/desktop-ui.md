@@ -32,12 +32,13 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 
 ## 表示言語・操作・状態
 
-- アプリ所有の表示文、tooltip、placeholder、accessible name、status、自前のerror・native labelは英語のsentence caseを使う。ブランドとAPI / CLI / JSON / MCP / URL / HEAD等の正式表記は維持し、装飾的なuppercaseを付けない。
-- 現役6 HTML entryのshellは`lang="en"`とする。会話、ユーザーtitle、Character定義、テンプレート本文、custom microcopy、ファイル内容・path、raw診断、Provider指示は原文を維持する。表示用の日時・件数には英語localeを明示し、ローカルtime zone、保存値、parse、sort、raw copyを変更しない。
+- アプリ所有の短い表示文、見出し、label、button、option、status名はPascalCase（空白なし）を使う。長いerror・safety説明、screen reader向けの自然文、ユーザーが入力・生成する内容は読みやすい文章を維持する。検索inputのplaceholderは表示せず、accessible nameは残す。ブランドとAPI / CLI / JSON / MCP / URL / HEAD等の正式表記は維持する。
+- 現役6 HTML entryのshellは`lang="en"`とする。会話、ユーザーtitle、Character定義、テンプレート本文、保存済みcustom microcopy、ファイル内容・path、raw診断、Provider指示は原文と保存値を維持する。表示用の日時・件数には英語localeを明示し、ローカルtime zone、保存値、parse、sort、raw copyを変更しない。microcopyの編集面はcurrent Settings UIに含めない。
 - 対象が明確なtoolbar操作は既存iconを使い、英語の操作名・対象、focus、busy、toggle状態を残す。Save等の主CTA、Approve / Reject、Forget、GC、全削除、最終確認は必要な可視labelと影響説明を保つ。
 - 同一対象・同一requestの待機表現を集約する。未取得、pending、利用不可、正常0件、失敗を区別し、Mainと複数Auxiliary、一覧取得とrun、Audit refreshとpaginationの状態を混ぜない。承認・入力待ちは次の操作と要求本文を示す。
+- 正常0件、検索0件、情報のないpane/listの本文は空にする。既存shell、必要な見出し、create/restore等の操作、accessible nameは残し、未取得・読込中・取得失敗は正常0件と混同しない。読込中は対象領域のspinnerとaccessible status/busyへ集約し、取得失敗・validation・安全・回復に必要な説明と操作は残す。
 - 局所的なmotionを使い、reduced motionでは止まった形状とaccessible statusでも状態を識別できるようにする。spinnerのために処理完了を遅らせず、実際に成功した後だけ完了を示す。通知は意味のある遷移へ絞り、会話本文や全カードを重複して読み上げない。
-- 正常状態や操作を言い換えただけの常設説明は省略する。未保存・保存中・失敗・回復は残し、新しい編集に古い保存成功を表示しない。`Stop`はrunの停止要求、`Cancel`は現在操作の取消、`Close`はWindow等を閉じる操作、`Quit`はアプリ終了と区別する。
+- 同じ事実を見出し、label、status、helper文で重ねない。正常状態や操作を言い換えただけの常設説明は省略する。未保存・保存中・失敗・回復は残し、新しい編集に古い保存成功を表示しない。`Stop`はrunの停止要求、`Cancel`は現在操作の取消、`Close`はWindow等を閉じる操作、`Quit`はアプリ終了と区別する。
 
 ## UI Implementation Boundary
 
@@ -75,33 +76,33 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 黒基調の管理ハブとして表示する
 - `Settings` は別 window で開く前提のため、Home は session / Character catalog 管理ハブを優先する
 - 2 カラム構成
-  - 左: `Recent sessions`
-  - 右: `Memory / Settings` rail + `Session Monitor` または `Characters`
-- `Recent sessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
+  - 左: `RecentSessions`
+  - 右: `Memory / Settings` rail + `SessionMonitor` または `Characters`
+- `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
-- `Session Monitor`
+- `SessionMonitor`
   - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
-  - 初期表示は `Session Monitor`
-  - 親Session単位の2行集約カードを表示する。1行目はdisclosure、avatar、親title、2行目は`Main`と、Auxiliaryが存在する場合だけ`Aux`の状態アイコンを表示する
-  - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`Recent sessions` と同じ filtered session list の交差集合を使う
+  - 初期表示は `SessionMonitor`
+  - 意味のある親Session cardを2行まとまりで表示する。1行目はdisclosure、avatar、親title、2行目は`Main`と、Auxiliaryが存在する場合だけ`Aux`の状態アイコンを表示し、装飾目的の入れ子cardは作らない
+  - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`RecentSessions` と同じ filtered session list の交差集合を使う
   - section
-    - `実行中`: `running`
-    - `停止・完了`: `interrupted` / `error` / `neutral` を含む non-running
+    - `Running`: `running`
+    - `Stopped`: `interrupted` / `error` / `neutral` を含む non-running
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
-  - Auxiliary一覧の取得状態はMonitor領域のstatus feedbackで示す。未取得の親カードに架空のAuxiliary集約を作らず、既に取得したsummaryがある場合は既知のrun状態を保持して取得errorと区別する
-  - open な SessionWindow がないときは、その旨が分かる empty state を出す
-  - `Monitor Window` button から独立した monitor window を開ける
-- `Recent sessions`
-  - section action として `New session`
+  - Auxiliary一覧の取得状態はMonitor領域のstatus feedbackで示す。未取得の親cardに架空のAuxiliary集約を作らず、既に取得したsummaryがある場合は既知のrun状態を保持して取得errorと区別する
+  - open な SessionWindow がないときは、正常なempty本文を出さず、Monitorのshellと必要なstatus/accessibilityだけを保つ
+  - `MonitorWindow` button から独立した monitor window を開ける
+- `RecentSessions`
+  - section action として＋iconの`NewSession`を置く。保存済みWindowの復元操作は`RestoreSessions`とする
   - resume picker
-  - session search input
+  - session search input（placeholderは表示しない。accessible nameは残す）
     - `taskTitle / workspace / kind label`
     - 部分一致
-  - card list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない
+  - session list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない。検索0件でも本文を埋める説明文は出さない
   - `sessionKind === "character-authoring"` の Character authoring session は通常 session と同じ削除・再開導線へ到達できるよう表示する
-  - card 常時表示情報
+  - session card の常時表示情報
     - `avatar / taskTitle / runState badge / workspacePath / updatedAt`
     - `taskSummary` は 1 行補助情報として、空なら省略可
   - Home の state precedence
@@ -115,19 +116,19 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
     - left accent bar = mate `sub`
     - text color = WCAG AA の contrast ratio を満たす dark / light 候補から自動決定
 - `Characters`
-  - right pane 上部の segmented toggle で `Session Monitor` と排他的に切り替える
-  - Character catalog の active Character を card list で表示する
-  - header に `Create` を置く
-  - card には avatar / name / description / updatedAt / `Edit` を表示する
-  - card click または `Edit` で `Character Editor Window` を開く
-  - Character 0 件時は empty state と `Create Character` を表示する
+  - right pane 上部の segmented toggle で `SessionMonitor` と排他的に切り替える
+  - Character catalog の active Character は意味のある card item として表示する。必要な識別情報と操作をまとめるが、入れ子の装飾cardは作らない
+  - header に＋iconの`CreateCharacter`を置く
+  - card には avatar / name / description（空なら Character ID）を表示する
+  - card click で `Character Editor Window` を開く
+  - Character 0 件または検索0件時は本文を空にし、headerの`CreateCharacter`と検索inputのaccessible nameを残す
   - Home には archive / delete を置かない
   - `Your Mate` / MateTalk launcher / Mate Profile 編集導線は表示しない
   - card theme
     - background = Character `main`
     - left accent bar = Character `sub`
     - text color = WCAG AA の contrast ratio を満たす dark / light 候補から自動決定
-- `New session` dialog
+- `NewSession` dialog
   - session title 入力
   - Agent Mode の workspace は既存 directory を選ぶ `Browse` と、WithMate 管理下の directory を開始時に作る `SessionFolder` から選ぶ
   - enabled provider の選択
@@ -143,11 +144,13 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - header copy や `Home / Close` は置かず、内容本体と保存 footer に分ける
   - 本文は inner scroll で流し、shell の角丸と scrollbar が干渉しないようにする
   - `Session Window`
-    - `Close the action dock after sending`
-  - `Default microcopy`
-  - `Coding agent providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える
+    - `CloseActionDockAfterSend`
+  - `PromptContext` の4項目を個別に切り替える。説明だけのhelper文やHelp iconは常設しない
+  - `CodingAgentProviders` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える。sectionやproviderを装飾cardで入れ子にしない
   - `Diagnostics`
-  - `Model catalog` import / export
+  - `ModelCatalog` import / export
+  - `RepositoryGlossary` の自動追加上限
+  - `StorageMaintenance` のDB reset / 古いSession削除
   - 縦が小さいときも overlay 内スクロールで末尾まで操作できる
 
 ## Character Editor Window
@@ -171,12 +174,12 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `character.md`
   - runtime definition の正本である説明
   - save 前 validation issue。正常時の validation 宣言は常設しない
-  - raw markdown editor
+  - raw markdown editor。file名はaccessible labelとして保持するが、visible headingとruntime説明を重複表示しない
   - import / replace
 - `character-notes.md`
   - authoring notes / evidence / revision notes 用である説明
-  - V5 Core では runtime prompt に常設注入しない境界説明
-  - raw markdown editor
+  - V5 Core では runtime prompt に常設注入しない境界は契約として維持するが、editor内で同じ説明を常設表示しない
+  - raw markdown editor。file名はaccessible labelとして保持するが、visible headingとnotes説明を重複表示しない
 - `Preview`
   - Home card preview
   - launch selector row preview
@@ -195,15 +198,15 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 既定サイズは細く縦長の compact window とする
 - `always on top` を初期 slice から有効にする
 - renderer は `HomeApp` の compact monitor mode を再利用する
-- 表示内容は Home 右ペインの `Session Monitor` と同じ truth source を使う
+  - 表示内容は Home 右ペインの `SessionMonitor` と同じ truth source を使う
   - open な `Session Window` のみ表示する
-  - `Running` / `Stopped or completed` の 2 section を持つ
-  - 表示単位は親Sessionの集約カードとし、親カードを2行で固定する。1行目はdisclosure、avatar、親title、2行目は`Main`と`Aux`の状態アイコンを表示する
+  - `Running` / `Stopped` の 2 section を持つ
+  - 表示単位は意味のある親Session cardの2行まとまりとし、親cardを2行で固定する。1行目はdisclosure、avatar、親title、2行目は`Main`と`Aux`の状態アイコンを表示する。装飾目的の入れ子cardは作らない
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
-  - `running` はaccent色のspinner、待機と終了はsubduedな中空円、errorはwarning triangleで表し、カード点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
-  - Auxiliaryが存在する親だけdisclosureと`Aux`集約を表示し、Auxiliaryがない場合もMainだけの2行を維持する。展開時は親カード内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
+  - `running` はaccent色のspinner、待機と終了はsubduedな中空円、errorはwarning triangleで表し、cardの点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
+  - Auxiliaryが存在する親だけdisclosureと`Aux`集約を表示し、Auxiliaryがない場合もMainだけの2行を維持する。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
   - Auxiliaryの状態集約では`Running`、`Error`、`Idle`、`Closed`を別々に数え、closed Auxiliaryをidleへ変換しない。idleとclosedは同じ円形だが、状態ラベルと集約を分ける。interruptedとerrorも別の形状で表示する
-  - section countは親カード数とし、Auxiliaryをtop-level rowとして重複表示しない。親の状態はMainとAuxiliaryを分離して保持し、Auxiliaryのいずれかが実行中なら親カードを`Running`へ分類する
+  - section countは親card group数とし、Auxiliaryをtop-level rowとして重複表示しない。親の状態はMainとAuxiliaryを分離して保持し、Auxiliaryのいずれかが実行中なら親card groupを`Running`へ分類する
   - 親titleは既存の親Windowを開き、Auxiliary rowは同じ親Windowを指定したstable Auxiliary IDで開いて選択する。対象が消えた、親が一致しない、Windowを開けない場合はfallbackせずMonitor内へ失敗を返す
   - 展開状態は親kindとstable IDごとのWindow local stateとし、複数親を同時に展開できる。再描画、状態更新、section移動で失わず、Homeと独立Monitor Windowの間で永続化・同期しない
 - window 内の `Home` button から通常の `Home Window` を前面へ戻せる
@@ -218,7 +221,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 新しい会話機能を追加する場合も、chat layout 実装を増やさず、Session UI の mode を追加する
 - session title の rename / delete
 - `Audit log` overlay
-  - approval 表示は `Auto-run / Safety-focused / Provider-controlled` の provider-neutral wording を使う
+  - approval 表示は `AutoRun / ProviderControlled / SafetyFocused` の provider-neutral wording を使う
 - `Work Chat`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
@@ -230,7 +233,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - title 編集などの強制表示は保存済み preference を変更しない
   - wide layout では中央 surface の最小高さを160pxとし、中央が160px未満になるサイズでは中央を高さ0で非表示にする。ActionDockの高さはHeaderとsplitter以外の残余高まで使用できる。narrow layoutではactive side paneとwork surfaceの縦stackを維持する
   - work surface: `message list または file / live Git Diff preview`
-  - context pane: `Latest command`
+  - context pane: `LatestCommand`
   - 左右splitterはclickで開閉し、開いた領域をdragと矢印キーでサイズ調整する。幅0でもclick用の操作領域を残す
   - 中央が高さ0の間はHeaderとActionDockのsplitterだけを表示し、それ以外のsplitterは操作不可とする
   - ActionDockの展開時最小高さは320pxとし、実行設定は常時表示する。展開時もtextarea自体は最低100pxを保ち、feedbackの高さは別に確保する。添付・候補一覧は既存の高さ上限内で表示し、縮めて消さない。高さが不足する場合は内部スクロールで設定と送信操作へ到達できるようにする
@@ -284,7 +287,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - 中央 preview と同じ `SessionFilePreview` / `SessionDiffPreview` を使用し、Quote と Action Dock は表示しない
   - live Git Diff の `Open preview` は対象 file を通常 preview として開く。detached file preview から開いた live Git Diff と Changes から直接開いた detached live Git Diff は、左向き icon または `Open preview` で同じ Window の preview へ戻る。独立 File Preview、snapshot Diff、Character Editor の Window 自体は native window chrome で閉じ、重複する app 内 Close 操作を置かない
   - Character Editor が dirty な状態で native window chrome から閉じようとした場合は、編集内容を保持したまま in-app の破棄確認を表示する。キャンセルでは編集へ戻り、明示的に破棄した場合だけ Window を閉じる
-  - New Session dialog は backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
+  - `NewSession` dialog は backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
   - Auxiliary 起動 dialog と Audit Log overlay も backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
   - 破棄確認は単一の dialog surface に確認対象と操作を直接配置し、見出しと重複する補足文や装飾目的の card を置かない。破壊的操作は neutral なキャンセルと色・文言の両方で区別する
   - 同じ root-scoped resource は既存 Window を前面化し、異なる resource は複数 Window を開ける。navigation、認可、lifecycle の決定は ADR 020 を正本とする
@@ -302,44 +305,44 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - pending bubble には provider-native pending item を差し込める
   - `approvalRequest`: `Allow once / Reject`
   - `elicitationRequest`: form の `Submit` または URL completion の `Complete` と、`Reject / Close`
-- `live run step` は pending bubble に混在させず、right pane の `Latest command` へ要約して分離する
-- right pane は `Latest command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
+- `live run step` は pending bubble に混在させず、right pane の `LatestCommand` へ要約して分離する
+- right pane は `LatestCommand` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
 - right pane 上部には collapsed state の `title handle` を置く
 - right pane shell は Agent で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
 - `Generate Memory` は current UI では表示しない
-- command 実行中は `Latest command` を最優先で自動表示する
+- command 実行中は `LatestCommand` を最優先で自動表示する
 - MemoryGeneration / 独り言の right pane 自動切り替えは行わない
-- right pane の empty / idle copy は説明過多にせず、使えば分かる最小表現を優先する
-- `Latest command` には raw command、status、source、rough risk badge、必要時だけ開く `details` を出す
-- 実行中に確定した live step があれば、`Latest command` の下に `Confirmed details` として直近数件だけ補助表示してよい
+- right pane の正常empty / idle bodyはblankにし、pane shell・tab・必要な操作・accessible statusだけを残す。実エラー、validation、安全・復旧説明は維持する
+- `LatestCommand` には raw command、status、source、rough risk badge、必要時だけ開く `details` を出す
+- 実行中に確定した live step があれば、`LatestCommand` の下に `ConfirmedDetails` として直近数件だけ補助表示してよい
   - 直近の in-progress command とは分ける
   - full timeline には戻さず、summary + optional `details` に留める
 - provider が `Copilot` で background task snapshot が来た時は、right pane の `Tasks` tab で `agent / shell` の running / completed / failed を確認できるようにする
 - `Tasks` tab は `/tasks` 全機能の再現ではなく、current session に紐づく background task の coarse な観測面に留める
 - `Memory生成` tab は current UI では表示しない
-- provider が `Copilot` の時だけ、`Latest command` の下に `Premium requests` の薄い strip を常設し、残量だけを即読できるようにする
+- provider が `Copilot` の時だけ、`LatestCommand` の下に `CopilotUsage` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は pending bubble の会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
 - Action Dockの実行中indicatorは本文の代替ではなく `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後もrun中は維持する
 - 未選択のMain / Auxiliaryが実行中の場合は、そのtarget切替buttonに局所spinnerと対象付きaccessible nameを示す。選択中targetではAction Dockの主indicatorへ集約し、他のAuxiliaryは一覧の既存processing indicatorで識別する
 - 実行中indicatorは `runState !== "running"` になった時点で消し、success固定の完了表現にはしない
-- 待機文と実行状態copyはSettingsの `Default microcopy` で差し替えられる。既定文の可視性整理でもcustomを保持し、Character別override編集は持たない
+- 待機文と実行状態copyは既存のuser microcopy catalogを解決する。current Settings UIでは編集面を提供しないが、保存済みcustom値とslot IDは保持し、consumerがない表示を復活させない
 - built-in fallbackは短い英語の一般化表現とし、custom候補・placeholder・安定選択の境界は [Session Microcopy](session-character-copy.md) に従う
-- `assistantText`未着でもright paneの `Latest command` があればraw commandを表示し、command未到着の局面ではempty stateとAction Dockのrun indicatorで待機を示す
-- `Latest command` のwaiting / empty copyとrecovery action titleも同じuser catalogで解決する。非表示の内容に対応するslotを保存形式から削除せず、consumerがない表示を復活させない
+- `assistantText`未着でもright paneの `LatestCommand` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、Action Dockのrun indicatorとaccessible statusで待機を示す
+- `LatestCommand` のwaiting / empty copyに対応するslotは保存形式から削除しない。current UIで正常empty本文を表示せず、consumerがない表示を復活させない
 - screen readerには会話本文全体でなくAction Dockの状態変化を通知する。compact / expandedの非表示側から重複して通知しない
 - retry draft conflictとcomposer feedbackはvisible textを正本にして常時live通知しない
 - `command_execution` は通常 paragraph ではなく shell command と即判別できる専用の monospace block で表示する
 - `details` は stdout / stderr など二次情報だけを折りたたみ表示する
-- `liveRun.errorMessage` は `Latest command` card 内の alert block として扱う
-- right pane 自体の描画失敗は pane 専用 fallback に切り替え、`Retry right pane` と `Reload window` を出す
+- `liveRun.errorMessage` は `LatestCommand` のalert blockとして扱う
+- right pane 自体の描画失敗は pane 専用 fallback に切り替え、`RetryRightPane` と `ReloadWindow` を出す
 - right pane は run 中の command 安全確認面として扱い、full timeline や `Turn Inspector` は常設しない
 - 実行中は上段に `Cancel` を表示し、下段には disabled の `Send` を残す
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
   - `Changed files` は Details UIには表示しない。artifactの永続化、audit、Diff model、Changes paneのデータはこの表示変更だけでは削除しない
   - `Run checks`
-    - approval は `Auto-run / Safety-focused / Provider-controlled` の provider-neutral wording で表示する
+    - approval は `AutoRun / ProviderControlled / SafetyFocused` の provider-neutral wording で表示する
   - turn 内の operation timeline は arrival 順を保ち、全 operation を1つの `Operations` groupにまとめる。groupはdefault closedとし、summaryでは件数を示し、展開時は元のoperation単位・元順序で表示する
   - `Operations` groupの展開内容は高さを制約し、長い内容はgroup内部でscrollできるようにする。Details本体、Operations group、各operationはkeyboardで開閉でき、native detailsのaccessible name / focus / expanded stateを維持する
 - composer 上の添付 toolbar
@@ -358,8 +361,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer toolbar に `Add directory` を置き、その横の toggle から `Additional directories` 一覧を既定 closed で開閉できるようにする
-- composer 下の runtime settings は shared chat composer を正本とし、`Approval / Sandbox / Model / Depth`を表示する。Codex providerでは`Approval`の直後にcompactな`Reviewer`選択、そのほかのruntime optionと同じ列に`Speed`選択を追加する。`Reviewer`は`User` / `Auto-review`、`Speed`は`Standard` / `Fast`をSession単位で保持する。Codex以外では両方を表示しない。`Reviewer`はrunning、read-only、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionは既存の制約に従う
-  - approval chip は `Auto-run / Safety-focused / Provider-controlled`
+  - composer 下の runtime settings は shared chat composer を正本とし、`Approval / Sandbox / Model / Depth`を表示する。Codex providerでは`Approval`の直後にcompactな`Reviewer`選択、そのほかのruntime optionと同じ列に`Speed`選択を追加する。`Reviewer`は`User` / `AutoReview`、`Speed`は`Standard` / `Fast`をSession単位で保持する。Codex以外では両方を表示しない。`Reviewer`はrunning、read-only、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionは既存の制約に従う
+  - approval chip は `AutoRun / ProviderControlled / SafetyFocused`
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`
 - assistant / pending bubble は `sub` ベースの薄い accent を持つ
@@ -407,8 +410,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - Home から Session / Settings / Session Monitor を開く
 - Session の作成・更新・削除は Main Process 経由で永続化する
 - Session の実行中イベントは Main Process から live state として IPC 中継する
-- Home の `Session Monitor` は Main Process の `sessionWindows` を thin IPC bridge で参照し、開いている `Session Window` の session だけを表示する
-- Home の `Session Monitor` と `Session Monitor Window` は同じ projection / component を使い、open parentに紐づく保存済みAuxiliary summaryを同じ順序で集約する。状態更新は既存のlive eventと軽量summary再読込で反映し、pollingやMonitor専用storageは持たない
+- Home の `SessionMonitor` は Main Process の `sessionWindows` を thin IPC bridge で参照し、開いている `Session Window` の session だけを表示する
+- Home の `SessionMonitor` と `Session Monitor Window` は同じ projection / component を使い、open parentに紐づく保存済みAuxiliary summaryを同じ順序で集約する。状態更新は既存のlive eventと軽量summary再読込で反映し、pollingやMonitor専用storageは持たない
 - Auxiliary summary再読込はopen parent集合を一括取得し、親数に比例した個別SQLite取得を行わない
 - MonitorからAuxiliaryを選択して開いたときは、Mainがstable Auxiliary IDとparent IDを検証してnavigationし、既存Windowにはselection event、新規Windowにはentry queryで正確な会話を渡す
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
@@ -420,7 +423,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - theme 由来の前景色決定は輝度閾値ではなく共通 contrast helper を正本にし、Home / Character Editor / Session / Diff で同じ WCAG AA 基準を使う
 - session は SQLite を正本とする
 - model catalog は DB の active revision を読む
-- message list follow mode は assistantText streaming / pending bubble 更新に反応し、command 監視は right pane の `Latest command` へ分離する
+- message list follow mode は assistantText streaming / pending bubble 更新に反応し、command 監視は right pane の `LatestCommand` へ分離する
 
 ## Deliverables
 

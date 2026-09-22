@@ -66,6 +66,16 @@ describe("resolveModelChangeSelection", () => {
 });
 
 describe("reasoning effort catalog contract", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "catalogのxhigh/max/ultraは保存値のまま受理し、selectorには別の表示labelを提供する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+  // fault = "表示名の変更でcatalogの有効なreasoning値を拒否するかselectorの保存idを変更する"
+  // observable = "parse結果のreasoningEffortsとselector optionのid/label"
+  // observation_boundary = "public-boundary"
+  // scope = "reasoning effort catalog parsing and display"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("max / ultra を catalog の有効値として保持する", () => {
     const document = parseModelCatalogDocument({
       providers: [
@@ -89,9 +99,9 @@ describe("reasoning effort catalog contract", () => {
     assert.deepEqual(
       reasoningEffortOptions.slice(-3),
       [
-        { id: "xhigh", label: "xhigh" },
-        { id: "max", label: "max" },
-        { id: "ultra", label: "ultra" },
+        { id: "xhigh", label: "XHigh" },
+        { id: "max", label: "Max" },
+        { id: "ultra", label: "Ultra" },
       ],
     );
   });

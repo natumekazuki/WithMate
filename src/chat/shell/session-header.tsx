@@ -169,10 +169,17 @@ export function SessionHeader({
                       type="button"
                       role="menuitem"
                       aria-pressed={isPinned}
+                      aria-busy={isPinPending || undefined}
+                      aria-label={isPinPending ? "Updating pin" : isPinned ? "Unpin" : "Pin"}
                       onClick={() => runSessionAction(onTogglePin)}
                       disabled={isPinPending}
                     >
-                      {isPinPending ? "Updating..." : isPinned ? "Unpin" : "Pin"}
+                      {isPinPending ? (
+                        <>
+                          <span className="settings-action-spinner" aria-hidden="true" />
+                          <span className="visually-hidden">Updating pin.</span>
+                        </>
+                      ) : isPinned ? "Unpin" : "Pin"}
                     </button>
                   ) : null}
                   {showRenameButton ? (
@@ -182,7 +189,7 @@ export function SessionHeader({
                   ) : null}
                   {showAuditLogButton ? (
                     <button type="button" role="menuitem" onClick={() => runSessionAction(onOpenAuditLog)}>
-                      Audit Log
+                      AuditLog
                     </button>
                   ) : null}
                   {showDeleteButton ? (

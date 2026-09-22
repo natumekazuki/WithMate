@@ -150,6 +150,15 @@ const ENCODING_OPTIONS: Array<{ value: SessionFileEncodingSelection; label: stri
   { value: "utf-16be", label: "UTF-16 BE" },
 ];
 
+function SessionFilePreviewBusyLabel({ label }: { label: string }) {
+  return (
+    <>
+      <span className="workspace-changes-root-spinner session-file-preview-action-spinner" aria-hidden="true" />
+      <span className="visually-hidden">{label}</span>
+    </>
+  );
+}
+
 function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
@@ -1238,7 +1247,7 @@ export function SessionFilePreview({
         ) : null}
         <div className="session-file-preview-title">
           <strong>{descriptor?.name ?? getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}</strong>
-          {isSessionFileGitCommitResource(request) ? <span>Commit {request.commitId.slice(0, 7)}</span> : null}
+          {isSessionFileGitCommitResource(request) ? <span>Commit{request.commitId.slice(0, 7)}</span> : null}
         </div>
         <div className="session-file-preview-actions">
           {descriptor && (previewKind === "text" || previewKind === "markdown") ? (
@@ -1275,10 +1284,11 @@ export function SessionFilePreview({
             <>
               <button
                 type="button"
+                className={busyAction === "copy-image" ? "session-file-preview-action-busy" : undefined}
                 disabled={!imageObjectUrl || busyAction !== null}
                 onClick={() => void copyPreviewImage()}
               >
-                {busyAction === "copy-image" ? "Copying…" : "Copy image"}
+                {busyAction === "copy-image" ? <SessionFilePreviewBusyLabel label="Copying image" /> : "CopyImage"}
               </button>
               <ImageZoomControls
                 controller={imageViewport}
@@ -1291,25 +1301,27 @@ export function SessionFilePreview({
             <button
               key={scope}
               type="button"
+              className={diffLoadingScope === scope ? "session-file-preview-action-busy" : undefined}
               disabled={diffLoadingScope !== null || busyAction !== null}
               onClick={() => void openDiff(scope)}
             >
               {diffLoadingScope === scope
-                ? "Loading diff…"
+                ? <SessionFilePreviewBusyLabel label="Loading diff" />
                 : diffScopes.length === 1
-                ? "Open diff"
+                ? "OpenDiff"
                 : scope === "staged"
-                  ? "Staged diff"
-                  : "Working tree diff"}
+                  ? "StagedDiff"
+                  : "WorkingTreeDiff"}
             </button>
           )) : null}
           {currentFileActionsAvailable && fileObjectCopyAvailable ? (
             <button
               type="button"
+              className={busyAction === "copy-file" ? "session-file-preview-action-busy" : undefined}
               disabled={busyAction !== null}
               onClick={() => void copyCurrentFile()}
             >
-              {busyAction === "copy-file" ? "Copying…" : "Copy file"}
+              {busyAction === "copy-file" ? <SessionFilePreviewBusyLabel label="Copying file" /> : "CopyFile"}
             </button>
           ) : null}
           {previewKind === "text" || previewKind === "markdown" ? (
@@ -1323,6 +1335,7 @@ export function SessionFilePreview({
           ) : null}
           <button
             type="button"
+            className={reloadPending ? "session-file-preview-action-busy" : undefined}
             disabled={contentLoading || reloadPending || Boolean(busyAction)}
             onClick={() => {
               if (contentLoading || reloadPending || busyAction) {
@@ -1332,23 +1345,25 @@ export function SessionFilePreview({
               setReloadRevision((current) => current + 1);
             }}
           >
-            {reloadPending ? "Reloading…" : "Reload"}
+            {reloadPending ? <SessionFilePreviewBusyLabel label="Reloading" /> : "Reload"}
           </button>
           {currentFileActionsAvailable ? (
             <>
               <button
                 type="button"
+                className={busyAction === "open" ? "session-file-preview-action-busy" : undefined}
                 disabled={busyAction !== null}
                 onClick={() => void openCurrentFile()}
               >
-                {busyAction === "open" ? "Opening…" : "Open"}
+                {busyAction === "open" ? <SessionFilePreviewBusyLabel label="Opening file" /> : "Open"}
               </button>
               <button
                 type="button"
+                className={busyAction === "reveal" ? "session-file-preview-action-busy" : undefined}
                 disabled={busyAction !== null}
                 onClick={() => void revealCurrentFile()}
               >
-                {busyAction === "reveal" ? "Showing…" : "Show in Explorer"}
+                {busyAction === "reveal" ? <SessionFilePreviewBusyLabel label="Showing file in Explorer" /> : "ShowInExplorer"}
               </button>
             </>
           ) : null}
@@ -1377,15 +1392,13 @@ export function SessionFilePreview({
       ) : null}
 
       {loadState.status === "inspecting" ? (
-        <div className="session-file-preview-loading" role="status" aria-live="polite">
+        <div className="session-file-preview-loading" role="status" aria-live="polite" aria-label="Inspecting file">
           <span className="session-file-preview-spinner" aria-hidden="true" />
-          <span className="visually-hidden">Inspecting file</span>
         </div>
       ) : null}
       {loadState.status === "loading" ? (
-        <div className="session-file-preview-loading" role="status" aria-live="polite">
+        <div className="session-file-preview-loading" role="status" aria-live="polite" aria-label="Loading file content">
           <progress max={loadState.descriptor.byteLength || 1} value={loadState.loadedBytes} />
-          <span className="visually-hidden">Loading file content</span>
           <span>{formatFileByteLength(loadState.loadedBytes)} / {formatFileByteLength(loadState.descriptor.byteLength)}</span>
         </div>
       ) : null}
@@ -1397,6 +1410,7 @@ export function SessionFilePreview({
             : "The file can still be opened. It is read in chunks and replaces the previous preview."}</p>
           <button
             type="button"
+            className={busyAction === "load" ? "session-file-preview-action-busy" : undefined}
             disabled={busyAction !== null}
             onClick={() => {
               if (busyAction) {
@@ -1409,7 +1423,7 @@ export function SessionFilePreview({
               void loadDescriptor(loadState.descriptor, loadRevisionRef.current).finally(() => finishAction(actionRevision));
             }}
           >
-            {busyAction === "load" ? "Loading…" : "Load anyway"}
+            {busyAction === "load" ? <SessionFilePreviewBusyLabel label="Loading file" /> : "LoadAnyway"}
           </button>
         </div>
       ) : null}
@@ -1425,11 +1439,21 @@ export function SessionFilePreview({
           </dl>
           {currentFileActionsAvailable ? (
             <>
-              <button type="button" disabled={busyAction !== null} onClick={() => void openCurrentFile()}>
-                {busyAction === "open" ? "Opening…" : "Open in default app"}
+              <button
+                type="button"
+                className={busyAction === "open" ? "session-file-preview-action-busy" : undefined}
+                disabled={busyAction !== null}
+                onClick={() => void openCurrentFile()}
+              >
+                {busyAction === "open" ? <SessionFilePreviewBusyLabel label="Opening file" /> : "OpenInDefaultApp"}
               </button>
-              <button type="button" disabled={busyAction !== null} onClick={() => void revealCurrentFile()}>
-                {busyAction === "reveal" ? "Showing…" : "Show in Explorer"}
+              <button
+                type="button"
+                className={busyAction === "reveal" ? "session-file-preview-action-busy" : undefined}
+                disabled={busyAction !== null}
+                onClick={() => void revealCurrentFile()}
+              >
+                {busyAction === "reveal" ? <SessionFilePreviewBusyLabel label="Showing file in Explorer" /> : "ShowInExplorer"}
               </button>
             </>
           ) : null}
@@ -1657,7 +1681,7 @@ export function SessionDiffPreview({
         ) : null}
         <div className="session-file-preview-title">
           <strong>{title}</strong>
-          <span>Git diff</span>
+          <span>GitDiff</span>
           {contextLabel ? <span className="session-diff-preview-context">{contextLabel}</span> : null}
         </div>
         <div className="session-file-preview-actions">
@@ -1682,28 +1706,31 @@ export function SessionDiffPreview({
           {onOpenPreview ? (
             <button
               type="button"
+              className={navigationAction === "preview" ? "session-file-preview-action-busy" : undefined}
               disabled={navigationAction !== null}
               onClick={() => void openPreviewAction(onOpenPreview, "The file preview could not be opened.", "preview")}
             >
-              {navigationAction === "preview" ? "Opening…" : "Open preview"}
+              {navigationAction === "preview" ? <SessionFilePreviewBusyLabel label="Opening preview" /> : "OpenPreview"}
             </button>
           ) : null}
           {onOpenBeforePreview ? (
             <button
               type="button"
+              className={navigationAction === "before" ? "session-file-preview-action-busy" : undefined}
               disabled={navigationAction !== null}
               onClick={() => void openPreviewAction(onOpenBeforePreview, "The before preview could not be opened.", "before")}
             >
-              {navigationAction === "before" ? "Opening…" : "Open before"}
+              {navigationAction === "before" ? <SessionFilePreviewBusyLabel label="Opening before preview" /> : "OpenBefore"}
             </button>
           ) : null}
           {onOpenAfterPreview ? (
             <button
               type="button"
+              className={navigationAction === "after" ? "session-file-preview-action-busy" : undefined}
               disabled={navigationAction !== null}
               onClick={() => void openPreviewAction(onOpenAfterPreview, "The after preview could not be opened.", "after")}
             >
-              {navigationAction === "after" ? "Opening…" : "Open after"}
+              {navigationAction === "after" ? <SessionFilePreviewBusyLabel label="Opening after preview" /> : "OpenAfter"}
             </button>
           ) : null}
           <button
@@ -1717,10 +1744,11 @@ export function SessionDiffPreview({
           {onReload ? (
             <button
               type="button"
+              className={reloadPending && !loading ? "session-file-preview-action-busy" : undefined}
               disabled={loading || reloadPending || navigationAction !== null}
               onClick={() => void reload()}
             >
-              {reloadPending && !loading ? "Reloading…" : "Reload"}
+              {reloadPending && !loading ? <SessionFilePreviewBusyLabel label="Reloading" /> : "Reload"}
             </button>
           ) : null}
         </div>
@@ -1736,9 +1764,8 @@ export function SessionDiffPreview({
         onClose={() => setFindOpen(false)}
       />
       {loading ? (
-        <div className="session-file-preview-loading" role="status" aria-live="polite">
+        <div className="session-file-preview-loading" role="status" aria-live="polite" aria-label="Loading Git diff">
           <span className="session-file-preview-spinner" aria-hidden="true" />
-          <span className="visually-hidden">Loading Git diff</span>
         </div>
       ) : viewMode === "split" ? (
         <VirtualizedSplitDiffContent

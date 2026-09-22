@@ -74,7 +74,14 @@ export type GlossaryWatchErrorState = {
   message: string;
 };
 
-export type GlossaryProjectionState = GlossarySnapshot | GlossaryWatchErrorState;
+export type GlossaryNotApplicableState = {
+  status: "not-applicable";
+  relativePath: typeof GLOSSARY_RELATIVE_PATH;
+  revision: null;
+  reason: "not-git";
+};
+
+export type GlossaryProjectionState = GlossarySnapshot | GlossaryWatchErrorState | GlossaryNotApplicableState;
 
 export type GlossaryCheckoutSummary = {
   repositoryName: string;

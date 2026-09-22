@@ -109,9 +109,9 @@ WithMate が最低限維持すべき体験は次のとおり。
 
 - `Home Window`
   - `codex resume` picker と新規起動前判断を担う管理面
-- `Recent Sessions`
+- `RecentSessions`
   - `Home Window` 内で workspace と task の再開判断を担う
-- `New Session Launch`
+- `NewSessionLaunch`
   - `Home Window` 内の dialog として `cd -> codex` を置き換える
 - `Session Window`
   - TUI に相当する本体作業面
@@ -242,7 +242,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 
 ### 1. 作業面とキャラ面を分離する
 
-- `Home Window` は resume / new session / Your Mate を担う管理面
+- `Home Window` は resume / NewSession / Your Mate を担う管理面
 - `Session Window` は作業面
 - `Work Chat` は作業結果を読む面
 - `独り言` は current UI では表示しない
@@ -309,7 +309,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 
 現在の desktop UI では、次の方向で継続調整する。
 
-- `Recent Sessions` は `Home Window` の resume picker として再設計する
+- `RecentSessions` は `Home Window` の resume picker として再設計する
 - `Session Window` の `Work Chat` は TUI 本体寄りに保つ
 - Mate は `Session Copy`、theme、icon、assistant 表現で効かせる
 - 独り言 UI は current runtime では表示しない

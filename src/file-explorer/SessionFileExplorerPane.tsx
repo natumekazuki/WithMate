@@ -46,7 +46,7 @@ type SessionFileExplorerPaneProps = {
 type FileTreeRow =
   | { kind: "root"; root: SessionFileRoot; depth: number }
   | { kind: "entry"; rootId: string; entry: SessionDirectoryEntry; depth: number }
-  | { kind: "status"; id: string; label: string; depth: number };
+  | { kind: "status"; id: string; depth: number };
 
 type DirectoryLoadRequest = {
   revision: number;
@@ -321,7 +321,7 @@ export function SessionFileExplorerPane({
         return;
       }
       if (loadingDirectories[key] && !entriesByDirectory[key]) {
-        rows.push({ kind: "status", id: `${key}\u0000loading`, label: "Loading…", depth });
+        rows.push({ kind: "status", id: `${key}\u0000loading`, depth });
         return;
       }
       for (const entry of entriesByDirectory[key] ?? []) {
@@ -398,7 +398,7 @@ export function SessionFileExplorerPane({
             void reloadRoots();
           }}
           aria-label={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
-          title={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
+          title={activeTab === "changes" ? "RefreshChanges" : activeTab === "history" ? "RefreshHistory" : "RefreshFiles"}
           disabled={activeTab === "files" && rootsLoadState === "loading"}
           aria-busy={activeTab === "files" && rootsLoadState === "loading"}
         >
@@ -420,13 +420,10 @@ export function SessionFileExplorerPane({
           <p className="session-file-tree-feedback" role="status" aria-live="polite">{feedbackMessage}</p>
         ) : null}
         {rootsLoadState === "loading" ? (
-          <p className="session-file-tree-status" role="status" aria-live="polite">
+          <p className="session-file-tree-status" role="status" aria-live="polite" aria-label="Loading files">
             <span className="workspace-changes-root-spinner" aria-hidden="true" />
-            <span className="visually-hidden">Loading files</span>
           </p>
         ) : null}
-        {rootsLoadState === "unavailable" ? <p className="session-file-tree-empty">Files are not available.</p> : null}
-        {rootsLoadState === "ready" && roots.length === 0 && !errorMessage ? <p className="session-file-tree-empty">No files.</p> : null}
         <div className="session-file-tree-virtual" style={{ height: treeVirtualizer.getTotalSize() }}>
           {treeVirtualizer.getVirtualItems().map((virtualRow) => {
             const row = treeRows[virtualRow.index];
@@ -445,7 +442,14 @@ export function SessionFileExplorerPane({
                 style={{ height: virtualRow.size, transform: `translateY(${virtualRow.start}px)` }}
               >
                 {row.kind === "status" ? (
-                  <div className="session-file-tree-status" style={{ paddingLeft: `${10 + row.depth * 14}px` }}>{row.label}</div>
+                  <div
+                    className="session-file-tree-status"
+                    role="status"
+                    aria-label="Loading directory"
+                    style={{ paddingLeft: `${10 + row.depth * 14}px` }}
+                  >
+                    <span className="workspace-changes-root-spinner" aria-hidden="true" />
+                  </div>
                 ) : row.kind === "root" ? (
                   <button
                     className="session-file-root-row"
@@ -514,7 +518,7 @@ export function SessionFileExplorerPane({
         {mountedTabs.changes || activeTab === "changes"
           ? (
               <Fragment key={`${tabOwnerKey}:changes`}>
-                {renderChangesContent?.(roots) ?? <p className="session-file-tree-empty">No changes.</p>}
+                {renderChangesContent?.(roots) ?? null}
               </Fragment>
             )
           : null}
@@ -529,7 +533,7 @@ export function SessionFileExplorerPane({
         {mountedTabs.history || activeTab === "history"
           ? (
               <Fragment key={`${tabOwnerKey}:history`}>
-                {historyContent ?? <p className="session-file-tree-empty">No history.</p>}
+                {historyContent ?? null}
               </Fragment>
             )
           : null}

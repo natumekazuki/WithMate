@@ -22,9 +22,9 @@ providerごとの対応状況は[対応機能一覧](docs/design/coding-agent-ca
 
 セッションとCharacterを管理する入口です。
 
-- `Recent Sessions`から既存セッションを検索、再開
-- `New Session`でtitle、workspace、provider、Characterを選択
-- `Session Monitor`で開いているセッションの状態を確認
+- `RecentSessions`から既存セッションを検索、再開
+- `NewSession`でtitle、workspace、provider、Characterを選択
+- `SessionMonitor`で開いているセッションの状態を確認
 - `Characters`からCharacterの作成、編集を開始
 - Settings Windowと独立したSession Monitor Windowを開く
 
@@ -34,7 +34,7 @@ coding agentと作業する中心画面です。
 
 - チャットの送信、応答のstreaming表示、実行中turnのcancel
 - approval、model、depthなどの実行オプションを変更
-- `Latest Command`、Copilotのbackground tasks、usage情報を確認
+- `LatestCommand`、Copilotのbackground tasks、usage情報を確認
 - Audit Log、Terminal、session title変更、session削除へ移動
 - File Explorer、Repository Glossary、File Preview、Git Diffを同じ作業面から利用
 
@@ -61,7 +61,7 @@ Characterのprofile、icon、theme、`character.md`、`character-notes.md`を編
 次のapp共通設定を管理します。
 
 - app起動、turn完了通知、Session Windowの表示動作
-- default microcopy
+- 保存済みの microcopy catalog は互換性のため保持するが、Settings から編集する UI は提供しない
 - coding agent providerの有効化とprovider file settings
 - Memory API、managed Skill、CLI shim、logのdiagnostics
 - model catalogのimport、export

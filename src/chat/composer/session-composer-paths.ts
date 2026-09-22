@@ -196,11 +196,11 @@ export function buildComposerAttachmentDisplay(attachment: ComposerAttachment): 
       : compactPathForDisplay(title, 48)
     : parentPath
       ? compactPathForDisplay(parentPath, 42)
-      : "Workspace root";
+      : "WorkspaceRoot";
 
   return {
     kindLabel: attachmentKindLabel(attachment.kind),
-    locationLabel: attachment.isOutsideWorkspace ? "Outside workspace" : "In workspace",
+    locationLabel: attachment.isOutsideWorkspace ? "OutsideWorkspace" : "InWorkspace",
     primaryLabel: basename || title,
     secondaryLabel: secondaryPath,
     title,

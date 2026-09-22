@@ -19,7 +19,7 @@ const noop = () => {};
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionHeaderは低頻度のsession管理操作をaccessible menu itemとしてPin・Rename・Audit Log・Deleteへまとめる"
+// claim = "SessionHeaderは低頻度のsession管理操作をaccessible menu itemとしてPin・Rename・AuditLog・Deleteへまとめる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
 // fault = "管理操作を常設してsession headerを圧迫するか、menu itemのaccessible nameまたはpressed stateを失う"
 // observable = "Session actions summaryとrole=menu/menuitem、Pinのaria-pressed、各操作label"
@@ -52,9 +52,9 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
   assert.match(html, /aria-haspopup="menu"/);
   assert.match(html, /aria-expanded="false"/);
   assert.match(html, /role="menu"/);
-  assert.match(html, /role="menuitem" aria-pressed="false">Pin<\/button>/);
+  assert.match(html, /role="menuitem" aria-pressed="false" aria-label="Pin">Pin<\/button>/);
   assert.match(html, /role="menuitem">Rename<\/button>/);
-  assert.match(html, /role="menuitem">Audit Log<\/button>/);
+  assert.match(html, /role="menuitem">AuditLog<\/button>/);
   assert.match(html, /role="menuitem">Delete<\/button>/);
 });
 
@@ -142,7 +142,7 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
     assert.equal(details.open, false);
     assert.equal(dom.window.document.activeElement, trigger);
 
-    for (const [label, action] of [["Pin", "pin"], ["Rename", "rename"], ["Audit Log", "audit"], ["Delete", "delete"]]) {
+    for (const [label, action] of [["Pin", "pin"], ["Rename", "rename"], ["AuditLog", "audit"], ["Delete", "delete"]]) {
       await act(async () => trigger.click());
       const item = [...container.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]")]
         .find((button) => button.textContent === label);
@@ -254,10 +254,10 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "SessionHeaderはpinned stateをaria-pressedへ投影し、pin pending中はmenu itemをdisabledにしてUpdating...を表示する"
+// claim = "SessionHeaderはpinned stateをaria-pressedへ投影し、pin pending中はmenu itemをdisabledにしてspinnerとaccessible stateを表示する"
 // oracle = { type = "contract", ref = "Issue #731 session pin pending state" }
-// fault = "pinned stateを反映しないか、pending中もpin操作を許可して重複更新を起こす"
-// observable = "pin menu itemのaria-pressed、disabled属性、pending label"
+// fault = "pinned stateを反映しないか、pending中もpin操作を許可して重複更新を起こす、または状態を支援技術へ伝えない"
+// observable = "pin menu itemのaria-pressed、aria-busy、aria-label、disabled属性、既存spinnerとaccessible state"
 // observation_boundary = "component-behavior"
 // scope = "SessionHeader pin and pending state"
 // lifecycle = "permanent"
@@ -292,5 +292,9 @@ test("SessionHeader はpin stateとpending stateを操作ボタンへ投影す�
   assert.match(html, /role="menu"/);
   assert.match(html, /role="menuitem"/);
   assert.match(html, /disabled=""/);
-  assert.match(html, />Updating\.\.\.<\/button>/);
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, /aria-label="Updating pin"/);
+  assert.match(html, /<span class="settings-action-spinner" aria-hidden="true"><\/span>/);
+  assert.match(html, /<span class="visually-hidden">Updating pin\.<\/span>/);
+  assert.doesNotMatch(html, />Updating\.\.\.<\/button>/);
 });

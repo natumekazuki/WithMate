@@ -16,7 +16,7 @@ import BootApp from "../../src/app/BootApp.js";
 // lifecycle = "permanent"
 // distinction = "型検査では分からないBoot consumerのstageと非視覚的状態の結び付きを確認する"
 // @end-test-value
-test("BootApp は現在の起動stageと読み上げstatusを表示する", () => {
+test("BootApp はPascalCaseの起動stageと読み上げstatusを表示する", () => {
   const html = renderToStaticMarkup(React.createElement(BootApp));
 
   assert.match(html, /<div class="page-shell home-page boot-page">/);
@@ -24,6 +24,6 @@ test("BootApp は現在の起動stageと読み上げstatusを表示する", () =
   assert.match(html, /<h1><span role="status" aria-atomic="true">Starting WithMate<\/span><\/h1>/);
   assert.match(html, /<p class="kicker">WithMate<\/p>/);
   assert.match(html, /<ol class="boot-stage-list" aria-label="Startup progress">/);
-  assert.match(html, /<li class="active" aria-current="step">.*?Preparing startup.*?In progress<\/span><\/li>/);
+  assert.match(html, /<li class="active" aria-current="step">.*?PreparingStartup.*?In progress<\/span><\/li>/);
   assert.equal((html.match(/role="status"/g) ?? []).length, 1);
 });

@@ -137,7 +137,7 @@ test("Home Characters は right pane 内の scroll container を使う", async (
     readStylesheet(),
   ]);
 
-  assert.match(componentSource, /<div className="home-monitor-body">/);
+  assert.match(componentSource, /<div className="home-monitor-body"[^>]*>/);
   const scrollContainerRule = stylesSource.match(/\.home-page \.home-monitor-body\s*{([^}]*)}/)?.[1];
 
   assert.ok(scrollContainerRule);

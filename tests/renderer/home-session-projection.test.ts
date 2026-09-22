@@ -154,15 +154,15 @@ describe("home-session-projection", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "buildHomeSessionProjectionは検索結果に一致するmonitorがない場合、Monitor各分類へ同じ利用者向けempty messageを返す"
+  // claim = "buildHomeSessionProjectionは検索結果に一致するmonitorがない場合、Monitor各分類のempty messageを空文字へ投影する"
   // oracle = { type = "contract", ref = "Issue #731 Home Monitor empty-state identification" }
-  // fault = "一致しない検索を正常なsession一覧として表示するか、Monitor分類ごとに誤ったempty messageを混在させる"
+  // fault = "一致しない検索で冗長なempty messageを表示するか、Monitor分類ごとに異なるempty messageを混在させる"
   // observable = "monitorBaseEmptyMessage、monitorRunningEmptyMessage、monitorCompletedEmptyMessage"
   // observation_boundary = "public-boundary"
   // scope = "buildHomeSessionProjection monitor empty messages"
   // lifecycle = "permanent"
-  // impact = "検索結果がない状態を実行中・停止済みの一覧と誤認せず、Monitorの空状態を識別できる"
-  // distinction = "entry配列の長さだけでなく、検索条件下で生成される各分類の表示messageを確認する"
+  // impact = "検索結果がない状態で冗長な説明文を重ねず、loadingとerrorのfeedbackを独立して表示できる"
+  // distinction = "entry配列の長さだけでなく、検索条件下で生成される各分類のmessageが空であることを確認する"
   // @end-test-value
   it("一致する monitor が無い時の empty message を返す", () => {
     const projection = buildHomeSessionProjection(
@@ -171,9 +171,9 @@ describe("home-session-projection", () => {
       "beta",
     );
 
-    assert.equal(projection.monitorBaseEmptyMessage, "No matching sessions.");
-    assert.equal(projection.monitorRunningEmptyMessage, "No matching sessions.");
-    assert.equal(projection.monitorCompletedEmptyMessage, "No matching sessions.");
+    assert.equal(projection.monitorBaseEmptyMessage, "");
+    assert.equal(projection.monitorRunningEmptyMessage, "");
+    assert.equal(projection.monitorCompletedEmptyMessage, "");
   });
 
   it("character-authoring session は Home に表示する", () => {

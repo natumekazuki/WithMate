@@ -763,11 +763,11 @@ test("AuxWindowService は Character Editor window を create/edit key ごとに
   assert.deepEqual(createdOptions, [
     {
       ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
-      title: "WithMate New Character",
+      title: "WithMateNewCharacter",
     },
     {
       ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
-      title: "WithMate Character Editor",
+      title: "WithMateCharacterEditor",
     },
   ]);
 });

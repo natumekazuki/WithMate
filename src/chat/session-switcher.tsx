@@ -122,7 +122,10 @@ export function SessionSwitcher({
     }
   };
 
-  const currentLabel = selectedOption?.label ?? emptyLabel ?? "None selected";
+  const currentLabel = selectedOption?.label ?? emptyLabel ?? "";
+  const currentLabelText = currentLabel.trim();
+  const currentPreviewText = selectedOption?.preview?.trim() ?? "";
+  const currentAccessibleLabel = currentLabelText || currentPreviewText || ariaLabel;
   const currentButton = (
     <button
       ref={triggerRef}
@@ -132,6 +135,7 @@ export function SessionSwitcher({
       aria-haspopup="listbox"
       aria-expanded={canOpen && isOpen}
       aria-controls={canOpen ? listId : undefined}
+      aria-label={currentLabelText || currentPreviewText ? undefined : currentAccessibleLabel}
       onClick={() => {
         if (canOpen) {
           setIsOpen((current) => !current);
@@ -204,6 +208,7 @@ export function SessionSwitcher({
                 role="option"
                 aria-selected={option.id === selectedId}
                 className="session-switcher-option"
+                aria-label={option.label.trim() || option.preview?.trim() ? undefined : ariaLabel}
                 title={option.isProcessing ? "Processing" : undefined}
                 onClick={() => {
                   onSelect(option.id);
@@ -225,7 +230,7 @@ export function SessionSwitcher({
                   {option.isProcessing ? <span className="visually-hidden">Processing</span> : null}
                 </span>
               </button>
-            )) : <span className="session-switcher-empty">No matching options.</span>}
+            )) : null}
           </div>
         </div>
       ) : null}

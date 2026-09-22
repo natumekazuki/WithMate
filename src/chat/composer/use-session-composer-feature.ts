@@ -262,7 +262,7 @@ export function useSessionComposerFeature(input: {
       {
         key: "default",
         value: null,
-        primaryLabel: "Default agent",
+        primaryLabel: "DefaultAgent",
         secondaryLabel: "Use the default Copilot agent",
         title: "Do not use a custom agent",
         isSelected: !bridge.session.customAgentName,

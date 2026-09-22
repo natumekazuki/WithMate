@@ -2,7 +2,7 @@ import { useRef } from "react";
 
 import { useDialogA11y } from "../ui/a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
-import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
+import { ProviderLaunchPicker } from "../launch/provider-launch-picker.js";
 
 type AuxiliaryLaunchProviderDialogProps = {
   open: boolean;
@@ -54,24 +54,29 @@ export function AuxiliaryLaunchProviderDialog({
       footer={
         <LaunchDialogFooter
           feedback={feedback}
-          startButtonLabel={starting ? "Starting..." : "Start Auxiliary"}
+          startButtonLabel="StartAuxiliary"
           startButtonDisabled={!selectedProviderId || starting || creationInFlight}
+          startButtonBusy={starting || creationInFlight}
+          startButtonLoadingText="StartingAuxiliary"
           onStart={onStart}
           startButtonRef={startButtonRef}
-          backButtonLabel="Back"
-          onBack={onClose}
-          cancelButtonLabel={canCancelCreation ? "Cancel creation" : undefined}
+          cancelButtonLabel={canCancelCreation ? "CancelCreation" : undefined}
           onCancel={canCancelCreation ? onCancelCreation : undefined}
           cancelButtonDisabled={cancelling}
         />
       }
     >
-      <ProviderLaunchField
-        fieldId="auxiliary-provider-picker"
-        providers={providers}
-        selectedProviderId={selectedProviderId}
-        onSelectProvider={onSelectProvider}
-      />
+      <div className="launch-field">
+        <label className="launch-field-label" htmlFor="auxiliary-provider-picker">
+          CodingProvider
+        </label>
+        <ProviderLaunchPicker
+          id="auxiliary-provider-picker"
+          providers={providers}
+          selectedProviderId={selectedProviderId}
+          onSelectProvider={onSelectProvider}
+        />
+      </div>
     </LaunchDialogShell>
   );
 }

@@ -14,7 +14,7 @@ hover、focus、選択中など操作が必要な状態で表示し、keyboard f
 
 Session headerの関連操作は一つのgroup surfaceへまとめます。headerの表示状態を切り替えた場合も、buttonの並びと境界を維持します。
 
-message artifactの`Details`では、複数operationをばらばらのcardへ分けず、一つのgroup内に並べます。各operationの種類、summary、詳細は識別できる状態を保ちます。
+message artifactの`Details`では、複数operationをばらばらのcardへ分けず、一つのgroup内に並べます。groupは意味上のまとまりとして保ち、装飾用の入れ子cardや重複labelは追加しません。各operationの種類、summary、詳細は識別できる状態を保ちます。
 
 ## Action Dock
 

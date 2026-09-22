@@ -163,9 +163,9 @@ type WithMateWindowApi = {
 
 ## Session Window UI
 
-### Premium Requests
+### CopilotUsage
 
-Session Window では `Latest Command` の下に、最小の quota strip を置く。
+Session Window では `LatestCommand` の下に、最小の `CopilotUsage` strip を置く。
 
 - 常時表示する情報
   - provider label
@@ -175,12 +175,12 @@ Session Window では `Latest Command` の下に、最小の quota strip を置�
 
 第 1 slice の primary copy 例:
 
-- `Premium Requests 72%`
-- `Premium Requests 120 / 420 left`
+- `CopilotUsage 72%`
+- `CopilotUsage 120 / 420 left`
 
 どちらを主表示にするかは実装時に調整してよいが、`残量が一目で分かる` を優先する。
 
-### Context Usage
+### Context
 
 `Context Usage` は default で非表示に寄せる。
 
@@ -193,8 +193,8 @@ Session Window では `Latest Command` の下に、最小の quota strip を置�
 
 つまり右 pane の常設面積は
 
-- `Latest Command`
-- `Premium Requests` の薄い strip
+- `LatestCommand`
+- `CopilotUsage` の薄い strip
 - `Context` toggle 1 行
 
 までに抑える。
@@ -202,9 +202,9 @@ Session Window では `Latest Command` の下に、最小の quota strip を置�
 ## Error / Empty State
 
 - Copilot quota 未取得
-  - `Premium Requests unavailable`
+  - `CopilotUsage` strip内の `unavailable` / `usage unavailable`
 - session context 未取得
-  - `まだ context usage はないよ。`
+  - `Context` detailsのsummary値を `unavailable` とし、本文説明は表示しない
 - provider が Copilot 以外
   - 第 1 slice では表示しない
 

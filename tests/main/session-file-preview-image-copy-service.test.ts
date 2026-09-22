@@ -84,7 +84,7 @@ test("画像context menuは選択時だけcopyし、dismissを成功扱いしな
     copyImageAt: (x: number, y: number) => copiedPoints.push([x, y]),
   };
   const copyResultPromise = first.service.showContextMenu({} as never, target as never, { x: 7, y: 9 });
-  assert.equal(first.getTemplate()[0]?.label, "Copy image");
+  assert.equal(first.getTemplate()[0]?.label, "CopyImage");
   assert.deepEqual(
     { x: first.getPopupOptions()?.x, y: first.getPopupOptions()?.y },
     { x: 7, y: 9 },

@@ -31,7 +31,7 @@ function createAuditLogSummary(): AuditLogSummary {
 // claim = "共有modalは呼び出し側の追加表示を同じfragmentへ描画する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
 // fault = "共有modalまたは追加childrenが描画結果から欠落する"
-// observable = "Audit Log見出し、監査カード、呼び出し側の追加表示"
+// observable = "AuditLog見出し、監査カード、呼び出し側の追加表示"
 // observation_boundary = "component-behavior"
 // scope = "chat-session-modals-shared-content"
 // lifecycle = "permanent"
@@ -62,7 +62,7 @@ test("ChatSessionModals は共有 modal と呼び出し側の追加表示を同�
     </ChatSessionModals>,
   );
 
-  assert.match(html, /<h2>Audit log<\/h2>/);
+  assert.match(html, /<h2>AuditLog<\/h2>/);
   assert.match(html, /audit-log-card completed/);
   assert.match(html, /session-toast success/);
   assert.doesNotMatch(html, /diff-editor panel/);
@@ -73,7 +73,7 @@ test("ChatSessionModals は共有 modal と呼び出し側の追加表示を同�
 // claim = "Auxiliary起動dialogは利用可能なcoding providerと起動操作を表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#auxiliary-session-issue-710" }
 // fault = "起動可能なproviderまたは起動操作が表示されない"
-// observable = "Coding providerの項目名、Codex/Copilot候補、Start Auxiliary操作"
+// observable = "CodingProviderの項目名、Codex/Copilot候補、StartAuxiliary操作"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-launch-dialog"
 // lifecycle = "permanent"
@@ -95,10 +95,10 @@ test("AuxiliaryLaunchProviderDialog は Provider だけを選択対象として�
     />,
   );
 
-  assert.match(html, /Coding provider/);
+  assert.match(html, /CodingProvider/);
   assert.match(html, /Codex/);
   assert.match(html, /Copilot/);
-  assert.match(html, /Start Auxiliary/);
+  assert.match(html, /StartAuxiliary/);
   assert.doesNotMatch(html, /Reasoning/);
   assert.doesNotMatch(html, /Sandbox/);
 });

@@ -53,7 +53,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
   if (input.draft.characterSelectionMode === "random" && input.sessionCharacterUsageLoadStatus !== "loaded") {
     input.setLaunchFeedback(
       input.sessionCharacterUsageLoadStatus === "loading"
-        ? "Loading session history. Try again when it finishes."
+        ? "Session history is not ready yet. Try again when it finishes."
         : "Session history is unavailable, so random selection cannot start.",
     );
     return;
@@ -62,13 +62,13 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
   if (input.draft.characterSelectionMode === "random" && input.openSessionWindowIdsLoadStatus !== "loaded") {
     input.setLaunchFeedback(
       input.openSessionWindowIdsLoadStatus === "loading"
-        ? "Checking open session windows. Try again when it finishes."
+        ? "Open session windows are not ready yet. Try again when the check finishes."
         : "Open session windows are unavailable, so random selection cannot start.",
     );
     return;
   }
 
-  input.setLaunchFeedback("Starting session…");
+  input.setLaunchFeedback("");
   input.setLaunchStarting(true);
 
   try {

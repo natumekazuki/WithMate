@@ -67,7 +67,17 @@ async function flushEffects() {
   });
 }
 
-test("MemoryV6ReviewScreen は nextCursor がある場合に Load more で次 page を append する", async () => {
+// @test-value v2
+// kind = "invariant"
+// claim = "Memory ReviewのLoadMoreはnextCursorを使って次pageを既存項目へappendする"
+// oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: runSearch pagination" }
+// fault = "LoadMoreがcursorを送らない、既存項目を置き換える、または次pageを表示しない"
+// observable = "search requestのcursorとrender後のentry title一覧"
+// observation_boundary = "component-behavior"
+// scope = "memory-v6-review-pagination-append"
+// lifecycle = "permanent"
+// @end-test-value
+test("MemoryV6ReviewScreen は nextCursor がある場合に LoadMore で次 page を append する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "https://withmate.local/?mode=memory-review",
   });
@@ -122,9 +132,7 @@ test("MemoryV6ReviewScreen は nextCursor がある場合に Load more で次 pa
     assert.match(rootElement.textContent ?? "", /First entry/);
     assert.doesNotMatch(rootElement.textContent ?? "", /Second entry/);
 
-    const loadMoreButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
-      button.textContent?.trim() === "Load more"
-    );
+    const loadMoreButton = rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more");
     assert.ok(loadMoreButton);
 
     await act(async () => {
@@ -137,7 +145,7 @@ test("MemoryV6ReviewScreen は nextCursor がある場合に Load more で次 pa
     assert.match(rootElement.textContent ?? "", /First entry/);
     assert.match(rootElement.textContent ?? "", /Second entry/);
     assert.equal(
-      Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Load more"),
+      Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "LoadMore"),
       false,
     );
   } finally {
@@ -152,10 +160,10 @@ test("MemoryV6ReviewScreen は nextCursor がある場合に Load more で次 pa
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Memory Reviewの新しいfilter検索は先行paginationのbusy stateを解除し、新first pageのLoad moreを通常状態で表示する"
+// claim = "Memory Reviewの新しいfilter検索は先行paginationのbusy stateを解除し、新first pageのLoadMoreを通常状態で表示する"
 // oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: runSearch pagination supersession" }
 // fault = "query変更後も古いpagination busyを残し、次の検索結果をLoading moreとして操作不能にする"
-// observable = "query変更後のLoad more labelと検索requestのcursor"
+// observable = "query変更後のLoadMore label、busy stateと検索requestのcursor"
 // observation_boundary = "component-behavior"
 // scope = "memory-v6-review-pagination-supersession"
 // lifecycle = "permanent"
@@ -221,7 +229,8 @@ test("MemoryV6ReviewScreen はfilter変更時に古いpagination busyを解除�
       loadMoreButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     });
     assert.equal(requests.at(-1)?.cursor, "cursor-1");
-    assert.equal(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more")?.textContent?.trim(), "Loading more");
+    assert.equal(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more")?.getAttribute("aria-busy"), "true");
+    assert.ok(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more .settings-action-spinner"));
 
     const kindSelect = rootElement.querySelector<HTMLSelectElement>("select");
     assert.ok(kindSelect);
@@ -232,7 +241,8 @@ test("MemoryV6ReviewScreen はfilter変更時に古いpagination busyを解除�
     await flushEffects();
 
     assert.deepEqual(requests.at(-1)?.kinds, ["decision"]);
-    assert.equal(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more")?.textContent?.trim(), "Load more");
+    assert.equal(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more")?.textContent?.trim(), "LoadMore");
+    assert.equal(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more")?.getAttribute("aria-busy"), null);
 
     resolveAppend?.({ items: [createHit("entry-old-page", "Old page")] });
     await flushEffects();
@@ -246,6 +256,16 @@ test("MemoryV6ReviewScreen はfilter変更時に古いpagination busyを解除�
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "Memory Reviewのentry detailはprotected fileのsummaryとdisplay nameを示し、内部IDや保存pathを表示しない"
+// oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: selectedEntry.files" }
+// fault = "file detailが内部識別子、保存path、またはsecretをユーザー向け表示へ漏らす"
+// observable = "detailのtextContentに含まれるfile summaryと、内部ID・path・storage markerの不在"
+// observation_boundary = "public-boundary"
+// scope = "memory-v6-review-file-summary"
+// lifecycle = "permanent"
+// @end-test-value
 test("MemoryV6ReviewScreen はentry detailのfile summaryを表示し、内部IDやpathは表示しない", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "https://withmate.local/?mode=memory-review",
@@ -311,7 +331,7 @@ test("MemoryV6ReviewScreen はentry detailのfile summaryを表示し、内部ID
     await flushEffects();
 
     const text = rootElement.textContent ?? "";
-    assert.match(text, /Protected files/);
+    assert.match(text, /ProtectedFiles/);
     assert.match(text, /dialog\.png/);
     assert.match(text, /evidence \/ image \/ 1\.5 KB/);
     assert.match(text, /エラー状態を確認できるスクリーンショット。/);
@@ -328,6 +348,16 @@ test("MemoryV6ReviewScreen はentry detailのfile summaryを表示し、内部ID
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Memory Reviewのfile usageとlargest entry候補は表示され、候補clickは対応するentry detailを開く"
+// oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: fileUsage and selectEntry" }
+// fault = "usage summaryまたはlargest entry候補が欠落する、または候補clickが別entryを選択する"
+// observable = "usageのtextContent、largest entry title、getMemoryV6Entryへ渡したentry ID"
+// observation_boundary = "component-behavior"
+// scope = "memory-v6-review-file-usage"
+// lifecycle = "permanent"
+// @end-test-value
 test("MemoryV6ReviewScreen はfile usageとlargest entriesを表示し、候補clickでdetailを開く", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "https://withmate.local/?mode=memory-review",
@@ -387,8 +417,8 @@ test("MemoryV6ReviewScreen はfile usageとlargest entriesを表示し、候補c
     assert.match(text, /Used/);
     assert.match(text, /1\.5 KB/);
     assert.match(text, /38% of 4\.0 KB/);
-    assert.match(text, /Pending delete/);
-    assert.match(text, /Largest entries/);
+    assert.match(text, /PendingDelete/);
+    assert.match(text, /LargestEntries/);
     assert.match(text, /Large memory/);
 
     const largestButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
@@ -414,6 +444,16 @@ test("MemoryV6ReviewScreen はfile usageとlargest entriesを表示し、候補c
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "Memory ReviewのExportFilesは選択中entryのprotected filesをexportし、公開範囲外のpathや内部値を表示しない"
+// oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: exportSelectedEntryFiles" }
+// fault = "export対象のentry IDを取り違える、export操作が実行されない、または内部path・secretをfeedbackへ漏らす"
+// observable = "export APIへ渡したentry IDとfeedback textContent"
+// observation_boundary = "public-boundary"
+// scope = "memory-v6-review-file-export"
+// lifecycle = "permanent"
+// @end-test-value
 test("MemoryV6ReviewScreen はentry detailからprotected filesをexportできる", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "https://withmate.local/?mode=memory-review",
@@ -483,9 +523,7 @@ test("MemoryV6ReviewScreen はentry detailからprotected filesをexportでき�
     });
     await flushEffects();
 
-    const exportButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
-      button.textContent?.trim() === "Export files"
-    );
+    const exportButton = rootElement.querySelector<HTMLButtonElement>('button[aria-label="Export Memory files"]');
     assert.ok(exportButton);
 
     await act(async () => {
@@ -593,15 +631,15 @@ test("MemoryV6ReviewScreen は遅延または失敗したdetail選択で旧entry
     });
     let text = rootElement.textContent ?? "";
     assert.doesNotMatch(text, /Entry A body/);
-    assert.match(text, /Loading Memory entry…/);
-    assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Forget entry"), false);
+    assert.ok(rootElement.querySelector('[role="status"][aria-label="Loading Memory entry"]'));
+    assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "ForgetEntry"), false);
 
     rejectB?.(new Error("Entry B failed"));
     await flushEffects();
     text = rootElement.textContent ?? "";
     assert.match(text, /Entry B failed/);
     assert.doesNotMatch(text, /Entry A body/);
-    assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Forget entry"), false);
+    assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "ForgetEntry"), false);
     assert.deepEqual(forgetRequests, []);
   } finally {
     await act(async () => {
@@ -679,7 +717,7 @@ test("MemoryV6ReviewScreen はprotected object GC dry-run reportを表示する"
     await flushEffects();
 
     const dryRunButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
-      button.textContent?.trim() === "GC dry run"
+      button.textContent?.trim() === "GCDryRun"
     );
     assert.ok(dryRunButton);
 

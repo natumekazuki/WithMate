@@ -17,6 +17,8 @@ export type LaunchDialogFooterProps = {
   startButtonLabel: string;
   startButtonDisabled: boolean;
   startButtonAriaDisabled?: boolean;
+  startButtonBusy?: boolean;
+  startButtonLoadingText?: string;
   onStart: () => void;
   startButtonRef?: RefObject<HTMLButtonElement | null>;
   backButtonLabel?: string;
@@ -32,6 +34,8 @@ export function LaunchDialogFooter({
   startButtonLabel,
   startButtonDisabled,
   startButtonAriaDisabled,
+  startButtonBusy = false,
+  startButtonLoadingText,
   onStart,
   startButtonRef,
   backButtonLabel,
@@ -60,9 +64,11 @@ export function LaunchDialogFooter({
         type="button"
         disabled={startButtonDisabled}
         aria-disabled={startButtonAriaDisabled}
+        aria-busy={startButtonBusy || undefined}
+        aria-label={startButtonBusy ? (startButtonLoadingText || startButtonLabel) : undefined}
         onClick={onStart}
       >
-        {startButtonLabel}
+        {startButtonBusy ? <span className="chat-skill-picker-spinner" aria-hidden="true" /> : startButtonLabel}
       </button>
     </>
   );

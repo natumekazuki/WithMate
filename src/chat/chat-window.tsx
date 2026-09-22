@@ -323,7 +323,6 @@ export function ChatSkillPickerPanel({
             }}
             className="chat-skill-picker-search"
             aria-label="Search skills"
-            placeholder="Search skills"
             autoComplete="off"
             disabled={isInteractionDisabled}
           />
@@ -339,7 +338,7 @@ export function ChatSkillPickerPanel({
           {isLoading ? (
             <div className="chat-skill-picker-state">
               <span className="chat-skill-picker-spinner" aria-hidden="true" />
-              <span className="visually-hidden">Loading skills.</span>
+              <span className="visually-hidden">LoadingSkills</span>
             </div>
           ) : errorMessage ? (
             <p className="chat-skill-picker-state error">{errorMessage}</p>
@@ -361,13 +360,7 @@ export function ChatSkillPickerPanel({
                 <span className="composer-path-match-secondary">{item.secondaryLabel}</span>
               </button>
             ))
-          ) : items.length > 0 ? (
-            <p className="chat-skill-picker-state">No skills match your search.</p>
-          ) : (
-            <p className="chat-skill-picker-state">
-              No skills are available. Check the Skill root in Settings or SKILL.md in the workspace.
-            </p>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
@@ -387,7 +380,7 @@ export function ChatAdditionalDirectoryList({
   return (
     <section className="chat-additional-directory-surface" aria-label="Additional directories">
       <div className="chat-additional-directory-heading">
-        <span>Additional directories</span>
+        <span>AdditionalDirectories</span>
         <span className="chat-additional-directory-count">{items.length}</span>
       </div>
       <div className="chat-additional-directory-list">
@@ -675,9 +668,7 @@ export function ChatWindow({
                   onColumnControls={handleAuxiliaryColumnControls}
                 />
               </>
-            ) : (
-              <div className="concurrent-chat-state" role="status">Select an Auxiliary conversation.</div>
-            )}
+            ) : null}
           </div>
           {concurrentChats.target !== "auxiliary" ? (
             <div className="concurrent-chat-target-overlay" aria-hidden="true" />

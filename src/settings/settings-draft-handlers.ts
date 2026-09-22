@@ -1,4 +1,3 @@
-import type { MicrocopySlot } from "../../src-shared/settings/microcopy-state.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
@@ -19,7 +18,6 @@ import {
   handleChangeSessionTurnNotificationEnabled,
   handleChangeSessionTurnNotificationResponsePreviewEnabled,
   handleChangeToolCallPresenceEnabled,
-  handleChangeUserMicrocopySlot,
 } from "./settings-draft-actions.js";
 
 type SettingsDraftHandlersContext = {
@@ -41,7 +39,6 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeToolCallPresenceEnabled"
   | "onChangeMemoryFileQuotaMegabytes"
   | "onChangeGlossaryProactiveCreateLimit"
-  | "onChangeUserMicrocopySlot"
   | "onChangeProviderEnabled"
   | "onChangeProviderInstructionRelativePath"
   | "onChangeProviderSkillRootPath"
@@ -93,9 +90,6 @@ export function buildSettingsDraftHandlers({
     },
     onChangeGlossaryProactiveCreateLimit: (value) => {
       handleChangeGlossaryProactiveCreateLimit({ value, setSettingsDraft: updateSettingsDraft });
-    },
-    onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => {
-      handleChangeUserMicrocopySlot({ slot, value, setSettingsDraft: updateSettingsDraft });
     },
     onChangeProviderEnabled: (providerId, enabled) => {
       handleChangeProviderEnabled({ providerId, enabled, setSettingsDraft: updateSettingsDraft });

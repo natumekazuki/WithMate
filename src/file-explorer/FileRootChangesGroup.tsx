@@ -25,8 +25,6 @@ export type GitRootChanges = {
 
 type FileRootChangeRow =
   | { key: string; type: "header"; label: string; count: number }
-  | { key: string; type: "empty"; label: string }
-  | { key: string; type: "status"; label: string }
   | { key: string; type: "error"; label: string }
   | {
       key: string;
@@ -97,7 +95,7 @@ export function FileRootChangesGroup({
   loadingKey,
   onToggleDirectory,
   onOpenEntry,
-  scopes = [["working-tree", "Working tree"], ["staged", "Staged"]],
+  scopes = [["working-tree", "WorkingTree"], ["staged", "Staged"]],
   selectedEntryKey = null,
 }: FileRootChangesGroupProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -143,7 +141,6 @@ export function FileRootChangesGroup({
       return nextRows;
     }
     if (rootChange.status === "pending" && rootChange.entries.length === 0) {
-      nextRows.push({ key: `status:${rootChange.root.id}`, type: "status", label: "Refreshing…" });
       return nextRows;
     }
     if (rootChange.message) {
@@ -154,15 +151,16 @@ export function FileRootChangesGroup({
     }
     for (const [scope, label] of scopes) {
       const scopedEntries = rootChange.entries.filter((entry) => entry.scopes.includes(scope));
+      if (scopedEntries.length === 0) {
+        continue;
+      }
       nextRows.push({
         key: `header:${rootChange.root.id}:${scope}`,
         type: "header",
         label,
         count: scopedEntries.length,
       });
-      if (scopedEntries.length === 0) {
-        nextRows.push({ key: `empty:${rootChange.root.id}:${scope}`, type: "empty", label: "No changes." });
-      } else {
+      if (scopedEntries.length > 0) {
         appendTreeNodes(buildChangedFileTree(scopedEntries, scope), scope, 0);
       }
     }
@@ -213,6 +211,10 @@ export function FileRootChangesGroup({
       scrollElement.scrollTop = maximumScrollTop;
     }
   }, [totalSize]);
+
+  if (rootChange.status === "empty") {
+    return null;
+  }
 
   return (
     <section
@@ -266,10 +268,6 @@ export function FileRootChangesGroup({
               >
                 {row.type === "header" ? (
                   <div className="workspace-changes-group-header"><strong>{row.label}</strong><span>{row.count}</span></div>
-                ) : row.type === "empty" ? (
-                  <p>{row.label}</p>
-                ) : row.type === "status" ? (
-                  <p role="status">{row.label}</p>
                 ) : row.type === "error" ? (
                   <p className="workspace-changes-root-error">{row.label}</p>
                 ) : row.type === "directory" ? (

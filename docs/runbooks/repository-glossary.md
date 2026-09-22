@@ -24,9 +24,9 @@ readだけでは`.withmate`や`glossary.yaml`を作成しない。初期fileはS
 - hoverまたはkeyboard focusで短い説明を表示する。click、Enter、Spaceで既存right paneのGlossary詳細を開く。
 - 1 messageにつきTab stopは1件だけである。左右矢印、Home、Endでmessage内のannotationを移動し、Escapeでtooltipを閉じる。
 - right paneは検索、一覧、詳細のread-only UIであり、作成、編集、削除、file初期化は行わない。
-- Glossary tabはfileの有無やentry件数にかかわらず表示する。missingと空は短いstate label、対処が必要なinvalid、unsupported、watch errorは原因を示し、常設の説明文や重複metadataは置かない。
+- Glossary tabはfileの有無やentry件数、primary workspaceがGit checkoutかどうかにかかわらず表示する。`missing`、`valid`かつ0件、非Gitの`not-applicable`は正常状態としてstate labelと説明本文を表示せず、pane shellと必要な操作・accessibilityだけを残す。対処が必要な`invalid`、`unsupported`、`watch-error`は実失敗として原因を示し、常設の説明文や重複metadataは置かない。
 
-fileがinvalid、unsupported、missingになった場合はannotationを無効にする。message本文はそのまま表示し、fileがvalidへ復旧すると再投影する。
+fileが`invalid`、`unsupported`、`watch-error`、`missing`になった場合、または非Gitの`not-applicable`ではannotationを無効にする。message本文はそのまま表示し、fileが`valid`へ復旧すると再投影する。`not-applicable`はrenderer projection専用のtyped stateであり、Glossary operationのerror codeは従来どおり`GLOSSARY_TARGET_INVALID`を使う。
 
 ## Managed Skill、MCP、CLI
 

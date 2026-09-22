@@ -122,7 +122,7 @@ current milestone の provider ごとの差は次。
   - `on-request` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
   - `elicitation.requested` が来た場合は、Main Process の `onElicitationRequest` bridge を通して Session UI の form / url card へ中継し、user の `accept / decline / cancel` を RPC で返す
   - Electron main process では `src-electron/providers/provider-binary-paths.ts` を正本にして staged native Copilot CLI binary を明示して起動する
-  - `Latest Command` と audit `operations` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
+  - `LatestCommand` と audit `operations` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
   - `rawItemsJson` は full session dump ではなく、`tool.execution_*`、`assistant.message`、`assistant.usage` など監査で読む stable event trace に絞って返す
   - `artifact` は snapshot diff fallback を使って `changedFiles / runChecks / operationTimeline` を最小構成で返す
   - `Premium Requests` は `client.rpc.account.getQuota()` と `assistant.usage.quotaSnapshots` から app-wide telemetry として更新する

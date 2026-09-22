@@ -53,7 +53,7 @@ Issue `#2 Homeとセッションは別ウインドウにする` に合わせて�
   - open な session の監視専用 compact window
 - `Memory Management Window` と legacy MateTalk window は V5 preview current から外す
 
-`Recent Sessions` を session 側へ常設する構成は採用しない。
+`RecentSessions` を session 側へ常設する構成は採用しない。
 既存セッションの再開判断は `Home Window` に集約する。
 
 ## Window Responsibilities
@@ -62,13 +62,13 @@ Issue `#2 Homeとセッションは別ウインドウにする` に合わせて�
 
 Home は `PowerShell -> cd -> codex resume` の手前にある判断をまとめる面とする。
 
-- `Recent Sessions`
+- `RecentSessions`
   - `codex resume` picker 相当
-- `New Session`
+- `NewSession`
   - `cd -> codex` 起動前設定
 - `Characters`
   - Character catalog の一覧
-  - `Create Character`
+  - `CreateCharacter`
   - Character Editor Window の起点
 - `Settings`
   - 独立した `Settings Window` を開く
@@ -189,9 +189,9 @@ Session Monitor Window に置かないもの:
 
 ## Launch And Resume Flow
 
-### New Session
+### NewSession
 
-1. ユーザーが `Home Window` で `New Session` を押す
+1. ユーザーが `Home Window` で `NewSession` を押す
 2. launch dialog で `title / workspace / provider` を決める
 3. アプリが新しい session record を作る
 4. `Session Window` を新規作成してその session を開く
@@ -203,7 +203,7 @@ V5 preview では legacy MateTalk runtime / window / `mode=mate-talk` route を 
 
 ### Character Editing
 
-1. ユーザーが `Home Window` の `Characters` で `Create Character` または既存 Character の `Edit` を押す
+1. ユーザーが `Home Window` の `Characters` で `CreateCharacter` または既存 Character card を押す
 2. Main Process が `Character Editor Window` を create mode または edit mode で開く
 3. Editor は Main Process の Character storage API から detail を読み、保存時も Main Process 経由で更新する
 4. 保存後の catalog 更新は Home / launch selector の次回取得に反映される
@@ -220,7 +220,7 @@ approval mode は実行ポリシーのため、session 中の変更を許可す�
 
 ### Resume Session
 
-1. ユーザーが `Home Window` の `Recent Sessions` から対象を選ぶ
+1. ユーザーが `Home Window` の `RecentSessions` から対象を選ぶ
 2. 既存 session に対応する `Session Window` が無ければ新規作成する
 3. 既に開いていればその window を foreground に出す
 4. 必要なら Home は開いたままにし、別 session も続けて開ける
@@ -343,7 +343,7 @@ flowchart LR
 
 ## UX Consequences
 
-- `Recent Sessions` は常時 session 面に出さない
+- `RecentSessions` は常時 session 面に出さない
 - session を複数同時に開ける
 - Home は作業面ではなく、管理面として情報密度を調整する
 - Session は coding agent 体験に集中し、resume 導線を持ち込みすぎない

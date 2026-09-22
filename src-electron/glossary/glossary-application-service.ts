@@ -118,6 +118,68 @@ class GlossaryServiceFailure extends Error {
   }
 }
 
+export class GlossaryNotApplicableError extends Error {
+  readonly reason = "not-git" as const;
+
+  constructor() {
+    super("Primary workspace is not a supported Git checkout.");
+    this.name = "GlossaryNotApplicableError";
+  }
+}
+
+export function isGlossaryNotApplicableError(error: unknown): error is GlossaryNotApplicableError {
+  return error instanceof GlossaryNotApplicableError;
+}
+
+function notApplicableProjectionState(): Extract<GlossaryProjectionState, { status: "not-applicable" }> {
+  return {
+    status: "not-applicable",
+    relativePath: GLOSSARY_RELATIVE_PATH,
+    revision: null,
+    reason: "not-git",
+  };
+}
+
+function isGitNotRepositoryDiagnostic(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const code = (error as { code?: unknown }).code;
+  const stderr = (error as { stderr?: unknown }).stderr;
+  return (code === 128 || code === "128")
+    && typeof stderr === "string"
+    && /^fatal: not a git repository \(or any of the parent directories\): \.git$/u.test(stderr.trim());
+}
+
+async function hasGitMarkerInAncestors(workspacePath: string): Promise<boolean> {
+  let currentPath = path.resolve(workspacePath);
+  while (true) {
+    try {
+      await lstat(path.join(currentPath, ".git"));
+      return true;
+    } catch (error) {
+      if (!isNodeError(error) || (error.code !== "ENOENT" && error.code !== "ENOTDIR")) {
+        // A marker we cannot inspect must not turn a real Git failure into a blank state.
+        return true;
+      }
+    }
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) {
+      return false;
+    }
+    currentPath = parentPath;
+  }
+}
+
+async function isGitCheckoutResolutionMiss(error: unknown, workspacePath: string): Promise<boolean> {
+  if (!isGitNotRepositoryDiagnostic(error)) {
+    return false;
+  }
+  // Git emits this diagnostic for malformed/unreadable markers too. A marker in the
+  // workspace ancestry therefore makes the same diagnostic a real checkout failure.
+  return !(await hasGitMarkerInAncestors(workspacePath));
+}
+
 function operationError(
   code: GlossaryOperationErrorCode,
   message: string,
@@ -558,6 +620,10 @@ async function safeOperation<T>(operation: () => Promise<T>): Promise<GlossaryOp
     if (error instanceof GlossaryServiceFailure) {
       return error.error;
     }
+    if (isGlossaryNotApplicableError(error)) {
+      // Keep the operation-level contract used before the projection-only state was added.
+      return operationError("GLOSSARY_TARGET_INVALID", error.message);
+    }
     return operationError(
       "GLOSSARY_IO_ERROR",
       error instanceof Error ? error.message : "Glossary I/O failed.",
@@ -581,6 +647,12 @@ export class GlossaryApplicationService {
     this.#runGit = deps.runGit ?? (async (cwd, args) => {
       const result = await execFileAsync("git", ["-C", cwd, ...args], {
         encoding: "utf8",
+        env: {
+          ...process.env,
+          // Keep the diagnostic used for checkout classification stable across locales.
+          LC_ALL: "C",
+          LANG: "C",
+        },
         timeout: 5_000,
         windowsHide: true,
         maxBuffer: 1024 * 1024,
@@ -607,8 +679,11 @@ export class GlossaryApplicationService {
     let gitRoot: string;
     try {
       gitRoot = await this.#runGit(normalizedWorkspacePath, ["rev-parse", "--show-toplevel"]);
-    } catch {
-      fail("GLOSSARY_TARGET_INVALID", "Primary workspace is not a supported Git checkout.");
+    } catch (error) {
+      if (await isGitCheckoutResolutionMiss(error, normalizedWorkspacePath)) {
+        throw new GlossaryNotApplicableError();
+      }
+      throw error;
     }
     const rootPath = path.resolve(gitRoot);
     const rootStats = await lstat(rootPath);
@@ -659,6 +734,10 @@ export class GlossaryApplicationService {
 
     const emitWatchError = (error: unknown) => {
       if (disposed) {
+        return;
+      }
+      if (isGlossaryNotApplicableError(error)) {
+        listener(notApplicableProjectionState());
         return;
       }
       listener({

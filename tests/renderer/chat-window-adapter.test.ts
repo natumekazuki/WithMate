@@ -944,7 +944,7 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
   assert.equal(agentProps.className, "");
   assert.equal(auxiliaryProps.className, "theme-accent auxiliary-session-mode");
   assert.match(renderToStaticMarkup(agentProps.mainContent), /Preview/);
-  assert.match(renderToStaticMarkup(React.createElement(ChatWindow, agentProps)), /Latest command/);
+  assert.match(renderToStaticMarkup(React.createElement(ChatWindow, agentProps)), /LatestCommand/);
   assert.equal(auxiliaryProps.rightPaneProps, rightPaneProps);
 });
 

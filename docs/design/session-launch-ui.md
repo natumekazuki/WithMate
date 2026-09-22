@@ -5,9 +5,9 @@
 
 ## Goal
 
-WithMate における `New Session` 導線を、`Codex CLI` を新しく起動する前の判断と対応する形で設計する。
-`resume picker` と競合させず、作業開始時に必要な最小判断だけを短く完了できる面にする。
-配置先は `Session Window` ではなく `Home Window` とする。
+WithMate における`NewSession`導線を、`Codex CLI`を新しく起動する前の判断と対応する形で設計する。
+`RestoreSessions`と競合させず、作業開始時に必要な最小判断だけを短く完了できる面にする。
+配置先は`SessionWindow`ではなく`HomeWindow`とする。
 
 ## TUI Workflow Alignment
 
@@ -18,12 +18,12 @@ WithMate における `New Session` 導線を、`Codex CLI` を新しく起動�
 3. 必要なら provider を確認する
 4. session を開始してから最初の prompt を入れる
 
-WithMate では、`Recent Sessions` が 2 の `resume` 側を担う。  
-`New Session Launch` は 1 と 3 を短く完了させ、4 はメインチャットへ引き渡す UI として扱う。
+WithMateでは、`RecentSessions`と`RestoreSessions`がstep 2の`resume`側を担う。
+`NewSessionLaunch`は 1 と 3 を短く完了させ、4 はメインチャットへ引き渡すUIとして扱う。
 
 ## Responsibilities
 
-### New Session Launch が担うもの
+### NewSessionLaunch が担うもの
 
 - 作業ディレクトリの選択
 - session title の入力
@@ -44,24 +44,22 @@ WithMate では、`Recent Sessions` が 2 の `resume` 側を担う。
 
 MVP では、次の 4 ブロックで十分。
 
-1. `Session Title`
+1. `SessionTitle`
 - 空文字初期値
 - 必須入力
 
-2. `Workspace Picker`
+2. `WorkspacePicker`
 - 現在選択中の directory
 - `Browse` ボタン
 
-3. `Launch Profile`
+3. `LaunchProfile`
 - Provider
-  - `Coding Agent Providers` で有効な provider だけを候補として出す
+  - `CodingAgentProviders` で有効な provider だけを候補として出す
 - Character
-  - search input
-    - `name / description`
-    - 部分一致
+  - Random または active Character の selector
 
-4. `Primary Action`
-- `Start New Session`
+4. `PrimaryAction`
+- `StartNewSession`
 
 ## Layout Direction
 
@@ -69,14 +67,14 @@ MVP では、次の 4 ブロックで十分。
 
 ### 推奨構成
 
-- 上: `Workspace Picker`
-- 中: `Launch Profile`
-- 最下部: `Start New Session`
+- 上: `WorkspacePicker`
+- 中: `LaunchProfile`
+- 最下部: `StartNewSession`
 
 理由:
 
 - 新規開始は頻繁に行うため、多段 wizard にすると遅い
-- `Home Window` 上の `Recent Sessions` と並ぶ管理導線として扱うなら、1 アクションで始められる方が自然
+- `HomeWindow`上の`RecentSessions`と並ぶ管理導線として扱うなら、1 actionで始められる方が自然
 - TUI の `cd -> codex` に近いテンポを保てる
 
 ## UI States
@@ -85,7 +83,7 @@ MVP では、次の 4 ブロックで十分。
 
 - title 未入力
 - workspace 未選択
-- `Start New Session` は無効
+- `StartNewSession`は無効
 - 何を選べば開始できるかを短く示す
 
 ### 2. workspace 選択済み
@@ -99,22 +97,22 @@ MVP では、次の 4 ブロックで十分。
 
 ## Relation With Window Architecture
 
-- `Home Window`
+- `HomeWindow`
   - 既存セッションへ戻る導線と、新しく始める導線をまとめる管理面
-- `Session Window`
+- `SessionWindow`
   - launch 完了後に開く作業面
-- `New Session Launch`
-  - `Home Window` の dialog / popup として表示する
+- `NewSessionLaunch`
+  - `HomeWindow`のdialog / popupとして表示する
 
-MVP では `Home Window` 上部の `New Session` ボタンから dialog を開く形が妥当。
+MVP では`HomeWindow`上部の＋iconの`NewSession`からdialogを開く形が妥当。
 
 ## Recommended Mock Direction
 
 React モックでは次の形がよい。
 
-- `Home Window` 上部に `New Session` ボタン
-- ボタン押下で `Launch Dialog` を表示
-- `Launch Panel` 内に
+- `HomeWindow`上部に＋iconの`NewSession`ボタン
+- ボタン押下で `LaunchDialog` を表示
+- `LaunchPanel` 内に
   - workspace path
   - session title
   - browse ボタン
@@ -124,28 +122,30 @@ React モックでは次の形がよい。
 
 ## Current Snapshot
 
-- 現在の Home UI では上部バーに `New Session` を置いている
-- `Launch Panel` 自体は modal dialog で維持できる
+- 現在の Home UI では上部バーに＋iconの`NewSession`を置いている
+- `LaunchPanel` 自体は modal dialog で維持できる
 - `Browse` は Electron 実行時に OS の directory picker を開く
 - Agent Mode の `SessionFolder` は path を事前確定せず、WithMate 管理下の SessionFolder を workspace にする選択として扱う
 - title は空文字で開き、入力必須
 - provider は launch dialog 内で chip 選択し、enabled provider が 0 件なら start できない
-- `Character` は card で切り替える
-- `Character` は portrait 付きカードで切り替える
-- Character一覧の先頭にランダム選択カードを置く。ランダム選択時は、通常Sessionの最終利用順を使い、最近使っていないactive Characterほど高い重みで抽選する
+- `Character` は意味のあるoption cardで切り替える。必要な識別情報は残すが、入れ子の装飾cardは作らない
+- `Character` はportrait付きoption cardで切り替える
+- Character一覧の先頭にランダム選択cardを置く。ランダム選択時は、通常Sessionの最終利用順を使い、最近使っていないactive Characterほど高い重みで抽選する
 - ランダム選択時は、開いている通常Session Windowで使用中のCharacterを、他にactive Characterがある間は候補から除外する。すべて使用中の場合は重複を許容する
 - Character利用履歴がない場合は使用中を除いた抽選候補を均等に抽選し、active Characterが0件なら既存のneutral fallbackを使う
 - Session履歴の読み込み中または取得失敗時はランダム選択で開始せず、取得成功した0件と区別する
 - 開いている通常Session Window一覧の読み込み中または取得失敗時もランダム選択で開始せず、取得成功した0件と区別する
-- `Character` には検索入力があり、`name / description` の部分一致で絞り込める
-- launch dialog 内の character card も Home と同じ theme rule を使う
+- `Character` selector は Random と active Character のoption cardを表示する。selector内に検索入力や常設説明文は置かない
+- Character 0件時は neutral fallback を表示し、正常なempty説明文を表示しない
+- launch dialog 内のcharacter cardもHomeと同じtheme ruleを使う
   - background = character `main`
   - left accent bar = character `sub`
   - foreground = background から自動コントラスト決定
 - model / depth / approval / sandbox / custom agent は launch dialog には出さず、Main Process が選択中 provider の直近 Session 一件から解決する。Home の履歴キャッシュは実行設定の正本にせず、最終選択の検証から永続化までは Settings / model catalog の変更と直列化する。SessionFolder の準備は排他の外で行い、準備中の storage または選択の変更は保存前に検出して作成を拒否する。詳細は ADR 007 を参照する
 - session 作成直後の UI 表示も `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording に揃える
+- ランダム選択の補足説明は表示せず、選択結果だけを示す
 - `provider` は session 作成時に明示保存する
-- `Start New Session` を押すと、入力した title を持つ新規 session record を作って `Session Window` を開く
+- `StartNewSession`を押すと、入力したtitleを持つ新規session recordを作って`SessionWindow`を開く。作成中は同じ確定button内のspinnerとbusy/accessibility statusだけで待機を示し、別の重複状態文を出さない
 - Main Process は directory / SessionFolder のどちらでも Session ID を発行し、ID 衝突時に既存 record を上書きしない
 - `SessionFolder` 選択時は `session-files/{sessionId}` を新規 directory として作成してから、その path を `workspacePath` として session record を保存する
 - 最初の依頼は Launch Dialog ではなく `Session Window` のメインチャットから入力する
@@ -156,4 +156,4 @@ React モックでは次の形がよい。
 
 ## Next Step
 
-- `Home Window` 内で `Recent Sessions` と視線競合しない配置に調整する
+- `HomeWindow`内で`RecentSessions`と視線競合しない配置に調整する

@@ -120,7 +120,7 @@ export default function CharacterEditorApp() {
   const authoringProviderSelectionReady = !desktopRuntime || (!!modelCatalog && !!appSettings);
   const authoringProviderBlocked = desktopRuntime && authoringProviderSelectionReady && enabledAuthoringProviders.length === 0;
   const authoringLaunchFeedback = !authoringProviderSelectionReady
-    ? "Loading provider settings."
+    ? ""
     : authoringProviderBlocked
       ? "Enable a coding agent provider in Settings."
       : feedback;
@@ -257,7 +257,7 @@ export default function CharacterEditorApp() {
 
         setPersistedDetail(detail);
         setDraft(createCharacterEditorDraftFromDetail(detail));
-        setFeedback("Character files reloaded.");
+        setFeedback("CharacterFilesReloaded");
       }).catch((error) => {
         authoringRefreshPendingRef.current = true;
         setFeedback(formatCharacterEditorError(error, "Could not reload character files."));
@@ -306,7 +306,7 @@ export default function CharacterEditorApp() {
         setPersistedDetail(created);
         setDraft(reconcileCharacterEditorDraftAfterSave(savedDraft, draftAtSave, latestDraft));
         if (!hasNewEdits) {
-          setFeedback("Character created.");
+          setFeedback("CharacterCreated");
         }
         return;
       }
@@ -339,7 +339,7 @@ export default function CharacterEditorApp() {
       setPersistedDetail(refreshed);
       setDraft(reconcileCharacterEditorDraftAfterSave(savedDraft, draftAtSave, latestDraft));
       if (!hasNewEdits) {
-        setFeedback("Saved.");
+        setFeedback("Saved");
       }
     } catch (error) {
       setFeedback(formatCharacterEditorError(error, "Could not save character."));
@@ -543,8 +543,8 @@ export default function CharacterEditorApp() {
           <div className="character-editor-heading">
             <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
             <div>
-              <h1>{draft.name || "New character"}</h1>
-              <p>{draft.description || "No description"}</p>
+              <h1>{draft.name || "NewCharacter"}</h1>
+              {draft.description ? <p>{draft.description}</p> : null}
             </div>
           </div>
           <div className="character-editor-header-actions">
@@ -577,9 +577,13 @@ export default function CharacterEditorApp() {
 
         <main className={`character-editor-window-body ${denseEditorBody ? "character-editor-window-body-dense" : ""}`.trim()}>
           {loading ? (
-            <div className="character-editor-loading-state" role="status" aria-live="polite">
+            <div
+              className="character-editor-loading-state"
+              role="status"
+              aria-live="polite"
+              aria-label="Loading character"
+            >
               <span className="chat-skill-picker-spinner" aria-hidden="true" />
-              <span className="visually-hidden">Loading character.</span>
             </div>
           ) : null}
           {!loading && selectedTab === "profile" ? (
@@ -606,7 +610,7 @@ export default function CharacterEditorApp() {
                       disabled={archived}
                     />
                     <button className="launch-toggle compact" type="button" onClick={importIconImage} disabled={archived}>
-                      Import image
+                      ImportImage
                     </button>
                   </div>
                 </label>
@@ -637,17 +641,15 @@ export default function CharacterEditorApp() {
           {!loading && selectedTab === "definition" ? (
             <section className="character-editor-markdown-card">
               <div className="settings-section-head-row">
-                <strong>character.md</strong>
                 <button
                   className="launch-toggle compact"
                   type="button"
                   onClick={() => definitionImportInputRef.current?.click()}
                   disabled={archived}
                 >
-                  Import / Replace
+                  ImportReplace
                 </button>
               </div>
-              <p className="settings-help">The runtime definition is captured as a snapshot when a session starts.</p>
               <ValidationList issues={validation.definitionIssues} />
               <input
                 ref={definitionImportInputRef}
@@ -669,6 +671,7 @@ export default function CharacterEditorApp() {
                 onChange={(event) => updateDraft({ definitionMarkdown: event.target.value })}
                 disabled={archived}
                 spellCheck={false}
+                aria-label="character.md"
               />
             </section>
           ) : null}
@@ -676,17 +679,15 @@ export default function CharacterEditorApp() {
           {!loading && selectedTab === "notes" ? (
             <section className="character-editor-markdown-card">
               <div className="settings-section-head-row">
-                <strong>character-notes.md</strong>
                 <button
                   className="launch-toggle compact"
                   type="button"
                   onClick={() => notesImportInputRef.current?.click()}
                   disabled={archived}
                 >
-                  Import / Replace
+                  ImportReplace
                 </button>
               </div>
-              <p className="settings-help">Use this file for research notes, rationale, and revision history. It is not injected into the runtime prompt in V5 Core.</p>
               <ValidationList issues={validation.notesIssues} />
               <input
                 ref={notesImportInputRef}
@@ -708,6 +709,7 @@ export default function CharacterEditorApp() {
                 onChange={(event) => updateDraft({ notesMarkdown: event.target.value })}
                 disabled={archived}
                 spellCheck={false}
+                aria-label="character-notes.md"
               />
             </section>
           ) : null}
@@ -716,11 +718,11 @@ export default function CharacterEditorApp() {
             <section className="character-editor-preview-grid">
               <div className="character-editor-preview-profile">
                 <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
-                <strong>{draft.name || "New character"}</strong>
-                <p>{draft.description || "No description"}</p>
+                <strong>{draft.name || "NewCharacter"}</strong>
+                {draft.description ? <p>{draft.description}</p> : null}
               </div>
               <label className="settings-provider-input character-editor-runtime-preview">
-                <span>Runtime prompt preview</span>
+                <span>RuntimePromptPreview</span>
                 <textarea value={runtimePromptPreview} readOnly rows={14} spellCheck={false} />
               </label>
             </section>
@@ -750,7 +752,7 @@ export default function CharacterEditorApp() {
                   type="button"
                   onClick={discardDraftAndCloseWindow}
                 >
-                  Discard and close
+                  DiscardAndClose
                 </button>
               </div>
             }
@@ -770,13 +772,15 @@ export default function CharacterEditorApp() {
             footer={
               <LaunchDialogFooter
                 feedback={authoringLaunchFeedback}
-                startButtonLabel={authoringStarting ? "Starting…" : "Start"}
+                startButtonLabel="Start"
                 startButtonDisabled={
                   authoringStarting ||
                   !selectedAuthoringProvider ||
                   !authoringProviderSelectionReady ||
                   authoringProviderBlocked
                 }
+                startButtonBusy={authoringStarting}
+                startButtonLoadingText="Starting authoring session"
                 onStart={startAuthoringSession}
                 startButtonRef={authoringStartButtonRef}
               />
@@ -812,9 +816,8 @@ export default function CharacterEditorApp() {
             {authoringStarting ? (
               <>
                 <span className="chat-skill-picker-spinner" aria-hidden="true" />
-                <span>Starting…</span>
               </>
-            ) : draft.mode === "edit" ? "Improve with agent" : "Author with agent"}
+            ) : draft.mode === "edit" ? "ImproveWithAgent" : "AuthorWithAgent"}
           </button>
           <button
             className="launch-toggle start-session-button"

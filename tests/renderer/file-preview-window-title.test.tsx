@@ -239,12 +239,12 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
     }
     assert.ok(loadingPreview);
     assert.equal(loadingPreview.querySelector(".session-file-preview-title strong")?.textContent, "src/notes.txt");
-    assert.equal(loadingPreview.querySelector("[role='status']")?.textContent, "Loading Git diff");
+    assert.equal(loadingPreview.querySelector("[role='status']")?.getAttribute("aria-label"), "Loading Git diff");
     assert.ok(loadingPreview.querySelector(".session-file-preview-spinner[aria-hidden='true']"));
     assert.equal(loadingPreview.querySelector(".file-preview-loading-content"), null);
     const loadingButtons = [...loadingPreview.querySelectorAll<HTMLButtonElement>("button")];
     assert.equal(loadingButtons.find((button) => button.textContent === "Find")?.disabled, true);
-    assert.equal(loadingButtons.find((button) => button.textContent === "Open preview")?.disabled, false);
+    assert.equal(loadingButtons.find((button) => button.textContent === "OpenPreview")?.disabled, false);
     await act(async () => releaseDiff?.());
     let openPreviewButton: HTMLButtonElement | undefined;
     for (let index = 0; index < 20 && !openPreviewButton; index += 1) {
@@ -252,7 +252,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
       openPreviewButton = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent === "Open preview");
+        .find((button) => button.textContent === "OpenPreview");
     }
     assert.ok(openPreviewButton);
     assert.deepEqual(diffRequests, [{ ...resource, scope: "working-tree" }]);

@@ -1140,14 +1140,14 @@ export function SessionMessageColumn({
                       {artifactExpanded ? (
                         <div id={`artifact-panel-${artifactKey}`} className="artifact-block">
                           {artifactLoading ? (
-                            <div className="artifact-detail-loading" role="status">
-                              Loading details...
+                            <div className="artifact-detail-loading" role="status" aria-label="Loading details">
+                              <span className="glossary-pane-spinner" aria-hidden="true" />
                             </div>
                           ) : null}
                           <div className="artifact-grid artifact-grid-single">
                             <section className="artifact-section compact">
                               <div className="artifact-section-header">
-                                <strong>Run checks</strong>
+                                <strong>RunChecks</strong>
                               </div>
                               <div className="check-list">
                                 {artifact.runChecks.map((check) => (

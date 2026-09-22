@@ -52,6 +52,18 @@ function installDomGlobals(dom: JSDOM): () => void {
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Keyboard shortcuts dialogはregistry由来のPascalCase labelを表示し、Escapeで閉じられる"
+// oracle = { type = "contract", ref = "src/settings/KeyboardShortcutsDialog.tsx#KeyboardShortcutsDialog" }
+// fault = "registry labelがdialogへ投影されないか、Escapeでdialogを閉じられない"
+// observable = "dialog textContent、Close callback回数、Escape eventのdefaultPrevented"
+// observation_boundary = "component-behavior"
+// scope = "keyboard-shortcuts-dialog-projection"
+// lifecycle = "permanent"
+// impact = "利用者がshortcutの対象を識別できず、dialogをキーボードで閉じられない"
+// distinction = "registryの表示labelとdialog固有のEscape closeを同じ描画経路で確認する"
+// @end-test-value
 test("Keyboard shortcuts dialogはregistry projectionを表示し、Escapeで閉じる", async () => {
   const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
   const restore = installDomGlobals(dom);
@@ -76,9 +88,9 @@ test("Keyboard shortcuts dialogはregistry projectionを表示し、Escapeで閉
     const dialog = container.querySelector<HTMLElement>("[role='dialog']");
     assert.ok(dialog);
     assert.equal(dialog.getAttribute("aria-label"), "Keyboard shortcuts");
-    assert.match(container.textContent ?? "", /Find messages/);
+    assert.match(container.textContent ?? "", /FindMessages/);
     assert.match(container.textContent ?? "", /⌘F/);
-    assert.match(container.textContent ?? "", /Send message/);
+    assert.match(container.textContent ?? "", /SendMessage/);
     assert.match(container.textContent ?? "", /⌘Enter/);
 
     await act(async () => {
@@ -110,6 +122,18 @@ test("Keyboard shortcuts dialogはregistry projectionを表示し、Escapeで閉
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Keyboard shortcuts dialogのChange操作はPascalCase registry labelで対象rowを識別し、押下したacceleratorを設定へ反映する"
+// oracle = { type = "contract", ref = "src/settings/KeyboardShortcutsDialog.tsx#shortcut change" }
+// fault = "対象shortcut rowを見つけられないか、Change後のacceleratorをsettingsへ反映しない"
+// observable = "ToggleMessageCollapse/SendMessage/FindMessages row、PressKeys状態、更新後accelerator"
+// observation_boundary = "component-behavior"
+// scope = "keyboard-shortcuts-dialog-change"
+// lifecycle = "permanent"
+// impact = "利用者が意図したshortcutを登録できない"
+// distinction = "表示labelの変更とChange・keydownによるsettings更新を同一componentで確認する"
+// @end-test-value
 test("Keyboard shortcuts dialogはChangeで押下した組み合わせを設定へ反映する", async () => {
   const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
   const restore = installDomGlobals(dom);
@@ -136,26 +160,26 @@ test("Keyboard shortcuts dialogはChangeで押下した組み合わせを設定�
     });
 
     const row = Array.from(container.querySelectorAll<HTMLElement>(".settings-keyboard-shortcut-row"))
-      .find((candidate) => candidate.textContent?.includes("Toggle message collapse"));
+      .find((candidate) => candidate.textContent?.includes("ToggleMessageCollapse"));
     assert.ok(row);
     const changeButton = Array.from(row.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Change");
     assert.ok(changeButton);
 
     const sendRow = Array.from(container.querySelectorAll<HTMLElement>(".settings-keyboard-shortcut-row"))
-      .find((candidate) => candidate.textContent?.includes("Send message"));
+      .find((candidate) => candidate.textContent?.includes("SendMessage"));
     assert.ok(sendRow);
     assert.ok(Array.from(sendRow.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Change"));
 
     const browserShortcutRow = Array.from(container.querySelectorAll<HTMLElement>(".settings-keyboard-shortcut-row"))
-      .find((candidate) => candidate.textContent?.includes("Find messages"));
+      .find((candidate) => candidate.textContent?.includes("FindMessages"));
     assert.ok(browserShortcutRow);
     assert.equal(browserShortcutRow.querySelector("button"), null);
 
     act(() => {
       changeButton.click();
     });
-    assert.match(row.textContent ?? "", /Press keys/);
+    assert.match(row.textContent ?? "", /PressKeys/);
 
     await act(async () => {
       dom.window.dispatchEvent(new dom.window.KeyboardEvent("keydown", {

@@ -104,7 +104,7 @@ export function buildSelectedCustomAgentDisplay(
 
   if (!session.customAgentName.trim()) {
     return {
-      label: "Default agent",
+      label: "DefaultAgent",
       title: "Use the default Copilot agent",
     };
   }

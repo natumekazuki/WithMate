@@ -12,19 +12,19 @@ function auditPhaseLabel(phase: AuditLogSummary["phase"]): string {
     case "started":
       return "Running";
     case "background-running":
-      return "Background running";
+      return "BackgroundRunning";
     case "completed":
       return "Completed";
     case "background-completed":
-      return "Background completed";
+      return "BackgroundCompleted";
     case "canceled":
       return "Canceled";
     case "background-canceled":
-      return "Background canceled";
+      return "BackgroundCanceled";
     case "failed":
       return "Failed";
     case "background-failed":
-      return "Background failed";
+      return "BackgroundFailed";
     default:
       return phase;
   }
@@ -81,6 +81,15 @@ function previewAuditLogText(value: string, maxChars = AUDIT_LOG_TEXT_PREVIEW_MA
 function AuditLogTextPreview({ value, maxChars }: { value: string; maxChars?: number }) {
   const preview = useMemo(() => previewAuditLogText(value, maxChars), [maxChars, value]);
   return <pre>{preview}</pre>;
+}
+
+function AuditLogLoadingIndicator({ label }: { label: string }) {
+  return (
+    <span className="settings-loading-inline" role="status" aria-label={label}>
+      <span className="settings-action-spinner" aria-hidden="true" />
+      <span className="visually-hidden">{label}</span>
+    </span>
+  );
 }
 
 function AuditLogLogicalPromptFieldFold({
@@ -323,7 +332,7 @@ export function SessionAuditLogModal({
         onKeyDown={handleDialogKeyDown}
       >
         <div className="diff-titlebar">
-          <h2>Audit log</h2>
+          <h2>AuditLog</h2>
         </div>
 
         <div className="audit-log-toolbar">
@@ -345,12 +354,17 @@ export function SessionAuditLogModal({
           </div>
           <div className="audit-log-page-status">
             <span>{entries.length} / {total}</span>
-            {refreshing ? <span className="audit-log-page-status-refreshing">Refreshing...</span> : null}
+            {refreshing ? (
+              <span className="audit-log-page-status-refreshing settings-loading-inline" role="status" aria-label="Refreshing audit log">
+                <span className="settings-action-spinner" aria-hidden="true" />
+                <span className="visually-hidden">Refreshing audit log.</span>
+              </span>
+            ) : null}
             {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
           </div>
         </div>
 
-        <div ref={auditLogListRef} className="audit-log-list">
+        <div ref={auditLogListRef} className="audit-log-list" aria-busy={refreshing || loadingMore || undefined}>
           {visibleEntries.length > 0 ? (
             <div className="audit-log-list-window">
               <div className="audit-log-list-window-items">
@@ -453,7 +467,7 @@ export function SessionAuditLogModal({
                   }}
                 >
                   <summary>
-                    <strong>Logical prompt</strong>
+                    <strong>LogicalPrompt</strong>
                   </summary>
                   {logicalOpen ? <section className="audit-log-section">
                     {detail?.logicalPrompt ? (
@@ -486,7 +500,7 @@ export function SessionAuditLogModal({
                     ) : (
                       <p className="audit-log-empty">
                         {sectionLoading("logical")
-                          ? "Loading audit log details."
+                          ? <AuditLogLoadingIndicator label="Loading audit log details." />
                           : sectionError("logical") ?? "Open to load audit log details."}
                       </p>
                     )}
@@ -501,12 +515,12 @@ export function SessionAuditLogModal({
                   }}
                 >
                   <summary>
-                    <strong>Transport payload</strong>
+                    <strong>TransportPayload</strong>
                   </summary>
                   {transportOpen ? <section className="audit-log-section">
                     {detail?.transportPayload ? (
                       <>
-                        <p><strong>{detail.transportPayload.summary || "Transport payload"}</strong></p>
+                        <p><strong>{detail.transportPayload.summary || "TransportPayload"}</strong></p>
                         {detail.transportPayload.fields.length > 0 ? (
                           <div className="audit-log-transport-fields">
                             {detail.transportPayload.fields.map((field, index) => (
@@ -516,16 +530,12 @@ export function SessionAuditLogModal({
                               </div>
                             ))}
                           </div>
-                        ) : (
-                          <p className="audit-log-empty">No transport payload recorded yet.</p>
-                        )}
+                        ) : null}
                       </>
                     ) : (
-                      <p className="audit-log-empty">
-                        {sectionLoading("transport")
-                          ? "Loading audit log details."
-                          : sectionError("transport") ?? "No transport payload recorded yet."}
-                      </p>
+                      sectionLoading("transport") ? (
+                        <AuditLogLoadingIndicator label="Loading audit log details." />
+                      ) : sectionError("transport") ?? null
                     )}
                   </section> : null}
                 </details>
@@ -542,7 +552,7 @@ export function SessionAuditLogModal({
                   </summary>
                   {responseOpen ? <section className="audit-log-section">
                     {sectionLoading("response") ? (
-                      <p className="audit-log-empty">Loading audit log details.</p>
+                      <AuditLogLoadingIndicator label="Loading audit log details." />
                     ) : sectionError("response") ? (
                       <p className="audit-log-empty">{sectionError("response")}</p>
                     ) : (
@@ -550,7 +560,7 @@ export function SessionAuditLogModal({
                         <pre>{previewAuditLogText(assistantText || "-")}</pre>
                         {interimMessages.length > 0 ? (
                           <div className="audit-log-transport-fields">
-                            <p><strong>Interim messages</strong></p>
+                            <p><strong>InterimMessages</strong></p>
                             {interimMessages.map((message) => (
                               <div key={`${entry.id}-interim-${message.seq}`} className="audit-log-transport-field">
                                 <p><strong>#{message.seq + 1}</strong> <span>{message.createdAt}</span></p>
@@ -576,7 +586,7 @@ export function SessionAuditLogModal({
                   </summary>
                   {operationsOpen ? <section className="audit-log-section">
                     {sectionLoading("operations") ? (
-                      <p className="audit-log-empty">Loading audit log details.</p>
+                      <AuditLogLoadingIndicator label="Loading audit log details." />
                     ) : sectionError("operations") ? (
                       <p className="audit-log-empty">{sectionError("operations")}</p>
                     ) : operations.length > 0 ? (
@@ -613,7 +623,7 @@ export function SessionAuditLogModal({
                                 <summary>Details</summary>
                                 {openAuditLogFolds[auditLogOperationDetailFoldKey(entry, index)] ? (
                                   operationDetailState(index)?.loading ? (
-                                    <p className="audit-log-empty">Loading operation details.</p>
+                                    <AuditLogLoadingIndicator label="Loading operation details." />
                                   ) : operationDetailState(index)?.errorMessage ? (
                                     <p className="audit-log-empty">{operationDetailState(index)?.errorMessage}</p>
                                   ) : (
@@ -630,9 +640,7 @@ export function SessionAuditLogModal({
                           </li>
                         ) : null}
                       </ul>
-                    ) : (
-                      <p className="audit-log-empty">No recorded operations yet.</p>
-                    )}
+                    ) : null}
                   </section> : null}
                 </details>
 
@@ -682,11 +690,17 @@ export function SessionAuditLogModal({
                   }}
                 >
                   <summary>
-                    <strong>Raw items</strong>
+                    <strong>RawItems</strong>
                   </summary>
                   {rawOpen ? (
                     <section className="audit-log-section compact">
-                      <pre>{previewAuditLogText(detail?.rawItemsJson ?? (sectionLoading("raw") ? "loading..." : sectionError("raw") ?? "[]"))}</pre>
+                      {detail?.rawItemsJson !== undefined ? (
+                        <AuditLogTextPreview value={detail.rawItemsJson} />
+                      ) : sectionLoading("raw") ? (
+                        <AuditLogLoadingIndicator label="Loading raw audit log items." />
+                      ) : (
+                        <AuditLogTextPreview value={sectionError("raw") ?? "[]"} />
+                      )}
                       {(detail?.providerMetadata?.length ?? 0) > 0 ? (
                         <pre>{previewAuditLogText(JSON.stringify(detail?.providerMetadata ?? [], null, 2))}</pre>
                       ) : null}
@@ -708,8 +722,16 @@ export function SessionAuditLogModal({
             className="audit-log-load-more"
             onClick={onLoadMore}
             disabled={loadingMore}
+            aria-busy={loadingMore}
+            aria-label={loadingMore ? "Loading more audit log entries" : "Load more audit log entries"}
           >
-            {loadingMore ? "Loading..." : "Load more"}
+            {loadingMore ? (
+              <>
+                <span className="settings-action-spinner" aria-hidden="true" />
+                <span>LoadMore</span>
+                <span className="visually-hidden">Loading more audit log entries.</span>
+              </>
+            ) : "LoadMore"}
           </button>
         ) : null}
       </section>

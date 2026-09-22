@@ -50,7 +50,7 @@ export type FileRootGitHistoryPaneProps = {
   onRepositoryChange?: (repositoryId: string | null) => void;
 };
 
-const HISTORY_SCOPES = [["commit", "Changed files"]] as const satisfies readonly [FileRootGitChangeScope, string][];
+const HISTORY_SCOPES = [["commit", "ChangedFiles"]] as const satisfies readonly [FileRootGitChangeScope, string][];
 
 const HISTORY_REF_MARKERS = {
   head: "H",
@@ -65,8 +65,8 @@ const HISTORY_REF_KIND_LABELS = {
 } as const satisfies Record<FileRootGitHistoryRef["kind"], string>;
 
 const HISTORY_COMPARISON_MODE_LABELS: Record<FileRootGitHistoryComparisonMode, string> = {
-  direct: "Direct comparison",
-  branch: "Branch changes",
+  direct: "DirectComparison",
+  branch: "BranchChanges",
 };
 
 const HISTORY_AVAILABLE_REF_KIND_LABELS: Record<FileRootGitHistoryAvailableRef["kind"], string> = {
@@ -110,13 +110,13 @@ function historyComparisonEntryKey(repositoryId: string, entry: FileRootGitChang
 
 function selectorLabel(selector: FileRootGitHistoryComparisonSelector | null): string {
   if (!selector) {
-    return "Select a ref";
+    return "SelectARef";
   }
   if (selector.kind === "head") {
     return "HEAD";
   }
   if (selector.kind === "commit") {
-    return `Commit ${selector.objectId.slice(0, 7)}`;
+    return `Commit${selector.objectId.slice(0, 7)}`;
   }
   return selector.name;
 }
@@ -268,7 +268,6 @@ function HistoryComparisonRefPicker({
               autoFocus
               aria-label={`${label} search`}
               type="search"
-              placeholder="Search refs or enter commit SHA"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
@@ -297,7 +296,7 @@ function HistoryComparisonRefPicker({
                   onClick={() => choose({ kind: "head" })}
                 >
                   <strong>HEAD</strong>
-                  <span>Current checked-out commit</span>
+                  <span>CurrentCheckedOutCommit</span>
                 </button>
               ) : null}
               {commitCandidate ? (
@@ -308,8 +307,8 @@ function HistoryComparisonRefPicker({
                   aria-selected={value?.kind === "commit" && value.objectId === commitCandidate}
                   onClick={() => choose({ kind: "commit", objectId: commitCandidate })}
                 >
-                  <strong>Commit {commitCandidate.slice(0, 7)}</strong>
-                  <span>Resolve typed commit SHA</span>
+                  <strong>Commit{commitCandidate.slice(0, 7)}</strong>
+                  <span>ResolveTypedCommitSHA</span>
                 </button>
               ) : null}
               {filteredRefs.map((ref) => (
@@ -325,9 +324,6 @@ function HistoryComparisonRefPicker({
                   <span>{HISTORY_AVAILABLE_REF_KIND_LABELS[ref.kind]}</span>
                 </button>
               ))}
-              {filteredRefs.length === 0 && !commitCandidate && queryText !== "head" ? (
-                <span className="file-history-comparison-picker-empty">No matching refs.</span>
-              ) : null}
             </div>
           </div>
         ) : null}
@@ -575,9 +571,9 @@ export function FileRootGitHistoryPane({
       return;
     }
     if (branch === null) {
-      setListMessage(repository.branches.length > 0
-        ? "Git HEAD is detached. Select a branch to view its history."
-        : "The Git repository has no committed branches.");
+      if (repository.branches.length > 0) {
+        setListMessage("Git HEAD is detached. Select a branch to view its history.");
+      }
       return;
     }
     void loadPage(repository, branch, nextGeneration, null, true);
@@ -1125,7 +1121,7 @@ export function FileRootGitHistoryPane({
       {comparisonOpen ? (
         <div className="file-history-comparison" aria-busy={comparisonLoading || undefined}>
           <button className="file-history-back" type="button" onClick={backFromComparison}>
-            ← {comparisonReturnToDetail ? "Commit details" : "History"}
+            ← {comparisonReturnToDetail ? "CommitDetails" : "History"}
           </button>
           <div className="file-history-comparison-form">
             <div className="file-history-comparison-form-heading">
@@ -1182,11 +1178,10 @@ export function FileRootGitHistoryPane({
           </div>
           {comparisonMessage ? <p className="file-history-message" role="alert">{comparisonMessage}</p> : null}
           {comparisonLoading ? (
-            <div className="workspace-changes-loading" role="status" aria-live="polite">
+            <div className="workspace-changes-loading" role="status" aria-live="polite" aria-label="Loading Git comparison">
               <span className="workspace-changes-spinner" aria-hidden="true" />
-              <span className="visually-hidden">Loading Git comparison</span>
             </div>
-          ) : comparison && comparisonRootChange ? (
+          ) : comparison && comparisonRootChange && comparisonRootChange.status !== "empty" ? (
             <>
               <div
                 className="file-history-comparison-result-header"
@@ -1196,8 +1191,8 @@ export function FileRootGitHistoryPane({
                 <div>
                   <strong>
                     {filteredComparisonEntries.length === comparisonEntries.length
-                      ? `${comparisonEntries.length} changed files`
-                      : `${filteredComparisonEntries.length} matching files`}
+                      ? `${comparisonEntries.length}ChangedFiles`
+                      : `${filteredComparisonEntries.length}MatchingFiles`}
                   </strong>
                   <span>{HISTORY_COMPARISON_MODE_LABELS[comparison.mode]}</span>
                 </div>
@@ -1208,7 +1203,7 @@ export function FileRootGitHistoryPane({
                 </div>
                 {comparison.mergeBaseCommitId ? (
                   <span className="file-history-comparison-merge-base">
-                    merge-base <code>{comparison.mergeBaseCommitId}</code>
+                    MergeBase <code>{comparison.mergeBaseCommitId}</code>
                   </span>
                 ) : null}
                 <label className="file-history-comparison-filter">
@@ -1216,7 +1211,6 @@ export function FileRootGitHistoryPane({
                   <input
                     aria-label="Filter changed files"
                     type="search"
-                    placeholder="Filter changed files"
                     value={comparisonFilter}
                     onChange={(event) => setComparisonFilter(event.target.value)}
                   />
@@ -1228,7 +1222,7 @@ export function FileRootGitHistoryPane({
                     disabled={!!loadingDiffKey}
                     onClick={(event) => void openComparisonDiff(null, event.ctrlKey || event.metaKey)}
                   >
-                    Open all changes
+                    OpenAllChanges
                   </button>
                 </div>
               </div>
@@ -1278,7 +1272,7 @@ export function FileRootGitHistoryPane({
                   disabled={loadingDetail || !!loadingDiffKey || !rootChange}
                   onClick={() => void openCommitDiff(null, false)}
                 >
-                  Open all changes
+                  OpenAllChanges
                 </button>
                 {canCompare ? (
                   <button
@@ -1296,9 +1290,8 @@ export function FileRootGitHistoryPane({
               </div>
               {detailMessage ? <p className="file-history-message" role="alert">{detailMessage}</p> : null}
               {loadingDetail ? (
-                <div className="workspace-changes-loading" role="status" aria-live="polite">
+                <div className="workspace-changes-loading" role="status" aria-live="polite" aria-label="Loading commit detail">
                   <span className="workspace-changes-spinner" aria-hidden="true" />
-                  <span className="visually-hidden">Loading commit detail</span>
                 </div>
               ) : rootChange ? (
                 <div className="file-history-changed-files">
@@ -1319,9 +1312,8 @@ export function FileRootGitHistoryPane({
               ) : null}
             </>
           ) : loadingDetail ? (
-            <div className="workspace-changes-loading" role="status" aria-live="polite">
+            <div className="workspace-changes-loading" role="status" aria-live="polite" aria-label="Loading commit detail">
               <span className="workspace-changes-spinner" aria-hidden="true" />
-              <span className="visually-hidden">Loading commit detail</span>
             </div>
           ) : detailMessage ? <p className="file-history-message" role="alert">{detailMessage}</p> : null}
         </div>
@@ -1338,19 +1330,12 @@ export function FileRootGitHistoryPane({
         >
           {listMessage ? <p className="file-history-message" role="alert">{listMessage}</p> : null}
           {loadingRepositories || repositoryState === "pending" || (loadingCommits && commits.length === 0) ? (
-            <div className="workspace-changes-loading" role="status" aria-live="polite">
+            <div className="workspace-changes-loading" role="status" aria-live="polite" aria-label="Loading commit history">
               <span className="workspace-changes-spinner" aria-hidden="true" />
-              <span className="visually-hidden">Loading commit history</span>
             </div>
-          ) : repositoryState === "unavailable" ? (
-            <p className="file-history-empty">History is not available.</p>
-          ) : repositoryState === "error" && !listMessage ? (
+          ) : repositoryState === "unavailable" ? null : repositoryState === "error" && !listMessage ? (
             <p className="file-history-message" role="alert">History could not be loaded.</p>
-          ) : repositories.length === 0 && !listMessage ? (
-            <p className="file-history-empty">No Git repositories.</p>
-          ) : commits.length === 0 && !listMessage ? (
-            <p className="file-history-empty">No commits.</p>
-          ) : (
+          ) : repositories.length === 0 && !listMessage ? null : commits.length === 0 && !listMessage ? null : (
             commits.map((commit) => (
               <div className="file-history-commit-row-wrapper" key={commit.id}>
                 <button
@@ -1358,7 +1343,7 @@ export function FileRootGitHistoryPane({
                   type="button"
                   onClick={() => void selectCommit(commit)}
                 >
-                  <span className="file-history-commit-subject" title={commit.subject}>{commit.subject || "No subject"}</span>
+                  <span className="file-history-commit-subject" title={commit.subject}>{commit.subject || ""}</span>
                   <span className="file-history-commit-secondary">
                     <code>{commit.shortHash}</code>
                     <span>{commitAuthor(commit)}</span>

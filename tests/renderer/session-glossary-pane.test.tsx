@@ -54,7 +54,7 @@ test("SessionGlossaryPaneは一覧を用語と検索へ絞りread-onlyで表示�
   const html = renderToStaticMarkup(
     <SessionGlossaryPane {...baseProps} projection={validProjection} />,
   );
-  assert.match(html, /<span class="sr-only">Search glossary<\/span>/);
+  assert.match(html, /<span class="sr-only">SearchGlossary<\/span>/);
   assert.doesNotMatch(html, /placeholder=/);
   assert.match(html, /Runtime/);
   assert.doesNotMatch(html, />RT</);
@@ -104,36 +104,6 @@ test("SessionGlossaryPaneはdefinitionをMarkdownやHTMLとして解釈せず完
   assert.match(html, />RT</);
   assert.doesNotMatch(html, /Aliases:/);
   assert.match(html, /aria-label="Back to glossary entries"/);
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "Glossary missing stateはfile pathや不要な説明を含めず短いNo glossary found状態を表示する"
-// oracle = { type = "contract", ref = "src/glossary/SessionGlossaryPane.tsx: missing projection view" }
-// fault = "missing stateでinternal file pathまたは将来説明を表示し、現在利用できる情報を越えて案内する"
-// observable = "No glossary found labelとrelative path・旧説明文の不在"
-// observation_boundary = "component-behavior"
-// scope = "session-glossary-missing-state"
-// lifecycle = "permanent"
-// @end-test-value
-test("SessionGlossaryPaneはmissingを説明文やfile pathなしの短い状態として表示する", () => {
-  const html = renderToStaticMarkup(
-    <SessionGlossaryPane
-      {...baseProps}
-      projection={{
-        ...validProjection,
-        sequence: 2,
-        state: {
-          status: "missing",
-          relativePath: ".withmate/glossary.yaml",
-          revision: null,
-        },
-      }}
-    />,
-  );
-  assert.match(html, />No glossary found</);
-  assert.doesNotMatch(html, /\.withmate\/glossary\.yaml/);
-  assert.doesNotMatch(html, /作成されると/);
 });
 
 // @test-value v2

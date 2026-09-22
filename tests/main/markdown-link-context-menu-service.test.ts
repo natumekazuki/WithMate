@@ -50,7 +50,7 @@ test("Markdown link context menuは選択時だけ解決したtargetをclipboard
   };
   const resultPromise = harness.service.showContextMenu({} as never, request);
 
-  assert.equal(harness.getMenuTemplate()[0]?.label, "Copy link");
+  assert.equal(harness.getMenuTemplate()[0]?.label, "CopyLink");
   assert.deepEqual(harness.getPopupOptions(), {
     window: {},
     x: 120,
@@ -185,8 +185,8 @@ test("Markdown link context menuは解決済みregular fileだけに別のfile c
   await Promise.resolve();
 
   assert.deepEqual(harness.getMenuTemplate().map((item) => item.label), [
-    "Copy link",
-    "Copy file",
+    "CopyLink",
+    "CopyFile",
   ]);
   harness.getMenuTemplate()[1]?.click?.();
   harness.getPopupOptions()?.callback?.();
@@ -202,7 +202,7 @@ test("Markdown link context menuは解決済みregular fileだけに別のfile c
     fileContext: { sessionId: "session-1" },
   });
   await Promise.resolve();
-  assert.deepEqual(unresolved.getMenuTemplate().map((item) => item.label), ["Copy link"]);
+  assert.deepEqual(unresolved.getMenuTemplate().map((item) => item.label), ["CopyLink"]);
   unresolved.getPopupOptions()?.callback?.();
   assert.deepEqual(await unresolvedResult, { status: "dismissed" });
 });

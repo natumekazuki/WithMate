@@ -33,7 +33,6 @@ export function SessionActionDockCompactRow({
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
-  pendingRunIndicatorTextVisible = true,
   pendingRunIndicatorAnnounce = true,
   targetDock = null,
   chatNotice,
@@ -69,7 +68,7 @@ export function SessionActionDockCompactRow({
           <PendingRunIndicator
             announcement={pendingRunIndicatorAnnouncement}
             text={pendingRunIndicatorText}
-            showText={pendingRunIndicatorTextVisible}
+            showText={false}
             announce={pendingRunIndicatorAnnounce}
           />
         </button>
@@ -83,7 +82,7 @@ export function SessionActionDockCompactRow({
         >
           {chatNotice ? <span className="session-action-dock-compact-badge attention">{chatNotice}</span> : null}
           {displayedAttachmentCount > 0 ? (
-            <span className="session-action-dock-compact-badge">{`Attachments: ${displayedAttachmentCount}`}</span>
+            <span className="session-action-dock-compact-badge">{`Attachments${displayedAttachmentCount}`}</span>
           ) : null}
         </button>
       )}
@@ -113,7 +112,7 @@ export function SessionActionDockCompactRow({
             type="button"
             onClick={onJumpToBottom}
           >
-            Jump to latest
+            JumpToLatest
           </button>
         ) : null}
         {showMessageViewModeControls ? (

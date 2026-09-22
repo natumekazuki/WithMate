@@ -23,9 +23,7 @@ export type SessionGlossaryPaneProps = {
 function stateMessage(projection: SessionGlossaryProjection): { title: string; detail?: string } | null {
   switch (projection.state.status) {
     case "missing":
-      return {
-        title: "No glossary found",
-      };
+      return null;
     case "invalid":
       return {
         title: "Could not load the glossary",
@@ -41,6 +39,8 @@ function stateMessage(projection: SessionGlossaryProjection): { title: string; d
         title: "Could not check for glossary updates",
         detail: projection.state.message,
       };
+    case "not-applicable":
+      return null;
     case "valid":
       return null;
   }
@@ -92,11 +92,12 @@ export function SessionGlossaryPane({
     projection.checkout.branch,
     projection.checkout.pathLabel,
   ].filter(Boolean).join(" / ");
+  const isNotApplicable = projection.state.status === "not-applicable";
   return (
     <section className="glossary-pane" aria-label="Repository glossary">
-      <p className="glossary-pane-checkout" title={checkoutTitle}>{checkoutLabel}</p>
+      {isNotApplicable ? null : <p className="glossary-pane-checkout" title={checkoutTitle}>{checkoutLabel}</p>}
 
-      {unavailable ? (
+      {projection.state.status === "missing" || isNotApplicable ? null : unavailable ? (
         <div className={`glossary-pane-status ${projection.state.status}`} role={projection.state.status === "invalid" ? "alert" : "status"}>
           <strong>{unavailable.title}</strong>
           {unavailable.detail ? <p>{unavailable.detail}</p> : null}
@@ -115,7 +116,7 @@ export function SessionGlossaryPane({
       ) : (
         <div className="glossary-list-view">
           <label className="glossary-search-field">
-            <span className="sr-only">Search glossary</span>
+            <span className="sr-only">SearchGlossary</span>
             <input
               type="search"
               value={searchQuery}
@@ -138,9 +139,6 @@ export function SessionGlossaryPane({
                 <span className="glossary-entry-term">{entry.term}</span>
               </button>
             ))}
-            {!searchLoading && !searchError && visibleEntries.length === 0 ? (
-              <p className="glossary-list-empty">{searchQuery.trim() ? "No matching terms" : "No terms"}</p>
-            ) : null}
             {searchLoading ? (
               <div className="glossary-search-loading" role="status" aria-label="Searching">
                 <span className="glossary-pane-spinner" aria-hidden="true" />
@@ -148,7 +146,7 @@ export function SessionGlossaryPane({
             ) : null}
             {visibleEntries.length < visibleTotal && !searchLoading ? (
               <button className="glossary-load-more" type="button" onClick={onLoadMoreSearchResults}>
-                Load more
+                LoadMore
               </button>
             ) : null}
           </div>

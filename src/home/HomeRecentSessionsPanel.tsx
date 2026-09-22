@@ -5,6 +5,7 @@ import type { HomeSessionSummary } from "../../src-shared/session/session-state.
 import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import type { HomeSessionState } from "./home-session-projection.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
+import { renderHomePlusIcon } from "./home-icons.js";
 
 export type HomeRecentSessionsPanelProps = {
   filteredSessionEntries: Array<{ session: HomeSessionSummary; state: HomeSessionState }>;
@@ -136,13 +137,10 @@ export function HomeRecentSessionsPanel({
     return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
   });
   const hasVisibleEntries = visibleSessionEntries.length > 0;
-  const emptyMessage = sessionSummaryLoadStatus === "loading"
-    ? "Loading sessions…"
-    : sessionSummaryLoadStatus === "error"
-      ? "Could not load sessions."
-      : normalizedSessionSearch
-        ? "No matching sessions."
-        : "No sessions yet.";
+  const isLoading = sessionSummaryLoadStatus === "loading";
+  const loadErrorMessage = sessionSummaryLoadStatus === "error"
+    ? "Could not load sessions."
+    : "";
 
   return (
     <section className="panel session-list-panel home-session-list-panel rise-3">
@@ -165,14 +163,17 @@ export function HomeRecentSessionsPanel({
           onClick={openLaunchDialog}
           aria-disabled={!canUsePrimaryFeatures}
           disabled={!canUsePrimaryFeatures}
+          aria-label="NewSession"
+          title="NewSession"
         >
-          New session
+          <span className="home-create-icon">{renderHomePlusIcon()}</span>
+          <span className="sr-only">NewSession</span>
         </button>
       </div>
 
       <div
         className="session-card-list home-session-card-list"
-        aria-busy={sessionSummaryLoadStatus === "loading" || loadingMore}
+        aria-busy={isLoading || loadingMore}
       >
         {visibleSessionEntries.map((item) => {
           const { session, state } = item.entry;
@@ -208,7 +209,7 @@ export function HomeRecentSessionsPanel({
               <div className="home-session-card-actions">
                 <div className="home-session-card-badges">
                   <span className={modeBadge.className}>{modeBadge.label}</span>
-                  {isReadOnly ? <span className="session-status home-session-status neutral">Read-only</span> : null}
+                  {isReadOnly ? <span className="session-status home-session-status neutral">ReadOnly</span> : null}
                   <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
                 </div>
                 <button
@@ -231,10 +232,14 @@ export function HomeRecentSessionsPanel({
             </div>
           );
         })}
-        {!hasVisibleEntries ? (
-          <p className="home-session-list-empty" role={sessionSummaryLoadStatus === "loading" ? "status" : undefined}>
-            {emptyMessage}
-          </p>
+        {!hasVisibleEntries && isLoading ? (
+          <div className="home-session-list-load-status" role="status" aria-live="polite">
+            <span className="home-session-list-load-spinner" aria-hidden="true" />
+            <span className="sr-only">Loading sessions…</span>
+          </div>
+        ) : null}
+        {!hasVisibleEntries && loadErrorMessage ? (
+          <p className="home-session-list-empty">{loadErrorMessage}</p>
         ) : null}
         {hasMore ? <div ref={loadMoreSentinelRef} className="home-session-list-load-sentinel" aria-hidden="true" /> : null}
         {loadingMore ? (

@@ -30,6 +30,6 @@
 
 ## Editor
 
-- Settingsの `Default microcopy` に各slotのtextareaを置き、1行を1候補として編集する。
-- slot名は英語の表示labelを使い、保存するstable slot IDは変えない。
-- 候補とplaceholderは既存設定保存経路で保存する。未保存変更・保存中・失敗の表示は [Settings UI](settings-ui.md) に従う。
+- current Settings UIには`DefaultMicrocopy`の編集面を置かない。これは表示面の廃止であり、既存の`user_microcopy_catalog_json`、候補、placeholder、stable slot IDを削除・空化する変更ではない。
+- slot名と保存するstable slot IDは変えない。保存形式の互換性調査が完了するまで、既存設定保存経路とlookupの契約を維持する。
+- 未保存変更・保存中・失敗の表示が別のSettings編集で発生する場合は [Settings UI](settings-ui.md) に従う。consumerがないslotをUIの都合で復活させない。

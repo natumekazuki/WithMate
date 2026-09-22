@@ -67,9 +67,8 @@ export default function DiffApp() {
   if (loadState === "loading") {
     return (
       <div className="page-shell diff-page">
-        <section className="panel empty-session-card rise-1" role="status" aria-live="polite">
+        <section className="panel empty-session-card rise-1" role="status" aria-live="polite" aria-label="Loading diff">
           <span className="workspace-changes-spinner" aria-hidden="true" />
-          <span className="visually-hidden">Loading diff</span>
         </section>
       </div>
     );

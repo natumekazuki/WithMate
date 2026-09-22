@@ -6,7 +6,6 @@ import {
 } from "../../src-shared/settings/provider-settings-state.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
-import { MICROCOPY_SLOTS, type MicrocopySlot } from "../../src-shared/settings/microcopy-state.js";
 import {
   getMemoryFileQuotaMegabytes,
   getMemoryFileQuotaMegabytesInputBounds,
@@ -29,10 +28,8 @@ import {
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
   SETTINGS_PROVIDER_FILE_SETTINGS_HELP,
   SETTINGS_PROVIDER_FILE_SETTINGS_LABEL,
-  SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_HELP,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER,
-  SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_HELP,
   SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL,
   SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER,
   SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL,
@@ -67,7 +64,6 @@ export type HomeSettingsContentProps = {
   onChangeMemoryFileQuotaMegabytes: (value: string) => void;
   onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
-  onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
@@ -86,22 +82,6 @@ export type HomeSettingsContentProps = {
   onSaveSettings: () => void | Promise<void>;
 };
 
-const MICROCOPY_SLOT_LABEL: Record<MicrocopySlot, string> = {
-  "chat.pending.response_waiting": "Chat / response waiting",
-  "dock.status.approval": "Action dock / approval",
-  "dock.status.working": "Action dock / working",
-  "dock.status.responding": "Action dock / responding",
-  "dock.status.preparing": "Action dock / preparing",
-  "retry.interrupted.title": "Retry / interrupted",
-  "retry.failed.title": "Retry / failed",
-  "retry.canceled.title": "Retry / canceled",
-  "composer.error.path_not_found": "Composer / path not found",
-  "empty.latest_command.waiting": "Empty / command waiting",
-  "empty.latest_command": "Empty / no command",
-  "empty.changed_files": "Empty / no changes",
-  "empty.context": "Empty / no context",
-};
-
 type SettingsActionKey =
   | "import-models"
   | "export-models"
@@ -115,14 +95,6 @@ type SettingsActionKey =
   | "browse-instruction"
   | "delete-sessions"
   | "save-settings";
-
-const microcopyTextareaValue = (value: AppSettings["userMicrocopyCatalog"][MicrocopySlot]): string => {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  return (value ?? []).join("\n");
-};
 
 type PromptContextToggleProps = {
   id: string;
@@ -142,6 +114,26 @@ function PromptContextToggle({ id, label, checked, onChange }: PromptContextTogg
         onChange={(event) => onChange(event.target.checked)}
       />
     </div>
+  );
+}
+
+type SettingsActionContentProps = {
+  busy: boolean;
+  label: string;
+  busyLabel: string;
+};
+
+function SettingsActionContent({ busy, label, busyLabel }: SettingsActionContentProps) {
+  if (!busy) {
+    return label;
+  }
+
+  return (
+    <>
+      <span className="settings-action-spinner" aria-hidden="true" />
+      <span>{label}</span>
+      <span className="visually-hidden">{busyLabel}</span>
+    </>
   );
 }
 
@@ -168,7 +160,6 @@ export function HomeSettingsContent({
   onChangeMemoryFileQuotaMegabytes,
   onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
-  onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
   onChangeProviderSkillRootPath,
   onChangeProviderSkillRelativePath,
@@ -263,7 +254,7 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>Prompt context</strong>
+              <strong>PromptContext</strong>
               <PromptContextToggle
                 id="settings-prompt-context-character-definition"
                 label={SETTINGS_CHARACTER_DEFINITION_LABEL}
@@ -293,28 +284,7 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>Default microcopy</strong>
-              <p className="settings-note">Use one line per candidate. Leave a slot empty to use the system default.</p>
-              <div className="settings-provider-list">
-                {MICROCOPY_SLOTS.map((slot) => (
-                  <label key={slot} className="settings-provider-input">
-                    <span>{MICROCOPY_SLOT_LABEL[slot]}</span>
-                    <textarea
-                      className="settings-microcopy-textarea"
-                      value={microcopyTextareaValue(settingsDraft.userMicrocopyCatalog[slot])}
-                      onChange={(event) => onChangeUserMicrocopySlot(slot, event.target.value)}
-                      rows={3}
-                      spellCheck={false}
-                    />
-                  </label>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="settings-section-card">
-            <div className="settings-field">
-              <strong>Coding agent providers</strong>
+              <strong>CodingAgentProviders</strong>
               {providerSettingRows.length > 0 ? (
                 <div className="settings-provider-list">
                   {providerSettingRows.map(({ provider, settings }) => (
@@ -349,8 +319,13 @@ export function HomeSettingsContent({
                               onClick={() => void runAction("browse-root", () => onBrowseProviderSkillRootPath(provider.id))}
                               disabled={isBusy}
                               aria-busy={actionIsBusy("browse-root")}
+                              aria-label={actionIsBusy("browse-root") ? "Opening provider root directory" : "Browse"}
                             >
-                              {actionIsBusy("browse-root") ? "Opening…" : "Browse"}
+                              <SettingsActionContent
+                                busy={actionIsBusy("browse-root")}
+                                label="Browse"
+                                busyLabel="Opening provider root directory."
+                              />
                             </button>
                           </div>
                         </label>
@@ -371,11 +346,15 @@ export function HomeSettingsContent({
                               onClick={() => void runAction("browse-skill", () => onBrowseProviderSkillRelativePath(provider.id))}
                               disabled={isBusy}
                               aria-busy={actionIsBusy("browse-skill")}
+                              aria-label={actionIsBusy("browse-skill") ? "Opening skill folder" : "Browse"}
                             >
-                              {actionIsBusy("browse-skill") ? "Opening…" : "Browse"}
+                              <SettingsActionContent
+                                busy={actionIsBusy("browse-skill")}
+                                label="Browse"
+                                busyLabel="Opening skill folder."
+                              />
                             </button>
                           </div>
-                          <p className="settings-help">{SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_HELP}</p>
                         </label>
                         <label className="settings-provider-input">
                           <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
@@ -394,22 +373,22 @@ export function HomeSettingsContent({
                               onClick={() => void runAction("browse-instruction", () => onBrowseProviderInstructionRelativePath(provider.id))}
                               disabled={isBusy}
                               aria-busy={actionIsBusy("browse-instruction")}
+                              aria-label={actionIsBusy("browse-instruction") ? "Opening instruction file" : "Browse"}
                             >
-                              {actionIsBusy("browse-instruction") ? "Opening…" : "Browse"}
+                              <SettingsActionContent
+                                busy={actionIsBusy("browse-instruction")}
+                                label="Browse"
+                                busyLabel="Opening instruction file."
+                              />
                             </button>
                           </div>
-                          <p className="settings-help">{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_HELP}</p>
                         </label>
                       </div>
                     </section>
                   ))}
                 </div>
               ) : (
-                <p className="settings-note">
-                  {providerCatalogLoaded
-                    ? "No coding agent providers found in the model catalog."
-                    : "Could not load the model catalog."}
-                </p>
+                providerCatalogLoaded ? null : <p className="settings-note">Could not load the model catalog.</p>
               )}
             </div>
           </section>
@@ -420,27 +399,29 @@ export function HomeSettingsContent({
               {memoryV6Diagnostics ? (
                 <div className="settings-diagnostics-grid">
                   <div className="settings-diagnostics-item">
-                    <span>Memory API</span>
+                    <span>MemoryAPI</span>
                     <strong>{memoryV6Diagnostics.runtime.status}</strong>
-                    <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "Discovery published" : "Discovery unavailable"}</small>
+                    <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "DiscoveryPublished" : "DiscoveryUnavailable"}</small>
                   </div>
                   <div className="settings-diagnostics-item">
-                    <span>CLI shim</span>
+                    <span>CLIShim</span>
                     <strong>{memoryV6Diagnostics.cliShim.status}</strong>
                     <small>{formatCliShimDetail(memoryV6Diagnostics)}</small>
                   </div>
                   <div className="settings-diagnostics-item settings-diagnostics-wide">
-                    <span>Last error</span>
+                    <span>LastError</span>
                     <strong>
                       {memoryV6Diagnostics.lastErrors[0]?.discoveryCode
                         ?? memoryV6Diagnostics.lastErrors[0]?.kind
-                        ?? "none"}
+                        ?? "None"}
                     </strong>
                     <small>{memoryV6Diagnostics.lastErrors.length > 0 ? "Review the application log for details." : "No recorded Memory V6 errors."}</small>
                   </div>
                 </div>
               ) : (
-                <p className="settings-note">Loading Memory V6 diagnostics…</p>
+                <div className="settings-loading-inline" role="status" aria-label="Loading Memory V6 diagnostics">
+                  <span className="settings-action-spinner" aria-hidden="true" />
+                </div>
               )}
               <div className="settings-actions">
                 <button
@@ -449,8 +430,13 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("review-memory", onOpenMemoryV6Review)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("review-memory")}
+                  aria-label={actionIsBusy("review-memory") ? "Opening Memory review" : "ReviewMemory"}
                 >
-                  {actionIsBusy("review-memory") ? "Opening…" : "Review memory"}
+                  <SettingsActionContent
+                    busy={actionIsBusy("review-memory")}
+                    label="ReviewMemory"
+                    busyLabel="Opening Memory review."
+                  />
                 </button>
                 <button
                   className={`launch-toggle ${actionIsBusy("install-cli-shim") ? "settings-action-busy" : ""}`.trim()}
@@ -458,8 +444,13 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("install-cli-shim", onInstallMemoryV6CliShim)}
                   disabled={isBusy || !memoryV6Diagnostics?.cliShim.supported}
                   aria-busy={actionIsBusy("install-cli-shim")}
+                  aria-label={actionIsBusy("install-cli-shim") ? "Installing CLI shim" : "InstallCLIShim"}
                 >
-                  {actionIsBusy("install-cli-shim") ? "Installing…" : "Install CLI shim"}
+                  <SettingsActionContent
+                    busy={actionIsBusy("install-cli-shim")}
+                    label="InstallCLIShim"
+                    busyLabel="Installing CLI shim."
+                  />
                 </button>
                 <button
                   className={`launch-toggle ${actionIsBusy("uninstall-cli-shim") ? "settings-action-busy" : ""}`.trim()}
@@ -467,8 +458,13 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("uninstall-cli-shim", onUninstallMemoryV6CliShim)}
                   disabled={isBusy || !canUninstallCliShim(memoryV6Diagnostics)}
                   aria-busy={actionIsBusy("uninstall-cli-shim")}
+                  aria-label={actionIsBusy("uninstall-cli-shim") ? "Uninstalling CLI shim" : "UninstallCLIShim"}
                 >
-                  {actionIsBusy("uninstall-cli-shim") ? "Uninstalling…" : "Uninstall CLI shim"}
+                  <SettingsActionContent
+                    busy={actionIsBusy("uninstall-cli-shim")}
+                    label="UninstallCLIShim"
+                    busyLabel="Uninstalling CLI shim."
+                  />
                 </button>
                 <button
                   className={`launch-toggle ${actionIsBusy("open-logs") ? "settings-action-busy" : ""}`.trim()}
@@ -476,8 +472,13 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("open-logs", onOpenAppLogFolder)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("open-logs")}
+                  aria-label={actionIsBusy("open-logs") ? "Opening application logs" : SETTINGS_OPEN_LOG_FOLDER_LABEL}
                 >
-                  {actionIsBusy("open-logs") ? "Opening…" : SETTINGS_OPEN_LOG_FOLDER_LABEL}
+                  <SettingsActionContent
+                    busy={actionIsBusy("open-logs")}
+                    label={SETTINGS_OPEN_LOG_FOLDER_LABEL}
+                    busyLabel="Opening application logs."
+                  />
                 </button>
                 <button
                   className={`launch-toggle ${actionIsBusy("open-crash-dumps") ? "settings-action-busy" : ""}`.trim()}
@@ -485,8 +486,13 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("open-crash-dumps", onOpenCrashDumpFolder)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("open-crash-dumps")}
+                  aria-label={actionIsBusy("open-crash-dumps") ? "Opening crash dumps" : SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
                 >
-                  {actionIsBusy("open-crash-dumps") ? "Opening…" : SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
+                  <SettingsActionContent
+                    busy={actionIsBusy("open-crash-dumps")}
+                    label={SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
+                    busyLabel="Opening crash dumps."
+                  />
                 </button>
               </div>
             </div>
@@ -494,8 +500,8 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>Model catalog</strong>
-              <p className="settings-help">Active revision: {modelCatalogRevisionLabel}</p>
+              <strong>ModelCatalog</strong>
+              <p className="settings-help">ActiveRevision: {modelCatalogRevisionLabel}</p>
               <div className="settings-actions">
                 <button
                   className={`launch-toggle ${actionIsBusy("import-models") ? "settings-action-busy" : ""}`.trim()}
@@ -503,8 +509,13 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("import-models", onImportModelCatalog)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("import-models")}
+                  aria-label={actionIsBusy("import-models") ? "Importing models" : "ImportModels"}
                 >
-                  {actionIsBusy("import-models") ? "Importing…" : "Import models"}
+                  <SettingsActionContent
+                    busy={actionIsBusy("import-models")}
+                    label="ImportModels"
+                    busyLabel="Importing models."
+                  />
                 </button>
                 <button
                   className={`launch-toggle ${actionIsBusy("export-models") ? "settings-action-busy" : ""}`.trim()}
@@ -512,8 +523,13 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("export-models", onExportModelCatalog)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("export-models")}
+                  aria-label={actionIsBusy("export-models") ? "Exporting models" : "ExportModels"}
                 >
-                  {actionIsBusy("export-models") ? "Exporting…" : "Export models"}
+                  <SettingsActionContent
+                    busy={actionIsBusy("export-models")}
+                    label="ExportModels"
+                    busyLabel="Exporting models."
+                  />
                 </button>
               </div>
             </div>
@@ -521,7 +537,7 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>Repository glossary</strong>
+              <strong>RepositoryGlossary</strong>
               <label className="settings-provider-input">
                 <span>{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL}</span>
                 <div className="settings-inline-input-row">
@@ -533,7 +549,7 @@ export function HomeSettingsContent({
                     value={settingsDraft.glossaryProactiveCreateLimit ?? ""}
                     onChange={(event) => onChangeGlossaryProactiveCreateLimit(event.target.value)}
                   />
-                  <span className="settings-inline-unit">terms</span>
+                  <span className="settings-inline-unit">Terms</span>
                 </div>
                 <p className="settings-help">{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP}</p>
               </label>
@@ -542,7 +558,7 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>Storage maintenance</strong>
+              <strong>StorageMaintenance</strong>
               <label className="settings-provider-input">
                 <span>{SETTINGS_MEMORY_FILE_QUOTA_LABEL}</span>
                 <div className="settings-inline-input-row">
@@ -573,8 +589,13 @@ export function HomeSettingsContent({
                     onClick={() => void runAction("delete-sessions", onDeleteSessionsLastActiveBefore)}
                     disabled={deletingOldSessions || isBusy || !sessionCleanupCutoffDate}
                     aria-busy={actionIsBusy("delete-sessions")}
+                    aria-label={actionIsBusy("delete-sessions") ? "Deleting old sessions" : "Delete"}
                   >
-                    {actionIsBusy("delete-sessions") ? "Deleting…" : "Delete"}
+                    <SettingsActionContent
+                      busy={actionIsBusy("delete-sessions")}
+                      label="Delete"
+                      busyLabel="Deleting old sessions."
+                    />
                   </button>
                 </div>
                 <p className="settings-help">{SETTINGS_DELETE_OLD_SESSIONS_HELP}</p>
@@ -592,7 +613,7 @@ export function HomeSettingsContent({
       </div>
       <div className="launch-dialog-foot settings-dialog-foot">
         <div className="settings-footer-status" aria-live="polite">
-          {settingsDirty ? <span className="settings-dirty-state">Unsaved changes</span> : null}
+          {settingsDirty ? <span className="settings-dirty-state">UnsavedChanges</span> : null}
           {settingsFeedback ? <p className="settings-feedback settings-feedback-inline" role="status">{settingsFeedback}</p> : null}
         </div>
         <button
@@ -601,8 +622,13 @@ export function HomeSettingsContent({
           onClick={() => void runAction("save-settings", onSaveSettings)}
           disabled={!settingsDirty || isBusy}
           aria-busy={actionIsBusy("save-settings")}
+          aria-label={actionIsBusy("save-settings") ? "Saving settings" : "SaveSettings"}
         >
-          {actionIsBusy("save-settings") ? "Saving…" : "Save settings"}
+          <SettingsActionContent
+            busy={actionIsBusy("save-settings")}
+            label="SaveSettings"
+            busyLabel="Saving settings."
+          />
         </button>
       </div>
     </>
@@ -612,10 +638,10 @@ export function HomeSettingsContent({
 function formatCliShimDetail(diagnostics: MemoryV6Diagnostics): string {
   const shim = diagnostics.cliShim;
   if (!shim.supported) {
-    return shim.status === "managed-by-installer" ? "managed by installer" : "unsupported";
+    return shim.status === "managed-by-installer" ? "ManagedByInstaller" : "Unsupported";
   }
 
-  const pathStatus = shim.pathContainsShimDirectory ? "PATH ready" : "PATH missing";
+  const pathStatus = shim.pathContainsShimDirectory ? "PATHReady" : "PATHMissing";
   return `${pathStatus}: ${shim.commandName}`;
 }
 

@@ -13,6 +13,7 @@ import {
 import {
   areResolvedGlossaryCheckoutsEqual,
   GlossaryApplicationService,
+  isGlossaryNotApplicableError,
   type ResolvedGlossaryCheckout,
 } from "./glossary-application-service.js";
 
@@ -48,6 +49,19 @@ function watchErrorState(error: unknown): GlossaryProjectionState {
     revision: null,
     message: error instanceof Error ? error.message : "Glossary projection failed.",
   };
+}
+
+function notApplicableState(): GlossaryProjectionState {
+  return {
+    status: "not-applicable",
+    relativePath: GLOSSARY_RELATIVE_PATH,
+    revision: null,
+    reason: "not-git",
+  };
+}
+
+function stateForError(error: unknown): GlossaryProjectionState {
+  return isGlossaryNotApplicableError(error) ? notApplicableState() : watchErrorState(error);
 }
 
 function operationError(error: unknown): GlossaryOperationError {
@@ -109,7 +123,7 @@ export class GlossarySessionProjectionService {
 
       try {
         const before = await this.#resolveScope(session);
-        const state = await this.#applicationService.read(before.target).catch(watchErrorState);
+        const state = await this.#applicationService.read(before.target).catch(stateForError);
         const afterSession = this.#getSession(sessionId);
         if (!afterSession || afterSession.id !== sessionId) {
           return this.#unavailableProjection(sessionId, afterSession, new Error("Session is unavailable."));
@@ -127,7 +141,7 @@ export class GlossarySessionProjectionService {
         }
         try {
           const scope = await this.#resolveScope(current);
-          return this.#project(scope, watchErrorState(error));
+          return this.#project(scope, stateForError(error));
         } catch {
           return this.#unavailableProjection(sessionId, current, error);
         }
@@ -329,7 +343,7 @@ export class GlossarySessionProjectionService {
         branch: fallbackSession.branch.trim() || "unavailable",
         pathLabel: label,
       },
-      state: watchErrorState(error),
+      state: stateForError(error),
     };
   }
 

@@ -193,10 +193,10 @@
 }
 
 .character-editor-markdown-card {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   height: 100%;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
   color: var(--ink);
@@ -212,6 +212,11 @@
   min-height: 0;
   resize: none;
   overflow: auto;
+}
+
+.character-editor-markdown-card > .character-editor-textarea {
+  flex: 1 1 0;
+  height: auto;
 }
 
 .character-editor-preview-grid {
@@ -333,6 +338,15 @@
 
 .character-editor-page .settings-inline-input-row {
   min-width: 0;
+}
+
+.character-editor-page .settings-character-form-grid,
+.character-editor-page .settings-character-theme-fields {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.character-editor-markdown-card .settings-section-head-row {
+  justify-content: flex-end;
 }
 
 .character-editor-page input,

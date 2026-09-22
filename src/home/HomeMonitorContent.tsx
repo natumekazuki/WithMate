@@ -101,8 +101,8 @@ export function HomeMonitorContent({
   nonRunningEntries,
   auxiliaryDataState = "ready",
   sessionWindowsDataState = "loaded",
-  runningEmptyMessage = "No running sessions.",
-  nonRunningEmptyMessage = "No stopped or completed sessions.",
+  runningEmptyMessage = "",
+  nonRunningEmptyMessage = "",
   feedback = "",
   onOpenSession,
   onShowContextMenu,
@@ -238,28 +238,34 @@ export function HomeMonitorContent({
     );
   });
 
+  const isLoading = sessionWindowsDataState === "loading" || auxiliaryDataState === "loading";
+  const loadingMessage = sessionWindowsDataState === "loading"
+    ? "Loading open sessions…"
+    : "Loading Auxiliary sessions…";
   const statusFeedback = feedback || (
-    sessionWindowsDataState === "loading"
-      ? "Loading open sessions…"
-      : sessionWindowsDataState === "error"
-        ? "Could not load open sessions."
-        : auxiliaryDataState === "loading"
-          ? "Loading Auxiliary sessions…"
-          : auxiliaryDataState === "error"
-            ? "Could not load Auxiliary sessions."
-            : ""
+    sessionWindowsDataState === "error"
+      ? "Could not load open sessions."
+      : auxiliaryDataState === "error"
+        ? "Could not load Auxiliary sessions."
+        : ""
   );
   const showEmptyState = sessionWindowsDataState !== "loading" && sessionWindowsDataState !== "error";
 
   return (
     <div
       className="home-monitor-body"
-      aria-busy={sessionWindowsDataState === "loading" || auxiliaryDataState === "loading"}
+      aria-busy={isLoading}
     >
       {statusFeedback ? (
         <p className="settings-feedback" role="status" aria-live="polite">
           {statusFeedback}
         </p>
+      ) : null}
+      {!feedback && isLoading ? (
+        <div className="home-session-list-load-status" role="status" aria-live="polite">
+          <span className="home-session-list-load-spinner" aria-hidden="true" />
+          <span className="sr-only">{loadingMessage}</span>
+        </div>
       ) : null}
       <section className="home-monitor-section" aria-labelledby="home-monitor-running">
         <div className="home-monitor-section-head">
@@ -269,7 +275,7 @@ export function HomeMonitorContent({
         <div className="home-monitor-list">
           {runningEntries.length > 0
             ? renderMonitorEntries(runningEntries)
-            : showEmptyState
+            : showEmptyState && runningEmptyMessage
               ? <p className="home-monitor-empty">{runningEmptyMessage}</p>
               : null}
         </div>
@@ -277,13 +283,13 @@ export function HomeMonitorContent({
 
       <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
         <div className="home-monitor-section-head">
-          <h3 id="home-monitor-inactive">Stopped or completed</h3>
+          <h3 id="home-monitor-inactive">Stopped</h3>
           <span className="home-monitor-count">{nonRunningEntries.length}</span>
         </div>
         <div className="home-monitor-list">
           {nonRunningEntries.length > 0
             ? renderMonitorEntries(nonRunningEntries)
-            : showEmptyState
+            : showEmptyState && nonRunningEmptyMessage
               ? <p className="home-monitor-empty">{nonRunningEmptyMessage}</p>
               : null}
         </div>

@@ -238,7 +238,7 @@ export function PromptTemplateWorkspace({
               disabled={isLoading}
               aria-label="Edit template"
             >
-              Edit
+              EditTemplates
             </button>
             <CloseButton
               ariaLabel="Close templates"
@@ -304,13 +304,14 @@ export function PromptTemplateWorkspace({
               ))
             ) : (
               <div className="prompt-template-picker-state">
-                <p>No templates yet.</p>
                 <button
                   type="button"
                   className="drawer-toggle compact secondary"
                   onClick={() => openEditor(EMPTY_EDITOR)}
+                  aria-label="New template"
+                  title="New template"
                 >
-                  New template
+                  <span className="composer-attachment-trigger-plus" aria-hidden="true">＋</span>
                 </button>
               </div>
             )}
@@ -324,13 +325,20 @@ export function PromptTemplateWorkspace({
     <>
       <header className="prompt-template-workspace-header">
         <BackNavigationButton label="Back to template selection" onBack={returnToPicker} />
-        <strong>Edit templates</strong>
+        <strong>EditTemplates</strong>
       </header>
 
       <div className="prompt-template-workspace-body">
         <aside className="prompt-template-list" aria-label="Template list">
-          <button className="drawer-toggle compact secondary" type="button" onClick={createNew} disabled={isSaving}>
-            New
+          <button
+            className="drawer-toggle compact secondary"
+            type="button"
+            onClick={createNew}
+            disabled={isSaving}
+            aria-label="New template"
+            title="New template"
+          >
+            <span className="composer-attachment-trigger-plus" aria-hidden="true">＋</span>
           </button>
           {templates.map((template) => (
             <button
@@ -380,9 +388,9 @@ export function PromptTemplateWorkspace({
               {savingAction === "save" ? (
                 <>
                   <span className="chat-skill-picker-spinner" aria-hidden="true" />
-                  <span>Save</span>
+                  <span>SaveTemplate</span>
                 </>
-              ) : "Save"}
+              ) : "SaveTemplate"}
             </button>
             <button
               type="button"
@@ -395,9 +403,9 @@ export function PromptTemplateWorkspace({
               {savingAction === "delete" ? (
                 <>
                   <span className="chat-skill-picker-spinner" aria-hidden="true" />
-                  <span>Delete</span>
+                  <span>DeleteTemplate</span>
                 </>
-              ) : "Delete"}
+              ) : "DeleteTemplate"}
             </button>
           </div>
         </div>

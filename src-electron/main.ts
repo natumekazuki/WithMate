@@ -394,10 +394,10 @@ const mainWindowRuntime = new MainWindowRuntime({
   confirmCloseWhileRunning: (window) => {
     const choice = dialog.showMessageBoxSync(window, {
       type: "warning",
-      buttons: ["Keep open", "Close and continue"],
+      buttons: ["KeepOpen", "CloseAndContinue"],
       defaultId: 0,
       cancelId: 0,
-      title: "Session is running",
+      title: "SessionIsRunning",
       message: "This session is still running.",
       detail: "The run will continue after this window closes. Reopen the session later to check its progress.",
       noLink: true,
@@ -1039,10 +1039,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             confirmQuitWhileRunning: () => {
               const choice = dialog.showMessageBoxSync({
                 type: "warning",
-                buttons: ["Go back", "Quit"],
+                buttons: ["GoBack", "Quit"],
                 defaultId: 0,
                 cancelId: 0,
-                title: "Session is running",
+                title: "SessionIsRunning",
                 message: "A session is still running.",
                 detail: "Quitting WithMate will interrupt the running work.",
                 noLink: true,

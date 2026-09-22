@@ -232,9 +232,8 @@ export function ComposerAttachmentMenu({
       style={menuStyle}
       onKeyDown={handleMenuKeyDown}
     >
-      <span className="composer-attachment-menu-title">Add attachment</span>
       {renderSection("composer-attach-source", "Attach", attachItems, 0)}
-      {renderSection("composer-session-files", "Session files", sessionItems, attachItems.length)}
+      {renderSection("composer-session-files", "SessionFiles", sessionItems, attachItems.length)}
     </div>,
     document.body,
   ) : null;

@@ -807,6 +807,8 @@
 }
 
 .workspace-changes-root-spinner {
+  display: inline-block;
+  flex-shrink: 0;
   width: 14px;
   height: 14px;
   box-sizing: border-box;
@@ -919,6 +921,19 @@
   align-items: center;
   justify-content: center;
   min-width: 14px;
+}
+
+.session-file-preview-action-busy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.session-file-preview-action-spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
 }
 
 .file-history-pane {

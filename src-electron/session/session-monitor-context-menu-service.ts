@@ -65,7 +65,7 @@ export class SessionMonitorContextMenuService {
             .catch(() => settle({ status: "failed", message: MENU_FAILED_MESSAGE }));
         },
       }, { type: "separator" }, {
-        label: "Copy session ID",
+        label: "CopySessionID",
         click: copySessionId,
       }];
 

@@ -2140,7 +2140,7 @@ test("SessionMessageColumn の Source は通常 message と pending の元 Markd
 // claim = "pending rowとlive approval/elicitationは既存messageの後、bottom anchorの前へ一度ずつ維持される"
 // oracle = { type = "contract", ref = "src/chat/conversation/session-message-column.tsx" }
 // fault = "実行中のrequest UIを既存messageの途中へ挿入するか末尾のpending/approvalを失う"
-// observable = "pending row、Approval required、approval/elicitation custom content、既存messageとanchorのDOM順"
+// observable = "pending row、ApprovalRequired、approval/elicitation custom content、既存messageとanchorのDOM順"
 // observation_boundary = "component-behavior"
 // scope = "session-message-live-request-tail"
 // lifecycle = "permanent"
@@ -2156,7 +2156,7 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
   });
 
   assert.match(html, /pending-row/);
-  assert.match(html, /Approval required/);
+  assert.match(html, /ApprovalRequired/);
   assert.match(html, /コマンド実行の承認/);
   assert.match(html, /対象ブランチを選んでね。/);
   assert.match(html, /Branch/);
@@ -2256,7 +2256,7 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
     pendingMessageText: "Preparing a response",
     pendingMessageTextVisible: false,
   });
-  assert.match(approvalHtml, /Approval required/);
+  assert.match(approvalHtml, /ApprovalRequired/);
   assert.match(approvalHtml, /コマンド実行の承認/);
   assert.doesNotMatch(approvalHtml, /Preparing a response/);
 
@@ -2336,10 +2336,10 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionComposerExpandedのidle DOMはattachment/view操作、closedなattachment menu、Add Directory/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
+// claim = "SessionComposerExpandedのidle DOMはattachment/view操作、closedなattachment menu、AddDirectory/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023C, MT-023D4; docs/design/desktop-ui.md: Action Dock" }
-// fault = "idle表示でattachment/view action・closedなattachment menu・Add Directory/Dirs・target dock・Cancel slot・SendのDOM配置が崩れる、Hide/reopen導線が混入する、Cancel slotがactiveまたはbuttonを持つ、Sendがsettings group内へ移動する"
-// observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAdd Directory/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row直下のsettings groupとSend button"
+// fault = "idle表示でattachment/view action・closedなattachment menu・AddDirectory/Dirs・target dock・Cancel slot・SendのDOM配置が崩れる、Hide/reopen導線が混入する、Cancel slotがactiveまたはbuttonを持つ、Sendがsettings group内へ移動する"
+// observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAddDirectory/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row直下のsettings groupとSend button"
 // observation_boundary = "component-behavior"
 // scope = "expanded ActionDock idle layout and Cancel slot"
 // lifecycle = "permanent"
@@ -2469,8 +2469,8 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   assert.equal(attachmentPanel, null);
   assert.equal(skillButton.nextElementSibling, additionalDirectoryToolbar);
   assert.match(attachmentButton.textContent ?? "", /Attach/);
-  assert.equal(addDirectoryButton.textContent, "Add Directory");
-  assert.equal(directoriesButton.textContent, "Dirs 0");
+  assert.equal(addDirectoryButton.textContent, "AddDirectory");
+  assert.equal(directoriesButton.textContent, "Dirs0");
   assert.ok((additionalDirectoryToolbar.compareDocumentPosition(viewActions) & 4) !== 0);
   assert.ok((attachmentMenu.compareDocumentPosition(viewActions) & 4) !== 0);
   assert.equal(viewActions.firstElementChild, cancelSlot);
@@ -2490,7 +2490,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   });
   assert.equal(forbiddenDockHitArea, undefined);
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
-  assert.equal(jumpButton.textContent, "Jump to latest");
+  assert.equal(jumpButton.textContent, "JumpToLatest");
   assert.equal(viewModeGroup.getAttribute("aria-label"), "Message display mode");
   assert.equal(previewButton.getAttribute("aria-pressed"), "false");
   assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
@@ -2591,11 +2591,11 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
 
   assert.match(html, /composer-toolbar-progress/);
   assert.match(html, /処理を実行中/);
-  assert.match(html, /Jump to latest/);
+  assert.match(html, /JumpToLatest/);
   assert.ok(html.indexOf("Attach") < html.indexOf("処理を実行中"));
-  assert.ok(html.indexOf("処理を実行中") < html.indexOf("Jump to latest"));
-  assert.ok(html.indexOf("Jump to latest") < html.indexOf("Preview"));
-  assert.match(html, /composer-toolbar-view-actions[\s\S]*Jump to latest[\s\S]*Message display mode/);
+  assert.ok(html.indexOf("処理を実行中") < html.indexOf("JumpToLatest"));
+  assert.ok(html.indexOf("JumpToLatest") < html.indexOf("Preview"));
+  assert.match(html, /composer-toolbar-view-actions[\s\S]*JumpToLatest[\s\S]*Message display mode/);
 
   const renderedDocument = new JSDOM(html).window.document;
   const toolbar = renderedDocument.querySelector(".composer-attachments-toolbar");
@@ -2646,17 +2646,17 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
 
 // @test-value v2
 // kind = "contract"
-// claim = "PendingRunIndicatorはconsumerが既定microcopyを非表示にしたときも実行状態のbadge・dots・accessible statusを保持し、custom textは表示できる"
+// claim = "PendingRunIndicatorはconsumerが実行中microcopyを非表示にしてもdot motion・accessible statusを保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 状態の形・動き・テキスト" }
-// fault = "既定文の重複整理でRunning indicator自体またはstatus通知が消える、あるいはcustom microcopyまで隠れる"
-// observable = "SessionComposerExpandedのrunning DOMにおけるbadge・dots・live status・custom textの有無"
+// fault = "実行中microcopyの整理でdot motionまたはstatus通知が消える、あるいは保存済みcustom microcopyがvisual DOMへ再表示される"
+// observable = "SessionComposerExpandedのrunning DOMにおけるdots・live status・visual textの有無"
 // observation_boundary = "component-behavior"
 // scope = "pending run indicator visible text policy"
 // lifecycle = "permanent"
-// impact = "同じrunの既定文を重ねず、実行中の状態とcustom microcopyの可視性を保つ"
+// impact = "同じrunの待機文を表示せず、実行中のdot motion・停止操作・accessible statusを保つ"
 // distinction = "ActionDockのexpanded/compact切替と別にindicatorのconsumer表示方針を直接確認する"
 // @end-test-value
-test("PendingRunIndicator は既定文を省略しても状態表示とcustom文言を保つ", () => {
+test("PendingRunIndicator は実行中microcopyを省略しても状態表示とaccessible statusを保つ", () => {
   const renderComposer = (pendingRunIndicatorTextVisible: boolean) => renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, createComposerTestProps({
       isRunning: true,
@@ -2667,13 +2667,14 @@ test("PendingRunIndicator は既定文を省略しても状態表示とcustom文
   );
 
   const defaultHtml = renderComposer(false);
-  assert.match(defaultHtml, /live-run-shell-status-badge[^>]*>Running<\/span>/);
+  assert.doesNotMatch(defaultHtml, /live-run-shell-status-badge/);
   assert.match(defaultHtml, /typing-dots pending-run-indicator-dots/);
   assert.match(defaultHtml, /visually-hidden[^>]*>Working<\/span>/);
   assert.doesNotMatch(defaultHtml, /live-run-shell-status-text/);
 
   const customHtml = renderComposer(true);
-  assert.match(customHtml, /live-run-shell-status-text[^>]*>Working<\/span>/);
+  assert.match(customHtml, /visually-hidden[^>]*>Working<\/span>/);
+  assert.doesNotMatch(customHtml, /live-run-shell-status-text/);
 });
 
 // @test-value v2
@@ -2681,7 +2682,7 @@ test("PendingRunIndicator は既定文を省略しても状態表示とcustom文
 // claim = "idleのcompact ActionDockはpreview/source切替とjumpを表示し、send・draftの重複UIを表示しない"
 // oracle = { type = "contract", ref = "src/chat/approval/session-action-dock.tsx" }
 // fault = "idle状態でもSendまたはdraftを複製するか、preview/source・jump affordanceを失う"
-// observable = "Jump to latest、Preview/Source、expand label、Send/draftのDOM有無"
+// observable = "JumpToLatest、Preview/Source、expand label、Send/draftのDOM有無"
 // observation_boundary = "component-behavior"
 // scope = "compact-action-dock-idle"
 // lifecycle = "permanent"
@@ -2703,7 +2704,7 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
     }),
   );
 
-  assert.match(html, /Jump to latest/);
+  assert.match(html, /JumpToLatest/);
   assert.match(html, />Preview<\/button>/);
   assert.match(html, />Source<\/button>/);
   assert.match(html, /class="session-action-dock-compact-meta session-action-dock-compact-expand-button"/);
@@ -2751,7 +2752,7 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
   assert.match(html, /処理を実行中/);
   assert.match(html, /New messages/);
   assert.match(html, /session-action-dock-compact-actions/);
-  assert.ok(html.indexOf("Cancel") < html.indexOf("Jump to latest"));
+  assert.ok(html.indexOf("Cancel") < html.indexOf("JumpToLatest"));
   assert.match(html, />Cancel<\/button>/);
   const renderedDocument = new JSDOM(html).window.document;
   const actions = renderedDocument.querySelector(".session-action-dock-compact-actions");
@@ -3009,7 +3010,7 @@ test("SessionActionDockCompactRow はcontroller-only preview通知で添付件�
         errors: [],
       });
     });
-    assert.equal(dom.window.document.querySelector(".session-action-dock-compact-badge")?.textContent, "Attachments: 1");
+    assert.equal(dom.window.document.querySelector(".session-action-dock-compact-badge")?.textContent, "Attachments1");
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -3023,15 +3024,15 @@ test("SessionActionDockCompactRow はcontroller-only preview通知で添付件�
 
 // @test-value v2
 // kind = "contract"
-// claim = "latest commandがないright paneは指定されたempty textを表示する"
+// claim = "latest commandがないright paneはempty shellを維持する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
-// fault = "latest commandがない状態でempty textまたはempty shellが表示されない"
-// observable = "right paneのempty textとempty shell markup"
+// fault = "latest commandがない状態でempty shellが表示されない"
+// observable = "right paneのempty shell markup"
 // observation_boundary = "component-behavior"
 // scope = "session-context-pane-empty-command"
 // lifecycle = "permanent"
 // @end-test-value
-test("SessionContextPane は latest command がないとき empty text を表示する", () => {
+test("SessionContextPane は latest command がないとき empty shell を維持する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionContextPane, {
       activeContextPaneTab: "latest-command",
@@ -3042,7 +3043,6 @@ test("SessionContextPane は latest command がないとき empty text を表示
         backgroundTasks: [],
       }),
       latestCommandView: null,
-      latestCommandEmptyText: "直近 run の command 記録はありません",
       runningDetailsEntries: [],
       liveRunReasoningText: "",
       backgroundTasks: [],
@@ -3066,6 +3066,5 @@ test("SessionContextPane は latest command がないとき empty text を表示
     }),
   );
 
-  assert.match(html, /直近 run の command 記録はありません/);
   assert.match(html, /command-monitor-empty-shell/);
 });

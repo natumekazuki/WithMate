@@ -135,14 +135,14 @@ export class SessionPaneErrorBoundary extends Component<
               <div className="command-monitor-stack">
                 <div className="command-monitor-card">
                   <div className="live-run-error-block" role="alert">
-                    <strong>Right pane error</strong>
+                    <strong>RightPaneError</strong>
                     <p className="live-run-error">{this.state.errorMessage}</p>
                     <div className="window-error-actions pane-error-actions">
                       <button type="button" onClick={this.handleRetry}>
-                        Retry right pane
+                        RetryRightPane
                       </button>
                       <button className="drawer-toggle secondary" type="button" onClick={this.handleReload}>
-                        Reload window
+                        ReloadWindow
                       </button>
                     </div>
                   </div>
@@ -175,7 +175,6 @@ export function SessionContextPane({
   selectedSessionContextTelemetry,
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
-  latestCommandEmptyText = "",
   messageNavigatorEntries = [],
   messageNavigatorSessionId,
   messageNavigatorCharacter,
@@ -423,26 +422,23 @@ export function SessionContextPane({
 
                   {latestCommandView.details ? (
                     <details className="command-monitor-details live-run-step-details">
-                      <summary>Command details</summary>
+                      <summary>CommandDetails</summary>
                       <pre>{latestCommandView.details}</pre>
                     </details>
                   ) : null}
 
                   {selectedSessionLiveRunErrorMessage && isSelectedSessionRunning ? (
                     <div className="live-run-error-block" role="alert">
-                      <strong>Run error</strong>
+                      <strong>RunError</strong>
                       <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
                     </div>
                   ) : null}
                 </div>
               ) : (
                 <div className="command-monitor-empty-shell">
-                  {latestCommandEmptyText.trim() ? (
-                    <p className="provider-context-empty">{latestCommandEmptyText}</p>
-                  ) : null}
                   {selectedSessionLiveRunErrorMessage ? (
                     <div className="live-run-error-block" role="alert">
-                      <strong>Run error</strong>
+                      <strong>RunError</strong>
                       <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
                     </div>
                   ) : null}
@@ -474,7 +470,7 @@ export function SessionContextPane({
                         <p className="command-monitor-confirmed-summary">{task.title}</p>
                         {task.details ? (
                           <details className="command-monitor-details live-run-step-details">
-                            <summary>Task details</summary>
+                            <summary>TaskDetails</summary>
                             <pre>{task.details}</pre>
                           </details>
                         ) : null}
@@ -482,12 +478,7 @@ export function SessionContextPane({
                     ))}
                   </div>
                 </div>
-              ) : (
-                <div className="command-monitor-empty-shell">
-                  <p className="command-monitor-empty">No background tasks yet.</p>
-                  <p className="command-monitor-empty-subtle">Background agents and shells appear here when available.</p>
-                </div>
-              )
+              ) : <div className="command-monitor-empty-shell" />
             ) : null}
 
             {activeContextPaneTab === "reasoning" ? (
@@ -500,7 +491,7 @@ export function SessionContextPane({
                       </span>
                       <span className="live-run-step-type">Reasoning</span>
                       <span className="command-monitor-source">
-                        {isSelectedSessionRunning ? "Live run" : "Last run"}
+                        {isSelectedSessionRunning ? "LiveRun" : "LastRun"}
                       </span>
                     </div>
                   </div>
@@ -509,9 +500,7 @@ export function SessionContextPane({
                   </div>
                 </div>
               ) : (
-                <div className="command-monitor-empty-shell">
-                  <p className="command-monitor-empty">No reasoning yet.</p>
-                </div>
+                <div className="command-monitor-empty-shell" />
               )
             ) : null}
 
@@ -548,11 +537,7 @@ export function SessionContextPane({
                       </button>
                     );
                   }) : messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks" ? null : (
-                    <div className="command-monitor-empty-shell">
-                      <p className="command-monitor-empty">
-                        No messages yet.
-                      </p>
-                    </div>
+                    <div className="command-monitor-empty-shell" />
                   )}
                 </div>
               </div>
@@ -570,7 +555,7 @@ export function SessionContextPane({
         <section className="provider-usage-shell" aria-label="Copilot usage">
           <div className="provider-usage-strip">
             <div className="provider-usage-strip-copy">
-              <span className="provider-usage-label">Copilot usage</span>
+              <span className="provider-usage-label">CopilotUsage</span>
               <strong>{selectedCopilotRemainingPercentLabel}</strong>
             </div>
             <span className="provider-usage-pill">
@@ -612,9 +597,7 @@ export function SessionContextPane({
                   <strong>{selectedCopilotQuotaResetLabel}</strong>
                 </div>
               </div>
-            ) : (
-              <p className="provider-context-empty">{contextEmptyText}</p>
-            )}
+            ) : null}
           </details>
         </section>
       ) : null}

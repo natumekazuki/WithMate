@@ -117,7 +117,7 @@ SQLite では次の 4 テーブルで保持する。
 - `Depth` は selected model の `reasoningEfforts` だけを chip で出す
 - current session の model が catalog から消えている場合は、互換用の 1 項目だけ一時表示する
 
-### Home / New Session
+### Home / NewSession
 
 - `Settings Window` から `Import Models` / `Export Models` を実行できる
 - file picker / save dialog は Main Process が開く

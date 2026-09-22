@@ -39,7 +39,6 @@ import {
   updateMateMemoryGenerationPriorityModelDraft,
   updateMateMemoryGenerationPriorityReasoningEffortDraft,
   updateMateMemoryGenerationPriorityTimeoutSecondsDraft,
-  updateUserMicrocopySlotDraft,
   addMateMemoryGenerationPriorityDraft,
   removeMateMemoryGenerationPriorityDraft,
 } from "../../src/settings/settings-draft.js";
@@ -62,7 +61,6 @@ import {
   handleChangeProviderSkillRootPath as handleChangeProviderSkillRootPathAction,
   handleChangeSessionTurnNotificationEnabled as handleChangeSessionTurnNotificationEnabledAction,
   handleChangeSessionTurnNotificationResponsePreviewEnabled as handleChangeSessionTurnNotificationResponsePreviewEnabledAction,
-  handleChangeUserMicrocopySlot as handleChangeUserMicrocopySlotAction,
   handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
   handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
 } from "../../src/settings/settings-draft-actions.js";
@@ -387,14 +385,6 @@ describe("home-settings-draft", () => {
     assert.equal(updateGlossaryProactiveCreateLimitDraft(draft, "").glossaryProactiveCreateLimit, null);
   });
 
-  it("microcopy slot draft は編集中の末尾改行を保持する", () => {
-    const draft = createDefaultAppSettings();
-
-    const next = updateUserMicrocopySlotDraft(draft, "chat.pending.response_waiting", "応答待機中\n");
-
-    assert.equal(next.userMicrocopyCatalog["chat.pending.response_waiting"], "応答待機中\n");
-  });
-
   it("mate memory generation の priority 1 を provider / model / reasoning / timeout / interval で更新できる", () => {
     const draft = createDefaultAppSettings();
 
@@ -477,8 +467,22 @@ describe("home-settings-draft", () => {
     assert.equal(state.draft.codingProviderSettings.codex.instructionRelativePath, "AGENTS.md");
   });
 
-  it("action: memory generation と auto collapse を draft 更新で反映できる", () => {
-    const state = createDraftTracker();
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Settings draft actionの更新は対象値を反映し、既存の保存済みmicrocopy catalogを保持する"
+  // oracle = { type = "contract", ref = "src/settings/settings-draft.ts#AppSettings spread preservation" }
+  // fault = "任意のSettings draft actionが未編集のmicrocopy catalogを初期値へ戻すか、対象外の設定値を消す"
+  // observable = "handler sequence後のAppSettings memory・notification・quota・userMicrocopyCatalog"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-draft-generic-preservation"
+  // lifecycle = "permanent"
+  // impact = "microcopy editorを非表示にしても既存custom値がSettings保存で失われる"
+  // distinction = "削除したeditor専用handlerではなく、既存handlerのgeneric AppSettings spread経路を確認する"
+  // @end-test-value
+  it("action: memory generation と auto collapse を更新し、既存catalogを保持する", () => {
+    const initialDraft = createDefaultAppSettings();
+    initialDraft.userMicrocopyCatalog["dock.status.responding"] = ["応答生成中\n"];
+    const state = createDraftTracker(initialDraft);
 
     handleChangeMemoryGenerationEnabledAction({
       enabled: false,
@@ -500,18 +504,12 @@ describe("home-settings-draft", () => {
       value: "2048",
       setSettingsDraft: state.setSettingsDraft,
     });
-    handleChangeUserMicrocopySlotAction({
-      slot: "dock.status.responding",
-      value: "応答生成中\n",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-
     assert.equal(state.draft.memoryGenerationEnabled, false);
     assert.equal(state.draft.autoCollapseActionDockOnSend, false);
     assert.equal(state.draft.sessionTurnNotificationEnabled, false);
     assert.equal(state.draft.sessionTurnNotificationResponsePreviewEnabled, true);
     assert.equal(state.draft.memoryFileQuotaBytes, 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES);
-    assert.equal(state.draft.userMicrocopyCatalog["dock.status.responding"], "応答生成中\n");
+    assert.deepEqual(state.draft.userMicrocopyCatalog["dock.status.responding"], ["応答生成中\n"]);
   });
 
   it("action: catalog 不在時は memory extraction model 更新を反映しない", () => {

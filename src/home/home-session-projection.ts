@@ -35,13 +35,7 @@ export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary
   const monitorEntries = filteredSessionEntries.filter(({ session }) => openIds.has(session.id));
   const runningMonitorEntries = monitorEntries.filter(({ state }) => state.kind === "running");
   const nonRunningMonitorEntries = monitorEntries.filter(({ state }) => state.kind !== "running");
-  const monitorBaseEmptyMessage = filteredSessionEntries.length === 0
-    ? (normalizedSessionSearch ? "No matching sessions." : "No sessions yet.")
-    : openSessionWindowIds.length === 0
-      ? "No open sessions."
-      : normalizedSessionSearch
-        ? "No matching open sessions."
-        : "No open sessions.";
+  const monitorBaseEmptyMessage = "";
   return {
     filteredSessionEntries,
     normalizedSessionSearch,
@@ -49,7 +43,7 @@ export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary
     runningMonitorEntries,
     nonRunningMonitorEntries,
     monitorBaseEmptyMessage,
-    monitorRunningEmptyMessage: monitorEntries.length > 0 ? "No running sessions." : monitorBaseEmptyMessage,
-    monitorCompletedEmptyMessage: monitorEntries.length > 0 ? "No stopped or completed sessions." : monitorBaseEmptyMessage,
+    monitorRunningEmptyMessage: monitorBaseEmptyMessage,
+    monitorCompletedEmptyMessage: monitorBaseEmptyMessage,
   };
 }

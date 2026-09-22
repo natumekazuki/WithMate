@@ -16,7 +16,6 @@ export function SettingsWindowScreen({ homePageClassName, ready, content }: Sett
           ) : (
             <div className="settings-loading-state" role="status" aria-label="Loading settings">
               <span className="settings-action-spinner" aria-hidden="true" />
-              <p>Loading settings…</p>
             </div>
           )}
         </section>

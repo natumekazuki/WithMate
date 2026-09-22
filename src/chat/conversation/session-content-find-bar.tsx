@@ -51,7 +51,6 @@ export function SessionContentFindBar({
         ref={inputRef}
         type="search"
         value={query}
-        placeholder="Find"
         aria-label="Find in current content"
         onChange={(event) => onQueryChange(event.currentTarget.value)}
         onKeyDown={(event) => {
