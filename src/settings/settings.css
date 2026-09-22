@@ -95,7 +95,14 @@
 .settings-window-shell .launch-dialog-foot {
   border-top: 1px solid rgba(203, 213, 225, 0.12);
   background: rgba(21, 26, 35, 0.98);
-  box-shadow: 0 -18px 34px rgba(0, 0, 0, 0.24);
+  box-shadow: none;
+}
+
+.home-page.home-page-settings-window .settings-window-shell {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .settings-keyboard-shortcuts-dialog > .launch-dialog-foot:empty {

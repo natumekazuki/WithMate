@@ -1184,10 +1184,10 @@ test("SessionActionDockCompactRow は通常時の chat notice を下書き表示
 
 // @test-value v2
 // kind = "contract"
-// claim = "Concurrent chat shell はActionDockのMain/Auxiliary操作対象、mode badgeなしの非対象overlay、Auxiliary一覧、独立splitter、および未選択実行対象の状態を同じWindowへ投影する"
-// oracle = { type = "contract", ref = "issue-710-ui-shell" }
-// fault = "Auxiliaryを表示しても対象切替や折りたたみ導線がActionDockと中央列へ接続されない、または未選択実行対象の状態が消えるか選択対象のindicatorと重複する"
-// observable = "expanded/compact ActionDock操作対象ボタンとcallback、未選択実行対象のtarget付きaccessible labelとinline indicator、mode badgeの不在、非対象列内のoverlay、一覧trigger、splitterのARIA属性と会話列"
+// claim = "Concurrent chat shell はActionDockのMain/Auxiliary操作対象、本文のある非対象Main列のoverlay、空列でのoverlay不在、Auxiliary一覧、および未選択実行対象の状態を同じWindowへ投影する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "対象切替や一覧が中央列へ接続されない、空列が不要に暗くなる、または未選択実行対象の状態が消えるか選択対象のindicatorと重複する"
+// observable = "expanded/compact ActionDock操作対象ボタンとcallback、未選択実行対象のtarget付きaccessible labelとinline indicator、本文のある非対象Main列内のoverlayと空列での不在、一覧triggerと会話列"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -1330,6 +1330,26 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
       assert.ok(auxiliaryButton.querySelector(".concurrent-chat-loading-spinner"));
       assert.equal(targetDock.querySelectorAll(".concurrent-chat-loading-spinner").length, 1);
     }
+
+    const emptyChats = {
+      ...concurrentChats,
+      main: { ...concurrentChats.main, messages: [], isRunning: false, hasLiveRunAssistantText: false, liveRunErrorMessage: "" },
+      auxiliary: { ...concurrentChats.auxiliary!, messages: [], isRunning: false, hasLiveRunAssistantText: false, liveRunErrorMessage: "" },
+    };
+    await act(async () => {
+      root?.render(React.createElement(ChatWindow, {
+        ...props,
+        concurrentChats: { ...emptyChats, target: "main" },
+      }));
+    });
+    assert.equal(container.querySelector(".session-concurrent-chat-auxiliary .concurrent-chat-target-overlay"), null);
+    await act(async () => {
+      root?.render(React.createElement(ChatWindow, {
+        ...props,
+        concurrentChats: { ...emptyChats, target: "auxiliary" },
+      }));
+    });
+    assert.equal(container.querySelector(".session-concurrent-chat-main .concurrent-chat-target-overlay"), null);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

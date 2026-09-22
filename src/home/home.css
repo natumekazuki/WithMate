@@ -121,6 +121,14 @@
   gap: 10px;
 }
 
+.home-page .home-session-list-panel,
+.home-page .home-right-pane {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .home-page .home-right-pane {
   flex: 1 1 auto;
   min-height: 0;
@@ -136,6 +144,10 @@
 .home-page .home-monitor-panel.compact {
   display: grid;
   min-height: 0;
+  background: transparent;
+}
+
+.home-page .home-monitor-panel:not(.compact) {
   background: transparent;
 }
 
@@ -291,10 +303,11 @@
   flex: 0 0 auto;
   gap: 10px;
   min-height: 0;
-  padding: 14px;
-  border: 1px solid rgba(203, 213, 225, 0.1);
-  border-radius: 18px;
-  background: rgba(10, 14, 20, 0.74);
+}
+
+.home-page .home-monitor-section + .home-monitor-section {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
 
 .home-page .home-monitor-section-head {
@@ -781,6 +794,20 @@
   align-items: start;
   grid-template-columns: 40px minmax(0, 1fr);
   min-height: 108px;
+  border-color: color-mix(in srgb, var(--card-sub, #6f8cff) 28%, rgba(203, 213, 225, 0.16));
+  background:
+    linear-gradient(105deg, color-mix(in srgb, var(--card-main, #1a2230) 18%, transparent), transparent 52%),
+    rgba(255, 255, 255, 0.035);
+  color: #f3f6fb;
+  box-shadow: none;
+}
+
+.home-page .home-session-card:hover {
+  border-color: color-mix(in srgb, var(--card-sub, #6f8cff) 56%, rgba(203, 213, 225, 0.22));
+  background:
+    linear-gradient(105deg, color-mix(in srgb, var(--card-main, #1a2230) 24%, transparent), transparent 58%),
+    rgba(255, 255, 255, 0.06);
+  box-shadow: none;
 }
 
 .home-page .home-session-card.is-pinnable {
@@ -807,8 +834,21 @@
 
 .home-page .home-session-card-open:focus-visible,
 .home-page .home-session-pin-button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--card-ink, var(--ink)) 72%, transparent);
+  outline: 2px solid rgba(190, 205, 255, 0.92);
   outline-offset: -3px;
+}
+
+.home-page .home-session-card-open strong {
+  color: #f3f6fb;
+}
+
+.home-page .home-session-card-meta span {
+  color: #c1cbd9;
+}
+
+.home-page .home-session-card .home-session-status,
+.home-page .home-session-card .session-mode-badge {
+  color: #e7edf7;
 }
 
 .home-page .home-session-card-actions {
@@ -849,10 +889,10 @@
   min-width: 34px;
   height: 34px;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--card-ink, var(--ink)) 22%, transparent);
+  border: 1px solid rgba(231, 237, 247, 0.26);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--card-ink, var(--ink)) 8%, transparent);
-  color: var(--card-ink, var(--ink));
+  background: rgba(255, 255, 255, 0.08);
+  color: #f3f6fb;
   font-size: 0.74rem;
   font-weight: 700;
   cursor: pointer;
@@ -880,8 +920,8 @@
 
 .home-page .home-session-pin-button:hover:not(:disabled),
 .home-page .home-session-pin-button.is-active {
-  border-color: color-mix(in srgb, var(--card-ink, var(--ink)) 38%, transparent);
-  background: color-mix(in srgb, var(--card-ink, var(--ink)) 16%, transparent);
+  border-color: rgba(231, 237, 247, 0.42);
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .home-page .home-session-pin-button.is-pending {
@@ -955,6 +995,7 @@
   min-width: 42px;
   height: 42px;
   padding: 0;
+  margin-right: 8px;
 }
 
 .home-page .home-create-icon {

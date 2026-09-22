@@ -79,6 +79,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 2 カラム構成
   - 左: `RecentSessions`
   - 右: `Memory / Settings` rail + `SessionMonitor` または `Characters`
+- 2 カラムの外側とMonitorのRunning／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
 - `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
 - `SessionMonitor`
@@ -113,9 +114,9 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
     - それ以外は neutral な non-active
     - 未知 state でも card は欠落させない
   - card theme
-    - background = mate `main`
+    - background = dark surfaceにmate `main`の薄いaccent
     - left accent bar = mate `sub`
-    - text color = WCAG AA の contrast ratio を満たす dark / light 候補から自動決定
+    - text color = dark surface上で読めるlight palette
 - `Characters`
   - right pane 上部の segmented toggle で `SessionMonitor` と排他的に切り替える
   - Character catalog の active Character は意味のある card item として表示する。必要な識別情報と操作をまとめるが、入れ子の装飾cardは作らない
@@ -143,9 +144,9 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Settings` button
   - 独立した `Settings Window` を開く
 - `Settings Window`
-  - dedicated window shell を使い、window 幅いっぱいまで panel が追従する
+  - dedicated window の内容を外側の装飾panelなしで配置する
   - header copy や `Home / Close` は置かず、内容本体と保存 footer に分ける
-  - 本文は inner scroll で流し、shell の角丸と scrollbar が干渉しないようにする
+  - 本文は inner scroll で流し、scrollbarと保存footerの操作領域を分ける
   - `Session Window`
     - `CloseActionDockAfterSend`
   - `PromptContext` の4項目を個別に切り替える。説明だけのhelper文やHelp iconは常設しない

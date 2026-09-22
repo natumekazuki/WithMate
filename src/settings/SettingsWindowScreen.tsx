@@ -10,7 +10,7 @@ export function SettingsWindowScreen({ homePageClassName, ready, content }: Sett
   return (
     <div className={`${homePageClassName} home-page-settings-window`.trim()}>
       <main className="home-layout home-layout-settings-window">
-        <section className="launch-dialog settings-dialog panel settings-window-shell">
+        <section className="launch-dialog settings-dialog settings-window-shell">
           {ready ? (
             content
           ) : (

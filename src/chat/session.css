@@ -1067,7 +1067,7 @@
 
 .composer {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   min-height: 0;
   align-content: start;
 }
@@ -3280,7 +3280,6 @@
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
-  margin-bottom: 10px;
 }
 
 .message-list-jump-bottom-button {
@@ -3863,7 +3862,6 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
   align-items: end;
-  margin-top: 12px;
 }
 
 @container session-action-dock (max-width: 960px) {

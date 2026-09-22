@@ -486,6 +486,16 @@ export function ChatWindow({
     .map((notice) => notice.domId)
     .join(" ");
   const resolvedMessageColumnProps = concurrentChats?.main ?? messageColumnProps;
+  const mainHasConversationContent = resolvedMessageColumnProps.messages.length > 0
+    || resolvedMessageColumnProps.isRunning
+    || resolvedMessageColumnProps.hasLiveRunAssistantText
+    || Boolean(resolvedMessageColumnProps.liveRunErrorMessage);
+  const auxiliaryHasConversationContent = Boolean(concurrentChats?.auxiliary && (
+    concurrentChats.auxiliary.messages.length > 0
+    || concurrentChats.auxiliary.isRunning
+    || concurrentChats.auxiliary.hasLiveRunAssistantText
+    || concurrentChats.auxiliary.liveRunErrorMessage
+  ));
   const rawTargetColumnControls = concurrentChats?.target === "auxiliary"
     ? auxiliaryColumnControlsRef.current
     : mainColumnControlsRef.current;
@@ -606,7 +616,7 @@ export function ChatWindow({
               messageViewMode={messageViewMode}
             />
           )}
-          {concurrentChats && concurrentChats.target !== "main" ? (
+          {concurrentChats && concurrentChats.target !== "main" && mainHasConversationContent ? (
             <div className="concurrent-chat-target-overlay" aria-hidden="true" />
           ) : null}
         </div>
@@ -670,7 +680,7 @@ export function ChatWindow({
               </>
             ) : null}
           </div>
-          {concurrentChats.target !== "auxiliary" ? (
+          {concurrentChats.target !== "auxiliary" && auxiliaryHasConversationContent ? (
             <div className="concurrent-chat-target-overlay" aria-hidden="true" />
           ) : null}
         </>

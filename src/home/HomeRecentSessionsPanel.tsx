@@ -163,11 +163,11 @@ export function HomeRecentSessionsPanel({
           onClick={openLaunchDialog}
           aria-disabled={!canUsePrimaryFeatures}
           disabled={!canUsePrimaryFeatures}
-          aria-label="NewSession"
-          title="NewSession"
+          aria-label="New session"
+          title="New session"
         >
           <span className="home-create-icon">{renderHomePlusIcon()}</span>
-          <span className="sr-only">NewSession</span>
+          <span className="sr-only">New session</span>
         </button>
       </div>
 
