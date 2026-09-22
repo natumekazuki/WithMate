@@ -9,16 +9,14 @@ type SettingsWindowScreenProps = {
 export function SettingsWindowScreen({ homePageClassName, ready, content }: SettingsWindowScreenProps) {
   return (
     <div className={`${homePageClassName} home-page-settings-window`.trim()}>
-      <main className="home-layout home-layout-settings-window">
-        <section className="launch-dialog settings-dialog settings-window-shell">
-          {ready ? (
-            content
-          ) : (
-            <div className="settings-loading-state" role="status" aria-label="Loading settings">
-              <span className="settings-action-spinner" aria-hidden="true" />
-            </div>
-          )}
-        </section>
+      <main className="settings-window-shell">
+        {ready ? (
+          content
+        ) : (
+          <div className="settings-loading-state" role="status" aria-label="Loading settings">
+            <span className="settings-action-spinner" aria-hidden="true" />
+          </div>
+        )}
       </main>
     </div>
   );

@@ -397,7 +397,7 @@ const mainWindowRuntime = new MainWindowRuntime({
       buttons: ["KeepOpen", "CloseAndContinue"],
       defaultId: 0,
       cancelId: 0,
-      title: "SessionIsRunning",
+      title: "Session Is Running",
       message: "This session is still running.",
       detail: "The run will continue after this window closes. Reopen the session later to check its progress.",
       noLink: true,
@@ -1042,7 +1042,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 buttons: ["GoBack", "Quit"],
                 defaultId: 0,
                 cancelId: 0,
-                title: "SessionIsRunning",
+                title: "Session Is Running",
                 message: "A session is still running.",
                 detail: "Quitting WithMate will interrupt the running work.",
                 noLink: true,
@@ -1065,12 +1065,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             registerMainIpcHandlers,
             initializePersistentStores,
             recoverInterruptedSessions,
-            createHomeWindow: async () => {
-              if (isBackgroundLaunch) {
-                return null;
-              }
-              return createHomeWindow();
-            },
             broadcastModelCatalog,
             onBootStatus: publishAppBootStatus,
             ipcRegistration: {
@@ -3095,6 +3089,19 @@ async function openPathTarget(target: string, options?: OpenPathOptions): Promis
 }
 
 async function createHomeWindow(): Promise<BrowserWindow> {
+  const bootWindow = mainWindowComposition.getBootWindow();
+  if (bootWindow) {
+    try {
+      const homeWindow = await requireAuxWindowService().adoptHomeWindow(bootWindow);
+      mainWindowComposition.releaseBootWindow(bootWindow);
+      return homeWindow;
+    } catch (error) {
+      if (!bootWindow.isDestroyed()) {
+        await mainWindowComposition.reloadBootWindow(bootWindow);
+      }
+      throw error;
+    }
+  }
   return requireMainWindowFacade().openHomeWindow();
 }
 
@@ -3263,6 +3270,13 @@ if (!hasSingleInstanceLock) {
     if (!app.isReady()) {
       return;
     }
+    const bootWindow = mainWindowComposition.getBootWindow();
+    if (bootWindow) {
+      if (bootWindow.isMinimized()) bootWindow.restore();
+      bootWindow.show();
+      bootWindow.focus();
+      return;
+    }
     void requireAppLifecycleService().handleSecondInstance();
   });
 
@@ -3329,6 +3343,14 @@ if (!hasSingleInstanceLock) {
         app.isPackaged,
       );
       await syncManagedGlossarySkillBestEffort();
+      if (!isBackgroundLaunch) {
+        publishAppBootStatus({
+          kind: "running",
+          stage: "home",
+          title: "Preparing Home",
+        });
+        await createHomeWindow();
+      }
       publishAppBootStatus({
         kind: "completed",
         stage: "home",

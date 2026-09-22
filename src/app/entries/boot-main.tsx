@@ -7,7 +7,7 @@ import "../../styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <WindowErrorBoundary pageClassName="boot-page" windowLabel="Boot">
+    <WindowErrorBoundary pageClassName="boot-page" windowLabel="Starting WithMate">
       <BootApp />
     </WindowErrorBoundary>
   </React.StrictMode>,

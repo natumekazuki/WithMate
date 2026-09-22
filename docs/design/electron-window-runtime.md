@@ -82,7 +82,7 @@ Main Process は `app.requestSingleInstanceLock()` を取得し、2 つ目以降
 
 ### MainWindowComposition / MainWindowRuntime
 
-- `MainWindowComposition` は BrowserWindow の共通生成設定、cursor placement、Boot Window の表示と状態通知を所有する
+- `MainWindowComposition` は BrowserWindow の共通生成設定、cursor placement、Homeと同じWindowでの起動状態表示を所有する。bootstrap完了時にAuxWindowServiceがそのWindowをHomeとして引き継ぐ
 - `MainWindowRuntime` は WindowEntryLoader、WindowBroadcastService、WindowDialogService、AuxWindowService、SessionWindowBridge、SessionWindowRestoreService を一つの window runtime として所有する
 - runtime は session lookup、run-in-flight、draft flush、restore persistence などの narrow port だけを受け取り、Memory、Character、Provider、Storage の service bag を保持しない
 - window service の生成・状態は MainInfrastructureRegistry から分離し、Main Process の app/service registry と二重管理しない

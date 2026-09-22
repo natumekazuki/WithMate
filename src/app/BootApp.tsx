@@ -61,6 +61,7 @@ export default function BootApp() {
           ) : (
             <div className="boot-progress" role="status" aria-atomic="true">
               {status.kind === "running" ? <span className="home-session-list-load-spinner" aria-hidden="true" /> : null}
+              <span>Starting WithMate</span>
               <span className="sr-only">{statusLabel}{status.detail ? `. ${status.detail}` : ""}</span>
             </div>
           )}

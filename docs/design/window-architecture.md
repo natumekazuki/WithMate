@@ -122,7 +122,7 @@ Session は `codex` 起動後の実作業面とする。
 
 - `Session Header`
   - session title の変更
-  - session title が空の場合の Window title fallback は `WithMateSession - {sessionId}` とし、fallback prefix を `WithMateSession` に統一する
+  - session title が空の場合の Window title fallback は `Session` とし、内部IDをtitleに表示しない
   - approval mode の変更
   - session 削除
   - audit log overlay の起点

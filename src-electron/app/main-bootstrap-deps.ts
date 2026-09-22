@@ -1,4 +1,4 @@
-import type { BrowserWindow, IpcMain } from "electron";
+import type { IpcMain } from "electron";
 
 import type { MateStorageState } from "../../src-shared/mate/mate-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
@@ -15,7 +15,6 @@ type CreateMainBootstrapDepsArgs = {
   registerMainIpcHandlers: typeof registerMainIpcHandlers;
   initializePersistentStores(): Promise<ModelCatalogSnapshot>;
   recoverInterruptedSessions(): Promise<void>;
-  createHomeWindow(): Promise<BrowserWindow | null>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
   getMateState?: () => MateStorageState | Promise<MateStorageState>;
   onBootStatus?: (status: AppBootStatus) => void;
@@ -32,9 +31,6 @@ export function createMainBootstrapDeps(
     onBootStatus: args.onBootStatus,
     registerIpcHandlers: () => {
       args.registerMainIpcHandlers(args.ipcMain, createMainIpcRegistrationDeps(args.ipcRegistration));
-    },
-    createHomeWindow: async () => {
-      await args.createHomeWindow();
     },
     broadcastModelCatalog: args.broadcastModelCatalog,
   };

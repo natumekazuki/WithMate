@@ -124,6 +124,59 @@ test("AuxWindowService は singleton window を再利用する", async () => {
 
 // @test-value v2
 // kind = "contract"
+// claim = "起動状態を表示したWindowは新規Windowを作らずHomeとして引き継がれ、Home load失敗時は未登録へ戻る"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window-startup" }
+// fault = "Homeへの切替で別Windowを生成するか、entry load失敗後に壊れたWindowをHomeとして再利用する"
+// observable = "Window identity、Home registry、load mode、失敗後のregistry解除"
+// observation_boundary = "public-boundary"
+// scope = "AuxWindowService startup-to-Home handoff"
+// lifecycle = "permanent"
+// impact = "起動とHomeが二重表示されるか、失敗からの再試行でHomeが開けない"
+// distinction = "buildや単独renderer testではnative Window identityとregistryの遷移を確認できない"
+// @end-test-value
+test("AuxWindowService は起動WindowをHomeとして引き継ぐ", async () => {
+  const startupWindow = createWindowStub();
+  const modes: string[] = [];
+  let createdWindows = 0;
+  let failLoad = true;
+  const service = new AuxWindowService({
+    createWindow() {
+      createdWindows += 1;
+      return startupWindow.window;
+    },
+    async loadHomeEntry(window, mode) {
+      assert.equal(window, startupWindow.window);
+      modes.push(mode);
+      if (failLoad) {
+        failLoad = false;
+        throw new Error("Home entry load failed.");
+      }
+    },
+    async loadDiffEntry() {},
+    async loadFilePreviewEntry() {},
+    async loadChatEntry() {},
+    async loadCharacterEditorEntry() {},
+    generateDiffToken() {
+      return "diff-token";
+    },
+  });
+
+  await assert.rejects(() => service.adoptHomeWindow(startupWindow.window), /Home entry load failed/);
+  assert.equal(service.getHomeWindow(), null);
+
+  const homeWindow = await service.adoptHomeWindow(startupWindow.window);
+  assert.equal(homeWindow, startupWindow.window);
+  assert.equal(service.getHomeWindow(), startupWindow.window);
+  assert.equal(await service.openHomeWindow(), startupWindow.window);
+  assert.equal(createdWindows, 0);
+  assert.deepEqual(modes, ["home", "home"]);
+
+  startupWindow.window.close();
+  assert.equal(service.getHomeWindow(), null);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "AuxWindowService は diff preview を保持し reset 時に close する"
 // oracle = { type = "contract", ref = "src-electron/auxiliary/aux-window-service.ts" }
 // fault = "diff previewをregistryへ保存しないか、reset後もpreviewを残す"
@@ -722,10 +775,10 @@ test("AuxWindowService は reset 時に Memory Review window を close する", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "AuxWindowService は Character Editor window を create/edit key ごとに再利用する"
+// claim = "AuxWindowService は Character Editor window を create/edit key ごとに再利用し、役割に合うtitleを付ける"
 // oracle = { type = "contract", ref = "src-electron/auxiliary/aux-window-service.ts" }
 // fault = "create keyとedit keyのwindowを混同するか、同一keyを再利用しない"
-// observable = "window identity、characterId load列、created options"
+// observable = "window identity、characterId load列、created optionsのtitle"
 // observation_boundary = "public-boundary"
 // scope = "tests/main/aux-window-service.test.ts"
 // lifecycle = "permanent"
@@ -763,11 +816,11 @@ test("AuxWindowService は Character Editor window を create/edit key ごとに
   assert.deepEqual(createdOptions, [
     {
       ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
-      title: "WithMateNewCharacter",
+      title: "New Character",
     },
     {
       ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
-      title: "WithMateCharacterEditor",
+      title: "Character Editor",
     },
   ]);
 });

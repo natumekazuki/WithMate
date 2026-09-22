@@ -66,10 +66,10 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - Vite dev server は Electron 開発時の配信面として使い、browser 単体での利用はサポートしない
 - 各 renderer entry point は window-level error boundary を持ち、描画クラッシュ時も `Retry` / `Reload` で復帰を試せるようにする
 
-## Boot Window
+## Home Window startup
 
-- 起動状況は画面へ直接配置し、全体を囲むカードの背景・枠線・影は設けない。
-- 通常の起動中・完了時は独立したstage一覧や完了説明を表示せず、処理のstatusをaccessible statusへ集約する。起動中だけspinnerを表示し、対象領域の`aria-busy`で処理中であることを示す。同義の初期待機説明を重ねない。
+- 通常起動ではHomeと同じ大きさのWindowを最初に開き、起動用entryからHome entryへ同じBrowserWindow内で切り替える。`--background`ではWindowを出さない。
+- 起動中はHomeの未準備な操作を表示せず、枠のない小さな待機表示をWindowの左上に置く。stage一覧や完了説明は表示せず、詳細statusをaccessible statusへ集約する。spinnerと`Starting WithMate`を表示し、対象領域の`aria-busy`で処理中を示す。
 - 起動失敗時はstatusのtitleを見出しとするalertへdetailとerror detailを残し、成功や通常完了へ読み替えない。
 
 ## Home Window
@@ -144,7 +144,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Settings` button
   - 独立した `Settings Window` を開く
 - `Settings Window`
-  - dedicated window の内容を外側の装飾panelなしで配置する
+  - dedicated window の全面を本文と保存footerで使い、外側の余白やdialog shellを置かない
   - header copy や `Home / Close` は置かず、内容本体と保存 footer に分ける
   - 本文は inner scroll で流し、scrollbarと保存footerの操作領域を分ける
   - `Session Window`

@@ -37,7 +37,7 @@ export class WindowDialogService {
   async pickDirectory(targetWindow?: BrowserWindow | null, initialPath?: string | null): Promise<string | null> {
     const result = await this.deps.showOpenDialog(targetWindow ?? undefined, {
       properties: ["openDirectory"],
-      title: "SelectWorkingDirectory",
+      title: "Select Working Directory",
       ...buildDefaultPathOption(initialPath),
     });
     if (result.canceled || result.filePaths.length === 0) {
@@ -49,7 +49,7 @@ export class WindowDialogService {
   async pickFile(targetWindow?: BrowserWindow | null, initialPath?: string | null): Promise<string | null> {
     const result = await this.deps.showOpenDialog(targetWindow ?? undefined, {
       properties: ["openFile"],
-      title: "SelectFile",
+      title: "Select File",
       ...buildDefaultPathOption(initialPath),
     });
     if (result.canceled || result.filePaths.length === 0) {
@@ -61,7 +61,7 @@ export class WindowDialogService {
   async pickFiles(targetWindow?: BrowserWindow | null, initialPath?: string | null): Promise<string[]> {
     const result = await this.deps.showOpenDialog(targetWindow ?? undefined, {
       properties: ["openFile", "multiSelections"],
-      title: "SelectFiles",
+      title: "Select Files",
       ...buildDefaultPathOption(initialPath),
     });
     if (result.canceled || result.filePaths.length === 0) {
@@ -78,7 +78,7 @@ export class WindowDialogService {
     const characterIcon = purpose === "character-icon";
     const result = await this.deps.showOpenDialog(targetWindow ?? undefined, {
       properties: ["openFile"],
-      title: characterIcon ? "SelectCharacterIcon" : "SelectImage",
+      title: characterIcon ? "Select Character Icon" : "Select Image",
       filters: [...(characterIcon ? CHARACTER_ICON_FILE_FILTER : IMAGE_FILE_FILTER)],
       ...buildDefaultPathOption(initialPath),
     });
@@ -90,7 +90,7 @@ export class WindowDialogService {
 
   async importModelCatalogFromFile(targetWindow?: BrowserWindow | null): Promise<ModelCatalogSnapshot | null> {
     const result = await this.deps.showOpenDialog(targetWindow ?? undefined, {
-      title: "ImportModelCatalog",
+      title: "Import Model Catalog",
       properties: ["openFile"],
       filters: [...MODEL_CATALOG_JSON_FILTER],
     });
@@ -112,7 +112,7 @@ export class WindowDialogService {
     }
 
     const result = await this.deps.showSaveDialog(targetWindow ?? undefined, {
-      title: "ExportModelCatalog",
+      title: "Export Model Catalog",
       defaultPath: "model-catalog.json",
       filters: [...MODEL_CATALOG_JSON_FILTER],
     });

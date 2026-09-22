@@ -2,6 +2,7 @@ import { screen, BrowserWindow } from "electron";
 import type { AppBootStatus } from "../../src-shared/window/app-boot-state.js";
 import { WITHMATE_APP_BOOT_STATUS_EVENT } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
+import { HOME_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 
 type WindowOptions = ConstructorParameters<typeof BrowserWindow>[0];
 
@@ -38,13 +39,25 @@ export class MainWindowComposition {
 
   public async openBootWindow(getStatus: () => AppBootStatus): Promise<BrowserWindow> {
     if (this.bootWindow && !this.bootWindow.isDestroyed()) return this.bootWindow;
-    const window = this.createBaseWindow({ width: 560, height: 520, minWidth: 460, minHeight: 420, title: "WithMateIsStarting", resizable: true });
+    const window = this.createBaseWindow({ ...HOME_WINDOW_DEFAULT_BOUNDS, title: "Starting WithMate" });
     this.bootWindow = window;
     window.once("ready-to-show", () => window.show());
     window.on("closed", () => { if (this.bootWindow === window) this.bootWindow = null; });
     await this.loadBootEntry(window);
     this.publishBootStatus(getStatus());
     return window;
+  }
+
+  public getBootWindow(): BrowserWindow | null {
+    return this.bootWindow && !this.bootWindow.isDestroyed() ? this.bootWindow : null;
+  }
+
+  public releaseBootWindow(window: BrowserWindow): void {
+    if (this.bootWindow === window) this.bootWindow = null;
+  }
+
+  public async reloadBootWindow(window: BrowserWindow): Promise<void> {
+    await this.loadBootEntry(window);
   }
 
   public closeBootWindow(): void {

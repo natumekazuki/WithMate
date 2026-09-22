@@ -6,7 +6,6 @@ type MainBootstrapServiceDeps = {
   initializePersistentStores(): Promise<ModelCatalogSnapshot>;
   recoverInterruptedSessions(): Promise<void>;
   registerIpcHandlers(): void;
-  createHomeWindow(): Promise<void>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
   getMateState: () => MateStorageState | Promise<MateStorageState>;
   onBootStatus?: (status: AppBootStatus) => void;
@@ -36,13 +35,6 @@ export class MainBootstrapService {
     const activeModelCatalog = await this.deps.initializePersistentStores();
     await this.deps.recoverInterruptedSessions();
     this.deps.registerIpcHandlers();
-    this.deps.onBootStatus?.({
-      kind: "running",
-      stage: "home",
-      title: "Preparing Home",
-      detail: "Home will open when startup is complete.",
-    });
-    await this.deps.createHomeWindow();
     this.deps.broadcastModelCatalog(activeModelCatalog);
   }
 

@@ -217,7 +217,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   }, [searchRequest]);
 
   useEffect(() => {
-    document.title = "WithMate Memory Review";
+    document.title = "Memory Review";
   }, []);
 
   const selectEntry = async (entryId: string) => {

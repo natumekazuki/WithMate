@@ -178,7 +178,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     const window = this.deps.createWindow({
       width: 0,
       height: 0,
-      title: "WithMateHome",
+      title: "Home",
       homeBounds: true,
     });
     this.homeWindow = window;
@@ -187,6 +187,20 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.homeWindow = null;
     });
     await this.deps.loadHomeEntry(window, "home");
+    return window;
+  }
+
+  async adoptHomeWindow(window: TWindow): Promise<TWindow> {
+    this.homeWindow = window;
+    window.on("closed", () => {
+      if (this.homeWindow === window) this.homeWindow = null;
+    });
+    try {
+      await this.deps.loadHomeEntry(window, "home");
+    } catch (error) {
+      if (this.homeWindow === window) this.homeWindow = null;
+      throw error;
+    }
     return window;
   }
 
@@ -203,7 +217,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       minWidth: 300,
       minHeight: 520,
       maxWidth: 460,
-      title: "WithMateMonitor",
+      title: "Session Monitor",
       alwaysOnTop: true,
     });
     this.sessionMonitorWindow = window;
@@ -227,7 +241,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       height: 960,
       minWidth: 760,
       minHeight: 720,
-      title: "WithMateSettings",
+      title: "Settings",
     });
     this.settingsWindow = window;
     window.once("ready-to-show", () => window.show());
@@ -249,7 +263,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       height: 880,
       minWidth: 860,
       minHeight: 680,
-      title: "WithMateMemoryReview",
+      title: "Memory Review",
     });
     this.memoryV6ReviewWindow = window;
     window.once("ready-to-show", () => window.show());
@@ -270,7 +284,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
 
     const window = this.deps.createWindow({
       ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
-      title: normalizedCharacterId ? "WithMateCharacterEditor" : "WithMateNewCharacter",
+      title: normalizedCharacterId ? "Character Editor" : "New Character",
     });
     this.characterEditorWindows.set(windowKey, window);
     window.once("ready-to-show", () => window.show());

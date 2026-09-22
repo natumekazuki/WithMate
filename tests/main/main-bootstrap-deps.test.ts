@@ -40,10 +40,6 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     async recoverInterruptedSessions() {
       calls.push("recover");
     },
-    async createHomeWindow() {
-      calls.push("openHome");
-      return {} as never;
-    },
     broadcastModelCatalog(snapshot) {
       calls.push(`broadcast:${snapshot.revision}`);
     },
@@ -261,7 +257,6 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
 
   const snapshot = await deps.initializePersistentStores();
   deps.registerIpcHandlers();
-  await deps.createHomeWindow();
   deps.broadcastModelCatalog(snapshot);
 
   assert.equal(
@@ -279,5 +274,5 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     ).window.showSessionMonitorContextMenu,
     showSessionMonitorContextMenu,
   );
-  assert.deepEqual(calls, ["initialize", "registerIpcHandlers", "openHome", "broadcast:1"]);
+  assert.deepEqual(calls, ["initialize", "registerIpcHandlers", "broadcast:1"]);
 });

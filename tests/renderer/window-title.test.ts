@@ -49,20 +49,20 @@ test("applySessionDocumentTitle は document がある場合だけ title を同�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Agent sessionのhydrate前window title fallbackはnative session windowと同じ短いapp labelを使う"
+// claim = "Agent sessionのhydrate前window title fallbackはnative windowと同じ役割名を使い、内部IDを表示しない"
 // oracle = { type = "contract", ref = "src-electron/windows/main-window-runtime.ts: session window title" }
-// fault = "rendererだけが空白付きの旧prefixを返し、同じsession windowでtitle表記が不一致になる"
+// fault = "rendererとnativeでfallback名が異なるか、内部sessionIdをtitleに表示する"
 // observable = "sessionIdだけを与えたresolveAgentSessionDocumentTitleの返却文字列"
 // observation_boundary = "public-boundary"
 // scope = "agent-session-window-title-fallback"
 // lifecycle = "permanent"
-// impact = "hydrate前のwindow titleがnative側と不一致になり、window識別が揺れる"
+// impact = "hydrate前にWindowの役割が分からないか、内部IDが利用者へ露出する"
 // distinction = "user入力titleの保持ではなく、sessionId fallbackのrenderer/native契約を直接確認する"
 // @end-test-value
 test("resolveAgentSessionDocumentTitle は hydrate 前でも sessionId fallback を返す", () => {
   assert.equal(
     resolveAgentSessionDocumentTitle({ sessionTitle: undefined, sessionId: "session-1" }),
-    "WithMateSession - session-1",
+    "Session",
   );
   assert.equal(
     resolveAgentSessionDocumentTitle({ sessionTitle: "Issue 58 cleanup", sessionId: "session-1" }),

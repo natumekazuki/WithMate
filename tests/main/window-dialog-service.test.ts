@@ -6,10 +6,10 @@ import { WindowDialogService } from "../../src-electron/windows/window-dialog-se
 
 // @test-value v2
 // kind = "contract"
-// claim = "WindowDialogServiceがdirectory、file、image pickerの選択結果を対応するdialogへ委譲する"
+// claim = "WindowDialogServiceがdirectory、file、image pickerへ役割に合うtitleを付け、選択結果を返す"
 // oracle = { type = "contract", ref = "src-electron/windows/window-dialog-service.ts" }
-// fault = "dialogの選択pathを変換・欠落させる"
-// observable = "dialog呼出し引数と各pickerの戻り値"
+// fault = "dialogのtitleを取り違えるか、選択pathを変換・欠落させる"
+// observable = "dialogのtitleを含む呼出し引数と各pickerの戻り値"
 // observation_boundary = "public-boundary"
 // scope = "window-dialog-service"
 // lifecycle = "permanent"
@@ -19,11 +19,11 @@ test("WindowDialogService は directory / file / image picker の選択結果を
   const service = new WindowDialogService({
     async showOpenDialog(_targetWindow, options) {
       calls.push({ kind: "open", options });
-      if ((options as { title?: string }).title === "SelectWorkingDirectory") {
+      if ((options as { title?: string }).title === "Select Working Directory") {
         return { canceled: false, filePaths: ["C:/workspace"] };
       }
       const title = (options as { title?: string }).title;
-      if (title?.includes("Icon") || title === "SelectImage") {
+      if (title?.includes("Icon") || title === "Select Image") {
         return { canceled: false, filePaths: ["C:/images/a.png"] };
       }
       if ((options as { properties?: string[] }).properties?.includes("multiSelections")) {
@@ -60,11 +60,11 @@ test("WindowDialogService は directory / file / image picker の選択結果を
   assert.equal(image, "C:/images/a.png");
   assert.equal(characterIcon, "C:/images/a.png");
   assert.deepEqual(calls.map((entry) => (entry.options as { title?: string }).title), [
-    "SelectWorkingDirectory",
-    "SelectFile",
-    "SelectFiles",
-    "SelectImage",
-    "SelectCharacterIcon",
+    "Select Working Directory",
+    "Select File",
+    "Select Files",
+    "Select Image",
+    "Select Character Icon",
   ]);
   assert.equal((calls[0]?.options as { defaultPath?: string }).defaultPath, "C:/seed");
   assert.equal((calls[1]?.options as { defaultPath?: string }).defaultPath, "C:/seed.txt");
@@ -120,10 +120,10 @@ test("WindowDialogService は open/save dialog の cancel を null として返�
 
 // @test-value v2
 // kind = "contract"
-// claim = "model catalog import/exportはdialogで選択したfile pathとJSON内容を既存のfile I/Oおよびcatalog serviceへ接続する"
+// claim = "model catalog import/exportは役割に合うdialog titleを付け、選択pathとJSON内容をfile I/Oおよびcatalog serviceへ接続する"
 // oracle = { type = "contract", ref = "src-electron/windows/window-dialog-service.ts model catalog import/export" }
-// fault = "選択pathを無視する、catalog JSONを変換して保存する、またはimport/export serviceを呼ばない"
-// observable = "read/write file pathとcontent、catalog serviceへ渡されたdocument、export path"
+// fault = "import/export dialogのtitleを取り違える、選択pathを無視する、またはcatalog JSONを変換して保存する"
+// observable = "dialog title、read/write file pathとcontent、catalog serviceへ渡されたdocument、export path"
 // observation_boundary = "public-boundary"
 // scope = "window-dialog-service-model-catalog"
 // lifecycle = "permanent"
@@ -134,11 +134,11 @@ test("WindowDialogService は model catalog import/export を file I/O と接続
   const exportRevisions: Array<number | null | undefined> = [];
   const service = new WindowDialogService({
     async showOpenDialog(_targetWindow, options) {
-      assert.equal(options.title, "ImportModelCatalog");
+      assert.equal(options.title, "Import Model Catalog");
       return { canceled: false, filePaths: ["C:/tmp/catalog.json"] };
     },
     async showSaveDialog(_targetWindow, options) {
-      assert.equal(options.title, "ExportModelCatalog");
+      assert.equal(options.title, "Export Model Catalog");
       return { canceled: false, filePath: "C:/tmp/export.json" };
     },
     async readTextFile(filePath) {

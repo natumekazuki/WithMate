@@ -98,13 +98,6 @@
   box-shadow: none;
 }
 
-.home-page.home-page-settings-window .settings-window-shell {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
 .settings-keyboard-shortcuts-dialog > .launch-dialog-foot:empty {
   display: none;
 }

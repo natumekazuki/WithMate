@@ -7,10 +7,10 @@ import BootApp from "../../src/app/BootApp.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Bootは起動中であることと処理名を一つのaccessible statusとして提供する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#boot-window" }
-// fault = "spinnerのみの起動画面からbusyと処理名の非視覚的識別を失い、待機状態が判別できなくなる"
-// observable = "初期描画のstatus内の処理名と領域のaria-busy"
+// claim = "起動待機画面は表示名と詳細なaccessible statusを一つの領域で提供する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window-startup" }
+// fault = "待機中の表示名または処理名とbusy状態が欠落し、長い初期化を停止と区別できない"
+// observable = "初期描画のstatus内の表示名、非視覚的処理名、領域のaria-busy"
 // observation_boundary = "component-behavior"
 // scope = "Boot初期状態の描画とaccessibility"
 // lifecycle = "permanent"
@@ -20,6 +20,6 @@ test("BootApp は起動中の領域と処理名を支援技術へ伝える", () 
   const html = renderToStaticMarkup(React.createElement(BootApp));
 
   assert.match(html, /<section[^>]*aria-busy="true"/);
-  assert.match(html, /role="status" aria-atomic="true">.*?<span class="sr-only">PreparingStartup<\/span>/);
+  assert.match(html, /role="status" aria-atomic="true">.*?Starting WithMate.*?<span class="sr-only">PreparingStartup<\/span>/);
   assert.equal((html.match(/role="status"/g) ?? []).length, 1);
 });

@@ -38,6 +38,7 @@ export default function DiffApp() {
 
     void withmateApi.getDiffPreview(token).then((payload) => {
       if (active) {
+        if (payload) document.title = `Diff - ${payload.file.path}`;
         setDiffPreview(payload);
         setLoadState("ready");
       }
