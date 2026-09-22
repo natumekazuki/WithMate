@@ -4,8 +4,16 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import { useAuxiliaryWorkspace, type AuxiliaryWorkspaceApi as WorkspaceApi, type AuxiliaryWorkspace } from "../../src/chat/use-auxiliary-workspace.js";
+import { ChatWindow } from "../../src/chat/chat-window.js";
+import {
+  createHiddenControlsTextChatComposerProps,
+  createStaticChatHeaderProps,
+  createStaticTextChatCompactActionDockProps,
+  createStaticTextConversationMessageColumnProps,
+} from "../../src/chat/chat-window-adapter.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 
 type AuxiliaryWorkspaceApi = Omit<WorkspaceApi, "getAuxiliarySessionStatus"> & Partial<Pick<WorkspaceApi, "getAuxiliarySessionStatus">>;
@@ -116,6 +124,98 @@ function deferred<T>() {
   const promise = new Promise<T>((next) => { resolve = next; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "一覧取得後のAuxiliary詳細待機・失敗・成功がownerから共通ChatWindowへ渡り、待機status・具体的なalert・会話本文として表示される"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/730#issuecomment-5774916681" }
+// fault = "buildConcurrentChatsが一覧のloading/errorだけを返し、詳細待機や失敗を未選択表示にする、または成功後も古い状態を残す"
+// observable = "実hookのbuildConcurrentChatsのloading/errorとChatWindow描画のstatus、alert、選択会話本文"
+// observation_boundary = "consumer"
+// scope = "auxiliary-detail-state-projection"
+// lifecycle = "permanent"
+// impact = "選択会話の取得状況や失敗理由を確認できず、会話が未選択に見える"
+// distinction = "詳細取得のrace testはowner stateだけを読み、表示surfaceへの状態の渡し忘れを検出しない"
+// @end-test-value
+test("Auxiliary詳細の待機・失敗・成功を共通chatへ投影する", async () => {
+  const a = session("a", "2026-01-02");
+  const b = session("b", "2026-01-01");
+  const loadA = deferred<AuxiliarySession | null>();
+  const loadB = deferred<AuxiliarySession | null>();
+  const view = setup({
+    listAuxiliarySessions: async () => [a, b],
+    getAuxiliarySession: (id) => id === a.id ? loadA.promise : loadB.promise,
+  });
+  const noop = () => {};
+  const messageColumn = createStaticTextConversationMessageColumnProps({
+    sessionId: "parent-1",
+    characterId: "character",
+    characterName: "Mate",
+    characterIconPath: "",
+    messages: [],
+    messageListRef: React.createRef<HTMLDivElement>(),
+    isRunning: false,
+  });
+  const renderSurface = () => {
+    const surface = view.current.buildConcurrentChats({
+      mainSession: null,
+      auxiliarySession: view.current.selectedSession,
+      messageColumn,
+    });
+    const html = renderToStaticMarkup(React.createElement(ChatWindow, {
+      mode: "agent",
+      headerSplitter: null,
+      actionDockSplitter: null,
+      rightPane: null,
+      splitter: null,
+      isHeaderExpanded: true,
+      headerProps: createStaticChatHeaderProps({ taskTitle: "Main", isRunning: false }),
+      messageColumnProps: messageColumn,
+      isActionDockExpanded: false,
+      composerProps: createHiddenControlsTextChatComposerProps({
+        draft: "", isRunning: false, feedback: "",
+        composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
+        onDraftChange: noop, onDraftKeyDown: noop, onSendOrCancel: noop,
+        modelOptions: [], selectedModel: "", selectedModelFallbackLabel: "",
+        reasoningOptions: [], selectedReasoningEffort: "",
+        onChangeModel: noop, onChangeReasoningEffort: noop,
+      }),
+      compactActionDockProps: createStaticTextChatCompactActionDockProps({}),
+      concurrentChats: surface,
+    }));
+    return { surface, document: new JSDOM(html).window.document };
+  };
+  try {
+    await view.render();
+    await act(async () => view.current.setWidthRatio(0.5));
+    assert.equal(view.current.loading, false);
+    assert.equal(view.current.selectedId, a.id);
+    const pending = renderSurface();
+    assert.equal(pending.surface.loading, true);
+    assert.equal(pending.surface.error, null);
+    assert.ok(pending.document.querySelector('.concurrent-chat-state[role="status"] .concurrent-chat-loading-spinner'));
+
+    await act(async () => loadA.resolve(null));
+    const failed = renderSurface();
+    assert.equal(failed.surface.loading, false);
+    assert.equal(failed.surface.error, "Auxiliary session a was not found");
+    assert.equal(failed.document.querySelector('.concurrent-chat-state[role="alert"]')?.textContent, "Auxiliary session a was not found");
+
+    await act(async () => view.current.selectSession(b.id));
+    const retrying = renderSurface();
+    assert.equal(retrying.surface.loading, true);
+    assert.equal(retrying.surface.error, null);
+    await act(async () => loadB.resolve(b));
+    const loaded = renderSurface();
+    assert.equal(loaded.surface.loading, false);
+    assert.equal(loaded.surface.error, null);
+    assert.equal(loaded.surface.auxiliarySession?.id, b.id);
+    assert.match(loaded.document.body.textContent ?? "", /b response/);
+    assert.equal(loaded.document.querySelector(".concurrent-chat-state"), null);
+  } finally {
+    await view.unmount();
+  }
+});
 
 // @test-value v2
 // kind = "contract"
