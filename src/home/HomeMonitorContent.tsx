@@ -9,7 +9,7 @@ import type {
   HomeMonitorEntry,
   HomeSessionState,
 } from "./home-session-projection.js";
-import { CharacterAvatar } from "../ui-utils.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
 
 export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];

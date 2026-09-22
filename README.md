@@ -1,7 +1,5 @@
 # WithMate
-
 WithMate は、Codex と GitHub Copilot の coding agent を、キャラクターと一緒に使う Electron デスクトップアプリです。ワークスペースを選んでセッションを開始し、チャット、コマンド実行の確認、ファイル参照、差分確認までを一つのアプリで扱います。
-
 対応 runtime は Electron です。Vite の画面をブラウザーだけで利用する構成はサポートしていません。
 
 ## 主な機能
@@ -113,7 +111,7 @@ npm run electron:dev
 npm run typecheck
 ```
 
-`typecheck`はSQLite実行ownerと依存方向のcheckも実行します。依存方向checkは、RendererのTSX entry/component・型宣言から到達する依存と、`src-shared/`全体を対象にします。RendererからMain・CLI・開発script・Node/Electron/Provider SDKへの依存、およびsharedから環境固有層・Reactへの依存を、type-onlyを含むimport・re-export・dynamic importで検査します。現在`src/`にあるMain/CLI専用moduleと、Main/preload側からの依存方向は、このcheckの対象に含みません。
+`typecheck`はSQLite実行ownerと依存方向のcheckも実行します。依存方向checkは`src/`、`src-shared/`、`src-electron/`、`src-cli/`全体のimport・re-export・dynamic importをtype-onlyも含めて検査します。RendererとsharedからNode/Electron/Provider SDKへの依存、sharedからReactへの依存、および実行環境の境界を逆流する相対importを拒否します。preloadはpreload内とshared、CLIはCLI内とsharedおよび限定したMainのplatform adapterを参照できます。Storage Workerの検証済みhandler entryだけは動的解決を許可し、実際のentry解決をWorker testで確認します。
 
 ### テスト
 
@@ -121,7 +119,8 @@ npm run typecheck
 npm test
 ```
 
-テストは`scripts/tests/`と`tests/`内の`*.test.ts`・`*.test.tsx`を再帰列挙し、Node test runnerで実行します。移設中の両rootを明示的に対象とし、helperやfixtureの名前にはこのsuffixを使いません。通常実行とshardは同じ列挙・選択経路を使います。
+テストは`tests/`内の`*.test.ts`・`*.test.tsx`を再帰列挙し、Node test runnerで実行します。helperやfixtureはテストファイルのsuffixを持たないため、実行対象には含まれません。通常実行とshardは同じ列挙・選択経路を使います。
+test失敗、空の実行対象、不正なshard指定は非zero終了となり、CIで成功扱いにしません。
 
 ```bash
 # 実行対象の一覧（testは実行しない）
@@ -129,7 +128,7 @@ npm test -- --list
 # CIと同じ3分割のうち1番目
 npm run test:shard -- --shard=1/3
 # 対象を絞った実行
-node --import tsx --test scripts/tests/session-storage.test.ts
+node --import tsx --test tests/main/session-storage.test.ts
 # testとhelper/fixtureを含む型検査（実行時transpileとは別）
 npm run typecheck:tests
 ```
@@ -195,8 +194,9 @@ WithMateのソースコードは[ISC License](LICENSE)で提供します。
 - `src/`: React renderer、UI state
 - `src-shared/`: Main、preload、renderer、CLIで共有する副作用のない契約・正規化・定数
 - `src-electron/`: Electron main、preload、IPC、永続化、provider連携
+- `src-cli/`: 配布物に含めるMemory／Glossary CLIの入力ソース
 - `scripts/`: build、生成、migration、検証用script
-- `scripts/tests/`: Node test runner用test
+- `tests/`: Node test runner用test
 - `docs/design/`: 現行設計の正本とdomain detail
 - `docs/features/`: 利用者向けの機能別ガイド
 - `docs/runbooks/`: 現在の運用・診断・復旧手順

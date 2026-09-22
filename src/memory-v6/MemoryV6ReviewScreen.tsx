@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useDialogA11y } from "../a11y.js";
+import { useDialogA11y } from "../ui/a11y.js";
 import type { MemoryEntryKind, MemoryForgetReason } from "../../src-shared/memory/memory-contract.js";
 import type {
   MemoryV6ReviewApi,

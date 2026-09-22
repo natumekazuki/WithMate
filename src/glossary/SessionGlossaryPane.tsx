@@ -4,7 +4,7 @@ import type {
   GlossaryEntry,
   SessionGlossaryProjection,
 } from "../../src-shared/glossary/glossary-contract.js";
-import { BackNavigationButton } from "../back-navigation-button.js";
+import { BackNavigationButton } from "../ui/back-navigation-button.js";
 
 export type SessionGlossaryPaneProps = {
   projection: SessionGlossaryProjection | null;

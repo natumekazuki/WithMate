@@ -1,9 +1,7 @@
 # Character Definition Format
-
 - 作成日: 2026-03-29
 - 更新日: 2026-09-04
 - 対象: `character.md` と `character-notes.md`
-
 ## Goal
 
 `character.md` をユーザー向け response behavior の runtime 正本とし、調査、解釈、改稿履歴を `character-notes.md` へ分離する。
@@ -50,7 +48,7 @@ frontmatter parser は `key: value` の flat scalar subset だけを扱う。nes
 
 `character-notes.md` は optional とする。存在する場合は null byte を含まず、UTF-8 byte size が 256 KiB 以下であることだけを hard contract とする。authoring で必要になった時は固定 Skill の template から作成する。
 
-実装の正本は `src/character/character-definition.ts`、境界検証は `scripts/tests/character-definition-format.test.ts` と `scripts/tests/character-storage.test.ts` を参照する。
+実装の正本は `src/character/character-definition.ts`、境界検証は `tests/shared/character-definition-format.test.ts` と `tests/main/character-storage.test.ts` を参照する。
 
 ## Recommended Character Kernel
 

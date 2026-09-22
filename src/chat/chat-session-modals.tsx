@@ -3,9 +3,9 @@ import type { CSSProperties, ReactNode } from "react";
 import type { DiffPreviewPayload } from "../../src-shared/session/session-state.js";
 import {
   SessionAuditLogModal,
-  SessionDiffModal,
   type SessionAuditLogModalProps,
-} from "../session-components.js";
+} from "./runtime/session-audit-log.js";
+import { SessionDiffModal } from "./runtime/session-diff.js";
 
 export type ChatSessionModalsProps = {
   selectedDiff: DiffPreviewPayload | null;

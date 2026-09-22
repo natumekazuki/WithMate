@@ -1,12 +1,12 @@
 import {
   buildActionDockCollapseState,
   buildActionDockExpandState,
-} from "../action-dock-state.js";
+} from "./approval/action-dock-state.js";
 import {
   buildExclusiveComposerPickerToggleState,
   buildSkillPromptInsertionState,
   type SkillPromptInsertionState,
-} from "../session-composer-selection.js";
+} from "./composer/session-composer-selection.js";
 import { createQuotedMessageInsertionFromComposer } from "./message-text-actions.js";
 import {
   buildComposerReferenceInsertionState,
@@ -17,11 +17,11 @@ import {
   type ComposerPathPickerKind,
   type ComposerReferenceInput,
   type PathReferenceInsertionState,
-} from "../session-composer-paths.js";
+} from "./composer/session-composer-paths.js";
 import {
   cycleContextPaneTab,
   type ContextPaneTabKey,
-} from "../session-ui-projection.js";
+} from "./runtime/session-ui-projection.js";
 
 export function toggleExpandedArtifactState(
   current: Record<string, boolean>,

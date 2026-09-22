@@ -1,7 +1,5 @@
 # Codex Capability Matrix
-
 ## Position
-
 - 状態: supporting doc
 - cross-provider の正本一覧は `docs/design/coding-agent-capability-matrix.md`
 - provider 境界の正本は `docs/design/provider-adapter.md`
@@ -38,7 +36,7 @@
 主な実装:
 
 - `src-electron/main.ts`
-- `src-electron/codex-adapter.ts`
+- `src-electron/providers/codex/codex-adapter.ts`
 - `src/model-catalog.ts`
 
 ### 2. Session lifecycle
@@ -54,9 +52,9 @@
 主な実装:
 
 - `src-electron/main.ts`
-- `src-electron/session-storage.ts`
-- `src/HomeApp.tsx`
-- `src/App.tsx`
+- `src-electron/session/session-storage.ts`
+- `src/home/HomeApp.tsx`
+- `src/app/SessionWindowApp.tsx`
 
 ### 3. Prompt composition
 
@@ -68,7 +66,7 @@
 
 主な実装:
 
-- `src-electron/codex-adapter.ts`
+- `src-electron/providers/codex/codex-adapter.ts`
 - `docs/design/prompt-composition.md`
 
 ### 4. Attachment / workspace context
@@ -81,8 +79,8 @@
 
 主な実装:
 
-- `src-electron/codex-adapter.ts`
-- `src/App.tsx`
+- `src-electron/providers/codex/codex-adapter.ts`
+- `src/app/SessionWindowApp.tsx`
 - `docs/design/provider-adapter.md`
 
 ### 5. Skill integration
@@ -95,10 +93,10 @@
 
 主な実装:
 
-- `src-electron/skill-discovery.ts`
+- `src-electron/skills/skill-discovery.ts`
 - `src-electron/main.ts`
-- `src/HomeApp.tsx`
-- `src/App.tsx`
+- `src/home/HomeApp.tsx`
+- `src/app/SessionWindowApp.tsx`
 
 制約:
 
@@ -122,7 +120,7 @@
 - `src/approval-mode.ts`
 - `src/codex-sandbox-mode.ts`
 - `src/provider-runtime-options.ts`
-- `src-electron/codex-adapter.ts`
+- `src-electron/providers/codex/codex-adapter.ts`
 - `src-electron/main.ts`
 
 未対応:
@@ -140,8 +138,8 @@
 
 主な実装:
 
-- `src-electron/codex-adapter.ts`
-- `src/App.tsx`
+- `src-electron/providers/codex/codex-adapter.ts`
+- `src/app/SessionWindowApp.tsx`
 - `docs/design/desktop-ui.md`
 
 制約:
@@ -166,10 +164,10 @@
 主な実装:
 
 - `src-electron/main.ts`
-- `src-electron/audit-log-storage.ts`
-- `src/App.tsx`
-- `src/DiffApp.tsx`
-- `src/DiffViewer.tsx`
+- `src-electron/session/audit-log-storage.ts`
+- `src/app/SessionWindowApp.tsx`
+- `src/file-explorer/DiffApp.tsx`
+- `src/ui/DiffViewer.tsx`
 - `docs/design/audit-log.md`
 
 ### 9. Slash command parity

@@ -1,4 +1,4 @@
-import { CharacterAvatar } from "../ui-utils.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
 
 export type HomeMateSetupPanelProps = {
   mode?: "create" | "edit" | "unavailable";

@@ -1,10 +1,10 @@
 import { useRef } from "react";
 
-import { focusRovingItemByKey, useDialogA11y } from "../a11y.js";
+import { focusRovingItemByKey, useDialogA11y } from "../ui/a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
 import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
-import { buildCharacterThemeStyle } from "../theme-utils.js";
-import { CharacterAvatar } from "../ui-utils.js";
+import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
 import type { HomeLaunchWorkspaceValidationState } from "./home-launch-state.js";

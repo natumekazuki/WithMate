@@ -1,8 +1,6 @@
 # Electron Window Runtime
-
 - 作成日: 2026-03-12
 - 対象: BrowserWindow / preload / bootstrap の current runtime
-
 ## Goal
 
 WithMate の `Home Window`、`Session Window`、`Session Monitor Window`、`Settings Window`、`Diff Window` を Electron の current runtime でどう起動・再利用・接続しているかを説明する。
@@ -82,6 +80,13 @@ Main Process は `app.requestSingleInstanceLock()` を取得し、2 つ目以降
 - running close policy
 - `session-start`
 
+### MainWindowComposition / MainWindowRuntime
+
+- `MainWindowComposition` は BrowserWindow の共通生成設定、cursor placement、Boot Window の表示と状態通知を所有する
+- `MainWindowRuntime` は WindowEntryLoader、WindowBroadcastService、WindowDialogService、AuxWindowService、SessionWindowBridge、SessionWindowRestoreService を一つの window runtime として所有する
+- runtime は session lookup、run-in-flight、draft flush、restore persistence などの narrow port だけを受け取り、Memory、Character、Provider、Storage の service bag を保持しない
+- window service の生成・状態は MainInfrastructureRegistry から分離し、Main Process の app/service registry と二重管理しない
+
 ### AuxWindowService
 
 - `Home`
@@ -112,7 +117,7 @@ current 実装の API surface は次の domain に分かれる。
 - `picker`
 - `subscription`
 
-型定義の正本は `src-shared/ipc/withmate-window-api.ts` と `src-shared/window/withmate-window-types.ts` に置く。Bridgeの実装は`src-electron/preload-api.ts`が担当し、rendererのURL queryからsession・auxiliary・diff tokenを読む処理は`src/app/session-location.ts`が担当する。
+型定義の正本は `src-shared/ipc/withmate-window-api.ts` と `src-shared/window/withmate-window-types.ts` に置く。Bridgeの実装は`src-electron/preload/preload-api.ts`が担当し、rendererのURL queryからsession・auxiliary・diff tokenを読む処理は`src/app/session-location.ts`が担当する。
 
 ## URL Resolution
 

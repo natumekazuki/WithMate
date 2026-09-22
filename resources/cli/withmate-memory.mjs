@@ -1,4 +1,4 @@
-// Generated from scripts/withmate-memory.ts. Do not edit directly.
+// Generated from src-cli/memory/withmate-memory.ts. Do not edit directly.
 import { createRequire } from "node:module";
 import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -78,7 +78,7 @@ var MEMORY_FORGET_REASONS = [
 	"other"
 ];
 //#endregion
-//#region src/memory-v6/memory-discovery.ts
+//#region src-electron/platform/memory/memory-discovery.ts
 var WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v2";
 var WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6.current.json";
 function buildWithMateMemoryDiscoveryGenerationFileName(adapter, runtimeGenerationId) {
@@ -122,7 +122,7 @@ function createMemoryErrorResponse(error) {
 	};
 }
 //#endregion
-//#region src/memory-v6/memory-validation.ts
+//#region src-shared/memory/memory-validation.ts
 var MEMORY_ENTRY_KIND_SET = new Set(MEMORY_ENTRY_KINDS);
 var MEMORY_APPEND_FILE_ROLE_SET = new Set(MEMORY_APPEND_FILE_ROLES);
 var MEMORY_FORGET_REASON_SET = new Set(MEMORY_FORGET_REASONS);
@@ -1045,7 +1045,7 @@ function isCharacterContextError(value) {
 	return candidate.schemaVersion === "withmate-character-context-v1" && Boolean(candidate.error && typeof candidate.error === "object");
 }
 //#endregion
-//#region src/character-context/character-context-validation.ts
+//#region src-shared/character-context/character-context-validation.ts
 var CharacterContextValidationError = class extends Error {
 	field;
 	constructor(message, field) {
@@ -1362,7 +1362,7 @@ var WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV = "WITHMATE_AGENT_RUNTIME_BINDIN
 var WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV = "WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID";
 var WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV = "WITHMATE_MEMORY_RUNTIME_GENERATION_ID";
 //#endregion
-//#region src/memory-v6/memory-runtime-exchange.ts
+//#region src-electron/platform/memory/memory-runtime-exchange.ts
 var WITHMATE_MEMORY_RUNTIME_NONCE_HEADER = "x-withmate-memory-runtime-nonce";
 var WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER = "x-withmate-memory-runtime-instance";
 /** Non-secret application owner identity (main-process lifetime). */
@@ -2985,7 +2985,7 @@ async function readRuntimeDiscoveryCredential(record, adapterKind) {
 	}
 }
 //#endregion
-//#region scripts/withmate-memory-runtime-client.ts
+//#region src-cli/memory/withmate-memory-runtime-client.ts
 var WithMateMemoryRuntimeExchangeError = class extends Error {
 	dispatched;
 	discoveryCode;
@@ -24910,7 +24910,7 @@ var StdioServerTransport = class {
 	}
 };
 //#endregion
-//#region scripts/withmate-memory-mcp-operation.ts
+//#region src-cli/memory/withmate-memory-mcp-operation.ts
 var GENERAL_MEMORY_COMMANDS = /* @__PURE__ */ new Set([
 	"list_targets",
 	"list_entries",
@@ -24958,7 +24958,7 @@ function buildWithMateMemoryMcpRuntimeBody(command, publicInput) {
 	};
 }
 //#endregion
-//#region scripts/withmate-memory-mcp-general.ts
+//#region src-cli/memory/withmate-memory-mcp-general.ts
 var projectRefSchema$1 = discriminatedUnion("type", [object({
 	type: literal("id"),
 	id: string().min(1).max(200)
@@ -25532,7 +25532,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	}));
 }
 //#endregion
-//#region scripts/withmate-memory-mcp.ts
+//#region src-cli/memory/withmate-memory-mcp.ts
 var DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS$1 = 3e5;
 var GENERAL_MEMORY_FILE_OPERATION_PATHS = /* @__PURE__ */ new Set([
 	"/v1/append",
@@ -26415,7 +26415,7 @@ async function startWithMateMemoryMcpServer(deps = {}) {
 	return server;
 }
 //#endregion
-//#region scripts/withmate-memory.ts
+//#region src-cli/memory/withmate-memory.ts
 var WITHMATE_MEMORY_CLI_EXIT_CODES = {
 	ok: 0,
 	usage: 1,

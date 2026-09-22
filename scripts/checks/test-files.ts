@@ -31,12 +31,9 @@ export function listTestFiles(rootDirectory: string): TestFile[] {
     }
   }
 
-  // Both roots are explicit during the tests/ migration; neither is a fallback.
-  for (const relativePath of ["scripts/tests", "tests"]) {
-    const directory = path.join(rootDirectory, relativePath);
-    if (existsSync(directory)) {
-      visit(directory);
-    }
+  const directory = path.join(rootDirectory, "tests");
+  if (existsSync(directory)) {
+    visit(directory);
   }
   return files.sort(comparePaths);
 }

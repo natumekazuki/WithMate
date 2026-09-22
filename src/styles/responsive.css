@@ -1,0 +1,347 @@
+@media (max-width: 1080px) {
+  .session-message-stack {
+    min-height: 0;
+  }
+
+  .session-context-pane {
+    height: min(42vh, 360px);
+    min-height: min(34vh, 300px);
+  }
+
+  .diff-split-view {
+    grid-template-columns: 1fr;
+  }
+
+  .diff-pane {
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .diff-pane:last-child {
+    border-bottom: 0;
+  }
+
+  .diff-pane-head-inner,
+  .diff-pane-row {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .session-live-diff-split-header,
+  .session-live-diff-split-row.change {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .session-live-diff-split-header > :nth-child(n + 3),
+  .session-live-diff-split-row.change > :nth-child(n + 3) {
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+  }
+}
+
+@media (max-width: 1180px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .home-page .home-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    grid-template-rows: auto auto minmax(220px, 1fr) auto;
+  }
+
+  .workspace-header,
+  .character-editor-layout,
+  .summary-grid,
+  .profile-grid,
+  .artifact-grid,
+  .choice-card-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-height: 860px) {
+  .character-editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .character-editor-footer {
+    backdrop-filter: none;
+  }
+
+  .markdown-editor-textarea {
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 640px) {
+  .character-editor-window-header,
+  .character-editor-window-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .character-editor-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .character-editor-header-actions > .launch-toggle,
+  .character-editor-window-footer > .launch-toggle {
+    width: 100%;
+  }
+
+  .character-editor-window .character-editor-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-inline: 14px;
+    overflow: visible;
+  }
+
+  .character-editor-window .character-editor-tab {
+    width: 100%;
+    flex-basis: auto;
+  }
+
+  .character-editor-window-body {
+    padding: 14px;
+  }
+
+  .character-editor-page .settings-inline-input-row,
+  .character-editor-page .settings-character-form-grid,
+  .character-editor-page .settings-character-theme-fields,
+  .character-editor-preview-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .character-editor-actions {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    gap: 14px;
+    padding: 14px;
+  }
+
+  .app-badge,
+  .home-status-card,
+  .catalog-panel,
+  .sessions-panel,
+  .session-window-bar,
+  .chat-panel,
+  .stream-panel {
+    padding: 18px;
+  }
+
+  .session-page {
+    gap: 0;
+    padding: 12px;
+  }
+
+  .session-page .session-top-bar {
+    padding: 10px 12px;
+  }
+
+  .session-page .session-work-surface {
+    padding: 0;
+  }
+
+  .chat-skill-picker-layer {
+    padding: 4px;
+  }
+
+  .app-badge,
+  .session-card,
+  .character-card,
+  .message-row.assistant,
+  .composer-input-row,
+  .composer-box,
+  .choice-card {
+    grid-template-columns: 1fr;
+  }
+
+  .message-avatar-stack {
+    position: static;
+  }
+
+  .home-settings-rail {
+    align-items: stretch;
+  }
+
+  .home-page .home-pane-toggle {
+    width: 100%;
+  }
+
+  .home-page .home-settings-button {
+    width: 100%;
+  }
+
+  .settings-dialog-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .session-window-controls {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .session-window-control-group {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    border-radius: 16px;
+  }
+
+  .session-top-bar-row,
+  .session-top-bar-manage,
+  .session-action-dock-compact-row,
+  .session-action-dock-compact-actions {
+    width: 100%;
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .session-action-dock-cancel-slot {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .session-action-dock-compact-meta {
+    justify-content: flex-start;
+  }
+
+  .command-monitor-card-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .session-title-shell,
+  .session-title-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .session-title-editor {
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
+
+  .session-top-bar-row.is-editing-title {
+    padding-right: 0;
+  }
+
+  .session-top-bar-row.is-editing-title > .session-title-actions {
+    position: static;
+  }
+
+  .drawer-toggle,
+  .launch-toggle,
+  .browse-button,
+  .artifact-toggle,
+  .diff-button,
+  .diff-close {
+    width: 100%;
+  }
+
+  .artifact-toolbar,
+  .check-item,
+  .diff-titlebar,
+  .diff-subbar,
+  .diff-pane-head,
+  .panel-head,
+  .session-card-head,
+  .session-character-row,
+  .message-head,
+  .artifact-file-meta,
+  .stream-card-head,
+  .tag-row,
+  .section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .message-row.user .message-card {
+    width: 100%;
+  }
+
+  .header-rail-grid,
+  .artifact-grid,
+  .summary-grid,
+  .profile-grid,
+  .catalog-grid,
+  .toolbar-search-row,
+  .choice-card-list,
+  .character-form-grid,
+  .theme-color-grid,
+  .theme-rgb-grid,
+  .settings-character-form-grid,
+  .settings-character-theme-fields,
+  .composer-settings,
+  .editor-inline-field {
+    grid-template-columns: 1fr;
+  }
+
+  .choice-list {
+    flex-direction: column;
+  }
+
+  .running-session-strip {
+    flex-direction: column;
+  }
+
+  .diff-modal,
+  .launch-modal {
+    padding: 12px;
+  }
+
+  .diff-editor {
+    height: min(88vh, 920px);
+  }
+
+  .launch-dialog {
+    max-height: min(90vh, 980px);
+  }
+
+  .launch-dialog-foot {
+    padding: 12px 18px 18px;
+  }
+
+  .diff-split-view {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-attachment-list {
+    max-height: min(20vh, 144px);
+  }
+}
+
+.session-chat-layout.is-central-collapsed {
+  grid-template-rows: var(--session-header-dock-row-height) var(--session-dock-splitter-size)
+    0px var(--session-dock-splitter-size) minmax(0, 1fr);
+}
+.session-chat-layout.is-central-collapsed .session-message-stack {
+  visibility: hidden;
+  overflow: hidden;
+  min-height: 0;
+  height: 0;
+}
+@media (max-width: 1399.98px) {
+  .session-chat-layout.is-central-collapsed {
+    grid-template-rows: var(--session-header-dock-row-height) var(--session-dock-splitter-size)
+      var(--session-left-pane-track-width) var(--session-dock-splitter-size) 0px
+      var(--session-dock-splitter-size) var(--session-right-pane-track-width)
+      var(--session-dock-splitter-size) minmax(0, 1fr);
+  }
+}
+
+.session-chat-layout.is-central-collapsed .session-dock-splitter:not(.edge-top):not(.edge-bottom) {
+  visibility: hidden;
+  pointer-events: none;
+}

@@ -14,16 +14,16 @@ import {
 import {
   areCharacterIconPathReferencesEquivalent,
   validateCharacterIconRegistrationPath,
-} from "../character/character-icon.js";
+} from "../../src-shared/character/character-icon.js";
 import {
   buildDefaultCharacterDefinition,
   buildDefaultCharacterNotes,
-} from "../character/character-definition-template.js";
+} from "../../src-shared/character/character-definition-template.js";
 
 export {
   buildDefaultCharacterDefinition,
   buildDefaultCharacterNotes,
-} from "../character/character-definition-template.js";
+} from "../../src-shared/character/character-definition-template.js";
 
 export type CharacterEditorTab = "profile" | "definition" | "notes" | "preview";
 

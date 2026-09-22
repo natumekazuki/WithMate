@@ -1,4 +1,4 @@
-import type { SessionHeaderProps } from "../session-components.js";
+import type { SessionHeaderProps } from "./shell/session-header.js";
 
 export type ChatHeaderVisibilityOptions = {
   isAuxiliaryMode?: boolean;

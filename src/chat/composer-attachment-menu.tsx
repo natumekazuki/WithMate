@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 
-import { focusRovingItemByKey } from "../a11y.js";
+import { focusRovingItemByKey } from "../ui/a11y.js";
 
 type ComposerAttachmentMenuProps = {
   disabled: boolean;

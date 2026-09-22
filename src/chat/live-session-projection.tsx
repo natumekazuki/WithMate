@@ -1,4 +1,5 @@
-import type { SessionContextPaneProps, SessionRetryBannerProps } from "../session-components.js";
+import type { SessionContextPaneProps } from "./shell/session-context-pane.js";
+import type { SessionRetryBannerProps } from "./runtime/session-retry.js";
 import {
   buildLiveSessionContextPaneProps,
   type LiveSessionComposerDockPropsInput,

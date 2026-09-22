@@ -9,6 +9,9 @@ type AstNode = {
   source?: AstNode;
   moduleReference?: AstNode;
   expression?: AstNode;
+  object?: AstNode;
+  property?: AstNode;
+  name?: string;
   importKind?: string;
   exportKind?: string;
   loc?: { start: { line: number } };
@@ -27,23 +30,36 @@ function isPackage(specifier: string, name: string): boolean {
 function checkImport(file: string, node: AstNode, source: AstNode | undefined): void {
   const label = `${file}:${node.loc?.start.line ?? 1}`;
   if (typeof source?.value !== "string") {
+    // The Worker loads its typed handler entry from validated startup data.
+    // Its actual entry resolution is exercised by the storage-worker tests.
+    if (file === "src-electron/storage/storage-worker-entry.ts"
+      && source?.type === "MemberExpression"
+      && source.object?.name === "entryData" && source.property?.name === "handlerModule") return;
     violations.push(`${label}: dynamic dependency cannot be checked statically.`);
     return;
   }
   const specifier = source.value;
   const shared = file.startsWith("src-shared/");
-  const environmentPackage = specifier.startsWith("node:") || nodeModules.has(specifier)
+  const main = file.startsWith("src-electron/");
+  const cli = file.startsWith("src-cli/");
+  const preload = file.startsWith("src-electron/preload/") || file === "src-electron/preload.ts";
+  const environmentPackage = !main && !cli && (specifier.startsWith("node:") || nodeModules.has(specifier)
     || isPackage(specifier, "electron") || providerPackages.some((name) => isPackage(specifier, name))
-    || shared && ["react", "react-dom"].some((name) => isPackage(specifier, name));
+    || shared && ["react", "react-dom"].some((name) => isPackage(specifier, name)));
   const target = specifier.startsWith(".")
     ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier))
     : specifier;
-  const invalidRelative = specifier.startsWith(".") && (shared
+  const invalidRelative = specifier.startsWith(".") && (preload
+    ? !target.startsWith("src-shared/") && !target.startsWith("src-electron/preload/")
+    : main ? !target.startsWith("src-electron/") && !target.startsWith("src-shared/")
+    : cli ? !target.startsWith("src-cli/") && !target.startsWith("src-shared/")
+      && !target.startsWith("src-electron/platform/")
+    : shared
     ? !target.startsWith("src-shared/")
     : !target.startsWith("src/") && !target.startsWith("src-shared/"));
   if (environmentPackage || invalidRelative) {
     const kind = node.type === "TSImportType" || node.importKind === "type" || node.exportKind === "type" ? "type" : "runtime/mixed";
-    violations.push(`${label}: ${kind} dependency ${specifier} crosses the ${shared ? "shared" : "renderer"} boundary.`);
+    violations.push(`${label}: ${kind} dependency ${specifier} crosses the ${preload ? "preload" : main ? "main" : cli ? "cli" : shared ? "shared" : "renderer"} boundary.`);
   }
 }
 
@@ -81,13 +97,11 @@ async function visitDirectory(directory: string): Promise<void> {
   }
 }
 
-// src/ still contains Main/CLI-only modules. Check the renderer closure from
-// TSX entries/components and declarations, plus every neutral shared module.
-for (const directory of ["src", "src-shared"]) {
+for (const directory of ["src", "src-shared", "src-electron", "src-cli"]) {
   const fullPath = path.join(root, directory);
   if (existsSync(fullPath)) await visitDirectory(fullPath);
 }
-const pending = [...dependencies.keys()].filter((file) => file.endsWith(".tsx") || file.endsWith(".d.ts") || file.startsWith("src-shared/"));
+const pending = [...dependencies.keys()];
 const checked = new Set<string>();
 for (const file of pending) {
   if (checked.has(file)) continue;

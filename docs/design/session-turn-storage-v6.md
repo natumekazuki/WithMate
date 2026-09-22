@@ -1,9 +1,7 @@
 # V6 Session Turn Storage
-
 - 作成日: 2026-07-05
 - 対象: Session turn の永続化分類、provider output の分離、初回 migration 方針
 - Status: Proposed
-
 ## Goal
 
 Session 実行 1 turn に関する保存データを、WithMate の意味で分類し直す。
@@ -401,7 +399,7 @@ skipped row が後続 repair や削除で解消された場合、既に投入済
 初期実装では write migration の前に dry-run report を用意する。
 
 ```bash
-npx tsx scripts/migrate-session-turn-storage-v6.ts --dry-run --v6 <path-to-withmate-v6.db>
+npx tsx scripts/migrations/migrate-session-turn-storage-v6.ts --dry-run --v6 <path-to-withmate-v6.db>
 ```
 
 dry-run は DB を更新せず、次を報告する。
@@ -478,7 +476,7 @@ Audit Log の明示削除は transitional source にも適用する。
 ## Implementation Slices
 
 1. 新 schema と validation を追加する。Done: `session_turns_v6` / `session_turn_interims_v6` / `session_turn_provider_outputs_v6` を追加済み。
-2. 初回 migration dry-run を追加し、件数、照合成功数、照合失敗数を報告する。Done: `scripts/migrate-session-turn-storage-v6.ts`。
+2. 初回 migration dry-run を追加し、件数、照合成功数、照合失敗数を報告する。Done: `scripts/migrations/migrate-session-turn-storage-v6.ts`。
 3. 新 storage adapter を追加し、既存 `AuditLogStorageV6` の DTO を新 table から復元できるようにする。Done: summary / detail / section detail を `session_turns_v6` と child table から復元する。
 4. write path を新 table へ切り替える。Done: `AuditLogStorageV6` は `audit_events_v6` を新規作成しない。
 5. `phase = 'running'` の途中経過を `session_turn_interims_v6` に保存し、Response detail 展開時だけ返す。Done: final response は main response として分離し、running snapshot は `interimMessages` として遅延取得する。

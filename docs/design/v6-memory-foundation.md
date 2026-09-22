@@ -1,9 +1,7 @@
 # V6 Memory Foundation
-
 - 作成日: 2026-06-21
 - 対象: V5 Character Core後のMemory access / storage / runtime API
 - Status: Foundation implemented / agent-preview
-
 ## Goal
 
 WithMate V6では、Memoryを毎turn promptへ常設注入する仕組みとしてではなく、coding agentが必要な時だけ検索・追加・忘却できるlocal Memory serviceとして再設計する。
@@ -408,7 +406,7 @@ Memoryの明示的な保守作業では、`memory.list_targets`、`memory.list_e
 - `list_targets`はactive entryを持つtargetを列挙し、`includeEmpty`指定時だけ既知のproject、Character、user-globalのempty targetを加える。Character×projectの空組合せは生成しない。
 - `list_entries`は単一の明示targetをqueryなしでpaginationする。既定はactive entryで、bodyは`includeBody`指定時だけ投影する。
 - `audit`はtarget単位のkind/tag集計と保守候補を返す。候補はheuristicであり、forgetやmoveのauthorityにはしない。bodyは返さない。
-- pagination、owner/scope filter、public projectionの実行契約は`src/memory-v6/memory-validation.ts`、`src-electron/memory-v6-storage.ts`、`src/memory-v6/memory-response-contract.ts`を正本とする。
+- pagination、owner/scope filter、public projectionの実行契約は`src/memory-v6/memory-validation.ts`、`src-electron/memory/memory-v6-storage.ts`、`src/memory-v6/memory-response-contract.ts`を正本とする。
 
 ### `memory.append`
 
@@ -546,7 +544,7 @@ registry entryはsafe metadataとhash化したcredential参照だけを保持す
 `--api-url`または`WITHMATE_MEMORY_API_URL`で明示したURLがloopback HTTP URLでない場合、CLIはusage errorで終了し、discovery fileへfallbackしない。
 Windows registry rootは`%LOCALAPPDATA%\WithMate\runtime-discovery\v1`とする。既定のlegacy discovery fileは`WITHMATE_MEMORY_RUNTIME_DIR`があればその直下、なければOS temp配下のuser-specific runtime directoryに置く。
 app側writerはruntime directoryをOS userだけが読める権限で作成し、POSIXではsymlink directory、他user所有、group / other readableなdirectoryを拒否または修正する。discovery fileは0600相当でexclusive temporary fileから置き換える。
-current app起動配線は`src-electron/memory-v6-runtime.ts`で行う。main processは起動ごとに`applicationInstanceId`を一度だけ生成し、Memory runtimeは起動ごとに独立した`runtimeGenerationId`を生成する。app ready後に`withmate-v6.db`をbest-effortでbootstrapし、localhost API、credential generation、registry entry、lease heartbeatの順でpublishし、最後にlegacy pointerをbest-effort更新する。app shutdown時は自分のpublication IDとidentity tupleが一致するentryだけをunpublishし、listener停止後に自generationを削除する。V6 DB、ACL、capacity validationなどでMemory runtimeだけ起動できない場合でも通常app bootは継続し、未完成entryやcredentialを公開しない。
+current app起動配線は`src-electron/memory/memory-v6-runtime.ts`で行う。main processは起動ごとに`applicationInstanceId`を一度だけ生成し、Memory runtimeは起動ごとに独立した`runtimeGenerationId`を生成する。app ready後に`withmate-v6.db`をbest-effortでbootstrapし、localhost API、credential generation、registry entry、lease heartbeatの順でpublishし、最後にlegacy pointerをbest-effort更新する。app shutdown時は自分のpublication IDとidentity tupleが一致するentryだけをunpublishし、listener停止後に自generationを削除する。V6 DB、ACL、capacity validationなどでMemory runtimeだけ起動できない場合でも通常app bootは継続し、未完成entryやcredentialを公開しない。
 全 window close では app process を終了せず、Windows でも runtime API / CLI discovery を維持する。`app.requestSingleInstanceLock()` と `second-instance` handler により、Start Menu などから再起動された場合は既存 process の Home を再表示・focus する。
 Settings の `launchAtLoginEnabled` が有効な場合、packaged app だけが Electron login item へ `--background` 付きで登録する。dev / visual-check の unpackaged app は、引数なしの `electron.exe` をOSの起動先へ登録しないため、保存済み設定にかかわらずlogin itemを変更しない。`--background` 起動では Boot window / Home window を表示せず、runtime API と CLI discovery だけを立ち上げる。
 runtime APIはapp起動ごとの短命`apiSecret`、`applicationInstanceId`、Memory `runtimeGenerationId`を要求する。CLI/MCPはoperation bodyやsecret headerを送る前に、secretを送らない`GET /v1/status?nonce=...`でapplication instance、generation、owner challengeを検証する。lease期限切れでもchallenge成功runtimeはactiveとし、期限切れかつchallenge失敗だけをstaleとする。app log、status、diagnostics、error detailsにはruntime endpoint URL、credential path、userData path、binding reference、secretを出さない。V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmate-v6.db`が`foundation-ready`として見える状態にする。
@@ -679,16 +677,18 @@ CLIはuser-facingだが、API endpointはユーザーが直接叩く前提にし
 V6 MemoryはV6 DB foundation上の新規tableとして実装する。
 legacy Memory tableは読まない、書かない、意味変更しない。
 V5以前のsession / legacy MemoryはV6 first releaseのmigration対象にしない。
-SQL正本は`src-electron/database-schema-v6.ts`に置く。
-storage実装は`src-electron/memory-v6-storage.ts`に置き、解決済みowner / scopeに対するinventory、query-free list、append、get、lexical/tag search、supersede、forget preview/mutation、retarget、tag catalog、mutation event、idempotencyを扱う。
-storage helper型とtarget SQL helperは`src-electron/memory-v6-schema.ts`に置く。
+SQL正本は`src-electron/storage/database-schema-v6.ts`に置く。
+storage実装は`src-electron/memory/memory-v6-storage.ts`に置き、解決済みowner / scopeに対するinventory、query-free list、append、get、lexical/tag search、supersede、forget preview/mutation、retarget、tag catalog、mutation event、idempotencyを扱う。
+storage helper型とtarget SQL helperは`src-electron/memory/memory-v6-schema.ts`に置く。
 permission、project path / id解決、Character id解決はstorageへ入れず、application service層で扱う。
 storageはvalidな`withmate-v6.db`だけを開き、legacy DB pathへV6 schemaを作らない。
 
 ## Application Service
 
 Application serviceはversioned request contractとV6 storageの間に置く。
-実装は`src-electron/memory-v6-service.ts`、target解決は`src-electron/memory-v6-context-resolver.ts`、permission gateは`src-electron/memory-v6-permission.ts`に分ける。
+実装は`src-electron/memory/memory-v6-service.ts`、target解決は`src-electron/memory/memory-v6-context-resolver.ts`、permission gateは`src-electron/memory/memory-v6-permission.ts`に分ける。
+
+Mainのreview操作（usage / export / GC / search / get / forget）、diagnostics、CLI shim操作の組み立ては`src-electron/memory/memory-v6-main-assembly.ts`が所有する。`main.ts`はcurrent runtime、quota、key protector等の依存とWindow dialogを接続し、runtime APIの起動・終了を管理する。Worker経由のstorage操作と認可境界は変更しない。
 
 service層で扱う:
 

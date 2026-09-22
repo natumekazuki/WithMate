@@ -1,13 +1,11 @@
 # Character Management UI
-
 > Status: Superseded
-
 この文書が説明していた 3.x / 4.0.0 の Character 管理 UI と `character-update` Session は現行設計ではない。
 
 現行の Character Editor と Character authoring workflow は次を参照する。
 
-- `src/CharacterEditorApp.tsx`
-- `scripts/tests/character-editor-app.test.tsx`
+- `src/character-editor/CharacterEditorApp.tsx`
+- `tests/renderer/character-editor-app.test.tsx`
 - `docs/adr/010-character-authoring-project-contract.md`
 - `docs/design/character-authoring-growth.md`
 

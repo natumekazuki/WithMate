@@ -2,23 +2,21 @@ import type { CSSProperties, KeyboardEventHandler, PointerEventHandler, ReactNod
 
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { DiffPreviewPayload, Message, MessageArtifact } from "../../src-shared/session/session-state.js";
-import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
+import type { AdditionalDirectoryItem } from "./composer/session-composer-paths.js";
 import type { Session } from "../../src-shared/session/session-state.js";
-import {
-  type SessionActionDockCompactRowProps,
-  type SessionAuditLogModalProps,
-  type SessionComposerExpandedProps,
-  type SessionContextPaneProps,
-  type SessionHeaderProps,
-  type SessionMessageColumnProps,
-  type SessionRetryBannerProps,
-} from "../session-components.js";
-import type { ContextPaneTabKey } from "../session-ui-projection.js";
+import type { SessionActionDockCompactRowProps } from "./approval/session-action-dock.js";
+import type { SessionAuditLogModalProps } from "./runtime/session-audit-log.js";
+import type { SessionComposerExpandedProps } from "./composer/session-composer.js";
+import type { SessionContextPaneProps } from "./shell/session-context-pane.js";
+import type { SessionHeaderProps } from "./shell/session-header.js";
+import type { SessionMessageColumnProps } from "./conversation/session-message-column.js";
+import type { SessionRetryBannerProps } from "./runtime/session-retry.js";
+import type { ContextPaneTabKey } from "./runtime/session-ui-projection.js";
 import type {
   MessageCollapseTarget,
   MessageJumpRequest,
   MessageNavigatorEntry,
-} from "../session-message-collapse.js";
+} from "./conversation/session-message-collapse.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
 import type { ChatWindowProps } from "./chat-window.js";
 import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js";

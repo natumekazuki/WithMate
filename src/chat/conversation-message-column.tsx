@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
 
-import { type SessionMessageColumnProps } from "../session-components.js";
-import { useSessionMessageListFollowing } from "../session-chat-layout-hooks.js";
+import { type SessionMessageColumnProps } from "./conversation/session-message-column.js";
+import { useSessionMessageListFollowing } from "./shell/session-chat-layout-hooks.js";
 import { StableSessionMessageColumn } from "./stable-session-message-column.js";
-import { buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "../auxiliary-session-message-projection.js";
-import { buildMessageCollapseTargets, buildMessageNavigatorEntries, type MessageCollapseStateEntry, type MessageJumpRequest, type MessageNavigatorEntry } from "../session-message-collapse.js";
+import { buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "./auxiliary/auxiliary-session-message-projection.js";
+import { buildMessageCollapseTargets, buildMessageNavigatorEntries, type MessageCollapseStateEntry, type MessageJumpRequest, type MessageNavigatorEntry } from "./conversation/session-message-collapse.js";
 import { DEFAULT_CHARACTER_SESSION_COPY } from "../../src-shared/character/character-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
-import { buildCharacterThemeStyle } from "../theme-utils.js";
+import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
   "messages" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors"

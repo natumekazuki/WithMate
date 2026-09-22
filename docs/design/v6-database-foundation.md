@@ -1,7 +1,5 @@
 # V6 Database Foundation
-
 ## Auxiliary Session Projection (Issue #710)
-
 V6 runtimeのAuxiliaryは親Sessionに従属する複数の会話として保存する。会話payloadと一覧用`summary_json`を同時更新し、summaryにはtranscript、draft、Character定義本文を含めない。既存行のsummaryは初回migrationで補完し、以後の一覧取得でpayload全文を読み直さない。
 
 - 作成日: 2026-06-22
@@ -19,7 +17,7 @@ V5以前のsession / legacy Memory / Growth互換を引き継がず、Character-
 - current DB構造の棚卸しは`docs/design/database-schema.md`を参照する。
 - V6 Memoryのdomain contractは`docs/design/v6-memory-foundation.md`を参照する。
 - V6 Session turn の final / interim / provider output / run context 分離は`docs/design/session-turn-storage-v6.md`を参照する。
-- Character affectの追加tableと投影判断は`src-electron/database-schema-v6.ts`、`src-electron/character-affect-storage.ts`、`docs/adr/018-character-affect-event-persistence.md`を参照する。
+- Character affectの追加tableと投影判断は`src-electron/storage/database-schema-v6.ts`、`src-electron/character/character-affect-storage.ts`、`docs/adr/018-character-affect-event-persistence.md`を参照する。
 - V5 Character catalog / definition / snapshotの意味はV5 source of truthを優先する。
 
 ## Migration Boundary
@@ -102,17 +100,17 @@ V6 DBは次のdomainに分ける。
 
 ## Schema Source
 
-V6 DBの最小SQL正本は`src-electron/database-schema-v6.ts`に置く。
+V6 DBの最小SQL正本は`src-electron/storage/database-schema-v6.ts`に置く。
 first foundationでは、active runtime DB path selectionには接続せず、`withmate-v6.db`用のfresh DB作成path helper、schema検証、Memory V6 runtime API用のbest-effort bootstrapだけを実装する。
 
 - DB file name: `withmate-v6.db`
 - schema version: `PRAGMA user_version = 6`
 - fresh DB path: `<userData>/withmate-v6.db`
-- fresh DB bootstrap: `src-electron/app-database-v6-bootstrap.ts`
+- fresh DB bootstrap: `src-electron/storage/app-database-v6-bootstrap.ts`
 - required table list: `REQUIRED_V6_TABLES`
 - schema verification: `isValidV6Database()`
 - boot diagnostics schema check: `isValidV6DatabaseShallow()`
-- targeted tests: `scripts/tests/database-schema-v6.test.ts`、`scripts/tests/app-database-v6-bootstrap.test.ts`
+- targeted tests: `tests/main/database-schema-v6.test.ts`、`tests/main/app-database-v6-bootstrap.test.ts`
 
 V6 schemaは`app_settings`、`model_catalog_*`、`characters`を継続する。
 継続tableのDDLも`database-schema-v6.ts`が所有し、V1などlegacy schema fileからimportしない。
@@ -207,4 +205,4 @@ Storage実装へ進む前の前提:
 1. V5以前DBはV6 runtimeの正本にしない。backup renameするか、そのまま残して無視するかはrelease packagingで決めてよく、V6 storage実装のblockerにしない。
 2. Character catalog、Character definition files、app settings、provider settings、model catalogは必要なデータだけ自動移行する。
 3. Character file storage rootは現行`<userData>/characters/<character-id>/`を継続する。
-4. V6 storage実装で、`src-electron/database-schema-v6.ts`のtableへだけwriteすることを確認する。
+4. V6 storage実装で、`src-electron/storage/database-schema-v6.ts`のtableへだけwriteすることを確認する。

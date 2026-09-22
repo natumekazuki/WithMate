@@ -1,6 +1,6 @@
 import { memo, useMemo, useRef } from "react";
 
-import { SessionMessageColumn, type SessionMessageColumnProps } from "../session-components.js";
+import { SessionMessageColumn, type SessionMessageColumnProps } from "./conversation/session-message-column.js";
 
 type Callback = (...args: any[]) => any;
 

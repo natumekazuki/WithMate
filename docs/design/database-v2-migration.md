@@ -1,8 +1,6 @@
 # Database V2 Migration
-
 - 作成日: 2026-04-27
 - 対象: V1 `withmate.db` から V2 `withmate-v2.db` への移行方針
-
 ## Goal
 
 WithMate の DB を V2 として新規定義し、V1 の巨大 JSON / legacy Memory / Monologue schema を引きずらない保存構造へ移行する。
@@ -13,8 +11,8 @@ V1 から V2 への移行は app 起動時の破壊的 migration ではなく、
 
 - V1 DB filename は `withmate.db` とする。
 - V2 DB filename は `withmate-v2.db` とする。
-- V1 schema の SQL 正本は `src-electron/database-schema-v1.ts` に集約する。
-- V2 schema の SQL 正本は `src-electron/database-schema-v2.ts` に置く。
+- V1 schema の SQL 正本は `src-electron/storage/database-schema-v1.ts` に集約する。
+- V2 schema の SQL 正本は `src-electron/storage/database-schema-v2.ts` に置く。
 - V1 から V2 への移行処理は app runtime へ混ぜず、専用 migration script として実装する。
 - V1 DB は読み取り元として残し、自動削除しない。
 - V2 では MemoryGeneration / Monologue / memory legacy table を正本 schema に含めない。
@@ -22,7 +20,7 @@ V1 から V2 への移行は app 起動時の破壊的 migration ではなく、
 
 ## V1 Schema Source
 
-`src-electron/database-schema-v1.ts` は、現在の production schema を表す。
+`src-electron/storage/database-schema-v1.ts` は、現在の production schema を表す。
 
 - `app_settings`
 - `sessions`
@@ -40,7 +38,7 @@ V1 の storage class は当面この schema source を参照し、既存 DB 互�
 
 ## V2 Schema
 
-V2 は data loading optimization を前提に、一覧用 metadata と詳細 payload を分離する。SQL 定数の正本は `src-electron/database-schema-v2.ts` に置く。
+V2 は data loading optimization を前提に、一覧用 metadata と詳細 payload を分離する。SQL 定数の正本は `src-electron/storage/database-schema-v2.ts` に置く。
 
 ### Sessions
 
@@ -145,8 +143,8 @@ V1 の broken JSON は V2 本体へ raw 退避列を増やさない。対象 row
 
 V1 -> V2 migration script は次を満たす。
 
-- `scripts/migrate-database-v1-to-v2.ts --dry-run --v1 <path>` で V1 DB を読み取り専用で確認する
-- `scripts/migrate-database-v1-to-v2.ts --write --v1 <path> --v2 <path> [--overwrite]` で V2 DB を作成する
+- `scripts/migrations/migrate-database-v1-to-v2.ts --dry-run --v1 <path>` で V1 DB を読み取り専用で確認する
+- `scripts/migrations/migrate-database-v1-to-v2.ts --write --v1 <path> --v2 <path> [--overwrite]` で V2 DB を作成する
 - `dry-run` で件数、推定 JSON size、skip 対象、broken JSON を出す
 - V2 DB 作成前に既存 V2 DB の扱いを明示する
 - V1 DB と V2 DB に同一 path または SQLite companion file の衝突がある場合は、`--overwrite` 指定があっても拒否する
@@ -235,7 +233,7 @@ V2 runtime path は既存 DTO shape を復元・保存する互換 layer とし�
 
 ## Related
 
-- `src-electron/database-schema-v1.ts`
-- `src-electron/database-schema-v2.ts`
+- `src-electron/storage/database-schema-v1.ts`
+- `src-electron/storage/database-schema-v2.ts`
 - `docs/design/database-schema.md`
 - `docs/design/data-loading-performance-audit.md`

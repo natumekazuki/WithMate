@@ -1,7 +1,5 @@
 # Desktop UI
-
 ## Auxiliary Session (Issue #710)
-
 Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、中央のタイトル枠内にある`＋`から既存会話を閉じず最終使用順の一覧へ反映する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。実行中のAuxiliaryはicon内にcompactなprocessing indicatorを重ね、行高とpreviewの幅を変えない。折りたたみ時はAuxiliary面・内部境界・タイトル枠内の操作を隠し、splitterだけを再展開導線として残す。折りたたみでActionDock対象や選択中Sessionを変更しない。
 
 - 作成日: 2026-03-14
@@ -64,7 +62,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
   - 初期表示は `Session Monitor`
   - 親Session単位の2行集約カードを表示する。1行目はdisclosure、avatar、親title、2行目は`Main`と、Auxiliaryが存在する場合だけ`Aux`の状態アイコンを表示する
-  - source は `src-electron/main.ts` の `sessionWindows: Map<string, BrowserWindow>` を truth source にした open session ids と、`Recent Sessions` と同じ filtered session list の交差集合を使う
+  - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`Recent Sessions` と同じ filtered session list の交差集合を使う
   - section
     - `実行中`: `running`
     - `停止・完了`: `interrupted` / `error` / `neutral` を含む non-running
@@ -402,26 +400,26 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 
 ## Deliverables
 
-- `src/HomeApp.tsx`
+- `src/home/HomeApp.tsx`
 - `src-shared/ipc/withmate-window.ts`
-- `src/App.tsx`
-- `src/MessageRichText.tsx`
-- `src/CharacterEditorApp.tsx`
-- `src/DiffApp.tsx`
-- `src/DiffViewer.tsx`
+- `src/app/SessionWindowApp.tsx`
+- `src/ui/markdown/MessageRichText.tsx`
+- `src/character-editor/CharacterEditorApp.tsx`
+- `src/file-explorer/DiffApp.tsx`
+- `src/ui/DiffViewer.tsx`
 - `src-shared/session/session-state.ts`
 - `src-shared/settings/provider-settings-state.ts`
 - `src-shared/window/withmate-window-types.ts`
-- `src/ui-utils.tsx`
+- `src/ui/ui-utils.tsx`
 - `docs/design/message-rich-text.md`
 - `src-electron/main.ts`
 - `src-electron/preload.ts`
-- `src-electron/composer-attachments.ts`
-- `src-electron/session-storage.ts`
-- `src-electron/audit-log-storage.ts`
-- `src-electron/app-settings-storage.ts`
-- `src-electron/character-storage.ts`
-- `src-electron/model-catalog-storage.ts`
+- `src-electron/files/composer-attachments.ts`
+- `src-electron/session/session-storage.ts`
+- `src-electron/session/audit-log-storage.ts`
+- `src-electron/app/app-settings-storage.ts`
+- `src-electron/character/character-storage.ts`
+- `src-electron/settings/model-catalog-storage.ts`
 - `docs/manual-test-checklist.md`
 
 ## Runbook

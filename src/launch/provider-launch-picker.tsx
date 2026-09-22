@@ -1,4 +1,4 @@
-import { focusRovingItemByKey } from "../a11y.js";
+import { focusRovingItemByKey } from "../ui/a11y.js";
 import { LAUNCH_EMPTY_PROVIDER_MESSAGE } from "./launch-feedback.js";
 
 type Provider = {

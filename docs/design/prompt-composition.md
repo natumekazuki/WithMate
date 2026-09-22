@@ -1,9 +1,7 @@
 # Prompt Composition
-
 - 作成日: 2026-03-13
 - 更新日: 2026-09-19
 - 対象: WithMate における coding plane の prompt 合成
-
 ## Goal
 
 WithMate が保持する system 指示、character 定義、ユーザー入力を、coding plane の prompt へ安定して渡すための責務分離を定義する。
@@ -89,12 +87,12 @@ foreground の4項目とは別に、次の指示経路がある。これらは�
 
 | 経路 | 内容 | 4項目をOFFにしたとき |
 | --- | --- | --- |
-| Background Character Affect evaluator | `src-electron/character-affect-turn-evaluator.ts` がturn後のAffect候補を評価するための専用 system 指示 | 影響しない。`characterAffectContextEnabled` はforegroundのcontext projectionとresolverだけを切り替える |
+| Background Character Affect evaluator | `src-electron/character/character-affect-turn-evaluator.ts` がturn後のAffect候補を評価するための専用 system 指示 | 影響しない。`characterAffectContextEnabled` はforegroundのcontext projectionとresolverだけを切り替える |
 | Character authoring | Character本文を成果物として編集するためのauthoring prompt、workspace instruction、Skill projection | `Character Definition` OFFではsnapshot本文も省略するが、authoringの成果物境界・Skillは維持する。その他の3項目は従来どおり注入しない |
 | Provider-native instruction | provider組み込みsystem prompt、custom agent、provider instruction file、provider側のSkill解釈 | 影響しない。WithMateのforeground composer外でproviderが所有する |
 | Attachments / workspace access | folder metadata、`allowedAdditionalDirectories`、画像のstructured input | 影響しない。本文promptのsection切替とは別のtransport / access metadataである |
 
-`src-electron/session-memory-extraction.ts` のsystem指示は、現行runtimeのforeground turnでは呼び出されず、Prompt Contextの切替対象でもない。将来この経路を有効化する場合は、foregroundの4項目とは別に実行条件と保存境界を定義する。
+`src-electron/session/session-memory-extraction.ts` のsystem指示は、現行runtimeのforeground turnでは呼び出されず、Prompt Contextの切替対象でもない。将来この経路を有効化する場合は、foregroundの4項目とは別に実行条件と保存境界を定義する。
 
 foreground prompt context の個別設定は、既存の session 種別境界を拡張しない。`Character Affect Context` と `Conversation Timing` は既存 resolver が対象にする通常 session のみで取得し、設定が `false` の場合は resolver 自体を呼ばない。背景処理の別経路で使う context には適用しない。`Tool Call Presence` は既存の character snapshot 有無と `character-authoring` 除外条件を保ち、その条件を満たす provider prompt だけで切り替える。
 
@@ -115,7 +113,7 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 論理 prompt では `Character Definition Snapshot` section が有効な場合に system 側へ置く。
 通常 session では Character snapshot が存在する場合に `Output Boundary` section を system 側に置き、`Tool Call Presence` は対応する設定が有効な場合だけ置く。`character-authoring` session ではどちらも置かない。
 Character Contextを取得できたturnでは、`Character Affect Context` sectionをsystem側の固定sectionより後ろに置く。
-通常 session では `Conversation Timing` sectionをinput側の`User Input`直前に置く。値の解決は`src-electron/conversation-timing.ts`、sectionの合成は`src-electron/provider-prompt.ts`を参照する。
+通常 session では `Conversation Timing` sectionをinput側の`User Input`直前に置く。値の解決は`src-electron/session/conversation-timing.ts`、sectionの合成は`src-electron/providers/provider-prompt.ts`を参照する。
 
 4つの切替は同じ `AppSettings` payload から provider prompt 合成へ渡す。保存値が欠損した既存 DB では既定値 `true` に戻し、既存の注入内容と順序を保つ。`Conversation Timing` は input 側のため Copilot の `systemMessage` session cache を無効化せず、system 側の3項目は合成後の system message が既存の cache key に反映される。
 

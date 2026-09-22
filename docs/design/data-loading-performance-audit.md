@@ -1,9 +1,7 @@
 # データ読み込み/レンダリング負荷の回収ポイント調査（全体探索）
-
 - 作成日: 2026-04-27
 - 対象: WithMate 全体（Main Process / Renderer / SQLite schema）
 - 目的: 「一度に大きなデータを読み込んでクラッシュする」事象を避けるため、段階読み込み・軽量化の回収ポイントを整理する
-
 ## 結論サマリ（優先度順）
 
 1. **`sessions` の全量取得で `messages_json` / `stream_json` を同時読込している箇所を、summary 参照または bounded page query に置換する。**
@@ -110,7 +108,7 @@
 
 Session message list は可変高 virtualization を使用し、viewport 周辺だけを DOM に描画する。composer の draft-only 更新では Auxiliary transcript と runtime projection の参照を維持し、既存 message list と Markdown を再描画しない。
 
-現在の判断理由は `docs/adr/003-session-message-virtualization.md`、実装は `src/session-components.tsx` と `src/auxiliary-render-projections.ts`、実行可能な契約は `scripts/tests/session-message-column.test.ts` と `scripts/tests/auxiliary-runtime-projection.test.ts` を正本とする。
+現在の判断理由は `docs/adr/003-session-message-virtualization.md`、実装は `src/chat/` と `src/chat/auxiliary/auxiliary-render-projections.ts`、実行可能な契約は `tests/renderer/session-message-column.test.ts` と `tests/shared/auxiliary-runtime-projection.test.ts` を正本とする。
 
 DB / IPC から取得した全履歴は引き続き renderer memory に保持する。巨大 Session で初期転送量または memory 使用量が問題になった場合は、message cursor pagination と artifact detail の遅延取得を別変更として検討する。
 
@@ -147,7 +145,7 @@ DB / IPC から取得した全履歴は引き続き renderer memory に保持す
 
 これにより、一覧/集計処理で巨大 JSON を触らない設計にできる。
 
-V2 では独り言機能を削除するため、V1 `sessions.stream_json` は legacy data として V1 DB に残し、V2 正本 schema には持ち込まない。V2 の確定 schema は `src-electron/database-schema-v2.ts` と `docs/design/database-v2-migration.md` を参照する。
+V2 では独り言機能を削除するため、V1 `sessions.stream_json` は legacy data として V1 DB に残し、V2 正本 schema には持ち込まない。V2 の確定 schema は `src-electron/storage/database-schema-v2.ts` と `docs/design/database-v2-migration.md` を参照する。
 
 runtime path では、有効な `withmate-v2.db` が存在する場合に V2 `sessions` から session summary を復元する。summary 取得では `session_messages` / `session_message_artifacts` を読まず、session detail 取得時だけ対象 session の message row と artifact row を読む。V2 DB では V1 `SessionStorage` を開かず、`SessionStorageV2` が V2 split schema の read / write を担当する。session write は `sessions` header と対象 session の message / artifact rows を transaction 内で更新し、`stream` は V2 へ保存しない。
 
@@ -237,12 +235,12 @@ V2 DB では legacy memory table を作らないため、memory 系 storage は 
 
 ## 6. 参照した主な実装箇所
 
-- `src-electron/session-storage.ts`
+- `src-electron/session/session-storage.ts`
 - `src-electron/memory-management-service.ts`
 - `src-electron/main.ts`
-- `src-electron/audit-log-storage.ts`
-- `src/App.tsx`
-- `src/session-components.tsx`
+- `src-electron/session/audit-log-storage.ts`
+- `src/app/SessionWindowApp.tsx`
+- `src/chat/`
 - `src/memory-management-view.ts`
 - `src/session-state.ts`
 - `docs/design/database-schema.md`

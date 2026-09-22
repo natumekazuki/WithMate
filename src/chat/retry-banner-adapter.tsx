@@ -1,4 +1,4 @@
-import { SessionRetryBanner, type SessionRetryBannerProps } from "../session-components.js";
+import { SessionRetryBanner, type SessionRetryBannerProps } from "./runtime/session-retry.js";
 
 export type LiveSessionRetryBannerAdapterInput = SessionRetryBannerProps;
 

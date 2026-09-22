@@ -1,0 +1,468 @@
+.diff-titlebar,
+.diff-subbar,
+.diff-pane-head {
+  padding: 16px 22px;
+  border-bottom: 1px solid rgba(32, 36, 55, 0.08);
+}
+
+.diff-editor.theme-accent .diff-titlebar {
+  background: color-mix(in srgb, var(--character-main-soft, rgba(111, 140, 255, 0.14)) 88%, rgba(251, 249, 245, 0.98));
+  box-shadow: inset 4px 0 0 var(--character-main, #6f8cff);
+}
+
+.diff-editor.theme-accent .diff-subbar {
+  background: color-mix(in srgb, var(--character-sub-soft, rgba(111, 184, 199, 0.14)) 88%, rgba(248, 250, 252, 0.97));
+}
+
+.diff-editor.theme-accent .diff-titlebar h2 {
+  color: color-mix(in srgb, var(--character-main, #6f8cff) 66%, #0f172a);
+}
+
+.diff-titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.diff-close {
+  padding: 10px 14px;
+  background: rgba(32, 36, 55, 0.08);
+  color: var(--ink);
+}
+
+.diff-popout {
+  background: var(--orange);
+  color: #fff;
+}
+
+.diff-viewer {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--editor);
+  --scrollbar-track: color-mix(in srgb, var(--editor) 88%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, #cbd5e1 40%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--character-sub, #6fb8c7) 52%, #cbd5e1 48%);
+}
+
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.1);
+  background: rgba(15, 19, 26, 0.96);
+}
+
+.diff-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: rgba(237, 242, 251, 0.64);
+  font-size: 0.75rem;
+}
+
+.diff-toolbar button {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(237, 242, 251, 0.72);
+  cursor: pointer;
+  font: inherit;
+}
+
+.diff-toolbar button:hover:not(:disabled),
+.diff-toolbar button.active {
+  border-color: rgba(203, 213, 225, 0.14);
+  background: rgba(203, 213, 225, 0.1);
+  color: #edf2fb;
+}
+
+.diff-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.diff-split-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--editor);
+}
+
+.diff-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.diff-pane:last-child {
+  border-right: 0;
+}
+
+.diff-pane-head {
+  background: color-mix(in srgb, var(--character-sub-soft, rgba(111, 184, 199, 0.14)) 55%, rgba(15, 19, 26, 0.94));
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.diff-pane-head-inner,
+.diff-pane-body-inner {
+  min-width: 100%;
+  width: 100%;
+}
+
+.diff-pane-head-inner,
+.diff-pane-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
+.diff-pane-head-inner {
+  align-items: stretch;
+}
+
+.diff-pane-body {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--editor);
+}
+
+.diff-pane-head:focus-visible,
+.diff-pane-body:focus-visible {
+  outline: 2px solid rgba(125, 211, 252, 0.84);
+  outline-offset: -2px;
+}
+
+.diff-head-spacer {
+  background: color-mix(in srgb, var(--character-main-soft, rgba(111, 140, 255, 0.14)) 28%, rgba(255, 255, 255, 0.03));
+  border-right: 1px solid var(--editor-border);
+}
+
+.diff-pane-head-label {
+  display: flex;
+  align-items: center;
+  min-height: 100%;
+  padding: 0 16px;
+  color: #f8fafc;
+  text-shadow: 0 1px 0 rgba(15, 23, 42, 0.6);
+  background: color-mix(in srgb, var(--character-main, #6f8cff) 14%, rgba(15, 19, 26, 0.96));
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.diff-pane-row {
+  border-top: 0;
+}
+
+.diff-pane-row.context {
+  background: transparent;
+}
+
+.before-pane .diff-pane-row.add {
+  background: transparent;
+}
+
+.after-pane .diff-pane-row.add {
+  background: var(--editor-add);
+}
+
+.before-pane .diff-pane-row.delete {
+  background: var(--editor-delete);
+}
+
+.after-pane .diff-pane-row.delete {
+  background: transparent;
+}
+
+.before-pane .diff-pane-row.modify {
+  background: var(--editor-modify);
+}
+
+.after-pane .diff-pane-row.modify {
+  background: rgba(15, 139, 141, 0.22);
+}
+
+.diff-line-number,
+.diff-pane-cell {
+  display: block;
+  min-width: 0;
+  padding: 4px 10px;
+  color: #f5f7fa;
+  border-right: 1px solid var(--editor-border);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  overflow: visible;
+}
+
+.diff-line-number {
+  text-align: right;
+  color: rgba(245, 247, 250, 0.52);
+  background: rgba(255, 255, 255, 0.03);
+  user-select: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.diff-pane-row.active-change,
+.diff-inline-row.active-change {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--character-main, #6f8cff) 72%, #e2e8f0);
+}
+
+.diff-inline-view {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--editor);
+}
+
+.diff-inline-row {
+  display: grid;
+  grid-template-columns: 56px 28px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.diff-inline-row .diff-inline-marker {
+  display: block;
+  padding: 4px 0;
+  color: rgba(245, 247, 250, 0.58);
+  text-align: center;
+  border-right: 1px solid var(--editor-border);
+  background: rgba(255, 255, 255, 0.03);
+  user-select: none;
+}
+
+.diff-inline-row.add {
+  background: var(--editor-add);
+}
+
+.diff-inline-row.delete {
+  background: var(--editor-delete);
+}
+
+.rise-1,
+.rise-2,
+.rise-3,
+.rise-4 {
+  animation: rise 540ms ease both;
+}
+
+.rise-2 {
+  animation-delay: 70ms;
+}
+
+.rise-3 {
+  animation-delay: 140ms;
+}
+
+.rise-4 {
+  animation-delay: 220ms;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes typingPulse {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.36;
+  }
+
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+
+.message-copy-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 50;
+  max-width: min(520px, calc(100vw - 36px));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.message-copy-toast.success {
+  border-color: var(--teal);
+}
+
+.message-copy-toast.error {
+  border-color: var(--danger, #fca5a5);
+}
+
+@media (max-width: 1420px) {
+  .home-layout-manage,
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stream-panel {
+    min-height: 280px;
+  }
+}
+
+@media (max-width: 1399.98px) {
+  .session-chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows:
+      var(--session-header-dock-row-height) var(--session-dock-splitter-size)
+      var(--session-left-pane-track-width) var(--session-dock-splitter-size) minmax(0, 1fr)
+      var(--session-dock-splitter-size) var(--session-right-pane-track-width)
+      var(--session-dock-splitter-size) var(--session-action-dock-row-height);
+    grid-template-areas:
+      "header"
+      "top-split"
+      "left-pane"
+      "left-split"
+      "main"
+      "right-split"
+      "right-pane"
+      "bottom-split"
+      "action-dock";
+    overflow-y: auto;
+    padding-right: 2px;
+    scrollbar-gutter: stable;
+  }
+
+  .session-left-pane-slot,
+  .session-right-pane-slot {
+    height: 100%;
+    max-height: 100%;
+    transition:
+      max-height var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+      opacity var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+      transform var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+      visibility 0s linear 0s;
+  }
+
+  .session-left-pane-slot.is-hidden,
+  .session-right-pane-slot.is-hidden {
+    max-height: 0;
+    transform: translateY(-10px);
+    transition-delay: 0s, 0s, 0s, var(--session-dock-motion-duration);
+  }
+
+  .session-message-stack {
+    min-height: 0;
+  }
+
+  .session-left-pane-slot,
+  .session-right-pane-slot {
+    height: auto;
+  }
+
+  .session-dock-splitter.edge-left,
+  .session-dock-splitter.edge-right {
+    display: block;
+    width: 100%;
+    min-height: var(--session-dock-splitter-size);
+    cursor: row-resize;
+  }
+
+  .session-dock-splitter.edge-left.is-static,
+  .session-dock-splitter.edge-right.is-static {
+    display: none;
+  }
+
+  .session-dock-splitter.edge-left::before,
+  .session-dock-splitter.edge-right::before {
+    inset: 8px;
+  }
+
+  .session-dock-splitter.edge-left .session-dock-splitter-chevron,
+  .session-dock-splitter.edge-right .session-dock-splitter-chevron {
+    transform: translate(-50%, -50%) rotate(90deg);
+  }
+
+  .session-context-pane {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .session-context-pane.session-context-pane-header-expanded {
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+}
+
+.session-concurrent-chat-columns.is-single-chat {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.session-concurrent-chat-columns.is-single-chat .concurrent-chat-splitter {
+  display: none;
+}
+
+.session-central-surface.concurrent-target-main .is-single-chat .session-concurrent-chat-auxiliary,
+.session-central-surface.concurrent-target-auxiliary .is-single-chat .session-concurrent-chat-main {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-chat-layout {
+    --session-dock-motion-duration: 0ms;
+  }
+
+  .workspace-changes-spinner,
+  .workspace-changes-root-spinner,
+  .concurrent-chat-loading-spinner {
+    animation: none;
+  }
+
+  .file-preview-loading-title,
+  .file-preview-loading-actions,
+  .file-preview-loading-content span {
+    animation: none;
+  }
+
+  .session-file-preview-spinner {
+    animation: none;
+  }
+
+  .home-monitor-status-icon.running .home-monitor-status-icon-mark,
+  .home-monitor-status-icon.loading .home-monitor-status-icon-mark {
+    animation: none;
+  }
+}

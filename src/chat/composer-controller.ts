@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useSyncExternalStore, type SetStateAction } from "react";
 
 import type { ComposerPreview } from "../../src-shared/session/runtime-state.js";
-import { createEmptyComposerPreview } from "../composer-preview-config.js";
+import { createEmptyComposerPreview } from "./composer/composer-preview-config.js";
 
 export type ComposerOwnerKind = "main" | "auxiliary";
 export type ComposerOwner = Readonly<{ kind: ComposerOwnerKind; id: string }>;

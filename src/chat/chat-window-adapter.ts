@@ -11,7 +11,7 @@ import {
   type RefObject,
   type UIEventHandler,
 } from "react";
-import type { SessionContextPaneProps } from "../session-components.js";
+import type { SessionContextPaneProps } from "./shell/session-context-pane.js";
 import type { ChatWindowProps } from "./chat-window.js";
 
 export const chatWindowNoop = () => {};
