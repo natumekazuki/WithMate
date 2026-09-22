@@ -204,7 +204,7 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
       await Promise.resolve();
     });
     await act(async () => {
-      findButtonByText(rootElement, "Import Image")
+      findButtonByText(rootElement, "Import image")
         .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
@@ -222,23 +222,23 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
     assert.equal(metadataUpdates.length, 0);
     assert.match(
       rootElement.textContent ?? "",
-      /Character icon は png \/ jpg \/ jpeg の画像ファイルを指定してね。/,
+      /Character icon must be a PNG, JPG, or JPEG image file\./,
     );
     selectedIconPath = "C:\\icons\\muse.png";
     await act(async () => {
-      findButtonByText(rootElement, "Import Image")
+      findButtonByText(rootElement, "Import image")
         .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
-    const button = findButtonByText(rootElement, "Improve with Agent");
+    const button = findButtonByText(rootElement, "Improve with agent");
     assert.equal(button.disabled, false);
 
     await act(async () => {
       button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     });
     assert.equal(startInputs.length, 0);
-    assert.match(rootElement.textContent ?? "", /先に変更を保存してから authoring session を開始してください。/);
+    assert.match(rootElement.textContent ?? "", /Save your changes before starting an authoring session\./);
 
     await act(async () => {
       findButtonByText(rootElement, "Save")
@@ -327,6 +327,18 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "未保存のCharacterではauthoring開始を拒否し、icon validation失敗を保存・開始処理へ進めない"
+// oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+// fault = "invalid iconを保存する、未保存draftでauthoring APIを呼ぶ、またはvalidationとsave gateのfeedbackを失う"
+// observable = "icon validation feedback、Improve with agent buttonのdisabled state、startCharacterAuthoringSession input、metadata update count"
+// observation_boundary = "component-behavior"
+// scope = "CharacterEditorApp authoring and icon validation gate"
+// lifecycle = "permanent"
+// impact = "保存前の不正なCharacterをauthoringへ渡さず、次に必要な修正操作をユーザーへ残す"
+// distinction = "authoring開始APIの呼び出しだけでなく、icon選択・validation・保存後の開始条件を同一UI経路で確認する"
+// @end-test-value
 test("CharacterEditorApp は未保存 Character では Author with Agent を開始できない", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "https://withmate.local/character-editor.html",
@@ -373,7 +385,7 @@ test("CharacterEditorApp は未保存 Character では Author with Agent を開�
       await Promise.resolve();
     });
 
-    const button = findButtonByText(rootElement, "Author with Agent");
+    const button = findButtonByText(rootElement, "Author with agent");
     assert.equal(button.disabled, true);
     assert.equal(startInputs.length, 0);
   } finally {
@@ -393,6 +405,18 @@ test("CharacterEditorApp は未保存 Character では Author with Agent を開�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "新規Character Editorのdirtyなnative closeは破棄確認を表示し、Cancelでは保持し明示的な破棄後だけWindowを閉じる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
+// fault = "dirty draftのnative closeを確認なしで閉じる、Cancelで内容を失う、または確認後もcloseを実行しない"
+// observable = "beforeunload defaultPrevented、discard dialog copy、Cancel/Discard and close controls、window close call count"
+// observation_boundary = "component-behavior"
+// scope = "CharacterEditorApp dirty native close"
+// lifecycle = "permanent"
+// impact = "ユーザーのCharacter定義・notes・metadataを意図しないcloseから保護する"
+// distinction = "beforeunloadの抑止だけでなく、確認のキャンセルと明示破棄後のcloseを連続操作で確認する"
+// @end-test-value
 test("CharacterEditorApp は新規作成中のnative closeで破棄確認を表示する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "https://withmate.local/character-editor.html",
@@ -447,18 +471,18 @@ test("CharacterEditorApp は新規作成中のnative closeで破棄確認を表�
       dom.window.dispatchEvent(firstCloseEvent);
     });
     assert.equal(firstCloseEvent.defaultPrevented, true);
-    assert.match(rootElement.textContent ?? "", /新しいCharacterを破棄しますか？/);
-    assert.doesNotMatch(rootElement.textContent ?? "", /保存していない内容は失われます。/);
+    assert.match(rootElement.textContent ?? "", /Discard new character\?/);
+    assert.doesNotMatch(rootElement.textContent ?? "", /The unsaved content will be lost\./);
     const closeDialog = rootElement.querySelector(".character-editor-close-dialog");
     assert.ok(closeDialog);
     assert.equal(closeDialog.querySelector(".launch-section"), null);
     assert.equal(closeCalls, 0);
 
     await act(async () => {
-      findButtonByText(rootElement, "キャンセル")
+      findButtonByText(rootElement, "Cancel")
         .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     });
-    assert.doesNotMatch(rootElement.textContent ?? "", /新しいCharacterを破棄しますか？/);
+    assert.doesNotMatch(rootElement.textContent ?? "", /Discard new character\?/);
     assert.equal(closeCalls, 0);
 
     const secondCloseEvent = new dom.window.Event("beforeunload", { cancelable: true });
@@ -468,7 +492,7 @@ test("CharacterEditorApp は新規作成中のnative closeで破棄確認を表�
     assert.equal(secondCloseEvent.defaultPrevented, true);
 
     await act(async () => {
-      findButtonByText(rootElement, "破棄して閉じる")
+      findButtonByText(rootElement, "Discard and close")
         .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     });
     assert.equal(closeCalls, 1);

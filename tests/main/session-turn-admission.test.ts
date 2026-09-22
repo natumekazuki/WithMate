@@ -524,7 +524,7 @@ describe("SessionRuntimeService session admission", () => {
       assert.equal(runtime.service.isRunInFlight(runtime.session.id), true);
       await assert.rejects(
         runRequest(runtime.service, runtime.session.id),
-        /まだ実行中/,
+        /This session is already running/,
       );
     } finally {
       releaseRead.resolve();
@@ -628,7 +628,7 @@ describe("SessionRuntimeService session admission", () => {
     await providerStarted.promise;
     await assert.rejects(
       runRequest(runtime.service, runtime.session.id),
-      /実行中/,
+      /This session is already running/,
     );
     assert.equal(providerCallCount.value, 1);
     runtime.service.cancelRun(runtime.session.id);

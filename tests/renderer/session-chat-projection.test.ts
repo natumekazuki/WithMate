@@ -93,7 +93,7 @@ test("session runtime feature は blocked feedback と workspace/path notice を
     {
       id: "inline-path-open",
       message: "The local path was not found.",
-      dismissLabel: "パスを開いた結果を閉じる",
+      dismissLabel: "Dismiss path result",
       onDismiss: onDismissInlinePathFeedback,
     },
   ]);

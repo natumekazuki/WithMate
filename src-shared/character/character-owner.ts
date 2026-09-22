@@ -11,7 +11,7 @@ export function normalizeCharacterOwnerId(value: unknown): string | null {
 export function requireCharacterOwnerId(value: unknown): string {
   const normalized = normalizeCharacterOwnerId(value);
   if (!normalized || normalized === UNKNOWN_CHARACTER_OWNER_ID) {
-    throw new Error("characterId は空にできないよ。");
+    throw new Error("characterId cannot be empty.");
   }
   return normalized;
 }

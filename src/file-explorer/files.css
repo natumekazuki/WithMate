@@ -103,7 +103,6 @@
   color: var(--ink);
   font-size: 0.74rem;
   letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .session-live-diff-split-scroll {
@@ -821,7 +820,6 @@
   padding: 4px 5px;
   color: var(--muted);
   font-size: 0.73rem;
-  text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
@@ -914,6 +912,13 @@
 .workspace-change-kind.renamed,
 .workspace-change-kind.copied {
   color: #c4b5fd;
+}
+
+.workspace-change-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
 }
 
 .file-history-pane {

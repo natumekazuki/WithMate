@@ -30,14 +30,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function requireRecord(value: unknown, fieldName: string): Record<string, unknown> {
   if (!isRecord(value)) {
-    throw new Error(`${fieldName} の形式が正しくないよ。`);
+    throw new Error(`${fieldName} has an invalid format.`);
   }
   return value;
 }
 
 function requireString(value: unknown, fieldName: string): string {
   if (typeof value !== "string") {
-    throw new Error(`${fieldName} の形式が正しくないよ。`);
+    throw new Error(`${fieldName} has an invalid format.`);
   }
   return value;
 }
@@ -51,7 +51,7 @@ function optionalNumber(value: unknown, fieldName: string): number | undefined {
     return undefined;
   }
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`${fieldName} の形式が正しくないよ。`);
+    throw new Error(`${fieldName} has an invalid format.`);
   }
   return value;
 }
@@ -63,7 +63,7 @@ function requireEnum<T extends string>(
 ): T {
   const normalized = requireString(value, fieldName);
   if (!allowedValues.includes(normalized as T)) {
-    throw new Error(`${fieldName} の値を解釈できないよ。`);
+    throw new Error(`Could not parse the ${fieldName} value.`);
   }
   return normalized as T;
 }
@@ -81,7 +81,7 @@ function optionalStringArray(value: unknown, fieldName: string): string[] | unde
     return undefined;
   }
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
-    throw new Error(`${fieldName} の形式が正しくないよ。`);
+    throw new Error(`${fieldName} has an invalid format.`);
   }
   return [...value];
 }
@@ -96,15 +96,15 @@ export function parseCreateSessionRequest(input: unknown): {
     ? request.characterRuntimeSnapshot
     : normalizeCharacterRuntimeSnapshot(request.characterRuntimeSnapshot);
   if (request.characterRuntimeSnapshot !== undefined && request.characterRuntimeSnapshot !== null && !runtimeSnapshot) {
-    throw new Error("characterRuntimeSnapshot の形式が正しくないよ。");
+    throw new Error("characterRuntimeSnapshot has an invalid format.");
   }
   const characterId = normalizeCharacterOwnerId(requireString(request.characterId, "characterId"));
   if (!characterId || isUnknownCharacterOwnerId(characterId)) {
-    throw new Error("characterId が空だよ。");
+    throw new Error("characterId cannot be empty.");
   }
   const normalizedRuntimeSnapshot = runtimeSnapshot;
   if (normalizedRuntimeSnapshot && normalizedRuntimeSnapshot.characterId !== characterId) {
-    throw new Error("characterRuntimeSnapshot.characterId が characterId と一致しないよ。");
+    throw new Error("characterRuntimeSnapshot.characterId does not match characterId.");
   }
 
   const workspaceInput = requireRecord(request.workspace, "workspace");
@@ -120,7 +120,7 @@ export function parseCreateSessionRequest(input: unknown): {
   } else if (workspaceKind === "session-folder") {
     workspace = { kind: "session-folder" };
   } else {
-    throw new Error("workspace の作成方法を解釈できないよ。");
+    throw new Error("Could not parse the workspace creation method.");
   }
 
   return {

@@ -10,21 +10,21 @@ function auditPhaseLabel(phase: AuditLogSummary["phase"]): string {
   switch (phase) {
     case "running":
     case "started":
-      return "RUNNING";
+      return "Running";
     case "background-running":
-      return "BG RUN";
+      return "Background running";
     case "completed":
-      return "DONE";
+      return "Completed";
     case "background-completed":
-      return "BG DONE";
+      return "Background completed";
     case "canceled":
-      return "CANCELED";
+      return "Canceled";
     case "background-canceled":
-      return "BG CANCELED";
+      return "Background canceled";
     case "failed":
-      return "FAIL";
+      return "Failed";
     case "background-failed":
-      return "BG FAIL";
+      return "Background failed";
     default:
       return phase;
   }
@@ -118,7 +118,7 @@ function AuditLogLogicalPromptFieldFold({
         });
       }}
     >
-      <summary>{label} ({value.length.toLocaleString()} chars)</summary>
+      <summary>{label} ({value.length.toLocaleString("en-US")} chars)</summary>
       {open ? (
         <AuditLogTextPreview
           value={value || "-"}
@@ -172,6 +172,7 @@ export type SessionAuditLogModalProps = {
     errorMessage: string | null;
   }>;
   hasMore: boolean;
+  refreshing?: boolean;
   loadingMore: boolean;
   total: number;
   errorMessage: string | null;
@@ -188,6 +189,7 @@ export function SessionAuditLogModal({
   details,
   operationDetails,
   hasMore,
+  refreshing = false,
   loadingMore,
   total,
   errorMessage,
@@ -321,11 +323,11 @@ export function SessionAuditLogModal({
         onKeyDown={handleDialogKeyDown}
       >
         <div className="diff-titlebar">
-          <h2>Audit Log</h2>
+          <h2>Audit log</h2>
         </div>
 
         <div className="audit-log-toolbar">
-          <div className="audit-log-segmented" aria-label="監査ログ表示切り替え">
+          <div className="audit-log-segmented" aria-label="Audit log view">
             <button
               type="button"
               className={`audit-log-segmented-button${activeSection === "main" ? " is-active" : ""}`}
@@ -343,6 +345,7 @@ export function SessionAuditLogModal({
           </div>
           <div className="audit-log-page-status">
             <span>{entries.length} / {total}</span>
+            {refreshing ? <span className="audit-log-page-status-refreshing">Refreshing...</span> : null}
             {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
           </div>
         </div>
@@ -433,9 +436,9 @@ export function SessionAuditLogModal({
                     ) : null}
                     {usage ? (
                       <div className="audit-log-meta">
-                        <span>input {usage.inputTokens}</span>
-                        <span>cached {usage.cachedInputTokens}</span>
-                        <span>output {usage.outputTokens}</span>
+                        <span>Input {usage.inputTokens}</span>
+                        <span>Cached {usage.cachedInputTokens}</span>
+                        <span>Output {usage.outputTokens}</span>
                       </div>
                     ) : null}
                     {errorMessage ? <pre>{previewAuditLogText(errorMessage)}</pre> : null}
@@ -450,7 +453,7 @@ export function SessionAuditLogModal({
                   }}
                 >
                   <summary>
-                    <strong>Logical Prompt</strong>
+                    <strong>Logical prompt</strong>
                   </summary>
                   {logicalOpen ? <section className="audit-log-section">
                     {detail?.logicalPrompt ? (
@@ -483,8 +486,8 @@ export function SessionAuditLogModal({
                     ) : (
                       <p className="audit-log-empty">
                         {sectionLoading("logical")
-                          ? "audit log detail を読み込んでるよ。"
-                          : sectionError("logical") ?? "開くと audit log detail を読み込むよ。"}
+                          ? "Loading audit log details."
+                          : sectionError("logical") ?? "Open to load audit log details."}
                       </p>
                     )}
                   </section> : null}
@@ -498,12 +501,12 @@ export function SessionAuditLogModal({
                   }}
                 >
                   <summary>
-                    <strong>Transport Payload</strong>
+                    <strong>Transport payload</strong>
                   </summary>
                   {transportOpen ? <section className="audit-log-section">
                     {detail?.transportPayload ? (
                       <>
-                        <p><strong>{detail.transportPayload.summary || "transport payload"}</strong></p>
+                        <p><strong>{detail.transportPayload.summary || "Transport payload"}</strong></p>
                         {detail.transportPayload.fields.length > 0 ? (
                           <div className="audit-log-transport-fields">
                             {detail.transportPayload.fields.map((field, index) => (
@@ -514,14 +517,14 @@ export function SessionAuditLogModal({
                             ))}
                           </div>
                         ) : (
-                          <p className="audit-log-empty">記録された transport payload はまだないよ。</p>
+                          <p className="audit-log-empty">No transport payload recorded yet.</p>
                         )}
                       </>
                     ) : (
                       <p className="audit-log-empty">
                         {sectionLoading("transport")
-                          ? "audit log detail を読み込んでるよ。"
-                          : sectionError("transport") ?? "記録された transport payload はまだないよ。"}
+                          ? "Loading audit log details."
+                          : sectionError("transport") ?? "No transport payload recorded yet."}
                       </p>
                     )}
                   </section> : null}
@@ -539,7 +542,7 @@ export function SessionAuditLogModal({
                   </summary>
                   {responseOpen ? <section className="audit-log-section">
                     {sectionLoading("response") ? (
-                      <p className="audit-log-empty">audit log detail を読み込んでるよ。</p>
+                      <p className="audit-log-empty">Loading audit log details.</p>
                     ) : sectionError("response") ? (
                       <p className="audit-log-empty">{sectionError("response")}</p>
                     ) : (
@@ -547,7 +550,7 @@ export function SessionAuditLogModal({
                         <pre>{previewAuditLogText(assistantText || "-")}</pre>
                         {interimMessages.length > 0 ? (
                           <div className="audit-log-transport-fields">
-                            <p><strong>Interim Messages</strong></p>
+                            <p><strong>Interim messages</strong></p>
                             {interimMessages.map((message) => (
                               <div key={`${entry.id}-interim-${message.seq}`} className="audit-log-transport-field">
                                 <p><strong>#{message.seq + 1}</strong> <span>{message.createdAt}</span></p>
@@ -573,7 +576,7 @@ export function SessionAuditLogModal({
                   </summary>
                   {operationsOpen ? <section className="audit-log-section">
                     {sectionLoading("operations") ? (
-                      <p className="audit-log-empty">audit log detail を読み込んでるよ。</p>
+                      <p className="audit-log-empty">Loading audit log details.</p>
                     ) : sectionError("operations") ? (
                       <p className="audit-log-empty">{sectionError("operations")}</p>
                     ) : operations.length > 0 ? (
@@ -610,7 +613,7 @@ export function SessionAuditLogModal({
                                 <summary>Details</summary>
                                 {openAuditLogFolds[auditLogOperationDetailFoldKey(entry, index)] ? (
                                   operationDetailState(index)?.loading ? (
-                                    <p className="audit-log-empty">operation detail を読み込んでるよ。</p>
+                                    <p className="audit-log-empty">Loading operation details.</p>
                                   ) : operationDetailState(index)?.errorMessage ? (
                                     <p className="audit-log-empty">{operationDetailState(index)?.errorMessage}</p>
                                   ) : (
@@ -628,7 +631,7 @@ export function SessionAuditLogModal({
                         ) : null}
                       </ul>
                     ) : (
-                      <p className="audit-log-empty">記録された操作はまだないよ。</p>
+                      <p className="audit-log-empty">No recorded operations yet.</p>
                     )}
                   </section> : null}
                 </details>
@@ -646,9 +649,9 @@ export function SessionAuditLogModal({
                     </summary>
                     {usageOpen ? <section className="audit-log-section compact">
                       <div className="audit-log-meta">
-                        <span>input {usage.inputTokens}</span>
-                        <span>cached {usage.cachedInputTokens}</span>
-                        <span>output {usage.outputTokens}</span>
+                        <span>Input {usage.inputTokens}</span>
+                        <span>Cached {usage.cachedInputTokens}</span>
+                        <span>Output {usage.outputTokens}</span>
                       </div>
                     </section> : null}
                   </details>
@@ -679,7 +682,7 @@ export function SessionAuditLogModal({
                   }}
                 >
                   <summary>
-                    <strong>Raw Items</strong>
+                    <strong>Raw items</strong>
                   </summary>
                   {rawOpen ? (
                     <section className="audit-log-section compact">
@@ -706,7 +709,7 @@ export function SessionAuditLogModal({
             onClick={onLoadMore}
             disabled={loadingMore}
           >
-            {loadingMore ? "Loading..." : "Load More"}
+            {loadingMore ? "Loading..." : "Load more"}
           </button>
         ) : null}
       </section>

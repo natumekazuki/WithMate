@@ -13,20 +13,19 @@ const STAGES: AppBootStage[] = [
 ];
 
 const STAGE_LABELS: Record<AppBootStage, string> = {
-  starting: "起動準備",
-  database: "データベース確認",
-  diagnostics: "診断情報",
-  "workspace-cleanup": "作業領域の整理",
-  stores: "保存領域の初期化",
-  home: "Home 準備",
-  failed: "起動失敗",
+  starting: "Preparing startup",
+  database: "Checking database",
+  diagnostics: "Checking diagnostics",
+  "workspace-cleanup": "Cleaning workspace",
+  stores: "Initializing storage",
+  home: "Preparing Home",
+  failed: "Startup failed",
 };
 
 const INITIAL_STATUS: AppBootStatus = {
   kind: "running",
   stage: "starting",
-  title: "WithMate を起動しています",
-  detail: "起動状態を確認しています。",
+  title: "Starting WithMate",
 };
 
 export default function BootApp() {
@@ -63,29 +62,30 @@ export default function BootApp() {
   return (
     <div className={`page-shell home-page boot-page${status.kind === "failed" ? " failed" : ""}`}>
       <main className="home-layout home-layout-minimal boot-page-shell">
-        <section className="panel boot-status-panel rise-1" aria-live="polite">
+        <section className="panel boot-status-panel rise-1">
           <div className="home-panel-head boot-status-head">
             <div className="home-panel-copy">
               <p className="kicker">WithMate</p>
-              <h1>{status.title}</h1>
+              <h1><span role="status" aria-atomic="true">{status.title}</span></h1>
             </div>
           </div>
           {status.detail ? <p className="boot-status-detail">{status.detail}</p> : null}
           {status.kind === "failed" && status.error ? (
             <pre className="boot-error-message">{status.error.message}</pre>
           ) : null}
-          <ol className="boot-stage-list" aria-label="起動処理の進捗">
+          {status.kind !== "failed" ? <ol className="boot-stage-list" aria-label="Startup progress">
             {STAGES.map((stage, index) => {
               const isDone = activeIndex > index || status.kind === "completed";
               const isActive = status.stage === stage && status.kind === "running";
               return (
-                <li key={stage} className={isDone ? "done" : isActive ? "active" : ""}>
-                  <span className="boot-stage-dot" />
+                <li key={stage} className={isDone ? "done" : isActive ? "active" : ""} aria-current={isActive ? "step" : undefined}>
+                  <span className="boot-stage-dot" aria-hidden="true">{isDone ? "✓" : null}</span>
                   <span>{STAGE_LABELS[stage]}</span>
+                  <span className="visually-hidden">{isDone ? "Completed" : isActive ? "In progress" : "Not started"}</span>
                 </li>
               );
             })}
-          </ol>
+          </ol> : null}
         </section>
       </main>
     </div>

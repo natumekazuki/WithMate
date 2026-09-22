@@ -44,6 +44,18 @@ function createSession(taskTitle: string, workspaceLabel: string, characterId: s
 }
 
 describe("SessionStorage", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "SessionStorageの同一ID createは既存Sessionを保持し、collisionを拒否する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-storage.ts#insertSession" }
+  // fault = "同一IDの再createで既存Sessionを上書きするか、collision errorを成功扱いする"
+  // observable = "collision error and original Session taskTitle/workspacePath"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-session-id-collision"
+  // lifecycle = "permanent"
+  // impact = "既存Sessionの本文・workspaceが別createで失われる"
+  // distinction = "同一IDをinsertし、collision errorと既存rowの値を確認する"
+  // @end-test-value
   it("insertSession は同一 ID create を拒否して既存 Session を保持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -59,7 +71,7 @@ describe("SessionStorage", () => {
           taskTitle: "second",
           workspacePath: "C:/workspace-b",
         }),
-        /同じ ID の Session がすでに存在するよ。/,
+        /A Session with the same ID already exists/,
       );
       assert.equal(storage.getSession(original.id)?.taskTitle, "first");
       assert.equal(storage.getSession(original.id)?.workspacePath, original.workspacePath);

@@ -378,6 +378,18 @@ describe("home-launch-state", () => {
     );
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "launch validation messageはtitle、workspace、providerの既存優先順位を保ち、全条件充足時は空文字を返す"
+  // oracle = { type = "contract", ref = "Issue #731 New session validation state" }
+  // fault = "複数の不備があるとき優先順位が変わるか、条件充足後もvalidation errorを残してSession開始を妨げる"
+  // observable = "resolveLaunchValidationMessageの各draft状態に対するmessage string"
+  // observation_boundary = "public-boundary"
+  // scope = "resolveLaunchValidationMessage validation precedence"
+  // lifecycle = "permanent"
+  // impact = "利用者が最初に修正すべき入力理由を一貫して識別でき、valid draftは開始可能になる"
+  // distinction = "個別validatorの判定だけでなく、複数条件下の優先順位とvalid終端を同じ公開helperで確認する"
+  // @end-test-value
   it("launch validation message は既存の優先順位で返す", () => {
     const baseDraft = {
       ...createClosedLaunchDraft(),
@@ -395,7 +407,7 @@ describe("home-launch-state", () => {
         mateProfile: null,
         selectedProviderId: null,
       }),
-      "タイトルを入力してね。",
+      "Enter a session title.",
     );
     assert.equal(
       resolveLaunchValidationMessage({
@@ -404,7 +416,7 @@ describe("home-launch-state", () => {
         mateProfile,
         selectedProviderId: "codex",
       }),
-      "タイトルを入力してね。",
+      "Enter a session title.",
     );
     assert.equal(
       resolveLaunchValidationMessage({
@@ -413,7 +425,7 @@ describe("home-launch-state", () => {
         mateProfile,
         selectedProviderId: "codex",
       }),
-      "workspace を選んでね。",
+      "Choose a workspace.",
     );
     assert.equal(
       resolveLaunchValidationMessage({
@@ -422,7 +434,7 @@ describe("home-launch-state", () => {
         mateProfile,
         selectedProviderId: null,
       }),
-      "有効な Coding Provider を選んでね。",
+      "Choose an enabled coding provider.",
     );
     assert.equal(
       resolveLaunchValidationMessage({

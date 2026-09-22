@@ -27,7 +27,7 @@ export class SessionElicitationService {
   public resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void {
     const pendingRequest = this.pendingRequests.get(sessionId);
     if (!pendingRequest || pendingRequest.requestId !== requestId) {
-      throw new Error("対象の入力要求はもう存在しないよ。");
+      throw new Error("The input request no longer exists.");
     }
 
     pendingRequest.resolve(response);

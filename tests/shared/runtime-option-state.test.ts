@@ -198,6 +198,18 @@ test("model / reasoning effort helper は同じ選択でも既存どおり patch
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "modelとreasoning effortのinvalid selectionはmodel catalog由来のvalidation errorを維持する"
+// oracle = { type = "contract", ref = "src-shared/settings/model-catalog.ts#resolveModelSelection" }
+// fault = "invalid modelまたはreasoning effortを受け入れるか、model catalogのvalidation境界を別errorへ変換する"
+// observable = "thrown validation errors from model and reasoning helper calls"
+// observation_boundary = "public-boundary"
+// scope = "runtime option model catalog validation"
+// lifecycle = "permanent"
+// impact = "Sessionへ存在しないmodel/reasoning selectionが保存される"
+// distinction = "modelとreasoningの両invalid selectionをruntime helper経由で個別に確認する"
+// @end-test-value
 test("model / reasoning effort helper は model catalog validation error を維持する", () => {
   const session = {
     id: "session-1",
@@ -225,7 +237,7 @@ test("model / reasoning effort helper は model catalog validation error を維�
       2,
       "2026-06-07T01:00:00.000Z",
     ),
-    /selected depth/,
+    /The selected reasoning effort does not match the model catalog definition/,
   );
 });
 

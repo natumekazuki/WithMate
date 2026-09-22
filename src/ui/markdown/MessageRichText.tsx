@@ -159,7 +159,7 @@ function MessageMarkdownPreview({
     (result: MarkdownLinkContextMenuResult) => {
       setCopyFeedback(
         result.status === "link-copied"
-          ? { message: "リンクをコピーしました。", tone: "success" }
+          ? { message: "Link copied.", tone: "success" }
           : result.status === "file-copy"
             ? {
                 message: result.result.message,

@@ -67,7 +67,7 @@ export class MainSessionCommandFacade {
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause);
       throw new Error(
-        `Main Session の保存後初期化に失敗しました。保存済みの Session ID: ${session.id}。${reason}`,
+        `Main Session initialization failed after saving. Saved Session ID: ${session.id}. ${reason}`,
         { cause },
       );
     }
@@ -84,7 +84,7 @@ export class MainSessionCommandFacade {
     };
     if (workspace?.kind === "directory") {
       if (!workspace.label.trim() || !workspace.path.trim()) {
-        throw new Error("workspace の情報が不足しているよ。");
+        throw new Error("Workspace information is incomplete.");
       }
       return this.persistCreatedSession({
         ...sessionInput,
@@ -94,7 +94,7 @@ export class MainSessionCommandFacade {
         branch: workspace.branch,
       });
     }
-    throw new Error("workspace の作成方法を解釈できないよ。");
+    throw new Error("Could not parse the workspace creation method.");
   }
 
   private async createSessionFolderSession(
@@ -105,21 +105,21 @@ export class MainSessionCommandFacade {
     const sessionId = this.issueSessionId();
     const workspacePath = await this.deps.createSessionFilesDirectory(sessionId);
     if (!workspacePath.trim()) {
-      throw new Error("SessionFolder を作成できなかったよ。");
+      throw new Error("The SessionFolder could not be created.");
     }
 
     let persistenceStarted = false;
     try {
       return await this.deps.runProviderRuntimeOperationExclusive(async () => {
         if (this.deps.getSessionStorageIdentity() !== storageIdentity) {
-          throw new Error("Session storage が作成中に切り替わったため、Session 作成を再試行してね。");
+          throw new Error("Session storage changed during creation. Try creating the session again.");
         }
         const latestSelection = await this.deps.resolveSessionLaunchSelection(requestSessionInput.provider);
         if (!isDeepStrictEqual(latestSelection, initialSelection)) {
-          throw new Error("起動設定が作成中に変わったため、Session 作成を再試行してね。");
+          throw new Error("Startup settings changed during creation. Try creating the session again.");
         }
         if (this.deps.getSessionStorageIdentity() !== storageIdentity) {
-          throw new Error("Session storage が作成中に切り替わったため、Session 作成を再試行してね。");
+          throw new Error("Session storage changed during creation. Try creating the session again.");
         }
         persistenceStarted = true;
         return this.persistCreatedSession({
@@ -136,7 +136,7 @@ export class MainSessionCommandFacade {
         try {
           await this.deps.cleanupSessionFilesDirectory?.(sessionId);
         } catch (cleanupError) {
-          throw new AggregateError([error, cleanupError], "SessionFolder の後始末に失敗しました。", { cause: error });
+          throw new AggregateError([error, cleanupError], "SessionFolder cleanup failed.", { cause: error });
         }
       }
       throw error;
@@ -150,7 +150,7 @@ export class MainSessionCommandFacade {
   private issueSessionId(): string {
     const sessionId = this.deps.createSessionId().trim();
     if (!sessionId) {
-      throw new Error("Session ID を発行できなかったよ。");
+      throw new Error("Could not issue a Session ID.");
     }
     return sessionId;
   }

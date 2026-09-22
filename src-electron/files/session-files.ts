@@ -14,7 +14,7 @@ const MATE_TALK_SESSION_FILES_PREFIX = "mate-talk-";
 function safePathSegment(value: string): string {
   const normalized = value.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   if (!normalized || normalized === "." || normalized === "..") {
-    throw new Error("Session files の ID が不正だよ。");
+    throw new Error("The Session files ID is invalid.");
   }
   return normalized;
 }
@@ -39,7 +39,7 @@ export async function createSessionFilesDirectory(userDataPath: string, sessionI
   } catch (error) {
     const code = error && typeof error === "object" ? (error as { code?: unknown }).code : null;
     if (code === "EEXIST") {
-      throw new Error("同じ ID の SessionFolder がすでに存在するよ。");
+      throw new Error("A SessionFolder with the same ID already exists.");
     }
     throw error;
   }
@@ -94,7 +94,7 @@ async function writeUniqueFile(directoryPath: string, requestedFileName: string,
     }
   }
 
-  throw new Error("保存先ファイル名を決められなかったよ。");
+  throw new Error("Could not choose a destination file name.");
 }
 
 async function copyUniqueFile(directoryPath: string, sourcePath: string): Promise<string> {
@@ -111,7 +111,7 @@ async function copyUniqueFile(directoryPath: string, sourcePath: string): Promis
     }
   }
 
-  throw new Error("保存先ファイル名を決められなかったよ。");
+  throw new Error("Could not choose a destination file name.");
 }
 
 export async function copyFilesToSessionFiles(

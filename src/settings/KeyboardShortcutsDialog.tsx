@@ -35,7 +35,7 @@ export function KeyboardShortcutsHelpSection({
     <section className="settings-section-card settings-help-section">
       <div className="settings-field">
         <strong>Help</strong>
-        <p className="settings-help">ショートカットと発火する画面を確認できます。</p>
+        <p className="settings-help">Review shortcuts and the windows where they are active.</p>
         <button className="launch-toggle" type="button" onClick={() => setOpen(true)}>
           Keyboard shortcuts
         </button>
@@ -127,7 +127,7 @@ export function KeyboardShortcutsDialog({
           <h2>Keyboard shortcuts</h2>
           <p>
             Shortcuts are active while this WithMate window is focused.
-            {isEditable ? " Change を押して、登録したいキーを入力できます。" : ""}
+            {isEditable ? " Select Change, then press the keys to register." : ""}
           </p>
           {captureError ? <p className="settings-feedback settings-keyboard-shortcuts-error" role="alert">{captureError}</p> : null}
         </div>
@@ -187,9 +187,9 @@ export function KeyboardShortcutsDialog({
 
 function resolveShortcutUpdateError(error: unknown): string {
   if (error instanceof ShortcutRegistryError) {
-    return "そのキーの組み合わせは、別のショートカットと重なるため登録できません。";
+    return "That key combination conflicts with another shortcut.";
   }
-  return "このキーの組み合わせは登録できません。";
+  return "That key combination cannot be registered.";
 }
 
 function resolveCaptureErrorMessage(
@@ -197,20 +197,20 @@ function resolveCaptureErrorMessage(
 ): string {
   switch (reason) {
     case "modifier-only":
-      return "Ctrl、Shift、Alt、Meta などの修飾キーだけでは登録できません。キーを続けて押してね。";
+      return "Modifier keys alone cannot be registered. Press a key after the modifier.";
     case "alt-graph":
-      return "AltGraph として扱われる組み合わせは登録できません。";
+      return "AltGraph combinations cannot be registered.";
     case "composing":
-      return "日本語入力中のキーは登録できません。";
+      return "Keys pressed while composing text cannot be registered.";
     case "repeat":
-      return "キーを長押しせず、一度だけ押してね。";
+      return "Press the key once instead of holding it down.";
     case "dead-key":
-      return "Dead key は登録できません。";
+      return "Dead keys cannot be registered.";
     case "process-key":
-      return "IME の Process key は登録できません。";
+      return "The IME Process key cannot be registered.";
     case "empty-key":
-      return "キーを取得できませんでした。もう一度試してね。";
+      return "Could not read the key. Try again.";
     default:
-      return "このキーは登録できません。";
+      return "This key cannot be registered.";
   }
 }

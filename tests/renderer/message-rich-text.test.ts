@@ -696,8 +696,8 @@ test("MessageRichText は fenced code blockだけにaccessibleなcopy操作を�
     copyButtons[0],
   );
   assert.equal(codeBlock?.querySelector(".message-code-copy-button"), null);
-  assert.equal(copyButtons[0]?.getAttribute("aria-label"), "コードをコピー");
-  assert.equal(copyButtons[0]?.getAttribute("title"), "コードをコピー");
+  assert.equal(copyButtons[0]?.getAttribute("aria-label"), "Copy code");
+  assert.equal(copyButtons[0]?.getAttribute("title"), "Copy code");
   assert.match(
     dom.window.document.querySelector(".message-code-block")?.textContent ?? "",
     /outer\n```ts\nconst nested = true;\n```\n/,
@@ -830,7 +830,7 @@ test("MessageRichText のcode block copyは本文だけをclipboardへ渡してf
     assert.equal(button.disabled, false);
     assert.equal(
       container?.querySelector(".message-copy-toast")?.textContent,
-      "コードをコピーしました。",
+      "Code copied.",
     );
     assert.equal(
       container?.querySelector(".message-copy-toast")?.getAttribute("role"),
@@ -893,7 +893,7 @@ test("MessageRichText のcode block copy失敗はerror feedbackを表示する",
     });
 
     const feedback = container?.querySelector(".message-copy-toast");
-    assert.equal(feedback?.textContent, "コードのコピーに失敗しました。");
+    assert.equal(feedback?.textContent, "Could not copy code.");
     assert.ok(feedback?.classList.contains("error"));
   } finally {
     await act(async () => {
@@ -1123,7 +1123,7 @@ test("MessageRichText はrender済みlinkの右clickでtargetをcopy menuへ渡�
     assert.equal(contextMenuEvent.defaultPrevented, true);
     assert.equal(
       container.querySelector(".message-link-copy-toast")?.textContent,
-      "リンクをコピーしました。",
+      "Link copied.",
     );
   } finally {
     if (root) {
@@ -2266,7 +2266,7 @@ test("MessageRichText は遅い直接 image だけに領域内 spinner を表示
     );
     assert.ok(loading);
     assert.equal(loading.getAttribute("role"), "status");
-    assert.equal(loading.getAttribute("aria-label"), "画像を読み込み中");
+    assert.equal(loading.getAttribute("aria-label"), "Loading image");
     assert.equal(loading.textContent, "");
     assert.equal(loading.parentElement, shell);
     assert.doesNotMatch(container.textContent ?? "", /Image loading/);

@@ -90,7 +90,7 @@ type PreparedAuthoringSession = {
 export async function readBundledCharacterAuthoringSkillFiles(rootPath: string): Promise<PreparedWorkspaceFile[]> {
   const rootStat = await lstat(rootPath);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
-    throw new Error("Character authoring Skill bundle は通常のディレクトリである必要があります。");
+    throw new Error("The Character authoring Skill bundle must be a regular directory.");
   }
   const files: PreparedWorkspaceFile[] = [];
   const visit = async (currentPath: string, relativeRoot: string): Promise<void> => {
@@ -99,14 +99,14 @@ export async function readBundledCharacterAuthoringSkillFiles(rootPath: string):
       const relativePath = relativeRoot ? path.join(relativeRoot, entry.name) : entry.name;
       const entryPath = path.join(currentPath, entry.name);
       if (entry.isSymbolicLink()) {
-        throw new Error(`Character authoring Skill に symlink は配置できません: ${relativePath}`);
+        throw new Error(`Character authoring Skill cannot contain symlinks: ${relativePath}`);
       }
       if (entry.isDirectory()) {
         await visit(entryPath, relativePath);
         continue;
       }
       if (!entry.isFile()) {
-        throw new Error(`Character authoring Skill に通常ファイル以外の項目があります: ${relativePath}`);
+        throw new Error(`Character authoring Skill contains a non-regular file: ${relativePath}`);
       }
       files.push({ relativePath, content: await readFile(entryPath) });
     }
@@ -137,29 +137,29 @@ export class CharacterAuthoringService {
 
   private async prepareSession(input: StartCharacterAuthoringSessionInput): Promise<PreparedAuthoringSession> {
     if (input.mode !== "create" && input.mode !== "improve") {
-      throw new Error("Character authoring mode が正しくありません。");
+      throw new Error("Character authoring mode is invalid.");
     }
     const requestedProvider = input.provider?.trim();
     if (!requestedProvider) {
-      throw new Error("Authoring session を開始する provider を選択してください。");
+      throw new Error("Select a provider to start the authoring session.");
     }
     const provider = await this.deps.resolveProvider(requestedProvider);
     if (provider !== requestedProvider) {
-      throw new Error("Character authoring provider を一意に解決できませんでした。");
+      throw new Error("The Character authoring provider could not be resolved uniquely.");
     }
     const characterId = normalizeCharacterOwnerId(input.characterId);
     if (!characterId || isUnknownCharacterOwnerId(characterId)) {
-      throw new Error("Authoring session は保存済み Character でのみ開始できます。先に Character を保存してください。");
+      throw new Error("An authoring session can start only for a saved Character. Save the Character first.");
     }
     const normalizedInput = { ...input, provider, characterId };
     const storageIdentity = this.deps.getSessionStorageIdentity();
 
     const character = await this.deps.getCharacter(characterId);
     if (!character) {
-      throw new Error("Authoring session は保存済み Character でのみ開始できます。先に Character を保存してください。");
+      throw new Error("An authoring session can start only for a saved Character. Save the Character first.");
     }
     if (this.deps.getSessionStorageIdentity() !== storageIdentity) {
-      throw new Error("Character authoring の準備中に Session storage が切り替わりました。もう一度お試しください。");
+      throw new Error("Session storage changed while preparing Character authoring. Try again.");
     }
 
     const capturedCharacter = this.cloneCharacter(character);
@@ -167,7 +167,7 @@ export class CharacterAuthoringService {
     const runId = this.createRunId(seed.name);
     const workspacePath = await this.deps.getCharacterDirectory(characterId);
     if (!workspacePath) {
-      throw new Error("Character authoring workspace を解決できませんでした。");
+      throw new Error("The Character authoring workspace could not be resolved.");
     }
     const workspaceFiles = await this.prepareWorkspaceFiles(normalizedInput, seed, runId);
     return {
@@ -270,21 +270,21 @@ export class CharacterAuthoringService {
 
   private async assertPreparedSessionCurrent(prepared: PreparedAuthoringSession): Promise<void> {
     if (this.deps.getSessionStorageIdentity() !== prepared.storageIdentity) {
-      throw new Error("Character authoring の準備中に Session storage が切り替わりました。もう一度お試しください。");
+      throw new Error("Session storage changed while preparing Character authoring. Try again.");
     }
     const provider = await this.deps.resolveProvider(prepared.input.provider);
     if (provider !== prepared.input.provider) {
-      throw new Error("Character authoring provider を一意に解決できませんでした。");
+      throw new Error("The Character authoring provider could not be resolved uniquely.");
     }
     const currentCharacter = await this.deps.getCharacter(prepared.input.characterId);
     if (this.deps.getSessionStorageIdentity() !== prepared.storageIdentity) {
-      throw new Error("Character authoring の準備中に Session storage が切り替わりました。もう一度お試しください。");
+      throw new Error("Session storage changed while preparing Character authoring. Try again.");
     }
     if (!currentCharacter || !isDeepStrictEqual(this.cloneCharacter(currentCharacter), prepared.character)) {
-      throw new Error("Character authoring の準備中に Character が変更されました。もう一度お試しください。");
+      throw new Error("The Character changed while preparing Character authoring. Try again.");
     }
     if (await this.deps.getCharacterDirectory(prepared.input.characterId) !== prepared.workspacePath) {
-      throw new Error("Character authoring workspace が変更されました。もう一度お試しください。");
+      throw new Error("The Character authoring workspace changed. Try again.");
     }
   }
 
@@ -352,7 +352,7 @@ export class CharacterAuthoringService {
   private normalizeName(name: string): string {
     const normalized = name.trim();
     if (!normalized) {
-      throw new Error("Character name は空にできないよ。");
+      throw new Error("Character name cannot be empty.");
     }
     return normalized;
   }

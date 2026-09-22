@@ -10,17 +10,17 @@ import type {
 function liveApprovalKindLabel(kind: string): string {
   switch (kind) {
     case "shell":
-      return "Shell Command";
+      return "Shell command";
     case "write":
-      return "File Change";
+      return "File change";
     case "mcp":
-      return "MCP Tool";
+      return "MCP tool";
     case "custom-tool":
-      return "Custom Tool";
+      return "Custom tool";
     case "url":
-      return "URL Fetch";
+      return "URL fetch";
     case "read":
-      return "File Read";
+      return "File read";
     default:
       return kind;
   }
@@ -62,51 +62,51 @@ function validateLiveElicitationField(
     case "text": {
       const normalized = typeof value === "string" ? value.trim() : "";
       if (field.required && !normalized) {
-        return `${field.title} は必須だよ。`;
+        return `${field.title} is required.`;
       }
       if (field.minLength !== undefined && normalized.length < field.minLength) {
-        return `${field.title} は ${field.minLength} 文字以上にしてね。`;
+        return `${field.title} must be at least ${field.minLength} characters.`;
       }
       if (field.maxLength !== undefined && normalized.length > field.maxLength) {
-        return `${field.title} は ${field.maxLength} 文字以下にしてね。`;
+        return `${field.title} must be at most ${field.maxLength} characters.`;
       }
       return null;
     }
     case "select": {
       const normalized = typeof value === "string" ? value : "";
       if (field.required && !normalized) {
-        return `${field.title} を選んでね。`;
+        return `Select ${field.title}.`;
       }
       return null;
     }
     case "multi-select": {
       const items = Array.isArray(value) ? value : [];
       if ((field.required || (field.minItems ?? 0) > 0) && items.length === 0) {
-        return `${field.title} を少なくとも 1 つ選んでね。`;
+        return `Select at least 1 ${field.title}.`;
       }
       if (field.minItems !== undefined && items.length < field.minItems) {
-        return `${field.title} は ${field.minItems} 個以上選んでね。`;
+        return `${field.title} must have at least ${field.minItems} items.`;
       }
       if (field.maxItems !== undefined && items.length > field.maxItems) {
-        return `${field.title} は ${field.maxItems} 個以下にしてね。`;
+        return `${field.title} must have at most ${field.maxItems} items.`;
       }
       return null;
     }
     case "number": {
       if (value === "") {
-        return field.required ? `${field.title} は必須だよ。` : null;
+        return field.required ? `${field.title} is required.` : null;
       }
       if (typeof value !== "number" || Number.isNaN(value)) {
-        return `${field.title} は数値で入力してね。`;
+        return `Enter a number for ${field.title}.`;
       }
       if (field.numberKind === "integer" && !Number.isInteger(value)) {
-        return `${field.title} は整数で入力してね。`;
+        return `Enter an integer for ${field.title}.`;
       }
       if (field.minimum !== undefined && value < field.minimum) {
-        return `${field.title} は ${field.minimum} 以上にしてね。`;
+        return `${field.title} must be at least ${field.minimum}.`;
       }
       if (field.maximum !== undefined && value > field.maximum) {
-        return `${field.title} は ${field.maximum} 以下にしてね。`;
+        return `${field.title} must be at most ${field.maximum}.`;
       }
       return null;
     }
@@ -217,10 +217,10 @@ function LiveElicitationCard({
   };
 
   return (
-    <section className="live-elicitation-card" role="group" aria-label="入力要求">
+    <section className="live-elicitation-card" role="group" aria-label="Input required">
       <div className="live-approval-head">
         <div className="live-approval-copy">
-          <span className="live-approval-badge">入力待ち</span>
+          <span className="live-approval-badge">Input required</span>
           <p className="live-approval-title">{request.message}</p>
         </div>
         <span className="live-approval-kind">{liveElicitationModeLabel(request.mode)}</span>
@@ -287,7 +287,7 @@ function LiveElicitationCard({
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.checked }))}
                     disabled={isSubmitting}
                   />
-                  <span>有効</span>
+                  <span>Enabled</span>
                 </span>
               ) : null}
               {field.type === "select" ? (
@@ -296,7 +296,7 @@ function LiveElicitationCard({
                   onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                   disabled={isSubmitting}
                 >
-                  {!field.required ? <option value="">選択なし</option> : null}
+                  {!field.required ? <option value="">No selection</option> : null}
                   {field.options.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -340,7 +340,7 @@ function LiveElicitationCard({
       {validationMessage ? <p className="live-approval-warning" role="alert">{validationMessage}</p> : null}
       <div className="live-approval-actions">
         <button type="button" onClick={() => handleSubmit("accept")} disabled={isSubmitting}>
-          {request.mode === "url" ? "完了" : "送信"}
+          {request.mode === "url" ? "Complete" : "Submit"}
         </button>
         <button
           className="drawer-toggle secondary"
@@ -348,7 +348,7 @@ function LiveElicitationCard({
           onClick={() => handleSubmit("decline")}
           disabled={isSubmitting}
         >
-          拒否
+          Reject
         </button>
         <button
           className="drawer-toggle secondary"
@@ -356,7 +356,7 @@ function LiveElicitationCard({
           onClick={() => handleSubmit("cancel")}
           disabled={isSubmitting}
         >
-          閉じる
+          Close
         </button>
       </div>
     </section>
@@ -385,10 +385,10 @@ export function LiveRequestSurface({
   return (
     <>
       {liveApprovalRequest ? (
-        <section className="live-approval-card" role="group" aria-label="承認要求">
+        <section className="live-approval-card" role="group" aria-label="Approval required">
           <div className="live-approval-head">
             <div className="live-approval-copy">
-              <span className="live-approval-badge">承認待ち</span>
+              <span className="live-approval-badge">Approval required</span>
               <p className="live-approval-title">{liveApprovalRequest.title}</p>
             </div>
             <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
@@ -409,7 +409,7 @@ export function LiveRequestSurface({
               onClick={() => onResolveLiveApproval(liveApprovalRequest, "approve")}
               disabled={approvalActionRequestId === liveApprovalRequest.requestId}
             >
-              今回だけ許可
+              Allow once
             </button>
             <button
               className="drawer-toggle secondary"
@@ -417,7 +417,7 @@ export function LiveRequestSurface({
               onClick={() => onResolveLiveApproval(liveApprovalRequest, "deny")}
               disabled={approvalActionRequestId === liveApprovalRequest.requestId}
             >
-              拒否
+              Reject
             </button>
           </div>
         </section>

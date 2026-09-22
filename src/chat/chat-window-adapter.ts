@@ -152,6 +152,7 @@ type HiddenControlsTextChatComposerProps = Pick<
 type StaticTextChatCompactActionDockProps = {
   pendingRunIndicatorAnnouncement?: ChatCompactActionDockProps["pendingRunIndicatorAnnouncement"];
   pendingRunIndicatorText?: ChatCompactActionDockProps["pendingRunIndicatorText"];
+  pendingRunIndicatorTextVisible?: ChatCompactActionDockProps["pendingRunIndicatorTextVisible"];
   onExpand?: ChatCompactActionDockProps["onExpand"];
 };
 
@@ -179,6 +180,7 @@ export type LiveSessionMessageColumnProps = {
   hasLiveRunAssistantText?: boolean;
   liveRunErrorMessage: string;
   pendingMessageText?: string;
+  pendingMessageTextVisible?: boolean;
   pendingMessageGroupId?: ChatMessageColumnProps["pendingMessageGroupId"];
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
@@ -320,6 +322,7 @@ export function buildLiveSessionComposerDockProps(
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
+      pendingRunIndicatorTextVisible: input.pendingRunIndicatorTextVisible,
       chatNotice: input.chatNotice,
       showJumpToBottom,
       cancelButtonTitle: input.sendButtonTitle,
@@ -361,6 +364,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     hasLiveRunAssistantText: input.hasLiveRunAssistantText ?? input.liveRunAssistantText.length > 0,
     liveRunErrorMessage: input.liveRunErrorMessage,
     pendingMessageText: input.pendingMessageText,
+    pendingMessageTextVisible: input.pendingMessageTextVisible,
     pendingMessageGroupId: input.pendingMessageGroupId,
     isMessageListFollowing: input.isMessageListFollowing,
     onMessageListScroll: input.onMessageListScroll,
@@ -420,8 +424,8 @@ export function buildLiveSessionSplitterProps(
     isPanelExpanded: input.isContextRailVisible,
     onPointerDown: input.onStartContextRailResize,
     onKeyDown: input.onKeyDownContextRailResize,
-    title: "クリックで右ペインを開閉し、展開中はドラッグまたは矢印キーでサイズを調整",
-    ariaLabel: input.isContextRailVisible ? "右ペインを折りたたむ" : "右ペインを開く",
+    title: "Click to toggle the right pane. Drag or use arrow keys to resize when expanded.",
+    ariaLabel: input.isContextRailVisible ? "Collapse right pane" : "Open right pane",
     onTogglePanel: input.onToggleContextRailVisibility,
   };
 }
@@ -627,12 +631,14 @@ export function createStaticChatCompactActionDockProps(
 export function createStaticTextChatCompactActionDockProps({
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
+  pendingRunIndicatorTextVisible,
   onExpand,
 }: StaticTextChatCompactActionDockProps): ChatCompactActionDockProps {
   return createStaticChatCompactActionDockProps({
     isRunning: false,
     pendingRunIndicatorAnnouncement,
     pendingRunIndicatorText,
+    pendingRunIndicatorTextVisible,
     onExpand,
     onCancel: chatWindowNoop,
   });

@@ -277,12 +277,12 @@ function normalizeSessionForStorage(session: Session): Session {
   const ownerId = normalizeCharacterOwnerId(session.characterId);
   const snapshotOwnerId = normalizeCharacterOwnerId(session.characterRuntimeSnapshot?.characterId);
   if (session.characterRuntimeSnapshot && (!ownerId || snapshotOwnerId !== ownerId)) {
-    throw new Error("SessionStorageV6 に保存できない session 形式だよ。");
+    throw new Error("The Session data cannot be saved because it is invalid.");
   }
 
   const normalized = normalizeSession(session);
   if (!normalized) {
-    throw new Error("SessionStorageV6 に保存できない session 形式だよ。");
+    throw new Error("The Session data cannot be saved because it is invalid.");
   }
   return normalized;
 }
@@ -486,7 +486,7 @@ export class SessionStorageV6 {
     this.db.prepare("UPDATE sessions_v6 SET is_pinned = ? WHERE id = ?").run(isPinned ? 1 : 0, sessionId);
     const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
     if (!row) {
-      throw new Error("対象セッションが見つからないよ。");
+      throw new Error("The session could not be found.");
     }
     return this.rowToSessionSummary(row);
   }
@@ -598,14 +598,14 @@ export class SessionStorageV6 {
   ): SessionCharacterAuthoringRuntimeClearResult {
     const sessionId = input.sessionId.trim();
     if (!sessionId) {
-      throw new Error("Character authoring runtime clearの保存形式が不正だよ。");
+      throw new Error("Character authoring runtime state format is invalid.");
     }
 
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
       if (!currentRow) {
-        throw new Error("対象セッションが見つからないよ。");
+      throw new Error("The session could not be found.");
       }
       if (currentRow.incarnation_id.trim() !== getSessionIncarnationId({
         id: sessionId,
@@ -614,7 +614,7 @@ export class SessionStorageV6 {
         throw new SessionNotFoundError(sessionId);
       }
       if (currentRow.session_kind !== "character-authoring") {
-        throw new Error("Character authoring runtime clearのownerが一致しないよ。");
+      throw new Error("The Character authoring runtime owner does not match the Session.");
       }
 
       const updateResult = this.db.prepare(`
@@ -625,7 +625,7 @@ export class SessionStorageV6 {
         WHERE id = ?
       `).run(sessionId);
       if (Number(updateResult.changes) !== 1) {
-        throw new Error("Character authoring runtime stateをclearできなかったよ。");
+      throw new Error("Character authoring runtime state could not be cleared.");
       }
 
       const storedRow: SessionV6Row = {
@@ -656,14 +656,14 @@ export class SessionStorageV6 {
       || !input.userMessage.text.trim()
       || !input.updatedAt.trim()
     ) {
-      throw new Error("running turn 開始の保存形式が不正だよ。");
+      throw new Error("The Session data is invalid for starting a running turn.");
     }
 
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
       if (!currentRow) {
-        throw new Error("対象セッションが見つからないよ。");
+      throw new Error("The session could not be found.");
       }
       if (currentRow.incarnation_id.trim() !== getSessionIncarnationId({
         id: sessionId,
@@ -677,13 +677,13 @@ export class SessionStorageV6 {
       const currentRuntimeState = decodeSessionV6RuntimeState(currentRow);
       if (updatesCharacterSnapshot) {
         if (currentRow.session_kind !== "character-authoring") {
-          throw new Error("running turn 開始のCharacter snapshot ownerが一致しないよ。");
+      throw new Error("The Character snapshot owner does not match the Session.");
         }
         if (
           nextCharacterSnapshot
           && nextCharacterSnapshot.characterId !== currentRuntimeState.characterId
         ) {
-          throw new Error("running turn 開始のCharacter snapshot ownerが一致しないよ。");
+      throw new Error("The Character snapshot owner does not match the Session.");
         }
       }
 
@@ -740,7 +740,7 @@ export class SessionStorageV6 {
         sessionId,
       );
       if (Number(updateResult.changes) !== 1) {
-        throw new Error("running turn のSession metadataを更新できなかったよ。");
+      throw new Error("The running turn Session metadata could not be updated.");
       }
 
       this.db.prepare(`
@@ -786,7 +786,7 @@ export class SessionStorageV6 {
   ): Session {
     const normalized = normalizeSessionForStorage(session);
     if (terminalCommit && terminalCommit.sessionId !== normalized.id) {
-      throw new Error("terminal Session と audit marker の owner が一致しないよ。");
+      throw new Error("The terminal Session owner does not match the audit marker.");
     }
 
     const startedAt = Date.now();
@@ -1106,7 +1106,7 @@ export class SessionStorageV6 {
       threadId: decoded.threadId,
     });
     if (!summary) {
-      throw new Error(`V6 session row を summary に変換できないよ: ${row.id}`);
+      throw new Error(`The V6 Session row could not be converted to a summary: ${row.id}`);
     }
     return summary;
   }
@@ -1150,7 +1150,7 @@ export class SessionStorageV6 {
       stream: [],
     });
     if (!session) {
-      throw new Error(`V6 session row を session に変換できないよ: ${row.id}`);
+      throw new Error(`The V6 Session row could not be converted to a Session: ${row.id}`);
     }
     return session;
   }

@@ -6,6 +6,7 @@ import type {
   SessionMonitorEntryKind,
 } from "../../src-shared/window/withmate-window-types.js";
 import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
 
@@ -14,9 +15,13 @@ export type HomeRightPaneProps = {
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
+  sessionWindowsDataState?: "loading" | "loaded" | "error";
+  monitorRunningEmptyMessage?: string;
+  monitorNonRunningEmptyMessage?: string;
   sessionMonitorFeedback?: string;
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
+  characterLoadStatus?: HomeCharacterLoadStatus;
   characterListFeedback?: string;
   onChangeRightPaneView: (view: "monitor" | "characters") => void;
   onOpenSessionMonitorWindow: () => void;
@@ -41,9 +46,13 @@ export function HomeRightPane({
   runningMonitorEntries,
   nonRunningMonitorEntries,
   auxiliaryDataState,
+  sessionWindowsDataState = "loaded",
+  monitorRunningEmptyMessage = "No running sessions.",
+  monitorNonRunningEmptyMessage = "No stopped or completed sessions.",
   sessionMonitorFeedback = "",
   monitorWindowIcon,
   characterEntries,
+  characterLoadStatus = "loaded",
   characterListFeedback = "",
   onChangeRightPaneView,
   onOpenSessionMonitorWindow,
@@ -99,13 +108,13 @@ export function HomeRightPane({
             {sessionWindowRestorePending ? (
               <span className="restore-session-windows-spinner" aria-hidden="true" />
             ) : null}
-            <span>Restore Sessions</span>
+            <span>Restore sessions</span>
           </button>
           <button
             className="launch-toggle home-monitor-window-button"
             type="button"
-            aria-label="Session Monitor Window を開く"
-            title="Session Monitor Window"
+            aria-label="Open session monitor window"
+            title="Open session monitor window"
             onClick={openSessionMonitorWindow}
             aria-disabled={!canUsePrimaryFeatures}
             disabled={!canUsePrimaryFeatures}
@@ -144,11 +153,14 @@ export function HomeRightPane({
       </div>
 
       {rightPaneView === "monitor" ? (
-        <section className="home-monitor-panel" role="tabpanel" aria-label="Session Monitor">
+        <section className="home-monitor-panel" role="tabpanel" aria-label="Session monitor">
           <HomeMonitorContent
             runningEntries={runningMonitorEntries}
             nonRunningEntries={nonRunningMonitorEntries}
             auxiliaryDataState={auxiliaryDataState}
+            sessionWindowsDataState={sessionWindowsDataState}
+            runningEmptyMessage={monitorRunningEmptyMessage}
+            nonRunningEmptyMessage={monitorNonRunningEmptyMessage}
             feedback={sessionMonitorFeedback}
             onOpenSession={openSession}
             onShowContextMenu={showSessionMonitorContextMenu}
@@ -158,6 +170,7 @@ export function HomeRightPane({
         <section className="home-monitor-panel" role="tabpanel" aria-label="Characters">
           <HomeCharactersPanel
             characters={characterEntries}
+            characterLoadStatus={characterLoadStatus}
             feedback={characterListFeedback}
             onCreateCharacter={onCreateCharacter}
             onEditCharacter={onEditCharacter}

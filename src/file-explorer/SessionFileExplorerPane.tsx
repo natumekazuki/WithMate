@@ -54,6 +54,8 @@ type DirectoryLoadRequest = {
   promise: Promise<void>;
 };
 
+type RootsLoadState = "loading" | "ready" | "unavailable" | "error";
+
 type FileTreeInsertionOwnerSnapshot = {
   sessionId: string | null;
   rootsRevision: string;
@@ -136,6 +138,9 @@ export function SessionFileExplorerPane({
   const [expandedDirectories, setExpandedDirectories] = useState<Record<string, boolean>>({});
   const expandedDirectoriesRef = useRef(expandedDirectories);
   const [loadingDirectories, setLoadingDirectories] = useState<Record<string, boolean>>({});
+  const [rootsLoadState, setRootsLoadState] = useState<RootsLoadState>(() => (
+    api && sessionId && enabled ? "loading" : "unavailable"
+  ));
   const [errorMessage, setErrorMessage] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
@@ -202,7 +207,7 @@ export function SessionFileExplorerPane({
         setErrorMessage("");
       } catch (error) {
         if (isCurrentRequest()) {
-          setErrorMessage(error instanceof Error ? error.message : "Directory を読み込めなかったよ。");
+          setErrorMessage(error instanceof Error ? error.message : "Directory could not be loaded.");
         }
       } finally {
         if (isCurrentRequest()) {
@@ -232,17 +237,21 @@ export function SessionFileExplorerPane({
     setErrorMessage("");
     setFeedbackMessage("");
     if (!api || !sessionId || !enabled) {
+      setRootsLoadState("unavailable");
       return;
     }
+    setRootsLoadState("loading");
     try {
       const nextRoots = await api.listSessionFileRoots(sessionId);
       if (loadRevisionRef.current !== revision) {
         return;
       }
       setRoots(nextRoots);
+      setRootsLoadState("ready");
     } catch (error) {
       if (loadRevisionRef.current === revision) {
-        setErrorMessage(error instanceof Error ? error.message : "File roots を読み込めなかったよ。");
+        setRootsLoadState("error");
+        setErrorMessage(error instanceof Error ? error.message : "File roots could not be loaded.");
       }
     }
   }, [api, enabled, sessionId]);
@@ -337,9 +346,9 @@ export function SessionFileExplorerPane({
   });
 
   return (
-    <aside className="session-file-explorer" aria-label="File Explorer">
+    <aside className="session-file-explorer" aria-label="File explorer">
       <div className="session-file-explorer-header">
-        <div className="session-file-explorer-tabs" role="tablist" aria-label="File Explorer view">
+        <div className="session-file-explorer-tabs" role="tablist" aria-label="File explorer view">
           <button
             id={`${tabPanelId}-files-tab`}
             className={activeTab === "files" ? "is-active" : ""}
@@ -390,6 +399,8 @@ export function SessionFileExplorerPane({
           }}
           aria-label={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
           title={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
+          disabled={activeTab === "files" && rootsLoadState === "loading"}
+          aria-busy={activeTab === "files" && rootsLoadState === "loading"}
         >
           ↻
         </button>
@@ -401,13 +412,21 @@ export function SessionFileExplorerPane({
         className="session-file-explorer-body"
         role="tabpanel"
         aria-labelledby={`${tabPanelId}-files-tab`}
+        aria-busy={rootsLoadState === "loading"}
         hidden={activeTab !== "files"}
       >
         {errorMessage ? <p className="session-file-tree-error">{errorMessage}</p> : null}
         {feedbackMessage ? (
           <p className="session-file-tree-feedback" role="status" aria-live="polite">{feedbackMessage}</p>
         ) : null}
-        {!errorMessage && roots.length === 0 ? <p className="session-file-tree-empty">Loading roots…</p> : null}
+        {rootsLoadState === "loading" ? (
+          <p className="session-file-tree-status" role="status" aria-live="polite">
+            <span className="workspace-changes-root-spinner" aria-hidden="true" />
+            <span className="visually-hidden">Loading files</span>
+          </p>
+        ) : null}
+        {rootsLoadState === "unavailable" ? <p className="session-file-tree-empty">Files are not available.</p> : null}
+        {rootsLoadState === "ready" && roots.length === 0 && !errorMessage ? <p className="session-file-tree-empty">No files.</p> : null}
         <div className="session-file-tree-virtual" style={{ height: treeVirtualizer.getTotalSize() }}>
           {treeVirtualizer.getVirtualItems().map((virtualRow) => {
             const row = treeRows[virtualRow.index];
@@ -439,7 +458,7 @@ export function SessionFileExplorerPane({
                     })}
                     title={row.root.displayPath}
                   >
-                    <span className={`session-file-tree-icon${expandedDirectories[directoryKey(row.root.id, "")] ? " is-expanded" : ""}`}>▸</span>
+                    <span className={`session-file-tree-icon${expandedDirectories[directoryKey(row.root.id, "")] ? " is-expanded" : ""}`} aria-hidden="true">▸</span>
                     <span className="session-file-tree-name">{row.root.label}</span>
                   </button>
                 ) : (() => {
@@ -473,7 +492,7 @@ export function SessionFileExplorerPane({
                       }}
                       title={row.entry.relativePath}
                     >
-                      <span className={`session-file-tree-icon${isDirectory && expandedDirectories[entryKey] ? " is-expanded" : ""}`}>
+                      <span className={`session-file-tree-icon${isDirectory && expandedDirectories[entryKey] ? " is-expanded" : ""}`} aria-hidden="true">
                         {entryIcon(row.entry)}
                       </span>
                       <span className="session-file-tree-name">{row.entry.name}</span>

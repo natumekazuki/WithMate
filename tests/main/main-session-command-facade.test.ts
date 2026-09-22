@@ -501,7 +501,7 @@ test("MainSessionCommandFacade は保存後の初期化失敗時に Main Session
     facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
     (error: unknown) => {
       assert.ok(error instanceof Error);
-      assert.match(error.message, /保存済みの Session ID: launch-initialize-failed/);
+      assert.match(error.message, /Saved Session ID: launch-initialize-failed/);
       assert.match(error.message, /default Auxiliary を作成できない/);
       assert.equal(error.cause instanceof Error ? error.cause.message : error.cause, "default Auxiliary を作成できない");
       return true;
@@ -577,7 +577,7 @@ test("MainSessionCommandFacade は並行操作中の初期化失敗でも保存�
     (error: unknown) => {
       assert.ok(error instanceof Error);
       assert.equal(error.cause, initializationError);
-      assert.match(error.message, /保存済みの Session ID: launch-cleanup-failed/);
+      assert.match(error.message, /Saved Session ID: launch-cleanup-failed/);
       return true;
     },
   );
@@ -585,6 +585,18 @@ test("MainSessionCommandFacade は並行操作中の初期化失敗でも保存�
   assert.deepEqual(calls, ["persist", "update"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "空または空白だけのCharacter IDはSessionFolder作成やselection解決より前に拒否する"
+// oracle = { type = "contract", ref = "src-electron/session/create-session-request.ts#parseCreateSessionRequest" }
+// fault = "空のCharacter IDを受け入れて副作用を開始するか、入力エラーを別のvalidationへ変換する"
+// observable = "rejection message and selection/ID/folder/persistence calls"
+// observation_boundary = "public-boundary"
+// scope = "main-session-create-character-id-validation"
+// lifecycle = "permanent"
+// impact = "不正なSessionが保存されるか、拒否前にSessionFolderなどの副作用が発生する"
+// distinction = "session-folderとdirectoryの両workspaceで空・whitespace入力を通し、全副作用不在を確認する"
+// @end-test-value
 test("MainSessionCommandFacade は空の Character ID を SessionFolder 作成前に拒否する", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
@@ -629,7 +641,7 @@ test("MainSessionCommandFacade は空の Character ID を SessionFolder 作成�
 
       await assert.rejects(
         facade.createSessionFromRequest(request as never),
-        /characterId.*空/,
+        /characterId cannot be empty/,
       );
     }
   }
@@ -692,6 +704,18 @@ test("MainSessionCommandFacade は Character owner ID と snapshot owner ID を 
   );
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Character IDとruntime snapshot ownerが一致しないSession作成入力は副作用前に拒否する"
+// oracle = { type = "contract", ref = "src-electron/session/create-session-request.ts#parseCreateSessionRequest" }
+// fault = "owner不一致を受け入れてSessionFolder作成または永続化を開始する"
+// observable = "rejection message and create/selection/folder calls"
+// observation_boundary = "public-boundary"
+// scope = "main-session-create-character-runtime-owner"
+// lifecycle = "permanent"
+// impact = "SessionとCharacter runtime snapshotのowner identityが不一致になり、別Characterの状態を参照する"
+// distinction = "入力validationのrejectionと副作用callの不在を同じfacade境界で確認する"
+// @end-test-value
 test("MainSessionCommandFacade は Character ID と runtime snapshot owner の不一致を副作用前に拒否する", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
@@ -736,7 +760,7 @@ test("MainSessionCommandFacade は Character ID と runtime snapshot owner の�
 
   await assert.rejects(
     facade.createSessionFromRequest(request as never),
-    /characterId と一致しない/,
+    /characterRuntimeSnapshot\.characterId does not match characterId/,
   );
   assert.deepEqual(calls, []);
 });
@@ -906,7 +930,7 @@ test("SessionFolder のcommit前再検証は selection と storage の変更を�
 
     await assert.rejects(
       facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
-      /起動設定が作成中に変わった/,
+      /Startup settings changed during creation/,
     );
     assert.equal(persisted, false);
     assert.deepEqual(calls, ["resolve:1", "resolve:2", "cleanup:launch-selection-changed"]);
@@ -954,7 +978,7 @@ test("SessionFolder のcommit前再検証は selection と storage の変更を�
 
     await assert.rejects(
       facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
-      mode === "storage" ? /storage が作成中に切り替わった/ : /latest selection read failed/,
+      mode === "storage" ? /Session storage changed during creation/ : /latest selection read failed/,
     );
     assert.deepEqual(calls, ["cleanup:launch-storage-changed"]);
   }
@@ -1428,6 +1452,18 @@ test("MainSessionCommandFacade は directory cleanup が失敗しても削除済
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "実在しないcutoff日付はSession削除serviceを呼び出す前に拒否する"
+// oracle = { type = "contract", ref = "src-shared/window/withmate-window-types.ts#resolveDeleteSessionsLastActiveBeforeCutoff" }
+// fault = "存在しない日付を有効なcutoffとして削除処理へ渡すか、validation errorを失う"
+// observable = "rejection message and delete/cleanup calls"
+// observation_boundary = "public-boundary"
+// scope = "main-session-delete-cutoff-validation"
+// lifecycle = "permanent"
+// impact = "意図しないSessionが削除される"
+// distinction = "calendar-invalid dateをfacadeへ渡し、削除関連の副作用がないことを確認する"
+// @end-test-value
 test("MainSessionCommandFacade は実在しない cutoff delete 日付を拒否する", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
@@ -1460,7 +1496,7 @@ test("MainSessionCommandFacade は実在しない cutoff delete 日付を拒否�
 
   await assert.rejects(
     facade.deleteSessionsLastActiveBefore({ cutoffDate: "2026-02-31" }),
-    /削除基準日を解釈できないよ。/,
+    /The deletion cutoff date could not be parsed\./,
   );
   assert.deepEqual(calls, []);
 });

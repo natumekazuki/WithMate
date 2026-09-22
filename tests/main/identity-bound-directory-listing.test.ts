@@ -66,6 +66,18 @@ test("listIdentityBoundDirectory は entry metadata の並列取得数を制限�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "応答しないdirectory listing workerはdeadline後に終了し、呼び出し元へtimeoutを返してsettleする"
+// oracle = { type = "contract", ref = "src-electron/files/identity-bound-directory-listing.ts#listIdentityBoundDirectory" }
+// fault = "workerの応答待ちが無期限に残るか、timeout後もworkerのsettle通知が失われる"
+// observable = "timeout error、worker start/settle callbacks、処理時間"
+// observation_boundary = "public-boundary"
+// scope = "identity-bound directory listing timeout"
+// lifecycle = "permanent"
+// impact = "ファイル一覧処理が呼び出し元を停止させ、後続のSession操作へ進めない"
+// distinction = "応答しないworkerを明示的に起動し、deadline後の拒否とsettleを同時に観測する"
+// @end-test-value
 test("listIdentityBoundDirectory は応答しない worker を deadline 後に終了して settle する", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-bound-directory-timeout-"));
   let started = 0;
@@ -83,7 +95,7 @@ test("listIdentityBoundDirectory は応答しない worker を deadline 後に�
           settled += 1;
         },
       }),
-      /100ms 以内に完了しなかった/,
+      /The directory listing did not finish within 100 ms\./,
     );
     assert.equal(started, 1);
     assert.equal(settled, 1);

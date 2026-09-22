@@ -175,12 +175,12 @@ export function compactPathForDisplay(filePath: string, maxLength = 40): string 
 function attachmentKindLabel(kind: ComposerAttachment["kind"]): string {
   switch (kind) {
     case "folder":
-      return "フォルダ";
+      return "Folder";
     case "image":
-      return "画像";
+      return "Image";
     case "file":
     default:
-      return "ファイル";
+      return "File";
   }
 }
 
@@ -196,11 +196,11 @@ export function buildComposerAttachmentDisplay(attachment: ComposerAttachment): 
       : compactPathForDisplay(title, 48)
     : parentPath
       ? compactPathForDisplay(parentPath, 42)
-      : "ワークスペース直下";
+      : "Workspace root";
 
   return {
     kindLabel: attachmentKindLabel(attachment.kind),
-    locationLabel: attachment.isOutsideWorkspace ? "ワークスペース外" : "ワークスペース内",
+    locationLabel: attachment.isOutsideWorkspace ? "Outside workspace" : "In workspace",
     primaryLabel: basename || title,
     secondaryLabel: secondaryPath,
     title,
@@ -245,9 +245,9 @@ export function buildPathReferenceAttachmentItems(
       key: `${entry.kind}:${entry.path}`,
       kind: entry.kind,
       kindLabel: attachmentKindLabel(entry.kind),
-      locationLabel: "参照",
+      locationLabel: "Reference",
       primaryLabel: basename || entry.path,
-      secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ルート",
+      secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "Root",
       title: entry.path,
       removeTargets: [entry.path],
     };
@@ -282,7 +282,7 @@ export function buildAdditionalDirectoryDisplay(directoryPath: string): Addition
   const { basename, parentPath } = splitPathForDisplay(normalizedPath);
   return {
     primaryLabel: basename || normalizedPath,
-    secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 52) : "ルート",
+    secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 52) : "Root",
     title: normalizedPath,
   };
 }

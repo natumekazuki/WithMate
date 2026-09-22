@@ -7,7 +7,7 @@ import "../../styles.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <WindowErrorBoundary pageClassName="character-editor-page" windowLabel="Character Editor">
+    <WindowErrorBoundary pageClassName="character-editor-page" windowLabel="Character editor">
       <CharacterEditorApp />
     </WindowErrorBoundary>
   </React.StrictMode>,

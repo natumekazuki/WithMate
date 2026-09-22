@@ -145,7 +145,7 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
     const rows = Array.from(rootElement.querySelectorAll<HTMLButtonElement>(".messages-navigator-row"));
     assert.equal(rows.length, 3);
     assert.match(rows[0]?.getAttribute("aria-label") ?? "", /Test Character/);
-    assert.match(rows[1]?.getAttribute("aria-label") ?? "", /あなたのメッセージ/);
+    assert.match(rows[1]?.getAttribute("aria-label") ?? "", /Your message/);
     assert.match(rows[0]?.getAttribute("aria-label") ?? "", /assistant first/);
     await act(async () => {
       rows[0]?.focus();

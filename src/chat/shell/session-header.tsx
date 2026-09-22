@@ -172,7 +172,7 @@ export function SessionHeader({
                       onClick={() => runSessionAction(onTogglePin)}
                       disabled={isPinPending}
                     >
-                      {isPinPending ? "変更中..." : isPinned ? "ピン解除" : "ピン止め"}
+                      {isPinPending ? "Updating..." : isPinned ? "Unpin" : "Pin"}
                     </button>
                   ) : null}
                   {showRenameButton ? (

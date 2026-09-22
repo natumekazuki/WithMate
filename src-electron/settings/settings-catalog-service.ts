@@ -103,7 +103,7 @@ function getProvidersWithApiKeyChange(previousSettings: AppSettings, nextSetting
 function migrateProviderRuntimeMetadata<T extends ProviderRuntimeMetadata>(session: T, snapshot: ModelCatalogSnapshot): T {
   const provider = getProviderCatalog(snapshot.providers, session.provider);
   if (!provider) {
-    throw new Error("利用できる model catalog provider が見つからないよ。");
+    throw new Error("No usable model catalog provider was found.");
   }
 
   const selection = coerceModelSelection(provider, session.model, session.reasoningEffort);
@@ -161,13 +161,13 @@ export class SettingsCatalogService {
 
   private assertStorageIdentityCurrent(identity: unknown): void {
     if (this.deps.isStorageIdentityCurrent && !this.deps.isStorageIdentityCurrent(identity)) {
-      throw new Error("storage が交換されたため deferred rollback を中止したよ。");
+      throw new Error("Saved data changed, so deferred rollback was canceled.");
     }
   }
 
   private assertRollbackEpochCurrent(epoch: number): void {
     if (epoch !== this.rollbackEpoch) {
-      throw new Error("reset が開始されたため deferred rollback を中止したよ。");
+      throw new Error("Rollback was canceled because a reset started.");
     }
   }
 
@@ -186,7 +186,7 @@ export class SettingsCatalogService {
 
   assertProviderAvailableForTurn(providerId: string): void {
     if ((this.affectedProviders.get(providerId) ?? 0) > 0) {
-      throw new Error("provider の設定反映中は新しい session を開始できないよ。少し待ってね。");
+        throw new Error("A provider settings update is in progress. Wait for it to finish before starting a new session.");
     }
   }
 
@@ -213,7 +213,7 @@ export class SettingsCatalogService {
       try {
         await this.deps.runProviderRuntimeOperationExclusive(() => operation.rollback());
       } catch (rollbackError) {
-        throw new AggregateError([error, rollbackError], "app settings の cleanup 後 rollback に失敗したよ。");
+        throw new AggregateError([error, rollbackError], "App settings cleanup rollback failed.");
       }
       throw error;
     } finally {
@@ -245,7 +245,7 @@ export class SettingsCatalogService {
         (this.deps.isSessionRunInFlight(session.id) || session.runState === "running"),
       );
       if (hasBlockedSession || hasBlockedAuxiliary) {
-        throw new Error("Coding Agent credential を変更する provider に実行中の session があるため、完了まで待ってね。");
+        throw new Error("A session is using the provider whose Coding Agent credentials are changing. Wait for it to finish.");
       }
     }
 
@@ -333,7 +333,7 @@ export class SettingsCatalogService {
           this.assertStorageIdentityCurrent(storageIdentity);
           const current = await this.deps.getAppSettings();
           if (JSON.stringify(current) !== JSON.stringify(savedSettings)) {
-            throw new Error("cleanup 後に app settings が並行変更されたため rollback を中止したよ。");
+            throw new Error("App settings changed concurrently after cleanup, so rollback was canceled.");
           }
           await this.deps.updateAppSettings(previousSettings);
           for (const { previous, current: applied } of appliedSessionPatches) {
@@ -397,7 +397,7 @@ export class SettingsCatalogService {
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
-          "app settings の更新を rollback できなかったよ。",
+          "App settings rollback failed.",
         );
       }
 
@@ -416,7 +416,7 @@ export class SettingsCatalogService {
       try {
         await this.deps.runProviderRuntimeOperationExclusive(() => operation.rollback());
       } catch (rollbackError) {
-        throw new AggregateError([error, rollbackError], "model catalog の cleanup 後 rollback に失敗したよ。");
+        throw new AggregateError([error, rollbackError], "Model catalog cleanup rollback failed.");
       }
       throw error;
     } finally {
@@ -430,7 +430,7 @@ export class SettingsCatalogService {
     document: ModelCatalogDocument,
   ): Promise<DeferredProviderCleanup<ModelCatalogSnapshot>> {
     if (this.deps.hasInFlightSessionRuns()) {
-      throw new Error("session 実行中は model catalog を読み込めないよ。");
+      throw new Error("The model catalog cannot be imported while a session is running.");
     }
 
     const previousSnapshot = await this.deps.getModelCatalog(null) ?? await this.deps.ensureModelCatalogSeeded();
@@ -438,7 +438,7 @@ export class SettingsCatalogService {
     const rollbackEpoch = this.rollbackEpoch;
     const previousCatalogDocument = await this.deps.exportModelCatalogDocument(previousSnapshot.revision);
     if (!previousCatalogDocument) {
-      throw new Error("rollback 用の model catalog を取得できなかったよ。");
+      throw new Error("The previous model catalog could not be loaded for rollback.");
     }
 
     const previousSessions = await this.deps.listSessions();
@@ -528,7 +528,7 @@ export class SettingsCatalogService {
           this.assertStorageIdentityCurrent(storageIdentity);
           const currentSnapshot = await this.deps.getModelCatalog(null);
           if (!currentSnapshot || currentSnapshot.revision !== nextSnapshot.revision) {
-            throw new Error("cleanup 後に model catalog が並行変更されたため rollback を中止したよ。");
+            throw new Error("Model catalog changed concurrently after cleanup, so rollback was canceled.");
           }
           const restoredSnapshot = await this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
           for (const { previous, current } of appliedSessions) {
@@ -584,7 +584,7 @@ export class SettingsCatalogService {
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
-          "model catalog の import を rollback できなかったよ。",
+          "Model catalog import rollback failed.",
         );
       }
 
@@ -603,13 +603,13 @@ export class SettingsCatalogService {
   ): Promise<ResetAppDatabaseResult> {
     const sessions = await this.deps.listSessions();
     if (this.deps.hasInFlightSessionRuns() || sessions.some((session) => this.deps.isRunningSession(session))) {
-      throw new Error("実行中の session があるため、DB を初期化できないよ。完了またはキャンセル後に試してね。");
+      throw new Error("The database cannot be reset while a session is running. Complete or cancel it first.");
     }
 
     const previousSessionIds = sessions.map((session) => session.id);
     const resetTargets = normalizeResetAppDatabaseTargets(request?.targets);
     if (resetTargets.length === 0) {
-      throw new Error("初期化対象が選ばれていないよ。");
+      throw new Error("Select at least one reset target.");
     }
     // Invalidate deferred rollbacks only after reset validation and immediately
     // before the first reset mutation. This also covers app-settings-only ABA.

@@ -209,11 +209,11 @@ async function listAllOpenSessionWindowIds(
       ),
     );
     if (!page)
-      throw new Error("open Session Window ID page response が不正です。");
+      throw new Error("Invalid open Session Window ID page response.");
     sessionIds.push(...page.sessionIds);
     if (!page.hasMore) return Array.from(new Set(sessionIds));
     if (page.nextCursor === null || page.nextCursor === cursor)
-      throw new Error("open Session Window ID page cursor が進まないよ。");
+      throw new Error("The open Session Window ID page cursor did not advance.");
     cursor = page.nextCursor;
   }
 }

@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import {
   buildSessionFileExplorerRootsRevision,
   type SessionDirectoryEntry,
+  type SessionFileRoot,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 type Deferred<T> = {
@@ -95,14 +96,14 @@ test("File Explorer root revisionはworkspace path変更を検出する", () => 
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Files treeはroot・directory・regular fileだけを同じpath context menu契約へ渡し、通常clickとload identityを維持する"
+// claim = "Files treeはroot・directory・regular fileだけを同じpath context menu契約へ渡し、通常clickとload identityを維持し、rootsのempty/unavailable表示をloadingと混同しない"
 // oracle = { type = "contract", ref = "accepted behavior: File Explorer tree path context menu siblings" }
-// fault = "rootまたはdirectoryでpath操作できない、対象外rowに操作が出る、またはcontext menu追加で通常clickと非同期loadが回帰する"
-// observable = "path menu callback、通常click callback、tree load identity"
+// fault = "rootまたはdirectoryでpath操作できない、対象外rowに操作が出る、context menu追加で通常clickと非同期loadが回帰する、または確定empty/unavailable rootsをLoading rootsと表示する"
+// observable = "path menu callback、通常click callback、tree load identity、roots stateごとの表示"
 // observation_boundary = "component-behavior"
-// scope = "SessionFileExplorerPane Files tree interaction"
+// scope = "SessionFileExplorerPane Files tree interaction and roots state"
 // lifecycle = "permanent"
-// distinction = "root・directory・fileの兄弟入口とsymbolic link除外を、既存click/load observableと同時に確認する"
+// distinction = "root・directory・fileの兄弟入口とsymbolic link除外に加え、確定emptyと利用不可を実requestのpending表示から分離して確認する"
 // @end-test-value
 test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単位に保つ", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -170,6 +171,12 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
 
   const directoryRequests: Array<Deferred<SessionDirectoryEntry[]>> = [];
   const pathMenuRequests: unknown[] = [];
+  let listedRoots: SessionFileRoot[] = [{
+    id: "workspace",
+    kind: "workspace",
+    label: "Workspace",
+    displayPath: "C:\\workspace",
+  }];
   let directoryCalls = 0;
   const api = {
     async showSessionFileTreeContextMenu(request: unknown) {
@@ -179,7 +186,7 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
         : { status: "dismissed" as const };
     },
     async listSessionFileRoots() {
-      return [{ id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:\\workspace" }];
+      return listedRoots;
     },
     listSessionDirectory() {
       directoryCalls += 1;
@@ -356,6 +363,42 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
     assert.equal(changesRefresh.ariaLabel, "Refresh changes");
     await act(async () => changesRefresh.click());
     assert.equal(changesRefreshCalls, 1);
+
+    listedRoots = [];
+    await act(async () => {
+      root?.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-empty",
+        selectedFile: null,
+        activeTab: "files",
+        onActiveTabChange() {},
+        onRefreshChanges() {},
+        onOpenFile() {},
+        canInsertPathReference: false,
+        onInsertPathReference() {},
+      }));
+    });
+    await waitFor(() => dom.window.document.body.textContent?.includes("No files.") ?? false);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Loading roots/);
+
+    await act(async () => {
+      root?.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-1",
+        enabled: false,
+        rootsRevision: "roots-unavailable",
+        selectedFile: null,
+        activeTab: "files",
+        onActiveTabChange() {},
+        onRefreshChanges() {},
+        onOpenFile() {},
+        canInsertPathReference: false,
+        onInsertPathReference() {},
+      }));
+    });
+    await waitFor(() => dom.window.document.body.textContent?.includes("Files are not available.") ?? false);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

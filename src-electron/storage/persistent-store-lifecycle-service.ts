@@ -389,7 +389,7 @@ export class PersistentStoreLifecycleService {
 
   private removeBlobRoot(dbPath: string): Promise<void> {
     if (!this.deps.removeDirectory) {
-      throw new Error("DB 再生成には blob root 削除 dependency が必要です。");
+      throw new Error("Database reset requires access to remove the blob files.");
     }
 
     return this.deps.removeDirectory(this.v3BlobRootPath(dbPath));
@@ -397,7 +397,7 @@ export class PersistentStoreLifecycleService {
 
   private removeCharacterRoot(userDataPath: string): Promise<void> {
     if (!this.deps.removeDirectory) {
-      throw new Error("DB 再生成には Character root 削除 dependency が必要です。");
+      throw new Error("Database reset requires access to remove Character files.");
     }
 
     return this.deps.removeDirectory(join(userDataPath, "characters"));
@@ -464,15 +464,15 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
   getAuxiliarySessionStatus(): null { return null; }
 
   saveAuxiliaryDraft(): never {
-    throw new Error("Auxiliary draft は legacy DB では利用できません。");
+    throw new Error("Auxiliary drafts are not available in legacy databases.");
   }
 
   consumeAuxiliaryDraft(): never {
-    throw new Error("Auxiliary draft は legacy DB では利用できません。");
+    throw new Error("Auxiliary drafts are not available in legacy databases.");
   }
 
   upsertAuxiliarySession(): AuxiliarySession {
-    throw new Error("Auxiliary Session は legacy DB では利用できません。");
+    throw new Error("Auxiliary Sessions are not available in legacy databases.");
   }
 
   updateAuxiliarySessionIfMatches(): AuxiliarySession | null {
@@ -500,19 +500,19 @@ class LegacyCharacterStorage implements CharacterStorageAccess {
   }
 
   createCharacter(): CharacterDetail {
-    throw new Error("Character catalog は legacy DB では利用できません。");
+    throw new Error("The Character catalog is not available in legacy databases.");
   }
 
   updateCharacterMetadata(): CharacterDetail {
-    throw new Error("Character catalog は legacy DB では利用できません。");
+    throw new Error("The Character catalog is not available in legacy databases.");
   }
 
   updateCharacterDefinition(): CharacterDetail {
-    throw new Error("Character catalog は legacy DB では利用できません。");
+    throw new Error("The Character catalog is not available in legacy databases.");
   }
 
   archiveCharacter(): CharacterCatalogEntry {
-    throw new Error("Character catalog は legacy DB では利用できません。");
+    throw new Error("The Character catalog is not available in legacy databases.");
   }
 
   resolveLaunchCharacter(): CharacterDetail | null {
@@ -524,7 +524,7 @@ class LegacyCharacterStorage implements CharacterStorageAccess {
   }
 
   getCharacterDirectory(): string {
-    throw new Error("Character catalog は legacy DB では利用できません。");
+    throw new Error("The Character catalog is not available in legacy databases.");
   }
 
   async deleteCharacterRootDirectory(): Promise<void> {}

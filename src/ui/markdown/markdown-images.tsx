@@ -158,7 +158,7 @@ export const MarkdownImage = memo(function MarkdownImage({
         <span
           className="message-image-loading"
           role="status"
-          aria-label="画像を読み込み中"
+          aria-label="Loading image"
         />
       ) : null}
       {loadStatus === "error" ? (

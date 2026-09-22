@@ -9,6 +9,7 @@ import {
 } from "../../src-shared/character/character-definition.js";
 import {
   buildDefaultCharacterDefinition,
+  areCharacterEditorDraftsEqual,
   buildCharacterEditorValidationSummary,
   buildCreateCharacterInputFromDraft,
   createCharacterEditorDraftFromDetail,
@@ -16,6 +17,7 @@ import {
   getCharacterIconDraftValidationMessage,
   isCharacterEditorDraftDirty,
   replaceCharacterDefinitionDraft,
+  reconcileCharacterEditorDraftAfterSave,
   shouldBlockCharacterEditorBeforeUnload,
   updateCharacterEditorDraft,
 } from "../../src/character-editor/character-editor-state.js";
@@ -119,6 +121,42 @@ describe("Character editor state", () => {
     assert.equal(isCharacterEditorDraftDirty(createNewCharacterEditorDraft(), null), true);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "保存要求の応答が到着しても、要求開始後に行われたCharacter編集を保存済みdraftで上書きしない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
+  // fault = "保存中に追加した定義・notes・metadata編集が保存済みの応答で失われ、未保存状態がSavedとして扱われる"
+  // observable = "reconciled CharacterEditorDraft と draft equality"
+  // observation_boundary = "public-boundary"
+  // scope = "character-editor-save-reconciliation"
+  // lifecycle = "permanent"
+  // impact = "新しい編集の消失と、次の保存を不要にする誤ったSaved状態を防ぐ"
+  // distinction = "保存APIの型検査では検出できない、応答とローカルdraftの時間的競合を確認する"
+  // @end-test-value
+  it("保存中に追加した編集を保存済みdraftで上書きしない", () => {
+    const savedDetail: CharacterDetail = {
+      id: "mia",
+      name: "Mia",
+      description: "saved",
+      iconFilePath: "",
+      theme: { ...DEFAULT_CHARACTER_THEME },
+      state: "active",
+      createdAt: "2026-06-14T00:00:00.000Z",
+      updatedAt: "2026-06-14T00:00:00.000Z",
+      archivedAt: null,
+      definitionMarkdown: "---\nschema: withmate-character-v5\nname: \"Mia\"\ndescription: \"saved\"\n---\n\n# Saved",
+      notesMarkdown: "# Saved notes",
+    };
+    const savedDraft = createCharacterEditorDraftFromDetail(savedDetail);
+    const draftAtSave = { ...savedDraft, description: "before save" };
+    const currentDraft = { ...draftAtSave, definitionMarkdown: `${draftAtSave.definitionMarkdown}\n## New edit` };
+
+    const reconciled = reconcileCharacterEditorDraftAfterSave(savedDraft, draftAtSave, currentDraft);
+
+    assert.equal(areCharacterEditorDraftsEqual(reconciled, currentDraft), true);
+    assert.equal(isCharacterEditorDraftDirty(reconciled, savedDetail), true);
+  });
+
   it("persisted detail 読み込み時は character.md frontmatter の metadata を editor draft に反映する", () => {
     const detail: CharacterDetail = {
       id: "mia",
@@ -190,6 +228,18 @@ describe("Character editor state", () => {
     assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: true, saving: false, confirmedClose: true }), false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "新規・置換iconはlocal PNG/JPG/JPEGだけを受け入れ、既存の同一icon参照は保持し、不正形式を英語issueへ投影する"
+  // oracle = { type = "contract", ref = "docs/design/character-storage.md#data-safety" }
+  // fault = "remote/data URIや非画像形式を新規iconとして許可する、既存pathを不正扱いする、または修正可能なvalidation理由を失う"
+  // observable = "getCharacterIconDraftValidationMessageのnullまたはlocal-path/format error message"
+  // observation_boundary = "public-boundary"
+  // scope = "character-editor-icon-validation"
+  // lifecycle = "permanent"
+  // impact = "保存時のicon materialization境界を守り、ユーザーが不正入力の原因を判別して修正できる"
+  // distinction = "拡張子だけでなく、既存iconの同値path・URI形式・大文字小文字を含むvalidation投影を確認する"
+  // @end-test-value
   it("新規・置換 icon は PNG/JPEG の local path に制限し、既存 icon はそのまま許可する", () => {
     assert.equal(getCharacterIconDraftValidationMessage("", null), null);
     assert.equal(getCharacterIconDraftValidationMessage("C:\\icons\\muse.PNG", null), null);
@@ -197,11 +247,11 @@ describe("Character editor state", () => {
     assert.equal(getCharacterIconDraftValidationMessage("icons/muse.jpeg", null), null);
     assert.equal(
       getCharacterIconDraftValidationMessage("file:///icons/muse.png", null),
-      "Character icon は local file path で指定してね。",
+      "Character icon must use a local file path.",
     );
     assert.equal(
       getCharacterIconDraftValidationMessage("/icons/muse.webp", null),
-      "Character icon は png / jpg / jpeg の画像ファイルを指定してね。",
+      "Character icon must be a PNG, JPG, or JPEG image file.",
     );
     assert.equal(
       getCharacterIconDraftValidationMessage("  /legacy/muse.webp  ", "/legacy/muse.webp"),
@@ -223,32 +273,32 @@ describe("Character editor state", () => {
     );
     assert.equal(
       getCharacterIconDraftValidationMessage("/legacy/Muse.webp", "/legacy/muse.webp"),
-      "Character icon は png / jpg / jpeg の画像ファイルを指定してね。",
+      "Character icon must be a PNG, JPG, or JPEG image file.",
     );
     assert.equal(
       getCharacterIconDraftValidationMessage(
         "DATA:image/webp;base64,AAAA",
         "data:image/webp;base64,AAAA",
       ),
-      "Character icon は local file path で指定してね。",
+      "Character icon must use a local file path.",
     );
     assert.equal(
       getCharacterIconDraftValidationMessage(
         "data:image\\webp;base64,AAAA",
         "data:image/webp;base64,AAAA",
       ),
-      "Character icon は local file path で指定してね。",
+      "Character icon must use a local file path.",
     );
     assert.equal(
       getCharacterIconDraftValidationMessage(
         "/legacy/muse\\icon.webp",
         "/legacy/muse/icon.webp",
       ),
-      "Character icon は png / jpg / jpeg の画像ファイルを指定してね。",
+      "Character icon must be a PNG, JPG, or JPEG image file.",
     );
     assert.equal(
       getCharacterIconDraftValidationMessage("/legacy/other.gif", "/legacy/muse.webp"),
-      "Character icon は png / jpg / jpeg の画像ファイルを指定してね。",
+      "Character icon must be a PNG, JPG, or JPEG image file.",
     );
   });
 

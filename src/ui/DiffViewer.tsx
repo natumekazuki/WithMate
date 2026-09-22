@@ -203,7 +203,7 @@ export function DiffViewer({ file }: DiffViewerProps) {
         className="diff-pane-head"
         ref={headRef}
         tabIndex={0}
-        aria-label={`${side === "before" ? "Before" : "After"} 見出し`}
+        aria-label={`${side === "before" ? "Before" : "After"} heading`}
         onKeyDown={handleScrollablePaneKeyDown}
       >
         <div className="diff-pane-head-inner">
@@ -215,7 +215,7 @@ export function DiffViewer({ file }: DiffViewerProps) {
         className="diff-pane-body"
         ref={bodyRef}
         tabIndex={0}
-        aria-label={`${side === "before" ? "Before" : "After"} 差分`}
+        aria-label={`${side === "before" ? "Before" : "After"} diff`}
         onKeyDown={handleScrollablePaneKeyDown}
       >
         <div className="diff-pane-body-inner">
@@ -286,7 +286,7 @@ export function DiffViewer({ file }: DiffViewerProps) {
             type="button"
             onClick={() => setViewMode("split")}
           >
-            Side by Side
+            Side by side
           </button>
           <button
             className={viewMode === "inline" ? "active" : ""}
@@ -317,7 +317,7 @@ export function DiffViewer({ file }: DiffViewerProps) {
             className="diff-pane-body"
             ref={inlineBodyRef}
             tabIndex={0}
-            aria-label="Inline 差分"
+            aria-label="Inline diff"
             onKeyDown={handleScrollablePaneKeyDown}
           >
             <div className="diff-pane-body-inner">{renderInlineRows()}</div>

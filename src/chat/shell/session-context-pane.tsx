@@ -84,7 +84,7 @@ export class SessionPaneErrorBoundary extends Component<
 
   static getDerivedStateFromError(error: Error): SessionPaneErrorBoundaryState {
     return {
-      errorMessage: error.message || "右ペインの描画に失敗したよ。",
+      errorMessage: error.message || "Could not render the right pane.",
       resetNonce: 0,
     };
   }
@@ -135,14 +135,14 @@ export class SessionPaneErrorBoundary extends Component<
               <div className="command-monitor-stack">
                 <div className="command-monitor-card">
                   <div className="live-run-error-block" role="alert">
-                    <strong>右ペイン描画エラー</strong>
+                    <strong>Right pane error</strong>
                     <p className="live-run-error">{this.state.errorMessage}</p>
                     <div className="window-error-actions pane-error-actions">
                       <button type="button" onClick={this.handleRetry}>
-                        右ペインを再描画
+                        Retry right pane
                       </button>
                       <button className="drawer-toggle secondary" type="button" onClick={this.handleReload}>
-                        Window を再読み込み
+                        Reload window
                       </button>
                     </div>
                   </div>
@@ -280,7 +280,7 @@ export function SessionContextPane({
   const messageNavigatorCharacterName = messageNavigatorCharacter?.name.trim() || "Character";
   const messageNavigatorSpeakerLabel = (entry: MessageNavigatorEntry): string => {
     if (entry.role === "user") {
-      return "あなたのメッセージ";
+      return "Your message";
     }
     return entry.sourceKind === "auxiliary"
       ? `${messageNavigatorCharacterName}（Auxiliary）`
@@ -315,10 +315,10 @@ export function SessionContextPane({
 
   return (
     <aside className="session-context-pane session-context-pane-header-expanded">
-      <section className={`command-monitor-shell ${activeContextPaneTab}${messageNavigatorBookmarksEnabled ? " has-message-filter-toolbar" : ""}`} aria-label="右ペイン">
+      <section className={`command-monitor-shell ${activeContextPaneTab}${messageNavigatorBookmarksEnabled ? " has-message-filter-toolbar" : ""}`} aria-label="Right pane">
         <div className="command-monitor-head">
           <SessionSwitcher
-            ariaLabel="右ペイン表示切り替え"
+            ariaLabel="Right pane view"
             options={availableContextPaneTabs.map((tab): SessionSwitcherOption => ({
               id: tab,
               label: contextPaneTabLabel(tab),
@@ -357,7 +357,7 @@ export function SessionContextPane({
                 <div className="command-monitor-card-head">
                   <div className="command-monitor-meta">
                     <span className="live-run-step-type">Details</span>
-                    <span className="command-monitor-source">CONFIRMED</span>
+                    <span className="command-monitor-source">Confirmed</span>
                   </div>
                 </div>
 
@@ -374,7 +374,7 @@ export function SessionContextPane({
                       </div>
 
                       {entry.type === "command_execution" ? (
-                        <div className="live-run-command-summary compact" aria-label="確定した command">
+                        <div className="live-run-command-summary compact" aria-label="Confirmed command">
                           <span className="live-run-command-prefix" aria-hidden="true">$</span>
                           <code className="live-run-command-text">{entry.summary}</code>
                         </div>
@@ -404,7 +404,7 @@ export function SessionContextPane({
                       <span className="command-monitor-source">{contextPaneProjection.latestCommandSourceCopy}</span>
                     </div>
                     {latestCommandView.riskLabels.length > 0 ? (
-                      <div className="command-monitor-risk-list" aria-label="command risk">
+                      <div className="command-monitor-risk-list" aria-label="Command risk">
                         {latestCommandView.riskLabels.map((label) => (
                           <span key={label} className={`command-monitor-risk ${label.toLowerCase()}`}>
                             {label}
@@ -414,7 +414,7 @@ export function SessionContextPane({
                     ) : null}
                   </div>
 
-                  <div className="live-run-command-summary" aria-label="実行コマンド">
+                  <div className="live-run-command-summary" aria-label="Executed command">
                     <span className="live-run-command-prefix" aria-hidden="true">
                       $
                     </span>
@@ -423,14 +423,14 @@ export function SessionContextPane({
 
                   {latestCommandView.details ? (
                     <details className="command-monitor-details live-run-step-details">
-                      <summary>command_execution の詳細</summary>
+                      <summary>Command details</summary>
                       <pre>{latestCommandView.details}</pre>
                     </details>
                   ) : null}
 
                   {selectedSessionLiveRunErrorMessage && isSelectedSessionRunning ? (
                     <div className="live-run-error-block" role="alert">
-                      <strong>実行エラー</strong>
+                      <strong>Run error</strong>
                       <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
                     </div>
                   ) : null}
@@ -442,7 +442,7 @@ export function SessionContextPane({
                   ) : null}
                   {selectedSessionLiveRunErrorMessage ? (
                     <div className="live-run-error-block" role="alert">
-                      <strong>実行エラー</strong>
+                      <strong>Run error</strong>
                       <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
                     </div>
                   ) : null}
@@ -456,7 +456,7 @@ export function SessionContextPane({
                   <div className="command-monitor-card-head">
                     <div className="command-monitor-meta">
                       <span className="live-run-step-type">Tasks</span>
-                      <span className="command-monitor-source">COPILOT</span>
+                      <span className="command-monitor-source">Copilot</span>
                     </div>
                   </div>
 
@@ -474,7 +474,7 @@ export function SessionContextPane({
                         <p className="command-monitor-confirmed-summary">{task.title}</p>
                         {task.details ? (
                           <details className="command-monitor-details live-run-step-details">
-                            <summary>task details</summary>
+                            <summary>Task details</summary>
                             <pre>{task.details}</pre>
                           </details>
                         ) : null}
@@ -484,8 +484,8 @@ export function SessionContextPane({
                 </div>
               ) : (
                 <div className="command-monitor-empty-shell">
-                  <p className="command-monitor-empty">まだ background task はないよ。</p>
-                  <p className="command-monitor-empty-subtle">Copilot の sub-agent や background shell がある時だけここへ出るよ。</p>
+                  <p className="command-monitor-empty">No background tasks yet.</p>
+                  <p className="command-monitor-empty-subtle">Background agents and shells appear here when available.</p>
                 </div>
               )
             ) : null}
@@ -496,11 +496,11 @@ export function SessionContextPane({
                   <div className="command-monitor-card-head">
                     <div className="command-monitor-meta">
                       <span className={`live-run-step-status ${contextPaneProjection.reasoningToneClassName}`}>
-                        {isSelectedSessionRunning ? "実行中" : "保持中"}
+                        {isSelectedSessionRunning ? "Running" : "Retained"}
                       </span>
                       <span className="live-run-step-type">Reasoning</span>
                       <span className="command-monitor-source">
-                        {isSelectedSessionRunning ? "RUN LIVE" : "LAST RUN"}
+                        {isSelectedSessionRunning ? "Live run" : "Last run"}
                       </span>
                     </div>
                   </div>
@@ -510,7 +510,7 @@ export function SessionContextPane({
                 </div>
               ) : (
                 <div className="command-monitor-empty-shell">
-                  <p className="command-monitor-empty">まだ Reasoning はないよ。</p>
+                  <p className="command-monitor-empty">No reasoning yet.</p>
                 </div>
               )
             ) : null}
@@ -542,7 +542,7 @@ export function SessionContextPane({
                         <span className="messages-navigator-copy">
                           <span className="messages-navigator-preview">{entry.preview}</span>
                           {entry.isCollapsed ? (
-                            <span className="messages-navigator-state" aria-label="縮小中">縮小中</span>
+                            <span className="messages-navigator-state" aria-label="Collapsed">Collapsed</span>
                           ) : null}
                         </span>
                       </button>
@@ -570,7 +570,7 @@ export function SessionContextPane({
         <section className="provider-usage-shell" aria-label="Copilot usage">
           <div className="provider-usage-strip">
             <div className="provider-usage-strip-copy">
-              <span className="provider-usage-label">Copilot Usage</span>
+              <span className="provider-usage-label">Copilot usage</span>
               <strong>{selectedCopilotRemainingPercentLabel}</strong>
             </div>
             <span className="provider-usage-pill">

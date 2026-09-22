@@ -50,6 +50,8 @@ function createUnloadedRootChanges(roots: SessionFileRoot[]): GitRootChanges[] {
 
 const MAX_CONCURRENT_FILE_ROOT_CHANGES_REQUESTS = 2;
 
+type RepositoryDiscoveryState = "pending" | "ready" | "unavailable" | "error";
+
 type ChangesRefreshQueue = {
   revision: number;
   sessionId: string;
@@ -80,6 +82,9 @@ export function FileRootChangesPane({
   const diffRevisionRef = useRef(0);
   const [rootChanges, setRootChanges] = useState<GitRootChanges[]>([]);
   const [repositoriesLoading, setRepositoriesLoading] = useState(false);
+  const [repositoryDiscoveryState, setRepositoryDiscoveryState] = useState<RepositoryDiscoveryState>(() => (
+    api && sessionId && enabled ? "pending" : "unavailable"
+  ));
   const [repositoriesReady, setRepositoriesReady] = useState(false);
   const [repositoryMessage, setRepositoryMessage] = useState("");
   const [loadingKey, setLoadingKey] = useState("");
@@ -183,12 +188,21 @@ export function FileRootChangesPane({
     repositoriesReadyRef.current = false;
     repositoryDiscoveryFailedRef.current = false;
     setRepositoriesReady(false);
-    if (!api || !sessionId || !enabled || roots.length === 0) {
+    if (!api || !sessionId || !enabled) {
+      setRepositoryDiscoveryState("unavailable");
       setRepositoriesLoading(false);
       repositoriesReadyRef.current = true;
       setRepositoriesReady(true);
       return true;
     }
+    if (roots.length === 0) {
+      setRepositoryDiscoveryState("ready");
+      setRepositoriesLoading(false);
+      repositoriesReadyRef.current = true;
+      setRepositoriesReady(true);
+      return true;
+    }
+    setRepositoryDiscoveryState("pending");
     setRepositoriesLoading(true);
     try {
       const result = await api.listFileRootChangesRepositories({
@@ -200,6 +214,7 @@ export function FileRootChangesPane({
       }
       if (result.status === "failed") {
         repositoryDiscoveryFailedRef.current = true;
+        setRepositoryDiscoveryState("error");
         setRepositoryMessage(result.message);
         return false;
       }
@@ -217,10 +232,12 @@ export function FileRootChangesPane({
       repositoryRootsRef.current = nextRootChanges.map((rootChange) => rootChange.root);
       repositoryDiscoveryFailedRef.current = result.failures.length > 0;
       setRootChanges(nextRootChanges);
+      setRepositoryDiscoveryState("ready");
       return true;
     } catch (error) {
       if (repositoryRequestRevisionRef.current === revision) {
         repositoryDiscoveryFailedRef.current = true;
+        setRepositoryDiscoveryState("error");
         setRepositoryMessage(error instanceof Error ? error.message : "Git repositories could not be resolved.");
       }
       return false;
@@ -284,21 +301,6 @@ export function FileRootChangesPane({
     if (!api || !sessionId) {
       return;
     }
-    if (entry.kinds[scope] === "untracked") {
-      setMessage("");
-      try {
-        const resultMessage = await onOpenFile(
-          { sessionId, rootId, relativePath: entry.relativePath },
-          openInWindow,
-        );
-        if (resultMessage) {
-          setMessage(resultMessage);
-        }
-      } catch (error) {
-        setMessage(error instanceof Error ? error.message : "The file preview could not be opened.");
-      }
-      return;
-    }
     if (scope === "commit") {
       return;
     }
@@ -309,7 +311,12 @@ export function FileRootChangesPane({
     setLoadingKey(key);
     setMessage("");
     try {
-      const resultMessage = await onOpenDiff(request, openInWindow);
+      const resultMessage = entry.kinds[scope] === "untracked"
+        ? await onOpenFile(
+            { sessionId, rootId, relativePath: entry.relativePath },
+            openInWindow,
+          )
+        : await onOpenDiff(request, openInWindow);
       if (diffRevisionRef.current !== revision) {
         return;
       }
@@ -318,7 +325,11 @@ export function FileRootChangesPane({
       }
     } catch (error) {
       if (diffRevisionRef.current === revision) {
-        setMessage(error instanceof Error ? error.message : "Git diff failed.");
+        setMessage(error instanceof Error
+          ? error.message
+          : entry.kinds[scope] === "untracked"
+            ? "The file preview could not be opened."
+            : "Git diff failed.");
       }
     } finally {
       if (diffRevisionRef.current === revision) {
@@ -345,11 +356,15 @@ export function FileRootChangesPane({
             />
           ))}
         </div>
-      ) : repositoriesLoading ? (
+      ) : repositoriesLoading || repositoryDiscoveryState === "pending" ? (
         <div className="workspace-changes-discovery-loading" role="status" aria-live="polite">
           <span className="workspace-changes-spinner" aria-hidden="true" />
           <span className="visually-hidden">Discovering Git repositories</span>
         </div>
+      ) : repositoryDiscoveryState === "unavailable" ? (
+        <p className="workspace-changes-empty">Changes are not available.</p>
+      ) : repositoryDiscoveryState === "error" && !message && !repositoryMessage ? (
+        <p className="workspace-changes-message" role="alert">Changes could not be loaded.</p>
       ) : !message && !repositoryMessage ? (
         <p className="workspace-changes-empty">No Git repositories.</p>
       ) : null}

@@ -133,8 +133,7 @@
   background: rgba(255, 255, 255, 0.08);
   color: var(--ink);
   font-size: 0.72rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .session-action-dock-compact-badge.running {
@@ -836,8 +835,7 @@
 .command-monitor-source {
   color: var(--muted);
   font-size: 0.76rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .command-monitor-risk {
@@ -848,8 +846,7 @@
   background: rgba(255, 255, 255, 0.08);
   color: var(--ink);
   font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .command-monitor-risk.delete {
@@ -938,8 +935,7 @@
 .provider-usage-label {
   color: var(--muted);
   font-size: 0.74rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .provider-usage-pill {
@@ -1006,8 +1002,7 @@
 .provider-context-item span {
   color: var(--muted);
   font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .provider-context-item strong {
@@ -1430,7 +1425,7 @@
 }
 
 .message-role {
-  letter-spacing: 0.12em;
+  letter-spacing: 0.04em;
 }
 
 .message-voice {
@@ -1986,8 +1981,7 @@
   padding: 4px 9px;
   border-radius: 999px;
   font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .live-approval-badge {
@@ -2224,8 +2218,7 @@
   background: rgba(56, 189, 248, 0.16);
   color: #c8f1ff;
   font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .activity-monitor-badge.has-unread {
@@ -2303,8 +2296,7 @@
   padding: 3px 8px;
   border-radius: 999px;
   font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   background: rgba(15, 139, 141, 0.12);
   color: #0c6b6d;
 }
@@ -2411,8 +2403,7 @@
   padding: 3px 8px;
   border-radius: 999px;
   font-size: 0.74rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   background: rgba(32, 36, 55, 0.08);
   color: var(--muted);
 }
@@ -2495,8 +2486,7 @@
 
 .live-run-step-type {
   font-size: 0.76rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   color: var(--muted);
 }
 
@@ -2579,8 +2569,7 @@
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 0.7rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   background: rgba(32, 36, 55, 0.08);
   color: var(--muted);
 }
@@ -2744,8 +2733,7 @@
 
 .live-run-error-block strong {
   font-size: 0.82rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .live-run-error {
@@ -3056,8 +3044,7 @@
 .check-item span {
   color: var(--muted);
   font-size: 0.72rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .summary-list li {
@@ -3090,8 +3077,7 @@
   border: 1px solid rgba(32, 36, 55, 0.08);
   color: var(--muted);
   font-size: 0.68rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .artifact-operation-summary {
@@ -3203,6 +3189,8 @@
 .resume-banner-copy {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-right: auto;
 }
 
@@ -3212,7 +3200,7 @@
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.02em;
 }
 
 .resume-banner-badge.interrupted {
@@ -3422,8 +3410,7 @@
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .composer-attachment-menu-title {
@@ -3703,8 +3690,7 @@
   color: var(--muted);
   font-size: 0.66rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .composer-attachment-copy {
@@ -3909,7 +3895,6 @@
   color: var(--muted);
   font-size: 0.66rem;
   font-weight: 800;
-  text-transform: uppercase;
 }
 
 .composer-path-match.file .composer-path-match-kind {
@@ -4078,13 +4063,12 @@
 .composer-setting-note {
   color: var(--muted);
   font-size: 0.78rem;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.02em;
 }
 
 .composer-setting-field span {
   flex: 0 0 auto;
   white-space: nowrap;
-  text-transform: uppercase;
 }
 
 .session-approval-list {
@@ -4334,8 +4318,7 @@
 .audit-log-fold summary strong {
   color: var(--muted);
   font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .audit-log-fold summary::-webkit-details-marker {
@@ -4350,8 +4333,7 @@
 .audit-log-raw summary {
   color: var(--muted);
   font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .audit-log-section pre,
@@ -4414,8 +4396,7 @@
 .audit-log-operation-head span {
   color: var(--muted);
   font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .audit-log-operation-detail {
@@ -4455,4 +4436,13 @@
 
 .audit-log-raw summary::-webkit-details-marker {
   display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-page .pending-run-indicator .typing-dots span,
+  .session-page .concurrent-chat-loading-spinner,
+  .session-page .chat-skill-picker-spinner,
+  .session-page .glossary-pane-spinner {
+    animation: none;
+  }
 }

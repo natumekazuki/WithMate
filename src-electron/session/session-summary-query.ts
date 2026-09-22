@@ -40,10 +40,10 @@ function normalizeCursor(value: unknown): string | null {
     return null;
   }
   if (typeof value !== "string") {
-    throw new TypeError("Session summary cursor が不正です。");
+    throw new TypeError("Session summary cursor is invalid.");
   }
   if (value.length > SESSION_SUMMARY_CURSOR_MAX_LENGTH) {
-    throw new RangeError("Session summary cursor が長すぎます。");
+    throw new RangeError("Session summary cursor is too long.");
   }
   return value;
 }
@@ -53,15 +53,15 @@ export function normalizeSessionSummarySearchText(value: unknown): string {
     return "";
   }
   if (typeof value !== "string") {
-    throw new TypeError("Session summary search query が不正です。");
+    throw new TypeError("Session summary search query is invalid.");
   }
   if (value.length > SESSION_SUMMARY_RAW_QUERY_MAX_LENGTH) {
-    throw new RangeError("Session summary search query が長すぎます。");
+    throw new RangeError("Session summary search query is too long.");
   }
 
   const normalized = value.trim().toLocaleLowerCase();
   if (normalized.length > SESSION_SUMMARY_QUERY_MAX_LENGTH) {
-    throw new RangeError("Session summary search query は120文字以内で指定してね。");
+    throw new RangeError("Session summary search query must be 120 characters or fewer.");
   }
   return normalized;
 }
@@ -72,11 +72,11 @@ function parseLimit(value: unknown, scope: SessionSummaryPageScope): number {
     return defaultLimit;
   }
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-    throw new RangeError("Session summary page limit が不正です。");
+    throw new RangeError("Session summary page limit is invalid.");
   }
   const maxLimit = scope === "open" ? SESSION_SUMMARY_OPEN_ID_MAX : SESSION_SUMMARY_PAGE_MAX_LIMIT;
   if (value > maxLimit) {
-    throw new RangeError(`Session summary page limit は${maxLimit}件以内で指定してね。`);
+    throw new RangeError(`Session summary page limit must be at most ${maxLimit}.`);
   }
   return value;
 }
@@ -86,21 +86,21 @@ function parseSessionIds(value: unknown): string[] {
     return [];
   }
   if (!Array.isArray(value)) {
-    throw new TypeError("open Session ID list が不正です。");
+    throw new TypeError("Open Session ID list is invalid.");
   }
   if (value.length > SESSION_SUMMARY_OPEN_ID_MAX) {
-    throw new RangeError("open Session ID は100件ずつ取得してね。");
+    throw new RangeError("Open Session IDs must be fetched in batches of 100.");
   }
 
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const valueItem of value) {
     if (typeof valueItem !== "string") {
-      throw new TypeError("open Session ID が不正です。");
+      throw new TypeError("Open Session ID is invalid.");
     }
     const id = valueItem.trim();
     if (!id || id.length > SESSION_SUMMARY_ID_MAX_LENGTH) {
-      throw new RangeError("open Session ID が不正です。");
+      throw new RangeError("Open Session ID is invalid.");
     }
     if (!seen.has(id)) {
       seen.add(id);
@@ -120,7 +120,7 @@ export type ParsedSessionSummaryPageRequest = {
 
 export function parseSessionSummaryPageRequest(value: unknown): ParsedSessionSummaryPageRequest {
   if (value !== undefined && value !== null && !isRecord(value)) {
-    throw new TypeError("Session summary page request が不正です。");
+    throw new TypeError("Session summary page request is invalid.");
   }
   const candidate = isRecord(value) ? value : {};
   const scope = candidate.scope === undefined
@@ -129,7 +129,7 @@ export function parseSessionSummaryPageRequest(value: unknown): ParsedSessionSum
     ? candidate.scope as SessionSummaryPageScope
     : null;
   if (!scope) {
-    throw new TypeError("Session summary page scope が不正です。");
+    throw new TypeError("Session summary page scope is invalid.");
   }
 
   const cursor = normalizeCursor(candidate.cursor);
@@ -139,16 +139,16 @@ export function parseSessionSummaryPageRequest(value: unknown): ParsedSessionSum
 
   if (scope === "open") {
     if (cursor) {
-      throw new TypeError("open Session query は cursor を受け付けません。");
+      throw new TypeError("Open Session queries do not accept a cursor.");
     }
     if (searchText) {
-      throw new TypeError("open Session query は検索条件を受け付けません。");
+      throw new TypeError("Open Session queries do not accept search conditions.");
     }
     if (sessionIds.length > 0 && limit < sessionIds.length) {
-      throw new RangeError("open Session query のlimitは指定したID数以上にしてね。");
+      throw new RangeError("The Open Session query limit must be at least the number of requested IDs.");
     }
   } else if (sessionIds.length > 0) {
-    throw new TypeError("recent / pinned query に open Session ID は指定できません。");
+    throw new TypeError("Recent and pinned queries cannot specify Open Session IDs.");
   }
 
   return {
@@ -175,7 +175,7 @@ export function encodeSessionSummaryCursor(
   };
   const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   if (encoded.length > SESSION_SUMMARY_CURSOR_MAX_LENGTH) {
-    throw new RangeError("Session summary cursor を上限内に encode できません。");
+    throw new RangeError("Session summary cursor cannot be encoded within the length limit.");
   }
   return encoded;
 }
@@ -189,14 +189,14 @@ export function decodeSessionSummaryCursor(
     return null;
   }
   if (cursor.length > SESSION_SUMMARY_CURSOR_MAX_LENGTH) {
-    throw new RangeError("Session summary cursor が長すぎます。");
+    throw new RangeError("Session summary cursor is too long.");
   }
 
   let payload: unknown;
   try {
     payload = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
   } catch {
-    throw new TypeError("Session summary cursor を decode できません。");
+    throw new TypeError("Session summary cursor cannot be decoded.");
   }
 
   if (!isRecord(payload)
@@ -209,12 +209,12 @@ export function decodeSessionSummaryCursor(
     || payload.id.length > SESSION_SUMMARY_ID_MAX_LENGTH
     || typeof payload.query_fingerprint !== "string"
     || payload.query_fingerprint !== queryFingerprint(normalizedQuery)) {
-    throw new TypeError("Session summary cursor は現在の query と一致しません。");
+    throw new TypeError("Session summary cursor does not match the current query.");
   }
 
   const canonical = encodeSessionSummaryCursor(scope, payload.last_active_at, payload.id, normalizedQuery);
   if (canonical !== cursor) {
-    throw new TypeError("Session summary cursor の形式が不正です。");
+    throw new TypeError("Session summary cursor format is invalid.");
   }
 
   return { lastActiveAt: payload.last_active_at, id: payload.id };

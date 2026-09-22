@@ -29,7 +29,7 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
   );
   assert.match(
     stylesSource,
-    /\.composer-setting-field span\s*{\s*flex:\s*0 0 auto;\s*white-space:\s*nowrap;\s*text-transform:\s*uppercase;/,
+    /\.composer-setting-field span\s*{\s*flex:\s*0 0 auto;\s*white-space:\s*nowrap;/,
     "設定labelは折り返さない",
   );
   assert.match(

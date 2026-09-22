@@ -26,6 +26,6 @@ export function runSessionMonitorContextMenu(
     })
     .catch((error) => {
       console.error(error);
-      setFeedback(error instanceof Error ? error.message : "Session Monitorの操作に失敗しました。");
+      setFeedback(error instanceof Error ? error.message : "Could not complete session monitor action.");
     });
 }

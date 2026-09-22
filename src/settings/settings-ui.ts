@@ -6,66 +6,66 @@ import {
   type ResetAppDatabaseTarget,
 } from "../../src-shared/window/withmate-window-types.js";
 
-export const SETTINGS_SKILL_ROOT_LABEL = "Skill Root";
-export const SETTINGS_SKILL_ROOT_PLACEHOLDER = "skill folder の親ディレクトリを入力";
-export const SETTINGS_PROVIDER_FILE_SETTINGS_LABEL = "Provider File Settings";
-export const SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL = "Root Directory";
-export const SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER = "Provider 設定の root directory";
-export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL = "Skill Relative Path";
+export const SETTINGS_SKILL_ROOT_LABEL = "Skill root";
+export const SETTINGS_SKILL_ROOT_PLACEHOLDER = "Parent folder for skills";
+export const SETTINGS_PROVIDER_FILE_SETTINGS_LABEL = "Provider file settings";
+export const SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL = "Root directory";
+export const SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER = "Provider settings root directory";
+export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL = "Skill relative path";
 export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER = "skills";
-export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL = "Instruction Relative Path";
+export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL = "Instruction relative path";
 export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER = "AGENTS.md";
 export const SETTINGS_PROVIDER_FILE_SETTINGS_HELP =
-  "Provider ごとに skill folder と instruction file の基準 path を指定する。Root Directory が空欄の場合、skill は workspace 内の既定 directory だけを使う。";
+  "Set the base paths for this provider's skill folder and instruction file. If the root directory is empty, skills use the workspace default directory.";
 export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_HELP =
-  "Root Directory 配下の skill folder を相対パスで指定する。例: skills";
+  "Set the skill folder relative to the root directory. Example: skills";
 export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_HELP =
-  "Root Directory 配下の instruction file を相対パスで指定する。V5では同期実行せず、provider ごとの設定値として保持する。";
-export const SETTINGS_API_KEY_LABEL = "OpenAI API Key (Coding Agent)";
-export const SETTINGS_API_KEY_PLACEHOLDER = "Coding Agent 用 OpenAI API Key を入力";
+  "Set the instruction file relative to the root directory. This path is stored for the provider and is not synchronized in V5.";
+export const SETTINGS_API_KEY_LABEL = "OpenAI API key (coding agent)";
+export const SETTINGS_API_KEY_PLACEHOLDER = "Enter the OpenAI API key for the coding agent";
 export const SETTINGS_CODING_CREDENTIALS_HELP =
-  "Coding Agent が Character Stream を使うための OpenAI API Key を設定する。";
+  "Set the OpenAI API key used by the coding agent for Character Stream.";
 export const SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE =
-  "他 provider 対応は future scope として、いまは OpenAI 前提で扱う。";
+  "Other providers are future scope; the current setup assumes OpenAI.";
 export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
-  "初回リリース前のため、設定 schema の後方互換性は考慮しない。";
-export const SETTINGS_LAUNCH_AT_LOGIN_LABEL = "PC 起動時に WithMate をバックグラウンドで起動する";
-export const SETTINGS_SESSION_TURN_NOTIFICATION_LABEL = "Session のターン完了を Windows 通知で知らせる";
+  "Settings schema compatibility is not supported before the first release.";
+export const SETTINGS_LAUNCH_AT_LOGIN_LABEL = "Start WithMate in the background when the PC starts";
+export const SETTINGS_SESSION_TURN_NOTIFICATION_LABEL = "Show a Windows notification when a session turn finishes";
 export const SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL =
-  "Windows 通知に返答の冒頭を表示する";
-export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
-export const SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL = "送信時にチャット末尾へ移動する";
-export const SETTINGS_CHARACTER_DEFINITION_LABEL = "Character Definition Snapshot";
-export const SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL = "Character Affect Context";
-export const SETTINGS_CONVERSATION_TIMING_LABEL = "Conversation Timing";
-export const SETTINGS_TOOL_CALL_PRESENCE_LABEL = "Tool Call Presence";
+  "Show the start of the response in the Windows notification";
+export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "Close the action dock after sending";
+export const SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL = "Scroll to the latest message after sending";
+export const SETTINGS_CHARACTER_DEFINITION_LABEL = "Character definition snapshot";
+export const SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL = "Character affect context";
+export const SETTINGS_CONVERSATION_TIMING_LABEL = "Conversation timing";
+export const SETTINGS_TOOL_CALL_PRESENCE_LABEL = "Tool call presence";
 export const SETTINGS_MEMORY_FILE_QUOTA_LABEL = "Memory file quota";
 export const SETTINGS_MEMORY_FILE_QUOTA_HELP =
-  "Protected Object の全体容量上限。現在使用量が上限を超えている場合、新しい file append は失敗する。";
+  "Maximum total size for protected objects. New file appends fail when current usage exceeds this limit.";
 export const SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL = "Glossary proactive create limit";
 export const SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP =
-  "Agentが1 turnで自発登録できる最大件数。0は自発登録だけを無効にし、明示的な作成依頼には影響しない。";
-export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
+  "Maximum terms an agent can create proactively in one turn. 0 disables proactive creation but not explicit requests.";
+export const SETTINGS_RESET_DATABASE_LABEL = "Reset database";
 export const SETTINGS_RESET_DATABASE_HELP =
-  "Danger Zone: app settings などの DB 内容を初期化する。";
-export const SETTINGS_DELETE_OLD_SESSIONS_LABEL = "古い Session を削除";
+  "Danger zone: reset selected database content, including app settings.";
+export const SETTINGS_DELETE_OLD_SESSIONS_LABEL = "Delete old sessions";
 export const SETTINGS_DELETE_OLD_SESSIONS_HELP =
-  "指定日より前に最後に使われた Session を削除する。実行中の Session は削除しない。";
+  "Delete sessions last active before the selected date. Running sessions are kept.";
 export const SETTINGS_DIAGNOSTICS_LABEL = "Diagnostics";
-export const SETTINGS_OPEN_LOG_FOLDER_LABEL = "Open Logs";
-export const SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL = "Open Crash Dumps";
+export const SETTINGS_OPEN_LOG_FOLDER_LABEL = "Open logs";
+export const SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL = "Open crash dumps";
 export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarget, string> = {
-  sessions: "sessions",
-  auditLogs: "audit logs",
-  appSettings: "app settings",
-  modelCatalog: "model catalog",
-  projectMemory: "project memory",
+  sessions: "Sessions",
+  auditLogs: "Audit logs",
+  appSettings: "App settings",
+  modelCatalog: "Model catalog",
+  projectMemory: "Project memory",
 };
 
 export function describeResetDatabaseTargets(targets: readonly ResetAppDatabaseTarget[]): string {
   const normalized = normalizeResetAppDatabaseTargets(targets);
   if (normalized.length === 0) {
-    return "なし";
+    return "None";
   }
 
   return normalized.map((target) => SETTINGS_RESET_DATABASE_TARGET_LABELS[target]).join(" / ");
@@ -74,17 +74,17 @@ export function describeResetDatabaseTargets(targets: readonly ResetAppDatabaseT
 export function buildResetDatabaseConfirmMessage(targets: readonly ResetAppDatabaseTarget[]): string {
   const normalized = normalizeResetAppDatabaseTargets(targets);
   const lines = [
-    `次を初期化するよ: ${describeResetDatabaseTargets(normalized)}`,
-    "実行中の session がある間は初期化できないよ。",
+    `Reset the following: ${describeResetDatabaseTargets(normalized)}.`,
+    "Running sessions must finish before the reset can run.",
   ];
 
   if (areAllResetAppDatabaseTargetsSelected(normalized)) {
-    lines.splice(1, 0, "全対象を選んでいるので、DB ファイルと characters file body を再生成して schema も初期化するよ。");
+    lines.splice(1, 0, "All targets are selected. The database file, character file bodies, and schema will be recreated.");
   } else {
-    lines.splice(1, 0, "characters file body は保持されるよ。");
+    lines.splice(1, 0, "Character file bodies will be preserved.");
   }
 
-  lines.push("本当に続ける？");
+  lines.push("Continue?");
   return lines.join("\n\n");
 }
 
@@ -92,17 +92,17 @@ export function buildResetDatabaseSuccessMessage(targets: readonly ResetAppDatab
   const normalized = normalizeResetAppDatabaseTargets(targets);
   const targetSummary = describeResetDatabaseTargets(normalized);
   if (areAllResetAppDatabaseTargetsSelected(normalized)) {
-    return `DB と characters file body を再生成して ${targetSummary} を初期状態へ戻したよ。`;
+    return `Reset ${targetSummary}, including the database and character file bodies.`;
   }
 
-  return `${targetSummary} を初期状態へ戻したよ。characters file body は保持したよ。`;
+  return `Reset ${targetSummary}. Character file bodies were preserved.`;
 }
 
 export function buildDeleteOldSessionsConfirmMessage(cutoffDate: string): string {
   return [
-    `${cutoffDate} より前に最後に使われた Session を削除するよ。`,
-    "実行中の Session は削除せずに残すよ。",
-    "本当に続ける？",
+    `Delete sessions last active before ${cutoffDate}.`,
+    "Running sessions will be kept.",
+    "Continue?",
   ].join("\n\n");
 }
 
@@ -110,11 +110,14 @@ export function buildDeleteOldSessionsSuccessMessage(result: DeleteSessionsResul
   const deletedCount = result.deletedSessionIds.length;
   const skippedCount = result.skippedRunningSessionIds.length;
   if (deletedCount === 0 && skippedCount === 0) {
-    return "削除対象の古い Session はなかったよ。";
+    return "No sessions matched the cleanup date.";
   }
 
-  const skippedSuffix = skippedCount > 0 ? ` 実行中の ${skippedCount} 件は残したよ。` : "";
-  return `${deletedCount} 件の古い Session を削除したよ。${skippedSuffix}`.trim();
+  const deletedLabel = `${deletedCount} old session${deletedCount === 1 ? "" : "s"} deleted.`;
+  const skippedSuffix = skippedCount > 0
+    ? ` Kept ${skippedCount} running session${skippedCount === 1 ? "" : "s"}.`
+    : "";
+  return `${deletedLabel}${skippedSuffix}`.trim();
 }
 
 export { ALL_RESET_APP_DATABASE_TARGETS };

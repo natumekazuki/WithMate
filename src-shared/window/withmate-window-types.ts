@@ -100,7 +100,7 @@ export function parseSessionMonitorContextMenuRequest(value: unknown): SessionMo
 
 export function parseOpenSessionWindowIdsPageRequest(value: unknown): { cursor: string | null; limit: number } {
   if (value !== undefined && value !== null && (typeof value !== "object" || Array.isArray(value))) {
-    throw new TypeError("open Session Window ID page request が不正です。");
+    throw new TypeError("Invalid open Session Window ID page request.");
   }
   const candidate = value && typeof value === "object" && !Array.isArray(value)
     ? value as { cursor?: unknown; limit?: unknown }
@@ -117,7 +117,7 @@ export function parseOpenSessionWindowIdsPageRequest(value: unknown): { cursor: 
     || typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1
     || limit > OPEN_SESSION_WINDOW_IDS_PAGE_MAX
   ) {
-    throw new RangeError("open Session Window ID page request が不正です。");
+    throw new RangeError("Invalid open Session Window ID page request.");
   }
   return { cursor: typeof cursor === "string" ? cursor : null, limit };
 }
@@ -258,7 +258,7 @@ export function parseImageFilePickerPurpose(value: unknown): ImageFilePickerPurp
   if (value === "general" || value === "character-icon") {
     return value;
   }
-  throw new Error("画像選択の用途が不正です。");
+  throw new Error("Invalid image picker purpose.");
 }
 
 export const ALL_RESET_APP_DATABASE_TARGETS = [
@@ -323,7 +323,7 @@ export function resolveDeleteSessionsLastActiveBeforeCutoff(
 ): DeleteSessionsLastActiveBeforeCutoff {
   const cutoffDate = typeof request?.cutoffDate === "string" ? request.cutoffDate.trim() : "";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(cutoffDate)) {
-    throw new Error("削除基準日は YYYY-MM-DD 形式で指定してね。");
+    throw new Error("The deletion cutoff date must use YYYY-MM-DD format.");
   }
 
   const [yearText, monthText, dayText] = cutoffDate.split("-");
@@ -337,7 +337,7 @@ export function resolveDeleteSessionsLastActiveBeforeCutoff(
     cutoff.getMonth() !== month - 1 ||
     cutoff.getDate() !== day
   ) {
-    throw new Error("削除基準日を解釈できないよ。");
+    throw new Error("The deletion cutoff date could not be parsed.");
   }
 
   return {

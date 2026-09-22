@@ -50,7 +50,7 @@ export type FileRootGitHistoryPaneProps = {
   onRepositoryChange?: (repositoryId: string | null) => void;
 };
 
-const HISTORY_SCOPES = [["commit", "Changed Files"]] as const satisfies readonly [FileRootGitChangeScope, string][];
+const HISTORY_SCOPES = [["commit", "Changed files"]] as const satisfies readonly [FileRootGitChangeScope, string][];
 
 const HISTORY_REF_MARKERS = {
   head: "H",
@@ -93,6 +93,8 @@ type HistoryPageIdentity = {
   branch: string;
   cursor: string | null;
 };
+
+type HistoryRepositoryState = "pending" | "ready" | "unavailable" | "error";
 
 function directoryStateKey(rootId: string, scope: FileRootGitChangeScope, relativePath: string): string {
   return `${rootId}\u0000${scope}\u0000${relativePath}`;
@@ -352,7 +354,7 @@ function formatCommitDate(value: string): string {
   if (elapsedSeconds < 60 * 60 * 24 * 7) {
     return `${Math.floor(elapsedSeconds / (60 * 60 * 24))}d ago`;
   }
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+  return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
 function commitAuthor(commit: FileRootGitHistoryCommit): string {
@@ -408,7 +410,10 @@ export function FileRootGitHistoryPane({
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [commits, setCommits] = useState<FileRootGitHistoryCommit[]>([]);
   const [hasMore, setHasMore] = useState(false);
-  const [loadingRepositories, setLoadingRepositories] = useState(false);
+  const [loadingRepositories, setLoadingRepositories] = useState(() => Boolean(api && sessionId && enabled));
+  const [repositoryState, setRepositoryState] = useState<HistoryRepositoryState>(() => (
+    api && sessionId && enabled ? "pending" : "unavailable"
+  ));
   const [loadingCommits, setLoadingCommits] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [listMessage, setListMessage] = useState("");
@@ -598,18 +603,22 @@ export function FileRootGitHistoryPane({
     setRepositories([]);
     setLoadingRepositories(true);
     if (!api || !sessionId || !enabled) {
+      setRepositoryState("unavailable");
       setLoadingRepositories(false);
       return;
     }
+    setRepositoryState("pending");
     try {
       const result: FileRootGitHistoryRepositoriesResult = await api.listFileRootGitHistoryRepositories({ sessionId });
       if (generationRef.current !== generation || selectedRepositorySessionIdRef.current !== sessionId) {
         return;
       }
       if (result.status !== "ok") {
+        setRepositoryState("error");
         setListMessage(result.message);
         return;
       }
+      setRepositoryState("ready");
       setRepositories(result.repositories);
       const nextRepository = preserveSelection
         ? result.repositories.find((repository) => repository.repositoryId === previousRepositoryId
@@ -624,6 +633,7 @@ export function FileRootGitHistoryPane({
       chooseRepository(resolvedRepository, generation, nextBranch);
     } catch (error) {
       if (generationRef.current === generation) {
+        setRepositoryState("error");
         setListMessage(error instanceof Error ? error.message : "Git repositories could not be loaded.");
       }
     } finally {
@@ -1052,7 +1062,7 @@ export function FileRootGitHistoryPane({
       : `${selectedRepository?.repositoryId ?? ""}:commit:${selectedEntryPath}`
     : null;
   const canCompare = Boolean(api);
-  const isBusy = loadingRepositories || loadingCommits || loadingDetail || comparisonLoading || !!loadingDiffKey;
+  const isBusy = loadingRepositories || loadingCommits || loadingMore || loadingDetail || comparisonLoading || !!loadingDiffKey;
 
   return (
     <div className="file-history-pane" aria-busy={isBusy}>
@@ -1218,7 +1228,7 @@ export function FileRootGitHistoryPane({
                     disabled={!!loadingDiffKey}
                     onClick={(event) => void openComparisonDiff(null, event.ctrlKey || event.metaKey)}
                   >
-                    Open All Changes
+                    Open all changes
                   </button>
                 </div>
               </div>
@@ -1268,7 +1278,7 @@ export function FileRootGitHistoryPane({
                   disabled={loadingDetail || !!loadingDiffKey || !rootChange}
                   onClick={() => void openCommitDiff(null, false)}
                 >
-                  Open All Changes
+                  Open all changes
                 </button>
                 {canCompare ? (
                   <button
@@ -1327,11 +1337,15 @@ export function FileRootGitHistoryPane({
           tabIndex={0}
         >
           {listMessage ? <p className="file-history-message" role="alert">{listMessage}</p> : null}
-          {loadingRepositories || (loadingCommits && commits.length === 0) ? (
+          {loadingRepositories || repositoryState === "pending" || (loadingCommits && commits.length === 0) ? (
             <div className="workspace-changes-loading" role="status" aria-live="polite">
               <span className="workspace-changes-spinner" aria-hidden="true" />
               <span className="visually-hidden">Loading commit history</span>
             </div>
+          ) : repositoryState === "unavailable" ? (
+            <p className="file-history-empty">History is not available.</p>
+          ) : repositoryState === "error" && !listMessage ? (
+            <p className="file-history-message" role="alert">History could not be loaded.</p>
           ) : repositories.length === 0 && !listMessage ? (
             <p className="file-history-empty">No Git repositories.</p>
           ) : commits.length === 0 && !listMessage ? (
@@ -1344,7 +1358,7 @@ export function FileRootGitHistoryPane({
                   type="button"
                   onClick={() => void selectCommit(commit)}
                 >
-                  <span className="file-history-commit-subject" title={commit.subject}>{commit.subject || "(no subject)"}</span>
+                  <span className="file-history-commit-subject" title={commit.subject}>{commit.subject || "No subject"}</span>
                   <span className="file-history-commit-secondary">
                     <code>{commit.shortHash}</code>
                     <span>{commitAuthor(commit)}</span>
@@ -1376,8 +1390,12 @@ export function FileRootGitHistoryPane({
             ))
           )}
           {hasMore ? (
-            <div className="file-history-list-sentinel" ref={sentinelRef} aria-hidden="true">
-              {loadingMore ? <span className="workspace-changes-spinner" /> : null}
+            <div className="file-history-list-sentinel" ref={sentinelRef}>
+              {loadingMore ? (
+                <span className="workspace-changes-root-pending" role="status" aria-live="polite" aria-label="Loading more commits">
+                  <span className="workspace-changes-spinner" aria-hidden="true" />
+                </span>
+              ) : null}
             </div>
           ) : null}
         </div>

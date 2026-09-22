@@ -6,9 +6,16 @@ import { DiffViewer } from "../ui/DiffViewer.js";
 import { getWithMateApi, isDesktopRuntime } from "../app/renderer-withmate-api.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 
+type DiffPreviewLoadState = "loading" | "ready" | "unavailable" | "error";
+
 export default function DiffApp() {
   const desktopRuntime = isDesktopRuntime();
   const [diffPreview, setDiffPreview] = useState<DiffPreviewPayload | null>(null);
+  const [loadState, setLoadState] = useState<DiffPreviewLoadState>(() => {
+    const api = getWithMateApi();
+    return api && getDiffTokenFromLocation() ? "loading" : "unavailable";
+  });
+  const [loadMessage, setLoadMessage] = useState("");
   const diffThemeStyle = useMemo(
     () => (diffPreview ? buildCharacterThemeStyle(diffPreview.themeColors) : undefined),
     [diffPreview],
@@ -21,14 +28,24 @@ export default function DiffApp() {
 
     if (!withmateApi || !token) {
       setDiffPreview(null);
+      setLoadState("unavailable");
       return () => {
         active = false;
       };
     }
+    setLoadState("loading");
+    setLoadMessage("");
 
     void withmateApi.getDiffPreview(token).then((payload) => {
       if (active) {
         setDiffPreview(payload);
+        setLoadState("ready");
+      }
+    }).catch((error) => {
+      if (active) {
+        setDiffPreview(null);
+        setLoadState("error");
+        setLoadMessage(error instanceof Error ? error.message : "Diff could not be loaded.");
       }
     });
 
@@ -41,18 +58,40 @@ export default function DiffApp() {
     return (
       <div className="page-shell diff-page">
         <section className="panel empty-session-card rise-1">
-          <p>Diff Viewer は Electron から開いてね。</p>
+          <p>Diff viewer must be opened from the desktop app.</p>
         </section>
       </div>
     );
   }
 
-  if (!diffPreview) {
+  if (loadState === "loading") {
+    return (
+      <div className="page-shell diff-page">
+        <section className="panel empty-session-card rise-1" role="status" aria-live="polite">
+          <span className="workspace-changes-spinner" aria-hidden="true" />
+          <span className="visually-hidden">Loading diff</span>
+        </section>
+      </div>
+    );
+  }
+
+  if (loadState === "error") {
+    return (
+      <div className="page-shell diff-page">
+        <section className="panel empty-session-card rise-1" role="alert">
+          <h2>Diff could not be loaded</h2>
+          <p>{loadMessage || "Open the diff again from the originating Session."}</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (loadState === "unavailable" || !diffPreview) {
     return (
       <div className="page-shell diff-page">
         <section className="panel empty-session-card rise-1">
-          <h2>表示できる Diff がないよ</h2>
-          <p>もう一度 `Open In Window` から開き直してね。</p>
+          <h2>No diff is available</h2>
+          <p>Open the diff again from the originating Session.</p>
         </section>
       </div>
     );

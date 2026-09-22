@@ -168,21 +168,29 @@ export function ImageZoomControls({
       <button
         type="button"
         aria-label="Zoom image out"
+        title="Zoom image out"
         disabled={effectiveZoom <= IMAGE_ZOOM_MIN}
         onClick={() => setZoom(Math.max(IMAGE_ZOOM_MIN, effectiveZoom - IMAGE_ZOOM_STEP))}
       >−</button>
-      <button type="button" aria-label="Reset image zoom to 100%" onClick={() => setZoom(100)}>
+      <button
+        type="button"
+        aria-label="Reset image zoom to 100%"
+        title="Reset image zoom to 100%"
+        onClick={() => setZoom(100)}
+      >
         {effectiveZoom}%
       </button>
       <button
         type="button"
         aria-label="Zoom image in"
+        title="Zoom image in"
         disabled={effectiveZoom >= IMAGE_ZOOM_MAX}
         onClick={() => setZoom(Math.min(IMAGE_ZOOM_MAX, effectiveZoom + IMAGE_ZOOM_STEP))}
       >＋</button>
       <button
         type="button"
         aria-label={fitAriaLabel}
+        title={fitAriaLabel}
         className={zoom === "fit" ? "is-active" : ""}
         onClick={() => setZoom("fit")}
       >Fit</button>

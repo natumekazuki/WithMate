@@ -77,13 +77,24 @@ function createSession(provider: string, id?: string) {
 }
 
 describe("session-state custom agent selection", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "pin要求は空でないtrim済みSession IDとboolean値だけを受理する"
+  // oracle = { type = "contract", ref = "src-shared/session/session-state.ts#SetSessionPinnedRequest" }
+  // fault = "空IDやboolean以外のpin値が永続更新の入口を通過する"
+  // observable = "parseSetSessionPinnedRequestの戻り値と不正入力時の例外"
+  // observation_boundary = "public-boundary"
+  // scope = "Session pin入力検証"
+  // lifecycle = "permanent"
+  // distinction = "unknownなIPC入力の拒否はTypeScriptの型だけでは確認できない"
+  // @end-test-value
   it("pin requestはtrim済みIDとbooleanだけを受理する", () => {
     assert.deepEqual(
       parseSetSessionPinnedRequest({ sessionId: " session-1 ", isPinned: true }),
       { sessionId: "session-1", isPinned: true },
     );
-    assert.throws(() => parseSetSessionPinnedRequest({ sessionId: "", isPinned: true }), /正しくない/);
-    assert.throws(() => parseSetSessionPinnedRequest({ sessionId: "session-1", isPinned: "true" }), /正しくない/);
+    assert.throws(() => parseSetSessionPinnedRequest({ sessionId: "", isPinned: true }), /Invalid session pin request/);
+    assert.throws(() => parseSetSessionPinnedRequest({ sessionId: "session-1", isPinned: "true" }), /Invalid session pin request/);
   });
 
   it("新規 session は V5 schema version で作成し、V4 以前は閲覧専用として扱う", () => {

@@ -157,7 +157,7 @@ export async function handleMarkdownLinkContextMenu(
       message:
         error instanceof Error
           ? error.message
-          : "リンクのメニューを開けませんでした。",
+          : "Could not open the link menu.",
     };
   }
 }

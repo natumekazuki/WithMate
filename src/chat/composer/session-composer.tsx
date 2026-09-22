@@ -72,6 +72,8 @@ export type SessionComposerExpandedProps = {
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
+  pendingRunIndicatorTextVisible?: boolean;
+  pendingRunIndicatorAnnounce?: boolean;
   targetDock?: ReactNode;
   chatNotice?: string;
   composerBlocked: boolean;
@@ -157,6 +159,8 @@ export function SessionComposerExpanded({
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
+  pendingRunIndicatorTextVisible = true,
+  pendingRunIndicatorAnnounce = true,
   targetDock = null,
   chatNotice,
   composerBlocked,
@@ -379,7 +383,7 @@ export function SessionComposerExpanded({
                 aria-expanded={isAgentPickerOpen}
                 aria-haspopup="listbox"
                 aria-controls={isAgentPickerOpen ? "composer-agent-picker-list" : undefined}
-                aria-label="Copilot custom agent を選択"
+                aria-label="Select a Copilot custom agent"
                 title={selectedCustomAgentTitle}
               >
                 {selectedCustomAgentLabel}
@@ -453,6 +457,8 @@ export function SessionComposerExpanded({
               <PendingRunIndicator
                 announcement={pendingRunIndicatorAnnouncement}
                 text={pendingRunIndicatorText}
+                showText={pendingRunIndicatorTextVisible}
+                announce={pendingRunIndicatorAnnounce}
               />
             </div>
           ) : null}
@@ -480,7 +486,7 @@ export function SessionComposerExpanded({
                   type="button"
                   onClick={onJumpToBottom}
                 >
-                  末尾へ移動
+                  Jump to latest
                 </button>
               ) : null}
               {showMessageViewModeControls ? (
@@ -514,14 +520,14 @@ export function SessionComposerExpanded({
           ref={customAgentListRef}
           className="composer-path-match-list composer-skill-picker-list"
           role="listbox"
-          aria-label="Custom Agent 候補"
+          aria-label="Custom Agent options"
           aria-orientation="vertical"
           onKeyDown={(event) => {
             focusRovingItemByKey(event, { orientation: "vertical" });
           }}
         >
           {isCustomAgentListLoading ? (
-            <p className="composer-skill-empty">Custom Agent を読み込み中だよ。</p>
+            <p className="composer-skill-empty">Loading custom agents.</p>
           ) : customAgentItems.length > 0 ? (
             customAgentItems.map((item) => (
               <button
@@ -542,7 +548,7 @@ export function SessionComposerExpanded({
             ))
           ) : (
             <p className="composer-skill-empty">
-              使える custom agent がまだないよ。`~/.copilot/agents` か workspace の `.github/agents` を確認してね。
+              No custom agents are available yet. Check `~/.copilot/agents` or `.github/agents` in the workspace.
             </p>
           )}
         </div>
@@ -568,6 +574,8 @@ export function SessionComposerExpanded({
                 type="button"
                 onClick={() => onRemoveAttachment(item.removeTargets)}
                 disabled={isRunning || composerBlocked || composerFrozen}
+                aria-label={`Remove ${item.primaryLabel} attachment`}
+                title={`Remove ${item.primaryLabel} attachment`}
               >
                 ×
               </button>
@@ -720,7 +728,7 @@ export function SessionComposerExpanded({
               value={selectedReasoningEffort}
               onChange={(event) => onChangeReasoningEffort(event.target.value)}
               disabled={isRunning || composerBlocked}
-              aria-label="推論の深さ"
+              aria-label="Reasoning depth"
             >
               {reasoningOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -756,7 +764,7 @@ export function SessionComposerExpanded({
           disabled={isRunning || displayedIsSendDisabled || composerFrozen}
           title={
             isRunning
-              ? "実行中は送信できません"
+              ? "Cannot send while a run is active"
               : appendShortcutLabel(
                   displayedSendButtonTitle,
                   SHORTCUT_COMMAND_IDS.composerSubmit,

@@ -174,7 +174,7 @@ test("Auxiliary作成は準備中のprovider操作を塞がずcommit前のselect
     await provider.runExclusive(async () => { providerOperationFinished = true; });
     assert.equal(providerOperationFinished, true);
     releasePreparation();
-    await assert.rejects(create, /runtime 選択が作成中に変わった/);
+    await assert.rejects(create, /Auxiliary Session creation was canceled because its runtime selection changed during creation/);
     assert.deepEqual(oldStorage.listAuxiliarySessions(parentSession.id), []);
 
     resolverCalls = 0;
@@ -189,7 +189,7 @@ test("Auxiliary作成は準備中のprovider操作を塞がずcommit前のselect
     });
     await assert.rejects(
       explicitService.createAuxiliarySession({ parentSessionId: parentSession.id, provider: "codex", clientRequestId: "catalog-boundary" }),
-      /runtime 選択が作成中に変わった/,
+      /Auxiliary Session creation was canceled because its runtime selection changed during creation/,
     );
     assert.deepEqual(oldStorage.listAuxiliarySessions(parentSession.id), []);
   } finally {
@@ -233,7 +233,7 @@ test("Auxiliary作成の保存前再検証失敗はfailedで終端する", async
       runtimeSelection: "latest-session",
       clientRequestId: "precommit-failure",
       creationContext: context,
-    }), /runtime 選択が作成中に変わった/);
+    }), /Auxiliary Session creation was canceled because its runtime selection changed during creation/);
     assert.equal(stateChanges.includes("failed"), true);
     assert.equal(stateChanges.includes("unknown"), false);
     assert.deepEqual(storage.listAuxiliarySessions(currentParent.id), []);
@@ -398,7 +398,7 @@ test("Auxiliary作成はcancelの永続化lookup中に割り込んだcreateと�
     const createError = create.catch((error) => error);
     releaseLookup();
     assert.deepEqual(await cancel, { status: "cancelled" });
-    assert.match(String(await createError), /取消結果を確認中|取り消し済み/);
+    assert.match(String(await createError), /Auxiliary Session creation cancellation is still being confirmed/);
     assert.equal(stateChanges.includes("cancelled"), true);
     assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 0);
     for (const releaseOwner of [false, true]) {
@@ -417,7 +417,7 @@ test("Auxiliary作成はcancelの永続化lookup中に割り込んだcreateと�
       rejectLookup(new Error("lookup unavailable"));
       assert.equal((await cancelling).status, releaseOwner ? "expired" : "unknown");
       assert.equal((await service.getAuxiliaryCreation(recoveryRequest)).status, releaseOwner ? "expired" : "cancelled");
-      await assert.rejects(service.createAuxiliarySession(recoveryRequest), /creation context が期限切れ/);
+      await assert.rejects(service.createAuxiliarySession(recoveryRequest), /The Auxiliary Session creation context has expired/);
       assert.equal(originalList(currentParent.id).length, 0);
     }
   } finally {
@@ -484,9 +484,9 @@ test("Auxiliary作成のcancel先着は未作成要求をtombstoneで拒否す�
     assert.equal(stateChanges.every((change) => change.parentSessionId === request.parentSessionId), true);
     assert.equal(stateChanges.every((change) => change.generationId === context.generationId), true);
     releaseParent();
-    await assert.rejects(creation, /取り消した/);
+    await assert.rejects(creation, /Auxiliary Session creation was canceled/);
     assert.equal((service as unknown as { creationRecords: Map<string, unknown> }).creationRecords.size, 0);
-    await assert.rejects(service.createAuxiliarySession(request), /creation context が期限切れ/);
+    await assert.rejects(service.createAuxiliarySession(request), /The Auxiliary Session creation context has expired/);
     assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 0);
   } finally {
     storage.close();
@@ -549,8 +549,8 @@ test("Auxiliary作成はpersisted lookup中のcancelと並行createを安全に�
     });
     assert.equal(cancelled.status, "cancelled");
     releaseLookup();
-    await assert.rejects(first, /creation context が期限切れ/);
-    await assert.rejects(second, /creation context が期限切れ/);
+    await assert.rejects(first, /The Auxiliary Session creation context has expired/);
+    await assert.rejects(second, /The Auxiliary Session creation context has expired/);
     assert.equal((await originalList(currentParent.id)).length, 0);
   } finally {
     storage.close();
@@ -658,7 +658,7 @@ test("Auxiliary作成は同一request IDの異なる入力を拒否する", asyn
     assert.equal((await first).id, (await second).id);
     await assert.rejects(
       service.createAuxiliarySession({ ...request, provider: "other" }),
-      /異なる入力/,
+      /same Auxiliary creation request ID cannot be used with different input/,
     );
     assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 1);
   } finally {
@@ -720,7 +720,7 @@ test("Auxiliary作成のowner解放は旧generationを失効させる", async ()
     await selectionReached;
     service.releaseAuxiliaryCreationOwner(currentParent.id);
     releaseSelection();
-    await assert.rejects(creation, /作成を取り消したよ/);
+    await assert.rejects(creation, /Auxiliary Session creation was canceled/);
     assert.deepEqual(stateChanges, ["preparing", "expired"]);
     assert.notEqual((await service.getAuxiliaryCreationContext(currentParent.id)).generationId, resolvedContext.generationId);
     assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 0);
@@ -826,7 +826,7 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
     currentStorage = second;
     first.close();
     releaseInitialParent();
-    await assert.rejects(create, /保存先が作成中に切り替わった/);
+    await assert.rejects(create, /Auxiliary Session creation was canceled because its storage changed during creation/);
     assert.deepEqual(second.listAuxiliarySessions(currentParent.id), []);
 
     currentStorage = second;
@@ -856,7 +856,7 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
     currentStorage = second;
     third.close();
     releaseCommitParent();
-    await assert.rejects(commitCreate, /保存先が作成中に切り替わった/);
+    await assert.rejects(commitCreate, /Auxiliary Session creation was canceled because its storage changed during creation/);
     assert.deepEqual(second.listAuxiliarySessions(currentParent.id), []);
 
     const incarnationBefore = parent({ incarnationId: "incarnation-before", characterId: "stable-character", character: "Stable", characterRuntimeSnapshot: character("stable-character", "Stable") });
@@ -885,7 +885,7 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
     await incarnationStarted;
     currentParent = parent({ incarnationId: "incarnation-after", characterId: "stable-character", character: "Stable", characterRuntimeSnapshot: character("stable-character", "Stable") });
     releaseIncarnation();
-    await assert.rejects(incarnationCreate, /親セッションが作成中に置き換わった/);
+    await assert.rejects(incarnationCreate, /Auxiliary Session creation was canceled because its parent session changed during creation/);
 
     const characterBefore = parent({ incarnationId: "character-incarnation", characterId: "character-before", character: "Before", characterRuntimeSnapshot: character("character-before", "Before") });
     currentParent = characterBefore;
@@ -913,7 +913,7 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
     await characterStarted;
     currentParent = parent({ incarnationId: "character-incarnation", characterId: "character-after", character: "After", characterRuntimeSnapshot: character("character-after", "After") });
     releaseCharacter();
-    await assert.rejects(characterCreate, /親セッションが作成中に置き換わった/);
+    await assert.rejects(characterCreate, /Auxiliary Session creation was canceled because its parent session changed during creation/);
 
     currentParent = parent({ incarnationId: "active-character-incarnation", characterId: "main-character", character: "Main", characterRuntimeSnapshot: character("main-character", "Main") });
     let characterIsActive = true;
@@ -957,7 +957,7 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
     await characterSelectionStarted;
     characterIsActive = false;
     releaseCharacterSelection();
-    await assert.rejects(activeCharacterCreate, /Character が作成中に利用できなくなった/);
+    await assert.rejects(activeCharacterCreate, /Auxiliary Session creation was canceled because its Character became unavailable/);
     assert.deepEqual(second.listAuxiliarySessions(currentParent.id), []);
   } finally {
     first.close();
@@ -1098,7 +1098,7 @@ test("Auxiliaryの取消レコードは回収し、遅延要求を拒否して�
       }
       assert.equal(records.size, 1);
       assert.equal((await service.getAuxiliaryCreation(request)).status, "expired");
-      await assert.rejects(service.createAuxiliarySession(request), /creation context が期限切れ/);
+      await assert.rejects(service.createAuxiliarySession(request), /The Auxiliary Session creation context has expired/);
       assert.equal((await service.getAuxiliaryCreation(admittedRequest)).status, "preparing");
     }
     releaseParent();

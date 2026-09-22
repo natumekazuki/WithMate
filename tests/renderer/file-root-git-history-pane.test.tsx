@@ -968,7 +968,7 @@ test("History detail はref種別、commit metadata、changed file tree、file d
     assert.equal(fileDiffRequest.relativePath, "src/example.ts");
     assert.equal(fileDiffRequest.commitId, targetCommit.id);
     const openChanges = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "Open All Changes");
+      .find((button) => button.textContent === "Open all changes");
     assert.ok(openChanges);
     await act(async () => openChanges.click());
     await flush();
@@ -1140,7 +1140,7 @@ test("History Compareはentryとtoolbarから起動し、固定comparisonをdeta
     assert.equal(resultHeader?.dataset.targetCommitId, "b".repeat(40));
     assert.match(resultHeader?.textContent ?? "", /Direct comparison/);
     const openAllChanges = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "Open All Changes");
+      .find((button) => button.textContent === "Open all changes");
     assert.ok(openAllChanges);
     await act(async () => openAllChanges.click());
     await flush();

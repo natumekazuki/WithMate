@@ -33,7 +33,7 @@ export function createWindowApi(
         ),
       );
       if (!sessionIds)
-        throw new Error("Session Window restore set response が不正です。");
+        throw new Error("Invalid Session Window restore set response.");
       return sessionIds;
     },
     async restoreSessionWindows() {
@@ -43,7 +43,7 @@ export function createWindowApi(
         ),
       );
       if (!result)
-        throw new Error("Session Window restore result が不正です。");
+        throw new Error("Invalid Session Window restore result.");
       return result;
     },
     openHomeWindow() {

@@ -104,7 +104,7 @@ export function resolveProtocolRelativeExternalFallback(target: string): string 
 export function resolveOpenPathTarget(target: string, options: OpenPathOptions = {}): ResolvedOpenPathTarget {
   const trimmed = target.trim();
   if (!trimmed) {
-    throw new Error("開く対象が空だよ。");
+    throw new Error("The target to open cannot be empty.");
   }
 
   const normalizedTarget = stripLocalPathFragment(trimmed).trim();
@@ -156,7 +156,7 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
   }
 
   if (!normalizedTarget) {
-    throw new Error("開く対象の path が空だよ。");
+    throw new Error("The target path to open cannot be empty.");
   }
 
   const localTarget = normalizeLeadingSlashWindowsAbsolutePath(decodedTarget);

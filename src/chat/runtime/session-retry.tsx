@@ -3,6 +3,7 @@ export type SessionRetryBannerProps = {
     kind: "interrupted" | "failed" | "canceled";
     badge: string;
     title: string;
+    titleVisible?: boolean;
     lastRequestText: string;
   } | null;
   isRetryActionDisabled: boolean;
@@ -26,21 +27,27 @@ export function SessionRetryBanner({
 }: SessionRetryBannerProps) {
   if (!retryBanner) return null;
   return (
-    <section className={`resume-banner retry-banner ${retryBanner.kind}`} aria-label="完了できなかった依頼の操作">
+    <section className={`resume-banner retry-banner ${retryBanner.kind}`} aria-label="Actions for an unfinished request">
       <div className="resume-banner-head"><div className="resume-banner-copy">
         <span className={`resume-banner-badge ${retryBanner.kind}`} title={retryBanner.title}>
-          {retryBanner.badge}<span className="sr-only">: {retryBanner.title}</span>
+          {retryBanner.badge}
+          {retryBanner.titleVisible === false
+            ? <span className="sr-only">: {retryBanner.title}</span>
+            : null}
         </span>
+        {retryBanner.titleVisible !== false
+          ? <span className="resume-banner-title">{retryBanner.title}</span>
+          : null}
       </div></div>
       <div className="resume-banner-actions">
-        <button type="button" onClick={onResendLastMessage} disabled={isRetryActionDisabled}>再送</button>
-        <button className="drawer-toggle secondary" type="button" onClick={onEditLastMessage} disabled={isRetryEditDisabled}>編集</button>
+        <button type="button" onClick={onResendLastMessage} disabled={isRetryActionDisabled}>Resend</button>
+        <button className="drawer-toggle secondary" type="button" onClick={onEditLastMessage} disabled={isRetryEditDisabled}>Edit</button>
       </div>
       {isRetryDraftReplacePending ? <div className="resume-banner-conflict">
-        <p>今の下書きは残しています。</p>
+        <p>Your current draft is preserved.</p>
         <div className="resume-banner-conflict-actions">
-          <button type="button" onClick={onConfirmRetryDraftReplace} disabled={isRetryEditDisabled}>前回の依頼で置き換える</button>
-          <button className="drawer-toggle secondary" type="button" onClick={onCancelRetryDraftReplace}>今の下書きを続ける</button>
+          <button type="button" onClick={onConfirmRetryDraftReplace} disabled={isRetryEditDisabled}>Replace with the previous request</button>
+          <button className="drawer-toggle secondary" type="button" onClick={onCancelRetryDraftReplace}>Keep the current draft</button>
         </div>
       </div> : null}
     </section>

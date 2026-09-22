@@ -8,11 +8,11 @@ const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 export function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
   switch (kind) {
     case "add":
-      return `${filePath} を新規作成した`;
+      return `${filePath} created`;
     case "delete":
-      return `${filePath} を削除した`;
+      return `${filePath} deleted`;
     default:
-      return `${filePath} を更新した`;
+      return `${filePath} updated`;
   }
 }
 

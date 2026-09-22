@@ -15,6 +15,9 @@ export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
   auxiliaryDataState?: HomeMonitorAuxiliaryDataState;
+  sessionWindowsDataState?: "loading" | "loaded" | "error";
+  runningEmptyMessage?: string;
+  nonRunningEmptyMessage?: string;
   feedback?: string;
   onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowContextMenu: (
@@ -34,15 +37,15 @@ function getAuxiliaryStatus(summary: HomeMonitorEntry["auxiliarySessions"][numbe
   label: string;
 } {
   if (summary.runState === "running") {
-    return { kind: "running", label: "実行中" };
+    return { kind: "running", label: "Running" };
   }
   if (summary.runState === "error") {
-    return { kind: "error", label: "エラー" };
+    return { kind: "error", label: "Error" };
   }
   if (summary.status === "closed") {
-    return { kind: "closed", label: "終了" };
+    return { kind: "closed", label: "Closed" };
   }
-  return { kind: "neutral", label: "待機" };
+  return { kind: "neutral", label: "Idle" };
 }
 
 function MonitorStatusIcon({
@@ -55,7 +58,11 @@ function MonitorStatusIcon({
   count?: number;
 }) {
   return (
-    <span className={`home-monitor-status-icon ${kind}`} aria-label={count === undefined ? label : `${label} ${count}件`}>
+    <span
+      className={`home-monitor-status-icon ${kind}`}
+      role="img"
+      aria-label={count === undefined ? label : `${label}: ${count}`}
+    >
       <span className="home-monitor-status-icon-mark" aria-hidden="true" />
       {count === undefined ? null : <span className="home-monitor-status-icon-count">: {count}</span>}
     </span>
@@ -65,17 +72,17 @@ function MonitorStatusIcon({
 function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
   const summaries = entry.auxiliarySessions;
   const groups = [
-    { kind: "running" as const, label: "実行中" },
-    { kind: "error" as const, label: "エラー" },
-    { kind: "neutral" as const, label: "待機" },
-    { kind: "closed" as const, label: "終了" },
+    { kind: "running" as const, label: "Running" },
+    { kind: "error" as const, label: "Error" },
+    { kind: "neutral" as const, label: "Idle" },
+    { kind: "closed" as const, label: "Closed" },
   ].map((group) => ({
     ...group,
     count: summaries.filter((summary) => getAuxiliaryStatus(summary).kind === group.kind).length,
   })).filter((group) => group.count > 0);
 
   return (
-    <span className="home-monitor-status-cluster home-monitor-auxiliary-status" aria-label="Auxiliaryの状態">
+    <span className="home-monitor-status-cluster home-monitor-auxiliary-status" aria-label="Auxiliary status">
       <span className="home-monitor-status-label">Aux</span>
       {groups.map((group) => (
         <MonitorStatusIcon
@@ -93,6 +100,9 @@ export function HomeMonitorContent({
   runningEntries,
   nonRunningEntries,
   auxiliaryDataState = "ready",
+  sessionWindowsDataState = "loaded",
+  runningEmptyMessage = "No running sessions.",
+  nonRunningEmptyMessage = "No stopped or completed sessions.",
   feedback = "",
   onOpenSession,
   onShowContextMenu,
@@ -159,7 +169,7 @@ export function HomeMonitorContent({
             <button
               className="home-monitor-disclosure"
               type="button"
-              aria-label={`${title} のAuxiliary一覧を${isExpanded ? "閉じる" : "開く"}`}
+              aria-label={`${isExpanded ? "Hide" : "Show"} Auxiliary sessions for ${title}`}
               aria-expanded={isExpanded}
               onClick={() => toggleEntry(entry)}
             >
@@ -174,7 +184,7 @@ export function HomeMonitorContent({
             onClick={openParent}
             onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
             aria-haspopup="menu"
-            aria-label={`Sessionを開く: ${title}`}
+            aria-label={`Open session: ${title}`}
           >
             <CharacterAvatar
               character={{ name: entry.session.character, iconPath: entry.session.characterIconPath }}
@@ -185,7 +195,7 @@ export function HomeMonitorContent({
           </button>
         </div>
         <div className="home-monitor-summary-row">
-          <span className="home-monitor-status-cluster" aria-label={`Mainの状態: ${entry.mainState.label}`}>
+          <span className="home-monitor-status-cluster" aria-label={`Main status: ${entry.mainState.label}`}>
             <span className="home-monitor-status-label">Main</span>
             <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
           </span>
@@ -197,8 +207,8 @@ export function HomeMonitorContent({
           ) : null}
         </div>
         {isExpanded ? (
-          <div className="home-monitor-auxiliary-list" aria-label={`${title} のAuxiliary一覧`}>
-            {auxiliarySessions.map((summary) => {
+          <div className="home-monitor-auxiliary-list" aria-label={`Auxiliary sessions for ${title}`}>
+            {auxiliarySessions.map((summary, index) => {
               const status = getAuxiliaryStatus(summary);
               const preview = summary.preview?.trim() ?? "";
               const openAuxiliary = () => {
@@ -210,7 +220,7 @@ export function HomeMonitorContent({
                   className="home-monitor-auxiliary-row"
                   type="button"
                   onClick={openAuxiliary}
-                  aria-label={`Auxiliaryを開く: ${preview}`}
+                  aria-label={preview ? `Open Auxiliary: ${preview}` : `Open Auxiliary ${index + 1}`}
                 >
                   <CharacterAvatar
                     character={{ name: "", iconPath: summary.characterIconPath ?? "" }}
@@ -229,15 +239,23 @@ export function HomeMonitorContent({
   });
 
   const statusFeedback = feedback || (
-    auxiliaryDataState === "loading"
-      ? "Auxiliaryを確認中…"
-      : auxiliaryDataState === "error"
-        ? "Auxiliaryの読み込みに失敗したよ。"
-        : ""
+    sessionWindowsDataState === "loading"
+      ? "Loading open sessions…"
+      : sessionWindowsDataState === "error"
+        ? "Could not load open sessions."
+        : auxiliaryDataState === "loading"
+          ? "Loading Auxiliary sessions…"
+          : auxiliaryDataState === "error"
+            ? "Could not load Auxiliary sessions."
+            : ""
   );
+  const showEmptyState = sessionWindowsDataState !== "loading" && sessionWindowsDataState !== "error";
 
   return (
-    <div className="home-monitor-body">
+    <div
+      className="home-monitor-body"
+      aria-busy={sessionWindowsDataState === "loading" || auxiliaryDataState === "loading"}
+    >
       {statusFeedback ? (
         <p className="settings-feedback" role="status" aria-live="polite">
           {statusFeedback}
@@ -245,21 +263,29 @@ export function HomeMonitorContent({
       ) : null}
       <section className="home-monitor-section" aria-labelledby="home-monitor-running">
         <div className="home-monitor-section-head">
-          <h3 id="home-monitor-running">実行中</h3>
+          <h3 id="home-monitor-running">Running</h3>
           <span className="home-monitor-count">{runningEntries.length}</span>
         </div>
         <div className="home-monitor-list">
-          {runningEntries.length > 0 ? renderMonitorEntries(runningEntries) : null}
+          {runningEntries.length > 0
+            ? renderMonitorEntries(runningEntries)
+            : showEmptyState
+              ? <p className="home-monitor-empty">{runningEmptyMessage}</p>
+              : null}
         </div>
       </section>
 
       <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
         <div className="home-monitor-section-head">
-          <h3 id="home-monitor-inactive">停止・完了</h3>
+          <h3 id="home-monitor-inactive">Stopped or completed</h3>
           <span className="home-monitor-count">{nonRunningEntries.length}</span>
         </div>
         <div className="home-monitor-list">
-          {nonRunningEntries.length > 0 ? renderMonitorEntries(nonRunningEntries) : null}
+          {nonRunningEntries.length > 0
+            ? renderMonitorEntries(nonRunningEntries)
+            : showEmptyState
+              ? <p className="home-monitor-empty">{nonRunningEmptyMessage}</p>
+              : null}
         </div>
       </section>
     </div>

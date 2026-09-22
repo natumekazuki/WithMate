@@ -104,11 +104,11 @@ type WorkerMessage =
 function parseWorkerMessage(line: string): WorkerMessage {
   const value: unknown = JSON.parse(line);
   if (!value || typeof value !== "object" || !("type" in value)) {
-    throw new Error("directory worker の応答形式が不正だよ。");
+    throw new Error("The directory listing response is invalid.");
   }
   if (value.type === "ready" && "device" in value && "inode" in value) {
     if (typeof value.device !== "number" || typeof value.inode !== "number") {
-      throw new Error("directory worker の identity が不正だよ。");
+      throw new Error("The directory listing identity is invalid.");
     }
     return { type: "ready", device: value.device, inode: value.inode };
   }
@@ -121,7 +121,7 @@ function parseWorkerMessage(line: string): WorkerMessage {
   ) {
     const entries = value.entries.map((entry): IdentityBoundDirectorySnapshot["entries"][number] => {
       if (!entry || typeof entry !== "object" || !("name" in entry) || !("kind" in entry)) {
-        throw new Error("directory worker の entry が不正だよ。");
+        throw new Error("The directory listing entry is invalid.");
       }
       if (
         typeof entry.name !== "string" ||
@@ -131,7 +131,7 @@ function parseWorkerMessage(line: string): WorkerMessage {
         !("modifiedAt" in entry) ||
         (entry.modifiedAt !== null && typeof entry.modifiedAt !== "string")
       ) {
-        throw new Error("directory worker の entry が不正だよ。");
+        throw new Error("The directory listing entry is invalid.");
       }
       return {
         name: entry.name,
@@ -142,7 +142,7 @@ function parseWorkerMessage(line: string): WorkerMessage {
     });
     return { type: "result", entries, maxConcurrentStats: value.maxConcurrentStats };
   }
-  throw new Error("directory worker の応答形式が不正だよ。");
+  throw new Error("The directory listing response is invalid.");
 }
 
 export function listIdentityBoundDirectory(
@@ -170,7 +170,7 @@ export function listIdentityBoundDirectory(
     let terminalError: Error | null = null;
     const timeoutMs = options.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
     const timeout = setTimeout(() => {
-      terminate(new Error(`directory worker が ${timeoutMs}ms 以内に完了しなかったよ。`));
+      terminate(new Error(`The directory listing did not finish within ${timeoutMs} ms.`));
     }, timeoutMs);
 
     const settle = (error: Error | null, snapshot?: IdentityBoundDirectorySnapshot) => {
@@ -259,11 +259,11 @@ export function listIdentityBoundDirectory(
         return;
       }
       if (code !== 0) {
-        settle(new Error(stderr.trim() || `directory worker が code ${code ?? "unknown"} で終了したよ。`));
+        settle(new Error(stderr.trim() || `The directory listing exited with code ${code ?? "unknown"}.`));
         return;
       }
       if (!identity || !entries || maxConcurrentStats === null) {
-        settle(new Error("directory worker の応答が途中で終了したよ。"));
+        settle(new Error("The directory listing response ended unexpectedly."));
         return;
       }
       settle(null, { ...identity, entries, maxConcurrentStats });

@@ -103,7 +103,7 @@ export class MainQueryService {
   async listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {
     const session = await this.getSessionSummary(sessionId);
     if (!session) {
-      throw new Error("対象セッションが見つからないよ。");
+      throw new Error("The session could not be found.");
     }
 
     return this.listWorkspaceSkills(session.provider, session.workspacePath);
@@ -118,7 +118,7 @@ export class MainQueryService {
   async listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]> {
     const session = await this.getSessionSummary(sessionId);
     if (!session) {
-      throw new Error("対象セッションが見つからないよ。");
+      throw new Error("The session could not be found.");
     }
 
     return this.listWorkspaceCustomAgents(session.provider, session.workspacePath);
@@ -153,7 +153,7 @@ export class MainQueryService {
 
     const session = await this.getSessionSummary(sessionId);
     if (!session) {
-      throw new Error("対象セッションが見つからないよ。");
+      throw new Error("The session could not be found.");
     }
 
     return this.deps.resolveComposerPreview(session, userMessage);
@@ -162,7 +162,7 @@ export class MainQueryService {
   async openSessionTerminal(sessionId: string): Promise<void> {
     const session = await this.getSessionSummary(sessionId);
     if (!session) {
-      throw new Error("対象セッションが見つからないよ。");
+      throw new Error("The session could not be found.");
     }
 
     await this.openTerminalAtPath(session.workspacePath);

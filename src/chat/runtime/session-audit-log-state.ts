@@ -15,7 +15,8 @@ type SessionOwnedAuditLogs = {
   nextCursor: number | null;
   hasMore: boolean;
   total: number;
-  loading: boolean;
+  refreshing: boolean;
+  loadingMore: boolean;
   errorMessage: string | null;
 };
 
@@ -144,7 +145,8 @@ function createEmptyAuditLogsState(ownerSessionId: string | null, cacheKey: stri
     nextCursor: null,
     hasMore: false,
     total: 0,
-    loading: false,
+    refreshing: false,
+    loadingMore: false,
     errorMessage: null,
   };
 }
@@ -165,6 +167,7 @@ export function useSessionAuditLogs({
   const [auditLogDetails, setAuditLogDetails] = useState<Record<number, AuditLogDetailLoadState>>({});
   const [auditLogOperationDetails, setAuditLogOperationDetails] = useState<Record<string, AuditLogOperationDetailLoadState>>({});
   const auditLogDetailOwnerRef = useRef<string | null>(null);
+  const auditLogRequestGenerationRef = useRef(0);
   const selectedSessionId = selectedSession?.id ?? null;
   const auditLogOwnerSessionId = ownerSessionId ?? selectedSessionId;
   const normalizedCacheScopeKey = cacheScopeKey?.trim() || "default";
@@ -198,7 +201,8 @@ export function useSessionAuditLogs({
     && auditLogsState.ownerSessionId === auditLogOwnerSessionId
     && auditLogsState.cacheKey === auditLogCacheKey;
   const auditLogsHasMore = isAuditLogsStateCurrent ? auditLogsState.hasMore : false;
-  const auditLogsLoading = isAuditLogsStateCurrent ? auditLogsState.loading : false;
+  const auditLogsRefreshing = isAuditLogsStateCurrent ? auditLogsState.refreshing : false;
+  const auditLogsLoading = isAuditLogsStateCurrent ? auditLogsState.loadingMore : false;
   const auditLogsTotal = isAuditLogsStateCurrent
     ? Math.max(auditLogsState.total, displayedEntries.length)
     : displayedEntries.length;
@@ -216,6 +220,8 @@ export function useSessionAuditLogs({
   );
 
   const refreshAuditLogSummary = useCallback((reason: "signature" | "modal-open") => {
+    const requestGeneration = auditLogRequestGenerationRef.current + 1;
+    auditLogRequestGenerationRef.current = requestGeneration;
     let active = true;
 
     if (!enabled || !auditLogApi || !auditLogOwnerSessionId || !auditLogCacheKey) {
@@ -232,8 +238,8 @@ export function useSessionAuditLogs({
     const ownerCacheKey = auditLogCacheKey;
     setAuditLogsState((current) =>
       current.ownerSessionId === ownerSessionId && current.cacheKey === ownerCacheKey
-        ? { ...current, loading: true, errorMessage: null }
-        : { ...createEmptyAuditLogsState(ownerSessionId, ownerCacheKey), loading: true },
+        ? { ...current, refreshing: true, loadingMore: false, errorMessage: null }
+        : { ...createEmptyAuditLogsState(ownerSessionId, ownerCacheKey), refreshing: true },
     );
     if (auditLogDetailOwnerRef.current !== ownerCacheKey) {
       setAuditLogDetails({});
@@ -257,7 +263,8 @@ export function useSessionAuditLogs({
       limit: AUDIT_LOG_PAGE_LIMIT,
     }).then(
       (page) => {
-        if (active) {
+        if (active && auditLogRequestGenerationRef.current === requestGeneration) {
+          auditLogRequestGenerationRef.current = requestGeneration + 1;
           setAuditLogsState({
             ownerSessionId,
             cacheKey: ownerCacheKey,
@@ -265,7 +272,8 @@ export function useSessionAuditLogs({
             nextCursor: page.nextCursor,
             hasMore: page.hasMore,
             total: page.total,
-            loading: false,
+            refreshing: false,
+            loadingMore: false,
             errorMessage: null,
           });
           reportAuditLogDetailLog(withmateApi, {
@@ -284,12 +292,13 @@ export function useSessionAuditLogs({
         }
       },
       (error: unknown) => {
-        if (active) {
+        if (active && auditLogRequestGenerationRef.current === requestGeneration) {
+          auditLogRequestGenerationRef.current = requestGeneration + 1;
           setAuditLogsState((current) => ({
             ...current,
             ownerSessionId,
-            loading: false,
-            errorMessage: error instanceof Error ? error.message : "audit log summary の取得に失敗したよ。",
+            refreshing: false,
+            errorMessage: error instanceof Error ? error.message : "Could not load the audit log summary.",
           }));
           reportAuditLogDetailLog(withmateApi, {
             level: "error",
@@ -386,7 +395,7 @@ export function useSessionAuditLogs({
               loading: false,
               loadingStartedAtMs: null,
               requestId: null,
-              errorMessage: "operation detail の取得がタイムアウトしたよ。もう一度開いてね。",
+              errorMessage: "Operation details timed out. Open it again.",
             };
             continue;
           }
@@ -413,16 +422,17 @@ export function useSessionAuditLogs({
     const currentState = auditLogsState.ownerSessionId === auditLogOwnerSessionId && auditLogsState.cacheKey === auditLogCacheKey
       ? auditLogsState
       : null;
-    if (!currentState?.hasMore || currentState.loading || currentState.nextCursor === null) {
+    if (!currentState?.hasMore || currentState.loadingMore || currentState.nextCursor === null) {
       return;
     }
 
     const ownerSessionId = auditLogOwnerSessionId;
     const ownerCacheKey = auditLogCacheKey;
     const cursor = currentState.nextCursor;
+    const requestGeneration = auditLogRequestGenerationRef.current;
     setAuditLogsState((current) =>
       current.ownerSessionId === ownerSessionId && current.cacheKey === ownerCacheKey
-        ? { ...current, loading: true, errorMessage: null }
+        ? { ...current, loadingMore: true, errorMessage: null }
         : current,
     );
 
@@ -431,6 +441,9 @@ export function useSessionAuditLogs({
       limit: AUDIT_LOG_PAGE_LIMIT,
     }).then(
       (page) => {
+        if (auditLogRequestGenerationRef.current !== requestGeneration) {
+          return;
+        }
         setAuditLogsState((current) => {
           if (current.ownerSessionId !== ownerSessionId) {
             return current;
@@ -452,19 +465,23 @@ export function useSessionAuditLogs({
             nextCursor: page.nextCursor,
             hasMore: page.hasMore,
             total: page.total,
-            loading: false,
+            refreshing: current.refreshing,
+            loadingMore: false,
             errorMessage: null,
           };
         });
       },
       (error: unknown) => {
+        if (auditLogRequestGenerationRef.current !== requestGeneration) {
+          return;
+        }
         setAuditLogsState((current) =>
           current.ownerSessionId === ownerSessionId
             && current.cacheKey === ownerCacheKey
             ? {
                 ...current,
-                loading: false,
-                errorMessage: error instanceof Error ? error.message : "audit log summary の追加取得に失敗したよ。",
+                loadingMore: false,
+                errorMessage: error instanceof Error ? error.message : "Could not load more audit log entries.",
               }
             : current,
         );
@@ -576,7 +593,7 @@ export function useSessionAuditLogs({
                 loadingRequestIds,
                 errorMessages: {
                   ...current[entry.id]?.errorMessages,
-                  [section]: fragment ? undefined : "audit log detail が見つからなかったよ。",
+                  [section]: fragment ? undefined : "Audit log details were not found.",
                 },
               },
             };
@@ -628,7 +645,7 @@ export function useSessionAuditLogs({
                 loadingRequestIds,
                 errorMessages: {
                   ...current[entry.id]?.errorMessages,
-                  [section]: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
+                  [section]: error instanceof Error ? error.message : "Could not load audit log details.",
                 },
               },
             };
@@ -674,7 +691,7 @@ export function useSessionAuditLogs({
             loadingRequestIds,
             errorMessages: {
               ...current[entry.id]?.errorMessages,
-              [section]: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
+              [section]: error instanceof Error ? error.message : "Could not load audit log details.",
             },
           },
         };
@@ -754,7 +771,7 @@ export function useSessionAuditLogs({
                 loading: false,
                 loadingStartedAtMs: null,
                 requestId: null,
-                errorMessage: fragment ? null : "operation detail が見つからなかったよ。",
+                errorMessage: fragment ? null : "Operation details were not found.",
               },
             };
           });
@@ -788,7 +805,7 @@ export function useSessionAuditLogs({
                 loading: false,
                 loadingStartedAtMs: null,
                 requestId: null,
-                errorMessage: error instanceof Error ? error.message : "operation detail の取得に失敗したよ。",
+                errorMessage: error instanceof Error ? error.message : "Could not load operation details.",
               },
             };
           });
@@ -823,7 +840,7 @@ export function useSessionAuditLogs({
             loading: false,
             loadingStartedAtMs: null,
             requestId: null,
-            errorMessage: error instanceof Error ? error.message : "operation detail の取得に失敗したよ。",
+            errorMessage: error instanceof Error ? error.message : "Could not load operation details.",
           },
         };
       });
@@ -837,6 +854,7 @@ export function useSessionAuditLogs({
     details: auditLogDetails,
     operationDetails: auditLogOperationDetails,
     hasMore: auditLogsHasMore,
+    refreshing: auditLogsRefreshing,
     loadingMore: auditLogsLoading,
     total: auditLogsTotal,
     errorMessage: auditLogsErrorMessage,
@@ -856,6 +874,7 @@ export function useSessionAuditLogs({
     persistedEntries,
     displayedEntries,
     auditLogsHasMore,
+    auditLogsRefreshing,
     auditLogsLoading,
     auditLogsTotal,
     auditLogsErrorMessage,

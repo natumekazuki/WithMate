@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import type { HomeRightPaneProps } from "./HomeRightPane.js";
 import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
@@ -28,9 +29,13 @@ export type HomeRightPanePropsInput = {
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
+  sessionWindowsDataState?: "loading" | "loaded" | "error";
+  monitorRunningEmptyMessage?: string;
+  monitorNonRunningEmptyMessage?: string;
   sessionMonitorFeedback?: string;
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
+  characterLoadStatus?: HomeCharacterLoadStatus;
   characterListFeedback?: string;
   handlers: HomeRightPaneHandlers;
   canUsePrimaryFeatures?: boolean;
@@ -44,9 +49,13 @@ export function buildHomeRightPaneProps({
   runningMonitorEntries,
   nonRunningMonitorEntries,
   auxiliaryDataState,
+  sessionWindowsDataState,
+  monitorRunningEmptyMessage,
+  monitorNonRunningEmptyMessage,
   sessionMonitorFeedback,
   monitorWindowIcon,
   characterEntries,
+  characterLoadStatus,
   characterListFeedback,
   handlers,
   canUsePrimaryFeatures,
@@ -59,9 +68,13 @@ export function buildHomeRightPaneProps({
     runningMonitorEntries,
     nonRunningMonitorEntries,
     auxiliaryDataState,
+    sessionWindowsDataState,
+    monitorRunningEmptyMessage,
+    monitorNonRunningEmptyMessage,
     sessionMonitorFeedback,
     monitorWindowIcon,
     characterEntries,
+    characterLoadStatus,
     characterListFeedback,
     onChangeRightPaneView: handlers.onChangeRightPaneView,
     onOpenSessionMonitorWindow: handlers.onOpenSessionMonitorWindow,

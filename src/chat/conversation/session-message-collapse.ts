@@ -3,7 +3,7 @@ import type { MessageListSource } from "../auxiliary/auxiliary-session-message-p
 import { projectMessageRenderedSearchText } from "./message-rendered-search-text.js";
 
 export const MESSAGE_COLLAPSE_PREVIEW_MAX_LENGTH = 160;
-export const MESSAGE_COLLAPSE_EMPTY_PREVIEW = "内容なし";
+export const MESSAGE_COLLAPSE_EMPTY_PREVIEW = "No content";
 
 export type MessageCollapseTarget = Readonly<{
   key: string;

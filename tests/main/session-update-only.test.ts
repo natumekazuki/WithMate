@@ -149,7 +149,7 @@ describe("Session update-only persistence", () => {
         assert.deepEqual(sharedState.revoked, [session.id]);
         assert.deepEqual(sharedState.broadcasts, [ [session.id] ]);
         release();
-        await assert.rejects(update, /対象セッションが見つからないよ/);
+        await assert.rejects(update, /The session could not be found/);
         assert.equal(storage.getSession(session.id), null);
         assert.deepEqual(getCached(), []);
         assert.deepEqual(sharedState.revoked, [session.id]);
@@ -301,7 +301,7 @@ describe("Session update-only persistence", () => {
         assert.equal(getCached()[0]?.threadId, commit.threadId);
         assert.deepEqual(sharedState.broadcasts, [[session.id]]);
         await service.deleteSession(session.id);
-        await assert.rejects(service.upsertTerminalSession(storedSession, commit), /対象セッションが見つからないよ/);
+        await assert.rejects(service.upsertTerminalSession(storedSession, commit), /The session could not be found/);
         assert.equal(storage.getSession(session.id), null);
         assert.deepEqual(getCached(), []);
         assert.deepEqual(sharedState.broadcasts, [[session.id], [session.id]]);

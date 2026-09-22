@@ -105,10 +105,10 @@ function rowToManagedSessionMemoryItem(row: ManagedSessionMemoryRow): ManagedSes
 
   return {
     sessionId: memory.sessionId,
-    taskTitle: row.task_title || "削除済み Session",
+    taskTitle: row.task_title || "Deleted Session",
     character: row.character_name || "Unknown",
     provider: row.provider || "",
-    workspaceLabel: row.session_workspace_label || memory.workspacePath || "workspace 未設定",
+    workspaceLabel: row.session_workspace_label || memory.workspacePath || "Workspace not set",
     workspacePath: memory.workspacePath || row.session_workspace_path || "",
     status: row.status || "saved",
     runState: row.run_state || "idle",
@@ -233,7 +233,7 @@ export class SessionMemoryStorage {
   upsertSessionMemory(memory: SessionMemory): SessionMemory {
     const normalized = normalizeSessionMemory(memory);
     if (!normalized) {
-      throw new Error("保存する session memory の形式が不正だよ。");
+      throw new Error("The session memory is invalid and cannot be saved.");
     }
 
     this.db.prepare(UPSERT_SESSION_MEMORY_SQL).run(

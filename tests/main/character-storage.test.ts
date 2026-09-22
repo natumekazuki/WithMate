@@ -320,7 +320,7 @@ describe("CharacterStorage", () => {
           name: "Mutated",
           iconFilePath: null as unknown as string,
         }),
-        /Character icon path は文字列/,
+        /Character icon path must be a string\./,
       );
 
       const after = await storage.getCharacter(mia.id);
@@ -371,7 +371,7 @@ describe("CharacterStorage", () => {
           iconFilePath: null as unknown as string,
           definitionMarkdown: validDefinition("Invalid Runtime Icon"),
         }),
-        /Character icon path は文字列/,
+        /Character icon path must be a string\./,
       );
       await assert.rejects(
         storage.createCharacter({
@@ -379,7 +379,7 @@ describe("CharacterStorage", () => {
           iconFilePath: textPath,
           definitionMarkdown: validDefinition("Text Icon"),
         }),
-        /png \/ jpg \/ jpeg/,
+        /Character icon must be a PNG, JPG, or JPEG image file\./,
       );
       await assert.rejects(
         storage.createCharacter({
@@ -387,7 +387,7 @@ describe("CharacterStorage", () => {
           iconFilePath: gifPath,
           definitionMarkdown: validDefinition("GIF Icon"),
         }),
-        /png \/ jpg \/ jpeg/,
+        /Character icon must be a PNG, JPG, or JPEG image file\./,
       );
       await assert.rejects(
         storage.createCharacter({
@@ -395,7 +395,7 @@ describe("CharacterStorage", () => {
           iconFilePath: "assets/icon.webp",
           definitionMarkdown: validDefinition("Relative WebP Icon"),
         }),
-        /png \/ jpg \/ jpeg/,
+        /Character icon must be a PNG, JPG, or JPEG image file\./,
       );
       await assert.rejects(
         storage.createCharacter({
@@ -474,7 +474,7 @@ describe("CharacterStorage", () => {
           characterId: mia.id,
           iconFilePath: replacementPath,
         }),
-        /png \/ jpg \/ jpeg/,
+        /Character icon must be a PNG, JPG, or JPEG image file\./,
       );
     } finally {
       storage?.close();
@@ -527,7 +527,7 @@ describe("CharacterStorage", () => {
             characterId: mia.id,
             iconFilePath: "/legacy/muse\\icon.webp",
           }),
-          /png \/ jpg \/ jpeg/,
+          /Character icon must be a PNG, JPG, or JPEG image file\./,
         );
       } finally {
         db.close();

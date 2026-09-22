@@ -271,7 +271,7 @@ export class ProjectMemoryStorage {
 
       const updated = this.getProjectScopeByKey(input.projectKey);
       if (!updated) {
-        throw new Error("project scope の更新後に再読込できないよ。");
+        throw new Error("The project scope could not be reloaded after updating.");
       }
 
       return updated;
@@ -302,7 +302,7 @@ export class ProjectMemoryStorage {
 
         const migrated = this.getProjectScopeById(legacyScope.id);
         if (!migrated) {
-          throw new Error("legacy project scope の移行後に再読込できないよ。");
+          throw new Error("The project scope could not be reloaded after migration.");
         }
 
         return migrated;
@@ -336,7 +336,7 @@ export class ProjectMemoryStorage {
 
     const created = this.getProjectScopeById(projectScopeId);
     if (!created) {
-      throw new Error("project scope の作成後に再読込できないよ。");
+      throw new Error("The project scope could not be reloaded after creation.");
     }
 
     return created;
@@ -451,7 +451,7 @@ export class ProjectMemoryStorage {
       lastUsedAt: null,
     });
     if (!normalized) {
-      throw new Error("保存する project memory entry の形式が不正だよ。");
+      throw new Error("The project memory entry is invalid and cannot be saved.");
     }
 
     const existing = this.db.prepare(`
@@ -492,12 +492,12 @@ export class ProjectMemoryStorage {
         WHERE id = ?
       `).get(existing.id) as ProjectMemoryEntryRow | undefined;
       if (!updated) {
-        throw new Error("project memory entry の更新後に再読込できないよ。");
+        throw new Error("The project memory entry could not be reloaded after updating.");
       }
 
       const resolved = rowToProjectMemoryEntry(updated);
       if (!resolved) {
-        throw new Error("project memory entry の更新結果が不正だよ。");
+        throw new Error("The updated project memory entry is invalid.");
       }
 
       return resolved;
@@ -537,12 +537,12 @@ export class ProjectMemoryStorage {
       WHERE id = ?
     `).get(normalized.id) as ProjectMemoryEntryRow | undefined;
     if (!created) {
-      throw new Error("project memory entry の作成後に再読込できないよ。");
+      throw new Error("The project memory entry could not be reloaded after creation.");
     }
 
     const resolved = rowToProjectMemoryEntry(created);
     if (!resolved) {
-      throw new Error("project memory entry の作成結果が不正だよ。");
+      throw new Error("The created project memory entry is invalid.");
     }
 
     return resolved;

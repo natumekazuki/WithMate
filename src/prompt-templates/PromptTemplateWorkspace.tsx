@@ -43,13 +43,14 @@ export function PromptTemplateWorkspace({
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
   const [editor, setEditor] = useState<EditorState>(EMPTY_EDITOR);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+  const [savingAction, setSavingAction] = useState<"save" | "delete" | null>(null);
   const [error, setError] = useState("");
   const templatesRef = useRef<PromptTemplate[]>([]);
   const pickerListRef = useRef<HTMLDivElement | null>(null);
   const pickerEditButtonRef = useRef<HTMLButtonElement | null>(null);
   const editorNameInputRef = useRef<HTMLInputElement | null>(null);
   const shouldFocusPickerRef = useRef(true);
+  const isSaving = savingAction !== null;
 
   const selectedTemplate = templates.find((template) => template.id === editor.id) ?? null;
   const isDirty = selectedTemplate
@@ -173,7 +174,7 @@ export function PromptTemplateWorkspace({
   };
 
   const save = async (): Promise<boolean> => {
-    setIsSaving(true);
+    setSavingAction("save");
     setError("");
     try {
       const nextTemplates = editor.id
@@ -192,7 +193,7 @@ export function PromptTemplateWorkspace({
       setError(errorMessage(saveError));
       return false;
     } finally {
-      setIsSaving(false);
+      setSavingAction(null);
     }
   };
 
@@ -200,7 +201,7 @@ export function PromptTemplateWorkspace({
     if (!editor.id || !window.confirm(`Delete "${editor.name}"?`)) {
       return;
     }
-    setIsSaving(true);
+    setSavingAction("delete");
     setError("");
     try {
       const nextTemplates = await api.deletePromptTemplate(editor.id);
@@ -210,7 +211,7 @@ export function PromptTemplateWorkspace({
     } catch (deleteError) {
       setError(errorMessage(deleteError));
     } finally {
-      setIsSaving(false);
+      setSavingAction(null);
     }
   };
 
@@ -309,7 +310,7 @@ export function PromptTemplateWorkspace({
                   className="drawer-toggle compact secondary"
                   onClick={() => openEditor(EMPTY_EDITOR)}
                 >
-                  + New template
+                  New template
                 </button>
               </div>
             )}
@@ -322,14 +323,14 @@ export function PromptTemplateWorkspace({
   const renderEditor = () => (
     <>
       <header className="prompt-template-workspace-header">
-        <BackNavigationButton label="Back to Template selection" onBack={returnToPicker} />
+        <BackNavigationButton label="Back to template selection" onBack={returnToPicker} />
         <strong>Edit templates</strong>
       </header>
 
       <div className="prompt-template-workspace-body">
         <aside className="prompt-template-list" aria-label="Template list">
-          <button className="drawer-toggle compact secondary" type="button" onClick={createNew}>
-            + New
+          <button className="drawer-toggle compact secondary" type="button" onClick={createNew} disabled={isSaving}>
+            New
           </button>
           {templates.map((template) => (
             <button
@@ -351,14 +352,20 @@ export function PromptTemplateWorkspace({
             value={editor.name}
             maxLength={120}
             disabled={isSaving}
-            onChange={(event) => setEditor((current) => ({ ...current, name: event.target.value }))}
+            onChange={(event) => {
+              const value = event.target.value;
+              setEditor((current) => ({ ...current, name: value }));
+            }}
           />
           <textarea
             className="prompt-template-prompt-field"
             aria-label="Prompt"
             value={editor.prompt}
             disabled={isSaving}
-            onChange={(event) => setEditor((current) => ({ ...current, prompt: event.target.value }))}
+            onChange={(event) => {
+              const value = event.target.value;
+              setEditor((current) => ({ ...current, prompt: value }));
+            }}
           />
           {error ? <p className="prompt-template-error" role="alert">{error}</p> : null}
           <div className="prompt-template-editor-actions">
@@ -366,17 +373,31 @@ export function PromptTemplateWorkspace({
               type="button"
               className="drawer-toggle compact secondary"
               disabled={isSaving || !isDirty}
+              aria-busy={savingAction === "save" || undefined}
+              aria-label={savingAction === "save" ? "Saving template" : "Save"}
               onClick={() => void save()}
             >
-              Save
+              {savingAction === "save" ? (
+                <>
+                  <span className="chat-skill-picker-spinner" aria-hidden="true" />
+                  <span>Save</span>
+                </>
+              ) : "Save"}
             </button>
             <button
               type="button"
               className="drawer-toggle compact danger"
               disabled={isSaving || !editor.id}
+              aria-busy={savingAction === "delete" || undefined}
+              aria-label={savingAction === "delete" ? "Deleting template" : "Delete"}
               onClick={() => void remove()}
             >
-              Delete
+              {savingAction === "delete" ? (
+                <>
+                  <span className="chat-skill-picker-spinner" aria-hidden="true" />
+                  <span>Delete</span>
+                </>
+              ) : "Delete"}
             </button>
           </div>
         </div>

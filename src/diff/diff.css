@@ -116,8 +116,7 @@
   background: color-mix(in srgb, var(--character-sub-soft, rgba(111, 184, 199, 0.14)) 55%, rgba(15, 19, 26, 0.94));
   font-size: 0.8rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
   overflow-x: auto;
   overflow-y: hidden;
 }
@@ -306,6 +305,15 @@
   40% {
     transform: translateY(-4px);
     opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise-1,
+  .rise-2,
+  .rise-3,
+  .rise-4 {
+    animation: none;
   }
 }
 

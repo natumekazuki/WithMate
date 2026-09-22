@@ -100,7 +100,7 @@ export function useSessionContextPaneFeature({
   );
   const selectedCopilotRemainingPercentLabel = selectedCopilotQuotaProjection?.remainingPercentLabel ?? "unavailable";
   const selectedCopilotRemainingRequestsLabel = selectedCopilotQuotaProjection?.remainingRequestsLabel ?? "usage unavailable";
-  const selectedCopilotQuotaResetLabel = selectedCopilotQuotaProjection?.resetLabel ?? "未確認";
+  const selectedCopilotQuotaResetLabel = selectedCopilotQuotaProjection?.resetLabel ?? "Unknown";
   const selectedSessionContextTelemetryProjection = useMemo(
     () => buildSessionContextTelemetryProjection(selectedSessionContextTelemetry),
     [selectedSessionContextTelemetry],

@@ -25,7 +25,7 @@ export async function updateAuxiliarySessionWithProviderRuntimeLifecycle(input: 
   invalidateProviderSessionThread: (providerId: string, sessionId: string) => Promise<void>;
 }): Promise<AuxiliarySession> {
   if (input.isRunInFlight(input.session.id)) {
-    throw new Error("実行中の Auxiliary Session は更新できないよ。");
+    throw new Error("A running Auxiliary Session cannot be updated.");
   }
   const current = await input.getAuxiliarySession(input.session.id);
   const updated = await input.updateAuxiliarySession(input.session);

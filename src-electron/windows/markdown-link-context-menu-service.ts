@@ -17,8 +17,8 @@ export type MarkdownLinkContextMenuServiceDeps = {
   copyFile(resource: SessionFileResourceRequest): Promise<SessionFileObjectCopyResult>;
 };
 
-const LINK_COPY_FAILED_MESSAGE = "リンクをコピーできませんでした。";
-const LINK_CONTEXT_MENU_FAILED_MESSAGE = "リンクのメニューを開けませんでした。";
+const LINK_COPY_FAILED_MESSAGE = "Link could not be copied.";
+const LINK_CONTEXT_MENU_FAILED_MESSAGE = "Link context menu could not be opened.";
 
 export class MarkdownLinkContextMenuService {
   constructor(private readonly deps: MarkdownLinkContextMenuServiceDeps) {}
@@ -61,12 +61,12 @@ export class MarkdownLinkContextMenuService {
 
       try {
         const template: MenuItemConstructorOptions[] = [{
-          label: "リンクをコピー",
+          label: "Copy link",
           click: copyAndSettle,
         }];
         if (copyableFile) {
           template.push({
-            label: "ファイルをコピー",
+            label: "Copy file",
             click: () => {
               if (!settled) {
                 selectionStarted = true;

@@ -35,7 +35,7 @@ export class SessionWindowRestoreStorage {
       ? normalizeSessionWindowRestoreIds(parsed.sessionIds)
       : null;
     if (!sessionIds) {
-      throw new Error("Session Window restore snapshot が不正です。");
+      throw new Error("Session Window restore snapshot is invalid.");
     }
     return sessionIds;
   }
@@ -43,7 +43,7 @@ export class SessionWindowRestoreStorage {
   async saveSnapshot(sessionIds: readonly string[]): Promise<void> {
     const normalized = normalizeSessionWindowRestoreIds(sessionIds);
     if (!normalized) {
-      throw new TypeError("Session Window restore snapshot が不正です。");
+      throw new TypeError("Session Window restore snapshot is invalid.");
     }
     const document: SnapshotDocument = {
       version: SNAPSHOT_VERSION,

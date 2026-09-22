@@ -1408,7 +1408,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     auxiliaryStorage.upsertAuxiliarySession({ ...staleDraftAfterSettingsChange, runState: "running" });
     await assert.rejects(
       service.closeAuxiliarySession(auxiliary.id),
-      /実行中の Auxiliary Session は終了できない/,
+      /A running Auxiliary Session cannot be closed/,
     );
     auxiliaryStorage.upsertAuxiliarySession(staleDraftAfterSettingsChange);
 
@@ -1515,7 +1515,7 @@ test("AuxiliarySessionService はMain除外とsnapshot失敗時の既存状態�
     failSnapshot = true;
     await assert.rejects(
       service.createAuxiliarySession({ parentSessionId: parent.id, provider: parent.provider, clientRequestId: "selection-2" }),
-      /Character snapshot を作成できない/,
+      /The Auxiliary Session Character snapshot could not be created/,
     );
     const afterFailure = await service.getAuxiliarySession(preserved.id);
     assert.equal(afterFailure?.composerDraft, "keep me");
@@ -1605,7 +1605,7 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
     await deleteParent;
     assert.equal(resolveSelectionCalls, 1);
     releaseSelection();
-    await assert.rejects(create, /親セッションが見つからない|親セッションが作成中に置き換わった/);
+    await assert.rejects(create, /The parent session could not be found/);
     assert.deepEqual(auxiliaryStorage.listAuxiliarySessions(parent.id), []);
 
     const reverseParent = { ...parent, id: "session-race-reverse" };
@@ -1621,7 +1621,7 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
         runtimeSelection: "latest-session",
         clientRequestId: "race-reverse",
       }),
-      /親セッションが見つからない/,
+      /The parent session could not be found/,
     );
     assert.deepEqual(auxiliaryStorage.listAuxiliarySessions(reverseParent.id), []);
   } finally {
@@ -2009,7 +2009,7 @@ test("AuxiliarySessionService は latest-session 選択を保存し、再検証�
         provider: "codex",
         runtimeSelection: "latest-session",
       }),
-      /runtime 選択が作成中に変わったため/,
+      /Auxiliary Session creation was canceled because its runtime selection changed during creation/,
     );
     assert.deepEqual(drifted.resolvedProviderIds, ["codex", "codex"]);
     assert.deepEqual(await auxiliaryStorage.listAuxiliarySessions(driftParent.id), []);
@@ -2081,7 +2081,7 @@ test("AuxiliarySessionService は latest-session の取得失敗と runtime opti
         runtimeSelection: "latest-session",
         approvalMode: "never",
       }),
-      /runtime option を直接指定できない/,
+      /Runtime options cannot be specified when using latest-session selection/,
     );
     assert.deepEqual(await service.listAuxiliarySessions(parent.id), []);
   } finally {
@@ -2144,25 +2144,25 @@ test("AuxiliarySessionService は現行 enum 外の runtime option を拒否し�
         input: {
           approvalMode: "allow-all" as ApprovalMode,
         },
-        expectedError: /approvalMode を解釈できない/,
+        expectedError: /Could not parse the Auxiliary Session approvalMode/,
       },
       {
         input: {
           approvalMode: " never " as ApprovalMode,
         },
-        expectedError: /approvalMode を解釈できない/,
+        expectedError: /Could not parse the Auxiliary Session approvalMode/,
       },
       {
         input: {
           codexSandboxMode: " danger-full-access " as CodexSandboxMode,
         },
-        expectedError: /codexSandboxMode を解釈できない/,
+        expectedError: /Could not parse the Auxiliary Session codexSandboxMode/,
       },
       {
         input: {
           codexSandboxMode: 1 as unknown as CodexSandboxMode,
         },
-        expectedError: /codexSandboxMode を解釈できない/,
+        expectedError: /Could not parse the Auxiliary Session codexSandboxMode/,
       },
     ];
 
@@ -2260,8 +2260,6 @@ test("AuxiliarySessionService は選択値なしなら指定 Provider と同じ�
 
 // @test-value v2
 // kind = "contract"
-// @test-value v2
-// kind = "contract"
 // claim = "起動時に実行中のAuxiliaryは再開可能なerror状態へ遷移し、履歴を保持する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#recovery" }
 // fault = "前回実行中のAuxiliaryをrunningのまま放置し、次回実行で二重実行または履歴欠落を起こす"
@@ -2312,7 +2310,7 @@ test("AuxiliarySessionService は起動時に running active session を復旧�
     const recovered = await service.getAuxiliarySession(auxiliary.id);
     assert.equal(recovered?.runState, "error");
     assert.equal(recovered?.status, "active");
-    const interruptionMessage = "前回の Auxiliary 実行はアプリ終了で中断された可能性があります。必要ならもう一度送信してください。";
+    const interruptionMessage = "The previous Auxiliary run may have been interrupted when the app quit. Send again if needed.";
     assert.equal(recovered?.messages.length, 2);
     assert.equal(recovered?.messages[0]?.role, "user");
     assert.equal(recovered?.messages[0]?.text, "review");
@@ -2826,7 +2824,7 @@ test("Auxiliary serviceはcaptured ownerへ更新し親削除後の更新を拒�
       storage.deleteAuxiliarySessionsForParent(session.parentSessionId);
       parentStorage.deleteSession(session.parentSessionId);
       releaseDeletionRead();
-      await assert.rejects(deletionUpdate, /削除または更新されたため/);
+      await assert.rejects(deletionUpdate, /Saving was canceled because the Auxiliary Session was deleted or changed/);
       assert.equal(storage.getAuxiliarySession(session.id), null);
       assert.equal(replacementStorage.getAuxiliarySession(session.id)?.title, "replacement sentinel");
       assert.equal(deletionStorageRequests, 1);

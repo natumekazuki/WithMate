@@ -417,6 +417,98 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
 
 // @test-value v2
 // kind = "contract"
+// claim = "File Previewのtoolbar actionは一つの実行中operationを保持し、完了まで他の対象操作を開始させない"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "Open中にRevealや別のtoolbar actionが開始され、busy表示が後発operationの完了で先に解除される"
+// observable = "Open中のbutton disabled、busy aria、Reveal API呼出し数、完了後の再操作可否"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.toolbar-action-busy"
+// lifecycle = "permanent"
+// impact = "同じpreview resourceへ重複したopen操作を送らず、利用者へ実行中の対象を継続して示す"
+// distinction = "同一DOM上でOpen保留中のRevealを試行し、request開始抑止とbusy解除境界を確認する"
+// @end-test-value
+test("File Previewのtoolbar actionは実行中operationを直列化する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const openResult = deferred<Awaited<ReturnType<PreviewApi["openSessionFile"]>>>();
+  const revealResult = deferred<Awaited<ReturnType<PreviewApi["openSessionFile"]>>>();
+  let revealCalls = 0;
+  const api: PreviewApi = {
+    ...createTextPreviewApi(MARKDOWN_REQUEST, "readme.md", "preview content", "preview-r1"),
+    async openSessionFile(openRequest) {
+      if (openRequest.reveal) {
+        revealCalls += 1;
+        return revealResult.promise;
+      }
+      return openResult.promise;
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, MARKDOWN_REQUEST);
+    await waitFor(() => Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .some((button) => button.textContent === "Open"));
+    const preview = container.querySelector<HTMLElement>("[aria-label='File preview']");
+    const openButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Open");
+    const revealButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Show in Explorer");
+    assert.ok(preview);
+    assert.ok(openButton);
+    assert.ok(revealButton);
+
+    await act(async () => openButton.click());
+    assert.equal(openButton.textContent, "Opening…");
+    assert.equal(openButton.disabled, true);
+    assert.equal(revealButton.disabled, true);
+    assert.equal(preview.getAttribute("aria-busy"), "true");
+
+    await act(async () => revealButton.click());
+    assert.equal(revealCalls, 0);
+
+    await act(async () => {
+      openResult.resolve({
+        status: "opened",
+        targetType: "local-path",
+        target: MARKDOWN_REQUEST.relativePath,
+      });
+      await openResult.promise;
+    });
+    await waitFor(() => openButton.textContent === "Open");
+    assert.equal(revealButton.disabled, false);
+    assert.equal(preview.getAttribute("aria-busy"), null);
+
+    await act(async () => revealButton.click());
+    assert.equal(revealCalls, 1);
+    assert.equal(revealButton.textContent, "Showing…");
+    await act(async () => {
+      revealResult.resolve({
+        status: "revealed",
+        targetType: "local-path",
+        target: MARKDOWN_REQUEST.relativePath,
+        message: "",
+      });
+      await revealResult.promise;
+    });
+    await waitFor(() => revealButton.textContent === "Show in Explorer");
+    assert.equal(preview.getAttribute("aria-busy"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "File Previewのcopy availability APIが有効な場合だけCopy Fileを表示し、結果を操作群と分離した共通通知overlayへ表示する"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8A" }
 // fault = "Copy Fileを利用可能時に表示しない、利用不可時に表示する、effect-unknownをsuccess toneまたはstatusとして表示する、copiedをerror toneまたはalertとして表示する、または操作群を構成する要素として表示する"
@@ -456,10 +548,10 @@ test("File Preview はcopy availability APIが有効な場合だけCopy Fileを�
     assert.ok(container);
     root = await renderPreview(api, container, IMAGE_DESCRIPTOR);
     await waitFor(() => Array.from(container.querySelectorAll("button"))
-      .some((button) => button.textContent === "Copy Image"));
+      .some((button) => button.textContent === "Copy image"));
     const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
-    assert.ok(buttons.some((button) => button.textContent === "Copy Image"));
-    const copyFile = buttons.find((button) => button.textContent === "Copy File");
+    assert.ok(buttons.some((button) => button.textContent === "Copy image"));
+    const copyFile = buttons.find((button) => button.textContent === "Copy file");
     assert.ok(copyFile);
     await act(async () => {
       copyFile.click();
@@ -506,7 +598,7 @@ test("File Preview はcopy availability APIが有効な場合だけCopy Fileを�
       }));
     });
     assert.equal(Array.from(container.querySelectorAll("button"))
-      .some((button) => button.textContent === "Copy File"), false);
+      .some((button) => button.textContent === "Copy file"), false);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -517,6 +609,18 @@ test("File Preview はcopy availability APIが有効な場合だけCopy Fileを�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Markdownのroot外local file linkはcurrent resourceを基準にdetached preview navigationへ渡される"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "Markdown local linkがopenPathへ誤送信される、base resourceを失う、またはdetached preview resourceを誤る"
+// observable = "preview navigation requestのkind、target、baseResource、detached resource"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.markdown-local-link"
+// lifecycle = "permanent"
+// impact = "root外Markdown linkを現在のfile contextから安全にpreview navigationへ接続する"
+// distinction = "表示されたanchorの実clickからIPC navigation payloadを直接確認する"
+// @end-test-value
 test("Markdown preview の local file link は current resource を基準に detached Preview navigation へ戻す", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -596,6 +700,18 @@ test("Markdown preview の local file link は current resource を基準に det
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "commit-scoped file previewは通常previewを再利用し、working tree専用操作を表示しない"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "commit resourceにOpen、Show in Explorer、Copy fileなどのworking tree操作を表示する、またはcommit内容をpreviewしない"
+// observable = "commit title、本文、Open/Show in Explorer/Copy file buttonの表示有無、Reload表示"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.git-commit-resource"
+// lifecycle = "permanent"
+// impact = "commit snapshotをread-only resourceとして扱い、local working tree操作との混同を防ぐ"
+// distinction = "commit resourceの実render DOMで操作群と本文を確認する"
+// @end-test-value
 test("commit file preview は通常previewを再利用しworking tree操作を表示しない", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -627,7 +743,7 @@ test("commit file preview は通常previewを再利用しworking tree操作を�
     const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
     assert.equal(labels.includes("Open"), false);
     assert.equal(labels.includes("Show in Explorer"), false);
-    assert.equal(labels.includes("Copy File"), false);
+    assert.equal(labels.includes("Copy file"), false);
     assert.equal(labels.includes("Reload"), true);
   } finally {
     if (root) {
@@ -639,6 +755,18 @@ test("commit file preview は通常previewを再利用しworking tree操作を�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "binary commit file previewのmetadataにもworking tree専用操作を表示しない"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "commit snapshotへOpen、Show in Explorer、Copy fileを表示し、通常file操作と誤認させる"
+// observable = "binary metadata、commit title、Open/Show in Explorer/Copy file buttonの表示有無"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.git-commit-binary-resource"
+// lifecycle = "permanent"
+// impact = "binary commit snapshotをread-onlyとして表示し、working tree操作を誤って実行させない"
+// distinction = "binary metadata previewの実DOMから操作群の非表示を確認する"
+// @end-test-value
 test("binary commit file preview はmetadata内にもworking tree操作を表示しない", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -694,7 +822,7 @@ test("binary commit file preview はmetadata内にもworking tree操作を表示
     assert.equal(labels.includes("Open"), false);
     assert.equal(labels.includes("Open in default app"), false);
     assert.equal(labels.includes("Show in Explorer"), false);
-    assert.equal(labels.includes("Copy File"), false);
+    assert.equal(labels.includes("Copy file"), false);
     assert.equal(labels.includes("Reload"), true);
   } finally {
     if (root) {
@@ -1070,6 +1198,72 @@ test("Markdown File Preview のReloadは同一画像を現行generationへ再登
     assert.equal(createdBlobs.length, 2);
     assert.deepEqual(Array.from(new Uint8Array(await createdBlobs[0].arrayBuffer())), Array.from(IMAGE_BYTES));
     assert.deepEqual(Array.from(new Uint8Array(await createdBlobs[1].arrayBuffer())), Array.from(changedImageBytes));
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    URL.createObjectURL = originalCreateObjectUrl;
+    URL.revokeObjectURL = originalRevokeObjectUrl;
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "File PreviewのReload busyはready本文を一時表示していても実際のinspectとcontent読込完了まで保持される"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "Reload直後の旧ready stateを見てbusyを解除し、request完了前に再操作可能またはaria-busy解除になる"
+// observable = "Reloading label、reload button disabled、preview aria-busy、inspect gate解放後の解除"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.reload-busy"
+// lifecycle = "permanent"
+// impact = "再読込中の対象を継続して示し、古い本文への操作と重複requestを防ぐ"
+// distinction = "ready本文を保持したまま二回目inspectを保留し、完了前後のDOM busy projectionを分けて確認する"
+// @end-test-value
+test("File PreviewのReload busyはrequest完了まで保持される", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const originalCreateObjectUrl = URL.createObjectURL;
+  const originalRevokeObjectUrl = URL.revokeObjectURL;
+  let objectUrlSequence = 0;
+  URL.createObjectURL = () => `blob:reload-busy-${++objectUrlSequence}`;
+  URL.revokeObjectURL = () => undefined;
+  const secondInspect = deferred<SessionFileDescriptor>();
+  const harness = createPreviewApi(async (callCount) => (
+    callCount === 1 ? IMAGE_DESCRIPTOR : secondInspect.promise
+  ));
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(harness.api, container, IMAGE_DESCRIPTOR);
+    await waitFor(() => container.querySelector<HTMLImageElement>(".session-file-image") !== null);
+    const preview = container.querySelector<HTMLElement>("[aria-label='File preview']");
+    const reload = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Reload");
+    assert.ok(preview);
+    assert.ok(reload);
+
+    await act(async () => reload.click());
+    await waitFor(() => reload.textContent === "Reloading…");
+    assert.equal(reload.disabled, true);
+    assert.equal(preview.getAttribute("aria-busy"), "true");
+
+    await act(async () => {
+      secondInspect.resolve({
+        ...IMAGE_DESCRIPTOR,
+        revision: "image-r2",
+      });
+      await secondInspect.promise;
+    });
+    await waitFor(() => reload.textContent === "Reload");
+    assert.equal(reload.disabled, false);
+    assert.equal(preview.getAttribute("aria-busy"), null);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -1576,7 +1770,7 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
       toJSON() {},
     });
     const copyButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent === "Copy Image");
+      .find((button) => button.textContent === "Copy image");
     assert.ok(copyButton);
 
     await act(async () => copyButton.click());
@@ -1824,10 +2018,10 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
       onOpenDiff: () => diffResult.promise,
     });
     await waitFor(() => Array.from(container.querySelectorAll("button"))
-      .some((button) => button.textContent === "Open Diff"));
+      .some((button) => button.textContent === "Open diff"));
     const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
     const openButton = buttons.find((button) => button.textContent === "Open");
-    const diffButton = buttons.find((button) => button.textContent === "Open Diff");
+    const diffButton = buttons.find((button) => button.textContent === "Open diff");
     assert.ok(openButton);
     assert.ok(diffButton);
     await act(async () => {
@@ -2008,6 +2202,18 @@ test("Git Diff世代切替後に古いReloadが完了しても現在のfeedback�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Git Diffは新しい対象の初回取得だけ本文spinnerを表示し、既存patchのReload中は本文を維持しつつbusyを示す"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "対象切替後の初回取得で本文を残す、Reload中に既存patchを消す、またはreloadPendingのbusyを示さない"
+// observable = "初回loading spinner、title、patch本文の有無、reload button disabled、aria-busy"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.git-diff-loading-reload"
+// lifecycle = "permanent"
+// impact = "新しいdiff取得の待機と既存patchの再読込を区別し、操作対象のbusy状態を伝える"
+// distinction = "loading=trueとpatch保持/reloadPending=trueの2描画をDOMで比較する"
+// @end-test-value
 test("Git Diffは新しい対象の初回取得だけ本文spinnerへ切り替えReload中は既存本文を維持する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -2056,7 +2262,7 @@ test("Git Diffは新しい対象の初回取得だけ本文spinnerへ切り替�
         },
       }));
     });
-    assert.equal(preview.getAttribute("aria-busy"), null);
+    assert.equal(preview.getAttribute("aria-busy"), "true");
     assert.equal(preview.querySelector(".session-file-preview-spinner"), null);
     assert.ok(preview.querySelector(".session-live-diff-split"));
     const pendingReload = [...preview.querySelectorAll<HTMLButtonElement>("button")]
@@ -2212,7 +2418,7 @@ test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", a
     assert.equal(container.querySelector("button.is-active")?.textContent, "Split");
 
     const openPreviewButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent === "Open Preview");
+      .find((button) => button.textContent === "Open preview");
     assert.ok(openPreviewButton);
     await act(async () => {
       openPreviewButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));

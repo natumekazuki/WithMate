@@ -49,7 +49,7 @@ export function buildSessionChatRuntimeFeature(
       ? [{
           id: "inline-path-open",
           message: input.inlinePathFeedback,
-          dismissLabel: "パスを開いた結果を閉じる",
+          dismissLabel: "Dismiss path result",
           onDismiss: input.onDismissInlinePathFeedback,
         }]
       : []),

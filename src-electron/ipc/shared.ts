@@ -777,7 +777,7 @@ export async function getAuxiliarySessionForMutation(
 ): Promise<AuxiliarySession> {
   const session = await auxiliaryDeps.getAuxiliarySession(auxiliarySessionId);
   if (!session) {
-    throw new Error("Auxiliary Session が見つからないよ。");
+    throw new Error("The Auxiliary Session could not be found.");
   }
   return session;
 }
@@ -796,10 +796,10 @@ export async function resolveWindowAuxiliarySessionId(
   }
   const auxiliarySession = await deps.getAuxiliarySession(auxiliarySessionId);
   if (!auxiliarySession) {
-    throw new Error("対象のAuxiliary Sessionが見つからないよ。");
+    throw new Error("The target Auxiliary Session could not be found.");
   }
   if (auxiliarySession.parentSessionId !== parentSessionId) {
-    throw new Error("Auxiliary Sessionの親が一致しないよ。");
+    throw new Error("The Auxiliary Session parent does not match.");
   }
   return auxiliarySessionId;
 }

@@ -79,7 +79,7 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
 
     const resultPromise = service.showContextMenu({} as BrowserWindow, testCase.request);
     const [menuItem] = harness.getTemplate();
-    assert.equal(menuItem?.label, "閉じる");
+    assert.equal(menuItem?.label, "Close");
     assert.deepEqual(harness.getPopupOptions(), {
       window: {} as BrowserWindow,
       x: testCase.request.point.x,
@@ -170,7 +170,7 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
     });
 
     const resultPromise = service.showContextMenu({} as BrowserWindow, request);
-    const copyItem = harness.getTemplate().find((item) => item.label === "Session IDをコピー");
+    const copyItem = harness.getTemplate().find((item) => item.label === "Copy session ID");
     assert.ok(copyItem);
     invokeMenuItem(copyItem);
     assert.deepEqual(await resultPromise, { status: "copied" } satisfies SessionMonitorContextMenuResult);
@@ -198,12 +198,12 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
       sessionId: `${kind}-copy-failed`,
       point: { x: 5, y: 6 },
     });
-    const copyItem = harness.getTemplate().find((item) => item.label === "Session IDをコピー");
+    const copyItem = harness.getTemplate().find((item) => item.label === "Copy session ID");
     assert.ok(copyItem);
     invokeMenuItem(copyItem);
     assert.deepEqual(await resultPromise, {
       status: "failed",
-      message: "Session IDをコピーできませんでした。",
+      message: "Session ID could not be copied.",
     } satisfies SessionMonitorContextMenuResult);
     assert.equal(copyAttempts, 1);
     assert.deepEqual(closedTargets, []);

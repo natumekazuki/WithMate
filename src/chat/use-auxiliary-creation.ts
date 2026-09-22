@@ -167,7 +167,7 @@ export function useAuxiliaryCreation(input: {
         latest.current.onFeedback(resolveAuxiliaryLaunchCreationFeedback({ status: "unknown" }));
       } else {
         setStatus("failed");
-        latest.current.onFeedback(error instanceof Error ? error.message : "Auxiliary Session の開始に失敗したよ。");
+        latest.current.onFeedback(error instanceof Error ? error.message : "Could not start the Auxiliary session.");
       }
     } finally {
       if (isAttemptCurrent()) {
@@ -194,7 +194,7 @@ export function useAuxiliaryCreation(input: {
       });
       if (!result.stale && isTerminal(result.status)) finish(candidate, result.status);
     } catch (error) {
-      if (isCurrent(candidate)) latest.current.onFeedback(error instanceof Error ? error.message : "Auxiliary Session の作成を取り消せなかったよ。");
+      if (isCurrent(candidate)) latest.current.onFeedback(error instanceof Error ? error.message : "Could not cancel Auxiliary session creation.");
     } finally {
       if (cancellingRef.current === candidate) {
         cancellingRef.current = null;

@@ -1,116 +1,35 @@
 # Session Microcopy
 
-- 作成日: 2026-03-25
-- 更新日: 2026-05-24
-- 対象: SessionWindow の microcopy を system default / user default / character override で解決する仕組み
-
-## Goal
-
-SessionWindow の固定文言を system default で安定運用しつつ、ユーザーが default copy を編集できるようにする。複数 character 復帰後は character ごとの override を差分として重ね、character 未設定時や壊れた設定では system default へ fallback する。
-
-## Position
-
-- 状態: supporting doc
-- current UI 全体の正本は `docs/design/desktop-ui.md`
-- この文書は Session microcopy slot の詳細仕様だけを扱う
-- character override の DB / UI 実装は複数 character 復帰時に扱う
+- 対象: Session Window の system default / user default microcopy
+- UI全体の正本: [Desktop UI](desktop-ui.md)
 
 ## State Model
 
-microcopy は stable slot ID ごとの複数候補として持つ。1 slot 1 string にはしない。
-
-```ts
-type MicrocopySlot =
-  | "chat.pending.response_waiting"
-  | "dock.status.approval"
-  | "dock.status.working"
-  | "dock.status.responding"
-  | "dock.status.preparing"
-  | "retry.interrupted.title"
-  | "retry.failed.title"
-  | "retry.canceled.title"
-  | "empty.latest_command.waiting"
-  | "empty.latest_command"
-  | "empty.changed_files"
-  | "empty.context";
-
-type MicrocopyCatalog = Partial<Record<MicrocopySlot, string[]>>;
-```
-
-- 値はすべて複数候補の配列
-- 未設定時は system default copy を使う
-- 空文字、空配列、未知 slot は normalize 時に破棄または fallback する
-- `{name}` placeholder を許可し、描画時に character 名へ置換する
+- slot IDと同梱既定値の正本は `src-shared/settings/microcopy-state.ts` の `MICROCOPY_SLOTS` / `BUILT_IN_MICROCOPY_CATALOG` とする。
+- slotごとに複数候補を保持する。外部入力のstringまたはstring配列を、空行を除いた候補配列へnormalizeする。未設定・空のslotは同梱既定値へ戻し、未知slotは表示用catalogへ含めない。
+- 解決順は user default、built-in system default。Character別overrideの保存・編集UIは持たない。
+- `{name}` は表示対象Character名、path errorの `{path}` は対象pathへ置換する。slot ID、placeholder、内部保存値を表示言語に合わせて変更しない。
 
 ## Storage Policy
 
-- built-in system default はコード同梱の復旧用正本として保持する
-- user default は `app_settings` の `user_microcopy_catalog_json` に JSON として保存する
-- この追加は既存 `app_settings` key/value の範囲なので V5 schema migration を要求しない
-- character override は将来 `CharacterProfile` 側に差分として持たせる
-- character override は user default 全体を複製せず、変更した slot だけを保存する
-
-将来の character 側 shape:
-
-```ts
-type CharacterMicrocopyOverrides = Partial<Record<MicrocopySlot, string[]>>;
-
-type CharacterProfile = {
-  id: string;
-  name: string;
-  microcopyOverrides?: CharacterMicrocopyOverrides;
-};
-```
-
-解決順:
-
-1. character override
-2. user default
-3. built-in system default
+- user defaultは既存 `app_settings` の `user_microcopy_catalog_json` に保存し、Sessionへ複製しない。
+- 同梱既定値は短い英語のprovider-neutral wordingとする。ユーザーが設定した文言の言語は変更しない。
+- リリース済み旧日本語既定値は、slotごとの候補数・内容・順序が旧同梱配列と完全一致する場合だけ英語既定値へ移行する。文字列形式、候補の一部変更、順序変更、追加候補はこの一致に含めない。
+- 移行は `AppSettingsStorage` の初期化で一回だけ行い、catalog更新と `user_microcopy_catalog_english_migrated` の保存を同じtransactionで確定する。DB更新失敗時はrollbackして上位へ失敗を返す。
+- 一度移行した後のcustomは、旧既定値と同文でも再置換しない。初回移行時に旧同梱配列と完全一致する手入力は、同梱値と識別できない。
+- 旧path errorの日本語literalは過去の保存値との照合に必要な値であり、未翻訳UIとして置換しない。
+- schema versionは変更せず、既存key/value storage内で扱う。
 
 ## Rendering Policy
 
-- microcopy の lookup は Renderer 側で `resolveMicrocopy()` を通す
-- Session へ microcopy を複製しない
-- user default 更新後は既存 session でも reopen なしで反映できる構成を維持する
-- 候補選択は slot ごとの stable seed から決め、同じ表示中に文言が揺れないようにする
-- chat message column と ActionDock は別 slot にする
-- message column は会話時系列の placeholder、ActionDock は状態表示と操作を担当する
-
-## Default Copy Policy
-
-- default は短く、無味で、provider 非依存の wording を使う
-- character override がある時だけ語尾や温度感を変える
-
-初期 default の例:
-
-- chat pending response waiting: `応答を準備しています`, `出力を待機しています`
-- dock approval: `承認を待機中`
-- dock working: `処理を実行中`
-- dock responding: `応答を生成中`
-- dock preparing: `応答を準備中`
-- retry interrupted title: `前回の依頼は中断されたままです`
-- retry failed title: `前回の依頼は完了できませんでした`
-- retry canceled title: `この依頼は途中で停止しました`
-- latest command waiting: `最初の command を待機中`
-- latest command empty: `直近 run の command 記録はありません`
-- changed files empty: `ファイル変更はありません`
-- context empty: `context usage はまだありません`
+- Rendererのlookupは `resolveMicrocopy()` を通す。候補はslotとstable seedから選び、同じ表示中に文言を揺らさない。
+- user default更新は既存Sessionにも設定購読を通して反映する。
+- chat message columnとAction Dockは別slotを使うが、同一対象・同一runの既定待機文を重複して主表示しない。runの状態、操作、accessibilityを維持したうえでconsumer側で可視性を決める。
+- 空文字をresolverへ渡すことを非表示の仕組みにしない。custom候補を既定待機文の整理に巻き込まず、slot全体の設定と表示状態で判定する。
+- custom microcopy、会話本文、Character定義、ファイル内容、Provider向け指示は英語化の対象外とする。
 
 ## Editor
 
-- Settings に `Default Microcopy` 編集面を追加する
-- Character Editor には将来 `Character Microcopy Override` 編集面を追加する
-- 各 slot は 1 行 input の候補リストで編集する
-- `+` で候補行を追加し、`×` で候補行を削除する
-- slot ごとに `system default に戻す` / `user default を使う` を提供する
-- 候補リスト部分だけを card 内でスクロールさせ、footer や card 外へはみ出させない
-- helper text で `{name}` placeholder と複数候補運用を案内する
-
-## Out Of Scope
-
-- character override の永続化 table 設計
-- character override 編集 UI
-- main process dialog
-- Home / monitor / settings copy
-- provider prompt / memory 連携
+- Settingsの `Default microcopy` に各slotのtextareaを置き、1行を1候補として編集する。
+- slot名は英語の表示labelを使い、保存するstable slot IDは変えない。
+- 候補とplaceholderは既存設定保存経路で保存する。未保存変更・保存中・失敗の表示は [Settings UI](settings-ui.md) に従う。

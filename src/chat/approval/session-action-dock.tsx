@@ -13,6 +13,8 @@ export type SessionActionDockCompactRowProps = {
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
+  pendingRunIndicatorTextVisible?: boolean;
+  pendingRunIndicatorAnnounce?: boolean;
   targetDock?: ReactNode;
   chatNotice?: string;
   showJumpToBottom: boolean;
@@ -31,6 +33,8 @@ export function SessionActionDockCompactRow({
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
+  pendingRunIndicatorTextVisible = true,
+  pendingRunIndicatorAnnounce = true,
   targetDock = null,
   chatNotice,
   showJumpToBottom,
@@ -59,12 +63,14 @@ export function SessionActionDockCompactRow({
           className="session-action-dock-compact-progress session-action-dock-compact-progress-button"
           type="button"
           onClick={onExpand}
-          aria-label="ActionDock を展開"
-          title="ActionDock を展開"
+          aria-label="Expand action dock"
+          title="Expand action dock"
         >
           <PendingRunIndicator
             announcement={pendingRunIndicatorAnnouncement}
             text={pendingRunIndicatorText}
+            showText={pendingRunIndicatorTextVisible}
+            announce={pendingRunIndicatorAnnounce}
           />
         </button>
       ) : (
@@ -72,12 +78,12 @@ export function SessionActionDockCompactRow({
           className="session-action-dock-compact-meta session-action-dock-compact-expand-button"
           type="button"
           onClick={onExpand}
-          aria-label="ActionDock を展開"
-          title="ActionDock を展開"
+          aria-label="Expand action dock"
+          title="Expand action dock"
         >
           {chatNotice ? <span className="session-action-dock-compact-badge attention">{chatNotice}</span> : null}
           {displayedAttachmentCount > 0 ? (
-            <span className="session-action-dock-compact-badge">{`添付 ${displayedAttachmentCount}`}</span>
+            <span className="session-action-dock-compact-badge">{`Attachments: ${displayedAttachmentCount}`}</span>
           ) : null}
         </button>
       )}
@@ -107,7 +113,7 @@ export function SessionActionDockCompactRow({
             type="button"
             onClick={onJumpToBottom}
           >
-            末尾へ移動
+            Jump to latest
           </button>
         ) : null}
         {showMessageViewModeControls ? (

@@ -9,6 +9,18 @@ import { ComposerAttachmentMenu } from "../../src/chat/composer-attachment-menu.
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// @test-value v2
+// kind = "contract"
+// claim = "ComposerAttachmentMenuはclipping境界外の単一popoverで添付操作とfocus復帰を完結する"
+// oracle = { type = "contract", ref = "src/chat/composer-attachment-menu.tsx" }
+// fault = "popoverをcomposerのoverflow内へ複製し、menu itemの順序・keyboard focus・outside dismissを壊す"
+// observable = "単一menu、section/item labels、keyboard選択、copy callback、outside pointer後のmenu消失"
+// observation_boundary = "component-behavior"
+// scope = "composer-attachment-menu"
+// lifecycle = "permanent"
+// impact = "添付操作の候補が切り取られるかkeyboard利用者がmenuを完了できなくなる"
+// distinction = "表示markupだけでなくportal境界、interaction callback、outside dismissを一連で確認する"
+// @end-test-value
 test("ComposerAttachmentMenu は clipping 境界外の単一popoverで添付操作を完結する", async () => {
   const previousGlobals = {
     window: globalThis.window,
@@ -89,7 +101,7 @@ test("ComposerAttachmentMenu は clipping 境界外の単一popoverで添付操�
     assert.equal(dom.window.document.activeElement, attachButton);
 
     await act(async () => attachButton?.click());
-    const copyButton = dom.window.document.querySelector<HTMLButtonElement>("[aria-label=\"ファイルをSession Filesへコピーして添付\"]");
+    const copyButton = dom.window.document.querySelector<HTMLButtonElement>("[aria-label=\"Copy files to Session files and attach them\"]");
     await act(async () => copyButton?.click());
     assert.equal(copiedToSessionFiles, 1);
     assert.equal(dom.window.document.querySelector("[role=\"menu\"]"), null);

@@ -30,8 +30,8 @@ export class MainBootstrapService {
     this.deps.onBootStatus?.({
       kind: "running",
       stage: "stores",
-      title: "保存領域を初期化しています",
-      detail: "セッション、設定、Mate 関連データを読み込んでいます。",
+      title: "Initializing saved data",
+      detail: "Loading sessions, settings, and saved data.",
     });
     const activeModelCatalog = await this.deps.initializePersistentStores();
     await this.deps.recoverInterruptedSessions();
@@ -39,8 +39,8 @@ export class MainBootstrapService {
     this.deps.onBootStatus?.({
       kind: "running",
       stage: "home",
-      title: "Home を準備しています",
-      detail: "起動処理が完了したら Home を表示します。",
+      title: "Preparing Home",
+      detail: "Home will open when startup is complete.",
     });
     await this.deps.createHomeWindow();
     this.deps.broadcastModelCatalog(activeModelCatalog);

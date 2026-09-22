@@ -190,7 +190,7 @@ function makeAdditionalRootId(absolutePath: string): string {
 
 function makeRoot(kind: SessionFileRootKind, absolutePath: string, id: string, label: string): ResolvedSessionFileRoot {
   if (typeof absolutePath !== "string" || !absolutePath.trim()) {
-    throw new Error("file root path が空だよ。");
+    throw new Error("File root path cannot be empty.");
   }
   return {
     id,
@@ -203,21 +203,21 @@ function makeRoot(kind: SessionFileRootKind, absolutePath: string, id: string, l
 
 function normalizeRelativePath(value: string, allowRoot: boolean): string {
   if (typeof value !== "string") {
-    throw new TypeError("relativePath は文字列で指定してね。");
+    throw new TypeError("relativePath must be a string.");
   }
   if (!value) {
     if (allowRoot) {
       return "";
     }
-    throw new Error("ファイル path が空だよ。");
+    throw new Error("File path cannot be empty.");
   }
   if (path.isAbsolute(value) || /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("\\\\")) {
-    throw new Error("relativePath に絶対 path は指定できないよ。");
+    throw new Error("relativePath must not be absolute.");
   }
 
   const segments = value.replaceAll("\\", "/").split("/");
   if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
-    throw new Error("relativePath に不正な segment があるよ。");
+    throw new Error("relativePath contains an invalid segment.");
   }
   return segments.join("/");
 }
@@ -248,7 +248,7 @@ export class SessionFileExplorerService {
   private async resolveRoots(sessionId: string): Promise<ResolvedSessionFileRoot[]> {
     const context = await this.deps.getSessionContext(sessionId);
     if (!context) {
-      throw new Error("Session が見つからないよ。");
+      throw new Error("The session could not be found.");
     }
 
     const workspace = makeRoot("workspace", context.workspacePath, "workspace", "Workspace");
@@ -310,7 +310,7 @@ export class SessionFileExplorerService {
     validateRootFileResource(request);
     const root = await this.resolveRoot(request.sessionId, request.rootId);
     if (!root) {
-      throw new Error("指定された file root は現在の Session で利用できないよ。");
+      throw new Error("The specified file root is not available in the current session.");
     }
     const relativePath = normalizeRelativePath(request.relativePath, request.nodeKind === "root");
     return {
@@ -349,7 +349,7 @@ export class SessionFileExplorerService {
   ): Promise<SessionFilePreviewTargetResolution> {
     const context = await this.deps.getSessionContext(sessionId);
     if (!context) {
-      return { type: "failed", targetPath: target, message: "Session が見つからないよ。" };
+      return { type: "failed", targetPath: target, message: "The session could not be found." };
     }
 
     try {
@@ -398,7 +398,7 @@ export class SessionFileExplorerService {
       return {
         type: "failed",
         targetPath: target,
-        message: error instanceof Error ? error.message : "リンク先を解決できなかったよ。",
+        message: error instanceof Error ? error.message : "The link target could not be resolved.",
       };
     }
     if (resolvedTarget.type === "external-url") {
@@ -504,7 +504,7 @@ export class SessionFileExplorerService {
     validateRootFileResource(request);
     const root = await this.resolveRoot(request.sessionId, request.rootId);
     if (!root) {
-      throw new Error("指定された file root は現在の Session で利用できないよ。");
+      throw new Error("The specified file root is not available in the current session.");
     }
     const relativePath = normalizeRelativePath(request.relativePath, allowRoot);
     if (allowRoot && !relativePath && root.kind === "session-folder") {
@@ -538,7 +538,7 @@ export class SessionFileExplorerService {
     try {
       const openedStats = await handle.stat();
       if (expectedKind === "file" ? !openedStats.isFile() : !openedStats.isDirectory()) {
-        throw new Error(`指定 path は ${expectedKind} ではないよ。`);
+        throw new Error(`The specified path is not a ${expectedKind}.`);
       }
       const targetRealPath = await this.confirmOpenedTarget(candidate, openedStats);
       return { candidate, handle, stats: openedStats, targetRealPath };
@@ -560,7 +560,7 @@ export class SessionFileExplorerService {
     try {
       const openedStats = await handle.stat();
       if (!openedStats.isFile()) {
-        throw new Error("指定 path は file ではないよ。");
+        throw new Error("The specified path is not a file.");
       }
       const targetRealPath = await realpath(absolutePath);
       const statPath = this.deps.statPath ?? stat;
@@ -572,7 +572,7 @@ export class SessionFileExplorerService {
         || !isSameFileIdentity(openedStats, targetStats)
         || !isSameFileIdentity(openedStats, confirmedTargetStats)
       ) {
-        throw new Error("resource path が確認中に変更されたよ。再実行してね。");
+        throw new Error("The resource path changed during verification. Try again.");
       }
       return {
         candidate: {
@@ -603,7 +603,7 @@ export class SessionFileExplorerService {
   private async confirmOpenedTarget(candidate: ResolvedTargetCandidate, openedStats: Stats): Promise<string> {
     const targetRealPath = await realpath(candidate.unresolvedTargetPath);
     if (!isPathInside(candidate.rootRealPath, targetRealPath)) {
-      throw new Error("指定 path は file root の外側を参照しているよ。");
+      throw new Error("The specified path is outside the file root.");
     }
     const statPath = this.deps.statPath ?? stat;
     const targetStats = await statPath(targetRealPath);
@@ -617,7 +617,7 @@ export class SessionFileExplorerService {
       !isSameFileIdentity(openedStats, targetStats) ||
       !isSameFileIdentity(openedStats, confirmedTargetStats)
     ) {
-      throw new Error("resource path が認可中に変更されたよ。再実行してね。");
+      throw new Error("The resource path changed during authorization. Try again.");
     }
     return targetRealPath;
   }
@@ -629,7 +629,7 @@ export class SessionFileExplorerService {
       try {
         const result = await (this.deps.listDirectory ?? listIdentityBoundDirectory)(opened.targetRealPath);
         if (result.device !== opened.stats.dev || result.inode !== opened.stats.ino) {
-          throw new Error("directory path が認可後に変更されたよ。再実行してね。");
+          throw new Error("The directory path changed after authorization. Try again.");
         }
         return result;
       } finally {
@@ -649,7 +649,7 @@ export class SessionFileExplorerService {
 
   async openFile(request: SessionFileOpenRequest): Promise<OpenPathResult> {
     if (!this.deps.openResolvedPath) {
-      throw new Error("file open service を利用できないよ。");
+      throw new Error("The file open service is unavailable.");
     }
     const opened = await this.openLocalFile(request);
     try {
@@ -722,7 +722,7 @@ export class SessionFileExplorerService {
       const { bytesRead } = await handle.read(inspection, 0, inspection.byteLength, 0);
       const fileStatsAfterInspection = await handle.stat();
       if (makeFileRevision(fileStatsAfterInspection) !== makeFileRevision(fileStats)) {
-        throw new Error("inspection 中に file が変更されたよ。再読み込みしてね。");
+      throw new Error("The file changed during inspection. Reload and try again.");
       }
       const inspectedBytes = inspection.subarray(0, bytesRead);
       const resource = detectSessionFileResourceKind(targetRealPath, inspectedBytes);
@@ -743,24 +743,24 @@ export class SessionFileExplorerService {
 
   async readFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult> {
     if (!Number.isSafeInteger(request.offset) || request.offset < 0) {
-      throw new Error("file chunk offset が不正だよ。");
+      throw new Error("The file chunk offset is invalid.");
     }
     if (!Number.isSafeInteger(request.length) || request.length < 1 || request.length > MAX_CHUNK_BYTES) {
-      throw new Error(`file chunk length は 1 から ${MAX_CHUNK_BYTES} bytes で指定してね。`);
+      throw new Error(`File chunk length must be between 1 and ${MAX_CHUNK_BYTES} bytes.`);
     }
     const opened = await this.openLocalFile(request);
     try {
       const { handle, stats: fileStats } = opened;
       const revision = makeFileRevision(fileStats);
       if (request.expectedRevision !== revision) {
-        throw new Error("読み込み中に file が変更されたよ。再読み込みしてね。");
+      throw new Error("The file changed while it was being read. Reload and try again.");
       }
       const bytes = new Uint8Array(Math.min(request.length, Math.max(0, fileStats.size - request.offset)));
       const { bytesRead } = await handle.read(bytes, 0, bytes.byteLength, request.offset);
       const fileStatsAfterRead = await handle.stat();
       const revisionAfterRead = makeFileRevision(fileStatsAfterRead);
       if (revisionAfterRead !== revision) {
-        throw new Error("読み込み中に file が変更されたよ。再読み込みしてね。");
+      throw new Error("The file changed while it was being read. Reload and try again.");
       }
       const data = bytes.slice(0, bytesRead).buffer;
       const nextOffset = request.offset + bytesRead;

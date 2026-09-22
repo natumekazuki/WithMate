@@ -748,6 +748,17 @@
   color: var(--muted);
 }
 
+.home-page .home-session-list-empty {
+  margin: 0;
+  padding: 18px 14px;
+  border: 1px solid rgba(203, 213, 225, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #b6c1d2;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
 .home-page .home-session-list-load-spinner {
   width: 18px;
   height: 18px;
@@ -833,8 +844,12 @@
 }
 
 .home-page .home-session-pin-button {
-  min-width: 76px;
-  padding: 6px 10px;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0;
   border: 1px solid color-mix(in srgb, var(--card-ink, var(--ink)) 22%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--card-ink, var(--ink)) 8%, transparent);
@@ -842,6 +857,26 @@
   font-size: 0.74rem;
   font-weight: 700;
   cursor: pointer;
+}
+
+.home-page .home-session-pin-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.home-page .home-session-pin-icon.pending {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: home-session-pin-spin 760ms linear infinite;
+}
+
+@keyframes home-session-pin-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .home-page .home-session-pin-button:hover:not(:disabled),
@@ -973,6 +1008,8 @@
 
 .home-page .launch-field-label {
   color: #cbd5e1;
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 
 .home-page .launch-field-input {
@@ -1053,7 +1090,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .workspace-validation-spinner,
-  .home-page .home-session-list-load-spinner {
+  .home-page .home-session-list-load-spinner,
+  .home-page .home-session-pin-icon.pending,
+  .home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark,
+  .home-page .home-monitor-status-icon.loading .home-monitor-status-icon-mark {
     animation: none;
   }
 }
@@ -1369,8 +1409,7 @@
   color: #cbd5e1;
   font-size: 0.82rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
 }
 
 .launch-field-input {
@@ -1708,8 +1747,7 @@
 .settings-keyboard-shortcuts-group h3 {
   color: var(--muted);
   font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .settings-keyboard-shortcuts-group dl {
@@ -2112,7 +2150,6 @@
   color: #9ca8bb;
   font-size: 0.78rem;
   font-weight: 700;
-  text-transform: uppercase;
 }
 
 .memory-review-usage-summary strong {

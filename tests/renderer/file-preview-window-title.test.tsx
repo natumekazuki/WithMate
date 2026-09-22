@@ -124,6 +124,18 @@ test("buildFileRootDiffPreviewWindowRequest は root resource と Git scope を 
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "detached live Git DiffのOpen previewは同じresourceのfile previewへ戻り、初回diff取得中も回復導線を保持する"
+// oracle = { type = "contract", ref = "src/file-explorer/FilePreviewApp.tsx" }
+// fault = "diff取得中にOpen previewを利用できない、別resourceへ遷移する、またはdiff requestのresource identityを失う"
+// observable = "loading中のOpen preview disabled状態、diff request payload、遷移後のfile preview表示"
+// observation_boundary = "component-behavior"
+// scope = "FilePreviewApp.detached-live-diff-navigation"
+// lifecycle = "permanent"
+// impact = "取得中のlive diffから同じfile previewへ復帰でき、detached windowのresource identityを保つ"
+// distinction = "detached payloadのloadingと解放後のDOMを順に確認し、button contractとnavigation requestを分けて観測する"
+// @end-test-value
 test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Window の file preview へ戻る", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -232,7 +244,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
     assert.equal(loadingPreview.querySelector(".file-preview-loading-content"), null);
     const loadingButtons = [...loadingPreview.querySelectorAll<HTMLButtonElement>("button")];
     assert.equal(loadingButtons.find((button) => button.textContent === "Find")?.disabled, true);
-    assert.equal(loadingButtons.find((button) => button.textContent === "Open Preview")?.disabled, false);
+    assert.equal(loadingButtons.find((button) => button.textContent === "Open preview")?.disabled, false);
     await act(async () => releaseDiff?.());
     let openPreviewButton: HTMLButtonElement | undefined;
     for (let index = 0; index < 20 && !openPreviewButton; index += 1) {
@@ -240,7 +252,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
       openPreviewButton = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent === "Open Preview");
+        .find((button) => button.textContent === "Open preview");
     }
     assert.ok(openPreviewButton);
     assert.deepEqual(diffRequests, [{ ...resource, scope: "working-tree" }]);

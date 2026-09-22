@@ -2007,7 +2007,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.status, "idle");
     assert.equal(storedSessions.at(-1)?.status, "idle");
     assert.equal(storedSessions.at(-1)?.runState, "idle");
-    assert.match(result.messages.at(-1)?.text ?? "", /キャンセル/);
+    assert.match(result.messages.at(-1)?.text ?? "", /Run canceled/);
     assert.equal(auditUpdates.length, 2);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates[0]?.assistantText, "途中まで進んだよ。");
@@ -2257,7 +2257,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(service.hasInFlightRuns(), true);
     await assert.rejects(
       service.runSessionTurn(session.id, { userMessage: "再送" }),
-      /まだ実行中/,
+      /This session is already running/,
     );
     if (!resolveComposer) {
       throw new Error("composer resolve が取得できていないよ。");
@@ -2446,7 +2446,7 @@ resolveComposer!({ attachments: [], errors: [] });
     assert.equal(service.hasInFlightRuns(), true);
     await assert.rejects(
       service.runSessionTurn(session.id, { userMessage: "再送" }),
-      /まだ実行中/,
+      /This session is already running/,
     );
     if (!resolveProvider) {
       throw new Error("provider resolve が取得できていないよ。");
@@ -4144,7 +4144,7 @@ releaseSecondAttempt!();
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
     await waitForCondition(() => auditUpdates.at(-1)?.phase === "failed", "usage limit auditがbackgroundで保存されること");
-    const expectedMessage = "Codexの使用上限に達しました。\n再実行可能時刻: Jun 12th, 2026 2:07 AM";
+    const expectedMessage = "Codex usage limit reached.\nTry again at: Jun 12th, 2026 2:07 AM";
 
     assert.equal(result.runState, "error");
     assert.equal(auditUpdates.at(-1)?.phase, "failed");

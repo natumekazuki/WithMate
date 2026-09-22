@@ -79,13 +79,19 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const [selectedEntryId, setSelectedEntryId] = useState("");
   const [forgetReason, setForgetReason] = useState<MemoryForgetReason>("user_request");
   const [feedback, setFeedback] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [entryLoading, setEntryLoading] = useState(false);
   const [forgetting, setForgetting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [runningGc, setRunningGc] = useState(false);
   const [confirmForgetOpen, setConfirmForgetOpen] = useState(false);
   const cancelForgetButtonRef = useRef<HTMLButtonElement | null>(null);
+  const entryRequestIdRef = useRef(0);
+  const searchRequestIdRef = useRef(0);
+  const refreshRequestIdRef = useRef(0);
 
   const closeForgetConfirm = () => {
     if (!forgetting) {
@@ -109,9 +115,16 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   }), [query, selectedKind]);
 
   const runSearch = async (options?: { cursor?: string; append?: boolean }) => {
+    const requestId = ++searchRequestIdRef.current;
     const api = getApi();
     if (!api) {
-      setFeedback("Memory Review には desktop runtime が必要です。");
+      setFeedback("Memory review requires the desktop runtime.");
+      if (options?.append) {
+        setLoadingMore(false);
+      } else {
+        setLoading(false);
+        setLoadingMore(false);
+      }
       return;
     }
     const append = options?.append === true;
@@ -119,6 +132,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       setLoadingMore(true);
     } else {
       setLoading(true);
+      setLoadingMore(false);
       setNextCursor("");
     }
     try {
@@ -126,38 +140,63 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
         ...searchRequest,
         ...(options?.cursor ? { cursor: options.cursor } : {}),
       });
+      if (requestId !== searchRequestIdRef.current) {
+        return;
+      }
       setItems((currentItems) => append ? [...currentItems, ...result.items] : result.items);
       setNextCursor(result.nextCursor ?? "");
-      setFeedback(!append && result.items.length === 0 ? "一致する active Memory はありません。" : "");
+      if (!append) {
+        setHasLoaded(true);
+      }
+      setFeedback("");
       if (!append && selectedEntryId && !result.items.some((item) => item.id === selectedEntryId)) {
+        ++entryRequestIdRef.current;
+        setEntryLoading(false);
         setSelectedEntry(null);
         setSelectedEntryId("");
       }
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory の検索に失敗しました。");
+      if (requestId === searchRequestIdRef.current) {
+        setFeedback(error instanceof Error ? error.message : "Could not search Memory entries.");
+      }
     } finally {
-      if (append) {
-        setLoadingMore(false);
-      } else {
-        setLoading(false);
+      if (requestId === searchRequestIdRef.current) {
+        if (append) {
+          setLoadingMore(false);
+        } else {
+          setLoading(false);
+        }
       }
     }
   };
 
-  const loadFileUsage = async () => {
+  const loadFileUsage = async (requestId: number) => {
     const api = getApi();
     if (!api) {
       return;
     }
     try {
-      setFileUsage(await api.getMemoryV6FileUsage());
+      const nextFileUsage = await api.getMemoryV6FileUsage();
+      if (requestId === refreshRequestIdRef.current) {
+        setFileUsage(nextFileUsage);
+      }
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory file usage の読み込みに失敗しました。");
+      if (requestId === refreshRequestIdRef.current) {
+        setFeedback(error instanceof Error ? error.message : "Could not load Memory file usage.");
+      }
     }
   };
 
   const refreshReview = async () => {
-    await Promise.all([runSearch(), loadFileUsage()]);
+    const requestId = ++refreshRequestIdRef.current;
+    setRefreshing(true);
+    try {
+      await Promise.all([runSearch(), loadFileUsage(requestId)]);
+    } finally {
+      if (requestId === refreshRequestIdRef.current) {
+        setRefreshing(false);
+      }
+    }
   };
 
   useEffect(() => {
@@ -169,28 +208,50 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   }, []);
 
   const selectEntry = async (entryId: string) => {
+    const requestId = ++entryRequestIdRef.current;
+    setSelectedEntryId(entryId);
+    setSelectedEntry(null);
+    setConfirmForgetOpen(false);
+    setEntryLoading(true);
     const api = getApi();
     if (!api) {
-      setFeedback("Memory Review には desktop runtime が必要です。");
+      setEntryLoading(false);
+      setSelectedEntryId("");
+      setFeedback("Memory review requires the desktop runtime.");
       return;
     }
-    setSelectedEntryId(entryId);
     try {
       const entry = await api.getMemoryV6Entry(entryId);
+      if (requestId !== entryRequestIdRef.current) {
+        return;
+      }
+      setEntryLoading(false);
+      if (!entry || entry.id !== entryId) {
+        setSelectedEntry(null);
+        setSelectedEntryId("");
+        setFeedback("Memory entry was not found or is no longer active.");
+        return;
+      }
       setSelectedEntry(entry);
-      setFeedback(entry ? "" : "Memory entry は見つからないか、すでに inactive です。");
+      setFeedback("");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory entry の読み込みに失敗しました。");
+      if (requestId !== entryRequestIdRef.current) {
+        return;
+      }
+      setEntryLoading(false);
+      setSelectedEntry(null);
+      setSelectedEntryId("");
+      setFeedback(error instanceof Error ? error.message : "Could not load the Memory entry.");
     }
   };
 
   const forgetSelectedEntry = async () => {
-    if (!selectedEntryId || !selectedEntry || forgetting) {
+    if (!selectedEntryId || !selectedEntry || selectedEntry.id !== selectedEntryId || forgetting) {
       return;
     }
     const api = getApi();
     if (!api) {
-      setFeedback("Memory Review には desktop runtime が必要です。");
+      setFeedback("Memory review requires the desktop runtime.");
       return;
     }
     setForgetting(true);
@@ -202,28 +263,28 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       setConfirmForgetOpen(false);
       await refreshReview();
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory entry の forget に失敗しました。");
+      setFeedback(error instanceof Error ? error.message : "Could not forget the Memory entry.");
     } finally {
       setForgetting(false);
     }
   };
 
   const exportSelectedEntryFiles = async () => {
-    if (!selectedEntryId || !selectedEntry || exporting) {
+    if (!selectedEntryId || !selectedEntry || selectedEntry.id !== selectedEntryId || exporting) {
       return;
     }
     const api = getApi();
     if (!api) {
-      setFeedback("Memory Review には desktop runtime が必要です。");
+      setFeedback("Memory review requires the desktop runtime.");
       return;
     }
     setExporting(true);
     setFeedback("");
     try {
       const result = await api.exportMemoryV6EntryFiles(selectedEntryId);
-      setFeedback(result ? `${result.exportedCount} files exported.` : "Memory file export をキャンセルしました。");
+      setFeedback(result ? `${result.exportedCount} files exported.` : "Memory file export canceled.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory file export に失敗しました。");
+      setFeedback(error instanceof Error ? error.message : "Could not export Memory files.");
     } finally {
       setExporting(false);
     }
@@ -238,7 +299,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     }
     const api = getApi();
     if (!api) {
-      setFeedback("Memory Review には desktop runtime が必要です。");
+      setFeedback("Memory review requires the desktop runtime.");
       return;
     }
     setRunningGc(true);
@@ -252,7 +313,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       }
       setFeedback(dryRun ? "Memory file GC dry-run completed." : "Memory file GC cleanup completed.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory file GC に失敗しました。");
+      setFeedback(error instanceof Error ? error.message : "Could not run Memory file GC.");
     } finally {
       setRunningGc(false);
     }
@@ -265,10 +326,16 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
           <header className="memory-review-header">
             <div>
               <h1>Memory Review</h1>
-              <p>V6 Memory の active entry を確認し、不要な entry を検索対象から外す。</p>
+              <p>Review active Memory entries and remove entries from search when they are no longer needed.</p>
             </div>
-            <button className="launch-toggle" type="button" onClick={() => void refreshReview()} disabled={loading}>
-              {loading ? "Refreshing" : "Refresh"}
+            <button
+              className="launch-toggle"
+              type="button"
+              onClick={() => void refreshReview()}
+              disabled={refreshing || loading || loadingMore}
+              aria-busy={refreshing}
+            >
+              {refreshing ? <><span className="settings-action-spinner" aria-hidden="true" />Refreshing…</> : "Refresh"}
             </button>
           </header>
 
@@ -291,7 +358,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
             </label>
           </div>
 
-          {feedback ? <p className="settings-feedback memory-review-feedback">{feedback}</p> : null}
+          {feedback ? <p className="settings-feedback memory-review-feedback" role="status">{feedback}</p> : null}
 
           {fileUsage ? (
             <section className="memory-review-usage" aria-label="Memory file usage">
@@ -326,26 +393,26 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                 </div>
               ) : null}
               <div className="memory-review-gc-actions">
-                <button type="button" onClick={() => void runProtectedObjectGc(true)} disabled={runningGc}>
-                  {runningGc ? "Running" : "GC dry-run"}
+                <button type="button" onClick={() => void runProtectedObjectGc(true)} disabled={runningGc || refreshing} aria-busy={runningGc}>
+                  {runningGc ? <><span className="settings-action-spinner" aria-hidden="true" />Running…</> : "GC dry run"}
                 </button>
-                <button type="button" onClick={() => void runProtectedObjectGc(false)} disabled={runningGc}>
-                  Cleanup GC
+                <button type="button" onClick={() => void runProtectedObjectGc(false)} disabled={runningGc || refreshing} aria-busy={runningGc}>
+                  {runningGc ? <><span className="settings-action-spinner" aria-hidden="true" />Running…</> : "Run GC cleanup"}
                 </button>
               </div>
               {gcReport ? (
                 <div className="memory-review-gc-report" aria-label="Memory file GC report">
                   <span>{gcReport.dryRun ? "Dry-run" : "Cleanup"}</span>
                   <small>
-                    pending {gcReport.deletePending.candidates} / deleted {gcReport.deletePending.deleted} / missing {gcReport.deletePending.missing ?? 0} / failed {gcReport.deletePending.failed}
+                    Pending {gcReport.deletePending.candidates} / deleted {gcReport.deletePending.deleted} / missing {gcReport.deletePending.missing ?? 0} / failed {gcReport.deletePending.failed}
                   </small>
                   <small>
-                    orphan {gcReport.orphanFiles.candidates} / deleted {gcReport.orphanFiles.deleted} / failed {gcReport.orphanFiles.failed}
+                    Orphan {gcReport.orphanFiles.candidates} / deleted {gcReport.orphanFiles.deleted} / failed {gcReport.orphanFiles.failed}
                   </small>
                   <small>
-                    staging {gcReport.stagingFiles.candidates} / deleted {gcReport.stagingFiles.deleted} / failed {gcReport.stagingFiles.failed}
+                    Staging {gcReport.stagingFiles.candidates} / deleted {gcReport.stagingFiles.deleted} / failed {gcReport.stagingFiles.failed}
                   </small>
-                  <small>missing active {gcReport.missingActiveObjects}</small>
+                  <small>Missing active {gcReport.missingActiveObjects}</small>
                 </div>
               ) : null}
             </section>
@@ -376,11 +443,15 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   {loadingMore ? "Loading more" : "Load more"}
                 </button>
               ) : null}
-              {items.length === 0 && !loading ? <p className="settings-note">active Memory entry はありません。</p> : null}
+              {hasLoaded && items.length === 0 && !loading ? (
+                <p className="settings-note">
+                  {query.trim() || selectedKind ? "No active Memory entries match the search." : "No active Memory entries."}
+                </p>
+              ) : null}
             </section>
 
-            <section className="memory-review-detail" aria-label="Memory entry detail">
-              {selectedEntry ? (
+            <section className="memory-review-detail" aria-label="Memory entry detail" aria-busy={entryLoading}>
+              {selectedEntry && selectedEntry.id === selectedEntryId ? (
                 <>
                   <div className="memory-review-detail-head">
                     <div>
@@ -403,8 +474,8 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                     <section className="memory-review-files" aria-label="Protected files">
                       <div className="memory-review-files-head">
                         <h3>Protected files</h3>
-                        <button type="button" onClick={() => void exportSelectedEntryFiles()} disabled={exporting}>
-                          {exporting ? "Exporting" : "Export files"}
+                        <button type="button" onClick={() => void exportSelectedEntryFiles()} disabled={exporting || refreshing} aria-busy={exporting}>
+                          {exporting ? <><span className="settings-action-spinner" aria-hidden="true" />Exporting…</> : "Export files"}
                         </button>
                       </div>
                       <ul>
@@ -436,16 +507,16 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                       onClick={() => setConfirmForgetOpen(true)}
                       disabled={forgetting}
                     >
-                      {forgetting ? "Forgetting" : "Forget Entry"}
+                      {forgetting ? <><span className="settings-action-spinner" aria-hidden="true" />Forgetting…</> : "Forget entry"}
                     </button>
                   </div>
                 </>
-              ) : null}
+              ) : entryLoading ? <p className="settings-note">Loading Memory entry…</p> : null}
             </section>
           </div>
         </section>
       </main>
-      {confirmForgetOpen && selectedEntry ? (
+      {confirmForgetOpen && selectedEntry && selectedEntry.id === selectedEntryId ? (
         <div className="memory-review-modal-backdrop" role="presentation" onClick={closeForgetConfirm}>
           <section
             ref={forgetDialogRef}
@@ -457,7 +528,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
             onKeyDown={handleForgetDialogKeyDown}
           >
             <header>
-              <h2 id="memory-review-forget-title">Memory entry を検索対象から除外</h2>
+              <h2 id="memory-review-forget-title">Forget this Memory entry</h2>
               <button
                 className="diff-close"
                 type="button"
@@ -469,11 +540,11 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               </button>
             </header>
             <div className="memory-review-modal-body">
-              <p>この memory entry を検索対象から除外しますか？</p>
+              <p>Remove this Memory entry from search?</p>
               <strong>{selectedEntry.title || selectedEntry.id}</strong>
-              <span>reason: {forgetReason}</span>
+              <span>Reason: {forgetReason}</span>
               {forgetReason === "privacy" ? (
-                <span>privacy reason では title、body、preview、tags も削除されます。</span>
+                <span>For privacy requests, the title, body, preview, and tags are also deleted.</span>
               ) : null}
             </div>
             <footer>
@@ -487,7 +558,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                 Cancel
               </button>
               <button className="launch-toggle danger-button" type="button" onClick={() => void forgetSelectedEntry()} disabled={forgetting}>
-                {forgetting ? "Forgetting" : "Forget Entry"}
+                {forgetting ? <><span className="settings-action-spinner" aria-hidden="true" />Forgetting…</> : "Forget entry"}
               </button>
             </footer>
           </section>

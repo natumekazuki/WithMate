@@ -46,14 +46,14 @@ export class AppTrayService {
     tray.setToolTip("WithMate");
     tray.setContextMenu(this.deps.buildMenu([
       {
-        label: "WithMate を表示",
+        label: "Show WithMate",
         click: () => {
           void this.showHomeWindow();
         },
       },
       { type: "separator" },
       {
-        label: "終了",
+        label: "Quit",
         click: () => {
           this.deps.quitApp();
         },

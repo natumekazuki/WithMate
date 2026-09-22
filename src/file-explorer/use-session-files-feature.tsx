@@ -131,7 +131,7 @@ export function useSessionFilesFeature(input: {
       fileRootGitHistoryDiffPreview, fileRootGitHistoryDiffPendingPreview, fileRootGitHistoryDiffLoading,
     } = view;
     const shared = {
-      backNavigation: { label: "Back to Chat", onBack: bindings.onBack },
+      backNavigation: { label: "Back to chat", onBack: bindings.onBack },
       onCopyText: bindings.onCopyText,
       onQuoteText: bindings.onQuoteText,
       chatNotice: bindings.chatNotice,
@@ -173,7 +173,7 @@ export function useSessionFilesFeature(input: {
       return (
         <SessionDiffPreview
           {...shared}
-          title={`${fileRootDiffPendingPreview.relativePath} · ${fileRootDiffPendingPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
+          title={`${fileRootDiffPendingPreview.relativePath} · ${fileRootDiffPendingPreview.scope === "staged" ? "Staged" : "Working tree"}`}
           previewRevision={fileRootDiffPendingPreview.generation}
           patch=""
           loading
@@ -191,7 +191,7 @@ export function useSessionFilesFeature(input: {
       return (
         <SessionDiffPreview
           {...shared}
-          title={`${fileRootDiffPreview.relativePath} · ${fileRootDiffPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
+          title={`${fileRootDiffPreview.relativePath} · ${fileRootDiffPreview.scope === "staged" ? "Staged" : "Working tree"}`}
           previewRevision={fileRootDiffPreview.generation}
           patch={fileRootDiffPreview.patch}
           onOpenPreview={() => actions.handleOpenFileRootFile({

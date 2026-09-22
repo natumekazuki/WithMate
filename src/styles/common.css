@@ -76,8 +76,7 @@
 .rail-label {
   color: var(--muted);
   font-size: 0.74rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .drawer-toggle,

@@ -160,18 +160,46 @@ export function ConcurrentChatSplitter({
         const next = current + (event.key === "ArrowLeft" ? 0.02 : -0.02);
         onWidthRatioChange(next < bounds.minRatio ? 0 : next > bounds.maxRatio ? 1 : next);
       }}
-      ariaLabel={widthRatio >= 1 ? "Mainを開く" : widthRatio > 0 ? "Auxiliaryを折りたたむ" : "Auxiliaryを開く"}
+      ariaLabel={widthRatio >= 1 ? "Open Main" : widthRatio > 0 ? "Collapse Auxiliary" : "Open Auxiliary"}
       ariaControls={widthRatio >= 1 ? "session-main-chat-pane" : "session-auxiliary-chat-pane"}
-      title="クリックで開閉、ドラッグまたは矢印キーでサイズ調整。端まで寄せると片側を全幅表示"
+      title="Click to toggle. Drag or use arrow keys to resize. Move to an edge to show one side at full width."
     />
   );
 }
 
 function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps }) {
+  const targets = [
+    {
+      id: "main" as const,
+      label: "Main",
+      isRunning: chats.mainSession?.runState === "running" || Boolean(chats.mainLiveRun),
+    },
+    {
+      id: "auxiliary" as const,
+      label: "Auxiliary",
+      isRunning: chats.auxiliarySession?.runState === "running" || Boolean(chats.auxiliaryLiveRun),
+    },
+  ];
+
   return (
-    <div className="concurrent-chat-target-dock" role="group" aria-label="操作対象チャット">
-      <button type="button" className={chats.target === "main" ? "is-active" : ""} onClick={() => chats.onTargetChange("main")}>Main</button>
-      <button type="button" className={chats.target === "auxiliary" ? "is-active" : ""} onClick={() => chats.onTargetChange("auxiliary")}>Auxiliary</button>
+    <div className="concurrent-chat-target-dock" role="group" aria-label="Chat target">
+      {targets.map((target) => {
+        const isActive = chats.target === target.id;
+        const showRunningIndicator = target.isRunning && !isActive;
+        return (
+          <button
+            key={target.id}
+            type="button"
+            className={isActive ? "is-active" : ""}
+            aria-pressed={isActive}
+            onClick={() => chats.onTargetChange(target.id)}
+            aria-label={showRunningIndicator ? `${target.label} is running` : undefined}
+          >
+            {target.label}
+            {showRunningIndicator ? <span className="concurrent-chat-loading-spinner" aria-hidden="true" /> : null}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -260,7 +288,7 @@ export function ChatSkillPickerPanel({
         ref={panelRef}
         className="chat-skill-picker-panel"
         role="dialog"
-        aria-label="Skill 候補"
+        aria-label="Skill options"
         tabIndex={-1}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
@@ -294,8 +322,8 @@ export function ChatSkillPickerPanel({
               panelRef.current?.querySelector<HTMLElement>("[role=\"option\"]")?.focus();
             }}
             className="chat-skill-picker-search"
-            aria-label="Skillを検索"
-            placeholder="Skillを検索"
+            aria-label="Search skills"
+            placeholder="Search skills"
             autoComplete="off"
             disabled={isInteractionDisabled}
           />
@@ -304,14 +332,14 @@ export function ChatSkillPickerPanel({
         <div
           className="chat-skill-picker-content"
           role={hasItems ? "listbox" : "status"}
-          aria-label={hasItems ? "Skill 候補" : undefined}
+          aria-label={hasItems ? "Skill options" : undefined}
           aria-orientation={hasItems ? "vertical" : undefined}
           aria-busy={isLoading || undefined}
         >
           {isLoading ? (
             <div className="chat-skill-picker-state">
               <span className="chat-skill-picker-spinner" aria-hidden="true" />
-              <span className="visually-hidden">Skill候補を読み込んでいます。</span>
+              <span className="visually-hidden">Loading skills.</span>
             </div>
           ) : errorMessage ? (
             <p className="chat-skill-picker-state error">{errorMessage}</p>
@@ -334,10 +362,10 @@ export function ChatSkillPickerPanel({
               </button>
             ))
           ) : items.length > 0 ? (
-            <p className="chat-skill-picker-state">検索条件に一致する Skill はありません。</p>
+            <p className="chat-skill-picker-state">No skills match your search.</p>
           ) : (
             <p className="chat-skill-picker-state">
-              使える Skill がありません。SettingsのSkill RootまたはworkspaceのSKILL.mdを確認してください。
+              No skills are available. Check the Skill root in Settings or SKILL.md in the workspace.
             </p>
           )}
         </div>
@@ -357,9 +385,9 @@ export function ChatAdditionalDirectoryList({
   }
 
   return (
-    <section className="chat-additional-directory-surface" aria-label="許可中の追加Directory">
+    <section className="chat-additional-directory-surface" aria-label="Additional directories">
       <div className="chat-additional-directory-heading">
-        <span>追加Directory</span>
+        <span>Additional directories</span>
         <span className="chat-additional-directory-count">{items.length}</span>
       </div>
       <div className="chat-additional-directory-list">
@@ -375,12 +403,12 @@ export function ChatAdditionalDirectoryList({
                 className="chat-additional-directory-remove"
                 onClick={() => onRemove(item.path)}
                 disabled={isInteractionDisabled}
-                aria-label={`${item.primaryLabel} を削除`}
+                aria-label={`${item.primaryLabel}: Remove`}
               >
                 ×
               </button>
             ) : (
-              <span className="chat-additional-directory-readonly">許可中</span>
+              <span className="chat-additional-directory-readonly">Allowed</span>
             )}
           </div>
         ))}
@@ -521,7 +549,7 @@ export function ChatWindow({
       isHeaderVisible={isHeaderExpanded}
       isActionDockExpanded={isActionDockExpanded}
       errorSurface={renderedErrorNotices.length > 0 ? (
-        <div className="chat-error-surface" role="region" aria-label="チャットエラー">
+        <div className="chat-error-surface" role="region" aria-label="Chat error">
           {renderedErrorNotices.map((notice) => (
             <div key={notice.id} id={notice.domId} className="chat-error-notice" role="alert">
               <div className="chat-error-copy">
@@ -547,7 +575,7 @@ export function ChatWindow({
                   className="chat-error-dismiss"
                   type="button"
                   onClick={notice.onDismiss}
-                  aria-label={notice.dismissLabel ?? "エラー表示を閉じる"}
+                  aria-label={notice.dismissLabel ?? "Dismiss error"}
                 >
                   ×
                 </button>
@@ -593,7 +621,7 @@ export function ChatWindow({
       auxiliaryHeader={concurrentChats && concurrentChats.widthRatio > 0
         && (concurrentChats.auxiliaryItems.length > 0 || concurrentChats.onAddAuxiliary) ? (
         <SessionSwitcher
-          ariaLabel="Auxiliary会話切り替え"
+          ariaLabel="Auxiliary conversation"
           className="concurrent-chat-session-switcher"
           options={concurrentChats.auxiliaryItems}
           selectedId={concurrentChats.selectedAuxiliaryId ?? ""}
@@ -602,8 +630,8 @@ export function ChatWindow({
             <button
               type="button"
               className="session-switcher-add-button"
-              aria-label="Auxiliaryを追加"
-              title="Auxiliaryを追加"
+              aria-label="Add Auxiliary"
+              title="Add Auxiliary"
               onClick={concurrentChats.onAddAuxiliary}
               disabled={concurrentChats.isAddAuxiliaryDisabled}
             >
@@ -624,7 +652,7 @@ export function ChatWindow({
         <>
           <div id="session-auxiliary-chat-pane" className="concurrent-chat-column-content">
             {concurrentChats.auxiliaryItems.length === 0 ? null : concurrentChats.loading ? (
-              <div className="concurrent-chat-state" role="status" aria-label="Auxiliaryを読み込み中">
+              <div className="concurrent-chat-state" role="status" aria-label="Loading Auxiliary">
                 <span className="concurrent-chat-loading-spinner" aria-hidden="true" />
               </div>
             ) : concurrentChats.error ? (
@@ -648,7 +676,7 @@ export function ChatWindow({
                 />
               </>
             ) : (
-              <div className="concurrent-chat-state" role="status">Auxiliaryを選択してください。</div>
+              <div className="concurrent-chat-state" role="status">Select an Auxiliary conversation.</div>
             )}
           </div>
           {concurrentChats.target !== "auxiliary" ? (
@@ -678,6 +706,7 @@ export function ChatWindow({
           >
             <SessionComposerExpanded
               {...composerProps}
+              pendingRunIndicatorAnnounce={isActionDockExpanded}
               externalErrorDescriptionIds={composerErrorDescriptionIds || undefined}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
               onJumpToBottom={targetColumnControls?.followLatest ?? composerProps.onJumpToBottom}
@@ -698,6 +727,7 @@ export function ChatWindow({
           >
             <SessionActionDockCompactRow
               {...compactActionDockProps}
+              pendingRunIndicatorAnnounce={!isActionDockExpanded}
               onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
               showMessageViewModeControls={showMessageViewModeControls}
@@ -754,17 +784,17 @@ export function ChatDockSplitter({
   }
 
   const panelLabel = edge === "top"
-    ? "ヘッダー"
+    ? "Header"
     : edge === "bottom"
       ? "ActionDock"
       : edge === "left"
-        ? "左ペイン"
-        : "右ペイン";
+        ? "Left pane"
+        : "Right pane";
   const resolvedAriaLabel = ariaLabel
     ?? (
       effectiveTogglePanel
-        ? (isPanelExpanded ? `${panelLabel}を折りたたむ` : `${panelLabel}を展開`)
-        : `${panelLabel}のサイズを調整`
+        ? (isPanelExpanded ? `Collapse ${panelLabel}` : `Expand ${panelLabel}`)
+        : `Resize ${panelLabel}`
     );
   const resolvedTitle = title
     ?? (
@@ -773,12 +803,12 @@ export function ChatDockSplitter({
           isPanelExpanded
             ? (
               onPointerDown
-                ? `クリックで${panelLabel}を折りたたみ、ドラッグでサイズを調整`
-                : `クリックで${panelLabel}を折りたたみ`
+                ? `Click to collapse ${panelLabel}; drag to resize`
+                : `Click to collapse ${panelLabel}`
             )
-            : `クリックで${panelLabel}を展開`
+            : `Click to expand ${panelLabel}`
         )
-        : `${panelLabel}のサイズをドラッグで調整`
+        : `Drag to resize ${panelLabel}`
     );
   const controlledId = edge === "top"
     ? SESSION_HEADER_DOCK_ID

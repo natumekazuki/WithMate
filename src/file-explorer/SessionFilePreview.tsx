@@ -123,6 +123,8 @@ type FileLoadState =
   | { status: "ready"; loaded: LoadedFile | null; descriptor: SessionFileDescriptor }
   | { status: "error"; message: string };
 
+type PreviewAction = "open" | "reveal" | "copy-file" | "copy-image" | "context-menu" | "open-path" | "open-diff" | "load";
+
 type StructuredTextProjectionState =
   | { status: "idle" | "loading" }
   | {
@@ -591,6 +593,10 @@ export function SessionFilePreview({
   const [findQuery, setFindQuery] = useState("");
   const [currentMatch, setCurrentMatch] = useState(0);
   const [reloadRevision, setReloadRevision] = useState(0);
+  const [reloadPending, setReloadPending] = useState(false);
+  const [busyAction, setBusyAction] = useState<PreviewAction | null>(null);
+  const actionRevisionRef = useRef(0);
+  const busyActionRef = useRef<PreviewAction | null>(null);
   const markdownSurfaceRef = useRef<HTMLDivElement | null>(null);
   const imageViewport = useImageViewport(imageObjectUrl);
   const renderedMarkdownIndexRef = useRef<RenderedTextSearchIndex | null>(null);
@@ -600,6 +606,23 @@ export function SessionFilePreview({
   });
   const [renderedMarkdownIndexRevision, setRenderedMarkdownIndexRevision] = useState(0);
   const [renderedMarkdownMatchCount, setRenderedMarkdownMatchCount] = useState(0);
+
+  const beginAction = useCallback((action: PreviewAction): number | null => {
+    if (busyActionRef.current !== null) {
+      return null;
+    }
+    const revision = actionRevisionRef.current + 1;
+    actionRevisionRef.current = revision;
+    busyActionRef.current = action;
+    setBusyAction(action);
+    return revision;
+  }, []);
+  const finishAction = useCallback((revision: number) => {
+    if (actionRevisionRef.current === revision) {
+      busyActionRef.current = null;
+      setBusyAction(null);
+    }
+  }, []);
 
   useLayoutEffect(() => {
     for (const accumulator of markdownImageAccumulatorsRef.current) {
@@ -681,9 +704,13 @@ export function SessionFilePreview({
     setFindOpen(false);
     setFindQuery("");
     setCurrentMatch(0);
+    actionRevisionRef.current += 1;
+    busyActionRef.current = null;
+    setBusyAction(null);
 
     if (!api) {
       setLoadState({ status: "error", message: "File API is unavailable." });
+      setReloadPending(false);
       return () => {
         loadRevisionRef.current += 1;
       };
@@ -692,7 +719,7 @@ export function SessionFilePreview({
     void Promise.all([
       api.inspectSessionFile(request),
       api.listSessionFileRoots(request.sessionId),
-    ]).then(([descriptor, nextRoots]) => {
+    ]).then(async ([descriptor, nextRoots]) => {
       if (loadRevisionRef.current !== revision) {
         return;
       }
@@ -700,11 +727,15 @@ export function SessionFilePreview({
       if (descriptor.kind !== "binary" && descriptor.byteLength >= SESSION_FILE_LARGE_WARNING_BYTES) {
         setLoadState({ status: "large-warning", descriptor });
       } else {
-        void loadDescriptor(descriptor, revision);
+        await loadDescriptor(descriptor, revision);
       }
     }).catch((error) => {
       if (loadRevisionRef.current === revision) {
         setLoadState({ status: "error", message: error instanceof Error ? error.message : "File could not be inspected." });
+      }
+    }).finally(() => {
+      if (loadRevisionRef.current === revision) {
+        setReloadPending(false);
       }
     });
 
@@ -925,7 +956,11 @@ export function SessionFilePreview({
     ) % findMatches.length);
   }, [findMatches.length, markdownMode, previewKind]);
   const openCurrentFile = useCallback(async () => {
-    if (!api) {
+    if (!api || busyAction !== null) {
+      return;
+    }
+    const actionRevision = beginAction("open");
+    if (actionRevision === null) {
       return;
     }
     const revision = loadRevisionRef.current;
@@ -938,11 +973,17 @@ export function SessionFilePreview({
       if (loadRevisionRef.current === revision) {
         setFeedback(error instanceof Error ? error.message : "The file could not be opened.");
       }
+    } finally {
+      finishAction(actionRevision);
     }
-  }, [api, request]);
+  }, [api, beginAction, busyAction, finishAction, request]);
 
   const revealCurrentFile = useCallback(async () => {
-    if (!api) {
+    if (!api || busyAction !== null) {
+      return;
+    }
+    const actionRevision = beginAction("reveal");
+    if (actionRevision === null) {
       return;
     }
     const revision = loadRevisionRef.current;
@@ -955,11 +996,17 @@ export function SessionFilePreview({
       if (loadRevisionRef.current === revision) {
         setFeedback(error instanceof Error ? error.message : "The file could not be revealed.");
       }
+    } finally {
+      finishAction(actionRevision);
     }
-  }, [api, request]);
+  }, [api, beginAction, busyAction, finishAction, request]);
 
   const copyCurrentFile = useCallback(async () => {
-    if (!api || !fileObjectCopyAvailable) {
+    if (!api || !fileObjectCopyAvailable || busyAction !== null) {
+      return;
+    }
+    const actionRevision = beginAction("copy-file");
+    if (actionRevision === null) {
       return;
     }
     const revision = loadRevisionRef.current;
@@ -975,16 +1022,22 @@ export function SessionFilePreview({
       if (loadRevisionRef.current === revision) {
         setCopyFeedback({ message: "File could not be copied.", tone: "error" });
       }
+    } finally {
+      finishAction(actionRevision);
     }
-  }, [api, fileObjectCopyAvailable, request]);
+  }, [api, beginAction, busyAction, fileObjectCopyAvailable, finishAction, request]);
 
   const copyPreviewImage = useCallback(async () => {
-    if (!api || !imageViewport.imageRef.current || !imageViewport.viewportRef.current) {
+    if (!api || !imageViewport.imageRef.current || !imageViewport.viewportRef.current || busyAction !== null) {
       return;
     }
     const point = resolveVisibleImageCopyPoint(imageViewport.imageRef.current, imageViewport.viewportRef.current);
     if (!point) {
       setCopyFeedback({ message: "The image is not currently visible.", tone: "error" });
+      return;
+    }
+    const actionRevision = beginAction("copy-image");
+    if (actionRevision === null) {
       return;
     }
     const revision = loadRevisionRef.current;
@@ -1003,14 +1056,20 @@ export function SessionFilePreview({
       if (loadRevisionRef.current === revision) {
         setCopyFeedback({ message: "Image could not be copied.", tone: "error" });
       }
+    } finally {
+      finishAction(actionRevision);
     }
-  }, [api, request.sessionId]);
+  }, [api, beginAction, busyAction, finishAction, imageViewport.imageRef, imageViewport.viewportRef, request.sessionId]);
 
   const showPreviewImageContextMenu = useCallback(async (
     event: ReactMouseEvent<HTMLImageElement>,
   ) => {
     event.preventDefault();
-    if (!api) {
+    if (!api || busyAction !== null) {
+      return;
+    }
+    const actionRevision = beginAction("context-menu");
+    if (actionRevision === null) {
       return;
     }
     const revision = loadRevisionRef.current;
@@ -1032,15 +1091,21 @@ export function SessionFilePreview({
       if (loadRevisionRef.current === revision) {
         setCopyFeedback({ message: "Image context menu could not be opened.", tone: "error" });
       }
+    } finally {
+      finishAction(actionRevision);
     }
-  }, [api, request.sessionId]);
+  }, [api, beginAction, busyAction, finishAction, request.sessionId]);
 
   const handleOpenMarkdownPath = useCallback((target: string) => {
-    if (!api) {
+    if (!api || busyAction !== null) {
       return;
     }
     const trimmedTarget = target.trim();
     if (!trimmedTarget || trimmedTarget.startsWith("#")) {
+      return;
+    }
+    const actionRevision = beginAction("open-path");
+    if (actionRevision === null) {
       return;
     }
     const revision = loadRevisionRef.current;
@@ -1059,8 +1124,11 @@ export function SessionFilePreview({
         if (loadRevisionRef.current === revision) {
           setFeedback(error instanceof Error ? error.message : "The link could not be opened.");
         }
+      })
+      .finally(() => {
+        finishAction(actionRevision);
       });
-  }, [api, request]);
+  }, [api, beginAction, busyAction, finishAction, request]);
 
   const resolveMarkdownImageSource = useCallback(async (target: string): Promise<string | null> => {
     if (!api) {
@@ -1124,7 +1192,11 @@ export function SessionFilePreview({
   }, [api, encoding, markdownImageQueue, request, roots]);
 
   const openDiff = useCallback(async (scope: FileRootGitDiffScope) => {
-    if (!onOpenDiff) {
+    if (!onOpenDiff || busyAction !== null) {
+      return;
+    }
+    const actionRevision = beginAction("open-diff");
+    if (actionRevision === null) {
       return;
     }
     const revision = loadRevisionRef.current;
@@ -1137,8 +1209,10 @@ export function SessionFilePreview({
       if (loadRevisionRef.current === revision) {
         setFeedback(error instanceof Error ? error.message : "Git diff failed.");
       }
+    } finally {
+      finishAction(actionRevision);
     }
-  }, [onOpenDiff]);
+  }, [beginAction, busyAction, finishAction, onOpenDiff]);
 
   const structuredTextFeedback = currentStructuredTextError
     ? `Formatted preview is unavailable: ${currentStructuredTextError.message} Showing raw content.`
@@ -1149,7 +1223,11 @@ export function SessionFilePreview({
   const contentLoading = loadState.status === "inspecting" || loadState.status === "loading";
 
   return (
-    <section className="session-file-preview" aria-label="File preview" aria-busy={contentLoading || undefined}>
+    <section
+      className="session-file-preview"
+      aria-label="File preview"
+      aria-busy={contentLoading || reloadPending || Boolean(busyAction) || diffLoadingScope !== null || undefined}
+    >
       <header className="session-file-preview-header">
         {backNavigation ? (
           <BackNavigationButton
@@ -1195,7 +1273,13 @@ export function SessionFilePreview({
           ) : null}
           {descriptor && (previewKind === "image" || previewKind === "svg") ? (
             <>
-              <button type="button" disabled={!imageObjectUrl} onClick={() => void copyPreviewImage()}>Copy Image</button>
+              <button
+                type="button"
+                disabled={!imageObjectUrl || busyAction !== null}
+                onClick={() => void copyPreviewImage()}
+              >
+                {busyAction === "copy-image" ? "Copying…" : "Copy image"}
+              </button>
               <ImageZoomControls
                 controller={imageViewport}
                 className="session-file-preview-segmented"
@@ -1207,20 +1291,26 @@ export function SessionFilePreview({
             <button
               key={scope}
               type="button"
-              disabled={diffLoadingScope !== null}
+              disabled={diffLoadingScope !== null || busyAction !== null}
               onClick={() => void openDiff(scope)}
             >
               {diffLoadingScope === scope
-                ? "Loading Diff…"
+                ? "Loading diff…"
                 : diffScopes.length === 1
-                ? "Open Diff"
+                ? "Open diff"
                 : scope === "staged"
-                  ? "Staged Diff"
-                  : "Working Tree Diff"}
+                  ? "Staged diff"
+                  : "Working tree diff"}
             </button>
           )) : null}
           {currentFileActionsAvailable && fileObjectCopyAvailable ? (
-            <button type="button" onClick={() => void copyCurrentFile()}>Copy File</button>
+            <button
+              type="button"
+              disabled={busyAction !== null}
+              onClick={() => void copyCurrentFile()}
+            >
+              {busyAction === "copy-file" ? "Copying…" : "Copy file"}
+            </button>
           ) : null}
           {previewKind === "text" || previewKind === "markdown" ? (
             <button
@@ -1231,11 +1321,35 @@ export function SessionFilePreview({
               Find
             </button>
           ) : null}
-          <button type="button" onClick={() => setReloadRevision((current) => current + 1)}>Reload</button>
+          <button
+            type="button"
+            disabled={contentLoading || reloadPending || Boolean(busyAction)}
+            onClick={() => {
+              if (contentLoading || reloadPending || busyAction) {
+                return;
+              }
+              setReloadPending(true);
+              setReloadRevision((current) => current + 1);
+            }}
+          >
+            {reloadPending ? "Reloading…" : "Reload"}
+          </button>
           {currentFileActionsAvailable ? (
             <>
-              <button type="button" onClick={() => void openCurrentFile()}>Open</button>
-              <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={() => void openCurrentFile()}
+              >
+                {busyAction === "open" ? "Opening…" : "Open"}
+              </button>
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={() => void revealCurrentFile()}
+              >
+                {busyAction === "reveal" ? "Showing…" : "Show in Explorer"}
+              </button>
             </>
           ) : null}
         </div>
@@ -1281,7 +1395,22 @@ export function SessionFilePreview({
           <p>{isSessionFileGitCommitResource(request)
             ? "The file can still be opened. Loading materializes the selected commit blob in memory and replaces the previous preview."
             : "The file can still be opened. It is read in chunks and replaces the previous preview."}</p>
-          <button type="button" onClick={() => void loadDescriptor(loadState.descriptor, loadRevisionRef.current)}>Load anyway</button>
+          <button
+            type="button"
+            disabled={busyAction !== null}
+            onClick={() => {
+              if (busyAction) {
+                return;
+              }
+              const actionRevision = beginAction("load");
+              if (actionRevision === null) {
+                return;
+              }
+              void loadDescriptor(loadState.descriptor, loadRevisionRef.current).finally(() => finishAction(actionRevision));
+            }}
+          >
+            {busyAction === "load" ? "Loading…" : "Load anyway"}
+          </button>
         </div>
       ) : null}
       {loadState.status === "error" ? <div className="session-file-preview-error" role="alert">{loadState.message}</div> : null}
@@ -1296,8 +1425,12 @@ export function SessionFilePreview({
           </dl>
           {currentFileActionsAvailable ? (
             <>
-              <button type="button" onClick={() => void openCurrentFile()}>Open in default app</button>
-              <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+              <button type="button" disabled={busyAction !== null} onClick={() => void openCurrentFile()}>
+                {busyAction === "open" ? "Opening…" : "Open in default app"}
+              </button>
+              <button type="button" disabled={busyAction !== null} onClick={() => void revealCurrentFile()}>
+                {busyAction === "reveal" ? "Showing…" : "Show in Explorer"}
+              </button>
             </>
           ) : null}
         </div>
@@ -1408,6 +1541,7 @@ export function SessionDiffPreview({
   const [query, setQuery] = useState("");
   const [currentMatch, setCurrentMatch] = useState(0);
   const [feedback, setFeedback] = useState("");
+  const [navigationAction, setNavigationAction] = useState<"preview" | "before" | "after" | null>(null);
   const previewIdentity = `${title}\0${previewRevision}`;
   const previewIdentityRef = useRef(previewIdentity);
   const navigationRevisionRef = useRef(0);
@@ -1431,11 +1565,12 @@ export function SessionDiffPreview({
 
   useEffect(() => {
     setFeedback("");
+    setNavigationAction(null);
   }, [previewIdentity]);
 
   useShortcutScope("file-preview");
   useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewFind, () => {
-    if (loading) {
+    if (loading || reloadPending || navigationAction !== null) {
       return false;
     }
     setFindOpen(true);
@@ -1464,7 +1599,7 @@ export function SessionDiffPreview({
   };
 
   const reload = async () => {
-    if (!onReload) {
+    if (!onReload || loading || reloadPending || navigationAction) {
       return;
     }
     const revision = ++reloadRevisionRef.current;
@@ -1483,11 +1618,13 @@ export function SessionDiffPreview({
   const openPreviewAction = async (
     action: (() => Promise<string | null>) | undefined,
     fallbackMessage: string,
+    actionName: "preview" | "before" | "after",
   ) => {
-    if (!action) {
+    if (!action || navigationAction) {
       return;
     }
     const revision = ++navigationRevisionRef.current;
+    setNavigationAction(actionName);
     try {
       const message = await action();
       if (revision === navigationRevisionRef.current && previewIdentityRef.current === previewIdentity) {
@@ -1497,6 +1634,10 @@ export function SessionDiffPreview({
       if (revision === navigationRevisionRef.current && previewIdentityRef.current === previewIdentity) {
         setFeedback(error instanceof Error ? error.message : fallbackMessage);
       }
+    } finally {
+      if (revision === navigationRevisionRef.current) {
+        setNavigationAction(null);
+      }
     }
   };
 
@@ -1504,7 +1645,7 @@ export function SessionDiffPreview({
     <section
       className="session-file-preview session-diff-preview"
       aria-label="Git diff preview"
-      aria-busy={loading || undefined}
+      aria-busy={loading || reloadPending || navigationAction !== null || undefined}
     >
       <header className="session-file-preview-header">
         {backNavigation ? (
@@ -1516,7 +1657,7 @@ export function SessionDiffPreview({
         ) : null}
         <div className="session-file-preview-title">
           <strong>{title}</strong>
-          <span>Git Diff</span>
+          <span>Git diff</span>
           {contextLabel ? <span className="session-diff-preview-context">{contextLabel}</span> : null}
         </div>
         <div className="session-file-preview-actions">
@@ -1524,7 +1665,7 @@ export function SessionDiffPreview({
             <button
               type="button"
               className={viewMode === "split" ? "is-active" : ""}
-              disabled={loading}
+              disabled={loading || reloadPending}
               onClick={() => setViewMode("split")}
             >
               Split
@@ -1532,7 +1673,7 @@ export function SessionDiffPreview({
             <button
               type="button"
               className={viewMode === "inline" ? "is-active" : ""}
-              disabled={loading}
+              disabled={loading || reloadPending}
               onClick={() => setViewMode("inline")}
             >
               Inline
@@ -1541,30 +1682,33 @@ export function SessionDiffPreview({
           {onOpenPreview ? (
             <button
               type="button"
-              onClick={() => void openPreviewAction(onOpenPreview, "The file preview could not be opened.")}
+              disabled={navigationAction !== null}
+              onClick={() => void openPreviewAction(onOpenPreview, "The file preview could not be opened.", "preview")}
             >
-              Open Preview
+              {navigationAction === "preview" ? "Opening…" : "Open preview"}
             </button>
           ) : null}
           {onOpenBeforePreview ? (
             <button
               type="button"
-              onClick={() => void openPreviewAction(onOpenBeforePreview, "The before preview could not be opened.")}
+              disabled={navigationAction !== null}
+              onClick={() => void openPreviewAction(onOpenBeforePreview, "The before preview could not be opened.", "before")}
             >
-              Open Before
+              {navigationAction === "before" ? "Opening…" : "Open before"}
             </button>
           ) : null}
           {onOpenAfterPreview ? (
             <button
               type="button"
-              onClick={() => void openPreviewAction(onOpenAfterPreview, "The after preview could not be opened.")}
+              disabled={navigationAction !== null}
+              onClick={() => void openPreviewAction(onOpenAfterPreview, "The after preview could not be opened.", "after")}
             >
-              Open After
+              {navigationAction === "after" ? "Opening…" : "Open after"}
             </button>
           ) : null}
           <button
             type="button"
-            disabled={loading}
+            disabled={loading || reloadPending || navigationAction !== null}
             onClick={() => setFindOpen(true)}
             title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind, undefined, keyboardShortcuts)}
           >
@@ -1573,7 +1717,7 @@ export function SessionDiffPreview({
           {onReload ? (
             <button
               type="button"
-              disabled={loading || reloadPending}
+              disabled={loading || reloadPending || navigationAction !== null}
               onClick={() => void reload()}
             >
               {reloadPending && !loading ? "Reloading…" : "Reload"}
@@ -1582,7 +1726,7 @@ export function SessionDiffPreview({
         </div>
       </header>
       <SessionContentFindBar
-        open={!loading && findOpen}
+        open={!loading && !reloadPending && findOpen}
         query={query}
         currentMatch={activeCurrentMatch}
         matchCount={matches.length}

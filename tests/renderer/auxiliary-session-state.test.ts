@@ -460,6 +460,18 @@ test("applyAuxiliarySessionReasoningEffortChange は reasoning effort と update
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "applyAuxiliarySessionReasoningEffortChangeはmodel catalogと不一致のreasoning effortを拒否し、validation errorを維持する"
+// oracle = { type = "contract", ref = "Issue #731 Auxiliary settings validation feedback" }
+// fault = "model catalogに存在しないreasoning effortを受け入れるか、selected model/reasoning effortのvalidation理由を失う"
+// observable = "不一致modelとreasoning effort入力でthrowされるError.message"
+// observation_boundary = "public-boundary"
+// scope = "applyAuxiliarySessionReasoningEffortChange model catalog validation"
+// lifecycle = "permanent"
+// impact = "Auxiliary settingsで無効なmodel選択や推論強度を保存せず、修正理由を利用者へ伝える"
+// distinction = "正常なstate patch結果ではなく、model catalog境界の拒否理由を公開helperから直接確認する"
+// @end-test-value
 test("applyAuxiliarySessionReasoningEffortChange は model catalog validation error を維持する", () => {
   const session = createAuxiliarySession({
     model: "gpt-5.4-mini",
@@ -484,7 +496,7 @@ test("applyAuxiliarySessionReasoningEffortChange は model catalog validation er
       2,
       "2026-01-02T00:00:00.000Z",
     ),
-    /selected depth/,
+    /selected reasoning effort/,
   );
 });
 
@@ -556,6 +568,18 @@ test("resolveAuxiliarySessionSendPreflight は送信文を trim する", () => {
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "resolveAuxiliarySessionSendPreflightは空message・実行中・composer blockを理由別に分類し、利用者向けmessageとtrim済み本文を返す"
+// oracle = { type = "contract", ref = "Issue #731 Auxiliary send preflight" }
+// fault = "空messageまたはrunningを送信可能として扱うか、blocked reasonとmessageを取り違えて本文を返す"
+// observable = "resolveAuxiliarySessionSendPreflightのblockedReason、blockedMessage、userMessage"
+// observation_boundary = "public-boundary"
+// scope = "resolveAuxiliarySessionSendPreflight blocked reasons"
+// lifecycle = "permanent"
+// impact = "Auxiliary送信前の停止理由を識別し、空送信や実行中の重複送信を防ぐ"
+// distinction = "UI側のerror renderingではなく、送信actionが消費するpreflight resultの分類契約を確認する"
+// @end-test-value
 test("resolveAuxiliarySessionSendPreflight は送信前 block 理由を返す", () => {
   assert.deepEqual(
     resolveAuxiliarySessionSendPreflight({
@@ -564,7 +588,7 @@ test("resolveAuxiliarySessionSendPreflight は送信前 block 理由を返す", 
     }),
     {
       blockedReason: "empty-message",
-      blockedMessage: "送信するメッセージが空だよ。",
+      blockedMessage: "Enter a message before sending.",
       userMessage: "",
     },
   );
@@ -575,7 +599,7 @@ test("resolveAuxiliarySessionSendPreflight は送信前 block 理由を返す", 
     }),
     {
       blockedReason: "running",
-      blockedMessage: "Auxiliary Session はまだ実行中だよ。",
+      blockedMessage: "This Auxiliary Session is still running.",
       userMessage: "hello",
     },
   );

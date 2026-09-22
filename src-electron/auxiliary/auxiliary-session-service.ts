@@ -91,7 +91,7 @@ function isCreationContext(value: unknown): value is AuxiliaryCreationContext {
 }
 
 function buildInterruptedMessages(messages: AuxiliarySession["messages"]): AuxiliarySession["messages"] {
-  const interruptedMessage = "前回の Auxiliary 実行はアプリ終了で中断された可能性があります。必要ならもう一度送信してください。";
+  const interruptedMessage = "The previous Auxiliary run may have been interrupted when the app quit. Send again if needed.";
   const lastMessage = messages.at(-1);
   if (lastMessage?.role === "assistant" && lastMessage.text === interruptedMessage) {
     return messages;
@@ -146,7 +146,7 @@ function resolveInitialRuntimeOption<T extends string>(
     return value as T;
   }
 
-  throw new Error(`Auxiliary Session の ${fieldName} を解釈できないよ。`);
+  throw new Error(`Could not parse the Auxiliary Session ${fieldName}.`);
 }
 
 function resolveRuntimeSelectionMode(value: unknown): AuxiliaryRuntimeSelectionMode {
@@ -156,7 +156,7 @@ function resolveRuntimeSelectionMode(value: unknown): AuxiliaryRuntimeSelectionM
   if (value === "latest-session") {
     return value;
   }
-  throw new Error("Auxiliary Session の runtimeSelection を解釈できないよ。");
+  throw new Error("Could not parse the Auxiliary Session runtime selection.");
 }
 
 function assertLatestSessionRuntimeFieldsAbsent(input: CreateAuxiliarySessionInput): void {
@@ -168,7 +168,7 @@ function assertLatestSessionRuntimeFieldsAbsent(input: CreateAuxiliarySessionInp
     input.codexSpeed !== undefined ||
     input.customAgentName !== undefined
   ) {
-    throw new Error("latest-session 選択では runtime option を直接指定できないよ。");
+    throw new Error("Runtime options cannot be specified when using latest-session selection.");
   }
 }
 
@@ -191,7 +191,7 @@ export class AuxiliarySessionService {
     this.syncCreationStorage(storage);
     const parent = await this.deps.getParentSession(parentSessionId);
     if (!parent) {
-      throw new Error("親セッションが見つからないよ。");
+      throw new Error("The parent session could not be found.");
     }
     this.syncCreationStorage(this.deps.getStorage());
     return {
@@ -353,7 +353,7 @@ export class AuxiliarySessionService {
     const requestId = input.clientRequestId?.trim() ?? "";
     const creationContext = input.creationContext;
     if (requestId && creationContext !== undefined && !isCreationContext(creationContext)) {
-      throw new Error("Auxiliary Session の creation context を解釈できないよ。");
+      throw new Error("Could not parse the Auxiliary Session creation context.");
     }
     if (requestId && creationContext) {
       const storage = this.deps.getStorage();
@@ -368,16 +368,16 @@ export class AuxiliarySessionService {
       const existingRecord = this.creationRecords.get(key);
       if (existingRecord) {
         if (existingRecord.status === "cancelled" || existingRecord.status === "expired") {
-          throw new Error("Auxiliary Session の作成要求は取り消し済みだよ。");
+          throw new Error("The Auxiliary Session creation request was canceled.");
         }
         if (existingRecord.status === "unknown" && !existingRecord.promise) {
-          throw new Error("Auxiliary Session の作成要求の取消結果を確認中だよ。");
+          throw new Error("The Auxiliary Session creation cancellation is still being confirmed.");
         }
         if (!existingRecord.input || !isDeepStrictEqual(existingRecord.input, normalizedInput)) {
-          throw new Error("同じ Auxiliary creation request ID に異なる入力は使えないよ。");
+          throw new Error("The same Auxiliary creation request ID cannot be used with different input.");
         }
         if (!existingRecord.promise) {
-          throw new Error("Auxiliary Session の作成要求はすでに終了しているよ。");
+          throw new Error("The Auxiliary Session creation request has already finished.");
         }
         return existingRecord.promise;
       }
@@ -386,27 +386,27 @@ export class AuxiliarySessionService {
       const recordAfterLookup = this.creationRecords.get(key);
       if (recordAfterLookup) {
         if (recordAfterLookup.status === "cancelled" || recordAfterLookup.status === "expired") {
-          throw new Error("Auxiliary Session の作成要求は取り消し済みだよ。");
+          throw new Error("The Auxiliary Session creation request was canceled.");
         }
         if (!recordAfterLookup.input || !isDeepStrictEqual(recordAfterLookup.input, normalizedInput)) {
-          throw new Error("同じ Auxiliary creation request ID に異なる入力は使えないよ。");
+          throw new Error("The same Auxiliary creation request ID cannot be used with different input.");
         }
         if (recordAfterLookup.promise) return recordAfterLookup.promise;
       }
       if (persisted) {
         const existing = await storage.getAuxiliarySession(persisted.id);
-        if (!existing) throw new Error("Auxiliary Session の再送対象が見つからないよ。");
+        if (!existing) throw new Error("The Auxiliary Session retry target could not be found.");
         this.assertCharacterSnapshotValid(existing);
         if (!existing.creationRequest) {
-          throw new Error("継続境界以前のAuxiliary作成行はquery専用で、再作成には利用できないよ。");
+          throw new Error("Auxiliary creation records before the continuity boundary are query-only and cannot be recreated.");
         }
         if (!isDeepStrictEqual(existing.creationRequest, normalizedInput)) {
-          throw new Error("同じ Auxiliary creation request ID に異なる入力は使えないよ。");
+          throw new Error("The same Auxiliary creation request ID cannot be used with different input.");
         }
         return existing;
       }
       if (creationContext.generationId !== this.getCreationOwnerGeneration(input.parentSessionId)) {
-        throw new Error("Auxiliary Session の creation context が期限切れだよ。");
+        throw new Error("The Auxiliary Session creation context has expired.");
       }
 
       const record = {} as AuxiliaryCreationRecord;
@@ -436,10 +436,10 @@ export class AuxiliarySessionService {
     const storage = this.deps.getStorage();
     const parent = await this.deps.getParentSession(input.parentSessionId);
     if (!parent) {
-      throw new Error("親セッションが見つからないよ。");
+      throw new Error("The parent session could not be found.");
     }
     if (this.deps.getStorage() !== storage) {
-      throw new Error("Auxiliary Session の保存先が作成中に切り替わったため、作成を中止したよ。");
+      throw new Error("Auxiliary Session creation was canceled because its storage changed during creation.");
     }
     const legacyRequestId = input.clientRequestId?.trim() ?? "";
     if (legacyRequestId) {
@@ -447,7 +447,7 @@ export class AuxiliarySessionService {
         .find((summary) => summary.clientRequestId === legacyRequestId);
       if (existing) {
         return await this.getAuxiliarySession(existing.id) ?? (() => {
-          throw new Error("Auxiliary Session の再送対象が見つからないよ。");
+          throw new Error("The Auxiliary Session retry target could not be found.");
         })();
       }
     }
@@ -469,12 +469,12 @@ export class AuxiliarySessionService {
     try {
       const options = this.validateAuxiliaryInput(input);
       const parent = await this.deps.getParentSession(input.parentSessionId);
-      if (!parent) throw new Error("親セッションが見つからないよ。");
+      if (!parent) throw new Error("The parent session could not be found.");
       if (input.creationContext && input.creationContext.parentIncarnationId !== getSessionIncarnationId(parent)) {
-        throw new Error("Auxiliary Session の親セッションが置き換わったため、作成を中止したよ。");
+        throw new Error("Auxiliary Session creation was canceled because its parent session changed during creation.");
       }
       prepared = await this.prepareAuxiliarySession(input, parent, options);
-      if (record.cancelRequested) throw new Error("Auxiliary Session の作成を取り消したよ。");
+      if (record.cancelRequested) throw new Error("Auxiliary Session creation was canceled.");
     } catch (error) {
       if (record.status !== "expired") {
         record.status = record.cancelRequested ? "cancelled" : "failed";
@@ -554,7 +554,7 @@ export class AuxiliarySessionService {
     const storage = this.deps.getStorage();
     const patch = storage.updateAuxiliarySessionThreadIfMatches;
     if (!patch) {
-      throw new Error("Auxiliary thread の条件付き更新storageが利用できないよ。");
+      throw new Error("Auxiliary thread storage is unavailable for conditional updates.");
     }
     return patch.call(storage, input);
   }
@@ -565,7 +565,7 @@ export class AuxiliarySessionService {
     const storage = this.deps.getStorage();
     const patch = storage.updateAuxiliarySessionRuntimeMetadataIfMatches;
     if (!patch) {
-      throw new Error("Auxiliary runtime metadata の条件付き更新storageが利用できないよ。");
+      throw new Error("Auxiliary runtime metadata storage is unavailable for conditional updates.");
     }
     return patch.call(storage, input);
   }
@@ -613,24 +613,24 @@ export class AuxiliarySessionService {
     normalizedInput?: AuxiliaryCreationRequestSnapshot,
   ): Promise<AuxiliarySession> {
     if (record?.cancelRequested) {
-      throw new Error("Auxiliary Session の作成を取り消したよ。");
+      throw new Error("Auxiliary Session creation was canceled.");
     }
     if (this.deps.getStorage() !== storage) {
-      throw new Error("Auxiliary Session の保存先が作成中に切り替わったため、作成を中止したよ。");
+      throw new Error("Auxiliary Session creation was canceled because its storage changed during creation.");
     }
     const parent = await this.deps.getParentSession(input.parentSessionId);
     if (!parent) {
-      throw new Error("親セッションが見つからないよ。");
+      throw new Error("The parent session could not be found.");
     }
     if (
       getSessionIncarnationId(parent) !== prepared.parentIncarnationId ||
       resolveParentCharacterId(parent) !== prepared.parentCharacterId
     ) {
-      throw new Error("Auxiliary Session の親セッションが作成中に置き換わったため、作成を中止したよ。");
+        throw new Error("Auxiliary Session creation was canceled because its parent session changed during creation.");
     }
 
     if (this.deps.getStorage() !== storage) {
-      throw new Error("Auxiliary Session の保存先が作成中に切り替わったため、作成を中止したよ。");
+      throw new Error("Auxiliary Session creation was canceled because its storage changed during creation.");
     }
     const requestId = input.clientRequestId?.trim() ?? "";
     if (requestId) {
@@ -638,7 +638,7 @@ export class AuxiliarySessionService {
         .find((summary) => summary.clientRequestId === requestId);
       if (existing) {
         return await this.getAuxiliarySession(existing.id) ?? (() => {
-          throw new Error("Auxiliary Session の再送対象が見つからないよ。");
+          throw new Error("The Auxiliary Session retry target could not be found.");
         })();
       }
     }
@@ -653,20 +653,20 @@ export class AuxiliarySessionService {
         prepared.launchSelection.codexSpeed,
       );
     if (!isDeepStrictEqual(launchSelection, prepared.launchSelection)) {
-      throw new Error("Auxiliary Session の runtime 選択が作成中に変わったため、作成を中止したよ。");
+      throw new Error("Auxiliary Session creation was canceled because its runtime selection changed during creation.");
     }
     if (this.deps.getStorage() !== storage) {
-      throw new Error("Auxiliary Session の保存先が作成中に切り替わったため、作成を中止したよ。");
+      throw new Error("Auxiliary Session creation was canceled because its storage changed during creation.");
     }
 
     if (!(await this.deps.listActiveCharacters()).some((entry) =>
       entry.id === prepared.characterSelection.characterId && entry.state === "active"
     )) {
-      throw new Error("Auxiliary Session の Character が作成中に利用できなくなったため、作成を中止したよ。");
+      throw new Error("Auxiliary Session creation was canceled because its Character became unavailable.");
     }
     if (record) {
       if (record.cancelRequested) {
-        throw new Error("Auxiliary Session の作成を取り消したよ。");
+        throw new Error("Auxiliary Session creation was canceled.");
       }
       record.status = "committing";
       this.notifyCreationState(record, "committing");
@@ -756,11 +756,11 @@ export class AuxiliarySessionService {
       this.deps.randomCharacter ?? Math.random,
     );
     if (!selectedId) {
-      throw new Error("Auxiliary Session に割り当て可能な Character がないよ。");
+      throw new Error("No Character is available for this Auxiliary Session.");
     }
     const snapshot = await this.deps.createCharacterRuntimeSnapshot(selectedId);
     if (!snapshot || snapshot.characterId !== selectedId) {
-      throw new Error("Auxiliary Session の Character snapshot を作成できないよ。");
+      throw new Error("The Auxiliary Session Character snapshot could not be created.");
     }
     return { characterId: selectedId, characterRuntimeSnapshot: snapshot };
   }
@@ -774,7 +774,7 @@ export class AuxiliarySessionService {
     const snapshot = await this.deps.getModelCatalogSnapshot?.();
     const providerCatalog = getProviderCatalog(snapshot?.providers ?? [], input.provider);
     if (!snapshot || !providerCatalog || providerCatalog.id !== input.provider.trim()) {
-      throw new Error("Auxiliary Session の Provider が model catalog に存在しないよ。");
+      throw new Error("The Auxiliary Session provider is not in the model catalog.");
     }
     const modelSelection = resolveInitialModelSelection(input, providerCatalog);
     return {
@@ -881,11 +881,11 @@ export class AuxiliarySessionService {
       || captured.parentSessionId !== input.parentSessionId
       || captured.incarnation !== input.incarnation
       || captured.durableRevision !== input.expectedDurableRevision) {
-      throw new Error("Auxiliary の送信対象draftが更新されたため、送信を中止したよ。");
+      throw new Error("Sending was canceled because the Auxiliary draft changed.");
     }
     const consumed = await this.consumeAuxiliaryDraftWithStorage(storage, input);
     if (consumed.outcome !== "consumed" || !consumed.ack) {
-      throw new Error("Auxiliary の送信対象draftが更新されたため、送信を中止したよ。");
+      throw new Error("Sending was canceled because the Auxiliary draft changed.");
     }
     try {
       await input.run();
@@ -929,7 +929,7 @@ export class AuxiliarySessionService {
     const current = await storage.getAuxiliarySession(runtimeSession.id);
     if (current) this.assertCharacterSnapshotValid(current);
     if (!current) {
-      throw new Error("Auxiliary Session が見つからないよ。");
+      throw new Error("The Auxiliary Session could not be found.");
     }
     const next: AuxiliarySession = {
       ...current,
@@ -960,7 +960,7 @@ export class AuxiliarySessionService {
       session: next,
       expectedSession: current,
     });
-    if (!updated) throw new Error("Auxiliary Session の保存対象が削除または更新されたため、保存を中止したよ。");
+    if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
     return updated;
   }
 
@@ -969,10 +969,10 @@ export class AuxiliarySessionService {
     const current = await storage.getAuxiliarySession(session.id);
     if (current) this.assertCharacterSnapshotValid(current);
     if (!current) {
-      throw new Error("Auxiliary Session が見つからないよ。");
+      throw new Error("The Auxiliary Session could not be found.");
     }
     if (current.runState === "running") {
-      throw new Error("実行中の Auxiliary Session は更新できないよ。");
+      throw new Error("A running Auxiliary Session cannot be updated.");
     }
 
     const hasStaleRuntimeThread = session.threadId !== current.threadId && current.threadId !== "";
@@ -1020,7 +1020,7 @@ export class AuxiliarySessionService {
       session: next,
       expectedSession: current,
     });
-    if (!updated) throw new Error("Auxiliary Session の保存対象が削除または更新されたため、保存を中止したよ。");
+    if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
     return updated;
   }
 
@@ -1034,10 +1034,10 @@ export class AuxiliarySessionService {
     const current = await storage.getAuxiliarySession(auxiliarySessionId);
     if (current) this.assertCharacterSnapshotValid(current);
     if (!current) {
-      throw new Error("Auxiliary Session が見つからないよ。");
+      throw new Error("The Auxiliary Session could not be found.");
     }
     if (current.runState === "running") {
-      throw new Error("実行中の Auxiliary Session は終了できないよ。");
+      throw new Error("A running Auxiliary Session cannot be closed.");
     }
 
     const now = currentTimestampLabel();
@@ -1053,7 +1053,7 @@ export class AuxiliarySessionService {
       session: next,
       expectedSession: current,
     });
-    if (!updated) throw new Error("Auxiliary Session の保存対象が削除または更新されたため、終了を中止したよ。");
+    if (!updated) throw new Error("Closing was canceled because the Auxiliary Session was deleted or changed.");
     return updated;
   }
 
@@ -1087,7 +1087,7 @@ export class AuxiliarySessionService {
   private async toRuntimeSession(auxiliary: AuxiliarySession): Promise<Session> {
     const parent = await this.deps.getParentSession(auxiliary.parentSessionId);
     if (!parent) {
-      throw new Error("親セッションが見つからないよ。");
+      throw new Error("The parent session could not be found.");
     }
 
     return {
@@ -1120,7 +1120,7 @@ export class AuxiliarySessionService {
 
   private assertCharacterSnapshotValid(session: AuxiliarySession): void {
     if (session.characterRuntimeSnapshotInvalid) {
-      throw new Error("Auxiliary Session の Character snapshot が不正だよ。会話を親 Characterへ差し替えず、再確認が必要です。");
+      throw new Error("The Auxiliary Session Character snapshot is invalid. Review it before continuing; the conversation was not switched to the parent Character.");
     }
   }
 }

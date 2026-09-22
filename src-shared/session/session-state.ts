@@ -212,12 +212,12 @@ export type SetSessionPinnedRequest = {
 
 export function parseSetSessionPinnedRequest(value: unknown): SetSessionPinnedRequest {
   if (!value || typeof value !== "object") {
-    throw new Error("ピン止めするセッションの指定が正しくないよ。");
+    throw new Error("Invalid session pin request.");
   }
   const candidate = value as Partial<SetSessionPinnedRequest>;
   const sessionId = typeof candidate.sessionId === "string" ? candidate.sessionId.trim() : "";
   if (!sessionId || typeof candidate.isPinned !== "boolean") {
-    throw new Error("ピン止めするセッションの指定が正しくないよ。");
+    throw new Error("Invalid session pin request.");
   }
   return { sessionId, isPinned: candidate.isPinned };
 }
@@ -388,7 +388,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
   }
 
   const candidate = value as Partial<Session>;
-  const characterName = typeof candidate.character === "string" && candidate.character.trim() ? candidate.character : "キャラクター";
+  const characterName = typeof candidate.character === "string" && candidate.character.trim() ? candidate.character : "Character";
   const characterId = recoverStoredCharacterOwnerId(candidate.characterId);
 
   return {
@@ -400,7 +400,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     taskTitle:
       typeof candidate.taskTitle === "string" && candidate.taskTitle.trim()
         ? candidate.taskTitle
-        : "既存セッション",
+        : "Untitled session",
     status:
       candidate.status === "running" || candidate.status === "idle" || candidate.status === "saved"
         ? candidate.status
@@ -488,13 +488,13 @@ function normalizeHomeSessionSummaryShape(value: unknown): HomeSessionSummary | 
 
   const characterName = typeof candidate.character === "string" && candidate.character.trim()
     ? candidate.character
-    : "キャラクター";
+    : "Character";
   return {
     id,
     taskTitle:
       typeof candidate.taskTitle === "string" && candidate.taskTitle.trim()
         ? candidate.taskTitle
-        : "既存セッション",
+        : "Untitled session",
     status:
       candidate.status === "running" || candidate.status === "idle" || candidate.status === "saved"
         ? candidate.status
@@ -537,7 +537,7 @@ export function normalizeHomeSessionSummary(value: unknown): HomeSessionSummary 
 export function projectHomeSessionSummary(session: Session | SessionSummary | HomeSessionSummary): HomeSessionSummary {
   const summary = normalizeHomeSessionSummaryShape(session);
   if (!summary) {
-    throw new Error("Home session summary へ変換できない session 形式だよ。");
+    throw new Error("Could not convert the session to a Home summary.");
   }
 
   return summary;
@@ -546,7 +546,7 @@ export function projectHomeSessionSummary(session: Session | SessionSummary | Ho
 export function projectSessionSummary(session: Session | SessionSummary): SessionSummary {
   const summary = normalizeSessionSummaryShape(session);
   if (!summary) {
-    throw new Error("session summary へ変換できない session 形式だよ。");
+    throw new Error("Could not convert the session to a summary.");
   }
 
   return summary;
@@ -615,16 +615,16 @@ export function summarizeMessageArtifact(artifact: MessageArtifact): MessageArti
 }
 
 export function buildNewSession(input: CreateSessionInput): Session {
-  const normalizedTaskTitle = input.taskTitle.trim() || `${input.workspaceLabel} で新規作業を開始する`;
+  const normalizedTaskTitle = input.taskTitle.trim() || `Start new work in ${input.workspaceLabel}`;
   const characterId = requireCharacterOwnerId(input.characterId);
   const characterRuntimeSnapshot = input.characterRuntimeSnapshot == null
     ? null
     : normalizeCharacterRuntimeSnapshot(input.characterRuntimeSnapshot);
   if (input.characterRuntimeSnapshot != null && !characterRuntimeSnapshot) {
-    throw new Error("characterRuntimeSnapshot の形式が正しくないよ。");
+    throw new Error("Invalid Character runtime snapshot.");
   }
   if (characterRuntimeSnapshot && characterRuntimeSnapshot.characterId !== characterId) {
-    throw new Error("characterRuntimeSnapshot.characterId が characterId と一致しないよ。");
+    throw new Error("The Character runtime snapshot does not match the selected Character.");
   }
   return {
     id: input.id?.trim() || `launch-${Date.now()}`,

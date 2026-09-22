@@ -24,7 +24,11 @@ import {
   getProviderAppSettings,
   type AppSettings,
 } from "../../src-shared/settings/provider-settings-state.js";
-import { resolveMicrocopy, type MicrocopySlot } from "../../src-shared/settings/microcopy-state.js";
+import {
+  hasCustomMicrocopyVariants,
+  resolveMicrocopy,
+  type MicrocopySlot,
+} from "../../src-shared/settings/microcopy-state.js";
 import {
   type DiffPreviewPayload,
   type Message,
@@ -225,25 +229,25 @@ type ParsedFileChangeSummaryLine = {
 };
 
 const FILE_CHANGE_SUMMARY_ACTION_META: Record<string, Pick<ParsedFileChangeSummaryLine, "actionLabel" | "toneClassName">> = {
-  add: { actionLabel: "ADD", toneClassName: "add" },
-  added: { actionLabel: "ADD", toneClassName: "add" },
-  create: { actionLabel: "ADD", toneClassName: "add" },
-  created: { actionLabel: "ADD", toneClassName: "add" },
-  new: { actionLabel: "ADD", toneClassName: "add" },
-  edit: { actionLabel: "EDIT", toneClassName: "edit" },
-  edited: { actionLabel: "EDIT", toneClassName: "edit" },
-  modify: { actionLabel: "EDIT", toneClassName: "edit" },
-  modified: { actionLabel: "EDIT", toneClassName: "edit" },
-  update: { actionLabel: "EDIT", toneClassName: "edit" },
-  updated: { actionLabel: "EDIT", toneClassName: "edit" },
-  delete: { actionLabel: "DEL", toneClassName: "delete" },
-  deleted: { actionLabel: "DEL", toneClassName: "delete" },
-  remove: { actionLabel: "DEL", toneClassName: "delete" },
-  removed: { actionLabel: "DEL", toneClassName: "delete" },
-  move: { actionLabel: "MOVE", toneClassName: "rename" },
-  moved: { actionLabel: "MOVE", toneClassName: "rename" },
-  rename: { actionLabel: "MOVE", toneClassName: "rename" },
-  renamed: { actionLabel: "MOVE", toneClassName: "rename" },
+  add: { actionLabel: "Added", toneClassName: "add" },
+  added: { actionLabel: "Added", toneClassName: "add" },
+  create: { actionLabel: "Added", toneClassName: "add" },
+  created: { actionLabel: "Added", toneClassName: "add" },
+  new: { actionLabel: "Added", toneClassName: "add" },
+  edit: { actionLabel: "Modified", toneClassName: "edit" },
+  edited: { actionLabel: "Modified", toneClassName: "edit" },
+  modify: { actionLabel: "Modified", toneClassName: "edit" },
+  modified: { actionLabel: "Modified", toneClassName: "edit" },
+  update: { actionLabel: "Modified", toneClassName: "edit" },
+  updated: { actionLabel: "Modified", toneClassName: "edit" },
+  delete: { actionLabel: "Deleted", toneClassName: "delete" },
+  deleted: { actionLabel: "Deleted", toneClassName: "delete" },
+  remove: { actionLabel: "Deleted", toneClassName: "delete" },
+  removed: { actionLabel: "Deleted", toneClassName: "delete" },
+  move: { actionLabel: "Moved", toneClassName: "rename" },
+  moved: { actionLabel: "Moved", toneClassName: "rename" },
+  rename: { actionLabel: "Moved", toneClassName: "rename" },
+  renamed: { actionLabel: "Moved", toneClassName: "rename" },
 };
 
 function parseFileChangeSummary(summary: string): ParsedFileChangeSummaryLine[] | null {
@@ -644,7 +648,7 @@ export default function AgentSessionWindowApp() {
   } = resolveAuditLogOwner({
     parentSession: selectedSession,
     displayedSession,
-    parentSourceLabel: "Main Session",
+    parentSourceLabel: "Main session",
   });
   const {
     modalProps: auditLogModalProps,
@@ -740,7 +744,7 @@ export default function AgentSessionWindowApp() {
   const getChangedFilesEmptyText = useCallback(
     (artifactKey: string, artifactHasSnapshotRisk: boolean) =>
       artifactHasSnapshotRisk
-        ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
+        ? "No differences were found. Snapshot limits or truncation may have omitted some changes."
         : resolveMicrocopy({
             slot: "empty.changed_files",
             userCatalog: appSettings.userMicrocopyCatalog,
@@ -796,7 +800,7 @@ export default function AgentSessionWindowApp() {
     }
 
     if (auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession) {
-      return auxiliaryWorkspace.detailError?.message ?? auxiliaryWorkspace.error?.message ?? "Auxiliary の会話を読み込んでいます。";
+      return auxiliaryWorkspace.detailError?.message ?? auxiliaryWorkspace.error?.message ?? "Loading the Auxiliary conversation.";
     }
 
     if (!isSelectedProviderEnabled) {
@@ -1036,31 +1040,39 @@ export default function AgentSessionWindowApp() {
       case "interrupted":
         return {
           kind,
-          badge: "中断",
+          badge: "Interrupted",
           title: resolveSessionMicrocopy("retry.interrupted.title", [
             "retry",
             "interrupted",
             selectedSession.id,
             lastRequestText,
           ]),
+          titleVisible: hasCustomMicrocopyVariants(
+            appSettings.userMicrocopyCatalog,
+            "retry.interrupted.title",
+          ),
           lastRequestText,
         };
       case "failed":
         return {
           kind,
-          badge: "失敗",
+          badge: "Failed",
           title: resolveSessionMicrocopy("retry.failed.title", [
             "retry",
             "failed",
             selectedSession.id,
             lastRequestText,
           ]),
+          titleVisible: hasCustomMicrocopyVariants(
+            appSettings.userMicrocopyCatalog,
+            "retry.failed.title",
+          ),
           lastRequestText,
         };
       case "canceled":
         return {
           kind,
-          badge: "キャンセル",
+          badge: "Canceled",
           title: resolveSessionMicrocopy("retry.canceled.title", [
             "retry",
             "canceled",
@@ -1068,6 +1080,10 @@ export default function AgentSessionWindowApp() {
             lastRequestText,
             terminalAuditLog?.id,
           ]),
+          titleVisible: hasCustomMicrocopyVariants(
+            appSettings.userMicrocopyCatalog,
+            "retry.canceled.title",
+          ),
           lastRequestText,
         };
       default:
@@ -1196,7 +1212,7 @@ export default function AgentSessionWindowApp() {
         setForceComposerBlockedFeedback(false);
         await sendAuxiliaryMessage(auxiliaryDraft);
       } catch (error) {
-        window.alert(resolveSessionRunErrorMessage(error, "送信に失敗したよ。"));
+        window.alert(resolveSessionRunErrorMessage(error, "Could not send the message."));
       }
       return;
     }
@@ -1214,7 +1230,7 @@ export default function AgentSessionWindowApp() {
         submitSource: "composer",
       });
     } catch (error) {
-      window.alert(resolveSessionRunErrorMessage(error, "送信に失敗したよ。"));
+      window.alert(resolveSessionRunErrorMessage(error, "Could not send the message."));
     }
   };
 
@@ -1310,7 +1326,7 @@ export default function AgentSessionWindowApp() {
     try {
       await toggleSessionPin(selectedSession);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "ピン止めの変更に失敗したよ。");
+      window.alert(error instanceof Error ? error.message : "Could not update the pin.");
     }
   };
 
@@ -1523,7 +1539,7 @@ export default function AgentSessionWindowApp() {
         cancelRun: withmateApi ? (sessionId) => withmateApi.cancelAuxiliarySessionRun(sessionId) : null,
       });
     } catch (error) {
-      window.alert(resolveSessionRunErrorMessage(error, "キャンセルに失敗したよ。"));
+      window.alert(resolveSessionRunErrorMessage(error, "Could not cancel the run."));
     }
   };
 
@@ -1664,7 +1680,7 @@ export default function AgentSessionWindowApp() {
         throw new Error(preflight.blockedMessage);
       },
       onRunningTargetBlocked: () => {
-        throw new Error("Auxiliary Session はまだ実行中だよ。");
+        throw new Error("The Auxiliary session is still running.");
       },
       onError: (error) => {
         console.error(error);
@@ -1677,7 +1693,7 @@ export default function AgentSessionWindowApp() {
     writeText: (normalized) => navigator.clipboard.writeText(normalized),
     onFailure: (error) => {
       console.error(error);
-      window.alert("コピーに失敗したよ。");
+      window.alert("Could not copy the content.");
     },
   });
 
@@ -1915,7 +1931,7 @@ export default function AgentSessionWindowApp() {
           : selectedSessionRunState === "running");
     },
     currentTimestampLabel,
-    fallbackErrorMessage: "貼り付けたファイルの保存に失敗したよ。",
+    fallbackErrorMessage: "Could not save the pasted file.",
     getSavePastedSessionFile: () => {
       return withmateApi ? (request) => {
         if (composerRegistry.isFrozen) throw new Error("Attachments cannot be added while the window is closing.");
@@ -2039,7 +2055,7 @@ export default function AgentSessionWindowApp() {
     try {
       await withmateApi.openSessionTerminal(selectedSession.id);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "terminal の起動に失敗したよ。");
+      window.alert(error instanceof Error ? error.message : "Could not open the terminal.");
     }
   };
 
@@ -2050,7 +2066,7 @@ export default function AgentSessionWindowApp() {
 
     showOpenPathFeedback(await resolveOpenPathFeedback(
       () => withmateApi.openPath(selectedSession.workspacePath),
-      "Explorer を開けなかったよ。",
+      "Could not open Explorer.",
     ));
   };
 
@@ -2060,7 +2076,7 @@ export default function AgentSessionWindowApp() {
       withmateApi ? (sessionId) => withmateApi.openSessionFilesTerminal(sessionId) : null
     ),
     alertError: (message) => window.alert(message),
-    fallbackErrorMessage: "session files terminal の起動に失敗したよ。",
+    fallbackErrorMessage: "Could not open the Session files terminal.",
   });
 
   const handleOpenSessionFilesExplorer = createSessionFilesOpenHandler({
@@ -2069,7 +2085,7 @@ export default function AgentSessionWindowApp() {
       withmateApi ? (sessionId) => withmateApi.openSessionFilesDirectory(sessionId) : null
     ),
     alertError: (message) => window.alert(message),
-    fallbackErrorMessage: "session files directory を開けなかったよ。",
+    fallbackErrorMessage: "Could not open the Session files directory.",
   });
 
   const handleJumpToActivityMonitorBottom = () => {
@@ -2078,35 +2094,46 @@ export default function AgentSessionWindowApp() {
     scrollActivityMonitorToBottom();
   };
 
-  const pendingRunIndicatorText = isApprovalRequestPending || isElicitationRequestPending
-    ? resolveSessionMicrocopy("dock.status.approval", [
+  const pendingRunIndicatorSlot: MicrocopySlot = isApprovalRequestPending || isElicitationRequestPending
+    ? "dock.status.approval"
+    : hasInProgressLiveRunStep
+      ? "dock.status.working"
+      : hasLiveRunAssistantText
+        ? "dock.status.responding"
+        : "dock.status.preparing";
+  const pendingRunIndicatorText = pendingRunIndicatorSlot === "dock.status.approval"
+    ? resolveSessionMicrocopy(pendingRunIndicatorSlot, [
       "pending",
       "approval",
       selectedSession?.id,
       liveApprovalRequest?.requestId,
       liveElicitationRequest?.requestId,
     ])
-    : hasInProgressLiveRunStep
-      ? resolveSessionMicrocopy("dock.status.working", [
+    : pendingRunIndicatorSlot === "dock.status.working"
+      ? resolveSessionMicrocopy(pendingRunIndicatorSlot, [
         "pending",
         "working",
         selectedSession?.id,
         selectedSessionLiveRun?.threadId,
         liveRunStepStatusSignature,
       ])
-      : hasLiveRunAssistantText
-        ? resolveSessionMicrocopy("dock.status.responding", [
+      : pendingRunIndicatorSlot === "dock.status.responding"
+        ? resolveSessionMicrocopy(pendingRunIndicatorSlot, [
           "pending",
           "responding",
           selectedSession?.id,
           selectedSessionLiveRun?.threadId,
         ])
-        : resolveSessionMicrocopy("dock.status.preparing", [
+        : resolveSessionMicrocopy(pendingRunIndicatorSlot, [
           "pending",
           "preparing",
           selectedSession?.id,
           selectedSessionLiveRun?.threadId,
         ]);
+  const pendingRunIndicatorTextVisible = hasCustomMicrocopyVariants(
+    appSettings.userMicrocopyCatalog,
+    pendingRunIndicatorSlot,
+  );
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
   const pendingMessageText = resolveSessionMicrocopy("chat.pending.response_waiting", [
     "chat",
@@ -2172,11 +2199,11 @@ export default function AgentSessionWindowApp() {
     });
   };
   if (!desktopRuntime) {
-    return <ChatWindowStatusScreen message="Session Window は Electron から開いてね。" />;
+    return <ChatWindowStatusScreen message="Open the Session Window from Electron." />;
   }
 
   if (!selectedSession || !renderedSession || !selectedSessionCharacter) {
-    return <ChatWindowStatusScreen message="Session が選択されていません。Home Window から session を開いてね。" />;
+    return <ChatWindowStatusScreen message="No session is selected. Open a session from the Home Window." />;
   }
 
   const canInsertFileTreePathReference = activeAuxiliarySession
@@ -2249,6 +2276,7 @@ export default function AgentSessionWindowApp() {
       forceBlockedFeedback: forceComposerBlockedFeedback,
       pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText,
+      pendingRunIndicatorTextVisible,
       isMessageListFollowing,
       isPromptTemplateWorkspaceOpen,
       chatNotice: isCentralPreviewActive ? actionDockChatNotice : "",
@@ -2350,6 +2378,10 @@ export default function AgentSessionWindowApp() {
     hasLiveRunAssistantText,
     liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
     pendingMessageText,
+    pendingMessageTextVisible: hasCustomMicrocopyVariants(
+      appSettings.userMicrocopyCatalog,
+      "chat.pending.response_waiting",
+    ),
     pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
     isMessageListFollowing,
     messageListRef,

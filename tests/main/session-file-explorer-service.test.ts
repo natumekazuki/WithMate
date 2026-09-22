@@ -9,13 +9,16 @@ import test from "node:test";
 import { listIdentityBoundDirectory } from "../../src-electron/files/identity-bound-directory-listing.js";
 import { SessionFileExplorerService } from "../../src-electron/files/session-file-explorer-service.js";
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "tree path actionは現在のSession root内にあるroot・directory・regular fileのlexical pathだけを期待kind一致後に返す"
-// oracle = { type = "contract", ref = "accepted behavior invariant 1: resource authority" }
-// failure_mode = "renderer指定のtraversal、stale root、symlink、またはkind不一致targetがclipboardまたはcomposer用pathへ認可される"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: resolvePathActionTarget" }
+// fault = "renderer指定のtraversal、stale root、symlink、kind不一致target、または空のroot pathがclipboardまたはcomposer用pathへ認可される"
+// observable = "有効なroot/directory/fileの解決結果と、不正requestおよびroot変更・空root pathの拒否Error"
+// observation_boundary = "public-boundary"
 // scope = "SessionFileExplorerService.resolvePathActionTarget"
 // lifecycle = "permanent"
+// impact = "tree actionから未認可pathをclipboardまたはcomposerへ渡すことを防ぐ"
 // distinction = "previewのreal path解決ではなくtree表示上のlexical pathとnode kindを検証する"
 // @end-test-value
 test("SessionFileExplorerService は tree path actionをcurrent rootとnode kindへ制限する", async () => {
@@ -97,7 +100,7 @@ test("SessionFileExplorerService は tree path actionをcurrent rootとnode kind
         relativePath: "",
         nodeKind: "root",
       }),
-      /root path.*空/,
+      /File root path cannot be empty\./,
     );
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
@@ -509,6 +512,18 @@ test("SessionFileExplorerService は未作成の Session Folder を初回展開�
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "root外参照を拒否し、認可したfileだけをrevision固定のchunkとして読み取る"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: inspectFile/readFileChunk" }
+// fault = "path traversalを受け入れる、またはinspect時点のfile identityから変わった内容をchunkとして返す"
+// observable = "traversalの拒否Error、file descriptorのkind/byteLength、全chunkの長さ、revision不一致の拒否Error"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService.inspectFile/readFileChunk"
+// lifecycle = "permanent"
+// impact = "root外のfileやinspect後に置換されたfileをrendererへ公開することを防ぐ"
+// distinction = "path boundary、large-file chunk投影、encoding分類、read-time revisionを一連で確認する"
+// @end-test-value
 test("SessionFileExplorerService は root 外参照を拒否し file を revision 固定 chunk で読む", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-file-explorer-"));
   const workspacePath = path.join(tempDirectory, "workspace");
@@ -528,7 +543,7 @@ test("SessionFileExplorerService は root 外参照を拒否し file を revisio
 
     await assert.rejects(
       () => service.inspectFile({ sessionId: "session-1", rootId: "workspace", relativePath: "../outside.txt" }),
-      /不正な segment/,
+      /relativePath contains an invalid segment\./,
     );
     const descriptor = await service.inspectFile({
       sessionId: "session-1",
@@ -577,13 +592,25 @@ test("SessionFileExplorerService は root 外参照を拒否し file を revisio
         length: 32,
         expectedRevision: descriptor.revision,
       }),
-      /変更された/,
+      /The file changed while it was being read\. Reload and try again\./,
     );
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "chunk read後に同じfile handleのrevisionが変化した場合は内容を返さず拒否する"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: readFileChunk" }
+// fault = "read中に変更されたfileのbytesを、変更検出なしにchunk結果として返す"
+// observable = "readFileChunkの変更検出Error"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService.readFileChunk"
+// lifecycle = "permanent"
+// impact = "rendererがstaleまたは部分的に変更されたfile内容を表示することを防ぐ"
+// distinction = "descriptor取得後のpath置換ではなく、同じopen handleのread直後revision変化を確認する"
+// @end-test-value
 test("SessionFileExplorerService は chunk read 後に同じ handle の revision が変わった場合も拒否する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-file-read-race-"));
   const workspacePath = path.join(tempDirectory, "workspace");
@@ -629,7 +656,7 @@ test("SessionFileExplorerService は chunk read 後に同じ handle の revision
         length: descriptor.byteLength,
         expectedRevision: descriptor.revision,
       }),
-      /読み込み中に file が変更された/,
+      /The file changed while it was being read\. Reload and try again\./,
     );
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
@@ -856,6 +883,18 @@ test("SessionFileExplorerService は別 Session の待機中 directory listing �
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "directory worker timeout後も認可handleをcloseしてresourceを解放する"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: listDirectory" }
+// fault = "worker timeoutを拒否Errorにせず、認可したdirectory handleをcloseしない"
+// observable = "100ms timeoutの拒否ErrorとcloseCalls"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService.listDirectory timeout cleanup"
+// lifecycle = "permanent"
+// impact = "応答しないdirectory workerによるhandle leakと認可resourceの蓄積を防ぐ"
+// distinction = "通常のdirectory listing成功ではなく、worker timeout後のcleanupを直接確認する"
+// @end-test-value
 test("SessionFileExplorerService は directory worker timeout 後に認可 handle を close する", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-directory-timeout-close-"));
   const workspacePath = path.join(basePath, "workspace");
@@ -883,7 +922,7 @@ test("SessionFileExplorerService は directory worker timeout 後に認可 handl
   try {
     await assert.rejects(
       () => service.listDirectory({ sessionId: "session-1", rootId: "workspace", relativePath: "" }),
-      /100ms 以内に完了しなかった/,
+      /The directory listing did not finish within 100 ms\./,
     );
     assert.equal(closeCalls, 1);
   } finally {
@@ -894,7 +933,7 @@ test("SessionFileExplorerService は directory worker timeout 後に認可 handl
 // @test-value v2
 // kind = "security"
 // claim = "SessionFileExplorerServiceは認可root内のrealpathだけを既定アプリへ渡す"
-// oracle = { type = "contract", ref = "src-electron/session-file-explorer-service.ts: open authorization" }
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: open authorization" }
 // fault = "root外またはsymlink経由のpathを既定アプリへ渡し、意図しないファイルを公開する"
 // observable = "openPath requestと拒否結果"
 // observation_boundary = "public-boundary"
@@ -928,7 +967,7 @@ test("SessionFileExplorerService は認可 root 内だけを realpath 後に既�
     assert.deepEqual(openedPaths, [await realpath(path.join(workspacePath, "inside.txt"))]);
     await assert.rejects(
       () => service.openFile({ sessionId: "session-1", rootId: "workspace", relativePath: "outside-link/secret.txt" }),
-      /file root の外側/,
+      /The specified path is outside the file root\./,
     );
     assert.equal(openedPaths.length, 1);
   } finally {
@@ -936,6 +975,18 @@ test("SessionFileExplorerService は認可 root 内だけを realpath 後に既�
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "認可したpathと異なる実体のfile handleをreadまたはopenへ渡さない"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: inspectFile/openFile" }
+// fault = "認可時に確認したfileとは異なるhandleの内容をreadし、既定アプリへopenする"
+// observable = "inspectFile/openFileのauthorization拒否ErrorとopenResolvedPathCalls"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService file handle authorization"
+// lifecycle = "permanent"
+// impact = "path authorizationをすり抜けた別fileの読み取りや外部公開を防ぐ"
+// distinction = "realpathのsymlink境界ではなく、同一pathへ異なる実体のhandleを注入した場合を確認する"
+// @end-test-value
 test("SessionFileExplorerService は認可した path と異なる実体の handle を read / open へ渡さない", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-handle-auth-"));
   const workspacePath = path.join(basePath, "workspace");
@@ -956,8 +1007,8 @@ test("SessionFileExplorerService は認可した path と異なる実体の hand
   });
   const request = { sessionId: "session-1", rootId: "workspace", relativePath: "inside.txt" };
   try {
-    await assert.rejects(() => service.inspectFile(request), /認可中に変更された/);
-    await assert.rejects(() => service.openFile(request), /認可中に変更された/);
+    await assert.rejects(() => service.inspectFile(request), /The resource path changed during authorization\. Try again\./);
+    await assert.rejects(() => service.openFile(request), /The resource path changed during authorization\. Try again\./);
     assert.equal(openResolvedPathCalls, 0);
   } finally {
     await rm(basePath, { recursive: true, force: true });
@@ -991,6 +1042,18 @@ test("SessionFileExplorerService はfile operation中のpath置換をidentity不
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "認可したdirectoryと異なる実体の一覧を返さない"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: listDirectory" }
+// fault = "認可時に確認したdirectoryとは異なるhandleをdirectory workerへ渡し、そのentriesを返す"
+// observable = "listDirectoryのauthorization拒否Error"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService directory handle authorization"
+// lifecycle = "permanent"
+// impact = "別directoryのentriesをrendererへ返すpath confusionを防ぐ"
+// distinction = "file handleのauthorization testとは別に、directory listingのhandle identityを確認する"
+// @end-test-value
 test("SessionFileExplorerService は認可した directory と異なる実体の一覧を返さない", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-directory-handle-auth-"));
   const workspacePath = path.join(basePath, "workspace");
@@ -1008,13 +1071,25 @@ test("SessionFileExplorerService は認可した directory と異なる実体の
   try {
     await assert.rejects(
       () => service.listDirectory({ sessionId: "session-1", rootId: "workspace", relativePath: "inside" }),
-      /認可中に変更された/,
+      /The resource path changed during authorization\. Try again\./,
     );
   } finally {
     await rm(basePath, { recursive: true, force: true });
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "認可したdirectory identityと異なるworker結果を返さない"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: listDirectory" }
+// fault = "workerが別directoryのdevice/inodeを返しても認可済みlistingとして受け入れる"
+// observable = "listDirectoryのauthorization後identity拒否Error"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService directory worker identity"
+// lifecycle = "permanent"
+// impact = "worker resultのpath confusionで別directoryのentriesを公開することを防ぐ"
+// distinction = "handleそのものの差し替えではなく、workerが返すidentity metadataの不一致を確認する"
+// @end-test-value
 test("SessionFileExplorerService は認可した directory identity と異なる worker 結果を返さない", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-directory-worker-auth-"));
   const workspacePath = path.join(basePath, "workspace");
@@ -1037,13 +1112,25 @@ test("SessionFileExplorerService は認可した directory identity と異なる
   try {
     await assert.rejects(
       () => service.listDirectory({ sessionId: "session-1", rootId: "workspace", relativePath: "" }),
-      /認可後に変更された/,
+      /The directory path changed after authorization\. Try again\./,
     );
   } finally {
     await rm(basePath, { recursive: true, force: true });
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "同じsize/mtimeに偽装された別fileへの置換をchunk readで検出して拒否する"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: readFileChunk" }
+// fault = "inspect時のfileを同じsize/mtimeの別fileへ置換してもchunk bytesを返す"
+// observable = "readFileChunkのfile identity変更Error"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService.readFileChunk file identity"
+// lifecycle = "permanent"
+// impact = "mtime/sizeだけでは識別できない置換fileの内容をrendererへ渡すことを防ぐ"
+// distinction = "通常のmtimeまたはsize変更ではなく、両方を維持した別inode置換を確認する"
+// @end-test-value
 test("SessionFileExplorerService は同じ size と mtime の別 file へ置換された chunk read を拒否する", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-identity-revision-"));
   const workspacePath = path.join(basePath, "workspace");
@@ -1075,13 +1162,25 @@ test("SessionFileExplorerService は同じ size と mtime の別 file へ置換�
         length: descriptor.byteLength,
         expectedRevision: descriptor.revision,
       }),
-      /変更された/,
+      /The file changed while it was being read\. Reload and try again\./,
     );
   } finally {
     await rm(basePath, { recursive: true, force: true });
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "同じinode/size/mtimeを保った上書きでもctime差分をchunk readで検出して拒否する"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: readFileChunk" }
+// fault = "ctimeの変更を無視し、inspect時とは異なるfile内容をchunkとして返す"
+// observable = "readFileChunkのrevision変更Error"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService.readFileChunk ctime revision"
+// lifecycle = "permanent"
+// impact = "同一inodeに見える上書きからstaleまたは不正なfile内容を公開することを防ぐ"
+// distinction = "別inode置換とは別に、inode/size/mtimeが同じでもctimeを用いて検出する"
+// @end-test-value
 test("SessionFileExplorerService は同じ inode / size / mtime へ偽装した上書きを拒否する", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-ctime-revision-"));
   const workspacePath = path.join(basePath, "workspace");
@@ -1136,13 +1235,25 @@ test("SessionFileExplorerService は同じ inode / size / mtime へ偽装した�
         length: descriptor.byteLength,
         expectedRevision: descriptor.revision,
       }),
-      /変更された/,
+      /The file changed while it was being read\. Reload and try again\./,
     );
   } finally {
     await rm(basePath, { recursive: true, force: true });
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "inspection read中にfileが変更された場合はdescriptorを返さず拒否する"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: inspectFile" }
+// fault = "inspection開始後に変更されたfileのmetadataとrevisionをdescriptorとして返す"
+// observable = "inspectFileのinspection変更検出Error"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService.inspectFile read identity"
+// lifecycle = "permanent"
+// impact = "rendererが変更途中のfileを有効なpreview descriptorとして扱うことを防ぐ"
+// distinction = "chunk read後のrevision検出とは別に、descriptor生成中のread raceを確認する"
+// @end-test-value
 test("SessionFileExplorerService は inspection read 中の file 変更を descriptor にしない", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-inspection-race-"));
   const workspacePath = path.join(basePath, "workspace");
@@ -1168,7 +1279,7 @@ test("SessionFileExplorerService は inspection read 中の file 変更を descr
   try {
     await assert.rejects(
       () => service.inspectFile({ sessionId: "session-1", rootId: "workspace", relativePath: "changing.txt" }),
-      /inspection 中に file が変更された/,
+      /The file changed during inspection\. Reload and try again\./,
     );
   } finally {
     await rm(basePath, { recursive: true, force: true });

@@ -54,19 +54,19 @@ export function ComposerAttachmentMenu({
   const attachItems: ComposerAttachmentMenuItem[] = [
     {
       label: "File",
-      ariaLabel: "元のファイルを参照として添付",
+      ariaLabel: "Attach the original file as a reference",
       title: "Pick a file and insert its original path as a reference",
       onSelect: onPickFile,
     },
     {
       label: "Folder",
-      ariaLabel: "元のフォルダーを参照として添付",
+      ariaLabel: "Attach the original folder as a reference",
       title: "Pick a folder and insert its original path as a reference",
       onSelect: onPickFolder,
     },
     {
       label: "Image",
-      ariaLabel: "元の画像を参照として添付",
+      ariaLabel: "Attach the original image as a reference",
       title: "Pick an image and insert its original path as a reference",
       onSelect: onPickImage,
     },
@@ -74,25 +74,25 @@ export function ComposerAttachmentMenu({
   const sessionItems: ComposerAttachmentMenuItem[] = [
     {
       label: "Copy",
-      ariaLabel: "ファイルをSession Filesへコピーして添付",
+      ariaLabel: "Copy files to Session files and attach them",
       title: "Copy files into Session Files and insert references",
       onSelect: onAddToSessionFiles,
     },
     {
       label: "File",
-      ariaLabel: "Session Files内のファイルを添付",
+      ariaLabel: "Attach a file from Session files",
       title: "Pick files from Session Files and insert references",
       onSelect: onPickSessionFiles,
     },
     {
       label: "Folder",
-      ariaLabel: "Session Files内のフォルダーを添付",
+      ariaLabel: "Attach a folder from Session files",
       title: "Pick a folder from Session Files and insert a reference",
       onSelect: onPickSessionFolder,
     },
     {
       label: "Image",
-      ariaLabel: "Session Files内の画像を添付",
+      ariaLabel: "Attach an image from Session files",
       title: "Pick an image from Session Files and insert a reference",
       onSelect: onPickSessionImage,
     },
@@ -228,7 +228,7 @@ export function ComposerAttachmentMenu({
       id="composer-attachment-menu"
       className="composer-attachment-menu"
       role="menu"
-      aria-label="添付を追加"
+      aria-label="Add attachment"
       style={menuStyle}
       onKeyDown={handleMenuKeyDown}
     >
@@ -249,6 +249,8 @@ export function ComposerAttachmentMenu({
         aria-expanded={isOpen}
         aria-haspopup="menu"
         aria-controls={isOpen ? "composer-attachment-menu" : undefined}
+        aria-label="Attach"
+        title="Attach a file, folder, image, or Session file"
         onClick={() => onOpenChange(!isOpen)}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {

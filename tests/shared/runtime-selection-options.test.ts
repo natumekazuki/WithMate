@@ -43,9 +43,9 @@ test("buildRuntimeSelectionOptions は approval / sandbox / model / reasoning / 
   });
 
   assert.deepEqual(options.approvalChoiceOptions, [
-    { value: "never", label: "never" },
-    { value: "on-request", label: "on-request" },
-    { value: "untrusted", label: "untrusted" },
+    { value: "never", label: "Auto-run" },
+    { value: "on-request", label: "Provider-controlled" },
+    { value: "untrusted", label: "Safety-focused" },
   ]);
   assert.deepEqual(options.sandboxChoiceOptions, []);
   assert.deepEqual(options.modelSelectOptions[0], { value: "legacy-model", label: "legacy-model" });

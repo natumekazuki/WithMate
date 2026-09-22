@@ -64,6 +64,18 @@ test("画像copyは指定座標を同じwebContentsへ渡し、破棄済みtarge
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "画像context menuは選択時だけ同じtargetへcopyし、dismissでは成功扱いしない"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-preview-image-copy-service.ts#SessionFilePreviewImageCopyService" }
+// fault = "menu表示時にcopyする、dismiss後もcopyする、または選択結果をcopied以外へ誤変換する"
+// observable = "menu label、popup coordinates、copy result status、copy coordinates"
+// observation_boundary = "public-boundary"
+// scope = "Session file preview image context menu"
+// lifecycle = "permanent"
+// impact = "ユーザーの選択前またはdismiss後に画像がclipboardへ書き込まれる"
+// distinction = "menu表示・選択・dismissの順序を分けてclipboard副作用と結果を確認する"
+// @end-test-value
 test("画像context menuは選択時だけcopyし、dismissを成功扱いしない", async () => {
   const first = createHarness();
   const copiedPoints: Array<[number, number]> = [];
@@ -72,7 +84,7 @@ test("画像context menuは選択時だけcopyし、dismissを成功扱いしな
     copyImageAt: (x: number, y: number) => copiedPoints.push([x, y]),
   };
   const copyResultPromise = first.service.showContextMenu({} as never, target as never, { x: 7, y: 9 });
-  assert.equal(first.getTemplate()[0]?.label, "Copy Image");
+  assert.equal(first.getTemplate()[0]?.label, "Copy image");
   assert.deepEqual(
     { x: first.getPopupOptions()?.x, y: first.getPopupOptions()?.y },
     { x: 7, y: 9 },

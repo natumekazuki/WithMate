@@ -157,7 +157,7 @@ export class SessionFileObjectCopyService {
       };
       try {
         const menu = this.deps.buildMenu!([{
-          label: "ファイルをコピー",
+          label: "Copy file",
           click: () => {
             if (!settled) {
               selectionStarted = true;

@@ -39,9 +39,19 @@
 .settings-loading-state {
   display: grid;
   place-items: center;
+  gap: 10px;
   min-height: 240px;
   padding: 24px;
   color: var(--muted);
+}
+
+.settings-action-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: settings-action-spin 720ms linear infinite;
 }
 
 .launch-dialog-head {
@@ -143,8 +153,6 @@
 
 .settings-field strong {
   font-size: 0.82rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -255,7 +263,6 @@
   color: var(--muted);
   font-size: 0.76rem;
   font-weight: 700;
-  text-transform: uppercase;
 }
 
 .settings-diagnostics-item strong {
@@ -278,6 +285,21 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.settings-footer-status {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 10px;
+}
+
+.settings-dirty-state {
+  flex: 0 0 auto;
+  color: #f6c77b;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .settings-feedback-inline {
@@ -458,8 +480,6 @@
 .settings-memory-tags span {
   color: var(--muted);
   font-size: 0.76rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .settings-memory-meta dd,
@@ -574,7 +594,6 @@
   color: color-mix(in srgb, var(--ink) 88%, var(--character-sub) 12%);
   font-size: 0.66rem;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .settings-character-form {
@@ -691,8 +710,35 @@
 .settings-provider-input span {
   color: var(--muted);
   font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+}
+
+.settings-action-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-action-busy::before {
+  width: 0.8em;
+  height: 0.8em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  content: "";
+  animation: settings-action-spin 720ms linear infinite;
+}
+
+@keyframes settings-action-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-action-busy::before,
+  .settings-action-spinner {
+    animation: none;
+    border-right-color: currentColor;
+    opacity: 0.65;
+  }
 }
 
 .settings-note,
@@ -781,7 +827,6 @@
   color: var(--muted);
   font-size: 0.76rem;
   letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 .window-chip.active {

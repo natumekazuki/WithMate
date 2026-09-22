@@ -29,6 +29,18 @@ function createHarness(
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Markdown link menuは選択されたときだけdecode済みtargetをclipboardへ1回渡す"
+// oracle = { type = "contract", ref = "src-electron/windows/markdown-link-context-menu-service.ts#MarkdownLinkContextMenuService" }
+// fault = "menu表示だけでclipboardを書き込む、未decodeのtargetを渡す、または選択後に重複書込みする"
+// observable = "menu label、popup result、clipboard write targets"
+// observation_boundary = "public-boundary"
+// scope = "Markdown link copy action"
+// lifecycle = "permanent"
+// impact = "ユーザーが意図しないpathをclipboardへ受け取るか、link copy操作が重複する"
+// distinction = "menu表示時と選択action後を分けてclipboard side effectと結果を確認する"
+// @end-test-value
 test("Markdown link context menuは選択時だけ解決したtargetをclipboardへ渡す", async () => {
   const copied: string[] = [];
   const harness = createHarness((target) => copied.push(target));
@@ -38,7 +50,7 @@ test("Markdown link context menuは選択時だけ解決したtargetをclipboard
   };
   const resultPromise = harness.service.showContextMenu({} as never, request);
 
-  assert.equal(harness.getMenuTemplate()[0]?.label, "リンクをコピー");
+  assert.equal(harness.getMenuTemplate()[0]?.label, "Copy link");
   assert.deepEqual(harness.getPopupOptions(), {
     window: {},
     x: 120,
@@ -66,6 +78,19 @@ test("Markdown link context menuはpercent-encodedされたWindows pathをfilesy
   assert.deepEqual(copied, ["C:\\workspace\\session-files\\report 仕様.md"]);
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "decode後に制御文字を含むlocal pathはlink copy対象として扱わず失敗を返す"
+// oracle = { type = "contract", ref = "src-electron/windows/markdown-link-context-menu-service.ts#MarkdownLinkContextMenuService" }
+// fault = "decode後の制御文字を含むpathをclipboardへ書き込み、path injectionの入力を通す"
+// observable = "copy result status/message and clipboard writes"
+// observation_boundary = "public-boundary"
+// scope = "decoded local path control-character rejection"
+// lifecycle = "permanent"
+// impact = "制御文字を含むpathが外部操作へ渡り、意図しないclipboard内容になる"
+// distinction = "percent-encoded control characterをdecodeした後の拒否とclipboard無副作用を確認する"
+// risk_tags = ["security"]
+// @end-test-value
 test("Markdown link context menuはdecode後に制御文字を含むlocal pathをcopyしない", async () => {
   const copied: string[] = [];
   const harness = createHarness((target) => copied.push(target));
@@ -78,11 +103,24 @@ test("Markdown link context menuはdecode後に制御文字を含むlocal path�
 
   assert.deepEqual(await resultPromise, {
     status: "failed",
-    message: "リンクをコピーできませんでした。",
+    message: "Link could not be copied.",
   });
   assert.deepEqual(copied, []);
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "raw制御文字を含む外部URLはlink copy対象として扱わず失敗を返す"
+// oracle = { type = "contract", ref = "src-electron/windows/markdown-link-context-menu-service.ts#MarkdownLinkContextMenuService" }
+// fault = "raw URL中の制御文字を検証せずclipboardへ渡す"
+// observable = "copy result status/message and clipboard writes"
+// observation_boundary = "public-boundary"
+// scope = "raw external URL control-character rejection"
+// lifecycle = "permanent"
+// impact = "不正なURL文字列がclipboardへ渡り、外部リンク操作の安全境界を破る"
+// distinction = "percent decodeを経ないraw URLでも制御文字拒否と無副作用を確認する"
+// risk_tags = ["security"]
+// @end-test-value
 test("Markdown link context menuはraw制御文字を含む外部URLをcopyしない", async () => {
   const copied: string[] = [];
   const harness = createHarness((target) => copied.push(target));
@@ -95,7 +133,7 @@ test("Markdown link context menuはraw制御文字を含む外部URLをcopyし�
 
   assert.deepEqual(await resultPromise, {
     status: "failed",
-    message: "リンクをコピーできませんでした。",
+    message: "Link could not be copied.",
   });
   assert.deepEqual(copied, []);
 });
@@ -124,6 +162,18 @@ test("Markdown link context menuはdismiss後のclickと選択後の再clickでc
   assert.deepEqual(selectedCopies, ["docs/selected.md"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "解決済みregular fileだけがlink copyと独立したfile copy menu actionを持つ"
+// oracle = { type = "contract", ref = "src-electron/windows/markdown-link-context-menu-service.ts#MarkdownLinkContextMenuService" }
+// fault = "未解決pathにもfile copyを表示する、またはregular fileのcopy actionがtargetを渡さない"
+// observable = "menu labels and file-copy result"
+// observation_boundary = "public-boundary"
+// scope = "Markdown link regular-file context menu"
+// lifecycle = "permanent"
+// impact = "ユーザーが存在しないpathをfile objectとしてcopyするか、file copy導線を失う"
+// distinction = "解決済みregular fileと未解決pathを同じmenu APIで比較する"
+// @end-test-value
 test("Markdown link context menuは解決済みregular fileだけに別のfile copy操作を出す", async () => {
   const resource = { sessionId: "session-1", rootId: "workspace", relativePath: "docs/report.txt" };
   const harness = createHarness(undefined, resource);
@@ -135,8 +185,8 @@ test("Markdown link context menuは解決済みregular fileだけに別のfile c
   await Promise.resolve();
 
   assert.deepEqual(harness.getMenuTemplate().map((item) => item.label), [
-    "リンクをコピー",
-    "ファイルをコピー",
+    "Copy link",
+    "Copy file",
   ]);
   harness.getMenuTemplate()[1]?.click?.();
   harness.getPopupOptions()?.callback?.();
@@ -152,11 +202,23 @@ test("Markdown link context menuは解決済みregular fileだけに別のfile c
     fileContext: { sessionId: "session-1" },
   });
   await Promise.resolve();
-  assert.deepEqual(unresolved.getMenuTemplate().map((item) => item.label), ["リンクをコピー"]);
+  assert.deepEqual(unresolved.getMenuTemplate().map((item) => item.label), ["Copy link"]);
   unresolved.getPopupOptions()?.callback?.();
   assert.deepEqual(await unresolvedResult, { status: "dismissed" });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Markdown link menuのdismissとclipboard failureは成功statusへ変換されない"
+// oracle = { type = "contract", ref = "src-electron/windows/markdown-link-context-menu-service.ts#MarkdownLinkContextMenuService" }
+// fault = "popup dismissまたはclipboard例外をlink-copiedとして返し、呼び出し元が成功扱いする"
+// observable = "dismiss/failure result status and clipboard writes"
+// observation_boundary = "public-boundary"
+// scope = "Markdown link menu terminal outcomes"
+// lifecycle = "permanent"
+// impact = "ユーザーがcopyできていない操作を成功と誤認する"
+// distinction = "dismiss経路とclipboard例外経路の両方をterminal resultで確認する"
+// @end-test-value
 test("Markdown link context menuはdismissとcopy失敗を成功扱いしない", async () => {
   const dismissed = createHarness();
   const dismissResult = dismissed.service.showContextMenu({} as never, {
@@ -176,6 +238,6 @@ test("Markdown link context menuはdismissとcopy失敗を成功扱いしない"
   failed.getMenuTemplate()[0]?.click?.();
   assert.deepEqual(await failedResult, {
     status: "failed",
-    message: "リンクをコピーできませんでした。",
+    message: "Link could not be copied.",
   });
 });

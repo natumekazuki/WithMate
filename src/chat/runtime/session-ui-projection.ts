@@ -95,7 +95,7 @@ export function buildCommandRiskLabels(command: string): string[] {
     /\b(rm|del|rmdir|rd|truncate|delete|remove)\b/.test(normalizedCommand)
     || /\b(remove-item|remove-itemproperty)\b/.test(normalizedCommand)
   ) {
-    labels.push("DELETE");
+    labels.push("Delete");
   }
 
   if (
@@ -103,7 +103,7 @@ export function buildCommandRiskLabels(command: string): string[] {
     || /\b(new-item|set-content|add-content|out-file|rename-item|move-item|copy-item)\b/.test(normalizedCommand)
     || /\b(git apply|git checkout|git restore|git clean)\b/.test(normalizedCommand)
   ) {
-    labels.push("WRITE");
+    labels.push("Write");
   }
 
   if (
@@ -111,7 +111,7 @@ export function buildCommandRiskLabels(command: string): string[] {
     || /\b(invoke-webrequest|invoke-restmethod|iwr|irm)\b/.test(normalizedCommand)
     || /\b(npm|pnpm|yarn|pip|uv|cargo|go)\s+(install|add|get)\b/.test(normalizedCommand)
   ) {
-    labels.push("NETWORK");
+    labels.push("Network");
   }
 
   return labels;
@@ -252,7 +252,7 @@ function formatCopilotQuotaUnitLabel(quotaKey: string): string {
 
 export function formatQuotaResetLabel(resetDate: string | undefined): string {
   if (!resetDate?.trim()) {
-    return "未確認";
+    return "Unknown";
   }
 
   const parsed = new Date(resetDate);
@@ -260,7 +260,7 @@ export function formatQuotaResetLabel(resetDate: string | undefined): string {
     return resetDate;
   }
 
-  return parsed.toLocaleString("ja-JP", {
+  return parsed.toLocaleString("en-US", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -275,7 +275,7 @@ export function buildCopilotQuotaProjection(telemetry: ProviderQuotaTelemetry | 
       snapshot: null,
       remainingPercentLabel: "unavailable",
       remainingRequestsLabel: "usage unavailable",
-      resetLabel: "未確認",
+    resetLabel: "Unknown",
     };
   }
 
@@ -304,25 +304,25 @@ export function buildSessionContextTelemetryProjection(
   }
 
   return {
-    summaryLabel: `${telemetry.currentTokens.toLocaleString()} / ${telemetry.tokenLimit.toLocaleString()}`,
-    currentTokensLabel: telemetry.currentTokens.toLocaleString(),
-    tokenLimitLabel: telemetry.tokenLimit.toLocaleString(),
-    messagesLengthLabel: telemetry.messagesLength.toLocaleString(),
-    systemTokensLabel: telemetry.systemTokens?.toLocaleString() ?? "-",
-    conversationTokensLabel: telemetry.conversationTokens?.toLocaleString() ?? "-",
+    summaryLabel: `${telemetry.currentTokens.toLocaleString("en-US")} / ${telemetry.tokenLimit.toLocaleString("en-US")}`,
+    currentTokensLabel: telemetry.currentTokens.toLocaleString("en-US"),
+    tokenLimitLabel: telemetry.tokenLimit.toLocaleString("en-US"),
+    messagesLengthLabel: telemetry.messagesLength.toLocaleString("en-US"),
+    systemTokensLabel: telemetry.systemTokens?.toLocaleString("en-US") ?? "-",
+    conversationTokensLabel: telemetry.conversationTokens?.toLocaleString("en-US") ?? "-",
   };
 }
 
 export function sessionBackgroundActivityStatusLabel(status: string): string {
   switch (status) {
     case "running":
-      return "実行中";
+      return "Running";
     case "completed":
-      return "完了";
+      return "Completed";
     case "failed":
-      return "失敗";
+      return "Failed";
     case "canceled":
-      return "キャンセル";
+      return "Canceled";
     default:
       return status;
   }
@@ -347,7 +347,7 @@ export function summarizeBackgroundTasksStatus(backgroundTasks: LiveBackgroundTa
 export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
   switch (tab) {
     case "latest-command":
-      return "LatestCommand";
+      return "Latest command";
     case "messages":
       return "Messages";
     case "glossary":
@@ -427,8 +427,8 @@ export function buildContextPaneProjection({
   isSelectedSessionRunning?: boolean;
 }): ContextPaneProjection {
   const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
-  const latestCommandStatusLabel = latestCommandView ? liveRunStepStatusLabel(latestCommandView.status) : "待機";
-  const latestCommandSourceCopy = latestCommandView?.sourceLabel === "live" ? "RUN LIVE" : "LAST RUN";
+  const latestCommandStatusLabel = latestCommandView ? liveRunStepStatusLabel(latestCommandView.status) : "Idle";
+  const latestCommandSourceCopy = latestCommandView?.sourceLabel === "live" ? "Live run" : "Last run";
   const tasksToneClassName = summarizeBackgroundTasksStatus(backgroundTasks);
   const reasoningToneClassName = hasReasoningText
     ? (isSelectedSessionRunning ? "in_progress" : "completed")
@@ -437,11 +437,11 @@ export function buildContextPaneProjection({
   switch (activeContextPaneTab) {
     case "tasks":
       badgeLabel = backgroundTasks.length > 0
-        ? sessionBackgroundActivityStatusLabel(tasksToneClassName)
+      ? sessionBackgroundActivityStatusLabel(tasksToneClassName)
         : "";
       break;
     case "reasoning":
-      badgeLabel = hasReasoningText ? (isSelectedSessionRunning ? "Live" : "Hold") : "";
+      badgeLabel = hasReasoningText ? (isSelectedSessionRunning ? "Live" : "Retained") : "";
       break;
     default:
       badgeLabel = "";

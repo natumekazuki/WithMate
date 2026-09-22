@@ -48,6 +48,7 @@ export function buildHomeLaunchDialogProps({
     selectedCharacterId: projection.selectedCharacter?.id ?? null,
     randomCharacterSelected: projection.randomCharacterSelected,
     charactersLoaded: projection.charactersLoaded,
+    characterLoadStatus: projection.characterLoadStatus,
     canStartSession: projection.canStartSession && canUsePrimaryFeatures,
     launchFeedback,
     launchStarting,

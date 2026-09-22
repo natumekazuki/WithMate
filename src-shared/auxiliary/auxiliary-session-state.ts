@@ -293,14 +293,14 @@ export function resolveAuxiliarySessionSendPreflight(input: {
   if (!userMessage) {
     return {
       blockedReason: "empty-message",
-      blockedMessage: "送信するメッセージが空だよ。",
+      blockedMessage: "Enter a message before sending.",
       userMessage,
     };
   }
   if (input.activeSession.runState === "running") {
     return {
       blockedReason: "running",
-      blockedMessage: "Auxiliary Session はまだ実行中だよ。",
+      blockedMessage: "This Auxiliary Session is still running.",
       userMessage,
     };
   }

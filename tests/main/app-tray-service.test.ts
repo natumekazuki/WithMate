@@ -84,6 +84,18 @@ describe("AppTrayService", () => {
     assert.equal(createTrayCalled, false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Windows trayはWithMate表示とQuit操作を提供し、表示操作は既存Home Windowを復元して前面化する"
+  // oracle = { type = "contract", ref = "src-electron/app/app-tray-service.ts#AppTrayService" }
+  // fault = "tray menuの表示・終了labelまたはclick処理が欠落し、Homeを復元できないかQuitを呼び出さない"
+  // observable = "tray menu labels、window restore/show/focus state、quit callback"
+  // observation_boundary = "public-boundary"
+  // scope = "Windows tray menu actions"
+  // lifecycle = "permanent"
+  // impact = "trayからHomeを再表示またはアプリを終了できない"
+  // distinction = "menu構成と各action後の外部callback結果を同じWindows harnessで確認する"
+  // @end-test-value
   it("creates a Windows tray with show and quit actions", async () => {
     const tray = new FakeTray();
     const window = new FakeWindow();
@@ -105,9 +117,9 @@ describe("AppTrayService", () => {
     assert.equal(tray.toolTip, "WithMate");
     const menu = tray.contextMenu as AppTrayMenuItem[];
     assert.deepEqual(menu.map((item) => "label" in item ? item.label : item.type), [
-      "WithMate を表示",
+      "Show WithMate",
       "separator",
-      "終了",
+      "Quit",
     ]);
 
     tray.listeners.get("click")?.();
@@ -118,7 +130,7 @@ describe("AppTrayService", () => {
     assert.equal(window.focused, true);
 
     const quitItem = menu.find((item): item is Extract<AppTrayMenuItem, { label: string }> =>
-      "label" in item && item.label === "終了",
+      "label" in item && item.label === "Quit",
     );
     quitItem?.click();
 

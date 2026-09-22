@@ -22,17 +22,21 @@ function isRunningSession(session: Session): boolean {
   return session.status === "running" || session.runState === "running";
 }
 
+const LEGACY_INTERRUPTED_SESSION_MESSAGE = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
+const INTERRUPTED_SESSION_MESSAGE = "The previous run may have been interrupted when the app quit. Send again if needed.";
+
 function buildInterruptedSession(session: Session): Session {
-  const interruptedMessage = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
   const lastMessage = session.messages.at(-1);
   const nextMessages =
-    lastMessage?.role === "assistant" && lastMessage.text === interruptedMessage
+    lastMessage?.role === "assistant"
+      && (lastMessage.text === INTERRUPTED_SESSION_MESSAGE
+        || lastMessage.text === LEGACY_INTERRUPTED_SESSION_MESSAGE)
       ? session.messages
       : [
           ...session.messages,
           {
             role: "assistant" as const,
-            text: interruptedMessage,
+            text: INTERRUPTED_SESSION_MESSAGE,
             accent: true,
           },
         ];

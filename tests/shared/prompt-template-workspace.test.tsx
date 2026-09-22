@@ -55,6 +55,7 @@ function createDomHarness() {
     Node: globalThis.Node,
     HTMLElement: globalThis.HTMLElement,
     Event: globalThis.Event,
+    InputEvent: globalThis.InputEvent,
     MouseEvent: globalThis.MouseEvent,
     KeyboardEvent: globalThis.KeyboardEvent,
     PointerEvent: globalThis.PointerEvent,
@@ -65,11 +66,15 @@ function createDomHarness() {
   });
   Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
     configurable: true,
-    value() {},
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.addEventListener(name.replace(/^on/, ""), listener);
+    },
   });
   Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
     configurable: true,
-    value() {},
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.removeEventListener(name.replace(/^on/, ""), listener);
+    },
   });
   Object.defineProperty(dom.window, "confirm", { configurable: true, value: () => true });
   Object.defineProperties(globalThis, {
@@ -78,6 +83,7 @@ function createDomHarness() {
     Node: { configurable: true, value: dom.window.Node },
     HTMLElement: { configurable: true, value: dom.window.HTMLElement },
     Event: { configurable: true, value: dom.window.Event },
+    InputEvent: { configurable: true, value: dom.window.InputEvent },
     MouseEvent: { configurable: true, value: dom.window.MouseEvent },
     KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
     PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
@@ -97,6 +103,7 @@ function createDomHarness() {
         Node: { configurable: true, value: previousGlobals.Node },
         HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
         Event: { configurable: true, value: previousGlobals.Event },
+        InputEvent: { configurable: true, value: previousGlobals.InputEvent },
         MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
         KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
         PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
@@ -261,6 +268,18 @@ test("Template選択は保存済みpromptを即時挿入し、呼び出し側の
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Template編集modeはprompt本文を挿入せず、sentence-caseの戻る操作で選択modeへ戻りfocusを復帰する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "編集modeの選択や戻る操作がchatへpromptを挿入する、または戻り先とaccessible labelが不一致になる"
+// observable = "inserted prompt list、Prompt textareaの有無、Back to template selection button、選択optionへのfocus"
+// observation_boundary = "component-behavior"
+// scope = "PromptTemplateWorkspace edit navigation"
+// lifecycle = "permanent"
+// impact = "テンプレート本文を意図せずchatへ送らず、既存の選択・編集・戻る導線を維持する"
+// distinction = "表示labelだけでなく、編集mode中の選択、戻り後のoption、focusと挿入callbackを同時に確認する"
+// @end-test-value
 test("編集modeのTemplate選択はeditorだけを切り替え、挿入導線を持たない", async () => {
   const harness = createDomHarness();
   const inserted: string[] = [];
@@ -294,12 +313,91 @@ test("編集modeのTemplate選択はeditorだけを切り替え、挿入導線�
     assert.deepEqual(inserted, []);
 
     await act(async () => {
-      harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Back to Template selection\"]")?.click();
+      harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Back to template selection\"]")?.click();
     });
     const option = harness.container.querySelector<HTMLButtonElement>("[role=\"option\"]");
     assert.ok(option);
     assert.equal(harness.dom.window.document.activeElement, option);
     assert.equal(harness.container.querySelector("textarea"), null);
+  } finally {
+    await act(async () => harness.root.unmount());
+    harness.dom.window.close();
+    harness.restore();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Prompt templateの主保存操作は短いlabelを維持し、保存中だけ局所busyを示す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "保存操作が無反応に見える、または保存中に別操作を許可してテンプレート本文を取り違える"
+// observable = "Save buttonのaria-busy・spinner・disabled state"
+// observation_boundary = "component-behavior"
+// scope = "PromptTemplateWorkspace save action"
+// lifecycle = "permanent"
+// impact = "保存対象と処理中状態を識別でき、テンプレート本文・名前の既存編集境界を維持する"
+// distinction = "API結果だけを確認するテストでは検出できない、保存中の操作フィードバックと入力制御を確認する"
+// @end-test-value
+test("Template保存は短いCTAと局所spinnerを表示する", async () => {
+  const harness = createDomHarness();
+  let resolveUpdate: ((templates: PromptTemplate[]) => void) | null = null;
+  const api: WithMateWindowPromptTemplateApi = {
+    ...createApi([FIRST_TEMPLATE]),
+    updatePromptTemplate: async () => new Promise<PromptTemplate[]>((resolve) => {
+      resolveUpdate = resolve;
+    }),
+  };
+  try {
+    await renderAndFlush(
+      harness.root,
+      <PromptTemplateWorkspace api={api} onBack={() => {}} onInsert={() => {}} />,
+    );
+    await act(async () => {
+      harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Edit template\"]")?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const prompt = harness.container.querySelector<HTMLTextAreaElement>("textarea[aria-label=\"Prompt\"]");
+    assert.ok(prompt);
+    await act(async () => {
+      const nextPrompt = `${FIRST_TEMPLATE.prompt} (edited)`;
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        harness.dom.window.HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      prompt.focus();
+      valueSetter?.call(prompt, nextPrompt);
+      const propertyChange = new harness.dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      prompt.dispatchEvent(propertyChange);
+      prompt.dispatchEvent(new harness.dom.window.InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: " (edited)",
+      }));
+    });
+
+    const saveButton = Array.from(harness.container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.getAttribute("aria-label") === "Save");
+    assert.ok(saveButton);
+    await act(async () => {
+      saveButton.click();
+    });
+
+    assert.equal(saveButton.disabled, true);
+    assert.equal(saveButton.getAttribute("aria-busy"), "true");
+    assert.ok(saveButton.querySelector(".chat-skill-picker-spinner"));
+    assert.equal(prompt.disabled, true);
+
+    await act(async () => {
+      resolveUpdate?.([{ ...FIRST_TEMPLATE, prompt: `${FIRST_TEMPLATE.prompt} (edited)` }]);
+      await Promise.resolve();
+    });
+    assert.equal(saveButton.getAttribute("aria-busy"), null);
   } finally {
     await act(async () => harness.root.unmount());
     harness.dom.window.close();
@@ -337,6 +435,18 @@ test("canInsert=false の選択項目は挿入せず、編集modeへの導線を
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Templateが0件でもempty stateのNew template操作から名前・本文の編集modeへ進める"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "empty stateから新規作成へ進めない、作成操作のlabelが見つからない、または編集fieldを描画しない"
+// observable = "No templates yet. text、New template button、Template name input、Prompt textarea"
+// observation_boundary = "component-behavior"
+// scope = "PromptTemplateWorkspace empty template creation"
+// lifecycle = "permanent"
+// impact = "保存済みtemplateがない初回利用でも、選択workspaceから編集・作成の入口を失わない"
+// distinction = "empty表示の文言だけでなく、実際に新規editorへ遷移して編集対象fieldが利用可能になることを確認する"
+// @end-test-value
 test("Templateが0件でも選択modeから新規作成へ進める", async () => {
   const harness = createDomHarness();
   try {
@@ -351,7 +461,7 @@ test("Templateが0件でも選択modeから新規作成へ進める", async () =
 
     assert.match(harness.container.textContent ?? "", /No templates yet\./);
     const createButton = Array.from(harness.container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent?.trim() === "+ New template");
+      .find((button) => button.textContent?.trim() === "New template");
     assert.ok(createButton);
     assert.equal(harness.container.querySelector("input"), null);
 

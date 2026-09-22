@@ -19,11 +19,11 @@ test("WindowDialogService は directory / file / image picker の選択結果を
   const service = new WindowDialogService({
     async showOpenDialog(_targetWindow, options) {
       calls.push({ kind: "open", options });
-      if ((options as { title?: string }).title === "作業ディレクトリを選択") {
+      if ((options as { title?: string }).title === "Select working directory") {
         return { canceled: false, filePaths: ["C:/workspace"] };
       }
       const title = (options as { title?: string }).title;
-      if (title?.includes("icon") || title === "画像を選択") {
+      if (title?.includes("icon") || title === "Select image") {
         return { canceled: false, filePaths: ["C:/images/a.png"] };
       }
       if ((options as { properties?: string[] }).properties?.includes("multiSelections")) {
@@ -60,11 +60,11 @@ test("WindowDialogService は directory / file / image picker の選択結果を
   assert.equal(image, "C:/images/a.png");
   assert.equal(characterIcon, "C:/images/a.png");
   assert.deepEqual(calls.map((entry) => (entry.options as { title?: string }).title), [
-    "作業ディレクトリを選択",
-    "ファイルを選択",
-    "ファイルを選択",
-    "画像を選択",
-    "Character icon を選択",
+    "Select working directory",
+    "Select file",
+    "Select files",
+    "Select image",
+    "Select character icon",
   ]);
   assert.equal((calls[0]?.options as { defaultPath?: string }).defaultPath, "C:/seed");
   assert.equal((calls[1]?.options as { defaultPath?: string }).defaultPath, "C:/seed.txt");
@@ -134,11 +134,11 @@ test("WindowDialogService は model catalog import/export を file I/O と接続
   const exportRevisions: Array<number | null | undefined> = [];
   const service = new WindowDialogService({
     async showOpenDialog(_targetWindow, options) {
-      assert.equal(options.title, "model catalog を読み込む");
+      assert.equal(options.title, "Import model catalog");
       return { canceled: false, filePaths: ["C:/tmp/catalog.json"] };
     },
     async showSaveDialog(_targetWindow, options) {
-      assert.equal(options.title, "model catalog を保存");
+      assert.equal(options.title, "Export model catalog");
       return { canceled: false, filePath: "C:/tmp/export.json" };
     },
     async readTextFile(filePath) {

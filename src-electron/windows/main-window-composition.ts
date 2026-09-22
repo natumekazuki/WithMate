@@ -38,7 +38,7 @@ export class MainWindowComposition {
 
   public async openBootWindow(getStatus: () => AppBootStatus): Promise<BrowserWindow> {
     if (this.bootWindow && !this.bootWindow.isDestroyed()) return this.bootWindow;
-    const window = this.createBaseWindow({ width: 560, height: 520, minWidth: 460, minHeight: 420, title: "WithMate 起動中", resizable: true });
+    const window = this.createBaseWindow({ width: 560, height: 520, minWidth: 460, minHeight: 420, title: "WithMate is starting", resizable: true });
     this.bootWindow = window;
     window.once("ready-to-show", () => window.show());
     window.on("closed", () => { if (this.bootWindow === window) this.bootWindow = null; });

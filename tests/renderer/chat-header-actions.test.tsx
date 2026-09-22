@@ -17,6 +17,18 @@ const noop = () => {};
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// @test-value v2
+// kind = "contract"
+// claim = "SessionHeaderは低頻度のsession管理操作をaccessible menu itemとしてPin・Rename・Audit Log・Deleteへまとめる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "管理操作を常設してsession headerを圧迫するか、menu itemのaccessible nameまたはpressed stateを失う"
+// observable = "Session actions summaryとrole=menu/menuitem、Pinのaria-pressed、各操作label"
+// observation_boundary = "component-behavior"
+// scope = "SessionHeader management action menu"
+// lifecycle = "permanent"
+// impact = "session headerの対象と操作を識別し、低頻度操作を一貫したmenuから実行できる"
+// distinction = "action builderのpropsだけでなく、実描画されたmenu semanticsと英語labelを確認する"
+// @end-test-value
 test("SessionHeader は低頻度の管理操作を menu にまとめる", () => {
   const html = renderToStaticMarkup(
     <SessionHeader
@@ -40,12 +52,24 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
   assert.match(html, /aria-haspopup="menu"/);
   assert.match(html, /aria-expanded="false"/);
   assert.match(html, /role="menu"/);
-  assert.match(html, /role="menuitem" aria-pressed="false">ピン止め<\/button>/);
+  assert.match(html, /role="menuitem" aria-pressed="false">Pin<\/button>/);
   assert.match(html, /role="menuitem">Rename<\/button>/);
   assert.match(html, /role="menuitem">Audit Log<\/button>/);
   assert.match(html, /role="menuitem">Delete<\/button>/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "SessionHeader menuはtrigger再クリック・外側操作・Escape・項目実行の各経路で閉じ、実行したmenu actionを対応callbackへ渡す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "menuが閉じずfocusをtriggerへ戻さないか、表示labelとcallback actionの対応を取り違える"
+// observable = "details.open、document.activeElement、menu itemの英語label、actions callbackの順序"
+// observation_boundary = "component-behavior"
+// scope = "SessionHeader menu interaction lifecycle"
+// lifecycle = "permanent"
+// impact = "menu操作後のfocusと表示状態を予測可能にし、対象session actionを誤実行しない"
+// distinction = "静的markupだけでなく、pointerdown・Escape・clickの実DOMイベントによる閉じ方を確認する"
+// @end-test-value
 test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再クリックで閉じる", async () => {
   const previousGlobals = {
     window: globalThis.window,
@@ -118,7 +142,7 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
     assert.equal(details.open, false);
     assert.equal(dom.window.document.activeElement, trigger);
 
-    for (const [label, action] of [["ピン止め", "pin"], ["Rename", "rename"], ["Audit Log", "audit"], ["Delete", "delete"]]) {
+    for (const [label, action] of [["Pin", "pin"], ["Rename", "rename"], ["Audit Log", "audit"], ["Delete", "delete"]]) {
       await act(async () => trigger.click());
       const item = [...container.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]")]
         .find((button) => button.textContent === label);
@@ -161,6 +185,18 @@ test("createWorkspaceExplorerAction は disabled state を反映する", () => {
   assert.match(html, /disabled=""/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "createMessageCollapseHeaderActionはCollapse/Expandの英語CTAとcompleted messages向けaccessible labelへshortcut名を付与する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "collapse状態に応じたCTAまたはaccessible labelを取り違えるか、keyboard shortcut名をtitleから失う"
+// observable = "button text、aria-label、titleの文字列とCtrl+Shift+M shortcut"
+// observation_boundary = "component-behavior"
+// scope = "createMessageCollapseHeaderAction accessible labels"
+// lifecycle = "permanent"
+// impact = "message collapse actionを視覚表示と支援技術の双方で識別できる"
+// distinction = "shortcut registry単体ではなく、header actionとしてrenderされた公開属性を確認する"
+// @end-test-value
 test("createMessageCollapseHeaderAction は既存header button語彙とshortcut名を使う", () => {
   const html = renderToStaticMarkup(createMessageCollapseHeaderAction({
     allMessagesCollapsed: false,
@@ -168,8 +204,8 @@ test("createMessageCollapseHeaderAction は既存header button語彙とshortcut�
   }));
 
   assert.match(html, /class="drawer-toggle compact secondary"/);
-  assert.match(html, /aria-label="完了済みmessageをすべて縮小"/);
-  assert.match(html, /title="完了済みmessageをすべて縮小 \(Ctrl\+Shift\+M\)"/);
+  assert.match(html, /aria-label="Collapse all completed messages"/);
+  assert.match(html, /title="Collapse all completed messages \(Ctrl\+Shift\+M\)"/);
   assert.match(html, />Collapse<\/button>/);
 
   const expandedHtml = renderToStaticMarkup(createMessageCollapseHeaderAction({
@@ -216,6 +252,18 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
   assert.match(sessionFilesHtml, />Terminal<\/button>/);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "SessionHeaderはpinned stateをaria-pressedへ投影し、pin pending中はmenu itemをdisabledにしてUpdating...を表示する"
+// oracle = { type = "contract", ref = "Issue #731 session pin pending state" }
+// fault = "pinned stateを反映しないか、pending中もpin操作を許可して重複更新を起こす"
+// observable = "pin menu itemのaria-pressed、disabled属性、pending label"
+// observation_boundary = "component-behavior"
+// scope = "SessionHeader pin and pending state"
+// lifecycle = "permanent"
+// impact = "pin状態を識別し、更新中の重複操作を防ぐ"
+// distinction = "pin callbackだけでなく、stateに応じた操作buttonの公開属性とlabelを確認する"
+// @end-test-value
 test("SessionHeader はpin stateとpending stateを操作ボタンへ投影する", () => {
   const html = renderToStaticMarkup(<SessionHeader
     taskTitle="Pinned session"
@@ -244,5 +292,5 @@ test("SessionHeader はpin stateとpending stateを操作ボタンへ投影す�
   assert.match(html, /role="menu"/);
   assert.match(html, /role="menuitem"/);
   assert.match(html, /disabled=""/);
-  assert.match(html, />変更中\.\.\.<\/button>/);
+  assert.match(html, />Updating\.\.\.<\/button>/);
 });

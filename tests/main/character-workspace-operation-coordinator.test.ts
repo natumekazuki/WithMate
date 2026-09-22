@@ -82,7 +82,7 @@ describe("CharacterWorkspaceOperationCoordinator", () => {
     });
     await assert.rejects(
       () => coordinator.runExclusive("char-2", () => undefined),
-      /maintenance.*実行中/,
+      /Character workspace maintenance is already running\./,
     );
     await Promise.resolve();
     assert.deepEqual(events, ["write-enter"]);

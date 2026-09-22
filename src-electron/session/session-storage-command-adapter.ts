@@ -17,14 +17,14 @@ export function createSessionStorageCommandAdapter(
         return storage.insertSession(session);
       }
       if (!storage.updateSession) {
-        throw new Error("既存 Session の更新 storage が利用できないよ。");
+        throw new Error("Storage for updating an existing Session is unavailable.");
       }
       return storage.updateSession(session);
     },
     upsertStoredTerminalSession(session, terminalCommit) {
       const storage = getStorage();
       if (!storage.updateTerminalSession) {
-        throw new Error("terminal Session の atomic commit storage が利用できないよ。");
+        throw new Error("Atomic commit storage for the terminal Session is unavailable.");
       }
       return storage.updateTerminalSession(session, terminalCommit);
     },

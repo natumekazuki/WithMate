@@ -27,7 +27,7 @@ export class SessionApprovalService {
   public resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void {
     const pendingRequest = this.pendingRequests.get(sessionId);
     if (!pendingRequest || pendingRequest.requestId !== requestId) {
-      throw new Error("対象の承認要求はもう存在しないよ。");
+      throw new Error("The approval request no longer exists.");
     }
 
     pendingRequest.resolve(decision);

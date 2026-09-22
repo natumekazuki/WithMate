@@ -773,6 +773,18 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "release data migration marker済みのV6 DBとV4 DBが併存しても、2回目の解決は再移行せずV6を返す"
+  // oracle = { type = "contract", ref = "src-electron/app-database-path.ts#resolveOrMigrateAppDatabasePath" }
+  // fault = "既存markerを無視してV4を再移行し、保存済みデータを重複処理または上書きする"
+  // observable = "2回の選択pathと各回のmigration progress title、およびrelease marker"
+  // observation_boundary = "public-boundary"
+  // scope = "release data migration marker idempotence"
+  // lifecycle = "permanent"
+  // impact = "既存データの再移行による重複処理や上書きが起きる"
+  // distinction = "同じ管理DBを2回解決し、2回目のprogressにmigrationが含まれないことを直接確認する"
+  // @end-test-value
   it("V6 DB と V4 DB が併存しても release data migration marker 済みなら再移行しない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
 
@@ -787,14 +799,14 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       });
       assert.equal(firstSelectedPath, v6Path);
       assert.equal(hasV4ToV6ReleaseDataMigrationMarker(v6Path), true);
-      assert.equal(firstProgress.includes("データベースを移行しています"), true);
+      assert.equal(firstProgress.includes("Migrating saved data"), true);
 
       const secondProgress: string[] = [];
       const secondSelectedPath = await resolveOrMigrateAppDatabasePath(userDataPath, (progress) => {
         secondProgress.push(progress.title);
       });
       assert.equal(secondSelectedPath, v6Path);
-      assert.equal(secondProgress.includes("データベースを移行しています"), false);
+      assert.equal(secondProgress.includes("Migrating saved data"), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

@@ -508,11 +508,11 @@ function formatProviderUsageLimitMessage(providerId: Session["provider"], messag
   const providerLabel = providerId === "codex" ? "Codex" : "Provider";
   const retryAt = extractProviderUsageLimitRetryAt(message);
   if (retryAt) {
-    return `${providerLabel}の使用上限に達しました。\n再実行可能時刻: ${retryAt}`;
+    return `${providerLabel} usage limit reached.\nTry again at: ${retryAt}`;
   }
 
   const preview = toAuditTextPreview(message) ?? message;
-  return `${providerLabel}の使用上限に達しました。\n詳細: ${preview}`;
+  return `${providerLabel} usage limit reached.\nDetails: ${preview}`;
 }
 
 function formatProviderFailureMessage(params: {
@@ -522,7 +522,7 @@ function formatProviderFailureMessage(params: {
   canceled: boolean;
 }): string {
   if (params.canceled) {
-    return "ユーザーがキャンセルしたよ。";
+    return "Canceled by the user.";
   }
 
   if (params.reason === "usage_limit") {
@@ -539,14 +539,14 @@ function formatProviderFailureNotice(params: {
   canceled: boolean;
 }): string {
   if (params.canceled) {
-    return "実行をキャンセルしたよ。";
+    return "Run canceled.";
   }
 
   if (params.reason === "usage_limit") {
     return formatProviderUsageLimitMessage(params.providerId, params.message);
   }
 
-  return `実行に失敗したよ。\n${params.message}`;
+  return `The run failed.\n${params.message}`;
 }
 
 function pickPreferredThreadId(...candidates: Array<string | null | undefined>): string {
@@ -862,14 +862,14 @@ export class SessionRuntimeService {
     const { clientRequestId, submitSource } = normalizeSessionTurnCorrelation(request);
     const runAbortController = new AbortController();
     if (this.isRunInFlight(sessionId) || this.waitingSessionRunAdmissions.has(sessionId)) {
-      throw new Error("このセッションはまだ実行中だよ。");
+      throw new Error("This session is already running.");
     }
     let admitted = false;
     this.waitingSessionRunAdmissions.add(sessionId);
     const admit = () => {
       this.waitingSessionRunAdmissions.delete(sessionId);
       if (this.isRunInFlight(sessionId)) {
-        throw new Error("このセッションはまだ実行中だよ。");
+        throw new Error("This session is already running.");
       }
       this.startingSessionRuns.add(sessionId);
       this.sessionRunControllers.set(sessionId, runAbortController);
@@ -942,7 +942,7 @@ export class SessionRuntimeService {
     const storedSession = await this.deps.getSession(sessionId);
     throwIfRunCanceled(runAbortController.signal);
     if (!storedSession) {
-      throw new Error("対象セッションが見つからないよ。");
+      throw new Error("The session could not be found.");
     }
     const resolvedSession = await Promise.resolve(
       this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession,
@@ -955,7 +955,7 @@ export class SessionRuntimeService {
       : resolvedSession;
     if (shouldResetCharacterAuthoringThread) {
       if (!this.deps.clearCharacterAuthoringRuntimeState) {
-        throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+        throw new Error("Character authoring runtime storage is unavailable.");
       }
       session = await this.deps.clearCharacterAuthoringRuntimeState(session);
       await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
@@ -972,16 +972,16 @@ export class SessionRuntimeService {
     });
 
     if (session.runState === "running") {
-      throw new Error("このセッションはまだ実行中だよ。");
+      throw new Error("This session is already running.");
     }
 
     if (isReadOnlySession(session)) {
-      throw new Error("閲覧専用セッションには送信できないよ。新しいセッションを作成してください。");
+      throw new Error("Read-only sessions cannot send messages. Create a new session.");
     }
 
     const nextMessage = request.userMessage.trim();
     if (!nextMessage) {
-      throw new Error("送信するメッセージが空だよ。");
+      throw new Error("Enter a message before sending.");
     }
 
     const providerSession = await (this.deps.resolveProviderSession?.(session) ?? session);
@@ -993,7 +993,7 @@ export class SessionRuntimeService {
 
     const appSettings = await this.deps.getAppSettings();
     if (!getProviderAppSettings(appSettings, session.provider).enabled) {
-      throw new Error("この provider は Settings で無効になっているよ。");
+      throw new Error("This provider is disabled in Settings.");
     }
 
     const { provider } = await this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
@@ -1349,7 +1349,7 @@ export class SessionRuntimeService {
         }
       }
       if (!result) {
-        throw new Error("provider turn result を確定できなかったよ。");
+        throw new Error("The provider did not return a completed turn.");
       }
 
       const completedAt = new Date().toISOString();

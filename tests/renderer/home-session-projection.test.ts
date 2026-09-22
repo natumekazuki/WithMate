@@ -70,14 +70,30 @@ function createAuxiliarySession(partial: Partial<AuxiliarySessionSummary> & Pick
 }
 
 describe("home-session-projection", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "getHomeSessionStateは既知runStateを対応する表示stateへ変換し、未知enumをUnknownとして中立表示する"
+  // oracle = { type = "contract", ref = "Issue #731 Home session status labels" }
+  // fault = "未知runStateのraw enumを利用者向けlabelへ露出するか、running/interruptedの識別を失う"
+  // observable = "getHomeSessionStateのkindとlabel"
+  // observation_boundary = "public-boundary"
+  // scope = "getHomeSessionState runState projection"
+  // lifecycle = "permanent"
+  // impact = "将来追加されたrunStateでも誤った既知状態を表示せず、診断用原値をUIへ漏らさない"
+  // distinction = "型上の既知enumだけでなく未知文字列入力の公開labelを直接確認する"
+  // @end-test-value
   it("runState に応じた Home session state を返す", () => {
     assert.deepEqual(
       getHomeSessionState(createSession({ id: "a", taskTitle: "A", runState: "running" })),
-      { kind: "running", label: "実行中" },
+      { kind: "running", label: "Running" },
     );
     assert.deepEqual(
       getHomeSessionState(createSession({ id: "b", taskTitle: "B", runState: "interrupted" })),
-      { kind: "interrupted", label: "中断" },
+      { kind: "interrupted", label: "Interrupted" },
+    );
+    assert.deepEqual(
+      getHomeSessionState(createSession({ id: "c", taskTitle: "C", runState: "future-state" })),
+      { kind: "neutral", label: "Unknown" },
     );
   });
 
@@ -136,6 +152,18 @@ describe("home-session-projection", () => {
 
 
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "buildHomeSessionProjectionは検索結果に一致するmonitorがない場合、Monitor各分類へ同じ利用者向けempty messageを返す"
+  // oracle = { type = "contract", ref = "Issue #731 Home Monitor empty-state identification" }
+  // fault = "一致しない検索を正常なsession一覧として表示するか、Monitor分類ごとに誤ったempty messageを混在させる"
+  // observable = "monitorBaseEmptyMessage、monitorRunningEmptyMessage、monitorCompletedEmptyMessage"
+  // observation_boundary = "public-boundary"
+  // scope = "buildHomeSessionProjection monitor empty messages"
+  // lifecycle = "permanent"
+  // impact = "検索結果がない状態を実行中・停止済みの一覧と誤認せず、Monitorの空状態を識別できる"
+  // distinction = "entry配列の長さだけでなく、検索条件下で生成される各分類の表示messageを確認する"
+  // @end-test-value
   it("一致する monitor が無い時の empty message を返す", () => {
     const projection = buildHomeSessionProjection(
       [createSession({ id: "a", taskTitle: "Alpha" })],
@@ -143,9 +171,9 @@ describe("home-session-projection", () => {
       "beta",
     );
 
-    assert.equal(projection.monitorBaseEmptyMessage, "一致するセッションはないよ。");
-    assert.equal(projection.monitorRunningEmptyMessage, "一致するセッションはないよ。");
-    assert.equal(projection.monitorCompletedEmptyMessage, "一致するセッションはないよ。");
+    assert.equal(projection.monitorBaseEmptyMessage, "No matching sessions.");
+    assert.equal(projection.monitorRunningEmptyMessage, "No matching sessions.");
+    assert.equal(projection.monitorCompletedEmptyMessage, "No matching sessions.");
   });
 
   it("character-authoring session は Home に表示する", () => {

@@ -350,7 +350,7 @@ describe("SessionPersistenceService", () => {
     );
     await assert.rejects(
       () => service.resolveCharacterAuthoringProvider("copilot"),
-      /provider.*無効/,
+      /provider is disabled/,
     );
 
     const created = await service.createSession({
@@ -401,7 +401,7 @@ describe("SessionPersistenceService", () => {
         customAgentName: "",
         allowedAdditionalDirectories: [],
       }),
-      /provider.*無効/,
+      /provider is disabled/,
     );
     assert.deepEqual(storeOperations, ["create"]);
 
@@ -480,7 +480,7 @@ describe("SessionPersistenceService", () => {
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
         approvalMode: DEFAULT_APPROVAL_MODE,
       }),
-      /同じ ID の Session がすでに存在するよ。/,
+      /A Session with the same ID already exists/,
     );
     assert.equal(upsertCount, 0);
     assert.equal(existing.threadId, "thread-existing");
@@ -523,7 +523,7 @@ describe("SessionPersistenceService", () => {
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
         approvalMode: DEFAULT_APPROVAL_MODE,
       }),
-      /同じ ID の Session がすでに存在するよ。/,
+      /A Session with the same ID already exists/,
     );
     assert.equal(storageOnlyUpsertCount, 0);
   });
@@ -862,7 +862,7 @@ describe("SessionPersistenceService", () => {
     storedSessions.splice(0, storedSessions.length, createSession({ id: baseSession.id, runState: "running", status: "running" }));
     await assert.rejects(
       () => service.updateSession({ ...storedSessions[0], taskTitle: "blocked" }),
-      /実行中のセッションは更新できない/,
+      /A running session cannot be updated/,
     );
   });
 
@@ -1005,7 +1005,7 @@ describe("SessionPersistenceService", () => {
 
       await assert.rejects(
         () => service.updateSession(invalidUpdate),
-        /Character owner \/ runtime snapshot は更新できない/,
+        /Character owner and runtime snapshot cannot be updated/,
       );
       assert.equal(upsertCallCount, 0);
     }
@@ -1226,11 +1226,11 @@ describe("SessionPersistenceService", () => {
 
     await assert.rejects(
       () => service.updateSession({ ...legacySession, taskTitle: "Blocked Update" }),
-      /閲覧専用セッションは更新できない/,
+      /Read-only sessions cannot be updated/,
     );
     await assert.rejects(
       () => service.upsertSession({ ...legacySession, taskTitle: "Blocked Upsert" }),
-      /閲覧専用セッションは更新できない/,
+      /Read-only sessions cannot be updated/,
     );
     assert.equal(storedSessions[0]?.taskTitle, legacySession.taskTitle);
   });
@@ -1391,7 +1391,7 @@ describe("SessionPersistenceService", () => {
 
     await assert.rejects(
       () => service.deleteSession(parentSession.id),
-      /実行中のセッションは削除できない/,
+      /A running session cannot be deleted/,
     );
 
     assert.deepEqual(deleted, []);

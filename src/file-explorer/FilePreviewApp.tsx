@@ -22,6 +22,8 @@ type DiffState = {
   revision: number;
 };
 
+type PayloadLoadState = "loading" | "ready" | "unavailable" | "error";
+
 function getToken(): string {
   return new URLSearchParams(window.location.search).get("token")?.trim() ?? "";
 }
@@ -91,7 +93,10 @@ function FilePreviewWindowLoading({ label }: { label: string }) {
 export default function FilePreviewApp() {
   const api = getWithMateApi();
   const [payload, setPayload] = useState<SessionFilePreviewWindowPayload | null>(null);
-  const [loadFinished, setLoadFinished] = useState(false);
+  const [payloadLoadState, setPayloadLoadState] = useState<PayloadLoadState>(() => (
+    api && getToken() ? "loading" : "unavailable"
+  ));
+  const [payloadLoadMessage, setPayloadLoadMessage] = useState("");
   const [diffScopes, setDiffScopes] = useState<FileRootGitDiffScope[]>([]);
   const [diffState, setDiffState] = useState<DiffState | null>(null);
   const [diffLoadingScope, setDiffLoadingScope] = useState<FileRootGitDiffScope | null>(null);
@@ -102,19 +107,24 @@ export default function FilePreviewApp() {
     let active = true;
     const token = getToken();
     if (!api || !token) {
-      setLoadFinished(true);
+      setPayload(null);
+      setPayloadLoadMessage("");
+      setPayloadLoadState("unavailable");
       return () => {
         active = false;
       };
     }
+    setPayloadLoadMessage("");
+    setPayloadLoadState("loading");
     void api.getSessionFilePreviewWindowPayload(token).then((nextPayload) => {
       if (active) {
         setPayload(nextPayload);
-        setLoadFinished(true);
+        setPayloadLoadState("ready");
       }
-    }).catch(() => {
+    }).catch((error) => {
       if (active) {
-        setLoadFinished(true);
+        setPayloadLoadState("error");
+        setPayloadLoadMessage(error instanceof Error ? error.message : "File preview could not be loaded.");
       }
     });
     return () => {
@@ -184,6 +194,8 @@ export default function FilePreviewApp() {
       }
       setDiffState((current) => ({ scope, patch: result.patch, revision: (current?.revision ?? 0) + 1 }));
       return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : "Git diff could not be loaded.";
     } finally {
       if (diffRequestRevisionRef.current === revision) {
         setDiffLoadingScope(null);
@@ -227,16 +239,26 @@ export default function FilePreviewApp() {
   }, [loadDiff, payload, showPreview]);
 
   if (!isDesktopRuntime()) {
-    return <main className="file-preview-window-page"><p>File Preview must be opened from the desktop app.</p></main>;
+    return <main className="file-preview-window-page"><p>File preview must be opened from the desktop app.</p></main>;
   }
-  if (!loadFinished) {
+  if (payloadLoadState === "loading") {
     return <FilePreviewWindowLoading label="Loading file preview" />;
   }
-  if (!api || !payload) {
+  if (payloadLoadState === "error") {
+    return (
+      <main className="file-preview-window-page">
+        <section className="panel empty-session-card" role="alert">
+          <h2>File preview could not be loaded</h2>
+          <p>{payloadLoadMessage || "Try opening the file again from the originating Session."}</p>
+        </section>
+      </main>
+    );
+  }
+  if (payloadLoadState === "unavailable" || !api || !payload) {
     return (
       <main className="file-preview-window-page">
         <section className="panel empty-session-card">
-          <h2>No file is available to preview</h2>
+          <h2>File preview is unavailable</h2>
           <p>Open the file again from the originating Session.</p>
         </section>
       </main>
@@ -264,7 +286,7 @@ export default function FilePreviewApp() {
           previewRevision={0}
           patch=""
           loading
-          backNavigation={{ label: "Back to Preview", onBack: showPreview }}
+          backNavigation={{ label: "Back to preview", onBack: showPreview }}
           onCopyText={(text) => void navigator.clipboard.writeText(text)}
           onOpenPreview={async () => {
             showPreview();
@@ -284,7 +306,7 @@ export default function FilePreviewApp() {
           title={getSessionFileResourceDisplayPath(payload.resource)}
           previewRevision={diffState.revision}
           patch={diffState.patch}
-          backNavigation={{ label: "Back to Preview", onBack: showPreview }}
+          backNavigation={{ label: "Back to preview", onBack: showPreview }}
           onCopyText={(text) => void navigator.clipboard.writeText(text)}
           onOpenPreview={async () => {
             showPreview();

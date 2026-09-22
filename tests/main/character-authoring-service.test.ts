@@ -835,7 +835,10 @@ description: "作業を一緒に進める相手"
           storageIdentity = replacementStorageIdentity;
         }
         releasePreparation();
-        await assert.rejects(authoringPromise, /変更されました|切り替わりました/);
+        await assert.rejects(
+          authoringPromise,
+          /(?:The Character changed while preparing Character authoring|Session storage changed while preparing Character authoring|The Character authoring workspace changed)\. Try again\./,
+        );
         assert.equal(sessionCreationCount, 0);
         assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
         await assertManagedArtifactsPreserved(workspacePath);
@@ -922,7 +925,7 @@ description: "作業を一緒に進める相手"
       await readerEntered.promise;
       mutableCharacter.description = "準備中に変更された説明";
       readerBarrier.resolve();
-      await assert.rejects(authoringPromise, /Character.*変更されました/);
+      await assert.rejects(authoringPromise, /The Character changed while preparing Character authoring\./);
       assert.equal(sessionCreationCount, 0);
       assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
       await assertManagedArtifactsPreserved(workspacePath);
@@ -979,7 +982,7 @@ description: "作業を一緒に進める相手"
       await commitReadEntered.promise;
       storageIdentity = replacementStorageIdentity;
       commitReadBarrier.resolve();
-      await assert.rejects(authoringPromise, /Session storage.*切り替わりました/);
+      await assert.rejects(authoringPromise, /Session storage changed while preparing Character authoring\./);
       assert.equal(sessionCreationCount, 0);
       assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
       await assertManagedArtifactsPreserved(workspacePath);
@@ -1089,6 +1092,18 @@ description: "作業を一緒に進める相手"
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "authoring sessionは保存済みCharacter IDが確定するまで開始しない"
+  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+  // fault = "未保存draftのcharacterIdなし入力でworkspace mutationまたはSession作成を実行する"
+  // observable = "reject error、workspace作成数、Session作成数"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-saved-character-gate"
+  // lifecycle = "permanent"
+  // impact = "保存前Characterがauthoring workspaceやSessionへ流れ込むのを防ぐ"
+  // distinction = "provider validation通過後でも保存済みID境界を実際のstartSession rejectionと作成回数で確認する"
+  // @end-test-value
   it("characterId 未確定の authoring session は開始しない", async () => {
     const service = createService({
       getCharacter: () => null,
@@ -1100,10 +1115,22 @@ description: "作業を一緒に進める相手"
         mode: "create",
         provider: "codex",
       }),
-      /保存済み Character/,
+      /An authoring session can start only for a saved Character\./,
     );
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "保存済みCharacterが見つからないauthoring requestはworkspaceとSessionを作成せず失敗する"
+  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+  // fault = "Character lookupのnullを成功扱いし、workspaceまたはSessionを孤立させる"
+  // observable = "reject error、workspace operation count、Session creation count"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-character-lookup"
+  // lifecycle = "permanent"
+  // impact = "存在しないCharacterへのauthoring artifactやSessionが残らない"
+  // distinction = "characterIdなしのgateとは分け、保存IDのlookup失敗時の副作用不在を観測する"
+  // @end-test-value
   it("保存済み Character が見つからない場合は workspace と session を作らない", async () => {
     let workspaceResolutionCount = 0;
     let sessionCreationCount = 0;
@@ -1125,7 +1152,7 @@ description: "作業を一緒に進める相手"
         characterId: "missing-character",
         provider: "codex",
       }),
-      /保存済み Character/,
+      /An authoring session can start only for a saved Character\./,
     );
     assert.equal(workspaceResolutionCount, 0);
     assert.equal(sessionCreationCount, 0);

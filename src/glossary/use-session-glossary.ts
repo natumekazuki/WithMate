@@ -94,7 +94,7 @@ export function useSessionGlossary({
             status: "watch-error",
             relativePath: GLOSSARY_RELATIVE_PATH,
             revision: null,
-            message: error instanceof Error ? error.message : "用語集を読み込めませんでした。",
+            message: error instanceof Error ? error.message : "Could not load the glossary.",
           },
         });
       });
@@ -140,7 +140,7 @@ export function useSessionGlossary({
       if (active && searchRequestIdRef.current === requestId) {
         setSearchEntries([]);
         setSearchTotal(0);
-        setSearchError(error instanceof Error ? error.message : "用語集を検索できませんでした。");
+        setSearchError(error instanceof Error ? error.message : "Could not search the glossary.");
         setSearchLoading(false);
       }
     });
@@ -198,7 +198,7 @@ export function useSessionGlossary({
       if (searchRequestIdRef.current !== requestId) {
         return;
       }
-      setSearchError(error instanceof Error ? error.message : "用語集を検索できませんでした。");
+      setSearchError(error instanceof Error ? error.message : "Could not search the glossary.");
       setSearchLoading(false);
     });
   }, [api, projection?.state.revision, searchEntries.length, searchLoading, searchQuery, searchTotal, selectedSession]);

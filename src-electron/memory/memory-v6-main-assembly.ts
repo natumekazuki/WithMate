@@ -109,7 +109,7 @@ export class MemoryV6MainAssembly {
   private createReviewService(): MemoryV6ReviewService {
     const runtime = this.deps.getRuntime();
     if (!runtime) {
-      throw new Error("Memory V6 runtime が利用できないため、Memory を読み書きできません。");
+      throw new Error("Memory is unavailable because the Memory V6 runtime is not available.");
     }
     const protectedObjectStore = MemoryProtectedObjectStore.fromUserDataPath(this.deps.userDataPath);
     const protectedObjectKeyStore = MemoryProtectedObjectKeyStore.fromUserDataPath(

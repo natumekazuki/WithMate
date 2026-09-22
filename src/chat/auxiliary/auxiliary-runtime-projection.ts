@@ -3,7 +3,7 @@ import type { AuxiliarySession } from "../../../src-shared/auxiliary/auxiliary-s
 
 export type AuxiliaryRuntimeProjectionInput = Pick<AuxiliarySession, "id" | "runState" | "title" | "provider" | "catalogRevision" | "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "codexSpeed" | "codexReviewer" | "customAgentName" | "allowedAdditionalDirectories" | "threadId" | "messages" | "updatedAt" | "characterId" | "characterRuntimeSnapshot" | "characterRuntimeSnapshotInvalid">;
 export function buildMainAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliaryRuntimeProjectionInput): Session {
-  if (auxiliary.characterRuntimeSnapshotInvalid) throw new Error("Auxiliary Character runtime snapshot is invalid.");
+  if (auxiliary.characterRuntimeSnapshotInvalid) throw new Error("Auxiliary character runtime snapshot is invalid.");
   const snapshot = auxiliary.characterRuntimeSnapshot;
   const projection: Session & Pick<AuxiliaryRuntimeProjectionInput, "characterRuntimeSnapshotInvalid"> = {
     ...parent,

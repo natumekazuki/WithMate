@@ -30,6 +30,7 @@ type HomeLaunchHandlersContext = {
   sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
   refreshCharacterEntries: () => Promise<readonly CharacterCatalogEntry[]>;
   setCharactersLoaded: (loaded: boolean) => void;
+  setCharacterLoadStatus?: (status: "loading" | "loaded" | "error") => void;
   setLaunchFeedback: (message: string) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
   setLaunchDraft: (updater: HomeLaunchDraft | ((draft: HomeLaunchDraft) => HomeLaunchDraft)) => void;
@@ -69,6 +70,7 @@ export function buildHomeLaunchHandlers({
   sessionCharacterUsageLoadStatus,
   refreshCharacterEntries,
   setCharactersLoaded,
+  setCharacterLoadStatus,
   setLaunchFeedback,
   setLaunchStarting,
   setLaunchDraft,
@@ -94,7 +96,8 @@ export function buildHomeLaunchHandlers({
     setLaunchFeedback("");
     await refreshCharacterEntries().catch((error) => {
       setCharactersLoaded(false);
-      setLaunchFeedback(error instanceof Error ? error.message : "Character 一覧の再読み込みに失敗したよ。");
+      setCharacterLoadStatus?.("error");
+      setLaunchFeedback(error instanceof Error ? error.message : "Could not refresh characters.");
     });
     setLaunchDraft((current) =>
       openLaunchDraft(

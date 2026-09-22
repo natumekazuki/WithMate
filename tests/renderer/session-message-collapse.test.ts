@@ -43,9 +43,21 @@ function buildBookmarkProjectionTargets() {
   return buildMessageCollapseTargets(projection.messages, projection.sources, projection.keys);
 }
 
+// @test-value v2
+// kind = "invariant"
+// claim = "plain-text projectionはMarkdownと空白を正規化し、空contentをNo contentへ投影して160 code pointsへ収める"
+// oracle = { type = "contract", ref = "src/chat/conversation/session-message-collapse.ts" }
+// fault = "Markdown記号・空白・空本文をそのままpreviewへ出すか、上限を超えてcollapse previewを伸ばす"
+// observable = "通常本文、空本文、長文のprojected textとcode point長"
+// observation_boundary = "public-boundary"
+// scope = "session-message-plain-text-projection"
+// lifecycle = "permanent"
+// impact = "collapse previewの可読性と固定高さ契約が崩れ、空messageの状態を説明できなくなる"
+// distinction = "通常・空・上限超過の三つの入力を同一helperの出力で確認する"
+// @end-test-value
 test("plain-text projection は Markdown と空白を正規化し、160 code pointsへ収める", () => {
   assert.equal(projectMessagePlainText("# **hello**\n\n  world `code`"), "hello world code");
-  assert.equal(projectMessagePlainText("***\n\n  \n"), "内容なし");
+  assert.equal(projectMessagePlainText("***\n\n  \n"), "No content");
 
   const longText = "あ".repeat(160) + "tail";
   const projected = projectMessagePlainText(longText);

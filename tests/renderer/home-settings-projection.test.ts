@@ -4,6 +4,16 @@ import { describe, it } from "node:test";
 import { buildHomeSettingsProjection } from "../../src/settings/settings-projection.js";
 
 describe("home-settings-projection", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Settings projectionはloading中のwindow ready、選択reset targets、disabled target、reset可否を一貫して派生する"
+  // oracle = { type = "contract", ref = "src/settings/settings-projection.ts: buildHomeSettingsProjection" }
+  // fault = "loading中にSettings windowをready扱いするか、選択対象のlabelとdisabled stateを誤って表示する"
+  // observable = "settingsWindowReady、selectedResetTargetsDescription、canResetDatabase、resetTargetItems"
+  // observation_boundary = "public-boundary"
+  // scope = "home-settings-projection reset state"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("loading と reset target 派生状態を返す", () => {
     const projection = buildHomeSettingsProjection({
       settingsDraftLoaded: true,
@@ -13,7 +23,7 @@ describe("home-settings-projection", () => {
     });
 
     assert.equal(projection.settingsWindowReady, false);
-    assert.equal(projection.selectedResetTargetsDescription, "sessions / audit logs");
+    assert.equal(projection.selectedResetTargetsDescription, "Sessions / Audit logs");
     assert.equal(projection.canResetDatabase, true);
     assert.deepEqual(projection.resetTargetItems.find((item) => item.target === "auditLogs"), {
       target: "auditLogs",

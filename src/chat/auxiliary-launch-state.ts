@@ -15,8 +15,8 @@ export type AuxiliaryLaunchProviderItem = {
 
 export const AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK = LAUNCH_EMPTY_PROVIDER_MESSAGE;
 export const AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK = LAUNCH_NO_PROVIDER_SELECTED_MESSAGE;
-export const AUXILIARY_LAUNCH_START_FAILED_FEEDBACK = "Auxiliary Session の開始に失敗したよ。";
-export const AUXILIARY_LAUNCH_CANCEL_FAILED_FEEDBACK = "Auxiliary Session の作成を取り消せなかったよ。";
+export const AUXILIARY_LAUNCH_START_FAILED_FEEDBACK = "Could not start the Auxiliary session.";
+export const AUXILIARY_LAUNCH_CANCEL_FAILED_FEEDBACK = "Could not cancel Auxiliary session creation.";
 
 export type AuxiliaryLaunchCreationState = {
   request: {
@@ -63,11 +63,11 @@ export function resolveAuxiliaryLaunchCreationFeedback(
 ): string {
   switch (result.status) {
     case "cancelled":
-      return "Auxiliary Session の作成を取り消したよ。";
+      return "Auxiliary session creation was canceled.";
     case "expired":
-      return "親セッションが変わったため、作成を終了したよ。";
+      return "Creation ended because the parent session changed.";
     case "unknown":
-      return "Auxiliary Session の作成結果を確認できないよ。";
+      return "Could not confirm the Auxiliary session creation result.";
     case "failed":
       return AUXILIARY_LAUNCH_START_FAILED_FEEDBACK;
     default:

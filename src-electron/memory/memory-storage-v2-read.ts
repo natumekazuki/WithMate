@@ -67,7 +67,7 @@ export class ProjectMemoryStorageV2Read {
       updatedAt: now,
     });
     if (!normalized) {
-      throw new Error("V2 read-only project scope の形式が不正だよ。");
+      throw new Error("The V2 read-only project scope is invalid.");
     }
     return normalized;
   }
@@ -100,7 +100,7 @@ export class ProjectMemoryStorageV2Read {
       lastUsedAt: null,
     });
     if (!normalized) {
-      throw new Error("V2 read-only project memory entry の形式が不正だよ。");
+      throw new Error("The V2 read-only project memory entry is invalid.");
     }
     return normalized;
   }

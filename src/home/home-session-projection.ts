@@ -13,10 +13,10 @@ export function getHomeSessionKindSearchLabels(session: HomeSessionSummary): str
 }
 export function getHomeSessionState(session: HomeSessionSummary, auxiliarySessions: readonly AuxiliarySessionSummary[] | AuxiliarySessionSummary | null = []): HomeSessionState {
   const auxiliaries = !auxiliarySessions ? [] : Array.isArray(auxiliarySessions) ? auxiliarySessions : [auxiliarySessions];
-  if (session.status === "running" || session.runState === "running" || auxiliaries.some((item) => item.runState === "running")) return { kind: "running", label: "実行中" };
-  if (session.runState === "interrupted") return { kind: "interrupted", label: "中断" };
-  if (session.runState === "error") return { kind: "error", label: "エラー" };
-  if (session.runState && session.runState !== "idle") return { kind: "neutral", label: session.runState };
+  if (session.status === "running" || session.runState === "running" || auxiliaries.some((item) => item.runState === "running")) return { kind: "running", label: "Running" };
+  if (session.runState === "interrupted") return { kind: "interrupted", label: "Interrupted" };
+  if (session.runState === "error") return { kind: "error", label: "Error" };
+  if (session.runState && session.runState !== "idle") return { kind: "neutral", label: "Unknown" };
   return { kind: "neutral", label: sessionStateLabel(session) };
 }
 function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
@@ -35,6 +35,21 @@ export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary
   const monitorEntries = filteredSessionEntries.filter(({ session }) => openIds.has(session.id));
   const runningMonitorEntries = monitorEntries.filter(({ state }) => state.kind === "running");
   const nonRunningMonitorEntries = monitorEntries.filter(({ state }) => state.kind !== "running");
-  const monitorBaseEmptyMessage = filteredSessionEntries.length === 0 ? (normalizedSessionSearch ? "一致するセッションはないよ。" : "表示できるセッションはまだないよ。") : openSessionWindowIds.length > 0 ? "一致する開いているセッションはないよ。" : "開いているセッションはないよ。";
-  return { filteredSessionEntries, normalizedSessionSearch, monitorEntries, runningMonitorEntries, nonRunningMonitorEntries, monitorBaseEmptyMessage, monitorRunningEmptyMessage: monitorEntries.length > 0 ? "実行中はないよ。" : monitorBaseEmptyMessage, monitorCompletedEmptyMessage: monitorEntries.length > 0 ? "停止・完了はないよ。" : monitorBaseEmptyMessage };
+  const monitorBaseEmptyMessage = filteredSessionEntries.length === 0
+    ? (normalizedSessionSearch ? "No matching sessions." : "No sessions yet.")
+    : openSessionWindowIds.length === 0
+      ? "No open sessions."
+      : normalizedSessionSearch
+        ? "No matching open sessions."
+        : "No open sessions.";
+  return {
+    filteredSessionEntries,
+    normalizedSessionSearch,
+    monitorEntries,
+    runningMonitorEntries,
+    nonRunningMonitorEntries,
+    monitorBaseEmptyMessage,
+    monitorRunningEmptyMessage: monitorEntries.length > 0 ? "No running sessions." : monitorBaseEmptyMessage,
+    monitorCompletedEmptyMessage: monitorEntries.length > 0 ? "No stopped or completed sessions." : monitorBaseEmptyMessage,
+  };
 }

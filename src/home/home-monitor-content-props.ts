@@ -9,6 +9,9 @@ export type HomeMonitorContentInput = {
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
+  sessionWindowsDataState?: "loading" | "loaded" | "error";
+  runningEmptyMessage?: string;
+  nonRunningEmptyMessage?: string;
   feedback?: string;
   onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowContextMenu: (
@@ -22,6 +25,9 @@ export function buildHomeMonitorContentProps({
   runningEntries,
   nonRunningEntries,
   auxiliaryDataState,
+  sessionWindowsDataState,
+  runningEmptyMessage,
+  nonRunningEmptyMessage,
   feedback,
   onOpenSession,
   onShowContextMenu,
@@ -30,6 +36,9 @@ export function buildHomeMonitorContentProps({
     runningEntries,
     nonRunningEntries,
     auxiliaryDataState,
+    sessionWindowsDataState,
+    runningEmptyMessage,
+    nonRunningEmptyMessage,
     feedback,
     onOpenSession,
     onShowContextMenu,

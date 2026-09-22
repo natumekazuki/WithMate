@@ -50,7 +50,7 @@ export async function resolveProviderCatalogOrThrow(
   const snapshot = (await args.getModelCatalog(args.revision)) ?? (await args.ensureSeeded());
   const provider = getProviderCatalog(snapshot.providers, args.providerId ?? DEFAULT_PROVIDER_ID);
   if (!provider) {
-    throw new Error("利用できる model catalog provider が見つからないよ。");
+    throw new Error("No usable model catalog provider was found.");
   }
 
   return { snapshot, provider };

@@ -53,8 +53,8 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
   if (input.draft.characterSelectionMode === "random" && input.sessionCharacterUsageLoadStatus !== "loaded") {
     input.setLaunchFeedback(
       input.sessionCharacterUsageLoadStatus === "loading"
-        ? "Session 履歴を読み込んでるよ。完了してからもう一度開始してね。"
-        : "Session 履歴を読み込めていないため、ランダム選択を開始できないよ。",
+        ? "Loading session history. Try again when it finishes."
+        : "Session history is unavailable, so random selection cannot start.",
     );
     return;
   }
@@ -62,13 +62,13 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
   if (input.draft.characterSelectionMode === "random" && input.openSessionWindowIdsLoadStatus !== "loaded") {
     input.setLaunchFeedback(
       input.openSessionWindowIdsLoadStatus === "loading"
-        ? "開いている Session Window を確認してるよ。完了してからもう一度開始してね。"
-        : "開いている Session Window を確認できないため、ランダム選択を開始できないよ。",
+        ? "Checking open session windows. Try again when it finishes."
+        : "Open session windows are unavailable, so random selection cannot start.",
     );
     return;
   }
 
-  input.setLaunchFeedback("Session を開始してるよ...");
+  input.setLaunchFeedback("Starting session…");
   input.setLaunchStarting(true);
 
   try {
@@ -87,13 +87,13 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       random: input.random,
     });
     if (!sessionInput) {
-      input.setLaunchFeedback("Session の開始条件が揃ってないよ。");
+      input.setLaunchFeedback("Session requirements are incomplete.");
       return;
     }
 
     const createdSession = await input.createSession(sessionInput);
     if (!createdSession) {
-      input.setLaunchFeedback("Session を開始できなかったよ。");
+      input.setLaunchFeedback("Could not start session.");
       return;
     }
 
@@ -101,7 +101,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     input.closeLaunchDialog();
     await input.openSessionWindow(createdSession.id);
   } catch (error) {
-    input.setLaunchFeedback(error instanceof Error ? error.message : "開始に失敗したよ。");
+    input.setLaunchFeedback(error instanceof Error ? error.message : "Could not start session.");
   } finally {
     input.setLaunchStarting(false);
   }

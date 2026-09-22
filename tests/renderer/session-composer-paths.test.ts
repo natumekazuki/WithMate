@@ -129,8 +129,8 @@ test("buildComposerAttachmentItems は attachment display と remove targets を
     {
       key: "att-1",
       kind: "file",
-      kindLabel: "ファイル",
-      locationLabel: "ワークスペース内",
+      kindLabel: "File",
+      locationLabel: "In workspace",
       primaryLabel: "App.tsx",
       secondaryLabel: "src",
       title: "src/App.tsx",
@@ -139,8 +139,8 @@ test("buildComposerAttachmentItems は attachment display と remove targets を
     {
       key: "att-2",
       kind: "image",
-      kindLabel: "画像",
-      locationLabel: "ワークスペース外",
+      kindLabel: "Image",
+      locationLabel: "Outside workspace",
       primaryLabel: "cover image.png",
       secondaryLabel: "D:/assets",
       title: "D:/assets/cover image.png",
@@ -154,6 +154,18 @@ test("buildComposerAttachmentItems は attachment display と remove targets を
   );
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "path reference attachment itemはfile/folder/imageのkind、Reference location、表示名、削除対象を一貫して生成する"
+// oracle = { type = "contract", ref = "src/chat/composer/session-composer-paths.ts: buildPathReferenceAttachmentItems" }
+// fault = "kind・location・basenameまたはremove targetを取り違え、別referenceの削除対象を作る"
+// observable = "3種類のattachment itemのkey、labels、title、removeTargets"
+// observation_boundary = "public-boundary"
+// scope = "composer-path-reference-items"
+// lifecycle = "permanent"
+// impact = "path referenceの表示と削除操作が対象pathからずれる"
+// distinction = "単一fileだけでなくfolder/imageを含む異種item列で同じmapping契約を確認する"
+// @end-test-value
 test("buildPathReferenceAttachmentItems は MateTalk path reference item を作る", () => {
   assert.deepEqual(
     buildPathReferenceAttachmentItems([
@@ -165,8 +177,8 @@ test("buildPathReferenceAttachmentItems は MateTalk path reference item を作�
       {
         key: "file:src/App.tsx",
         kind: "file",
-        kindLabel: "ファイル",
-        locationLabel: "参照",
+        kindLabel: "File",
+        locationLabel: "Reference",
         primaryLabel: "App.tsx",
         secondaryLabel: "src",
         title: "src/App.tsx",
@@ -175,8 +187,8 @@ test("buildPathReferenceAttachmentItems は MateTalk path reference item を作�
       {
         key: "folder:docs/specs",
         kind: "folder",
-        kindLabel: "フォルダ",
-        locationLabel: "参照",
+        kindLabel: "Folder",
+        locationLabel: "Reference",
         primaryLabel: "specs",
         secondaryLabel: "docs",
         title: "docs/specs",
@@ -185,8 +197,8 @@ test("buildPathReferenceAttachmentItems は MateTalk path reference item を作�
       {
         key: "image:assets/cover image.png",
         kind: "image",
-        kindLabel: "画像",
-        locationLabel: "参照",
+        kindLabel: "Image",
+        locationLabel: "Reference",
         primaryLabel: "cover image.png",
         secondaryLabel: "assets",
         title: "assets/cover image.png",
@@ -235,6 +247,18 @@ test("removePathReferenceAttachments は削除対象以外の path reference を
   );
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "additional directoryは正規化されたdisplay pathとroot/relative labelを作り、削除可否を保持する"
+// oracle = { type = "contract", ref = "src/chat/composer/session-composer-paths.ts: buildAdditionalDirectoryItems" }
+// fault = "trailing separatorやroot pathを誤表示するか、readonly一覧を削除可能として投影する"
+// observable = "directory itemのkey、path、primary/secondary/title、canRemove"
+// observation_boundary = "public-boundary"
+// scope = "composer-additional-directory-items"
+// lifecycle = "permanent"
+// impact = "workspace補助directoryの識別と削除操作を誤る"
+// distinction = "普通のexternal pathとroot path、remove allowed/readonlyを同時に確認する"
+// @end-test-value
 test("buildAdditionalDirectoryItems は additional directory display と remove state を作る", () => {
   assert.deepEqual(
     buildAdditionalDirectoryItems(
@@ -257,7 +281,7 @@ test("buildAdditionalDirectoryItems は additional directory display と remove 
         key: "C:/",
         path: "C:/",
         primaryLabel: "C:",
-        secondaryLabel: "ルート",
+        secondaryLabel: "Root",
         title: "C:",
         canRemove: true,
       },

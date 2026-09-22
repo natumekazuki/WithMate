@@ -162,6 +162,15 @@
   padding-block: 12px;
 }
 
+.character-editor-loading-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 120px;
+  color: var(--muted);
+}
+
 .character-editor-card {
   display: grid;
   gap: 16px;
@@ -272,8 +281,6 @@
 
 .character-editor-validation-list strong {
   font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .character-editor-page {
@@ -627,8 +634,6 @@
 .editor-field span {
   color: var(--muted);
   font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .editor-field-help {
@@ -768,8 +773,6 @@
 .theme-hex-field span {
   color: var(--muted);
   font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .theme-hex-field input {
@@ -791,8 +794,6 @@
 .theme-rgb-grid span {
   color: var(--muted);
   font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .theme-rgb-grid input {
@@ -1002,4 +1003,16 @@
   background: var(--character-main);
   color: var(--character-main-ink);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
+}
+
+.character-editor-page .start-session-button,
+.character-editor-page .character-editor-window-footer .launch-toggle {
+  gap: 8px;
+}
+
+.character-editor-page .start-session-button .chat-skill-picker-spinner,
+.character-editor-page .character-editor-window-footer .chat-skill-picker-spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
 }

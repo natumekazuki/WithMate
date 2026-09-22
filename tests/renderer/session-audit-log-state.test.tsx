@@ -197,4 +197,174 @@ describe("useSessionAuditLogs", () => {
       dom.window.close();
     }
   });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Audit refresh と pagination は独立したpendingを持ち、refresh完了後の古いpagination応答を適用しない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#Audit" }
+  // fault = "refreshとLoad Moreを一つのbusyへ潰すか、refresh後に古いpageが新しい一覧へ混入する"
+  // observable = "refreshing/loadingMoreの同時状態、page応答後の表示entry"
+  // observation_boundary = "component-behavior"
+  // scope = "session-audit-log-state"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Audit refresh と pagination のpendingを分離し、refresh後の古いpageを捨てる", async () => {
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+      pretendToBeVisual: true,
+    });
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+    const previousNode = globalThis.Node;
+    const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
+
+    Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+    Object.defineProperty(globalThis, "requestAnimationFrame", {
+      configurable: true,
+      value: dom.window.requestAnimationFrame.bind(dom.window),
+    });
+    Object.defineProperty(globalThis, "cancelAnimationFrame", {
+      configurable: true,
+      value: dom.window.cancelAnimationFrame.bind(dom.window),
+    });
+
+    const session = {
+      ...buildNewSession({
+        taskTitle: "AuditLog",
+        workspaceLabel: "repo",
+        workspacePath: "/repo",
+        branch: "main",
+        characterId: "character-1",
+        character: "WithMate",
+        characterIconPath: "",
+        characterThemeColors: {
+          main: "#000000",
+          sub: "#ffffff",
+        },
+        approvalMode: "untrusted",
+      }),
+      id: "session-1",
+    };
+    const firstPage = {
+      entries: [createAuditLogSummary(1)],
+      nextCursor: 1,
+      hasMore: true,
+      total: 2,
+    };
+    const refreshedPage = {
+      entries: [createAuditLogSummary(3)],
+      nextCursor: 1,
+      hasMore: true,
+      total: 2,
+    };
+    const stalePage = {
+      entries: [createAuditLogSummary(2)],
+      nextCursor: null,
+      hasMore: false,
+      total: 2,
+    };
+    let summaryCallCount = 0;
+    let resolveRefresh: ((page: typeof refreshedPage) => void) | null = null;
+    let resolveLoadMore: ((page: typeof stalePage) => void) | null = null;
+    const auditLogApi = {
+      listSessionAuditLogSummaryPage(_sessionId: string, page: { cursor: number; limit: number }) {
+        summaryCallCount += 1;
+        if (page.cursor === 0 && summaryCallCount === 1) {
+          return Promise.resolve(firstPage);
+        }
+        if (page.cursor === 0) {
+          return new Promise<typeof refreshedPage>((resolve) => {
+            resolveRefresh = resolve;
+          });
+        }
+        return new Promise<typeof stalePage>((resolve) => {
+          resolveLoadMore = resolve;
+        });
+      },
+      async getSessionAuditLogDetailSection() {
+        return null;
+      },
+      async getSessionAuditLogOperationDetail() {
+        return null;
+      },
+    };
+    let openAuditLogs: (() => void) | null = null;
+    let loadMoreAuditLogs: (() => void) | null = null;
+    let root: Root | null = null;
+
+    function Harness() {
+      const auditLogs = useSessionAuditLogs({
+        withmateApi: null,
+        selectedSession: session,
+        ownerSessionId: "parent-session-1",
+        liveRun: null,
+        auditLogApi,
+      });
+      useEffect(() => {
+        openAuditLogs = () => auditLogs.setAuditLogsOpen(true);
+        loadMoreAuditLogs = auditLogs.handleLoadMoreAuditLogs;
+      }, [auditLogs]);
+      return React.createElement(
+        "div",
+        {
+          "data-refreshing": String(auditLogs.modalProps.refreshing),
+          "data-loading-more": String(auditLogs.modalProps.loadingMore),
+          "data-entries": auditLogs.displayedEntries.map((entry) => entry.id).join(","),
+        },
+      );
+    }
+
+    try {
+      await act(async () => {
+        root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+        root.render(React.createElement(Harness));
+      });
+      await act(async () => {});
+      assert.equal(summaryCallCount, 1);
+
+      await act(async () => {
+        openAuditLogs?.();
+      });
+      assert.equal(dom.window.document.querySelector("[data-refreshing]")?.getAttribute("data-refreshing"), "true");
+
+      await act(async () => {
+        loadMoreAuditLogs?.();
+      });
+      const stateDuringBoth = dom.window.document.querySelector("[data-refreshing]");
+      assert.equal(stateDuringBoth?.getAttribute("data-refreshing"), "true");
+      assert.equal(stateDuringBoth?.getAttribute("data-loading-more"), "true");
+
+      await act(async () => {
+        resolveRefresh?.(refreshedPage);
+      });
+      const stateAfterRefresh = dom.window.document.querySelector("[data-refreshing]");
+      assert.equal(stateAfterRefresh?.getAttribute("data-refreshing"), "false");
+      assert.equal(stateAfterRefresh?.getAttribute("data-loading-more"), "false");
+      assert.equal(stateAfterRefresh?.getAttribute("data-entries"), "3");
+
+      await act(async () => {
+        resolveLoadMore?.(stalePage);
+      });
+      assert.equal(dom.window.document.querySelector("[data-refreshing]")?.getAttribute("data-entries"), "3");
+    } finally {
+      await act(async () => root?.unmount());
+      Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+      Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+      Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+      Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+      Object.defineProperty(globalThis, "requestAnimationFrame", {
+        configurable: true,
+        value: previousRequestAnimationFrame,
+      });
+      Object.defineProperty(globalThis, "cancelAnimationFrame", {
+        configurable: true,
+        value: previousCancelAnimationFrame,
+      });
+      dom.window.close();
+    }
+  });
 });

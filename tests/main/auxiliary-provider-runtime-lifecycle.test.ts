@@ -100,6 +100,18 @@ describe("Auxiliary provider runtime lifecycle", () => {
     assert.equal(invalidated, false);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "composer preview中のstarting Auxiliary runではprovider更新をside effect前に拒否する"
+  // oracle = { type = "contract", ref = "src-electron/auxiliary/auxiliary-provider-runtime-lifecycle.ts#updateAuxiliarySessionWithProviderRuntimeLifecycle" }
+  // fault = "実行中Auxiliaryのprovider更新を許可し、runtime binding revokeやthread invalidationを開始する"
+  // observable = "rejection message and update/revoke/invalidate calls"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-provider-runtime-lifecycle-running-update"
+  // lifecycle = "permanent"
+  // impact = "実行中turnのprovider identityが途中で変わり、provider runtime状態が破損する"
+  // distinction = "starting runを明示した状態で拒否と副作用不在を同時に確認する"
+  // @end-test-value
   it("composer preview中のstarting runではprovider更新をside effect前に拒否する", async () => {
     const current = createAuxiliarySession("codex");
     let updated = false;
@@ -122,7 +134,7 @@ describe("Auxiliary provider runtime lifecycle", () => {
           invalidated = true;
         },
       }),
-      /実行中の Auxiliary Session は更新できない/,
+      /A running Auxiliary Session cannot be updated/,
     );
 
     assert.equal(updated, false);

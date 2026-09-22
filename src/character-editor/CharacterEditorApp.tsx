@@ -10,7 +10,9 @@ import {
   createNewCharacterEditorDraft,
   formatCharacterEditorError,
   getCharacterIconDraftValidationMessage,
+  areCharacterEditorDraftsEqual,
   isCharacterEditorDraftDirty,
+  reconcileCharacterEditorDraftAfterSave,
   replaceCharacterDefinitionDraft,
   resolveCharacterDefinitionMetadata,
   shouldBlockCharacterEditorBeforeUnload,
@@ -90,12 +92,15 @@ export default function CharacterEditorApp() {
   const [saving, setSaving] = useState(false);
   const [authoringStarting, setAuthoringStarting] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const draftRef = useRef(draft);
   const definitionImportInputRef = useRef<HTMLInputElement | null>(null);
   const notesImportInputRef = useRef<HTMLInputElement | null>(null);
   const authoringStartButtonRef = useRef<HTMLButtonElement | null>(null);
   const closeConfirmationCancelButtonRef = useRef<HTMLButtonElement | null>(null);
   const authoringRefreshPendingRef = useRef(false);
   const confirmedCloseRef = useRef(false);
+
+  draftRef.current = draft;
 
   const validation = useMemo(() => buildCharacterEditorValidationSummary(draft), [draft]);
   const iconValidationMessage = useMemo(
@@ -115,9 +120,9 @@ export default function CharacterEditorApp() {
   const authoringProviderSelectionReady = !desktopRuntime || (!!modelCatalog && !!appSettings);
   const authoringProviderBlocked = desktopRuntime && authoringProviderSelectionReady && enabledAuthoringProviders.length === 0;
   const authoringLaunchFeedback = !authoringProviderSelectionReady
-    ? "Provider 設定を読み込んでいます。"
+    ? "Loading provider settings."
     : authoringProviderBlocked
-      ? "Settings で Coding Agent Provider を有効化してください。"
+      ? "Enable a coding agent provider in Settings."
       : feedback;
   const {
     dialogRef: authoringDialogRef,
@@ -164,11 +169,11 @@ export default function CharacterEditorApp() {
       if (detail) {
         setDraft(createCharacterEditorDraftFromDetail(detail));
       } else {
-        setFeedback("Character が見つかりませんでした。");
+        setFeedback("Character not found.");
       }
     }).catch((error) => {
       if (active) {
-        setFeedback(formatCharacterEditorError(error, "Character の読み込みに失敗しました。"));
+        setFeedback(formatCharacterEditorError(error, "Could not load character."));
       }
     }).finally(() => {
       if (active) {
@@ -202,7 +207,7 @@ export default function CharacterEditorApp() {
       setAppSettings(settings);
     }).catch((error) => {
       if (active) {
-        setFeedback(formatCharacterEditorError(error, "Authoring provider 設定の読み込みに失敗しました。"));
+        setFeedback(formatCharacterEditorError(error, "Could not load authoring provider settings."));
       }
     });
 
@@ -246,16 +251,16 @@ export default function CharacterEditorApp() {
       authoringRefreshPendingRef.current = false;
       void api.getCharacter(draft.characterId).then((detail) => {
         if (!detail) {
-          setFeedback("Character の再読み込みに失敗しました。");
+          setFeedback("Could not reload character files.");
           return;
         }
 
         setPersistedDetail(detail);
         setDraft(createCharacterEditorDraftFromDetail(detail));
-        setFeedback("Character files を再読み込みしました。");
+        setFeedback("Character files reloaded.");
       }).catch((error) => {
         authoringRefreshPendingRef.current = true;
-        setFeedback(formatCharacterEditorError(error, "Character の再読み込みに失敗しました。"));
+        setFeedback(formatCharacterEditorError(error, "Could not reload character files."));
       });
     };
 
@@ -271,11 +276,11 @@ export default function CharacterEditorApp() {
   const saveCharacter = async () => {
     const api = getWithMateApi();
     if (!api) {
-      setFeedback("Character Editor は Electron から開いてください。");
+      setFeedback("Open Character Editor in Electron.");
       return;
     }
     if (archived) {
-      setFeedback("Archived Character は保存できません。");
+      setFeedback("Archived characters cannot be saved.");
       return;
     }
     if (iconValidationMessage) {
@@ -284,49 +289,60 @@ export default function CharacterEditorApp() {
       return;
     }
     if (validation.blockingIssues.length > 0) {
-      setFeedback("validation issue を解消してから保存してください。");
+      setFeedback("Resolve validation issues before saving.");
       setSelectedTab(validation.definitionIssues.length > 0 ? "definition" : "notes");
       return;
     }
 
+    const draftAtSave = draft;
     setSaving(true);
-    setFeedback("保存しています...");
+    setFeedback("");
     try {
-      if (draft.mode === "create") {
-        const created = await api.createCharacter(buildCreateCharacterInputFromDraft(draft));
+      if (draftAtSave.mode === "create") {
+        const created = await api.createCharacter(buildCreateCharacterInputFromDraft(draftAtSave));
+        const savedDraft = createCharacterEditorDraftFromDetail(created);
+        const latestDraft = draftRef.current;
+        const hasNewEdits = !areCharacterEditorDraftsEqual(latestDraft, draftAtSave);
         setPersistedDetail(created);
-        setDraft(createCharacterEditorDraftFromDetail(created));
-        setFeedback("Character を作成しました。");
+        setDraft(reconcileCharacterEditorDraftAfterSave(savedDraft, draftAtSave, latestDraft));
+        if (!hasNewEdits) {
+          setFeedback("Character created.");
+        }
         return;
       }
 
-      if (!draft.characterId) {
-        setFeedback("保存対象の Character がありません。");
+      if (!draftAtSave.characterId) {
+        setFeedback("No character to save.");
         return;
       }
 
       await api.updateCharacterDefinition({
-        characterId: draft.characterId,
-        definitionMarkdown: draft.definitionMarkdown,
-        notesMarkdown: draft.notesMarkdown,
+        characterId: draftAtSave.characterId,
+        definitionMarkdown: draftAtSave.definitionMarkdown,
+        notesMarkdown: draftAtSave.notesMarkdown,
       });
-      const definitionMetadata = resolveCharacterDefinitionMetadata(draft.definitionMarkdown);
+      const definitionMetadata = resolveCharacterDefinitionMetadata(draftAtSave.definitionMarkdown);
       const updated = await api.updateCharacterMetadata({
-        characterId: draft.characterId,
-        name: definitionMetadata?.name || draft.name,
-        description: definitionMetadata?.description ?? draft.description,
-        iconFilePath: draft.iconFilePath,
-        theme: draft.theme,
+        characterId: draftAtSave.characterId,
+        name: definitionMetadata?.name || draftAtSave.name,
+        description: definitionMetadata?.description ?? draftAtSave.description,
+        iconFilePath: draftAtSave.iconFilePath,
+        theme: draftAtSave.theme,
       });
-      const refreshed = await api.getCharacter(draft.characterId);
+      const refreshed = await api.getCharacter(draftAtSave.characterId);
       if (!refreshed) {
-        throw new Error("保存後の Character を再読み込みできませんでした。");
+        throw new Error("Could not reload character after saving.");
       }
+      const savedDraft = createCharacterEditorDraftFromDetail(refreshed);
+      const latestDraft = draftRef.current;
+      const hasNewEdits = !areCharacterEditorDraftsEqual(latestDraft, draftAtSave);
       setPersistedDetail(refreshed);
-      setDraft(createCharacterEditorDraftFromDetail(refreshed));
-      setFeedback("Character を保存しました。");
+      setDraft(reconcileCharacterEditorDraftAfterSave(savedDraft, draftAtSave, latestDraft));
+      if (!hasNewEdits) {
+        setFeedback("Saved.");
+      }
     } catch (error) {
-      setFeedback(formatCharacterEditorError(error, "Character の保存に失敗しました。"));
+      setFeedback(formatCharacterEditorError(error, "Could not save character."));
     } finally {
       setSaving(false);
     }
@@ -337,7 +353,7 @@ export default function CharacterEditorApp() {
     if (!api || !draft.characterId || archived) {
       return;
     }
-    if (!window.confirm("この Character を archive しますか？\n\nHome list と New Session selector には出なくなります。")) {
+    if (!window.confirm("Archive this character?\n\nIt will be removed from the Home list and New Session selector.")) {
       return;
     }
 
@@ -355,9 +371,9 @@ export default function CharacterEditorApp() {
             updatedAt: archivedCharacter.updatedAt,
           }
         : current);
-      setFeedback("Character を archive しました。Home list と New Session selector には表示されません。");
+      setFeedback("Character archived. It is no longer available in Home or the New Session selector.");
     } catch (error) {
-      setFeedback(formatCharacterEditorError(error, "Character の archive に失敗しました。"));
+      setFeedback(formatCharacterEditorError(error, "Could not archive character."));
     } finally {
       setSaving(false);
     }
@@ -366,34 +382,34 @@ export default function CharacterEditorApp() {
   const startAuthoringSession = async () => {
     const api = getWithMateApi();
     if (!api) {
-      setFeedback("Character Editor は Electron から開いてください。");
+      setFeedback("Open Character Editor in Electron.");
       return;
     }
     if (archived) {
-      setFeedback("Archived Character は authoring session を開始できません。");
+      setFeedback("Archived characters cannot start authoring sessions.");
       return;
     }
     if (!draft.name.trim()) {
-      setFeedback("Name を入力してから authoring session を開始してください。");
+      setFeedback("Enter a name before starting an authoring session.");
       setSelectedTab("profile");
       return;
     }
     if (!draft.characterId) {
-      setFeedback("先に Character を保存してから authoring session を開始してください。");
+      setFeedback("Save the character before starting an authoring session.");
       return;
     }
     if (dirty) {
-      setFeedback("先に変更を保存してから authoring session を開始してください。");
+      setFeedback("Save your changes before starting an authoring session.");
       return;
     }
     if (!selectedAuthoringProvider) {
-      setFeedback("Settings で有効な provider を選択してから authoring session を開始してください。");
+      setFeedback("Enable a provider in Settings before starting an authoring session.");
       setAuthoringLaunchOpen(true);
       return;
     }
 
     setAuthoringStarting(true);
-    setFeedback("Authoring session を準備しています...");
+    setFeedback("");
     try {
       const result = await api.startCharacterAuthoringSession({
         mode: "improve",
@@ -401,10 +417,10 @@ export default function CharacterEditorApp() {
         provider: selectedAuthoringProvider.id,
       });
       authoringRefreshPendingRef.current = true;
-      setFeedback(`Authoring session を開始しました: ${result.session.taskTitle}`);
+      setFeedback(`Authoring session started: ${result.session.taskTitle}`);
       setAuthoringLaunchOpen(false);
     } catch (error) {
-      setFeedback(formatCharacterEditorError(error, "Authoring session の開始に失敗しました。"));
+      setFeedback(formatCharacterEditorError(error, "Could not start authoring session."));
     } finally {
       setAuthoringStarting(false);
     }
@@ -412,20 +428,20 @@ export default function CharacterEditorApp() {
 
   const openAuthoringLauncher = () => {
     if (archived) {
-      setFeedback("Archived Character は authoring session を開始できません。");
+      setFeedback("Archived characters cannot start authoring sessions.");
       return;
     }
     if (!draft.name.trim()) {
-      setFeedback("Name を入力してから authoring session を開始してください。");
+      setFeedback("Enter a name before starting an authoring session.");
       setSelectedTab("profile");
       return;
     }
     if (!draft.characterId) {
-      setFeedback("先に Character を保存してから authoring session を開始してください。");
+      setFeedback("Save the character before starting an authoring session.");
       return;
     }
     if (dirty) {
-      setFeedback("先に変更を保存してから authoring session を開始してください。");
+      setFeedback("Save your changes before starting an authoring session.");
       return;
     }
 
@@ -457,7 +473,7 @@ export default function CharacterEditorApp() {
     if (selected) {
       updateDraft({ iconFilePath: selected });
       setSelectedTab("profile");
-      setFeedback("画像を icon に読み込みました。保存するまで反映されません。");
+      setFeedback("Icon image imported. Save to apply it.");
     }
   };
 
@@ -465,7 +481,7 @@ export default function CharacterEditorApp() {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result !== "string") {
-        setFeedback("character.md の読み込みに失敗しました。");
+        setFeedback("Could not load character.md.");
         return;
       }
 
@@ -483,11 +499,11 @@ export default function CharacterEditorApp() {
       ));
       setSelectedTab("definition");
       setFeedback(parsed.ok
-        ? `${file.name} を character.md draft に読み込み、name / description も反映しました。保存するまで反映されません。`
-        : `${file.name} を character.md draft に読み込みました。validation issue を確認してください。`);
+        ? `${file.name} imported into the character.md draft; name and description updated. Save to apply.`
+        : `${file.name} imported into the character.md draft. Review validation issues.`);
     };
     reader.onerror = () => {
-      setFeedback("character.md の読み込みに失敗しました。");
+      setFeedback("Could not load character.md.");
     };
     reader.readAsText(file);
   };
@@ -496,16 +512,16 @@ export default function CharacterEditorApp() {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result !== "string") {
-        setFeedback("character-notes.md の読み込みに失敗しました。");
+        setFeedback("Could not load character-notes.md.");
         return;
       }
 
       updateDraft({ notesMarkdown: reader.result as string });
       setSelectedTab("notes");
-      setFeedback(`${file.name} を character-notes.md draft に読み込みました。保存するまで反映されません。`);
+      setFeedback(`${file.name} imported into the character-notes.md draft. Save to apply.`);
     };
     reader.onerror = () => {
-      setFeedback("character-notes.md の読み込みに失敗しました。");
+      setFeedback("Could not load character-notes.md.");
     };
     reader.readAsText(file);
   };
@@ -514,7 +530,7 @@ export default function CharacterEditorApp() {
     return (
       <div className="page-shell character-editor-page">
         <section className="panel empty-session-card rise-1">
-          <p>Character Editor は Electron から開いてね。</p>
+          <p>Open Character Editor in Electron.</p>
         </section>
       </div>
     );
@@ -527,14 +543,16 @@ export default function CharacterEditorApp() {
           <div className="character-editor-heading">
             <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
             <div>
-              <h1>{draft.name || "New Character"}</h1>
+              <h1>{draft.name || "New character"}</h1>
               <p>{draft.description || "No description"}</p>
             </div>
           </div>
           <div className="character-editor-header-actions">
-            <span className="settings-character-badge">
-              {archived ? "Archived" : saving ? "Saving" : authoringStarting ? "Authoring" : dirty ? "Unsaved" : "Saved"}
-            </span>
+            {archived || saving || authoringStarting || dirty ? (
+              <span className="settings-character-badge">
+                {archived ? "Archived" : saving ? "Saving" : authoringStarting ? "Authoring" : "Unsaved"}
+              </span>
+            ) : null}
           </div>
         </header>
 
@@ -546,13 +564,24 @@ export default function CharacterEditorApp() {
               type="button"
               onClick={() => setSelectedTab(tab)}
             >
-              {tab === "definition" ? "character.md" : tab === "notes" ? "character-notes.md" : tab}
+              {tab === "definition"
+                ? "character.md"
+                : tab === "notes"
+                  ? "character-notes.md"
+                  : tab === "profile"
+                    ? "Profile"
+                    : "Preview"}
             </button>
           ))}
         </nav>
 
         <main className={`character-editor-window-body ${denseEditorBody ? "character-editor-window-body-dense" : ""}`.trim()}>
-          {loading ? <p className="settings-note">Character を読み込んでいます...</p> : null}
+          {loading ? (
+            <div className="character-editor-loading-state" role="status" aria-live="polite">
+              <span className="chat-skill-picker-spinner" aria-hidden="true" />
+              <span className="visually-hidden">Loading character.</span>
+            </div>
+          ) : null}
           {!loading && selectedTab === "profile" ? (
             <section className="character-editor-profile-card">
               <div className="settings-character-form-grid">
@@ -577,7 +606,7 @@ export default function CharacterEditorApp() {
                       disabled={archived}
                     />
                     <button className="launch-toggle compact" type="button" onClick={importIconImage} disabled={archived}>
-                      Import Image
+                      Import image
                     </button>
                   </div>
                 </label>
@@ -619,7 +648,7 @@ export default function CharacterEditorApp() {
                 </button>
               </div>
               <p className="settings-help">The runtime definition is captured as a snapshot when a session starts.</p>
-              <ValidationList issues={validation.definitionIssues} emptyLabel="character.md validation OK" />
+              <ValidationList issues={validation.definitionIssues} />
               <input
                 ref={definitionImportInputRef}
                 type="file"
@@ -657,8 +686,8 @@ export default function CharacterEditorApp() {
                   Import / Replace
                 </button>
               </div>
-              <p className="settings-help">調査メモ、採用理由、改稿履歴用です。V5 Core では runtime prompt に常設注入しません。</p>
-              <ValidationList issues={validation.notesIssues} emptyLabel="character-notes.md validation OK" />
+              <p className="settings-help">Use this file for research notes, rationale, and revision history. It is not injected into the runtime prompt in V5 Core.</p>
+              <ValidationList issues={validation.notesIssues} />
               <input
                 ref={notesImportInputRef}
                 type="file"
@@ -687,7 +716,7 @@ export default function CharacterEditorApp() {
             <section className="character-editor-preview-grid">
               <div className="character-editor-preview-profile">
                 <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
-                <strong>{draft.name || "New Character"}</strong>
+                <strong>{draft.name || "New character"}</strong>
                 <p>{draft.description || "No description"}</p>
               </div>
               <label className="settings-provider-input character-editor-runtime-preview">
@@ -703,7 +732,7 @@ export default function CharacterEditorApp() {
             onClose={() => setCloseConfirmationOpen(false)}
             dialogRef={closeConfirmationDialogRef}
             onKeyDown={handleCloseConfirmationDialogKeyDown}
-            ariaLabel={draft.mode === "create" ? "新しいCharacterの破棄確認" : "未保存の変更の破棄確認"}
+            ariaLabel={draft.mode === "create" ? "Confirm discard of new character" : "Confirm discard of unsaved changes"}
             showDismissControl={false}
             dialogClassName="character-editor-close-dialog"
             footer={
@@ -714,20 +743,20 @@ export default function CharacterEditorApp() {
                   type="button"
                   onClick={() => setCloseConfirmationOpen(false)}
                 >
-                  キャンセル
+                  Cancel
                 </button>
                 <button
                   className="launch-toggle danger-button"
                   type="button"
                   onClick={discardDraftAndCloseWindow}
                 >
-                  破棄して閉じる
+                  Discard and close
                 </button>
               </div>
             }
           >
             <div className="character-editor-close-dialog-copy">
-              <h2>{draft.mode === "create" ? "新しいCharacterを破棄しますか？" : "未保存の変更を破棄しますか？"}</h2>
+              <h2>{draft.mode === "create" ? "Discard new character?" : "Discard unsaved changes?"}</h2>
             </div>
           </LaunchDialogShell>
         ) : null}
@@ -741,7 +770,7 @@ export default function CharacterEditorApp() {
             footer={
               <LaunchDialogFooter
                 feedback={authoringLaunchFeedback}
-                startButtonLabel={authoringStarting ? "Starting..." : "Start"}
+                startButtonLabel={authoringStarting ? "Starting…" : "Start"}
                 startButtonDisabled={
                   authoringStarting ||
                   !selectedAuthoringProvider ||
@@ -777,16 +806,30 @@ export default function CharacterEditorApp() {
             type="button"
             onClick={openAuthoringLauncher}
             disabled={saving || authoringStarting || archived || loading || !draft.characterId}
+            aria-busy={authoringStarting || undefined}
+            aria-label={authoringStarting ? "Starting authoring session" : undefined}
           >
-            {authoringStarting ? "Starting..." : draft.mode === "edit" ? "Improve with Agent" : "Author with Agent"}
+            {authoringStarting ? (
+              <>
+                <span className="chat-skill-picker-spinner" aria-hidden="true" />
+                <span>Starting…</span>
+              </>
+            ) : draft.mode === "edit" ? "Improve with agent" : "Author with agent"}
           </button>
           <button
             className="launch-toggle start-session-button"
             type="button"
             onClick={saveCharacter}
             disabled={saving || authoringStarting || archived || !dirty}
+            aria-busy={saving || undefined}
+            aria-label={saving ? "Saving character" : "Save"}
           >
-            Save
+            {saving ? (
+              <>
+                <span className="chat-skill-picker-spinner" aria-hidden="true" />
+                <span>Save</span>
+              </>
+            ) : "Save"}
           </button>
         </footer>
       </section>
@@ -796,13 +839,11 @@ export default function CharacterEditorApp() {
 
 function ValidationList({
   issues,
-  emptyLabel,
 }: {
   issues: readonly { code: string; message: string; path?: string }[];
-  emptyLabel: string;
 }) {
   if (issues.length === 0) {
-    return <p className="settings-feedback">{emptyLabel}</p>;
+    return null;
   }
 
   return (

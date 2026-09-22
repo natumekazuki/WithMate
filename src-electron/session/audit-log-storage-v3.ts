@@ -1010,7 +1010,7 @@ export class AuditLogStorageV3 {
 
     const created = await this.getSessionAuditLogEntry(input.sessionId, auditLogId);
     if (!created) {
-      throw new Error(`audit log ${auditLogId} の再取得に失敗したよ。`);
+      throw new Error(`Audit log ${auditLogId} could not be reloaded.`);
     }
     return created;
   }
@@ -1033,7 +1033,7 @@ export class AuditLogStorageV3 {
         try {
           const currentSessionId = getAuditLogSessionId(db, id);
           if (!currentSessionId || currentSessionId !== input.sessionId) {
-            throw new Error(`audit log ${id} の更新に失敗したよ。`);
+            throw new Error(`Audit log ${id} could not be updated.`);
           }
 
           const previousBlobIds = collectAuditLogBlobIds(db, id);
@@ -1058,7 +1058,7 @@ export class AuditLogStorageV3 {
           );
 
           if (result.changes === 0) {
-            throw new Error(`audit log ${id} の更新に失敗したよ。`);
+            throw new Error(`Audit log ${id} could not be updated.`);
           }
 
           db.prepare(DELETE_AUDIT_LOG_DETAIL_SQL).run(id);
@@ -1098,7 +1098,7 @@ export class AuditLogStorageV3 {
 
     const updated = await this.getSessionAuditLogEntry(input.sessionId, id);
     if (!updated) {
-      throw new Error(`audit log ${id} の再取得に失敗したよ。`);
+      throw new Error(`Audit log ${id} could not be reloaded.`);
     }
     return updated;
   }

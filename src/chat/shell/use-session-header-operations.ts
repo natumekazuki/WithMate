@@ -82,7 +82,7 @@ export function useSessionHeaderOperations(input: {
   const deleteSession = useCallback(async () => {
     const session = input.selectedSession;
     if (!input.api || !session || input.runState === "running") return;
-    if (!window.confirm(`セッション「${session.taskTitle}」を削除する？`)) return;
+    if (!window.confirm(`Delete session "${session.taskTitle}"?`)) return;
     await input.api.deleteSession(session.id);
     input.closeWindow();
   }, [input]);

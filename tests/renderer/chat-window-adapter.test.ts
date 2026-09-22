@@ -568,6 +568,8 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
     liveElicitationRequest: null,
     elicitationActionRequestId: null,
     liveRunAssistantText: "生成中",
+    pendingMessageText: "Preparing a response",
+    pendingMessageTextVisible: false,
     liveRunErrorMessage: "",
     isMessageListFollowing: true,
     onMessageListScroll: () => {},
@@ -591,6 +593,8 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
   assert.equal(composerMessageColumnProps.sessionId, "session-id");
   assert.equal(composerMessageColumnProps.liveRunAssistantText, "生成中");
   assert.equal(composerMessageColumnProps.hasLiveRunAssistantText, true);
+  assert.equal(composerMessageColumnProps.pendingMessageText, "Preparing a response");
+  assert.equal(composerMessageColumnProps.pendingMessageTextVisible, false);
   assert.equal(explicitEmptyMessageColumnProps.hasLiveRunAssistantText, false);
   assert.equal(composerMessageColumnProps.onCopyMessageText, onCopyMessageText);
   assert.equal(composerMessageColumnProps.onQuoteMessageText, onQuoteMessageText);
@@ -940,7 +944,7 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
   assert.equal(agentProps.className, "");
   assert.equal(auxiliaryProps.className, "theme-accent auxiliary-session-mode");
   assert.match(renderToStaticMarkup(agentProps.mainContent), /Preview/);
-  assert.match(renderToStaticMarkup(React.createElement(ChatWindow, agentProps)), /LatestCommand/);
+  assert.match(renderToStaticMarkup(React.createElement(ChatWindow, agentProps)), /Latest command/);
   assert.equal(auxiliaryProps.rightPaneProps, rightPaneProps);
 });
 
@@ -1139,6 +1143,18 @@ test("buildLiveSessionContextPaneProps は right pane props を共通形式で�
   assert.equal(props.onCycleContextPaneTab, onCycleContextPaneTab);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "静的chat adapterはcharacter session copyのbuilt-in英語既定を保持する"
+// oracle = { type = "contract", ref = "Chat window adapter default CharacterProfile" }
+// fault = "adapterが古い既定文を注入して静的chat表示だけ別言語になる"
+// observable = "character.sessionCopy.pendingResponding"
+// observation_boundary = "public-boundary"
+// scope = "static-chat-character-profile-defaults"
+// lifecycle = "permanent"
+// impact = "共通chat surfaceの既定microcopyが不整合になる"
+// distinction = "shared catalog testとは別にadapterのdefault projectionを確認する"
+// @end-test-value
 test("createStaticChatCharacterProfile は静的 chat 用 CharacterProfile 既定値を補う", () => {
   const character = createStaticChatCharacterProfile({
     id: "static-chat",
@@ -1154,7 +1170,7 @@ test("createStaticChatCharacterProfile は静的 chat 用 CharacterProfile 既�
   assert.equal(character.updatedAt, "");
   assert.equal(character.themeColors.main, "#6f8cff");
   assert.equal(character.themeColors.sub, "#6fb8c7");
-  assert.deepEqual(character.sessionCopy.pendingResponding, ["応答を生成中"]);
+  assert.deepEqual(character.sessionCopy.pendingResponding, ["Generating a response"]);
 });
 
 test("toConversationMessages は user 以外を assistant として共通 message に変換する", () => {

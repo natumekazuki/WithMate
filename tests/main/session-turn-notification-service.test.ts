@@ -189,7 +189,7 @@ describe("SessionTurnNotificationService", () => {
         : ["eligibility-check-failed", "preview-setting-check-failed"]);
       assert.equal(harness.warnings.find(({ event }) => event === "preview-setting-check-failed")?.error, previewError);
       if (order === "preview-only") {
-        assert.equal(harness.options[0]?.body, "「通知テスト」のターンが完了しました");
+        assert.equal(harness.options[0]?.body, "通知テスト: turn completed.");
         assert.equal(harness.notifications[0]?.shown, true);
       } else {
         assert.equal(harness.notifications.length, 0);
@@ -197,11 +197,13 @@ describe("SessionTurnNotificationService", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "failed通知は保存済みSessionの識別情報だけから成功通知と区別できる固定文を作り、同一Sessionの通知置換とCharacter iconを共有する"
   // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
-  // failure_mode = "failed通知へassistant本文またはraw provider errorが露出するか、成功通知と別の置換・icon経路を通って重複通知になる"
+  // fault = "failed通知へassistant本文またはraw provider errorが露出するか、成功通知と別の置換・icon経路を通って重複通知になる"
+  // observable = "terminal notification options, closed notification, and icon path"
+  // observation_boundary = "public-boundary"
   // scope = "session-turn-terminal-notification-content"
   // lifecycle = "permanent"
   // distinction = "既存の成功preview testではなく、failed outcomeの固定contentと成功通知からの置換を検証する"
@@ -223,12 +225,24 @@ describe("SessionTurnNotificationService", () => {
       id: harness.options[0]?.id,
       groupId: "WithMateSessions",
       title: "WithMate",
-      body: "「通知テスト」のターンでエラーが発生しました",
+      body: "通知テスト: turn failed.",
       icon: { path: "C:/characters/a.png" },
     });
     assert.doesNotMatch(harness.options[1]?.body ?? "", /secret-token|provider error|成功preview/);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Windowsで通知設定が有効かつSession Windowが非focusなら、Character icon付きの完了通知を表示する"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "非focus条件を誤判定して通知を抑止するか、通知本文またはCharacter iconを欠落させる"
+  // observable = "notification options, shown state, and icon path"
+  // observation_boundary = "public-boundary"
+  // scope = "session-turn-completed-notification-eligibility"
+  // lifecycle = "permanent"
+  // impact = "バックグラウンドで完了したSessionを通知から把握できない"
+  // distinction = "Windows・非focus・opt-inの条件と通知表示結果を同時に確認する"
+  // @end-test-value
   it("Windows で設定が有効かつ対象 Session Window が非 focus ならキャラアイコン付きで通知する", () => {
     const harness = createHarness();
     const session = createSession({
@@ -242,7 +256,7 @@ describe("SessionTurnNotificationService", () => {
       id: harness.options[0]?.id,
       groupId: "WithMateSessions",
       title: "WithMate",
-      body: "「通知テスト」のターンが完了しました",
+      body: "通知テスト: turn completed.",
       icon: { path: "C:/characters/a.png" },
     });
     assert.match(harness.options[0]?.id ?? "", /^[0-9a-f]{64}$/);
@@ -332,6 +346,18 @@ describe("SessionTurnNotificationService", () => {
     assert.equal(harness.options[0]?.body, `${"あ".repeat(39)}${familyEmoji}…`);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "返答previewが空またはpreview設定確認に失敗した場合は、固定の完了文へ安全に戻す"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "空previewや設定例外を通知本文へ露出するか、通知を失敗扱いにして完了を知らせない"
+  // observable = "notification title/body, shown state, and warning event"
+  // observation_boundary = "public-boundary"
+  // scope = "session-turn-preview-fallback"
+  // lifecycle = "permanent"
+  // impact = "内部本文が通知へ露出するか、完了通知が欠落する"
+  // distinction = "空入力と設定read failureを個別に通し、同じ固定fallbackとwarningを確認する"
+  // @end-test-value
   it("返答 preview が空、または設定確認に失敗した場合は完了文へ安全に戻す", () => {
     const missingSourceHarness = createHarness({
       isResponsePreviewEnabled: () => true,
@@ -342,7 +368,7 @@ describe("SessionTurnNotificationService", () => {
 
     assert.equal(missingSourceHarness.service.notifyTurnCompleted(aggregatedSession), true);
     assert.equal(missingSourceHarness.options[0]?.title, "WithMate");
-    assert.equal(missingSourceHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
+    assert.equal(missingSourceHarness.options[0]?.body, "通知テスト: turn completed.");
 
     const emptyHarness = createHarness({
       isResponsePreviewEnabled: () => true,
@@ -353,7 +379,7 @@ describe("SessionTurnNotificationService", () => {
 
     assert.equal(emptyHarness.service.notifyTurnCompleted(emptySession, " ** ** "), true);
     assert.equal(emptyHarness.options[0]?.title, "WithMate");
-    assert.equal(emptyHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
+    assert.equal(emptyHarness.options[0]?.body, "通知テスト: turn completed.");
 
     const settingFailureHarness = createHarness({
       isResponsePreviewEnabled() {
@@ -369,10 +395,23 @@ describe("SessionTurnNotificationService", () => {
       true,
     );
     assert.equal(settingFailureHarness.options[0]?.title, "WithMate");
-    assert.equal(settingFailureHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
+    assert.equal(settingFailureHarness.options[0]?.body, "通知テスト: turn completed.");
     assert.equal(settingFailureHarness.warnings[0]?.event, "preview-setting-check-failed");
   });
 
+  // @test-value v2
+  // kind = "security"
+  // claim = "表示されないMarkdown metadataだけのpreviewは通知せず、固定の完了文へ戻す"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "link reference、footnote、math、diagram、HTML commentなどのmetadataやtokenを通知本文へ露出する"
+  // observable = "notification body and shown state for each metadata-only input"
+  // observation_boundary = "public-boundary"
+  // scope = "session-turn-markdown-preview-filter"
+  // lifecycle = "permanent"
+  // impact = "非表示metadataに含まれるtokenや内部情報がOS通知へ露出する"
+  // distinction = "複数のMarkdown metadata形状を通し、各通知が固定fallbackになることを直接確認する"
+  // risk_tags = ["privacy"]
+  // @end-test-value
   it("返答 preview は表示されない Markdown metadata を通知せず完了文へ戻す", () => {
     const secret = "SECRET-TOKEN";
     const cases = [
@@ -398,7 +437,7 @@ describe("SessionTurnNotificationService", () => {
 
       assert.equal(harness.service.notifyTurnCompleted(session, text), true);
       assert.equal(harness.options[0]?.title, "WithMate");
-      assert.equal(harness.options[0]?.body, "「通知テスト」のターンが完了しました");
+      assert.equal(harness.options[0]?.body, "通知テスト: turn completed.");
       assert.equal(harness.options[0]?.body.includes(secret), false);
     }
 
@@ -463,6 +502,18 @@ describe("SessionTurnNotificationService", () => {
     assert.equal(harness.options[0]?.body, "before $x$ after const value = 1;");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "65536 code unitsを超える返答previewは解析せず固定の完了文へ戻し、上限内の本文は通常previewを保つ"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "preview上限を超える本文を解析して通知へ露出するか、上限内の本文まで固定文へ置換する"
+  // observable = "within-limit and over-limit notification bodies"
+  // observation_boundary = "public-boundary"
+  // scope = "session-turn-preview-size-limit"
+  // lifecycle = "permanent"
+  // impact = "大きな本文が通知処理を過剰に実行するか、利用者が完了内容を確認できない"
+  // distinction = "上限境界の直前と超過を同じ通知serviceへ入力して結果を比較する"
+  // @end-test-value
   it("返答 preview は65536 code unitsを超える本文を解析せず完了文へ戻す", () => {
     const withinLimitHarness = createHarness({
       isResponsePreviewEnabled: () => true,
@@ -497,7 +548,7 @@ describe("SessionTurnNotificationService", () => {
       true,
     );
     assert.equal(overLimitHarness.options[0]?.title, "WithMate");
-    assert.equal(overLimitHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
+    assert.equal(overLimitHarness.options[0]?.body, "通知テスト: turn completed.");
   });
 
   it("Windows 以外、非対応、設定無効、対象 Session Window focus 中は通知しない", () => {
@@ -567,6 +618,18 @@ describe("SessionTurnNotificationService", () => {
     assert.equal(harness.warnings[0]?.event, "dismiss-close-failed");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character iconのload failureでも通知本体を表示し、OS notificationのshow failureを呼び出し元へ投げない"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "icon loadまたはnotification showの例外で通知処理がthrowするか、通知本文まで失われる"
+  // observable = "notify result, notification options, and warning events"
+  // observation_boundary = "public-boundary"
+  // scope = "session-turn-notification-error-isolation"
+  // lifecycle = "permanent"
+  // impact = "通知機能の補助失敗がSession完了処理や呼び出し元へ波及する"
+  // distinction = "icon failureとshow failureを別harnessで確認し、本文表示とwarningだけを観測する"
+  // @end-test-value
   it("キャラアイコンを読み込めなくても通知本体を表示し、show failure は呼び出し元へ投げない", () => {
     const iconFailureHarness = createHarness({
       loadCharacterIcon() {
@@ -579,7 +642,7 @@ describe("SessionTurnNotificationService", () => {
       id: iconFailureHarness.options[0]?.id,
       groupId: "WithMateSessions",
       title: "WithMate",
-      body: "「通知テスト」のターンが完了しました",
+      body: "通知テスト: turn completed.",
     });
     assert.equal(iconFailureHarness.warnings[0]?.event, "icon-load-failed");
 

@@ -96,8 +96,8 @@ async function migratePendingSessionTurnStorageV6(
     return;
   }
   onProgress?.({
-    title: "データベースを移行しています",
-    detail: "既存の監査ログを session turn storage へ移行しています。",
+    title: "Migrating saved data",
+    detail: "Migrating existing audit logs to session turn storage.",
   });
   try {
     migrateSessionTurnStorageV6(v6Path);
@@ -180,8 +180,8 @@ export async function resolveOrMigrateAppDatabasePath(
   }));
   const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
   onProgress?.({
-    title: "データベースを確認しています",
-    detail: `${APP_DATABASE_V6_FILENAME} を確認しています。`,
+    title: "Checking saved data",
+    detail: `Checking ${APP_DATABASE_V6_FILENAME}.`,
   });
   const v6Exists = existsSync(v6Path);
   if (v6Exists) {
@@ -194,8 +194,8 @@ export async function resolveOrMigrateAppDatabasePath(
       const alreadyMigrated = await hasV4ToV6MigrationMarker(v6Path);
       if (!alreadyMigrated) {
         onProgress?.({
-          title: "データベースを移行しています",
-          detail: `${APP_DATABASE_V4_FILENAME} から ${APP_DATABASE_V6_FILENAME} へ継続データを移行しています。`,
+          title: "Migrating saved data",
+          detail: `Migrating retained data from ${APP_DATABASE_V4_FILENAME} to ${APP_DATABASE_V6_FILENAME}.`,
         });
         await migrateV4ToV6(v4PathForExistingV6, v6Path);
       }
@@ -205,14 +205,14 @@ export async function resolveOrMigrateAppDatabasePath(
 
   const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
   onProgress?.({
-    title: "データベースを確認しています",
-    detail: `${APP_DATABASE_V4_FILENAME} を確認しています。`,
+    title: "Checking saved data",
+    detail: `Checking ${APP_DATABASE_V4_FILENAME}.`,
   });
   const v4Exists = existsSync(v4Path);
   if (v4Exists && isValidV4Database(v4Path)) {
     onProgress?.({
-      title: "データベースを移行しています",
-      detail: `${APP_DATABASE_V4_FILENAME} から ${APP_DATABASE_V6_FILENAME} へ移行しています。`,
+      title: "Migrating saved data",
+      detail: `Migrating from ${APP_DATABASE_V4_FILENAME} to ${APP_DATABASE_V6_FILENAME}.`,
     });
     await migrateV4ToV6(v4Path, v6Path, { overwrite: v6Exists });
     return v6Path;
@@ -220,9 +220,9 @@ export async function resolveOrMigrateAppDatabasePath(
   if (v4Exists && isUnsupportedNewerV4Database(v4Path)) {
     const userVersion = readV4DatabaseUserVersion(v4Path);
     throw new Error(
-      `${APP_DATABASE_V4_FILENAME} はこの WithMate が対応していない新しい DB バージョンです。`
-      + ` user_version=${userVersion} は対応バージョン ${APP_DATABASE_V4_SCHEMA_VERSION} より新しいため、`
-      + "legacy DB からの自動移行で上書きしません。",
+      `${APP_DATABASE_V4_FILENAME} is a newer database version unsupported by this WithMate.`
+      + ` user_version=${userVersion} exceeds supported version ${APP_DATABASE_V4_SCHEMA_VERSION}; `
+      + "the legacy database will not be overwritten by automatic migration.",
     );
   }
 
@@ -230,13 +230,13 @@ export async function resolveOrMigrateAppDatabasePath(
   const v3Exists = existsSync(v3Path);
   if (v3Exists && isValidV3Database(v3Path)) {
     onProgress?.({
-      title: "データベースを移行しています",
-      detail: `${APP_DATABASE_V3_FILENAME} から ${APP_DATABASE_V4_FILENAME} へ移行しています。`,
+      title: "Migrating saved data",
+      detail: `Migrating from ${APP_DATABASE_V3_FILENAME} to ${APP_DATABASE_V4_FILENAME}.`,
     });
     await migrateV3ToV4(userDataPath, v3Path, v4Path, { overwrite: v4Exists });
     onProgress?.({
-      title: "データベースを移行しています",
-      detail: `${APP_DATABASE_V4_FILENAME} から ${APP_DATABASE_V6_FILENAME} へ移行しています。`,
+      title: "Migrating saved data",
+      detail: `Migrating from ${APP_DATABASE_V4_FILENAME} to ${APP_DATABASE_V6_FILENAME}.`,
     });
     await migrateV4ToV6(v4Path, v6Path, { overwrite: v6Exists });
     return v6Path;
@@ -246,18 +246,18 @@ export async function resolveOrMigrateAppDatabasePath(
   const v2Exists = existsSync(v2Path);
   if (v2Exists && isValidV2Database(v2Path)) {
     onProgress?.({
-      title: "データベースを移行しています",
-      detail: `${APP_DATABASE_V2_FILENAME} から ${APP_DATABASE_V3_FILENAME} へ移行しています。`,
+      title: "Migrating saved data",
+      detail: `Migrating from ${APP_DATABASE_V2_FILENAME} to ${APP_DATABASE_V3_FILENAME}.`,
     });
     await migrateV2ToV3(userDataPath, v2Path, v3Path, { overwrite: v3Exists });
     onProgress?.({
-      title: "データベースを移行しています",
-      detail: `${APP_DATABASE_V3_FILENAME} から ${APP_DATABASE_V4_FILENAME} へ移行しています。`,
+      title: "Migrating saved data",
+      detail: `Migrating from ${APP_DATABASE_V3_FILENAME} to ${APP_DATABASE_V4_FILENAME}.`,
     });
     await migrateV3ToV4(userDataPath, v3Path, v4Path, { overwrite: v4Exists });
     onProgress?.({
-      title: "データベースを移行しています",
-      detail: `${APP_DATABASE_V4_FILENAME} から ${APP_DATABASE_V6_FILENAME} へ移行しています。`,
+      title: "Migrating saved data",
+      detail: `Migrating from ${APP_DATABASE_V4_FILENAME} to ${APP_DATABASE_V6_FILENAME}.`,
     });
     await migrateV4ToV6(v4Path, v6Path, { overwrite: v6Exists });
     return v6Path;
@@ -266,23 +266,23 @@ export async function resolveOrMigrateAppDatabasePath(
   const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
   if (existsSync(v1Path)) {
     onProgress?.({
-      title: "データベースを移行しています",
-      detail: `${APP_DATABASE_V1_FILENAME} から ${APP_DATABASE_V2_FILENAME} へ移行しています。`,
+      title: "Migrating saved data",
+      detail: `Migrating from ${APP_DATABASE_V1_FILENAME} to ${APP_DATABASE_V2_FILENAME}.`,
     });
     await migrateV1ToV2(v1Path, v2Path, { overwrite: v2Exists });
     onProgress?.({
-      title: "データベースを移行しています",
-      detail: `${APP_DATABASE_V2_FILENAME} から ${APP_DATABASE_V3_FILENAME} へ移行しています。`,
+      title: "Migrating saved data",
+      detail: `Migrating from ${APP_DATABASE_V2_FILENAME} to ${APP_DATABASE_V3_FILENAME}.`,
     });
     await migrateV2ToV3(userDataPath, v2Path, v3Path, { overwrite: v3Exists });
     onProgress?.({
-      title: "データベースを移行しています",
-      detail: `${APP_DATABASE_V3_FILENAME} から ${APP_DATABASE_V4_FILENAME} へ移行しています。`,
+      title: "Migrating saved data",
+      detail: `Migrating from ${APP_DATABASE_V3_FILENAME} to ${APP_DATABASE_V4_FILENAME}.`,
     });
     await migrateV3ToV4(userDataPath, v3Path, v4Path, { overwrite: v4Exists });
     onProgress?.({
-      title: "データベースを移行しています",
-      detail: `${APP_DATABASE_V4_FILENAME} から ${APP_DATABASE_V6_FILENAME} へ移行しています。`,
+      title: "Migrating saved data",
+      detail: `Migrating from ${APP_DATABASE_V4_FILENAME} to ${APP_DATABASE_V6_FILENAME}.`,
     });
     await migrateV4ToV6(v4Path, v6Path, { overwrite: v6Exists });
     return v6Path;

@@ -394,12 +394,12 @@ const mainWindowRuntime = new MainWindowRuntime({
   confirmCloseWhileRunning: (window) => {
     const choice = dialog.showMessageBoxSync(window, {
       type: "warning",
-      buttons: ["閉じない", "閉じて続行"],
+      buttons: ["Keep open", "Close and continue"],
       defaultId: 0,
       cancelId: 0,
-      title: "実行中のセッション",
-      message: "このセッションはまだ実行中だよ。",
-      detail: "閉じても処理は Main Process 側で続くよ。進捗はあとで開き直して確認してね。",
+      title: "Session is running",
+      message: "This session is still running.",
+      detail: "The run will continue after this window closes. Reopen the session later to check its progress.",
       noLink: true,
     });
     return choice === 1;
@@ -422,8 +422,7 @@ const sessionFileExplorerRuntime = new SessionFileExplorerRuntime({
 let appBootStatus: AppBootStatus = {
   kind: "running",
   stage: "starting",
-  title: "WithMate を起動しています",
-  detail: "起動状態を確認しています。",
+  title: "Starting WithMate",
 };
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -535,7 +534,7 @@ app.once("will-quit", stopEventLoopDelayMonitoring);
 async function getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics> {
   if (!mainStoreContext.appDatabaseDiagnostics) {
     if (!mainStoreContext.dbPath) {
-      throw new Error("DB path が初期化されていないよ。");
+      throw new Error("Saved data is not initialized.");
     }
     mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
   }
@@ -884,10 +883,10 @@ async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean,
       assertPersistentStoreOwnerIsActive(owner, "Turn admission");
       if (signal.aborted) throw new Error("Session run canceled.");
       if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) {
-        throw new Error("アプリ終了処理中のため送信を開始できません。");
+        throw new Error("The app is quitting, so a new message cannot be sent.");
       }
       if (databaseMaintenanceRequested) {
-        throw new Error("DB のメンテナンス中は新しい Turn を開始できません。");
+        throw new Error("A database maintenance operation is in progress, so a new turn cannot start.");
       }
     },
     reserve: operation,
@@ -897,10 +896,10 @@ async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean,
         : await owner.sessionStorage.getSession(sessionId);
       assertPersistentStoreOwnerIsActive(owner, "Turn admission");
       if (!session) {
-        throw new Error("対象セッションが見つかりません。");
+        throw new Error("The session could not be found.");
       }
       if ("parentSessionId" in session && !await owner.sessionStorage.getSession(session.parentSessionId)) {
-        throw new Error("Auxiliary の親セッションが見つかりません。");
+        throw new Error("The Auxiliary parent session could not be found.");
       }
       assertPersistentStoreOwnerIsActive(owner, "Turn admission");
       return session.provider;
@@ -1040,12 +1039,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             confirmQuitWhileRunning: () => {
               const choice = dialog.showMessageBoxSync({
                 type: "warning",
-                buttons: ["戻る", "終了する"],
+                buttons: ["Go back", "Quit"],
                 defaultId: 0,
                 cancelId: 0,
-                title: "実行中のセッション",
-                message: "実行中のセッションがあるよ。",
-                detail: "ここでアプリを終了すると、進行中の処理は中断されるよ。",
+                title: "Session is running",
+                message: "A session is still running.",
+                detail: "Quitting WithMate will interrupt the running work.",
                 noLink: true,
               });
               return choice === 1;
@@ -1178,7 +1177,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 forgetMemoryV6Entry,
                 resetAppDatabase: async (request) => {
                   if (databaseMaintenanceRequested) {
-                    throw new Error("DB の初期化はすでに実行中です。");
+                    throw new Error("Database initialization is already in progress.");
                   }
                   databaseMaintenanceRequested = true;
                   try {
@@ -1279,7 +1278,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireAuxiliarySessionService().getAuxiliarySessionStatus(auxiliarySessionId),
                 createAuxiliarySession: async (input) => {
                   if (databaseMaintenanceRequested) {
-                    throw new Error("DB のメンテナンス中は Auxiliary を作成できません。");
+                    throw new Error("A database maintenance operation is in progress, so an Auxiliary Session cannot be created.");
                   }
                   const created = await runWithStorageOperationCorrelation(input.clientRequestId ?? crypto.randomUUID(),
                     () => requireAuxiliarySessionService().createAuxiliarySession(input));
@@ -1315,7 +1314,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                       assertPersistentStoreOwnerIsActive(owner, "Auxiliary close");
                       if (auxiliaryRunParents.has(auxiliarySessionId)
                         || auxiliarySessionRuntimeService?.isRunInFlight(auxiliarySessionId)) {
-                        throw new Error("実行中の Auxiliary Session は終了できないよ。");
+                        throw new Error("A running Auxiliary Session cannot be closed.");
                       }
                       const service = requireAuxiliarySessionService();
                       const current = await service.getAuxiliarySession(auxiliarySessionId);
@@ -1332,23 +1331,23 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 },
                 runAuxiliarySessionTurn: (auxiliarySessionId, request) => requireAuxiliarySessionService().trackPendingDraftSend(async () => {
                   if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) {
-                    throw new Error("アプリ終了処理中のため送信を開始できません。");
+                    throw new Error("The app is quitting, so a new message cannot be sent.");
                   }
                   const initial = await requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
                   if (!initial) {
-                    throw new Error("Auxiliary Session が見つからないよ。");
+                    throw new Error("The Auxiliary Session could not be found.");
                   }
                   if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) {
-                    throw new Error("アプリ終了処理中のため送信を開始できません。");
+                    throw new Error("The app is quitting, so a new message cannot be sent.");
                   }
                   if (auxiliaryRunParents.has(auxiliarySessionId)) {
-                    throw new Error("Auxiliary Session はすでに実行中だよ。");
+                    throw new Error("The Auxiliary Session is already running.");
                   }
                   auxiliaryRunParents.set(auxiliarySessionId, initial.parentSessionId);
                   try {
                     if (request.submitSource === "composer") {
                       if (!request.auxiliaryDraftIncarnation || request.auxiliaryDraftDurableRevision === undefined) {
-                        throw new Error("Auxiliary の送信対象draft revisionがありません。");
+                        throw new Error("The Auxiliary draft revision could not be found.");
                       }
                       await requireAuxiliarySessionService().runAuxiliaryTurnWithDraft({
                         auxiliarySessionId,
@@ -1363,7 +1362,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     }
                     const session = await requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
                     if (!session) {
-                      throw new Error("Auxiliary Session が見つからないよ。");
+                      throw new Error("The Auxiliary Session could not be found.");
                     }
                     return session;
                   } finally {
@@ -1419,7 +1418,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
 
 function requireSessionStorage(): SessionStorageRead {
   if (!mainStoreContext.sessionStorage) {
-    throw new Error("session storage が初期化されていないよ。");
+    throw new Error("Session storage is not initialized.");
   }
 
   return mainStoreContext.sessionStorage;
@@ -1431,7 +1430,7 @@ function requireSessionStorageForWrite(): SessionStorageWrite {
     return storage;
   }
 
-  throw new Error("session storage は V2 DB の読み取り専用のため書き込み不可です。");
+  throw new Error("Session storage is read-only for this database and cannot be written.");
 }
 
 function requireSessionPinStorage(): SessionPinStorage {
@@ -1440,7 +1439,7 @@ function requireSessionPinStorage(): SessionPinStorage {
   if (typeof candidate.setSessionPinned === "function") {
     return candidate as SessionPinStorage;
   }
-  throw new Error("このセッション保存形式ではピン止めを利用できないよ。");
+  throw new Error("Pinning is not available for this session format.");
 }
 
 function isSessionStorageWritable(storage: SessionStorageRead): storage is SessionStorageWrite {
@@ -1462,14 +1461,14 @@ function requireMainQueryService(): MainQueryService {
       getSessionSummaryPage: (request) => {
         const storage = requireSessionStorage();
         if (!storage.listSessionSummaryPage) {
-          throw new Error("このDBのSession summary page queryは利用できないよ。");
+          throw new Error("Session summary pages are not available for this database.");
         }
         return storage.listSessionSummaryPage(request);
       },
       getSessionCharacterUsage: () => {
         const storage = requireSessionStorage();
         if (!storage.listSessionCharacterUsage) {
-          throw new Error("このDBのSession character usage queryは利用できないよ。");
+          throw new Error("Session Character usage is not available for this database.");
         }
         return storage.listSessionCharacterUsage();
       },
@@ -1562,11 +1561,11 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
         requireSessionLaunchSelectionService().resolve(providerId),
       runProviderRuntimeOperationExclusive: (operation) => {
         if (databaseMaintenanceRequested) {
-          throw new Error("DB のメンテナンス中は Session を作成できません。");
+          throw new Error("A database maintenance operation is in progress, so a Session cannot be created.");
         }
         return providerRuntimeOperationCoordinator.runExclusive(() => {
           if (databaseMaintenanceRequested) {
-            throw new Error("DB のメンテナンス中は Session を作成できません。");
+            throw new Error("A database maintenance operation is in progress, so a Session cannot be created.");
           }
           return operation();
         }, "session-create");
@@ -1634,7 +1633,7 @@ function requireMainSessionPersistenceFacade(): MainSessionPersistenceFacade {
 
 function requireModelCatalogStorage(): PersistentStoreBundle["modelCatalogStorage"] {
   if (!mainStoreContext.modelCatalogStorage) {
-    throw new Error("model catalog storage が初期化されていないよ。");
+    throw new Error("Model catalog storage is not initialized.");
   }
 
   return mainStoreContext.modelCatalogStorage;
@@ -1642,7 +1641,7 @@ function requireModelCatalogStorage(): PersistentStoreBundle["modelCatalogStorag
 
 function requireAuditLogStorage(): AuditLogStorageRead {
   if (!mainStoreContext.auditLogStorage) {
-    throw new Error("audit log storage が初期化されていないよ。");
+    throw new Error("Audit log storage is not initialized.");
   }
 
   return mainStoreContext.auditLogStorage;
@@ -1650,7 +1649,7 @@ function requireAuditLogStorage(): AuditLogStorageRead {
 
 function requireAuxiliarySessionStorage(): AuxiliarySessionStorageAccess {
   if (!mainStoreContext.auxiliarySessionStorage) {
-    throw new Error("Auxiliary Session storage が初期化されていないよ。");
+    throw new Error("Auxiliary Session storage is not initialized.");
   }
 
   return mainStoreContext.auxiliarySessionStorage;
@@ -1713,7 +1712,7 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
         providerRuntimeOperationCoordinator.runExclusive(async () => {
           assertPersistentStoreOwnerIsActive(owner, "Auxiliary session provider operation");
           if (databaseMaintenanceRequested) {
-            throw new Error("DB のメンテナンス中は Auxiliary を作成できません。");
+            throw new Error("A database maintenance operation is in progress, so an Auxiliary Session cannot be created.");
           }
           const result = await operation();
           assertPersistentStoreOwnerIsActive(owner, "Auxiliary session provider operation");
@@ -1745,7 +1744,7 @@ function requireAuditLogStorageForWrite(): AuditLogStorage {
     return storage;
   }
 
-  throw new Error("audit log storage は V2 DB の読み取り専用のため書き込み不可です。");
+  throw new Error("Audit log storage is read-only for this database and cannot be written.");
 }
 
 function isAuditLogStorageWritable(storage: AuditLogStorageRead): storage is AuditLogStorage {
@@ -1775,7 +1774,7 @@ function requireWindowDialogService(): WindowDialogService {
 
 function requireAppSettingsStorage(): PersistentStoreBundle["appSettingsStorage"] {
   if (!mainStoreContext.appSettingsStorage) {
-    throw new Error("app settings storage が初期化されていないよ。");
+    throw new Error("App settings storage is not initialized.");
   }
 
   return mainStoreContext.appSettingsStorage;
@@ -1784,7 +1783,7 @@ function requireAppSettingsStorage(): PersistentStoreBundle["appSettingsStorage"
 function requirePromptTemplateStorage(): NonNullable<typeof mainStoreContext.promptTemplateStorage> {
   if (!mainStoreContext.promptTemplateStorage) {
     if (!mainStoreContext.dbPath) {
-      throw new Error("DB path が初期化されていないよ。");
+      throw new Error("Saved data is not initialized.");
     }
     mainStoreContext.setPromptTemplateStorage(new PromptTemplateStorage(mainStoreContext.dbPath));
   }
@@ -1835,7 +1834,7 @@ async function resetAppSettings(): Promise<AppSettings> {
 
 function requireMateStorage(): PersistentStoreBundle["mateStorage"] {
   if (!mainStoreContext.mateStorage) {
-    throw new Error("mate storage が初期化されていないよ。");
+    throw new Error("Mate storage is not initialized.");
   }
 
   return mainStoreContext.mateStorage;
@@ -1843,7 +1842,7 @@ function requireMateStorage(): PersistentStoreBundle["mateStorage"] {
 
 function requireCharacterStorage(): CharacterStorageAccess {
   if (!mainStoreContext.characterStorage) {
-    throw new Error("character storage が初期化されていないよ。");
+    throw new Error("Character storage is not initialized.");
   }
 
   return mainStoreContext.characterStorage;
@@ -1938,10 +1937,10 @@ async function startCharacterAuthoringSession(
 
 function requireMateProfileItemStorage(): NonNullable<typeof mainStoreContext.mateProfileItemStorage> {
   if (mainStoreContext.storageWorker) {
-    throw new Error("Mate profile item storage は V6 runtime では利用できません。");
+    throw new Error("Mate profile items are not available in this runtime.");
   }
   if (!mainStoreContext.dbPath) {
-    throw new Error("DB path が初期化されていないよ。");
+    throw new Error("Saved data is not initialized.");
   }
 
   if (!mainStoreContext.mateProfileItemStorage) {
@@ -2096,7 +2095,7 @@ function requireSessionTurnNotificationService(): SessionTurnNotificationService
           || auxiliary.parentSessionId !== parentSessionId
           || !await requireSessionStorage().getSession(parentSessionId)
         ) {
-          throw new Error("Auxiliary Session の通知対象が見つからないよ。");
+          throw new Error("The Auxiliary Session notification target could not be found.");
         }
         await requireSessionWindowBridge().openAuxiliarySessionWindow(parentSessionId, auxiliarySessionId);
       },
@@ -2134,7 +2133,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
           const auxiliaryService = requireAuxiliarySessionService();
           await auxiliaryService.upsertAuxiliaryRuntimeSession(session, options);
           const storedSession = await auxiliaryService.getAuxiliaryRuntimeSession(session.id);
-          if (!storedSession) throw new Error("Auxiliary Session の保存結果を読み戻せなかったよ。");
+          if (!storedSession) throw new Error("The saved Auxiliary Session could not be loaded.");
           return storedSession;
         },
         isAuxiliarySession: async (sessionId) => Boolean(await requireAuxiliarySessionService().getAuxiliarySession(sessionId)),
@@ -2373,7 +2372,7 @@ function requireSessionElicitationService(): SessionElicitationService {
 
 function requireSessionMemoryStorage(): SessionMemoryStorageAccess {
   if (!mainStoreContext.sessionMemoryStorage) {
-    throw new Error("session memory storage が初期化されていないよ。");
+    throw new Error("Session memory storage is not initialized.");
   }
 
   return mainStoreContext.sessionMemoryStorage;
@@ -2381,7 +2380,7 @@ function requireSessionMemoryStorage(): SessionMemoryStorageAccess {
 
 function requireProjectMemoryStorage(): ProjectMemoryStorageAccess {
   if (!mainStoreContext.projectMemoryStorage) {
-    throw new Error("project memory storage が初期化されていないよ。");
+    throw new Error("Project memory storage is not initialized.");
   }
 
   return mainStoreContext.projectMemoryStorage;
@@ -2425,7 +2424,7 @@ function stopWalMaintenance(): void {
 
 async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   if (!mainStoreContext.dbPath) {
-    throw new Error("DB path が初期化されていないよ。");
+    throw new Error("Saved data is not initialized.");
   }
 
   await closePersistentStores();
@@ -2475,7 +2474,7 @@ async function closePersistentStores(): Promise<void> {
 
 async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   if (!mainStoreContext.dbPath) {
-    throw new Error("DB path が初期化されていないよ。");
+    throw new Error("Saved data is not initialized.");
   }
 
   mainStoreContext.setActivePersistentStoreOwner(null);
@@ -2541,7 +2540,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   if (memoryRuntimeToStop) {
     await startMemoryV6RuntimeApiBestEffort();
     if (!memoryV6RuntimeApi) {
-      throw new Error("DB は初期化済みですが、Memory runtime の再起動に失敗しました。アプリを再起動してください。");
+      throw new Error("Memory runtime restart failed after database initialization. Restart the app.");
     }
   }
   startWalMaintenance();
@@ -3293,8 +3292,8 @@ if (!hasSingleInstanceLock) {
       publishAppBootStatus({
         kind: "running",
         stage: "diagnostics",
-        title: "データベース診断を確認しています",
-        detail: "利用するデータベースと schema version を確認しています。",
+        title: "Checking database diagnostics",
+        detail: "Checking the selected database and schema version.",
       });
       mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
       const diagnostics = mainStoreContext.appDatabaseDiagnostics!;
@@ -3333,8 +3332,8 @@ if (!hasSingleInstanceLock) {
       publishAppBootStatus({
         kind: "completed",
         stage: "home",
-        title: "起動が完了しました",
-        detail: isBackgroundLaunch ? "バックグラウンドで起動しました。" : "Home を表示しました。",
+        title: "Startup complete",
+        detail: isBackgroundLaunch ? "Started in the background." : "Home is ready.",
       });
       closeBootWindow();
 
@@ -3365,8 +3364,8 @@ if (!hasSingleInstanceLock) {
       publishAppBootStatus({
         kind: "failed",
         stage: "failed",
-        title: "WithMate の起動に失敗しました",
-        detail: "データベース移行または起動初期化でエラーが発生しました。ログに詳細を記録しました。",
+        title: "WithMate could not start",
+        detail: "Database migration or startup initialization failed. See the logs for details.",
         error: serializedError,
       });
     }

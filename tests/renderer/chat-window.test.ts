@@ -141,6 +141,18 @@ test("ChatWindow は preview と compact ActionDock の間に recovery actions �
   assert.ok(html.indexOf("Retry Actions") < html.indexOf("session-action-dock-slot"));
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "ChatWindowはActionDockの展開状態にかかわらず共通error領域と関連controlを描画する"
+// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: chat error surface" }
+// fault = "compact ActionDock時にerror surfaceまたはtextareaのinvalid/busy関連付けが欠落する"
+// observable = "chat-error-surface、alert、textarea aria-describedby/aria-invalid、ActionDockのDOM順序"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-error-surface"
+// lifecycle = "permanent"
+// impact = "送信失敗の原因と回復位置を利用者・支援技術へ伝えられなくなる"
+// distinction = "単一のerror message表示ではなく、関連controlとlayout順序を同時に検証する"
+// @end-test-value
 test("ChatWindow は ActionDock の展開状態に依存しない共通エラー領域を描画する", () => {
   const props = createChatWindowProps();
   props.isActionDockExpanded = false;
@@ -162,7 +174,7 @@ test("ChatWindow は ActionDock の展開状態に依存しない共通エラー
 
   const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
 
-  assert.match(html, /class="chat-error-surface" role="region" aria-label="チャットエラー"/);
+  assert.match(html, /class="chat-error-surface" role="region" aria-label="Chat error"/);
   assert.match(html, /class="chat-error-notice" role="alert"/);
   assert.match(html, /Path not found: C:\/missing/);
   assert.match(html, /Expected a file: C:\/directory/);
@@ -235,6 +247,18 @@ test("chat work surface は補助情報と共通エラーの有無に関係な�
   assert.match(centralRule, /grid-row:\s*1/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "追加Directory一覧は共通work surfaceへ配置され、ActionDock内へ複製されない"
+// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: additional directory surface" }
+// fault = "追加Directory一覧をActionDock内へ戻すか、compact時にwork surfaceから失う"
+// observable = "additional-directory surfaceのaria label、ActionDock外のDOM位置、compact ActionDock"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-additional-directories"
+// lifecycle = "permanent"
+// impact = "作業領域の補助情報が操作dockと重複または不可視になる"
+// distinction = "表示有無だけでなく共通surfaceとActionDockの配置境界を確認する"
+// @end-test-value
 test("ChatWindow は追加Directory一覧をActionDock外の共通work surfaceへ描画する", () => {
   const props = createChatWindowProps();
   props.isActionDockExpanded = false;
@@ -255,12 +279,24 @@ test("ChatWindow は追加Directory一覧をActionDock外の共通work surface�
   const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
 
   assert.match(html, /class="chat-additional-directory-surface"/);
-  assert.match(html, /aria-label="許可中の追加Directory"/);
+  assert.match(html, /aria-label="Additional directories"/);
   assert.doesNotMatch(html, /composer-additional-directory-list/);
   assert.ok(html.indexOf("chat-additional-directory-surface") < html.indexOf("session-action-dock-slot"));
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "追加Directory一覧は削除可能項目とreadonly項目を区別し、interaction disabledを各controlへ投影する"
+// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: ChatAdditionalDirectoryList" }
+// fault = "readonly項目を削除可能にするか、disabled状態とaccessible labelを失う"
+// observable = "remove buttonのdisabled属性、remove label、readonly表示"
+// observation_boundary = "component-behavior"
+// scope = "chat-additional-directory-list"
+// lifecycle = "permanent"
+// impact = "ユーザーが許可されないdirectoryを削除したり状態を判断できなくなる"
+// distinction = "item単位のcanRemoveと一覧全体のinteraction disabledを同時に確認する"
+// @end-test-value
 test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影する", () => {
   const html = renderToStaticMarkup(React.createElement(ChatAdditionalDirectoryList, {
     isOpen: true,
@@ -287,8 +323,8 @@ test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影す�
   }));
 
   assert.match(html, /class="chat-additional-directory-remove" disabled=""/);
-  assert.match(html, /aria-label="removable を削除"/);
-  assert.match(html, /class="chat-additional-directory-readonly">許可中/);
+  assert.match(html, /aria-label="removable: Remove"/);
+  assert.match(html, /class="chat-additional-directory-readonly">Allowed/);
 });
 
 test("ChatWindow は Skill 候補を中央 work surface overlayとして描画する", () => {
@@ -336,6 +372,18 @@ test("Skill候補panelはchat work surfaceのほぼ全体を使う", async () =>
   assert.doesNotMatch(panelRule, /max-height/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Skill pickerはloading・empty・errorを別の状態表示として描画する"
+// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: ChatSkillPickerPanel" }
+// fault = "読み込み中を空状態またはerrorと誤表示し、spinner・busy state・error labelを失う"
+// observable = "status aria-busy、spinner、empty copy、error state classのDOM"
+// observation_boundary = "component-behavior"
+// scope = "chat-skill-picker-state"
+// lifecycle = "permanent"
+// impact = "候補取得の進行状況と失敗理由を利用者へ正しく伝えられなくなる"
+// distinction = "同一panelの三状態をそれぞれrenderして状態境界を確認する"
+// @end-test-value
 test("ChatSkillPickerPanel は loading・empty・error状態を区別する", () => {
   const commonProps = {
     isOpen: true,
@@ -361,8 +409,8 @@ test("ChatSkillPickerPanel は loading・empty・error状態を区別する", ()
   assert.match(loadingHtml, /aria-busy="true"/);
   assert.match(loadingHtml, /chat-skill-picker-spinner/);
   assert.match(loadingHtml, /class="surface-close-button"/);
-  assert.match(loadingHtml, /aria-label="Close skill picker">×<\/button>/);
-  assert.match(emptyHtml, /使える Skill がありません/);
+  assert.match(loadingHtml, /aria-label="Close skill picker"/);
+  assert.match(emptyHtml, /No skills are available/);
   assert.match(errorHtml, /class="chat-skill-picker-state error">Skill error/);
 });
 
@@ -706,6 +754,18 @@ test("ChatDockSplitter は resize handler がない場合に静的 splitter を�
   assert.equal(html, '<div class="session-dock-splitter edge-right is-static" aria-hidden="true"></div>');
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "resize handlerがあるChatDockSplitterは操作可能なbuttonとしてedgeを示す"
+// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: ChatDockSplitter" }
+// fault = "操作可能splitterを静的なdivへ落とし、edgeのaccessible labelやtitleを失う"
+// observable = "button type、edge class、aria-label、titleのrender結果"
+// observation_boundary = "component-behavior"
+// scope = "chat-dock-splitter-resize"
+// lifecycle = "permanent"
+// impact = "paneのサイズ変更操作がkeyboard・pointer双方で発見できなくなる"
+// distinction = "resize handler有りのinteractive状態を静的splitter testと分離して確認する"
+// @end-test-value
 test("ChatDockSplitter は resize handler がある場合に操作可能 splitter をレンダリングする", () => {
   const html = renderToStaticMarkup(
     React.createElement(ChatDockSplitter, {
@@ -716,10 +776,22 @@ test("ChatDockSplitter は resize handler がある場合に操作可能 splitte
   );
 
   assert.match(html, /<button class="session-dock-splitter edge-right is-active" type="button"/);
-  assert.match(html, /aria-label="右ペインのサイズを調整"/);
-  assert.match(html, /title="右ペインのサイズをドラッグで調整"/);
+  assert.match(html, /aria-label="Resize Right pane"/);
+  assert.match(html, /title="Drag to resize Right pane"/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "ChatDockSplitterはedgeごとのcollapse/expand状態とdrag affordanceをaccessible属性へ投影する"
+// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: ChatDockSplitter" }
+// fault = "expanded stateとaria-expanded/controlsまたはchevron directionが不一致になる"
+// observable = "各edgeのaria-label、aria-controls、aria-expanded、direction class、drag hint"
+// observation_boundary = "component-behavior"
+// scope = "chat-dock-splitter-affordance"
+// lifecycle = "permanent"
+// impact = "paneの表示状態を理解・切り替えられず、操作対象を誤る"
+// distinction = "right・bottom・topの異なる状態を一つの表示結果に縮約せず確認する"
+// @end-test-value
 test("ChatDockSplitter は各辺の表示状態を切り替える affordance を示す", () => {
   const expandedHtml = renderToStaticMarkup(
     React.createElement(ChatDockSplitter, {
@@ -744,23 +816,23 @@ test("ChatDockSplitter は各辺の表示状態を切り替える affordance を
     }),
   );
 
-  assert.match(expandedHtml, /aria-label="右ペインを折りたたむ"/);
+  assert.match(expandedHtml, /aria-label="Collapse Right pane"/);
   assert.match(expandedHtml, /aria-controls="session-right-pane"/);
   assert.match(expandedHtml, /aria-expanded="true"/);
-  assert.match(expandedHtml, /クリックで右ペインを折りたたみ、ドラッグでサイズを調整/);
+  assert.match(expandedHtml, /Click to collapse Right pane; drag to resize/);
   assert.match(expandedHtml, /session-dock-splitter-chevron direction-right/);
   assert.match(expandedHtml, /<svg viewBox="0 0 12 12" focusable="false">/);
   assert.match(expandedHtml, /<path d="M4 2.5 8 6 4 9.5"><\/path>/);
 
   assert.match(collapsedHtml, /class="session-dock-splitter edge-bottom is-toggle-only is-collapsed"/);
-  assert.match(collapsedHtml, /aria-label="ActionDockを展開"/);
+  assert.match(collapsedHtml, /aria-label="Expand ActionDock"/);
   assert.match(collapsedHtml, /aria-controls="session-action-dock"/);
   assert.match(collapsedHtml, /aria-expanded="false"/);
   assert.match(collapsedHtml, /session-dock-splitter-chevron direction-up/);
 
   assert.match(fixedHeaderHtml, /class="session-dock-splitter edge-top is-toggle-only"/);
-  assert.match(fixedHeaderHtml, /title="クリックでヘッダーを折りたたみ"/);
-  assert.doesNotMatch(fixedHeaderHtml, /ドラッグでサイズを調整/);
+  assert.match(fixedHeaderHtml, /title="Click to collapse Header"/);
+  assert.doesNotMatch(fixedHeaderHtml, /Drag to resize/);
 });
 
 // @test-value v2
@@ -1076,10 +1148,10 @@ test("SessionActionDockCompactRow は通常時の chat notice を下書き表示
 
 // @test-value v2
 // kind = "contract"
-// claim = "Concurrent chat shell はActionDockのMain/Auxiliary操作対象、mode badgeなしの非対象overlay、Auxiliary一覧、独立splitterを同じWindowへ投影する"
+// claim = "Concurrent chat shell はActionDockのMain/Auxiliary操作対象、mode badgeなしの非対象overlay、Auxiliary一覧、独立splitter、および未選択実行対象の状態を同じWindowへ投影する"
 // oracle = { type = "contract", ref = "issue-710-ui-shell" }
-// fault = "Auxiliaryを表示しても対象切替や折りたたみ導線がActionDockと中央列へ接続されない"
-// observable = "expanded/compact ActionDock操作対象ボタンとcallback、mode badgeの不在、非対象列内のoverlay、一覧trigger、splitterのARIA属性と会話列"
+// fault = "Auxiliaryを表示しても対象切替や折りたたみ導線がActionDockと中央列へ接続されない、または未選択実行対象の状態が消えるか選択対象のindicatorと重複する"
+// observable = "expanded/compact ActionDock操作対象ボタンとcallback、未選択実行対象のtarget付きaccessible labelとinline indicator、mode badgeの不在、非対象列内のoverlay、一覧trigger、splitterのARIA属性と会話列"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -1114,32 +1186,57 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   let root: Root | null = null;
   const targetChanges: Array<"main" | "auxiliary"> = [];
+  const concurrentChats: NonNullable<ChatWindowProps["concurrentChats"]> = {
+    main: props.messageColumnProps,
+    auxiliary: props.messageColumnProps,
+    mainSession: { id: "main", runState: "running" },
+    auxiliarySession: { id: "aux-b", runState: "idle" },
+    mainLiveRun: {
+      sessionId: "main",
+      threadId: "thread-main",
+      assistantText: "",
+      steps: [],
+      backgroundTasks: [],
+      usage: null,
+      errorMessage: "",
+      approvalRequest: null,
+      elicitationRequest: null,
+    },
+    auxiliaryLiveRun: {
+      sessionId: "aux-b",
+      threadId: "thread-aux-b",
+      assistantText: "",
+      steps: [],
+      backgroundTasks: [],
+      usage: null,
+      errorMessage: "",
+      approvalRequest: null,
+      elicitationRequest: null,
+    },
+    selectedAuxiliaryId: "aux-b",
+    auxiliaryItems: [
+      { id: "aux-a", label: "A", preview: "first preview", icon: "✦" },
+      { id: "aux-b", label: "B", preview: "second preview", icon: "✧" },
+    ],
+    target: "auxiliary",
+    widthRatio: 0.45,
+    onSelectAuxiliary() {},
+    onTargetChange: (target) => targetChanges.push(target),
+    onWidthRatioChange() {},
+  };
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement(ChatWindow, {
         ...props,
-        concurrentChats: {
-          main: props.messageColumnProps,
-          auxiliary: props.messageColumnProps,
-          selectedAuxiliaryId: "aux-b",
-          auxiliaryItems: [
-            { id: "aux-a", label: "A", preview: "first preview", icon: "✦" },
-            { id: "aux-b", label: "B", preview: "second preview", icon: "✧" },
-          ],
-          target: "auxiliary",
-          widthRatio: 0.45,
-          onSelectAuxiliary() {},
-          onTargetChange: (target) => targetChanges.push(target),
-          onWidthRatioChange() {},
-        },
+        concurrentChats,
       }));
     });
 
     const container = dom.window.document.getElementById("root") as HTMLElement;
     const html = container.innerHTML;
-    assert.match(html, /操作対象チャット/);
-    assert.match(html, />Main<\/button>/);
+    assert.match(html, /Chat target/);
+    assert.match(html, />Main(?:<span class="concurrent-chat-loading-spinner"[^>]*><\/span>)?<\/button>/);
     assert.match(html, />Auxiliary<\/button>/);
     assert.doesNotMatch(html, /action-dock-mode-badge/);
     assert.match(html, /concurrent-chat-target-overlay/);
@@ -1148,7 +1245,7 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
     assert.equal(container.querySelector(".concurrent-chat-target-dock-slot"), null);
     assert.ok(container.querySelector(".session-concurrent-chat-main .concurrent-chat-target-overlay"));
     assert.equal(container.querySelector(".session-concurrent-chat-auxiliary .concurrent-chat-target-overlay"), null);
-    assert.match(html, /Auxiliary会話切り替え/);
+    assert.match(html, /Auxiliary conversation/);
     assert.match(html, /session-auxiliary-chat-pane/);
     assert.match(html, /aria-controls="session-auxiliary-chat-pane"/);
 
@@ -1162,10 +1259,41 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
       assert.ok(targetDock);
       const targetButtons = [...targetDock.querySelectorAll<HTMLButtonElement>("button")];
       assert.deepEqual(targetButtons.map((button) => button.textContent), ["Main", "Auxiliary"]);
+      const mainButton = targetButtons[0];
+      const auxiliaryButton = targetButtons[1];
+      assert.equal(mainButton.getAttribute("aria-label"), "Main is running");
+      assert.ok(mainButton.querySelector(".concurrent-chat-loading-spinner"));
+      assert.equal(auxiliaryButton.getAttribute("aria-label"), null);
+      assert.equal(auxiliaryButton.querySelector(".concurrent-chat-loading-spinner"), null);
+      assert.equal(targetDock.querySelectorAll(".concurrent-chat-loading-spinner").length, 1);
       await act(async () => targetButtons[0].click());
       await act(async () => targetButtons[1].click());
     }
     assert.deepEqual(targetChanges, ["main", "auxiliary", "main", "auxiliary"]);
+
+    await act(async () => {
+      root?.render(React.createElement(ChatWindow, {
+        ...props,
+        concurrentChats: { ...concurrentChats, target: "main" },
+      }));
+    });
+    const mainTargetDocks = [
+      container.querySelector(".composer-target-dock-slot .concurrent-chat-target-dock"),
+      container.querySelector(".session-action-dock-target-slot .concurrent-chat-target-dock"),
+    ];
+    for (const targetDock of mainTargetDocks) {
+      assert.ok(targetDock);
+      const mainButton = targetDock.querySelector<HTMLButtonElement>("button");
+      const auxiliaryButton = targetDock.querySelectorAll<HTMLButtonElement>("button")[1];
+      assert.ok(mainButton);
+      assert.ok(auxiliaryButton);
+      assert.equal(mainButton.className, "is-active");
+      assert.equal(mainButton.getAttribute("aria-label"), null);
+      assert.equal(mainButton.querySelector(".concurrent-chat-loading-spinner"), null);
+      assert.equal(auxiliaryButton.getAttribute("aria-label"), "Auxiliary is running");
+      assert.ok(auxiliaryButton.querySelector(".concurrent-chat-loading-spinner"));
+      assert.equal(targetDock.querySelectorAll(".concurrent-chat-loading-spinner").length, 1);
+    }
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -1257,7 +1385,7 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
       .find((button) => button.textContent === "Collapse");
     assert.ok(collapseButton);
     assert.equal(collapseButton.disabled, true);
-    const auxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
+      const auxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Add Auxiliary']");
     assert.ok(auxiliaryAddButton);
     assert.ok(auxiliaryAddButton.closest(".session-switcher-current-group"));
     assert.equal(auxiliaryAddButton.closest("[aria-hidden='true']"), null);
@@ -1272,7 +1400,7 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
         concurrentChats: buildConcurrentChats([], false, [{ id: "aux-a", label: "Auxiliary A" }]),
       }));
     });
-    const existingAuxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
+    const existingAuxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Add Auxiliary']");
     assert.ok(existingAuxiliaryAddButton);
     assert.equal(existingAuxiliaryAddButton.disabled, false);
     await act(async () => existingAuxiliaryAddButton.click());
@@ -1284,7 +1412,7 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
         concurrentChats: buildConcurrentChats([], true, [{ id: "aux-a", label: "Auxiliary A" }]),
       }));
     });
-    const existingDisabledAuxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
+    const existingDisabledAuxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Add Auxiliary']");
     assert.ok(existingDisabledAuxiliaryAddButton);
     assert.equal(existingDisabledAuxiliaryAddButton.disabled, true);
 
@@ -1294,7 +1422,7 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
         concurrentChats: buildConcurrentChats([], true),
       }));
     });
-    const disabledAuxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
+    const disabledAuxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Add Auxiliary']");
     assert.ok(disabledAuxiliaryAddButton);
     assert.equal(disabledAuxiliaryAddButton.disabled, true);
 
@@ -1371,9 +1499,9 @@ test("ChatWindow はAuxiliaryを幅0で完全に閉じsplitterの再展開導線
   assert.equal(auxiliaryColumn.getAttribute("aria-hidden"), "true");
   assert.equal(auxiliaryColumn.hasAttribute("inert"), true);
   assert.equal(dom.window.document.querySelector(".concurrent-chat-session-switcher"), null);
-  assert.equal(dom.window.document.querySelector("button[aria-label='Auxiliaryを追加']"), null);
+  assert.equal(dom.window.document.querySelector("button[aria-label='Add Auxiliary']"), null);
   const auxiliarySplitter = dom.window.document.querySelector<HTMLButtonElement>(
-    ".concurrent-chat-splitter[aria-label='Auxiliaryを開く']",
+    ".concurrent-chat-splitter[aria-label='Open Auxiliary']",
   );
   assert.ok(auxiliarySplitter);
   assert.equal(auxiliarySplitter.getAttribute("aria-expanded"), "false");
@@ -1437,7 +1565,7 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
       }));
     });
 
-    assert.ok(dom.window.document.querySelector("[aria-label='Auxiliary会話切り替え']"));
+    assert.ok(dom.window.document.querySelector("[aria-label='Auxiliary conversation']"));
     assert.match(dom.window.document.body.textContent ?? "", /Auxiliary detail failed/);
     assert.ok([...dom.window.document.querySelectorAll<HTMLButtonElement>(".concurrent-chat-target-dock button")]
       .some((button) => button.textContent === "Main"));
@@ -1973,7 +2101,7 @@ test("ConcurrentChatSplitter は幅0をclickだけで既定幅へ戻す", async 
       widthRatio: 1,
       onWidthRatioChange: (ratio: number) => ratios.push(ratio),
     })));
-    const restoreMain = dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Mainを開く"]');
+    const restoreMain = dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Open Main"]');
     assert.ok(restoreMain);
     const before = ratios.length;
     await act(async () => restoreMain.click());
@@ -2028,7 +2156,7 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement(SessionSwitcher, {
-        ariaLabel: "Auxiliary会話切り替え",
+        ariaLabel: "Auxiliary conversation",
         options: [
           { id: "a", label: "Alpha", preview: "first", isProcessing: true, icon: React.createElement("span", null, "A") },
           { id: "b", label: "Beta", preview: "second", icon: React.createElement("span", null, "B") },
@@ -2084,7 +2212,7 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     assert.ok(dom.window.document.querySelector('[role="listbox"]'));
     await act(async () => {
       root?.render(React.createElement(SessionSwitcher, {
-        ariaLabel: "Auxiliary会話切り替え",
+        ariaLabel: "Auxiliary conversation",
         options: [],
         selectedId: "",
         searchable: true,

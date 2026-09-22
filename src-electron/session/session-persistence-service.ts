@@ -102,7 +102,7 @@ function toCachedSessions(sessions: Session[]): Session[] {
 
 function assertSessionWritable(session: Session): void {
   if (isReadOnlySession(session)) {
-    throw new Error("閲覧専用セッションは更新できないよ。新しいセッションを作成してください。");
+    throw new Error("Read-only sessions cannot be updated. Create a new session.");
   }
 }
 
@@ -189,11 +189,11 @@ export class SessionPersistenceService {
 
     const storedCurrentSession = await this.deps.getStoredSession?.(nextSession.id) ?? currentSession;
     if (!hasSameCharacterRuntimeIdentity(storedCurrentSession, nextSession)) {
-      throw new Error("Session の Character owner / runtime snapshot は更新できないよ。");
+      throw new Error("A session's Character owner and runtime snapshot cannot be updated.");
     }
 
     if (this.deps.isSessionRunInFlight(nextSession.id) || isRunningSession(currentSession)) {
-      throw new Error("実行中のセッションは更新できないよ。");
+      throw new Error("A running session cannot be updated.");
     }
 
     const shouldResetThreadId =
@@ -229,7 +229,7 @@ export class SessionPersistenceService {
 
   private async setSessionPinnedNow(sessionId: string, isPinned: boolean): Promise<SessionSummary> {
     if (!this.deps.setStoredSessionPinned) {
-      throw new Error("このセッション保存形式ではピン止めを利用できないよ。");
+      throw new Error("Pinning is not available for this session format.");
     }
     const stored = await this.deps.setStoredSessionPinned(sessionId, isPinned);
     this.deps.setSessions(this.deps.getSessions().map((session) => (
@@ -261,7 +261,7 @@ export class SessionPersistenceService {
   async updateSessionThreadIfMatches(input: SessionThreadPatchInput): Promise<Session | null> {
     return this.enqueueSessionMutation(async () => {
       if (!this.deps.updateStoredSessionThreadIfMatches) {
-        throw new Error("Session thread の条件付き更新storageが利用できないよ。");
+        throw new Error("Conditional Session thread update storage is unavailable.");
       }
       const stored = await this.deps.updateStoredSessionThreadIfMatches(input);
       if (!stored) {
@@ -285,7 +285,7 @@ export class SessionPersistenceService {
   async updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Promise<Session | null> {
     return this.enqueueSessionMutation(async () => {
       if (!this.deps.updateStoredSessionRuntimeMetadataIfMatches) {
-        throw new Error("Session runtime metadata の条件付き更新storageが利用できないよ。");
+        throw new Error("Conditional Session runtime metadata update storage is unavailable.");
       }
       const stored = await this.deps.updateStoredSessionRuntimeMetadataIfMatches(input);
       if (!stored) {
@@ -324,7 +324,7 @@ export class SessionPersistenceService {
       ...results.flatMap((result) => result.status === "rejected" ? [result.reason] : []),
     ];
     if (failures.length > 0) {
-      throw new AggregateError(failures, "Session は削除済みですが、削除後の投影または provider thread の後処理に失敗しました。");
+      throw new AggregateError(failures, "The Session was deleted, but post-deletion projection or provider thread cleanup failed.");
     }
     return committed.result;
   }
@@ -358,7 +358,7 @@ export class SessionPersistenceService {
         (session ? isRunningSession(session) : false)
       ) {
         if (options.runningPolicy === "throw") {
-          throw new Error("実行中のセッションは削除できないよ。");
+          throw new Error("A running session cannot be deleted.");
         }
         skippedRunningSessionIds.push(sessionId);
         continue;
@@ -488,10 +488,10 @@ export class SessionPersistenceService {
         || !userMessage
         || userMessage.role !== "user"
       ) {
-        throw new Error("running turn 開始のSession形式が不正だよ。");
+        throw new Error("The Session is invalid for starting a running turn.");
       }
       if (!this.deps.appendStoredRunningTurnStart) {
-        throw new Error("running turn 開始のincremental storageが利用できないよ。");
+        throw new Error("Incremental storage for starting a running turn is unavailable.");
       }
 
       const storedResult = await this.deps.appendStoredRunningTurnStart({
@@ -526,10 +526,10 @@ export class SessionPersistenceService {
         assertSessionWritable(currentSession);
       }
       if (nextSession.sessionKind !== "character-authoring") {
-        throw new Error("Character authoring runtime clearのownerが一致しないよ。");
+        throw new Error("The Character authoring runtime clear owner does not match the Session.");
       }
       if (!this.deps.clearStoredCharacterAuthoringRuntimeState) {
-        throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+        throw new Error("Storage for clearing Character authoring runtime state is unavailable.");
       }
 
       const storedResult = await this.deps.clearStoredCharacterAuthoringRuntimeState({
@@ -591,7 +591,7 @@ export class SessionPersistenceService {
       ? await this.deps.upsertStoredTerminalSession?.(normalizedSession, terminalCommit)
       : await this.deps.upsertStoredSession(normalizedSession, operation);
     if (!stored) {
-      throw new Error("terminal Session の atomic commit storage が利用できないよ。");
+      throw new Error("Atomic commit storage for the terminal Session is unavailable.");
     }
     const storeDurationMs = Date.now() - storeStartedAt;
     const cacheStartedAt = Date.now();
@@ -737,12 +737,12 @@ export class SessionPersistenceService {
     }
     if (requireRequestedProvider) {
       if (!normalizedRequestedProviderId) {
-        throw new Error("Character authoring の provider を選択してください。");
+        throw new Error("Select a provider for Character authoring.");
       }
       if (!requestedProvider) {
-        throw new Error("選択した Character authoring provider が model catalog に見つからないよ。");
+        throw new Error("The selected Character authoring provider is not in the model catalog.");
       }
-      throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
+      throw new Error("The selected Character authoring provider is disabled in Settings.");
     }
 
     const defaultProvider = snapshot.providers.find((provider) => provider.id === DEFAULT_PROVIDER_ID) ?? null;
@@ -757,7 +757,7 @@ export class SessionPersistenceService {
       return firstEnabledProvider;
     }
 
-    throw new Error("有効な provider が Settings に見つからないよ。");
+    throw new Error("No enabled provider is available in Settings.");
   }
 
   private syncStoredSession(stored: Session): void {

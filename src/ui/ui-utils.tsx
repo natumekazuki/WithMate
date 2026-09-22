@@ -41,19 +41,19 @@ type SessionStateSnapshot = Pick<Session, "status" | "runState">;
 function statusLabel(status: Session["status"]): string {
   switch (status) {
     case "running":
-      return "実行中";
+      return "Running";
     case "idle":
-      return "待機";
+      return "Idle";
     case "saved":
-      return "保存";
+      return "Saved";
     default:
-      return status;
+      return "Unknown";
   }
 }
 
 export function sessionStateLabel(session: SessionStateSnapshot): string {
   if (session.runState === "interrupted") {
-    return "中断";
+    return "Interrupted";
   }
 
   return statusLabel(session.status);
@@ -70,30 +70,30 @@ export function sessionStateClassName(session: Session): string {
 export function liveRunStepStatusLabel(status: string): string {
   switch (status) {
     case "in_progress":
-      return "実行中";
+      return "Running";
     case "completed":
-      return "完了";
+      return "Completed";
     case "failed":
-      return "エラー";
+      return "Failed";
     case "canceled":
-      return "キャンセル";
+      return "Canceled";
     case "pending":
-      return "待機";
+      return "Pending";
     default:
-      return status;
+      return "Unknown";
   }
 }
 
 export function liveRunStepDetailsLabel(type: string): string {
   switch (type) {
     case "command_execution":
-      return "出力詳細";
+      return "Output details";
     case "todo_list":
-      return "Todo 詳細";
+      return "Todo details";
     case "mcp_tool_call":
-      return "Tool 詳細";
+      return "Tool details";
     default:
-      return "詳細";
+      return "Details";
   }
 }
 
@@ -139,11 +139,11 @@ export function modelOptionLabel(model: ModelCatalogItem): string {
 export function fileKindLabel(kind: ChangedFile["kind"]): string {
   switch (kind) {
     case "add":
-      return "ADD";
+      return "Added";
     case "edit":
-      return "EDIT";
+      return "Modified";
     case "delete":
-      return "DEL";
+      return "Deleted";
     default:
       return kind;
   }

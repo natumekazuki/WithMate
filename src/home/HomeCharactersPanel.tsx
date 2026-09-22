@@ -3,9 +3,11 @@ import { useState } from "react";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
 import { renderHomeSearchIcon } from "./home-icons.js";
+import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 
 export type HomeCharactersPanelProps = {
   characters: readonly CharacterCatalogEntry[];
+  characterLoadStatus?: HomeCharacterLoadStatus;
   feedback?: string;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
@@ -23,6 +25,7 @@ export function filterCharactersByName(
 
 export function HomeCharactersPanel({
   characters,
+  characterLoadStatus = "loaded",
   feedback = "",
   onCreateCharacter,
   onEditCharacter,
@@ -35,15 +38,15 @@ export function HomeCharactersPanel({
       <section className="home-monitor-section">
         <div className="home-monitor-section-head">
           <div className="home-character-toolbar">
-            <label className="toolbar-search-field" aria-label="Characterを名前で検索">
+            <label className="toolbar-search-field" aria-label="Search characters by name">
               <span className="toolbar-search-icon" aria-hidden="true">
                 {renderHomeSearchIcon()}
               </span>
               <input
                 className="toolbar-search-input"
                 type="search"
-                aria-label="Characterを名前で検索"
-                placeholder="名前で検索"
+                aria-label="Search characters by name"
+                placeholder="Search by name"
                 value={searchText}
                 onChange={(event) => setSearchText(event.target.value)}
               />
@@ -53,17 +56,23 @@ export function HomeCharactersPanel({
             </button>
           </div>
         </div>
-        {feedback ? <p className="settings-feedback">{feedback}</p> : null}
-        {characters.length === 0 ? (
+        {feedback ? <p className="settings-feedback" role="status" aria-live="polite">{feedback}</p> : null}
+        {characterLoadStatus === "loading" ? (
+          <p className="home-monitor-empty" role="status" aria-live="polite">Loading characters…</p>
+        ) : characterLoadStatus === "error" ? (
+          feedback ? null : (
+            <p className="home-monitor-empty" role="status" aria-live="polite">Could not load characters.</p>
+          )
+        ) : characters.length === 0 ? (
           <div className="home-monitor-empty">
-            <p>Character はまだありません。</p>
+            <p>No characters yet.</p>
             <button className="launch-toggle" type="button" onClick={onCreateCharacter}>
               Create Character
             </button>
           </div>
         ) : visibleCharacters.length === 0 ? (
           <div className="home-monitor-empty">
-            <p>名前に一致するCharacterはありません。</p>
+            <p>No matching characters.</p>
           </div>
         ) : (
           <div className="home-character-list">

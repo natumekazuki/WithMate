@@ -93,12 +93,12 @@ function byteSize(content: string): number {
 
 function normalizeName(value: unknown): string {
   if (typeof value !== "string") {
-    throw new Error("Character name は文字列で指定してね。");
+    throw new Error("Character name must be a string.");
   }
 
   const normalized = value.trim().replace(/\s+/g, " ");
   if (!normalized) {
-    throw new Error("Character name は空にできないよ。");
+    throw new Error("Character name cannot be empty.");
   }
   return normalized;
 }
@@ -118,7 +118,7 @@ function normalizeCharacterIconPathInput(value: unknown, fallback = ""): string 
     return fallback;
   }
   if (typeof value !== "string") {
-    throw new Error("Character icon path は文字列で指定してね。");
+    throw new Error("Character icon path must be a string.");
   }
   return value.trim();
 }
@@ -144,10 +144,10 @@ async function safeIconExtension(sourcePath: string): Promise<string> {
 
   const stats = await stat(sourcePath);
   if (!stats.isFile()) {
-    throw new Error("Character icon は通常のファイルを指定してね。");
+    throw new Error("Character icon must be a regular file.");
   }
   if (stats.size > CHARACTER_ICON_MAX_BYTE_SIZE) {
-    throw new Error("Character icon は 10 MiB 以下の画像ファイルを指定してね。");
+    throw new Error("Character icon must be an image file no larger than 10 MiB.");
   }
 
   return extension;
@@ -202,7 +202,7 @@ export class CharacterStorage {
 
   private characterDirectory(characterId: string): string {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(characterId)) {
-      throw new Error("Character id が不正です。");
+      throw new Error("Character ID is invalid.");
     }
     return path.join(this.characterRootPath, characterId);
   }
@@ -531,7 +531,7 @@ export class CharacterStorage {
 
     const created = await this.getCharacter(characterId);
     if (!created) {
-      throw new Error("作成した Character を読み込めませんでした。");
+      throw new Error("The created Character could not be loaded.");
     }
     return created;
   }
@@ -539,11 +539,11 @@ export class CharacterStorage {
   async updateCharacterMetadata(input: UpdateCharacterMetadataInput): Promise<CharacterDetail> {
     const current = await this.getCharacter(input.characterId);
     if (!current) {
-      throw new Error("Character が見つかりません。");
+      throw new Error("The Character could not be found.");
     }
     const currentRow = this.readCharacterRow(input.characterId);
     if (!currentRow) {
-      throw new Error("Character が見つかりません。");
+      throw new Error("The Character could not be found.");
     }
 
     const name = input.name === undefined ? current.name : normalizeName(input.name);
@@ -569,7 +569,7 @@ export class CharacterStorage {
 
     const updated = await this.getCharacter(input.characterId);
     if (!updated) {
-      throw new Error("更新した Character を読み込めませんでした。");
+      throw new Error("The updated Character could not be loaded.");
     }
     return updated;
   }
@@ -577,7 +577,7 @@ export class CharacterStorage {
   async updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Promise<CharacterDetail> {
     const current = await this.getCharacter(input.characterId);
     if (!current) {
-      throw new Error("Character が見つかりません。");
+      throw new Error("The Character could not be found.");
     }
 
     await this.writeDefinitionFiles(input.characterId, input.definitionMarkdown, input.notesMarkdown);
@@ -585,7 +585,7 @@ export class CharacterStorage {
 
     const updated = await this.getCharacter(input.characterId);
     if (!updated) {
-      throw new Error("更新した Character を読み込めませんでした。");
+      throw new Error("The updated Character could not be loaded.");
     }
     return updated;
   }
@@ -593,7 +593,7 @@ export class CharacterStorage {
   async archiveCharacter(characterId: string): Promise<CharacterCatalogEntry> {
     const current = await this.getCharacter(characterId);
     if (!current) {
-      throw new Error("Character が見つかりません。");
+      throw new Error("The Character could not be found.");
     }
 
     const archivedAt = nowIso();
@@ -605,7 +605,7 @@ export class CharacterStorage {
 
     const archived = this.readCharacterRow(characterId);
     if (!archived) {
-      throw new Error("archive した Character を読み込めませんでした。");
+      throw new Error("The archived Character could not be loaded.");
     }
     return this.toEntry(archived);
   }

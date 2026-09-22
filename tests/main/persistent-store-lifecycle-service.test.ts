@@ -451,7 +451,7 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初�
       () => bundle.auxiliarySessionStorage.upsertAuxiliarySession(
         createAuxiliarySessionFixture({ parentSessionId: "session-v4" }),
       ),
-      /Auxiliary Session は legacy DB では利用できません/,
+      /Auxiliary Sessions are not available in legacy databases/,
     );
 
     const db = new DatabaseSync(dbPath);

@@ -14,7 +14,7 @@ export class CharacterWorkspaceOperationCoordinator {
 
   async runExclusive<T>(characterId: string, operation: CharacterWorkspaceOperation<T>): Promise<T> {
     if (this.maintenanceRequested) {
-      throw new Error("Character workspace maintenance が実行中です。もう一度お試しください。");
+      throw new Error("Character workspace maintenance is already running. Try again later.");
     }
     this.operationCount += 1;
     const previous = this.tails.get(characterId) ?? Promise.resolve();
@@ -40,7 +40,7 @@ export class CharacterWorkspaceOperationCoordinator {
 
   async runMaintenance<T>(operation: () => T | Promise<T>): Promise<T> {
     if (this.maintenanceRequested) {
-      throw new Error("Character workspace maintenance がすでに実行中です。");
+      throw new Error("Character workspace maintenance is already running.");
     }
     this.maintenanceRequested = true;
     if (this.operationCount > 0) {

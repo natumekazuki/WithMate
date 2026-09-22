@@ -137,8 +137,8 @@ export async function persistMainSession(input: {
   if (!api || isReadOnly) {
     throw new Error(
       isReadOnly
-        ? "閲覧専用セッションは更新できないよ。新しいセッションを作成してください。"
-        : "Session Window は Electron から開いてね。",
+        ? "Read-only sessions cannot be updated. Create a new session."
+        : "Open the Session Window from Electron.",
     );
   }
   return api.updateSession(session);
@@ -149,7 +149,7 @@ export async function toggleMainSessionPin(input: {
   session: Session;
 }): Promise<Pick<Session, "id" | "isPinned">> {
   if (!input.api) {
-    throw new Error("Session Window は Electron から開いてね。");
+    throw new Error("Open the Session Window from Electron.");
   }
   const saved = await input.api.setSessionPinned({
     sessionId: input.session.id,

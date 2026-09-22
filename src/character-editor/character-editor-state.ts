@@ -12,6 +12,8 @@ import {
   type CharacterDefinitionValidationIssue,
 } from "../../src-shared/character/character-definition.js";
 import {
+  CHARACTER_ICON_FORMAT_ERROR,
+  CHARACTER_ICON_LOCAL_PATH_ERROR,
   areCharacterIconPathReferencesEquivalent,
   validateCharacterIconRegistrationPath,
 } from "../../src-shared/character/character-icon.js";
@@ -109,6 +111,54 @@ export function isCharacterEditorDraftDirty(
     || draft.notesMarkdown !== persistedDetail.notesMarkdown;
 }
 
+function areCharacterThemesEqual(left: CharacterTheme, right: CharacterTheme): boolean {
+  return left.main === right.main && left.sub === right.sub;
+}
+
+export function areCharacterEditorDraftsEqual(
+  left: CharacterEditorDraft,
+  right: CharacterEditorDraft,
+): boolean {
+  return left.characterId === right.characterId
+    && left.mode === right.mode
+    && left.state === right.state
+    && left.name === right.name
+    && left.description === right.description
+    && left.iconFilePath === right.iconFilePath
+    && areCharacterThemesEqual(left.theme, right.theme)
+    && left.definitionMarkdown === right.definitionMarkdown
+    && left.notesMarkdown === right.notesMarkdown;
+}
+
+/**
+ * Keeps edits made while a save request was in flight. A create request needs
+ * the newly assigned character id, so its saved draft is used as the base and
+ * only the newer field values are carried across.
+ */
+export function reconcileCharacterEditorDraftAfterSave(
+  savedDraft: CharacterEditorDraft,
+  draftAtSave: CharacterEditorDraft,
+  currentDraft: CharacterEditorDraft,
+): CharacterEditorDraft {
+  if (areCharacterEditorDraftsEqual(draftAtSave, currentDraft)) {
+    return savedDraft;
+  }
+
+  if (draftAtSave.mode !== "create" || savedDraft.mode !== "edit") {
+    return currentDraft;
+  }
+
+  return {
+    ...savedDraft,
+    name: currentDraft.name,
+    description: currentDraft.description,
+    iconFilePath: currentDraft.iconFilePath,
+    theme: { ...currentDraft.theme },
+    definitionMarkdown: currentDraft.definitionMarkdown,
+    notesMarkdown: currentDraft.notesMarkdown,
+  };
+}
+
 export function shouldBlockCharacterEditorBeforeUnload(args: {
   dirty: boolean;
   saving: boolean;
@@ -129,7 +179,19 @@ export function getCharacterIconDraftValidationMessage(
     return null;
   }
 
-  return validateCharacterIconRegistrationPath(draftIconFilePath);
+  const validationMessage = validateCharacterIconRegistrationPath(draftIconFilePath);
+  if (!validationMessage) {
+    return null;
+  }
+
+  if (validationMessage === CHARACTER_ICON_LOCAL_PATH_ERROR) {
+    return "Character icon must use a local file path.";
+  }
+  if (validationMessage === CHARACTER_ICON_FORMAT_ERROR) {
+    return "Character icon must be a PNG, JPG, or JPEG image file.";
+  }
+
+  return validationMessage;
 }
 
 export function normalizeThemeColorDraft(value: string, fallback: string): string {

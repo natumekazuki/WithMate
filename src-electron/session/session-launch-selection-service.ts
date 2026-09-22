@@ -57,7 +57,7 @@ function resolveEnabledProviderCatalog(
     return firstEnabledProvider;
   }
 
-  throw new Error("有効な provider が Settings に見つからないよ。");
+  throw new Error("No enabled provider is available in Settings.");
 }
 
 export class SessionLaunchSelectionService {

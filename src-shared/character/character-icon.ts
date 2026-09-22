@@ -1,9 +1,9 @@
 const CHARACTER_ICON_SUPPORTED_EXTENSION_PATTERN = /\.(?:png|jpe?g)$/i;
 
 export const CHARACTER_ICON_FORMAT_ERROR =
-  "Character icon は png / jpg / jpeg の画像ファイルを指定してね。";
+  "Character icon must be a PNG, JPG, or JPEG image file.";
 export const CHARACTER_ICON_LOCAL_PATH_ERROR =
-  "Character icon は local file path で指定してね。";
+  "Character icon must use a local file path.";
 
 export function hasCharacterIconPathScheme(value: string): boolean {
   if (/^[a-zA-Z]:[\\/]/.test(value)) {

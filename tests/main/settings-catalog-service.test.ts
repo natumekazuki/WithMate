@@ -284,7 +284,7 @@ describe("SettingsCatalogService", () => {
           ...previousSettings.codingProviderSettings,
           codex: { ...previousSettings.codingProviderSettings.codex, apiKey: "changed-key" },
         },
-      }), /実行中の session/);
+      }), /A session is using the provider whose Coding Agent credentials are changing/);
       assert.equal(writes, 0, running);
     }
   });
@@ -1073,7 +1073,7 @@ describe("SettingsCatalogService", () => {
       },
     });
     await cleanupStarted.promise;
-    assert.throws(() => service.assertProviderAvailableForTurn("codex"), /provider の設定反映中/);
+    assert.throws(() => service.assertProviderAvailableForTurn("codex"), /A provider settings update is in progress/);
     assert.doesNotThrow(() => service.assertProviderAvailableForTurn("copilot"));
     releaseCleanup.resolve();
     await assert.rejects(() => updating);
@@ -1126,7 +1126,10 @@ describe("SettingsCatalogService", () => {
       assert.deepEqual(current, resetSettings);
       const rejection = assert.rejects(updating, (error: unknown) => {
         assert.ok(error instanceof AggregateError);
-        assert.match(String(error.errors[1]), invalidation === "owner" ? /storage が交換/ : /reset が開始/);
+        assert.match(
+          String(error.errors[1]),
+          invalidation === "owner" ? /Saved data changed/ : /Rollback was canceled because a reset started/,
+        );
         return true;
       });
       if (invalidation === "owner") {
@@ -1219,7 +1222,7 @@ describe("SettingsCatalogService", () => {
     await firstCleanup.promise;
     const second = service.updateAppSettings({ ...current, codingProviderSettings: { ...current.codingProviderSettings, codex: { ...current.codingProviderSettings.codex, apiKey: "second" } } });
     await second;
-    assert.throws(() => service.assertProviderAvailableForTurn("codex"), /provider の設定反映中/);
+    assert.throws(() => service.assertProviderAvailableForTurn("codex"), /A provider settings update is in progress/);
     assert.doesNotThrow(() => service.assertProviderAvailableForTurn("copilot"));
     firstCleanupRelease.resolve();
     await assert.rejects(first);

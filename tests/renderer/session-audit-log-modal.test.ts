@@ -37,6 +37,18 @@ describe("SessionAuditLogModal", () => {
     assert.equal(shouldLoadAuditLogDetailForFold("error"), false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Audit log modalは取得済みpageの全entryを固定高spacerなしで描画し、次ページ操作を示す"
+  // oracle = { type = "contract", ref = "src/chat/runtime/session-audit-log.tsx" }
+  // fault = "entryを間引くか固定高spacerで一覧を埋め、pagination controlを失う"
+  // observable = "audit-log-cardの件数、spacerの不在、Load more label"
+  // observation_boundary = "component-behavior"
+  // scope = "session-audit-log-page-rendering"
+  // lifecycle = "permanent"
+  // impact = "監査履歴の欠落や誤ったscroll体験によりrunの確認を妨げる"
+  // distinction = "paged summaryの描画件数とpagination affordanceを同一renderで確認する"
+  // @end-test-value
   it("取得済み page の entry を固定高 spacer なしで描画する", () => {
     const entries = Array.from({ length: 50 }, (_, index) => createAuditLogSummary(index + 1));
     const html = renderToStaticMarkup(
@@ -59,7 +71,7 @@ describe("SessionAuditLogModal", () => {
     const renderedCardCount = (html.match(/audit-log-card/g) ?? []).length;
     assert.equal(renderedCardCount, 50);
     assert.doesNotMatch(html, /audit-log-list-spacer/);
-    assert.match(html, /Load More/);
+    assert.match(html, /Load more/);
   });
 
   it("Operations detail は operation ごとの fold を開くまで本文を描画しない", () => {
@@ -99,6 +111,18 @@ describe("SessionAuditLogModal", () => {
     assert.doesNotMatch(html, /OPERATION_DETAIL_SENTINEL/);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Audit log source labelはphase labelの隣へタグとして描画される"
+  // oracle = { type = "contract", ref = "src/chat/runtime/session-audit-log.tsx" }
+  // fault = "sourceをphaseへ混ぜるか隠し、Main/Auxiliaryの監査対象を区別できなくする"
+  // observable = "source tagのDOMとCompleted phase labelに対する描画順"
+  // observation_boundary = "component-behavior"
+  // scope = "session-audit-log-source-label"
+  // lifecycle = "permanent"
+  // impact = "同一画面上のaudit sourceを誤認する"
+  // distinction = "tagの存在だけでなくphase後の順序をassertする"
+  // @end-test-value
   it("sourceLabel を phase の隣にタグとして描画する", () => {
     const html = renderToStaticMarkup(
       React.createElement(SessionAuditLogModal, {
@@ -119,14 +143,26 @@ describe("SessionAuditLogModal", () => {
     );
 
     assert.match(html, /audit-log-source-tag/);
-    assert.match(html, />DONE</);
+    assert.match(html, />Completed</);
     assert.match(html, />Main Session</);
     assert.ok(
-      html.indexOf("DONE") < html.indexOf("Main Session"),
+      html.indexOf("Completed") < html.indexOf("Main Session"),
       "source tag は phase label の後に描画する",
     );
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "detail unavailable entryはlive previewだけを描画し、保存済みdetail foldを表示しない"
+  // oracle = { type = "contract", ref = "src/chat/runtime/session-audit-log.tsx" }
+  // fault = "未保存のdetailを保存済みと誤表示し、preview中に存在しないlogical/raw sectionを出す"
+  // observable = "Live preview only、assistant preview、operation summary、Logical prompt/Raw itemsの不在"
+  // observation_boundary = "component-behavior"
+  // scope = "session-audit-log-live-preview"
+  // lifecycle = "permanent"
+  // impact = "streaming中の監査情報を誤って確定値として扱う"
+  // distinction = "利用可能なpreviewの保持と未利用sectionの非表示を同時に確認する"
+  // @end-test-value
   it("detail unavailable entry は live preview として描画し、保存済み detail fold を出さない", () => {
     const html = renderToStaticMarkup(
       React.createElement(SessionAuditLogModal, {
@@ -156,7 +192,7 @@ describe("SessionAuditLogModal", () => {
     assert.match(html, /Live preview only/);
     assert.match(html, /streaming response/);
     assert.match(html, /npm test/);
-    assert.doesNotMatch(html, /Logical Prompt/);
-    assert.doesNotMatch(html, /Raw Items/);
+    assert.doesNotMatch(html, /Logical prompt/);
+    assert.doesNotMatch(html, /Raw items/);
   });
 });

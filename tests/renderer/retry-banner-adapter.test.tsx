@@ -6,12 +6,25 @@ import { buildLiveSessionRetryBanner } from "../../src/chat/retry-banner-adapter
 
 const noop = () => {};
 
+// @test-value v2
+// kind = "contract"
+// claim = "retry banner adapterはretry状態、custom title、resend/edit actionをmode-neutralなUIへ投影する"
+// oracle = { type = "contract", ref = "docs/design/session-character-copy.md#rendering-policy" }
+// fault = "retry titleを一律で隠すか、action label・accessible label・custom copyを失う"
+// observable = "retry class、aria label、visible custom title、resend/edit buttonsのrender結果"
+// observation_boundary = "component-behavior"
+// scope = "session-retry-banner"
+// lifecycle = "permanent"
+// impact = "中断・失敗したrequestを再送または編集できず、custom microcopyも利用者へ届かなくなる"
+// distinction = "built-in重複省略の経路とcustom title可視経路を別testで確認する"
+// @end-test-value
 test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み立てる", () => {
   const html = renderToStaticMarkup(buildLiveSessionRetryBanner({
     retryBanner: {
       kind: "failed",
       badge: "失敗",
       title: "前回の依頼は完了できませんでした",
+      titleVisible: true,
       lastRequestText: "直して",
     },
     isRetryActionDisabled: false,
@@ -24,11 +37,50 @@ test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み
   }));
 
   assert.match(html, /retry-banner failed/);
-  assert.match(html, /aria-label="完了できなかった依頼の操作"/);
-  assert.match(html, />再送<\/button>/);
-  assert.match(html, />編集<\/button>/);
+  assert.match(html, /aria-label="Actions for an unfinished request"/);
+  assert.match(html, />Resend<\/button>/);
+  assert.match(html, />Edit<\/button>/);
   assert.match(html, /title="前回の依頼は完了できませんでした"/);
-  assert.doesNotMatch(html, /停止地点|resume-banner-title|>Details<|>Hide</);
+  assert.match(html, /class="resume-banner-title">前回の依頼は完了できませんでした<\/span>/);
+  assert.doesNotMatch(html, /停止地点|>Details<|>Hide</);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "既定のretry説明を短縮しても失敗状態のaccessible説明と再送・編集操作を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "既定文の表示整理で失敗理由のaccessible説明または回復操作を失う"
+// observable = "Failed badge、sr-only説明、ResendとEditの有効なbutton"
+// observation_boundary = "component-behavior"
+// scope = "session-retry-banner"
+// lifecycle = "permanent"
+// impact = "失敗状態の理解と再送・編集による回復が難しくなる"
+// distinction = "custom可視testと異なり既定説明を短縮した分岐のaccessible内容と回復操作を観測する"
+// @end-test-value
+test("SessionRetryBanner は既定説明を短縮しても状態と回復操作を保つ", () => {
+  const html = renderToStaticMarkup(buildLiveSessionRetryBanner({
+    retryBanner: {
+      kind: "failed",
+      badge: "Failed",
+      title: "The previous request could not be completed",
+      titleVisible: false,
+      lastRequestText: "Fix it",
+    },
+    isRetryActionDisabled: false,
+    isRetryEditDisabled: false,
+    isRetryDraftReplacePending: false,
+    onResendLastMessage: noop,
+    onEditLastMessage: noop,
+    onConfirmRetryDraftReplace: noop,
+    onCancelRetryDraftReplace: noop,
+  }));
+
+  assert.doesNotMatch(html, /class="resume-banner-title"/);
+  assert.match(html, /class="sr-only">: The previous request could not be completed<\/span>/);
+  assert.match(html, />Failed<span/);
+  assert.match(html, />Resend<\/button>/);
+  assert.match(html, />Edit<\/button>/);
+  assert.doesNotMatch(html, /disabled=""/);
 });
 
 test("buildLiveSessionRetryBanner は banner がない場合 null を描画する", () => {

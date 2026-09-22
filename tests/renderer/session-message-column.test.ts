@@ -278,6 +278,7 @@ function renderSessionMessageColumn(options: {
   liveRunAssistantText?: string;
   liveRunErrorMessage?: string;
   pendingMessageText?: string;
+  pendingMessageTextVisible?: boolean;
   pendingMessageGroupId?: string | null;
   withResponseActions?: boolean;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
@@ -309,6 +310,7 @@ function renderSessionMessageColumn(options: {
       hasLiveRunAssistantText: !!options.liveRunAssistantText,
       liveRunErrorMessage: options.liveRunErrorMessage ?? "",
       pendingMessageText: options.pendingMessageText,
+      pendingMessageTextVisible: options.pendingMessageTextVisible,
       pendingMessageGroupId: options.pendingMessageGroupId,
       isMessageListFollowing: options.isMessageListFollowing ?? false,
       onMessageListScroll() {},
@@ -398,6 +400,7 @@ async function mountSessionMessageColumn(options: {
   onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
   pendingMessageGroupId?: string | null;
   pendingMessageText?: string;
+  pendingMessageTextVisible?: boolean;
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
   onRender?: ProfilerOnRenderCallback;
 }): Promise<MountedSessionMessageColumn> {
@@ -560,6 +563,7 @@ async function mountSessionMessageColumn(options: {
     onQuoteMessageText?: (text: string) => void;
     pendingMessageGroupId?: string | null;
     pendingMessageText?: string;
+    pendingMessageTextVisible?: boolean;
     messageViewMode?: SessionMessageColumnProps["messageViewMode"];
   }) => {
     await act(async () => {
@@ -583,6 +587,7 @@ async function mountSessionMessageColumn(options: {
           hasLiveRunAssistantText: false,
           liveRunErrorMessage: "",
           pendingMessageText: callbacks.pendingMessageText ?? options.pendingMessageText,
+          pendingMessageTextVisible: callbacks.pendingMessageTextVisible ?? options.pendingMessageTextVisible,
           pendingMessageGroupId: callbacks.pendingMessageGroupId ?? options.pendingMessageGroupId,
           isMessageListFollowing: callbacks.isMessageListFollowing ?? false,
           isContentActive: callbacks.isContentActive ?? options.isContentActive ?? true,
@@ -753,13 +758,16 @@ test("SessionMessageColumn はvalid glossaryを通常messageへだけ投影しSo
   assert.doesNotMatch(sourceHtml, /class="glossary-annotation"/);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "個別collapse controlは状態と対象本文を支援技術へ公開しkeyboard focusとclickで操作でき、一括shortcutも維持される"
 // oracle = { type = "contract", ref = "accepted behavior: accessible name、aria-expanded、aria-controlsと一括shortcutを維持する" }
-// failure_mode = "個別controlがkeyboardから到達不能になるかARIAの状態・対象を失う、または一括shortcutが動作しなくなる"
+// fault = "個別controlがkeyboardから到達不能になるかARIAの状態・対象を失う、または一括shortcutが動作しなくなる"
+// observable = "個別collapse buttonのaria-label/aria-expanded/aria-controls、focus、click callback、一括shortcutのpreventDefault"
+// observation_boundary = "component-behavior"
 // scope = "SessionMessageColumn collapse controls"
 // lifecycle = "permanent"
+// impact = "message本文の開閉とkeyboard shortcutによる一括操作が利用できなくなる"
 // distinction = "DOM owner境界ではなく、個別controlのaccessibility contractと一括shortcutの操作経路を検証する"
 // @end-test-value
 test("SessionMessageColumn は個別・一括collapseをnative controlで操作する", async () => {
@@ -795,7 +803,7 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
     assert.equal(collapsedBody.querySelector(".rich-text"), null);
     assert.equal(collapsedBody.querySelector(".message-collapsed-preview")?.textContent, "first collapsed message");
     const individualButton = mounted.container.querySelector<HTMLButtonElement>(
-      "button[aria-label^='メッセージを展開']",
+      "button[aria-label^='Expand message']",
     );
     assert.ok(individualButton);
     assert.equal(individualButton.getAttribute("aria-expanded"), "false");
@@ -1606,6 +1614,18 @@ test("ConversationMessageColumn は callback 再生成だけでは既存 message
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "message listが最新追従していない状態ではjump UIをmessage list内へ重複描画しない"
+// oracle = { type = "contract", ref = "src/chat/conversation/session-message-column.tsx" }
+// fault = "非追従状態でもjump bannerを表示し、ActionDock側のjump affordanceと重複する"
+// observable = "message-follow-bannerとJump to latestの不在"
+// observation_boundary = "component-behavior"
+// scope = "session-message-following"
+// lifecycle = "permanent"
+// impact = "同一対象へのjump操作が重複し会話領域を圧迫する"
+// distinction = "非追従stateでの重複抑止だけを検証し、ActionDockの通常表示とは分離する"
+// @end-test-value
 test("SessionMessageColumn は未追従時に message list 内の jump UI を描画しない", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(2),
@@ -1613,7 +1633,7 @@ test("SessionMessageColumn は未追従時に message list 内の jump UI を描
   });
 
   assert.doesNotMatch(html, /message-follow-banner/);
-  assert.doesNotMatch(html, /末尾へ移動/);
+  assert.doesNotMatch(html, /Jump to latest/);
 });
 
 test("SessionMessageColumn はChanged Filesを描画せずRun Checksを維持し、Operationsを1groupで初期closedにする", () => {
@@ -2115,6 +2135,18 @@ test("SessionMessageColumn の Source は通常 message と pending の元 Markd
   assert.equal(dom.window.document.querySelector("[data-message-body='true'] a"), null);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "pending rowとlive approval/elicitationは既存messageの後、bottom anchorの前へ一度ずつ維持される"
+// oracle = { type = "contract", ref = "src/chat/conversation/session-message-column.tsx" }
+// fault = "実行中のrequest UIを既存messageの途中へ挿入するか末尾のpending/approvalを失う"
+// observable = "pending row、Approval required、approval/elicitation custom content、既存messageとanchorのDOM順"
+// observation_boundary = "component-behavior"
+// scope = "session-message-live-request-tail"
+// lifecycle = "permanent"
+// impact = "実行中requestへの承認・入力操作が会話末尾で見つからなくなる"
+// distinction = "Main transcriptの大量messageを含む末尾位置と各live requestの内容を同時に確認する"
+// @end-test-value
 test("SessionMessageColumn は pending と live approval\/elicitation を message window の末尾で維持する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(100),
@@ -2124,7 +2156,7 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
   });
 
   assert.match(html, /pending-row/);
-  assert.match(html, /承認待ち/);
+  assert.match(html, /Approval required/);
   assert.match(html, /コマンド実行の承認/);
   assert.match(html, /対象ブランチを選んでね。/);
   assert.match(html, /Branch/);
@@ -2184,6 +2216,72 @@ test("SessionMessageColumn は pending message text があれば実行開始直�
     html.indexOf("message 1") < html.indexOf("pending-row"),
     "pending row は既存メッセージの後に描画する",
   );
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "pending message textのconsumer可視性だけを切り替え、built-in待機文を省略してもcustom text・approval・error・実本文を保持する"
+// oracle = { type = "contract", ref = "src/chat/conversation/session-message-column.tsx: pendingMessageTextVisible" }
+// fault = "built-in待機文をDockとmessage columnへ重複表示する、custom textを隠す、または同じrunのapproval/error/live assistant textまで消す"
+// observable = "pending row/textの有無、approval/error/live assistant textのDOM"
+// observation_boundary = "component-behavior"
+// scope = "session-message-pending-text-visibility"
+// lifecycle = "permanent"
+// impact = "既定待機説明の重複を抑えながら実行中requestの状態と生成内容を失わない"
+// distinction = "text visibilityだけをfalseにし、run stateとlive request payloadは各入力へ独立して与える"
+// @end-test-value
+test("SessionMessageColumn は built-in pending text を省略しても custom と実行内容を保持する", () => {
+  const builtInHiddenHtml = renderSessionMessageColumn({
+    messages: createMessages(1),
+    isRunning: true,
+    pendingMessageText: "Preparing a response",
+    pendingMessageTextVisible: false,
+  });
+  assert.doesNotMatch(builtInHiddenHtml, /pending-row/);
+  assert.doesNotMatch(builtInHiddenHtml, /Preparing a response/);
+
+  const customVisibleHtml = renderSessionMessageColumn({
+    messages: createMessages(1),
+    isRunning: true,
+    pendingMessageText: "Custom waiting copy",
+    pendingMessageTextVisible: true,
+  });
+  assert.match(customVisibleHtml, /pending-row/);
+  assert.match(customVisibleHtml, /Custom waiting copy/);
+
+  const approvalHtml = renderSessionMessageColumn({
+    messages: createMessages(1),
+    isRunning: true,
+    liveApprovalRequest: createLiveApprovalRequest(),
+    pendingMessageText: "Preparing a response",
+    pendingMessageTextVisible: false,
+  });
+  assert.match(approvalHtml, /Approval required/);
+  assert.match(approvalHtml, /コマンド実行の承認/);
+  assert.doesNotMatch(approvalHtml, /Preparing a response/);
+
+  const errorHtml = renderSessionMessageColumn({
+    messages: createMessages(1),
+    isRunning: true,
+    liveRunErrorMessage: "Run failed",
+    pendingMessageText: "Preparing a response",
+    pendingMessageTextVisible: false,
+  });
+  assert.match(errorHtml, /Run failed/);
+  assert.doesNotMatch(errorHtml, /Preparing a response/);
+
+  const assistantHtml = renderSessionMessageColumn({
+    messages: [
+      ...createMessages(1),
+      { role: "assistant", text: "Live assistant response" },
+    ],
+    isRunning: true,
+    liveRunAssistantText: "Live assistant response",
+    pendingMessageText: "Preparing a response",
+    pendingMessageTextVisible: false,
+  });
+  assert.match(assistantHtml, /Live assistant response/);
+  assert.doesNotMatch(assistantHtml, /Preparing a response/);
 });
 
 test("SessionMessageColumn は Auxiliary 実行中の pending row を group 内に描画する", () => {
@@ -2392,7 +2490,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   });
   assert.equal(forbiddenDockHitArea, undefined);
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
-  assert.equal(jumpButton.textContent, "末尾へ移動");
+  assert.equal(jumpButton.textContent, "Jump to latest");
   assert.equal(viewModeGroup.getAttribute("aria-label"), "Message display mode");
   assert.equal(previewButton.getAttribute("aria-pressed"), "false");
   assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
@@ -2493,11 +2591,11 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
 
   assert.match(html, /composer-toolbar-progress/);
   assert.match(html, /処理を実行中/);
-  assert.match(html, /末尾へ移動/);
+  assert.match(html, /Jump to latest/);
   assert.ok(html.indexOf("Attach") < html.indexOf("処理を実行中"));
-  assert.ok(html.indexOf("処理を実行中") < html.indexOf("末尾へ移動"));
-  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Preview"));
-  assert.match(html, /composer-toolbar-view-actions[\s\S]*末尾へ移動[\s\S]*Message display mode/);
+  assert.ok(html.indexOf("処理を実行中") < html.indexOf("Jump to latest"));
+  assert.ok(html.indexOf("Jump to latest") < html.indexOf("Preview"));
+  assert.match(html, /composer-toolbar-view-actions[\s\S]*Jump to latest[\s\S]*Message display mode/);
 
   const renderedDocument = new JSDOM(html).window.document;
   const toolbar = renderedDocument.querySelector(".composer-attachments-toolbar");
@@ -2546,6 +2644,50 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.equal(idleSendButton.disabled, false);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "PendingRunIndicatorはconsumerが既定microcopyを非表示にしたときも実行状態のbadge・dots・accessible statusを保持し、custom textは表示できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 状態の形・動き・テキスト" }
+// fault = "既定文の重複整理でRunning indicator自体またはstatus通知が消える、あるいはcustom microcopyまで隠れる"
+// observable = "SessionComposerExpandedのrunning DOMにおけるbadge・dots・live status・custom textの有無"
+// observation_boundary = "component-behavior"
+// scope = "pending run indicator visible text policy"
+// lifecycle = "permanent"
+// impact = "同じrunの既定文を重ねず、実行中の状態とcustom microcopyの可視性を保つ"
+// distinction = "ActionDockのexpanded/compact切替と別にindicatorのconsumer表示方針を直接確認する"
+// @end-test-value
+test("PendingRunIndicator は既定文を省略しても状態表示とcustom文言を保つ", () => {
+  const renderComposer = (pendingRunIndicatorTextVisible: boolean) => renderToStaticMarkup(
+    React.createElement(SessionComposerExpanded, createComposerTestProps({
+      isRunning: true,
+      pendingRunIndicatorAnnouncement: "Working",
+      pendingRunIndicatorText: "Working",
+      pendingRunIndicatorTextVisible,
+    })),
+  );
+
+  const defaultHtml = renderComposer(false);
+  assert.match(defaultHtml, /live-run-shell-status-badge[^>]*>Running<\/span>/);
+  assert.match(defaultHtml, /typing-dots pending-run-indicator-dots/);
+  assert.match(defaultHtml, /visually-hidden[^>]*>Working<\/span>/);
+  assert.doesNotMatch(defaultHtml, /live-run-shell-status-text/);
+
+  const customHtml = renderComposer(true);
+  assert.match(customHtml, /live-run-shell-status-text[^>]*>Working<\/span>/);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "idleのcompact ActionDockはpreview/source切替とjumpを表示し、send・draftの重複UIを表示しない"
+// oracle = { type = "contract", ref = "src/chat/approval/session-action-dock.tsx" }
+// fault = "idle状態でもSendまたはdraftを複製するか、preview/source・jump affordanceを失う"
+// observable = "Jump to latest、Preview/Source、expand label、Send/draftのDOM有無"
+// observation_boundary = "component-behavior"
+// scope = "compact-action-dock-idle"
+// lifecycle = "permanent"
+// impact = "同じ操作をMain composerと重複表示し、compact dockの対象切替を妨げる"
+// distinction = "running compact表示のpending/cancel契約とは分離してidle表示の重複抑止を確認する"
+// @end-test-value
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
@@ -2561,11 +2703,11 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
     }),
   );
 
-  assert.match(html, /末尾へ移動/);
+  assert.match(html, /Jump to latest/);
   assert.match(html, />Preview<\/button>/);
   assert.match(html, />Source<\/button>/);
   assert.match(html, /class="session-action-dock-compact-meta session-action-dock-compact-expand-button"/);
-  assert.match(html, /aria-label="ActionDock を展開"/);
+  assert.match(html, /aria-label="Expand action dock"/);
   assert.doesNotMatch(html, />Send<\/button>/);
   assert.doesNotMatch(html, /Draft|下書きなし/);
 });
@@ -2603,13 +2745,13 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
       React.createElement(SessionActionDockCompactRow, compactProps),
     );
 
-  assert.match(html, /aria-label="ActionDock を展開"/);
+  assert.match(html, /aria-label="Expand action dock"/);
   assert.match(html, /session-action-dock-compact-progress-button/);
   assert.match(html, /session-action-dock-compact-progress/);
   assert.match(html, /処理を実行中/);
   assert.match(html, /New messages/);
   assert.match(html, /session-action-dock-compact-actions/);
-  assert.ok(html.indexOf("Cancel") < html.indexOf("末尾へ移動"));
+  assert.ok(html.indexOf("Cancel") < html.indexOf("Jump to latest"));
   assert.match(html, />Cancel<\/button>/);
   const renderedDocument = new JSDOM(html).window.document;
   const actions = renderedDocument.querySelector(".session-action-dock-compact-actions");
@@ -2642,7 +2784,7 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
       root.render(React.createElement(SessionActionDockCompactRow, compactProps));
     });
     const expandButton = mountedDom.window.document.querySelector<HTMLButtonElement>(
-      'button[aria-label="ActionDock を展開"]',
+      'button[aria-label="Expand action dock"]',
     );
     assert.ok(expandButton);
     act(() => {
@@ -2867,7 +3009,7 @@ test("SessionActionDockCompactRow はcontroller-only preview通知で添付件�
         errors: [],
       });
     });
-    assert.equal(dom.window.document.querySelector(".session-action-dock-compact-badge")?.textContent, "添付 1");
+    assert.equal(dom.window.document.querySelector(".session-action-dock-compact-badge")?.textContent, "Attachments: 1");
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

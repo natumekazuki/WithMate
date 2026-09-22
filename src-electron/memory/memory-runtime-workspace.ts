@@ -200,7 +200,7 @@ export class MemoryRuntimeWorkspaceService {
 
   async touchHeartbeat(): Promise<void> {
     if (!this.activeWorkspacePath || !this.activeRunId) {
-      throw new Error("アクティブな memory runtime workspace がありません");
+      throw new Error("No active memory runtime workspace is available.");
     }
 
     const currentMetadata = await this.readWorkspaceStatus(this.activeWorkspacePath);
@@ -616,10 +616,10 @@ export class MemoryRuntimeWorkspaceService {
   ): string {
     const trimmed = relativePath.trim();
     if (!trimmed || trimmed === ".") {
-      throw new Error(`relativePath は相対パスを指定してください: ${relativePath}`);
+      throw new Error(`relativePath must be relative: ${relativePath}`);
     }
     if (path.isAbsolute(trimmed)) {
-      throw new Error(`relativePath は相対パスを指定してください: ${relativePath}`);
+      throw new Error(`relativePath must be relative: ${relativePath}`);
     }
 
     const resolvedWorkspacePath = path.resolve(workspacePath);
@@ -631,7 +631,7 @@ export class MemoryRuntimeWorkspaceService {
       || relativeToWorkspace === ".."
       || path.isAbsolute(relativeToWorkspace)
     ) {
-      throw new Error(`Path traversal が検出されました: ${relativePath}`);
+      throw new Error(`Path traversal was detected: ${relativePath}`);
     }
 
     return destinationPath;

@@ -31,6 +31,7 @@ import {
   beginLaunchWorkspacePathValidation,
   markLaunchWorkspacePathValidationPending,
   resolveLaunchCharacterId,
+  type HomeCharacterLoadStatus,
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
 import {
@@ -205,6 +206,7 @@ export default function HomeApp() {
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
   const [characterListFeedback, setCharacterListFeedback] = useState("");
   const [charactersLoaded, setCharactersLoaded] = useState(false);
+  const [characterLoadStatus, setCharacterLoadStatus] = useState<HomeCharacterLoadStatus>("loading");
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoadSettled, setModelCatalogLoadSettled] = useState(!isSettingsWindowMode);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
@@ -218,6 +220,7 @@ export default function HomeApp() {
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
   const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
   const settingsDirtyRef = useRef(false);
+  const persistedSettingsDraftRef = useRef<AppSettings | null>(null);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const workspaceValidationControllerRef = useRef<HomeLaunchWorkspaceValidationController | null>(null);
   const sessionQueryKey = buildHomeSessionQueryKey(sessionSearchText, openSessionWindowIds);
@@ -356,7 +359,7 @@ export default function HomeApp() {
         status: "error",
         characterUsageStatus: "error",
       }));
-      setLaunchFeedback(error instanceof Error ? error.message : "Home のSession一覧読み込みに失敗したよ。");
+      setLaunchFeedback(error instanceof Error ? error.message : "Could not load Home sessions.");
     }
   };
   refreshSessionSummariesRef.current = refreshBoundedSessionSummaries;
@@ -406,7 +409,7 @@ export default function HomeApp() {
         ...current,
         ...(scope === "recent" ? { loadingRecentPage: false } : { loadingPinnedPage: false }),
       }));
-      setLaunchFeedback(error instanceof Error ? error.message : "Session一覧の追加読み込みに失敗したよ。");
+      setLaunchFeedback(error instanceof Error ? error.message : "Could not load more sessions.");
     }
   };
 
@@ -426,7 +429,7 @@ export default function HomeApp() {
   const setSessionPinned = async (sessionId: string, isPinned: boolean) => {
     const api = getWithMateApi();
     if (!api) {
-      window.alert("ピン止めはElectronアプリから操作してね。");
+      window.alert("Pinning is available from the Electron desktop app.");
       return;
     }
     setPendingSessionPinIds((current) => current.includes(sessionId) ? current : [...current, sessionId]);
@@ -438,7 +441,7 @@ export default function HomeApp() {
       }));
       void refreshSessionSummariesRef.current("preserve");
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "ピン止めの変更に失敗したよ。");
+      window.alert(error instanceof Error ? error.message : "Could not update pin.");
     } finally {
       setPendingSessionPinIds((current) => current.filter((id) => id !== sessionId));
     }
@@ -447,11 +450,19 @@ export default function HomeApp() {
   const refreshCharacterEntries = async (
     api: NonNullable<ReturnType<typeof getWithMateApi>>,
   ): Promise<CharacterCatalogEntry[]> => {
-    const entries = await api.listCharacters();
-    applyLoadedCharacterEntries(entries);
+    setCharacterLoadStatus("loading");
     setCharacterListFeedback("");
-    setCharactersLoaded(true);
-    return entries;
+    try {
+      const entries = await api.listCharacters();
+      applyLoadedCharacterEntries(entries);
+      setCharacterListFeedback("");
+      setCharactersLoaded(true);
+      setCharacterLoadStatus("loaded");
+      return entries;
+    } catch (error) {
+      setCharacterLoadStatus("error");
+      throw error;
+    }
   };
 
   const refreshMemoryV6Diagnostics = async (
@@ -471,7 +482,7 @@ export default function HomeApp() {
     }
 
     const handleInitialSummaryLoadError = (error: unknown) => {
-      setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
+      setLaunchFeedback(error instanceof Error ? error.message : "Could not load Home.");
     };
 
     void refreshMateStatus(withmateApi, { isActive: () => active }).then(() => {
@@ -485,7 +496,7 @@ export default function HomeApp() {
 
       setMateState("not_created");
       setMateProfile(null);
-      setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
+      setMateCreationFeedback(error instanceof Error ? error.message : "Could not load app state.");
     });
 
     void refreshCharacterEntries(withmateApi).catch((error) => {
@@ -493,14 +504,14 @@ export default function HomeApp() {
         return;
       }
 
-      setCharacterListFeedback(error instanceof Error ? error.message : "Character 一覧の読み込みに失敗したよ。");
+      setCharacterListFeedback(error instanceof Error ? error.message : "Could not load characters.");
     });
     void refreshMemoryV6Diagnostics(withmateApi).catch((error) => {
       if (!active) {
         return;
       }
 
-      setSettingsFeedback(error instanceof Error ? error.message : "Memory V6 diagnostics の読み込みに失敗したよ。");
+      setSettingsFeedback(error instanceof Error ? error.message : "Could not load Memory V6 diagnostics.");
     });
 
     const unsubscribeModelCatalog = startModelCatalogSubscription({
@@ -514,7 +525,7 @@ export default function HomeApp() {
       onInitialLoadError: (error) => {
         setModelCatalog(null);
         setModelCatalogLoadSettled(true);
-        setSettingsFeedback(error instanceof Error ? error.message : "model catalog の読み込みに失敗したよ。");
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not load model catalog.");
       },
     });
     const unsubscribeAppSettings = startAppSettingsSubscription({
@@ -524,7 +535,7 @@ export default function HomeApp() {
         applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
       },
       onInitialLoadError: (error) => {
-        setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
+        setMateCreationFeedback(error instanceof Error ? error.message : "Could not load app state.");
       },
     });
 
@@ -591,7 +602,7 @@ export default function HomeApp() {
       }
       refreshInFlight = true;
       void refreshCharacterEntries(withmateApi).catch((error) => {
-        setCharacterListFeedback(error instanceof Error ? error.message : "Character 一覧の再読み込みに失敗したよ。");
+        setCharacterListFeedback(error instanceof Error ? error.message : "Could not refresh characters.");
       }).finally(() => {
         refreshInFlight = false;
       });
@@ -626,7 +637,7 @@ export default function HomeApp() {
     }).catch((error) => {
       if (active) {
         setSessionWindowRestoreFeedback(
-          error instanceof Error ? error.message : "前回のSession一覧を読み込めませんでした。",
+          error instanceof Error ? error.message : "Could not load previous sessions.",
         );
       }
     });
@@ -648,7 +659,7 @@ export default function HomeApp() {
       setSessionWindowRestoreFeedback(buildSessionWindowRestoreFeedback(result));
     } catch (error) {
       setSessionWindowRestoreFeedback(
-        error instanceof Error ? error.message : "前回のSessionを復元できませんでした。",
+        error instanceof Error ? error.message : "Could not restore previous sessions.",
       );
     } finally {
       setSessionWindowRestorePending(false);
@@ -672,13 +683,13 @@ export default function HomeApp() {
       },
       onLoadState: (state) => {
         setAuxiliaryDataState(state);
-        if (state === "ready") {
+        if (state === "loading" || state === "ready") {
           setAuxiliaryLoadFeedback("");
         }
       },
       onError: (error) => {
         console.error(error);
-        setAuxiliaryLoadFeedback(error instanceof Error ? error.message : "Auxiliaryの読み込みに失敗したよ。");
+        setAuxiliaryLoadFeedback(error instanceof Error ? error.message : "Could not load Auxiliary sessions.");
       },
     });
 
@@ -716,6 +727,8 @@ export default function HomeApp() {
     normalizedSessionSearch,
     runningMonitorEntries,
     nonRunningMonitorEntries,
+    monitorRunningEmptyMessage,
+    monitorCompletedEmptyMessage,
   } = sessionProjection;
   const launchProjection = useMemo(
     () => buildHomeLaunchProjection({
@@ -729,10 +742,11 @@ export default function HomeApp() {
       launchCharacterSelectionMode: launchDraft.characterSelectionMode,
       characterEntries,
       charactersLoaded,
+      characterLoadStatus,
       appSettings,
       modelCatalog,
     }),
-    [appSettings, characterEntries, charactersLoaded, launchDraft, modelCatalog],
+    [appSettings, characterEntries, characterLoadStatus, charactersLoaded, launchDraft, modelCatalog],
   );
   const { enabledLaunchProviders, selectedLaunchProvider } = launchProjection;
 
@@ -750,7 +764,7 @@ export default function HomeApp() {
       return {
         ...current,
         providerId: nextProviderId,
-      };
+    };
     });
   }, [enabledLaunchProviders]);
 
@@ -772,11 +786,12 @@ export default function HomeApp() {
     refreshCharacterEntries: async () => {
       const api = getWithMateApi();
       if (!api) {
-        throw new Error("Character 一覧の再読み込みには desktop runtime が必要だよ。");
+        throw new Error("A desktop runtime is required to refresh characters.");
       }
       return refreshCharacterEntries(api);
     },
     setCharactersLoaded,
+    setCharacterLoadStatus,
     setLaunchFeedback,
     setLaunchStarting,
     setLaunchDraft,
@@ -817,6 +832,7 @@ export default function HomeApp() {
 
   const settingsDraftHandlers = buildSettingsDraftHandlers({
     setSettingsDraft,
+    clearSettingsFeedback: () => setSettingsFeedback(""),
   });
 
   const providerSettingRows = useMemo<HomeProviderSettingRow[]>(
@@ -830,6 +846,7 @@ export default function HomeApp() {
     () => buildPersistedAppSettingsFromRows(settingsDraft, providerSettingRows),
     [providerSettingRows, settingsDraft],
   );
+  persistedSettingsDraftRef.current = persistedSettingsDraft;
   const settingsWindowReady =
     settingsDraftLoaded && modelCatalogLoadSettled;
   const settingsDirty = useMemo(() => {
@@ -845,6 +862,7 @@ export default function HomeApp() {
     persistedSettingsDraft,
     setAppSettings,
     setSettingsDraft,
+    getPersistedSettingsDraft: () => persistedSettingsDraftRef.current ?? persistedSettingsDraft,
     setSettingsFeedback,
     setMemoryV6Diagnostics,
     getSessionCleanupCutoffDate: () => sessionCleanupCutoffDate,
@@ -858,7 +876,7 @@ export default function HomeApp() {
         return;
       }
       void refreshMemoryV6Diagnostics(api).catch((error) => {
-        setSettingsFeedback(error instanceof Error ? error.message : "Memory V6 diagnostics の再読み込みに失敗したよ。");
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not refresh Memory V6 diagnostics.");
       });
     },
   });
@@ -899,13 +917,12 @@ export default function HomeApp() {
     try {
       await openSessionWindow(sessionId, auxiliarySessionId);
     } catch (error) {
-      setSessionMonitorFeedback(error instanceof Error ? error.message : "Session Windowを開けなかったよ。");
+      setSessionMonitorFeedback(error instanceof Error ? error.message : "Could not open session window.");
     }
   };
 
 
-  const monitorFeedback = sessionMonitorFeedback
-    || (auxiliaryDataState === "loading" ? "Auxiliaryを確認中…" : auxiliaryLoadFeedback);
+  const monitorFeedback = sessionMonitorFeedback || auxiliaryLoadFeedback;
 
   const { settingsContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
     settingsContent: buildHomeSettingsContentProps(baseSettingsContentProps),
@@ -927,6 +944,9 @@ export default function HomeApp() {
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
       auxiliaryDataState,
+      sessionWindowsDataState: openSessionWindowIdsState.status,
+      runningEmptyMessage: monitorRunningEmptyMessage,
+      nonRunningEmptyMessage: monitorCompletedEmptyMessage,
       feedback: monitorFeedback,
       onOpenSession: openMonitorSession,
       onShowContextMenu: showSessionMonitorContextMenu,
@@ -950,14 +970,19 @@ export default function HomeApp() {
       loadingMore: sessionSummariesState.loadingRecentPage || sessionSummariesState.loadingPinnedPage,
       onLoadMore: loadNextSessionSummaryPage,
       pendingSessionPinIds,
+      sessionSummaryLoadStatus: sessionSummariesState.status,
     }),
     rightPane: buildHomeRightPaneProps({
       rightPaneView,
       runningMonitorEntries,
       nonRunningMonitorEntries,
       auxiliaryDataState,
+      sessionWindowsDataState: openSessionWindowIdsState.status,
+      monitorRunningEmptyMessage,
+      monitorNonRunningEmptyMessage: monitorCompletedEmptyMessage,
       sessionMonitorFeedback: monitorFeedback,
       characterEntries,
+      characterLoadStatus,
       characterListFeedback,
       monitorWindowIcon: renderHomeMonitorWindowIcon(),
       handlers: {

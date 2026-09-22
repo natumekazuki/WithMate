@@ -62,12 +62,22 @@ test("ChatSessionModals は共有 modal と呼び出し側の追加表示を同�
     </ChatSessionModals>,
   );
 
-  assert.match(html, /<h2>Audit Log<\/h2>/);
+  assert.match(html, /<h2>Audit log<\/h2>/);
   assert.match(html, /audit-log-card completed/);
   assert.match(html, /session-toast success/);
   assert.doesNotMatch(html, /diff-editor panel/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary起動dialogは利用可能なcoding providerと起動操作を表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#auxiliary-session-issue-710" }
+// fault = "起動可能なproviderまたは起動操作が表示されない"
+// observable = "Coding providerの項目名、Codex/Copilot候補、Start Auxiliary操作"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-launch-dialog"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxiliaryLaunchProviderDialog は Provider だけを選択対象として描画する", () => {
   const html = renderToStaticMarkup(
     <AuxiliaryLaunchProviderDialog
@@ -85,7 +95,7 @@ test("AuxiliaryLaunchProviderDialog は Provider だけを選択対象として�
     />,
   );
 
-  assert.match(html, /Coding Provider/);
+  assert.match(html, /Coding provider/);
   assert.match(html, /Codex/);
   assert.match(html, /Copilot/);
   assert.match(html, /Start Auxiliary/);

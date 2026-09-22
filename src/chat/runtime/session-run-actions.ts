@@ -52,7 +52,7 @@ export function useSessionRunActions(options: {
         latestLiveRun,
       }));
     } catch (error) {
-      options.onError(error instanceof Error ? error.message : "承認要求の処理に失敗したよ。");
+      options.onError(error instanceof Error ? error.message : "Could not process the approval request.");
     } finally {
       setApprovalActionRequestId(null);
     }
@@ -77,7 +77,7 @@ export function useSessionRunActions(options: {
         latestLiveRun,
       }));
     } catch (error) {
-      options.onError(error instanceof Error ? error.message : "入力要求の処理に失敗したよ。");
+      options.onError(error instanceof Error ? error.message : "Could not process the input request.");
     } finally {
       setElicitationActionRequestId(null);
     }
@@ -90,7 +90,7 @@ export function useSessionRunActions(options: {
         cancelRun: options.api ? (sessionId) => options.api!.cancelSessionRun(sessionId) : null,
       });
     } catch (error) {
-      options.onError(error instanceof Error ? error.message : "キャンセルに失敗したよ。");
+      options.onError(error instanceof Error ? error.message : "Could not cancel the run.");
     }
   }, [options.api, options.onError]);
 

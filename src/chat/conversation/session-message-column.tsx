@@ -83,6 +83,7 @@ export type SessionMessageColumnProps = {
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
   pendingMessageText?: string;
+  pendingMessageTextVisible?: boolean;
   pendingMessageGroupId?: string | null;
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
@@ -407,6 +408,7 @@ export function SessionMessageColumn({
   hasLiveRunAssistantText,
   liveRunErrorMessage,
   pendingMessageText = "",
+  pendingMessageTextVisible = true,
   pendingMessageGroupId = null,
   isMessageListFollowing,
   onMessageListScroll,
@@ -540,6 +542,7 @@ export function SessionMessageColumn({
     handledMessageJumpRequestIdRef.current = null;
   }, [sessionId]);
   const hasPendingMessageText =
+    pendingMessageTextVisible &&
     !hasLiveRunAssistantText &&
     liveApprovalRequest === null &&
     liveElicitationRequest === null &&
@@ -947,8 +950,8 @@ export function SessionMessageColumn({
           className="message-list-jump-bottom-button"
           type="button"
           onClick={onJumpToBottom}
-          aria-label="末尾へ移動"
-          title="末尾へ移動"
+          aria-label="Jump to latest"
+          title="Jump to latest"
         >
           <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <path d="M8 2v9M3.5 7.5 8 12l4.5-4.5M3 14h10" />
@@ -1002,7 +1005,7 @@ export function SessionMessageColumn({
             const isFindMatch = findMatchMessageIndexes.has(absoluteIndex);
             const shouldRenderFullMessage = !isMessageCollapsed || (findOpen && hasFindQuery && isFindMatch);
             const messageBodyId = `message-body-${messageKey.replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
-            const messageCollapseLabel = isMessageCollapsed ? "メッセージを展開" : "メッセージを縮小";
+            const messageCollapseLabel = isMessageCollapsed ? "Expand message" : "Collapse message";
             const isMessageBookmarked = messageCollapseTarget?.isBookmarked === true;
             const messageBookmarkLabel = isMessageBookmarked ? "Remove bookmark" : "Add bookmark";
 
@@ -1048,8 +1051,8 @@ export function SessionMessageColumn({
                         }}
                         aria-expanded={artifactExpanded}
                         aria-controls={`artifact-panel-${artifactKey}`}
-                        aria-label={artifactExpanded ? "Details を閉じる" : "Details を開く"}
-                        title={artifactExpanded ? "Hide Details" : "Details"}
+                        aria-label={artifactExpanded ? "Hide details" : "Show details"}
+                        title={artifactExpanded ? "Hide details" : "Details"}
                       >
                         {artifactExpanded ? "−" : "i"}
                       </button>
@@ -1070,8 +1073,8 @@ export function SessionMessageColumn({
                         }}
                         aria-expanded={artifactExpanded}
                         aria-controls={`artifact-panel-${artifactKey}`}
-                        aria-label={artifactExpanded ? "Details を閉じる" : "Details を開く"}
-                        title={artifactExpanded ? "Hide Details" : "Details"}
+                        aria-label={artifactExpanded ? "Hide details" : "Show details"}
+                        title={artifactExpanded ? "Hide details" : "Details"}
                       >
                         {artifactExpanded ? "−" : "i"}
                       </button>
@@ -1138,13 +1141,13 @@ export function SessionMessageColumn({
                         <div id={`artifact-panel-${artifactKey}`} className="artifact-block">
                           {artifactLoading ? (
                             <div className="artifact-detail-loading" role="status">
-                              Details を読み込んでいます...
+                              Loading details...
                             </div>
                           ) : null}
                           <div className="artifact-grid artifact-grid-single">
                             <section className="artifact-section compact">
                               <div className="artifact-section-header">
-                                <strong>Run Checks</strong>
+                                <strong>Run checks</strong>
                               </div>
                               <div className="check-list">
                                 {artifact.runChecks.map((check) => (

@@ -4,6 +4,7 @@ import { getProviderAppSettings, type AppSettings } from "../../src-shared/setti
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 import {
   resolveLaunchCharacterId,
+  type HomeCharacterLoadStatus,
   type HomeLaunchWorkspaceValidationState,
   type LaunchCharacterSelectionMode,
 } from "./home-launch-state.js";
@@ -22,6 +23,7 @@ export type HomeLaunchProjection = {
   selectedCharacter: CharacterCatalogEntry | null;
   randomCharacterSelected: boolean;
   charactersLoaded: boolean;
+  characterLoadStatus: HomeCharacterLoadStatus;
   launchWorkspacePathLabel: string;
   workspacePathInput: string;
   workspaceValidation: HomeLaunchWorkspaceValidationState;
@@ -42,6 +44,7 @@ export function buildHomeLaunchProjection({
   launchCharacterSelectionMode = "random",
   characterEntries = [],
   charactersLoaded = true,
+  characterLoadStatus,
   appSettings,
   modelCatalog,
 }: {
@@ -55,6 +58,7 @@ export function buildHomeLaunchProjection({
   launchCharacterSelectionMode?: LaunchCharacterSelectionMode;
   characterEntries?: readonly CharacterCatalogEntry[];
   charactersLoaded?: boolean;
+  characterLoadStatus?: HomeCharacterLoadStatus;
   appSettings: AppSettings;
   modelCatalog: ModelCatalogSnapshot | null;
 }): HomeLaunchProjection {
@@ -71,6 +75,7 @@ export function buildHomeLaunchProjection({
     : activeCharacterEntries.find((character) => character.id === selectedCharacterId) ?? null;
   const validCharacterSelection = launchCharacterSelectionMode === "random" || selectedCharacter !== null;
   const sessionFolderSelected = isSessionFolderLaunchWorkspace(launchWorkspace);
+  const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
 
   return {
     enabledLaunchProviders,
@@ -79,6 +84,7 @@ export function buildHomeLaunchProjection({
     selectedCharacter,
     randomCharacterSelected: launchCharacterSelectionMode === "random",
     charactersLoaded,
+    characterLoadStatus: resolvedCharacterLoadStatus,
     launchWorkspacePathLabel: sessionFolderSelected
       ? "SessionFolder"
       : launchWorkspace?.path ?? "workspace",
@@ -89,6 +95,7 @@ export function buildHomeLaunchProjection({
     workspaceSelected: !!launchWorkspace,
     canStartSession:
       charactersLoaded &&
+      resolvedCharacterLoadStatus === "loaded" &&
       !!launchTitle.trim() &&
       !!launchWorkspace &&
       !!selectedLaunchProvider &&

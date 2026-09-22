@@ -9,7 +9,7 @@ import { HomeLaunchDialog } from "../../src/home/HomeLaunchDialog.js";
 import type { HomeLaunchWorkspaceValidationState } from "../../src/home/home-launch-state.js";
 import { filterCharactersByName } from "../../src/home/HomeCharactersPanel.js";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
-import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
+import { formatHomeSessionUpdatedAt, HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
@@ -62,57 +62,69 @@ describe("HomeSettingsContent", () => {
     memoryV6Diagnostics?: MemoryV6Diagnostics | null;
   };
 
-  const buildSettingsContent = (params?: RenderSettingsParams) => HomeSettingsContent({
-    settingsDraft: params?.settingsDraft ?? settingsDraft,
-    providerSettingRows: params?.providerSettingRows ?? providerSettingRows,
-    providerCatalogLoaded: params?.providerCatalogLoaded ?? true,
-    modelCatalogRevisionLabel: String(modelCatalog.revision),
-    memoryV6Diagnostics: params?.memoryV6Diagnostics ?? null,
-    settingsDirty: false,
-    settingsFeedback: "",
-    sessionCleanupCutoffDate: "",
-    deletingOldSessions: false,
-    onChangeAutoCollapseActionDockOnSend: noOp,
-    onChangeCharacterDefinitionEnabled: noOp,
-    onChangeCharacterAffectContextEnabled: noOp,
-    onChangeConversationTimingEnabled: noOp,
-    onChangeScrollToLatestOnSend: noOp,
-    onChangeLaunchAtLoginEnabled: noOp,
-    onChangeSessionTurnNotificationEnabled: noOp,
-    onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
-    onChangeToolCallPresenceEnabled: noOp,
-    onChangeKeyboardShortcuts: noOp,
-    onChangeMemoryFileQuotaMegabytes: noOp,
-    onChangeGlossaryProactiveCreateLimit: noOp,
-    onChangeSessionCleanupCutoffDate: noOp,
-    onChangeUserMicrocopySlot: noOp,
-    onChangeProviderEnabled: noOp,
-    onChangeProviderSkillRootPath: noOp,
-    onChangeProviderSkillRelativePath: noOp,
-    onChangeProviderInstructionRelativePath: noOp,
-    onBrowseProviderSkillRootPath: noOp,
-    onBrowseProviderSkillRelativePath: noOp,
-    onBrowseProviderInstructionRelativePath: noOp,
-    onImportModelCatalog: noOp,
-    onExportModelCatalog: noOp,
-    onOpenAppLogFolder: noOp,
-    onOpenCrashDumpFolder: noOp,
-    onOpenMemoryV6Review: noOp,
-    onInstallMemoryV6CliShim: noOp,
-    onUninstallMemoryV6CliShim: noOp,
-    onDeleteSessionsLastActiveBefore: noOp,
-    onSaveSettings: noOp,
-  });
+  const buildSettingsContent = (params?: RenderSettingsParams) => (
+    <HomeSettingsContent
+      settingsDraft={params?.settingsDraft ?? settingsDraft}
+      providerSettingRows={params?.providerSettingRows ?? providerSettingRows}
+      providerCatalogLoaded={params?.providerCatalogLoaded ?? true}
+      modelCatalogRevisionLabel={String(modelCatalog.revision)}
+      memoryV6Diagnostics={params?.memoryV6Diagnostics ?? null}
+      settingsDirty={false}
+      settingsFeedback=""
+      sessionCleanupCutoffDate=""
+      deletingOldSessions={false}
+      onChangeAutoCollapseActionDockOnSend={noOp}
+      onChangeCharacterDefinitionEnabled={noOp}
+      onChangeCharacterAffectContextEnabled={noOp}
+      onChangeConversationTimingEnabled={noOp}
+      onChangeScrollToLatestOnSend={noOp}
+      onChangeLaunchAtLoginEnabled={noOp}
+      onChangeSessionTurnNotificationEnabled={noOp}
+      onChangeSessionTurnNotificationResponsePreviewEnabled={noOp}
+      onChangeToolCallPresenceEnabled={noOp}
+      onChangeKeyboardShortcuts={noOp}
+      onChangeMemoryFileQuotaMegabytes={noOp}
+      onChangeGlossaryProactiveCreateLimit={noOp}
+      onChangeSessionCleanupCutoffDate={noOp}
+      onChangeUserMicrocopySlot={noOp}
+      onChangeProviderEnabled={noOp}
+      onChangeProviderSkillRootPath={noOp}
+      onChangeProviderSkillRelativePath={noOp}
+      onChangeProviderInstructionRelativePath={noOp}
+      onBrowseProviderSkillRootPath={noOp}
+      onBrowseProviderSkillRelativePath={noOp}
+      onBrowseProviderInstructionRelativePath={noOp}
+      onImportModelCatalog={noOp}
+      onExportModelCatalog={noOp}
+      onOpenAppLogFolder={noOp}
+      onOpenCrashDumpFolder={noOp}
+      onOpenMemoryV6Review={noOp}
+      onInstallMemoryV6CliShim={noOp}
+      onUninstallMemoryV6CliShim={noOp}
+      onDeleteSessionsLastActiveBefore={noOp}
+      onSaveSettings={noOp}
+    />
+  );
 
   const renderSettings = (params?: RenderSettingsParams) => renderToStaticMarkup(buildSettingsContent(params));
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "App SettingsはWindows通知、response preview、action dock、latest messageの4つの表示設定をlabel付きcheckboxで表示する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
+  // fault = "4つの表示設定のいずれかを欠落させるか、別の設定面やsentence caseでないlabelを表示する"
+  // observable = "HomeSettingsContentのstatic markupにある4つのlabel"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-app-display-options"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("App settings に Windows の Session turn notification toggle を表示する", () => {
     const html = renderSettings();
 
-    assert.ok(html.includes("Session のターン完了を Windows 通知で知らせる"));
-    assert.ok(html.includes("Windows 通知に返答の冒頭を表示する"));
-    assert.ok(html.includes("送信後に Action Dock を自動で閉じる"));
-    assert.ok(html.includes("送信時にチャット末尾へ移動する"));
+    assert.ok(html.includes("Show a Windows notification when a session turn finishes"));
+    assert.ok(html.includes("Show the start of the response in the Windows notification"));
+    assert.ok(html.includes("Close the action dock after sending"));
+    assert.ok(html.includes("Scroll to the latest message after sending"));
   });
 
   // @test-value v2
@@ -131,16 +143,16 @@ describe("HomeSettingsContent", () => {
     const html = renderSettings();
     const document = new JSDOM(html).window.document;
     const promptContextSection = Array.from(document.querySelectorAll("section.settings-section-card"))
-      .find((section) => section.querySelector("strong")?.textContent === "Prompt Context");
+      .find((section) => section.querySelector("strong")?.textContent === "Prompt context");
 
     assert.ok(promptContextSection);
-    assert.equal(promptContextSection.querySelector("strong")?.textContent, "Prompt Context");
+    assert.equal(promptContextSection.querySelector("strong")?.textContent, "Prompt context");
 
     const promptContextLabels = [
-      "Character Definition Snapshot",
-      "Character Affect Context",
-      "Conversation Timing",
-      "Tool Call Presence",
+      "Character definition snapshot",
+      "Character affect context",
+      "Conversation timing",
+      "Tool call presence",
     ];
     const promptContextRows = Array.from(promptContextSection.querySelectorAll(".settings-provider-toggle-row"));
     assert.equal(promptContextRows.length, promptContextLabels.length);
@@ -162,6 +174,16 @@ describe("HomeSettingsContent", () => {
     assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, promptContextLabels.length);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Repository glossaryのproactive create limitは0から100のnumber inputとexplicit requestには影響しないhelpを表示する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
+  // fault = "limitの入力範囲または0の意味を表示せず、明示依頼まで無効になると誤認させる"
+  // observable = "input type/min/max/valueとhelp text"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-glossary-limit"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Repository Glossaryにproactive create上限を0から100のnumber inputで表示する", () => {
     const document = new JSDOM(renderSettings()).window.document;
     const label = Array.from(document.querySelectorAll("label"))
@@ -172,9 +194,19 @@ describe("HomeSettingsContent", () => {
     assert.equal(input?.min, "0");
     assert.equal(input?.max, "100");
     assert.equal(input?.value, "5");
-    assert.ok(label?.textContent?.includes("明示的な作成依頼には影響しない"));
+    assert.ok(label?.textContent?.includes("explicit requests"));
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "response preview checkboxはWindows通知が無効な間だけdisabledで、設定値のchecked stateは保持する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
+  // fault = "通知が無効でもpreviewを編集できるか、disabled化の際に保存値をfalseへ書き換える"
+  // observable = "notification enabled/disabled両条件のpreview input disabledとchecked"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-notification-preview-dependency"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("返答 preview toggle は Session turn notification が無効な間だけ操作できない", () => {
     const disabledHtml = renderSettings({
       settingsDraft: {
@@ -193,7 +225,7 @@ describe("HomeSettingsContent", () => {
     const findPreviewToggle = (html: string) => {
       const document = new JSDOM(html).window.document;
       const label = Array.from(document.querySelectorAll("label"))
-        .find((candidate) => candidate.textContent?.includes("Windows 通知に返答の冒頭を表示する"));
+        .find((candidate) => candidate.textContent?.includes("Show the start of the response in the Windows notification"));
       return label?.querySelector("input");
     };
 
@@ -225,27 +257,49 @@ describe("HomeSettingsContent", () => {
     assert.ok(!html.includes("character-notes.md"));
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "各coding providerはProvider file settingsとしてroot、skill relative、instruction relativeの3項目を表示する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
+  // fault = "provider fileの基準rootまたはrelative path設定を欠落させ、pickerの対象境界を利用者に示さない"
+  // observable = "provider settings sectionと3つのsentence-case label"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-provider-file-settings"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("provider ごとの file settings を表示する", () => {
     const html = renderSettings();
 
-    assert.ok(html.includes("Provider File Settings"));
-    assert.ok(html.includes("Root Directory"));
-    assert.ok(html.includes("Skill Relative Path"));
-    assert.ok(html.includes("Instruction Relative Path"));
+    assert.ok(html.includes("Provider file settings"));
+    assert.ok(html.includes("Root directory"));
+    assert.ok(html.includes("Skill relative path"));
+    assert.ok(html.includes("Instruction relative path"));
   });
 
+  // @test-value v2
+  // kind = "security"
+  // claim = "Storage maintenanceはDelete old sessionsと選択日より前を対象にするhelpを表示する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "削除対象の日付境界を説明せず、任意のSessionまたは実行中Sessionを削除する操作と誤認させる"
+  // observable = "delete labelとcleanup date help"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-session-cleanup"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("古い Session の削除操作を Settings に表示する", () => {
     const html = renderSettings();
 
-    assert.match(html, /古い Session を削除/);
-    assert.match(html, /指定日より前に最後に使われた Session を削除する/);
+    assert.match(html, /Delete old sessions/);
+    assert.match(html, /Delete sessions last active before the selected date/);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "Memory diagnosticsはruntime、CLI Shim、Last Errorだけを表示し、managed Skillまたはprovider instructionを表示しない"
-  // oracle = { type = "adr", ref = "ADR-024 diagnostics projection" }
-  // failure_mode = "Settingsが廃止済みのMemory Skill同期状態またはprovider instruction copy導線を公開し続ける"
+  // claim = "Memory diagnosticsはruntime、CLI shim、Last errorだけを表示し、managed Skill、provider instruction、secret、pathを表示しない"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "廃止済みのMemory Skill同期状態やprovider instruction copy導線、credential、個人pathをSettingsへ公開する"
+  // observable = "diagnosticsのsafe status/codeと禁止された表示内容の不在"
+  // observation_boundary = "public-boundary"
   // scope = "memory-runtime-diagnostics-projection"
   // lifecycle = "permanent"
   // @end-test-value
@@ -278,7 +332,7 @@ describe("HomeSettingsContent", () => {
     assert.ok(!html.includes("Active Bindings"));
     assert.ok(!html.includes("codex: env / custom: unsupported"));
     assert.ok(!html.includes("Managed Skill"));
-    assert.ok(html.includes("CLI Shim"));
+    assert.ok(html.includes("CLI shim"));
     assert.ok(html.includes("PATH ready"));
     assert.ok(html.includes("memory-v6.runtime-api.start-failed"));
     assert.ok(!html.includes("Provider Instruction Sample"));
@@ -289,18 +343,38 @@ describe("HomeSettingsContent", () => {
     assert.ok(!html.includes("/Users/"));
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "model catalogにcoding providerがない場合もCoding agent providers sectionと利用可能なempty stateを表示する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
+  // fault = "provider row 0件をsectionごと隠すか、catalog未読込の失敗状態と混同する"
+  // observable = "Coding agent providers headingとNo coding agent providers found in the model catalog."
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-provider-empty-state"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("provider row が 0 件でも Coding Agent Providers section と empty state を表示する", () => {
     const html = renderSettings({ providerSettingRows: [] });
 
-    assert.ok(html.includes("Coding Agent Providers"));
-    assert.ok(html.includes("model catalog に coding provider がありません。"));
+    assert.ok(html.includes("Coding agent providers"));
+    assert.ok(html.includes("No coding agent providers found in the model catalog."));
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "model catalog未読込時はCoding agent providers sectionを残し、catalog unavailableのempty stateを表示する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
+  // fault = "未読込をproviderなしと表示してcatalog取得失敗を隠すか、sectionを削除する"
+  // observable = "Coding agent providers headingとCould not load the model catalog."
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-provider-catalog-loading-state"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("provider catalog 読み込み前は catalog unavailable empty state を表示する", () => {
     const html = renderSettings({ providerSettingRows: [], providerCatalogLoaded: false });
 
-    assert.ok(html.includes("Coding Agent Providers"));
-    assert.ok(html.includes("model catalog を読み込めないため"));
+    assert.ok(html.includes("Coding agent providers"));
+    assert.ok(html.includes("Could not load the model catalog."));
   });
 });
 
@@ -588,6 +662,7 @@ describe("HomeLaunchDialog", () => {
     charactersLoaded = true,
     randomCharacterSelected = false,
     workspaceValidation: HomeLaunchWorkspaceValidationState = "idle",
+    characterLoadStatus?: "loading" | "loaded" | "error",
   ) => renderToStaticMarkup(
     <HomeLaunchDialog
       open={true}
@@ -602,6 +677,7 @@ describe("HomeLaunchDialog", () => {
       selectedCharacterId={randomCharacterSelected ? null : options[0]?.id ?? null}
       randomCharacterSelected={randomCharacterSelected}
       charactersLoaded={charactersLoaded}
+      characterLoadStatus={characterLoadStatus}
       canStartSession={true}
       launchFeedback=""
       launchStarting={false}
@@ -630,12 +706,24 @@ describe("HomeLaunchDialog", () => {
   it("新規作成導線は Session 専用である", () => {
     const html = renderHomeLaunchDialog();
 
-    assert.ok(html.includes("Start New Session"));
-    assert.ok(html.includes('aria-label="New Session"'));
+    assert.ok(html.includes("Start new session"));
+    assert.ok(html.includes('aria-label="New session"'));
     assert.ok(!html.includes("Agent Mode"));
     assert.ok(html.includes("SessionFolder"));
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Homeの新規SessionダイアログはCharacter候補・ランダム選択・workspace選択を同じ導線で表示する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+  // fault = "Character selectorまたはworkspace選択肢が欠落し、候補選択やSessionFolderへの切り替えを利用者が識別できない"
+  // observable = "Character section、Mia候補、Random候補、説明文、BrowseとSessionFolderのmarkup順序"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeLaunchDialog Character and workspace selectors"
+  // lifecycle = "permanent"
+  // impact = "新規Session作成時のCharacter選択とworkspace選択を同じ画面で完了できる"
+  // distinction = "開始CTAだけでなく、候補の内容・順序とworkspace切り替え導線を静的描画から確認する"
+  // @end-test-value
   it("ダイアログに Character selector が含まれる", () => {
     const html = renderHomeLaunchDialog();
 
@@ -644,9 +732,9 @@ describe("HomeLaunchDialog", () => {
     assert.ok(html.includes("Mia"));
     assert.ok(!html.includes(">Default</span>"));
     assert.ok(html.includes("Character description"));
-    assert.ok(html.includes("ランダム"));
-    assert.ok(html.indexOf("ランダム") < html.indexOf("Mia"));
-    assert.ok(html.includes("最近使っていないCharacterを優先"));
+    assert.ok(html.includes("Random"));
+    assert.ok(html.indexOf("Random") < html.indexOf("Mia"));
+    assert.ok(html.includes("Prefer characters used less recently"));
     assert.ok(html.indexOf("Browse") < html.indexOf("SessionFolder"));
   });
 
@@ -662,26 +750,48 @@ describe("HomeLaunchDialog", () => {
     assert.ok(html.includes("Path not found."));
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Homeのworkspace validationはdebounce中とfilesystem確認中の両方をbusy状態として表示する"
+  // oracle = { type = "contract", ref = "Issue #731 Home/New session workspace validation" }
+  // fault = "debounceまたはfilesystem確認の片方でspinnerとaria-busyを失い、入力が検証中かどうかを識別できない"
+  // observable = "debouncing/pending各markupのworkspace-validation-spinner、aria-busy、Checking workspace path…"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeLaunchDialog workspace validation feedback"
+  // lifecycle = "permanent"
+  // impact = "検証待ちの入力を利用者が未検証または完了済みと誤認しにくくなる"
+  // distinction = "検証完了結果ではなく、debounceからpendingまで連続する局所busy表示を状態別に確認する"
+  // @end-test-value
   it("Workspace validation は debounce 開始から filesystem 確認完了まで spinner を表示する", () => {
     const debouncing = renderHomeLaunchDialog(characterOptions, true, false, "debouncing");
     const pending = renderHomeLaunchDialog(characterOptions, true, false, "pending");
 
     assert.ok(debouncing.includes("workspace-validation-spinner"));
     assert.ok(debouncing.includes('aria-busy="true"'));
-    assert.ok(debouncing.includes("Workspace パスを確認しています"));
-    assert.ok(!debouncing.includes("確認中"));
+    assert.ok(debouncing.includes("Checking workspace path…"));
     assert.ok(pending.includes("workspace-validation-spinner"));
     assert.ok(pending.includes('aria-busy="true"'));
-    assert.ok(pending.includes("Workspace パスを確認しています"));
-    assert.ok(!pending.includes(">確認中<"));
+    assert.ok(pending.includes("Checking workspace path…"));
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Homeのrandom Character選択はRandom cardだけを選択状態として公開する"
+  // oracle = { type = "contract", ref = "Issue #731 Home/New session Character selection" }
+  // fault = "specific Characterにもselected状態を残し、random選択の対象またはaria-checkedを誤って伝える"
+  // observable = "Random/Mia各buttonのselected classとaria-checked markup"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeLaunchDialog random character selection"
+  // lifecycle = "permanent"
+  // impact = "開始時に選択されるCharacterの意味を視覚表示と支援技術へ一貫して伝える"
+  // distinction = "選択IDの内部値ではなく、利用者が操作するcardの公開選択状態を確認する"
+  // @end-test-value
   it("random選択時は一覧先頭のランダムcardだけを選択状態にする", () => {
     const html = renderHomeLaunchDialog(characterOptions, true, true);
 
     assert.match(
       html,
-      /<button class="launch-character-option selected"[^>]*aria-checked="true"[^>]*>(?:(?!<\/button>).)*ランダム/s,
+      /<button class="launch-character-option selected"[^>]*aria-checked="true"[^>]*>(?:(?!<\/button>).)*Random/s,
     );
     assert.doesNotMatch(
       html,
@@ -696,11 +806,44 @@ describe("HomeLaunchDialog", () => {
     assert.ok(html.includes("Neutral"));
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "New sessionのCharacter catalog読み込み中はLoading表示を出し、取得済み空一覧のNeutral fallbackを出さない"
+  // oracle = { type = "contract", ref = "Issue #731 Home/New session data-state distinction" }
+  // fault = "初期loadingをNeutralへ投影して未取得状態を空一覧と混同させる"
+  // observable = "LoadingとLoading characters…の表示、およびNeutralの不在"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeLaunchDialog character catalog loading state"
+  // lifecycle = "permanent"
+  // impact = "Character取得待ちと正常な空一覧を識別でき、開始可否を誤認しない"
+  // distinction = "候補配列が空である事実だけでなく、明示的loading stateの表示分岐を確認する"
+  // @end-test-value
   it("Character catalog 読み込み前は neutral fallback を表示しない", () => {
     const html = renderHomeLaunchDialog([], false);
 
-    assert.ok(html.includes("読み込み中"));
-    assert.ok(html.includes("Character を読み込んでるよ..."));
+    assert.ok(html.includes("Loading"));
+    assert.ok(html.includes("Loading characters…"));
+    assert.ok(!html.includes("Neutral"));
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "New sessionのCharacter領域はcatalog取得失敗を初期loadingや取得済み空一覧と区別して表示する"
+  // oracle = { type = "contract", ref = "Issue #731 Home/New session data-state distinction" }
+  // fault = "Character取得失敗をLoadingまたはNeutralへ投影し、開始可否と回復可能な失敗状態を隠す"
+  // observable = "Character領域のUnavailable、失敗文言、Loading/Neutral文言の有無"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeLaunchDialog character catalog state"
+  // lifecycle = "permanent"
+  // impact = "取得失敗時に利用者が空一覧と誤認せず、Session開始を継続できない理由を識別できる"
+  // distinction = "単なるCharacter候補数ではなく、明示したload stateの最終表示を検証する"
+  // @end-test-value
+  it("Character catalog の読み込み失敗は loading と空一覧を区別する", () => {
+    const html = renderHomeLaunchDialog([], false, false, "idle", "error");
+
+    assert.ok(html.includes("Unavailable"));
+    assert.ok(html.includes("Could not load characters."));
+    assert.ok(!html.includes("Loading characters…"));
     assert.ok(!html.includes("Neutral"));
   });
 
@@ -768,6 +911,29 @@ describe("HomeRecentSessionsPanel", () => {
       onLoadMore={onLoadMore}
     />,
   );
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Homeの更新時刻はen-USの表示書式を使い、保存値のraw ISO文字列を表示しない"
+  // oracle = { type = "contract", ref = "Issue #731 Home date presentation" }
+  // fault = "更新時刻をraw ISOまたは別localeへ表示し、利用者のローカルtime zoneを失う"
+  // observable = "formatHomeSessionUpdatedAtの戻り値とraw ISO形式の不在"
+  // observation_boundary = "public-boundary"
+  // scope = "HomeRecentSessionsPanel updatedAt formatter"
+  // lifecycle = "permanent"
+  // impact = "異なるlocale/time zoneでもHomeの日時を識別可能な英語表示で読める"
+  // distinction = "日時の保存・sort値ではなく、UI表示専用formatterのlocale/time zone境界を検証する"
+  // @end-test-value
+  it("updatedAt は en-US のローカル時刻として表示する", () => {
+    const value = "2026-08-08T05:00:00.000Z";
+    const expected = new Intl.DateTimeFormat("en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(value));
+
+    assert.equal(formatHomeSessionUpdatedAt(value), expected);
+    assert.doesNotMatch(formatHomeSessionUpdatedAt(value), /T\d{2}:\d{2}/);
+  });
 
   it("canUsePrimaryFeatures false の時は New Session が無効化される", () => {
     const html = renderHomeRecentSessions({ canUsePrimaryFeatures: false });
@@ -964,7 +1130,7 @@ describe("HomeRecentSessionsPanel", () => {
     assert.match(html, /class="session-card home-session-card is-pinnable is-pinned"/);
     assert.match(html, /class="home-session-card-open"/);
     assert.match(html, /aria-pressed="true"/);
-    assert.match(html, />ピン解除<\/button>/);
+    assert.match(html, /aria-label="Unpin Pinned task"/);
 
     const openButtonMarkup = html.match(
       /<button class="home-session-card-open"[^>]*>([\s\S]*?)<\/button>/,
@@ -999,7 +1165,7 @@ describe("HomeRecentSessionsPanel", () => {
 
     assert.equal((html.match(/character-avatar tiny home-session-card-avatar/g) ?? []).length, 1);
     assert.ok(html.includes("mate.png"));
-    assert.ok(html.includes("閲覧専用"));
+    assert.ok(html.includes("Read-only"));
     assert.match(html, /class="home-session-card-open"[^>]*aria-disabled="false"/);
     assert.match(html, /class="session-card home-session-card/);
   });
@@ -1071,8 +1237,8 @@ describe("HomeMonitorContent", () => {
       {
         kind: "agent",
         session: createMonitorSession("session-1", "Agent task"),
-        state: { kind: "running", label: "実行中" },
-        mainState: { kind: "neutral", label: "待機" },
+        state: { kind: "running", label: "Running" },
+        mainState: { kind: "neutral", label: "Idle" },
         auxiliarySessions: [
           createMonitorAuxiliary("aux-1", { runState: "error", preview: "Auxiliary error" }),
           createMonitorAuxiliary("aux-closed", {
@@ -1084,8 +1250,8 @@ describe("HomeMonitorContent", () => {
       {
         kind: "agent",
         session: createMonitorSession("session-2", "Auxiliary task"),
-        state: { kind: "running", label: "実行中" },
-        mainState: { kind: "running", label: "実行中" },
+        state: { kind: "running", label: "Running" },
+        mainState: { kind: "running", label: "Running" },
         auxiliarySessions: [],
       },
 
@@ -1139,10 +1305,10 @@ describe("HomeMonitorContent", () => {
     assert.equal(html.match(/class="home-monitor-status-icon neutral"/g)?.length, 1);
     assert.equal(html.match(/class="home-monitor-status-icon error"/g)?.length, 1);
     assert.equal(html.match(/class="home-monitor-status-icon closed"/g)?.length, 1);
-    assert.equal(html.match(/aria-label="Main 実行中"/g)?.length, 1);
-    assert.equal(html.match(/aria-label="Main 待機"/g)?.length, 1);
-    assert.ok(html.includes('aria-label="Auxiliary エラー 1件"'));
-    assert.ok(html.includes('aria-label="Auxiliary 終了 1件"'));
+    assert.equal(html.match(/aria-label="Main Running"/g)?.length, 1);
+    assert.equal(html.match(/aria-label="Main Idle"/g)?.length, 1);
+    assert.ok(html.includes('aria-label="Auxiliary Error: 1"'));
+    assert.ok(html.includes('aria-label="Auxiliary Closed: 1"'));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 2);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 2);
   });
@@ -1214,10 +1380,10 @@ describe("HomeMonitorContent", () => {
       const rows = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-auxiliary-row"));
       assert.equal(rows.length, 2);
       assert.equal(rows[0]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "");
-      assert.equal(rows[0]?.getAttribute("aria-label"), "Auxiliaryを開く: ");
+      assert.equal(rows[0]?.getAttribute("aria-label"), "Open Auxiliary 1");
       assert.equal(rows[0]?.textContent?.includes("新しい会話"), false);
       assert.equal(rows[1]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "");
-      assert.equal(rows[1]?.getAttribute("aria-label"), "Auxiliaryを開く: ");
+      assert.equal(rows[1]?.getAttribute("aria-label"), "Open Auxiliary 2");
       assert.equal(container.textContent?.includes("新しい会話"), false);
     } finally {
       await act(async () => root.unmount());
@@ -1257,8 +1423,8 @@ describe("HomeMonitorContent", () => {
     const entry: HomeMonitorEntry = {
       kind: "agent",
       session: createMonitorSession("session-count-summary", "Count summary task"),
-      state: { kind: "running", label: "実行中" },
-      mainState: { kind: "neutral", label: "待機" },
+      state: { kind: "running", label: "Running" },
+      mainState: { kind: "neutral", label: "Idle" },
       auxiliarySessions,
     };
     const html = renderToStaticMarkup(
@@ -1278,8 +1444,8 @@ describe("HomeMonitorContent", () => {
     assert.equal(card?.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
     assert.equal(runningIcon?.querySelector(".home-monitor-status-icon-count")?.textContent, ": 3");
     assert.equal(idleIcon?.querySelector(".home-monitor-status-icon-count")?.textContent, ": 1");
-    assert.equal(runningIcon?.getAttribute("aria-label"), "Auxiliary 実行中 3件");
-    assert.equal(idleIcon?.getAttribute("aria-label"), "Auxiliary 待機 1件");
+    assert.equal(runningIcon?.getAttribute("aria-label"), "Auxiliary Running: 3");
+    assert.equal(idleIcon?.getAttribute("aria-label"), "Auxiliary Idle: 1");
   });
 
   // @test-value v2
@@ -1297,13 +1463,13 @@ describe("HomeMonitorContent", () => {
     const entries = [{
       kind: "agent" as const,
       session: createMonitorSession("loading-session", "Loading task"),
-      state: { kind: "neutral" as const, label: "待機" },
-      mainState: { kind: "neutral" as const, label: "待機" },
+      state: { kind: "neutral" as const, label: "Idle" },
+      mainState: { kind: "neutral" as const, label: "Idle" },
       auxiliarySessions: [],
     }];
     for (const [auxiliaryDataState, expectedFeedback] of [
-      ["loading", "Auxiliaryを確認中…"],
-      ["error", "Auxiliaryの読み込みに失敗したよ。"],
+      ["loading", "Loading Auxiliary sessions…"],
+      ["error", "Could not load Auxiliary sessions."],
     ] as const) {
       const html = renderToStaticMarkup(
         <HomeMonitorContent
@@ -1615,7 +1781,7 @@ describe("HomeMonitorContent", () => {
       <HomeMonitorContent
         runningEntries={[]}
         nonRunningEntries={[]}
-        feedback="Session IDをコピーできませんでした。"
+        feedback="Could not copy session ID."
         onOpenSession={noOp}
         onShowContextMenu={noOp}
       />,
@@ -1624,7 +1790,7 @@ describe("HomeMonitorContent", () => {
     assert.doesNotMatch(emptyHtml, /role="status"/);
     assert.match(
       failureHtml,
-      /role="status" aria-live="polite">Session IDをコピーできませんでした。<\/p>/,
+      /role="status" aria-live="polite">Could not copy session ID\.<\/p>/,
     );
   });
 });
@@ -1649,6 +1815,7 @@ describe("HomeRightPane", () => {
     sessionWindowRestorePending = false,
     sessionWindowRestoreFeedback = "",
     sessionMonitorFeedback = "",
+    characterLoadStatus: "loading" | "loaded" | "error" = "loaded",
   ) => renderToStaticMarkup(
     <HomeRightPane
       rightPaneView={rightPaneView}
@@ -1656,6 +1823,7 @@ describe("HomeRightPane", () => {
       nonRunningMonitorEntries={[]}
       auxiliaryDataState="ready"
       characterEntries={characters}
+      characterLoadStatus={characterLoadStatus}
       characterListFeedback={characterListFeedback}
       monitorWindowIcon={<span>Monitor</span>}
       onChangeRightPaneView={noOp}
@@ -1689,6 +1857,18 @@ describe("HomeRightPane", () => {
     assert.ok(!html.includes('aria-label="補助情報"'));
   };
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Characters tabはcharacter情報・検索・Create導線を表示し、旧Mate talkや既定カードを表示しない"
+  // oracle = { type = "contract", ref = "Issue #731 Home Characters tab surface" }
+  // fault = "Character tabが旧default/Mate talk surfaceへ戻るか、検索またはCreate導線を失う"
+  // observable = "Characters見出し、Mia、説明文、検索label/placeholder、Create、旧surfaceの不在"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeRightPane Characters tab surface"
+  // lifecycle = "permanent"
+  // impact = "対象Characterの識別と作成導線を維持し、廃止したMate talk画面を復活させない"
+  // distinction = "表示文字列だけでなく、旧surfaceを含む情報構造と検索/Create affordanceを同時に確認する"
+  // @end-test-value
   it("Characters タブは character list と Create を表示する", () => {
     const html = renderHomeRightPane("characters");
 
@@ -1697,8 +1877,8 @@ describe("HomeRightPane", () => {
     assert.ok(html.includes("説明文"));
     assert.ok(html.includes("Create"));
     assert.ok(!html.includes("<h3>Characters</h3>"));
-    assert.ok(html.includes('aria-label="Characterを名前で検索"'));
-    assert.ok(html.includes('placeholder="名前で検索"'));
+    assert.ok(html.includes('aria-label="Search characters by name"'));
+    assert.ok(html.includes('placeholder="Search by name"'));
     assert.ok(!html.includes(">Default</span>"));
     assert.match(html, /<button class="home-character-card"/);
     assert.ok(!html.includes("home-character-card-edit"));
@@ -1737,16 +1917,62 @@ describe("HomeRightPane", () => {
     assert.deepEqual(filterCharactersByName(characters, "   "), characters);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Characters tabは取得済みCharacterが0件でも空状態とCreate Character導線を表示する"
+  // oracle = { type = "contract", ref = "Issue #731 Home Characters empty state" }
+  // fault = "候補が空のときCreate導線まで隠し、Character作成を開始できない"
+  // observable = "No characters yet. とCreate Characterの同一panel内表示"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeRightPane Characters empty state"
+  // lifecycle = "permanent"
+  // impact = "初回利用者がCharacterを作成するための入口を失わない"
+  // distinction = "loading/errorの状態ではなく、取得済み空一覧でCTAを維持する境界を確認する"
+  // @end-test-value
   it("Character が空でも Create Character を表示できる", () => {
     const html = renderHomeRightPane("characters", []);
-    assert.ok(html.includes("Character はまだありません。"));
+    assert.ok(html.includes("No characters yet."));
     assert.ok(html.includes("Create Character"));
   });
 
-  it("Characters panel は一覧読み込み error を panel 内に表示する", () => {
-    const html = renderHomeRightPane("characters", [], true, "Character 一覧の再読み込みに失敗したよ。");
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Home Characters panelはcatalog取得中・失敗・取得済み空を別状態として投影する"
+  // oracle = { type = "contract", ref = "Issue #731 Home Characters data-state distinction" }
+  // fault = "初期取得中または失敗をNo characters yetへ投影し、未取得と正常な空一覧を混同する"
+  // observable = "loading/error表示とNo characters yetの相互排他"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeCharactersPanel character catalog state"
+  // lifecycle = "permanent"
+  // impact = "Character作成導線で取得待ち・取得失敗・正常空一覧を正しく識別できる"
+  // distinction = "候補配列の長さだけでなく、明示load stateによる表示分岐を検証する"
+  // @end-test-value
+  it("Character list は初期取得中と取得失敗を空状態と区別する", () => {
+    const loadingHtml = renderHomeRightPane("characters", [], true, "", [], false, "", "", "loading");
+    const errorHtml = renderHomeRightPane("characters", [], true, "", [], false, "", "", "error");
 
-    assert.ok(html.includes("Character 一覧の再読み込みに失敗したよ。"));
+    assert.ok(loadingHtml.includes("Loading characters…"));
+    assert.ok(!loadingHtml.includes("No characters yet."));
+    assert.ok(errorHtml.includes("Could not load characters."));
+    assert.ok(!errorHtml.includes("No characters yet."));
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Characters panelは一覧取得errorをpanel内feedbackへ表示し、Create Character導線を維持する"
+  // oracle = { type = "contract", ref = "Issue #731 Home Characters data-state distinction" }
+  // fault = "取得失敗を無表示または空一覧として扱い、失敗理由と作成導線を利用者から隠す"
+  // observable = "Could not refresh characters. とCreate Characterのpanel内markup"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeRightPane Characters error feedback"
+  // lifecycle = "permanent"
+  // impact = "取得失敗を空一覧と区別しつつ、Character作成へ進む操作を維持する"
+  // distinction = "汎用feedback stateではなく、Characters panel内のエラー表示とCTA共存を確認する"
+  // @end-test-value
+  it("Characters panel は一覧読み込み error を panel 内に表示する", () => {
+    const html = renderHomeRightPane("characters", [], true, "Could not refresh characters.");
+
+    assert.ok(html.includes("Could not refresh characters."));
     assert.ok(html.includes("Create Character"));
   });
 
@@ -1766,13 +1992,17 @@ describe("HomeRightPane", () => {
     assertNoMateTalkChatSurface(characterHtml);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "Restore Sessions操作は復元対象の有無と処理中状態をdisabledおよびaria-busyへ投影する"
-  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#復元操作" }
-  // failure_mode = "対象がない状態または復元処理中に操作でき、重複した復元要求が発生する"
-  // scope = "HomeRightPane Restore Sessions control"
+  // claim = "HomeRightPaneのRestore sessions操作は復元対象の有無と処理中状態をdisabledおよびaria-busyへ投影する"
+  // oracle = { type = "contract", ref = "Issue #731 Home restore sessions action state" }
+  // fault = "対象がない状態または復元処理中に操作できて重複要求が発生するか、対象があるのにdisabledのままになる"
+  // observable = "Restore sessions buttonのdisabled属性とaria-busy属性"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeRightPane Restore sessions control"
   // lifecycle = "permanent"
+  // impact = "復元操作の対象有無と処理中状態を識別し、重複要求を防ぐ"
+  // distinction = "restore helperの入力選択ではなく、利用者が押すbuttonのdisabled/busy公開状態を確認する"
   // @end-test-value
   it("一括復元操作を上部へ常設し、対象なし・処理中をdisabledにする", () => {
     const emptyHtml = renderHomeRightPane("monitor");
@@ -1786,21 +2016,24 @@ describe("HomeRightPane", () => {
       true,
     );
 
-    assert.match(emptyHtml, /Restore Sessions/);
+    assert.match(emptyHtml, /Restore sessions/);
     assert.match(emptyHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
-    assert.match(enabledHtml, /Restore Sessions/);
+    assert.match(enabledHtml, /Restore sessions/);
     assert.doesNotMatch(enabledHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
     assert.match(pendingHtml, /class="restore-session-windows-button"[^>]*disabled=""[^>]*aria-busy="true"/);
   });
 
-  // @test-value v1
-  // kind = "regression"
-  // claim = "空の復元feedbackではstatus要素を描画せず、失敗feedbackではpoliteなlive statusとして対象と理由を描画する"
-  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#失敗時の扱い" }
-  // failure_mode = "正常終了後も空または成功文のstatusが残るか、復元失敗時に対象と理由を支援技術へ通知できない"
+  // @test-value v2
+  // kind = "contract"
+  // claim = "HomeRightPaneのrestore feedbackは成功・対象なしではstatusを描画せず、失敗時だけ対象と理由をpolite live statusへ表示する"
+  // oracle = { type = "contract", ref = "Issue #731 Home restore feedback accessibility" }
+  // fault = "正常終了後も空statusを残すか、復元失敗時に対象と理由を支援技術へ通知できない"
+  // observable = "success/failure HTMLのfeedback要素、role=status、aria-live=polite、失敗対象と理由"
+  // observation_boundary = "component-behavior"
   // scope = "HomeRightPane session restore feedback rendering"
   // lifecycle = "permanent"
-  // distinction = "builderの文字列変換ではなく、空文字によるDOM非表示と失敗文字列のlive status描画を検証する"
+  // impact = "復元結果を重複通知せず、失敗時だけ利用者へ識別可能に伝える"
+  // distinction = "builderの文字列だけでなく、空文字によるDOM非表示と失敗文字列のlive status描画を確認する"
   // @end-test-value
   it("復元feedbackは正常系でstatusを描画せず、失敗時だけlive statusを描画する", () => {
     const successHtml = renderHomeRightPane("monitor", undefined, true, "", ["session-a"]);
@@ -1811,12 +2044,12 @@ describe("HomeRightPane", () => {
       "",
       ["session-b"],
       false,
-      "復元できなかったSession: session-b（削除済み）",
+      "Could not restore sessions: session-b (Deleted)",
     );
 
     assert.doesNotMatch(successHtml, /session-window-restore-feedback/);
     assert.doesNotMatch(successHtml, /role="status"/);
-    assert.match(failureHtml, /session-b（削除済み）/);
+    assert.match(failureHtml, /session-b \(Deleted\)/);
     assert.match(failureHtml, /role="status" aria-live="polite"/);
     assert.doesNotMatch(failureHtml, /件のSessionを開きました/);
   });
@@ -1842,12 +2075,12 @@ describe("HomeRightPane", () => {
       [],
       false,
       "",
-      "Session IDをコピーできませんでした。",
+      "Could not copy session ID.",
     );
 
-    const monitorPanel = html.match(/<section class="home-monitor-panel" role="tabpanel" aria-label="Session Monitor">[\s\S]*?<\/section>/);
+    const monitorPanel = html.match(/<section class="home-monitor-panel" role="tabpanel" aria-label="Session monitor">[\s\S]*?<\/section>/);
     assert.ok(monitorPanel);
-    assert.match(monitorPanel[0], /Session IDをコピーできませんでした。/);
+    assert.match(monitorPanel[0], /Could not copy session ID\./);
     assert.match(monitorPanel[0], /role="status" aria-live="polite"/);
   });
 

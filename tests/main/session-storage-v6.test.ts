@@ -286,7 +286,7 @@ describe("SessionStorageV6", () => {
       storage = new SessionStorageV6(dbPath);
       assert.equal(storage.getSession(session.id)?.isPinned, true);
       assert.equal(storage.setSessionPinned(session.id, false).isPinned, false);
-      assert.throws(() => storage?.setSessionPinned("missing", true), /見つからない/);
+      assert.throws(() => storage?.setSessionPinned("missing", true), /session could not be found/);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);
@@ -342,6 +342,18 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V6 summary pageはkeyset境界、検索条件、pinned/open projection、Character usageをboundedに処理する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-storage-v6.ts#listSessionSummaryPage" }
+  // fault = "cursorとqueryの不一致やopen ID件数制約を受け入れる、projectionへ詳細を混ぜる、またはusageを誤る"
+  // observable = "summary page entries/hasMore/nextCursor、validation error、open projection keys、Character usage"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-summary-page"
+  // lifecycle = "permanent"
+  // impact = "HomeのSession一覧が別queryの結果やprovider内部情報を表示する"
+  // distinction = "keyset、literal search、scope別projection、invalid cursor/limitを実DBで横断確認する"
+  // @end-test-value
   it("summary page は keyset境界、検索、pinned/open projection、Character usageをboundedに扱う", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -395,7 +407,7 @@ describe("SessionStorageV6", () => {
       assert.deepEqual(literalUnderscore?.entries.map((entry) => entry.id), ["same-b"]);
       assert.throws(
         () => storage?.listSessionSummaryPage({ scope: "recent", cursor: firstPage?.nextCursor, searchText: "changed" }),
-        /一致しません/,
+        /does not match the current query/,
       );
 
       const pinnedPage = storage?.listSessionSummaryPage({ scope: "pinned" });
@@ -430,7 +442,7 @@ describe("SessionStorageV6", () => {
       assert.equal("threadId" in (openPage?.entries[0] ?? {}), false);
       assert.throws(
         () => storage?.listSessionSummaryPage({ scope: "open", sessionIds: ["older", "same-a"], limit: 1 }),
-        /ID数以上/,
+        /at least the number of requested IDs/,
       );
 
       assert.deepEqual(storage?.listSessionCharacterUsage().map((entry) => entry.characterId), ["char-b", "char-a"]);
@@ -684,6 +696,18 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character IDとruntime snapshot ownerが異なるSessionはV6へ保存されず、既存データも作成されない"
+  // oracle = { type = "contract", ref = "src-electron/session/session-storage-v6.ts#insertSession" }
+  // fault = "owner不一致のSessionを保存し、Character authoring runtimeの所有境界を壊す"
+  // observable = "validation error and subsequent getSession result"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-character-owner-validation"
+  // lifecycle = "permanent"
+  // impact = "別Characterのruntime snapshotがSessionへ紐づく"
+  // distinction = "異なるownerを持つSessionを実DBへinsertし、拒否とrow不在を確認する"
+  // @end-test-value
   it("Character ID と runtime snapshot owner が異なる Session は保存しない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -710,7 +734,7 @@ describe("SessionStorageV6", () => {
         characterRuntimeSnapshot: createCharacterRuntimeSnapshot("other", "Other"),
       };
 
-      assert.throws(() => storage?.insertSession(mismatched), /保存できない session 形式/);
+      assert.throws(() => storage?.insertSession(mismatched), /Session data cannot be saved because it is invalid/);
       assert.equal(storage.getSession(mismatched.id), null);
     } finally {
       storage?.close();
@@ -859,6 +883,18 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V6 insertSessionは別connectionからの同一ID createを拒否し、先に保存されたSessionを保持する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-storage-v6.ts#insertSession" }
+  // fault = "同一IDの再createで既存Sessionを上書きするか、collision errorを成功扱いする"
+  // observable = "collision error and original Session taskTitle/workspacePath"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-session-id-collision"
+  // lifecycle = "permanent"
+  // impact = "既存Sessionの本文・workspaceが別createで失われる"
+  // distinction = "2つのstorage connectionから同一IDをinsertし、既存rowの値を直接再読込する"
+  // @end-test-value
   it("insertSession は別 connection からの同一 ID create を拒否して既存 Session を保持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -888,7 +924,7 @@ describe("SessionStorageV6", () => {
           taskTitle: "second",
           workspacePath: "C:/workspace-b",
         }),
-        /同じ ID の Session がすでに存在するよ。/,
+        /A Session with the same ID already exists/,
       );
       assert.equal(firstStorage.getSession(original.id)?.taskTitle, "first");
       assert.equal(firstStorage.getSession(original.id)?.workspacePath, "C:/workspace-a");

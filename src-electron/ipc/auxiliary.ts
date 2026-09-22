@@ -191,7 +191,7 @@ export function registerAuxiliaryHandlers(
       assertAuxiliaryCreateModeForOwner(ownerWindowKind, input);
       if (!input.clientRequestId?.trim() || !input.creationContext) {
         throw new Error(
-          "Auxiliary Session の作成には clientRequestId と creationContext が必要だよ。",
+          "Auxiliary Session creation requires clientRequestId and creationContext.",
         );
       }
       return getAuxiliaryDeps(deps).createAuxiliarySession(input);

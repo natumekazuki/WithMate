@@ -27,7 +27,7 @@ export class SessionWindowRestoreService {
     this.restoreSetLoaded = this.deps.storage.loadSnapshot().then((sessionIds) => {
       const normalized = normalizeSessionWindowRestoreIds(sessionIds);
       if (!normalized) {
-        throw new Error("Session Window restore snapshot が不正です。");
+        throw new Error("The Session Window restore snapshot is invalid.");
       }
       this.restoreSet = normalized;
     });
@@ -46,7 +46,7 @@ export class SessionWindowRestoreService {
   saveSnapshot(sessionIds: readonly string[]): Promise<void> {
     const normalized = normalizeSessionWindowRestoreIds(sessionIds);
     if (!normalized) {
-      return Promise.reject(new TypeError("Session Window restore snapshot が不正です。"));
+      return Promise.reject(new TypeError("The Session Window restore snapshot is invalid."));
     }
     const write = this.writeTail.then(() => this.deps.storage.saveSnapshot(normalized));
     this.writeTail = write.then(

@@ -7,7 +7,7 @@ import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
-import type { HomeLaunchWorkspaceValidationState } from "./home-launch-state.js";
+import type { HomeCharacterLoadStatus, HomeLaunchWorkspaceValidationState } from "./home-launch-state.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
@@ -22,6 +22,7 @@ export type HomeLaunchDialogProps = {
   selectedCharacterId: string | null;
   randomCharacterSelected: boolean;
   charactersLoaded: boolean;
+  characterLoadStatus?: HomeCharacterLoadStatus;
   canStartSession: boolean;
   launchFeedback: string;
   launchStarting: boolean;
@@ -49,6 +50,7 @@ export function HomeLaunchDialog({
   selectedCharacterId,
   randomCharacterSelected,
   charactersLoaded,
+  characterLoadStatus,
   canStartSession,
   launchFeedback,
   launchStarting,
@@ -74,19 +76,20 @@ export function HomeLaunchDialog({
   }
 
   const workspaceValidationActive = workspaceValidation === "debouncing" || workspaceValidation === "pending";
+  const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
 
   return (
     <LaunchDialogShell
       onClose={onClose}
       dialogRef={dialogRef}
       onKeyDown={handleDialogKeyDown}
-      ariaLabel="New Session"
+      ariaLabel="New session"
       showDismissControl={false}
       dialogClassName="home-launch-dialog"
       footer={
         <LaunchDialogFooter
           feedback={launchFeedback}
-          startButtonLabel={launchStarting ? "Starting..." : "Start New Session"}
+          startButtonLabel={launchStarting ? "Starting…" : "Start new session"}
           startButtonDisabled={!canStartSession || launchStarting}
           startButtonAriaDisabled={!canStartSession || launchStarting}
           onStart={onStartSession}
@@ -96,7 +99,7 @@ export function HomeLaunchDialog({
       <section className="launch-section minimal">
         <div className="launch-field">
           <label className="launch-field-label" htmlFor="launch-session-title">
-            セッションタイトル
+            Session title
           </label>
           <input
             id="launch-session-title"
@@ -143,7 +146,7 @@ export function HomeLaunchDialog({
           </div>
           {workspaceValidationActive ? (
             <span className="visually-hidden" role="status" aria-live="polite">
-              Workspace パスを確認しています
+              Checking workspace path…
             </span>
           ) : null}
         </div>
@@ -172,12 +175,20 @@ export function HomeLaunchDialog({
       <section className="launch-section minimal home-launch-character-section">
         <div className="launch-field">
           <span className="launch-field-label">Character</span>
-          {!charactersLoaded ? (
+          {resolvedCharacterLoadStatus === "loading" ? (
             <div className="launch-character-neutral">
               <span className="character-avatar tiny" aria-hidden="true">W</span>
               <div className="launch-character-copy">
-                <strong>読み込み中</strong>
-                <span>Character を読み込んでるよ...</span>
+                <strong>Loading</strong>
+                <span>Loading characters…</span>
+              </div>
+            </div>
+          ) : resolvedCharacterLoadStatus === "error" ? (
+            <div className="launch-character-neutral" role="status">
+              <span className="character-avatar tiny" aria-hidden="true">W</span>
+              <div className="launch-character-copy">
+                <strong>Unavailable</strong>
+                <span>Could not load characters.</span>
               </div>
             </div>
           ) : characterOptions.length === 0 ? (
@@ -208,8 +219,8 @@ export function HomeLaunchDialog({
               >
                 <span className="character-avatar tiny" aria-hidden="true">R</span>
                 <span className="launch-character-copy">
-                  <strong>ランダム</strong>
-                  <span>最近使っていないCharacterを優先</span>
+                  <strong>Random</strong>
+                  <span>Prefer characters used less recently</span>
                 </span>
               </button>
               {characterOptions.map((character) => (

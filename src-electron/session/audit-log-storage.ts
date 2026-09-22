@@ -584,7 +584,7 @@ export class AuditLogStorage {
     ) as AuditLogRow | undefined;
 
     if (!row) {
-      throw new Error(`audit log ${id} の更新に失敗したよ。`);
+      throw new Error(`Audit log ${id} could not be updated.`);
     }
 
     return rowToAuditLogEntry(row);

@@ -1,2 +1,2 @@
-export const LAUNCH_EMPTY_PROVIDER_MESSAGE = "有効な Coding Provider がないよ。";
-export const LAUNCH_NO_PROVIDER_SELECTED_MESSAGE = "有効な Coding Provider を選んでね。";
+export const LAUNCH_EMPTY_PROVIDER_MESSAGE = "No enabled coding providers.";
+export const LAUNCH_NO_PROVIDER_SELECTED_MESSAGE = "Choose an enabled coding provider.";

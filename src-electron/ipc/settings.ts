@@ -69,7 +69,7 @@ export function registerSettingsHandlers(
     WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
     (_event, update) => {
       if (!isChatLayoutPreferenceUpdate(update)) {
-        throw new TypeError("chat layout preference の更新内容が不正です。");
+        throw new TypeError("Invalid chat layout preference update.");
       }
       return deps.updateChatLayoutPreference(update);
     },

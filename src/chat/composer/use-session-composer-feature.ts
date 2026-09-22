@@ -94,6 +94,7 @@ export type SessionComposerFeatureBridge = {
     forceBlockedFeedback: boolean;
     pendingRunIndicatorAnnouncement?: string;
     pendingRunIndicatorText?: string;
+    pendingRunIndicatorTextVisible?: boolean;
     isMessageListFollowing: boolean;
     isPromptTemplateWorkspaceOpen: boolean;
     chatNotice?: string;
@@ -261,9 +262,9 @@ export function useSessionComposerFeature(input: {
       {
         key: "default",
         value: null,
-        primaryLabel: "Default Agent",
-        secondaryLabel: "Copilot の標準 agent を使う",
-        title: "Custom Agent を使わない",
+        primaryLabel: "Default agent",
+        secondaryLabel: "Use the default Copilot agent",
+        title: "Do not use a custom agent",
         isSelected: !bridge.session.customAgentName,
       },
       ...bridge.resources.availableCustomAgents.map((agent) => {
@@ -508,13 +509,14 @@ export function useSessionComposerFeature(input: {
       isRunning: bridge.runtime.isRunning,
       pendingRunIndicatorAnnouncement: bridge.runtime.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: bridge.runtime.pendingRunIndicatorText,
+      pendingRunIndicatorTextVisible: bridge.runtime.pendingRunIndicatorTextVisible,
       composerBlocked: !!bridge.runtime.blockedReason,
       isAgentPickerOpen,
       isSkillPickerOpen,
       isPromptTemplateWorkspaceOpen: bridge.runtime.isPromptTemplateWorkspaceOpen,
       isAdditionalDirectoryListOpen,
       selectedCustomAgentLabel: canSelectCustomAgent ? selectedCustomAgentDisplay.label : "Agent",
-      selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択",
+      selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Select a Copilot custom agent",
       isMessageListFollowing: bridge.runtime.isMessageListFollowing,
       isCustomAgentListLoading: bridge.resources.isCustomAgentListLoading,
       customAgentItems,

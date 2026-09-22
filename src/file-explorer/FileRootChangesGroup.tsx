@@ -97,7 +97,7 @@ export function FileRootChangesGroup({
   loadingKey,
   onToggleDirectory,
   onOpenEntry,
-  scopes = [["working-tree", "Working Tree"], ["staged", "Staged"]],
+  scopes = [["working-tree", "Working tree"], ["staged", "Staged"]],
   selectedEntryKey = null,
 }: FileRootChangesGroupProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -220,7 +220,7 @@ export function FileRootChangesGroup({
       style={groupStyle}
       role="listitem"
       aria-labelledby={headingId}
-      aria-busy={rootChange.status === "pending"}
+      aria-busy={rootChange.status === "pending" || loadingKey.startsWith(`${rootChange.root.id}:`)}
       data-root-id={rootChange.root.id}
     >
       <div className="workspace-changes-root-header" title={rootChange.root.displayPath}>
@@ -281,7 +281,7 @@ export function FileRootChangesGroup({
                     title={row.relativePath}
                     onClick={() => onToggleDirectory(row.rootId, row.scope, row.relativePath)}
                   >
-                    <span className={`workspace-change-directory-icon${row.expanded ? " is-expanded" : ""}`}>▸</span>
+                    <span className={`workspace-change-directory-icon${row.expanded ? " is-expanded" : ""}`} aria-hidden="true">▸</span>
                     <span className="workspace-change-directory-name">{row.name}</span>
                   </button>
                 ) : (() => {
@@ -305,7 +305,15 @@ export function FileRootChangesGroup({
                     >
                       <span className={`workspace-change-kind ${kind}`}>{changeKindLabel(kind)}</span>
                       <span className="workspace-change-path">{changedFileDisplayName(row.entry)}</span>
-                      {loadingKey === key ? <span className="workspace-change-loading">…</span> : null}
+                      {loadingKey === key ? (
+                        <span
+                          className="workspace-change-loading"
+                          role="status"
+                          aria-label={kind === "untracked" ? "Opening file" : "Opening diff"}
+                        >
+                          <span className="workspace-changes-root-spinner" aria-hidden="true" />
+                        </span>
+                      ) : null}
                     </button>
                   );
                 })()}

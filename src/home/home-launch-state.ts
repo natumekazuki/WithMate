@@ -31,6 +31,7 @@ type LaunchCharacterSnapshot = {
 
 export type LaunchCharacterSelectionMode = "specific" | "random";
 export type HomeLaunchWorkspaceValidationState = "idle" | "debouncing" | "pending" | "valid" | "invalid";
+export type HomeCharacterLoadStatus = "loading" | "loaded" | "error";
 
 export type HomeLaunchDraft = {
   open: boolean;
@@ -198,10 +199,10 @@ export function resolveLaunchValidationMessage({
   selectedProviderId: string | null;
 }): string {
   if (!draft.title.trim()) {
-    return "タイトルを入力してね。";
+    return "Enter a session title.";
   }
   if (!draft.workspace) {
-    return "workspace を選んでね。";
+    return "Choose a workspace.";
   }
   if (!selectedProviderId) {
     return LAUNCH_NO_PROVIDER_SELECTED_MESSAGE;

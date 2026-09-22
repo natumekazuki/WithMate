@@ -137,11 +137,11 @@ export function resolveComposerSendabilityState({
 
 export function getComposerSendButtonTitle(state: ComposerSendabilityState): string | undefined {
   if (state.isRunning) {
-    return "実行をキャンセル";
+    return "Cancel run";
   }
 
   if (!state.isSendDisabled) {
-    return "メッセージを送信";
+    return "Send message";
   }
 
   return state.primaryFeedback

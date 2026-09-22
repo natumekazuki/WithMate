@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import type { HomeRecentSessionsPanelProps } from "./HomeRecentSessionsPanel.js";
 import type { HomeSessionState } from "./home-session-projection.js";
 import type { HomeSessionSummary } from "../../src-shared/session/session-state.js";
@@ -22,6 +23,7 @@ export type HomeRecentSessionsPanelPropsInput = {
   loadingMore?: boolean;
   onLoadMore?: () => void;
   pendingSessionPinIds?: readonly string[];
+  sessionSummaryLoadStatus?: SessionSummariesLoadStatus;
 };
 
 export function buildHomeRecentSessionsPanelProps({
@@ -35,6 +37,7 @@ export function buildHomeRecentSessionsPanelProps({
   loadingMore,
   onLoadMore,
   pendingSessionPinIds,
+  sessionSummaryLoadStatus,
 }: HomeRecentSessionsPanelPropsInput): HomeRecentSessionsPanelProps {
   return {
     filteredSessionEntries,
@@ -50,5 +53,6 @@ export function buildHomeRecentSessionsPanelProps({
     loadingMore,
     onLoadMore,
     pendingSessionPinIds,
+    sessionSummaryLoadStatus,
   };
 }

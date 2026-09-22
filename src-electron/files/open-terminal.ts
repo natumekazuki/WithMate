@@ -75,7 +75,7 @@ export function buildTerminalLaunchCommands(
 async function ensureDirectoryExists(workingDirectory: string): Promise<void> {
   const directoryStat = await stat(workingDirectory);
   if (!directoryStat.isDirectory()) {
-    throw new Error("workspacePath がディレクトリではないため terminal を起動できないよ。");
+    throw new Error("The workspace path is not a directory, so the terminal could not be opened.");
   }
 }
 
@@ -102,14 +102,14 @@ export async function launchTerminalAtPath(
 ): Promise<void> {
   const normalizedPath = workingDirectory.trim();
   if (!normalizedPath) {
-    throw new Error("workspacePath が空のため terminal を起動できないよ。");
+    throw new Error("The workspace path is empty, so the terminal could not be opened.");
   }
 
   await ensureDirectoryExists(normalizedPath);
 
   const launchCommands = buildTerminalLaunchCommands(normalizedPath, platform);
   if (launchCommands.length === 0) {
-    throw new Error("この OS では terminal 起動をまだサポートしていないよ。");
+    throw new Error("Opening a terminal is not supported on this OS.");
   }
 
   let lastError: unknown = null;
@@ -128,7 +128,7 @@ export async function launchTerminalAtPath(
 
   throw new Error(
     lastError instanceof Error
-      ? `terminal の起動に失敗したよ: ${lastError.message}`
-      : "terminal の起動に失敗したよ。",
+      ? `The terminal could not be opened: ${lastError.message}`
+      : "The terminal could not be opened.",
   );
 }

@@ -155,7 +155,7 @@ export function useFileRootPreviewController({
   }, [activeRunSessionId, api, prepareCentralSurfaceOpen]);
 
   const handleOpenSelectedFileDiff = useCallback(async (scope: FileRootGitDiffScope): Promise<string | null> => {
-    if (!api || !activeRunSessionId || !selectedFilePreview) return "Git Diff is not available for this file.";
+    if (!api || !activeRunSessionId || !selectedFilePreview) return "Git diff is not available for this file.";
     if (!prepareCentralSurfaceOpen()) return null;
     const revision = fileRootDiffRequestRevisionRef.current + 1;
     fileRootDiffRequestRevisionRef.current = revision;

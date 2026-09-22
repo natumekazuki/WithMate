@@ -163,6 +163,18 @@ describe("home-launch-actions", () => {
     assert.equal(harness.closeCount, 0);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "startHomeLaunchは入力validation error時にSession作成を行わず、利用者向けfeedbackを返す"
+  // oracle = { type = "contract", ref = "Issue #731 Home/New session validation feedback" }
+  // fault = "不正なSession titleでもcreateSessionを実行するか、validation理由をfeedbackへ渡さない"
+  // observable = "feedback callbackのvalidation messageとlaunchStarting callbackの呼び出し有無"
+  // observation_boundary = "public-boundary"
+  // scope = "startHomeLaunch validation guard"
+  // lifecycle = "permanent"
+  // impact = "利用者が修正すべき入力を識別でき、未検証Sessionの作成を防ぐ"
+  // distinction = "validation helperの戻り値だけでなく、launch actionが作成経路へ進まないことをcallbackで確認する"
+  // @end-test-value
   it("validation error を feedback に返す", async () => {
     const harness = createStartHomeLaunchHarness({
       draft: { ...createReadyDraft(), title: "" },
@@ -170,10 +182,22 @@ describe("home-launch-actions", () => {
 
     await startHomeLaunch(harness.input);
 
-    assert.deepEqual(harness.feedback, ["タイトルを入力してね。"]);
+    assert.deepEqual(harness.feedback, ["Enter a session title."]);
     assert.deepEqual(harness.startingStates, []);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "startHomeLaunchの成功経路は選択CharacterでSessionを作成し、summaryを保存してwindowを開き、dialogを閉じる"
+  // oracle = { type = "contract", ref = "Issue #731 Home/New session launch flow" }
+  // fault = "Session作成後にsummary登録・window open・dialog closeのいずれかを省略するか、選択Characterを取り違える"
+  // observable = "createSession入力のcharacterId、Starting session… feedback、starting states、close count、summary/opened session IDs"
+  // observation_boundary = "public-boundary"
+  // scope = "startHomeLaunch successful launch flow"
+  // lifecycle = "permanent"
+  // impact = "新規Sessionを作成した直後にHomeとSession windowの状態を同期する"
+  // distinction = "createSession単体の呼び出しではなく、成功後のUI状態通知とwindow導線まで一連で確認する"
+  // @end-test-value
   it("session を作成して window を開く", async () => {
     const harness = createStartHomeLaunchHarness();
     let capturedCharacterId = "";
@@ -185,7 +209,7 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(capturedCharacterId, "mia");
-    assert.deepEqual(harness.feedback, ["Session を開始してるよ..."]);
+    assert.deepEqual(harness.feedback, ["Starting session…"]);
     assert.deepEqual(harness.startingStates, [true, false]);
     assert.equal(harness.closeCount, 1);
     assert.deepEqual(harness.sessionSummaries, ["session-1"]);
@@ -261,6 +285,18 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character usage履歴がloading中のrandom launchはSession作成を保留し、再試行可能なpending feedbackを返す"
+  // oracle = { type = "contract", ref = "Issue #731 New session random selection data-state distinction" }
+  // fault = "履歴が未取得のままrandom候補を確定してSessionを作成するか、loading理由を表示しない"
+  // observable = "createSession call count、feedback message、launchStarting callback state"
+  // observation_boundary = "public-boundary"
+  // scope = "startHomeLaunch random launch usage loading"
+  // lifecycle = "permanent"
+  // impact = "不完全な履歴による意図しないCharacter選択とSession作成を防ぐ"
+  // distinction = "projectionのloading表示ではなく、開始action自体の副作用抑制とfeedbackを確認する"
+  // @end-test-value
   it("履歴の読み込み中はrandom選択のsessionを開始しない", async () => {
     let createCount = 0;
     const harness = createStartHomeLaunchHarness({
@@ -278,10 +314,22 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(createCount, 0);
-    assert.deepEqual(harness.feedback, ["Session 履歴を読み込んでるよ。完了してからもう一度開始してね。"]);
+    assert.deepEqual(harness.feedback, ["Loading session history. Try again when it finishes."]);
     assert.deepEqual(harness.startingStates, []);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character usage履歴がerrorのrandom launchはSession作成を行わず、利用不能理由をfeedbackへ返す"
+  // oracle = { type = "contract", ref = "Issue #731 New session random selection data-state distinction" }
+  // fault = "履歴取得失敗を空履歴として扱ってrandom Sessionを作成するか、利用不能状態を隠す"
+  // observable = "createSession call count、unavailable feedback、launchStarting callback state"
+  // observation_boundary = "public-boundary"
+  // scope = "startHomeLaunch random launch usage error"
+  // lifecycle = "permanent"
+  // impact = "取得失敗による予測不能なrandom選択を防ぎ、利用者が再試行判断できる"
+  // distinction = "loading時の保留とは別に、error状態を明示feedbackへ投影する契約を確認する"
+  // @end-test-value
   it("履歴の読み込み失敗後はrandom選択のsessionを開始しない", async () => {
     let createCount = 0;
     const harness = createStartHomeLaunchHarness({
@@ -299,10 +347,22 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(createCount, 0);
-    assert.deepEqual(harness.feedback, ["Session 履歴を読み込めていないため、ランダム選択を開始できないよ。"]);
+    assert.deepEqual(harness.feedback, ["Session history is unavailable, so random selection cannot start."]);
     assert.deepEqual(harness.startingStates, []);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "open Session Window一覧がloading中のrandom launchはSession作成を保留し、確認中feedbackを返す"
+  // oracle = { type = "contract", ref = "Issue #731 New session random selection open-window state" }
+  // fault = "open window情報が未取得のまま候補を確定してSessionを作成するか、確認中状態を利用者へ伝えない"
+  // observable = "createSession call count、Checking open session windows feedback、launchStarting callback state"
+  // observation_boundary = "public-boundary"
+  // scope = "startHomeLaunch random launch open-window loading"
+  // lifecycle = "permanent"
+  // impact = "既存open windowとの重複を避け、不完全な候補情報でのSession作成を防ぐ"
+  // distinction = "session usage履歴ではなくopen window一覧のloading guardを独立して確認する"
+  // @end-test-value
   it("open Session Window 一覧の読み込み中はrandom選択のsessionを開始しない", async () => {
     let createCount = 0;
     const harness = createStartHomeLaunchHarness({
@@ -321,7 +381,7 @@ describe("home-launch-actions", () => {
 
     assert.equal(createCount, 0);
     assert.deepEqual(harness.feedback, [
-      "開いている Session Window を確認してるよ。完了してからもう一度開始してね。",
+      "Checking open session windows. Try again when it finishes.",
     ]);
     assert.deepEqual(harness.startingStates, []);
   });
@@ -358,6 +418,18 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character未作成かつMate未作成でもrandom launchはneutral CharacterでSession作成を完了する"
+  // oracle = { type = "contract", ref = "Issue #731 New session neutral Character fallback" }
+  // fault = "候補catalogが空の初回状態でSession作成を停止するか、neutral Characterを選択せず不正なIDを渡す"
+  // observable = "createSession入力のneutral characterId、Starting session… feedback、opened session ID"
+  // observation_boundary = "public-boundary"
+  // scope = "startHomeLaunch neutral Character fallback"
+  // lifecycle = "permanent"
+  // impact = "初回利用者がCharacterを作成する前でも新規Session導線を利用できる"
+  // distinction = "通常のspecific/random候補選択ではなく、空catalogとMate未作成のfallback境界を確認する"
+  // @end-test-value
   it("Mate 未作成でも neutral character で session を作成する", async () => {
     let capturedCharacterId = "";
     const harness = createStartHomeLaunchHarness({
@@ -377,7 +449,7 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(capturedCharacterId, "withmate-neutral-character");
-    assert.deepEqual(harness.feedback, ["Session を開始してるよ..."]);
+    assert.deepEqual(harness.feedback, ["Starting session…"]);
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 

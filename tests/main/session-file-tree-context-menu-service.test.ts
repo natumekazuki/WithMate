@@ -60,11 +60,13 @@ function createMenuHarness(options?: {
   };
 }
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "native Files menuは「パスをコピー」と「パスを挿入」を全対象へ出し、Windows regular fileだけseparator後にfile-object copyを追加する"
 // oracle = { type = "contract", ref = "user-requested File tree menu labels and accepted behavior invariant 2 and 3" }
-// failure_mode = "path copyとfile-object copyが混同される、directoryやrootからpath操作が欠落する、またはinsert不可時にも操作可能になる"
+// fault = "path copyとfile-object copyが混同される、directoryやrootからpath操作が欠落する、またはinsert不可時にも操作可能になる"
+// observable = "node kindごとのmenu template labels、separator、enabled state、action result"
+// observation_boundary = "public-boundary"
 // scope = "SessionFileTreeContextMenuService menu template"
 // lifecycle = "permanent"
 // distinction = "node kindとplatformによるmenu sibling構成およびinsert capabilityを観測する"
@@ -80,10 +82,10 @@ test("Files path context menuはpath操作とWindows file copyをnode kind別に
   const fileResult = fileHarness.service.showContextMenu({} as never, REQUEST);
   await Promise.resolve();
   assert.deepEqual(fileHarness.getTemplate().map(({ label, type, enabled }) => ({ label, type, enabled })), [
-    { label: "パスをコピー", type: undefined, enabled: undefined },
-    { label: "パスを挿入", type: undefined, enabled: true },
+    { label: "Copy path", type: undefined, enabled: undefined },
+    { label: "Insert path", type: undefined, enabled: true },
     { label: undefined, type: "separator", enabled: undefined },
-    { label: "ファイルをコピー", type: undefined, enabled: undefined },
+    { label: "Copy file", type: undefined, enabled: undefined },
   ]);
   fileHarness.getTemplate()[3]?.click?.();
   fileHarness.closePopup();
@@ -112,8 +114,8 @@ test("Files path context menuはpath操作とWindows file copyをnode kind別に
     });
     await Promise.resolve();
     assert.deepEqual(harness.getTemplate().map(({ label, enabled }) => ({ label, enabled })), [
-      { label: "パスをコピー", enabled: undefined },
-      { label: "パスを挿入", enabled: false },
+      { label: "Copy path", enabled: undefined },
+      { label: "Insert path", enabled: false },
     ]);
     harness.closePopup();
     assert.deepEqual(await result, { status: "dismissed" });

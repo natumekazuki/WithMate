@@ -83,10 +83,10 @@ function CodeBlockCopyButton({
       );
       if (!writeText) throw new Error("Clipboard API is unavailable.");
       await writeText(code);
-      onCopyResult({ message: "コードをコピーしました。", tone: "success" });
+      onCopyResult({ message: "Code copied.", tone: "success" });
     } catch {
       onCopyResult({
-        message: "コードのコピーに失敗しました。",
+        message: "Could not copy code.",
         tone: "error",
       });
     } finally {
@@ -98,8 +98,9 @@ function CodeBlockCopyButton({
     <button
       className="message-code-copy-button"
       type="button"
-      aria-label="コードをコピー"
-      title="コードをコピー"
+      aria-label="Copy code"
+      title="Copy code"
+      aria-busy={isCopying}
       disabled={isCopying}
       onClick={() => void handleCopy()}
     >

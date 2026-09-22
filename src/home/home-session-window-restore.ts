@@ -1,9 +1,9 @@
 import type { SessionWindowRestoreResult } from "../../src-shared/window/session-window-restore.js";
 
 const FAILURE_LABELS = {
-  missing: "削除済み",
-  unreadable: "読込不能",
-  "open-failed": "Windowを開けませんでした",
+  missing: "Deleted",
+  unreadable: "Unavailable",
+  "open-failed": "Could not open window",
 } as const;
 
 export function selectPendingSessionWindowRestoreIds(
@@ -19,7 +19,7 @@ export function buildSessionWindowRestoreFeedback(result: SessionWindowRestoreRe
     return "";
   }
   const failedTargets = result.failures
-    .map(({ sessionId, reason }) => `${sessionId}（${FAILURE_LABELS[reason]}）`)
-    .join("、");
-  return `復元できなかったSession: ${failedTargets}`;
+    .map(({ sessionId, reason }) => `${sessionId} (${FAILURE_LABELS[reason]})`)
+    .join(", ");
+  return `Could not restore sessions: ${failedTargets}`;
 }

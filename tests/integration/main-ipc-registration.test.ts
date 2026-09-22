@@ -364,11 +364,11 @@ test("Session MonitorのAuxiliary navigationは対象と親を検証してWindow
 
   await assert.rejects(
     () => handlers.get(WITHMATE_OPEN_SESSION_CHANNEL)?.({}, "session-1", "missing") as Promise<unknown>,
-    /対象のAuxiliary Sessionが見つからないよ。/,
+    /The target Auxiliary Session could not be found/,
   );
   await assert.rejects(
     () => handlers.get(WITHMATE_OPEN_SESSION_CHANNEL)?.({}, "session-1", "aux-other") as Promise<unknown>,
-    /Auxiliary Sessionの親が一致しないよ。/,
+    /The Auxiliary Session parent does not match/,
   );
   assert.equal(calls.length, 1);
 });
@@ -599,6 +599,18 @@ test("prompt template IPC は CRUD payload を専用 dependency へ渡す", asyn
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "pick-image-file IPCはCharacter icon purposeをMain側へ伝播し、不正なpurposeを拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/window.ts#pick-image-file" }
+// fault = "不正なimage picker purposeを受け入れるか、valid purposeをdialog serviceへ渡さない"
+// observable = "pickImageFile dependency input and invalid-purpose rejection"
+// observation_boundary = "public-boundary"
+// scope = "main-ipc-image-picker-purpose"
+// lifecycle = "permanent"
+// impact = "Character icon選択の対象を誤るか、不正なIPC入力がnative dialogへ到達する"
+// distinction = "valid purposeの伝播とinvalid purposeの拒否を同じIPC handlerで確認する"
+// @end-test-value
 test("pick-image-file IPC は Character icon purpose を伝播し、不正な purpose を拒否する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const calls: Array<{ initialPath: string | null; purpose: string }> = [];
@@ -628,7 +640,7 @@ test("pick-image-file IPC は Character icon purpose を伝播し、不正な pu
   });
   await assert.rejects(
     async () => handler({}, null, "unsupported-purpose"),
-    /画像選択の用途が不正です/,
+    /Invalid image picker purpose/,
   );
 });
 
@@ -683,7 +695,7 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
         target: "header",
         value: "shown",
       }) as Promise<unknown>,
-    /更新内容が不正/,
+    /Invalid chat layout preference update/,
   );
   await assert.rejects(
     () =>
@@ -692,7 +704,7 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
         value: "expanded",
         sidePane: "context",
       }) as Promise<unknown>,
-    /更新内容が不正/,
+    /Invalid chat layout preference update/,
   );
   assert.deepEqual(updates, [
     { target: "sidePane", value: "files" },

@@ -41,6 +41,7 @@ export type TextChatWindowProjectionInput = {
   selectedReasoningEffort: string;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
+  pendingRunIndicatorTextVisible?: boolean;
   messageListRef: RefObject<HTMLDivElement | null>;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   onDraftChange: (value: string) => void;
@@ -83,6 +84,7 @@ export function buildTextChatWindowProps({
   selectedReasoningEffort,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
+  pendingRunIndicatorTextVisible,
   messageListRef,
   composerTextareaRef,
   onDraftChange,
@@ -99,7 +101,7 @@ export function buildTextChatWindowProps({
   isActionDockExpanded = true,
   onToggleActionDock,
   rightPaneHeaderTitle = pageTitle,
-  rightPaneAriaLabel = "補助情報",
+  rightPaneAriaLabel = "Additional information",
   rightPaneClassName,
   composerCapabilityProps,
 }: TextChatWindowProjectionInput): ChatWindowProps {
@@ -134,6 +136,7 @@ export function buildTextChatWindowProps({
       isRunning,
       pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText,
+      pendingRunIndicatorTextVisible,
       feedback,
       sendButtonTitleWhenEnabled,
       modelOptions,
@@ -150,6 +153,7 @@ export function buildTextChatWindowProps({
     compactActionDockProps: createStaticTextChatCompactActionDockProps({
       pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText,
+      pendingRunIndicatorTextVisible,
       onExpand: onToggleActionDock,
     }),
     headerSplitter: (

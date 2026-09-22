@@ -21,7 +21,7 @@ export class WindowErrorBoundary extends Component<WindowErrorBoundaryProps, Win
 
   static getDerivedStateFromError(error: Error): Pick<WindowErrorBoundaryState, "errorMessage"> {
     return {
-      errorMessage: error.message || "描画に失敗したよ。",
+      errorMessage: error.message || "Could not render this window.",
     };
   }
 
@@ -72,15 +72,15 @@ export class WindowErrorBoundary extends Component<WindowErrorBoundaryProps, Win
       return (
         <div className={`page-shell ${this.props.pageClassName} window-error-page`.trim()}>
           <section className="panel empty-session-card rise-1 window-error-card" role="alert">
-            <span className="window-error-badge">描画エラー</span>
-            <h2>{this.props.windowLabel} を表示できませんでした</h2>
+            <span className="window-error-badge">Display error</span>
+            <h2>Could not display {this.props.windowLabel}</h2>
             <p>{this.state.errorMessage}</p>
             <div className="window-error-actions">
               <button type="button" onClick={this.handleRetry}>
-                再試行
+                Retry
               </button>
               <button className="drawer-toggle secondary" type="button" onClick={this.handleReload}>
-                再読み込み
+                Reload
               </button>
             </div>
           </section>

@@ -40,7 +40,7 @@ export function SessionDiffModal({
           <h2>{selectedDiff.file.path}</h2>
           <div className="diff-titlebar-actions">
             <button className="diff-close diff-popout" type="button" onClick={() => onOpenDiffWindow(selectedDiff)}>
-              Open In Window
+              Open in window
             </button>
             <button className="diff-close" type="button" onClick={onClose}>
               Close

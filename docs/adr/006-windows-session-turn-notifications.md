@@ -2,6 +2,7 @@
 
 - 状態: Accepted
 - 日付: 2026-07-29
+- 適用補足: 通知契機、previewの秘匿・上限、activation、失敗分離の判断は引き続き有効。以下の日本語通知文は決定当時の例であり、アプリ所有の通知文言は [Desktop UIの表示言語規約](../design/desktop-ui.md#表示言語操作状態) に従う英語表記へ置き換えた。Session名と返答previewの原文は維持する。
 
 ## Context
 

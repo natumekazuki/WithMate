@@ -171,6 +171,18 @@ describe("MemoryRuntimeWorkspaceService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "releaseLockはactive workspace stateを解除し、解放後のheartbeat更新を拒否する"
+  // oracle = { type = "contract", ref = "src-electron/memory/memory-runtime-workspace.ts#releaseLock" }
+  // fault = "lock fileだけを削除してactive stateを残す、または解放後のheartbeatを成功扱いする"
+  // observable = "touchHeartbeatのreject errorとworkspace state/lockの不在"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-runtime-workspace-release"
+  // lifecycle = "permanent"
+  // impact = "終了済みmemory runtimeへheartbeatが継続し、次回runの状態を汚染する"
+  // distinction = "releaseLockの直接成功だけでなく、解放後の公開heartbeat拒否を確認する"
+  // @end-test-value
   it("releaseLock は active workspace state も解除する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-"));
 
@@ -182,7 +194,7 @@ describe("MemoryRuntimeWorkspaceService", () => {
 
       assert.equal(await exists(prepared.lockPath), false);
       assert.equal(service.getWorkspacePath(), path.join(userDataPath, "memory-runtime", "current"));
-      await assert.rejects(() => service.touchHeartbeat(), /アクティブな memory runtime workspace/);
+      await assert.rejects(() => service.touchHeartbeat(), /No active memory runtime workspace is available\./);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

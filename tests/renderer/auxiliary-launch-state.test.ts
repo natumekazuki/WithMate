@@ -499,8 +499,20 @@ describe("auxiliary-launch-state", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary launchのprovider未設定・未選択feedbackはUI契約の固定英語文言を使う"
+  // oracle = { type = "contract", ref = "src/chat/auxiliary-launch-state.ts" }
+  // fault = "provider launch errorの文言を日本語または別のfallbackへ戻し、dialogの状態説明を不安定にする"
+  // observable = "no provider/no selection feedback constants"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-launch-feedback-copy"
+  // lifecycle = "permanent"
+  // impact = "Auxiliary起動の停止理由が利用者へ一貫して伝わらなくなる"
+  // distinction = "provider選択処理そのものではなく、表示文言の固定契約を直接確認する"
+  // @end-test-value
   it("feedback 文言は固定文言を使う", () => {
-    assert.equal(AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK, "有効な Coding Provider がないよ。");
-    assert.equal(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK, "有効な Coding Provider を選んでね。");
+    assert.equal(AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK, "No enabled coding providers.");
+    assert.equal(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK, "Choose an enabled coding provider.");
   });
 });

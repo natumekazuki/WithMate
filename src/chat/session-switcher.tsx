@@ -122,7 +122,7 @@ export function SessionSwitcher({
     }
   };
 
-  const currentLabel = selectedOption?.label ?? emptyLabel ?? "選択なし";
+  const currentLabel = selectedOption?.label ?? emptyLabel ?? "None selected";
   const currentButton = (
     <button
       ref={triggerRef}
@@ -159,7 +159,7 @@ export function SessionSwitcher({
         className="session-switcher-button"
         onClick={() => onMove(-1)}
         disabled={!canMove}
-        aria-label="前へ"
+        aria-label="Previous"
       >‹</button>
       {currentAction ? (
         <div className="session-switcher-current-group">
@@ -172,10 +172,10 @@ export function SessionSwitcher({
         className="session-switcher-button"
         onClick={() => onMove(1)}
         disabled={!canMove}
-        aria-label="次へ"
+        aria-label="Next"
       >›</button>
       {canOpen && isOpen ? (
-        <div ref={listRef} id={listId} className="session-switcher-popover" role="listbox" aria-label={`${ariaLabel}一覧`} onKeyDown={handleListKeyDown}>
+        <div ref={listRef} id={listId} className="session-switcher-popover" role="listbox" aria-label={`${ariaLabel} list`} onKeyDown={handleListKeyDown}>
           {searchable ? (
             <input
               autoFocus
@@ -193,7 +193,7 @@ export function SessionSwitcher({
                   focusOption(listRef.current, 0);
                 }
               }}
-              aria-label="一覧を検索"
+              aria-label="Search list"
             />
           ) : null}
           <div className="session-switcher-options">
@@ -225,7 +225,7 @@ export function SessionSwitcher({
                   {option.isProcessing ? <span className="visually-hidden">Processing</span> : null}
                 </span>
               </button>
-            )) : <span className="session-switcher-empty">一致する候補はありません。</span>}
+            )) : <span className="session-switcher-empty">No matching options.</span>}
           </div>
         </div>
       ) : null}

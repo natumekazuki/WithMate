@@ -1,13 +1,13 @@
 export class SessionIdCollisionError extends Error {
   constructor(readonly sessionId: string) {
-    super("同じ ID の Session がすでに存在するよ。");
+    super("A Session with the same ID already exists.");
     this.name = "SessionIdCollisionError";
   }
 }
 
 export class SessionNotFoundError extends Error {
   constructor(readonly sessionId: string) {
-    super("対象セッションが見つからないよ。");
+    super("The session could not be found.");
     this.name = "SessionNotFoundError";
   }
 }
@@ -18,7 +18,7 @@ export class SessionRunningTurnStartConflictError extends Error {
     readonly expectedMessageCount: number,
     readonly actualMessageCount: number,
   ) {
-    super("Session の message sequence が更新されているため、turn を開始できないよ。");
+    super("The Session message sequence changed, so the turn cannot start.");
     this.name = "SessionRunningTurnStartConflictError";
   }
 }

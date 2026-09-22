@@ -93,7 +93,7 @@ export function toCopilotReasoningEffort(reasoningEffort: ModelReasoningEffort):
     return "low";
   }
   if (reasoningEffort === "max" || reasoningEffort === "ultra") {
-    throw new Error(`GitHub Copilot provider は reasoning effort ${reasoningEffort} に対応してないよ。`);
+    throw new Error(`GitHub Copilot does not support reasoning effort ${reasoningEffort}.`);
   }
 
   return reasoningEffort;
@@ -831,19 +831,19 @@ function buildCopilotPermissionSummary(request: CopilotPermissionRequestLike, wo
 function buildCopilotApprovalTitle(kind: string): string {
   switch (kind) {
     case "shell":
-      return "Shell command の承認が必要";
+      return "Approval required for shell commands";
     case "write":
-      return "ファイル変更の承認が必要";
+      return "Approval required for file changes";
     case "mcp":
-      return "MCP tool の承認が必要";
+      return "Approval required for MCP tools";
     case "custom-tool":
-      return "Custom tool の承認が必要";
+      return "Approval required for custom tools";
     case "url":
-      return "URL fetch の承認が必要";
+      return "Approval required for URL fetches";
     case "read":
-      return "ファイル参照の承認が必要";
+      return "Approval required for file access";
     default:
-      return "操作の承認が必要";
+      return "Approval required for this action";
   }
 }
 
@@ -1603,7 +1603,7 @@ async function respondToCopilotElicitation(
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error("elicitation response の送信に失敗したよ。");
+  throw lastError instanceof Error ? lastError : new Error("Could not send the elicitation response.");
 }
 
 export async function resolveCopilotSessionForSettings(args: {

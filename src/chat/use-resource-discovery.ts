@@ -85,7 +85,7 @@ export function useResourceDiscovery({
       if (active) {
         setAvailableSkills([]);
         setIsSkillListLoading(false);
-        setSkillListError("Skill候補を読み込めませんでした。Settingsまたはworkspaceを確認してください。");
+        setSkillListError("Could not load skills. Check Settings or the workspace.");
       }
     });
     return () => {

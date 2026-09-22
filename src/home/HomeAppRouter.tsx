@@ -43,7 +43,7 @@ export function HomeAppRouter({
   launchDialog,
 }: HomeAppRouterProps) {
   if (!desktopRuntime) {
-    return <HomeStatusScreen homePageClassName={homePageClassName} message="Home は Electron から起動してね。" />;
+    return <HomeStatusScreen homePageClassName={homePageClassName} message="Home is available from the Electron desktop app." />;
   }
 
   if (isSettingsWindowMode) {
@@ -61,7 +61,7 @@ export function HomeAppRouter({
   }
 
   if (isMateStateLoading) {
-    return <HomeStatusScreen homePageClassName={homePageClassName} message="Mate 状態を読み込んでるよ..." />;
+    return <HomeStatusScreen homePageClassName={homePageClassName} message="Loading app state…" />;
   }
 
   if (mateProfileEditorOpen) {

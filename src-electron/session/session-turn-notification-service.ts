@@ -332,13 +332,13 @@ export class SessionTurnNotificationService<TIcon> {
     if (notificationInput.outcome === "failed") {
       return {
         title: "WithMate",
-        body: `「${session.taskTitle.trim() || "Session"}」のターンでエラーが発生しました`,
+        body: `${session.taskTitle.trim() || "Session"}: turn failed.`,
       };
     }
 
     const genericContent = {
       title: "WithMate",
-      body: `「${session.taskTitle.trim() || "Session"}」のターンが完了しました`,
+      body: `${session.taskTitle.trim() || "Session"}: turn completed.`,
     };
     try {
       if (!previewEnabled) {

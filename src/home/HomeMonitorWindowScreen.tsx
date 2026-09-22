@@ -9,7 +9,7 @@ export function HomeMonitorWindowScreen({ homePageClassName, content }: HomeMoni
   return (
     <div className={homePageClassName}>
       <main className="home-layout home-layout-monitor-window">
-        <section className="home-monitor-panel compact" aria-label="Session Monitor">
+        <section className="home-monitor-panel compact" aria-label="Session monitor">
           {content}
         </section>
       </main>

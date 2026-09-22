@@ -166,6 +166,18 @@ describe("session-ui-projection", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "LatestCommand viewはlive commandをaudit fallbackより優先し、実行中status・summary・details・riskを保持する"
+  // oracle = { type = "contract", ref = "src/chat/runtime/session-ui-projection.ts" }
+  // fault = "古いaudit commandを表示するか、live commandのrisk labelとdetailsを失う"
+  // observable = "LatestCommand viewのstatus、summary、details、source label、Delete risk"
+  // observation_boundary = "public-boundary"
+  // scope = "session-latest-command-priority"
+  // lifecycle = "permanent"
+  // impact = "利用者が最新の実行対象と危険操作を誤認する"
+  // distinction = "live/audit双方を入力し、優先順位とderived riskを一つのprojectionで確認する"
+  // @end-test-value
   it("live command があれば latest run より優先して LatestCommand view を作る", () => {
     const latestAuditCommandOperation: AuditLogOperation = {
       type: "command_execution",
@@ -189,10 +201,22 @@ describe("session-ui-projection", () => {
       summary: "rm -rf dist",
       details: "destructive command",
       sourceLabel: "live",
-      riskLabels: ["DELETE"],
+      riskLabels: ["Delete"],
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Copilot quota projectionはpreferred snapshotの残量、request数、reset dateを表示文言へ変換する"
+  // oracle = { type = "contract", ref = "src/chat/runtime/session-ui-projection.ts" }
+  // fault = "quota snapshotを選び損ねるか、残量・reset表示を誤ったlocale/単位で投影する"
+  // observable = "snapshot key、remaining percent/requests label、reset label"
+  // observation_boundary = "public-boundary"
+  // scope = "session-copilot-quota-projection"
+  // lifecycle = "permanent"
+  // impact = "provider quotaの残量とreset時刻を判断できなくなる"
+  // distinction = "preferred snapshotの選択と表示formatをprojection結果から直接確認する"
+  // @end-test-value
   it("Copilot quota projection は preferred snapshot と表示文言を返す", () => {
     const telemetry: ProviderQuotaTelemetry = {
       provider: "copilot",
@@ -215,7 +239,7 @@ describe("session-ui-projection", () => {
     assert.equal(projection.snapshot?.quotaKey, "chat");
     assert.equal(projection.remainingPercentLabel, "40% left");
     assert.equal(projection.remainingRequestsLabel, "80 / 200 requests left");
-    assert.match(projection.resetLabel, /\d{2}\/\d{2} \d{2}:\d{2}/);
+    assert.match(projection.resetLabel, /\d{2}\/\d{2}, \d{2}:\d{2} [AP]M/);
   });
 
   it("Copilot quota projection は AI credits snapshot を優先して credits 表示にする", () => {
@@ -249,6 +273,18 @@ describe("session-ui-projection", () => {
     assert.equal(projection.remainingRequestsLabel, "1250 / 1500 credits left");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "ContextPaneProjectionはLatestCommand tabのstatus tone、source、risk入力を表示用値へ投影する"
+  // oracle = { type = "contract", ref = "src/chat/runtime/session-ui-projection.ts" }
+  // fault = "latest commandのCompleted statusまたはLast run sourceを欠落させ、別tabのtask状態で上書きする"
+  // observable = "badge、tone、latest command tone/status/sourceのprojection値"
+  // observation_boundary = "public-boundary"
+  // scope = "session-context-pane-latest-command"
+  // lifecycle = "permanent"
+  // impact = "context paneで最新commandの状態と出所を誤認する"
+  // distinction = "LatestCommand tabを選択し、background taskがあってもcommand projectionを維持することを確認する"
+  // @end-test-value
   it("ContextPaneProjection は LatestCommand tab の表示情報を作る", () => {
     const projection = buildContextPaneProjection({
       activeContextPaneTab: "latest-command",
@@ -272,10 +308,22 @@ describe("session-ui-projection", () => {
     assert.equal(projection.badgeLabel, "");
     assert.equal(projection.toneClassName, "completed");
     assert.equal(projection.latestCommandToneClassName, "completed");
-    assert.equal(projection.latestCommandStatusLabel, "完了");
-    assert.equal(projection.latestCommandSourceCopy, "LAST RUN");
+    assert.equal(projection.latestCommandStatusLabel, "Completed");
+    assert.equal(projection.latestCommandSourceCopy, "Last run");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "ContextPaneProjectionはTasks tabのtoneとbadgeをbackground taskのfailed状態から作る"
+  // oracle = { type = "contract", ref = "src/chat/runtime/session-ui-projection.ts" }
+  // fault = "background taskのfailed stateをCompletedまたはneutralとして投影する"
+  // observable = "tasks tone、overall tone、badge label"
+  // observation_boundary = "public-boundary"
+  // scope = "session-context-pane-tasks"
+  // lifecycle = "permanent"
+  // impact = "background taskの失敗を見逃し、復旧判断を誤る"
+  // distinction = "Tasks tabとLatestCommand nullを明示してtask由来のtoneを分離して確認する"
+  // @end-test-value
   it("ContextPaneProjection は Tasks tab の tone を background task 状態から作る", () => {
     const projection = buildContextPaneProjection({
       activeContextPaneTab: "tasks",
@@ -293,7 +341,7 @@ describe("session-ui-projection", () => {
 
     assert.equal(projection.toneClassName, "failed");
     assert.equal(projection.tasksToneClassName, "failed");
-    assert.equal(projection.badgeLabel, "失敗");
+    assert.equal(projection.badgeLabel, "Failed");
   });
 
 

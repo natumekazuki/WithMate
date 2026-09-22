@@ -60,28 +60,28 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
     upsertStoredSession: storageCommands.upsertStoredSession,
     updateStoredSessionThreadIfMatches: async (input) => {
       assertOwner("thread update");
-      if (!deps.storage.updateSessionThreadIfMatches) throw new Error("Session thread の条件付き更新storageが利用できないよ。");
+      if (!deps.storage.updateSessionThreadIfMatches) throw new Error("Conditional Session thread update storage is unavailable.");
       const stored = await deps.storage.updateSessionThreadIfMatches(input);
       assertOwner("thread update");
       return stored;
     },
     updateStoredSessionRuntimeMetadataIfMatches: async (input) => {
       assertOwner("runtime metadata update");
-      if (!deps.storage.updateSessionRuntimeMetadataIfMatches) throw new Error("Session runtime metadata の条件付き更新storageが利用できません。");
+      if (!deps.storage.updateSessionRuntimeMetadataIfMatches) throw new Error("Conditional Session runtime metadata update storage is unavailable.");
       const stored = await deps.storage.updateSessionRuntimeMetadataIfMatches(input);
       assertOwner("runtime metadata update");
       return stored;
     },
     appendStoredRunningTurnStart: async (input) => {
       assertOwner("running turn start");
-      if (!deps.storage.appendRunningTurnStart) throw new Error("running turn 開始のincremental storageが利用できないよ。");
+      if (!deps.storage.appendRunningTurnStart) throw new Error("Incremental storage for starting a running turn is unavailable.");
       const result = await deps.storage.appendRunningTurnStart(input);
       assertOwner("running turn start");
       return result;
     },
     clearStoredCharacterAuthoringRuntimeState: async (input) => {
       assertOwner("Character authoring runtime clear");
-      if (!deps.storage.clearCharacterAuthoringRuntimeState) throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+      if (!deps.storage.clearCharacterAuthoringRuntimeState) throw new Error("Storage for clearing Character authoring runtime state is unavailable.");
       const result = await deps.storage.clearCharacterAuthoringRuntimeState(input);
       assertOwner("Character authoring runtime clear");
       return result;
@@ -93,7 +93,7 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
     },
     setStoredSessionPinned: async (sessionId, isPinned) => {
       assertOwner("session pin update");
-      if (typeof deps.pinStorage.setSessionPinned !== "function") throw new Error("このセッション保存形式ではピン止めを利用できないよ。");
+      if (typeof deps.pinStorage.setSessionPinned !== "function") throw new Error("Session pinning is unavailable for this storage format.");
       const result = await deps.pinStorage.setSessionPinned(sessionId, isPinned);
       assertOwner("session pin update");
       return result;

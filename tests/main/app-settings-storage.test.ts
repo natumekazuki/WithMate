@@ -48,7 +48,19 @@ describe("AppSettingsStorage", () => {
     }
   });
 
-  it("保存済みの旧 path error 既定値を読み込み時に現在の既定値へ移行する", async () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "保存済みの旧同梱microcopyは初回起動でexact migrationされ、後続の明示custom設定は再移行されない"
+  // oracle = { type = "contract", ref = "docs/design/session-character-copy.md#storage-policy" }
+  // fault = "起動ごとに保存値を旧既定と誤認して明示customを英語既定へ上書きする"
+  // observable = "migrated/reopened AppSettings.userMicrocopyCatalog"
+  // observation_boundary = "public-boundary"
+  // scope = "app-settings-microcopy-migration"
+  // lifecycle = "permanent"
+  // impact = "保存済みcustom microcopyが失われる"
+  // distinction = "pure helperのslot判定とは別にDB ownerの永続化・one-time markerを確認する"
+  // @end-test-value
+  it("保存済みの旧同梱 microcopy 既定値を一度だけ現在の既定値へ移行する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
 
@@ -58,18 +70,61 @@ describe("AppSettingsStorage", () => {
 
       const legacyDatabase = new DatabaseSync(dbPath);
       const legacyCatalog = createDefaultAppSettings().userMicrocopyCatalog;
+      legacyCatalog["chat.pending.response_waiting"] = ["応答を準備しています", "出力を待機しています"];
+      legacyCatalog["dock.status.working"] = ["処理を実行中"];
+      legacyCatalog["dock.status.responding"] = ["独自の応答待機文"];
       legacyCatalog["composer.error.path_not_found"] = ["指定したパスが見つかりません: {path}"];
-      legacyDatabase
+      const seeded = legacyDatabase
         .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
-        .run(JSON.stringify(legacyCatalog), "user_microcopy_catalog");
+        .run(JSON.stringify(legacyCatalog), "user_microcopy_catalog_json");
+      assert.equal(seeded.changes, 1);
+      legacyDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("user_microcopy_catalog_english_migrated");
       legacyDatabase.close();
 
       const migratedStorage = new AppSettingsStorage(dbPath);
-      assert.deepEqual(
-        migratedStorage.getSettings().userMicrocopyCatalog["composer.error.path_not_found"],
-        ["Path not found: {path}"],
-      );
+      const migratedSettings = migratedStorage.getSettings();
+      assert.deepEqual(migratedSettings.userMicrocopyCatalog["chat.pending.response_waiting"], [
+        "Preparing a response",
+        "Waiting for output",
+      ]);
+      assert.deepEqual(migratedSettings.userMicrocopyCatalog["dock.status.working"], ["Working"]);
+      assert.deepEqual(migratedSettings.userMicrocopyCatalog["dock.status.responding"], ["独自の応答待機文"]);
+      assert.deepEqual(migratedSettings.userMicrocopyCatalog["composer.error.path_not_found"], [
+        "Path not found: {path}",
+      ]);
       migratedStorage.close();
+
+      const persistedStorage = new AppSettingsStorage(dbPath);
+      const persistedCatalog = persistedStorage.getSettings().userMicrocopyCatalog;
+      assert.deepEqual(persistedCatalog["chat.pending.response_waiting"], [
+        "Preparing a response",
+        "Waiting for output",
+      ]);
+      assert.deepEqual(persistedCatalog["dock.status.working"], ["Working"]);
+      assert.deepEqual(persistedCatalog["dock.status.responding"], ["独自の応答待機文"]);
+      assert.deepEqual(persistedCatalog["composer.error.path_not_found"], [
+        "Path not found: {path}",
+      ]);
+      persistedStorage.close();
+
+      const customStorage = new AppSettingsStorage(dbPath);
+      customStorage.updateSettings({
+        ...customStorage.getSettings(),
+        userMicrocopyCatalog: {
+          ...customStorage.getSettings().userMicrocopyCatalog,
+          "composer.error.path_not_found": ["指定したパスが見つかりません: {path}"],
+        },
+      });
+      customStorage.close();
+
+      const reopenedStorage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(
+        reopenedStorage.getSettings().userMicrocopyCatalog["composer.error.path_not_found"],
+        ["指定したパスが見つかりません: {path}"],
+      );
+      reopenedStorage.close();
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }

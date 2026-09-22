@@ -63,7 +63,7 @@ export function isModelReasoningEffort(value: unknown): value is ModelReasoningE
 
 function normalizeNonEmptyString(value: unknown, fieldName: string): string {
   if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`${fieldName} は空にできないよ。`);
+    throw new Error(`${fieldName} cannot be empty.`);
   }
 
   return value.trim();
@@ -71,7 +71,7 @@ function normalizeNonEmptyString(value: unknown, fieldName: string): string {
 
 function normalizeReasoningEffort(value: unknown, fieldName: string): ModelReasoningEffort {
   if (!isModelReasoningEffort(value)) {
-    throw new Error(`${fieldName} が不正だよ。`);
+    throw new Error(`${fieldName} is invalid.`);
   }
 
   return value;
@@ -79,12 +79,12 @@ function normalizeReasoningEffort(value: unknown, fieldName: string): ModelReaso
 
 function normalizeReasoningEfforts(value: unknown, fieldName: string): ModelReasoningEffort[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${fieldName} は 1 件以上必要だよ。`);
+    throw new Error(`${fieldName} must contain at least one item.`);
   }
 
   const efforts = Array.from(new Set(value.map((entry, index) => normalizeReasoningEffort(entry, `${fieldName}[${index}]`))));
   if (efforts.length === 0) {
-    throw new Error(`${fieldName} は 1 件以上必要だよ。`);
+    throw new Error(`${fieldName} must contain at least one item.`);
   }
 
   return efforts;
@@ -92,7 +92,7 @@ function normalizeReasoningEfforts(value: unknown, fieldName: string): ModelReas
 
 function normalizeModelCatalogItem(value: unknown, index: number): ModelCatalogItem {
   if (!value || typeof value !== "object") {
-    throw new Error(`models[${index}] が不正だよ。`);
+    throw new Error(`models[${index}] is invalid.`);
   }
 
   const candidate = value as Partial<ModelCatalogItem>;
@@ -105,19 +105,19 @@ function normalizeModelCatalogItem(value: unknown, index: number): ModelCatalogI
 
 function normalizeProviderCatalog(value: unknown, index: number): ModelCatalogProvider {
   if (!value || typeof value !== "object") {
-    throw new Error(`providers[${index}] が不正だよ。`);
+    throw new Error(`providers[${index}] is invalid.`);
   }
 
   const candidate = value as Partial<ModelCatalogProvider>;
   if (!Array.isArray(candidate.models) || candidate.models.length === 0) {
-    throw new Error(`providers[${index}].models は 1 件以上必要だよ。`);
+    throw new Error(`providers[${index}].models must contain at least one item.`);
   }
 
   const models = candidate.models.map((model, modelIndex) => normalizeModelCatalogItem(model, modelIndex));
   const defaultModelId = normalizeNonEmptyString(candidate.defaultModelId, `providers[${index}].defaultModelId`);
   const defaultModel = models.find((model) => model.id === defaultModelId);
   if (!defaultModel) {
-    throw new Error(`providers[${index}] の defaultModelId が models に存在しないよ。`);
+    throw new Error(`providers[${index}].defaultModelId is not present in models.`);
   }
 
   const defaultReasoningEffort = normalizeReasoningEffort(
@@ -125,13 +125,13 @@ function normalizeProviderCatalog(value: unknown, index: number): ModelCatalogPr
     `providers[${index}].defaultReasoningEffort`,
   );
   if (!defaultModel.reasoningEfforts.includes(defaultReasoningEffort)) {
-    throw new Error(`providers[${index}] の defaultReasoningEffort が defaultModel と噛み合ってないよ。`);
+    throw new Error(`providers[${index}].defaultReasoningEffort does not match defaultModel.`);
   }
 
   const modelIds = new Set<string>();
   for (const model of models) {
     if (modelIds.has(model.id)) {
-      throw new Error(`provider ${candidate.id ?? index} に重複 model id があるよ。`);
+      throw new Error(`Provider ${candidate.id ?? index} contains duplicate model IDs.`);
     }
 
     modelIds.add(model.id);
@@ -161,12 +161,12 @@ export function normalizeProviderId(value: unknown): string {
 
 export function parseModelCatalogDocument(value: unknown): ModelCatalogDocument {
   if (!value || typeof value !== "object") {
-    throw new Error("model catalog JSON の形式が不正だよ。`providers` が必要。" );
+    throw new Error("Model catalog JSON is invalid. `providers` is required." );
   }
 
   const candidate = value as Partial<ModelCatalogDocument>;
   if (!Array.isArray(candidate.providers) || candidate.providers.length === 0) {
-    throw new Error("model catalog JSON には providers が 1 件以上必要だよ。");
+    throw new Error("Model catalog JSON must contain at least one provider.");
   }
 
   return {
@@ -220,7 +220,7 @@ function clampReasoningEffort(
     return requestedReasoningEffort;
   }
 
-  throw new Error("selected depth が model catalog の定義と一致してないよ。");
+  throw new Error("The selected reasoning effort does not match the model catalog definition.");
 }
 
 function fallbackReasoningEffort(
@@ -247,7 +247,7 @@ export function coerceModelSelection(
     providerCatalog.models.find((entry) => entry.id === providerCatalog.defaultModelId) ??
     providerCatalog.models[0];
   if (!resolvedEntry) {
-    throw new Error("selected model が model catalog に存在しないよ。");
+  throw new Error("The selected model is not in the model catalog.");
   }
 
   return {
@@ -270,7 +270,7 @@ export function resolveModelChangeSelection(
     : providerCatalog.defaultModelId;
   const exactEntry = providerCatalog.models.find((entry) => entry.id === normalizedModel);
   if (!exactEntry) {
-    throw new Error("selected model が model catalog に存在しないよ。");
+  throw new Error("The selected model is not in the model catalog.");
   }
 
   return {
@@ -293,7 +293,7 @@ export function resolveModelSelection(
     : providerCatalog.defaultModelId;
   const exactEntry = providerCatalog.models.find((entry) => entry.id === normalizedModel);
   if (!exactEntry) {
-    throw new Error("selected model が model catalog に存在しないよ。");
+  throw new Error("The selected model is not in the model catalog.");
   }
 
   return {

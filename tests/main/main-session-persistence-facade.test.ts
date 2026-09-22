@@ -104,7 +104,7 @@ test("MainSessionPersistenceFacade は running session を詳細 hydrate して 
       { role: "user", text: "hello" },
     ],
   };
-  const expectedInterruptedMessage = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
+  const expectedInterruptedMessage = "The previous run may have been interrupted when the app quit. Send again if needed.";
   const expectedSetSessionsPayload = [
     {
       id: "s-1",
@@ -173,53 +173,59 @@ test("MainSessionPersistenceFacade は running session を詳細 hydrate して 
 // scope = "session-recovery"
 // lifecycle = "permanent"
 // @end-test-value
-test("MainSessionPersistenceFacade は既存 interrupted message を重複追加しない", async () => {
-  const interruptedMessage = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
-  const hydratedSession = {
-    id: "s-1",
-    status: "running",
-    runState: "running",
-    updatedAt: "2026-03-28 09:00:00",
-    taskTitle: "Recovered",
-    messages: [
-      { role: "user", text: "hello" },
-      { role: "assistant", text: interruptedMessage, accent: true },
-    ],
-  };
-  const upserted: string[] = [];
-  const facade = new MainSessionPersistenceFacade({
-    getSessions: () =>
-      [
-        {
-          id: "s-1",
-          status: "running",
-          runState: "running",
-          updatedAt: "2026-03-28 09:00:00",
-          messages: [],
-        },
-      ] as never,
-    setSessions: () => undefined,
-    getSessionPersistenceService: () =>
-      ({
-        upsertSession(session: Session) {
-          upserted.push(`${session.id}:${session.runState}:${session.messages.length}:${session.messages.at(-1)?.text}`);
-          return session as never;
-        },
-      }) as never,
-    getSessionStorage: () =>
-      ({
-        getSession(sessionId: string) {
-          return sessionId === "s-1" ? hydratedSession : null;
-        },
-        listSessionSummaries() {
-          return [] as never;
-        },
-      }) as never,
-  });
+test("MainSessionPersistenceFacade は legacy/new interrupted message を重複追加せず原文を保持する", async () => {
+  const interruptedMessages = [
+    "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。",
+    "The previous run may have been interrupted when the app quit. Send again if needed.",
+  ];
 
-  await facade.recoverInterruptedSessions();
+  for (const interruptedMessage of interruptedMessages) {
+    const hydratedSession = {
+      id: "s-1",
+      status: "running",
+      runState: "running",
+      updatedAt: "2026-03-28 09:00:00",
+      taskTitle: "Recovered",
+      messages: [
+        { role: "user", text: "hello" },
+        { role: "assistant", text: interruptedMessage, accent: true },
+      ],
+    };
+    const upserted: string[] = [];
+    const facade = new MainSessionPersistenceFacade({
+      getSessions: () =>
+        [
+          {
+            id: "s-1",
+            status: "running",
+            runState: "running",
+            updatedAt: "2026-03-28 09:00:00",
+            messages: [],
+          },
+        ] as never,
+      setSessions: () => undefined,
+      getSessionPersistenceService: () =>
+        ({
+          upsertSession(session: Session) {
+            upserted.push(`${session.id}:${session.runState}:${session.messages.length}:${session.messages.at(-1)?.text}`);
+            return session as never;
+          },
+        }) as never,
+      getSessionStorage: () =>
+        ({
+          getSession(sessionId: string) {
+            return sessionId === "s-1" ? hydratedSession : null;
+          },
+          listSessionSummaries() {
+            return [] as never;
+          },
+        }) as never,
+    });
 
-  assert.deepEqual(upserted, [`s-1:interrupted:2:${interruptedMessage}`]);
+    await facade.recoverInterruptedSessions();
+
+    assert.deepEqual(upserted, [`s-1:interrupted:2:${interruptedMessage}`]);
+  }
 });
 
 // @test-value v2
