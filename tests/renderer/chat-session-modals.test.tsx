@@ -41,20 +41,22 @@ test("ChatSessionModals は共有 modal と呼び出し側の追加表示を同�
     <ChatSessionModals
       selectedDiff={null}
       selectedDiffThemeStyle={{}}
-      auditLogsOpen={true}
-      displayedSessionAuditLogs={[createAuditLogSummary()]}
-      auditLogDetails={{}}
-      auditLogOperationDetails={{}}
-      auditLogsHasMore={false}
-      auditLogsLoading={false}
-      auditLogsTotal={1}
-      auditLogsErrorMessage={null}
+      auditLogProps={{
+        open: true,
+        entries: [createAuditLogSummary()],
+        details: {},
+        operationDetails: {},
+        hasMore: false,
+        loadingMore: false,
+        total: 1,
+        errorMessage: null,
+        onLoadMore: () => {},
+        onLoadDetail: () => {},
+        onLoadOperationDetail: () => {},
+        onClose: () => {},
+      }}
       onCloseDiff={() => {}}
       onOpenDiffWindow={() => {}}
-      onLoadMoreAuditLogs={() => {}}
-      onLoadAuditLogDetail={() => {}}
-      onLoadAuditLogOperationDetail={() => {}}
-      onCloseAuditLog={() => {}}
     >
       <div className="session-toast success">merged</div>
     </ChatSessionModals>,

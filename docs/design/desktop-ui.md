@@ -39,6 +39,9 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - chat layout の実装は 1 系統だけとし、`chat` domain を正本にする
 - Agent は chat layout に乗せ、機能側には state / service / adapter だけを置く
 - `chat/conversation/session-message-column.tsx` は会話本文、artifact、検索、仮想スクロールと pending row の配置を担当する。pending row 内の承認・入力要求は `chat/runtime/live-request-surface.tsx` が所有し、フォーム状態、validation、応答 payload、送信中の操作制御を conversation 列へ戻さない
+- File Explorer と中央 file / Git preview の接続は `file-explorer/use-session-files-feature.tsx` が所有する。タブ、再読込、preview の選択と表示分岐を機能内へ閉じ、Session Window には表示面、開閉状態、composer への挿入接続だけを公開する
+- Glossary の検索・選択状態と pane props は `glossary/use-session-glossary.ts`、Audit Log の取得状態と modal props は `chat/runtime/session-audit-log-state.ts` がそれぞれ組み立てる。Window 側で個別フィールドへ展開して再構築しない
+- Session Window は機能間の接続を担当し、Composer の入力・picker・表示 props、Context Pane の選択・表示投影、Shell の dock 操作・resize props は各機能 owner が組み立てる。`chat/session-chat-window-composition.tsx` は owner が返す表示面を共通 ChatWindow へ接続し、全機能の詳細状態を受け取る projection は持たない
 - `Session` という名前の UI 実装に provider 固有処理を詰め込まない。必要な差分は capability / adapter として注入する
 - Session context pane の `Messages` tab は session window が明示的に capability を有効化した場合だけ表示し、既存の `LatestCommand → Messages → Glossary → Reasoning → Tasks` 順を保つ
 - right pane に表示する情報がない mode では、説明文や誘導文で埋めず、空の pane shell として扱う

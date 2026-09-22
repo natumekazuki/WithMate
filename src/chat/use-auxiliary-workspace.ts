@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import {
   projectAuxiliarySessionSummary,
   type AuxiliarySession,
   type AuxiliarySessionSummary,
 } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { ConcurrentChatWindowProps } from "./chat-window.js";
+import type { ConversationColumnSession, ConversationMessageColumnApi } from "./conversation-message-column.js";
+import type { SessionMessageColumnProps } from "./conversation/session-message-column.js";
+import type { MessageArtifact } from "../../src-shared/session/session-state.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
 
 export type AuxiliaryWorkspaceApi = {
   listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
@@ -43,6 +48,25 @@ export type AuxiliaryWorkspace = {
   refreshSummaries(): Promise<void>;
   touchRecency(id: string, updatedAt: string): void;
   getBinding(id: string | null): AuxiliarySessionBinding;
+  buildConcurrentChats(input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps;
+};
+
+export type AuxiliaryConcurrentChatSurfaceInput = {
+  mainSession: ConversationColumnSession | null;
+  auxiliarySession: ConversationColumnSession | null;
+  api?: ConversationMessageColumnApi;
+  mainLiveRun?: LiveSessionRunState | null;
+  auxiliaryLiveRun?: LiveSessionRunState | null;
+  messageColumn: SessionMessageColumnProps;
+  mainOnToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
+  mainOnLoadArtifactDetail?: (index: number) => Promise<MessageArtifact | null>;
+  mainOnOpenPath?: (target: string) => void;
+  auxiliaryOnToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
+  auxiliaryOnLoadArtifactDetail?: (index: number) => Promise<MessageArtifact | null>;
+  auxiliaryOnOpenPath?: (target: string) => void;
+  onAddAuxiliary?: () => void;
+  isAddAuxiliaryDisabled?: boolean;
+  scrollToLatestOnSend?: boolean;
 };
 
 const DEFAULT_WIDTH_RATIO = 0;
@@ -540,6 +564,61 @@ export function useAuxiliaryWorkspace(input: {
     return binding;
   }, []);
 
+  const buildConcurrentChats = useCallback((input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps => {
+    const mainSessionId = input.mainSession?.id ?? input.messageColumn.sessionId;
+    const mainMessages = input.mainSession?.messages ?? input.messageColumn.messages;
+    const auxiliaryMessages = input.auxiliarySession?.messages ?? [];
+    const main = {
+      ...input.messageColumn,
+      sessionId: mainSessionId,
+      messages: mainMessages,
+      onToggleMessageBookmark: input.mainOnToggleMessageBookmark,
+      onLoadArtifactDetail: input.mainOnLoadArtifactDetail,
+      onOpenPath: input.mainOnOpenPath,
+    };
+    const auxiliary = input.auxiliarySession
+      ? {
+          ...input.messageColumn,
+          sessionId: input.auxiliarySession.id,
+          messages: auxiliaryMessages,
+          onToggleMessageBookmark: input.auxiliaryOnToggleMessageBookmark,
+          onLoadArtifactDetail: input.auxiliaryOnLoadArtifactDetail,
+          onOpenPath: input.auxiliaryOnOpenPath,
+        }
+      : null;
+
+    return {
+      main,
+      auxiliary,
+      mainSession: input.mainSession,
+      auxiliarySession: input.auxiliarySession,
+      api: input.api,
+      mainLiveRun: input.mainLiveRun,
+      auxiliaryLiveRun: input.auxiliaryLiveRun,
+      selectedAuxiliaryId: selectedId,
+      auxiliaryItems: summaries.map((summary) => ({
+        id: summary.id,
+        label: summary.preview?.trim() || "New conversation",
+        searchText: summary.preview?.trim() || "New conversation",
+        icon: createElement(CharacterAvatar, {
+          character: { name: "", iconPath: summary.characterIconPath ?? "" },
+          size: "tiny",
+        }),
+        isProcessing: summary.runState === "running",
+      })),
+      onAddAuxiliary: input.onAddAuxiliary,
+      isAddAuxiliaryDisabled: input.isAddAuxiliaryDisabled,
+      target,
+      widthRatio,
+      scrollToLatestOnSend: input.scrollToLatestOnSend,
+      onSelectAuxiliary: selectSession,
+      onTargetChange: setTarget,
+      onWidthRatioChange: setWidthRatio,
+      loading,
+      error: error?.message ?? null,
+    };
+  }, [error, loading, selectSession, selectedId, setTarget, setWidthRatio, summaries, target, widthRatio]);
+
   return useMemo(() => ({
     summaries,
     selectedId,
@@ -558,5 +637,6 @@ export function useAuxiliaryWorkspace(input: {
     refreshSummaries,
     touchRecency,
     getBinding,
-  }), [addSession, detailError, detailLoading, error, getBinding, loading, refreshSummaries, requestSessionSelection, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, touchRecency, widthRatio]);
+    buildConcurrentChats,
+  }), [addSession, buildConcurrentChats, detailError, detailLoading, error, getBinding, loading, refreshSummaries, requestSessionSelection, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, touchRecency, widthRatio]);
 }

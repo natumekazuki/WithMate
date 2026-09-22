@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AuditLogDetailFragment, AuditLogDetailSection, AuditLogOperationDetailFragment, AuditLogSummary, LiveSessionRunState } from "../../../src-shared/session/runtime-state.js";
 import { summarizeAuditLogDetailFragment } from "../../../src-shared/session/audit-log-detail-metrics.js";
 import { buildAuditLogRefreshSignature, buildDisplayedAuditLogs } from "./audit-log-refresh.js";
+import type { SessionAuditLogModalProps } from "./session-audit-log.js";
 import type { RendererLogInput } from "../../../src-shared/window/app-log-types.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
@@ -53,6 +54,7 @@ type UseSessionAuditLogsInput = {
   selectedSession: AuditLogSessionLike | null;
   ownerSessionId?: string | null;
   cacheScopeKey?: string | null;
+  sourceLabel?: SessionAuditLogModalProps["sourceLabel"];
   liveRun: LiveSessionRunState | null;
   enabled?: boolean;
   auditLogApi?: Pick<
@@ -152,11 +154,13 @@ export function useSessionAuditLogs({
   selectedSession,
   ownerSessionId,
   cacheScopeKey,
+  sourceLabel,
   liveRun,
   enabled = true,
   auditLogApi = withmateApi,
 }: UseSessionAuditLogsInput) {
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
+  const handleCloseAuditLogs = useCallback(() => setAuditLogsOpen(false), []);
   const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>(() => createEmptyAuditLogsState(null));
   const [auditLogDetails, setAuditLogDetails] = useState<Record<number, AuditLogDetailLoadState>>({});
   const [auditLogOperationDetails, setAuditLogOperationDetails] = useState<Record<string, AuditLogOperationDetailLoadState>>({});
@@ -826,7 +830,24 @@ export function useSessionAuditLogs({
     }
   };
 
+  const modalProps = {
+    open: auditLogsOpen,
+    entries: displayedEntries,
+    sourceLabel,
+    details: auditLogDetails,
+    operationDetails: auditLogOperationDetails,
+    hasMore: auditLogsHasMore,
+    loadingMore: auditLogsLoading,
+    total: auditLogsTotal,
+    errorMessage: auditLogsErrorMessage,
+    onLoadMore: handleLoadMoreAuditLogs,
+    onLoadDetail: handleLoadAuditLogDetail,
+    onLoadOperationDetail: handleLoadAuditLogOperationDetail,
+    onClose: handleCloseAuditLogs,
+  } satisfies SessionAuditLogModalProps;
+
   return {
+    modalProps,
     auditLogsOpen,
     setAuditLogsOpen,
     auditLogsState,

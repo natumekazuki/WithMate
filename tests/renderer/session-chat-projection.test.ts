@@ -1,395 +1,89 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { JSDOM } from "jsdom";
 import React from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 
 import {
-  buildAgentSessionChatWindowProps,
-  type AgentSessionChatProjectionInput,
-} from "../../src/chat/session-chat-projection.js";
-import { ChatWindow } from "../../src/chat/chat-window.js";
-import type { CharacterProfile } from "../../src-shared/character/character-state.js";
-import { SessionComposerExpanded } from "../../src/chat/composer/session-composer.js";
+  useSessionComposerFeature,
+  type SessionComposerFeature,
+  type SessionComposerFeatureBridge,
+} from "../../src/chat/composer/use-session-composer-feature.js";
+import { ComposerControllerRegistry, type ComposerOwner } from "../../src/chat/composer-controller.js";
+import { buildSessionChatRuntimeFeature } from "../../src/chat/runtime/session-chat-runtime-feature.js";
+import {
+  useSessionHeaderOperations,
+  type SessionHeaderOperations,
+} from "../../src/chat/shell/use-session-header-operations.js";
+import type { AuxiliaryDraftPersistence } from "../../src/chat/auxiliary/use-auxiliary-draft-persistence.js";
+import type { DiscoveredSkill } from "../../src-shared/session/runtime-state.js";
 import type { SessionContextPaneProps } from "../../src/chat/shell/session-context-pane.js";
 import type { Session } from "../../src-shared/session/session-state.js";
-import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 
 const noop = () => {};
 
-function createCharacterProfile(): CharacterProfile {
-  return {
-    id: "char-1",
-    name: "Test Character",
-    iconPath: "",
-    description: "",
-    roleMarkdown: "",
-    notesMarkdown: "",
-    updatedAt: "2026-05-24T00:00:00.000Z",
-    themeColors: {
-      main: "#6f8cff",
-      sub: "#6fb8c7",
-    },
-    sessionCopy: {
-      pendingApproval: ["承認を待機中"],
-      pendingWorking: ["処理を実行中"],
-      pendingResponding: ["応答を生成中"],
-      pendingPreparing: ["応答を準備中"],
-      retryInterruptedTitle: ["前回の依頼は中断されたままです"],
-      retryFailedTitle: ["前回の依頼は完了できませんでした"],
-      retryCanceledTitle: ["この依頼は途中で停止しました"],
-      latestCommandWaiting: ["最初の command を待機中"],
-      latestCommandEmpty: ["直近 run の command 記録はありません"],
-      changedFilesEmpty: ["ファイル変更はありません"],
-      contextEmpty: ["context usage はまだありません"],
-    },
-  };
-}
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function createSession(): Session {
-  return {
-    id: "session-1",
-    taskTitle: "Main session",
-    status: "idle",
-    updatedAt: "2026-05-24T00:00:00.000Z",
-    isPinned: false,
-    provider: "codex",
-    catalogRevision: 1,
-    workspaceLabel: "WithMate",
-    workspacePath: "C:/workspace/WithMate",
-    branch: "feat/temp-review-session",
-    sessionKind: "default",
-    accessMode: "active",
-    sourceSchemaVersion: 5,
-    characterId: "char-1",
-    character: "Test Character",
-    characterIconPath: "",
-    characterThemeColors: {
-      main: "#6f8cff",
-      sub: "#6fb8c7",
-    },
-    runState: "idle",
-    approvalMode: "never",
-    codexSandboxMode: "workspace-write",
-    codexSpeed: "fast",
-    codexReviewer: "user",
-    characterRuntimeSnapshot: null,
-    model: "gpt-test",
-    reasoningEffort: "low",
-    customAgentName: "",
-    allowedAdditionalDirectories: [],
-    threadId: "",
-    messages: [],
-    stream: [],
-  };
-}
-
-function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInput> = {}): AgentSessionChatProjectionInput {
-  return {
-    isFilesPaneVisible: false,
-    selectedSession: createSession(),
-    selectedSessionCharacter: createCharacterProfile(),
-    displayedMessages: [],
-    expandedArtifacts: {},
-    glossaryPaneProps: undefined,
-    sessionThemeStyle: undefined,
-    sessionDockLayoutRef: React.createRef<HTMLDivElement>(),
-    headerDockRef: React.createRef<HTMLDivElement>(),
-    actionDockRef: React.createRef<HTMLDivElement>(),
-    sessionDockLayoutStyle: {},
-    sessionWorkbenchRef: React.createRef<HTMLDivElement>(),
-    sessionWorkbenchStyle: undefined,
-    isSessionHeaderExpanded: true,
-    isEditingTitle: false,
-    titleDraft: "Main session",
-    isSelectedSessionRunning: false,
-    isSelectedSessionReadOnly: false,
-    isSelectedSessionPinned: false,
-    isSessionPinPending: false,
-    messageListRef: React.createRef<HTMLDivElement>(),
-    pendingRunIndicatorAnnouncement: "",
-    pendingRunIndicatorText: "",
-    pendingMessageText: "",
-    liveApprovalRequest: null,
-    approvalActionRequestId: null,
-    liveElicitationRequest: null,
-    elicitationActionRequestId: null,
-    liveRunAssistantText: "",
-    hasLiveRunAssistantText: false,
-    liveRunErrorMessage: "",
-    inlinePathFeedback: "",
-    workspaceAvailabilityMessage: "",
-    isWorkspaceAvailabilityCheckPending: false,
-    isWorkspaceAvailable: true,
-    isMessageListFollowing: true,
-    retryBanner: null,
-    isRetryActionDisabled: false,
-    isRetryEditDisabled: false,
-    isRetryDraftReplacePending: false,
-    composerBlocked: false,
-    isAgentPickerOpen: false,
-    isSkillPickerOpen: false,
-    isPromptTemplateWorkspaceOpen: false,
-    isAdditionalDirectoryListOpen: false,
-    selectedCustomAgentLabel: "Agent",
-    selectedCustomAgentTitle: "",
-    canCollapseActionDock: true,
-    isCustomAgentListLoading: false,
-    isSkillListLoading: false,
-    skillListError: null,
-    customAgentItems: [],
-    skillItems: [],
-    composerAttachmentItems: [],
-    additionalDirectoryItems: [],
-    draft: "",
-    composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
-    isComposerDisabled: false,
-    isSendDisabled: true,
-    composerSendability: {
-      primaryFeedback: "",
-      secondaryFeedback: [],
-      feedbackTone: null,
-      shouldShowFeedback: false,
-    },
-    composerSendButtonTitle: undefined,
-    isComposerBlockedFeedbackActive: false,
-    approvalChoiceOptions: [{ value: "never", label: "never" }],
-    reviewerChoiceOptions: [{ value: "user", label: "User" }],
-    sandboxChoiceOptions: [{ value: "workspace-write", label: "workspace-write" }],
-    speedChoiceOptions: [{ value: "standard", label: "Standard" }, { value: "fast", label: "Fast" }],
-    modelSelectOptions: [{ value: "gpt-test", label: "GPT Test" }],
-    selectedModelFallbackLabel: "GPT Test",
-    reasoningSelectOptions: [{ value: "low", label: "low" }],
-    attachmentCount: 0,
-    isActionDockExpanded: true,
-    isActionDockResizing: false,
-    isFilesPaneResizing: false,
-    isContextRailResizing: false,
-    isContextRailVisible: true,
-    latestCommandView: null,
-    runningDetailsEntries: [],
-    liveRunReasoningText: "",
-    activeContextPaneTab: "latest-command",
-    availableContextPaneTabs: ["latest-command"],
-    contextPaneProjection: {
-      activeTab: "latest-command",
-      badgeLabel: "",
-      toneClassName: "muted",
-      latestCommandToneClassName: "muted",
-      latestCommandStatusLabel: "No command",
-      latestCommandSourceCopy: "",
-      reasoningToneClassName: "muted",
-      tasksToneClassName: "muted",
-    },
-    selectedBackgroundTasks: [],
-    isCopilotSession: false,
-    selectedCopilotRemainingPercentLabel: "",
-    selectedCopilotRemainingRequestsLabel: "",
-    selectedCopilotQuotaResetLabel: "",
-    selectedSessionContextTelemetry: null,
-    selectedSessionContextTelemetryProjection: {
-      summaryLabel: "",
-      currentTokensLabel: "",
-      tokenLimitLabel: "",
-      messagesLengthLabel: "",
-      systemTokensLabel: "",
-      conversationTokensLabel: "",
-    },
-    selectedContextEmptyText: "context usage はまだありません",
-    latestCommandEmptyText: "直近 run の command 記録はありません",
-    selectedDiff: null,
-    selectedDiffThemeStyle: {},
-    auditLogsOpen: false,
-    displayedSessionAuditLogs: [],
-    auditLogDetails: {},
-    auditLogOperationDetails: {},
-    auditLogsHasMore: false,
-    auditLogsLoading: false,
-    auditLogsTotal: 0,
-    auditLogsErrorMessage: null,
-    onToggleHeaderSplitter: noop,
-    onOpenAuditLog: noop,
-    onOpenSessionTerminal: noop,
-    onOpenSessionFilesTerminal: noop,
-    onTitleDraftChange: noop,
-    onTitleInputKeyDown: noop,
-    onSaveTitle: noop,
-    onCancelTitleEdit: noop,
-    onStartTitleEdit: noop,
-    onDeleteSession: noop,
-    onToggleSessionPin: noop,
-    onOpenSessionExplorer: noop,
-    onOpenSessionFilesExplorer: noop,
-    onMessageListScroll: noop,
-    onToggleArtifact: noop,
-    onLoadArtifactDetail: async () => null,
-    onOpenDiff: noop,
-    onResolveLiveApproval: noop,
-    onResolveLiveElicitation: noop,
-    onOpenInlinePath: noop,
-    onDismissInlinePathFeedback: noop,
-    onRecheckWorkspaceAvailability: noop,
-    getChangedFilesEmptyText: () => "ファイル変更はありません",
-    onCopyMessageText: noop,
-    onQuoteMessageText: noop,
-    onResendLastMessage: noop,
-    onEditLastMessage: noop,
-    onConfirmRetryDraftReplace: noop,
-    onCancelRetryDraftReplace: noop,
-    onPickFile: noop,
-    onPickFolder: noop,
-    onPickImage: noop,
-    onAddToSessionFiles: noop,
-    onPickSessionFiles: noop,
-    onPickSessionFolder: noop,
-    onPickSessionImage: noop,
-    onToggleAgentPicker: noop,
-    onToggleSkillPicker: noop,
-    onOpenPromptTemplates: noop,
-    onAddAdditionalDirectory: noop,
-    onToggleAdditionalDirectoryList: noop,
-    onJumpToMessageListBottom: noop,
-    onSelectCustomAgent: noop,
-    onSelectSkill: noop,
-    onRemoveAttachment: noop,
-    onRemoveAdditionalDirectory: noop,
-    onDraftChange: noop,
-    onDraftFocus: noop,
-    onDraftKeyDown: noop,
-    onDraftPaste: noop,
-    onDraftSelect: noop,
-    onDraftCompositionStart: noop,
-    onDraftCompositionEnd: noop,
-    onSendOrCancel: noop,
-    onChangeApprovalMode: noop,
-    onChangeCodexReviewer: noop,
-    onChangeCodexSandboxMode: noop,
-    onChangeCodexSpeed: noop,
-    onChangeModel: noop,
-    onChangeReasoningEffort: noop,
-    onStartContextRailResize: noop,
-    onStartFilesPaneResize: noop,
-    onStartActionDockResize: noop,
-    onToggleActionDock: noop,
-    onToggleFilesPaneVisibility: noop,
-    onToggleContextRailVisibility: noop,
-    onCycleContextPaneTab: noop,
-    onCloseDiff: noop,
-    onOpenDiffWindow: noop,
-    onLoadMoreAuditLogs: noop,
-    onLoadAuditLogDetail: async () => null,
-    onLoadAuditLogOperationDetail: async () => null,
-    onCloseAuditLog: noop,
-    ...overrides,
-  };
+  return { taskTitle: "Main session" } as Session;
 }
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliary modeのchat window projectionでもcomposer attachmentの公開経路を維持する"
-// oracle = { type = "contract", ref = "src/chat/session-chat-projection.ts" }
-// fault = "Auxiliary modeだけattachment items、count、draft paste callbackをprojectionから落とす"
-// observable = "buildAgentSessionChatWindowPropsのattachment items/countとonDraftPaste identity"
+// claim = "session runtime featureはcomposerのblocked feedbackとworkspace/path noticeを共通error surfaceへ投影する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md:348" }
+// fault = "workspaceまたはpathの失敗がerror surfaceから欠落する、またはcomposerのblocked feedbackが表示されない"
+// observable = "buildSessionChatRuntimeFeatureのerrorNoticesに含まれるnoticeの内容とcallback identity"
 // observation_boundary = "public-boundary"
-// scope = "session chat projection auxiliary attachments"
+// scope = "session-chat-runtime-error-notices"
 // lifecycle = "permanent"
+// impact = "送信失敗やworkspace/path復旧操作を利用者が確認できず、再試行できない"
+// distinction = "旧projection builderの巨大props配線ではなく、現runtime ownerの公開error surfaceを直接確認する"
 // @end-test-value
-test("buildAgentSessionChatWindowProps は Auxiliary mode でも attachment 経路を維持する", () => {
-  const onDraftPaste = noop;
-  const attachmentItems: AgentSessionChatProjectionInput["composerAttachmentItems"] = [
-    {
-      key: "file:src/App.tsx",
-      kind: "file",
-      kindLabel: "File",
-      locationLabel: "Workspace",
-      primaryLabel: "src/app/SessionWindowApp.tsx",
-      secondaryLabel: "App component",
-      title: "src/app/SessionWindowApp.tsx",
-      removeTargets: ["src/app/SessionWindowApp.tsx"],
-    },
-  ];
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    isAuxiliaryMode: true,
-    composerAttachmentItems: attachmentItems,
-    attachmentCount: 1,
-    onDraftPaste,
-  }));
-
-  assert.equal(props.composerProps.showAttachmentControls, true);
-  assert.deepEqual(props.composerProps.attachmentItems, attachmentItems);
-  assert.equal(props.composerProps.onDraftPaste, onDraftPaste);
-  assert.equal(props.compactActionDockProps.attachmentCount, 1);
-});
-
-test("buildAgentSessionChatWindowProps は retry actions を共通 chat layout に渡す", () => {
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    retryBanner: {
-      kind: "failed",
-      badge: "失敗",
-      title: "前回の依頼は完了できませんでした",
-      lastRequestText: "調べて",
-    },
-    isRetryActionDisabled: false,
-    isRetryEditDisabled: false,
-    isRetryDraftReplacePending: false,
-    isActionDockExpanded: false,
-  }));
-
-  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.recoveryActions));
-
-  assert.equal(props.isActionDockExpanded, false);
-  assert.match(html, /retry-banner failed/);
-  assert.match(html, />再送<\/button>/);
-  assert.match(html, />編集<\/button>/);
-});
-
-test("buildAgentSessionChatWindowProps は Workspace 利用不可を共通エラー領域へ投影して操作を無効化する", () => {
-  const onRecheckWorkspaceAvailability = noop;
-  const message = "Workspace not found: C:/missing. Restore it, then recheck.";
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    workspaceAvailabilityMessage: message,
-    isWorkspaceAvailable: false,
-    onRecheckWorkspaceAvailability,
-    composerSendability: {
-      primaryFeedback: message,
-      secondaryFeedback: [],
-      feedbackTone: "blocked",
-      shouldShowFeedback: true,
-    },
-  }));
-
-  assert.deepEqual(props.errorNotices, [{
-    id: "workspace-unavailable",
-    message,
-    relatedControl: "composer",
-    actionLabel: "Recheck",
-    isActionDisabled: false,
-    onAction: onRecheckWorkspaceAvailability,
-  }]);
-  assert.equal(props.headerProps.isTerminalDisabled, true);
-  const headerHtml = renderToStaticMarkup(React.createElement(React.Fragment, null, props.headerProps.workspaceActions));
-  assert.match(headerHtml, /disabled=""/);
-});
-
-test("buildAgentSessionChatWindowProps は composer とpath操作のエラーを共通領域へ投影する", () => {
+test("session runtime feature は blocked feedback と workspace/path notice を共通error surfaceへ投影する", () => {
+  const onRecheckWorkspaceAvailability = () => {};
   const onDismissInlinePathFeedback = () => {};
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    inlinePathFeedback: "The local path was not found.",
-    onDismissInlinePathFeedback,
-    composerSendability: {
+  const feature = buildSessionChatRuntimeFeature({
+    recovery: {
+      retryBanner: null,
+      isRetryActionDisabled: false,
+      isRetryEditDisabled: false,
+      isRetryDraftReplacePending: false,
+      onResendLastMessage: noop,
+      onEditLastMessage: noop,
+      onConfirmRetryDraftReplace: noop,
+      onCancelRetryDraftReplace: noop,
+    },
+    composerFeedback: {
       primaryFeedback: "Path not found: C:/missing",
       secondaryFeedback: ["C:/missing"],
       feedbackTone: "blocked",
       shouldShowFeedback: true,
     },
-    isActionDockExpanded: false,
-  }));
+    workspaceAvailabilityMessage: "Workspace not found: C:/workspace.",
+    isWorkspaceAvailabilityCheckPending: false,
+    onRecheckWorkspaceAvailability,
+    inlinePathFeedback: "The local path was not found.",
+    onDismissInlinePathFeedback,
+    // The context-pane feature owns this projection; this test isolates runtime notices.
+    contextPane: {} as SessionContextPaneProps,
+  });
 
-  assert.deepEqual(props.errorNotices, [
+  assert.deepEqual(feature.errorNotices, [
     {
       id: "composer-sendability",
       message: "Path not found: C:/missing",
       details: ["C:/missing"],
       relatedControl: "composer",
+    },
+    {
+      id: "workspace-unavailable",
+      message: "Workspace not found: C:/workspace.",
+      relatedControl: "composer",
+      actionLabel: "Recheck",
+      isActionDisabled: false,
+      onAction: onRecheckWorkspaceAvailability,
     },
     {
       id: "inline-path-open",
@@ -398,351 +92,417 @@ test("buildAgentSessionChatWindowProps は composer とpath操作のエラーを
       onDismiss: onDismissInlinePathFeedback,
     },
   ]);
-  assert.equal(props.isActionDockExpanded, false);
-  assert.equal("inlinePathFeedback" in props.messageColumnProps, false);
-});
-
-test("buildAgentSessionChatWindowProps は submit pending の helper feedback を共通エラー領域へ投影しない", () => {
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    composerSendability: {
-      isBusy: true,
-      busyReason: "Message submission is in progress.",
-      primaryFeedback: "Message submission is in progress.",
-      secondaryFeedback: [],
-      feedbackTone: "helper",
-      shouldShowFeedback: true,
-    },
-  }));
-
-  assert.deepEqual(props.errorNotices, []);
-  assert.equal(props.composerProps.composerSendability.feedbackTone, "helper");
-  assert.equal(props.composerProps.composerSendability.isBusy, true);
-});
-
-test("buildAgentSessionChatWindowProps は workspace 再検証中の busy status を共通エラー領域へ投影しない", () => {
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    composerSendability: {
-      isBusy: true,
-      busyReason: "Workspace availability is being checked.",
-      primaryFeedback: "",
-      secondaryFeedback: [],
-      feedbackTone: null,
-      shouldShowFeedback: false,
-    },
-    isAuxiliaryMode: true,
-  }));
-
-  assert.deepEqual(props.errorNotices, []);
-  assert.equal(props.composerProps.composerSendability.isBusy, true);
-  assert.equal(props.composerProps.composerSendability.feedbackTone, null);
-});
-
-test("buildAgentSessionChatWindowProps は blank draft の helper feedback を共通エラー領域へ投影しない", () => {
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    composerSendability: {
-      primaryFeedback: "Message is empty.",
-      secondaryFeedback: [],
-      feedbackTone: "helper",
-      shouldShowFeedback: true,
-    },
-  }));
-
-  assert.deepEqual(props.errorNotices, []);
-});
-
-test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操作だけ隠す", () => {
-  const normalProps = buildAgentSessionChatWindowProps(createProjectionInput());
-  const auxiliaryProps = buildAgentSessionChatWindowProps(createProjectionInput({ isAuxiliaryMode: true }));
-
-  assert.equal(normalProps.headerProps.showRenameButton, true);
-  assert.equal(normalProps.headerProps.showAuditLogButton, true);
-  assert.equal(normalProps.headerProps.showDeleteButton, true);
-  assert.equal(auxiliaryProps.headerProps.showRenameButton, false);
-  assert.equal(auxiliaryProps.headerProps.showAuditLogButton, true);
-  assert.equal(auxiliaryProps.headerProps.showDeleteButton, false);
-});
-
-test("buildAgentSessionChatWindowProps は central preview 中に message shortcut scope を無効にする", () => {
-  const chatProps = buildAgentSessionChatWindowProps(createProjectionInput());
-  const previewProps = buildAgentSessionChatWindowProps(createProjectionInput({
-    mainContent: React.createElement("div", null, "preview"),
-  }));
-
-  assert.equal(chatProps.messageColumnProps.isContentActive, true);
-  assert.equal(previewProps.messageColumnProps.isContentActive, false);
-});
-
-test("buildAgentSessionChatWindowProps はglossary annotation projectionとactivationをmessage ownerへ渡す", () => {
-  const glossaryAnnotationMatcher = createGlossaryAnnotationMatcher([{
-    term: "Runtime",
-    aliases: [],
-    definition: "Runtime definition",
-  }], "revision-1");
-  const onActivateGlossaryEntry = () => {};
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    glossaryAnnotationMatcher,
-    onActivateGlossaryEntry,
-  }));
-
-  assert.equal(props.messageColumnProps.glossaryAnnotationMatcher, glossaryAnnotationMatcher);
-  assert.equal(props.messageColumnProps.onActivateGlossaryEntry, onActivateGlossaryEntry);
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "buildAgentSessionChatWindowPropsはright paneの選択callbackと表示内容をChatWindowへ転送する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "projectionがrightPanePropsを欠落させるか、ChatWindowが共通paneを描画しない"
-// observable = "buildAgentSessionChatWindowPropsのrightPanePropsとChatWindow描画結果に現れる共通paneの内容"
+// claim = "session header ownerはauxiliary modeでparent sessionのrename/deleteを隠し、audit logとsession action callbackを維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md:229" }
+// fault = "auxiliary conversationで親sessionの操作が誤表示される、またはworkspace/session action callbackが別操作へ接続される"
+// observable = "useSessionHeaderOperationsが返すheader propsのvisibility flagsとaction callback identity"
 // observation_boundary = "public-boundary"
-// scope = "session-chat-projection"
+// scope = "session-chat-header-auxiliary-actions"
 // lifecycle = "permanent"
+// impact = "補助会話から親sessionを誤って変更・削除する危険と、workspace/session操作不能が発生する"
+// distinction = "共通header componentの描画testとは分け、現在のheader hook ownerが受け取ったsession stateをaction surfaceへ投影する境界をReact hook harnessで確認する"
+// risk_tags = ["authorization"]
 // @end-test-value
-test("buildAgentSessionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {
-  const onToggleHeaderExpanded = () => {};
-  const onCycleContextPaneTab = () => {};
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    selectedContextEmptyText: "Agent context empty",
-    latestCommandEmptyText: "Agent latest command empty",
-    // Header expansion is owned by the common shell, not this projection input.
-    onCycleContextPaneTab,
-  }));
-  const paneProps = props.rightPaneProps as SessionContextPaneProps;
-
-  assert.equal(paneProps.contextEmptyText, "Agent context empty");
-  assert.equal(paneProps.latestCommandEmptyText, "Agent latest command empty");
-  assert.equal("onToggleHeaderExpanded" in paneProps, false);
-  assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
-  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
-  assert.match(html, /Agent latest command empty/);
-});
-
-test("buildAgentSessionChatWindowProps は right pane visibility と toggle を共通 shell に渡す", () => {
-  const onToggleContextRailVisibility = () => {};
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    isContextRailVisible: false,
-    onToggleContextRailVisibility,
-  }));
-  const splitter = props.splitter as React.ReactElement<{
-    isPanelExpanded: boolean;
-    onTogglePanel: () => void;
-  }>;
-
-  assert.equal(props.isRightPaneVisible, false);
-  assert.equal(splitter.props.isPanelExpanded, false);
-  assert.equal(splitter.props.onTogglePanel, onToggleContextRailVisibility);
-});
-
-test("buildAgentSessionChatWindowProps は header action callbacks を維持する", () => {
+test("session header owner は auxiliary の parent 操作を隠し action callback を維持する", async () => {
   const onOpenSessionExplorer = () => {};
   const onOpenSessionFilesExplorer = () => {};
   const onOpenSessionFilesTerminal = () => {};
   const onToggleSessionPin = () => {};
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    isSelectedSessionPinned: true,
-    onOpenSessionExplorer,
-    onOpenSessionFilesExplorer,
-    onOpenSessionFilesTerminal,
-    onToggleSessionPin,
-  }));
-  const workspaceAction = props.headerProps.workspaceActions as React.ReactElement<{
-    onClick: () => void;
-  }>;
-  const sessionFilesActions = props.headerProps.sessionFilesActions as React.ReactElement<{
-    children: React.ReactNode;
-  }>;
-  const [sessionFilesExplorer, sessionFilesTerminal] = React.Children.toArray(
-    sessionFilesActions.props.children,
-  ) as Array<React.ReactElement<{ onClick: () => void }>>;
+  const previousGlobals = {
+    window: globalThis.window,
+    document: globalThis.document,
+    Node: globalThis.Node,
+    HTMLElement: globalThis.HTMLElement,
+    Event: globalThis.Event,
+    MouseEvent: globalThis.MouseEvent,
+    KeyboardEvent: globalThis.KeyboardEvent,
+    PointerEvent: globalThis.PointerEvent,
+  };
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  let root: Root | null = null;
+  let operations: SessionHeaderOperations | null = null;
 
-  assert.equal(workspaceAction.props.onClick, onOpenSessionExplorer);
-  assert.equal(sessionFilesExplorer.props.onClick, onOpenSessionFilesExplorer);
-  assert.equal(sessionFilesTerminal.props.onClick, onOpenSessionFilesTerminal);
-  assert.equal(props.headerProps.isPinned, true);
-  assert.equal(props.headerProps.onTogglePin, onToggleSessionPin);
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window },
+    document: { configurable: true, value: dom.window.document },
+    Node: { configurable: true, value: dom.window.Node },
+    HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    Event: { configurable: true, value: dom.window.Event },
+    MouseEvent: { configurable: true, value: dom.window.MouseEvent },
+    KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
+    PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+  });
+
+  function Harness() {
+    operations = useSessionHeaderOperations({
+      api: null,
+      selectedSession: createSession(),
+      isReadOnly: false,
+      runState: "idle",
+      persistSession: async (session) => session,
+      closeWindow: noop,
+    });
+    return null;
+  }
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Harness));
+    });
+    const currentOperations = operations as SessionHeaderOperations | null;
+    assert.ok(currentOperations);
+    const feature = currentOperations.buildChatHeader({
+      isRunning: false,
+      isReadOnly: false,
+      isPinned: true,
+      isPinPending: false,
+      isAuxiliaryMode: true,
+      isWorkspaceAvailable: true,
+      onOpenAuditLog: noop,
+      onOpenSessionTerminal: noop,
+      onOpenSessionFilesExplorer,
+      onOpenSessionFilesTerminal,
+      onTitleInputKeyDown: noop,
+      onDeleteSession: noop,
+      onToggleSessionPin,
+      onOpenSessionExplorer,
+    });
+
+    assert.equal(feature.showRenameButton, false);
+    assert.equal(feature.showAuditLogButton, true);
+    assert.equal(feature.showDeleteButton, false);
+    assert.equal(feature.isPinned, true);
+    assert.equal(feature.onTogglePin, onToggleSessionPin);
+    const workspaceActions = feature.workspaceActions as React.ReactElement<{ onClick: () => void }>;
+    assert.equal(workspaceActions.props.onClick, onOpenSessionExplorer);
+    const sessionFileActions = React.Children.toArray(
+      (feature.sessionFilesActions as React.ReactElement<{ children: React.ReactNode }>).props.children,
+    ) as Array<React.ReactElement<{ onClick: () => void }>>;
+    assert.equal(sessionFileActions[0]?.props.onClick, onOpenSessionFilesExplorer);
+    assert.equal(sessionFileActions[1]?.props.onClick, onOpenSessionFilesTerminal);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    dom.window.close();
+    Object.defineProperties(globalThis, {
+      window: { configurable: true, value: previousGlobals.window },
+      document: { configurable: true, value: previousGlobals.document },
+      Node: { configurable: true, value: previousGlobals.Node },
+      HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
+      Event: { configurable: true, value: previousGlobals.Event },
+      MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
+      KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
+      PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+    });
+  }
+});
+
+type SessionComposerInput = Parameters<typeof useSessionComposerFeature>[0];
+
+type ComposerOperationLog = {
+  mainDrafts: Array<{ value: string; selectionStart: number }>;
+  auxiliaryDrafts: Array<{ value: string; selectionStart: number }>;
+  mainSkills: DiscoveredSkill[];
+  auxiliarySkills: DiscoveredSkill[];
+  mainSends: number;
+  auxiliarySends: number;
+};
+
+const testSkill: DiscoveredSkill = {
+  id: "skill-review",
+  name: "Review changes",
+  description: "Review the current changes",
+  source: "workspace",
+  sourcePath: "C:/workspace/.agents/skills/review/SKILL.md",
+  sourceLabel: "workspace",
+};
+
+function createComposerSession(): Session {
+  return {
+    taskTitle: "Main session",
+    provider: "copilot",
+    customAgentName: "",
+    approvalMode: "never",
+    codexSandboxMode: "workspace-write",
+    codexSpeed: "fast",
+    codexReviewer: "user",
+    model: "gpt-test",
+    reasoningEffort: "medium",
+    allowedAdditionalDirectories: [],
+  } as unknown as Session;
+}
+
+function createDraftPersistenceStub(): AuxiliaryDraftPersistence {
+  return {
+    getOwner: () => null,
+    observeSave: async () => {},
+    changeDraft: async () => {},
+    retrySave: () => {},
+    trackSend: <T>(operation: Promise<T>) => operation,
+    waitForPendingSends: async () => {},
+    flushAll: async () => {},
+    pendingSessionIds: () => [],
+  };
+}
+
+function createComposerBridge(
+  log: ComposerOperationLog,
+  target: "main" | "auxiliary",
+  isCharacterAuthoringSession = false,
+): SessionComposerFeatureBridge {
+  return {
+    session: createComposerSession(),
+    isCharacterAuthoringSession,
+    target,
+    runtime: {
+      isRunning: false,
+      selectedRunState: "idle",
+      auxiliaryRunState: "idle",
+      busyReason: "",
+      blockedReason: "",
+      isReadOnly: false,
+      forceBlockedFeedback: false,
+      pendingRunIndicatorAnnouncement: undefined,
+      pendingRunIndicatorText: undefined,
+      isMessageListFollowing: true,
+      isPromptTemplateWorkspaceOpen: false,
+      chatNotice: undefined,
+      providerCatalog: null,
+      models: [],
+      reasoningEfforts: [],
+    },
+    resources: {
+      availableCustomAgents: [],
+      availableSkills: [testSkill],
+      isCustomAgentListLoading: false,
+      isSkillListLoading: false,
+      skillListError: null,
+    },
+    operations: {
+      send: {
+        main: () => { log.mainSends += 1; },
+        auxiliary: () => { log.auxiliarySends += 1; },
+        cancelMain: noop,
+        cancelAuxiliary: noop,
+      },
+      runtimeOptions: {
+        runMain: noop,
+        auxiliary: {
+          session: null,
+          update: async () => {},
+          catalogRevision: null,
+          timestamp: () => "2026-09-22T00:00:00.000Z",
+        },
+      },
+      customAgent: {
+        main: noop,
+        auxiliary: noop,
+      },
+      skill: {
+        main: (skill) => { log.mainSkills.push(skill); },
+        auxiliary: (skill) => { log.auxiliarySkills.push(skill); },
+      },
+      draft: {
+        main: (value, selectionStart) => { log.mainDrafts.push({ value, selectionStart }); },
+        auxiliary: (value, selectionStart) => { log.auxiliaryDrafts.push({ value, selectionStart }); },
+        focus: noop,
+      },
+      files: {
+        pick: noop,
+        removeAttachment: noop,
+      },
+      layout: {
+        beforeOpenSkillPicker: () => true,
+        addAdditionalDirectory: {
+          main: noop,
+          auxiliary: noop,
+        },
+        removeAdditionalDirectory: {
+          main: noop,
+          auxiliary: noop,
+        },
+        expandActionDock: noop,
+        jumpToBottom: noop,
+      },
+    },
+  };
+}
+
+async function withReactDom<T>(callback: (root: Root) => Promise<T>): Promise<T> {
+  const previousGlobals = {
+    window: globalThis.window,
+    document: globalThis.document,
+    Node: globalThis.Node,
+    HTMLElement: globalThis.HTMLElement,
+    Event: globalThis.Event,
+    MouseEvent: globalThis.MouseEvent,
+    KeyboardEvent: globalThis.KeyboardEvent,
+    PointerEvent: globalThis.PointerEvent,
+  };
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window },
+    document: { configurable: true, value: dom.window.document },
+    Node: { configurable: true, value: dom.window.Node },
+    HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    Event: { configurable: true, value: dom.window.Event },
+    MouseEvent: { configurable: true, value: dom.window.MouseEvent },
+    KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
+    PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+  });
+
+  const root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+  try {
+    return await callback(root);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    Object.defineProperties(globalThis, {
+      window: { configurable: true, value: previousGlobals.window },
+      document: { configurable: true, value: previousGlobals.document },
+      Node: { configurable: true, value: previousGlobals.Node },
+      HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
+      Event: { configurable: true, value: previousGlobals.Event },
+      MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
+      KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
+      PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+    });
+  }
+}
+
+async function renderComposerHarness(
+  root: Root,
+  input: SessionComposerInput,
+): Promise<{ getFeature: () => SessionComposerFeature | null }> {
+  let feature: SessionComposerFeature | null = null;
+  function Harness() {
+    feature = useSessionComposerFeature(input);
+    return null;
+  }
+  await act(async () => {
+    root.render(React.createElement(Harness));
+  });
+  return { getFeature: () => feature };
+}
+
+function createComposerInput(
+  composerRegistry: ComposerControllerRegistry,
+  composerOwner: ComposerOwner,
+): SessionComposerInput {
+  return {
+    api: null,
+    composerRegistry,
+    composerOwner,
+    composerDraft: "",
+    activeRunSessionId: "main-session",
+    selectedSessionId: "main-session",
+    sessionProvider: "copilot",
+    sessionWorkspacePath: "C:/workspace",
+    visibleRunState: "idle",
+    auxiliaryDraftPersistence: createDraftPersistenceStub(),
+    setForceComposerBlockedFeedback: noop,
+  };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "composer featureは同じ表示surfaceからmainとauxiliaryのdraft、skill、send操作を対象会話へrouteする"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md:73" }
+// fault = "auxiliaryの入力やskillがmainへ書き込まれる、またはmainの送信がauxiliaryへ流れる"
+// observable = "useSessionComposerFeatureのbuildSurfaceから得たcomposer callbackのoperation log"
+// observation_boundary = "public-boundary"
+// scope = "session-composer-target-routing"
+// lifecycle = "permanent"
+// impact = "会話をまたいだdraft・skill・送信の混線により、ユーザーの入力または実行対象が失われる"
+// distinction = "helperのprops shapeではなく、現composer ownerのhook surfaceがtarget別operationへ到達する挙動を確認する"
+// @end-test-value
+test("session composer feature は main と auxiliary の operation を target へ route する", async () => {
+  await withReactDom(async (root) => {
+    const composerRegistry = new ComposerControllerRegistry();
+    const composerOwner: ComposerOwner = { kind: "main", id: "main-session" };
+    const harness = await renderComposerHarness(root, createComposerInput(composerRegistry, composerOwner));
+    const feature = harness.getFeature();
+    assert.ok(feature);
+    const log: ComposerOperationLog = {
+      mainDrafts: [],
+      auxiliaryDrafts: [],
+      mainSkills: [],
+      auxiliarySkills: [],
+      mainSends: 0,
+      auxiliarySends: 0,
+    };
+
+    const mainSurface = feature.buildSurface(createComposerBridge(log, "main"));
+    const auxiliarySurface = feature.buildSurface(createComposerBridge(log, "auxiliary"));
+    await act(async () => {
+      mainSurface.composer.onDraftChange("main draft", 5);
+      mainSurface.onSelectSkill(testSkill.id);
+      mainSurface.composer.onSendOrCancel();
+      auxiliarySurface.composer.onDraftChange("auxiliary draft", 9);
+      auxiliarySurface.onSelectSkill(testSkill.id);
+      auxiliarySurface.composer.onSendOrCancel();
+    });
+
+    assert.deepEqual(log.mainDrafts, [{ value: "main draft", selectionStart: 5 }]);
+    assert.deepEqual(log.auxiliaryDrafts, [{ value: "auxiliary draft", selectionStart: 9 }]);
+    assert.deepEqual(log.mainSkills, [testSkill]);
+    assert.deepEqual(log.auxiliarySkills, [testSkill]);
+    assert.equal(log.mainSends, 1);
+    assert.equal(log.auxiliarySends, 1);
+  });
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "agent session projectionはrunning composerとcompact dockへlive propsを転送する"
-// oracle = { type = "contract", ref = "shared chat shell projection" }
-// fault = "running状態、picker、cancel、追加directory情報が共通chat surfaceから欠落する"
-// observable = "projected composer and compact dock properties"
+// claim = "composer featureは終了凍結中のskill挿入を拒否し、character-authoring sessionではuser-selectable skill/agent capabilityを公開しない"
+// oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md:104" }
+// fault = "quit flushの凍結中にskillがdraftへ挿入される、またはauthoring sessionから任意skill/agentを選択できる"
+// observable = "frozen registryのskill operation logとauthoring composer surfaceのpicker capability"
 // observation_boundary = "public-boundary"
-// scope = "agent-chat-live-projection"
+// scope = "session-composer-freeze-authoring-capability"
 // lifecycle = "permanent"
+// impact = "終了処理中の入力復活やauthoring policy外のskill/agent選択により、保存内容または固定authoring workflowが壊れる"
+// distinction = "controller単体のfreeze testではなく、実際のcomposer feature surfaceが挿入callbackを遮断しcapabilityを絞る境界を確認する"
+// risk_tags = ["authorization"]
 // @end-test-value
-test("buildAgentSessionChatWindowProps は composer と compact dock の live props を維持する", () => {
-  const onCollapseActionDock = () => {};
-  const onToggleActionDock = () => {};
-  const onJumpToMessageListBottom = () => {};
-  const onSendOrCancel = () => {};
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    selectedSession: {
-      ...createSession(),
-      provider: "copilot",
-      runState: "running",
-      model: "gpt-agent",
-      reasoningEffort: "medium",
-      allowedAdditionalDirectories: ["C:/extra"],
-    },
-    selectedCustomAgentLabel: "Copilot Agent",
-    isSelectedSessionRunning: true,
-    pendingRunIndicatorAnnouncement: "Agent running",
-    pendingRunIndicatorText: "Agent responding",
-    isMessageListFollowing: false,
-    composerSendButtonTitle: "Agent stop",
-    chatNotice: "New messages",
-    attachmentCount: 2,
-    onToggleActionDock,
-    onJumpToMessageListBottom,
-    onSendOrCancel,
-  }));
+test("session composer feature は凍結中のskill挿入を拒否し authoring capability を絞る", async () => {
+  await withReactDom(async (root) => {
+    const composerRegistry = new ComposerControllerRegistry();
+    const composerOwner: ComposerOwner = { kind: "main", id: "main-session" };
+    const harness = await renderComposerHarness(root, createComposerInput(composerRegistry, composerOwner));
+    const feature = harness.getFeature();
+    assert.ok(feature);
+    const log: ComposerOperationLog = {
+      mainDrafts: [],
+      auxiliaryDrafts: [],
+      mainSkills: [],
+      auxiliarySkills: [],
+      mainSends: 0,
+      auxiliarySends: 0,
+    };
 
-  assert.equal(props.composerProps.isRunning, true);
-  assert.equal(props.composerProps.pendingRunIndicatorAnnouncement, "Agent running");
-  assert.equal(props.composerProps.pendingRunIndicatorText, "Agent responding");
-  assert.equal(props.composerProps.canSelectCustomAgent, true);
-  assert.equal(props.composerProps.showCustomAgentPicker, true);
-  assert.equal(props.composerProps.showPromptTemplateButton, true);
-  assert.equal(props.composerProps.selectedCustomAgentLabel, "Copilot Agent");
-  assert.equal(props.composerProps.additionalDirectoryCount, 1);
-  assert.equal(props.composerProps.showJumpToBottom, true);
-  assert.equal(props.composerProps.selectedApprovalMode, "never");
-  assert.equal(props.composerProps.selectedCodexSandboxMode, "workspace-write");
-  assert.equal(props.composerProps.selectedModel, "gpt-agent");
-  assert.equal(props.composerProps.selectedReasoningEffort, "medium");
-  assert.equal(props.composerProps.sendButtonTitle, "Agent stop");
-  assert.equal("onCollapse" in props.composerProps, false);
-  assert.equal(props.composerProps.chatNotice, "New messages");
-  assert.equal(props.compactActionDockProps.attachmentCount, 2);
-  assert.equal(props.compactActionDockProps.chatNotice, "New messages");
-  assert.equal(props.compactActionDockProps.isRunning, true);
-  assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Agent responding");
-  assert.equal(props.compactActionDockProps.showJumpToBottom, true);
-  assert.equal(props.compactActionDockProps.cancelButtonTitle, "Agent stop");
-  assert.equal(props.compactActionDockProps.onExpand, onToggleActionDock);
-  assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
-  assert.equal(props.compactActionDockProps.onCancel, onSendOrCancel);
-  assert.equal("additionalDirectoryItems" in props.composerProps, false);
-  assert.deepEqual(props.additionalDirectoryListProps?.items, []);
-});
+    composerRegistry.freeze();
+    const frozenSurface = feature.buildSurface(createComposerBridge(log, "main"));
+    frozenSurface.onSelectSkill(testSkill.id);
+    assert.deepEqual(log.mainSkills, []);
+    assert.equal(frozenSurface.isSkillPickerOpen, false);
 
-test("buildAgentSessionChatWindowProps は追加Directory一覧をshared chat surfaceへ投影する", () => {
-  const onRemoveAdditionalDirectory = () => {};
-  const additionalDirectoryItems = [{
-    key: "C:/shared/docs",
-    path: "C:/shared/docs",
-    primaryLabel: "docs",
-    secondaryLabel: "C:/shared",
-    title: "C:/shared/docs",
-    canRemove: true,
-  }];
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    isAdditionalDirectoryListOpen: true,
-    additionalDirectoryItems,
-    onRemoveAdditionalDirectory,
-  }));
-
-  assert.deepEqual(props.additionalDirectoryListProps, {
-    isOpen: true,
-    items: additionalDirectoryItems,
-    isInteractionDisabled: false,
-    onRemove: onRemoveAdditionalDirectory,
+    composerRegistry.unfreeze();
+    const authoringSurface = feature.buildSurface(createComposerBridge(log, "main", true));
+    assert.equal(authoringSurface.composer.showCustomAgentPicker, false);
+    assert.equal(authoringSurface.composer.showSkillPicker, false);
+    assert.equal(authoringSurface.composer.canSelectCustomAgent, false);
+    assert.equal(authoringSurface.skillPickerProps.isOpen, false);
   });
-  assert.equal("additionalDirectoryItems" in props.composerProps, false);
-  assert.equal("onRemoveAdditionalDirectory" in props.composerProps, false);
-});
-
-test("buildAgentSessionChatWindowProps は Codex で custom agent picker を隠す", () => {
-  const props = buildAgentSessionChatWindowProps(createProjectionInput());
-
-  assert.equal(props.composerProps.canSelectCustomAgent, false);
-  assert.equal(props.composerProps.showCustomAgentPicker, false);
-});
-
-test("buildAgentSessionChatWindowProps は Skill 候補を chat shell の一時 surface へ投影する", () => {
-  const onSelectSkill = () => {};
-  const onToggleSkillPicker = () => {};
-  const skillItems = [{
-    key: "skill-review",
-    skillId: "review",
-    primaryLabel: "review",
-    secondaryLabel: "Workspace",
-    title: "review",
-  }];
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    isSkillPickerOpen: true,
-    skillItems,
-    skillListError: "",
-    onSelectSkill,
-    onToggleSkillPicker,
-  }));
-
-  assert.deepEqual(props.skillPickerProps?.items, skillItems);
-  assert.equal(props.skillPickerProps?.isOpen, true);
-  assert.equal(props.skillPickerProps?.onSelectSkill, onSelectSkill);
-  assert.equal(props.skillPickerProps?.onDismiss, onToggleSkillPicker);
-  assert.equal("skillItems" in props.composerProps, false);
-});
-
-test("buildAgentSessionChatWindowProps は Character Authoring で Skill panel を開かない", () => {
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    selectedSession: { ...createSession(), sessionKind: "character-authoring" },
-    isSkillPickerOpen: true,
-  }));
-
-  assert.equal(props.composerProps.showSkillPicker, false);
-  assert.equal(props.skillPickerProps?.isOpen, false);
-});
-
-test("buildAgentSessionChatWindowProps は selected session running boolean を composer dock に渡す", () => {
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    selectedSession: {
-      ...createSession(),
-      runState: "idle",
-    },
-    isSelectedSessionRunning: true,
-  }));
-
-  assert.equal(props.composerProps.isRunning, true);
-  assert.equal(props.compactActionDockProps.isRunning, true);
-});
-
-test("buildAgentSessionChatWindowProps は session runState ではなく running boolean を優先する", () => {
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    selectedSession: {
-      ...createSession(),
-      runState: "running",
-    },
-    isSelectedSessionRunning: false,
-  }));
-
-  assert.equal(props.composerProps.isRunning, false);
-  assert.equal(props.compactActionDockProps.isRunning, false);
-});
-
-// @test-value v1
-// kind = "contract"
-// claim = "shared composer projectionは表示中SessionのSpeedを渡し、running時は既存runtime option制約で変更不可にする"
-// oracle = { type = "contract", ref = "accepted behavior: shared UI" }
-// failure_mode = "表示中Sessionの選択値と表示がずれる、またはrun中にSpeedを変更できる"
-// scope = "session-chat-projection"
-// lifecycle = "permanent"
-// @end-test-value
-test("buildAgentSessionChatWindowProps はSpeed選択値とrunning制約をshared composerへ渡す", () => {
-  const props = buildAgentSessionChatWindowProps(createProjectionInput({
-    isSelectedSessionRunning: true,
-  }));
-
-  assert.equal(props.composerProps.selectedCodexSpeed, "fast");
-  assert.deepEqual(props.composerProps.speedOptions, [
-    { value: "standard", label: "Standard" },
-    { value: "fast", label: "Fast" },
-  ]);
-  const html = renderToStaticMarkup(React.createElement(
-    SessionComposerExpanded,
-    props.composerProps,
-  ));
-  assert.match(html, /disabled="" aria-label="Speed"/);
 });

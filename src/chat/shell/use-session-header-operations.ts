@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, type KeyboardEventHandler } from "react";
 
 import type { Session } from "../../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
@@ -7,6 +7,8 @@ import {
   createCancelTitleEditHandler,
   createStartTitleEditHandler,
 } from "../session-shell-handlers.js";
+import type { SessionHeaderProps } from "./session-header.js";
+import { buildLiveSessionHeaderProps } from "../chat-header-actions.js";
 
 export type SessionHeaderOperations = {
   titleDraft: string;
@@ -16,6 +18,22 @@ export type SessionHeaderOperations = {
   cancelTitleEdit(): void;
   saveTitle(): Promise<void>;
   deleteSession(): Promise<void>;
+  buildChatHeader(input: {
+    isRunning: boolean;
+    isReadOnly: boolean;
+    isPinned: boolean;
+    isPinPending: boolean;
+    isAuxiliaryMode?: boolean;
+    isWorkspaceAvailable: boolean;
+    onOpenAuditLog: () => void;
+    onOpenSessionTerminal: () => void;
+    onOpenSessionFilesExplorer: () => void;
+    onOpenSessionFilesTerminal: () => void;
+    onTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement>;
+    onDeleteSession: () => void;
+    onToggleSessionPin: () => void;
+    onOpenSessionExplorer: () => void;
+  }): SessionHeaderProps;
 };
 
 export function useSessionHeaderOperations(input: {
@@ -69,5 +87,40 @@ export function useSessionHeaderOperations(input: {
     input.closeWindow();
   }, [input]);
 
-  return { titleDraft, setTitleDraft, isEditingTitle, startTitleEdit, cancelTitleEdit, saveTitle, deleteSession };
+  const buildChatHeader = useCallback((view: Parameters<SessionHeaderOperations["buildChatHeader"]>[0]) => {
+    const session = input.selectedSession;
+    if (!session) {
+      throw new Error("Cannot build a session header without a selected session.");
+    }
+
+    return buildLiveSessionHeaderProps({
+      taskTitle: session.taskTitle,
+      isEditingTitle,
+      titleDraft,
+      isRunning: view.isRunning,
+      isReadOnly: view.isReadOnly,
+      isPinned: view.isPinned,
+      isPinPending: view.isPinPending,
+      isAuxiliaryMode: view.isAuxiliaryMode,
+      canViewAuxiliaryAuditLog: true,
+      canDeleteSession: true,
+      canViewAuditLog: true,
+      onOpenAuditLog: view.onOpenAuditLog,
+      onOpenTerminal: view.onOpenSessionTerminal,
+      isTerminalDisabled: !view.isWorkspaceAvailable,
+      onOpenSessionFilesExplorer: view.onOpenSessionFilesExplorer,
+      onOpenSessionFilesTerminal: view.onOpenSessionFilesTerminal,
+      onTitleDraftChange: setTitleDraft,
+      onTitleInputKeyDown: view.onTitleInputKeyDown,
+      onSaveTitle: () => void saveTitle(),
+      onCancelTitleEdit: cancelTitleEdit,
+      onStartTitleEdit: startTitleEdit,
+      onDeleteSession: view.onDeleteSession,
+      onTogglePin: view.onToggleSessionPin,
+      onOpenWorkspaceExplorer: view.onOpenSessionExplorer,
+      isWorkspaceExplorerDisabled: !view.isWorkspaceAvailable,
+    });
+  }, [cancelTitleEdit, input.selectedSession, isEditingTitle, saveTitle, startTitleEdit, titleDraft]);
+
+  return { titleDraft, setTitleDraft, isEditingTitle, startTitleEdit, cancelTitleEdit, saveTitle, deleteSession, buildChatHeader };
 }

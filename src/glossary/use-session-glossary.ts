@@ -6,6 +6,7 @@ import {
   type GlossaryEntry,
   type SessionGlossaryProjection,
 } from "../../src-shared/glossary/glossary-contract.js";
+import type { SessionGlossaryPaneProps } from "./SessionGlossaryPane.js";
 import { createGlossaryAnnotationMatcher } from "./glossary-annotation-projection.js";
 import { isGlossarySearchRevisionCurrent } from "../chat/runtime/session-ui-projection.js";
 
@@ -202,7 +203,22 @@ export function useSessionGlossary({
     });
   }, [api, projection?.state.revision, searchEntries.length, searchLoading, searchQuery, searchTotal, selectedSession]);
 
+  const paneProps = {
+    projection,
+    searchQuery,
+    searchEntries,
+    searchTotal,
+    searchLoading,
+    searchError,
+    selectedTerm,
+    onSearchQueryChange: setSearchQuery,
+    onLoadMoreSearchResults,
+    onSelectTerm: setSelectedTerm,
+    onBackToList: () => setSelectedTerm(null),
+  } satisfies SessionGlossaryPaneProps;
+
   return {
+    paneProps,
     view: {
       projection,
       searchQuery,
