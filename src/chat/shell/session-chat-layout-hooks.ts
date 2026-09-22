@@ -21,9 +21,9 @@ const SESSION_LAYOUT_VIEWPORT_BREAKPOINT = 1400;
 const SESSION_CONTEXT_RAIL_DRAG_THRESHOLD = 4;
 const SESSION_CONTEXT_RAIL_DRAG_CLICK_SUPPRESSION_MS = 100;
 const SESSION_HORIZONTAL_SPLITTER_SIZE = 20;
-const SESSION_HEADER_DOCK_DEFAULT_HEIGHT = 64;
-const SESSION_ACTION_DOCK_DEFAULT_HEIGHT = 320;
-const SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT = 54;
+const SESSION_HEADER_DOCK_DEFAULT_HEIGHT = 48;
+const SESSION_ACTION_DOCK_DEFAULT_HEIGHT = 296;
+const SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT = 48;
 const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 40;
 const SESSION_MESSAGE_BOTTOM_EPSILON = 1;
 const SESSION_MESSAGE_SCROLL_INTENT_SETTLE_MS = 180;
@@ -66,6 +66,14 @@ function readSessionRegionMinimum(layout: HTMLElement, selector: string, propert
   }
   const value = Number.parseFloat(window.getComputedStyle(element).getPropertyValue(property));
   return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function measureVisibleHeaderDockHeight(layout: HTMLElement, isHeaderExpanded: boolean): number {
+  if (!isHeaderExpanded) {
+    return 0;
+  }
+  return layout.querySelector<HTMLElement>(".session-header-dock-slot")?.getBoundingClientRect().height
+    ?? SESSION_HEADER_DOCK_DEFAULT_HEIGHT;
 }
 
 function measureSidePaneAvailableSize(layout: HTMLElement): number {
@@ -270,7 +278,7 @@ export function useSessionVerticalDockResize(input: {
     if (layoutHeight <= 0) {
       return;
     }
-    const visibleHeaderHeight = input.isHeaderExpanded ? SESSION_HEADER_DOCK_DEFAULT_HEIGHT : 0;
+    const visibleHeaderHeight = measureVisibleHeaderDockHeight(layout, input.isHeaderExpanded);
     const nextActionDockHeight = clampSessionVerticalDockHeight({
       requestedHeight: actionDockHeightRef.current,
       layoutHeight,
@@ -342,7 +350,7 @@ export function useSessionVerticalDockResize(input: {
       }
 
       const bounds = measureSessionVerticalDockLayoutBounds(layout);
-      const oppositeHeight = input.isHeaderExpanded ? SESSION_HEADER_DOCK_DEFAULT_HEIGHT : 0;
+      const oppositeHeight = measureVisibleHeaderDockHeight(layout, input.isHeaderExpanded);
       const nextHeight = clampSessionVerticalDockHeight({
         requestedHeight: gesture.startHeight + gesture.startY - event.clientY,
         layoutHeight: bounds.height,

@@ -1591,7 +1591,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 10px 12px 12px;
+  padding: 4px 6px;
   opacity: 0;
   transform: translateY(10px);
   visibility: hidden;
@@ -1614,5 +1614,5 @@
 
 .session-action-dock-compact-content {
   align-self: center;
-  padding: 6px 8px;
+  padding: 4px 6px;
 }

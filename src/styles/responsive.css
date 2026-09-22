@@ -137,11 +137,19 @@
 
   .session-page {
     gap: 0;
-    padding: 12px;
+    padding: 4px 12px;
   }
 
   .session-page .session-top-bar {
-    padding: 10px 12px;
+    padding: 6px;
+  }
+
+  .session-chat-layout.is-header-visible {
+    --session-header-dock-row-height: 128px;
+  }
+
+  .session-header-dock-slot {
+    height: 128px;
   }
 
   .session-page .session-work-surface {

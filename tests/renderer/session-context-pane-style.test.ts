@@ -206,11 +206,11 @@ test("wide layout はHeaderとActionDockを全幅dockとして表示する", asy
   assert.match(componentSource, /session-header-dock-slot.*?is-hidden[\s\S]*?aria-hidden={!isHeaderVisible}/);
   assert.doesNotMatch(componentSource, /className="session-header-dock-slot"\s+hidden=/);
   assert.match(stylesSource, /\.session-chat-layout\s*{[\s\S]*?"header header header header header"[\s\S]*?"action-dock action-dock action-dock action-dock action-dock"/);
-  assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
+  assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*48px;/);
   assert.match(stylesSource, /--session-central-min-height:\s*160px;/);
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),\s*calc\(\s*100%\s*-\s*var\(--session-header-dock-row-height\)\s*-\s*var\(--session-dock-splitter-size\)\s*-\s*var\(--session-dock-splitter-size\)\s*\)/,
+    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 296px\),\s*calc\(\s*100%\s*-\s*var\(--session-header-dock-row-height\)\s*-\s*var\(--session-dock-splitter-size\)\s*-\s*var\(--session-dock-splitter-size\)\s*\)/,
   );
 });
 
@@ -339,7 +339,7 @@ test("Session 四辺の開閉は共通 motion を使い、resize 中と reduced-
   );
   assert.match(
     stylesSource,
-    /--session-action-dock-row-height:\s*var\(--session-action-dock-compact-height,\s*54px\);/,
+    /--session-action-dock-row-height:\s*var\(--session-action-dock-compact-height,\s*48px\);/,
   );
   assert.match(
     stylesSource,

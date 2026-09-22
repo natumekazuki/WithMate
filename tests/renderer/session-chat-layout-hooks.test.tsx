@@ -225,11 +225,11 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
     });
 
     await act(async () => dom.window.dispatchEvent(new dom.window.Event("resize")));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "320px");
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "296px");
 
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 1686));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 31));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "1871px");
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "1887px");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 1800));
     assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "260px");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 1800));
@@ -310,7 +310,7 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
             "div",
             {
               className: "session-action-dock-compact-content",
-              style: { paddingTop: "6px", paddingBottom: "6px" },
+              style: { paddingTop: "4px", paddingBottom: "4px" },
             },
             React.createElement("div", { className: "session-action-dock-compact-row" }),
           ),
@@ -326,7 +326,7 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
     });
     const layout = dom.window.document.querySelector<HTMLElement>("[data-testid=\"layout\"]");
     assert.ok(layout);
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-compact-height"), "54px");
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-compact-height"), "48px");
   } finally {
     if (root) {
       await act(async () => root?.unmount());

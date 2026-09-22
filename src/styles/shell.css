@@ -42,7 +42,7 @@
 
 .session-page {
   gap: 0;
-  padding: 10px 12px 12px;
+  padding: 4px 12px;
   color: var(--ink);
   background:
     radial-gradient(circle at top left, rgba(111, 140, 255, 0.12), transparent 28%),
@@ -80,7 +80,7 @@
   --session-dock-motion-easing: cubic-bezier(0.22, 1, 0.36, 1);
   --session-dock-splitter-size: 20px;
   --session-header-dock-row-height: 0px;
-  --session-action-dock-row-height: var(--session-action-dock-compact-height, 54px);
+  --session-action-dock-row-height: var(--session-action-dock-compact-height, 48px);
   --session-central-min-height: 160px;
   --session-left-pane-track-width: 0px;
   --session-right-pane-track-width: 0px;
@@ -169,18 +169,18 @@
 
 .session-action-dock-slot {
   grid-area: action-dock;
-  --session-region-min-height: 320px;
+  --session-region-min-height: 296px;
 }
 
 .session-chat-layout.is-header-visible {
-  --session-header-dock-row-height: 64px;
+  --session-header-dock-row-height: 48px;
 }
 
 .session-chat-layout.is-action-dock-expanded {
   --session-action-dock-row-height: max(
     0px,
     min(
-      var(--session-action-dock-height, 320px),
+      var(--session-action-dock-height, 296px),
       calc(
         100%
         - var(--session-header-dock-row-height)
@@ -192,7 +192,7 @@
 }
 
 .session-header-dock-slot {
-  height: 64px;
+  height: 48px;
   opacity: 1;
   transform: translateY(0);
   visibility: visible;
@@ -478,7 +478,7 @@
 
 .session-page .session-top-bar {
   container-type: inline-size;
-  padding: 10px 14px;
+  padding: 6px;
   overflow: visible;
 }
 

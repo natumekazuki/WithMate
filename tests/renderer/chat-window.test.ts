@@ -2355,7 +2355,7 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
     isHeaderVisible: true,
     messageColumn: React.createElement(StatefulCentral),
     rightPane: null,
-    style: { "--session-action-dock-height": `${height}px`, "--session-header-dock-row-height": "64px", "--session-dock-splitter-size": "20px" } as React.CSSProperties,
+    style: { "--session-action-dock-height": `${height}px`, "--session-header-dock-row-height": "48px", "--session-dock-splitter-size": "20px" } as React.CSSProperties,
     actionDock: React.createElement("div", null, "Composer"),
     actionDockSplitter: null,
     isActionDockExpanded: true,
@@ -2366,7 +2366,7 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(renderScreen(536));
+      root.render(renderScreen(552));
     });
     const button = dom.window.document.querySelector<HTMLButtonElement>("[data-central-state='true']");
     assert.ok(button);
@@ -2376,14 +2376,14 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
     await act(async () => button.click());
     assert.equal(button.textContent, "state:1");
 
-    await act(async () => root?.render(renderScreen(537)));
+    await act(async () => root?.render(renderScreen(553)));
     assert.equal(dom.window.document.querySelector(".session-message-stack")?.getAttribute("aria-hidden"), "true");
     assert.ok(central.hasAttribute("inert"));
     assert.ok(dom.window.document.querySelector(".session-chat-layout.is-central-collapsed"));
     assert.equal(dom.window.document.querySelector("[data-central-state='true']"), button);
     assert.equal(button.textContent, "state:1");
 
-    await act(async () => root?.render(renderScreen(536)));
+    await act(async () => root?.render(renderScreen(552)));
     assert.equal(dom.window.document.querySelector("[data-central-state='true']"), button);
     assert.equal(button.textContent, "state:1");
     assert.equal(central.getAttribute("aria-hidden"), "false");
