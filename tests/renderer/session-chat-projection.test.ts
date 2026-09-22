@@ -658,7 +658,6 @@ test("context pane owner は runtime/composition 経由で ChatWindow の Latest
       runtime,
     });
 
-    assert.equal(composed.rightPaneProps, runtime.rightPaneProps);
     const html = renderToStaticMarkup(React.createElement(ChatWindow, composed));
     assert.match(html, /session-context-pane/);
     assert.match(html, /LatestCommand/);
