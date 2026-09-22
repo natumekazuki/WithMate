@@ -118,8 +118,9 @@
 
 .settings-panel-window {
   min-height: 0;
-  padding: 18px;
+  padding: 0;
   overflow: hidden;
+  scrollbar-gutter: auto;
 }
 
 .settings-panel-window-scroll {
@@ -127,8 +128,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding-right: 6px;
-  padding-bottom: 18px;
+  padding: 18px;
 }
 
 .settings-panel-memory-only {

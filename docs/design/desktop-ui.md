@@ -102,6 +102,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - session search input（placeholderは表示しない。accessible nameは残す）
     - `taskTitle / workspace / kind label`
     - 部分一致
+  - 検索欄と`NewSession`は固定し、上下に余白を持たせたsession listだけをスクロールする
   - session list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない。検索0件でも本文を埋める説明文は出さない
   - `sessionKind === "character-authoring"` の Character authoring session は通常 session と同じ削除・再開導線へ到達できるよう表示する
   - session card の常時表示情報
@@ -114,13 +115,13 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
     - それ以外は neutral な non-active
     - 未知 state でも card は欠落させない
   - card theme
-    - background = dark surfaceにmate `main`の薄いaccent
+    - background = mate `main`
     - left accent bar = mate `sub`
-    - text color = dark surface上で読めるlight palette
+    - text color = themeのcontrast helperで決めたdark / light palette
 - `Characters`
   - right pane 上部の segmented toggle で `SessionMonitor` と排他的に切り替える
   - Character catalog の active Character は意味のある card item として表示する。必要な識別情報と操作をまとめるが、入れ子の装飾cardは作らない
-  - header に＋iconの`CreateCharacter`を置く
+  - 検索欄とheaderの＋icon `CreateCharacter`は固定し、Character listだけをスクロールする
   - card には avatar / name / description（空なら Character ID）を表示する
   - card click で `Character Editor Window` を開く
   - Character 0 件または検索0件時は本文を空にし、headerの`CreateCharacter`と検索inputのaccessible nameを残す
@@ -146,7 +147,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Settings Window`
   - dedicated window の全面を本文と保存footerで使い、外側の余白やdialog shellを置かない
   - header copy や `Home / Close` は置かず、内容本体と保存 footer に分ける
-  - 本文は inner scroll で流し、scrollbarと保存footerの操作領域を分ける
+  - 本文はWindow幅を使うinner scrollで流し、scrollbarを右端へ置いて保存footerの操作領域と分ける
   - `Session Window`
     - `CloseActionDockAfterSend`
   - `PromptContext` の4項目を個別に切り替える。説明だけのhelper文やHelp iconは常設しない

@@ -167,7 +167,7 @@ export function HomeRightPane({
           />
         </section>
       ) : (
-        <section className="home-monitor-panel" role="tabpanel" aria-label="Characters">
+        <section className="home-monitor-panel home-characters-panel" role="tabpanel" aria-label="Characters">
           <HomeCharactersPanel
             characters={characterEntries}
             characterLoadStatus={characterLoadStatus}

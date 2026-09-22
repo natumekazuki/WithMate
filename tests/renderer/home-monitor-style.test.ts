@@ -121,27 +121,32 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
 
 // @test-value v2
 // kind = "contract"
-// claim = "Home Characters panelはright pane内のmonitor bodyをscroll containerとして使う"
-// oracle = { type = "contract", ref = "Home Characters right pane scroll contract" }
-// fault = "panel全体がoverflowせず、right paneの外側へ内容がはみ出すか固定領域が縮まない"
-// observable = "HomeCharactersPanelのmonitor body要素とflex・min-height・overflow-y CSS"
+// claim = "Home Charactersは検索欄と作成ボタンを固定し、Character一覧だけをpane内でスクロールする"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "monitor body全体をスクロールして検索欄が移動する、または一覧が縮まず下端で切れる"
+// observable = "Characters panelとtoolbar/listのDOM構造、およびbody・section・listのoverflowとflex CSS"
 // observation_boundary = "implementation"
-// scope = "Home Characters panel scroll container"
+// scope = "Home Characters panelのスクロール境界"
 // lifecycle = "permanent"
-// impact = "Character一覧がright pane内で収まり、他のHome領域のlayoutを押し広げない"
-// distinction = "Monitor status iconのCSSとは分離して、right pane内のscroll境界だけを検証する"
+// impact = "長いCharacter一覧でも検索と作成へ到達でき、下端の項目も操作できる"
+// distinction = "component testと型検査では検出できないscroll ownerのCSS設定を確認する"
 // @end-test-value
-test("Home Characters は right pane 内の scroll container を使う", async () => {
-  const [componentSource, stylesSource] = await Promise.all([
+test("Home Characters は一覧だけをスクロールする", async () => {
+  const [componentSource, paneSource, stylesSource] = await Promise.all([
     readFile("src/home/HomeCharactersPanel.tsx", "utf8"),
+    readFile("src/home/HomeRightPane.tsx", "utf8"),
     readStylesheet(),
   ]);
 
   assert.match(componentSource, /<div className="home-monitor-body"[^>]*>/);
-  const scrollContainerRule = stylesSource.match(/\.home-page \.home-monitor-body\s*{([^}]*)}/)?.[1];
-
-  assert.ok(scrollContainerRule);
-  assert.match(scrollContainerRule, /flex:\s*1 1 auto;/);
-  assert.match(scrollContainerRule, /min-height:\s*0;/);
-  assert.match(scrollContainerRule, /overflow-y:\s*auto;/);
+  assert.match(componentSource, /className="home-character-toolbar"/);
+  assert.match(componentSource, /className="home-character-list"/);
+  assert.match(paneSource, /className="home-monitor-panel home-characters-panel"/);
+  assert.match(readCssRule(stylesSource, ".home-page .home-characters-panel .home-monitor-body"), /overflow:\s*hidden;/);
+  const sectionRule = readCssRule(stylesSource, ".home-page .home-characters-panel .home-monitor-section");
+  assert.match(sectionRule, /flex:\s*1 1 auto;/);
+  assert.match(sectionRule, /min-height:\s*0;/);
+  const listRule = readCssRule(stylesSource, ".home-page .home-character-list");
+  assert.match(listRule, /min-height:\s*0;/);
+  assert.match(listRule, /overflow-y:\s*auto;/);
 });
