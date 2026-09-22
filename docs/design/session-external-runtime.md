@@ -8,7 +8,7 @@
 
 この文書は、Session CLI、Session MCP、Electron Main Process、操作対象Sessionの関係を示す。特に、MCPを呼び出すagentのSessionと操作対象のWithMate Sessionを区別する。
 
-runtime bindingのauthority境界はADR 021を参照する。通常SessionのRole binding、grantとresource historyについて、本branchに残る実装の判断経緯はADR 026・029を参照する。2026-09-22に採用した[ADR 032](../adr/032-role-session-async-collaboration.md)は、WorkItem・集約・複合Delegation・業務報告管理・予算・grantの撤去とRole付きSessionの非同期協同を定める。実装適用は未完了であり、以下の旧操作・grant条件の説明を新方針の必須要件や復活根拠にしない。
+runtime bindingのauthority境界はADR 021を参照する。通常SessionのRole binding、grantとresource historyについて、本branchに残る実装の判断経緯はADR 026・029を参照する。2026-09-22に採用した[ADR 032](../adr/032-role-session-async-collaboration.md)は、WorkItem・集約・複合Delegation・予算・grantの撤去と、Coordinationの報告・相談・回答反映の維持を定める。v6.4.0は5種類のRole、GUI限定のStandalone→全体統括変更、通常Session／Auxiliaryの関連一覧と通常Session間の非同期協同を対象とし、WithMate管理Subagentはv6.5.0の#716へ分離する。実装適用は未完了であり、以下の旧操作・grant条件の説明を新方針の必須要件や復活根拠にしない。
 
 exact request、response、error、状態遷移、limitは、本branchのtype、JSON schema、shared validation、executable contractを正本とする。この文書はそれらのfieldを網羅しない。公開操作・配布Skillの更新は実装と同じ論理変更で行い、文書だけで新契約へ対応済みとしない。
 

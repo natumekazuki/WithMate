@@ -10,7 +10,7 @@
 
 利用者向けの機能別ガイドは[`docs/features/`](../features/README.md)、versionごとの変更内容は[`docs/releases/`](../releases/README.md)に分離する。設計上の責務や不変条件は引き続き`docs/design/`と`docs/adr/`を正本とする。
 
-v6.4.0の採用判断と実装状態は区別する。[ADR 032](../adr/032-role-session-async-collaboration.md)のRole付きSessionによる非同期協同と管理機能撤去は採用済み・実装適用待ちである。`session-external-runtime.md`等に残るWorkItem・grant・予算の説明は、このbranchの変更前の実装に対応する。これらを撤去後の必須要件として復活させない。未実装の作業範囲は[Issue #734](https://github.com/natumekazuki/WithMate/issues/734)を参照し、別branchの文書・配置整理を取り込み済みとみなさない。
+v6.4.0の採用判断と実装状態は区別する。[ADR 032](../adr/032-role-session-async-collaboration.md)の5種類のRole、GUI限定のStandalone→全体統括変更、通常Session／Auxiliaryの関連一覧、通常Session間の非同期協同と不要管理の撤去は採用済み・実装適用待ちである。Coordinationの報告・相談・回答反映は維持し、WithMate管理Subagentはv6.5.0の[Issue #716](https://github.com/natumekazuki/WithMate/issues/716)へ分離する。`session-external-runtime.md`等に残るWorkItem・grant・予算の説明は、このbranchの変更前の実装に対応する。これらを撤去後の必須要件として復活させない。未実装の作業範囲は[Issue #734](https://github.com/natumekazuki/WithMate/issues/734)を参照し、別branchの文書・配置整理を取り込み済みとみなさない。
 
 ## Classification
 

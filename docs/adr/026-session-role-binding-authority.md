@@ -2,9 +2,9 @@
 
 ## Status
 
-Partially superseded by [ADR 032](032-role-session-async-collaboration.md)（2026-09-22、実装適用待ち）。Role関連注入はロール名のみとし、作成経路と保存済み関係は維持する。以下は採用当時の判断であり、新方針で撤回した権限管理の復活根拠にしない。
+Partially superseded by [ADR 032](032-role-session-async-collaboration.md)（2026-09-22、実装適用待ち）。v6.4.0はAuxiliaryを含む5種類のRoleを識別し、Role関連注入はロール名のみとする。保存関係・identityは維持し、Roleの全面immutable扱いはGUI限定のStandalone→全体統括変更に限って置換する。以下は採用当時の判断であり、agentによるRole自己変更や撤回した権限管理の復活根拠にしない。
 
-実効権限をRoleで制限する判断はADR 029で置き換えた。immutable bindingの構造契約は維持する。
+実効権限をRoleで制限する判断はADR 029で置き換え、そのgrant体系もADR 032で撤去対象とした。bindingの保存関係は保持し、Role変更の条件・継続性はADR 032に従う。
 
 ## Context
 

@@ -1,6 +1,6 @@
 # Agent 自律操作拡張計画
 
-2026-09-22の[Issue #734](https://github.com/natumekazuki/WithMate/issues/734)と[ADR 032](../../adr/032-role-session-async-collaboration.md)により、本計画のWorkItem・集約・複合Delegation・業務報告管理・予算・grantの維持／拡張方針は撤回された。Role付きSessionの非同期協同へ変更し、実装適用は未完了である。個別設計を含む以下の旧contract・Slice・完了条件を、新しい実装や統合の必須条件にしない。
+2026-09-22の[Issue #734](https://github.com/natumekazuki/WithMate/issues/734)と[ADR 032](../../adr/032-role-session-async-collaboration.md)により、本計画のWorkItem・集約・複合Delegation・予算・grantの維持／拡張方針は撤回された。Coordinationの報告・相談・回答反映は維持する。v6.4.0は5種類のRole、GUI限定のStandalone→全体統括変更、通常Session／Auxiliaryの関連一覧と通常Session間の非同期協同を対象とし、WithMate管理Subagentはv6.5.0へ分離する。実装適用は未完了であり、個別設計を含む以下の旧contract・Slice・完了条件を、新しい実装や統合の必須条件にしない。
 
 新方針の作業範囲・受入条件は#734、採否と維持境界はADR 032を参照する。旧計画へ新しいSliceや検証ログを追加しない。旧plan等の削除・現行説明への整理は#728／#734に従い、Archiveや別名の作業文書として温存しない。
 
@@ -273,7 +273,7 @@ transport ごとに入出力形式を変える必要がある場合も、resourc
 | Session移管・削除のAuxiliary全件化 | 方針維持・統合後の実装確認が必要 | 所属全件の非表示実行、作成／実行開始との競合、停止・cleanup、遅延callbackを確認する。実行・データ保護は維持するが、撤去対象の仕事管理・grant・予算による拒否条件は外す。旧pathを固定せず統合後のownerを確認する | ADR 032「維持する境界」「既存の採用判断との接続」 |
 | Main／Auxiliaryのスケジュールと共有ActionDock | 方針確定・実装追従待ち | 作成・編集対象の会話ID固定、対象表示、Dock切替抑止と通常draft復元を実装する。Auxiliaryの非表示発火、同一会話queue、対象削除時の非振替、GUI／Agentの認可分離を接続・検証する | `docs/design/desktop-ui.md`「Main／Auxiliaryのスケジュールと共有ActionDock」 |
 | 自己宛direct Turnとscheduleの分離 | 方針維持・grant／予算依存案は撤回 | Agentの自己宛direct Turn禁止、GUI追加入力や外部要因のscheduleとの区別を具体的なactor／対象境界で扱う。代替grantを追加しない。既存queueや保存データを文書更新だけで削除・取消しない | ADR 032「既存の採用判断との接続」 |
-| Main／AuxiliaryとWithMate管理Subagent | #716の更新方針を採用・実装接続は別件 | 手動Auxiliaryを任意の仕事先へ転用しない。実際の依頼元Main／AuxiliaryへSubagent自身が通常Turnで返送する。Subagent再委譲禁止を維持し、通常Workerと同一視せずv6.4必須にも追加しない | [#716の方針更新](https://github.com/natumekazuki/WithMate/issues/716#issuecomment-5772984362)、ADR 032 |
+| Main／AuxiliaryとWithMate管理Subagent | #716の更新済み本文を正本とし、v6.5.0で追加 | Standaloneを含むMain／Auxiliaryから利用し、実際の依頼元へ通常Turnで返送する。再委譲禁止を維持し、作成・実行・専用Window・保存・lifecycle・共通一覧接続を#716で扱う。v6.4.0の通常Session間協同を待たせず、Subagent用の仮実装・公開操作を先行追加しない | [#716](https://github.com/natumekazuki/WithMate/issues/716)、ADR 032 |
 | 完了結果通知 | #724は不採用Close・通常Turnの非同期協同へ置換 | 専用登録・通知不要状態・自動代理配送・fallback・報告専用AI・定期ポーリングは追加しない。送信済みTurnから追加Sendなしで再開し、報告なし時は保存結果を明示回収できるようにする | [#734](https://github.com/natumekazuki/WithMate/issues/734)、[#724の結論](https://github.com/natumekazuki/WithMate/issues/724#issuecomment-5772973699)、ADR 032 |
 
 ## 個別設計
