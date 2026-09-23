@@ -40,8 +40,6 @@ export type TextChatWindowProjectionInput = {
   reasoningOptions: ChatSelectOption[];
   selectedReasoningEffort: string;
   pendingRunIndicatorAnnouncement?: string;
-  pendingRunIndicatorText?: string;
-  pendingRunIndicatorTextVisible?: boolean;
   messageListRef: RefObject<HTMLDivElement | null>;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   onDraftChange: (value: string) => void;
@@ -83,8 +81,6 @@ export function buildTextChatWindowProps({
   reasoningOptions,
   selectedReasoningEffort,
   pendingRunIndicatorAnnouncement,
-  pendingRunIndicatorText,
-  pendingRunIndicatorTextVisible,
   messageListRef,
   composerTextareaRef,
   onDraftChange,
@@ -125,6 +121,7 @@ export function buildTextChatWindowProps({
       messages,
       messageListRef,
       isRunning,
+      pendingRunIndicatorAnnouncement,
       onCopyMessageText,
       onQuoteMessageText,
     }),
@@ -134,9 +131,6 @@ export function buildTextChatWindowProps({
       placeholder,
       composerTextareaRef,
       isRunning,
-      pendingRunIndicatorAnnouncement,
-      pendingRunIndicatorText,
-      pendingRunIndicatorTextVisible,
       feedback,
       sendButtonTitleWhenEnabled,
       modelOptions,
@@ -151,9 +145,6 @@ export function buildTextChatWindowProps({
       ...composerCapabilityProps,
     }),
     compactActionDockProps: createStaticTextChatCompactActionDockProps({
-      pendingRunIndicatorAnnouncement,
-      pendingRunIndicatorText,
-      pendingRunIndicatorTextVisible,
       onExpand: onToggleActionDock,
     }),
     headerSplitter: (

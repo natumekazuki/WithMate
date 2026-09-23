@@ -2,14 +2,8 @@ import { type ReactNode } from "react";
 
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 
-import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
-
 export type SessionActionDockCompactRowProps = {
   isRunning: boolean;
-  pendingRunIndicatorAnnouncement?: string;
-  pendingRunIndicatorText?: string;
-  pendingRunIndicatorTextVisible?: boolean;
-  pendingRunIndicatorAnnounce?: boolean;
   targetDock?: ReactNode;
   chatNotice?: string;
   showJumpToBottom: boolean;
@@ -24,9 +18,6 @@ export type SessionActionDockCompactRowProps = {
 
 export function SessionActionDockCompactRow({
   isRunning,
-  pendingRunIndicatorAnnouncement,
-  pendingRunIndicatorText,
-  pendingRunIndicatorAnnounce = true,
   targetDock = null,
   chatNotice,
   showJumpToBottom,
@@ -52,22 +43,6 @@ export function SessionActionDockCompactRow({
         </button>
       ) : null}
       <div className="session-action-dock-compact-actions">
-        {isRunning ? (
-          <button
-            className="session-action-dock-compact-progress session-action-dock-compact-progress-button"
-            type="button"
-            onClick={onExpand}
-            aria-label="Expand action dock"
-            title="Expand action dock"
-          >
-            <PendingRunIndicator
-              announcement={pendingRunIndicatorAnnouncement}
-              text={pendingRunIndicatorText}
-              showText={false}
-              announce={pendingRunIndicatorAnnounce}
-            />
-          </button>
-        ) : null}
         <div
           className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}
           aria-hidden={isRunning ? undefined : true}

@@ -707,7 +707,6 @@ export function ChatWindow({
           >
             <SessionComposerExpanded
               {...composerProps}
-              pendingRunIndicatorAnnounce={isActionDockExpanded}
               externalErrorDescriptionIds={composerErrorDescriptionIds || undefined}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
               onJumpToBottom={targetColumnControls?.followLatest ?? composerProps.onJumpToBottom}
@@ -728,7 +727,6 @@ export function ChatWindow({
           >
             <SessionActionDockCompactRow
               {...compactActionDockProps}
-              pendingRunIndicatorAnnounce={!isActionDockExpanded}
               onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
               showMessageViewModeControls={showMessageViewModeControls}

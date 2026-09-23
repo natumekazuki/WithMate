@@ -151,9 +151,6 @@ type HiddenControlsTextChatComposerProps = Pick<
 >;
 
 type StaticTextChatCompactActionDockProps = {
-  pendingRunIndicatorAnnouncement?: ChatCompactActionDockProps["pendingRunIndicatorAnnouncement"];
-  pendingRunIndicatorText?: ChatCompactActionDockProps["pendingRunIndicatorText"];
-  pendingRunIndicatorTextVisible?: ChatCompactActionDockProps["pendingRunIndicatorTextVisible"];
   onExpand?: ChatCompactActionDockProps["onExpand"];
 };
 
@@ -173,6 +170,7 @@ export type LiveSessionMessageColumnProps = {
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
+  pendingRunIndicatorAnnouncement?: ChatMessageColumnProps["pendingRunIndicatorAnnouncement"];
   liveApprovalRequest: ChatMessageColumnProps["liveApprovalRequest"];
   approvalActionRequestId: ChatMessageColumnProps["approvalActionRequestId"];
   liveElicitationRequest: ChatMessageColumnProps["liveElicitationRequest"];
@@ -316,9 +314,6 @@ export function buildLiveSessionComposerDockProps(
     },
     compactActionDock: {
       isRunning: input.isRunning,
-      pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
-      pendingRunIndicatorText: input.pendingRunIndicatorText,
-      pendingRunIndicatorTextVisible: input.pendingRunIndicatorTextVisible,
       chatNotice: input.chatNotice,
       showJumpToBottom,
       cancelButtonTitle: input.sendButtonTitle,
@@ -352,6 +347,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isRunning,
+    pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
     liveApprovalRequest: input.liveApprovalRequest,
     approvalActionRequestId: input.approvalActionRequestId,
     liveElicitationRequest: input.liveElicitationRequest,
@@ -618,16 +614,10 @@ export function createStaticChatCompactActionDockProps(
 }
 
 export function createStaticTextChatCompactActionDockProps({
-  pendingRunIndicatorAnnouncement,
-  pendingRunIndicatorText,
-  pendingRunIndicatorTextVisible,
   onExpand,
 }: StaticTextChatCompactActionDockProps): ChatCompactActionDockProps {
   return createStaticChatCompactActionDockProps({
     isRunning: false,
-    pendingRunIndicatorAnnouncement,
-    pendingRunIndicatorText,
-    pendingRunIndicatorTextVisible,
     onExpand,
     onCancel: chatWindowNoop,
   });

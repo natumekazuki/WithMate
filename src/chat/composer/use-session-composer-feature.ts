@@ -91,9 +91,6 @@ export type SessionComposerFeatureBridge = {
     blockedReason: string;
     isReadOnly: boolean;
     forceBlockedFeedback: boolean;
-    pendingRunIndicatorAnnouncement?: string;
-    pendingRunIndicatorText?: string;
-    pendingRunIndicatorTextVisible?: boolean;
     isMessageListFollowing: boolean;
     isPromptTemplateWorkspaceOpen: boolean;
     chatNotice?: string;
@@ -504,9 +501,6 @@ export function useSessionComposerFeature(input: {
       canSelectCustomAgent,
       additionalDirectoryCount: bridge.session.allowedAdditionalDirectories.length,
       isRunning: bridge.runtime.isRunning,
-      pendingRunIndicatorAnnouncement: bridge.runtime.pendingRunIndicatorAnnouncement,
-      pendingRunIndicatorText: bridge.runtime.pendingRunIndicatorText,
-      pendingRunIndicatorTextVisible: bridge.runtime.pendingRunIndicatorTextVisible,
       composerBlocked: !!bridge.runtime.blockedReason,
       isAgentPickerOpen,
       isSkillPickerOpen,

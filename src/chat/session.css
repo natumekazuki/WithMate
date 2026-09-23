@@ -30,48 +30,6 @@
   white-space: nowrap;
 }
 
-.session-action-dock-compact-progress {
-  min-width: 0;
-}
-
-.session-action-dock-compact-progress-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 40px;
-  min-height: 40px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.session-action-dock-compact-progress-button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--character-main) 72%, #ffffff 28%);
-  outline-offset: 3px;
-}
-
-.session-action-dock-compact-progress .pending-run-indicator {
-  min-height: 40px;
-  padding: 8px 10px;
-}
-
-.session-action-dock-compact-progress .pending-run-indicator,
-.composer-toolbar-progress .pending-run-indicator {
-  flex-wrap: nowrap;
-}
-
-.session-action-dock-compact-progress .pending-run-indicator .live-run-shell-status-text,
-.composer-toolbar-progress .pending-run-indicator .live-run-shell-status-text {
-  flex-basis: auto;
-  overflow: hidden;
-  overflow-wrap: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .session-action-dock-compact-meta,
 .session-action-dock-compact-actions {
   display: flex;
@@ -1899,10 +1857,9 @@
 }
 
 .pending-message-card {
-  min-height: 82px;
   display: grid;
   gap: 12px;
-  background: linear-gradient(145deg, rgba(226, 232, 240, 0.16), rgba(255, 255, 255, 0.96));
+  background: rgba(255, 255, 255, 0.96);
   border-color: rgba(148, 163, 184, 0.28);
 }
 
@@ -1910,6 +1867,24 @@
   border-color: color-mix(in srgb, var(--character-sub) 22%, rgba(203, 213, 225, 0.18));
   background: color-mix(in srgb, var(--character-sub-soft) 38%, rgba(15, 19, 26, 0.98));
   box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 78%, transparent);
+}
+
+.session-page .pending-message-card.is-indicator-only,
+.session-page .message-row.auxiliary-message-group-item .pending-message-card.is-indicator-only {
+  width: max-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.session-page .pending-message-card .pending-run-indicator {
+  justify-self: start;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-color: color-mix(in srgb, var(--character-main) 48%, transparent);
+  background: color-mix(in srgb, var(--character-main-soft) 28%, rgba(15, 19, 26, 0.94));
+  color: var(--character-main);
 }
 
 .pending-run-error-note {
@@ -1931,12 +1906,6 @@
 .session-page .pending-run-indicator {
   border-color: rgba(56, 189, 248, 0.22);
   background: rgba(9, 28, 41, 0.42);
-}
-
-.pending-run-indicator .live-run-shell-status-text {
-  flex: 1 1 220px;
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 
 .pending-run-indicator .typing-dots {
@@ -3494,28 +3463,6 @@
 .composer-message-view-mode-button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--character-main) 70%, white 30%);
   outline-offset: 2px;
-}
-
-.composer-toolbar-progress {
-  display: inline-flex;
-  flex: 0 0 auto;
-  min-width: 0;
-  width: max-content;
-  max-width: max-content;
-}
-
-.composer-toolbar-progress .pending-run-indicator {
-  display: inline-flex;
-  flex: 0 0 auto;
-  min-height: 0;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  width: max-content;
-  max-width: max-content;
 }
 
 .composer-hide-button {

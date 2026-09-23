@@ -257,6 +257,9 @@ export function useConversationMessageColumn({
     collapsedMessageKeys,
     messageJumpRequest: conversation.messageJumpRequest,
     isRunning: session.runState === "running" || !!liveRun,
+    pendingRunIndicatorAnnouncement: messageSourceKind === "session"
+      ? baseProps.pendingRunIndicatorAnnouncement
+      : "Running",
     liveRunAssistantText: assistantText,
     hasLiveRunAssistantText: assistantText.length > 0,
     liveApprovalRequest: api ? liveRun?.approvalRequest ?? null : baseProps.liveApprovalRequest,

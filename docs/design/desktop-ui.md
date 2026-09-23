@@ -260,9 +260,9 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
   - 常に全幅の下dockとして置く
-  - compact では実行中indicatorを`Cancel`の隣に置き、末尾移動とmessage表示切替も必要に応じて操作列に残す。draft入力と`Send`はexpandedで表示する
-  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では86pxを使い、viewportが760px以下では操作列幅へ追従する。compactの実行中はindicatorと`Cancel`を同じ行にまとめ、狭幅ではindicatorを除く残り幅を`Cancel`が使う。expanded の下段には disabled の `Send` を残し、開閉や Main / Auxiliary 切替で `Cancel` の位置を変えない
-  - 開閉は下 splitter を主導線とし、compact の実行中indicatorと非実行中のmeta領域からも展開できる。dock 内に `Hide` は置かない
+  - compact では末尾移動とmessage表示切替を必要に応じて操作列に残す。draft入力と`Send`はexpandedで表示し、実行中indicatorはmessage listに置く
+  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では86pxを使い、viewportが760px以下では操作列幅へ追従する。expanded の下段には disabled の `Send` を残し、開閉や Main / Auxiliary 切替で `Cancel` の位置を変えない
+  - 開閉は下 splitter を主導線とし、compact の非実行中のmeta領域からも展開できる。dock 内に `Hide` は置かない
   - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
@@ -309,7 +309,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - `selectedSession.id` 切替時は follow / unread state をリセットする
   - `Jump to latest` で末尾へ移動して追従へ復帰できる
 - pending 中の live activity / streaming response
-- streamingの`assistantText`は会話本文として表示する。run状態はAction Dockのindicatorで示し、同じrunの既定待機文を会話本文へ重ねない
+- streamingの`assistantText`は会話本文として表示する。run開始直後からmessage list末尾にCharacter avatarとdot bubbleを置き、本文の到着後もrun中は維持する。同じrunの既定待機文を会話本文へ重ねない
 - pending bubble には provider-native pending item を差し込める
   - `approvalRequest`: `AllowOnce / Reject`
   - `elicitationRequest`: form の `Submit` または URL completion の `Complete` と、`Reject / Close`
@@ -332,12 +332,12 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Memory生成` tab は current UI では表示しない
 - provider が `Copilot` の時だけ、`LatestCommand` の下に `CopilotUsage` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
-- `assistantText` は pending bubble の会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
-- Action Dockの実行中indicatorは本文の代替ではなく `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後もrun中は維持する
-- 未選択のMain / Auxiliaryが実行中の場合は、そのtarget切替buttonに局所spinnerと対象付きaccessible nameを示す。選択中targetではAction Dockの主indicatorへ集約し、他のAuxiliaryは一覧の既存processing indicatorで識別する
-- 実行中indicatorは `runState !== "running"` になった時点で消し、success固定の完了表現にはしない
-- `assistantText`未着でもright paneの `LatestCommand` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、Action Dockのrun indicatorとaccessible statusで待機を示す
-- screen readerには会話本文全体でなくAction Dockの状態変化を通知する。compact / expandedの非表示側から重複して通知しない
+- `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
+- message list末尾のdot bubbleは `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後もrun中は維持する
+- 未選択のMain / Auxiliaryが実行中の場合は、そのtarget切替buttonに局所spinnerと対象付きaccessible nameを示す。選択中targetではmessage listの末尾行へ集約し、他のAuxiliaryは一覧の既存processing indicatorで識別する
+- 実行中bubbleは `runState !== "running"` になった時点で消し、success固定の完了表現にはしない
+- `assistantText`未着でもright paneの `LatestCommand` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、末尾のdot bubbleとaccessible statusで待機を示す
+- screen readerには会話本文全体でなく末尾行の状態変化を通知する。Action Dockから重複して通知しない
 - retry draft conflictとcomposer feedbackはvisible textを正本にして常時live通知しない
 - `command_execution` は通常 paragraph ではなく shell command と即判別できる専用の monospace block で表示する
 - `details` は stdout / stderr など二次情報だけを折りたたみ表示する

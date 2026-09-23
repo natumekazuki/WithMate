@@ -1012,22 +1012,12 @@
   animation: workspace-changes-spin 720ms linear infinite;
 }
 
-/* A compact running dock keeps only motion and controls visible. The
-   visually-hidden status announcement remains available to assistive tech. */
 .session-page .session-action-dock-compact-row.running {
   grid-template-columns: minmax(0, 1fr);
 }
 
 .session-page .session-action-dock-compact-row.running .session-action-dock-compact-actions {
   justify-content: flex-end;
-}
-
-.session-page .session-action-dock-compact-row.running
-  .session-action-dock-compact-progress .pending-run-indicator {
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
 }
 
 .prompt-template-picker {

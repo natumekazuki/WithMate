@@ -313,8 +313,6 @@ function createComposerBridge(
       blockedReason: "",
       isReadOnly: false,
       forceBlockedFeedback: false,
-      pendingRunIndicatorAnnouncement: undefined,
-      pendingRunIndicatorText: undefined,
       isMessageListFollowing: true,
       isPromptTemplateWorkspaceOpen: false,
       chatNotice: undefined,

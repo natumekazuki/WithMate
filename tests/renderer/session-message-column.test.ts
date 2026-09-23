@@ -248,6 +248,7 @@ function renderSessionMessageColumn(options: {
   messages: Message[];
   expandedArtifacts?: Record<string, boolean>;
   isRunning?: boolean;
+  pendingRunIndicatorAnnouncement?: string;
   isMessageListFollowing?: boolean;
   liveApprovalRequest?: LiveApprovalRequest | null;
   liveElicitationRequest?: LiveElicitationRequest | null;
@@ -278,6 +279,7 @@ function renderSessionMessageColumn(options: {
       expandedArtifacts: options.expandedArtifacts ?? {},
       messageListRef: createRef<HTMLDivElement>(),
       isRunning: options.isRunning ?? false,
+      pendingRunIndicatorAnnouncement: options.pendingRunIndicatorAnnouncement,
       liveApprovalRequest: options.liveApprovalRequest ?? null,
       approvalActionRequestId: null,
       liveElicitationRequest: options.liveElicitationRequest ?? null,
@@ -2138,7 +2140,19 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
   );
 });
 
-test("SessionMessageColumn は projection 済みの実行中 assistant text を通常 message row として表示する", () => {
+// @test-value v2
+// kind = "contract"
+// claim = "投影済みの実行中assistant本文を通常message rowに保ち、run終了前はその後に処理中bubbleを示す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: pending中のlive activity / streaming response" }
+// fault = "streaming本文がpending行へ重複する、または本文開始後に実行状態が会話末尾から消える"
+// observable = "assistant本文、pending bubble、bottom anchorのDOM順と本文の出現回数"
+// observation_boundary = "component-behavior"
+// scope = "session-message-streaming-tail"
+// lifecycle = "permanent"
+// impact = "返答を読みながら処理継続中であることを判断できなくなる"
+// distinction = "本文とrun状態を異なる行に保持するprojection済みstreaming局面を確認する"
+// @end-test-value
+test("SessionMessageColumn は projection 済みの実行中 assistant text と末尾の処理中bubbleを表示する", () => {
   const html = renderSessionMessageColumn({
     messages: [
       ...createMessages(100),
@@ -2148,8 +2162,9 @@ test("SessionMessageColumn は projection 済みの実行中 assistant text を�
     liveRunAssistantText: "ストリーミング中の返答",
   });
 
-  assert.doesNotMatch(html, /pending-row/);
+  assert.match(html, /pending-row/);
   assert.match(html, /ストリーミング中の返答/);
+  assert.equal((html.match(/ストリーミング中の返答/g) ?? []).length, 1);
   assert.ok(
     html.indexOf("message 100") < html.indexOf("ストリーミング中の返答"),
     "projection 済みの live assistant text は既存メッセージの後に描画する",
@@ -2158,17 +2173,34 @@ test("SessionMessageColumn は projection 済みの実行中 assistant text を�
     html.indexOf("ストリーミング中の返答") < html.indexOf("message-list-bottom-anchor"),
     "projection 済みの live assistant text は bottom anchor より前に描画する",
   );
-  assert.doesNotMatch(html, /処理を実行中/);
+  assert.ok(html.indexOf("ストリーミング中の返答") < html.indexOf("pending-row"));
+  assert.ok(html.indexOf("pending-row") < html.indexOf("message-list-bottom-anchor"));
 });
 
-test("SessionMessageColumn は inline content のない pending bubble を描画しない", () => {
+// @test-value v2
+// kind = "contract"
+// claim = "実行開始直後から内容未到着でも会話末尾に処理中bubbleとaccessible statusを表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: pending中のlive activity / streaming response" }
+// fault = "最初のassistant本文やrequestが到着するまで実行状態の行が表示されない"
+// observable = "最後のmessage、pending indicator、bottom anchorのDOM順とstatus announcement"
+// observation_boundary = "component-behavior"
+// scope = "session-message-empty-running-tail"
+// lifecycle = "permanent"
+// impact = "送信直後に処理が開始されたか分からず、応答待ちの状態を見失う"
+// distinction = "本文やrequestを持つpending rowの既存testと異なり、run開始直後の空状態を確認する"
+// @end-test-value
+test("SessionMessageColumn は内容未到着でも末尾に処理中bubbleを描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(1),
     isRunning: true,
+    pendingRunIndicatorAnnouncement: "Preparing a response",
   });
 
-  assert.doesNotMatch(html, /pending-row/);
-  assert.match(html, /message-list-bottom-anchor/);
+  assert.match(html, /pending-message-card is-indicator-only/);
+  assert.match(html, /typing-dots pending-run-indicator-dots/);
+  assert.match(html, /role="status"[^>]*>Preparing a response<\/span>/);
+  assert.ok(html.indexOf("message 1") < html.indexOf("pending-row"));
+  assert.ok(html.indexOf("pending-row") < html.indexOf("message-list-bottom-anchor"));
 });
 
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {
@@ -2188,14 +2220,14 @@ test("SessionMessageColumn は pending message text があれば実行開始直�
 
 // @test-value v2
 // kind = "contract"
-// claim = "pending message textのconsumer可視性だけを切り替え、built-in待機文を省略してもcustom text・approval・error・実本文を保持する"
+// claim = "pending message textのconsumer可視性だけを切り替え、built-in待機文を省略しても処理中bubble・custom text・approval・error・実本文を保持する"
 // oracle = { type = "contract", ref = "src/chat/conversation/session-message-column.tsx: pendingMessageTextVisible" }
-// fault = "built-in待機文をDockとmessage columnへ重複表示する、custom textを隠す、または同じrunのapproval/error/live assistant textまで消す"
-// observable = "pending row/textの有無、approval/error/live assistant textのDOM"
+// fault = "built-in待機文を本文へ表示する、custom textを隠す、または同じrunのbubble/approval/error/live assistant textまで消す"
+// observable = "pending rowと本文textの独立した有無、approval/error/live assistant textのDOM"
 // observation_boundary = "component-behavior"
 // scope = "session-message-pending-text-visibility"
 // lifecycle = "permanent"
-// impact = "既定待機説明の重複を抑えながら実行中requestの状態と生成内容を失わない"
+// impact = "既定待機説明の重複を抑えながらrun状態、request、生成内容を失わない"
 // distinction = "text visibilityだけをfalseにし、run stateとlive request payloadは各入力へ独立して与える"
 // @end-test-value
 test("SessionMessageColumn は built-in pending text を省略しても custom と実行内容を保持する", () => {
@@ -2205,7 +2237,8 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
     pendingMessageText: "Preparing a response",
     pendingMessageTextVisible: false,
   });
-  assert.doesNotMatch(builtInHiddenHtml, /pending-row/);
+  assert.match(builtInHiddenHtml, /pending-row/);
+  assert.match(builtInHiddenHtml, /typing-dots pending-run-indicator-dots/);
   assert.doesNotMatch(builtInHiddenHtml, /Preparing a response/);
 
   const customVisibleHtml = renderSessionMessageColumn({
@@ -2318,8 +2351,6 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
       isRunning: false,
-      pendingRunIndicatorAnnouncement: "処理を実行中",
-      pendingRunIndicatorText: "処理を実行中",
       targetDock: React.createElement("span", { className: "test-target-dock" }, "Main / Auxiliary"),
       composerBlocked: false,
       canSelectCustomAgent: true,
@@ -2483,8 +2514,6 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   const renderComposer = (isRunning: boolean) => renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
       isRunning,
-      pendingRunIndicatorAnnouncement: "処理を実行中",
-      pendingRunIndicatorText: "処理を実行中",
       targetDock: React.createElement("span", { className: "test-target-dock" }, "Main / Auxiliary"),
       composerBlocked: false,
       canSelectCustomAgent: true,
@@ -2553,11 +2582,8 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   );
   const html = renderComposer(true);
 
-  assert.match(html, /composer-toolbar-progress/);
-  assert.match(html, /処理を実行中/);
   assert.match(html, /JumpToLatest/);
-  assert.ok(html.indexOf("Attach") < html.indexOf("処理を実行中"));
-  assert.ok(html.indexOf("処理を実行中") < html.indexOf("JumpToLatest"));
+  assert.ok(html.indexOf("Attach") < html.indexOf("JumpToLatest"));
   assert.ok(html.indexOf("JumpToLatest") < html.indexOf("Preview"));
   assert.match(html, /composer-toolbar-view-actions[\s\S]*JumpToLatest[\s\S]*Message display mode/);
 
@@ -2659,39 +2685,6 @@ test("SessionComposerExpanded は busy 中の Send を spinner と status にす
 
 // @test-value v2
 // kind = "contract"
-// claim = "PendingRunIndicatorはconsumerが実行中microcopyを非表示にしてもdot motion・accessible statusを保持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 状態の形・動き・テキスト" }
-// fault = "実行中microcopyの整理でdot motionまたはstatus通知が消える、あるいは保存済みcustom microcopyがvisual DOMへ再表示される"
-// observable = "SessionComposerExpandedのrunning DOMにおけるdots・live status・visual textの有無"
-// observation_boundary = "component-behavior"
-// scope = "pending run indicator visible text policy"
-// lifecycle = "permanent"
-// impact = "同じrunの待機文を表示せず、実行中のdot motion・停止操作・accessible statusを保つ"
-// distinction = "ActionDockのexpanded/compact切替と別にindicatorのconsumer表示方針を直接確認する"
-// @end-test-value
-test("PendingRunIndicator は実行中microcopyを省略しても状態表示とaccessible statusを保つ", () => {
-  const renderComposer = (pendingRunIndicatorTextVisible: boolean) => renderToStaticMarkup(
-    React.createElement(SessionComposerExpanded, createComposerTestProps({
-      isRunning: true,
-      pendingRunIndicatorAnnouncement: "Working",
-      pendingRunIndicatorText: "Working",
-      pendingRunIndicatorTextVisible,
-    })),
-  );
-
-  const defaultHtml = renderComposer(false);
-  assert.doesNotMatch(defaultHtml, /live-run-shell-status-badge/);
-  assert.match(defaultHtml, /typing-dots pending-run-indicator-dots/);
-  assert.match(defaultHtml, /visually-hidden[^>]*>Working<\/span>/);
-  assert.doesNotMatch(defaultHtml, /live-run-shell-status-text/);
-
-  const customHtml = renderComposer(true);
-  assert.match(customHtml, /visually-hidden[^>]*>Working<\/span>/);
-  assert.doesNotMatch(customHtml, /live-run-shell-status-text/);
-});
-
-// @test-value v2
-// kind = "contract"
 // claim = "idleのcompact ActionDockはpreview/source切替とjumpを表示し、send・draftの重複UIを表示しない"
 // oracle = { type = "contract", ref = "src/chat/approval/session-action-dock.tsx" }
 // fault = "idle状態でもSendまたはdraftを複製するか、preview/source・jump affordanceを失う"
@@ -2727,40 +2720,30 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 
 // @test-value v2
 // kind = "contract"
-// claim = "compact ActionDockは実行中に展開導線を操作でき、progressをCancelの隣にまとめ、Main / Auxiliary操作列を維持する"
+// claim = "compact ActionDockは実行中にCancel、Main / Auxiliary、jump操作を同じ列に維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "実行中のcompact ActionDockに展開導線、progress、Cancel、Main / Auxiliary操作列のいずれかが欠ける、progressがCancelと離れる、展開callbackが呼ばれない、またはCancelがtarget slotの直前にない"
-// observable = "SessionActionDockCompactRowの実行中static DOMにおけるprogress、jump button、Cancel、target slot、操作列のDOM順と、展開button clickによるonExpand callback"
+// fault = "実行中のcompact ActionDockからCancel、Main / Auxiliary、jump操作が欠けるか、Cancelがtarget slotの直前にない"
+// observable = "SessionActionDockCompactRowの実行中DOMにおけるjump button、Cancel、target slot、操作列のDOM順"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock running presentation"
 // lifecycle = "permanent"
-// impact = "実行中のcompact ActionDockで展開導線とCancelの発見性、Main / Auxiliaryとの操作順を維持し、展開操作を失わせない"
-// distinction = "同一React treeのidle/running遷移は別testで確認し、このtestは実行中のstatic DOMと展開buttonの実clickを確認する"
+// impact = "実行中のcompact ActionDockで停止操作と会話対象の切替位置を見失わない"
+// distinction = "同一React treeのidle/running遷移は別testで確認し、このtestは実行中の操作列を確認する"
 // @end-test-value
-test("SessionActionDockCompactRow は実行中の compact 表示から展開でき、jump button と Cancel を描画する", () => {
-  const expansionProbe = { calls: 0 },
-    compactProps = {
+test("SessionActionDockCompactRow は実行中に jump button と Cancel を描画する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SessionActionDockCompactRow, {
       isRunning: true,
-      pendingRunIndicatorAnnouncement: "処理を実行中",
-      pendingRunIndicatorText: "処理を実行中",
       targetDock: React.createElement("span", { className: "test-target-dock" }, "Main / Auxiliary"),
       chatNotice: "New messages",
       showJumpToBottom: true,
       cancelButtonTitle: "実行をキャンセル",
-      onExpand() {
-        expansionProbe.calls += 1;
-      },
+      onExpand() {},
       onJumpToBottom() {},
       onCancel() {},
-    },
-    html = renderToStaticMarkup(
-      React.createElement(SessionActionDockCompactRow, compactProps),
-    );
+    }),
+  );
 
-  assert.match(html, /aria-label="Expand action dock"/);
-  assert.match(html, /session-action-dock-compact-progress-button/);
-  assert.match(html, /session-action-dock-compact-progress/);
-  assert.match(html, /処理を実行中/);
   assert.match(html, /New messages/);
   assert.match(html, /session-action-dock-compact-actions/);
   assert.ok(html.indexOf("Cancel") < html.indexOf("JumpToLatest"));
@@ -2768,61 +2751,21 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
   const renderedDocument = new JSDOM(html).window.document;
   const actions = renderedDocument.querySelector(".session-action-dock-compact-actions");
   assert.ok(actions);
-  const progressButton = actions?.querySelector(":scope > .session-action-dock-compact-progress-button");
   const cancelSlot = actions?.querySelector(":scope > .session-action-dock-cancel-slot");
   const targetSlot = actions?.querySelector(":scope > .session-action-dock-target-slot");
-  assert.ok(progressButton);
   assert.ok(cancelSlot);
   assert.ok(targetSlot);
-  assert.equal(actions.firstElementChild, progressButton);
-  assert.equal(progressButton.nextElementSibling, cancelSlot);
+  assert.equal(actions.firstElementChild, cancelSlot);
   assert.equal(cancelSlot.nextElementSibling, targetSlot);
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
-
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  const previousHTMLElement = globalThis.HTMLElement;
-  const previousNode = globalThis.Node;
-  const previousNavigator = globalThis.navigator;
-  const mountedDom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    pretendToBeVisual: true,
-  });
-  Object.defineProperty(globalThis, "window", { configurable: true, value: mountedDom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: mountedDom.window.document });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: mountedDom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: mountedDom.window.Node });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: mountedDom.window.navigator });
-  let root: Root | null = null;
-  try {
-    act(() => {
-      root = createRoot(mountedDom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(SessionActionDockCompactRow, compactProps));
-    });
-    const expandButton = mountedDom.window.document.querySelector<HTMLButtonElement>(
-      'button[aria-label="Expand action dock"]',
-    );
-    assert.ok(expandButton);
-    act(() => {
-      expandButton.click();
-    });
-    assert.equal(expansionProbe.calls, 1);
-  } finally {
-    act(() => root?.unmount());
-    mountedDom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-  }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "compact ActionDockはidleとrunningの双方向遷移でもCancel予約slotをMain / Auxiliary直前に保ち、runningではprogressをCancelの隣に置く"
+// claim = "compact ActionDockはidleとrunningの双方向遷移でもCancel予約slotをMain / Auxiliary直前に保つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "idleまたはrunningでslotが消えるか、双方向の実行状態切替でCancelがMain / Auxiliary直前以外へ移動する、progressがCancelと離れる、active状態・aria・Cancel buttonのenabled状態が崩れる"
-// observable = "React stateをidle/runningへ双方向に更新したSessionActionDockCompactRowのprogressとslotの順序、target内容、class、aria、Cancel button"
+// fault = "idleまたはrunningでslotが消えるか、双方向の実行状態切替でCancelがMain / Auxiliary直前以外へ移動する、active状態・aria・Cancel buttonのenabled状態が崩れる"
+// observable = "React stateをidle/runningへ双方向に更新したSessionActionDockCompactRowのslot順序、target内容、class、aria、Cancel button"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock Cancel slot"
 // lifecycle = "permanent"
@@ -2866,14 +2809,7 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
     assert.ok(slot);
     const parent = slot.parentElement;
     assert.ok(parent?.classList.contains("session-action-dock-compact-actions"));
-    const progressButton = parent?.querySelector(":scope > .session-action-dock-compact-progress-button");
-    if (isRunning) {
-      assert.equal(parent?.firstElementChild, progressButton);
-      assert.equal(progressButton?.nextElementSibling, slot);
-    } else {
-      assert.equal(parent?.firstElementChild, slot);
-      assert.equal(progressButton, null);
-    }
+    assert.equal(parent?.firstElementChild, slot);
     assert.equal(slot.nextElementSibling?.classList.contains("session-action-dock-target-slot"), true);
     assert.equal(slot.nextElementSibling?.textContent, targetLabel);
     assert.equal(slot.classList.contains("is-active"), isRunning);

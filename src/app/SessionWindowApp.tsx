@@ -2058,15 +2058,13 @@ export default function AgentSessionWindowApp() {
     scrollActivityMonitorToBottom();
   };
 
-  const pendingRunIndicatorText = isApprovalRequestPending || isElicitationRequestPending
+  const pendingRunIndicatorAnnouncement = isApprovalRequestPending || isElicitationRequestPending
     ? "Waiting for approval"
     : hasInProgressLiveRunStep
       ? "Working"
       : hasLiveRunAssistantText
         ? "Generating a response"
         : "Preparing a response";
-  const pendingRunIndicatorTextVisible = false;
-  const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
   const pendingMessageText = "Preparing a response";
   const isSelectedSessionRunning = resolveSelectedSessionIsRunning({
     runState: selectedSessionRunState,
@@ -2201,9 +2199,6 @@ export default function AgentSessionWindowApp() {
       blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly,
       forceBlockedFeedback: forceComposerBlockedFeedback,
-      pendingRunIndicatorAnnouncement,
-      pendingRunIndicatorText,
-      pendingRunIndicatorTextVisible,
       isMessageListFollowing,
       isPromptTemplateWorkspaceOpen,
       chatNotice: isCentralPreviewActive ? actionDockChatNotice : "",
@@ -2296,6 +2291,7 @@ export default function AgentSessionWindowApp() {
     collapsedMessageKeys: undefined,
     messageJumpRequest: null,
     isRunning: renderedIsRunning,
+    pendingRunIndicatorAnnouncement,
     liveApprovalRequest,
     approvalActionRequestId,
     liveElicitationRequest,

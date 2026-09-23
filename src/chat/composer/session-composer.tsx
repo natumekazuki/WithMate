@@ -20,7 +20,6 @@ import {
 
 import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../../settings/shortcut-registry.js";
 
-import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 
 export type SessionSelectOption = {
   value: string;
@@ -58,10 +57,6 @@ export type SessionComposerExpandedProps = {
   composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
   onRetryComposerSave?: () => void;
   isRunning: boolean;
-  pendingRunIndicatorAnnouncement?: string;
-  pendingRunIndicatorText?: string;
-  pendingRunIndicatorTextVisible?: boolean;
-  pendingRunIndicatorAnnounce?: boolean;
   targetDock?: ReactNode;
   chatNotice?: string;
   composerBlocked: boolean;
@@ -143,9 +138,6 @@ export function SessionComposerExpanded({
   composerController,
   onRetryComposerSave,
   isRunning,
-  pendingRunIndicatorAnnouncement,
-  pendingRunIndicatorText,
-  pendingRunIndicatorAnnounce = true,
   targetDock = null,
   chatNotice,
   composerBlocked,
@@ -431,16 +423,6 @@ export function SessionComposerExpanded({
               >
                 {`Dirs${additionalDirectoryCount}`}
               </button>
-            </div>
-          ) : null}
-          {isRunning ? (
-            <div className="composer-toolbar-progress">
-              <PendingRunIndicator
-                announcement={pendingRunIndicatorAnnouncement}
-                text={pendingRunIndicatorText}
-                showText={false}
-                announce={pendingRunIndicatorAnnounce}
-              />
             </div>
           ) : null}
           {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock ? (

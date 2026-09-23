@@ -728,8 +728,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
   const onExpandActionDock = () => {};
   const props = buildLiveSessionComposerDockProps({
     isRunning: true,
-    pendingRunIndicatorAnnouncement: "実行中",
-    pendingRunIndicatorText: "応答を生成中",
     chatNotice: "New messages",
     composerBlocked: false,
     canSelectCustomAgent: true,
@@ -993,8 +991,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
     },
     composer: {
       isRunning: true,
-      pendingRunIndicatorAnnouncement: "実行中",
-      pendingRunIndicatorText: "応答を生成中",
       composerBlocked: false,
       canSelectCustomAgent: false,
       showCustomAgentPicker: true,
@@ -1058,8 +1054,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
     },
     compactActionDock: {
       isRunning: true,
-      pendingRunIndicatorAnnouncement: "実行中",
-      pendingRunIndicatorText: "応答を生成中",
       showJumpToBottom: true,
       cancelButtonTitle: "Send",
       onExpand: noop,

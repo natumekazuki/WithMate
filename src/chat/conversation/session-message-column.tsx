@@ -13,6 +13,7 @@ import { approvalModeLabel, CharacterAvatar, operationTypeLabel } from "../../ui
 
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { LiveRequestSurface } from "../runtime/live-request-surface.js";
+import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches } from "../../ui/find-text-matches.js";
 
 import { resolveSelectionActionOverlayPosition } from "../../chat/selection-action-overlay.js";
@@ -75,6 +76,7 @@ export type SessionMessageColumnProps = {
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
+  pendingRunIndicatorAnnouncement?: string;
   liveApprovalRequest: LiveApprovalRequest | null;
   approvalActionRequestId: string | null;
   liveElicitationRequest: LiveElicitationRequest | null;
@@ -400,6 +402,7 @@ export function SessionMessageColumn({
   expandedArtifacts,
   messageListRef,
   isRunning,
+  pendingRunIndicatorAnnouncement,
   liveApprovalRequest,
   approvalActionRequestId,
   liveElicitationRequest,
@@ -574,7 +577,7 @@ export function SessionMessageColumn({
     hasPendingMessageText;
   const pendingMessageGroupEndIndex = useMemo(
     () => {
-      if (!hasPendingInlineContent || pendingMessageGroupId === null) {
+      if (!isRunning || pendingMessageGroupId === null) {
         return -1;
       }
 
@@ -583,7 +586,7 @@ export function SessionMessageColumn({
         messageGroups[index + 1]?.id !== messageGroup.id
       )) ?? -1;
     },
-    [hasPendingInlineContent, messageGroups, pendingMessageGroupId],
+    [isRunning, messageGroups, pendingMessageGroupId],
   );
   const messageFindMatches = useMemo(() => {
     const matches: Array<
@@ -618,7 +621,7 @@ export function SessionMessageColumn({
     [messageFindMatches],
   );
   const activeCurrentFindMatch = clampFindMatchIndex(currentFindMatch, messageFindMatches.length);
-  const canRenderGroupedPendingInlineContent =
+  const canRenderGroupedPending =
     pendingMessageGroupEndIndex >= 0 &&
     virtualMessages.some((virtualMessage) => virtualMessage.index === pendingMessageGroupEndIndex);
   const getFindMatchScrollIndex = useCallback((match: (typeof messageFindMatches)[number] | undefined) => {
@@ -897,7 +900,7 @@ export function SessionMessageColumn({
   const renderPendingRow = (className = "") => (
     <article className={`message-row assistant pending-row${className ? ` ${className}` : ""}`}>
       <CharacterAvatar character={character} size="small" className="message-avatar" />
-      <div className="message-card assistant pending-message-card">
+      <div className={`message-card assistant pending-message-card${hasPendingInlineContent ? "" : " is-indicator-only"}`}>
         <LiveRequestSurface
           liveApprovalRequest={liveApprovalRequest}
           approvalActionRequestId={approvalActionRequestId}
@@ -928,6 +931,7 @@ export function SessionMessageColumn({
         {liveRunErrorMessage ? (
           <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
         ) : null}
+        <PendingRunIndicator announcement={pendingRunIndicatorAnnouncement} />
       </div>
     </article>
   );
@@ -980,7 +984,7 @@ export function SessionMessageColumn({
             const doesMessageGroupContinue = !!messageGroup && nextMessageGroup?.id === messageGroup.id;
             const shouldRenderGroupedPending =
               isRunning &&
-              canRenderGroupedPendingInlineContent &&
+              canRenderGroupedPending &&
               isMessageGroupEnd &&
               messageGroup?.id === pendingMessageGroupId;
             const shouldCloseMessageGroup = isMessageGroupEnd && !shouldRenderGroupedPending;
@@ -1237,7 +1241,7 @@ export function SessionMessageColumn({
             );
           })}
             </div>
-            {isRunning && hasPendingInlineContent && !canRenderGroupedPendingInlineContent ? renderPendingRow() : null}
+            {isRunning && !canRenderGroupedPending ? renderPendingRow() : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}
