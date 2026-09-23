@@ -1,83 +1,21 @@
 # Coding Agent Capability Matrix
 
-## Goal
+WithMateが現在のSession UIから利用できるprovider機能を示す。provider SDKの一般的な対応表ではなく、WithMateのadapterとUIに接続済みの範囲である。実行・認可の責務は[Provider Adapter](provider-adapter.md)を参照する。
 
-- WithMate が wrapper として扱う coding agent capability を 1 枚で追跡できるようにする
-- capability ごとに `Codex`、`GitHub Copilot CLI`、`WithMate current` の対応状況を同じ表で確認できるようにする
-- 今後の実装や改修で、何を更新すべきかの正本 doc とする
+| 機能 | Codex | GitHub Copilot | WithMateの境界 |
+| --- | --- | --- | --- |
+| turn実行・session再開 | 対応 | 対応 | 保存済みthread／session identityから再開する |
+| 実行中の取消と状態表示 | 対応 | 対応 | Mainのrun stateを共通Session UIへ投影する |
+| model・reasoning depth | 対応 | 対応 | 選択可能な値はproviderとcatalogに従う。Copilotでは非対応depthを渡さない |
+| approval | policyを写像 | permission requestへ応答 | 共通表示からprovider固有の実行判断へ変換する |
+| sandbox設定 | 対応 | UI設定なし | Codexの選択値をSDK runtime optionへ渡す |
+| file・folder・画像の入力 | 対応 | 対応 | workspaceと許可済みAdditional Directoryの範囲でprovider固有のattachmentへ変換する |
+| Skill | mentionへ変換 | directiveへ変換 | 選択済みSkillをprovider側の入力へ反映する |
+| custom agent | UI選択なし | 対応 | Copilotのagent catalogをSession設定へ解決する |
+| assistant textのstreaming | 対応 | 対応 | 確定結果と実行中投影を区別する |
+| command・変更差分・監査 | 対応 | 対応 | 共通のoperation、Audit Log、Git差分表示へ投影する |
+| app内の承認・elicitation | 承認callbackなし | 対応 | Copilotのpermissionとform／URL質問をpending UIで扱う |
+| background task snapshot | UI表示なし | 対応 | CopilotのTasks tabに現在のsessionのsnapshotを表示する |
+| usage・quota・context情報 | 取得可能な情報を表示 | 取得可能な情報を表示 | providerごとの取得可能性と更新契機を区別する |
 
-## Position
-
-- cross-provider capability 一覧の正本はこの文書とする
-- provider 実行境界そのものの仕様は `docs/design/provider-adapter.md` を正本とする
-- provider 個別の詳細 snapshot は `docs/design/codex-capability-matrix.md` などの supporting doc を参照する
-
-## How To Use
-
-- 行は `WithMate が canonical UI / metadata として持ちたい capability` を表す
-- `Codex` 列と `GitHub Copilot CLI` 列は、provider native にどこまで対応余地があるかを示す
-- `WithMate current` 列は、今の wrapper 実装がどこまで吸収できているかを示す
-- 新しい実装や仕様変更を入れたら、この doc を同じ task で更新する
-- provider native 挙動が docs だけでは確定しない場合は、推測で埋めず `未確認` にする
-
-## Status Vocabulary
-
-### Provider Native
-
-- `対応`
-- `一部対応`
-- `未確認`
-- `非対応`
-
-### WithMate Current
-
-- `実装済み`
-- `一部実装`
-- `設計済み`
-- `未着手`
-
-## Capability Matrix
-
-| Capability | WithMate canonical shape | Codex | GitHub Copilot CLI | WithMate current | Notes |
-| --- | --- | --- | --- | --- | --- |
-| 基本 turn 実行 | session から prompt を送って assistant response を得る | 対応 | 対応 | 実装済み | current runtime は Codex と Copilot の両 adapter を持つ。Copilot は text-only の minimal turn から開始 |
-| session 再開 | session metadata と provider thread/session id を結びつけて継続する | 対応 | 対応 | 実装済み | Codex は `threadId` を保持して `resumeThread()`、Copilot も `sessionId` を `threadId` として保存し `resumeSession()` する |
-| cancel / interrupted handling | 実行中 turn を止め、UI と audit に canceled/interrupted を残す | 対応 | 未確認 | 実装済み | Copilot 側の中断 surface は別途実測が必要 |
-| retry | canceled/error 後に同じ request を再送する | 対応 | 未確認 | 実装済み | provider native 機能というより wrapper UX |
-| model selection | session ごとに model を選ぶ | 対応 | 対応 | 実装済み | catalog と session metadata に保存 |
-| reasoning depth | session ごとに reasoning depth を選ぶ | 対応 | 未確認 | 実装済み | Copilot 側の depth 同等概念は未整理 |
-| approval mode | provider-native approval 設定へ map する | 対応 | 一部対応 | 一部実装 | WithMate は Codex policy 値の `never / on-request / untrusted` を正本にする。Copilot は provider-specific choices だけを UI に出す |
-| file / folder context | workspace file/folder を turn input に含める | 一部対応 | 一部対応 | 実装済み | workspace 外 path は session metadata `allowedAdditionalDirectories` 配下だけを許可する。Codex はその許可リストを `additionalDirectories`、Copilot は `attachments` の `file` / `directory` へ変換して送る |
-| image attachment | image を turn input に含める | 対応 | 一部対応 | 実装済み | Codex は `local_image`、Copilot は `attachments` の `file` として送る |
-| skill selection | skill を選び、provider native invocation へ変換する | 対応 | 対応 | 実装済み | Codex は `$skill-name`、Copilot は directive 設計まで |
-| custom agent selection | provider 固有 agent を session metadata へ反映する | 一部対応 | 対応 | 実装済み | Codex の `/agent` は thread switch 寄りで意味が違う。Copilot は `~/.copilot/agents` と workspace `.github/agents` を探索し、session metadata の選択値を `customAgents` / `agent` へ変換する |
-| assistant text streaming | turn 完了前の message stream を UI に出す | 対応 | 対応 | 実装済み | Codex は `runStreamed()`、Copilot は `assistant.message_delta` を live state へ中継し、top-level `assistant.message` が複数回来た場合も空行区切りで連結する |
-| command visibility | 実行中または直前 command を UI で確認できる | 対応 | 一部対応 | 実装済み | Session 右 pane の `Latest Command`。Copilot は shell に加えて `create / edit / replace / move / delete` などの mutating tool も `command_execution` へ正規化して表示する |
-| live step timeline | command 以外の進行 step も細かく可視化する | 対応 | 未確認 | 一部実装 | 現在は情報量を絞って `Latest Command` 優先 |
-| background task snapshot | provider-native background task の in-flight / completion 情報を UI に出す | 非対応 | 一部対応 | 一部実装 | Copilot SDK は `session.idle.backgroundTasks` と `system.notification` を持つため、WithMate は Copilot 専用 `Tasks` tab として表示する。Codex SDK current surface には同等 event が無い |
-| audit log | prompt / operations / raw items / usage を保存する | 対応 | 一部対応 | 実装済み | Codex は rich item schema、Copilot は prompt / assistant / stable provider event trace / normalized operations を保存する |
-| changed files / diff | 変更ファイルと diff を見せる | 一部対応 | 未確認 | 実装済み | current は snapshot diff fallback 前提。監視対象は `workspacePath + allowedAdditionalDirectories`。Copilot でも snapshot diff から `artifact.changedFiles` を組み立て、`Details` と `Open Diff` を出す |
-| partial result preservation | canceled/failed 時も取得済み text/items を残す | 対応 | 未確認 | 実装済み | current runtime は Codex partial result を保存 |
-| slash command absorption | provider slash command を canonical UI/metadata に吸収する | 一部対応 | 一部対応 | 設計済み | docs はあるが parser 実装は未着手 |
-| native slash passthrough | provider slash command を SDK 経由でそのまま実行する | 非対応 | 非対応 | 未着手 | SDK surface 上は想定しない方針 |
-| apps / mcp / plugins | provider 拡張機能を session から扱う | 一部対応 | 一部対応 | 未着手 | Codex は `/apps` `/mcp`、Copilot は plugin 系がある |
-| sandbox / allowlist 拡張 | read dir 追加や tool allowlist を wrapper から制御する | 一部対応 | 一部対応 | 一部実装 | Codex は `read-only / workspace-write / workspace-write + network / danger-full-access` を session metadata から SDK runtime option へ渡す。Copilot は現時点で sandbox dropdown を出さない |
-| app-level approval callback | app 側で approve / deny を返す | 非対応 | 一部対応 | 一部実装 | Copilot `Provider Controlled` では Session UI の approval card から `approve / deny` を返せる。Codex は current SDK surface では未対応 |
-
-## Current Read
-
-2026-06-27 時点では、WithMate の Codex / GitHub Copilot 対応は同じ Session UI で通常turnを実行できる範囲まで入っている。
-Memory V6 はprovider共通MCPをagent-facing contractの正本とし、runtime bindingによるactor-relative target、operator CLI、app-internal guard、Settings Diagnosticsまで接続済みである。provider別のMemory Skillは配布・同期しない。
-一方で cross-provider matrix として見ると、未着手が多いのは `slash command`, `agent/apps/mcp/plugins` まわり。
-
-## Update Rule
-
-- capability の status を変える change では、この doc を同じ plan / commit 系列で更新する
-- provider native support を更新するときは、関連調査 doc か公式 docs を notes または related docs に残す
-- `WithMate current` は「docs があるか」ではなく「main branch で動く実装があるか」で判定する
-- provider ごとの詳細差分が増えたら、この doc は概要だけを残し、詳細は個別 doc へ分割する
-
-## Related Docs
-
-- `docs/design/provider-adapter.md`
-- `docs/design/codex-capability-matrix.md`
+表示の詳細は[Desktop UI](desktop-ui.md)、usageの投影と保存境界は[Provider Usage Telemetry](provider-usage-telemetry.md)を参照する。capabilityが変わる実装では、この表を同じ論理変更で更新する。

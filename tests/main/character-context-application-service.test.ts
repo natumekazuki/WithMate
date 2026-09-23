@@ -417,7 +417,7 @@ describe("CharacterContextApplicationService", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "afterglow projectionは公開schemaを保ち内部source情報を除外する"
-  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#decision" }
   // fault = "private source情報がcontextやmetricsへ漏れる"
   // observable = "context, MCP, CLI output"
   // observation_boundary = "public-boundary"
@@ -480,7 +480,7 @@ describe("CharacterContextApplicationService", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "stale versionと不正scope targetを拒否する"
-  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#decision" }
   // fault = "古いversionの書込み、不正relationship target、未知scopeの読取りを受理するかversion拒否を集計しない"
   // observable = "appraiseのversion_conflict/invalid_input、getContextのunknown_scope、versionRejections集計"
   // observation_boundary = "public-boundary"
@@ -825,7 +825,7 @@ describe("CharacterContextApplicationService", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "CharacterContextApplicationServiceのoperation結果と拒否理由をpayloadなしでmetricsへ集計する"
-  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#decision" }
   // fault = "private payloadをmetricsへ保存する"
   // observable = "service.getMetrics() response"
   // observation_boundary = "public-boundary"
@@ -903,7 +903,7 @@ describe("CharacterContextApplicationService", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Affect保存後のepisode失敗をpartial failureとして返し、同一request replayでもprivate payloadをmetricsへ出さない"
-  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#decision" }
   // fault = "partial failureを成功レスポンスへ偽装する"
   // observable = "初回・同一request replayのappraise resultとservice.getMetrics()"
   // observation_boundary = "public-boundary"

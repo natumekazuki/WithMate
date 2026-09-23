@@ -1,8 +1,5 @@
 # Model Catalog
 
-- 作成日: 2026-03-14
-- 更新日: 2026-07-14
-- 対象: WithMate の provider-aware model / reasoning depth catalog
 
 ## Goal
 
@@ -93,13 +90,13 @@ SQLite では次の 4 テーブルで保持する。
 - 新 revision を作って `is_active = 1` に切り替える
 - Agent / Auxiliary session には `catalogRevision` を保存する
 
-### current 実装
+### 現行の反映
 
 - Session Window の選択肢は常に current active revision を正本にして表示する
 - Session 内で model / depth を変更した場合は current active revision に乗り換える
 - import 成功時は、active revision の切り替えと同じタイミングで既存 Agent / Auxiliary session も自動 migrate 対象にする
 - `catalogRevision` は `旧 revision を保持し続ける pin` の説明よりも、`その session に現在反映されている revision` を示す値として扱う
-- import 後に旧 revision を長く抱えたまま UI と実行が分岐する状態は current milestone の目標にしない
+- import後はUIと実行のcatalog revisionを揃える
 - migration では provider / model / reasoningEffort を新 active revision に合わせて正規化し、選択が変わった runtime session は thread をリセットしてよい
 
 ## Seed Policy
@@ -122,7 +119,7 @@ SQLite では次の 4 テーブルで保持する。
 - `Settings Window` から `Import Models` / `Export Models` を実行できる
 - file picker / save dialog は Main Process が開く
 - import 成功時は active revision を切り替え、既存 Agent / Auxiliary session も同じタイミングで migrate する
-- current milestone では model / depth を出さない
+- HomeのNew Sessionではmodel / depthを出さない
 - new session は active catalog の provider default で作る
 
 ## Resolution Policy
@@ -153,4 +150,3 @@ adapter 実行時は session が持つ `catalogRevision` と `provider` を使�
 
 - `docs/design/provider-adapter.md`
 - `docs/design/electron-session-store.md`
-- `docs/plans/20260314-model-catalog-db.md`

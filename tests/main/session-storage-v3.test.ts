@@ -379,7 +379,7 @@ describe("SessionStorageV3", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "V3 sessionのraw message textとartifact detailはSQLite text columnへ保存せずblob storeから復元する"
-  // oracle = { type = "contract", ref = "docs/design/database-v3-blob-storage.md" }
+  // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v3.ts: V3 message blob columns; src-electron/session/session-storage-v3.ts: SessionStorageV3 readback" }
   // fault = "raw messageまたはartifact payloadをSQLite text columnへ書き込み、blob復元経路を迂回する"
   // observable = "再読込したmessage/artifact値とSQLite text values内のsentinel不在"
   // observation_boundary = "public-boundary"

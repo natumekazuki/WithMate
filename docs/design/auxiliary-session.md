@@ -1,7 +1,5 @@
 # Auxiliary Session
 
-- 更新日: 2026-09-12
-- 対象: Main Sessionに紐づく複数の補助会話、保存、runtime identity、一覧投影
 
 ## Goal
 

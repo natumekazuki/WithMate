@@ -1,7 +1,5 @@
 # App Log Base
 
-- 作成日: 2026-04-25
-- 対象: Electron Main / Preload / Renderer のクラッシュ調査用ログ基盤
 
 ## Goal
 

@@ -1,7 +1,5 @@
 # Manual Test Checklist
 
-- 作成日: 2026-03-14
-- 対象: `docs/manual-test-checklist.md` の運用方針
 
 ## Goal
 

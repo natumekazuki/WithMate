@@ -1,13 +1,5 @@
 # V6 Memory Protected Objects
 
-- 作成日: 2026-07-05
-- 対象: V6 Memory に紐づく暗号化ファイル object / CLI / quota / GC 設計
-- Status: Design proposal
-- 関連:
-  - `docs/design/v6-memory-foundation.md`
-  - `docs/design/v6-database-foundation.md`
-  - `docs/design/database-v3-blob-storage.md`
-
 ## Goal
 
 V6 Memory に、画像、スクリーンショット、ソース断片、ログ archive など、SQLite の `TEXT` に直接保存するより file として保持した方が自然な補助資料を紐づけられるようにする。
@@ -29,9 +21,8 @@ Protected Object は Memory entry 本文の代替ではない。Memory entry は
 ## Position
 
 - `docs/design/v6-memory-foundation.md` を V6 Memory API / owner / scope / mutation / privacy の正本とする。
-- 本書は V6 Memory foundation の supporting design として、file object 追加時の storage、contract、quota、GC、CLI 拡張を扱う。
-- V3 blob store の前例は DB 外 payload、opaque id、summary-first read path、GC の参考にする。ただし V6 Memory Protected Object は暗号化、Memory owner / scope、agent-facing CLI usage を別途定義する。
-- V6 first release の legacy Memory import / migration 境界は変更しない。
+- 本書はfile objectのstorage、contract、quota、GC、CLIを扱う。
+- DB外payload、opaque ID、summary-first read path、GCに加え、暗号化とMemory owner / scopeを定める。
 
 ## Non-Goals
 
@@ -355,6 +346,8 @@ project / character / user-global target を伴う object access は V6 Memory f
 
 ## Forget And GC
 
+### Forget
+
 `memory.forget` は Memory entry を通常 search から除外し、関連 file refs も inactive にする。
 
 forget 処理:
@@ -369,7 +362,9 @@ forget 処理:
 
 `privacy` reason では、entry text の縮退に加えて file ref summary / display name も縮退する。object metadata も通常 search / get-entry に出さない。
 
-GC は Memory Review / 管理画面から実行できるようにする。agent-facing hard purge は初期公開しない。
+### GC
+
+GCはMemory Reviewから実行する。agent-facing hard purgeは公開しない。
 
 GC の対象:
 
@@ -413,108 +408,7 @@ UI は runtime API secret、key material、object file path、復号済み temp 
 - input file missing / unreadable は append 全体を失敗させ、partial entry を作らない。
 - object write 成功後に import / DB transaction が失敗した場合、service は今回 prepare した object file を best-effort delete する。削除できず残った object は orphan として GC 対象にする。
 - file 付き append の完了済み idempotent replay は import 前 replay preflight で再 import を避ける。
-- 同一 idempotency key の並列同時送信で preflight 後に別 request が先に commit した場合、追加 object は orphan として GC 対象にする。将来は append idempotency reservation で import 前に concurrent duplicate を抑止できるようにする。
+- 同一 idempotency key の並列同時送信で preflight 後に別 request が先に commit した場合、追加 object は orphan として GC 対象にする。
 - DB commit 後の file delete 失敗は `delete_pending` として retry する。
 - export 対象 file が missing の場合、entry / search は壊さず、export API は missing object error を返す。
 - Memory API unavailable 時は既存 V6 foundation と同様に CLI が non-zero exit code と JSON error を返す。
-
-## Alternatives
-
-### SQLite BLOB に encrypted bytes を保存する
-
-DB と file の整合は単純になるが、SQLite 本体と WAL が肥大化し、V3 blob storage で避けた問題を再導入するため採用しない。
-
-### file path だけを Memory に保存する
-
-容量は増えないが、元 file の移動 / 削除で Memory が壊れ、privacy / portability / evidence preservation の目的を満たしにくいため採用しない。
-
-### CLI が復号鍵を持つ
-
-CLI 配布物や shell environment へ key material が広がり、WithMate runtime service 境界が崩れるため採用しない。
-
-### 個別 file size limit を設ける
-
-初期実装では `64 MiB` を固定上限にする。これは streaming 暗号化を入れる前の main process / runtime API 保護であり、WithMate 全体 quota とは別に append / export の読み込み前 validation で拒否する。将来 streaming read / encrypt / write へ移行した場合だけ、設定で optional per-file limit へ広げる。
-
-## Risks
-
-| Risk | Mitigation |
-| --- | --- |
-| Protected Object が storage を圧迫する | WithMate 全体 quota、append preflight、file-usage CLI、Memory Review 使用量表示 |
-| 並列 append で quota を超える | storage service で quota reservation / transaction を扱う |
-| file を開かないと削除可否が分からない | file 付き Memory の `body` と `files[].summary` を必須にする |
-| file delete に失敗して容量が戻らない | `delete_pending` と GC retry を持つ |
-| object path / key material が漏れる | renderer / CLI response / audit に path と key を出さない |
-| encrypted object が missing で UI が壊れる | search / get-entry は summary-first、export だけ missing error |
-| backup / restore が DB file だけでは不完全 | V6 Memory Protected Objects は DB と `memory-objects/v6/` を同じ永続化単位として扱う |
-
-## Implementation Slices
-
-1. Design / contract
-   - Done: 本書を追加する。
-   - Done: V6 Memory foundation / documentation map に supporting doc として参照を追加する。
-   - Done: Settings で Memory file quota を設定できるようにする。
-2. Schema / storage
-   - Done: object metadata table と quota usage query を追加する。
-   - Done: `forget` 成功時に active object metadata を `delete_pending` にする。
-   - Done: `memory-objects/v6` object store の shard path、staging write、delete primitive を追加する。
-   - Done: `AES-256-GCM` payload envelope helper を追加する。
-   - Done: active data key を platform key protector で wrap する key store abstraction を追加する。
-   - Done: `appendEntry` transaction 内で protected object metadata と quota preflight を扱う storage 境界を追加する。
-   - Done: input file inspection、AAD生成、暗号化、object store write、storage登録用metadata生成を行う importer を追加する。
-   - Done: application service で file 付き append の quota preflight、importer 実行、storage transaction 登録、失敗時の prepare 済み object cleanup を接続する。
-   - Done: file 付き append の完了済み idempotent replay を import 前に判定する replay preflight を追加する。
-   - Done: protected object metadata に `role` を保存し、既存 metadata には `other` を backfill する。
-   - Pending: entry ref table を追加する。
-   - Pending: import 前 idempotency reservation による concurrent duplicate orphan 削減を追加する。
-   - Done: Memory Review 用 GC report を追加する。
-   - Pending: key rotation を追加する。
-3. Service / contract
-   - Done: `file-usage` を application service に追加する。
-   - Done: `file-usage --largest --limit N` 用の entry 単位容量候補を追加する。
-   - Done: `memory.append` request contract に `files[]` を追加し、`files[].summary` 必須 validation を追加する。
-   - Done: `memory.append` の file 実体保存を application service で有効化する。
-   - Done: search / get-entry / append response に復号不要の file summary hydration を追加する。
-   - Done: `role` 付き file summary hydration を追加する。
-   - Pending: object 再利用に備えた entry ref table を追加する。
-   - Done: `get-file` を application service に追加し、明示 output path への復号 export を接続する。
-   - Done: `export-files` を application service に追加し、entry 内 active object の一括 export を接続する。
-   - target / permission / existence oracle 防止を既存 V6 Memory service に合わせる。
-4. CLI
-   - Done: `file-usage` を追加する。
-   - Done: `file-usage --largest --limit N` を追加する。
-   - Done: `append` structured files input を実体保存へ接続する。
-   - Done: `get-file` を追加する。
-   - Done: `export-files` を追加する。
-5. UI
-   - Done: Memory Review entry detail に file summary を表示する。
-   - Done: Memory Review に usage と largest entries を表示する。
-   - Done: Memory Review に export、GC を追加する。
-6. Validation
-   - quota exceed、append atomicity、forget cleanup、delete pending retry、path non-exposure、target mismatch、missing object fallback を test する。
-   - Done: Memory Review export response が path / object id / key material / hash を renderer に出さないことを test する。
-   - Done: GC dry-run / cleanup が delete_pending、orphan file、staging file を summary report に畳み、active object を削除対象にしないことを test する。
-
-## Validation Strategy
-
-- contract validation: file 付き append で `body` / `files[].summary` が必須であること。
-- quota test: quota 超過時に entry も object も作られないこと。
-- storage test: encrypted object roundtrip、hash mismatch、missing file report。
-- service test: target mismatch object が `not_found` になること。
-- exporter test: encrypted object を復号して明示 output path へ書き、既存 file を上書きしないこと。
-- exporter test: 複数 encrypted object を output directory へ安全な file name で書き出すこと。
-- forget test: entry forget で ref が inactive になり、unreferenced object が delete されること。
-- delete pending test: file delete 失敗時に retry 対象として残ること。
-- CLI test: `file-usage` が path / key material を返さないこと。
-- CLI test: `file-usage --largest --limit N` が runtime API query 経由で entry 単位候補を取得し、path / key material / hash を返さないこと。
-- CLI test: `get-file` が runtime API 経由で明示 output path を渡し、path / key material をresponseへ含めないこと。
-- CLI test: `export-files` が runtime API 経由で明示 output directory を渡し、path / key material をresponseへ含めないこと。
-- UI / IPC test: renderer に object path、key material、hash、復号済み temp path が渡らないこと。
-- GC test: dry-run が DB / file system を変更しないこと、cleanup が delete_pending と orphan / staging のみを対象にすること。
-
-## Open Questions
-
-- key storage の platform abstraction をどの層に置くか。
-- encrypted object に圧縮をかける場合、圧縮対象と順序を content type ごとに変えるか。
-- `rawSha256` を保存するか、dedupe を延期して ciphertext hash のみにするか。
-- `file-usage` を target 別にも返すか、初期は WithMate 全体だけにするか。

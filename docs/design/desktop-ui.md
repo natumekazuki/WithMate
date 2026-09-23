@@ -1,15 +1,14 @@
 # Desktop UI
+
 ## Auxiliary Session (Issue #710)
 Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、中央のタイトル枠内にある`＋`から既存会話を閉じず最終使用順の一覧へ反映する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。実行中のAuxiliaryはicon内にcompactなprocessing indicatorを重ね、行高とpreviewの幅を変えない。折りたたみ時はAuxiliary面・内部境界・タイトル枠内の操作を隠し、splitterだけを再展開導線として残す。折りたたみでActionDock対象や選択中Sessionを変更しない。
 
 Auxiliary追加のprovider pickerはHome `New Session`、Character authoringと同じloading / error / ready 0件の状態境界を使い、開始処理中のbusyをalertへ変換しない。
 
-- 作成日: 2026-03-14
-- 対象: Electron 版 WithMate の現在 UI
 
 ## Goal
 
-Electron デスクトップアプリとして、`Home Window` / `Character Editor Window` / `Session Window` / `Diff Window` / `Settings Window` / `Session Monitor Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。V5 preview では legacy MateTalk runtime / `mate-talk` mode を current UI として扱わない。
+Electronデスクトップアプリとして、各Windowの現行UIと操作の入口を把握できるようにする。Window間の責務は[Window Architecture](window-architecture.md)を参照する。
 
 ## Manual Test Maintenance
 
@@ -30,7 +29,6 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 ## UI Source Of Truth Boundary
 
 - current UI の正本はこの文書とする
-- UI の経緯メモや旧検討文書は `docs/design/archive/2026/03/` へ移しており、この文書より優先しない
 
 ## 表示言語・操作・状態
 
@@ -127,7 +125,6 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - card click で `Character Editor Window` を開く
   - Character 0 件または検索0件時は本文を空にし、headerの`Create Character`と検索inputのaccessible nameを残す
   - Home には archive / delete を置かない
-  - `Your Mate` / MateTalk launcher / Mate Profile 編集導線は表示しない
   - card theme
     - background = Character `main`
     - left accent bar = Character `sub`
@@ -185,7 +182,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - import / replace
 - `character-notes.md`
   - authoring notes / evidence / revision notes 用である説明
-  - V5 Core では runtime prompt に常設注入しない境界は契約として維持するが、editor内で同じ説明を常設表示しない
+  - `character-notes.md`はruntime promptに常設注入せず、editor内で同じ説明を常設表示しない
   - raw markdown editor。file名はaccessible labelとして保持するが、visible headingとnotes説明を重複表示しない
 - `Preview`
   - Home card preview
@@ -374,7 +371,6 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - composer settings は独立したaccent背景を持たず、周囲のsurfaceと同じ背景を使う
 - `Send / Cancel` は mate `main`
 - sendability 判定は共通resolverへ寄せ、Composer内の購読と送信shortcutで最新draft・preview・強制feedback条件を使う。入力のたびにSession shellを更新せず、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う
-- 実行中の latest command 監視の詳細は `docs/design/session-live-activity-monitor.md` を参照する
 - Send disabled 条件は submit button / `Ctrl+Enter` / `Cmd+Enter` guard で一致させ、blank / whitespace-only draft の no-op 送信を通さない
 - blank / whitespace-only draft は通常時は helper 文言を常時出さないが、blocked 送信ショートカットを押した時だけ inline reason を見せる
 - send button の `title` には current blocked reason を載せ、hover でも送信不可理由を確認できるようにする
@@ -421,51 +417,10 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - MonitorからAuxiliaryを選択して開いたときは、Mainがstable Auxiliary IDとparent IDを検証してnavigationし、既存Windowにはselection event、新規Windowにはentry queryで正確な会話を渡す
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
-- `Settings Window` は app 共通 system prompt や Character 本文を編集しない。V5 Character 定義は `Character Editor Window` と session snapshot を正本にする
-- legacy mate は `userData/mate/` に残る場合がある
+- `Settings Window` は app 共通 system prompt や Character 本文を編集しない。Character 定義は `Character Editor Window` と session snapshot を正本にする
 - `userData` は `<appData>/WithMate/` に固定する
 - Session は mate の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う
 - theme 由来の前景色決定は輝度閾値ではなく共通 contrast helper を正本にし、Home / Character Editor / Session / Diff で同じ WCAG AA 基準を使う
 - session は SQLite を正本とする
 - model catalog は DB の active revision を読む
 - message list follow mode は assistantText streaming / pending bubble 更新に反応し、command 監視は right pane の `Latest Command` へ分離する
-
-## Deliverables
-
-- `src/home/HomeApp.tsx`
-- `src-shared/ipc/withmate-window.ts`
-- `src/app/SessionWindowApp.tsx`
-- `src/ui/markdown/MessageRichText.tsx`
-- `src/character-editor/CharacterEditorApp.tsx`
-- `src/file-explorer/DiffApp.tsx`
-- `src/ui/DiffViewer.tsx`
-- `src-shared/session/session-state.ts`
-- `src-shared/settings/provider-settings-state.ts`
-- `src-shared/window/withmate-window-types.ts`
-- `src/ui/ui-utils.tsx`
-- `docs/design/message-rich-text.md`
-- `src-electron/main.ts`
-- `src-electron/preload.ts`
-- `src-electron/files/composer-attachments.ts`
-- `src-electron/session/session-storage.ts`
-- `src-electron/session/audit-log-storage.ts`
-- `src-electron/app/app-settings-storage.ts`
-- `src-electron/character/character-storage.ts`
-- `src-electron/settings/model-catalog-storage.ts`
-- `docs/manual-test-checklist.md`
-
-## Runbook
-
-```bash
-npm install
-npm run dev
-# 別ターミナル
-npm run electron:dev
-```
-
-ビルド済み確認:
-
-```bash
-npm run build
-npm run electron:start
-```

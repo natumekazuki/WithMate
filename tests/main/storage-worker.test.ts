@@ -68,7 +68,7 @@ function createFixtureWorkerUrl(): URL {
 // @test-value v2
 // kind = "contract"
 // claim = "Storage worker は許可されたMemoryドメイン例外の型と詳細をtransport越しに復元する"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "quota競合が汎用RemoteErrorとなり、HTTP層が正しいエラー分類や残量詳細を失う"
 // observable = "worker callの拒否エラーのinstanceofとquota詳細"
 // observation_boundary = "public-boundary"
@@ -146,7 +146,7 @@ test("storage worker client rejects a stale generation response", async () => {
 // @test-value v2
 // kind = "regression"
 // claim = "Storage worker の異常終了で送信済みmutationを成功扱いせず、後続要求を閉じる"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "送信済み書込みの結果を失った後も成功扱いするか、停止済みWorkerへ後続要求を送り未解決Promiseを残す"
 // observable = "送信済みmutationの拒否エラーと異常終了後の新規callの拒否"
 // observation_boundary = "public-boundary"
@@ -172,7 +172,7 @@ test("storage worker client rejects sent mutations after worker exit", async () 
 // @test-value v2
 // kind = "contract"
 // claim = "Auxiliaryの条件付き保存proxyはWorker切断時に書込み結果不明を返す"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "条件付き保存がmutation登録から漏れ、commit結果不明をread失敗として扱う"
 // observable = "実際のbundle proxy経由のcallがStorageWorkerUnknownOutcomeErrorで拒否される"
 // observation_boundary = "public-boundary"
@@ -226,7 +226,7 @@ test("storage worker client keeps interrupted reads distinct from unknown writes
 // @test-value v2
 // kind = "invariant"
 // claim = "Storage worker diagnosticは単一requestのstageとrequestIdを一貫して通知する"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "diagnosticのstageを欠落させるか、異なるrequestIdのイベントを混ぜる"
 // observable = "単一requestのqueued/started/completedとrequestId"
 // observation_boundary = "public-boundary"
@@ -254,7 +254,7 @@ test("storage worker diagnostics report request correlation and worker timings",
 // @test-value v2
 // kind = "invariant"
 // claim = "Storage worker client の close 後は旧 generation への新規要求を拒否する"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "close 後の caller が停止済み Worker へ要求を送り、未解決 Promise または旧 DB への書込みを残す"
 // observable = "close 後の call が返すエラー"
 // observation_boundary = "public-boundary"
@@ -274,7 +274,7 @@ test("storage worker client rejects calls after generation close", async () => {
 // @test-value v2
 // kind = "regression"
 // claim = "Storage worker へのstructured clone失敗を未送信DataCloneErrorとして解決し、Workerを継続利用できる"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "postMessageのclone例外後にPromiseが残るか、Worker全体を不要に停止する"
 // observable = "clone失敗したmutationのDataCloneErrorと後続echoの成功"
 // observation_boundary = "public-boundary"
@@ -300,7 +300,7 @@ test("storage worker client settles structured clone failures without leaking pe
 // @test-value v2
 // kind = "contract"
 // claim = "読み取り要求の未許可commandはnot-executedとして返し、unknown outcomeを付けない"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "全てのWorker例外をunknown扱いして読み取りcallerへ誤った再実行禁止を伝える"
 // observable = "未許可commandのStorageWorkerRemoteErrorとoutcome"
 // observation_boundary = "public-boundary"
@@ -329,7 +329,7 @@ test("storage worker classifies non-mutation command failures as not-executed", 
 // @test-value v2
 // kind = "regression"
 // claim = "不正なWorker frameはpendingを残さずWorker generationをfaultにする"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "requestId欠落のresultを受理して要求を未解決のまま残す"
 // observable = "不正frame要求の拒否と後続要求のgeneration拒否"
 // observation_boundary = "public-boundary"
@@ -351,7 +351,7 @@ test("storage worker faults on malformed response frames", async () => {
 // @test-value v2
 // kind = "invariant"
 // claim = "Character/MateのFS相当commandはresource laneで直列化し、Settings相当commandを待たせない"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "resource commandを全Worker tailへ置いて無関係な短いDB処理を待たせるか、同一laneを並列実行する"
 // observable = "lane待機中のshort commandの完了と同一Mate laneの開始順"
 // observation_boundary = "public-boundary"
@@ -402,7 +402,7 @@ test("storage worker resource lanes isolate unrelated work and serialize each re
 // @test-value v2
 // kind = "invariant"
 // claim = "shutdownはresource laneをdrainするまで完了せず、shutdown中の後続requestは明示的に拒否する"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "shutdown-completeをlane処理より先に送るか、shutdown中のrequestをpendingのまま残す"
 // observable = "shutdown中のlate call error、lane result、shutdown-complete、worker exit"
 // observation_boundary = "public-boundary"
@@ -484,7 +484,7 @@ test("storage worker entry drains a pending resource lane before shutdown", { ti
 // @test-value v2
 // kind = "contract"
 // claim = "V6 storage worker は実DBを所有し、typed store commandを通して初期catalogとSessionを返す"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "V6 storageをMainで同期生成するか、Worker初期化後にcatalog/session取得ができずbundleが不完全になる"
 // observable = "bundle.initializeのactiveModelCatalogとstores.session.listSessionsの戻り値"
 // observation_boundary = "public-boundary"
@@ -645,7 +645,7 @@ test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・cons
 // @test-value v2
 // kind = "contract"
 // claim = "PersistentStoreLifecycleService のV6 initialize/close/reopenは実Worker bundleを所有する"
-// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
 // fault = "V6 lifecycleがMain同期storageを生成するか、close後にWorkerを閉じず再open時にDB接続が競合する"
 // observable = "bundle.storageWorkerの存在、Worker経由のSession読み取り、close後の旧store拒否と再initialize"
 // observation_boundary = "public-boundary"

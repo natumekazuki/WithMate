@@ -158,6 +158,18 @@ describe("ProjectMemoryStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "同じProject scope、category、title、detailのentryを重複作成しない"
+  // oracle = { type = "contract", ref = "src-electron/memory/project-memory-storage.ts: upsertProjectMemoryEntry" }
+  // fault = "同一内容のentryが重複し、参照元の更新で別IDが作られる"
+  // observable = "返されたentry IDとscope内のentry件数"
+  // observation_boundary = "component-behavior"
+  // scope = "project-memory-storage"
+  // lifecycle = "permanent"
+  // impact = "Project Memoryの重複と参照の分岐"
+  // distinction = "異なる入力の保存testでは検出できない同一内容のupsertを確認する"
+  // @end-test-value
   it("同一 category/title/detail の entry は再利用する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -179,7 +191,7 @@ describe("ProjectMemoryStorage", () => {
         title: "memory の方針",
         detail: "Character Memory は coding plane の prompt に入れない",
         keywords: ["memory", "character"],
-        evidence: ["docs/design/memory-architecture.md"],
+        evidence: ["docs/design/v6-memory-foundation.md"],
       });
       const second = storage.upsertProjectMemoryEntry({
         projectScopeId: scope.id,
