@@ -1844,10 +1844,10 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
 
 // @test-value v2
 // kind = "contract"
-// claim = "別窓File Previewのcopy通知に必要な暗色theme token、success/errorの文字・背景・border、操作群外overlayのCSS宣言が定義されている"
+// claim = "別窓File Previewのcopy通知に必要な暗色theme token、success/errorの文字・背景・border、headerを基準にした操作群外overlayのCSS宣言が定義されている"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8" }
-// fault = "別窓copy通知の暗色theme token、success/errorの背景またはborder、または操作群外absolute overlayに必要なCSS宣言が欠けている"
-// observable = "file-preview-window-page、app-notificationのsuccess/error、session-file-preview-notification-layer各CSS declaration"
+// fault = "別窓copy通知の暗色theme token、success/errorの背景またはborder、headerのrelative基準、または操作群外absolute overlayに必要なCSS宣言が欠けている"
+// observable = "file-preview-window-page、app-notificationのsuccess/error、session-file-preview-headerとsession-file-preview-notification-layerの各CSS declaration"
 // observation_boundary = "declaration"
 // scope = "File Preview detached notification stylesheet"
 // lifecycle = "permanent"
@@ -1860,6 +1860,7 @@ test("別窓File Previewのcopy通知CSSは暗色themeと操作群外overlayを�
   const notificationRule = styles.match(/\.app-notification\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const successRule = styles.match(/\.app-notification\.success\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const errorRule = styles.match(/\.app-notification\.error\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const headerRule = styles.match(/\.session-file-preview-header\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const layerRule = styles.match(/\.session-file-preview-notification-layer\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
 
   assert.match(pageRule, /--surface-strong:\s*rgba\(28,\s*33,\s*43,\s*0\.98\);/);
@@ -1874,6 +1875,7 @@ test("別窓File Previewのcopy通知CSSは暗色themeと操作群外overlayを�
   assert.match(successRule, /background:\s*color-mix\(in srgb,\s*var\(--teal-soft\)\s*72%,\s*var\(--surface-strong\)\);/);
   assert.match(errorRule, /border-color:\s*var\(--danger,\s*#fca5a5\);/);
   assert.match(errorRule, /background:\s*color-mix\(in srgb,\s*var\(--danger,\s*#fca5a5\)\s*14%,\s*var\(--surface-strong\)\);/);
+  assert.match(headerRule, /position:\s*relative;/);
   assert.match(layerRule, /position:\s*absolute;/);
   assert.match(layerRule, /top:\s*calc\(100%\s*\+\s*8px\);/);
   assert.match(layerRule, /right:\s*10px;/);
