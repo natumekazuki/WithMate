@@ -82,7 +82,7 @@ function createDeferred<T>() {
 // @test-value v2
 // kind = "invariant"
 // claim = "Character Editorのauthoring provider pickerは取得中と取得失敗を有効providerゼロと区別し、editor本体の初期読み込みをbusyとして公開する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
+// oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
 // fault = "provider catalogのloading/errorを空一覧へfallbackする、loading中のeditorをbusyとして公開しない、または実エラーを失う"
 // observable = "editor main aria-busy、provider picker spinner/aria-busy、error feedback、No enabled coding providers.の不在"
 // observation_boundary = "component-behavior"
@@ -151,10 +151,9 @@ test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区
     });
     assert.match(rootElement.textContent ?? "", /Loading coding providers\./);
     assert.doesNotMatch(rootElement.textContent ?? "", /No enabled coding providers\./);
-    assert.equal(
-      rootElement.querySelector(".chat-skill-picker-state[aria-busy=\"true\"]") !== null,
-      true,
-    );
+    const providerStatus = rootElement.querySelector('[role="status"][aria-busy="true"]');
+    assert.ok(providerStatus);
+    assert.ok(providerStatus.querySelector(".chat-skill-picker-spinner"));
 
     await act(async () => {
       catalogDeferred.reject(new Error("catalog request failed"));
@@ -165,6 +164,7 @@ test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区
     });
     assert.match(rootElement.textContent ?? "", /catalog request failed/);
     assert.doesNotMatch(rootElement.textContent ?? "", /No enabled coding providers\./);
+    assert.match(rootElement.querySelector('[role="alert"]')?.textContent ?? "", /catalog request failed/);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -442,15 +442,15 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
 
 // @test-value v2
 // kind = "contract"
-// claim = "未保存のCharacterではauthoring開始を拒否し、icon validation失敗を保存・開始処理へ進めない"
+// claim = "未保存のCharacterではauthoring開始操作を無効にする"
 // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
-// fault = "invalid iconを保存する、未保存draftでauthoring APIを呼ぶ、またはvalidationとsave gateのfeedbackを失う"
-// observable = "icon validation feedback、ImproveWithAgent buttonのdisabled state、startCharacterAuthoringSession input、metadata update count"
+// fault = "未保存draftでauthoring開始操作が可能になる"
+// observable = "Author With Agent buttonのdisabled state"
 // observation_boundary = "component-behavior"
-// scope = "CharacterEditorApp authoring and icon validation gate"
+// scope = "CharacterEditorApp unsaved authoring gate"
 // lifecycle = "permanent"
 // impact = "保存前の不正なCharacterをauthoringへ渡さず、次に必要な修正操作をユーザーへ残す"
-// distinction = "authoring開始APIの呼び出しだけでなく、icon選択・validation・保存後の開始条件を同一UI経路で確認する"
+// distinction = "service境界の拒否testとは別にEditor上の開始操作を確認する"
 // @end-test-value
 test("CharacterEditorApp は未保存 Character では Author with Agent を開始できない", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
@@ -463,7 +463,6 @@ test("CharacterEditorApp は未保存 Character では Author with Agent を開�
   const previousTextEncoder = globalThis.TextEncoder;
   const previousTextDecoder = globalThis.TextDecoder;
   const previousWithMate = (globalThis.window as typeof window | undefined)?.withmate;
-  const startInputs: StartCharacterAuthoringSessionInput[] = [];
 
   Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
   Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
@@ -483,10 +482,6 @@ test("CharacterEditorApp は未保存 Character では Author with Agent を開�
     async getAppSettings() {
       return createDefaultAppSettings();
     },
-    async startCharacterAuthoringSession(input) {
-      startInputs.push(input);
-      throw new Error("authoring should not start for unsaved Character");
-    },
   } as Partial<WithMateWindowApi> as WithMateWindowApi;
 
   try {
@@ -500,7 +495,6 @@ test("CharacterEditorApp は未保存 Character では Author with Agent を開�
 
     const button = findButtonByText(rootElement, "Author With Agent");
     assert.equal(button.disabled, true);
-    assert.equal(startInputs.length, 0);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
