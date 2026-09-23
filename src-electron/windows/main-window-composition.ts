@@ -56,10 +56,6 @@ export class MainWindowComposition {
     if (this.bootWindow === window) this.bootWindow = null;
   }
 
-  public async reloadBootWindow(window: BrowserWindow): Promise<void> {
-    await this.loadBootEntry(window);
-  }
-
   public closeBootWindow(): void {
     if (!this.bootWindow || this.bootWindow.isDestroyed()) { this.bootWindow = null; return; }
     const window = this.bootWindow;

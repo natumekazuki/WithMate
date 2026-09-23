@@ -190,17 +190,12 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
-  async adoptHomeWindow(window: TWindow): Promise<TWindow> {
+  adoptHomeWindow(window: TWindow): TWindow {
+    if (this.homeWindow === window) return window;
     this.homeWindow = window;
     window.on("closed", () => {
       if (this.homeWindow === window) this.homeWindow = null;
     });
-    try {
-      await this.deps.loadHomeEntry(window, "home");
-    } catch (error) {
-      if (this.homeWindow === window) this.homeWindow = null;
-      throw error;
-    }
     return window;
   }
 

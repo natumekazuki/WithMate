@@ -43,7 +43,7 @@ npm run electron:start
 | --- | --- | --- | --- |
 | MT-001 | Home 起動 | `npm run electron:start` でアプリを起動する | Home Window が表示される |
 | MT-001B | 英語shellと内容保全 | 現役6 entry、Home / Monitor、Settings全section、Main / Auxiliary、Memory / Glossary、Templates、Character、Diff / Preview、native menuを開く。日本語のtitle・Character・会話・ファイルを含める | アプリ所有の表示・tooltip・accessible name・自前titleは英語で、shellは`lang="en"`。原文内容、内部値、raw copyは変わらず、表示日時は英語localeとローカルtime zoneを使う |
-| MT-001C | Home Window起動と失敗 | 分離した検証環境で通常起動と起動失敗を確認し、reduced motionも切り替える | 最初からHomeと同じ大きさのWindowが1つ開き、左上の枠なし待機表示から同じWindow内のHomeへ切り替わる。起動中はspinnerと`Starting WithMate`が見え、status detailはaccessible statusへ集約する。失敗時は同じWindowのalertでstatus title、detail、error detailが読める。motion停止時も状態を識別でき、stage一覧や完了説明を重複表示しない |
+| MT-001C | Home Window起動と失敗 | 分離した検証環境で通常起動と起動失敗を確認し、reduced motionも切り替える | 最初からHomeと同じ大きさのWindowが1つ開き、中央の枠なし待機表示から同じWindow内のHomeへ描画が途切れず切り替わる。起動中はspinnerと`Starting WithMate`が見え、status detailはaccessible statusへ集約する。失敗時は同じWindowのalertでstatus title、detail、error detailが読める。motion停止時も状態を識別でき、stage一覧や完了説明を重複表示しない |
 | MT-001D | 操作・状態の横断確認 | 変更controlをkeyboardで操作し、狭幅・拡大・theme / Character色・forced colors・reduced motionで確認する。短い処理、遅延、取消、対象切替、二重押しも試す | icon-onlyにも対象付き操作名とfocus、selected / expanded / pressedがある。busyは実requestの対象だけへ表示し、空・利用不可・失敗を混同しない。古い成功や状態が別対象へ残らず、必要な安全・回復操作へ到達できる |
 | MT-001A | Home narrow width guardrail | Home Window を最小幅近くまで縮める | single-column layout へ倒れても `RecentSessions` と right pane toggle / `Settings` 導線が残り、操作不能にならない |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 一覧の通常 empty body は表示せず、shell と `NewSession` 導線だけが残る |
@@ -112,7 +112,7 @@ npm run electron:start
 | MT-021 | Character Editor title theme | Home から Character Editor Window を開く | header / active tab / preview swatch に Character theme が限定的に反映され、文字が背景に埋もれない |
 | MT-022 | Session theme accent | Session Window を開く | header title、assistant / pending bubble、composer settings、`Send / Cancel`、Details 展開後の artifact block に mate theme の accent が反映され、`user-bubble` は neutral tone を維持する |
 | MT-023 | Diff theme accent | Session から Diff を開く | `titlebar / subbar / pane header` に mate theme の薄い accent が反映され、`Before / After` の文字が背景色に埋もれず読める |
-| MT-023AA | Theme contrast guard | 極端に明るい / 暗い Character `main` 色をそれぞれ設定し、Home card、Character Editor title、Session title、Diff titlebar を確認する | 前景色は WCAG AA 基準の contrast ratio を満たす dark / light 側へ自動で切り替わり、背景に埋もれない |
+| MT-023AA | Theme contrast guard | 極端に明るい / 暗い Character `main` 色をそれぞれ設定し、Home card、Character Editor title、Session title、assistant本文とavatar、Diff titlebar を確認する | 前景色は WCAG AA 基準の contrast ratio を満たす dark / light 側へ自動で切り替わる。assistant本文は文字の読みやすさを保ち、左端とavatarのCharacter色が背景に埋もれない |
 | MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 中央に `message list または preview`、左右に Window 上端から下端まで続く File Explorer / Context pane の splitter が配置される。Header hidden、ActionDock compact、side pane none、side pane 優先で開始する。中央work surfaceは外側の装飾cardで囲まず、side paneも必要なshellだけを表示する |
 | MT-023B | Session splitter resize | wide desktop 状態で左右境界をドラッグする | message list 面と `LatestCommand` pane の幅が追従し、極端に寄せても chat の最小可読幅と右 pane の最小幅を下回らない |
 | MT-023B1 | Session side pane toggle / persistence | Agent Session で File Explorer と Context pane の splitter を順に操作し、別の Session Window も開く | File Explorer と Context pane は同時表示されず、同じ pane の再操作で `none` に戻る。操作済み Window の状態は別 Window の変更に追従せず、新しい Window は利用可能な永続値を初期値として使う |

@@ -124,21 +124,20 @@ test("AuxWindowService は singleton window を再利用する", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "起動状態を表示したWindowは新規Windowを作らずHomeとして引き継がれ、Home load失敗時は未登録へ戻る"
+// claim = "起動状態を表示したWindowはentryを読み直さずHomeとして引き継がれる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window-startup" }
-// fault = "Homeへの切替で別Windowを生成するか、entry load失敗後に壊れたWindowをHomeとして再利用する"
-// observable = "Window identity、Home registry、load mode、失敗後のregistry解除"
+// fault = "Homeへの切替で別Windowを生成するか、表示中のentryを読み直して画面をちらつかせる"
+// observable = "Window identity、Home registry、entry load回数、close後のregistry解除"
 // observation_boundary = "public-boundary"
 // scope = "AuxWindowService startup-to-Home handoff"
 // lifecycle = "permanent"
-// impact = "起動とHomeが二重表示されるか、失敗からの再試行でHomeが開けない"
-// distinction = "buildや単独renderer testではnative Window identityとregistryの遷移を確認できない"
+// impact = "起動とHomeが二重表示されるか、切替時に描画が途切れる"
+// distinction = "buildや単独renderer testではWindow identityとentry再loadの有無を確認できない"
 // @end-test-value
 test("AuxWindowService は起動WindowをHomeとして引き継ぐ", async () => {
   const startupWindow = createWindowStub();
   const modes: string[] = [];
   let createdWindows = 0;
-  let failLoad = true;
   const service = new AuxWindowService({
     createWindow() {
       createdWindows += 1;
@@ -147,10 +146,6 @@ test("AuxWindowService は起動WindowをHomeとして引き継ぐ", async () =>
     async loadHomeEntry(window, mode) {
       assert.equal(window, startupWindow.window);
       modes.push(mode);
-      if (failLoad) {
-        failLoad = false;
-        throw new Error("Home entry load failed.");
-      }
     },
     async loadDiffEntry() {},
     async loadFilePreviewEntry() {},
@@ -161,15 +156,12 @@ test("AuxWindowService は起動WindowをHomeとして引き継ぐ", async () =>
     },
   });
 
-  await assert.rejects(() => service.adoptHomeWindow(startupWindow.window), /Home entry load failed/);
-  assert.equal(service.getHomeWindow(), null);
-
   const homeWindow = await service.adoptHomeWindow(startupWindow.window);
   assert.equal(homeWindow, startupWindow.window);
   assert.equal(service.getHomeWindow(), startupWindow.window);
   assert.equal(await service.openHomeWindow(), startupWindow.window);
   assert.equal(createdWindows, 0);
-  assert.deepEqual(modes, ["home", "home"]);
+  assert.deepEqual(modes, []);
 
   startupWindow.window.close();
   assert.equal(service.getHomeWindow(), null);

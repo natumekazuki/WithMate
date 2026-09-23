@@ -68,7 +68,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 
 ## Home Window startup
 
-- 通常起動ではHomeと同じ大きさのWindowを最初に開き、起動用entryからHome entryへ同じBrowserWindow内で切り替える。`--background`ではWindowを出さない。
+- 通常起動ではHomeと同じ大きさのWindowを最初に開き、起動用entry内でHomeの描画へ切り替える。切替時にWindowやentryを再生成しない。`--background`ではWindowを出さない。
 - 起動中はHomeの未準備な操作を表示せず、枠のない待機表示をWindowの中央に置く。stage一覧や完了説明は表示せず、詳細statusをaccessible statusへ集約する。spinnerと`Starting WithMate`を表示し、対象領域の`aria-busy`で処理中を示す。
 - 起動失敗時はstatusのtitleを見出しとするalertへdetailとerror detailを残し、成功や通常完了へ読み替えない。
 
@@ -369,7 +369,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - approval chip は `AutoRun / ProviderControlled / SafetyFocused`
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`
-- assistant本文は装飾cardで囲まず、`sub` の細い左アクセントで区別する。user本文は控えめなsurfaceで区別し、pendingとAuxiliary groupの状態表現は維持する
+- assistant本文は装飾cardで囲まず、`main` / `sub` の細い左アクセント、左端の淡い色、avatarの縁でCharacterを示す。user本文は控えめなsurfaceで区別し、pendingとAuxiliary groupの状態表現は維持する
 - `composer settings` の背景は `sub` ベースの薄い accent を持つ
 - `Send / Cancel` は mate `main`
 - sendability 判定は共通resolverへ寄せ、Composer内の購読と送信shortcutで最新draft・preview・強制feedback条件を使う。入力のたびにSession shellを更新せず、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う

@@ -1355,10 +1355,15 @@
 
 .session-page .message-row:not(.auxiliary-message-group-item) .message-card.assistant:not(.pending-message-card) {
   border-color: transparent;
-  border-left: 3px solid color-mix(in srgb, var(--character-sub) 78%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--character-main) 62%, var(--character-sub));
   border-radius: 0;
-  background: transparent;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--character-main) 11%, transparent), transparent 38%);
   box-shadow: none;
+}
+
+.session-page .message-row:not(.auxiliary-message-group-item).assistant .message-avatar {
+  border-color: color-mix(in srgb, var(--character-main) 72%, #ffffff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--character-main) 24%, transparent);
 }
 
 .session-page .message-row:not(.auxiliary-message-group-item) .message-card.user {

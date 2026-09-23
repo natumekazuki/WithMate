@@ -3091,16 +3091,7 @@ async function openPathTarget(target: string, options?: OpenPathOptions): Promis
 async function createHomeWindow(): Promise<BrowserWindow> {
   const bootWindow = mainWindowComposition.getBootWindow();
   if (bootWindow) {
-    try {
-      const homeWindow = await requireAuxWindowService().adoptHomeWindow(bootWindow);
-      mainWindowComposition.releaseBootWindow(bootWindow);
-      return homeWindow;
-    } catch (error) {
-      if (!bootWindow.isDestroyed()) {
-        await mainWindowComposition.reloadBootWindow(bootWindow);
-      }
-      throw error;
-    }
+    return requireAuxWindowService().adoptHomeWindow(bootWindow);
   }
   return requireMainWindowFacade().openHomeWindow();
 }
@@ -3343,13 +3334,14 @@ if (!hasSingleInstanceLock) {
         app.isPackaged,
       );
       await syncManagedGlossarySkillBestEffort();
+      let homeWindow: BrowserWindow | null = null;
       if (!isBackgroundLaunch) {
         publishAppBootStatus({
           kind: "running",
           stage: "home",
           title: "Preparing Home",
         });
-        await createHomeWindow();
+        homeWindow = await createHomeWindow();
       }
       publishAppBootStatus({
         kind: "completed",
@@ -3357,6 +3349,9 @@ if (!hasSingleInstanceLock) {
         title: "Startup complete",
         detail: isBackgroundLaunch ? "Started in the background." : "Home is ready.",
       });
+      if (homeWindow) {
+        mainWindowComposition.releaseBootWindow(homeWindow);
+      }
       closeBootWindow();
 
       if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
