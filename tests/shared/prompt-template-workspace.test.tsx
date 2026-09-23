@@ -331,7 +331,7 @@ test("編集modeのTemplate選択はeditorだけを切り替え、挿入導線�
 // claim = "Prompt templateの主保存操作は短いlabelを維持し、保存中だけ局所busyを示す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
 // fault = "保存操作が無反応に見える、または保存中に別操作を許可してテンプレート本文を取り違える"
-// observable = "Save buttonのaria-busy・spinner・disabled state"
+// observable = "Save buttonのlabel・aria-busy・spinner・disabled state"
 // observation_boundary = "component-behavior"
 // scope = "PromptTemplateWorkspace save action"
 // lifecycle = "permanent"
@@ -362,7 +362,9 @@ test("Template保存は短いCTAと局所spinnerを表示する", async () => {
     });
 
     const prompt = harness.container.querySelector<HTMLTextAreaElement>("textarea[aria-label=\"Prompt\"]");
+    const templateName = harness.container.querySelector<HTMLInputElement>("input[aria-label=\"Template name\"]");
     assert.ok(prompt);
+    assert.ok(templateName);
     await act(async () => {
       const nextPrompt = `${FIRST_TEMPLATE.prompt} (edited)`;
       const valueSetter = Object.getOwnPropertyDescriptor(
@@ -389,15 +391,22 @@ test("Template保存は短いCTAと局所spinnerを表示する", async () => {
     });
 
     assert.equal(saveButton.disabled, true);
+    assert.equal(saveButton.getAttribute("aria-label"), "Saving template");
+    assert.equal(saveButton.textContent?.trim(), "Save Template");
     assert.equal(saveButton.getAttribute("aria-busy"), "true");
     assert.ok(saveButton.querySelector(".chat-skill-picker-spinner"));
     assert.equal(prompt.disabled, true);
+    assert.equal(templateName.disabled, true);
 
     await act(async () => {
       resolveUpdate?.([{ ...FIRST_TEMPLATE, prompt: `${FIRST_TEMPLATE.prompt} (edited)` }]);
       await Promise.resolve();
     });
     assert.equal(saveButton.getAttribute("aria-busy"), null);
+    assert.equal(saveButton.getAttribute("aria-label"), "Save");
+    assert.equal(saveButton.textContent?.trim(), "Save Template");
+    assert.equal(prompt.disabled, false);
+    assert.equal(templateName.disabled, false);
   } finally {
     await act(async () => harness.root.unmount());
     harness.dom.window.close();

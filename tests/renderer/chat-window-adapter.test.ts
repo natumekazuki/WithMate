@@ -1080,8 +1080,8 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
 
 // @test-value v2
 // kind = "contract"
-// claim = "live sessionのright pane propsは共通形式でcallbackとempty textを保持する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+// claim = "live sessionのright pane propsは共通形式でcallbackと表示文言を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
 // fault = "right paneの表示情報またはtab操作callbackがprojectionから欠落する"
 // observable = "生成されたright pane propsの表示文言とtab callback"
 // observation_boundary = "public-boundary"
@@ -1095,11 +1095,11 @@ test("buildLiveSessionContextPaneProps は right pane props を共通形式で�
     availableContextPaneTabs: ["latest-command"],
     contextPaneProjection: {
       activeTab: "latest-command",
-      badgeLabel: "",
-      toneClassName: "",
-      latestCommandToneClassName: "",
-      latestCommandStatusLabel: "",
-      latestCommandSourceCopy: "",
+      badgeLabel: "Running",
+      toneClassName: "is-running",
+      latestCommandToneClassName: "command-running",
+      latestCommandStatusLabel: "Command running",
+      latestCommandSourceCopy: "npm test",
       reasoningToneClassName: "",
       tasksToneClassName: "",
     },
@@ -1107,8 +1107,8 @@ test("buildLiveSessionContextPaneProps は right pane props を共通形式で�
     runningDetailsEntries: [],
     liveRunReasoningText: "",
     backgroundTasks: [],
-    selectedSessionLiveRunErrorMessage: "",
-    isSelectedSessionRunning: false,
+    selectedSessionLiveRunErrorMessage: "Command failed",
+    isSelectedSessionRunning: true,
     isCopilotSession: false,
     selectedCopilotRemainingPercentLabel: "",
     selectedCopilotRemainingRequestsLabel: "",
@@ -1128,6 +1128,11 @@ test("buildLiveSessionContextPaneProps は right pane props を共通形式で�
   assert.equal(props.activeContextPaneTab, "latest-command");
   assert.deepEqual(props.availableContextPaneTabs, ["latest-command"]);
   assert.equal(props.contextPaneProjection.activeTab, "latest-command");
+  assert.equal(props.contextPaneProjection.badgeLabel, "Running");
+  assert.equal(props.contextPaneProjection.latestCommandStatusLabel, "Command running");
+  assert.equal(props.contextPaneProjection.latestCommandSourceCopy, "npm test");
+  assert.equal(props.selectedSessionLiveRunErrorMessage, "Command failed");
+  assert.equal(props.isSelectedSessionRunning, true);
   assert.equal(props.onCycleContextPaneTab, onCycleContextPaneTab);
 });
 

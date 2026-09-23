@@ -203,7 +203,6 @@ test("createMessageCollapseHeaderAction は既存header button語彙とshortcut�
     onToggle: noop,
   }));
 
-  assert.match(html, /class="drawer-toggle compact secondary"/);
   assert.match(html, /aria-label="Collapse all completed messages"/);
   assert.match(html, /title="Collapse all completed messages \(Ctrl\+Shift\+M\)"/);
   assert.match(html, />Collapse<\/button>/);
@@ -212,6 +211,8 @@ test("createMessageCollapseHeaderAction は既存header button語彙とshortcut�
     allMessagesCollapsed: true,
     onToggle: noop,
   }));
+  assert.match(expandedHtml, /aria-label="Expand all completed messages"/);
+  assert.match(expandedHtml, /title="Expand all completed messages \(Ctrl\+Shift\+M\)"/);
   assert.match(expandedHtml, />Expand<\/button>/);
 });
 

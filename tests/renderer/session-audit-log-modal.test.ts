@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { JSDOM } from "jsdom";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -39,17 +40,17 @@ describe("SessionAuditLogModal", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Audit log modalは取得済みpageの全entryを固定高spacerなしで描画し、次ページ操作を示す"
-  // oracle = { type = "contract", ref = "src/chat/runtime/session-audit-log.tsx" }
-  // fault = "entryを間引くか固定高spacerで一覧を埋め、pagination controlを失う"
-  // observable = "audit-log-cardの件数、spacerの不在、Load more label"
+  // claim = "Audit log modalは取得済みpageの全entryを一覧内に描画し、一覧の後に次ページ操作を示す"
+  // oracle = { type = "contract", ref = "docs/design/data-loading-performance-audit.md" }
+  // fault = "entryを間引くかpagination controlを一覧より前へ置き、履歴の続きへ到達できなくする"
+  // observable = "audit-log-cardの件数・各entryの時刻と一覧・Load More buttonのDOM順序"
   // observation_boundary = "component-behavior"
   // scope = "session-audit-log-page-rendering"
   // lifecycle = "permanent"
   // impact = "監査履歴の欠落や誤ったscroll体験によりrunの確認を妨げる"
   // distinction = "paged summaryの描画件数とpagination affordanceを同一renderで確認する"
   // @end-test-value
-  it("取得済み page の entry を固定高 spacer なしで描画する", () => {
+  it("取得済み page の entry を一覧に描画し、次ページ操作を後に置く", () => {
     const entries = Array.from({ length: 50 }, (_, index) => createAuditLogSummary(index + 1));
     const html = renderToStaticMarkup(
       React.createElement(SessionAuditLogModal, {
@@ -68,10 +69,18 @@ describe("SessionAuditLogModal", () => {
       }),
     );
 
-    const renderedCardCount = (html.match(/audit-log-card/g) ?? []).length;
-    assert.equal(renderedCardCount, 50);
-    assert.doesNotMatch(html, /audit-log-list-spacer/);
-    assert.match(html, /Load more/);
+    const { document, Node } = new JSDOM(html).window;
+    const list = document.querySelector(".audit-log-list");
+    const cards = [...document.querySelectorAll("article.audit-log-card")];
+    const loadMore = [...document.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Load More");
+    assert.ok(list);
+    assert.equal(cards.length, 50);
+    assert.deepEqual(cards.map((card) => card.querySelector(".audit-log-time")?.textContent),
+      entries.map((entry) => entry.createdAt));
+    assert.ok(cards.every((card) => list.contains(card)));
+    assert.ok(loadMore);
+    assert.ok((list.compareDocumentPosition(loadMore) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
   });
 
   it("Operations detail は operation ごとの fold を開くまで本文を描画しない", () => {

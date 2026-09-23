@@ -820,6 +820,8 @@ test("binary commit file preview はmetadata内にもworking tree操作を表示
     assert.ok(container);
     root = await renderPreview(api, container, request);
     await waitFor(() => container.querySelector(".session-file-preview-metadata") !== null);
+    assert.equal(container.querySelector(".session-file-preview-title strong")?.textContent, "archive.bin");
+    assert.match(container.querySelector(".session-file-preview-title")?.textContent ?? "", /Commit aaaaaaa/);
     const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
     assert.equal(labels.includes("Open"), false);
     assert.equal(labels.includes("Open In Default App"), false);
