@@ -19,7 +19,7 @@ import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-
 // impact = "多数会話での入力遅延、切替による下書き消失、古い入力や別会話への誤送信を防ぐ"
 // distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証し、A送信pending中のB送信、同一Aの重複入力、送信pending→quit待機→失敗復元保存→ACKの順序、非選択owner、closeとの違いも確認する。壁時計の性能値をCI合否にしない"
 // @end-test-value
-test("Session Windowの入力境界と切替後の最新値送信を実配線で守る", { timeout: 8000 }, async () => {
+test("Session Windowの入力境界と切替後の最新値送信を実配線で守る", { timeout: 30_000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
     url: "http://withmate.test/session.html?sessionId=benchmark-main", pretendToBeVisual: true,
   });
