@@ -260,9 +260,9 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
   - 常に全幅の下dockとして置く
-  - compact でも draft preview、run 状態、末尾移動、`Send / Cancel` を残す
-  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では86pxを使い、viewportが760px以下では操作列幅へ追従する。expanded の下段には disabled の `Send` を残し、開閉や Main / Auxiliary 切替で `Cancel` の位置を変えない
-  - 開閉は下 splitter に集約し、dock 内に `Hide` や reopen hit area を置かない
+  - compact では実行中indicatorを`Cancel`の隣に置き、末尾移動とmessage表示切替も必要に応じて操作列に残す。draft入力と`Send`はexpandedで表示する
+  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では86pxを使い、viewportが760px以下では操作列幅へ追従する。compactの実行中はindicatorと`Cancel`を同じ行にまとめ、狭幅ではindicatorを除く残り幅を`Cancel`が使う。expanded の下段には disabled の `Send` を残し、開閉や Main / Auxiliary 切替で `Cancel` の位置を変えない
+  - 開閉は下 splitter を主導線とし、compact の実行中indicatorと非実行中のmeta領域からも展開できる。dock 内に `Hide` は置かない
   - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
@@ -369,7 +369,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - approval chip は `AutoRun / ProviderControlled / SafetyFocused`
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`
-- assistant本文は装飾cardで囲まず、`main` / `sub` の細い左アクセント、左端の淡い色、avatarの縁でCharacterを示す。user本文は控えめなsurfaceで区別し、pendingとAuxiliary groupの状態表現は維持する
+- assistant本文は装飾cardやgradientで囲まず、`main`の細い左線とavatarの縁でCharacterを示す。user本文は控えめなsurfaceで区別し、pendingとAuxiliary groupの状態表現は維持する
 - `composer settings` の背景は `sub` ベースの薄い accent を持つ
 - `Send / Cancel` は mate `main`
 - sendability 判定は共通resolverへ寄せ、Composer内の購読と送信shortcutで最新draft・preview・強制feedback条件を使う。入力のたびにSession shellを更新せず、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う

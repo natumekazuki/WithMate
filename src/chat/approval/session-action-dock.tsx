@@ -40,22 +40,7 @@ export function SessionActionDockCompactRow({
 }: SessionActionDockCompactRowProps) {
   return (
     <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}`}>
-      {isRunning ? (
-        <button
-          className="session-action-dock-compact-progress session-action-dock-compact-progress-button"
-          type="button"
-          onClick={onExpand}
-          aria-label="Expand action dock"
-          title="Expand action dock"
-        >
-          <PendingRunIndicator
-            announcement={pendingRunIndicatorAnnouncement}
-            text={pendingRunIndicatorText}
-            showText={false}
-            announce={pendingRunIndicatorAnnounce}
-          />
-        </button>
-      ) : (
+      {!isRunning ? (
         <button
           className="session-action-dock-compact-meta session-action-dock-compact-expand-button"
           type="button"
@@ -65,8 +50,24 @@ export function SessionActionDockCompactRow({
         >
           {chatNotice ? <span className="session-action-dock-compact-badge attention">{chatNotice}</span> : null}
         </button>
-      )}
+      ) : null}
       <div className="session-action-dock-compact-actions">
+        {isRunning ? (
+          <button
+            className="session-action-dock-compact-progress session-action-dock-compact-progress-button"
+            type="button"
+            onClick={onExpand}
+            aria-label="Expand action dock"
+            title="Expand action dock"
+          >
+            <PendingRunIndicator
+              announcement={pendingRunIndicatorAnnouncement}
+              text={pendingRunIndicatorText}
+              showText={false}
+              announce={pendingRunIndicatorAnnounce}
+            />
+          </button>
+        ) : null}
         <div
           className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}
           aria-hidden={isRunning ? undefined : true}

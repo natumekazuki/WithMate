@@ -220,6 +220,17 @@
     min-width: 0;
   }
 
+  .session-page .session-action-dock-compact-row.running .session-action-dock-compact-actions {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .session-page .session-action-dock-compact-row.running .session-action-dock-cancel-slot {
+    flex: 1 1 86px;
+    width: auto;
+    min-width: 86px;
+  }
+
   .session-action-dock-compact-meta {
     justify-content: flex-start;
   }

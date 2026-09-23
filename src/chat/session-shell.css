@@ -1015,7 +1015,7 @@
 /* A compact running dock keeps only motion and controls visible. The
    visually-hidden status announcement remains available to assistive tech. */
 .session-page .session-action-dock-compact-row.running {
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .session-page .session-action-dock-compact-row.running .session-action-dock-compact-actions {
@@ -1028,12 +1028,6 @@
   padding: 0;
   border: 0;
   background: transparent;
-}
-
-@media (max-width: 760px) {
-  .session-page .session-action-dock-compact-row.running {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .prompt-template-picker {

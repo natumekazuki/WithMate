@@ -2727,9 +2727,9 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 
 // @test-value v2
 // kind = "contract"
-// claim = "compact ActionDockは実行中に展開導線を実際に操作でき、progress・CancelとMain / Auxiliary操作列を維持する"
+// claim = "compact ActionDockは実行中に展開導線を操作でき、progressをCancelの隣にまとめ、Main / Auxiliary操作列を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "実行中のcompact ActionDockに展開導線、progress、Cancel、Main / Auxiliary操作列のいずれかが欠ける、展開callbackが呼ばれない、またはCancelがtarget slotの直前にない"
+// fault = "実行中のcompact ActionDockに展開導線、progress、Cancel、Main / Auxiliary操作列のいずれかが欠ける、progressがCancelと離れる、展開callbackが呼ばれない、またはCancelがtarget slotの直前にない"
 // observable = "SessionActionDockCompactRowの実行中static DOMにおけるprogress、jump button、Cancel、target slot、操作列のDOM順と、展開button clickによるonExpand callback"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock running presentation"
@@ -2768,11 +2768,14 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
   const renderedDocument = new JSDOM(html).window.document;
   const actions = renderedDocument.querySelector(".session-action-dock-compact-actions");
   assert.ok(actions);
+  const progressButton = actions?.querySelector(":scope > .session-action-dock-compact-progress-button");
   const cancelSlot = actions?.querySelector(":scope > .session-action-dock-cancel-slot");
   const targetSlot = actions?.querySelector(":scope > .session-action-dock-target-slot");
+  assert.ok(progressButton);
   assert.ok(cancelSlot);
   assert.ok(targetSlot);
-  assert.equal(actions.firstElementChild, cancelSlot);
+  assert.equal(actions.firstElementChild, progressButton);
+  assert.equal(progressButton.nextElementSibling, cancelSlot);
   assert.equal(cancelSlot.nextElementSibling, targetSlot);
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
 
@@ -2816,10 +2819,10 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
 
 // @test-value v2
 // kind = "contract"
-// claim = "compact ActionDockはidleとrunningの双方向遷移でもMain / Auxiliary直前のCancel予約slotを同じ位置に保持し、実行中だけCancel buttonをenabledで描画する"
+// claim = "compact ActionDockはidleとrunningの双方向遷移でもCancel予約slotをMain / Auxiliary直前に保ち、runningではprogressをCancelの隣に置く"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "idleまたはrunningでslotが消えるか、双方向の実行状態切替でCancelがMain / Auxiliary直前以外へ移動する、active状態・aria・Cancel buttonのenabled状態が崩れる"
-// observable = "React stateをidle/runningへ双方向に更新したSessionActionDockCompactRowのslot親、target内容、class、aria、Cancel button"
+// fault = "idleまたはrunningでslotが消えるか、双方向の実行状態切替でCancelがMain / Auxiliary直前以外へ移動する、progressがCancelと離れる、active状態・aria・Cancel buttonのenabled状態が崩れる"
+// observable = "React stateをidle/runningへ双方向に更新したSessionActionDockCompactRowのprogressとslotの順序、target内容、class、aria、Cancel button"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock Cancel slot"
 // lifecycle = "permanent"
@@ -2863,7 +2866,14 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
     assert.ok(slot);
     const parent = slot.parentElement;
     assert.ok(parent?.classList.contains("session-action-dock-compact-actions"));
-    assert.equal(parent?.firstElementChild, slot);
+    const progressButton = parent?.querySelector(":scope > .session-action-dock-compact-progress-button");
+    if (isRunning) {
+      assert.equal(parent?.firstElementChild, progressButton);
+      assert.equal(progressButton?.nextElementSibling, slot);
+    } else {
+      assert.equal(parent?.firstElementChild, slot);
+      assert.equal(progressButton, null);
+    }
     assert.equal(slot.nextElementSibling?.classList.contains("session-action-dock-target-slot"), true);
     assert.equal(slot.nextElementSibling?.textContent, targetLabel);
     assert.equal(slot.classList.contains("is-active"), isRunning);
