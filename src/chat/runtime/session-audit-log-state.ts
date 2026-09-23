@@ -298,6 +298,7 @@ export function useSessionAuditLogs({
             ...current,
             ownerSessionId,
             refreshing: false,
+            loadingMore: false,
             errorMessage: error instanceof Error ? error.message : "Could not load the audit log summary.",
           }));
           reportAuditLogDetailLog(withmateApi, {

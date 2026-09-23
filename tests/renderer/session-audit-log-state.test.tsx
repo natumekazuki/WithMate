@@ -200,15 +200,15 @@ describe("useSessionAuditLogs", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Audit refresh と pagination は独立したpendingを持ち、refresh完了後の古いpagination応答を適用しない"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#Audit" }
-  // fault = "refreshとLoad Moreを一つのbusyへ潰すか、refresh後に古いpageが新しい一覧へ混入する"
-  // observable = "refreshing/loadingMoreの同時状態、page応答後の表示entry"
+  // claim = "Audit refresh と pagination は独立したpendingを持ち、refresh完了後の古いpagination応答を適用せず、refresh失敗後もpaginationを再試行できる"
+  // oracle = { type = "issue", ref = "https://github.com/natumekazuki/WithMate/issues/496" }
+  // fault = "refreshとLoad Moreを一つのbusyへ潰すか、refresh後に古いpageが新しい一覧へ混入するか、refresh失敗後にLoad Moreがpendingのまま残る"
+  // observable = "refreshing/loadingMoreの同時状態、page応答後の表示entry、refresh失敗時のerrorと再試行可能状態"
   // observation_boundary = "component-behavior"
   // scope = "session-audit-log-state"
   // lifecycle = "permanent"
   // @end-test-value
-  it("Audit refresh と pagination のpendingを分離し、refresh後の古いpageを捨てる", async () => {
+  it("Audit refresh と pagination のpendingを分離し、古いpageを捨て、refresh失敗後も再試行できる", async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
       pretendToBeVisual: true,
     });
@@ -269,6 +269,7 @@ describe("useSessionAuditLogs", () => {
     };
     let summaryCallCount = 0;
     let resolveRefresh: ((page: typeof refreshedPage) => void) | null = null;
+    let rejectRefresh: ((error: Error) => void) | null = null;
     let resolveLoadMore: ((page: typeof stalePage) => void) | null = null;
     const auditLogApi = {
       listSessionAuditLogSummaryPage(_sessionId: string, page: { cursor: number; limit: number }) {
@@ -277,8 +278,9 @@ describe("useSessionAuditLogs", () => {
           return Promise.resolve(firstPage);
         }
         if (page.cursor === 0) {
-          return new Promise<typeof refreshedPage>((resolve) => {
+          return new Promise<typeof refreshedPage>((resolve, reject) => {
             resolveRefresh = resolve;
+            rejectRefresh = reject;
           });
         }
         return new Promise<typeof stalePage>((resolve) => {
@@ -293,6 +295,7 @@ describe("useSessionAuditLogs", () => {
       },
     };
     let openAuditLogs: (() => void) | null = null;
+    let closeAuditLogs: (() => void) | null = null;
     let loadMoreAuditLogs: (() => void) | null = null;
     let root: Root | null = null;
 
@@ -306,6 +309,7 @@ describe("useSessionAuditLogs", () => {
       });
       useEffect(() => {
         openAuditLogs = () => auditLogs.setAuditLogsOpen(true);
+        closeAuditLogs = () => auditLogs.setAuditLogsOpen(false);
         loadMoreAuditLogs = auditLogs.handleLoadMoreAuditLogs;
       }, [auditLogs]);
       return React.createElement(
@@ -314,6 +318,7 @@ describe("useSessionAuditLogs", () => {
           "data-refreshing": String(auditLogs.modalProps.refreshing),
           "data-loading-more": String(auditLogs.modalProps.loadingMore),
           "data-entries": auditLogs.displayedEntries.map((entry) => entry.id).join(","),
+          "data-error": auditLogs.modalProps.errorMessage ?? "",
         },
       );
     }
@@ -350,6 +355,39 @@ describe("useSessionAuditLogs", () => {
         resolveLoadMore?.(stalePage);
       });
       assert.equal(dom.window.document.querySelector("[data-refreshing]")?.getAttribute("data-entries"), "3");
+
+      await act(async () => {
+        closeAuditLogs?.();
+      });
+      await act(async () => {
+        openAuditLogs?.();
+      });
+      await act(async () => {
+        loadMoreAuditLogs?.();
+      });
+      const stateDuringFailedRefresh = dom.window.document.querySelector("[data-refreshing]");
+      assert.equal(stateDuringFailedRefresh?.getAttribute("data-refreshing"), "true");
+      assert.equal(stateDuringFailedRefresh?.getAttribute("data-loading-more"), "true");
+
+      await act(async () => {
+        rejectRefresh?.(new Error("Refresh failed"));
+      });
+      const stateAfterFailedRefresh = dom.window.document.querySelector("[data-refreshing]");
+      assert.equal(stateAfterFailedRefresh?.getAttribute("data-refreshing"), "false");
+      assert.equal(stateAfterFailedRefresh?.getAttribute("data-loading-more"), "false");
+      assert.equal(stateAfterFailedRefresh?.getAttribute("data-entries"), "3");
+      assert.equal(stateAfterFailedRefresh?.getAttribute("data-error"), "Refresh failed");
+
+      await act(async () => {
+        loadMoreAuditLogs?.();
+      });
+      assert.equal(dom.window.document.querySelector("[data-refreshing]")?.getAttribute("data-loading-more"), "true");
+      await act(async () => {
+        resolveLoadMore?.(stalePage);
+      });
+      const stateAfterRetry = dom.window.document.querySelector("[data-refreshing]");
+      assert.equal(stateAfterRetry?.getAttribute("data-loading-more"), "false");
+      assert.equal(stateAfterRetry?.getAttribute("data-entries"), "3,2");
     } finally {
       await act(async () => root?.unmount());
       Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
