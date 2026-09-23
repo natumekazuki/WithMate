@@ -12,10 +12,10 @@ export type CodexSdkSandboxMode = "read-only" | "workspace-write" | "danger-full
 export const DEFAULT_CODEX_SANDBOX_MODE: CodexSandboxMode = "workspace-write";
 
 export const codexSandboxModeOptions = [
-  { id: "read-only", label: "ReadOnly" },
-  { id: "workspace-write", label: "WorkspaceWrite" },
-  { id: "workspace-write-network", label: "WorkspaceWriteWithNetwork" },
-  { id: "danger-full-access", label: "DangerFullAccess" },
+  { id: "read-only", label: "Read Only" },
+  { id: "workspace-write", label: "Workspace Write" },
+  { id: "workspace-write-network", label: "Workspace Write With Network" },
+  { id: "danger-full-access", label: "Danger Full Access" },
 ] as const satisfies Array<{ id: CodexSandboxMode; label: string }>;
 
 export function normalizeCodexSandboxMode(

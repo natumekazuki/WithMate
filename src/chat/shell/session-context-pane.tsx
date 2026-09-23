@@ -133,14 +133,14 @@ export class SessionPaneErrorBoundary extends Component<
               <div className="command-monitor-stack">
                 <div className="command-monitor-card">
                   <div className="live-run-error-block" role="alert">
-                    <strong>RightPaneError</strong>
+                    <strong>Right Pane Error</strong>
                     <p className="live-run-error">{this.state.errorMessage}</p>
                     <div className="window-error-actions pane-error-actions">
                       <button type="button" onClick={this.handleRetry}>
-                        RetryRightPane
+                        Retry Right Pane
                       </button>
                       <button className="drawer-toggle secondary" type="button" onClick={this.handleReload}>
-                        ReloadWindow
+                        Reload Window
                       </button>
                     </div>
                   </div>
@@ -411,14 +411,14 @@ export function SessionContextPane({
 
                   {latestCommandView.details ? (
                     <details className="command-monitor-details live-run-step-details">
-                      <summary>CommandDetails</summary>
+                      <summary>Command Details</summary>
                       <pre>{latestCommandView.details}</pre>
                     </details>
                   ) : null}
 
                   {selectedSessionLiveRunErrorMessage && isSelectedSessionRunning ? (
                     <div className="live-run-error-block" role="alert">
-                      <strong>RunError</strong>
+                      <strong>Run Error</strong>
                       <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
                     </div>
                   ) : null}
@@ -427,7 +427,7 @@ export function SessionContextPane({
                 <div className="command-monitor-empty-shell">
                   {selectedSessionLiveRunErrorMessage ? (
                     <div className="live-run-error-block" role="alert">
-                      <strong>RunError</strong>
+                      <strong>Run Error</strong>
                       <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
                     </div>
                   ) : null}
@@ -459,7 +459,7 @@ export function SessionContextPane({
                         <p className="command-monitor-confirmed-summary">{task.title}</p>
                         {task.details ? (
                           <details className="command-monitor-details live-run-step-details">
-                            <summary>TaskDetails</summary>
+                            <summary>Task Details</summary>
                             <pre>{task.details}</pre>
                           </details>
                         ) : null}
@@ -480,7 +480,7 @@ export function SessionContextPane({
                       </span>
                       <span className="live-run-step-type">Reasoning</span>
                       <span className="command-monitor-source">
-                        {isSelectedSessionRunning ? "LiveRun" : "LastRun"}
+                        {isSelectedSessionRunning ? "Live Run" : "Last Run"}
                       </span>
                     </div>
                   </div>
@@ -544,7 +544,7 @@ export function SessionContextPane({
         <section className="provider-usage-shell" aria-label="Copilot usage">
           <div className="provider-usage-strip">
             <div className="provider-usage-strip-copy">
-              <span className="provider-usage-label">CopilotUsage</span>
+              <span className="provider-usage-label">Copilot Usage</span>
               <strong>{selectedCopilotRemainingPercentLabel}</strong>
             </div>
             <span className="provider-usage-pill">

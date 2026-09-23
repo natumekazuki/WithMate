@@ -226,7 +226,7 @@ overlay では 1 entry ごとに次を表示する。
 
 `logical prompt` は人間が読むための論理構成であり、provider 実 transport と完全一致する必要はない。
 実 transport は `transport payload` 側を正本として扱う。
-approval は UI 上では `AutoRun / ProviderControlled / SafetyFocused` の provider-neutral wording で表示する。
+approval は UI 上では `Auto Run / Provider Controlled / Safety Focused` の provider-neutral wording で表示する。
 そのため、保存値が legacy/native でも overlay 表示時には canonical mode へ normalize したうえで同じ表示labelに揃える。
 background task の completed / failed / canceled 更新で `updatedAt` または status が変わった場合、renderer は Audit Log 一覧を再取得して response / error / raw items の確定値を stale にしない。
 

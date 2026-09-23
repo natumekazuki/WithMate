@@ -19,7 +19,7 @@ const noop = () => {};
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionHeaderは低頻度のsession管理操作をaccessible menu itemとしてPin・Rename・AuditLog・Deleteへまとめる"
+// claim = "SessionHeaderは低頻度のsession管理操作をaccessible menu itemとしてPin・Rename・Audit Log・Deleteへまとめる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
 // fault = "管理操作を常設してsession headerを圧迫するか、menu itemのaccessible nameまたはpressed stateを失う"
 // observable = "Session actions summaryとrole=menu/menuitem、Pinのaria-pressed、各操作label"
@@ -54,7 +54,7 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
   assert.match(html, /role="menu"/);
   assert.match(html, /role="menuitem" aria-pressed="false" aria-label="Pin">Pin<\/button>/);
   assert.match(html, /role="menuitem">Rename<\/button>/);
-  assert.match(html, /role="menuitem">AuditLog<\/button>/);
+  assert.match(html, /role="menuitem">Audit Log<\/button>/);
   assert.match(html, /role="menuitem">Delete<\/button>/);
 });
 
@@ -142,7 +142,7 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
     assert.equal(details.open, false);
     assert.equal(dom.window.document.activeElement, trigger);
 
-    for (const [label, action] of [["Pin", "pin"], ["Rename", "rename"], ["AuditLog", "audit"], ["Delete", "delete"]]) {
+    for (const [label, action] of [["Pin", "pin"], ["Rename", "rename"], ["Audit Log", "audit"], ["Delete", "delete"]]) {
       await act(async () => trigger.click());
       const item = [...container.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]")]
         .find((button) => button.textContent === label);

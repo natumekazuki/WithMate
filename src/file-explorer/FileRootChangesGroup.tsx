@@ -95,7 +95,7 @@ export function FileRootChangesGroup({
   loadingKey,
   onToggleDirectory,
   onOpenEntry,
-  scopes = [["working-tree", "WorkingTree"], ["staged", "Staged"]],
+  scopes = [["working-tree", "Working Tree"], ["staged", "Staged"]],
   selectedEntryKey = null,
 }: FileRootChangesGroupProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);

@@ -822,7 +822,7 @@ test("buildLiveSessionSplitterProps は context rail resize state を反映す�
 // claim = "AgentとAuxiliaryのmodeを共通shellへ反映し、右ペインの内容と操作をChatWindowへ渡す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Agent / Auxiliary shared chat screen" }
 // fault = "mode classや右ペイン入力が失われ、対応する共通画面を表示できない"
-// observable = "shellのclassName、mainContent、rightPanePropsとChatWindow内のLatestCommand表示"
+// observable = "shellのclassName、mainContent、rightPanePropsとChatWindow内のLatest Command表示"
 // observation_boundary = "component-behavior"
 // scope = "live-session-window-shell"
 // lifecycle = "permanent"
@@ -944,7 +944,7 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
   assert.equal(agentProps.className, "");
   assert.equal(auxiliaryProps.className, "theme-accent auxiliary-session-mode");
   assert.match(renderToStaticMarkup(agentProps.mainContent), /Preview/);
-  assert.match(renderToStaticMarkup(React.createElement(ChatWindow, agentProps)), /LatestCommand/);
+  assert.match(renderToStaticMarkup(React.createElement(ChatWindow, agentProps)), /Latest Command/);
   assert.equal(auxiliaryProps.rightPaneProps, rightPaneProps);
 });
 

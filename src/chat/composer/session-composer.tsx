@@ -403,7 +403,7 @@ export function SessionComposerExpanded({
                 }}
                 disabled={isRunning || composerBlocked || composerFrozen}
               >
-                AddDirectory
+                Add Directory
               </button>
               <button
                 className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
@@ -449,7 +449,7 @@ export function SessionComposerExpanded({
                   type="button"
                   onClick={onJumpToBottom}
                 >
-                  JumpToLatest
+                  Jump To Latest
                 </button>
               ) : null}
               {showMessageViewModeControls ? (
@@ -493,7 +493,7 @@ export function SessionComposerExpanded({
           {isCustomAgentListLoading ? (
             <div className="chat-skill-picker-state" role="status" aria-label="Loading custom agents">
               <span className="chat-skill-picker-spinner" aria-hidden="true" />
-              <span className="visually-hidden">LoadingCustomAgents</span>
+              <span className="visually-hidden">Loading Custom Agents</span>
             </div>
           ) : customAgentItems.length > 0 ? (
             customAgentItems.map((item) => (

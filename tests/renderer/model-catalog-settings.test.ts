@@ -99,7 +99,7 @@ describe("reasoning effort catalog contract", () => {
     assert.deepEqual(
       reasoningEffortOptions.slice(-3),
       [
-        { id: "xhigh", label: "XHigh" },
+        { id: "xhigh", label: "X High" },
         { id: "max", label: "Max" },
         { id: "ultra", label: "Ultra" },
       ],

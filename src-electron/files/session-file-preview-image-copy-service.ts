@@ -58,7 +58,7 @@ export class SessionFilePreviewImageCopyService {
 
       try {
         const menu = this.deps.buildMenu([{
-          label: "CopyImage",
+          label: "Copy Image",
           click: () => settle(this.copyImage(webContents, point)),
         }]);
         menu.popup({

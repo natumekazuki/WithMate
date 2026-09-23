@@ -31,7 +31,7 @@ function createAuditLogSummary(): AuditLogSummary {
 // claim = "共有modalは共有表示と呼び出し側の追加表示を欠落・重複なく描画する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
 // fault = "共有modalまたは追加childrenが描画結果から欠落する、または同じ表示が重複する"
-// observable = "HTML文字列に含まれるAuditLog見出し、監査カード、呼び出し側の追加表示の出現回数とdialogのラベル参照"
+// observable = "HTML文字列に含まれるAudit Log見出し、監査カード、呼び出し側の追加表示の出現回数とdialogのラベル参照"
 // observation_boundary = "component-behavior"
 // scope = "chat-session-modals-shared-content"
 // lifecycle = "permanent"
@@ -64,7 +64,7 @@ test("ChatSessionModals は共有 modal と追加表示を欠落・重複なく�
   );
 
   assert.match(html, /<div class="diff-modal"[^>]*aria-labelledby="session-audit-log-title"/);
-  assert.equal((html.match(/<h2 id="session-audit-log-title">AuditLog<\/h2>/g) ?? []).length, 1);
+  assert.equal((html.match(/<h2 id="session-audit-log-title">Audit Log<\/h2>/g) ?? []).length, 1);
   assert.equal((html.match(/audit-log-card completed/g) ?? []).length, 1);
   assert.equal((html.match(/class="session-toast success"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /diff-editor panel/);
@@ -75,7 +75,7 @@ test("ChatSessionModals は共有 modal と追加表示を欠落・重複なく�
 // claim = "Auxiliary起動dialogは利用可能なcoding providerと起動操作を表示し、dialogのaccessible nameを提供する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#auxiliary-session-issue-710" }
 // fault = "起動可能なprovider・起動操作・dialogのaccessible nameのいずれかが表示結果から欠落する"
-// observable = "dialog role/aria-label、CodingProviderの項目名、Codex/Copilot候補、StartAuxiliary操作"
+// observable = "dialog role/aria-label、Coding Providerの項目名、Codex/Copilot候補、Start Auxiliary操作"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-launch-dialog"
 // lifecycle = "permanent"
@@ -98,10 +98,10 @@ test("AuxiliaryLaunchProviderDialog は Provider だけを選択対象として�
   );
 
   assert.match(html, /<div class="launch-modal" role="dialog" aria-modal="true" aria-label="Start Auxiliary">/);
-  assert.match(html, /CodingProvider/);
+  assert.match(html, /Coding Provider/);
   assert.match(html, /Codex/);
   assert.match(html, /Copilot/);
-  assert.match(html, /StartAuxiliary/);
+  assert.match(html, /Start Auxiliary/);
   assert.doesNotMatch(html, /Reasoning/);
   assert.doesNotMatch(html, /Sandbox/);
 });

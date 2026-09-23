@@ -338,7 +338,7 @@ export function ChatSkillPickerPanel({
           {isLoading ? (
             <div className="chat-skill-picker-state">
               <span className="chat-skill-picker-spinner" aria-hidden="true" />
-              <span className="visually-hidden">LoadingSkills</span>
+              <span className="visually-hidden">Loading Skills</span>
             </div>
           ) : errorMessage ? (
             <p className="chat-skill-picker-state error">{errorMessage}</p>
@@ -380,7 +380,7 @@ export function ChatAdditionalDirectoryList({
   return (
     <section className="chat-additional-directory-surface" aria-label="Additional directories">
       <div className="chat-additional-directory-heading">
-        <span>AdditionalDirectories</span>
+        <span>Additional Directories</span>
         <span className="chat-additional-directory-count">{items.length}</span>
       </div>
       <div className="chat-additional-directory-list">
@@ -785,7 +785,7 @@ export function ChatDockSplitter({
   const panelLabel = edge === "top"
     ? "Header"
     : edge === "bottom"
-      ? "ActionDock"
+      ? "Action Dock"
       : edge === "left"
         ? "Left pane"
         : "Right pane";

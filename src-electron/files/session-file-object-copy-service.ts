@@ -157,7 +157,7 @@ export class SessionFileObjectCopyService {
       };
       try {
         const menu = this.deps.buildMenu!([{
-          label: "CopyFile",
+          label: "Copy File",
           click: () => {
             if (!settled) {
               selectionStarted = true;

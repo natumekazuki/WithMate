@@ -48,7 +48,7 @@ const FORGET_REASON_OPTIONS: MemoryForgetReason[] = [
 ];
 
 const FORGET_REASON_LABELS: Record<MemoryForgetReason, string> = {
-  user_request: "UserRequest",
+  user_request: "User Request",
   incorrect: "Incorrect",
   outdated: "Outdated",
   privacy: "Privacy",
@@ -339,7 +339,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
         <section className="memory-review-shell">
           <header className="memory-review-header">
             <div>
-              <h1>MemoryReview</h1>
+              <h1>Memory Review</h1>
             </div>
             <button
               className="launch-toggle"
@@ -371,7 +371,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
             <label className="settings-provider-input">
               <span>Kind</span>
               <select value={selectedKind} onChange={(event) => setSelectedKind(event.target.value as MemoryEntryKind | "")}>
-                <option value="">AllKinds</option>
+                <option value="">All Kinds</option>
                 {MEMORY_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{MEMORY_KIND_LABELS[kind]}</option>)}
               </select>
             </label>
@@ -393,14 +393,14 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   <small>{fileUsage.objectCount} active objects</small>
                 </div>
                 <div>
-                  <span>PendingDelete</span>
+                  <span>Pending Delete</span>
                   <strong>{formatBytes(fileUsage.pendingDeleteBytes)}</strong>
                   <small>{fileUsage.pendingDeleteCount} objects</small>
                 </div>
               </div>
               {fileUsage.largestEntries && fileUsage.largestEntries.length > 0 ? (
                 <div className="memory-review-largest-entries">
-                  <span>LargestEntries</span>
+                  <span>Largest Entries</span>
                   <div>
                     {fileUsage.largestEntries.map((entry) => (
                       <button key={entry.entryId} type="button" onClick={() => void selectEntry(entry.entryId)}>
@@ -422,10 +422,10 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   {runningGc === "dry-run" ? (
                     <>
                       <span className="settings-action-spinner" aria-hidden="true" />
-                      <span>GCDryRun</span>
+                      <span>GC Dry Run</span>
                       <span className="visually-hidden">Running Memory file GC dry run.</span>
                     </>
-                  ) : "GCDryRun"}
+                  ) : "GC Dry Run"}
                 </button>
                 <button
                   type="button"
@@ -437,15 +437,15 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   {runningGc === "cleanup" ? (
                     <>
                       <span className="settings-action-spinner" aria-hidden="true" />
-                      <span>RunGCCleanup</span>
+                      <span>Run GC Cleanup</span>
                       <span className="visually-hidden">Running Memory file GC cleanup.</span>
                     </>
-                  ) : "RunGCCleanup"}
+                  ) : "Run GC Cleanup"}
                 </button>
               </div>
               {gcReport ? (
                 <div className="memory-review-gc-report" aria-label="Memory file GC report">
-                  <span>{gcReport.dryRun ? "DryRun" : "Cleanup"}</span>
+                  <span>{gcReport.dryRun ? "Dry Run" : "Cleanup"}</span>
                   <small>
                     Pending {gcReport.deletePending.candidates} / deleted {gcReport.deletePending.deleted} / missing {gcReport.deletePending.missing ?? 0} / failed {gcReport.deletePending.failed}
                   </small>
@@ -495,10 +495,10 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   {loadingMore ? (
                     <>
                       <span className="settings-action-spinner" aria-hidden="true" />
-                      <span>LoadMore</span>
+                      <span>Load More</span>
                       <span className="visually-hidden">Loading more Memory entries.</span>
                     </>
-                  ) : "LoadMore"}
+                  ) : "Load More"}
                 </button>
               ) : null}
             </section>
@@ -528,7 +528,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   {selectedEntry.files && selectedEntry.files.length > 0 ? (
                     <section className="memory-review-files" aria-label="Protected files">
                       <div className="memory-review-files-head">
-                        <h3>ProtectedFiles</h3>
+                        <h3>Protected Files</h3>
                         <button
                           type="button"
                           onClick={() => void exportSelectedEntryFiles()}
@@ -539,10 +539,10 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                           {exporting ? (
                             <>
                               <span className="settings-action-spinner" aria-hidden="true" />
-                              <span>ExportFiles</span>
+                              <span>Export Files</span>
                               <span className="visually-hidden">Exporting Memory files.</span>
                             </>
-                          ) : "ExportFiles"}
+                          ) : "Export Files"}
                         </button>
                       </div>
                       <ul>
@@ -563,7 +563,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   </div>
                   <div className="memory-review-forget-row">
                     <label className="settings-provider-input">
-                      <span>ForgetReason</span>
+                      <span>Forget Reason</span>
                       <select value={forgetReason} onChange={(event) => setForgetReason(event.target.value as MemoryForgetReason)}>
                         {FORGET_REASON_OPTIONS.map((reason) => <option key={reason} value={reason}>{FORGET_REASON_LABELS[reason]}</option>)}
                       </select>
@@ -579,10 +579,10 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                       {forgetting ? (
                         <>
                           <span className="settings-action-spinner" aria-hidden="true" />
-                          <span>ForgetEntry</span>
+                          <span>Forget Entry</span>
                           <span className="visually-hidden">Forgetting Memory entry.</span>
                         </>
-                      ) : "ForgetEntry"}
+                      ) : "Forget Entry"}
                     </button>
                   </div>
                 </>
@@ -608,7 +608,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
             onKeyDown={handleForgetDialogKeyDown}
           >
             <header>
-              <h2 id="memory-review-forget-title">ForgetMemoryEntry</h2>
+              <h2 id="memory-review-forget-title">Forget Memory Entry</h2>
               <button
                 className="diff-close"
                 type="button"
@@ -649,10 +649,10 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                 {forgetting ? (
                   <>
                     <span className="settings-action-spinner" aria-hidden="true" />
-                    <span>ForgetEntry</span>
+                    <span>Forget Entry</span>
                     <span className="visually-hidden">Forgetting Memory entry.</span>
                   </>
-                ) : "ForgetEntry"}
+                ) : "Forget Entry"}
               </button>
             </footer>
           </section>

@@ -42,8 +42,8 @@ test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み
   assert.match(html, /title="前回の依頼は完了できませんでした"/);
   assert.match(html, /class="sr-only">: 前回の依頼は完了できませんでした<\/span>/);
   assert.match(html, /Your current draft is preserved\.<\/p>/);
-  assert.match(html, />ReplacePreviousRequest<\/button>/);
-  assert.match(html, />KeepCurrentDraft<\/button>/);
+  assert.match(html, />Replace Previous Request<\/button>/);
+  assert.match(html, />Keep Current Draft<\/button>/);
   assert.doesNotMatch(html, /停止地点|>Details<|>Hide</);
 });
 

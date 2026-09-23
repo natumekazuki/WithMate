@@ -4,7 +4,7 @@
 
 - Session 実行中に、会話本文を潰さずに `command_execution` を常時確認できるようにする
 - safety / trust 観点で必要な情報を `最新 command 1 件` に絞り、見落としや情報過多を減らす
-- right pane を `LatestCommand` と Copilot `Tasks` の activity host にする
+- right pane を `Latest Command` と Copilot `Tasks` の activity host にする
 
 ## Problem
 
@@ -17,15 +17,15 @@
 ## Design Summary
 
 - pending bubble は引き続き `assistantText` と run indicator だけを表示する
-- right pane は `LatestCommand` と、Copilot session の場合だけ `Tasks` 面を持つ
+- right pane は `Latest Command` と、Copilot session の場合だけ `Tasks` 面を持つ
 - 手動切り替えは左右ボタンで常時可能にする
 - 自動切り替えは `running` を基準にする
-  - `LatestCommand` は session run 中を最優先で表示する
+  - `Latest Command` は session run 中を最優先で表示する
   - MemoryGeneration / Monologue の自動表示は current runtime では行わない
-- `LatestCommand` は次の優先順で決める
+- `Latest Command` は次の優先順で決める
   - 実行中なら `liveRun.steps` の最後の `command_execution`
   - 待機中なら直近 terminal Audit Log に含まれる最後の `command_execution`
-- run 中は `LatestCommand` の上に、確定済み live step のうち直近数件だけを `ConfirmedDetails` 面として補助表示してよい
+- run 中は `Latest Command` の上に、確定済み live step のうち直近数件だけを `Confirmed Details` 面として補助表示してよい
   - 対象は `completed / failed / canceled` の step
   - 直近の in-progress command は面の最下段で常に追えるようにし、full timeline は常設しない
 - MemoryGeneration / Monologue の専用 background activity state は current UI では受けない
@@ -56,7 +56,7 @@ flowchart TB
 - badge は current 面の状態だけを最小表示する
 - inactive 面は常時並べず、狭い幅でも詰まらないことを優先する
 
-#### LatestCommand
+#### Latest Command
 
 - 表示対象は 1 件だけ
 - 内容は次に絞る

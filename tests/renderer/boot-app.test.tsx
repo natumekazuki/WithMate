@@ -20,6 +20,6 @@ test("BootApp は起動中の領域と処理名を支援技術へ伝える", () 
   const html = renderToStaticMarkup(React.createElement(BootApp));
 
   assert.match(html, /<section[^>]*aria-busy="true"/);
-  assert.match(html, /role="status" aria-atomic="true">.*?Starting WithMate.*?<span class="sr-only">PreparingStartup<\/span>/);
+  assert.match(html, /role="status" aria-atomic="true">.*?Starting WithMate.*?<span class="sr-only">Preparing Startup<\/span>/);
   assert.equal((html.match(/role="status"/g) ?? []).length, 1);
 });

@@ -36,7 +36,7 @@ export function KeyboardShortcutsHelpSection({
       <div className="settings-field">
         <strong>Help</strong>
         <button className="launch-toggle" type="button" onClick={() => setOpen(true)}>
-          KeyboardShortcuts
+          Keyboard Shortcuts
         </button>
       </div>
       <KeyboardShortcutsDialog
@@ -123,7 +123,7 @@ export function KeyboardShortcutsDialog({
     >
       <div className="settings-keyboard-shortcuts-content">
         <div className="settings-keyboard-shortcuts-head">
-          <h2>KeyboardShortcuts</h2>
+          <h2>Keyboard Shortcuts</h2>
           <p>Shortcuts are active while this WithMate window is focused.</p>
           {captureError ? <p className="settings-feedback settings-keyboard-shortcuts-error" role="alert">{captureError}</p> : null}
         </div>

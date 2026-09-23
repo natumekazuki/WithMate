@@ -394,7 +394,7 @@ const mainWindowRuntime = new MainWindowRuntime({
   confirmCloseWhileRunning: (window) => {
     const choice = dialog.showMessageBoxSync(window, {
       type: "warning",
-      buttons: ["KeepOpen", "CloseAndContinue"],
+      buttons: ["Keep Open", "Close And Continue"],
       defaultId: 0,
       cancelId: 0,
       title: "Session Is Running",
@@ -1039,7 +1039,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             confirmQuitWhileRunning: () => {
               const choice = dialog.showMessageBoxSync({
                 type: "warning",
-                buttons: ["GoBack", "Quit"],
+                buttons: ["Go Back", "Quit"],
                 defaultId: 0,
                 cancelId: 0,
                 title: "Session Is Running",

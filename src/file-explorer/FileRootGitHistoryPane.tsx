@@ -50,7 +50,7 @@ export type FileRootGitHistoryPaneProps = {
   onRepositoryChange?: (repositoryId: string | null) => void;
 };
 
-const HISTORY_SCOPES = [["commit", "ChangedFiles"]] as const satisfies readonly [FileRootGitChangeScope, string][];
+const HISTORY_SCOPES = [["commit", "Changed Files"]] as const satisfies readonly [FileRootGitChangeScope, string][];
 
 const HISTORY_REF_MARKERS = {
   head: "H",
@@ -65,8 +65,8 @@ const HISTORY_REF_KIND_LABELS = {
 } as const satisfies Record<FileRootGitHistoryRef["kind"], string>;
 
 const HISTORY_COMPARISON_MODE_LABELS: Record<FileRootGitHistoryComparisonMode, string> = {
-  direct: "DirectComparison",
-  branch: "BranchChanges",
+  direct: "Direct Comparison",
+  branch: "Branch Changes",
 };
 
 const HISTORY_AVAILABLE_REF_KIND_LABELS: Record<FileRootGitHistoryAvailableRef["kind"], string> = {
@@ -110,13 +110,13 @@ function historyComparisonEntryKey(repositoryId: string, entry: FileRootGitChang
 
 function selectorLabel(selector: FileRootGitHistoryComparisonSelector | null): string {
   if (!selector) {
-    return "SelectARef";
+    return "Select A Ref";
   }
   if (selector.kind === "head") {
     return "HEAD";
   }
   if (selector.kind === "commit") {
-    return `Commit${selector.objectId.slice(0, 7)}`;
+    return `Commit ${selector.objectId.slice(0, 7)}`;
   }
   return selector.name;
 }
@@ -296,7 +296,7 @@ function HistoryComparisonRefPicker({
                   onClick={() => choose({ kind: "head" })}
                 >
                   <strong>HEAD</strong>
-                  <span>CurrentCheckedOutCommit</span>
+                  <span>Current Checked Out Commit</span>
                 </button>
               ) : null}
               {commitCandidate ? (
@@ -308,7 +308,7 @@ function HistoryComparisonRefPicker({
                   onClick={() => choose({ kind: "commit", objectId: commitCandidate })}
                 >
                   <strong>Commit{commitCandidate.slice(0, 7)}</strong>
-                  <span>ResolveTypedCommitSHA</span>
+                  <span>Resolve Typed Commit SHA</span>
                 </button>
               ) : null}
               {filteredRefs.map((ref) => (
@@ -1121,7 +1121,7 @@ export function FileRootGitHistoryPane({
       {comparisonOpen ? (
         <div className="file-history-comparison" aria-busy={comparisonLoading || undefined}>
           <button className="file-history-back" type="button" onClick={backFromComparison}>
-            ← {comparisonReturnToDetail ? "CommitDetails" : "History"}
+            ← {comparisonReturnToDetail ? "Commit Details" : "History"}
           </button>
           <div className="file-history-comparison-form">
             <div className="file-history-comparison-form-heading">
@@ -1203,7 +1203,7 @@ export function FileRootGitHistoryPane({
                 </div>
                 {comparison.mergeBaseCommitId ? (
                   <span className="file-history-comparison-merge-base">
-                    MergeBase <code>{comparison.mergeBaseCommitId}</code>
+                    Merge Base <code>{comparison.mergeBaseCommitId}</code>
                   </span>
                 ) : null}
                 <label className="file-history-comparison-filter">
@@ -1222,7 +1222,7 @@ export function FileRootGitHistoryPane({
                     disabled={!!loadingDiffKey}
                     onClick={(event) => void openComparisonDiff(null, event.ctrlKey || event.metaKey)}
                   >
-                    OpenAllChanges
+                    Open All Changes
                   </button>
                 </div>
               </div>
@@ -1272,7 +1272,7 @@ export function FileRootGitHistoryPane({
                   disabled={loadingDetail || !!loadingDiffKey || !rootChange}
                   onClick={() => void openCommitDiff(null, false)}
                 >
-                  OpenAllChanges
+                  Open All Changes
                 </button>
                 {canCompare ? (
                   <button

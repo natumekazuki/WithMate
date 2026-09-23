@@ -2110,7 +2110,7 @@ test("SessionMessageColumn の Source は通常 message と pending の元 Markd
 // claim = "pending rowとlive approval/elicitationは既存messageの後、bottom anchorの前へ一度ずつ維持される"
 // oracle = { type = "contract", ref = "src/chat/conversation/session-message-column.tsx" }
 // fault = "実行中のrequest UIを既存messageの途中へ挿入するか末尾のpending/approvalを失う"
-// observable = "pending row、ApprovalRequired、approval/elicitation custom content、既存messageとanchorのDOM順"
+// observable = "pending row、Approval Required、approval/elicitation custom content、既存messageとanchorのDOM順"
 // observation_boundary = "component-behavior"
 // scope = "session-message-live-request-tail"
 // lifecycle = "permanent"
@@ -2126,7 +2126,7 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
   });
 
   assert.match(html, /pending-row/);
-  assert.match(html, /ApprovalRequired/);
+  assert.match(html, /Approval Required/);
   assert.match(html, /コマンド実行の承認/);
   assert.match(html, /対象ブランチを選んでね。/);
   assert.match(html, /Branch/);
@@ -2257,7 +2257,7 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
     pendingMessageText: "Preparing a response",
     pendingMessageTextVisible: false,
   });
-  assert.match(approvalHtml, /ApprovalRequired/);
+  assert.match(approvalHtml, /Approval Required/);
   assert.match(approvalHtml, /コマンド実行の承認/);
   assert.doesNotMatch(approvalHtml, /Preparing a response/);
 
@@ -2337,10 +2337,10 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionComposerExpandedのidle DOMはattachment/view操作、closedなattachment menu、AddDirectory/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
+// claim = "SessionComposerExpandedのidle DOMはattachment/view操作、closedなattachment menu、Add Directory/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023C, MT-023D4; docs/design/desktop-ui.md: Action Dock" }
-// fault = "idle表示でattachment/view action・closedなattachment menu・AddDirectory/Dirs・target dock・Cancel slot・SendのDOM配置が崩れる、Hide/reopen導線が混入する、Cancel slotがactiveまたはbuttonを持つ、Sendがsettings group内へ移動する"
-// observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAddDirectory/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row直下のsettings groupとSend button"
+// fault = "idle表示でattachment/view action・closedなattachment menu・Add Directory/Dirs・target dock・Cancel slot・SendのDOM配置が崩れる、Hide/reopen導線が混入する、Cancel slotがactiveまたはbuttonを持つ、Sendがsettings group内へ移動する"
+// observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAdd Directory/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row直下のsettings groupとSend button"
 // observation_boundary = "component-behavior"
 // scope = "expanded ActionDock idle layout and Cancel slot"
 // lifecycle = "permanent"
@@ -2466,7 +2466,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   assert.equal(attachmentPanel, null);
   assert.equal(skillButton.nextElementSibling, additionalDirectoryToolbar);
   assert.match(attachmentButton.textContent ?? "", /Attach/);
-  assert.equal(addDirectoryButton.textContent, "AddDirectory");
+  assert.equal(addDirectoryButton.textContent, "Add Directory");
   assert.equal(directoriesButton.textContent, "Dirs0");
   assert.ok((additionalDirectoryToolbar.compareDocumentPosition(viewActions) & 4) !== 0);
   assert.ok((attachmentMenu.compareDocumentPosition(viewActions) & 4) !== 0);
@@ -2487,7 +2487,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   });
   assert.equal(forbiddenDockHitArea, undefined);
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
-  assert.equal(jumpButton.textContent, "JumpToLatest");
+  assert.equal(jumpButton.textContent, "Jump To Latest");
   assert.equal(viewModeGroup.getAttribute("aria-label"), "Message display mode");
   assert.equal(previewButton.getAttribute("aria-pressed"), "false");
   assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
@@ -2582,10 +2582,10 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   );
   const html = renderComposer(true);
 
-  assert.match(html, /JumpToLatest/);
-  assert.ok(html.indexOf("Attach") < html.indexOf("JumpToLatest"));
-  assert.ok(html.indexOf("JumpToLatest") < html.indexOf("Preview"));
-  assert.match(html, /composer-toolbar-view-actions[\s\S]*JumpToLatest[\s\S]*Message display mode/);
+  assert.match(html, /Jump To Latest/);
+  assert.ok(html.indexOf("Attach") < html.indexOf("Jump To Latest"));
+  assert.ok(html.indexOf("Jump To Latest") < html.indexOf("Preview"));
+  assert.match(html, /composer-toolbar-view-actions[\s\S]*Jump To Latest[\s\S]*Message display mode/);
 
   const renderedDocument = new JSDOM(html).window.document;
   const toolbar = renderedDocument.querySelector(".composer-attachments-toolbar");
@@ -2688,7 +2688,7 @@ test("SessionComposerExpanded は busy 中の Send を spinner と status にす
 // claim = "idleのcompact ActionDockはpreview/source切替とjumpを表示し、send・draftの重複UIを表示しない"
 // oracle = { type = "contract", ref = "src/chat/approval/session-action-dock.tsx" }
 // fault = "idle状態でもSendまたはdraftを複製するか、preview/source・jump affordanceを失う"
-// observable = "JumpToLatest、Preview/Source、expand label、Send/draftのDOM有無"
+// observable = "Jump To Latest、Preview/Source、expand label、Send/draftのDOM有無"
 // observation_boundary = "component-behavior"
 // scope = "compact-action-dock-idle"
 // lifecycle = "permanent"
@@ -2709,7 +2709,7 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
     }),
   );
 
-  assert.match(html, /JumpToLatest/);
+  assert.match(html, /Jump To Latest/);
   assert.match(html, />Preview<\/button>/);
   assert.match(html, />Source<\/button>/);
   assert.match(html, /class="session-action-dock-compact-meta session-action-dock-compact-expand-button"/);
@@ -2746,7 +2746,7 @@ test("SessionActionDockCompactRow は実行中に jump button と Cancel を描�
 
   assert.match(html, /New messages/);
   assert.match(html, /session-action-dock-compact-actions/);
-  assert.ok(html.indexOf("Cancel") < html.indexOf("JumpToLatest"));
+  assert.ok(html.indexOf("Cancel") < html.indexOf("Jump To Latest"));
   assert.match(html, />Cancel<\/button>/);
   const renderedDocument = new JSDOM(html).window.document;
   const actions = renderedDocument.querySelector(".session-action-dock-compact-actions");

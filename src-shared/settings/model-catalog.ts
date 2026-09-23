@@ -52,7 +52,7 @@ export const reasoningEffortOptions = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },
-  { id: "xhigh", label: "XHigh" },
+  { id: "xhigh", label: "X High" },
   { id: "max", label: "Max" },
   { id: "ultra", label: "Ultra" },
 ] as const satisfies ReadonlyArray<{ id: ModelReasoningEffort; label: string }>;

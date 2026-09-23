@@ -233,7 +233,7 @@ export function ComposerAttachmentMenu({
       onKeyDown={handleMenuKeyDown}
     >
       {renderSection("composer-attach-source", "Attach", attachItems, 0)}
-      {renderSection("composer-session-files", "SessionFiles", sessionItems, attachItems.length)}
+      {renderSection("composer-session-files", "Session Files", sessionItems, attachItems.length)}
     </div>,
     document.body,
   ) : null;

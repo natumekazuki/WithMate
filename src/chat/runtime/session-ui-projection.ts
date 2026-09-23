@@ -347,7 +347,7 @@ export function summarizeBackgroundTasksStatus(backgroundTasks: LiveBackgroundTa
 export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
   switch (tab) {
     case "latest-command":
-      return "LatestCommand";
+      return "Latest Command";
     case "messages":
       return "Messages";
     case "glossary":
@@ -428,7 +428,7 @@ export function buildContextPaneProjection({
 }): ContextPaneProjection {
   const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
   const latestCommandStatusLabel = latestCommandView ? liveRunStepStatusLabel(latestCommandView.status) : "Idle";
-  const latestCommandSourceCopy = latestCommandView?.sourceLabel === "live" ? "LiveRun" : "LastRun";
+  const latestCommandSourceCopy = latestCommandView?.sourceLabel === "live" ? "Live Run" : "Last Run";
   const tasksToneClassName = summarizeBackgroundTasksStatus(backgroundTasks);
   const reasoningToneClassName = hasReasoningText
     ? (isSelectedSessionRunning ? "in_progress" : "completed")

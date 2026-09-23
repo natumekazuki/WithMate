@@ -87,11 +87,11 @@ export function liveRunStepStatusLabel(status: string): string {
 export function liveRunStepDetailsLabel(type: string): string {
   switch (type) {
     case "command_execution":
-      return "OutputDetails";
+      return "Output Details";
     case "todo_list":
-      return "TodoDetails";
+      return "Todo Details";
     case "mcp_tool_call":
-      return "ToolDetails";
+      return "Tool Details";
     default:
       return "Details";
   }

@@ -309,7 +309,7 @@ describe("session-ui-projection", () => {
     assert.equal(projection.toneClassName, "completed");
     assert.equal(projection.latestCommandToneClassName, "completed");
     assert.equal(projection.latestCommandStatusLabel, "Completed");
-    assert.equal(projection.latestCommandSourceCopy, "LastRun");
+    assert.equal(projection.latestCommandSourceCopy, "Last Run");
   });
 
   // @test-value v2

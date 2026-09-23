@@ -69,14 +69,14 @@ export function AuxiliaryLaunchProviderDialog({
       footer={
         <LaunchDialogFooter
           feedback={visibleFeedback}
-          startButtonLabel="StartAuxiliary"
+          startButtonLabel="Start Auxiliary"
           startButtonDisabled={!resolvedSelectedProviderId || !providerLoadReady || starting || creationInFlight}
           startButtonAriaDisabled={!resolvedSelectedProviderId || !providerLoadReady || starting || creationInFlight}
           startButtonBusy={starting || creationInFlight}
-          startButtonLoadingText="StartingAuxiliary"
+          startButtonLoadingText="Starting Auxiliary"
           onStart={onStart}
           startButtonRef={startButtonRef}
-          cancelButtonLabel={canCancelCreation ? "CancelCreation" : undefined}
+          cancelButtonLabel={canCancelCreation ? "Cancel Creation" : undefined}
           onCancel={canCancelCreation ? onCancelCreation : undefined}
           cancelButtonDisabled={cancelling}
         />
@@ -84,7 +84,7 @@ export function AuxiliaryLaunchProviderDialog({
     >
       <div className="launch-field">
         <label className="launch-field-label" htmlFor="auxiliary-provider-picker">
-          CodingProvider
+          Coding Provider
         </label>
         <ProviderLaunchPicker
           id="auxiliary-provider-picker"

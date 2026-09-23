@@ -68,7 +68,7 @@ export function SessionActionDockCompactRow({
             type="button"
             onClick={onJumpToBottom}
           >
-            JumpToLatest
+            Jump To Latest
           </button>
         ) : null}
         {showMessageViewModeControls ? (

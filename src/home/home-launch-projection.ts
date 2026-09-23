@@ -96,7 +96,7 @@ export function buildHomeLaunchProjection({
     charactersLoaded,
     characterLoadStatus: resolvedCharacterLoadStatus,
     launchWorkspacePathLabel: sessionFolderSelected
-      ? "SessionFolder"
+      ? "Session Folder"
       : launchWorkspace?.path ?? "workspace",
     workspacePathInput,
     workspaceValidation,

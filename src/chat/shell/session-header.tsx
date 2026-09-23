@@ -189,7 +189,7 @@ export function SessionHeader({
                   ) : null}
                   {showAuditLogButton ? (
                     <button type="button" role="menuitem" onClick={() => runSessionAction(onOpenAuditLog)}>
-                      AuditLog
+                      Audit Log
                     </button>
                   ) : null}
                   {showDeleteButton ? (

@@ -117,7 +117,7 @@ describe("AppTrayService", () => {
     assert.equal(tray.toolTip, "WithMate");
     const menu = tray.contextMenu as AppTrayMenuItem[];
     assert.deepEqual(menu.map((item) => "label" in item ? item.label : item.type), [
-      "ShowWithMate",
+      "Show WithMate",
       "separator",
       "Quit",
     ]);

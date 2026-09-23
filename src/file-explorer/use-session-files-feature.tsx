@@ -16,7 +16,7 @@ import { useFileRootPreviewController } from "./use-file-root-preview-controller
 
 function formatGitHistoryComparisonSelector(selector: FileRootGitHistoryComparison["base"]): string {
   if (selector.kind === "head") return "HEAD";
-  if (selector.kind === "commit") return `Commit${selector.objectId.slice(0, 7)}`;
+  if (selector.kind === "commit") return `Commit ${selector.objectId.slice(0, 7)}`;
   return selector.name;
 }
 
@@ -25,15 +25,15 @@ function formatGitHistoryDiffTitle(request: FileRootGitHistoryDiffRequest): stri
     return request.relativePath
       ?? `${formatGitHistoryComparisonSelector(request.comparison.base)} → ${formatGitHistoryComparisonSelector(request.comparison.target)}`;
   }
-  return request.relativePath ?? `Commit${request.commitId.slice(0, 7)}`;
+  return request.relativePath ?? `Commit ${request.commitId.slice(0, 7)}`;
 }
 
 function formatGitHistoryDiffContext(request: FileRootGitHistoryDiffRequest): string | undefined {
   if (!isFileRootGitHistoryComparisonDiffRequest(request)) return undefined;
   const mergeBase = request.comparison.mergeBaseCommitId
-    ? ` · MergeBase ${request.comparison.mergeBaseCommitId.slice(0, 7)}`
+    ? ` · Merge Base ${request.comparison.mergeBaseCommitId.slice(0, 7)}`
     : "";
-  return `${request.comparison.mode === "branch" ? "BranchChanges" : "DirectComparison"} · ${request.comparison.baseCommitId.slice(0, 7)} → ${request.comparison.targetCommitId.slice(0, 7)}${mergeBase}`;
+  return `${request.comparison.mode === "branch" ? "Branch Changes" : "Direct Comparison"} · ${request.comparison.baseCommitId.slice(0, 7)} → ${request.comparison.targetCommitId.slice(0, 7)}${mergeBase}`;
 }
 
 export function useSessionFilesFeature(input: {
@@ -131,7 +131,7 @@ export function useSessionFilesFeature(input: {
       fileRootGitHistoryDiffPreview, fileRootGitHistoryDiffPendingPreview, fileRootGitHistoryDiffLoading,
     } = view;
     const shared = {
-      backNavigation: { label: "BackToChat", onBack: bindings.onBack },
+      backNavigation: { label: "Back To Chat", onBack: bindings.onBack },
       onCopyText: bindings.onCopyText,
       onQuoteText: bindings.onQuoteText,
       chatNotice: bindings.chatNotice,
@@ -173,7 +173,7 @@ export function useSessionFilesFeature(input: {
       return (
         <SessionDiffPreview
           {...shared}
-          title={`${fileRootDiffPendingPreview.relativePath} · ${fileRootDiffPendingPreview.scope === "staged" ? "Staged" : "WorkingTree"}`}
+          title={`${fileRootDiffPendingPreview.relativePath} · ${fileRootDiffPendingPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
           previewRevision={fileRootDiffPendingPreview.generation}
           patch=""
           loading
@@ -191,7 +191,7 @@ export function useSessionFilesFeature(input: {
       return (
         <SessionDiffPreview
           {...shared}
-          title={`${fileRootDiffPreview.relativePath} · ${fileRootDiffPreview.scope === "staged" ? "Staged" : "WorkingTree"}`}
+          title={`${fileRootDiffPreview.relativePath} · ${fileRootDiffPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
           previewRevision={fileRootDiffPreview.generation}
           patch={fileRootDiffPreview.patch}
           onOpenPreview={() => actions.handleOpenFileRootFile({

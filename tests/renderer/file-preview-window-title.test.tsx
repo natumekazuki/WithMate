@@ -244,7 +244,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
     assert.equal(loadingPreview.querySelector(".file-preview-loading-content"), null);
     const loadingButtons = [...loadingPreview.querySelectorAll<HTMLButtonElement>("button")];
     assert.equal(loadingButtons.find((button) => button.textContent === "Find")?.disabled, true);
-    assert.equal(loadingButtons.find((button) => button.textContent === "OpenPreview")?.disabled, false);
+    assert.equal(loadingButtons.find((button) => button.textContent === "Open Preview")?.disabled, false);
     await act(async () => releaseDiff?.());
     let openPreviewButton: HTMLButtonElement | undefined;
     for (let index = 0; index < 20 && !openPreviewButton; index += 1) {
@@ -252,7 +252,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
       openPreviewButton = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent === "OpenPreview");
+        .find((button) => button.textContent === "Open Preview");
     }
     assert.ok(openPreviewButton);
     assert.deepEqual(diffRequests, [{ ...resource, scope: "working-tree" }]);

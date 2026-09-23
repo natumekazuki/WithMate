@@ -58,7 +58,7 @@ export function HomeCharactersPanel({
               onClick={onCreateCharacter}
             >
               <span className="home-create-icon">{renderHomePlusIcon()}</span>
-              <span className="sr-only">CreateCharacter</span>
+              <span className="sr-only">Create Character</span>
             </button>
           </div>
         </div>

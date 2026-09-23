@@ -820,7 +820,7 @@ test("ChatDockSplitter は各辺の表示状態を切り替える affordance を
   assert.match(expandedHtml, /<path d="M4 2.5 8 6 4 9.5"><\/path>/);
 
   assert.match(collapsedHtml, /class="session-dock-splitter edge-bottom is-toggle-only is-collapsed"/);
-  assert.match(collapsedHtml, /aria-label="Expand ActionDock"/);
+  assert.match(collapsedHtml, /aria-label="Expand Action Dock"/);
   assert.match(collapsedHtml, /aria-controls="session-action-dock"/);
   assert.match(collapsedHtml, /aria-expanded="false"/);
   assert.match(collapsedHtml, /session-dock-splitter-chevron direction-up/);

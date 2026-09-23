@@ -108,7 +108,7 @@ export function HomeRightPane({
             {sessionWindowRestorePending ? (
               <span className="restore-session-windows-spinner" aria-hidden="true" />
             ) : null}
-            <span>RestoreSessions</span>
+            <span>Restore Sessions</span>
           </button>
           <button
             className="launch-toggle home-monitor-window-button"

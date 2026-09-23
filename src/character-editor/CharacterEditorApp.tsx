@@ -271,7 +271,7 @@ export default function CharacterEditorApp() {
 
         setPersistedDetail(detail);
         setDraft(createCharacterEditorDraftFromDetail(detail));
-        setFeedback("CharacterFilesReloaded");
+        setFeedback("Character Files Reloaded");
       }).catch((error) => {
         authoringRefreshPendingRef.current = true;
         setFeedback(formatCharacterEditorError(error, "Could not reload character files."));
@@ -320,7 +320,7 @@ export default function CharacterEditorApp() {
         setPersistedDetail(created);
         setDraft(reconcileCharacterEditorDraftAfterSave(savedDraft, draftAtSave, latestDraft));
         if (!hasNewEdits) {
-          setFeedback("CharacterCreated");
+          setFeedback("Character Created");
         }
         return;
       }
@@ -557,7 +557,7 @@ export default function CharacterEditorApp() {
           <div className="character-editor-heading">
             <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
             <div>
-              <h1>{draft.name || "NewCharacter"}</h1>
+              <h1>{draft.name || "New Character"}</h1>
               {draft.description ? <p>{draft.description}</p> : null}
             </div>
           </div>
@@ -627,7 +627,7 @@ export default function CharacterEditorApp() {
                       disabled={archived}
                     />
                     <button className="launch-toggle compact" type="button" onClick={importIconImage} disabled={archived}>
-                      ImportImage
+                      Import Image
                     </button>
                   </div>
                 </label>
@@ -664,7 +664,7 @@ export default function CharacterEditorApp() {
                   onClick={() => definitionImportInputRef.current?.click()}
                   disabled={archived}
                 >
-                  ImportReplace
+                  Import Replace
                 </button>
               </div>
               <ValidationList issues={validation.definitionIssues} />
@@ -702,7 +702,7 @@ export default function CharacterEditorApp() {
                   onClick={() => notesImportInputRef.current?.click()}
                   disabled={archived}
                 >
-                  ImportReplace
+                  Import Replace
                 </button>
               </div>
               <ValidationList issues={validation.notesIssues} />
@@ -735,11 +735,11 @@ export default function CharacterEditorApp() {
             <section className="character-editor-preview-grid">
               <div className="character-editor-preview-profile">
                 <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
-                <strong>{draft.name || "NewCharacter"}</strong>
+                <strong>{draft.name || "New Character"}</strong>
                 {draft.description ? <p>{draft.description}</p> : null}
               </div>
               <label className="settings-provider-input character-editor-runtime-preview">
-                <span>RuntimePromptPreview</span>
+                <span>Runtime Prompt Preview</span>
                 <textarea value={runtimePromptPreview} readOnly rows={14} spellCheck={false} />
               </label>
             </section>
@@ -769,7 +769,7 @@ export default function CharacterEditorApp() {
                   type="button"
                   onClick={discardDraftAndCloseWindow}
                 >
-                  DiscardAndClose
+                  Discard And Close
                 </button>
               </div>
             }
@@ -837,7 +837,7 @@ export default function CharacterEditorApp() {
               <>
                 <span className="chat-skill-picker-spinner" aria-hidden="true" />
               </>
-            ) : draft.mode === "edit" ? "ImproveWithAgent" : "AuthorWithAgent"}
+            ) : draft.mode === "edit" ? "Improve With Agent" : "Author With Agent"}
           </button>
           <button
             className="launch-toggle start-session-button"

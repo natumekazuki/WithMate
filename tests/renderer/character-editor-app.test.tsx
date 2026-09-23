@@ -145,7 +145,7 @@ test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区
       await Promise.resolve();
     });
 
-    const improveButton = findButtonByText(rootElement, "ImproveWithAgent");
+    const improveButton = findButtonByText(rootElement, "Improve With Agent");
     await act(async () => {
       improveButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     });
@@ -317,7 +317,7 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
       await Promise.resolve();
     });
     await act(async () => {
-      findButtonByText(rootElement, "ImportImage")
+      findButtonByText(rootElement, "Import Image")
         .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
@@ -339,12 +339,12 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
     );
     selectedIconPath = "C:\\icons\\muse.png";
     await act(async () => {
-      findButtonByText(rootElement, "ImportImage")
+      findButtonByText(rootElement, "Import Image")
         .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
-    const button = findButtonByText(rootElement, "ImproveWithAgent");
+    const button = findButtonByText(rootElement, "Improve With Agent");
     assert.equal(button.disabled, false);
 
     await act(async () => {
@@ -498,7 +498,7 @@ test("CharacterEditorApp は未保存 Character では Author with Agent を開�
       await Promise.resolve();
     });
 
-    const button = findButtonByText(rootElement, "AuthorWithAgent");
+    const button = findButtonByText(rootElement, "Author With Agent");
     assert.equal(button.disabled, true);
     assert.equal(startInputs.length, 0);
   } finally {
@@ -523,7 +523,7 @@ test("CharacterEditorApp は未保存 Character では Author with Agent を開�
 // claim = "新規Character Editorのdirtyなnative closeは破棄確認を表示し、Cancelでは保持し明示的な破棄後だけWindowを閉じる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
 // fault = "dirty draftのnative closeを確認なしで閉じる、Cancelで内容を失う、または確認後もcloseを実行しない"
-// observable = "beforeunload defaultPrevented、discard dialog copy、Cancel/DiscardAndClose controls、window close call count"
+// observable = "beforeunload defaultPrevented、discard dialog copy、Cancel/Discard And Close controls、window close call count"
 // observation_boundary = "component-behavior"
 // scope = "CharacterEditorApp dirty native close"
 // lifecycle = "permanent"
@@ -605,7 +605,7 @@ test("CharacterEditorApp は新規作成中のnative closeで破棄確認を表�
     assert.equal(secondCloseEvent.defaultPrevented, true);
 
     await act(async () => {
-      findButtonByText(rootElement, "DiscardAndClose")
+      findButtonByText(rootElement, "Discard And Close")
         .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     });
     assert.equal(closeCalls, 1);

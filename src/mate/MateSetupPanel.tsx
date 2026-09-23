@@ -41,7 +41,7 @@ export function HomeMateSetupPanel({
   return (
     <section className="home-mate-setup-panel">
       <h2 className="home-mate-setup-head">
-        {isUnavailableMode ? "MateProfile" : isEditMode ? "MateProfile" : "CreateMate"}
+        {isUnavailableMode ? "Mate Profile" : isEditMode ? "Mate Profile" : "Create Mate"}
       </h2>
       <form
         className="home-mate-setup-form"
@@ -67,12 +67,12 @@ export function HomeMateSetupPanel({
                   onClick={onSelectAvatar}
                   disabled={avatarBusy}
                   aria-busy={avatarUpdating}
-                  aria-label={avatarUpdating ? "UpdatingAvatar" : "SelectImage"}
+                  aria-label={avatarUpdating ? "Updating Avatar" : "Select Image"}
                 >
-                  {avatarUpdating ? <span className="home-mate-spinner" aria-hidden="true" /> : "SelectImage"}
+                  {avatarUpdating ? <span className="home-mate-spinner" aria-hidden="true" /> : "Select Image"}
                 </button>
                 {canClearAvatar ? (
-                  <button className="launch-toggle" type="button" onClick={onClearAvatar} disabled={avatarBusy} aria-label="ClearAvatar">
+                  <button className="launch-toggle" type="button" onClick={onClearAvatar} disabled={avatarBusy} aria-label="Clear Avatar">
                     Clear
                   </button>
                 ) : null}
@@ -81,7 +81,7 @@ export function HomeMateSetupPanel({
           </div>
         </div>
         <label className="settings-field" htmlFor="mate-display-name">
-          <span>DisplayName</span>
+          <span>Display Name</span>
           <input
             id="mate-display-name"
             type="text"
@@ -94,7 +94,7 @@ export function HomeMateSetupPanel({
         </label>
         {isUnavailableMode ? (
           <p className="settings-feedback home-mate-feedback">
-            MateProfile is unavailable.
+            Mate profile is unavailable.
           </p>
         ) : feedback ? <p className="settings-feedback home-mate-feedback">{feedback}</p> : null}
         <div className="home-mate-setup-actions">
@@ -104,9 +104,9 @@ export function HomeMateSetupPanel({
               type="submit"
               disabled={creating}
               aria-busy={creating}
-              aria-label={creating ? (isEditMode ? "Saving" : "CreatingMate") : isEditMode ? "Save" : "CreateMate"}
+              aria-label={creating ? (isEditMode ? "Saving" : "Creating Mate") : isEditMode ? "Save" : "Create Mate"}
             >
-              {creating ? <span className="home-mate-spinner" aria-hidden="true" /> : isEditMode ? "Save" : "CreateMate"}
+              {creating ? <span className="home-mate-spinner" aria-hidden="true" /> : isEditMode ? "Save" : "Create Mate"}
             </button>
           )}
           {onCancel ? (

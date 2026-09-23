@@ -252,7 +252,7 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>PromptContext</strong>
+              <strong>Prompt Context</strong>
               <PromptContextToggle
                 id="settings-prompt-context-character-definition"
                 label={SETTINGS_CHARACTER_DEFINITION_LABEL}
@@ -282,7 +282,7 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>CodingAgentProviders</strong>
+              <strong>Coding Agent Providers</strong>
               {providerSettingRows.length > 0 ? (
                 <div className="settings-provider-list">
                   {providerSettingRows.map(({ provider, settings }) => (
@@ -395,17 +395,17 @@ export function HomeSettingsContent({
               {memoryV6Diagnostics ? (
                 <div className="settings-diagnostics-grid">
                   <div className="settings-diagnostics-item">
-                    <span>MemoryAPI</span>
+                    <span>Memory API</span>
                     <strong>{memoryV6Diagnostics.runtime.status}</strong>
-                    <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "DiscoveryPublished" : "DiscoveryUnavailable"}</small>
+                    <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "Discovery Published" : "Discovery Unavailable"}</small>
                   </div>
                   <div className="settings-diagnostics-item">
-                    <span>CLIShim</span>
+                    <span>CLI Shim</span>
                     <strong>{memoryV6Diagnostics.cliShim.status}</strong>
                     <small>{formatCliShimDetail(memoryV6Diagnostics)}</small>
                   </div>
                   <div className="settings-diagnostics-item settings-diagnostics-wide">
-                    <span>LastError</span>
+                    <span>Last Error</span>
                     <strong>
                       {memoryV6Diagnostics.lastErrors[0]?.discoveryCode
                         ?? memoryV6Diagnostics.lastErrors[0]?.kind
@@ -426,11 +426,11 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("review-memory", onOpenMemoryV6Review)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("review-memory")}
-                  aria-label={actionIsBusy("review-memory") ? "Opening Memory review" : "ReviewMemory"}
+                  aria-label={actionIsBusy("review-memory") ? "Opening Memory review" : "Review Memory"}
                 >
                   <SettingsActionContent
                     busy={actionIsBusy("review-memory")}
-                    label="ReviewMemory"
+                    label="Review Memory"
                     busyLabel="Opening Memory review."
                   />
                 </button>
@@ -440,11 +440,11 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("install-cli-shim", onInstallMemoryV6CliShim)}
                   disabled={isBusy || !memoryV6Diagnostics?.cliShim.supported}
                   aria-busy={actionIsBusy("install-cli-shim")}
-                  aria-label={actionIsBusy("install-cli-shim") ? "Installing CLI shim" : "InstallCLIShim"}
+                  aria-label={actionIsBusy("install-cli-shim") ? "Installing CLI shim" : "Install CLI Shim"}
                 >
                   <SettingsActionContent
                     busy={actionIsBusy("install-cli-shim")}
-                    label="InstallCLIShim"
+                    label="Install CLI Shim"
                     busyLabel="Installing CLI shim."
                   />
                 </button>
@@ -454,11 +454,11 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("uninstall-cli-shim", onUninstallMemoryV6CliShim)}
                   disabled={isBusy || !canUninstallCliShim(memoryV6Diagnostics)}
                   aria-busy={actionIsBusy("uninstall-cli-shim")}
-                  aria-label={actionIsBusy("uninstall-cli-shim") ? "Uninstalling CLI shim" : "UninstallCLIShim"}
+                  aria-label={actionIsBusy("uninstall-cli-shim") ? "Uninstalling CLI shim" : "Uninstall CLI Shim"}
                 >
                   <SettingsActionContent
                     busy={actionIsBusy("uninstall-cli-shim")}
-                    label="UninstallCLIShim"
+                    label="Uninstall CLI Shim"
                     busyLabel="Uninstalling CLI shim."
                   />
                 </button>
@@ -496,7 +496,7 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>ModelCatalog</strong>
+              <strong>Model Catalog</strong>
               <p className="settings-help">ActiveRevision: {modelCatalogRevisionLabel}</p>
               <div className="settings-actions">
                 <button
@@ -505,11 +505,11 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("import-models", onImportModelCatalog)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("import-models")}
-                  aria-label={actionIsBusy("import-models") ? "Importing models" : "ImportModels"}
+                  aria-label={actionIsBusy("import-models") ? "Importing models" : "Import Models"}
                 >
                   <SettingsActionContent
                     busy={actionIsBusy("import-models")}
-                    label="ImportModels"
+                    label="Import Models"
                     busyLabel="Importing models."
                   />
                 </button>
@@ -519,11 +519,11 @@ export function HomeSettingsContent({
                   onClick={() => void runAction("export-models", onExportModelCatalog)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("export-models")}
-                  aria-label={actionIsBusy("export-models") ? "Exporting models" : "ExportModels"}
+                  aria-label={actionIsBusy("export-models") ? "Exporting models" : "Export Models"}
                 >
                   <SettingsActionContent
                     busy={actionIsBusy("export-models")}
-                    label="ExportModels"
+                    label="Export Models"
                     busyLabel="Exporting models."
                   />
                 </button>
@@ -533,7 +533,7 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>RepositoryGlossary</strong>
+              <strong>Repository Glossary</strong>
               <label className="settings-provider-input">
                 <span>{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL}</span>
                 <div className="settings-inline-input-row">
@@ -554,7 +554,7 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>StorageMaintenance</strong>
+              <strong>Storage Maintenance</strong>
               <label className="settings-provider-input">
                 <span>{SETTINGS_MEMORY_FILE_QUOTA_LABEL}</span>
                 <div className="settings-inline-input-row">
@@ -609,7 +609,7 @@ export function HomeSettingsContent({
       </div>
       <div className="launch-dialog-foot settings-dialog-foot">
         <div className="settings-footer-status" aria-live="polite">
-          {settingsDirty ? <span className="settings-dirty-state">UnsavedChanges</span> : null}
+          {settingsDirty ? <span className="settings-dirty-state">Unsaved Changes</span> : null}
           {settingsFeedback ? <p className="settings-feedback settings-feedback-inline" role="status">{settingsFeedback}</p> : null}
         </div>
         <button
@@ -618,11 +618,11 @@ export function HomeSettingsContent({
           onClick={() => void runAction("save-settings", onSaveSettings)}
           disabled={!settingsDirty || isBusy}
           aria-busy={actionIsBusy("save-settings")}
-          aria-label={actionIsBusy("save-settings") ? "Saving settings" : "SaveSettings"}
+          aria-label={actionIsBusy("save-settings") ? "Saving settings" : "Save Settings"}
         >
           <SettingsActionContent
             busy={actionIsBusy("save-settings")}
-            label="SaveSettings"
+            label="Save Settings"
             busyLabel="Saving settings."
           />
         </button>
@@ -634,10 +634,10 @@ export function HomeSettingsContent({
 function formatCliShimDetail(diagnostics: MemoryV6Diagnostics): string {
   const shim = diagnostics.cliShim;
   if (!shim.supported) {
-    return shim.status === "managed-by-installer" ? "ManagedByInstaller" : "Unsupported";
+    return shim.status === "managed-by-installer" ? "Managed By Installer" : "Unsupported";
   }
 
-  const pathStatus = shim.pathContainsShimDirectory ? "PATHReady" : "PATHMissing";
+  const pathStatus = shim.pathContainsShimDirectory ? "PATH Ready" : "PATH Missing";
   return `${pathStatus}: ${shim.commandName}`;
 }
 

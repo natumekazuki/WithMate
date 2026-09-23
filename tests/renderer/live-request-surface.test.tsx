@@ -58,7 +58,7 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
   assert.match(html, /Run a command/);
   assert.match(html, /npm test/);
   assert.match(html, /This command can change workspace state\./);
-  assert.match(html, />AllowOnce<\/button>/);
+  assert.match(html, />Allow Once<\/button>/);
   assert.match(html, />Reject<\/button>/);
 });
 

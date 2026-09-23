@@ -54,7 +54,7 @@ function installDomGlobals(dom: JSDOM): () => void {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Keyboard shortcuts dialogはregistry由来のPascalCase labelを表示し、最初のChange操作へfocusしてEscapeで閉じられる"
+// claim = "Keyboard shortcuts dialogはregistry由来のTitle Case labelを表示し、最初のChange操作へfocusしてEscapeで閉じられる"
 // oracle = { type = "contract", ref = "src/settings/KeyboardShortcutsDialog.tsx#KeyboardShortcutsDialog" }
 // fault = "registry labelがdialogへ投影されない、最初の操作へfocusしない、またはEscapeでdialogを閉じられない"
 // observable = "dialog textContent、最初のChange buttonへのfocus、Close callback回数、Escape eventのdefaultPrevented"
@@ -89,9 +89,9 @@ test("Keyboard shortcuts dialogはregistry projectionを表示し、Escapeで閉
     const dialog = container.querySelector<HTMLElement>("[role='dialog']");
     assert.ok(dialog);
     assert.equal(dialog.getAttribute("aria-label"), "Keyboard shortcuts");
-    assert.match(container.textContent ?? "", /FindMessages/);
+    assert.match(container.textContent ?? "", /Find Messages/);
     assert.match(container.textContent ?? "", /⌘F/);
-    assert.match(container.textContent ?? "", /SendMessage/);
+    assert.match(container.textContent ?? "", /Send Message/);
     assert.match(container.textContent ?? "", /⌘Enter/);
 
     await act(async () => {
@@ -125,10 +125,10 @@ test("Keyboard shortcuts dialogはregistry projectionを表示し、Escapeで閉
 
 // @test-value v2
 // kind = "contract"
-// claim = "Keyboard shortcuts dialogのChange操作はPascalCase registry labelで対象rowを識別し、押下したacceleratorを設定へ反映する"
+// claim = "Keyboard shortcuts dialogのChange操作はTitle Case registry labelで対象rowを識別し、押下したacceleratorを設定へ反映する"
 // oracle = { type = "contract", ref = "src/settings/KeyboardShortcutsDialog.tsx#shortcut change" }
 // fault = "対象shortcut rowを見つけられないか、Change後のacceleratorをsettingsへ反映しない"
-// observable = "ToggleMessageCollapse/SendMessage/FindMessages row、PressKeys状態、更新後accelerator"
+// observable = "Toggle Message Collapse/Send Message/Find Messages row、Press Keys状態、更新後accelerator"
 // observation_boundary = "component-behavior"
 // scope = "keyboard-shortcuts-dialog-change"
 // lifecycle = "permanent"
@@ -161,19 +161,19 @@ test("Keyboard shortcuts dialogはChangeで押下した組み合わせを設定�
     });
 
     const row = Array.from(container.querySelectorAll<HTMLElement>(".settings-keyboard-shortcut-row"))
-      .find((candidate) => candidate.textContent?.includes("ToggleMessageCollapse"));
+      .find((candidate) => candidate.textContent?.includes("Toggle Message Collapse"));
     assert.ok(row);
     const changeButton = Array.from(row.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Change");
     assert.ok(changeButton);
 
     const sendRow = Array.from(container.querySelectorAll<HTMLElement>(".settings-keyboard-shortcut-row"))
-      .find((candidate) => candidate.textContent?.includes("SendMessage"));
+      .find((candidate) => candidate.textContent?.includes("Send Message"));
     assert.ok(sendRow);
     assert.ok(Array.from(sendRow.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Change"));
 
     const browserShortcutRow = Array.from(container.querySelectorAll<HTMLElement>(".settings-keyboard-shortcut-row"))
-      .find((candidate) => candidate.textContent?.includes("FindMessages"));
+      .find((candidate) => candidate.textContent?.includes("Find Messages"));
     assert.ok(browserShortcutRow);
     assert.equal(browserShortcutRow.querySelector("button"), null);
 

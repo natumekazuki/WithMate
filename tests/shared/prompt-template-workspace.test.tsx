@@ -300,8 +300,8 @@ test("編集modeのTemplate選択はeditorだけを切り替え、挿入導線�
     assert.ok(harness.container.querySelector("input[aria-label=\"Template name\"]"));
     assert.equal(harness.container.textContent?.includes("Name"), false);
     assert.ok(harness.container.querySelector("textarea[aria-label=\"Prompt\"]"));
-    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "SaveTemplate"));
-    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "DeleteTemplate"));
+    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Save Template"));
+    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Delete Template"));
     assert.equal(
       Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Insert"),
       false,

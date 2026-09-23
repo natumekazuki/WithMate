@@ -52,8 +52,8 @@
 | skill selection | skill を選び、provider native invocation へ変換する | 対応 | 対応 | 実装済み | Codex は `$skill-name`、Copilot は directive 設計まで |
 | custom agent selection | provider 固有 agent を session metadata へ反映する | 一部対応 | 対応 | 実装済み | Codex の `/agent` は thread switch 寄りで意味が違う。Copilot は `~/.copilot/agents` と workspace `.github/agents` を探索し、session metadata の選択値を `customAgents` / `agent` へ変換する |
 | assistant text streaming | turn 完了前の message stream を UI に出す | 対応 | 対応 | 実装済み | Codex は `runStreamed()`、Copilot は `assistant.message_delta` を live state へ中継し、top-level `assistant.message` が複数回来た場合も空行区切りで連結する |
-| command visibility | 実行中または直前 command を UI で確認できる | 対応 | 一部対応 | 実装済み | Session 右 pane の `LatestCommand`。Copilot は shell に加えて `create / edit / replace / move / delete` などの mutating tool も `command_execution` へ正規化して表示する |
-| live step timeline | command 以外の進行 step も細かく可視化する | 対応 | 未確認 | 一部実装 | 現在は情報量を絞って `LatestCommand` 優先 |
+| command visibility | 実行中または直前 command を UI で確認できる | 対応 | 一部対応 | 実装済み | Session 右 pane の `Latest Command`。Copilot は shell に加えて `create / edit / replace / move / delete` などの mutating tool も `command_execution` へ正規化して表示する |
+| live step timeline | command 以外の進行 step も細かく可視化する | 対応 | 未確認 | 一部実装 | 現在は情報量を絞って `Latest Command` 優先 |
 | background task snapshot | provider-native background task の in-flight / completion 情報を UI に出す | 非対応 | 一部対応 | 一部実装 | Copilot SDK は `session.idle.backgroundTasks` と `system.notification` を持つため、WithMate は Copilot 専用 `Tasks` tab として表示する。Codex SDK current surface には同等 event が無い |
 | audit log | prompt / operations / raw items / usage を保存する | 対応 | 一部対応 | 実装済み | Codex は rich item schema、Copilot は prompt / assistant / stable provider event trace / normalized operations を保存する |
 | changed files / diff | 変更ファイルと diff を見せる | 一部対応 | 未確認 | 実装済み | current は snapshot diff fallback 前提。監視対象は `workspacePath + allowedAdditionalDirectories`。Copilot でも snapshot diff から `artifact.changedFiles` を組み立て、`Details` と `Open Diff` を出す |
@@ -62,7 +62,7 @@
 | native slash passthrough | provider slash command を SDK 経由でそのまま実行する | 非対応 | 非対応 | 未着手 | SDK surface 上は想定しない方針 |
 | apps / mcp / plugins | provider 拡張機能を session から扱う | 一部対応 | 一部対応 | 未着手 | Codex は `/apps` `/mcp`、Copilot は plugin 系がある |
 | sandbox / allowlist 拡張 | read dir 追加や tool allowlist を wrapper から制御する | 一部対応 | 一部対応 | 一部実装 | Codex は `read-only / workspace-write / workspace-write + network / danger-full-access` を session metadata から SDK runtime option へ渡す。Copilot は現時点で sandbox dropdown を出さない |
-| app-level approval callback | app 側で approve / deny を返す | 非対応 | 一部対応 | 一部実装 | Copilot `ProviderControlled` では Session UI の approval card から `approve / deny` を返せる。Codex は current SDK surface では未対応 |
+| app-level approval callback | app 側で approve / deny を返す | 非対応 | 一部対応 | 一部実装 | Copilot `Provider Controlled` では Session UI の approval card から `approve / deny` を返せる。Codex は current SDK surface では未対応 |
 
 ## Current Read
 

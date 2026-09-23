@@ -109,7 +109,7 @@ export function SessionGlossaryPane({
           {showList ? (
             <>
               <label className="glossary-search-field">
-                <span className="sr-only">SearchGlossary</span>
+                <span className="sr-only">Search Glossary</span>
                 <input
                   type="search"
                   value={searchQuery}
@@ -129,7 +129,7 @@ export function SessionGlossaryPane({
         </div>
       ) : selectedEntry ? (
         <article className="glossary-entry-detail">
-          <BackNavigationButton label="BackToEntries" onBack={onBackToList} />
+          <BackNavigationButton label="Back To Entries" onBack={onBackToList} />
           <header>
             <h3>{selectedEntry.term}</h3>
             {selectedEntry.aliases.length > 0 ? (
@@ -161,7 +161,7 @@ export function SessionGlossaryPane({
             ) : null}
             {visibleEntries.length < visibleTotal && !searchLoading ? (
               <button className="glossary-load-more" type="button" onClick={onLoadMoreSearchResults}>
-                LoadMore
+                Load More
               </button>
             ) : null}
           </div>

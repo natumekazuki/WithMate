@@ -33,7 +33,7 @@ function formatHistoryDiffSelector(selector: FileRootGitHistoryComparisonSelecto
     return "HEAD";
   }
   if (selector.kind === "commit") {
-    return `Commit${selector.objectId.slice(0, 7)}`;
+    return `Commit ${selector.objectId.slice(0, 7)}`;
   }
   return selector.name;
 }
@@ -43,7 +43,7 @@ function formatHistoryDiffTitle(request: FileRootGitHistoryDiffRequest): string 
     return request.relativePath
       ?? `${formatHistoryDiffSelector(request.comparison.base)} → ${formatHistoryDiffSelector(request.comparison.target)}`;
   }
-  return request.relativePath ?? `Commit${request.commitId.slice(0, 7)}`;
+  return request.relativePath ?? `Commit ${request.commitId.slice(0, 7)}`;
 }
 
 function formatHistoryDiffContext(request: FileRootGitHistoryDiffRequest): string | undefined {
@@ -51,9 +51,9 @@ function formatHistoryDiffContext(request: FileRootGitHistoryDiffRequest): strin
     return undefined;
   }
   const mergeBase = request.comparison.mergeBaseCommitId
-    ? ` · MergeBase ${request.comparison.mergeBaseCommitId.slice(0, 7)}`
+    ? ` · Merge Base ${request.comparison.mergeBaseCommitId.slice(0, 7)}`
     : "";
-  return `${request.comparison.mode === "branch" ? "BranchChanges" : "DirectComparison"} · ${request.comparison.baseCommitId.slice(0, 7)} → ${request.comparison.targetCommitId.slice(0, 7)}${mergeBase}`;
+  return `${request.comparison.mode === "branch" ? "Branch Changes" : "Direct Comparison"} · ${request.comparison.baseCommitId.slice(0, 7)} → ${request.comparison.targetCommitId.slice(0, 7)}${mergeBase}`;
 }
 
 function areFilePreviewPayloadsEqual(
@@ -295,7 +295,7 @@ export default function FilePreviewApp() {
           previewRevision={0}
           patch=""
           loading
-          backNavigation={{ label: "BackToPreview", onBack: showPreview }}
+          backNavigation={{ label: "Back To Preview", onBack: showPreview }}
           onCopyText={(text) => void navigator.clipboard.writeText(text)}
           onOpenPreview={async () => {
             showPreview();
@@ -315,7 +315,7 @@ export default function FilePreviewApp() {
           title={getSessionFileResourceDisplayPath(payload.resource)}
           previewRevision={diffState.revision}
           patch={diffState.patch}
-          backNavigation={{ label: "BackToPreview", onBack: showPreview }}
+          backNavigation={{ label: "Back To Preview", onBack: showPreview }}
           onCopyText={(text) => void navigator.clipboard.writeText(text)}
           onOpenPreview={async () => {
             showPreview();

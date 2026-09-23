@@ -1150,7 +1150,7 @@ export function SessionMessageColumn({
                           <div className="artifact-grid artifact-grid-single">
                             <section className="artifact-section compact">
                               <div className="artifact-section-header">
-                                <strong>RunChecks</strong>
+                                <strong>Run Checks</strong>
                               </div>
                               <div className="check-list">
                                 {artifact.runChecks.map((check) => (

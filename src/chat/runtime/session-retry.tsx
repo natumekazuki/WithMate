@@ -40,8 +40,8 @@ export function SessionRetryBanner({
       {isRetryDraftReplacePending ? <div className="resume-banner-conflict">
         <p>Your current draft is preserved.</p>
         <div className="resume-banner-conflict-actions">
-          <button type="button" onClick={onConfirmRetryDraftReplace} disabled={isRetryEditDisabled}>ReplacePreviousRequest</button>
-          <button className="drawer-toggle secondary" type="button" onClick={onCancelRetryDraftReplace}>KeepCurrentDraft</button>
+          <button type="button" onClick={onConfirmRetryDraftReplace} disabled={isRetryEditDisabled}>Replace Previous Request</button>
+          <button className="drawer-toggle secondary" type="button" onClick={onCancelRetryDraftReplace}>Keep Current Draft</button>
         </div>
       </div> : null}
     </section>

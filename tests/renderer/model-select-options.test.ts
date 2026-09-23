@@ -46,7 +46,7 @@ test("buildModelSelectOptions は catalog にない選択中 model を先頭に�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "reasoning effort選択肢は保存用IDを保持してPascalCaseの表示名を返す"
+// claim = "reasoning effort選択肢は保存用IDを保持してTitle Caseの表示名を返す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
 // fault = "表示名の変換で選択valueも変わるか、未変換の表示名がselectに露出する"
 // observable = "buildReasoningEffortSelectOptionsが返すvalueとlabelの対応"
@@ -58,7 +58,7 @@ test("buildReasoningEffortSelectOptions は reasoning effort を select option �
   assert.deepEqual(buildReasoningEffortSelectOptions(["low", "medium", "xhigh", "max", "ultra"]), [
     { value: "low", label: "Low" },
     { value: "medium", label: "Medium" },
-    { value: "xhigh", label: "XHigh" },
+    { value: "xhigh", label: "X High" },
     { value: "max", label: "Max" },
     { value: "ultra", label: "Ultra" },
   ]);

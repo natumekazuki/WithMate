@@ -8,7 +8,7 @@ export const DEFAULT_CODEX_REVIEWER: CodexReviewer = "user";
 
 export const codexReviewerOptions = [
   { value: "user", label: "User" },
-  { value: "auto-review", label: "AutoReview" },
+  { value: "auto-review", label: "Auto Review" },
 ] as const satisfies readonly RuntimeSelectOption<CodexReviewer>[];
 
 export type CodexApprovalsReviewer = "user" | "auto_review";

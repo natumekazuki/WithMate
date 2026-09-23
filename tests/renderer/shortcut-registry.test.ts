@@ -368,7 +368,7 @@ describe("shortcut registry validation", () => {
 describe("shortcut projection", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "shortcut Help projectionはregistry定義のPascalCase labelとplatform acceleratorを同じentryから生成する"
+  // claim = "shortcut Help projectionはregistry定義のTitle Case labelとplatform acceleratorを同じentryから生成する"
   // oracle = { type = "contract", ref = "src/settings/shortcut-registry.ts#getShortcutHelpProjection" }
   // fault = "Help projectionのlabelまたはplatform acceleratorがregistry entryと不一致になる"
   // observable = "composer shortcutのHelp item labelとacceleratorLabel"
@@ -389,7 +389,7 @@ describe("shortcut projection", () => {
       .find((item) => item.id === "session.composer.submit");
     assert.deepEqual(sendItem, {
       id: "session.composer.submit",
-      label: "SendMessage",
+      label: "Send Message",
       acceleratorLabel: "⌘Enter",
     });
     assert.equal(
@@ -409,7 +409,7 @@ describe("shortcut projection", () => {
     );
     assert.equal(
       getShortcutTooltip(SHORTCUT_COMMAND_IDS.composerSubmit, "windows", windowsSettings),
-      "SendMessage (Alt+Enter)",
+      "Send Message (Alt+Enter)",
     );
     const windowsHelpItem = getShortcutHelpProjection("windows", windowsSettings)
       .flatMap((group) => group.items)
@@ -430,7 +430,7 @@ describe("shortcut projection", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "message collapse shortcutはPascalCase labelとplatform acceleratorをHelp projectionへ公開する"
+  // claim = "message collapse shortcutはTitle Case labelとplatform acceleratorをHelp projectionへ公開する"
   // oracle = { type = "contract", ref = "src/settings/shortcut-registry.ts#messageToggleCollapse" }
   // fault = "message collapseのentryまたはHelp itemがlabel・scope・acceleratorを失う"
   // observable = "entry policy、platform shortcut label、Help item"
@@ -458,16 +458,16 @@ describe("shortcut projection", () => {
       .find((item) => item.id === SHORTCUT_COMMAND_IDS.messageToggleCollapse);
     assert.deepEqual(helpItem, {
       id: SHORTCUT_COMMAND_IDS.messageToggleCollapse,
-      label: "ToggleMessageCollapse",
+      label: "Toggle Message Collapse",
       acceleratorLabel: "Ctrl+Shift+M",
     });
   });
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Preview / Source shortcutはPascalCase labelとcustomizableなplatform acceleratorをHelp projectionへ公開する"
+  // claim = "Preview / Source shortcutはTitle Case labelとcustomizableなplatform acceleratorをHelp projectionへ公開する"
   // oracle = { type = "contract", ref = "src/settings/shortcut-registry.ts#messageToggleViewMode" }
-  // fault = "customizable shortcutのpolicyまたはPascalCase labelがHelp projectionへ反映されない"
+  // fault = "customizable shortcutのpolicyまたはTitle Case labelがHelp projectionへ反映されない"
   // observable = "entry accelerator、custom override後のHelp item labelとacceleratorLabel"
   // observation_boundary = "public-boundary"
   // scope = "shortcut-projection-preview-source"
@@ -503,7 +503,7 @@ describe("shortcut projection", () => {
         .find((item) => item.id === entry.id),
       {
         id: entry.id,
-        label: "TogglePreviewSource",
+        label: "Toggle Preview Source",
         acceleratorLabel: "Alt+Shift+Y",
       },
     );
@@ -515,7 +515,7 @@ describe("shortcut projection", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Main / Auxiliary切り替え操作をPascalCase labelで既定shortcutとHelp projectionへ公開する"
+  // claim = "Main / Auxiliary切り替え操作をTitle Case labelで既定shortcutとHelp projectionへ公開する"
   // oracle = { type = "contract", ref = "shortcut-registry" }
   // fault = "Main / Auxiliary切り替えshortcutが未登録、またはplatform別labelとHelpへ反映されない"
   // observable = "shortcut registry entryのscope、accelerator、customizable policy、Help item"
@@ -543,7 +543,7 @@ describe("shortcut projection", () => {
         .find((item) => item.id === entry.id),
       {
         id: entry.id,
-        label: "ToggleMainAuxiliary",
+        label: "Toggle Main Auxiliary",
         acceleratorLabel: "Ctrl+Shift+J",
       },
     );

@@ -61,12 +61,12 @@ export class MarkdownLinkContextMenuService {
 
       try {
         const template: MenuItemConstructorOptions[] = [{
-          label: "CopyLink",
+          label: "Copy Link",
           click: copyAndSettle,
         }];
         if (copyableFile) {
           template.push({
-            label: "CopyFile",
+            label: "Copy File",
             click: () => {
               if (!settled) {
                 selectionStarted = true;

@@ -2145,14 +2145,14 @@ export default function AgentSessionWindowApp() {
       : renderedIsRunning
         ? "Running"
         : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
-          ? "NewMessages"
+          ? "New Messages"
           : "";
   const actionDockChatNotice = liveApprovalRequest
     ? "Approval required"
     : liveElicitationRequest
       ? "Input required"
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
-        ? "NewMessages"
+        ? "New Messages"
         : "";
   const filePreviewContent = isPromptTemplateWorkspaceOpen && withmateApi ? (
     <PromptTemplateWorkspace

@@ -238,7 +238,7 @@ export function PromptTemplateWorkspace({
               disabled={isLoading}
               aria-label="Edit template"
             >
-              EditTemplates
+              Edit Templates
             </button>
             <CloseButton
               ariaLabel="Close templates"
@@ -325,7 +325,7 @@ export function PromptTemplateWorkspace({
     <>
       <header className="prompt-template-workspace-header">
         <BackNavigationButton label="Back to template selection" onBack={returnToPicker} />
-        <strong>EditTemplates</strong>
+        <strong>Edit Templates</strong>
       </header>
 
       <div className="prompt-template-workspace-body">
@@ -388,9 +388,9 @@ export function PromptTemplateWorkspace({
               {savingAction === "save" ? (
                 <>
                   <span className="chat-skill-picker-spinner" aria-hidden="true" />
-                  <span>SaveTemplate</span>
+                  <span>Save Template</span>
                 </>
-              ) : "SaveTemplate"}
+              ) : "Save Template"}
             </button>
             <button
               type="button"
@@ -403,9 +403,9 @@ export function PromptTemplateWorkspace({
               {savingAction === "delete" ? (
                 <>
                   <span className="chat-skill-picker-spinner" aria-hidden="true" />
-                  <span>DeleteTemplate</span>
+                  <span>Delete Template</span>
                 </>
-              ) : "DeleteTemplate"}
+              ) : "Delete Template"}
             </button>
           </div>
         </div>

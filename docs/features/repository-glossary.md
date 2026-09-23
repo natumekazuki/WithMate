@@ -14,7 +14,7 @@ Session Windowの右ペインに`Glossary`タブを表示します。用語集�
 - 一つの用語を選択した詳細表示
 - message内の登録語から該当する定義への移動
 
-詳細表示から一覧へ戻る操作の表示・accessible labelは`BackToEntries`とします。
+詳細表示から一覧へ戻る操作の表示・accessible labelは`Back To Entries`とします。
 
 用語集ファイルがない`missing`、有効だが0件の`valid`、primary workspaceが非Gitの`not-applicable`は正常状態として、paneの状態labelや説明本文を空にします。pane shellと必要な操作・accessibilityは維持します。`invalid`、`unsupported`、`watch-error`は実失敗として原因を表示します。非Gitの`not-applicable`はrenderer projection専用のtyped stateであり、Glossary operationのerror codeは従来どおり`GLOSSARY_TARGET_INVALID`を使います。Glossaryが利用できないことを理由にchat実行は停止しません。
 

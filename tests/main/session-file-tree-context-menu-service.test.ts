@@ -82,10 +82,10 @@ test("Files path context menuはpath操作とWindows file copyをnode kind別に
   const fileResult = fileHarness.service.showContextMenu({} as never, REQUEST);
   await Promise.resolve();
   assert.deepEqual(fileHarness.getTemplate().map(({ label, type, enabled }) => ({ label, type, enabled })), [
-    { label: "CopyPath", type: undefined, enabled: undefined },
-    { label: "InsertPath", type: undefined, enabled: true },
+    { label: "Copy Path", type: undefined, enabled: undefined },
+    { label: "Insert Path", type: undefined, enabled: true },
     { label: undefined, type: "separator", enabled: undefined },
-    { label: "CopyFile", type: undefined, enabled: undefined },
+    { label: "Copy File", type: undefined, enabled: undefined },
   ]);
   fileHarness.getTemplate()[3]?.click?.();
   fileHarness.closePopup();
@@ -114,8 +114,8 @@ test("Files path context menuはpath操作とWindows file copyをnode kind別に
     });
     await Promise.resolve();
     assert.deepEqual(harness.getTemplate().map(({ label, enabled }) => ({ label, enabled })), [
-      { label: "CopyPath", enabled: undefined },
-      { label: "InsertPath", enabled: false },
+      { label: "Copy Path", enabled: undefined },
+      { label: "Insert Path", enabled: false },
     ]);
     harness.closePopup();
     assert.deepEqual(await result, { status: "dismissed" });

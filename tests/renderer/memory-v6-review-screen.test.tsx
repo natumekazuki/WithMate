@@ -69,9 +69,9 @@ async function flushEffects() {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Memory ReviewのLoadMoreはnextCursorを使って次pageを既存項目へappendする"
+// claim = "Memory ReviewのLoad MoreはnextCursorを使って次pageを既存項目へappendする"
 // oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: runSearch pagination" }
-// fault = "LoadMoreがcursorを送らない、既存項目を置き換える、または次pageを表示しない"
+// fault = "Load Moreがcursorを送らない、既存項目を置き換える、または次pageを表示しない"
 // observable = "search requestのcursorとrender後のentry title一覧"
 // observation_boundary = "component-behavior"
 // scope = "memory-v6-review-pagination-append"
@@ -145,7 +145,7 @@ test("MemoryV6ReviewScreen は nextCursor がある場合に LoadMore で次 pag
     assert.match(rootElement.textContent ?? "", /First entry/);
     assert.match(rootElement.textContent ?? "", /Second entry/);
     assert.equal(
-      Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "LoadMore"),
+      Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Load More"),
       false,
     );
   } finally {
@@ -160,10 +160,10 @@ test("MemoryV6ReviewScreen は nextCursor がある場合に LoadMore で次 pag
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Memory Reviewの新しいfilter検索は先行paginationのbusy stateを解除し、新first pageのLoadMoreを通常状態で表示する"
+// claim = "Memory Reviewの新しいfilter検索は先行paginationのbusy stateを解除し、新first pageのLoad Moreを通常状態で表示する"
 // oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: runSearch pagination supersession" }
 // fault = "query変更後も古いpagination busyを残し、次の検索結果をLoading moreとして操作不能にする"
-// observable = "query変更後のLoadMore label、busy stateと検索requestのcursor"
+// observable = "query変更後のLoad More label、busy stateと検索requestのcursor"
 // observation_boundary = "component-behavior"
 // scope = "memory-v6-review-pagination-supersession"
 // lifecycle = "permanent"
@@ -241,7 +241,7 @@ test("MemoryV6ReviewScreen はfilter変更時に古いpagination busyを解除�
     await flushEffects();
 
     assert.deepEqual(requests.at(-1)?.kinds, ["decision"]);
-    assert.equal(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more")?.textContent?.trim(), "LoadMore");
+    assert.equal(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more")?.textContent?.trim(), "Load More");
     assert.equal(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more")?.getAttribute("aria-busy"), null);
 
     resolveAppend?.({ items: [createHit("entry-old-page", "Old page")] });
@@ -331,7 +331,7 @@ test("MemoryV6ReviewScreen はentry detailのfile summaryを表示し、内部ID
     await flushEffects();
 
     const text = rootElement.textContent ?? "";
-    assert.match(text, /ProtectedFiles/);
+    assert.match(text, /Protected Files/);
     assert.match(text, /dialog\.png/);
     assert.match(text, /evidence \/ image \/ 1\.5 KB/);
     assert.match(text, /エラー状態を確認できるスクリーンショット。/);
@@ -417,8 +417,8 @@ test("MemoryV6ReviewScreen はfile usageとlargest entriesを表示し、候補c
     assert.match(text, /Used/);
     assert.match(text, /1\.5 KB/);
     assert.match(text, /38% of 4\.0 KB/);
-    assert.match(text, /PendingDelete/);
-    assert.match(text, /LargestEntries/);
+    assert.match(text, /Pending Delete/);
+    assert.match(text, /Largest Entries/);
     assert.match(text, /Large memory/);
 
     const largestButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
@@ -632,14 +632,14 @@ test("MemoryV6ReviewScreen は遅延または失敗したdetail選択で旧entry
     let text = rootElement.textContent ?? "";
     assert.doesNotMatch(text, /Entry A body/);
     assert.ok(rootElement.querySelector('[role="status"][aria-label="Loading Memory entry"]'));
-    assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "ForgetEntry"), false);
+    assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Forget Entry"), false);
 
     rejectB?.(new Error("Entry B failed"));
     await flushEffects();
     text = rootElement.textContent ?? "";
     assert.match(text, /Entry B failed/);
     assert.doesNotMatch(text, /Entry A body/);
-    assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "ForgetEntry"), false);
+    assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Forget Entry"), false);
     assert.deepEqual(forgetRequests, []);
   } finally {
     await act(async () => {
@@ -717,7 +717,7 @@ test("MemoryV6ReviewScreen はprotected object GC dry-run reportを表示する"
     await flushEffects();
 
     const dryRunButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
-      button.textContent?.trim() === "GCDryRun"
+      button.textContent?.trim() === "GC Dry Run"
     );
     assert.ok(dryRunButton);
 

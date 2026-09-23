@@ -64,11 +64,11 @@ Home は `PowerShell -> cd -> codex resume` の手前にある判断をまとめ
 
 - `RecentSessions`
   - `codex resume` picker 相当
-- `NewSession`
+- `New Session`
   - `cd -> codex` 起動前設定
 - `Characters`
   - Character catalog の一覧
-  - `CreateCharacter`
+  - `Create Character`
   - Character Editor Window の起点
 - `Settings`
   - 独立した `Settings Window` を開く
@@ -190,9 +190,9 @@ Session Monitor Window に置かないもの:
 
 ## Launch And Resume Flow
 
-### NewSession
+### New Session
 
-1. ユーザーが `Home Window` で `NewSession` を押す
+1. ユーザーが `Home Window` で `New Session` を押す
 2. launch dialog で `title / workspace / provider` を決める
 3. アプリが新しい session record を作る
 4. `Session Window` を新規作成してその session を開く

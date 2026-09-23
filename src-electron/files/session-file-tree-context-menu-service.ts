@@ -68,7 +68,7 @@ export class SessionFileTreeContextMenuService {
       );
       const template: MenuItemConstructorOptions[] = [
         {
-          label: "CopyPath",
+          label: "Copy Path",
           click: () => {
             if (!beginSelection()) {
               return;
@@ -82,7 +82,7 @@ export class SessionFileTreeContextMenuService {
           },
         },
         {
-          label: "InsertPath",
+          label: "Insert Path",
           enabled: request.canInsert,
           click: () => {
             if (!request.canInsert || !beginSelection()) {
@@ -102,7 +102,7 @@ export class SessionFileTreeContextMenuService {
         template.push(
           { type: "separator" },
           {
-            label: "CopyFile",
+            label: "Copy File",
             click: () => {
               if (!beginSelection()) {
                 return;

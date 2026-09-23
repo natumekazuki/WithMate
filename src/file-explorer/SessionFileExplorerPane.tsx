@@ -398,7 +398,7 @@ export function SessionFileExplorerPane({
             void reloadRoots();
           }}
           aria-label={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
-          title={activeTab === "changes" ? "RefreshChanges" : activeTab === "history" ? "RefreshHistory" : "RefreshFiles"}
+          title={activeTab === "changes" ? "Refresh Changes" : activeTab === "history" ? "Refresh History" : "Refresh Files"}
           disabled={activeTab === "files" && rootsLoadState === "loading"}
           aria-busy={activeTab === "files" && rootsLoadState === "loading"}
         >

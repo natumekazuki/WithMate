@@ -11,6 +11,6 @@
 
 ## Ownership
 
-- 表示面ごとの短いlabel、見出し、button、option、status名は各consumerが所有し、Desktop UIのPascalCase（空白なし）規則に従う。
+- 表示面ごとの短いlabel、見出し、button、option、status名は各consumerが所有し、Desktop UIの単語間に空白を入れたTitle Case規則に従う。
 - 長いerror・safety説明とscreen reader向けの自然文は、必要な意味が伝わる文章として維持する。
 - 同一target・同一requestの状態は一つの主表示へ集約し、会話本文、ActionDock、right pane、compact / expandedの非表示側で同じ説明を重複させない。

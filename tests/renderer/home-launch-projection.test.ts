@@ -127,6 +127,16 @@ describe("home-launch-projection", () => {
     assert.equal(enabledOnlyCodex.canStartSession, true);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Session Folder選択時は未確定pathを表示せず、選択状態として投影して開始可能にする"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: New Session dialog" }
+  // fault = "未確定pathを表示するか、Session Folderの選択を未選択として扱う"
+  // observable = "Session Folder表示、sessionFolderSelected、workspaceSelected、canStartSession"
+  // observation_boundary = "public-boundary"
+  // scope = "home-launch-session-folder-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("SessionFolder 選択時は未確定 path の代わりに選択状態を投影する", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
@@ -137,7 +147,7 @@ describe("home-launch-projection", () => {
       modelCatalog: createCatalog(),
     });
 
-    assert.equal(projection.launchWorkspacePathLabel, "SessionFolder");
+    assert.equal(projection.launchWorkspacePathLabel, "Session Folder");
     assert.equal(projection.sessionFolderSelected, true);
     assert.equal(projection.workspaceSelected, true);
     assert.equal(projection.canStartSession, true);

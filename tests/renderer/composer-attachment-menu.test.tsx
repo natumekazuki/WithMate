@@ -83,7 +83,7 @@ test("ComposerAttachmentMenu は clipping 境界外の単一popoverで添付操�
     assert.equal(menu?.parentElement, dom.window.document.body);
     assert.deepEqual(
       Array.from(dom.window.document.querySelectorAll(".composer-attachment-menu-section-label")).map((item) => item.textContent),
-      ["Attach", "SessionFiles"],
+      ["Attach", "Session Files"],
     );
     const menuItems = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]"));
     assert.deepEqual(menuItems.map((item) => item.textContent), ["File", "Folder", "Image", "Copy", "File", "Folder", "Image"]);

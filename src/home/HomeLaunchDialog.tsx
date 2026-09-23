@@ -88,13 +88,13 @@ export function HomeLaunchDialog({
       onClose={onClose}
       dialogRef={dialogRef}
       onKeyDown={handleDialogKeyDown}
-      ariaLabel="NewSession"
+      ariaLabel="New Session"
       showDismissControl={false}
       dialogClassName="home-launch-dialog"
       footer={
         <LaunchDialogFooter
           feedback={launchStarting ? "" : launchFeedback}
-          startButtonLabel="StartNewSession"
+          startButtonLabel="Start New Session"
           startButtonDisabled={!canStartSession || !providerLoadReady || launchStarting}
           startButtonAriaDisabled={!canStartSession || !providerLoadReady || launchStarting}
           startButtonBusy={launchStarting}
@@ -106,7 +106,7 @@ export function HomeLaunchDialog({
       <section className="launch-section minimal">
         <div className="launch-field">
           <label className="launch-field-label" htmlFor="launch-session-title">
-            SessionTitle
+            Session Title
           </label>
           <input
             id="launch-session-title"
@@ -167,7 +167,7 @@ export function HomeLaunchDialog({
             aria-pressed={sessionFolderSelected}
             onClick={onSelectSessionFolder}
           >
-            SessionFolder
+            Session Folder
           </button>
         </div>
       </section>

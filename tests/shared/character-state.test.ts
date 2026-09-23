@@ -34,7 +34,7 @@ describe("character-state", () => {
   // scope = "character-profile-clone"
   // lifecycle = "permanent"
   // impact = "character表示値またはテーマが別sessionの操作で汚染される"
-  // distinction = "microcopy廃止後も有効なcharacter profile/themeのclone契約を確認する"
+  // distinction = "profileの値保持とthemeColorsの参照分離を同時に確認する"
   // @end-test-value
   it("cloneCharacterProfiles は profile を保持して themeColors を deep clone する", () => {
     const source = [createCharacter()];

@@ -23,7 +23,7 @@ export function ProviderLaunchPicker({
   providers,
   selectedProviderId,
   onSelectProvider,
-  ariaLabel = "CodingProvider",
+  ariaLabel = "Coding Provider",
   loadStatus = "loaded",
   loadError = "",
 }: ProviderLaunchPickerProps) {
@@ -103,7 +103,7 @@ export function ProviderLaunchField({
     <section className="launch-section minimal">
       <div className="launch-field">
         <label className="launch-field-label" htmlFor={fieldId}>
-          CodingProvider
+          Coding Provider
         </label>
         <ProviderLaunchPicker
           id={fieldId}

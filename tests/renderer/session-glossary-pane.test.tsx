@@ -54,7 +54,7 @@ test("SessionGlossaryPaneは一覧を用語と検索へ絞りread-onlyで表示�
   const html = renderToStaticMarkup(
     <SessionGlossaryPane {...baseProps} projection={validProjection} />,
   );
-  assert.match(html, /<span class="sr-only">SearchGlossary<\/span>/);
+  assert.match(html, /<span class="sr-only">Search Glossary<\/span>/);
   assert.doesNotMatch(html, /placeholder=/);
   assert.match(html, /Runtime/);
   assert.doesNotMatch(html, />RT</);
@@ -90,7 +90,7 @@ test("SessionGlossaryPaneは検索失敗を空結果として表示しない", (
 // claim = "Glossary definitionはMarkdownやHTMLとして解釈せず、aliasを表示してtextとして安全に完全表示する"
 // oracle = { type = "contract", ref = "src/glossary/SessionGlossaryPane.tsx: definition rendering" }
 // fault = "definitionをHTML化してmarkup injectionを許すか、aliasとback navigationを失う"
-// observable = "escaped definition、literal markdown、alias、BackToEntries label"
+// observable = "escaped definition、literal markdown、alias、Back To Entries label"
 // observation_boundary = "component-behavior"
 // scope = "session-glossary-definition-rendering"
 // lifecycle = "permanent"
@@ -103,7 +103,7 @@ test("SessionGlossaryPaneはdefinitionをMarkdownやHTMLとして解釈せず完
   assert.doesNotMatch(html, /<strong>plain<\/strong>/);
   assert.match(html, />RT</);
   assert.doesNotMatch(html, /Aliases:/);
-  assert.match(html, /aria-label="BackToEntries"/);
+  assert.match(html, /aria-label="Back To Entries"/);
 });
 
 // @test-value v2

@@ -7,19 +7,19 @@ import { getWithMateApi } from "./renderer-withmate-api.js";
 const HomeApp = lazy(() => import("../home/HomeApp.js"));
 
 const BOOT_STAGE_LABELS: Record<AppBootStatus["stage"], string> = {
-  starting: "PreparingStartup",
-  database: "CheckingDatabase",
-  diagnostics: "CheckingDiagnostics",
-  "workspace-cleanup": "CleaningWorkspace",
-  stores: "InitializingStorage",
-  home: "PreparingHome",
-  failed: "StartupFailed",
+  starting: "Preparing Startup",
+  database: "Checking Database",
+  diagnostics: "Checking Diagnostics",
+  "workspace-cleanup": "Cleaning Workspace",
+  stores: "Initializing Storage",
+  home: "Preparing Home",
+  failed: "Startup Failed",
 };
 
 const INITIAL_STATUS: AppBootStatus = {
   kind: "running",
   stage: "starting",
-  title: "PreparingStartup",
+  title: "Preparing Startup",
 };
 
 export default function BootApp() {

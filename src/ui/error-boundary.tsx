@@ -72,7 +72,7 @@ export class WindowErrorBoundary extends Component<WindowErrorBoundaryProps, Win
       return (
         <div className={`page-shell ${this.props.pageClassName} window-error-page`.trim()}>
           <section className="panel empty-session-card rise-1 window-error-card" role="alert">
-            <span className="window-error-badge">DisplayError</span>
+            <span className="window-error-badge">Display Error</span>
             <h2>Could not display {this.props.windowLabel}</h2>
             <p>{this.state.errorMessage}</p>
             <div className="window-error-actions">

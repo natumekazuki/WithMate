@@ -12,19 +12,19 @@ function auditPhaseLabel(phase: AuditLogSummary["phase"]): string {
     case "started":
       return "Running";
     case "background-running":
-      return "BackgroundRunning";
+      return "Background Running";
     case "completed":
       return "Completed";
     case "background-completed":
-      return "BackgroundCompleted";
+      return "Background Completed";
     case "canceled":
       return "Canceled";
     case "background-canceled":
-      return "BackgroundCanceled";
+      return "Background Canceled";
     case "failed":
       return "Failed";
     case "background-failed":
-      return "BackgroundFailed";
+      return "Background Failed";
     default:
       return phase;
   }
@@ -338,7 +338,7 @@ export function SessionAuditLogModal({
         onKeyDown={handleDialogKeyDown}
       >
         <div className="diff-titlebar">
-          <h2 id="session-audit-log-title">AuditLog</h2>
+          <h2 id="session-audit-log-title">Audit Log</h2>
         </div>
 
         <div className="audit-log-toolbar">
@@ -475,7 +475,7 @@ export function SessionAuditLogModal({
                   }}
                 >
                   <summary>
-                    <strong>LogicalPrompt</strong>
+                    <strong>Logical Prompt</strong>
                   </summary>
                   {logicalOpen ? <section className="audit-log-section">
                     {detail?.logicalPrompt ? (
@@ -523,12 +523,12 @@ export function SessionAuditLogModal({
                   }}
                 >
                   <summary>
-                    <strong>TransportPayload</strong>
+                    <strong>Transport Payload</strong>
                   </summary>
                   {transportOpen ? <section className="audit-log-section">
                     {detail?.transportPayload ? (
                       <>
-                        <p><strong>{detail.transportPayload.summary || "TransportPayload"}</strong></p>
+                        <p><strong>{detail.transportPayload.summary || "Transport Payload"}</strong></p>
                         {detail.transportPayload.fields.length > 0 ? (
                           <div className="audit-log-transport-fields">
                             {detail.transportPayload.fields.map((field, index) => (
@@ -568,7 +568,7 @@ export function SessionAuditLogModal({
                         <pre>{previewAuditLogText(assistantText || "-")}</pre>
                         {interimMessages.length > 0 ? (
                           <div className="audit-log-transport-fields">
-                            <p><strong>InterimMessages</strong></p>
+                            <p><strong>Interim Messages</strong></p>
                             {interimMessages.map((message) => (
                               <div key={`${entry.id}-interim-${message.seq}`} className="audit-log-transport-field">
                                 <p><strong>#{message.seq + 1}</strong> <span>{message.createdAt}</span></p>
@@ -698,7 +698,7 @@ export function SessionAuditLogModal({
                   }}
                 >
                   <summary>
-                    <strong>RawItems</strong>
+                    <strong>Raw Items</strong>
                   </summary>
                   {rawOpen ? (
                     <section className="audit-log-section compact">
@@ -736,10 +736,10 @@ export function SessionAuditLogModal({
             {loadingMore ? (
               <>
                 <span className="settings-action-spinner" aria-hidden="true" />
-                <span>LoadMore</span>
+                <span>Load More</span>
                 <span className="visually-hidden">Loading more audit log entries.</span>
               </>
-            ) : "LoadMore"}
+            ) : "Load More"}
           </button>
         ) : null}
       </section>

@@ -209,7 +209,7 @@ export function HomeRecentSessionsPanel({
               <div className="home-session-card-actions">
                 <div className="home-session-card-badges">
                   <span className={modeBadge.className}>{modeBadge.label}</span>
-                  {isReadOnly ? <span className="session-status home-session-status neutral">ReadOnly</span> : null}
+                  {isReadOnly ? <span className="session-status home-session-status neutral">Read Only</span> : null}
                   <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
                 </div>
                 <button
