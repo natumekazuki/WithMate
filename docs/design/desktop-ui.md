@@ -32,7 +32,9 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## 表示言語・操作・状態
 
+- アプリ内UIのユーザー向け表示文字列は英語を標準とする。Character定義、ユーザー入力・生成コンテンツ、provider向け指示、ログ、テストデータ、開発者向け文書は対象外とする。
 - アプリ所有の短い表示文、見出し、label、button、option、status名は単語間に空白を入れたTitle Caseを使う。長いerror・safety説明、screen reader向けの自然文、ユーザーが入力・生成する内容は読みやすい文章を維持する。検索inputのplaceholderは表示せず、accessible nameは残す。ブランドとAPI / CLI / JSON / MCP / URL / HEAD等の正式表記は維持する。
+- theme tokenと既存CSS variableを優先する。新しいsurface・badge・button等の色を追加する時は、その上のtext・icon・borderのcontrastを同時に確認する。disabled、muted、placeholder、secondary textと、hover、selected、active、focus、error、warning、successの状態も背景へ埋もれないようにする。
 - 現役6 HTML entryのshellは`lang="en"`とする。会話、ユーザーtitle、Character定義、テンプレート本文、ファイル内容・path、raw診断、Provider指示は原文と保存値を維持する。表示用の日時・件数には英語localeを明示し、ローカルtime zone、保存値、parse、sort、raw copyを変更しない。UI用の通常状態copyは各consumerが定義し、ユーザー設定として編集・保存しない。
 - 対象が明確なtoolbar操作は既存iconを使い、英語の操作名・対象、focus、busy、toggle状態を残す。Save等の主CTA、Approve / Reject、Forget、GC、全削除、最終確認は必要な可視labelと影響説明を保つ。
 - 同一対象・同一requestの待機表現を集約する。未取得、pending、利用不可、正常0件、失敗を区別し、Mainと複数Auxiliary、一覧取得とrun、Audit refreshとpaginationの状態を混ぜない。承認・入力待ちは次の操作と要求本文を示す。

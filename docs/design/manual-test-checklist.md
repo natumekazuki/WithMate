@@ -42,7 +42,7 @@ Electron 版 WithMate の現行実装に対して、人手で確認すべき項�
 
 ### 実施記録の配置
 
-実機テスト項目表には、現在の機能に対する再利用可能な確認手順を残す。過去の実施結果や作業ログは追記せず、対応するIssue／PRまたはSessionFolder等のrepository外で扱う。リリース時の検証結果と未確認事項は、別枠で恒久保存するリリースノートにも記載する。保存区分は[Documentation Policy](../../AGENTS.md#documentation-policy)、リリース時の記載事項は[Release Notes](../releases/README.md)に従う。
+実機テスト項目表には、現在の機能に対する再利用可能な確認手順を残す。過去の実施結果や作業ログは追記せず、対応するIssue／PRまたはSessionFolder等のrepository外で扱う。リリース時の検証結果と未確認事項は、別枠で恒久保存するリリースノートにも記載する。保存区分は[Documentation Map](documentation-map.md#文書の保存区分)、リリース時の記載事項は[Release Notes](../releases/README.md)に従う。
 
 ### 参照順
 

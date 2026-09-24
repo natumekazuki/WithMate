@@ -218,7 +218,7 @@ Chat layout preferenceの型・既定値・検証は`src-shared/settings/chat-la
 
 一般文書には、現行実装について正しく、現在の利用・開発・保守に必要な情報だけを残します。設計判断の履歴はADR、リリースの履歴はリリースノートと索引に分け、古い判断や当時のリリース内容を現在の仕様で上書きしません。それ以外の過去情報はGit履歴、課題・作業計画はGitHub Issue／PR、一時的な棚卸しや検証記録はSessionFolder等のrepository外で扱います。
 
-一般の作業文書や未実装の構想は、進行中・採用済みであっても保存対象にしません。Archiveや移転案内として残したり、ADR・リリースノートへ改名して温存したりしません。保存・更新規則の詳細は[Documentation Policy](AGENTS.md#documentation-policy)を参照してください。
+一般の作業文書や未実装の構想は、進行中・採用済みであっても保存対象にしません。Archiveや移転案内として残したり、ADR・リリースノートへ改名して温存したりしません。保存・更新規則は[Documentation Map](docs/design/documentation-map.md#文書の保存区分)を参照してください。
 
 ## 関連ドキュメント
 
