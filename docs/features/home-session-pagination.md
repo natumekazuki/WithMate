@@ -24,5 +24,4 @@ database更新通知にはquery generationを使用します。古いgeneration�
 
 ## 関連文書
 
-- [Data Loading Performance Audit](../design/data-loading-performance-audit.md)
 - [Electron Session Store](../design/electron-session-store.md)

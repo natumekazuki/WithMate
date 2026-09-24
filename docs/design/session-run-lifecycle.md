@@ -4,8 +4,6 @@
 
 AuxiliaryのrunはMainや兄弟Auxiliaryと独立し、非表示でも継続・terminal保存する。新規追加・表示切り替え・折りたたみはProvider turnを開始せず、同一会話内の二重実行だけを拒否する。Window close、親削除、設定変更では親配下の全Auxiliary runを列挙して扱う。正常terminalで確定した最終assistant本文は、必要な場合に一覧preview projectionを更新する。
 
-- 作成日: 2026-03-14
-- 対象: 実行中 session の run / cancel / close / relaunch 制御
 
 ## Goal
 
@@ -29,10 +27,6 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - `Session Window` は session 実行の viewer / input surface として扱う
 - 実行中 session の `Session Window` を閉じても、実行自体は継続する
 - `Session Window` から実行中 session を明示キャンセルできる
-- V5 preview では turn 完了後の Session Memory extraction / Character Reflection を current background task として起動しない
-- `SessionStart` で monologue only の character reflection path を起動しない
-- `Session Window` close では Session Memory extraction を自動実行しない
-- Memory / Growth history は V5 Character runtime prompt に常設注入しない
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
 - 実行中 session の metadata 更新は制限し、少なくとも approval / model / depth / title / delete は UI と Main Process の両方でブロックする
@@ -94,10 +88,6 @@ window は上の状態機械とは分離する。
 - session context telemetry
 - background activity
 
-### Legacy Memory Orchestration
-
-V5 preview では Session Memory extraction / Character Reflection trigger を current runtime path として起動しない。既存 data や background audit record は legacy compatibility として保持してよいが、新規 Character prompt の正本にはしない。
-
 ### Session Window
 
 - 実行中 session の表示
@@ -120,7 +110,6 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 - 通常closeは入力を凍結し、未保存Auxiliary draftのflush完了ACKを待つ。保存失敗・例外・ACKのtimeoutでは閉じず、凍結を解除して編集・再試行を可能にする。成功時は実際に閉じるまで凍結を維持する。詳細は[Auxiliary Sessionの保存・終了契約](auxiliary-session.md#composer-の更新保存境界)を参照する
 - 通常closeとapp quitが重なる場合、保存だけを待つclose ACKをquitに流用しない。quitは送信結果と復元保存まで待つ専用requestを送り、全体の終了判定まで通常closeによるWindow破棄と解凍を保留する。失敗時は生存Windowを解凍し、保留中の通常closeも中止して再試行を可能にする。ACK前のWindow消滅は保存成功として扱わない
 - Sessionを対象に含む明示的DBリセットでは、通常closeの保存待ちを使わずWindowを破棄する。管理登録とownerの解放は実際のclosed通知に合わせ、Windowが残ったまま登録だけを消さない
-- close 時に Session Memory extraction は自動実行しない
 
 ### Session Run Cancel
 
@@ -163,13 +152,11 @@ completed 保存後の detached readiness 更新も捕捉した persistent store
 
 適用直前の Session 生存、Character owner、committed assistant turn の検証と、既存 `expectedVersion` による appraise、settlement 確定を同じ ownership 境界に置く。評価中に owner が削除された場合は結果を破棄し、Affect を適用しない。同じ Character の競合は既存の version conflict / idempotency / bounded retry 契約で扱い、確定済みの通常 Turn を巻き戻さない。
 
-非同期処理中に settlement storage または Memory runtime の instance が交換された場合、その評価試行は `invalidated` とする。await 後と適用前に instance identity を確認し、閉じた storage へ評価結果や failure を書かず、新 instance の同名要求にも結果を引き継がない。これは現行 Main の lifecycle 保護であり、Worker 全体の generation 契約の実装完了を意味しない。
+非同期処理中に settlement storage または Memory runtime の instance が交換された場合、その評価試行は `invalidated` とする。await 後と適用前に instance identity を確認し、閉じた storage へ評価結果や failure を書かず、新 instance の同名要求にも結果を引き継がない。
 
 Memory runtime だけが交換され、元の settlement storage がまだ current の場合は、その correlation の attempt を既存の中断回収処理へ戻す。旧試行の未保存評価・遅延応答は採用せず、閉じた storage を操作せず、current DB に試行中のまま残ることを防ぐ。
 
 交換前に durable pending へ保存済みの評価は、この失効だけでは破棄しない。appraise 開始前の ownership 待ち・owner 読取待ちで交換した場合も、次回 drain は同じ candidate 列・expected version・評価世代・idempotency key を使い、現 owner と version を再検証する。appraise dispatch 後に交換した場合は適用の有無を失効した応答から確定せず、同じ保存済み評価を再照合する。runtime 交換だけを理由に新しい key で再評価すると、既に commit した event を二重化し得る。新しい評価世代へ進むのは、既存 ADR 020 の `effect: none` version conflict で未commitを確認できた場合等の明示された遷移だけとする。
-
-Issue #726 の段階ごとの変更と検証履歴は `docs/plans/20260919-session-operation-boundaries/plan.md` で管理する。現行の Worker、Settings の限定 field 更新、Auxiliary 作成取消の契約は各設計書を参照する。
 
 ### Home Window Close
 
@@ -203,7 +190,7 @@ current 実装では tray 常駐までは行わない。
 - Main Session は次回起動時に `runState = interrupted` へ補正し、アプリ終了による中断を示す assistant message を 1 件だけ追加する。Auxiliary は別の回収経路で `runState = error` とする
 - `interrupted` Main Session は `Session Window` から直前 user message を同じ内容で明示再送できる
 
-現時点では graceful resume までは入れず、`interrupted` からの明示再送を最小導線として扱う。
+`interrupted` からの再開は明示再送で行う。
 
 ## Relation To Existing Docs
 

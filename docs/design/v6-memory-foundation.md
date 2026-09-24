@@ -1,10 +1,8 @@
 # V6 Memory Foundation
-- 作成日: 2026-06-21
-- 対象: V5 Character Core後のMemory access / storage / runtime API
-- Status: Foundation implemented / agent-preview
+
 ## Goal
 
-WithMate V6では、Memoryを毎turn promptへ常設注入する仕組みとしてではなく、coding agentが必要な時だけ検索・追加・忘却できるlocal Memory serviceとして再設計する。
+WithMate V6のMemoryは、coding agentが必要な時だけ検索・追加・忘却できるlocal Memory serviceである。
 
 V6 foundationは次を成立させる。
 
@@ -20,9 +18,7 @@ V6 foundationは次を成立させる。
 
 - 本書をV6 Memory foundationのsource of truthとする。
 - V6 DB全体再設計、destructive reset、legacy data境界は`docs/design/v6-database-foundation.md`を優先する。
-- V5 Character catalog / definition / snapshotは既存V5 source of truthを優先する。
-- `docs/design/memory-architecture.md`のV1〜V4 Memory / Growth記述はhistorical / legacy contextとして扱う。
-- legacy project identity detailは`docs/design/project-memory-storage.md`をhistorical contextとして参照できるが、V6 project scopeの正本にはしない。
+- Character catalog / definition / snapshotは`docs/design/character-storage.md`を優先する。
 - V6 Memory に紐づく暗号化 file object / quota / export / GC の拡張設計は`docs/design/v6-memory-protected-objects.md`を参照する。
 - provider runtime boundaryは`docs/design/provider-adapter.md`へ反映する。
 - current保存構造の棚卸しは`docs/design/database-schema.md`を参照する。
@@ -48,9 +44,8 @@ foundationでは次を扱わない。
 - Character definitionの自動更新
 - Character Stream / Monologue連携
 - vector DB / embedding model download
-- Memory Management Window
 - cloud sync
-- export / import
+- Memory全体のexport / import
 - legacy Memoryの自動migration
 - arbitrary SQL query
 - generic hard delete / purgeのagent公開
@@ -392,11 +387,16 @@ type MemoryGetEntryResponse = {
 ```ts
 type MemoryListTagsResponse = {
   schemaVersion: "withmate-memory-v1";
-  tags: MemoryTag[];
+  tags: Array<MemoryTag & {
+    entryCount?: number;
+    latestUpdatedAt?: string;
+    samples?: Array<{ id: string; title: string }>;
+  }>;
+  nextCursor?: string;
 };
 ```
 
-- 明示targetで利用可能なactive tag catalogを返す。`withCounts`指定時はentry count、latest update、bounded sampleを同じresponseへ加える。
+- 明示targetで利用可能なactive tag catalogを返す。`limit`と`cursor`で結果を区切り、続きがあれば`nextCursor`を返す。`withCounts`指定時はentry count、latest update、bounded sampleを同じresponseへ加える。
 - search refinementとappend時のtag reuseに使う。
 
 ### Maintenance inventory / audit
@@ -634,8 +634,9 @@ project targetはcurrent working directoryから暗黙推定しない。
 同じrepositoryの別worktreeは同一project scopeとして扱う。
 
 appendはfirst releaseでは単一target必須とする。
-searchは複数target対応を将来検討してよいが、初期実装では単一targetから始めてよい。
+searchは単一targetを受け付ける。
 owner / scopeのallowlist、entry access、mutation permissionはapp service側で再検証する。
+Session bindingによるtarget inventoryの権限絞り込みはpaginationとcursor生成より前に行う。未許可targetはpageを消費せず、cursorにも含めない。
 
 WithMateが起動していない場合:
 
@@ -655,7 +656,7 @@ WithMateが起動していない場合:
 
 ## Runtime Memory API Security
 
-runtime Memory APIはCLIや将来のMCP adapterが使うapp/service内部境界であり、public APIとして公開しない。
+runtime Memory APIはCLIとMCP adapterが使うapp/service内部境界であり、public APIとして公開しない。
 CLIはuser-facingだが、API endpointはユーザーが直接叩く前提にしない。
 
 - 可能ならUnix domain socket / named pipeなどOS-local IPCを優先する。
@@ -681,6 +682,7 @@ SQL正本は`src-electron/storage/database-schema-v6.ts`に置く。
 storage実装は`src-electron/memory/memory-v6-storage.ts`に置き、解決済みowner / scopeに対するinventory、query-free list、append、get、lexical/tag search、supersede、forget preview/mutation、retarget、tag catalog、mutation event、idempotencyを扱う。
 storage helper型とtarget SQL helperは`src-electron/memory/memory-v6-schema.ts`に置く。
 permission、project path / id解決、Character id解決はstorageへ入れず、application service層で扱う。
+project pathのread/searchとdry-run、失敗したmutationではscopeを作らず、成功したappend/moveで必要なscopeを作る。
 storageはvalidな`withmate-v6.db`だけを開き、legacy DB pathへV6 schemaを作らない。
 
 ## Application Service
@@ -839,14 +841,6 @@ forgetは解決済みtargetを必須とし、target外entry IDは存在確認に
 - index recoveryやoptional retrieval backend失敗時もlexical / tag searchを継続する。
 - Memory検索失敗で通常coding turnを失敗させない。
 
-### Future
-
-- FTS5
-- local embedding
-- hybrid rerank
-- relation-aware search
-
-`memory.search` contractはretrieval実装を隠蔽し、embedding-specific fieldsを公開しない。
 
 ## Audit And Privacy
 
@@ -891,7 +885,7 @@ foundationではMemory Management Windowを戻さない。
 
 current実装では、Settings Diagnosticsから`Memory Review` windowを開き、active entryの検索、full body閲覧、agent-facing APIとは分離したapp-internal IPC経由のforgetを行える。
 Review UIはruntime API secret、discovery documentのsecret値をrendererへ渡さず、main process側のReview serviceからV6 Memory storageを扱う。
-manual correctionはappend + supersedesによる訂正方針を維持し、restore、exportは後続UI phaseとする。
+manual correctionはappend + supersedesによる訂正方針を維持する。
 
 ## Legacy Data
 
@@ -915,79 +909,3 @@ V6 DB migration boundaryは`docs/design/v6-database-foundation.md`を正本に�
 - app側timeoutは短くboundedにする。
 - append / forgetはtransactionalにする。
 - duplicate retryで二重writeしない。
-
-## Implementation Order
-
-1. docs / contract - 完了
-2. shared types / validation - 完了
-3. schema / storage - 完了
-4. application service - 完了
-5. localhost server - 完了
-6. CLI / runtime discovery - 完了
-7. app起動配線 / discovery publish / app-internal API guard - 完了
-8. provider共通MCP / operator CLI distribution - 完了
-9. diagnostics - 完了
-10. Memory Review UI - 完了
-11. optional retrieval enhancement
-
-## Docs To Update
-
-- `docs/design/documentation-map.md`
-- `docs/design/memory-architecture.md`
-- `docs/design/v6-database-foundation.md`
-- `docs/design/database-schema.md`
-- `docs/design/provider-adapter.md`
-- `docs/design/coding-agent-capability-matrix.md`
-- `docs/design/window-architecture.md`
-- `docs/design/settings-ui.md`
-- `docs/manual-test-checklist.md`
-
-## Verification
-
-Automated commandは実装時点の`package.json`を正本にする。2026-06-21時点の候補:
-
-```bash
-npm run typecheck
-npm test
-npm run build
-```
-
-実装済みtest:
-
-- contract validation
-- append idempotency
-- supersede transaction
-- forget exclusion
-- legacy table non-mutation
-- service permission denial
-- service target access denial
-- service get / forget existence oracle防止
-- service idempotency conflict error mapping
-- localhost API loopback guard
-- localhost API app-internal secret guard
-- localhost API browser-origin / content-type guard
-- localhost API method / route / JSON / body size / concurrency guard
-- localhost API service dispatch
-- app起動時のV6 DB bootstrap / runtime API discovery publish
-- discovery file cleanup
-- invalid V6 DB時にdiscovery fileを残さない
-- Settings DiagnosticsでMemory V6 runtime / CLI shim / last errorを表示する
-- Memory V6 diagnostics stateにruntime API secretを含めない
-- `current` target、`--session-project`、`memory.resolve_context`を拒否する
-- Codex / Copilot adapterがMemory bindingなしでprovider client / session cacheを再利用する
-- 起動、upgrade、Settings操作でprovider側の`withmate-memory` Skill directoryへアクセスしない
-- Settings DiagnosticsからMemory Review windowを開き、active entryの検索、full body閲覧、forgetを実行できる
-
-手動smoke gate:
-
-- Settings DiagnosticsでMemory V6 runtime、CLI shim、latest error summaryを確認する。
-- Codex / Copilot sessionでprovider共通MCPがactor-relative targetを同じcanonical user / Character / Projectへ解決することを確認する。
-- operator CLIが明示project path / project ID / Character ID targetへ接続できることを確認する。
-- stale thread retry相当のinternal retry後に通常turnが継続し、Memory CLI利用が壊れないことを確認する。
-- provider rootに既存`withmate-memory` Skillがあっても、起動とSettings保存で内容とtimestampが変わらないことを確認する。
-
-## Open Questions
-
-- `context_file` transportを実際に使うproviderが出た場合のfile lifecycle。
-- full entry閲覧、manual correction、forget、restore、exportをどのUI phaseで扱うか。
-- Protected Object supportを実装する場合のkey storage、file export UI / CLI境界。

@@ -22,7 +22,7 @@ const providerCatalog: ModelCatalogProvider = {
 // @test-value v2
 // kind = "contract"
 // claim = "providerと現在の選択値から一貫したruntime selector optionsを構築する"
-// oracle = { type = "contract", ref = "docs/design/codex-capability-matrix.md#6-approval--sandbox--model--reasoning-depth" }
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes; docs/design/provider-adapter.md#sandbox-modes; docs/design/model-catalog.md#ui-policy; docs/design/model-catalog.md#resolution-policy" }
 // fault = "provider非対応の設定が現れるか、既存sessionのmodelまたはreasoning表示が失われる"
 // observable = "approval、sandbox、model、reasoning optionsとfallback label"
 // observation_boundary = "public-boundary"

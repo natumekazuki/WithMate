@@ -1,10 +1,8 @@
 # Distribution Packaging
-- 作成日: 2026-04-04
-- 対象: Electron アプリの配布ビルド
+
 ## Goal
 
-WithMate を開発用の `electron:start` 実行だけでなく、Windows と macOS 向けに配布可能な形へまとめる。  
-current milestone では、署名や notarization まで確定せず、まず未署名ビルドを再現できる packaging 導線を正本化する。
+WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packagingの実行設定は`package.json`の`build`セクションを正本とする。
 
 ## Tooling
 
@@ -61,28 +59,19 @@ current milestone では、署名や notarization まで確定せず、まず未
 
 ## Platform Constraint
 
-- current の Windows 環境では `win` の実ビルド確認を優先する
 - macOS artifact の実ビルドは macOS machine または macOS CI runner を前提にする
-- current task では macOS 向け設定と手順までは repo に含めるが、local 実ビルド確認までは要求しない
 
 ## Signing Policy
 
-- current milestone では署名と notarization を未導入とする
+- Windows code signingとmacOS signing／notarizationは未導入とする
 - macOS build は `mac.identity = null` で未署名前提にする
-- Windows code signing certificate も current task では扱わない
-- 正式配布前に別 task で次を扱う
-  - Windows code signing
-  - macOS signing
-  - macOS notarization
 
 ## Asset Policy
 
 - packaging icon は `build/` 配下で管理する
-- source asset は `scripts/build/generate-app-icon.ts`
-- `build/icon.svg` は生成物として扱い、Git 管理しない
+- `npm run icon:generate`が`build/icon.svg`、`build/icon.png`、`build/icon.ico`を生成する
 - Windows packaging は `build/icon.ico` を使う
-- macOS packaging は `build/icon.png` を source asset として使う
-- icon asset の再生成は `npm run icon:generate` を正本にする
+- macOS packaging は `build/icon.png` を使う
 
 ## Manual Verification
 

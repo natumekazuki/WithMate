@@ -1,7 +1,5 @@
 # Settings UI
-- 作成日: 2026-03-14
-- 更新日: 2026-09-23
-- 対象: 独立した `Settings Window`
+
 ## Goal
 
 設定系の要素を `Home Window` から分離し、独立した `Settings Window` に集約する。
@@ -10,9 +8,7 @@
 ## Decision
 
 - 設定は `Home Window` から開く独立 `Settings Window` とする
-- app 共通 system prompt を編集する旧設定項目は廃止する
-- V5 current では Character 定義は `Characters` editor で管理し、session 開始時の `CharacterRuntimeSnapshot` を runtime prompt の主経路にする
-- provider instruction sync は V5 Character 注入の主経路ではなく、Settings current UI には置かない
+- Character定義は`Characters` editorで管理し、Session開始時の`CharacterRuntimeSnapshot`をruntime promptへ渡す
 - current 実装では `App`、`Prompt Context`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog`、`Repository Glossary`、`Storage Maintenance` を置く。microcopy catalogの編集面や保存設定は提供せず、残存するmicrocopy設定キーは起動時に削除してcurrent `AppSettings`へ読み戻さない
 - Settings のsectionとprovider rowは意味上のgroupを保つが、入れ子の装飾card、重複するsection見出し、説明だけの空行は置かない
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
@@ -87,7 +83,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
   - `Root Directory` は provider ごとの file 設定の基準 directory として保持される
   - `Skill Relative Path` がある場合は root 配下の相対 path として解決される
   - `Instruction Relative Path` は root 配下の instruction file 設定として保持される
-  - V5 current では skill folder だけが runtime の skill 探索元になり、instruction file は Provider Instruction Sync を再起動せず設定値として保持する
+  - runtimeのskill探索にはskill folderを使い、instruction fileは設定値として保持する
 - Diagnostics の folder open
 - Diagnostics の Memory V6 read-only summary
   - runtime API は `running` / `stopped` / `failed` と、application instance、runtime generation、build channel、discovery publish状態を表示する
@@ -103,9 +99,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 
 ## Runtime Policy
 
-- MemoryGeneration / Character Reflection / Monologue の background 実行は current runtime では行わない
-- Memory extraction / Character reflection の既存 settings key は互換用に残る場合があるが、current UI では編集面を出さない
-- Provider Instruction Sync の既存設定や table は legacy 互換として残る場合があるが、V5 Character runtime prompt の主経路ではない
+- completed turn後のCharacter Affect評価はSettingsで切り替えない
 - Main Process 側の `app settings` 更新、`model catalog` import、rollback、関連 session / telemetry invalidation は `SettingsCatalogService` が担当する
 - `model catalog export` の document 取得も `SettingsCatalogService` が担当する
 - renderer 側では `HomeApp.tsx` が storage 正規化を直接持たず、`home-settings-view-model` の derived data を使って provider row を描画する
@@ -124,17 +118,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - Character editor は Settings Window から分離し、Home の `Characters` panel から開く独立 `Character Editor Window` で扱う。
 - `character.md` の validation error は `Character Editor Window` の raw editor 操作結果として表示する。
 
-## Future Scope
-
-- 独立 monologue plane 用 API 設定
-- 新規 workspace の root directory 設定
-- provider ごとの既定値
-- MemoryGeneration を再設計する場合の専用設定
-- DB reset をSettingsへ戻す場合の専用導線
-
 ## Non Goals
 
 - Home に設定項目を常設すること
-- 独立 monologue plane 用設定欄を current milestone で追加すること
-- MemoryGeneration / Character Reflection の旧設定 UI を current milestone で維持すること
 - Memory managed Skillの同期状態やprovider instruction sampleを表示すること

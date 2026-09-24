@@ -26,6 +26,17 @@ function createSession(workspacePath: string) {
 }
 
 describe("ProjectMemoryStorage", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "旧Project Memoryはworkspace内のGit rootをproject scopeとして保存する"
+  // oracle = { type = "contract", ref = "src-electron/memory/project-memory-storage.ts: ensureProjectScope" }
+  // fault = "nested workspaceを別projectとして保存する"
+  // observable = "保存されたproject keyとscope"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy project scope resolution"
+  // lifecycle = "characterization"
+  // review_when = "旧Project Memory store生成経路を廃止する時"
+  // @end-test-value
   it("git root を優先して project scope を解決して保存できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -49,6 +60,17 @@ describe("ProjectMemoryStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Git remote URLのあるworkspaceはrepository keyへ解決する"
+  // oracle = { type = "contract", ref = "src-electron/platform/project-scope.ts: resolveProjectScope" }
+  // fault = "worktreeごとに別keyを作る"
+  // observable = "解決されたproject keyとremote URL"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy repository scope"
+  // lifecycle = "characterization"
+  // review_when = "旧Project Memory store生成経路を廃止する時"
+  // @end-test-value
   it("git remote url がある時は repository 単位の key を優先する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
     const repoRoot = path.join(tempDirectory, "repo");
@@ -79,6 +101,17 @@ describe("ProjectMemoryStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "旧Project Memoryのworktree scopeは既存entryを保持してrepository keyへ移る"
+  // oracle = { type = "contract", ref = "src-electron/memory/project-memory-storage.ts: ensureProjectScope" }
+  // fault = "key変更時にscopeやentryを複製または喪失する"
+  // observable = "移行前後のscope IDとentry"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy worktree scope"
+  // lifecycle = "characterization"
+  // review_when = "旧Project Memory store生成経路を廃止する時"
+  // @end-test-value
   it("worktree の legacy scope は repository key へ移行する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -137,6 +170,17 @@ describe("ProjectMemoryStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Git rootのないworkspaceはdirectory scopeとして保存する"
+  // oracle = { type = "contract", ref = "src-electron/memory/project-memory-storage.ts: ensureProjectScope" }
+  // fault = "Gitのないworkspaceを未解決にするか誤ったGit scopeを作る"
+  // observable = "保存されたproject typeとkey"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy directory scope"
+  // lifecycle = "characterization"
+  // review_when = "旧Project Memory store生成経路を廃止する時"
+  // @end-test-value
   it("git root が無い workspace は directory scope として保存する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -158,6 +202,18 @@ describe("ProjectMemoryStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "同じProject scope、category、title、detailのentryを重複作成しない"
+  // oracle = { type = "contract", ref = "src-electron/memory/project-memory-storage.ts: upsertProjectMemoryEntry" }
+  // fault = "同一内容のentryが重複し、参照元の更新で別IDが作られる"
+  // observable = "返されたentry IDとscope内のentry件数"
+  // observation_boundary = "component-behavior"
+  // scope = "project-memory-storage"
+  // lifecycle = "permanent"
+  // impact = "Project Memoryの重複と参照の分岐"
+  // distinction = "異なる入力の保存testでは検出できない同一内容のupsertを確認する"
+  // @end-test-value
   it("同一 category/title/detail の entry は再利用する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -179,7 +235,7 @@ describe("ProjectMemoryStorage", () => {
         title: "memory の方針",
         detail: "Character Memory は coding plane の prompt に入れない",
         keywords: ["memory", "character"],
-        evidence: ["docs/design/memory-architecture.md"],
+        evidence: ["docs/design/v6-memory-foundation.md"],
       });
       const second = storage.upsertProjectMemoryEntry({
         projectScopeId: scope.id,
@@ -200,6 +256,17 @@ describe("ProjectMemoryStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "旧Project Memoryのsource Session削除はentry本文を残し参照だけを外す"
+  // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v1.ts: project memory foreign key" }
+  // fault = "Session削除時にMemory entryも失うか無効なsource IDを残す"
+  // observable = "Session削除後のentryとsource_session_id"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy memory source linkage"
+  // lifecycle = "characterization"
+  // review_when = "旧Project Memory store生成経路を廃止する時"
+  // @end-test-value
   it("source_session_id は session 削除時に null へ落ちる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -237,6 +304,17 @@ describe("ProjectMemoryStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "旧Project Memoryの利用記録はentryのlastUsedAtを更新する"
+  // oracle = { type = "contract", ref = "src-electron/memory/project-memory-storage.ts: markProjectMemoryEntriesUsed" }
+  // fault = "retrieval後も利用日時が更新されない"
+  // observable = "取得後のentry.lastUsedAt"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy memory usage"
+  // lifecycle = "characterization"
+  // review_when = "旧Project Memory store生成経路を廃止する時"
+  // @end-test-value
   it("retrieval に使った entry の lastUsedAt を更新できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -273,6 +351,17 @@ describe("ProjectMemoryStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "旧Project Memoryの最後のentry削除時は空scopeも消す"
+  // oracle = { type = "contract", ref = "src-electron/memory/project-memory-storage.ts: deleteProjectMemoryEntry" }
+  // fault = "最後のentry削除後に孤立scopeを残す"
+  // observable = "削除後のentryとscope件数"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy memory cleanup"
+  // lifecycle = "characterization"
+  // review_when = "旧Project Memory store生成経路を廃止する時"
+  // @end-test-value
   it("entry 削除時に最後の scope も自動で掃除する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -306,7 +395,18 @@ describe("ProjectMemoryStorage", () => {
     }
   });
 
-  it("management page query は category / search / sort / cursor / total を DB 側で適用する", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "旧Project Memory管理一覧はcategoryとliteral searchを適用しlimit内のentryとtotalを返す"
+  // oracle = { type = "contract", ref = "src-electron/memory/project-memory-storage.ts: listProjectMemoryPage" }
+  // fault = "categoryまたはsearchを無視するかwildcard文字を誤解釈してtotalを誤る"
+  // observable = "page entriesのID、件数、total"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy memory management page"
+  // lifecycle = "characterization"
+  // review_when = "旧Project Memory store生成経路を廃止する時"
+  // @end-test-value
+  it("management page query は category / literal search / limit / total を返す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
     const oldWorkspace = path.join(tempDirectory, "old");

@@ -1,6 +1,5 @@
 # Electron Window Runtime
-- 作成日: 2026-03-12
-- 対象: BrowserWindow / preload / bootstrap の current runtime
+
 ## Goal
 
 WithMate の `Home Window`、`Session Window`、`Session Monitor Window`、`Settings Window`、`Diff Window` を Electron の current runtime でどう起動・再利用・接続しているかを説明する。
@@ -148,7 +147,7 @@ current 実装の API surface は次の domain に分かれる。
 
 current 実装では preload が `contextBridge` と `ipcRenderer.invoke/on` の薄い橋渡しだけを担当し、Codex SDK / GitHub Copilot SDK は main process 側で動かしている。  
 ただし `npm run electron:start` の Home Window では `sandbox: true` が入ると `window.withmate` 注入が回帰し、renderer が `Home は Electron から起動してね。` の fallback へ落ちる事象を確認した。  
-archive 済み decision `docs/plans/archive/2026/03/20260329-review-findings-remediation/decisions.md` の issue 3 に従い、preload API / IPC の成立を優先して current 実装は `sandbox: false` を維持する。
+preload API / IPC の成立を優先し、現行実装は `sandbox: false` を維持する。
 
 ## Local Path Operation Boundary
 
@@ -169,9 +168,3 @@ archive 済み decision `docs/plans/archive/2026/03/20260329-review-findings-rem
   - session / audit / memory persistence orchestration
 - `session-run-lifecycle.md`
   - running session の保護制御
-
-## Open Questions
-
-- Home Window を閉じたあと Session だけを残す運用をどこまで許容するか
-- app メニューやショートカットをどの window に割り当てるか
-- sandbox / hardened runtime を `window.withmate` 注入回帰を解消できる条件がそろった段階でどう再評価するか

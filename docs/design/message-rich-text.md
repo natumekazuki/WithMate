@@ -1,6 +1,5 @@
 # Message Rich Text
-- 作成日: 2026-03-14
-- 対象: Session Window の message と Markdown file preview
+
 ## Goal
 
 Session message と Markdown file preview に同じ rich text renderer を使い、構文、link、image の挙動が表示面によって分岐しないようにする。構文と表示の executable contract は `src/ui/markdown/MessageRichText.tsx` と `tests/renderer/message-rich-text.test.ts` を正本とする。

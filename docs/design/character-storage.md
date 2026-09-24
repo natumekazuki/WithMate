@@ -1,20 +1,17 @@
 # Character Storage
-## Auxiliary Character Snapshot (Issue #710)
-新規AuxiliaryはMain Processでactive候補からMainのstable IDを除外してCharacterをweighted random選択し、`characterId`と`CharacterRuntimeSnapshot`を会話作成時に固定保存する。他Auxiliaryとの同一Characterは許容する。既存会話の切り替え、再表示、retry、再起動で再抽選・catalog再生成を行わない。snapshotがない旧形式行だけは親の保存済みidentityを互換利用し、不正な新形式snapshotは親へfallbackせず失敗として扱う。
 
-- 作成日: 2026-03-12
-- 更新日: 2026-07-30
-- 対象: V5 Core の Character catalog / storage / snapshot 境界
+## Auxiliary Character Snapshot
+新規AuxiliaryはMain Processでactive候補からMainのstable IDを除外してCharacterをweighted random選択し、`characterId`と`CharacterRuntimeSnapshot`を会話作成時に固定保存する。他Auxiliaryとの同一Characterは許容する。既存会話の切り替え、再表示、retry、再起動で再抽選・catalog再生成を行わない。snapshotがない旧形式行だけは親の保存済みidentityを互換利用し、不正な新形式snapshotは親へfallbackせず失敗として扱う。
 
 ## Goal
 
-V5 Core では、SingleMate の `current` 固定ではなく、複数 Character を保存、列挙、取得、更新できる catalog boundary を提供する。
+複数 Character を保存、列挙、取得、更新できる catalog boundary を提供する。
 
-この文書は V5 Core の Character storage 正本である。current runtime の session prompt injection はこの storage 境界を優先する。
+この文書は Character storage の正本である。runtime の session prompt injection はこの storage 境界を優先する。
 
 ## Scope
 
-V5 Core に含める:
+保存対象:
 
 - SQLite 上の Character metadata
 - `characters/<character-id>/character.md` file body
@@ -23,15 +20,6 @@ V5 Core に含める:
 - archive
 - session snapshot 用 domain model
 - renderer から Main Process 経由で使う IPC / preload API
-
-V5 Core に含めない:
-
-- `meta.json` 正本の file-only catalog
-- Character 定義自動生成
-- 詳細 Editor / section Editor
-- Character Update Workspace
-- provider instruction sync への Character 書き込み
-- Memory / Growth / MateTalk 再設計
 
 ## Source Of Truth
 
@@ -49,7 +37,7 @@ Renderer は filesystem を直接走査しない。Character catalog は Main Pr
 
 ```text
 <userData>/
-  withmate-v4.db
+  withmate-v6.db
   characters/
     <character-id>/
       character.md
@@ -79,18 +67,18 @@ Character icon は保存時に Main Process が app data 配下へ materialize �
 | `icon_file_path` | optional icon path。managed icon は `characters/<character-id>/icon.<ext>` の app data 相対 path |
 | `theme_main` / `theme_sub` | UI theme color snapshot の元値 |
 | `state` | `active` / `archived` |
-| `is_default` | 互換性のため残すlegacy metadata。sourceとpublic projectionは参照しない |
+| `is_default` | 互換性のため残す列。sourceとpublic projectionは参照しない |
 | `created_at` / `updated_at` / `archived_at` | lifecycle timestamps |
 
-`is_default`列とunique indexは、既存DBとの互換性のため物理削除しない。Character作成・archive・一覧・launch解決では読み書きせず、既存rowの値も初期化時に変更しない。table rebuildを伴う別migrationが必要になった時点で物理削除を再検討する。
+`is_default`列とunique indexは、タグ付きDBとの互換性のため保持する。Character作成・archive・一覧・launch解決では読み書きせず、既存rowの値も初期化時に変更しない。
 
-既存 V4 DB への安全な追加にするため、`characters` table は V4 required table 判定には入れず、`CharacterStorage` 初期化時に `CREATE TABLE IF NOT EXISTS` で作成する。
+`CharacterStorage` は `characters` table を初期化する。現行V6 schemaと旧DBからの継続は `database-schema.md` に記す。
 
 ## Files
 
 ### `character.md`
 
-- V5 Character runtime definition の正本。
+- Character runtime definition の正本。
 - format と validation は `docs/design/character-definition-format.md` に従う。
 - storage / import / raw editor は schema、name、body、size、null byte、path safety を検証する。
 
@@ -98,7 +86,7 @@ Character icon は保存時に Main Process が app data 配下へ materialize �
 
 - authoring notes / evidence / revision notes 用の補助ファイル。
 - runtime prompt の常設入力にしない。
-- V5 Core では null byte と size limit だけを検証する。
+- null byte と size limit を検証する。
 
 ### `icon.<ext>`
 
@@ -109,7 +97,7 @@ Character icon は保存時に Main Process が app data 配下へ materialize �
 
 ## Service API
 
-V5 Core の storage service は次を提供する:
+storage service は次を提供する:
 
 - `listCharacters({ includeArchived? })`
 - `getCharacter(characterId)`

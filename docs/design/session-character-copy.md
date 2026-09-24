@@ -1,6 +1,5 @@
 # Session UI Copy
 
-- 対象: Session Window の待機・実行状態・通常emptyに関する表示
 - UI全体の正本: [Desktop UI](desktop-ui.md)
 
 ## Current Policy

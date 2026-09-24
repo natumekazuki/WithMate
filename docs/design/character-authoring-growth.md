@@ -1,7 +1,5 @@
 # Character Authoring And Improvement
-- 作成日: 2026-06-16
-- 更新日: 2026-09-12
-- 対象: 保存済み Character の agent authoring
+
 ## Goal
 
 通常 Session の UI と provider adapter を再利用し、保存済み `character.md` と optional な `character-notes.md` を固定 authoring Skill で作成・改善する。

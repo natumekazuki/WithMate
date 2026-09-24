@@ -1,7 +1,5 @@
 # Character Definition Format
-- 作成日: 2026-03-29
-- 更新日: 2026-09-04
-- 対象: `character.md` と `character-notes.md`
+
 ## Goal
 
 `character.md` をユーザー向け response behavior の runtime 正本とし、調査、解釈、改稿履歴を `character-notes.md` へ分離する。

@@ -24,18 +24,6 @@
 npm run electron:start
 ```
 
-## V5 Character Core Release Gate
-
-| ID | 領域 | 手順 | 期待結果 |
-| --- | --- | --- | --- |
-| V5C-001 | Character 0 件 fallback | Character catalog が 0 件の状態で Home を起動し、`New Session` を開く | 起動導線は SingleMate / Mate 未作成 gate に戻らず、neutral fallback の Character 表示で session を開始できる |
-| V5C-002 | Character A / B 登録 | Home の `Characters` から `Create Character` を押し、Character Editor Window で Character A と Character B を作成して name / description / icon / theme / `character.md` を保存する | Home の Characters list に A / B が表示され、Editor Window を開き直しても metadata と `character.md` が保持される |
-| V5C-003 | Random Character default | Character A / B がある状態でHomeの`New Session`を開き、閉じて再度開く | どちらもCharacter selectorはランダムが初期選択され、既存DBの`is_default`値は表示と選択へ影響しない |
-| V5C-004 | New Session explicit selection | `New Session` で Character A を明示選択して session を作成する | 作成された Session Window と Home summary は Character A の name / icon / theme を表示し、既存sessionの表示はcatalog更新後も保存済みsnapshotのまま残る |
-| V5C-006 | Snapshot boundary | Character A で session を作成した後、Character Editor Window で Character A の `character.md` を別内容へ変更し、既存 session で 1 turn 実行する | provider prompt は session 作成時点の saved snapshot を使い、現在の catalog 内容へ置き換わらない |
-| V5C-007 | Prompt boundary | `character.md` と `character-notes.md` の両方を持つ Character で 1 turn 実行し、Audit Log の `Logical prompt` / `Transport payload` を確認する | `character.md` snapshot は system 側に入る。`character-notes.md`、Memory / Growth history、provider instruction sync 由来の Character 書き込みは常設注入されない |
-| V5C-008 | Markdown fence boundary | `character.md` に triple backtick と quadruple backtick の code fence を含め、session を作成して 1 turn 実行する | Character Definition Snapshot section の外側 fence が壊れず、definition 全体が 1 つの markdown block として扱われる |
-| V5C-009 | Legacy read-only compatibility | V5 Core 前に作られた session、または `source_schema_version < 5` / `legacy_readonly` の session を Home から開く | Home 履歴に `Read Only` として残り、Session Window で messages / audit / diff など既存情報を確認できる。send、model 変更、approval 変更、その他永続更新は拒否され、新しい V5 session 作成へ誘導される |
 
 ## 項目
 
@@ -47,11 +35,16 @@ npm run electron:start
 | MT-001D | 操作・状態の横断確認 | 変更controlをkeyboardで操作し、狭幅・拡大・theme / Character色・forced colors・reduced motionで確認する。短い処理、遅延、取消、対象切替、二重押しも試す | icon-onlyにも対象付き操作名とfocus、selected / expanded / pressedがある。busyは実requestの対象だけへ表示し、空・利用不可・失敗を混同しない。古い成功や状態が別対象へ残らず、必要な安全・回復操作へ到達できる |
 | MT-001A | Home narrow width guardrail | Home Window を最小幅近くまで縮める | single-column layout へ倒れても `RecentSessions` と right pane toggle / `Settings` 導線が残り、操作不能にならない |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 一覧の通常 empty body は表示せず、shell と `New Session` 導線だけが残る |
-| MT-003 | Home Characters panel | Home 右ペインの `Characters` を開く | Character list と `Create Character` が表示され、`Your Mate` tab / panel / `Mate を編集` は出ない |
+| MT-003 | Home Characters panel | Home 右ペインの `Characters` を開く | Character list と `Create Character` が表示される |
 | MT-003A | Character Editor Window create | Home の `Characters` で `Create Character` を押す | 独立した Character Editor Window が create mode で開き、Profile / `character.md` / `character-notes.md` / Preview を編集できる |
 | MT-003B | Character Editor Window edit | Home の Character card を押す | 該当 Character の Editor Window が edit mode で開き、同じ Character を再度開いた場合は既存 window が前面に出る |
 | MT-003C | Character editor validation / notes boundary | Character Editor Windowでvalid / invalidな `character.md` と `character-notes.md` を編集する | 正常時のvalidation宣言は常設せず、問題時はcode / path / messageが読める。notesがruntime promptへ常設注入されない境界説明とユーザーの本文を維持する |
 | MT-003D | Character editor archive / dirty close | 既存 Character を編集し、未保存のまま close と archive をそれぞれ試す | close は未保存変更の破棄確認を出し、archive は destructive confirmation を挟む。archive 後は Home list と launch selector から消える |
+| MT-003E | Characterが0件 | Character catalogが0件の状態でHomeを起動し、New Sessionを開く | Characterを選ばないneutral sessionを開始できる |
+| MT-003F | Random Character | Characterを2件以上用意し、New Sessionを開き直す | Character選択の初期値はRandomで、開始時に利用可能なCharacterから選ぶ |
+| MT-003G | Character snapshot | Characterを選んでSessionを作成し、catalogの`character.md`を変更して既存Sessionで1 turn実行する | 既存Sessionは作成時点の保存済みsnapshotを使う |
+| MT-003H | Prompt boundary | `character.md`と`character-notes.md`を持つCharacterで1 turn実行し、Audit Logを確認する | system側にCharacter snapshotが入り、notesとMemoryは常設注入されない |
+| MT-003I | Character Markdown fence | `character.md`に3連・4連のbacktick fenceを入れて1 turn実行する | definitionが一つのMarkdown blockとして保持される |
 | MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは spinner が出る。読み込み後は `App` / `Prompt Context` / `Coding Agent Providers` / `Diagnostics` / `Model Catalog` / `Repository Glossary` / `Storage Maintenance` が既存値で表示され、microcopyの編集UIや保存設定、Character editorは出ない。section/provider groupに入れ子の装飾card、重複見出し、説明だけの空行を置かない |
 | MT-004H | Settings window shell layout | `Settings Window` を wide 幅で開き、縦に長い内容まで scroll する | Window全面を本文と保存footerで使い、外側にdialog枠や余白を作らない。`Home / Close` の headerは出ない。本文はinner scrollで最後まで到達でき、scrollbarと保存footerが干渉しない |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
@@ -148,7 +141,7 @@ npm run electron:start
 | MT-023E1 | Session action dock auto close | Settings で `Close the action dock after sending` を ON にした状態で Session Window から通常送信する。続けて OFF にして同じ操作を行う | ON の時は送信直後に `Action Dock` が compact へ戻り、優先度も左右 pane 優先へ戻る。OFF の時は expanded のまま残る。picker など force-expanded 条件がある時は ON でも閉じない |
 | MT-023F | Session action dock forced expand | skill picker、blocked feedback のいずれかが出る状態と、recovery action surface だけが出る状態を作る | picker / blocked feedback 中は `Action Dock` が compact に落ちず、必要な操作要素が隠れない。recovery action surface だけでは dock の状態が変わらない |
 | MT-024 | LatestCommand running state | `command_execution` を含む run を実行する | 右 pane に実行中または直前の command 1 件だけが表示され、raw command、status、source が読める |
-| MT-024A | Right pane tab switch | Session Window の右 pane を確認し、`Latest Command` と provider に応じた `Tasks` / `Reasoning` / `Context` 表示を切り替える | Memory 生成や独り言の tab は出ず、current session の command / task / context 観測面だけが表示される |
+| MT-024A | Right pane tab switch | Session Window の右 pane を確認し、`Latest Command` と provider に応じた `Tasks` / `Reasoning` / `Context` 表示を切り替える | current Session の command / task / context 観測面が表示される |
 | MT-025 | LatestCommand terminal state | completed / failed / canceled の run をそれぞれ確認する | run 完了後も right pane に直近 run の最後の command が残り、status が terminal state に応じて変わる |
 | MT-026 | LatestCommand visibility with assistantText | assistantText streaming と `command_execution` が同時にある run を実行する | streaming本文の後にdot bubbleが残り、right pane は command 1 件だけを表示する。command 一覧が会話本文を押し流さない |
 | MT-027 | LatestCommand pre-command empty state | run開始直後でまだ `command_execution` が来ていない状態を観察する | message list末尾にdot bubbleがすぐ表示され、right paneは shell と必要な操作を維持する。通常の待機本文は表示せず、同じrunの待機文を会話本文へ重ねない |
@@ -191,7 +184,7 @@ npm run electron:start
 | MT-054D | Quit during a long Auxiliary run | 検証用環境で長時間のAuxiliary実行中にquitを要求して終了を確定する。キャンセルが即時に完了する場合と猶予満了まで応答しない場合を確認する | DBを開いたままキャンセルを先に要求し、terminal処理と下書き復元保存が収束してから終了する。providerの自然完了を待つだけのtimeoutにはならず、保存失敗時はDBを閉じずに終了を中止する |
 | MT-055 | Home right pane segmented toggle / initial state | Home を起動し、右ペイン上部の切替 UI を確認した後、`Monitor` / `Characters` を相互に切り替える | 起動時は `Monitor` が選択済みで、right pane には片方だけが表示される。segmented toggle だけで現在選択中が見分けられ、`Characters` 選択時に Character list / Create が出る |
 | MT-056 | Home session empty / no-result と monitor empty state | session 0 件の状態で Home を開き、その後 session を作成して `SessionWindow` を開かないケース、さらに search で 0 件になる条件も試す | session 0 件では `RecentSessions` の通常本文を空にし、shell と `New Session` 導線を維持する。open な `SessionWindow` が 0 件なら monitor 側は説明文を出さず、必要な切替・操作だけを維持する。search 0 件では検索本文を出さず、monitor 側も同じ検索条件に追従する |
-| MT-057 | Home right pane heading dedupe | Home を開いて `Monitor` / `Characters` を切り替え、right pane の先頭付近を確認する | active pane は segmented toggle だけで判別でき、pane 内トップに `Monitor` / `Characters` の重複 heading は出ない。Characters 側に legacy MateTalk / Mate editor 導線は出ない |
+| MT-057 | Home right pane heading dedupe | Home を開いて `Monitor` / `Characters` を切り替え、right pane の先頭付近を確認する | active pane は segmented toggle だけで判別でき、pane 内トップに `Monitor` / `Characters` の重複 heading は出ない |
 | MT-058 | Home monitor scroll / CSS no-bleed | monitor 対象になる open session を増やして right pane を縦にあふれさせた後、Home でスクロール挙動を確認する。続けて Session Window を開いて pending / recovery action surface / composer 周辺の既存表示も見る | `Monitor` は right pane 内で自然に縦スクロールし、wrapper 全体が伸び続けない。Home 専用の 2 カラム / right pane toggle / monitor 用 CSS が Session Window へ波及せず、Session 側の既存レイアウトと配色が退行しない |
 | MT-058A | MonitorWindow open | Home の `MonitorWindow` icon を押す | 細く縦長の `Session Monitor Window` が開き、Home とは独立した window として表示される |
 | MT-058B | Monitor Window always-on-top | `Session Monitor Window` を開いたまま別の通常 window を前面に出す | monitor window が最前面を維持し、`Home` button を押すと通常の `Home Window` を前面へ戻せる |

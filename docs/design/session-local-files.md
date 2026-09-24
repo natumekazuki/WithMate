@@ -1,109 +1,19 @@
 # Session Local Files
 
-- 作成日: 2026-05-17
-- 対象: Session ごとの repo 外ファイル置き場と composer 連携
+WithMateはSessionごとにrepository外のmanaged directory `session-files/{sessionId}/`を用意する。provider内部のsession stateやlog directoryとは分け、画像やfileをcomposerへ添付するときの保存先とする。`sessionId`は安全なpath segmentへ正規化し、directory traversalを許さない。
 
-## Goal
-
-WithMate の Session ごとに、repo へ入れない一時資料を置ける managed directory を用意する。
-ユーザーは composer への paste や picker から画像・ファイルを追加し、保存された path を prompt reference として使える。
-
-## Position
-
-- この機能は provider 内部の session-state や log directory を使わない
-- 保存先は WithMate app data 配下の managed directory とする
-- session local files は user-managed additional directories ではなく、runtime が常に暗黙許可する directory として扱う
-- `New Session` で `Session Folder` を選んだ場合は、この managed directory 自体を Session の `workspacePath` として扱う
-- prompt 本文には保存済み file path の reference だけを入れ、file 内容の常設 inline 展開はしない
-- V5 preview では legacy MateTalk runtime / window を current runtime として提供しない。本文中の MateTalk 記述は stale `mate-talk-*` directory cleanup などの legacy compatibility として扱う
-
-## Directory Layout
-
-通常 Session と legacy MateTalk は同じ layout で保存する。
-
-```text
-session-files/{sessionId}/
-```
-
-`sessionId` は path segment として安全な文字だけへ正規化する。既存 ID は UUID 形式だが、将来の prefix 付き ID でも directory traversal を起こさないことを優先する。
-
-`New Session` の `Session Folder` 選択は directory を作成しない。`Start New Session` 時に Main Process が Session ID を発行し、同じ ID の既存 directory を再利用しない排他的な作成を行った後、その absolute path を持つ Session を永続化する。
+`New Session`で`Session Folder`を選んだ場合、このdirectoryをSessionのworkspaceとする。選択時には作成せず、開始時に新しいSession IDへ排他的に作成してから保存する。既存の同名directoryやSession recordを上書き・再利用しない。
 
 ## Access Contract
 
-Session local files directory は次の経路で常に effective allowed directory に含める。
+Session Local Filesはcomposerの`@path` preview、Markdown local image、providerのattachment／additional directory解決で許可対象に含める。ユーザーが明示追加する`allowedAdditionalDirectories`とは別のmanaged directoryであり、DBのその一覧やUIの`Dirs {N}`に数えない。`Session Folder`自体をworkspaceにした場合は同じdirectoryを二重に追加しない。promptへfile本文を常設inline展開せず、参照とprovider固有の画像入力に分ける。
 
-- composer preview の `@path` と local Markdown image 解決
-- provider prompt composition の `additionalDirectories`
-- Codex thread options
-- Copilot session config / attachment roots
-- legacy MateTalk の picker / paste 由来 attachment と provider runtime
+## Composerと保存
 
-DB の `allowedAdditionalDirectories` へは保存しない。
-これはユーザーが明示追加した external directory と、WithMate が管理する session-local directory を分けるためである。
-UI の `Dirs {N}` はユーザー追加分だけを数え、session local files は数に含めない。
-`SessionFolder` を workspace にした Session では、同じ directory を additional directory として重複追加しない。
+`Attach`の`File`／`Folder`／`Image`は元pathを参照する。`Session Files`の`Copy`は選択fileをmanaged directoryへコピーし、その保存先をcaret位置へ`@path`として挿入する。`File`はmanaged directoryを起点にpickerを開き、その配下で選択したfileだけを参照する。外部directoryへ移動して選んだfileを、managed directory内のfileとして受け入れない。
 
-## Composer UI
+textareaへの画像pasteはPNG、JPEG、GIF、WebP、BMP、SVGを保存してMarkdown image参照を挿入する。一般のfile pasteはmanaged directoryへコピーして`@path`を挿入する。basenameが重なれば採番する。Rendererはpaste bytesやsource pathを直接providerへ送らず、Mainのcopy／write APIを使う。
 
-attachment popover の `Attach` sectionにある `File`、`Folder`、`Image` は「元の path をそのまま参照する」操作とする。
+## 削除時の扱い
 
-attachment popover の `Session Files` sectionにある `Copy` action は次のように扱う。
-
-- picker で選んだ file を session local files directory へコピーする
-- 複数 file を選んだ場合は選択順にまとめてコピーする
-- コピー先 path を composer の caret 位置へ `@path` として挿入する
-- 複数 file を選んだ場合は複数 reference を挿入する
-- repo 内 file でも `Session` action ではコピーする
-
-attachment popover の `Session Files` sectionにある `File` action は session local files directory を初期位置にして picker を開く。
-選択された file はコピーせず、その path を composer の caret 位置へ `@path` として挿入する。
-選択結果は session local files directory 配下に限定し、dialog から外部 directory へ移動して選んだ file は参照として採用しない。
-
-composer textarea の paste は次のように扱う。
-
-- text only: 通常 paste
-- image: PNG、JPEG、GIF、WebP、BMP、SVG は保存し、absolute path の Markdown image を挿入する
-- file: session local files directory へコピーし、保存先を `@path` として挿入する。AVIF、TIFF、ICO もこの扱いとする
-- mixed: browser / Electron が提供する file item を優先し、保存できた reference を挿入する
-
-保存時の basename 衝突は `name-2.ext` のように採番する。
-paste image は `pasted-YYYYMMDD-HHMMSS.png` を基本名にする。
-
-## IPC
-
-renderer は file path と paste bytes を直接 provider に渡さない。
-main process が managed directory を作成し、copy / write を担当する。
-
-必要な API は次の通り。
-
-- `copyFilesToSessionFiles(sessionId, sourcePaths)`
-- `pickSessionFiles(sessionId)`
-- `savePastedSessionFile(sessionId, fileName, bytes)`
-- `openSessionFilesDirectory(sessionId)`
-- `openSessionFilesTerminal(sessionId)`
-
-保存 API は保存済み absolute path を返す。
-renderer は clipboard file の MIME type と拡張子から表示形式を決め、対応画像を Markdown image、それ以外を `@path` として caret 位置へ挿入する。
-
-## Cleanup
-
-通常の external workspace を使う Session では、Session 削除時に session ID 単位で local files directory を削除する。
-削除に失敗しても session 削除自体は失敗させず、best-effort cleanup として扱う。
-Session 自身の local files directory を workspace としている場合は、Session record を削除しても directory と内容を保持する。
-bulk 削除では削除前に storage の Session summary を取得し、未読込 Session も workspace の種別を判定する。
-legacy MateTalk は永続 session record を持たないため、window ごとの一時 session ID を使っていた。
-`mate-talk-*` の session files directory は使い捨て扱いとし、次回起動時に stale directory を削除する。
-
-## Validation
-
-- paste image が session local files directory に保存され、composer に Markdown image が挿入される
-- paste image の Markdown image が preview と provider image attachment の同じ file identity へ解決される
-- `Session` action で選んだ file がコピーされ、コピー先 reference が挿入される
-- preview で session local files が outside workspace attachment として認識される
-- Codex / Copilot runtime に session local files directory が additional directory として渡る
-- `Dirs {N}` は session local files を数えない
-- `Session Folder` 選択だけでは directory が作成されず、開始時に作成済み path が `workspacePath` として保存される
-- SessionFolder の作成に失敗した場合は Session が保存されない
-- 同じ ID の SessionFolder または Session record が存在しても、既存内容を再利用または上書きしない
-- SessionFolder workspace の Session record を削除しても directory と内容が残る
+外部workspaceを使うSessionの削除では、そのSession IDのmanaged directoryをbest-effortで片付ける。managed directory自身をworkspaceとするSessionは、recordを削除してもdirectoryと内容を保持する。期間指定の一括削除でも、未読込Sessionのworkspace種別をstorage summaryで判定する。実装上のAPIとcleanupは`src-electron/files/session-files.ts`を正本とする。

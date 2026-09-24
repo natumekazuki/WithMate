@@ -1,6 +1,5 @@
 # Provider Adapter
-- 作成日: 2026-03-13
-- 対象: WithMate の Main Process に置く provider 実行境界
+
 ## Goal
 
 Renderer が provider ごとの差異を知らずに、`Session Window` の送信と結果反映を扱えるようにする。
@@ -9,8 +8,6 @@ Renderer が provider ごとの差異を知らずに、`Session Window` の送�
 
 - provider 実行境界と current adapter 責務の正本はこの文書とする
 - current capability の一覧は `docs/design/coding-agent-capability-matrix.md` を参照する
-- provider ごとの詳細 snapshot は `docs/design/codex-capability-matrix.md` などの supporting doc を参照する
-- SDK surface 不足で保留している項目は、この文書または capability matrix に follow-up として反映する
 
 ## Boundary
 
@@ -23,88 +20,21 @@ WithMate では provider 実行境界を Main Process に置く。
 
 ## Current Runtime
 
-current runtime は shared contract の上に次の 2 adapter を持つ。
+runtimeはshared contractの上に次の2 adapterを持つ。
 
 - `CodexAdapter`
 - `CopilotAdapter`
 
-```ts
-type ProviderCodingAdapter = {
-  composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
-  getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
-  invalidateSessionThread(sessionId: string): Promise<void>;
-  invalidateAllSessionThreads(): Promise<void>;
-  runSessionTurn(input: {
-    session: Session;
-    sessionMemory: SessionMemory;
-    projectMemoryEntries: ProjectMemoryEntry[];
-    character?: CharacterProfile;
-    providerCatalog: ModelCatalogProvider;
-    userMessage: string;
-    appSettings: AppSettings;
-    attachments: ComposerAttachment[];
-    signal?: AbortSignal;
-    onApprovalRequest?: (request: LiveApprovalRequest) => Promise<"approve" | "deny">;
-    onProviderQuotaTelemetry?: (telemetry: ProviderQuotaTelemetry) => void | Promise<void>;
-    onSessionContextTelemetry?: (telemetry: SessionContextTelemetry) => void | Promise<void>;
-  }, onProgress?: (state: LiveSessionRunState) => void | Promise<void>): Promise<ProviderTurnResult>;
-};
-```
-
-```ts
-type ProviderBackgroundAdapter = {
-  extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
-};
-```
-
-```ts
-type ProviderTurnResult = {
-  threadId: string | null;
-  assistantText: string;
-  artifact?: MessageArtifact;
-  logicalPrompt: {
-    systemText: string;
-    inputText: string;
-    composedText: string;
-  };
-  transportPayload: {
-    summary: string;
-    fields: Array<{ label: string; value: string }>;
-  } | null;
-  operations: AuditLogOperation[];
-  rawItemsJson: string;
-  usage: AuditLogUsage | null;
-};
-```
+`ProviderCodingAdapter`はprompt composition、quota取得、thread invalidation、live turn実行を担う。`ProviderBackgroundAdapter`は権限を制限したstructured promptによるcompleted turn後のCharacter Affect評価を担う。型と入力・出力の正本は`src-electron/providers/provider-runtime.ts`に置く。
 
 Provider 実行が失敗した場合、adapter は `ProviderTurnError` を投げる。`canceled` は既存の session phase / retry / invalidation 判定のため boolean として維持し、失敗分類は `reason` で渡す。
 
-```ts
-type ProviderErrorReason =
-  | "usage_limit"
-  | "auth"
-  | "network"
-  | "provider_unavailable"
-  | "canceled"
-  | "unknown";
-
-type ProviderTurnError = Error & {
-  partialResult: ProviderTurnResult;
-  canceled: boolean;
-  reason: ProviderErrorReason;
-};
-```
-
 Provider 固有の error message 判定は adapter 側に閉じる。`SessionRuntimeService` は `reason` を見て audit log と assistant fallback message を分け、provider 固有の英語 message を再 parse しない。
 
-```ts
-type ProviderTurnAdapter = ProviderCodingAdapter & ProviderBackgroundAdapter;
-```
-
 監査用途では、provider 実行結果から `logical prompt`、`transport payload`、operations、raw items、usage も Main Process へ返し、SQLite の監査ログに保存する。
-Main Process では `MainProviderFacade` が `coding plane` と `background plane` の入口を分けて解決し、`SessionRuntimeService` は coding plane、`MemoryOrchestrationService` は background plane だけを見る。
+Main Processでは`MainProviderFacade`がcoding planeとbackground planeの入口を分ける。`SessionRuntimeService`はcoding plane、completed turn後のCharacter Affect評価はbackground planeを使う。
 
-current milestone の provider ごとの差は次。
+providerごとの差は次。
 
 - `CodexAdapter`
   - `thread.runStreamed()` を使い、workspace snapshot を含む artifact まで組み立てる
@@ -149,36 +79,34 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
 
 ### Background Plane
 
-- `Session Memory extraction`
-- `character reflection cycle`
+- completed turn後のCharacter Affect評価
 
 利用側:
 
-- `MemoryOrchestrationService`
+- `character-affect-turn-main-lifecycle`
 - `MainProviderFacade#getProviderBackgroundAdapter()`
 
-この分離により、通常の coding turn と裏で走る memory / monologue 系処理の責務を adapter の入口で混ぜない。
+この分離により、通常のcoding turnと完了後のAffect評価をadapterの入口で分ける。
 
 ## Session Flow
 
 1. Renderer が `runSessionTurn(sessionId, { userMessage })` を IPC で Main Process に送る
 2. Main Process が session store から session metadata を引く
-3. `characterId` で `CharacterProfile` を読む
+3. 保存済みCharacter snapshotとturn contextを解決する
 4. Main Process が textarea 内の `@path` を解決し、file / folder / image を正規化する
    - workspace 外 path は `allowedAdditionalDirectories` 配下だけを許可する
-5. Main Process が provider instruction sync status を参照する
-6. prompt composer が app 共通 system prompt を挿入せず、user input と添付 reference を provider へ渡す形式に正規化する
-7. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
-8. `MainProviderFacade` が coding plane adapter を解決し、`model / reasoningEffort` を検証したうえで provider-native SDK 実行へ変換する
+5. prompt composer がCharacter context、user inputと添付referenceをproviderへ渡す形式に正規化する
+6. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
+7. `MainProviderFacade` が coding plane adapter を解決し、`model / reasoningEffort` を検証したうえで provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder の workspace 外 access は session metadata `allowedAdditionalDirectories` だけを `additionalDirectories` へ変換し、画像は structured input にして `thread.runStreamed()` を実行する
-   - `CopilotAdapter`: Mate 定義は provider instruction file の managed block 側へ同期済みであることを前提にし、`session.send()` には user input 本文と attachment だけを送る。file / folder は `session.send({ attachments })` の `file` / `directory` へ変換して同時に渡す。image も `file` attachment として吸収し、renderer 側では共通の `Image` 導線を維持する。workspace 外 path は WithMate 側の `allowedAdditionalDirectories` 判定だけを正本にして許可する。`on-request` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
-9. Main Process が stream event から live state と provider telemetry を組み立て、IPC で Session Window へ中継する
+   - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時はaudit logにdebug metadataを残す
+8. Main Process が stream event から live state と provider telemetry を組み立て、IPC で Session Window へ中継する
    - live state には `approvalRequest` と `elicitationRequest` を含められる
    - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する
    - Codex は `turn.completed` / `turn.failed` / fatal `error` の最初の event を terminal outcome の正本とし、transport EOF は bounded cleanup として扱う
-10. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
-11. Main Process が `running / completed / canceled / failed` の監査ログを 1 turn 1 record で SQLite に保存する。terminal phase の最小更新を先に確定し、詳細は bounded enrichment として後段で更新する
-12. Renderer は Session summary invalidation と live state 購読を使って再描画する
+9. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
+10. Main Process が `running / completed / canceled / failed` の監査ログを 1 turn 1 record で SQLite に保存する。terminal phase の最小更新を先に確定し、詳細は bounded enrichment として後段で更新する
+11. Renderer は Session summary invalidation と live state 購読を使って再描画する
 
 ## Prompt Composition Constraint
 
@@ -189,7 +117,7 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
   - image: structured input (`local_image`)
 - `Copilot`
   - SDK native には `attachments` として `file` / `directory` attachment がある
-  - current milestone の `CopilotAdapter` は file / folder に加えて image も `file` attachment として吸収する
+  - `CopilotAdapter` はfile / folderに加えてimageも`file` attachmentとして扱う
 
 workspace 外 path の access control は provider 任せにせず、WithMate が session metadata `allowedAdditionalDirectories` を正本にして先に判定する。
 
@@ -208,7 +136,6 @@ the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動�
 - model または reasoning depth を変更した場合も、その session の `threadId` は維持し、次回 turn は新しい runtime parameter で既存 thread / session の resume を試す
 - Codex の `approvalMode` / `codexSandboxMode` は thread settings key に含める。変更後の turn では既存 thread cache を再利用せず、選択された runtime parameter で `resumeThread()` または `startThread()` する
 - provider ごとの coding credential は `AppSettings.codingProviderSettings[providerId].apiKey` から解決して SDK client へ渡す
-- coding plane の provider 設定は Character Stream 用 credential とは混ぜない
 - coding credential が変わった provider では既存 thread / adapter cache を再利用しないため、対象 session の `threadId` を空に戻す
 
 理由:
@@ -278,7 +205,7 @@ Codex session は `codexSandboxMode` を持つ。UI では Codex provider のと
 
 ## Artifact Summary Policy
 
-MVP では Codex SDK の `turn.items` と workspace snapshot 差分から最小の summary を組み立てる。
+Codex SDKの`turn.items`とworkspace snapshot差分からsummaryを組み立てる。
 
 - `file_change` + snapshot diff -> changed files
 - `command_execution` -> activity summary
@@ -312,8 +239,6 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 - `delete`: `before = 実行前 snapshot`, `after = null`
 - `ChangedFile.diffRows` は split diff viewer 向けに `add / edit / delete / modify / context` を持つ
 
-この方式は GitHub Desktop ライクな side-by-side diff を優先した MVP であり、将来 streaming diff を導入する場合は取得経路を見直す。
-さらに `.gitignore` の優先順や exclude source を厳密に Git 本体へ寄せたくなったら、その時点で拡張する。
 
 ## Streaming Policy
 
@@ -375,7 +300,7 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 - skill 探索元は次を使う
   - `codingProviderSettings[providerId].skillRootPath` と任意の `skillRelativePath` から解決した provider skill root
   - workspace 標準 skill roots (`skills`, `.github/skills`, `.copilot/skills`, `.codex/skills`, `.claude/skills`)
-- `codingProviderSettings[providerId].instructionRelativePath` は provider ごとの instruction file 設定として保持するが、V5 current の skill 探索や prompt composition では参照しない
+- `codingProviderSettings[providerId].instructionRelativePath` は provider ごとの instruction file 設定として保持するが、skill 探索やprompt compositionでは参照しない
 - 同名 skill は workspace 優先で dedupe する
 - adapter は選択済み skill を provider ごとの prompt / option へ変換する
   - Codex: `$skill-name` mention
@@ -384,15 +309,6 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
   - Codex: 未対応
   - Copilot: custom agent selection を session metadata に保存し、`~/.copilot/agents` と workspace `.github/agents` から探索した agent catalog を adapter が `customAgents` / `agent` に変換する
 
-## Future Extension
-
-将来は次を追加できる構造にする。
-
-- provider ごとの prompt composer 差し替え
-- artifact summary の richer な構造化
-- Character Stream 用 provider / credential 設定の別系統化
-- background plane の provider を coding plane と独立させる
-
 ## References
 
 - `docs/design/prompt-composition.md`
@@ -400,4 +316,3 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 - `docs/design/model-catalog.md`
 - `docs/design/audit-log.md`
 - `docs/design/coding-agent-capability-matrix.md`
-- `docs/design/codex-capability-matrix.md`

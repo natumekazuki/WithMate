@@ -188,6 +188,17 @@ function readSessionBlobIds(db: DatabaseSync, sessionId: string): string[] {
 }
 
 describe("SessionStorageV3", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V3 Session一覧は指定ID内の軽量summaryだけを返す"
+  // oracle = { type = "contract", ref = "src-electron/session/session-storage-v3.ts: listSessionSummaryPage" }
+  // fault = "指定ID外のSessionや本文・provider詳細を一覧へ混ぜる"
+  // observable = "返されたSession IDとsummaryのfield"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy V3 session summary"
+  // lifecycle = "characterization"
+  // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
+  // @end-test-value
   it("listSessionSummaryPage は Home 用の bounded projection だけを返す", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -239,6 +250,17 @@ describe("SessionStorageV3", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V3 Sessionのprovider別最新summaryは旧provider表記を正規化して一件を返す"
+  // oracle = { type = "contract", ref = "src-electron/session/session-storage-v3.ts: getLatestSessionSummaryForProvider" }
+  // fault = "旧provider値を別provider扱いするか最新でないSessionを返す"
+  // observable = "provider別取得結果のIDとprovider"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy V3 provider summary"
+  // lifecycle = "characterization"
+  // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
+  // @end-test-value
   it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -379,7 +401,7 @@ describe("SessionStorageV3", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "V3 sessionのraw message textとartifact detailはSQLite text columnへ保存せずblob storeから復元する"
-  // oracle = { type = "contract", ref = "docs/design/database-v3-blob-storage.md" }
+  // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v3.ts: V3 message blob columns; src-electron/session/session-storage-v3.ts: SessionStorageV3 readback" }
   // fault = "raw messageまたはartifact payloadをSQLite text columnへ書き込み、blob復元経路を迂回する"
   // observable = "再読込したmessage/artifact値とSQLite text values内のsentinel不在"
   // observation_boundary = "public-boundary"
@@ -482,6 +504,17 @@ describe("SessionStorageV3", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V3の大きなartifactはpreviewを制限しfull detailをblobに保持する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-storage-v3.ts: upsertSession" }
+  // fault = "preview上限を超えるかfull detailを失う"
+  // observable = "SQLite preview長と取得したfull artifact"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy V3 artifact storage"
+  // lifecycle = "characterization"
+  // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
+  // @end-test-value
   it("large artifact summary は DB 上限内に丸めつつ full artifact blob を保持する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -524,6 +557,17 @@ describe("SessionStorageV3", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V3 Sessionのsummaryを再保存しても既存のfull artifactは保持される"
+  // oracle = { type = "contract", ref = "src-electron/session/session-storage-v3.ts: upsertSession" }
+  // fault = "summaryで既存blobを上書きしてartifact detailを失う"
+  // observable = "再取得したartifact detail"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy V3 artifact rewrite"
+  // lifecycle = "characterization"
+  // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
+  // @end-test-value
   it("summary artifact を含む session rewrite でも既存 full artifact blob を保持する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -574,6 +618,17 @@ describe("SessionStorageV3", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V3 Session保存のDB失敗時は未参照blob fileを残さない"
+  // oracle = { type = "contract", ref = "src-electron/session/session-storage-v3.ts: upsertSession" }
+  // fault = "transaction失敗後にorphan blob fileを残す"
+  // observable = "失敗後のblob file一覧とDB row"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy V3 failed write cleanup"
+  // lifecycle = "characterization"
+  // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
+  // @end-test-value
   it("DB transaction が失敗した場合は永続化されなかった blob file を cleanup する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -622,6 +677,17 @@ describe("SessionStorageV3", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V3 Sessionの削除では参照を失ったblob fileとrowを消す"
+  // oracle = { type = "contract", ref = "src-electron/session/session-storage-v3.ts: deleteSession, clearSessions" }
+  // fault = "Session削除後に不要なblobを残すか共有blobを消す"
+  // observable = "削除前後のblob fileとblob_objects row"
+  // observation_boundary = "public-boundary"
+  // scope = "legacy V3 delete cleanup"
+  // lifecycle = "characterization"
+  // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
+  // @end-test-value
   it("deleteSession / clearSessions は未参照になった blob file と blob_objects row を消す", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);

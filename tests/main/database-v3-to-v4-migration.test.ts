@@ -311,7 +311,7 @@ describe("migrate-database-v3-to-v4", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "旧V3任意列が不足していてもV3からV4へのwriteはsource DBを変更しない"
-  // oracle = { type = "contract", ref = "docs/design/database-schema.md:108" }
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
   // fault = "V3 sourceの不足列を補うためALTER TABLEやWAL設定を実行し、sourceのschema・rows・bytesを変更する"
   // observable = "migration前後のsource DB raw bytes、schema、rows、journal mode"
   // observation_boundary = "public-boundary"

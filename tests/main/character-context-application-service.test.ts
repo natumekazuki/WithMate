@@ -416,17 +416,17 @@ describe("CharacterContextApplicationService", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "afterglow projectionは公開schemaを保ち内部source情報を除外する"
-  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
-  // fault = "private source情報がcontextやmetricsへ漏れる"
-  // observable = "context, MCP, CLI output"
+  // claim = "serviceの各transport向けcontextは同じafterglow effectiveを返し、contextとmetricsにsource詳細を含めない"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#decision" }
+  // fault = "transport間でafterglow effectiveが異なるか、contextとmetricsにsource詳細が混入する"
+  // observable = "service.getContextのinternal/MCP/CLI effectiveとJSON、service.getMetrics JSON"
   // observation_boundary = "public-boundary"
   // scope = "character-context-application-service"
   // lifecycle = "permanent"
   // impact = "公開projectionのprivacy"
-  // distinction = "CharacterContextApplicationServiceのgetContext/getMetrics公開projectionを実呼出しで確認する"
+  // distinction = "MCP/CLI transport serializerではなく、serviceのgetContext/getMetrics projectionを確認する"
   // @end-test-value
-  it("afterglowをpublic context・MCP・CLIへ同じschemaで投影し、source情報をmetricsへ出さない", async () => {
+  it("afterglow effectiveをserviceのinternal・MCP・CLIで揃え、source情報をcontextとmetricsへ出さない", async () => {
     const fixture = createFixture();
     try {
       const sourceStorage = new CharacterAffectStorage(fixture.dbPath, {
@@ -466,8 +466,9 @@ describe("CharacterContextApplicationService", () => {
       assert.deepEqual(mcp.affect.effective, internal.affect.effective);
       assert.deepEqual(cli.affect.effective, internal.affect.effective);
       assert.equal(internal.affect.effective.some((component) => component.label === "public-afterglow"), true);
-      const publicJson = JSON.stringify(internal);
-      assert.doesNotMatch(publicJson, /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|sourceSessionId|session-b/);
+      for (const context of [internal, mcp, cli]) {
+        assert.doesNotMatch(JSON.stringify(context), /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|sourceSessionId|session-b/);
+      }
       const metricsJson = JSON.stringify(await fixture.service.getMetrics());
       assert.doesNotMatch(metricsJson, /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|private-target|session-b|sourceSessionId/);
       assert.equal("eventIds" in internal.affect.effective[0]!, false);
@@ -480,7 +481,7 @@ describe("CharacterContextApplicationService", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "stale versionと不正scope targetを拒否する"
-  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#decision" }
   // fault = "古いversionの書込み、不正relationship target、未知scopeの読取りを受理するかversion拒否を集計しない"
   // observable = "appraiseのversion_conflict/invalid_input、getContextのunknown_scope、versionRejections集計"
   // observation_boundary = "public-boundary"
@@ -824,9 +825,9 @@ describe("CharacterContextApplicationService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "CharacterContextApplicationServiceのoperation結果と拒否理由をpayloadなしでmetricsへ集計する"
-  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
-  // fault = "private payloadをmetricsへ保存する"
+  // claim = "CharacterContextApplicationServiceはoperation結果と拒否理由を集計し、検証したtarget/idempotency値をmetricsへ含めない"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#decision" }
+  // fault = "結果や拒否理由を集計しないか、検証したtarget/idempotency値をmetricsへ混入する"
   // observable = "service.getMetrics() response"
   // observation_boundary = "public-boundary"
   // scope = "character-context-application-service"
@@ -834,7 +835,7 @@ describe("CharacterContextApplicationService", () => {
   // impact = "diagnostic privacy"
   // distinction = "MCP/CLI transport routeではなく、実サービスのrecordFallbackとoperation metrics境界を確認する"
   // @end-test-value
-  it("transport別結果、拒否理由、replay、fallbackを内容なしで集計する", async () => {
+  it("MCPの結果・拒否理由とfallbackを識別子なしで集計する", async () => {
     const fixture = createFixture();
     try {
       await fixture.service.appraise({
@@ -903,7 +904,7 @@ describe("CharacterContextApplicationService", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Affect保存後のepisode失敗をpartial failureとして返し、同一request replayでもprivate payloadをmetricsへ出さない"
-  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#decision" }
   // fault = "partial failureを成功レスポンスへ偽装する"
   // observable = "初回・同一request replayのappraise resultとservice.getMetrics()"
   // observation_boundary = "public-boundary"

@@ -34,5 +34,4 @@ turn開始時は対象Sessionのuser message、running状態、必要なsnapshot
 
 ## 関連文書
 
-- [Data Loading Performance Audit](../design/data-loading-performance-audit.md)
 - [Electron Session Store](../design/electron-session-store.md)

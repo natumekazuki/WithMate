@@ -325,7 +325,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "security"
   // claim = "session bindingのtarget inventoryは未許可Projectをpaginationとcursor生成より前に除外する"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-PROJECT-ADMISSION" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#target-selection" }
   // fault = "未許可Projectがpageを消費するかcursorへ混入する"
   // observable = "許可済みProjectだけのinventory pageとcursor"
   // observation_boundary = "public-boundary"
@@ -579,7 +579,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "file付きappendは未実装契約を検証後に返し、再送でもentryを作らない"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#api-contract-extensions" }
   // fault = "未実装のfile appendが成功扱いになりentryまたはfile metadataを永続化する"
   // observable = "初回と同一idempotency keyの再送のerror code/fieldとtarget内entry検索結果"
   // observation_boundary = "public-boundary"
@@ -621,7 +621,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "file付きappendはimporter metadataを一度だけ登録し、同一keyの再送をreplayする"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#api-contract-extensions" }
   // fault = "replayで再度inspectしてfile usageを二重計上する、またはcanonical entryと異なるentry IDへprepareする"
   // observable = "append/replayのentry identity、inspect回数、prepare entry ID、file usage"
   // observation_boundary = "public-boundary"
@@ -716,7 +716,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "同じidempotency keyの同時file appendはcanonical entryを一件だけ確定しreplay側objectを破棄する"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE-RETRY" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#failure-policy" }
   // fault = "並行replay側のprepared objectをcleanupせず孤立させる、またはentry/file usageを二重化する"
   // observable = "二つのresponseのentry ID/replayed状態、discard object数、file usage"
   // observation_boundary = "public-boundary"
@@ -796,7 +796,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "並行file appendのcleanup成功と失敗が混在しても未完了cleanupをpartialとして永続化しretryへ伝える"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE-RETRY" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#failure-policy" }
   // fault = "cleanup成功が失敗分のpending countを消し、response loss後のretryを成功扱いにする"
   // observable = "partial error、cleanup_pending_count、再open replayのcleanupRequired、retry error"
   // observation_boundary = "public-boundary"
@@ -906,7 +906,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "security"
   // claim = "get-fileは明示targetに属するobjectだけをexporterへ渡し、target不一致をnot foundで拒否する"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#api-contract-extensions" }
   // fault = "別targetのobjectをexporterへ渡す、またはexport先とmetadataのentry identityを混同する"
   // observable = "exporter inputのentry/object/key/output pathとtarget mismatchのerror code"
   // observation_boundary = "public-boundary"
@@ -990,7 +990,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "file付きappendはimporterの入力検証エラーをdomain errorへ投影しentryを作らない"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#api-contract-extensions" }
   // fault = "読めないfile pathを内部例外または成功へ変換し、空のentryを永続化する"
   // observable = "error code/field/messageとtarget内entry検索結果"
   // observation_boundary = "public-boundary"
@@ -1035,7 +1035,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "file付きappendのprepare失敗はdomain errorになりentryを作らない"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#api-contract-extensions" }
   // fault = "protected object prepareの例外を成功または未分類例外へ流し、部分entryを残す"
   // observable = "error code/fieldとtarget内entry検索結果"
   // observation_boundary = "public-boundary"
@@ -1152,17 +1152,17 @@ describe("MemoryV6Service", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "file付きappendのDB append失敗はprepared objectを破棄しentryを作らない"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
-  // fault = "DB commit failure後にprepared objectを残す、または失敗entryを検索可能にする"
-  // observable = "storage error code、discard object IDs、target内entry検索結果"
+  // claim = "file付きappendで存在しないsupersedesを指定した場合はprepared objectのcleanupを依頼しentryを作らない"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#failure-policy" }
+  // fault = "supersedes検証エラー後にprepared objectのcleanupを呼ばない、または失敗entryを検索可能にする"
+  // observable = "MEMORY_ENTRY_NOT_FOUND、discard object IDs、target内entry検索結果"
   // observation_boundary = "public-boundary"
-  // scope = "memory-v6-service.file-append-commit"
+  // scope = "memory-v6-service.file-append-validation"
   // lifecycle = "permanent"
-  // impact = "atomic append失敗で孤立したprotected objectを作らない"
-  // distinction = "DB失敗から外部object cleanupへのservice settlementを確認する"
+  // impact = "append失敗時に孤立するprotected objectをcleanup経路で抑制する"
+  // distinction = "supersedes検証失敗から外部object cleanupへのservice settlementを確認する"
   // @end-test-value
-  it("file付きappendはDB append失敗時に準備済みobjectを破棄する", async () => {
+  it("file付きappendは存在しないsupersedesの検証失敗時に準備済みobjectのcleanupを依頼する", async () => {
     const protectedObject = {
       objectId: "b".repeat(32),
       role: "evidence",
@@ -1213,17 +1213,17 @@ describe("MemoryV6Service", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "DB append失敗とcleanup失敗が重なる場合は元errorをdetailsへ保持したpartial errorを返す"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-EFFECT" }
+  // claim = "supersedes検証失敗とcleanup失敗が重なる場合は元errorをdetailsへ保持したpartial errorを返す"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#failure-policy" }
   // fault = "cleanup未完了を成功または元errorだけへ潰し、partial effectをconsumerへ伝えない"
   // observable = "cleanup error code/effectとdetails.originalCode"
   // observation_boundary = "public-boundary"
   // scope = "memory-v6-service.file-cleanup-settlement"
   // lifecycle = "permanent"
-  // impact = "orphan cleanupが未完了な事実と元のDB失敗を同時に回復経路へ渡す"
+  // impact = "orphan cleanupが未完了な事実と元の検証失敗を同時に回復経路へ渡す"
   // distinction = "二重失敗の公開error projectionを直接確認する"
   // @end-test-value
-  it("file付きappendのDB失敗後にcleanupも失敗した場合は元errorを保持したpartial errorを返す", async () => {
+  it("file付きappendのsupersedes検証失敗後にcleanupも失敗した場合は元errorを保持したpartial errorを返す", async () => {
     const protectedObject = {
       objectId: "9".repeat(32),
       role: "evidence",
@@ -1268,7 +1268,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "generic DB失敗とcleanup失敗が重なる場合はstorage errorを元errorとして保持したpartial errorを返す"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-EFFECT" }
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#決定" }
   // fault = "generic storage failureを隠す、またはcleanup失敗をpartialへ投影しない"
   // observable = "cleanup error code/effectとdetails.originalCode"
   // observation_boundary = "public-boundary"
@@ -1326,7 +1326,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "prepare途中失敗とcleanup失敗が重なる場合は元のimport errorを保持したpartial errorを返す"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-EFFECT" }
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#決定" }
   // fault = "先行prepared objectのcleanup失敗を成功または単一import errorへ投影する"
   // observable = "cleanup error code/effectとdetails.originalCode"
   // observation_boundary = "public-boundary"
@@ -1387,7 +1387,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "file付きappendのinspectは並列化されてもprepareは一件ずつ実行され、同時encryptを発生させない"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#api-contract-extensions" }
   // fault = "複数fileを並行prepareしてresource concurrencyを一時に超える"
   // observable = "append成功時のfile countと観測した最大inspect/prepare concurrency"
   // observation_boundary = "component-behavior"
@@ -1465,7 +1465,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "export-filesは明示targetのentryに属するactive objectsをまとめてexporterへ渡す"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#api-contract-extensions" }
   // fault = "inactive/別entryのobjectを含める、対象外targetをexportする、またはmetadataを欠落させる"
   // observable = "export responseのentry/output/count/object IDsとexporter input metadata"
   // observation_boundary = "public-boundary"
@@ -1763,7 +1763,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "path read/search、dry-run、失敗append/move/forgetはProject scopeを作らず、成功append/moveだけがscopeを作る"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-PROJECT-ADMISSION" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#target-selection" }
   // fault = "effectなしのproject操作がscopeを永続化するか成功mutationがscopeを作らない"
   // observable = "path operation responses and project scope count"
   // observation_boundary = "component-behavior"
@@ -1946,7 +1946,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "list-tagsはlimitとcursorでbounded response pageを返す"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-TAG-PAGE" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memorylist_tags" }
   // fault = "response page上限またはcursor継続を壊す"
   // observable = "tag page and cursor"
   // observation_boundary = "public-boundary"
@@ -2000,7 +2000,7 @@ describe("MemoryV6Service", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "forgetはsourceMessageIdをidempotencyとauditへ保持する"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FORGET-SOURCE" }
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memoryforget" }
   // fault = "retry識別子またはmutation auditが欠落する"
   // observable = "forget result and audit"
   // observation_boundary = "component-behavior"
@@ -2050,14 +2050,14 @@ describe("MemoryV6Service", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "forget dry-runはMemory entryとresponseを変更せず、move/retarget/replayを同一契約へ収束する"
-  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FORGET-SOURCE" }
-  // fault = "dry-runでMemory entryまたはresponseを変更する"
+  // claim = "forget dry-runは書込みなしでpreviewを返し、move/retarget/replayは明示targetとidempotencyへ収束する"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memoryforget; docs/design/v6-memory-foundation.md#memorymove_entry" }
+  // fault = "dry-runでMemory entryを変更するか、move後のtargetまたはretry結果がずれる"
   // observable = "dry-run response、move後のtarget、retarget replayのresponseとMemory entry state"
   // observation_boundary = "public-boundary"
   // scope = "memory-v6-service"
   // lifecycle = "permanent"
-  // impact = "safe maintenance mutations"
+  // impact = "dry-runによる誤変更とmove retryの二重mutationを防ぐ"
   // distinction = "forget dry-run、move retarget、idempotent replayを同一service経路で確認する"
   // @end-test-value
   it("forget dry-runはpreviewだけを返し、move-entryは明示target間でretargetしてretry収束する", async () => {
