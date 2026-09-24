@@ -345,6 +345,8 @@ type MountedSessionMessageColumn = {
     onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
     onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
     messages?: Message[];
+    isRunning?: boolean;
+    liveRunAssistantText?: string;
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
     pendingMessageGroupId?: string | null;
@@ -363,6 +365,7 @@ async function mountSessionMessageColumn(options: {
   isContentActive?: boolean;
   component?: ComponentType<SessionMessageColumnProps>;
   isRunning?: boolean;
+  liveRunAssistantText?: string;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
   messageKeys?: SessionMessageColumnProps["messageKeys"];
   messageCollapseTargets?: SessionMessageColumnProps["messageCollapseTargets"];
@@ -530,6 +533,8 @@ async function mountSessionMessageColumn(options: {
     onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
     onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
     messages?: Message[];
+    isRunning?: boolean;
+    liveRunAssistantText?: string;
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
     pendingMessageGroupId?: string | null;
@@ -549,13 +554,13 @@ async function mountSessionMessageColumn(options: {
           messageJumpRequest: callbacks.messageJumpRequest ?? options.messageJumpRequest,
           expandedArtifacts,
           messageListRef,
-          isRunning: options.isRunning ?? false,
+          isRunning: callbacks.isRunning ?? options.isRunning ?? false,
           liveApprovalRequest: null,
           approvalActionRequestId: null,
           liveElicitationRequest: null,
           elicitationActionRequestId: null,
-          liveRunAssistantText: "",
-          hasLiveRunAssistantText: false,
+          liveRunAssistantText: callbacks.liveRunAssistantText ?? options.liveRunAssistantText ?? "",
+          hasLiveRunAssistantText: !!(callbacks.liveRunAssistantText ?? options.liveRunAssistantText),
           liveRunErrorMessage: "",
           pendingMessageText: callbacks.pendingMessageText ?? options.pendingMessageText,
           pendingMessageTextVisible: callbacks.pendingMessageTextVisible ?? options.pendingMessageTextVisible,
@@ -2142,15 +2147,15 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
 
 // @test-value v2
 // kind = "contract"
-// claim = "投影済みの実行中assistant本文を通常message rowに保ち、run終了前はその後に処理中bubbleを示す"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: pending中のlive activity / streaming response" }
-// fault = "streaming本文がpending行へ重複する、または本文開始後に実行状態が会話末尾から消える"
-// observable = "assistant本文、pending bubble、bottom anchorのDOM順と本文の出現回数"
+// claim = "投影済みの実行中assistant本文と処理中bubbleを同じレスポンス枠に表示する"
+// oracle = { type = "contract", ref = "Issue #742: 完了条件; docs/design/desktop-ui.md: pending中のlive activity / streaming response" }
+// fault = "streaming本文と処理中bubbleが別のassistant行に分かれ、avatarと本文を重複して見せる"
+// observable = "assistant本文を持つmessage row内の処理中bubble、avatar、本文の出現回数"
 // observation_boundary = "component-behavior"
-// scope = "session-message-streaming-tail"
+// scope = "session-message-streaming-response"
 // lifecycle = "permanent"
-// impact = "返答を読みながら処理継続中であることを判断できなくなる"
-// distinction = "本文とrun状態を異なる行に保持するprojection済みstreaming局面を確認する"
+// impact = "返答と処理状態の所属が分からず、別の応答が始まったように誤認する"
+// distinction = "内容未到着の応答枠を確認するtestと異なり、本文投影後の同一枠を確認する"
 // @end-test-value
 test("SessionMessageColumn は projection 済みの実行中 assistant text と末尾の処理中bubbleを表示する", () => {
   const html = renderSessionMessageColumn({
@@ -2162,8 +2167,14 @@ test("SessionMessageColumn は projection 済みの実行中 assistant text と�
     liveRunAssistantText: "ストリーミング中の返答",
   });
 
-  assert.match(html, /pending-row/);
-  assert.match(html, /ストリーミング中の返答/);
+  const document = new JSDOM(html).window.document;
+  const responseBody = [...document.querySelectorAll("[data-message-body='true']")]
+    .find((body) => body.textContent?.includes("ストリーミング中の返答"));
+  const responseRow = responseBody?.closest(".message-row.assistant");
+  assert.ok(responseRow);
+  assert.equal(responseRow.querySelectorAll(".message-avatar").length, 1);
+  assert.equal(responseRow.querySelectorAll(".pending-run-indicator").length, 1);
+  assert.equal(document.querySelectorAll(".pending-row").length, 0);
   assert.equal((html.match(/ストリーミング中の返答/g) ?? []).length, 1);
   assert.ok(
     html.indexOf("message 100") < html.indexOf("ストリーミング中の返答"),
@@ -2173,8 +2184,49 @@ test("SessionMessageColumn は projection 済みの実行中 assistant text と�
     html.indexOf("ストリーミング中の返答") < html.indexOf("message-list-bottom-anchor"),
     "projection 済みの live assistant text は bottom anchor より前に描画する",
   );
-  assert.ok(html.indexOf("ストリーミング中の返答") < html.indexOf("pending-row"));
-  assert.ok(html.indexOf("pending-row") < html.indexOf("message-list-bottom-anchor"));
+  assert.ok(html.indexOf("ストリーミング中の返答") < html.indexOf("pending-run-indicator"));
+  assert.ok(html.indexOf("pending-run-indicator") < html.indexOf("message-list-bottom-anchor"));
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "streaming応答は実行終了時に本文を一度だけ表示し、処理中状態を残さない"
+// oracle = { type = "contract", ref = "Issue #742: 完了条件" }
+// fault = "run終了後も処理中bubbleが残るか、live本文と保存済み本文が二重に表示される"
+// observable = "実行終了を示すisRunning=falseへ再描画したmessage rowの本文出現回数と処理中indicator数"
+// observation_boundary = "component-behavior"
+// scope = "session-message-streaming-terminal-transition"
+// lifecycle = "permanent"
+// impact = "利用者が応答終了を判断できず、同じ返答を別のメッセージと誤認する"
+// distinction = "実行中の同一枠を確認するtestと異なり、同じmounted componentの共通終端表示を確認する。provider別の終端経路は対象外"
+// @end-test-value
+test("SessionMessageColumn は streaming から各終端へ移ると処理中表示を消す", async () => {
+  for (const { terminal, text: finalText } of [
+    { terminal: "completed", text: "完了した返答" },
+    { terminal: "failed", text: "途中までの返答" },
+    { terminal: "canceled", text: "途中までの返答" },
+  ]) {
+    const userMessage: Message = { role: "user", text: "依頼" };
+    const mounted = await mountSessionMessageColumn({
+      messages: [userMessage, { role: "assistant", text: "途中までの返答" }],
+      isRunning: true,
+      liveRunAssistantText: "途中までの返答",
+    });
+    try {
+      assert.equal(mounted.container.querySelectorAll(".pending-run-indicator").length, 1, terminal);
+      await mounted.rerender({
+        messages: [userMessage, { role: "assistant", text: finalText }],
+        isRunning: false,
+        liveRunAssistantText: "",
+      });
+      assert.equal(mounted.container.querySelectorAll(".pending-run-indicator").length, 0, terminal);
+      assert.equal(mounted.container.querySelectorAll(".pending-row").length, 0, terminal);
+      assert.equal(mounted.container.querySelectorAll(".message-row.assistant").length, 1, terminal);
+      assert.equal((mounted.container.textContent?.match(new RegExp(finalText, "g")) ?? []).length, 1, terminal);
+    } finally {
+      await mounted.cleanup();
+    }
+  }
 });
 
 // @test-value v2
@@ -2187,7 +2239,7 @@ test("SessionMessageColumn は projection 済みの実行中 assistant text と�
 // scope = "session-message-empty-running-tail"
 // lifecycle = "permanent"
 // impact = "送信直後に処理が開始されたか分からず、応答待ちの状態を見失う"
-// distinction = "本文やrequestを持つpending rowの既存testと異なり、run開始直後の空状態を確認する"
+// distinction = "本文やrequestを持つ応答枠のtestと異なり、run開始直後の空状態を確認する"
 // @end-test-value
 test("SessionMessageColumn は内容未到着でも末尾に処理中bubbleを描画する", () => {
   const html = renderSessionMessageColumn({
@@ -2196,9 +2248,10 @@ test("SessionMessageColumn は内容未到着でも末尾に処理中bubbleを�
     pendingRunIndicatorAnnouncement: "Preparing a response",
   });
 
-  assert.match(html, /pending-message-card is-indicator-only/);
+  assert.match(html, /pending-message-card/);
   assert.match(html, /typing-dots pending-run-indicator-dots/);
   assert.match(html, /role="status"[^>]*>Preparing a response<\/span>/);
+  assert.equal(new JSDOM(html).window.document.querySelectorAll(".pending-row .message-avatar").length, 1);
   assert.ok(html.indexOf("message 1") < html.indexOf("pending-row"));
   assert.ok(html.indexOf("pending-row") < html.indexOf("message-list-bottom-anchor"));
 });
@@ -2221,9 +2274,9 @@ test("SessionMessageColumn は pending message text があれば実行開始直�
 // @test-value v2
 // kind = "contract"
 // claim = "pending message textのconsumer可視性だけを切り替え、built-in待機文を省略しても処理中bubble・custom text・approval・error・実本文を保持する"
-// oracle = { type = "contract", ref = "src/chat/conversation/session-message-column.tsx: pendingMessageTextVisible" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: pending中のlive activity / streaming response" }
 // fault = "built-in待機文を本文へ表示する、custom textを隠す、または同じrunのbubble/approval/error/live assistant textまで消す"
-// observable = "pending rowと本文textの独立した有無、approval/error/live assistant textのDOM"
+// observable = "応答枠と本文textの独立した有無、approval/error/live assistant textのDOM"
 // observation_boundary = "component-behavior"
 // scope = "session-message-pending-text-visibility"
 // lifecycle = "permanent"
@@ -2285,9 +2338,9 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
   });
   assert.match(assistantHtml, /Live assistant response/);
   const assistantDocument = new JSDOM(assistantHtml).window.document;
-  assert.equal(assistantDocument.querySelector(".pending-row")?.textContent?.includes("Live assistant response"), false);
-  assert.ok([...assistantDocument.querySelectorAll(".message-row:not(.pending-row)")]
-    .some((row) => row.textContent?.includes("Live assistant response")));
+  assert.equal(assistantDocument.querySelectorAll(".pending-row").length, 0);
+  assert.ok([...assistantDocument.querySelectorAll(".message-row.assistant")]
+    .some((row) => row.textContent?.includes("Live assistant response") && row.querySelector(".pending-run-indicator")));
   assert.doesNotMatch(assistantHtml, /Preparing a response/);
 });
 
@@ -2317,6 +2370,44 @@ test("SessionMessageColumn は Auxiliary 実行中の pending row を group 内�
     html.indexOf("応答を準備しています") < html.indexOf("later main response"),
     "pending row は後続 main message より前の Auxiliary group 内に描画する",
   );
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryのstreaming応答も対象groupのassistant枠内に処理中状態を置く"
+// oracle = { type = "contract", ref = "Issue #742: 完了条件; docs/design/desktop-ui.md: pending中のlive activity / streaming response" }
+// fault = "group末尾へ別のassistant行を足すか、後続Main応答へ処理中状態を付ける"
+// observable = "Auxiliary応答枠と後続Main応答枠の処理中indicator数、独立pending行数"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-streaming-response-group"
+// lifecycle = "permanent"
+// impact = "処理中の対象会話を取り違え、別のassistant応答が始まったように見える"
+// distinction = "Mainのstreaming応答testと異なり、group後に別のMain応答がある配置を確認する"
+// @end-test-value
+test("SessionMessageColumn は Auxiliary の実行中応答内に処理中bubbleを置く", () => {
+  const html = renderSessionMessageColumn({
+    messages: [
+      { role: "user", text: "aux prompt", accent: true },
+      { role: "assistant", text: "aux streaming", accent: true },
+      { role: "assistant", text: "later main response" },
+    ],
+    messageGroups: [
+      { id: "aux-1", label: "Auxiliary" },
+      { id: "aux-1", label: "Auxiliary" },
+      null,
+    ],
+    isRunning: true,
+    liveRunAssistantText: "aux streaming",
+    pendingMessageGroupId: "aux-1",
+  });
+  const document = new JSDOM(html).window.document;
+  const auxiliaryResponse = [...document.querySelectorAll(".message-row.assistant")]
+    .find((row) => row.textContent?.includes("aux streaming"));
+  const mainResponse = [...document.querySelectorAll(".message-row.assistant")]
+    .find((row) => row.textContent?.includes("later main response"));
+  assert.equal(auxiliaryResponse?.querySelectorAll(".pending-run-indicator").length, 1);
+  assert.equal(mainResponse?.querySelectorAll(".pending-run-indicator").length, 0);
+  assert.equal(document.querySelectorAll(".pending-row").length, 0);
 });
 
 test("SessionMessageColumn は pending 対象の Auxiliary group が window 外なら末尾に fallback 描画する", () => {

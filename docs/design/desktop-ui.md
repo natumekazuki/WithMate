@@ -309,7 +309,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - `selectedSession.id` 切替時は follow / unread state をリセットする
   - `Jump to latest` で末尾へ移動して追従へ復帰できる
 - pending 中の live activity / streaming response
-- streamingの`assistantText`は会話本文として表示する。run開始直後からmessage list末尾にCharacter avatarとdot bubbleを置き、本文の到着後もrun中は維持する。同じrunの既定待機文を会話本文へ重ねない
+- streamingの`assistantText`は会話本文として表示する。run開始直後から応答用のassistant行にCharacter avatarとdot bubbleを置き、本文の到着後は同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
 - pending bubble には provider-native pending item を差し込める
   - `approvalRequest`: `Allow Once / Reject`
   - `elicitationRequest`: form の `Submit` または URL completion の `Complete` と、`Reject / Close`
@@ -333,7 +333,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Copilot Usage` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
-- message list末尾のdot bubbleは `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後もrun中は維持する
+- 応答内のdot bubbleは `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後もrun中は維持する
 - 未選択のMain / Auxiliaryが実行中の場合は、そのtarget切替buttonに局所spinnerと対象付きaccessible nameを示す。選択中targetではmessage listの末尾行へ集約し、他のAuxiliaryは一覧の既存processing indicatorで識別する
 - 実行中bubbleは `runState !== "running"` になった時点で消し、success固定の完了表現にはしない
 - `assistantText`未着でもright paneの `Latest Command` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、末尾のdot bubbleとaccessible statusで待機を示す
@@ -369,7 +369,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - approval chip は `Auto Run / Provider Controlled / Safety Focused`
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`
-- assistant本文は装飾cardやgradientで囲まず、`main`の細い左線とavatarの縁でCharacterを示す。user本文は控えめなsurfaceで区別し、pendingとAuxiliary groupの状態表現は維持する
+- assistant本文はgradientを使わず、`main`の細い左線とavatarの縁、控えめな背景色で周囲から区別する。user本文は控えめなsurfaceで区別し、pendingとAuxiliary groupの状態表現は維持する
 - composer settings は独立したaccent背景を持たず、周囲のsurfaceと同じ背景を使う
 - `Send / Cancel` は mate `main`
 - sendability 判定は共通resolverへ寄せ、Composer内の購読と送信shortcutで最新draft・preview・強制feedback条件を使う。入力のたびにSession shellを更新せず、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う
