@@ -2,6 +2,11 @@ import { readStylesheet } from "../support/read-stylesheet.js";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { JSDOM } from "jsdom";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 
 function readCssRule(stylesSource: string, selector: string): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -35,6 +40,40 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
   }
   return blocks;
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Homeと独立MonitorのRunning／Stopped領域は、件数や空状態に依存せず同じ高さの2行を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "片側が空の時にsectionを縮める、見出しを下へずらす、またはloading indicatorで2領域の高さを変える"
+// observable = "描画した2 sectionの親子関係、等分rowとsection内配置とloading overlayのCSS"
+// observation_boundary = "implementation"
+// scope = "HomeMonitorContentとhome.cssのMonitor専用layout"
+// lifecycle = "permanent"
+// impact = "Session Windowの開閉や片側0件のときにもMonitor領域が跳ねず、両状態を同じ面積で確認できる"
+// distinction = "手動の実描画確認とは別に、5:5を破るCSS・DOM構造の変更を自動検出する"
+// @end-test-value
+test("MonitorのRunning／Stopped領域は空状態と読込状態でも等分する", async () => {
+  const stylesSource = await readStylesheet();
+  const html = renderToStaticMarkup(createElement(HomeMonitorContent, {
+    runningEntries: [],
+    nonRunningEntries: [],
+    auxiliaryDataState: "loading",
+    onOpenSession: () => {},
+    onShowContextMenu: () => {},
+  }));
+  const document = new JSDOM(html).window.document;
+  const sections = document.querySelector(".home-monitor-sections");
+
+  assert.deepEqual(
+    [...(sections?.children ?? [])].map((section) => section.getAttribute("aria-labelledby")),
+    ["home-monitor-running", "home-monitor-inactive"],
+  );
+  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-sections"), /grid-template-rows:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/);
+  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-sections > .home-monitor-section"), /display:\s*flex;\s*flex-direction:\s*column;/);
+  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-body > .home-session-list-load-status"), /position:\s*absolute;/);
+  assert.doesNotMatch(stylesSource, /\.home-monitor-section\.is-empty/);
+});
 
 // @test-value v2
 // kind = "contract"

@@ -178,6 +178,7 @@ export default function HomeApp() {
   const sessions = sessionSummariesState.summaries;
   const [auxiliarySessionSummaries, setAuxiliarySessionSummaries] = useState<AuxiliarySessionSummary[]>([]);
   const [auxiliaryDataState, setAuxiliaryDataState] = useState<HomeMonitorAuxiliaryDataState>("loading");
+  const hasLoadedAuxiliarySessionSummariesRef = useRef(false);
   const [openSessionWindowIdsState, setOpenSessionWindowIdsState] = useState<OpenSessionWindowIdsState>({
     status: "loading",
     sessionIds: [],
@@ -697,8 +698,13 @@ export default function HomeApp() {
         );
       },
       onLoadState: (state) => {
-        setAuxiliaryDataState(state);
-        if (state === "loading" || state === "ready") {
+        if (state === "ready") {
+          hasLoadedAuxiliarySessionSummariesRef.current = true;
+        }
+        if (state !== "loading" || !hasLoadedAuxiliarySessionSummariesRef.current) {
+          setAuxiliaryDataState(state);
+        }
+        if (state === "ready" || (state === "loading" && !hasLoadedAuxiliarySessionSummariesRef.current)) {
           setAuxiliaryLoadFeedback("");
         }
       },
