@@ -285,16 +285,26 @@
   gap: 14px;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 
-.home-page .home-monitor-panel:not(.home-characters-panel) .home-monitor-section {
+.home-page .home-monitor-sections {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  min-height: 0;
+}
+
+.home-page .home-monitor-sections > .home-monitor-section {
   display: flex;
-  flex: 1 1 0;
   flex-direction: column;
 }
 
-.home-page .home-monitor-panel:not(.home-characters-panel) .home-monitor-section.is-empty {
-  flex: 0 0 auto;
+.home-page .home-monitor-body > .home-session-list-load-status {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 .home-page .home-characters-panel .home-monitor-section {

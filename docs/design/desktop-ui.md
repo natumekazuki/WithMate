@@ -90,7 +90,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - section
     - `Running`: `running`
     - `Stopped`: `interrupted` / `error` / `neutral` を含む non-running
-  - `Running` と `Stopped` の一覧はそれぞれ独立してスクロールする。両方に項目がある場合は表示領域を等分し、一方が空ならその見出しだけを残してもう一方へ領域を渡す
+  - `Running` と `Stopped` の一覧はそれぞれ独立してスクロールし、件数や空状態にかかわらず表示領域を等分する
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
