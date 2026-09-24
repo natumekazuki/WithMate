@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { JSDOM } from "jsdom";
-import React, { act, isValidElement, type ReactNode } from "react";
+import React, { act, isValidElement, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -742,6 +742,119 @@ describe("HomeLaunchDialog", () => {
 
   // @test-value v2
   // kind = "contract"
+  // claim = "New Sessionは入力中のwindow切替・paste・backdrop click・Escapeでは閉じず、Start不可でもvisibleなCancelから作成せず閉じて起点へfocusを戻す"
+  // oracle = { type = "contract", ref = "Issue #558 New Session dismiss acceptance criteria" }
+  // fault = "暗黙のdismissで入力が失われる、またはStart不可時にCancelで戻れずSession作成が呼ばれる"
+  // observable = "dialogと入力値の維持、Cancelの有効状態とsecondary表示、close/start callback回数、close後のactiveElement"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeLaunchDialog dismiss and focus flow"
+  // lifecycle = "permanent"
+  // impact = "他Windowからworkspace pathを持ち帰る途中の入力消失を防ぎ、作成不可時も安全にHomeへ戻れる"
+  // distinction = "静的markup検査と異なり、window event・暗黙dismiss・Cancel後のcallbackとfocusをmounted componentで確認する"
+  // @end-test-value
+  it("New Session は暗黙に閉じず、Cancel は作成せずに focus を戻す", async () => {
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+      pretendToBeVisual: true,
+    });
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+    Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
+    Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
+    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+
+    const rootElement = dom.window.document.getElementById("root");
+    assert.ok(rootElement);
+    const root = createRoot(rootElement);
+    let closeCount = 0;
+    let startCount = 0;
+
+    function LaunchHarness() {
+      const [open, setOpen] = useState(false);
+      const [workspacePathInput, setWorkspacePathInput] = useState("C:\\draft\\");
+      return (
+        <>
+          <button id="open-new-session" type="button" onClick={() => setOpen(true)}>New Session</button>
+          <HomeLaunchDialog
+            open={open}
+            title="Draft title"
+            sessionFolderSelected={false}
+            workspacePathInput={workspacePathInput}
+            workspaceValidation="invalid"
+            workspaceValidationMessage="Path not found."
+            enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
+            selectedLaunchProviderId="codex"
+            characterOptions={characterOptions}
+            selectedCharacterId="mia"
+            randomCharacterSelected={false}
+            charactersLoaded={true}
+            canStartSession={false}
+            launchFeedback=""
+            launchStarting={false}
+            onClose={() => { closeCount += 1; setOpen(false); }}
+            onChangeTitle={noOp}
+            onChangeWorkspacePath={setWorkspacePathInput}
+            onBrowseWorkspace={noOp}
+            onSelectSessionFolder={noOp}
+            onSelectProvider={noOp}
+            onSelectCharacter={noOp}
+            onSelectRandomCharacter={noOp}
+            onStartSession={() => { startCount += 1; }}
+          />
+        </>
+      );
+    }
+
+    try {
+      await act(async () => root.render(<LaunchHarness />));
+      const opener = rootElement.querySelector<HTMLButtonElement>("#open-new-session");
+      assert.ok(opener);
+      opener.focus();
+      await act(async () => opener.click());
+      await act(async () => new Promise<void>((resolve) => dom.window.setTimeout(resolve, 0)));
+
+      const dialog = rootElement.querySelector<HTMLElement>('[aria-label="New Session"]');
+      const workspace = rootElement.querySelector<HTMLInputElement>("#launch-workspace-path");
+      const title = rootElement.querySelector<HTMLInputElement>("#launch-session-title");
+      const cancel = Array.from(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+        .find((button) => button.textContent === "Cancel");
+      const start = Array.from(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+        .find((button) => button.textContent === "Start");
+      assert.ok(dialog && workspace && title && cancel && start);
+      assert.equal(dom.window.document.activeElement, title);
+      assert.equal(start.disabled, true);
+      assert.equal(cancel.disabled, false);
+      assert.ok(cancel.classList.contains("secondary"));
+
+      await act(async () => {
+        dom.window.dispatchEvent(new dom.window.Event("blur"));
+        dom.window.dispatchEvent(new dom.window.Event("focus"));
+        workspace.dispatchEvent(new dom.window.Event("paste", { bubbles: true }));
+        dialog.click();
+        workspace.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      assert.equal(closeCount, 0);
+      assert.equal(workspace.value, "C:\\draft\\");
+      assert.equal(title.value, "Draft title");
+      assert.ok(rootElement.querySelector('[aria-label="New Session"]'));
+
+      await act(async () => cancel.click());
+      assert.equal(closeCount, 1);
+      assert.equal(startCount, 0);
+      assert.equal(rootElement.querySelector('[aria-label="New Session"]'), null);
+      assert.equal(dom.window.document.activeElement, opener);
+    } finally {
+      await act(async () => root.unmount());
+      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "Homeの新規Sessionダイアログは開始操作とSession Folder選択を識別可能に表示する"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
   // fault = "開始ボタンのaccessible nameまたはworkspace選択肢を失いSessionを作成できない"
@@ -753,7 +866,7 @@ describe("HomeLaunchDialog", () => {
   it("新規作成導線は Session 専用である", () => {
     const html = renderHomeLaunchDialog();
 
-    assert.ok(html.includes("Start New Session"));
+    assert.match(html, /<button class="start-session-button"[^>]*>Start<\/button>/);
     assert.ok(html.includes('aria-label="New Session"'));
     assert.ok(html.includes("Coding Provider"));
     assert.ok(!html.includes("Agent Mode"));
@@ -899,7 +1012,7 @@ describe("HomeLaunchDialog", () => {
   // claim = "New sessionのProvider catalogは取得中・取得失敗・正常な有効provider 0件を別状態として表示し、未確定中は開始を無効化する"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
   // fault = "Provider catalogの取得中または失敗をNo enabled coding providersへ投影し、開始条件と実エラーを混同する"
-  // observable = "Provider pickerのspinner/aria-busy、実エラー、Start New Session disabled、No enabled coding providers.の相互排他"
+  // observable = "Provider pickerのspinner/aria-busy、実エラー、Start disabled、No enabled coding providers.の相互排他"
   // observation_boundary = "component-behavior"
   // scope = "HomeLaunchDialog provider catalog state"
   // lifecycle = "permanent"

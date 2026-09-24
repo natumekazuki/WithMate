@@ -73,6 +73,7 @@ export function HomeLaunchDialog({
     open,
     onClose,
     initialFocusRef: titleInputRef,
+    closeOnEscape: false,
   });
 
   if (!open) {
@@ -90,15 +91,18 @@ export function HomeLaunchDialog({
       onKeyDown={handleDialogKeyDown}
       ariaLabel="New Session"
       showDismissControl={false}
+      closeOnBackdropClick={false}
       dialogClassName="home-launch-dialog"
       footer={
         <LaunchDialogFooter
           feedback={launchStarting ? "" : launchFeedback}
-          startButtonLabel="Start New Session"
+          startButtonLabel="Start"
           startButtonDisabled={!canStartSession || !providerLoadReady || launchStarting}
           startButtonAriaDisabled={!canStartSession || !providerLoadReady || launchStarting}
           startButtonBusy={launchStarting}
           startButtonLoadingText="Starting session"
+          cancelButtonLabel="Cancel"
+          onCancel={onClose}
           onStart={onStartSession}
         />
       }

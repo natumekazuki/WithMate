@@ -6,6 +6,7 @@ type LaunchDialogShellProps = {
   onKeyDown: KeyboardEventHandler<HTMLElement>;
   ariaLabel?: string;
   showDismissControl?: boolean;
+  closeOnBackdropClick?: boolean;
   className?: string;
   dialogClassName?: string;
   children: ReactNode;
@@ -80,6 +81,7 @@ export function LaunchDialogShell({
   onKeyDown,
   ariaLabel,
   showDismissControl = true,
+  closeOnBackdropClick = true,
   className = "launch-modal",
   dialogClassName,
   children,
@@ -93,7 +95,7 @@ export function LaunchDialogShell({
   ].filter(Boolean).join(" ");
 
   return (
-    <div className={className} role="dialog" aria-modal="true" aria-label={ariaLabel} onClick={onClose}>
+    <div className={className} role="dialog" aria-modal="true" aria-label={ariaLabel} onClick={closeOnBackdropClick ? onClose : undefined}>
       <section
         ref={dialogRef}
         className={dialogClassNameValue}

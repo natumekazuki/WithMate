@@ -141,8 +141,9 @@ export function useDialogA11y<T extends HTMLElement>(options: {
   open: boolean;
   onClose: () => void;
   initialFocusRef?: RefObject<HTMLElement | null>;
+  closeOnEscape?: boolean;
 }) {
-  const { open, onClose, initialFocusRef } = options;
+  const { open, onClose, initialFocusRef, closeOnEscape = true } = options;
   const dialogRef = useRef<T | null>(null);
 
   useEffect(() => {
@@ -175,7 +176,9 @@ export function useDialogA11y<T extends HTMLElement>(options: {
   const handleDialogKeyDown = (event: ReactKeyboardEvent<T>) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      onClose();
+      if (closeOnEscape) {
+        onClose();
+      }
       return;
     }
 
