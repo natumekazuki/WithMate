@@ -140,7 +140,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Character selector は開くたびにランダムを初期選択する。明示選択したactive Characterはそのまま使い、Characterが0件の場合はneutral fallbackを使う。詳細はADR 004を参照する
   - HomeのCharacter一覧は初回とWindow再フォーカス時に再取得する。再取得に失敗した場合は保持済みの一覧を起動候補として使わず、Character selectorに取得失敗を示してSession作成を無効にする。取得成功後の0件だけneutral fallbackを使う
   - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
-  - open 時は dialog 内の最初の主要入力へ focus し、`Escape` で閉じる
+  - open 時は dialog 内の最初の主要入力へ focus する。Home の `New Session` は入力途中の意図しないdismissを避けるため、footerの`Cancel`で閉じ、backdrop clickや`Escape`では閉じない
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
   - provider の single-select chip は矢印キーで選択を移動できる
 - `Settings` button
@@ -295,7 +295,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - 中央 preview と同じ `SessionFilePreview` / `SessionDiffPreview` を使用し、Quote と Action Dock は表示しない
   - live Git Diff の `Open preview` は対象 file を通常 preview として開く。detached file preview から開いた live Git Diff と Changes から直接開いた detached live Git Diff は、左向き icon または `Open preview` で同じ Window の preview へ戻る。独立 File Preview、snapshot Diff、Character Editor の Window 自体は native window chrome で閉じ、重複する app 内 Close 操作を置かない
   - Character Editor が dirty な状態で native window chrome から閉じようとした場合は、編集内容を保持したまま in-app の破棄確認を表示する。キャンセルでは編集へ戻り、明示的に破棄した場合だけ Window を閉じる
-  - `New Session` dialog は backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
+  - `New Session` dialog はfooterの`Cancel`で作成せず閉じる。開始buttonがdisabledでも`Cancel`は使用でき、重複する常設 Close control は置かない
   - Auxiliary 起動 dialog と Audit Log overlay も backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
   - 破棄確認は単一の dialog surface に確認対象と操作を直接配置し、見出しと重複する補足文や装飾目的の card を置かない。破壊的操作は neutral なキャンセルと色・文言の両方で区別する
   - 同じ root-scoped resource は既存 Window を前面化し、異なる resource は複数 Window を開ける。navigation、認可、lifecycle の決定は ADR 020 を正本とする

@@ -1759,6 +1759,14 @@
   grid-template-rows: minmax(0, 1fr) auto;
 }
 
+.home-launch-dialog > .launch-dialog-foot {
+  gap: 10px;
+}
+
+.home-launch-dialog > .launch-dialog-foot .drawer-toggle {
+  width: auto;
+}
+
 .auxiliary-provider-dialog {
   width: min(560px, 100%);
 }
