@@ -12,6 +12,8 @@ V6 runtimeの正本は`<userData>/withmate-v6.db`である。旧DBをin-placeで
 
 V6 SQLiteのschema/bootstrap、通常保存、WAL maintenance、診断はstorage Workerが所有する。Mainはtyped commandを非同期に送り、任意SQLや同期SQLite接続をWorker境界へ追加しない。close／reset／reopenではgenerationを交換し、旧generationの遅延応答を新DBの書込みへ使わない。resetはユーザーデータの暗黙削除や、結果不明のcommitの自動再送を許可しない。
 
+Workerの応答はrequest IDとgenerationで照合し、不正な応答ではそのgenerationを失効させる。送信済みmutationのWorker喪失は結果不明として扱い、未送信のstructured clone失敗と読み取りcommandの失敗は結果不明にしない。許可されたdomain errorは型と詳細を復元し、診断eventはrequest単位でqueued／started／completedを対応付ける。CharacterとMateのfile処理はresourceごとに直列化し、無関係なDB commandを待たせない。shutdownは進行中のresource処理を待ち、新規requestを拒否する。
+
 V6 schemaは設定・catalog、Project scope、Main／Auxiliary Session、message、turn、Memory、Character Affectを分ける。Memoryの保存と権限は[V6 Memory Foundation](v6-memory-foundation.md)、Auxiliaryの会話・draft・summaryは[Auxiliary Session](auxiliary-session.md)に記す。
 
 `sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存V6行の列補完と、旧pending Affect settlementのowner解釈はschema更新で扱い、既存の本文やcorrelation fingerprintを変更しない。通常の保存と取消は[Session Run Lifecycle](session-run-lifecycle.md)に従う。

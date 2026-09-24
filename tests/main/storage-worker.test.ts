@@ -299,17 +299,17 @@ test("storage worker client settles structured clone failures without leaking pe
 
 // @test-value v2
 // kind = "contract"
-// claim = "読み取り要求の未許可commandはnot-executedとして返し、unknown outcomeを付けない"
+// claim = "fixture Workerが返す非mutation commandのerrorはnot-executedとして復元し、unknown outcomeを付けない"
 // oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
-// fault = "全てのWorker例外をunknown扱いして読み取りcallerへ誤った再実行禁止を伝える"
-// observable = "未許可commandのStorageWorkerRemoteErrorとoutcome"
+// fault = "全てのWorker例外をunknown扱いして非mutation callerへ誤った再実行禁止を伝える"
+// observable = "fixtureのcommand errorから復元したStorageWorkerRemoteErrorとoutcome"
 // observation_boundary = "public-boundary"
-// scope = "storage-worker-dispatch"
+// scope = "storage-worker-client remote error classification"
 // lifecycle = "permanent"
-// impact = "実行されていない読み取りの失敗を正確に分類する"
-// distinction = "entryのmutation分類は静的なdispatch確認だけでは検出できない"
+// impact = "結果不明の書込みと非mutation要求の失敗を区別する"
+// distinction = "実Worker dispatchではなく、clientが受け取る非mutation error frameの分類を確認する"
 // @end-test-value
-test("storage worker classifies non-mutation command failures as not-executed", async () => {
+test("storage worker client classifies fixture non-mutation errors as not-executed", async () => {
   const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
   try {
     await assert.rejects(

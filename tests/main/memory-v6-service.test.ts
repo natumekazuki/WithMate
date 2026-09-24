@@ -1152,17 +1152,17 @@ describe("MemoryV6Service", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "file付きappendのDB append失敗はprepared objectを破棄しentryを作らない"
-  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#api-contract-extensions" }
-  // fault = "DB commit failure後にprepared objectを残す、または失敗entryを検索可能にする"
-  // observable = "storage error code、discard object IDs、target内entry検索結果"
+  // claim = "file付きappendで存在しないsupersedesを指定した場合はprepared objectのcleanupを依頼しentryを作らない"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#failure-policy" }
+  // fault = "supersedes検証エラー後にprepared objectのcleanupを呼ばない、または失敗entryを検索可能にする"
+  // observable = "MEMORY_ENTRY_NOT_FOUND、discard object IDs、target内entry検索結果"
   // observation_boundary = "public-boundary"
-  // scope = "memory-v6-service.file-append-commit"
+  // scope = "memory-v6-service.file-append-validation"
   // lifecycle = "permanent"
-  // impact = "atomic append失敗で孤立したprotected objectを作らない"
-  // distinction = "DB失敗から外部object cleanupへのservice settlementを確認する"
+  // impact = "append失敗時に孤立するprotected objectをcleanup経路で抑制する"
+  // distinction = "supersedes検証失敗から外部object cleanupへのservice settlementを確認する"
   // @end-test-value
-  it("file付きappendはDB append失敗時に準備済みobjectを破棄する", async () => {
+  it("file付きappendは存在しないsupersedesの検証失敗時に準備済みobjectのcleanupを依頼する", async () => {
     const protectedObject = {
       objectId: "b".repeat(32),
       role: "evidence",
@@ -1213,17 +1213,17 @@ describe("MemoryV6Service", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "DB append失敗とcleanup失敗が重なる場合は元errorをdetailsへ保持したpartial errorを返す"
-  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#決定" }
+  // claim = "supersedes検証失敗とcleanup失敗が重なる場合は元errorをdetailsへ保持したpartial errorを返す"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#failure-policy" }
   // fault = "cleanup未完了を成功または元errorだけへ潰し、partial effectをconsumerへ伝えない"
   // observable = "cleanup error code/effectとdetails.originalCode"
   // observation_boundary = "public-boundary"
   // scope = "memory-v6-service.file-cleanup-settlement"
   // lifecycle = "permanent"
-  // impact = "orphan cleanupが未完了な事実と元のDB失敗を同時に回復経路へ渡す"
+  // impact = "orphan cleanupが未完了な事実と元の検証失敗を同時に回復経路へ渡す"
   // distinction = "二重失敗の公開error projectionを直接確認する"
   // @end-test-value
-  it("file付きappendのDB失敗後にcleanupも失敗した場合は元errorを保持したpartial errorを返す", async () => {
+  it("file付きappendのsupersedes検証失敗後にcleanupも失敗した場合は元errorを保持したpartial errorを返す", async () => {
     const protectedObject = {
       objectId: "9".repeat(32),
       role: "evidence",
@@ -2050,14 +2050,14 @@ describe("MemoryV6Service", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "forget dry-runはMemory entryとresponseを変更せず、move/retarget/replayを同一契約へ収束する"
-  // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memoryforget" }
-  // fault = "dry-runでMemory entryまたはresponseを変更する"
+  // claim = "forget dry-runは書込みなしでpreviewを返し、move/retarget/replayは明示targetとidempotencyへ収束する"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memoryforget; docs/design/v6-memory-foundation.md#memorymove_entry" }
+  // fault = "dry-runでMemory entryを変更するか、move後のtargetまたはretry結果がずれる"
   // observable = "dry-run response、move後のtarget、retarget replayのresponseとMemory entry state"
   // observation_boundary = "public-boundary"
   // scope = "memory-v6-service"
   // lifecycle = "permanent"
-  // impact = "safe maintenance mutations"
+  // impact = "dry-runによる誤変更とmove retryの二重mutationを防ぐ"
   // distinction = "forget dry-run、move retarget、idempotent replayを同一service経路で確認する"
   // @end-test-value
   it("forget dry-runはpreviewだけを返し、move-entryは明示target間でretargetしてretry収束する", async () => {

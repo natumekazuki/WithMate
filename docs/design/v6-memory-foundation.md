@@ -387,11 +387,16 @@ type MemoryGetEntryResponse = {
 ```ts
 type MemoryListTagsResponse = {
   schemaVersion: "withmate-memory-v1";
-  tags: MemoryTag[];
+  tags: Array<MemoryTag & {
+    entryCount?: number;
+    latestUpdatedAt?: string;
+    samples?: Array<{ id: string; title: string }>;
+  }>;
+  nextCursor?: string;
 };
 ```
 
-- 明示targetで利用可能なactive tag catalogを返す。`withCounts`指定時はentry count、latest update、bounded sampleを同じresponseへ加える。
+- 明示targetで利用可能なactive tag catalogを返す。`limit`と`cursor`で結果を区切り、続きがあれば`nextCursor`を返す。`withCounts`指定時はentry count、latest update、bounded sampleを同じresponseへ加える。
 - search refinementとappend時のtag reuseに使う。
 
 ### Maintenance inventory / audit
@@ -631,6 +636,7 @@ project targetはcurrent working directoryから暗黙推定しない。
 appendはfirst releaseでは単一target必須とする。
 searchは単一targetを受け付ける。
 owner / scopeのallowlist、entry access、mutation permissionはapp service側で再検証する。
+Session bindingによるtarget inventoryの権限絞り込みはpaginationとcursor生成より前に行う。未許可targetはpageを消費せず、cursorにも含めない。
 
 WithMateが起動していない場合:
 
@@ -676,6 +682,7 @@ SQL正本は`src-electron/storage/database-schema-v6.ts`に置く。
 storage実装は`src-electron/memory/memory-v6-storage.ts`に置き、解決済みowner / scopeに対するinventory、query-free list、append、get、lexical/tag search、supersede、forget preview/mutation、retarget、tag catalog、mutation event、idempotencyを扱う。
 storage helper型とtarget SQL helperは`src-electron/memory/memory-v6-schema.ts`に置く。
 permission、project path / id解決、Character id解決はstorageへ入れず、application service層で扱う。
+project pathのread/searchとdry-run、失敗したmutationではscopeを作らず、成功したappend/moveで必要なscopeを作る。
 storageはvalidな`withmate-v6.db`だけを開き、legacy DB pathへV6 schemaを作らない。
 
 ## Application Service

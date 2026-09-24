@@ -407,6 +407,7 @@ UI は runtime API secret、key material、object file path、復号済み temp 
 - quota 超過は append 前に machine-readable error を返す。
 - input file missing / unreadable は append 全体を失敗させ、partial entry を作らない。
 - object write 成功後に import / DB transaction が失敗した場合、service は今回 prepare した object file を best-effort delete する。削除できず残った object は orphan として GC 対象にする。
+- prepare済みobjectのcleanupも失敗した場合は、元の失敗codeをdetailsへ保持したpartial errorを返す。
 - file 付き append の完了済み idempotent replay は import 前 replay preflight で再 import を避ける。
 - 同一 idempotency key の並列同時送信で preflight 後に別 request が先に commit した場合、追加 object は orphan として GC 対象にする。
 - DB commit 後の file delete 失敗は `delete_pending` として retry する。
