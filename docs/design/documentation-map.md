@@ -65,6 +65,7 @@
 | 文書 | 内容 |
 | --- | --- |
 | [Agent Guide](../../AGENTS.md) | 作業内容に応じた参照先と、課題管理・互換性の入口 |
+| [Development Workflow](../runbooks/development-workflow.md) | 回答・コード変更・検証・Git操作の規則 |
 | [Manual Test Checklist Policy](manual-test-checklist.md) | 実機確認項目の更新責務と運用 |
 | [Distribution Packaging](distribution-packaging.md) | installer、app bundle、配布build |
 
