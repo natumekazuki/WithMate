@@ -38,7 +38,6 @@ export function SessionActionDockCompactRow({
         aria-label="Expand action dock"
         title="Expand action dock"
       >
-        <span>Expand Action Dock</span>
         {!isRunning && chatNotice ? (
           <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
         ) : null}

@@ -2726,17 +2726,17 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 
 // @test-value v2
 // kind = "contract"
-// claim = "compact ActionDockはidle、noticeあり、runningの全状態で同じ可視buttonから展開できる"
+// claim = "compact ActionDockはidle、noticeあり、runningの全状態で同じmeta領域から展開できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "idleで展開buttonが空になるか、runningでbuttonが消え、状態ごとに異なる領域からしか展開できない"
-// observable = "各状態のbuttonの可視label、accessible name、notice、click後のonExpand呼出回数"
+// fault = "runningでmeta領域のbuttonが消え、実行状態によって同じ領域から展開できない"
+// observable = "各状態のbuttonのaccessible name、notice、click後のonExpand呼出回数"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock expand interaction"
 // lifecycle = "permanent"
-// impact = "折りたたみ後に入力へ戻る入口を見失うか、実行中だけ同じ操作で再展開できなくなる"
-// distinction = "既存の静的DOM testとは異なり、React上で各状態の可視buttonをclickして同一callbackを確認する"
+// impact = "実行中だけmeta領域から再展開できず、状態によって開閉操作が変わる"
+// distinction = "既存の静的DOM testとは異なり、React上で各状態のmeta領域をclickして同一callbackを確認する"
 // @end-test-value
-test("SessionActionDockCompactRow は状態によらず可視buttonから展開する", async () => {
+test("SessionActionDockCompactRow は状態によらずmeta領域から展開する", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
@@ -2765,7 +2765,6 @@ test("SessionActionDockCompactRow は状態によらず可視buttonから展開�
       const row = dom.window.document.querySelector(".session-action-dock-compact-row");
       const button = row?.querySelector<HTMLButtonElement>(".session-action-dock-compact-expand-button");
       assert.ok(button);
-      assert.equal(button.textContent?.includes("Expand Action Dock"), true);
       assert.equal(button.getAttribute("aria-label"), "Expand action dock");
       assert.equal(button.type, "button");
       assert.equal(button.tabIndex, 0);
