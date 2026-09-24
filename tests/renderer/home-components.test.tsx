@@ -1002,25 +1002,78 @@ describe("HomeRecentSessionsPanel", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Homeの更新時刻はen-USの表示書式を使い、保存値のraw ISO文字列を表示しない"
-  // oracle = { type = "contract", ref = "Issue #731 Home date presentation" }
-  // fault = "更新時刻をraw ISOまたは別localeへ表示し、利用者のローカルtime zoneを失う"
-  // observable = "formatHomeSessionUpdatedAtの戻り値とraw ISO形式の不在"
+  // claim = "Homeの更新時刻はローカルのyyyy-MM-dd(英語曜日3文字) HH:mmで表示する"
+  // oracle = { type = "contract", ref = "Issue #666 acceptance criteria" }
+  // fault = "UTCのまま表示する、曜日と日付がずれる、または指定形式から外れる"
+  // observable = "固定timezone下のformatHomeSessionUpdatedAtの戻り値"
   // observation_boundary = "public-boundary"
   // scope = "HomeRecentSessionsPanel updatedAt formatter"
   // lifecycle = "permanent"
-  // impact = "異なるlocale/time zoneでもHomeの日時を識別可能な英語表示で読める"
-  // distinction = "日時の保存・sort値ではなく、UI表示専用formatterのlocale/time zone境界を検証する"
+  // impact = "ユーザーがSessionを開かずにローカルの更新日と時刻を比較できる"
+  // distinction = "保存・sort値やcomponent配置ではなく、UI表示専用formatterのtimezoneと曜日を検証する"
   // @end-test-value
-  it("updatedAt は en-US のローカル時刻として表示する", () => {
-    const value = "2026-08-08T05:00:00.000Z";
-    const expected = new Intl.DateTimeFormat("en-US", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }).format(new Date(value));
+  it("updatedAt は固定timezoneでローカル日時と英語曜日を表示する", () => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = "Asia/Tokyo";
+    try {
+      assert.equal(formatHomeSessionUpdatedAt("2026-09-10T05:31:00.000Z"), "2026-09-10(Thu) 14:31");
+    } finally {
+      if (previousTimezone === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = previousTimezone;
+      }
+    }
+  });
 
-    assert.equal(formatHomeSessionUpdatedAt(value), expected);
-    assert.doesNotMatch(formatHomeSessionUpdatedAt(value), /T\d{2}:\d{2}/);
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Recent Sessions cardは更新日時をユーザー向けlabelと指定形式で表示し、parse不能値はそのまま読める"
+  // oracle = { type = "contract", ref = "Issue #666 acceptance criteria" }
+  // fault = "cardが保存値のISOを露出するか、parse不能値をInvalid Dateに変える"
+  // observable = "HomeRecentSessionsPanelが描画するcardの更新日時metadata"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeRecentSessionsPanel Agent card timestamp"
+  // lifecycle = "permanent"
+  // impact = "一覧でSessionの更新時刻を比較できず、legacy値を誤った日時と誤認する"
+  // distinction = "formatter単体testでは検出できないcardへの表示接続とfallbackを確認する"
+  // @end-test-value
+  it("Agent cardに整形済み更新日時とparse不能値のfallbackを表示する", () => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = "Asia/Tokyo";
+    try {
+      const html = renderHomeRecentSessions({
+        filteredSessionEntries: [
+          {
+            session: createSessionSummary({
+              id: "recent",
+              taskTitle: "Recent task",
+              updatedAt: "2026-09-10T05:31:00.000Z",
+            }),
+            state: { kind: "neutral", label: "idle" },
+          },
+          {
+            session: createSessionSummary({
+              id: "legacy",
+              taskTitle: "Legacy task",
+              updatedAt: "legacy-value",
+            }),
+            state: { kind: "neutral", label: "idle" },
+          },
+        ],
+      });
+      const document = new JSDOM(html).window.document;
+      const timestampLabels = Array.from(document.querySelectorAll(".home-session-card-meta span:nth-child(2)"))
+        .map((element) => element.textContent);
+
+      assert.deepEqual(timestampLabels, ["Updated 2026-09-10(Thu) 14:31", "Updated legacy-value"]);
+    } finally {
+      if (previousTimezone === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = previousTimezone;
+      }
+    }
   });
 
   it("canUsePrimaryFeatures false の時は New Session が無効化される", () => {

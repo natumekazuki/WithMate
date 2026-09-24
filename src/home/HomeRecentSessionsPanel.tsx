@@ -24,17 +24,21 @@ export type HomeRecentSessionsPanelProps = {
   sessionSummaryLoadStatus?: SessionSummariesLoadStatus;
 };
 
-const HOME_SESSION_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
+const HOME_SESSION_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 export function formatHomeSessionUpdatedAt(value: string): string {
   const timestamp = new Date(value);
   if (Number.isNaN(timestamp.getTime())) {
     return value;
   }
-  return HOME_SESSION_DATE_FORMATTER.format(timestamp);
+
+  const year = String(timestamp.getFullYear()).padStart(4, "0");
+  const month = String(timestamp.getMonth() + 1).padStart(2, "0");
+  const day = String(timestamp.getDate()).padStart(2, "0");
+  const weekday = HOME_SESSION_WEEKDAYS[timestamp.getDay()];
+  const hours = String(timestamp.getHours()).padStart(2, "0");
+  const minutes = String(timestamp.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}(${weekday}) ${hours}:${minutes}`;
 }
 
 function PinIcon({ active, pending }: { active: boolean; pending: boolean }) {
