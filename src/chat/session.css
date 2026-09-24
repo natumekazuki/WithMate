@@ -1319,7 +1319,7 @@
 .session-page .message-row:not(.auxiliary-message-group-item) .message-card.assistant {
   border-color: transparent;
   border-left: 3px solid var(--character-main);
-  border-radius: 0;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--character-main) 8%, rgba(20, 25, 34, 0.96));
   box-shadow: none;
 }
