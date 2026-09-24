@@ -203,13 +203,19 @@ describe("home-settings-actions", () => {
   // claim = "database reset actionは対象なしをnoopとし、confirm拒否をcanceledとして副作用なしに返す"
   // oracle = { type = "contract", ref = "src/settings/settings-actions.ts: resetHomeDatabase" }
   // fault = "空の対象をresetするか、confirm falseを成功扱いして破壊的操作を実行する"
-  // observable = "noop/canceled resultのkindとfeedback"
+  // observable = "noop/canceled resultのkindとfeedback、resetAppDatabase呼び出し数"
   // observation_boundary = "public-boundary"
   // scope = "home-settings-database-reset-guard"
   // lifecycle = "permanent"
   // @end-test-value
   it("reset target が空なら noop、confirm false なら canceled を返す", async () => {
-    const api = createApi();
+    let resetCalls = 0;
+    const api = createApi({
+      resetAppDatabase: async () => {
+        resetCalls += 1;
+        throw new Error("reset must not run");
+      },
+    });
 
     const noopResult = await resetHomeDatabase({
       api,
@@ -229,6 +235,7 @@ describe("home-settings-actions", () => {
     assert.deepEqual(canceledResult, {
       kind: "canceled",
     });
+    assert.equal(resetCalls, 0);
   });
 
   // @test-value v2
@@ -261,13 +268,19 @@ describe("home-settings-actions", () => {
   // claim = "old session delete actionはcleanup date未指定をnoopとし、confirm拒否をcanceledとして返す"
   // oracle = { type = "contract", ref = "src/settings/settings-actions.ts: deleteOldSessions" }
   // fault = "日付なしで削除を実行するか、confirm falseを成功扱いしてSessionを削除する"
-  // observable = "noop/canceled resultのkindとfeedback"
+  // observable = "noop/canceled resultのkindとfeedback、deleteSessionsLastActiveBefore呼び出し数"
   // observation_boundary = "public-boundary"
   // scope = "home-settings-session-cleanup-guard"
   // lifecycle = "permanent"
   // @end-test-value
   it("old session delete は cutoff 未指定なら noop、confirm false なら canceled を返す", async () => {
-    const api = createApi();
+    let deleteCalls = 0;
+    const api = createApi({
+      deleteSessionsLastActiveBefore: async () => {
+        deleteCalls += 1;
+        throw new Error("delete must not run");
+      },
+    });
 
     const noopResult = await deleteOldSessions({
       api,
@@ -287,6 +300,7 @@ describe("home-settings-actions", () => {
     assert.deepEqual(canceledResult, {
       kind: "canceled",
     });
+    assert.equal(deleteCalls, 0);
   });
 
   // @test-value v2

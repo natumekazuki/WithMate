@@ -1096,18 +1096,27 @@ description: "作業を一緒に進める相手"
   // kind = "contract"
   // claim = "authoring sessionは保存済みCharacter IDが確定するまで開始しない"
   // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
-  // fault = "未保存draftのcharacterIdなし入力でworkspace mutationまたはSession作成を実行する"
-  // observable = "reject error、workspace作成数、Session作成数"
+  // fault = "未保存draftのcharacterIdなし入力でworkspace directory解決またはSession作成を実行する"
+  // observable = "reject error、workspace directory解決回数、Session作成数"
   // observation_boundary = "public-boundary"
   // scope = "character-authoring-saved-character-gate"
   // lifecycle = "permanent"
   // impact = "保存前Characterがauthoring workspaceやSessionへ流れ込むのを防ぐ"
-  // distinction = "provider validation通過後でも保存済みID境界を実際のstartSession rejectionと作成回数で確認する"
+  // distinction = "provider validation通過後でも保存済みID境界を実際のstartSession rejectionとdirectory解決・Session作成回数で確認する"
   // @end-test-value
   it("characterId 未確定の authoring session は開始しない", async () => {
+    let workspaceResolutionCount = 0;
+    let sessionCreationCount = 0;
     const service = createService({
       getCharacter: () => null,
-      getCharacterDirectory: () => null,
+      getCharacterDirectory: () => {
+        workspaceResolutionCount += 1;
+        return "C:/unexpected";
+      },
+      async createSession(input) {
+        sessionCreationCount += 1;
+        return buildNewSession(input);
+      },
     });
 
     await assert.rejects(
@@ -1117,6 +1126,8 @@ description: "作業を一緒に進める相手"
       }),
       /An authoring session can start only for a saved Character\./,
     );
+    assert.equal(workspaceResolutionCount, 0);
+    assert.equal(sessionCreationCount, 0);
   });
 
   // @test-value v2

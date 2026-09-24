@@ -836,6 +836,7 @@ test("MessageRichText のcode block copyは本文だけをclipboardへ渡してf
       container?.querySelector(".message-copy-toast")?.getAttribute("role"),
       "status",
     );
+    assert.ok(container?.querySelector(".message-copy-toast")?.classList.contains("success"));
   } finally {
     await act(async () => {
       root?.unmount();
@@ -850,7 +851,7 @@ test("MessageRichText のcode block copyは本文だけをclipboardへ渡してf
 // claim = "MessageRichText のcode block copy失敗はerror feedbackを表示する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
 // fault = "clipboard write失敗を成功toastとして扱う、またはerror feedbackを表示しない"
-// observable = "rejected writeText後のerror feedback role/statusとmessage"
+// observable = "rejected writeText後のerror tone、status roleとmessage"
 // observation_boundary = "component-behavior"
 // scope = "MessageRichText code block copy failure handling"
 // lifecycle = "permanent"
@@ -895,6 +896,7 @@ test("MessageRichText のcode block copy失敗はerror feedbackを表示する",
     const feedback = container?.querySelector(".message-copy-toast");
     assert.equal(feedback?.textContent, "Could not copy code.");
     assert.ok(feedback?.classList.contains("error"));
+    assert.equal(feedback?.getAttribute("role"), "status");
   } finally {
     await act(async () => {
       root?.unmount();

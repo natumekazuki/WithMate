@@ -110,6 +110,7 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
   const openedSessions: string[] = [];
   const sessionSummaries: string[] = [];
   let closeCount = 0;
+  let createSessionCount = 0;
 
   return {
     feedback,
@@ -118,6 +119,9 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
     sessionSummaries,
     get closeCount() {
       return closeCount;
+    },
+    get createSessionCount() {
+      return createSessionCount;
     },
     input: {
       draft: createReadyDraft(),
@@ -131,7 +135,10 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
       openSessionWindowIds: [],
       openSessionWindowIdsLoadStatus: "loaded" as const,
       sessionCharacterUsageLoadStatus: "loaded" as const,
-      createSession: async () => createSessionSummary(),
+      createSession: async () => {
+        createSessionCount += 1;
+        return createSessionSummary();
+      },
       openSessionWindow: async (sessionId: string) => {
         openedSessions.push(sessionId);
       },
@@ -165,12 +172,12 @@ describe("home-launch-actions", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "startHomeLaunchは入力validation error時にSession作成を行わず、利用者向けfeedbackを返す"
+  // claim = "startHomeLaunchはtitle空のvalidation error時にSession作成を行わず、利用者向けfeedbackを返す"
   // oracle = { type = "contract", ref = "Issue #731 Home/New session validation feedback" }
   // fault = "不正なSession titleでもcreateSessionを実行するか、validation理由をfeedbackへ渡さない"
-  // observable = "feedback callbackのvalidation messageとlaunchStarting callbackの呼び出し有無"
+  // observable = "feedback callbackのvalidation message、launchStarting callbackとcreateSession APIの呼び出し有無"
   // observation_boundary = "public-boundary"
-  // scope = "startHomeLaunch validation guard"
+  // scope = "startHomeLaunch empty-title validation guard"
   // lifecycle = "permanent"
   // impact = "利用者が修正すべき入力を識別でき、未検証Sessionの作成を防ぐ"
   // distinction = "validation helperの戻り値だけでなく、launch actionが作成経路へ進まないことをcallbackで確認する"
@@ -184,6 +191,7 @@ describe("home-launch-actions", () => {
 
     assert.deepEqual(harness.feedback, ["Enter a session title."]);
     assert.deepEqual(harness.startingStates, []);
+    assert.equal(harness.createSessionCount, 0);
   });
 
   // @test-value v2

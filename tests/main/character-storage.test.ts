@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -342,15 +342,15 @@ describe("CharacterStorage", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Character icon入力の形式・実体・容量制約を作成前に検証する"
-  // oracle = { type = "contract", ref = "src-electron/character-storage.ts#safeIconExtension" }
+  // claim = "Character icon入力の形式・実体・容量制約を検証し、拒否後に保存行やmanaged directoryを残さない"
+  // oracle = { type = "contract", ref = "docs/design/character-storage.md#directory-layout" }
   // fault = "不正なiconを非同期準備またはSQL登録まで通して中途データを残す"
-  // observable = "拒否ErrorとincludeArchived一覧が空であること"
+  // observable = "拒否Error、includeArchived一覧、characters directoryのentry一覧"
   // observation_boundary = "public-boundary"
   // scope = "character-icon-validation"
   // lifecycle = "permanent"
-  // impact = "表示不能なiconと壊れたCharacter行が保存される"
-  // distinction = "拡張子・通常file・容量・path schemeの拒否をまとめて確認する"
+  // impact = "非対応pathや容量超過のiconと作成途中のCharacter dataが残る"
+  // distinction = "拡張子・非regular file・容量・path schemeの拒否と保存副作用不在をまとめて確認する"
   // @end-test-value
   it("createCharacter は PNG / JPEG 以外、画像ではない path、大きすぎる icon を拒否する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
@@ -360,9 +360,11 @@ describe("CharacterStorage", () => {
       storage = new CharacterStorage(dbPath, userDataPath);
       const textPath = path.join(path.dirname(userDataPath), "not-image.txt");
       const gifPath = path.join(path.dirname(userDataPath), "legacy-icon.gif");
+      const directoryIconPath = path.join(path.dirname(userDataPath), "directory-icon.png");
       const largePngPath = path.join(path.dirname(userDataPath), "large-icon.png");
       await writeFile(textPath, "not an image", "utf8");
       await writeFile(gifPath, Buffer.from("GIF89a", "ascii"));
+      await mkdir(directoryIconPath);
       await writeFile(largePngPath, Buffer.alloc((10 * 1024 * 1024) + 1));
 
       await assert.rejects(
@@ -407,6 +409,14 @@ describe("CharacterStorage", () => {
       );
       await assert.rejects(
         storage.createCharacter({
+          name: "Directory Icon",
+          iconFilePath: directoryIconPath,
+          definitionMarkdown: validDefinition("Directory Icon"),
+        }),
+        /Character icon must be a regular file\./,
+      );
+      await assert.rejects(
+        storage.createCharacter({
           name: "Large Icon",
           iconFilePath: largePngPath,
           definitionMarkdown: validDefinition("Large Icon"),
@@ -414,6 +424,7 @@ describe("CharacterStorage", () => {
         /10 MiB/,
       );
       assert.equal(storage.listCharacters({ includeArchived: true }).length, 0);
+      assert.deepEqual(await readdir(path.join(userDataPath, "characters")), []);
     } finally {
       storage?.close();
       await cleanup();

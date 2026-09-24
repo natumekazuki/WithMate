@@ -2093,7 +2093,7 @@ test("AuxiliarySessionService は latest-session の取得失敗と runtime opti
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliary作成は定義済みenum外のruntime optionを保存前に拒否する"
+// claim = "Auxiliary作成は定義済みenum外のruntime optionを拒否し、Auxiliary保存行を残さない"
 // oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md#decision" }
 // fault = "未知のruntime optionを既定値へ変換して保存し、後続turnの実行条件を変える"
 // observable = "不正optionごとのrejectと保存件数0"
@@ -2137,6 +2137,7 @@ test("AuxiliarySessionService は現行 enum 外の runtime option を拒否し�
       input: {
         approvalMode?: ApprovalMode;
         codexSandboxMode?: CodexSandboxMode;
+        codexSpeed?: AuxiliarySession["codexSpeed"];
       };
       expectedError: RegExp;
     }> = [
@@ -2163,6 +2164,12 @@ test("AuxiliarySessionService は現行 enum 外の runtime option を拒否し�
           codexSandboxMode: 1 as unknown as CodexSandboxMode,
         },
         expectedError: /Could not parse the Auxiliary Session codexSandboxMode/,
+      },
+      {
+        input: {
+          codexSpeed: "turbo" as AuxiliarySession["codexSpeed"],
+        },
+        expectedError: /Could not parse the Auxiliary Session codexSpeed/,
       },
     ];
 

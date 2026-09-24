@@ -2259,6 +2259,7 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
   });
   assert.match(approvalHtml, /Approval Required/);
   assert.match(approvalHtml, /コマンド実行の承認/);
+  assert.match(new JSDOM(approvalHtml).window.document.querySelector(".pending-row")?.textContent ?? "", /コマンド実行の承認/);
   assert.doesNotMatch(approvalHtml, /Preparing a response/);
 
   const errorHtml = renderSessionMessageColumn({
@@ -2269,6 +2270,7 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
     pendingMessageTextVisible: false,
   });
   assert.match(errorHtml, /Run failed/);
+  assert.equal(new JSDOM(errorHtml).window.document.querySelector(".pending-row .pending-run-error-note")?.textContent, "Run failed");
   assert.doesNotMatch(errorHtml, /Preparing a response/);
 
   const assistantHtml = renderSessionMessageColumn({
@@ -2282,6 +2284,10 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
     pendingMessageTextVisible: false,
   });
   assert.match(assistantHtml, /Live assistant response/);
+  const assistantDocument = new JSDOM(assistantHtml).window.document;
+  assert.equal(assistantDocument.querySelector(".pending-row")?.textContent?.includes("Live assistant response"), false);
+  assert.ok([...assistantDocument.querySelectorAll(".message-row:not(.pending-row)")]
+    .some((row) => row.textContent?.includes("Live assistant response")));
   assert.doesNotMatch(assistantHtml, /Preparing a response/);
 });
 

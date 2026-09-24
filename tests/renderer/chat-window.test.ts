@@ -143,17 +143,17 @@ test("ChatWindow は preview と compact ActionDock の間に recovery actions �
 
 // @test-value v2
 // kind = "contract"
-// claim = "ChatWindowはActionDockの展開状態にかかわらず共通error領域と関連controlを描画する"
+// claim = "ChatWindowはcompact ActionDock時にも共通error領域と関連controlを描画する"
 // oracle = { type = "contract", ref = "src/chat/chat-window.tsx: chat error surface" }
-// fault = "compact ActionDock時にerror surfaceまたはtextareaのinvalid/busy関連付けが欠落する"
-// observable = "chat-error-surface、alert、textarea aria-describedby/aria-invalid、ActionDockのDOM順序"
+// fault = "compact ActionDock時にerror surfaceまたはtextareaのinvalid関連付けが欠落するか、busy表示を誤って混ぜる"
+// observable = "chat-error-surface、alert、textarea aria-describedby/aria-invalidとbusy不在、ActionDockのDOM順序"
 // observation_boundary = "component-behavior"
 // scope = "chat-window-error-surface"
 // lifecycle = "permanent"
-// impact = "送信失敗の原因と回復位置を利用者・支援技術へ伝えられなくなる"
+// impact = "path validation errorの原因と回復位置を利用者・支援技術へ伝えられなくなる"
 // distinction = "単一のerror message表示ではなく、関連controlとlayout順序を同時に検証する"
 // @end-test-value
-test("ChatWindow は ActionDock の展開状態に依存しない共通エラー領域を描画する", () => {
+test("ChatWindow は compact ActionDock 時も共通エラー領域を描画する", () => {
   const props = createChatWindowProps();
   props.isActionDockExpanded = false;
   props.composerProps = {
@@ -179,14 +179,28 @@ test("ChatWindow は ActionDock の展開状態に依存しない共通エラー
   assert.match(html, /Path not found: C:\/missing/);
   assert.match(html, /Expected a file: C:\/directory/);
   assert.match(html, /<textarea[^>]*aria-describedby="[^"]+-notice-0"[^>]*aria-invalid="true"/);
+  assert.doesNotMatch(html.match(/<textarea[^>]*>/)?.[0] ?? "", /aria-busy/);
+  assert.doesNotMatch(html, /Message submission is in progress|concurrent-chat-loading-spinner/);
   assert.doesNotMatch(html, /class="composer-sendability-feedback blocked"/);
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
   assert.ok(html.indexOf("session-central-surface") < html.indexOf("chat-error-surface"));
   assert.ok(html.indexOf("chat-error-surface") < html.indexOf("session-action-dock-slot"));
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "ChatWindowは送信待機中にSendのspinnerとcomposerのbusy statusを示し、errorとして表示しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/731" }
+// fault = "送信中をerrorとして表示するか、Sendのspinner・busy statusを欠落させる"
+// observable = "Send spinner、textarea aria-busy、status announcement、error surfaceの不在"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-submit-pending"
+// lifecycle = "permanent"
+// impact = "利用者が送信処理中と失敗を区別できず、重複操作や誤った再試行を招く"
+// distinction = "error surface testと異なり、送信中のspinnerと非表示statusを同一renderで確認する"
+// @end-test-value
 test("ChatWindow は submit pending を非表示の busy status として通知し、エラー表示しない", () => {
-  const props = createChatWindowProps();
+  const props = createChatWindowProps({ messages: [] });
   props.composerProps = {
     ...props.composerProps,
     isComposerDisabled: true,
@@ -204,6 +218,9 @@ test("ChatWindow は submit pending を非表示の busy status として通知�
 
   assert.match(html, /<textarea[^>]*disabled=""[^>]*aria-busy="true"/);
   assert.match(html, /class="visually-hidden" role="status"[^>]*>Message submission is in progress\.<\/span>/);
+  const sendButton = new JSDOM(html).window.document.querySelector(".session-send-button");
+  assert.equal(sendButton?.getAttribute("aria-busy"), "true");
+  assert.ok(sendButton?.querySelector(".concurrent-chat-loading-spinner[aria-hidden='true']"));
   assert.doesNotMatch(html, /chat-error-surface/);
   assert.doesNotMatch(html, /composer-sendability-feedback/);
 });

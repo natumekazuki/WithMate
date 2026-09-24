@@ -122,7 +122,11 @@ describe("AppTrayService", () => {
       "Quit",
     ]);
 
-    tray.listeners.get("click")?.();
+    const showItem = menu.find((item): item is Extract<AppTrayMenuItem, { label: string }> =>
+      "label" in item && item.label === "Show WithMate",
+    );
+    assert.ok(showItem);
+    showItem.click();
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(window.restored, true);

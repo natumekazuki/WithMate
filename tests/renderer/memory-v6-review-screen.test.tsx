@@ -551,9 +551,9 @@ test("MemoryV6ReviewScreen はentry detailからprotected filesをexportでき�
 // @test-value v2
 // kind = "security"
 // claim = "Memory Reviewでdetail選択を切り替える間は旧detailとforget/export操作を消し、遅延または失敗した新entryを旧対象として操作できない"
-// oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: selectEntry and detail actions" }
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
 // fault = "selectedEntryIdだけを先に更新して旧detailを表示し、旧本文に対する操作を新entry IDへ送る"
-// observable = "切替中のLoading表示、旧本文とForget buttonの不在、失敗feedback、forget API call数"
+// observable = "切替中のLoading表示、旧本文とForget/Export buttonの不在、失敗feedback、forget/export API call数"
 // observation_boundary = "component-behavior"
 // scope = "memory-v6-review-detail-selection-safety"
 // lifecycle = "permanent"
@@ -575,13 +575,24 @@ test("MemoryV6ReviewScreen は遅延または失敗したdetail選択で旧entry
   let root: Root | null = null;
   let rejectB: ((error: Error) => void) | undefined;
   const forgetRequests: string[] = [];
-  const detailA = createDetail("entry-a", "Entry A");
+  const exportRequests: string[] = [];
+  const detailA = createDetail("entry-a", "Entry A", {
+    files: [{
+      role: "artifact",
+      mediaKind: "text",
+      contentType: "text/plain",
+      displayName: "entry-a.txt",
+      summary: "Entry A file",
+      originalBytes: 12,
+    }],
+  });
 
   const api: MemoryV6ReviewApi = {
     async getMemoryV6FileUsage() {
       return createUsage();
     },
-    async exportMemoryV6EntryFiles() {
+    async exportMemoryV6EntryFiles(entryId) {
+      exportRequests.push(entryId);
       return null;
     },
     async runMemoryV6ProtectedObjectGc() {
@@ -625,6 +636,7 @@ test("MemoryV6ReviewScreen は遅延または失敗したdetail選択で旧entry
     });
     await flushEffects();
     assert.match(rootElement.textContent ?? "", /Entry A body/);
+    assert.ok(rootElement.querySelector('button[aria-label="Export Memory files"]'));
 
     await act(async () => {
       entryBButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
@@ -633,6 +645,7 @@ test("MemoryV6ReviewScreen は遅延または失敗したdetail選択で旧entry
     assert.doesNotMatch(text, /Entry A body/);
     assert.ok(rootElement.querySelector('[role="status"][aria-label="Loading Memory entry"]'));
     assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Forget Entry"), false);
+    assert.equal(rootElement.querySelector('button[aria-label="Export Memory files"]'), null);
 
     rejectB?.(new Error("Entry B failed"));
     await flushEffects();
@@ -640,7 +653,9 @@ test("MemoryV6ReviewScreen は遅延または失敗したdetail選択で旧entry
     assert.match(text, /Entry B failed/);
     assert.doesNotMatch(text, /Entry A body/);
     assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Forget Entry"), false);
+    assert.equal(rootElement.querySelector('button[aria-label="Export Memory files"]'), null);
     assert.deepEqual(forgetRequests, []);
+    assert.deepEqual(exportRequests, []);
   } finally {
     await act(async () => {
       root?.unmount();
