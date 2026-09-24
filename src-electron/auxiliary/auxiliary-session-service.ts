@@ -883,7 +883,12 @@ export class AuxiliarySessionService {
       || captured.durableRevision !== input.expectedDurableRevision) {
       throw new Error("Sending was canceled because the Auxiliary draft changed.");
     }
-    const consumed = await this.consumeAuxiliaryDraftWithStorage(storage, input);
+    const consumed = await this.consumeAuxiliaryDraftWithStorage(storage, {
+      auxiliarySessionId: input.auxiliarySessionId,
+      parentSessionId: input.parentSessionId,
+      incarnation: input.incarnation,
+      expectedDurableRevision: input.expectedDurableRevision,
+    });
     if (consumed.outcome !== "consumed" || !consumed.ack) {
       throw new Error("Sending was canceled because the Auxiliary draft changed.");
     }

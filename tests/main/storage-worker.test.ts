@@ -5,11 +5,13 @@ import { test } from "node:test";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 
+import { AuxiliarySessionService } from "../../src-electron/auxiliary/auxiliary-session-service.js";
 import { StorageWorkerClient, StorageWorkerGenerationError, StorageWorkerRemoteError } from "../../src-electron/storage/storage-worker-client.js";
 import { MemoryV6FileQuotaExceededError } from "../../src-electron/memory/memory-v6-storage.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
 import { createPersistentStoreLifecycleService } from "../../src-electron/storage/persistent-store-lifecycle-service.js";
+import type { AuxiliarySessionStorageAccess } from "../../src-electron/storage/persistent-store-lifecycle-service.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
@@ -636,6 +638,151 @@ test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・cons
     assert.equal(consumed.ack?.incarnation, savedRecord!.incarnation);
     assert.equal(consumed.ack?.durableRevision, savedRecord!.durableRevision + 1);
     assert.equal((await bundle.stores.auxiliary.getAuxiliarySession(auxiliary.id))?.composerDraft, "");
+  } finally {
+    if (bundle) await bundle.client.close();
+    await rm(userDataPath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary Composer送信はclone可能なdraft consume入力だけを実Storage Workerへ渡し、consume成功後だけturnを実行し、失敗時はdraftを復元する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// fault = "Main専用run callbackをWorkerへ転送してDataCloneErrorで送信不能になるか、stale draftを実行・失敗したdraftを喪失する"
+// observable = "Worker転送のDataCloneError、run callback回数、durable draft本文とrevision"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-composer-worker-send"
+// lifecycle = "permanent"
+// impact = "Auxiliary Composerからturnを開始できず、失敗・再送時の入力も失い得る"
+// distinction = "service mockや型検査では見えないstructured cloneを、実Workerとserviceの組合せで確認する"
+// @end-test-value
+test("Auxiliary Composer送信は実Storage Worker越しにdraftをconsume・復元する", async () => {
+  const userDataPath = await mkdtemp(join(process.env.TEMP ?? process.cwd(), "withmate-storage-worker-aux-send-"));
+  let bundle: ReturnType<typeof createV6StorageWorkerBundle> | null = null;
+  try {
+    await mkdir(join(userDataPath, "characters"), { recursive: true });
+    const bootstrap = await createOrVerifyV6FreshDatabase(userDataPath);
+    bundle = createV6StorageWorkerBundle({
+      dbPath: bootstrap.dbPath,
+      bundledModelCatalogPath: join(process.cwd(), "public", "model-catalog.json"),
+      userDataPath,
+      workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
+      handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
+      workerOptions: { execArgv: ["--import", "tsx"] },
+    });
+    await bundle.initialize();
+    const parent = buildNewSession({
+      id: "worker-send-parent",
+      taskTitle: "worker parent",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "mate",
+      character: "Mate",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    });
+    await bundle.stores.session.upsertSession(parent);
+    const auxiliary: AuxiliarySession = {
+      id: "worker-send-auxiliary",
+      parentSessionId: parent.id,
+      status: "active",
+      runState: "idle",
+      title: "Auxiliary",
+      provider: "codex",
+      catalogRevision: parent.catalogRevision,
+      model: parent.model,
+      reasoningEffort: parent.reasoningEffort,
+      approvalMode: parent.approvalMode,
+      codexSandboxMode: parent.codexSandboxMode,
+      codexSpeed: parent.codexSpeed,
+      codexReviewer: parent.codexReviewer,
+      customAgentName: "",
+      allowedAdditionalDirectories: [],
+      threadId: "",
+      composerDraft: "first draft",
+      messages: [],
+      displayAfterMessageIndex: null,
+      createdAt: "2026-09-20T00:00:00.000Z",
+      updatedAt: "2026-09-20T00:00:00.000Z",
+      closedAt: "",
+      characterId: parent.characterId,
+      characterRuntimeSnapshot: parent.characterRuntimeSnapshot,
+      characterIconPath: parent.characterIconPath,
+    };
+    await bundle.stores.auxiliary.upsertAuxiliarySession(auxiliary);
+    const initial = (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))!;
+    const consumeInput = {
+      auxiliarySessionId: auxiliary.id,
+      parentSessionId: parent.id,
+      incarnation: initial.incarnation,
+      expectedDurableRevision: initial.durableRevision,
+    };
+    const uncloneableInput = { ...consumeInput, run: async () => undefined };
+    await assert.rejects(
+      bundle.stores.auxiliary.consumeAuxiliaryDraft(uncloneableInput),
+      (error: unknown) => error instanceof Error && error.name === "DataCloneError",
+    );
+    assert.equal((await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))?.text, "first draft");
+
+    const service = new AuxiliarySessionService({
+      getStorage: () => bundle!.stores.auxiliary as unknown as AuxiliarySessionStorageAccess,
+      getParentSession: async () => parent,
+      runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+      resolveSessionLaunchSelection: async () => { throw new Error("not used"); },
+      listActiveCharacters: () => { throw new Error("not used"); },
+      createCharacterRuntimeSnapshot: () => { throw new Error("not used"); },
+    });
+    let runs = 0;
+    await service.runAuxiliaryTurnWithDraft({
+      ...consumeInput,
+      userMessage: "first draft",
+      run: async () => { runs += 1; },
+    });
+    assert.equal(runs, 1);
+    const consumed = (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))!;
+    assert.equal(consumed.text, "");
+    await assert.rejects(service.runAuxiliaryTurnWithDraft({
+      ...consumeInput,
+      userMessage: "stale draft",
+      run: async () => { runs += 1; },
+    }), /draft changed/);
+    assert.equal(runs, 1);
+
+    const saved = await bundle.stores.auxiliary.saveAuxiliaryDraft({
+      ...consumeInput,
+      expectedDurableRevision: consumed.durableRevision,
+      text: "changed draft",
+      updatedAt: "2026-09-20T00:01:00.000Z",
+    });
+    assert.equal(saved.outcome, "saved");
+    await assert.rejects(service.runAuxiliaryTurnWithDraft({
+      ...consumeInput,
+      expectedDurableRevision: consumed.durableRevision,
+      userMessage: "changed draft",
+      run: async () => { runs += 1; },
+    }), /draft changed/);
+    assert.equal(runs, 1);
+
+    const changed = (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))!;
+    await assert.rejects(service.runAuxiliaryTurnWithDraft({
+      ...consumeInput,
+      expectedDurableRevision: changed.durableRevision,
+      userMessage: "changed draft",
+      run: async () => { runs += 1; throw new Error("turn failed"); },
+    }), /turn failed/);
+    const restored = (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))!;
+    assert.equal(restored.text, "changed draft");
+    assert.equal(restored.durableRevision, changed.durableRevision + 2);
+    await service.runAuxiliaryTurnWithDraft({
+      ...consumeInput,
+      expectedDurableRevision: restored.durableRevision,
+      userMessage: "changed draft",
+      run: async () => { runs += 1; },
+    });
+    assert.equal(runs, 3);
+    assert.equal((await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))?.text, "");
   } finally {
     if (bundle) await bundle.client.close();
     await rm(userDataPath, { recursive: true, force: true });
