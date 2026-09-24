@@ -39,14 +39,12 @@
 }
 
 .session-action-dock-compact-meta {
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .session-action-dock-compact-expand-button {
-  justify-self: end;
   min-width: 0;
   min-height: 40px;
-  max-width: 100%;
   padding: 7px 10px;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 8px;
