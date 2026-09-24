@@ -1760,11 +1760,18 @@
 }
 
 .home-launch-dialog > .launch-dialog-foot {
+  flex-wrap: wrap;
   gap: 10px;
+}
+
+.home-launch-dialog > .launch-dialog-foot .launch-feedback {
+  flex-basis: 100%;
+  text-align: left;
 }
 
 .home-launch-dialog > .launch-dialog-foot .drawer-toggle {
   width: auto;
+  margin-right: auto;
 }
 
 .auxiliary-provider-dialog {

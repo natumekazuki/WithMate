@@ -96,7 +96,7 @@ export function HomeLaunchDialog({
       footer={
         <LaunchDialogFooter
           feedback={launchStarting ? "" : launchFeedback}
-          startButtonLabel="Start New Session"
+          startButtonLabel="Start"
           startButtonDisabled={!canStartSession || !providerLoadReady || launchStarting}
           startButtonAriaDisabled={!canStartSession || !providerLoadReady || launchStarting}
           startButtonBusy={launchStarting}

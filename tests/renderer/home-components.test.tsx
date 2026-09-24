@@ -821,7 +821,7 @@ describe("HomeLaunchDialog", () => {
       const cancel = Array.from(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])
         .find((button) => button.textContent === "Cancel");
       const start = Array.from(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])
-        .find((button) => button.textContent === "Start New Session");
+        .find((button) => button.textContent === "Start");
       assert.ok(dialog && workspace && title && cancel && start);
       assert.equal(dom.window.document.activeElement, title);
       assert.equal(start.disabled, true);
@@ -866,7 +866,7 @@ describe("HomeLaunchDialog", () => {
   it("新規作成導線は Session 専用である", () => {
     const html = renderHomeLaunchDialog();
 
-    assert.ok(html.includes("Start New Session"));
+    assert.match(html, /<button class="start-session-button"[^>]*>Start<\/button>/);
     assert.ok(html.includes('aria-label="New Session"'));
     assert.ok(html.includes("Coding Provider"));
     assert.ok(!html.includes("Agent Mode"));
@@ -1012,7 +1012,7 @@ describe("HomeLaunchDialog", () => {
   // claim = "New sessionのProvider catalogは取得中・取得失敗・正常な有効provider 0件を別状態として表示し、未確定中は開始を無効化する"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
   // fault = "Provider catalogの取得中または失敗をNo enabled coding providersへ投影し、開始条件と実エラーを混同する"
-  // observable = "Provider pickerのspinner/aria-busy、実エラー、Start New Session disabled、No enabled coding providers.の相互排他"
+  // observable = "Provider pickerのspinner/aria-busy、実エラー、Start disabled、No enabled coding providers.の相互排他"
   // observation_boundary = "component-behavior"
   // scope = "HomeLaunchDialog provider catalog state"
   // lifecycle = "permanent"
