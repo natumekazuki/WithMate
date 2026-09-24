@@ -220,6 +220,16 @@ Chat layout preferenceの型・既定値・検証は`src-shared/settings/chat-la
 
 一般の作業文書や未実装の構想は、進行中・採用済みであっても保存対象にしません。Archiveや移転案内として残したり、ADR・リリースノートへ改名して温存したりしません。保存・更新規則は[Documentation Map](docs/design/documentation-map.md#文書の保存区分)を参照してください。
 
+## 課題の対応予定とMilestone
+
+課題・不具合・レビュー残件・作業計画はGitHub Issue／PRで管理します。対応予定の正本はGitHub Milestoneとし、正式版`vX.Y.Z`ごとに1件を作ります。その版のpreviewで扱う課題も同じMilestoneに含め、preview別のMilestoneや版別ラベル、repository内の予定表は設けません。期限は合意された日付がある場合だけ設定します。
+
+IssueをMilestoneへ割り当てるのは、その版で扱うことが明示的に決まった場合だけです。未割当ては対応版未決定を意味し、不採用や着手禁止を意味しません。ブランチ名、package version、調査対象のpreview tagだけから対応予定を決めません。既に固定されたリリース範囲をMilestoneへの移行だけで拡張せず、個々の予定をIssue本文やラベルへ二重記録しません。
+
+Milestoneは予定であり、実装・レビュー・対象ブランチへの統合・課題完了・公開とは別の状態です。Issueは受け入れ条件、対象ブランチへの反映、必要な検証と残件の引き継ぎを確認して閉じます。重複・不採用によるクローズは修正完了と区別し、正式版の公開前でも完了したIssueは閉じられます。予定変更時は理由と変更後の扱いをIssue／PRへ記録し、残件を隠すために移動・クローズしません。
+
+リリース範囲の確定時と公開判断時は、対象Milestoneの未完了Issueに加え、未割当ての関連Issueの取りこぼしを確認します。preview tagではMilestoneを閉じず、正式版の公開と対象Issueの完了・正当な延期を確認してから閉じます。タグとリリースノート、互換性境界は[Release Notes](docs/releases/README.md)の規則に従います。
+
 ## 関連ドキュメント
 
 ### 現在の利用・開発・保守
