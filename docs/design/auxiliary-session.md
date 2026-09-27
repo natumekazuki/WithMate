@@ -66,7 +66,11 @@ Main / Auxiliary は送信文の追加と `running` 状態の生成を共通化�
 
 Auxiliary の状態更新は workspace の binding setter を入口とし、呼び出し側から binding の ref を先に書き換えない。setter が ref、詳細 cache、選択中の React state、一覧 summary、詳細取得の更新世代をまとめて更新する。送信前に開始した古い詳細取得や状態取得で本文を巻き戻さず、会話切替後も送信文を保持する。確定結果は Session の置換で反映し、送信文を二重追加しない。
 
-共通化するのは送信直後の表示遷移と適用順序までとする。Main の再取得・完了収束、Auxiliary の保存 queue・draft revision・失敗復元はそれぞれの owner が保持する。失敗時は Pending を解除して送信前の会話を復元し、入力復元では後続の編集を上書きしない。
+共通化するのは送信直後の表示遷移と適用順序までとする。Main の再取得・完了収束、Auxiliary の保存 queue・draft revision・失敗復元はそれぞれの owner が保持する。送信要求の reject と、Provider の実行失敗が保存済み Session として返る場合を区別する。
+
+- Auxiliary の送信処理（anchor 保存を含む）が reject された場合は、対象 Session と mutation revision が一致するときだけ Pending を解除して送信前の会話を復元する。入力復元は捕捉した Composer revision と照合し、後続の編集を上書きしない。
+- Main の送信要求が reject された場合は、再取得した Session / live run と更新世代に従って収束する。Session 再取得も失敗して live run を取得できない場合は、楽観更新がまだ現行のときだけ、送信文を含む楽観本文を保持したまま `idle` / `error` へ復旧する。live run を取得できれば実行中状態を維持し、正常な `null` 取得で削除済みと分かった Session は復元しない。詳細は [Session Run Lifecycle](session-run-lifecycle.md#position) に従う。
+- Provider の実行失敗が処理され、失敗 Session の保存と返却が成功した場合は、Main / Auxiliary とも送信済み user message、取得済みの途中応答、失敗表示を確定結果として保持する。送信前の会話へ戻さず、送信要求の reject に伴う入力復元も行わない。実行結果の保持は [Provider Adapter](provider-adapter.md#error-handling) に従う。
 
 ## Context boundary
 
