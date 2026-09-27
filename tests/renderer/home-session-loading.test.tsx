@@ -223,47 +223,54 @@ test("RecentとPinnedの単独失敗を分離し、Randomは使用中Character�
 
 // @test-value v2
 // kind = "contract"
-// claim = "使用履歴の未完了・失敗中はRandomを拒否するが固定Characterは開始でき、回復時はreadiness警告だけが消える"
-// oracle = { type = "contract", ref = "docs/adr/004-launch-character-random-selection.md Decision / GitHub Issue #754" }
-// fault = "未取得の履歴を0件とみなしてRandom開始するか、一覧の状態変化で無関係な作成失敗を消す"
-// observable = "createSession呼出件数、dialog feedback、固定CharacterでのcreateSession要求"
+// claim = "使用履歴の未完了・失敗中はRandomのStartが無効で、回復後と固定Character選択では開始でき、一覧回復は別の作成失敗を消さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog / docs/adr/004-launch-character-random-selection.md Decision / GitHub Issues #754 and #755" }
+// fault = "履歴未準備のRandomでStartを有効にするか、回復後も無効にするか、一覧の状態変化で無関係な作成失敗を消す"
+// observable = "Startのdisabled、createSession呼出件数とcharacterId、dialogの閉鎖と作成失敗feedback"
 // observation_boundary = "component-behavior"
 // scope = "HomeAppの履歴取得とNew Session開始"
 // lifecycle = "permanent"
 // impact = "抽選重みが未確定の起動や固定Characterの不要な停止、実際の作成失敗の見落としにつながる"
-// distinction = "純粋なlaunch guardでは検出できない非同期取得・feedbackの所有と回復遷移を検証する"
+// distinction = "実行guardを直接呼ぶaction testとは別に、Homeの非同期取得からStartの有効状態・起動要求・feedback回復までの結線を検証する"
 // @end-test-value
-test("履歴待機・失敗・回復はRandom guardと作成失敗feedbackを分離する", async () => {
+test("履歴未準備時のStart無効化と回復後の開始、作成失敗feedbackの保持を分離する", async () => {
   const home = await mountHome();
   const pending = deferred<Array<{ characterId: string; sessionKind: "default" }>>();
   try {
     home.setUsage(() => pending.promise);
     await home.settle();
-    const dialog = await home.launch();
+    let dialog = await home.launch();
+    assert.equal(button(dialog, "Start").disabled, true);
     await act(async () => button(dialog, "Start").click());
     assert.equal(home.requests.length, 0);
-    assert.match(dialog.textContent ?? "", /history is not ready/i);
 
     await act(async () => pending.reject(new Error("History unavailable")));
+    assert.equal(button(dialog, "Start").disabled, true);
     await act(async () => button(dialog, "Start").click());
     assert.equal(home.requests.length, 0);
-    assert.match(dialog.textContent ?? "", /history is unavailable/i);
 
     home.setUsage(async () => [{ characterId: "used", sessionKind: "default" }]);
     await home.focus();
-    assert.doesNotMatch(dialog.textContent ?? "", /history is unavailable/i);
+    assert.equal(button(dialog, "Start").disabled, false);
+    await act(async () => button(dialog, "Start").click());
+    assert.equal(home.requests.length, 1);
+    assert.equal(home.requests[0]?.characterId, "unused");
+    assert.equal(home.element.querySelector('[role="dialog"][aria-label="New Session"]'), null);
 
+    dialog = await home.launch();
     home.setUsage(async () => { throw new Error("History unavailable again"); });
     await home.focus();
+    assert.equal(button(dialog, "Start").disabled, true);
 
     home.setCreate(async () => { throw new Error("Create failed"); });
     const fixed = Array.from(dialog.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
       .find((item) => item.textContent?.includes("used"));
     assert.ok(fixed);
     await act(async () => fixed.click());
+    assert.equal(button(dialog, "Start").disabled, false);
     await act(async () => button(dialog, "Start").click());
-    assert.equal(home.requests.length, 1);
-    assert.equal(home.requests[0]?.characterId, "used");
+    assert.equal(home.requests.length, 2);
+    assert.equal(home.requests[1]?.characterId, "used");
     assert.match(dialog.textContent ?? "", /Create failed/);
 
     home.setListPage(async (request) => {
