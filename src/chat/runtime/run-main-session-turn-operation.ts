@@ -4,6 +4,7 @@ import type {
   ComposerPreview,
 } from "../../../src-shared/session/runtime-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
+import { createOptimisticRunningSessionState } from "../../../src-shared/session/session-run-transition.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type {
   ComposerControllerRegistry,
@@ -170,10 +171,9 @@ export async function runMainSessionTurnOperation(input: {
       ? composerRegistry.clearIfRevision(composerOwner, sendCapture.revision)
       : null;
     const updatedSession = applyOptimisticSessionRunUpdate({
-      session: selectedSession,
-      userMessage: nextMessage,
-      updatedAt: input.currentTimestamp,
-      status: "running",
+      runningSession: createOptimisticRunningSessionState(
+        selectedSession, nextMessage, input.currentTimestamp, { status: "running" },
+      ),
       updateLiveRunState: state.setLiveRunState,
       applyRunningSession: (runningSession) =>
         state.setAuthoritativeSessions(() => [runningSession]),

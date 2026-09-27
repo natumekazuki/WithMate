@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  applyActiveAuxiliarySessionUpdate,
-  createActiveAuxiliarySessionUpdateApplier,
   createGuardedActiveAuxiliarySessionUpdater,
   enqueueAuxiliarySessionSaveOperation,
   enqueueAuxiliarySessionSaveWithQueue,
@@ -619,6 +617,16 @@ describe("runGuardedAuxiliarySessionUpdate", () => {
 });
 
 describe("createGuardedActiveAuxiliarySessionUpdater", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "APIがないAuxiliary更新は保存と状態反映を開始しない"
+  // oracle = { type = "contract", ref = "src/chat/auxiliary/auxiliary-session-update-operation.ts: createGuardedActiveAuxiliarySessionUpdater" }
+  // fault = "利用不可のAPIでも状態だけを保存済みとして反映する"
+  // observable = "返り値と状態ownerの呼出有無"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-update-unavailable"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("API がない場合は guarded update を実行しない", async () => {
     const activeSession = makeAuxiliarySession();
     let saved = false;
@@ -626,7 +634,6 @@ describe("createGuardedActiveAuxiliarySessionUpdater", () => {
       activeSession,
       getApi: () => null,
       getCurrentSession: () => activeSession,
-      activeSessionRef: { current: activeSession },
       setActiveSession: () => {
         saved = true;
       },
@@ -642,7 +649,17 @@ describe("createGuardedActiveAuxiliarySessionUpdater", () => {
     assert.equal(saved, false);
   });
 
-  it("guarded active updater は active session update helper を通して保存結果を反映する", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary更新は状態ownerを通じて変更中と保存済みのSessionを反映する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信直後の共通反映" }
+  // fault = "変更中または保存完了のSessionをownerへ反映せず後続操作が古い状態を使う"
+  // observable = "保存要求、適用Sessionの本文と時刻、後続参照のSession"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-guarded-update-owner"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("guarded active updater は状態ownerを通して保存結果を反映する", async () => {
     const activeSession = makeAuxiliarySession({ composerDraft: "before" });
     const savedSession = makeAuxiliarySession({ composerDraft: "after", updatedAt: "saved" });
     const activeSessionRef = { current: activeSession as AuxiliarySession | null };
@@ -659,8 +676,8 @@ describe("createGuardedActiveAuxiliarySessionUpdater", () => {
         },
       }),
       getCurrentSession: () => activeSessionRef.current,
-      activeSessionRef,
       setActiveSession: (session) => {
+        activeSessionRef.current = session;
         appliedSessions.push(session);
       },
       draftSaveQueue: { current: Promise.resolve() },
@@ -686,44 +703,6 @@ describe("createGuardedActiveAuxiliarySessionUpdater", () => {
       savedSession,
     ]);
     assert.equal(activeSessionRef.current, savedSession);
-  });
-});
-
-describe("applyActiveAuxiliarySessionUpdate", () => {
-  it("active session ref と state setter に同じ session を反映する", () => {
-    const previousSession = makeAuxiliarySession({ updatedAt: "previous" });
-    const nextSession = makeAuxiliarySession({ updatedAt: "next" });
-    const activeSessionRef = { current: previousSession as AuxiliarySession | null };
-    const appliedSessions: AuxiliarySession[] = [];
-
-    applyActiveAuxiliarySessionUpdate({
-      session: nextSession,
-      activeSessionRef,
-      setActiveSession: (session) => {
-        appliedSessions.push(session);
-      },
-    });
-
-    assert.equal(activeSessionRef.current, nextSession);
-    assert.deepEqual(appliedSessions, [nextSession]);
-  });
-
-  it("active session update applier callback は active session ref と state setter に同じ session を反映する", () => {
-    const previousSession = makeAuxiliarySession({ updatedAt: "previous" });
-    const nextSession = makeAuxiliarySession({ updatedAt: "next" });
-    const activeSessionRef = { current: previousSession as AuxiliarySession | null };
-    const appliedSessions: AuxiliarySession[] = [];
-    const applySession = createActiveAuxiliarySessionUpdateApplier({
-      activeSessionRef,
-      setActiveSession: (session) => {
-        appliedSessions.push(session);
-      },
-    });
-
-    applySession(nextSession);
-
-    assert.equal(activeSessionRef.current, nextSession);
-    assert.deepEqual(appliedSessions, [nextSession]);
   });
 });
 

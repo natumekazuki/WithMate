@@ -5,7 +5,7 @@ import type { LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState }
 import {
   applyOptimisticSessionRunUpdate,
   applyResolvedSessionRunUpdate,
-  buildOptimisticSessionRunUpdate,
+  createOwnedPendingLiveSessionRunState,
   clearOwnedLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
   rollbackOptimisticSessionRunUpdate,
@@ -13,6 +13,7 @@ import {
   type OwnedLiveSessionRunState,
 } from "../../src/chat/runtime/session-live-run-state.js";
 import type { Message } from "../../src-shared/session/session-state.js";
+import { createOptimisticRunningSessionState } from "../../src-shared/session/session-run-transition.js";
 
 function makeLiveRunState(
   sessionId: string,
@@ -80,14 +81,14 @@ test("resolveSessionRunErrorMessage は message 付き object でも非 Error �
 // @test-value v2
 // kind = "contract"
 // claim = "optimistic session updateはrunning sessionとowner付きpending live runを整合して生成する"
-// oracle = { type = "contract", ref = "src/chat/runtime/session-live-run-state.ts" }
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信直後の共通反映" }
 // fault = "user message、running state、background taskが不整合なownerへ反映される"
 // observable = "running session and pending live run snapshots"
 // observation_boundary = "public-boundary"
 // scope = "optimistic-session-run-update"
 // lifecycle = "permanent"
 // @end-test-value
-test("buildOptimisticSessionRunUpdate は running session と pending live run updater を作る", () => {
+test("共通のrunning生成とPending生成は送信本文と同じownerのbackground taskを保持する", () => {
   const session: TestSession = {
     id: "session-1",
     threadId: "thread-1",
@@ -104,14 +105,9 @@ test("buildOptimisticSessionRunUpdate は running session と pending live run u
     },
   };
 
-  const update = buildOptimisticSessionRunUpdate({
-    session,
-    userMessage: "next",
-    updatedAt: "after",
-    status: "running",
-  });
+  const runningSession = createOptimisticRunningSessionState(session, "next", "after", { status: "running" });
 
-  assert.deepEqual(update.runningSession, {
+  assert.deepEqual(runningSession, {
     ...session,
     status: "running",
     runState: "running",
@@ -121,7 +117,7 @@ test("buildOptimisticSessionRunUpdate は running session と pending live run u
       { role: "user", text: "next" },
     ],
   });
-  assert.deepEqual(update.createPendingLiveRunState(current), {
+  assert.deepEqual(createOwnedPendingLiveSessionRunState(runningSession, current), {
     ownerSessionId: "session-1",
     state: {
       sessionId: "session-1",
@@ -137,7 +133,7 @@ test("buildOptimisticSessionRunUpdate は running session と pending live run u
     },
   });
 
-  assert.deepEqual(update.createPendingLiveRunState({
+  assert.deepEqual(createOwnedPendingLiveSessionRunState(runningSession, {
     ownerSessionId: "session-other",
     state: {
       ...makeLiveRunState("session-other"),
@@ -160,7 +156,18 @@ test("buildOptimisticSessionRunUpdate は running session と pending live run u
   });
 });
 
-test("applyOptimisticSessionRunUpdate は pending live run と running session を順に反映する", () => {
+// @test-value v2
+// kind = "contract"
+// claim = "共通の送信反映は送信本文を含むSessionをownerへ渡してから同じ会話のPendingを開始する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信直後の共通反映" }
+// fault = "Session適用を省略するかPendingを先行させ、送信本文がない実行中表示を通知する"
+// observable = "Pending通知時点の適用済Session、Sessionとlive runのownerおよび本文"
+// observation_boundary = "public-boundary"
+// scope = "optimistic-session-application"
+// lifecycle = "permanent"
+// distinction = "owner接続の統合testとは別に、共通適用関数の同期通知境界を小さい入力で検証する"
+// @end-test-value
+test("applyOptimisticSessionRunUpdate は送信本文を適用してからPendingを開始する", () => {
   const session: TestSession = {
     id: "session-1",
     threadId: "thread-1",
@@ -173,11 +180,9 @@ test("applyOptimisticSessionRunUpdate は pending live run と running session �
   let nextSession: TestSession | null = null;
 
   const returnedSession = applyOptimisticSessionRunUpdate({
-    session,
-    userMessage: "hello",
-    updatedAt: "after",
-    status: "running",
+    runningSession: createOptimisticRunningSessionState(session, "hello", "after", { status: "running" }),
     updateLiveRunState: (update) => {
+      assert.deepEqual(nextSession?.messages, [{ role: "user", text: "hello" }]);
       calls.push("live-run");
       nextLiveRunState = update({ ownerSessionId: null, state: null });
     },
@@ -187,7 +192,7 @@ test("applyOptimisticSessionRunUpdate は pending live run と running session �
     },
   });
 
-  assert.deepEqual(calls, ["live-run", "session"]);
+  assert.deepEqual(calls, ["session", "live-run"]);
   assert.equal(nextSession, returnedSession);
   assert.deepEqual(nextSession, {
     ...session,

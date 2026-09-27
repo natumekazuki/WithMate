@@ -311,6 +311,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - `selectedSession.id` 切替時は follow / unread state をリセットする
   - `Jump to latest` で末尾へ移動して追従へ復帰できる
 - pending 中の live activity / streaming response
+- Main / Auxiliary の送信直後は、Provider 応答前から送信した user message と同じ会話の Pending を表示する。会話の状態 owner へ本文を適用してから Pending を反映し、遅い状態取得や会話切替で送信文を消したり、確定時に重複追加したりしない
 - streamingの`assistantText`は会話本文として表示する。run開始直後から応答用のassistant行にCharacter avatarとdot bubbleを置き、本文の到着後は同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
 - 処理中表示の所属は、投影が会話ID・thread・メッセージ位置から生成するmessage keyで識別する。保存済み本文とlive本文が異なる場合も対象の応答枠を使い、本文一致や最後のassistantから推測しない。Main／Auxiliaryで所属を分離し、完了・失敗・キャンセル後は本文を重複させず処理中表示を消す
 - pending bubble には provider-native pending item を差し込める

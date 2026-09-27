@@ -148,7 +148,6 @@ export function createGuardedActiveAuxiliarySessionUpdater(input: {
     updateAuxiliarySession: (session: AuxiliarySession) => Promise<AuxiliarySession>;
   } | null;
   getCurrentSession: () => AuxiliarySession | null;
-  activeSessionRef: { current: AuxiliarySession | null };
   setActiveSession: (session: AuxiliarySession) => void;
   draftSaveQueue: { current: Promise<void> };
   sessionSaveQueue: { current: Promise<void> };
@@ -163,38 +162,13 @@ export function createGuardedActiveAuxiliarySessionUpdater(input: {
     return runGuardedAuxiliarySessionUpdate({
       activeSession: input.activeSession,
       getCurrentSession: input.getCurrentSession,
-      applyActiveSession: createActiveAuxiliarySessionUpdateApplier({
-        activeSessionRef: input.activeSessionRef,
-        setActiveSession: input.setActiveSession,
-      }),
+      applyActiveSession: input.setActiveSession,
       draftSaveQueue: input.draftSaveQueue,
       sessionSaveQueue: input.sessionSaveQueue,
       mutationRevision: input.mutationRevision,
       recipe,
       getAuxiliarySession: (sessionId) => api.getAuxiliarySession(sessionId),
       saveAuxiliarySession: (session) => api.updateAuxiliarySession(session),
-    });
-  };
-}
-
-export function applyActiveAuxiliarySessionUpdate(input: {
-  session: AuxiliarySession;
-  activeSessionRef: { current: AuxiliarySession | null };
-  setActiveSession: (session: AuxiliarySession) => void;
-}): void {
-  input.activeSessionRef.current = input.session;
-  input.setActiveSession(input.session);
-}
-
-export function createActiveAuxiliarySessionUpdateApplier(input: {
-  activeSessionRef: { current: AuxiliarySession | null };
-  setActiveSession: (session: AuxiliarySession) => void;
-}): (session: AuxiliarySession) => void {
-  return (session) => {
-    applyActiveAuxiliarySessionUpdate({
-      session,
-      activeSessionRef: input.activeSessionRef,
-      setActiveSession: input.setActiveSession,
     });
   };
 }
