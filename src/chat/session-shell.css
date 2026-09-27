@@ -1012,10 +1012,6 @@
   animation: workspace-changes-spin 720ms linear infinite;
 }
 
-.session-page .session-action-dock-compact-row.running {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .session-page .session-action-dock-compact-row.running .session-action-dock-compact-actions {
   justify-content: flex-end;
 }

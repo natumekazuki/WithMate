@@ -220,6 +220,10 @@
     min-width: 0;
   }
 
+  .session-action-dock-compact-row.running {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .session-page .session-action-dock-compact-row.running .session-action-dock-compact-actions {
     flex-direction: row;
     align-items: center;

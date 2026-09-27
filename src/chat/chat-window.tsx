@@ -697,7 +697,15 @@ export function ChatWindow({
         : undefined}
       concurrentTarget={concurrentChats?.target}
       actionDock={(
-          <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
+          <div
+            className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}
+            onClick={isActionDockExpanded ? undefined : (event) => {
+              if (event.defaultPrevented || (event.target as Element).closest("button")) {
+                return;
+              }
+              compactActionDockProps.onExpand();
+            }}
+          >
           <div
             className={`session-action-dock-content session-action-dock-expanded-content${
               isActionDockExpanded ? " is-active" : ""

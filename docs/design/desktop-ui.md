@@ -262,7 +262,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - 常に全幅の下dockとして置く
   - compact では末尾移動とmessage表示切替を必要に応じて操作列に残す。draft入力と`Send`はexpandedで表示し、実行中indicatorはmessage listに置く
   - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では86pxを使い、viewportが760px以下では操作列幅へ追従する。expanded の下段には disabled の `Send` を残し、開閉や Main / Auxiliary 切替で `Cancel` の位置を変えない
-  - 開閉は下 splitter を主導線とし、compact の非実行中のmeta領域からも展開できる。dock 内に `Hide` は置かない
+  - 開閉は下 splitter を主導線とし、compact では実行状態によらずdock全体の余白からも展開できる。非表示の `Cancel` 予約領域と操作間の隙間も対象とし、表示中の操作ボタンは自身の操作を優先してdockを展開しない。dock 内に `Hide` は置かない
   - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする

@@ -2726,6 +2726,65 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 
 // @test-value v2
 // kind = "contract"
+// claim = "compact ActionDockはidle、noticeあり、runningの全状態で同じmeta領域から展開できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
+// fault = "runningでmeta領域のbuttonが消え、実行状態によって同じ領域から展開できない"
+// observable = "各状態のbuttonのaccessible name、notice、click後のonExpand呼出回数"
+// observation_boundary = "component-behavior"
+// scope = "compact ActionDock expand interaction"
+// lifecycle = "permanent"
+// impact = "実行中だけmeta領域から再展開できず、状態によって開閉操作が変わる"
+// distinction = "既存の静的DOM testとは異なり、React上で各状態のmeta領域をclickして同一callbackを確認する"
+// @end-test-value
+test("SessionActionDockCompactRow は状態によらずmeta領域から展開する", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  let root: Root | null = null;
+  let expandCount = 0;
+
+  try {
+    root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+    for (const [isRunning, chatNotice] of [[false, undefined], [false, "New messages"], [true, "New messages"]] as const) {
+      await act(async () => {
+        root?.render(React.createElement(SessionActionDockCompactRow, {
+          isRunning,
+          chatNotice,
+          showJumpToBottom: false,
+          onExpand: () => { expandCount += 1; },
+          onJumpToBottom() {},
+          onCancel() {},
+        }));
+      });
+      const row = dom.window.document.querySelector(".session-action-dock-compact-row");
+      const button = row?.querySelector<HTMLButtonElement>(".session-action-dock-compact-expand-button");
+      assert.ok(button);
+      assert.equal(button.getAttribute("aria-label"), "Expand action dock");
+      assert.equal(button.type, "button");
+      assert.equal(button.tabIndex, 0);
+      assert.equal(row?.querySelectorAll(".session-action-dock-compact-expand-button").length, 1);
+      assert.equal(row?.querySelector(".session-action-dock-compact-badge.attention")?.textContent, chatNotice ?? undefined);
+      await act(async () => button.click());
+      assert.equal(expandCount, isRunning ? 3 : chatNotice ? 2 : 1);
+    }
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "compact ActionDockは実行中にCancel、Main / Auxiliary、jump操作を同じ列に維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
 // fault = "実行中のcompact ActionDockからCancel、Main / Auxiliary、jump操作が欠けるか、Cancelがtarget slotの直前にない"
