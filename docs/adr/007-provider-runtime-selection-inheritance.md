@@ -5,7 +5,9 @@
 
 ## 適用状態
 
-通常 Session、Auxiliary Session、provider runtime の実行設定継承と ownership 境界は現行のまま適用する。本文中の Companion 作成・閲覧・merge・discard に関する記述は当時の設計判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。現行の Main / Auxiliary / Character / SessionFolder 契約を失効させず、撤去済み Companion service の再公開も行わない。
+作成時の設定検証と ownership 境界は引き続き適用する。DB の直近 Session だけを実行設定の継承元とする判断は、Issue #738 の現在選択と保存 checkpoint の分離により適用対象外とする。新規会話は Main Process が保持する provider ごとの現在選択を優先し、存在しない場合に保存済みの直近値を参照する。各 Send は送信時に捕捉した設定を検証して使用する。後継判断と現行契約は [Electron Session Store の実行設定と Send](../design/electron-session-store.md#実行設定と-send) に記載する。以下の判断本文は履歴として保持する。
+
+本文中の Companion 作成・閲覧・merge・discard に関する記述は当時の設計判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。現行の Main / Auxiliary / Character / SessionFolder 契約を失効させず、撤去済み Companion service の再公開も行わない。
 
 ## Context
 

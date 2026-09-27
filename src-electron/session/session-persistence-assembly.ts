@@ -10,6 +10,8 @@ export type SessionPersistenceAssemblyDeps = {
     getSessions(): Parameters<SessionPersistenceServiceDeps["setSessions"]>[0];
     setSessions(nextSessions: Parameters<SessionPersistenceServiceDeps["setSessions"]>[0]): void;
     getSession: SessionPersistenceServiceDeps["getSession"];
+    overlayCurrentExecutionOptions?: NonNullable<SessionPersistenceServiceDeps["overlayCurrentExecutionOptions"]>;
+    rememberExecutionOptions?: NonNullable<SessionPersistenceServiceDeps["rememberExecutionOptions"]>;
   };
   runtime: Pick<SessionPersistenceServiceDeps, "isSessionRunInFlight" | "listRunningActiveAuxiliaryParentIds">;
   auxiliary: {
@@ -43,6 +45,8 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
     getSessions: () => { assertOwner("cache read"); return deps.cache.getSessions(); },
     setSessions: (nextSessions) => { assertOwner("cache write"); deps.cache.setSessions(nextSessions); },
     getSession: (sessionId) => { assertOwner("session read"); return deps.cache.getSession(sessionId); },
+    overlayCurrentExecutionOptions: (session) => { assertOwner("selection overlay"); return deps.cache.overlayCurrentExecutionOptions?.(session) ?? session; },
+    rememberExecutionOptions: (session, options) => { assertOwner("selection remember"); deps.cache.rememberExecutionOptions?.(session, options); },
     getStoredSession: async (sessionId) => {
       assertOwner("stored session read");
       const stored = await deps.storage.getSession(sessionId);
@@ -58,6 +62,24 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
       return identities;
     }))).flat(),
     upsertStoredSession: storageCommands.upsertStoredSession,
+    setStoredSessionTitle: async (sessionId, incarnationId, title) => {
+      assertOwner("title update");
+      if (!deps.storage.setSessionTitle) throw new Error("Session title storage is unavailable.");
+      await deps.storage.setSessionTitle(sessionId, incarnationId, title);
+      assertOwner("title update");
+    },
+    setStoredSessionMessageBookmark: async (sessionId, incarnationId, messageIndex, isBookmarked) => {
+      assertOwner("bookmark update");
+      if (!deps.storage.setSessionMessageBookmark) throw new Error("Session bookmark storage is unavailable.");
+      await deps.storage.setSessionMessageBookmark(sessionId, incarnationId, messageIndex, isBookmarked);
+      assertOwner("bookmark update");
+    },
+    setStoredSessionExecutionOptions: async (sessionId, incarnationId, options) => {
+      assertOwner("execution options update");
+      if (!deps.storage.setSessionExecutionOptions) throw new Error("Session execution option storage is unavailable.");
+      await deps.storage.setSessionExecutionOptions(sessionId, incarnationId, options);
+      assertOwner("execution options update");
+    },
     updateStoredSessionThreadIfMatches: async (input) => {
       assertOwner("thread update");
       if (!deps.storage.updateSessionThreadIfMatches) throw new Error("Conditional Session thread update storage is unavailable.");
@@ -126,7 +148,7 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
     closeSessionWindow: (sessionId) => { assertOwner("session window close"); deps.effects.closeSessionWindow(sessionId); },
     discardSessionWindow: (sessionId) => { assertOwner("session window discard"); deps.effects.discardSessionWindow(sessionId); },
     upsertStoredTerminalSession: storageCommands.upsertStoredTerminalSession,
-    broadcastSessions: (sessionIds) => { assertOwner("broadcast"); deps.effects.broadcastSessions(sessionIds); },
+    broadcastSessions: (sessionIds, detailChanged) => { assertOwner("broadcast"); deps.effects.broadcastSessions(sessionIds, detailChanged); },
     runCharacterAffectTurnOwnershipExclusive: (operation) => deps.effects.runCharacterAffectTurnOwnershipExclusive(async () => { assertOwner("Character affect ownership"); const result = await operation(); assertOwner("Character affect ownership"); return result; }),
   };
   return new SessionPersistenceService(assembled);

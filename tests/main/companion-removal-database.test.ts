@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
+import os from "node:os";
+import path from "node:path";
 
 import {
   applyCompanionRemovalDatabaseTarget,
@@ -12,6 +14,7 @@ function database(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON;");
   ensureV6Schema(db);
+  installReleasedLegacyAuxiliarySessionsTable(db);
   db.exec(`
     CREATE TABLE companion_groups (id TEXT PRIMARY KEY, repo_root TEXT NOT NULL);
     CREATE TABLE companion_sessions (
@@ -29,7 +32,60 @@ function database(): DatabaseSync {
   return db;
 }
 
+function installReleasedLegacyAuxiliarySessionsTable(db: DatabaseSync): void {
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    DROP TABLE auxiliary_sessions;
+    CREATE TABLE auxiliary_sessions (
+      id TEXT PRIMARY KEY,
+      parent_session_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
+    CREATE INDEX idx_auxiliary_sessions_parent_updated
+      ON auxiliary_sessions(parent_session_id, updated_at DESC);
+    PRAGMA foreign_keys = ON;
+  `);
+}
+
 describe("companion removal database", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "normalized Auxiliary message bodyのlive attachment参照をCompanion removal inventoryで保護する"
+  // oracle = { type = "contract", ref = "Companion removal live file reference protection" }
+  // fault = "他DBにある通常Auxiliaryの添付参照を見落としてCompanion cleanupが参照先を削除する"
+  // observable = "normalized auxiliary_session_messagesから収集したsurvivingFilePaths"
+  // observation_boundary = "public-boundary"
+  // scope = "normalized auxiliary live references"
+  // lifecycle = "permanent"
+  // impact = "legacy removal targetとの混在時に通常会話の添付ファイルを失わない"
+  // distinction = "旧payload_json fixtureではなく現行normalized message tableと同じschemaを使う"
+  // risk_tags = ["irreversible-data-loss"]
+  // @end-test-value
+  it("preserves normalized Auxiliary message attachment references", () => {
+    const db = new DatabaseSync(":memory:");
+    const liveAttachment = path.join(os.tmpdir(), "withmate-live-aux-attachment.txt");
+    const message = {
+      role: "user",
+      text: `Please review [attachment](<${liveAttachment.replaceAll("\\", "/")}>)`,
+    };
+    try {
+      ensureV6Schema(db);
+      db.prepare(`INSERT INTO auxiliary_sessions
+        (id, parent_session_id, status, created_at, updated_at)
+        VALUES ('live-aux', 'live-parent', 'active', 'now', 'now')`).run();
+      db.prepare(`INSERT INTO auxiliary_session_messages
+        (auxiliary_session_id, seq, role, body, created_at)
+        VALUES ('live-aux', 0, 'user', ?, 'now')`).run(JSON.stringify(message));
+
+      const target = collectCompanionRemovalDatabaseTarget(db);
+
+      assert.deepEqual(target.survivingFilePaths, [liveAttachment.replaceAll("\\", "/")]);
+    } finally { db.close(); }
+  });
+
   // @test-value v2
   // kind = "invariant"
   // claim = "専用行・親Auxiliary・blob参照を特定し、共有blobと通常sessionを保全する"

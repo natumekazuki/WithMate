@@ -27,6 +27,7 @@ const STORE_METHODS = {
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
     "getLatestSessionSummaryForProvider", "getSession", "setSessionPinned", "getSessionMessageArtifact",
     "listSessionIdsLastActiveBefore", "upsertSession", "updateSessionThreadIfMatches",
+    "listSessionCredentialThreads", "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
     "updateSessionRuntimeMetadataIfMatches", "updateSession", "upsertTerminalSession", "updateTerminalSession",
     "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "insertSession", "replaceSessions",
     "deleteSession", "deleteSessions", "clearSessions",
@@ -39,8 +40,11 @@ const STORE_METHODS = {
   auxiliary: [
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
     "listActiveAuxiliarySessionSummaries", "listRunningActiveAuxiliarySessions", "getActiveAuxiliarySession",
-    "getAuxiliarySession", "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches",
-    "updateAuxiliarySessionIfMatches", "upsertAuxiliarySession", "backfillAuxiliarySessionSummaries", "deleteAuxiliarySessionsForParent", "deleteAuxiliarySessionsExceptParents",
+    "getAuxiliarySession", "getAuxiliarySessionSummary", "listAuxiliaryCredentialThreads", "getAuxiliaryMessageArtifactDetail",
+    "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches",
+    "updateAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent", "deleteAuxiliarySessionsExceptParents",
+    "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches",
+    "updateAuxiliaryDisplayAnchorIfMatches",
     "getAuxiliaryDraft", "saveAuxiliaryDraft", "consumeAuxiliaryDraft",
     "getAuxiliarySessionStatus",
   ],
@@ -66,11 +70,14 @@ const STORE_METHODS = {
 } as const;
 
 const MUTATIONS = new Set([
+  "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
   "setSessionPinned", "upsertSession", "updateSessionThreadIfMatches", "updateSessionRuntimeMetadataIfMatches", "updateSession",
   "upsertTerminalSession", "updateTerminalSession", "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "insertSession",
   "replaceSessions", "deleteSession", "deleteSessions", "clearSessions", "createAuditLog", "updateAuditLog", "clearAuditLogs",
   "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches", "updateAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent",
-  "backfillAuxiliarySessionSummaries", "deleteAuxiliarySessionsExceptParents", "saveAuxiliaryDraft", "consumeAuxiliaryDraft", "createCharacter", "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter",
+  "deleteAuxiliarySessionsExceptParents", "saveAuxiliaryDraft", "consumeAuxiliaryDraft",
+  "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches", "updateAuxiliaryDisplayAnchorIfMatches",
+  "createCharacter", "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter",
   "deleteCharacterRootDirectory", "updateSettings", "updateChatLayoutPreference", "resetSettings", "importCatalogDocument", "resetToBundled",
   "ensureSeeded", "initializeSchema", "recoverMateProfileFilesFromActiveRevision",
   "updateMateGrowthApplyIntervalMinutes", "updateMateGrowthSettings", "createMate", "updateMate", "setMateAvatar", "resetMate",
@@ -185,51 +192,18 @@ export function createV6StorageWorkerBundle(options: {
       },
     }),
   ])) as V6StorageWorkerBundle["stores"];
-  const runAuxiliarySummaryMaintenance = async (batchSize = 100): Promise<AuxiliarySummaryMaintenanceResult> => {
-    let processed = 0;
-    let updated = 0;
-    let remaining = 0;
-    for (;;) {
-      const result = await client.call<AuxiliarySummaryMaintenanceResult>(
-        "store.call",
-        { store: "auxiliary", method: "backfillAuxiliarySessionSummaries", args: [{ batchSize }] },
-        { mutation: true, operation: "auxiliary.backfillAuxiliarySessionSummaries" },
-      );
-      processed += result.processed;
-      updated += result.updated;
-      remaining = result.remaining;
-      if (result.error) {
-        return { processed, updated, remaining, error: result.error, stopped: "malformed" };
-      }
-      if (remaining === 0) return { processed, updated, remaining };
-      if (result.processed === 0 || result.updated === 0) {
-        return { processed, updated, remaining, stopped: "no-progress" };
-      }
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-  };
   return {
     client,
     stores,
     initialize: () => client.call("bundle.initialize", null, { mutation: true, operation: "bundle.initialize" }),
     truncateWal: () => client.call<boolean>("maintenance.truncateWal", null, { mutation: true, operation: "maintenance.truncateWal" }),
-    runAuxiliarySummaryMaintenance,
   };
 }
-
-export type AuxiliarySummaryMaintenanceResult = {
-  processed: number;
-  updated: number;
-  remaining: number;
-  error?: { id: string; message: string };
-  stopped?: "malformed" | "no-progress";
-};
 
 export type V6StorageWorkerBundle = {
   client: StorageWorkerClient;
   initialize(): Promise<unknown>;
   truncateWal(): Promise<boolean>;
-  runAuxiliarySummaryMaintenance(batchSize?: number): Promise<AuxiliarySummaryMaintenanceResult>;
   stores: {
     session: AsyncStore<SessionStorageV6>;
     audit: AsyncStore<AuditLogStorageV6>;

@@ -762,7 +762,19 @@ test("resolveAuxiliarySessionDisplayAfterMessageIndex は初回 Auxiliary anchor
   );
 });
 
-test("buildAuxiliarySessionRunningTransition は初回 anchor update と running state を組み立てる", () => {
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary初回送信は親の最終message位置を表示anchorへ捕捉し、user messageを追加したrunning sessionを返す"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md" }
+// fault = "初回送信時のanchorが失われる、またはrunning stateと送信本文が保存候補へ反映されない"
+// observable = "runningSessionのdisplayAfterMessageIndex、runState、composerDraft、messages、updatedAt"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-running-transition"
+// lifecycle = "permanent"
+// impact = "送信したAuxiliaryが親会話の誤った位置に表示されるか、実行状態と本文が一致しなくなる"
+// distinction = "既存anchorを維持する再送caseとは異なり、最初のanchor捕捉を確認する"
+// @end-test-value
+test("buildAuxiliarySessionRunningTransition は初回 anchor と running state を組み立てる", () => {
   const session = createAuxiliarySession({
     composerDraft: "draft text",
     displayAfterMessageIndex: null,
@@ -778,10 +790,6 @@ test("buildAuxiliarySessionRunningTransition は初回 anchor update と running
       updatedAt: "2026-05-31T00:00:00.000Z",
     }),
     {
-      anchorUpdateSession: {
-        ...session,
-        displayAfterMessageIndex: 3,
-      },
       runningSession: {
         ...session,
         runState: "running",
@@ -794,7 +802,19 @@ test("buildAuxiliarySessionRunningTransition は初回 anchor update と running
   );
 });
 
-test("buildAuxiliarySessionRunningTransition は既存 anchor では保存用 update を作らない", () => {
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary再送時は既存表示anchorを保持し、過去本文に新たなuser messageを続ける"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md" }
+// fault = "再送時に表示anchorを現在の親末尾へ移すか、過去本文を失う"
+// observable = "runningSessionのdisplayAfterMessageIndexとmessages"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-running-transition"
+// lifecycle = "permanent"
+// impact = "Auxiliaryの表示位置と会話履歴が送信前後で変わる"
+// distinction = "初回送信のanchor捕捉では検出できない再送時の位置・履歴保持を確認する"
+// @end-test-value
+test("buildAuxiliarySessionRunningTransition は既存 anchor を維持する", () => {
   const session = createAuxiliarySession({
     composerDraft: "draft text",
     displayAfterMessageIndex: 2,
@@ -809,7 +829,6 @@ test("buildAuxiliarySessionRunningTransition は既存 anchor では保存用 up
     updatedAt: "2026-05-31T00:00:00.000Z",
   });
 
-  assert.equal(result.anchorUpdateSession, null);
   assert.deepEqual(result.runningSession, {
     ...session,
     runState: "running",

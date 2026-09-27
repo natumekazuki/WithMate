@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { describe, it } from "node:test";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -41,6 +42,8 @@ function createSession(overrides: Partial<Session> = {}): Session {
     ...overrides,
   };
 }
+
+const TEST_EXECUTION_OPTIONS = captureSessionExecutionOptions(createSession());
 
 function createRuntime(options: {
   session?: Session;
@@ -160,7 +163,7 @@ function createRuntime(options: {
 }
 
 async function runRequest(service: SessionRuntimeService, sessionId: string): Promise<Session> {
-  return service.runSessionTurn(sessionId, { userMessage: "hello", clientRequestId: crypto.randomUUID() });
+  return service.runSessionTurn(sessionId, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "hello", clientRequestId: crypto.randomUUID() });
 }
 
 describe("SessionRuntimeService session admission", () => {

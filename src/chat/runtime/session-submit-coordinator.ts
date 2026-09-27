@@ -1,5 +1,5 @@
 import type { LiveSessionRunState } from "../../../src-shared/session/runtime-state.js";
-import type { Session } from "../../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, setMessageBookmarked, type Message, type Session } from "../../../src-shared/session/session-state.js";
 import type { OwnedLiveSessionRunState } from "./session-live-run-state.js";
 
 export type SessionSubmitLease = {
@@ -103,9 +103,18 @@ export function mergeRefetchedSessionProjection(
   refreshed: Session,
   preserveCurrentPin: boolean,
 ): Session {
-  return preserveCurrentPin && current?.id === refreshed.id
-    ? { ...refreshed, isPinned: current.isPinned }
+  return preserveCurrentPin && current?.id === refreshed.id && getSessionIncarnationId(current) === getSessionIncarnationId(refreshed)
+    ? { ...refreshed, isPinned: current.isPinned, messages: mergeMessageBookmarkProjection(current.messages, refreshed.messages) }
     : refreshed;
+}
+
+export function mergeMessageBookmarkProjection(current: Message[], incoming: Message[]): Message[] {
+  return incoming.map((message, index) => {
+    const projected = current[index];
+    return projected && projected.role === message.role && projected.text === message.text
+      ? setMessageBookmarked(message, projected.isBookmarked === true)
+      : message;
+  });
 }
 
 export function convergeResolvedSessionProjection(
@@ -121,12 +130,14 @@ export function recoverRejectedSessionSnapshot(
   optimistic: Session,
   canReplaceOptimisticBody: boolean,
 ): Session | null {
-  if (!canReplaceOptimisticBody || !current || current.id !== optimistic.id) {
+  if (!canReplaceOptimisticBody || !current || current.id !== optimistic.id
+    || getSessionIncarnationId(current) !== getSessionIncarnationId(optimistic)) {
     return current;
   }
   return {
     ...optimistic,
     isPinned: current.isPinned,
+    messages: mergeMessageBookmarkProjection(current.messages, optimistic.messages),
     status: "idle",
     runState: "error",
   };

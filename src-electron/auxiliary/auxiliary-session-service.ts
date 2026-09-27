@@ -20,22 +20,28 @@ import {
   DEFAULT_CODEX_SANDBOX_MODE,
 } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { CODEX_SPEED_VALUES, DEFAULT_CODEX_SPEED } from "../../src-shared/settings/codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER, resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-reviewer.js";
+import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer.js";
 import {
   coerceModelSelection,
-  getModelCatalogItem,
   getProviderCatalog,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
+import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import type {
+  SetExecutionOptionsResult,
+  SetAuxiliaryExecutionOptionsRequest,
+  SetAuxiliaryTitleRequest,
+  SetAuxiliaryMessageBookmarkRequest,
+} from "../../src-shared/session/session-mutation-contract.js";
 import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import { selectWeightedRandomLaunchCharacterId } from "../../src-shared/character/launch-character-selection.js";
 import type { Awaitable, AuxiliarySessionStorageAccess } from "../storage/persistent-store-lifecycle-service.js";
 import type { SessionLaunchSelection } from "../session/session-launch-selection-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "../providers/provider-runtime-operation-coordinator.js";
 import type { RunCharacterAffectTurnOwnershipExclusive } from "../character/character-affect-turn-ownership-coordinator.js";
-import type { AuxiliarySessionThreadPatchInput } from "./auxiliary-session-storage.js";
+import type { AuxiliarySessionThreadPatchInput, AuxiliaryThreadPatchResult, AuxiliaryRuntimeMetadataPatchResult } from "./auxiliary-session-storage.js";
 import type { AuxiliarySessionRuntimeMetadataPatchInput } from "./auxiliary-session-storage.js";
 import type {
   AuxiliaryDraftConsumeInput,
@@ -57,6 +63,11 @@ type AuxiliarySessionServiceDeps = {
   randomCharacter?: () => number;
   runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
   onCreationStateChanged?(result: AuxiliaryCreationStateChange): void;
+  captureStorageIdentity?(): unknown;
+  isStorageIdentityCurrent?(identity: unknown): boolean;
+  isAuxiliaryRunInFlight?(auxiliarySessionId: string): boolean;
+  rememberExecutionOptions?(session: AuxiliarySessionSummary, options: SessionExecutionOptions): void;
+  overlayCurrentExecutionOptions?<T extends AuxiliarySessionSummary>(session: T): T;
 };
 
 type AuxiliaryCreationRecord = {
@@ -105,23 +116,6 @@ function buildInterruptedMessages(messages: AuxiliarySession["messages"]): Auxil
       accent: true,
     },
   ];
-}
-
-async function isRuntimeMetadataInCatalog(
-  session: AuxiliarySession,
-  snapshot: ModelCatalogSnapshot | null | undefined,
-): Promise<boolean> {
-  if (!snapshot || session.catalogRevision !== snapshot.revision) {
-    return false;
-  }
-
-  const providerCatalog = getProviderCatalog(snapshot.providers, session.provider);
-  if (!providerCatalog || providerCatalog.id !== session.provider) {
-    return false;
-  }
-
-  const model = getModelCatalogItem(providerCatalog, session.model);
-  return model?.reasoningEfforts.includes(session.reasoningEffort) ?? false;
 }
 
 function resolveInitialModelSelection(input: CreateAuxiliarySessionInput, providerCatalog: ModelCatalogProvider) {
@@ -183,8 +177,21 @@ export class AuxiliarySessionService {
   private readonly failedDraftRestores = new Set<AuxiliaryDraftSaveInput>();
   private creationStorage: AuxiliarySessionStorageAccess | null = null;
   private creationGenerationId = randomUUID();
+  private readonly selectionCheckpoints = new Map<string, Promise<void>>();
+  private readonly selectionRequestRevisions = new Map<string, number>();
 
   constructor(private readonly deps: AuxiliarySessionServiceDeps) {}
+
+  private overlayExecutionOptions<T extends AuxiliarySessionSummary>(session: T): T {
+    return this.deps.overlayCurrentExecutionOptions?.(session) ?? session;
+  }
+
+  private assertStorageIdentity(storage: AuxiliarySessionStorageAccess, identity: unknown): void {
+    if (this.deps.getStorage() !== storage
+      || (this.deps.isStorageIdentityCurrent && !this.deps.isStorageIdentityCurrent(identity))) {
+      throw new Error("The Auxiliary Session storage changed.");
+    }
+  }
 
   async getAuxiliaryCreationContext(parentSessionId: string): Promise<AuxiliaryCreationContext> {
     const storage = this.deps.getStorage();
@@ -320,33 +327,147 @@ export class AuxiliarySessionService {
   }
 
   async listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]> {
-    return this.deps.getStorage().listAuxiliarySessions(parentSessionId);
+    return (await this.deps.getStorage().listAuxiliarySessions(parentSessionId)).map((session) => this.overlayExecutionOptions(session));
   }
 
   async listAuxiliarySessionSummaries(parentSessionIds: readonly string[]): Promise<AuxiliarySessionSummary[]> {
-    return this.deps.getStorage().listAuxiliarySessionSummaries(parentSessionIds);
+    return (await this.deps.getStorage().listAuxiliarySessionSummaries(parentSessionIds)).map((session) => this.overlayExecutionOptions(session));
   }
 
   async listAllAuxiliarySessions(): Promise<AuxiliarySession[]> {
-    return this.deps.getStorage().listAllAuxiliarySessions();
+    return (await this.deps.getStorage().listAllAuxiliarySessions()).map((session) => this.overlayExecutionOptions(session));
   }
 
   async listActiveAuxiliarySessionSummaries(parentSessionIds: readonly string[]): Promise<AuxiliarySessionSummary[]> {
-    return this.deps.getStorage().listActiveAuxiliarySessionSummaries(parentSessionIds);
+    return (await this.deps.getStorage().listActiveAuxiliarySessionSummaries(parentSessionIds)).map((session) => this.overlayExecutionOptions(session));
   }
 
   async getActiveAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null> {
-    return this.deps.getStorage().getActiveAuxiliarySession(parentSessionId);
+    const session = await this.deps.getStorage().getActiveAuxiliarySession(parentSessionId);
+    return session ? this.overlayExecutionOptions(session) : null;
   }
 
   async getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null> {
     const session = await this.deps.getStorage().getAuxiliarySession(auxiliarySessionId);
     if (session) this.assertCharacterSnapshotValid(session);
-    return session;
+    return session ? this.overlayExecutionOptions(session) : null;
+  }
+
+  async getAuxiliarySessionSummary(auxiliarySessionId: string): Promise<AuxiliarySessionSummary | null> {
+    const session = await this.deps.getStorage().getAuxiliarySessionSummary(auxiliarySessionId);
+    return session ? this.overlayExecutionOptions(session) : null;
+  }
+
+  private async getMutationTarget(request: {
+    auxiliarySessionId: string;
+    parentSessionId: string;
+    createdAt: string;
+  }): Promise<{ storage: AuxiliarySessionStorageAccess; identity: unknown; session: AuxiliarySessionSummary }> {
+    const storage = this.deps.getStorage();
+    const identity = this.deps.captureStorageIdentity?.();
+    const session = await storage.getAuxiliarySessionSummary(request.auxiliarySessionId);
+    this.assertStorageIdentity(storage, identity);
+    if (!session
+      || session.parentSessionId !== request.parentSessionId
+      || session.createdAt !== request.createdAt
+      || session.status !== "active") {
+      throw new Error("The Auxiliary Session could not be found or has changed.");
+    }
+    return { storage, identity, session: this.overlayExecutionOptions(session) };
+  }
+
+  async setAuxiliaryTitle(request: SetAuxiliaryTitleRequest): Promise<void> {
+    const { storage, session } = await this.getMutationTarget(request);
+    if (session.runState === "running") throw new Error("A running Auxiliary Session cannot be updated.");
+    if (typeof request.title !== "string" || !request.title.trim()) {
+      throw new Error("The Auxiliary Session title cannot be empty.");
+    }
+    const updated = await storage.updateAuxiliaryTitleIfMatches({ ...request, updatedAt: currentTimestampLabel() });
+    if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+  }
+
+  async setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Promise<void> {
+    const { storage } = await this.getMutationTarget(request);
+    if (!Number.isInteger(request.messageIndex) || request.messageIndex < 0 || typeof request.isBookmarked !== "boolean") {
+      throw new Error("The Auxiliary message bookmark is invalid.");
+    }
+    const updated = await storage.updateAuxiliaryMessageBookmarkIfMatches({ ...request, updatedAt: currentTimestampLabel() });
+    if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+  }
+
+  async setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Promise<SetExecutionOptionsResult> {
+    const selectionKey = `${request.auxiliarySessionId}:${request.createdAt}`;
+    const revision = (this.selectionRequestRevisions.get(selectionKey) ?? 0) + 1;
+    this.selectionRequestRevisions.set(selectionKey, revision);
+    const { storage, identity, session } = await this.getMutationTarget(request);
+    const snapshot = await this.deps.getModelCatalogSnapshot?.();
+    if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
+    const current = await storage.getAuxiliarySessionSummary(request.auxiliarySessionId);
+    this.assertStorageIdentity(storage, identity);
+    if (!current || current.parentSessionId !== request.parentSessionId
+      || current.createdAt !== request.createdAt || current.status !== "active") {
+      throw new Error("The Auxiliary Session could not be found or has changed.");
+    }
+    if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
+    const fresh = this.overlayExecutionOptions(current);
+    const provider = getProviderCatalog(snapshot?.providers ?? [], fresh.provider);
+    if (!snapshot || !provider || provider.id !== session.provider) {
+      throw new Error("The Auxiliary Session provider is not in the model catalog.");
+    }
+    const options = validateSessionExecutionOptions(request.executionOptions, provider, snapshot.revision);
+    this.assertStorageIdentity(storage, identity);
+    if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
+    if (fresh.runState === "running" || this.deps.isAuxiliaryRunInFlight?.(fresh.id)) {
+      if (options.approvalMode !== fresh.approvalMode || options.codexSandboxMode !== fresh.codexSandboxMode
+        || options.codexSpeed !== fresh.codexSpeed || options.codexReviewer !== fresh.codexReviewer
+        || options.customAgentName !== fresh.customAgentName) {
+        throw new Error("A running Auxiliary Session cannot change these execution options.");
+      }
+    }
+    this.deps.rememberExecutionOptions?.(fresh, options);
+    const previous = this.selectionCheckpoints.get(session.id) ?? Promise.resolve();
+    const checkpoint = previous.catch(() => {}).then(async () => {
+      this.assertStorageIdentity(storage, identity);
+      const updated = await storage.updateAuxiliaryExecutionOptionsIfMatches({
+        ...request,
+        options: { provider: session.provider, ...options },
+        updatedAt: currentTimestampLabel(),
+      });
+      if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+    });
+    this.selectionCheckpoints.set(session.id, checkpoint);
+    try {
+      await checkpoint;
+      return { status: "accepted", checkpointSaved: true };
+    } catch {
+      return { status: "accepted", checkpointSaved: false };
+    } finally {
+      if (this.selectionCheckpoints.get(session.id) === checkpoint) this.selectionCheckpoints.delete(session.id);
+    }
+  }
+
+  async setAuxiliaryDisplayAnchor(auxiliarySessionId: string, parentMessageCount: number): Promise<void> {
+    if (!Number.isInteger(parentMessageCount) || parentMessageCount < 0) {
+      throw new Error("The Auxiliary display anchor is invalid.");
+    }
+    const storage = this.deps.getStorage();
+    const identity = this.deps.captureStorageIdentity?.();
+    const session = await storage.getAuxiliarySessionSummary(auxiliarySessionId);
+    this.assertStorageIdentity(storage, identity);
+    if (!session || session.status !== "active") throw new Error("The Auxiliary Session could not be found.");
+    if (session.displayAfterMessageIndex !== null) return;
+    const updated = await storage.updateAuxiliaryDisplayAnchorIfMatches({
+      auxiliarySessionId: session.id,
+      parentSessionId: session.parentSessionId,
+      createdAt: session.createdAt,
+      displayAfterMessageIndex: parentMessageCount - 1,
+      updatedAt: currentTimestampLabel(),
+    });
+    if (!updated) throw new Error("Saving the Auxiliary display anchor was canceled.");
   }
 
   async listRunningActiveAuxiliarySessions(): Promise<AuxiliarySessionSummary[]> {
-    return this.deps.getStorage().listRunningActiveAuxiliarySessions();
+    return (await this.deps.getStorage().listRunningActiveAuxiliarySessions()).map((session) => this.overlayExecutionOptions(session));
   }
 
   async createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession> {
@@ -550,7 +671,7 @@ export class AuxiliarySessionService {
     return next;
   }
 
-  async updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): Promise<AuxiliarySession | null> {
+  async updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): Promise<AuxiliaryThreadPatchResult | null> {
     const storage = this.deps.getStorage();
     const patch = storage.updateAuxiliarySessionThreadIfMatches;
     if (!patch) {
@@ -561,7 +682,7 @@ export class AuxiliarySessionService {
 
   async updateAuxiliarySessionRuntimeMetadataIfMatches(
     input: AuxiliarySessionRuntimeMetadataPatchInput,
-  ): Promise<AuxiliarySession | null> {
+  ): Promise<AuxiliaryRuntimeMetadataPatchResult | null> {
     const storage = this.deps.getStorage();
     const patch = storage.updateAuxiliarySessionRuntimeMetadataIfMatches;
     if (!patch) {
@@ -823,6 +944,7 @@ export class AuxiliarySessionService {
     incarnation: string;
     expectedDurableRevision: number;
     userMessage: string;
+    displayAnchorParentMessageCount?: number;
     run: () => Promise<void>;
   }): Promise<void> {
     return this.trackPendingDraftSend(() => this.runAuxiliaryTurnWithDraftInternal(input));
@@ -872,6 +994,7 @@ export class AuxiliarySessionService {
       incarnation: string;
       expectedDurableRevision: number;
       userMessage: string;
+      displayAnchorParentMessageCount?: number;
       run: () => Promise<void>;
     },
   ): Promise<void> {
@@ -893,6 +1016,25 @@ export class AuxiliarySessionService {
       throw new Error("Sending was canceled because the Auxiliary draft changed.");
     }
     try {
+      if (input.displayAnchorParentMessageCount !== undefined) {
+        const summary = await storage.getAuxiliarySessionSummary(input.auxiliarySessionId);
+        if (!summary || summary.parentSessionId !== input.parentSessionId || summary.status !== "active") {
+          throw new Error("The Auxiliary Session could not be found or has changed.");
+        }
+        if (summary.displayAfterMessageIndex === null) {
+          if (!Number.isInteger(input.displayAnchorParentMessageCount) || input.displayAnchorParentMessageCount < 0) {
+            throw new Error("The Auxiliary display anchor is invalid.");
+          }
+          const updated = await storage.updateAuxiliaryDisplayAnchorIfMatches({
+            auxiliarySessionId: summary.id,
+            parentSessionId: summary.parentSessionId,
+            createdAt: summary.createdAt,
+            displayAfterMessageIndex: input.displayAnchorParentMessageCount - 1,
+            updatedAt: currentTimestampLabel(),
+          });
+          if (!updated) throw new Error("Saving the Auxiliary display anchor was canceled.");
+        }
+      }
       await input.run();
     } catch (error) {
       const restore: AuxiliaryDraftSaveInput = {
@@ -936,7 +1078,7 @@ export class AuxiliarySessionService {
     if (!current) {
       throw new Error("The Auxiliary Session could not be found.");
     }
-    const next: AuxiliarySession = {
+    const next: AuxiliarySession = this.overlayExecutionOptions({
       ...current,
       status: "active",
       closedAt: "",
@@ -960,13 +1102,13 @@ export class AuxiliarySessionService {
       messages: runtimeSession.messages,
       preview: resolveAuxiliaryPreview(runtimeSession.messages, current.preview, options.confirmedFinalAssistantText),
       updatedAt: runtimeSession.updatedAt,
-    };
+    });
     const updated = await storage.updateAuxiliarySessionIfMatches({
       session: next,
       expectedSession: current,
     });
     if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
-    return updated;
+    return this.overlayExecutionOptions(updated);
   }
 
   async updateAuxiliarySession(session: AuxiliarySession): Promise<AuxiliarySession> {
@@ -986,39 +1128,26 @@ export class AuxiliarySessionService {
       hasStaleRuntimeThread ||
       session.messages.length < current.messages.length;
     if (isRuntimeStalePayload) {
-      return current;
+      return this.overlayExecutionOptions(current);
     }
-    const hasRuntimeMetadataChange =
-      session.provider !== current.provider ||
-      session.catalogRevision !== current.catalogRevision ||
-      session.model !== current.model ||
-      session.reasoningEffort !== current.reasoningEffort;
-    const isExplicitRuntimeMetadataUpdate =
-      hasRuntimeMetadataChange &&
-      await isRuntimeMetadataInCatalog(session, await this.deps.getModelCatalogSnapshot?.());
-    const shouldPreserveRuntimeMetadata =
-      hasRuntimeMetadataChange &&
-      !isExplicitRuntimeMetadataUpdate;
-    const shouldResetRuntimeThread = hasRuntimeMetadataChange && !shouldPreserveRuntimeMetadata;
-
     const next: AuxiliarySession = {
       ...current,
       status: "active",
       closedAt: "",
       title: session.title,
-      provider: shouldPreserveRuntimeMetadata ? current.provider : session.provider,
-      catalogRevision: shouldPreserveRuntimeMetadata ? current.catalogRevision : session.catalogRevision,
-      model: shouldPreserveRuntimeMetadata ? current.model : session.model,
-      reasoningEffort: shouldPreserveRuntimeMetadata ? current.reasoningEffort : session.reasoningEffort,
-      approvalMode: session.approvalMode,
-      codexSandboxMode: session.codexSandboxMode,
-      codexSpeed: session.codexSpeed,
-      codexReviewer: resolveCodexReviewerUpdate(current, session.codexReviewer),
-      customAgentName: session.customAgentName,
+      provider: current.provider,
+      catalogRevision: current.catalogRevision,
+      model: current.model,
+      reasoningEffort: current.reasoningEffort,
+      approvalMode: current.approvalMode,
+      codexSandboxMode: current.codexSandboxMode,
+      codexSpeed: current.codexSpeed,
+      codexReviewer: current.codexReviewer,
+      customAgentName: current.customAgentName,
       allowedAdditionalDirectories: [...session.allowedAdditionalDirectories],
       composerDraft: current.composerDraft,
       displayAfterMessageIndex: session.displayAfterMessageIndex,
-      threadId: shouldResetRuntimeThread ? "" : current.threadId,
+      threadId: current.threadId,
       updatedAt: currentTimestampLabel(),
     };
     const updated = await storage.updateAuxiliarySessionIfMatches({
@@ -1026,7 +1155,7 @@ export class AuxiliarySessionService {
       expectedSession: current,
     });
     if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
-    return updated;
+    return this.overlayExecutionOptions(updated);
   }
 
   async replaceAuxiliarySessions(sessions: AuxiliarySession[]): Promise<AuxiliarySession[]> {

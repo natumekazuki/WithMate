@@ -233,10 +233,22 @@ export function collectCompanionRemovalDatabaseTarget(
       if (text(row, "messages_json")) preservePaths({ messages: JSON.parse(text(row, "messages_json")) });
     }
   }
-  for (const table of includeFileReferences ? ["session_messages", "session_messages_v6", "auxiliary_session_drafts"] : []) {
+  for (const table of includeFileReferences
+    ? ["session_messages", "session_messages_v6", "auxiliary_session_drafts", "auxiliary_session_messages"]
+    : []) {
     if (!names.has(table)) continue;
     for (const row of rows(db, table, [...CONVERSATION_OWNER_COLUMNS, "text", "body", "text_preview", "draft_text"])) {
       if (deletedConversationRow(row, deletedSessionIds)) continue;
+      if (table === "auxiliary_session_messages") {
+        const body = text(row, "body");
+        if (!body) continue;
+        const message = JSON.parse(body) as Row;
+        if (!message || typeof message !== "object" || typeof message.text !== "string") {
+          throw new Error("A normalized Auxiliary message body is invalid.");
+        }
+        preserveTextReferences(message.text);
+        continue;
+      }
       for (const field of ["text", "body", "text_preview", "draft_text"]) preserveTextReferences(text(row, field));
     }
   }

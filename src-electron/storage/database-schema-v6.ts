@@ -18,6 +18,7 @@ export const REQUIRED_V6_TABLES = [
   "sessions_v6",
   "session_messages_v6",
   "auxiliary_sessions",
+  "auxiliary_session_messages",
   "session_turns_v6",
   "session_turn_interims_v6",
   "session_turn_provider_outputs_v6",
@@ -107,7 +108,8 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "last_active_at",
   ],
   session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
-  auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at", "payload_json"],
+  auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at"],
+  auxiliary_session_messages: ["auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at"],
   session_turns_v6: [
     "id",
     "session_id",
@@ -400,6 +402,17 @@ function hasRequiredColumns(db: DatabaseSync): boolean {
     }
   }
 
+  const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
+  const normalizedColumns = ["title", "run_state", "preview", "provider_id", "catalog_revision",
+    "model_id", "reasoning_effort", "approval_mode", "codex_sandbox_mode", "codex_speed",
+    "codex_reviewer", "custom_agent_name", "allowed_additional_directories_json", "thread_id",
+    "display_after_message_index", "closed_at", "character_id", "character_snapshot_json",
+    "character_snapshot_invalid", "character_icon_path", "client_request_id", "creation_context_json",
+    "creation_request_json"];
+  if (!auxiliaryColumns.has("payload_json") && !normalizedColumns.every((name) => auxiliaryColumns.has(name))) {
+    return false;
+  }
+
   return true;
 }
 
@@ -436,6 +449,7 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
   return hasForeignKey(db, "sessions_v6", "character_id", "characters")
     && hasForeignKey(db, "sessions_v6", "project_scope_id", "project_scopes_v6")
     && hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6")
+    && hasForeignKey(db, "auxiliary_session_messages", "auxiliary_session_id", "auxiliary_sessions")
     && hasForeignKey(db, "session_turns_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions")
     && hasForeignKey(db, "session_turn_interims_v6", "turn_id", "session_turns_v6")
@@ -545,10 +559,13 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const affectIdempotencySql = tableSql(db, "character_affect_idempotency_v6");
   const affectMutationsSql = tableSql(db, "character_affect_mutations_v6");
   const affectObservationsSql = tableSql(db, "character_affect_observations_v6");
+  const auxiliaryStatusConstrained = auxiliarySessionsSql.includes("status IN ('active', 'closed')")
+    || (tableColumnNames(db, "auxiliary_sessions").has("payload_json")
+      && !db.prepare("SELECT 1 FROM auxiliary_sessions WHERE status NOT IN ('active', 'closed') OR status IS NULL LIMIT 1").get());
 
   return sessionsSql.includes("json_valid(character_snapshot_json)")
     && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
-    && auxiliarySessionsSql.includes("status IN ('active', 'closed')")
+    && auxiliaryStatusConstrained
     && sessionTurnsSql.includes("phase IN ('running', 'completed', 'failed', 'canceled')")
     && sessionTurnsSql.includes("session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL")
     && sessionTurnsSql.includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)")
@@ -761,11 +778,44 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
     status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    payload_json TEXT NOT NULL
+    title TEXT NOT NULL DEFAULT '',
+    run_state TEXT NOT NULL DEFAULT 'idle' CHECK (run_state IN ('idle', 'running', 'error')),
+    preview TEXT NOT NULL DEFAULT '',
+    provider_id TEXT NOT NULL DEFAULT 'codex',
+    catalog_revision INTEGER NOT NULL DEFAULT 1,
+    model_id TEXT NOT NULL DEFAULT '',
+    reasoning_effort TEXT NOT NULL DEFAULT 'medium',
+    approval_mode TEXT NOT NULL DEFAULT '',
+    codex_sandbox_mode TEXT NOT NULL DEFAULT '',
+    codex_speed TEXT NOT NULL DEFAULT '',
+    codex_reviewer TEXT NOT NULL DEFAULT '',
+    custom_agent_name TEXT NOT NULL DEFAULT '',
+    allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]',
+    thread_id TEXT NOT NULL DEFAULT '',
+    display_after_message_index INTEGER,
+    closed_at TEXT NOT NULL DEFAULT '',
+    character_id TEXT,
+    character_snapshot_json TEXT,
+    character_snapshot_invalid INTEGER NOT NULL DEFAULT 0,
+    character_icon_path TEXT,
+    client_request_id TEXT,
+    creation_context_json TEXT,
+    creation_request_json TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
     ON auxiliary_sessions(parent_session_id, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS auxiliary_session_messages (
+    auxiliary_session_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    body TEXT NOT NULL CHECK (json_valid(body)),
+    artifact_body TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (auxiliary_session_id, seq),
+    FOREIGN KEY (auxiliary_session_id) REFERENCES auxiliary_sessions(id) ON DELETE CASCADE
+  );
 `;
 
 export const CREATE_V6_SESSION_TURNS_TABLE_SQL = `
@@ -1453,8 +1503,12 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
   } else {
     const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
-    const shouldRebuildAuxiliarySessions = hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6")
-      || !tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')");
+    const hasRetainedAuxiliaryTurns = tableExists(db, "session_turns_v6")
+      && Boolean(db.prepare("SELECT 1 FROM session_turns_v6 WHERE auxiliary_session_id IS NOT NULL LIMIT 1").get());
+    const shouldRebuildAuxiliarySessions = !hasRetainedAuxiliaryTurns && (
+      hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6")
+      || !tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')")
+    );
     if (shouldRebuildAuxiliarySessions) {
       rebuildAuxiliarySessionsTable(db, auxiliaryColumns);
     } else if (!auxiliaryColumns.has("created_at")) {
@@ -1467,6 +1521,8 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
         ON auxiliary_sessions(parent_session_id, updated_at DESC)
     `);
   }
+
+  db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
 
   db.exec("DROP INDEX IF EXISTS idx_auxiliary_sessions_parent_created");
 

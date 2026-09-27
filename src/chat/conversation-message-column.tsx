@@ -15,7 +15,7 @@ export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Sessi
 >>;
 
 export type ConversationMessageColumnApi = Partial<Pick<WithMateWindowApi,
-  "subscribeLiveSessionRun" | "getLiveSessionRun" | "resolveLiveApproval" | "resolveLiveElicitation"
+  "subscribeLiveSessionRun" | "getLiveSessionRun" | "resolveLiveApproval" | "resolveLiveElicitation" | "getSessionMessageArtifact"
 >>;
 
 export type ConversationColumnCache = {
@@ -283,6 +283,9 @@ export function useConversationMessageColumn({
       ? (messageIndex) => loadProjectedMessageArtifact({
         source: projection.sources[messageIndex],
         loadSessionArtifact: baseProps.onLoadArtifactDetail!,
+        loadAuxiliaryArtifact: api?.getSessionMessageArtifact
+          ? (sessionId, sourceMessageIndex) => api.getSessionMessageArtifact!(sessionId, sourceMessageIndex)
+          : undefined,
       })
       : undefined,
     onToggleMessageCollapse,

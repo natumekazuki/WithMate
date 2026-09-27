@@ -1,7 +1,6 @@
 import { type ApprovalMode } from "../settings/approval-mode.js";
 import { type CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
-import { type CodexSpeed } from "../settings/codex-speed.js";
-import { type CodexReviewer } from "../settings/codex-reviewer.js";
+import { type SessionExecutionOptions } from "./session-execution-options.js";
 import { type ModelReasoningEffort } from "../settings/model-catalog.js";
 
 export type DiffRow = {
@@ -349,16 +348,12 @@ export type ComposerPreview = {
 
 export type RunSessionTurnRequest = {
   userMessage: string;
+  executionOptions: SessionExecutionOptions;
   clientRequestId?: string;
   submitSource?: "composer" | "retry";
-  model?: string;
-  reasoningEffort?: ModelReasoningEffort;
-  approvalMode?: ApprovalMode;
-  codexSandboxMode?: CodexSandboxMode;
-  codexSpeed?: CodexSpeed;
-  codexReviewer?: CodexReviewer;
   auxiliaryDraftIncarnation?: string;
   auxiliaryDraftDurableRevision?: number;
+  displayAnchorParentMessageCount?: number;
 };
 
 const SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -53,6 +53,7 @@ async function fixture(t: TestContext, sharedAttachment = false) {
   try {
     db.exec("PRAGMA foreign_keys = ON");
     ensureV6Schema(db);
+    installReleasedLegacyAuxiliarySessionsTable(db);
     db.exec(`
       CREATE TABLE companion_groups (id TEXT PRIMARY KEY);
       CREATE TABLE companion_sessions (id TEXT PRIMARY KEY, group_id TEXT REFERENCES companion_groups(id), repo_root TEXT, target_branch TEXT, base_snapshot_ref TEXT, base_snapshot_commit TEXT, companion_branch TEXT, worktree_path TEXT);
@@ -83,6 +84,24 @@ async function fixture(t: TestContext, sharedAttachment = false) {
 function query<T>(dbPath: string, sql: string): T {
   const db = new DatabaseSync(dbPath);
   try { return db.prepare(sql).get() as T; } finally { db.close(); }
+}
+
+function installReleasedLegacyAuxiliarySessionsTable(db: DatabaseSync): void {
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    DROP TABLE auxiliary_sessions;
+    CREATE TABLE auxiliary_sessions (
+      id TEXT PRIMARY KEY,
+      parent_session_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
+    CREATE INDEX idx_auxiliary_sessions_parent_updated
+      ON auxiliary_sessions(parent_session_id, updated_at DESC);
+    PRAGMA foreign_keys = ON;
+  `);
 }
 
 const LEGACY_V3_COMPANION_TABLES = [
@@ -674,6 +693,7 @@ test("boots without parsing live reference JSON when there are no removal target
   const db = new DatabaseSync(dbPath);
   try {
     ensureV6Schema(db);
+    installReleasedLegacyAuxiliarySessionsTable(db);
     db.exec(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id, approval_mode, created_at, updated_at, last_active_at, allowed_additional_directories_json)
       VALUES ('normal', 'Normal task', 'active', 'codex', 1, 'fixture', 'never', 'now', 'now', 'now', 'invalid-json');
       INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at, payload_json)

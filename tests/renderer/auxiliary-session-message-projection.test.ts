@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildMessageListProjection,
   hasPersistedLiveAssistantMessage,
+  loadOwnedAuxiliaryMessageArtifact,
   loadProjectedMessageArtifact,
   resolveLiveAssistantMessageIndex,
   resolvePendingAuxiliaryMessageGroupId,
@@ -523,8 +524,20 @@ test("loadProjectedMessageArtifact は projected index ではなく source messa
   assert.equal(loaded, artifact);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "追加detailがないAuxiliary artifactは投影済み内容をそのまま返す"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md: Turn・監査" }
+// fault = "detail不要なartifactに不要な詳細取得を行い表示を失う"
+// observable = "投影済みartifactのidentity"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-projected-artifact-inline"
+// lifecycle = "permanent"
+// impact = "軽量なAuxiliary artifact表示が失われる"
+// distinction = "detailAvailableのない既存内容はlazy APIと別経路で扱う"
+// @end-test-value
 test("loadProjectedMessageArtifact は Auxiliary source の artifact を直接返す", async () => {
-  const artifact = createArtifact();
+  const artifact = { ...createArtifact(), detailAvailable: false };
   const loaded = await loadProjectedMessageArtifact({
     source: { kind: "auxiliary", sessionId: "aux-1", messageIndex: 1, artifact },
     loadSessionArtifact: () => {
@@ -533,6 +546,64 @@ test("loadProjectedMessageArtifact は Auxiliary source の artifact を直接�
   });
 
   assert.equal(loaded, artifact);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "投影済みAuxiliary messageのdetailAvailable artifactは元会話IDとmessage indexで詳細を取得する"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md: Turn・監査" }
+// fault = "軽量summaryを詳細として返し、再読み込み後のoperation detailを表示できない"
+// observable = "detail API呼び出しの会話ID・indexと返されたartifact"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-projected-artifact-detail"
+// lifecycle = "permanent"
+// impact = "Auxiliary turnの詳細が閲覧できなくなる"
+// distinction = "Main session indexとAuxiliary owner indexの写像を検査する"
+// @end-test-value
+test("loadProjectedMessageArtifact は Auxiliary source の詳細を元会話IDとindexで読む", async () => {
+  const artifact = createArtifact();
+  const detail = { ...artifact, title: "Loaded detail" };
+  const loaded = await loadProjectedMessageArtifact({
+    source: { kind: "auxiliary", sessionId: "aux-1", messageIndex: 1, artifact },
+    loadSessionArtifact: () => {
+      throw new Error("parent artifact loader should not run for auxiliary source");
+    },
+    loadAuxiliaryArtifact: (sessionId, messageIndex) => {
+      assert.equal(sessionId, "aux-1");
+      assert.equal(messageIndex, 1);
+      return detail;
+    },
+  });
+
+  assert.equal(loaded, detail);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary detail取得中に選択ownerが変わった場合は古い詳細を新しい列へ表示しない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 会話の選択と表示" }
+// fault = "遅延した旧会話detailが切替後の会話へ混入する"
+// observable = "遅延API結果に対するnull戻り値"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-artifact-owner-guard"
+// lifecycle = "permanent"
+// impact = "別の会話の実行詳細を誤表示する"
+// distinction = "同期的な元ID index写像だけでは非同期owner切替を検出できない"
+// @end-test-value
+test("Auxiliary artifact detailは取得中にownerが切り替われば破棄する", async () => {
+  const owner = createAuxiliarySession([{ role: "assistant", text: "done", artifact: createArtifact() }]);
+  let current: AuxiliarySession | null = owner;
+  const deferred: { resolve?: (artifact: MessageArtifact) => void } = {};
+  const loading = loadOwnedAuxiliaryMessageArtifact({
+    owner,
+    getCurrentOwner: () => current,
+    messageIndex: 0,
+    loadArtifact: () => new Promise((resolve) => { deferred.resolve = resolve; }),
+  });
+  current = createAuxiliarySession([], { id: "aux-2" });
+  assert.ok(deferred.resolve);
+  deferred.resolve(createArtifact());
+  assert.equal(await loading, null);
 });
 
 test("loadProjectedMessageArtifact は source 不明または artifact なしなら null を返す", async () => {

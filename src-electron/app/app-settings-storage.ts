@@ -620,7 +620,7 @@ export class AppSettingsStorage {
     return this.getSettings();
   }
 
-  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): AppSettings {
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): void {
     const [settingKey, settingValue] = (() => {
       if (update.target === "header") {
         return [SESSION_HEADER_VISIBILITY_KEY, update.value] as const;
@@ -642,7 +642,6 @@ export class AppSettingsStorage {
           updated_at = excluded.updated_at
       `)
       .run(settingKey, settingValue, new Date().toISOString());
-    return this.getSettings();
   }
 
   resetSettings(): AppSettings {

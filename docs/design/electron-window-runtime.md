@@ -79,6 +79,10 @@ Main Process は `app.requestSingleInstanceLock()` を取得し、2 つ目以降
 - running close policy
 - `session-start`
 
+Window復元候補のsnapshotは任意保存とし、open完了・quit準備は保存完了を待たない。quit準備時は候補の保存を要求したうえでcloseによる候補更新を止める。Auxiliary draft等の必須flushは独立した終了条件として維持する。
+
+`SessionWindowRestoreService`は起動時に読み込んだ復元候補と現在開いているWindowの保存集合を分離する。復元操作は起動時候補の読込みだけを待ち、その後の現在集合の保存には待機しない。
+
 ### MainWindowComposition / MainWindowRuntime
 
 - `MainWindowComposition` は BrowserWindow の共通生成設定、cursor placement、Homeと同じWindowでの起動状態表示を所有する。bootstrap完了時にAuxWindowServiceがそのWindowをHomeとして引き継ぐ

@@ -15,6 +15,7 @@ import {
   createStaticTextConversationMessageColumnProps,
 } from "../../src/chat/chat-window-adapter.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 
 type AuxiliaryWorkspaceApi = Omit<WorkspaceApi, "getAuxiliarySessionStatus"> & Partial<Pick<WorkspaceApi, "getAuxiliarySessionStatus">>;
 
@@ -73,6 +74,8 @@ function setup(
   const root: Root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
   return {
     get current() { return current as AuxiliaryWorkspace; },
+    localStorage: dom.window.localStorage,
+    storagePrototype: dom.window.Storage.prototype,
     async render(nextParentSessionId = parentSessionId) {
       await act(async () => { root.render(React.createElement(Probe, { parentSessionId: nextParentSessionId })); });
     },
@@ -124,6 +127,182 @@ function deferred<T>() {
   const promise = new Promise<T>((next) => { resolve = next; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "catalog変更は表示中と非表示のAuxiliaryへ反映され、旧snapshotで戻らずrollbackやrevisionが下がるresetにも追従する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#現行の反映" }
+// fault = "現在選択が新catalogを上書きするか、表示中の会話だけ更新して他の会話を旧revisionに残す"
+// observable = "両bindingとselectedSessionのmodel、depth、catalogRevision"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-catalog-selection"
+// lifecycle = "permanent"
+// @end-test-value
+test("catalog更新を表示中と非表示のAuxiliaryへ反映する", async () => {
+  const a = session("a", "2026-01-01");
+  const b = session("b", "2026-01-02");
+  const view = setup({ listAuxiliarySessions: async () => [a, b], getAuxiliarySession: async (id) => id === "a" ? a : b }, "parent-1", "a");
+  const catalog: ModelCatalogSnapshot = { revision: 2, providers: [{
+    id: "codex", label: "Codex", defaultModelId: "imported", defaultReasoningEffort: "high",
+    models: [{ id: "imported", label: "Imported", reasoningEfforts: ["high"] }],
+  }] };
+  try {
+    await view.render();
+    await act(async () => { view.current.selectSession("b"); });
+    await act(async () => {
+      view.current.getBinding("a").setExecutionSelection({ ...a, model: "chosen" });
+      view.current.getBinding("b").setExecutionSelection({ ...b, model: "chosen" });
+      view.current.applyModelCatalog(catalog);
+    });
+    assert.equal(view.current.selectedSession?.model, "imported");
+    assert.equal(view.current.getBinding("a").getSession()?.model, "imported");
+    await act(async () => { view.current.getBinding("a").setSession(a); });
+    assert.equal(view.current.getBinding("a").getSession()?.catalogRevision, 2);
+    await act(async () => { view.current.applyModelCatalog({ ...catalog, revision: 3, providers: [{ ...catalog.providers[0]!,
+      models: [...catalog.providers[0]!.models, { id: "chosen", label: "Chosen", reasoningEfforts: ["medium"] }],
+    }] }); });
+    assert.equal(view.current.selectedSession?.model, "chosen");
+    assert.equal(view.current.getBinding("a").getSession()?.model, "chosen");
+    assert.equal(view.current.getBinding("a").getSession()?.reasoningEffort, "medium");
+    assert.equal(view.current.selectedSession?.catalogRevision, 3);
+    await act(async () => { view.current.applyModelCatalog({ ...catalog, revision: 1 }); });
+    assert.equal(view.current.selectedSession?.catalogRevision, 1);
+    assert.equal(view.current.selectedSession?.model, "imported");
+    assert.equal(view.current.getBinding("a").getSession()?.catalogRevision, 1);
+    assert.equal(view.current.getBinding("a").getSession()?.model, "imported");
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "送信対象と実行状態に関係なくMain/Auxiliaryの両列へ同じBookmark操作を渡す"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md" }
+// fault = "選択中の送信先またはrunning列だけにBookmark操作を渡す"
+// observable = "buildConcurrentChatsの両列のonToggleMessageBookmark"
+// observation_boundary = "component-behavior"
+// scope = "concurrent-chat-bookmark-routing"
+// lifecycle = "permanent"
+// impact = "backgroundの確定messageを実行中にBookmark操作できなくなる"
+// distinction = "handler単体では両列への共通操作配線を観測できない"
+// @end-test-value
+test("実行中の両会話へ同じBookmark操作を渡す", async () => {
+  const a = session("a", "2026-01-02", { runState: "running" });
+  const view = setup({ listAuxiliarySessions: async () => [a], getAuxiliarySession: async () => a });
+  try {
+    await view.render();
+    const callback = async () => {};
+    const messageColumn = createStaticTextConversationMessageColumnProps({
+      sessionId: "parent-1", characterId: "character", characterName: "Mate", characterIconPath: "",
+      messages: [{ role: "assistant", text: "main" }], messageListRef: React.createRef<HTMLDivElement>(), isRunning: true,
+    });
+    for (const target of ["main", "auxiliary"] as const) {
+      await act(async () => { view.current.setTarget(target); });
+      const surface = view.current.buildConcurrentChats({
+        mainSession: { id: "parent-1", messages: messageColumn.messages },
+        auxiliarySession: view.current.selectedSession,
+        messageColumn,
+        onToggleMessageBookmark: callback,
+      });
+      assert.equal(surface.main.onToggleMessageBookmark, callback);
+      assert.equal(surface.auxiliary?.onToggleMessageBookmark, callback);
+    }
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "terminal詳細取得中のBookmark付与・解除は確定本文を落とさず両状態を保持する"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md" }
+// fault = "Bookmark局所更新がterminal取得を無効化する、または古い取得結果がBookmarkを巻き戻す"
+// observable = "選択Auxiliaryの最終assistant本文と先行messageのBookmark"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-terminal-bookmark-race"
+// lifecycle = "permanent"
+// impact = "実行完了本文または利用者が指定したBookmarkが失われる"
+// distinction = "通常のterminal testとBookmark局所反映testは同時更新を検証しない"
+// @end-test-value
+test("terminal詳細取得中のBookmark変更は本文を落とさず保持する", async () => {
+  const initial = session("a", "2026-01-01", { runState: "running" });
+  let terminal = deferred<AuxiliarySession | null>();
+  let reads = 0;
+  let listener: ((id: string, state: null) => void) | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => [initial],
+    getAuxiliarySession: async () => ++reads === 1 ? initial : terminal.promise,
+    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => {}; },
+  });
+  try {
+    await view.render();
+    const binding = view.current.getBinding(initial.id);
+    await act(async () => { listener?.(initial.id, null); });
+    await act(async () => { binding.setMessageBookmark(0, true); });
+    await act(async () => { terminal.resolve({ ...initial, runState: "idle", messages: [...initial.messages, { role: "assistant", text: "final" }] }); });
+    assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked, true);
+    assert.equal(view.current.selectedSession?.messages[1]?.text, "final");
+    assert.equal(view.current.selectedSession?.runState, "idle");
+    terminal = deferred<AuxiliarySession | null>();
+    await act(async () => { listener?.(initial.id, null); });
+    await act(async () => { binding.setMessageBookmark(0, false); });
+    await act(async () => { terminal.resolve({ ...initial, runState: "idle", messages: [{ ...initial.messages[0], isBookmarked: true }, { role: "assistant", text: "later" }] }); });
+    assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked, undefined);
+    assert.equal(view.current.selectedSession?.messages[1]?.text, "later");
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryの状態ownerで反映したBookmarkの付与・解除は、再取得なしで選択会話と会話surfaceへ通知され、会話切替後も保持される"
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D9A" }
+// fault = "Bookmark更新がrefだけに適用され、選択会話と詳細cacheへの反映が省略される"
+// observable = "selectedSessionとbuildConcurrentChatsのAuxiliary messageのBookmark、切替後のBookmark、詳細取得回数"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-local-message-update-publication"
+// lifecycle = "permanent"
+// impact = "保存済みBookmarkの表示が変わらず、連続操作や再選択でも誤った状態を使うことを防ぐ"
+// distinction = "Bookmark operation単体のmock setterでは検出できない実workspaceの状態通知・cacheとの接続を付与と解除で検証する"
+// @end-test-value
+test("Auxiliary状態ownerのBookmark付与・解除を再取得なしで会話surfaceへ反映する", async () => {
+  const a = session("a", "2026-01-02");
+  const b = session("b", "2026-01-01");
+  let detailReads = 0;
+  const view = setup({
+    listAuxiliarySessions: async () => [a, b],
+    getAuxiliarySession: async (id) => { detailReads += 1; return id === a.id ? a : b; },
+  });
+  const messageColumn = createStaticTextConversationMessageColumnProps({
+    sessionId: "parent-1", characterId: "character", characterName: "Mate", characterIconPath: "",
+    messages: [], messageListRef: React.createRef<HTMLDivElement>(), isRunning: false,
+  });
+  try {
+    await view.render();
+    const binding = view.current.getBinding(a.id);
+    for (const isBookmarked of [true, false]) {
+      const readsBeforeUpdate = detailReads;
+      await act(async () => {
+        binding.setMessageBookmark(0, isBookmarked);
+      });
+      assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked === true, isBookmarked);
+      const surface = view.current.buildConcurrentChats({
+        mainSession: null, auxiliarySession: view.current.selectedSession, messageColumn,
+      });
+      assert.equal(surface.auxiliary?.messages[0]?.isBookmarked === true, isBookmarked);
+      assert.equal(detailReads, readsBeforeUpdate);
+      await act(async () => { view.current.selectSession(b.id); });
+      const readsBeforeReturn = detailReads;
+      await act(async () => { view.current.selectSession(a.id); });
+      assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked === true, isBookmarked);
+      assert.equal(detailReads, readsBeforeReturn);
+    }
+  } finally {
+    await view.unmount();
+  }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -362,9 +541,9 @@ test("stale summary responseはaddSessionを巻き戻さない", async () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Main/Auxiliary対象の切替とAuxiliary追加は選択中の幅を変更せず、幅0は同一親の再マウントでも復元する"
+// claim = "Main/Auxiliary対象の切替とAuxiliary追加は選択中の幅を変更せず、確定した幅0は同一親の再マウントでも復元する"
 // oracle = { type = "contract", ref = "issue-710-auxiliary-width-target-separation" }
-// fault = "対象切替や新規追加で幅が暗黙に変わる、幅0から対象切替だけで再展開する、または親セッション再マウントで幅0を失う"
+// fault = "対象切替や新規追加で幅が暗黙に変わる、幅0から対象切替だけで再展開する、または確定した幅0を親セッション再マウントで失う"
 // observable = "hookのtarget、selectedId、widthRatioと親セッション切替後のwidthRatio"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-workspace-layout"
@@ -379,12 +558,12 @@ test("対象切替は選択・幅を変更せず、Auxiliaryの幅0を保持す�
   };
   const view = setup(api);
   await view.render();
-  await act(async () => { view.current.selectSession("a"); view.current.setWidthRatio(0.65); view.current.setTarget("auxiliary"); });
+  await act(async () => { view.current.selectSession("a"); view.current.setWidthRatio(0.65); view.current.commitWidthRatio(); view.current.setTarget("auxiliary"); });
   await act(async () => { view.current.setTarget("main"); });
   assert.equal(view.current.selectedId, "a");
   assert.equal(view.current.target, "main");
   assert.equal(view.current.widthRatio, 0.65);
-  await act(async () => { view.current.setWidthRatio(0); view.current.setTarget("auxiliary"); });
+  await act(async () => { view.current.setWidthRatio(0); view.current.commitWidthRatio(); view.current.setTarget("auxiliary"); });
   assert.equal(view.current.target, "auxiliary");
   assert.equal(view.current.widthRatio, 0);
   await act(async () => { view.current.setTarget("main"); });
@@ -397,6 +576,69 @@ test("対象切替は選択・幅を変更せず、Auxiliaryの幅0を保持す�
   await view.render("parent-1");
   assert.equal(view.current.widthRatio, 0);
   await view.unmount();
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary workspace preferences are read only for initial mount or parent changes, while splitter width is persisted once when an interaction commits"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Auxiliary Session" }
+// fault = "localStorage preferences are reread on unrelated renders or every drag update is synchronously written, causing avoidable storage work; alternatively a committed width is not restored for its parent"
+// observable = "localStorage getItem/setItem call counts and persisted per-parent widthRatio"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-layout-preferences"
+// lifecycle = "permanent"
+// distinction = "Type checking cannot verify when browser preference reads and writes occur or whether a completed resize survives a parent switch"
+// @end-test-value
+test("Auxiliary workspace preferences load on parent changes and persist width only on commit", async () => {
+  const view = setup({
+    listAuxiliarySessions: async () => [],
+    getAuxiliarySession: async () => null,
+  });
+  const key = (id: string) => `withmate:auxiliary-workspace:${id}`;
+  view.localStorage.setItem(key("parent-1"), JSON.stringify({ selectedId: null, widthRatio: 0.4 }));
+  view.localStorage.setItem(key("parent-2"), JSON.stringify({ selectedId: null, widthRatio: 0.25 }));
+  const getItemDescriptor = Object.getOwnPropertyDescriptor(view.storagePrototype, "getItem");
+  const setItemDescriptor = Object.getOwnPropertyDescriptor(view.storagePrototype, "setItem");
+  const getItem = (name: string) => getItemDescriptor?.value.call(view.localStorage, name) as string | null;
+  let reads = 0;
+  let writes = 0;
+  Object.defineProperty(view.storagePrototype, "getItem", {
+    configurable: true,
+    value(this: Storage, name: string) { reads += 1; return getItemDescriptor?.value.call(this, name) as string | null; },
+  });
+  Object.defineProperty(view.storagePrototype, "setItem", {
+    configurable: true,
+    value(this: Storage, name: string, value: string) { writes += 1; setItemDescriptor?.value.call(this, name, value); },
+  });
+
+  try {
+    await view.render();
+    assert.equal(view.current.widthRatio, 0.4);
+    assert.equal(reads, 1);
+    await view.render();
+    assert.equal(reads, 1);
+
+    await act(async () => { view.current.setWidthRatio(0.55); });
+    await act(async () => { view.current.setWidthRatio(0.6); });
+    assert.equal(view.current.widthRatio, 0.6);
+    assert.equal(writes, 0);
+    await act(async () => { view.current.commitWidthRatio(); });
+    assert.equal(writes, 1);
+    assert.equal(JSON.parse(getItem(key("parent-1")) ?? "null").widthRatio, 0.6);
+    await act(async () => { view.current.commitWidthRatio(); });
+    assert.equal(writes, 1);
+
+    await view.render("parent-2");
+    assert.equal(reads, 2);
+    assert.equal(view.current.widthRatio, 0.25);
+    await view.render("parent-1");
+    assert.equal(reads, 3);
+    assert.equal(view.current.widthRatio, 0.6);
+  } finally {
+    if (getItemDescriptor) Object.defineProperty(view.storagePrototype, "getItem", getItemDescriptor);
+    if (setItemDescriptor) Object.defineProperty(view.storagePrototype, "setItem", setItemDescriptor);
+    await view.unmount();
+  }
 });
 
 // @test-value v2

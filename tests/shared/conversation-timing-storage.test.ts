@@ -193,6 +193,18 @@ describe("AuditLogStorageV6 conversation timing", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Conversation Timingは通常Sessionの完了turnだけを同Characterのcurrent・別Session・共同作業へ時刻順に投影する"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md: Conversation Timing" }
+  // fault = "失敗turnや別Character・authoring Sessionを混入し、観測時刻以降の完了turnを過去のsnapshotへ含める"
+  // observable = "getConversationTimingSnapshotのcurrent/other完了時刻、sameCharacterCompletedTurns、空ownerの結果"
+  // observation_boundary = "public-boundary"
+  // scope = "conversation-timing-storage-projection"
+  // lifecycle = "permanent"
+  // impact = "次turnへ誤った会話時刻が渡され、共同作業の時系列とCharacter文脈が崩れる"
+  // distinction = "terminal commit単体ではなく、複数owner・phase・観測時刻の組合せを実DBで確認する"
+  // @end-test-value
   it("通常Sessionの正常完了turnだけをcurrent・別Session・共同作業へ投影する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-conversation-timing-"));
     try {
@@ -209,8 +221,8 @@ describe("AuditLogStorageV6 conversation timing", () => {
         insertSession(db, "no-owner", null);
         insertSession(db, "empty-owner", "char-empty");
         db.prepare(`
-          INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at, payload_json)
-          VALUES ('aux', 'current', 'active', ?, ?, '{}')
+          INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at)
+          VALUES ('aux', 'current', 'active', ?, ?)
         `).run("2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z");
 
         insertTurn(db, { sessionId: "current" }, "completed", "2026-08-04T09:50:00.000Z", "2026-08-04T10:00:00.000Z", 1);

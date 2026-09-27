@@ -143,9 +143,10 @@ export type SessionCharacterUsage = {
   sessionKind: "default";
 };
 
-export type SessionSummaryInvalidation =
+export type SessionSummaryInvalidation = (
   | { scope: "ids"; sessionIds: string[] }
-  | { scope: "all" };
+  | { scope: "all" }
+) & { detailChanged?: false };
 
 export type DiffPreviewPayload = {
   title: string;

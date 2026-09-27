@@ -2,6 +2,15 @@ import type { AuditLogEntry, AuditLogDetail, AuditLogDetailFragment, AuditLogDet
 import type { AppSettings } from "../settings/provider-settings-state.js";
 import type { CharacterProfile } from "../character/character-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, SessionCharacterUsage, Session, SessionSummaryInvalidation, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary, SetSessionPinnedRequest } from "../session/session-state.js";
+import type {
+  SetExecutionOptionsResult,
+  SetAuxiliaryExecutionOptionsRequest,
+  SetAuxiliaryMessageBookmarkRequest,
+  SetAuxiliaryTitleRequest,
+  SetSessionExecutionOptionsRequest,
+  SetSessionMessageBookmarkRequest,
+  SetSessionTitleRequest,
+} from "../session/session-mutation-contract.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../memory/session-memory-state.js";
 import type { ChatLayoutPreferenceUpdate } from "../settings/chat-layout-preference.js";
 import type { AuxiliaryDraftRecord, AuxiliaryDraftSaveInput, AuxiliaryDraftSaveResult, AuxiliarySessionStatus } from "../auxiliary/auxiliary-draft-contract.js";
@@ -196,6 +205,9 @@ export type WithMateWindowSessionApi = {
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
+  setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
+  setSessionTitle(request: SetSessionTitleRequest): Promise<void>;
+  setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Promise<void>;
   setSessionPinned(request: SetSessionPinnedRequest): Promise<SessionSummary>;
   deleteSession(sessionId: string): Promise<void>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
@@ -241,6 +253,9 @@ export type WithMateWindowAuxiliaryApi = {
   cancelAuxiliaryCreation(request: import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Promise<import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
   getAuxiliaryCreation(request: import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Promise<import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
   updateAuxiliarySession(session: AuxiliarySession): Promise<AuxiliarySession>;
+  setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
+  setAuxiliaryTitle(request: SetAuxiliaryTitleRequest): Promise<void>;
+  setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Promise<void>;
   closeAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Promise<AuxiliarySession>;
   cancelAuxiliarySessionRun(auxiliarySessionId: string): Promise<void>;
@@ -260,7 +275,7 @@ export type WithMateWindowObservabilityApi = {
 export type WithMateWindowSettingsApi = {
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
-  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<AppSettings>;
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<void>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;

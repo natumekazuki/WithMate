@@ -49,6 +49,16 @@ type ProviderOutputV6Row = {
   payload_json: string;
 };
 
+type StoredProviderOutputV6Row = ProviderOutputV6Row & {
+  id: number;
+  seq: number;
+  provider_id: string;
+};
+
+type DesiredProviderOutputV6Row = ProviderOutputV6Row & {
+  provider_id: string;
+};
+
 type InterimMessageV6Row = {
   seq: number;
   body: string;
@@ -588,47 +598,138 @@ export class AuditLogStorageV6 {
   }
 
   private replaceProviderOutputs(turnId: number, entry: Omit<AuditLogEntry, "id">): void {
-    this.db.prepare("DELETE FROM session_turn_provider_outputs_v6 WHERE turn_id = ?").run(turnId);
-    let seq = 0;
-    const insertOutput = (kind: string, summary: string, value: unknown): void => {
-      this.db.prepare(`
-        INSERT INTO session_turn_provider_outputs_v6 (
-          turn_id,
-          seq,
-          provider_id,
-          kind,
-          summary,
-          payload_json,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(turnId, seq, entry.provider, kind, summary, outputPayload(value), entry.createdAt);
-      seq += 1;
+    const desired: DesiredProviderOutputV6Row[] = [];
+    const addOutput = (kind: string, summary: string, value: unknown): void => {
+      desired.push({ kind, summary, payload_json: outputPayload(value), provider_id: entry.provider });
     };
 
-    insertOutput("logical_prompt", "Logical Prompt", entry.logicalPrompt);
+    addOutput("logical_prompt", "Logical Prompt", entry.logicalPrompt);
     if (entry.transportPayload) {
-      insertOutput("transport_payload", entry.transportPayload.summary, entry.transportPayload);
+      addOutput("transport_payload", entry.transportPayload.summary, entry.transportPayload);
     }
     for (const operation of entry.operations) {
-      insertOutput("operation", operationSummaryPayload(operation), operation);
+      addOutput("operation", operationSummaryPayload(operation), operation);
     }
     if (entry.rawItemsJson.trim() !== "") {
-      insertOutput("raw_items", "Raw Items", entry.rawItemsJson);
+      addOutput("raw_items", "Raw Items", entry.rawItemsJson);
     }
     if (entry.usage) {
-      insertOutput("usage", "Usage", entry.usage);
+      addOutput("usage", "Usage", entry.usage);
     }
     if (entry.errorMessage.trim() !== "") {
-      insertOutput("provider_error", "Provider Error", entry.errorMessage);
+      addOutput("provider_error", "Provider Error", entry.errorMessage);
     }
     for (const metadata of entry.providerMetadata ?? []) {
-      insertOutput("provider_metadata", metadata.summary, metadata);
+      addOutput("provider_metadata", metadata.summary, metadata);
     }
     if (
       normalizePhase(entry.phase) !== "running"
       && entry.assistantText.trim() !== ""
     ) {
-      insertOutput("legacy_assistant_text", "Assistant Text", entry.assistantText);
+      addOutput("legacy_assistant_text", "Assistant Text", entry.assistantText);
+    }
+
+    const existing = this.db.prepare(`
+      SELECT id, seq, provider_id, kind, summary, payload_json
+      FROM session_turn_provider_outputs_v6
+      WHERE turn_id = ?
+      ORDER BY seq ASC
+    `).all(turnId) as StoredProviderOutputV6Row[];
+    const generatedKinds = new Set([
+      "logical_prompt", "transport_payload", "operation", "raw_items", "usage",
+      "provider_error", "provider_metadata", "legacy_assistant_text",
+    ]);
+    // Other output kinds may be written by a different provider path; this snapshot does not own them.
+    const owned = existing.filter((row) => generatedKinds.has(row.kind));
+    const retained = existing.filter((row) => !generatedKinds.has(row.kind));
+    const matches = new Map<number, StoredProviderOutputV6Row>();
+    const usedIds = new Set<number>();
+    const ownedByKind = new Map<string, StoredProviderOutputV6Row[]>();
+    const desiredByKind = new Map<string, number[]>();
+    for (const row of owned) {
+      const bucket = ownedByKind.get(row.kind) ?? [];
+      bucket.push(row);
+      ownedByKind.set(row.kind, bucket);
+    }
+    for (let seq = 0; seq < desired.length; seq += 1) {
+      const bucket = desiredByKind.get(desired[seq].kind) ?? [];
+      bucket.push(seq);
+      desiredByKind.set(desired[seq].kind, bucket);
+    }
+    // With an unchanged count, occurrence order identifies an in-flight operation even if its payload changes.
+    for (const [kind, desiredPositions] of desiredByKind) {
+      const previousRows = ownedByKind.get(kind) ?? [];
+      if (previousRows.length !== desiredPositions.length) continue;
+      desiredPositions.forEach((seq, index) => {
+        const row = previousRows[index];
+        matches.set(seq, row);
+        usedIds.add(row.id);
+      });
+    }
+    const exactKey = (row: ProviderOutputV6Row & { provider_id: string }): string =>
+      JSON.stringify([row.kind, row.provider_id, row.summary, row.payload_json]);
+    const exactRows = new Map<string, StoredProviderOutputV6Row[]>();
+    for (const row of owned) {
+      if (usedIds.has(row.id)) continue;
+      const key = exactKey(row);
+      const bucket = exactRows.get(key) ?? [];
+      bucket.push(row);
+      exactRows.set(key, bucket);
+    }
+    for (let seq = 0; seq < desired.length; seq += 1) {
+      if (matches.has(seq)) continue;
+      const match = exactRows.get(exactKey(desired[seq]))?.shift();
+      if (match) {
+        matches.set(seq, match);
+        usedIds.add(match.id);
+      }
+    }
+    const remainingByKind = new Map<string, StoredProviderOutputV6Row[]>();
+    for (const row of owned) {
+      if (!usedIds.has(row.id)) {
+        const bucket = remainingByKind.get(row.kind) ?? [];
+        bucket.push(row);
+        remainingByKind.set(row.kind, bucket);
+      }
+    }
+    for (let seq = 0; seq < desired.length; seq += 1) {
+      if (matches.has(seq)) continue;
+      const match = remainingByKind.get(desired[seq].kind)?.shift();
+      if (match) {
+        matches.set(seq, match);
+        usedIds.add(match.id);
+      }
+    }
+
+    const deleteRow = this.db.prepare("DELETE FROM session_turn_provider_outputs_v6 WHERE id = ?");
+    for (const row of owned) {
+      if (!usedIds.has(row.id)) deleteRow.run(row.id);
+    }
+    const finalPositions = [...matches.entries(), ...retained.map((row, index) => [desired.length + index, row] as const)];
+    const moved = finalPositions.filter(([seq, row]) => row.seq !== seq);
+    const changeSeq = this.db.prepare("UPDATE session_turn_provider_outputs_v6 SET seq = ? WHERE id = ?");
+    let temporarySeq = Math.max(existing.at(-1)?.seq ?? -1, desired.length + retained.length - 1) + 1;
+    for (const [, row] of moved) changeSeq.run(temporarySeq++, row.id);
+    for (const [seq, row] of moved) changeSeq.run(seq, row.id);
+
+    const updateRow = this.db.prepare(`
+      UPDATE session_turn_provider_outputs_v6
+      SET provider_id = ?, summary = ?, payload_json = ?, created_at = ?
+      WHERE id = ?
+    `);
+    const insertRow = this.db.prepare(`
+      INSERT INTO session_turn_provider_outputs_v6 (
+        turn_id, seq, provider_id, kind, summary, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (let seq = 0; seq < desired.length; seq += 1) {
+      const output = desired[seq];
+      const previous = matches.get(seq);
+      if (!previous) {
+        insertRow.run(turnId, seq, output.provider_id, output.kind, output.summary, output.payload_json, entry.createdAt);
+      } else if (exactKey(previous) !== exactKey(output)) {
+        updateRow.run(output.provider_id, output.summary, output.payload_json, entry.createdAt, previous.id);
+      }
     }
   }
 

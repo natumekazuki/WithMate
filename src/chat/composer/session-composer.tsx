@@ -641,7 +641,7 @@ export function SessionComposerExpanded({
             <select
               value={selectedModel}
               onChange={(event) => onChangeModel(event.target.value)}
-              disabled={isRunning || composerBlocked}
+              disabled={composerBlocked || composerFrozen}
             >
               {modelOptions.length > 0 ? (
                 modelOptions.map((option) => (
@@ -660,7 +660,7 @@ export function SessionComposerExpanded({
             <select
               value={selectedReasoningEffort}
               onChange={(event) => onChangeReasoningEffort(event.target.value)}
-              disabled={isRunning || composerBlocked}
+              disabled={composerBlocked || composerFrozen}
               aria-label="Reasoning depth"
             >
               {reasoningOptions.map((option) => (

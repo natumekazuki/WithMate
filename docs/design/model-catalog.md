@@ -97,6 +97,7 @@ SQLite では次の 4 テーブルで保持する。
 - import 成功時は、active revision の切り替えと同じタイミングで既存 Agent / Auxiliary session も自動 migrate 対象にする
 - `catalogRevision` は `旧 revision を保持し続ける pin` の説明よりも、`その session に現在反映されている revision` を示す値として扱う
 - import後はUIと実行のcatalog revisionを揃える
+- import／reset／rollbackのactive revision変更は、MainとRendererの現在選択にも適用する。古いcheckpointの到着とは区別し、model／depthを新catalogで正規化する。保存失敗で未保存の選択も対象とし、importの一時的な正規化だけでは利用者の選択意図を書き換えない。
 - migration では provider / model / reasoningEffort を新 active revision に合わせて正規化し、選択が変わった runtime session は thread をリセットしてよい
 
 ## Seed Policy
@@ -124,7 +125,7 @@ SQLite では次の 4 テーブルで保持する。
 
 ## Resolution Policy
 
-adapter 実行時は session が持つ `catalogRevision` と `provider` を使って provider catalog を読む。
+adapter 実行時は Send が捕捉した `executionOptions.catalogRevision` と session の `provider` を使って provider catalog を読む。
 
 - `requestedModel` が exact match すればその model を使う
 - model が見つからなければそのままエラーにする

@@ -63,6 +63,7 @@ import type {
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
 import type { ProviderRuntimeMetadataPatch } from "../providers/provider-runtime-metadata-patch.js";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
 type SessionV6Row = {
   id: string;
@@ -116,6 +117,8 @@ type MessageV6Row = {
 
 type ExistingMessageArtifactRow = {
   seq: number;
+  role: Message["role"];
+  body: string;
   artifact_body: string | null;
 };
 
@@ -145,6 +148,10 @@ export type SessionRuntimeMetadataPatchInput = ProviderRuntimeMetadataPatch & {
   sessionId: string;
   incarnationId: string;
 };
+
+export type SessionThreadPatchResult = Pick<Session, "id" | "threadId" | "updatedAt">;
+export type SessionRuntimeMetadataPatchResult = Pick<Session, "id" | "provider" | "catalogRevision" | "model" | "reasoningEffort" | "threadId" | "updatedAt">;
+export type SessionCredentialThreadInfo = Pick<Session, "id" | "provider" | "threadId" | "status" | "runState"> & { incarnationId: string };
 
 type DecodedSessionV6RuntimeState = {
   runtimePolicy: Record<string, unknown>;
@@ -482,6 +489,64 @@ export class SessionStorageV6 {
     return row ? this.rowToSession(row) : null;
   }
 
+  listSessionCredentialThreads(): SessionCredentialThreadInfo[] {
+    const rows = this.db.prepare(`
+      SELECT id, incarnation_id, provider_id, thread_id, state, runtime_policy_json
+      FROM sessions_v6
+    `).all() as Array<Pick<SessionV6Row, "id" | "incarnation_id" | "provider_id" | "thread_id" | "state" | "runtime_policy_json">>;
+    return rows.map((row) => {
+      const policy = parseJsonObject(row.runtime_policy_json);
+      return {
+        id: row.id,
+        incarnationId: row.incarnation_id?.trim() || `legacy:${row.id}`,
+        provider: normalizeProviderId(row.provider_id),
+        threadId: row.thread_id,
+        status: policy.appStatus === "running" || policy.appStatus === "saved" || policy.appStatus === "idle"
+          ? policy.appStatus : row.state === "active" ? "running" : "idle",
+        runState: typeof policy.runState === "string" ? policy.runState : "idle",
+      };
+    });
+  }
+
+  setSessionTitle(sessionId: string, incarnationId: string, title: string): void {
+    const result = this.db.prepare(`
+      UPDATE sessions_v6 SET title = ?
+      WHERE id = ? AND incarnation_id = ?
+    `).run(title, sessionId, incarnationId);
+    if (Number(result.changes) !== 1) throw new SessionNotFoundError(sessionId);
+  }
+
+  setSessionMessageBookmark(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): void {
+    if (!Number.isSafeInteger(messageIndex) || messageIndex < 0) throw new Error("The message index is invalid.");
+    const result = this.db.prepare(`
+      UPDATE session_messages_v6
+      SET body = CASE WHEN ? = 1
+        THEN json_set(body, '$.isBookmarked', json('true'))
+        ELSE json_remove(body, '$.isBookmarked') END
+      WHERE session_id = ? AND seq = ? AND json_valid(body)
+        AND EXISTS (SELECT 1 FROM sessions_v6 WHERE id = ? AND incarnation_id = ?)
+    `).run(isBookmarked ? 1 : 0, sessionId, messageIndex, sessionId, incarnationId);
+    if (Number(result.changes) !== 1) throw new SessionNotFoundError(sessionId);
+  }
+
+  setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions): void {
+    const result = this.db.prepare(`
+      UPDATE sessions_v6
+      SET catalog_revision = ?, model_id = ?, reasoning_effort = ?, approval_mode = ?,
+          codex_sandbox_mode = ?, custom_agent_name = ?,
+          runtime_policy_json = json_set(
+            CASE WHEN json_valid(runtime_policy_json) THEN runtime_policy_json ELSE '{}' END,
+            '$.codexSpeed', ?, '$.codexReviewer', ?
+          )
+      WHERE id = ? AND incarnation_id = ?
+    `).run(
+      options.catalogRevision, options.model, options.reasoningEffort, options.approvalMode,
+      options.codexSandboxMode, options.customAgentName, options.codexSpeed, options.codexReviewer,
+      sessionId, incarnationId,
+    );
+    if (Number(result.changes) !== 1) throw new SessionNotFoundError(sessionId);
+  }
+
   setSessionPinned(sessionId: string, isPinned: boolean): SessionSummary {
     this.db.prepare("UPDATE sessions_v6 SET is_pinned = ? WHERE id = ?").run(isPinned ? 1 : 0, sessionId);
     const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
@@ -514,7 +579,7 @@ export class SessionStorageV6 {
     return this.storeSession(session, "upsert");
   }
 
-  updateSessionThreadIfMatches(input: SessionThreadPatchInput): Session | null {
+  updateSessionThreadIfMatches(input: SessionThreadPatchInput): SessionThreadPatchResult | null {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       const result = this.db.prepare(`
@@ -526,20 +591,15 @@ export class SessionStorageV6 {
         this.db.exec("ROLLBACK");
         return null;
       }
-      const stored = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(input.sessionId) as SessionV6Row | undefined;
-      if (!stored) {
-        throw new SessionNotFoundError(input.sessionId);
-      }
-      const resultSession = this.rowToSession(stored);
       this.db.exec("COMMIT");
-      return resultSession;
+      return { id: input.sessionId, threadId: input.nextThreadId, updatedAt: input.updatedAt };
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
   }
 
-  updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Session | null {
+  updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): SessionRuntimeMetadataPatchResult | null {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       const result = this.db.prepare(`
@@ -568,13 +628,8 @@ export class SessionStorageV6 {
         this.db.exec("ROLLBACK");
         return null;
       }
-      const stored = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(input.sessionId) as SessionV6Row | undefined;
-      if (!stored) {
-        throw new SessionNotFoundError(input.sessionId);
-      }
-      const resultSession = this.rowToSession(stored);
       this.db.exec("COMMIT");
-      return resultSession;
+      return { id: input.sessionId, ...input.next };
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
@@ -1026,28 +1081,37 @@ export class SessionStorageV6 {
 
     const existingArtifactBodies = new Map(
       (this.db.prepare(`
-        SELECT seq, artifact_body
+        SELECT seq, role, body, artifact_body
         FROM session_messages_v6
         WHERE session_id = ?
       `).all(session.id) as ExistingMessageArtifactRow[])
-        .map((row) => [row.seq, row.artifact_body] as const),
+        .map((row) => [row.seq, row] as const),
     );
 
-    this.db.prepare("DELETE FROM session_messages_v6 WHERE session_id = ?").run(session.id);
     const insertMessage = this.db.prepare(`
       INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
+    const updateMessage = this.db.prepare(`
+      UPDATE session_messages_v6
+      SET role = ?, body = ?, artifact_body = ?, created_at = ?
+      WHERE session_id = ? AND seq = ?
+    `);
     session.messages.forEach((message, index) => {
-      insertMessage.run(
-        session.id,
-        index,
-        message.role,
-        encodeMessage(message),
-        encodeMessageArtifactForWrite(message, existingArtifactBodies.get(index)),
-        session.updatedAt,
-      );
+      const previous = existingArtifactBodies.get(index);
+      const previousMessage = previous ? decodeMessage(previous) : null;
+      const preservedBookmark = previousMessage?.role === message.role && previousMessage.text === message.text
+        ? previousMessage.isBookmarked === true : message.isBookmarked === true;
+      const body = encodeMessage({ ...message, isBookmarked: preservedBookmark ? true : undefined });
+      const artifactBody = encodeMessageArtifactForWrite(message, previous?.artifact_body);
+      if (!previous) {
+        insertMessage.run(session.id, index, message.role, body, artifactBody, session.updatedAt);
+      } else if (previous.role !== message.role || previous.body !== body || previous.artifact_body !== artifactBody) {
+        updateMessage.run(message.role, body, artifactBody, session.updatedAt, session.id, index);
+      }
     });
+    this.db.prepare("DELETE FROM session_messages_v6 WHERE session_id = ? AND seq >= ?")
+      .run(session.id, session.messages.length);
     logSessionRunStuckInvestigation("storage-v6.write-session.done", {
       sessionId: session.id,
       durationMs: Date.now() - startedAt,

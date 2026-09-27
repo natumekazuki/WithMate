@@ -3,6 +3,7 @@ import type { AuditLogEntry, ComposerPreview, LiveApprovalDecision, LiveApproval
 import type { MessageArtifact } from "../../src-shared/session/session-state.js";
 import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { normalizeSessionTurnCorrelation } from "../../src-shared/session/runtime-state.js";
+import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { type CharacterProfile } from "../../src-shared/character/character-state.js";
 import { buildLiveRunAuditOperations } from "../../src-shared/session/live-run-audit-operations.js";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -600,7 +601,8 @@ function buildRunningAuditProgressSignature(entry: CreateAuditLogInput): string 
 function buildRunningAuditEntry(params: {
   sessionId: string;
   createdAt: string;
-  session: Pick<Session, "provider" | "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "threadId" | "messages">;
+  session: Pick<Session, "provider" | "threadId" | "messages">;
+  executionOptions: SessionExecutionOptions;
   logicalPrompt: CreateAuditLogInput["logicalPrompt"];
   threadId?: string;
   clientRequestId?: string | null;
@@ -611,10 +613,10 @@ function buildRunningAuditEntry(params: {
     createdAt: params.createdAt,
     phase: "running",
     provider: params.session.provider,
-    model: params.session.model,
-    reasoningEffort: params.session.reasoningEffort,
-    approvalMode: params.session.approvalMode,
-    sandboxMode: params.session.codexSandboxMode,
+    model: params.executionOptions.model,
+    reasoningEffort: params.executionOptions.reasoningEffort,
+    approvalMode: params.executionOptions.approvalMode,
+    sandboxMode: params.executionOptions.codexSandboxMode,
     userMessageSeq: Math.max(0, params.session.messages.length - 1),
     threadId: params.threadId ?? params.session.threadId,
     logicalPrompt: params.logicalPrompt,
@@ -691,7 +693,8 @@ function buildTerminalAuditEntry(params: {
   baseEntry: CreateAuditLogInput;
   phase: CreateAuditLogInput["phase"];
   completedAt: string;
-  session: Pick<Session, "provider" | "model" | "reasoningEffort" | "approvalMode">;
+  session: Pick<Session, "provider">;
+  executionOptions: SessionExecutionOptions;
   threadId?: string | null;
   logicalPrompt?: CreateAuditLogInput["logicalPrompt"];
   transportPayload?: CreateAuditLogInput["transportPayload"];
@@ -709,9 +712,9 @@ function buildTerminalAuditEntry(params: {
     phase: params.phase,
     createdAt: params.completedAt,
     provider: params.session.provider,
-    model: params.session.model,
-    reasoningEffort: params.session.reasoningEffort,
-    approvalMode: params.session.approvalMode,
+    model: params.executionOptions.model,
+    reasoningEffort: params.executionOptions.reasoningEffort,
+    approvalMode: params.executionOptions.approvalMode,
     threadId: pickPreferredThreadId(params.threadId, baseEntry.threadId),
     logicalPrompt: params.logicalPrompt ?? baseEntry.logicalPrompt,
     transportPayload: params.transportPayload ?? baseEntry.transportPayload,
@@ -996,7 +999,11 @@ export class SessionRuntimeService {
       throw new Error("This provider is disabled in Settings.");
     }
 
-    const { provider } = await this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
+    const { snapshot, provider } = await this.deps.resolveProviderCatalog(session.provider, request.executionOptions?.catalogRevision);
+    if (provider.id !== session.provider) {
+      throw new Error("The selected provider does not match this session.");
+    }
+    const executionOptions = validateSessionExecutionOptions(request.executionOptions, provider, snapshot.revision);
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     let agentRuntimeBinding = await Promise.resolve(
       this.deps.getProviderAgentRuntimeBinding?.({ session, provider }) ?? null,
@@ -1027,6 +1034,7 @@ export class SessionRuntimeService {
     try {
       promptForAudit = providerAdapter.composePrompt({
         session: providerSession,
+        executionOptions,
         sessionFolderPath: await this.deps.resolveSessionFolderPath?.(providerSession.id),
         sessionMemory,
         projectMemoryEntries,
@@ -1074,6 +1082,7 @@ export class SessionRuntimeService {
         sessionId,
         createdAt: new Date().toISOString(),
         session: runningSession,
+        executionOptions,
         logicalPrompt: promptForAudit.logicalPrompt,
         clientRequestId,
         submitSource: submitSource ?? undefined,
@@ -1174,9 +1183,9 @@ export class SessionRuntimeService {
         ...latestObservedRunningAuditEntry,
         phase: "running",
         provider: activeRunningSession.provider,
-        model: activeRunningSession.model,
-        reasoningEffort: activeRunningSession.reasoningEffort,
-        approvalMode: activeRunningSession.approvalMode,
+        model: executionOptions.model,
+        reasoningEffort: executionOptions.reasoningEffort,
+        approvalMode: executionOptions.approvalMode,
         threadId: pickPreferredThreadId(
           nextLiveState.threadId,
           latestObservedRunningAuditEntry.threadId,
@@ -1207,6 +1216,7 @@ export class SessionRuntimeService {
       const effectiveTurnSession = await (this.deps.resolveProviderSession?.(turnSession) ?? turnSession);
       const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
+        executionOptions,
         sessionFolderPath: await this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
         sessionMemory,
         projectMemoryEntries,
@@ -1335,6 +1345,7 @@ export class SessionRuntimeService {
             sessionId,
             createdAt: runningAuditLog.createdAt,
             session: activeRunningSession,
+            executionOptions,
             logicalPrompt: promptForAudit.logicalPrompt,
             threadId: "",
             clientRequestId,
@@ -1443,6 +1454,7 @@ export class SessionRuntimeService {
           phase: "completed",
           completedAt,
           session: storedCompletedSession,
+          executionOptions,
           threadId: completedThreadId,
           logicalPrompt: result.logicalPrompt,
           transportPayload: appendTransportPayloadFields(
@@ -1598,6 +1610,7 @@ export class SessionRuntimeService {
           phase: canceled ? "canceled" : "failed",
           completedAt,
           session: storedFailedSession,
+          executionOptions,
           threadId: failedAuditThreadId,
           logicalPrompt: failedLogicalPrompt,
           transportPayload: appendTransportPayloadFields(

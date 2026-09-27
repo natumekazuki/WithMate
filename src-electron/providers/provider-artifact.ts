@@ -1,5 +1,6 @@
 import type { AuditLogOperation, AuditLogUsage, ChangedFile, DiffRow, RunCheck } from "../../src-shared/session/runtime-state.js";
 import type { MessageArtifact, Session } from "../../src-shared/session/session-state.js";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { reasoningEffortLabel, type ModelCatalogProvider, type ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
 import type { SnapshotCaptureStats, WorkspaceSnapshot } from "../platform/snapshot-ignore.js";
 
@@ -297,7 +298,7 @@ function buildActivitySummary(operations: AuditLogOperation[], changedFiles: Cha
 }
 
 function buildRunChecks(
-  session: Session,
+  executionOptions: SessionExecutionOptions,
   usage: AuditLogUsage | null,
   threadId: string | null,
   providerCatalog: ModelCatalogProvider,
@@ -307,7 +308,7 @@ function buildRunChecks(
 ): RunCheck[] {
   const checks: RunCheck[] = [
     { label: "provider", value: providerCatalog.label },
-    { label: "approval", value: session.approvalMode },
+    { label: "approval", value: executionOptions.approvalMode },
     { label: "model", value: selection.resolvedModel },
     { label: "reasoning", value: reasoningEffortLabel(selection.resolvedReasoningEffort) },
   ];
@@ -335,6 +336,7 @@ function buildRunChecks(
 
 export function buildArtifactFromOperations(input: {
   session: Session;
+  executionOptions: SessionExecutionOptions;
   operations: AuditLogOperation[];
   usage: AuditLogUsage | null;
   threadId: string | null;
@@ -348,7 +350,7 @@ export function buildArtifactFromOperations(input: {
   const changedFiles = buildChangedFilesFromSnapshots(input.beforeSnapshot, input.afterSnapshot);
   const operationTimeline = input.operations;
   const runChecks = buildRunChecks(
-    input.session,
+    input.executionOptions,
     input.usage,
     input.threadId,
     input.providerCatalog,

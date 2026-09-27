@@ -6,6 +6,7 @@ import React, { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
 import { createStaticTextConversationMessageColumnProps } from "../../src/chat/chat-window-adapter.js";
@@ -71,7 +72,7 @@ async function setup() {
       const owner = { kind: "main" as const, id: session.id };
       registry.setDraft(owner, text);
       return current.main.runMainSessionTurn({
-        sessionId: session.id, selectedSession: session, request: { userMessage: text, submitSource: "composer" },
+        sessionId: session.id, selectedSession: session, request: { userMessage: text, submitSource: "composer", executionOptions: captureSessionExecutionOptions(session) },
         composerOwner: owner, clearDraft: true, shouldCollapseActionDock: false, isCentralPreviewActive: false,
         hasLiveRun: false, selectedSessionRunState: session.runState, blockedReason: null, isReadOnly: false,
         currentTimestamp: "sending", validateWorkspace: async () => true,
@@ -84,10 +85,11 @@ async function setup() {
       const binding = current.auxiliary.getBinding(session.id);
       return runAuxiliarySessionSendOperationWithApi({
         activeSession: session, messageText: text, parentMessageCount: 4, updatedAt: "sending",
-        draftSaveQueue: binding.draftSaveQueue, sessionSaveQueue: binding.sessionSaveQueue,
+        executionOptions: captureSessionExecutionOptions(session),
+        draftSaveQueue: binding.draftSaveQueue,
         mutationRevision: binding.mutationRevision, getCurrentSession: binding.getSession,
-        applyRunningSession: createAuxiliarySessionRunningApplier({ setActiveSession: binding.setSession, updateLiveRunState: current.setLive }),
-        ...createAuxiliarySessionSendResultAppliers({ setActiveSession: binding.setSession }),
+        applyRunningSession: createAuxiliarySessionRunningApplier({ activeSessionRef: binding.sessionRef, setActiveSession: binding.setSession, updateLiveRunState: current.setLive }),
+        ...createAuxiliarySessionSendResultAppliers({ activeSessionRef: binding.sessionRef, setActiveSession: binding.setSession }),
         clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({ updateLiveRunState: current.setLive }),
         api,
       });

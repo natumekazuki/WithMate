@@ -1,4 +1,5 @@
-import type { Session } from "../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
+import { CurrentExecutionSelections } from "../session/current-execution-selections.js";
 import type { AppDatabaseDiagnostics } from "../../src-shared/window/app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
 import type { CharacterAffectTurnDrainCursor } from "../character/character-affect-turn-drain.js";
@@ -10,6 +11,7 @@ import type { AuditLogStorageRead, AuxiliarySessionStorageAccess, CharacterStora
 
 /** Owns the live persistent-store generation and its lifecycle state. */
 export class MainStoreContext {
+  readonly executionSelections = new CurrentExecutionSelections();
   private state: {
     sessions: Session[];
     owner: PersistentStoreBundle | null;
@@ -65,7 +67,17 @@ export class MainStoreContext {
   public setDatabaseDiagnostics(value: AppDatabaseDiagnostics | null): void { this.state.diagnostics = value; }
   public setMemoryRuntimeStatus(value: MemoryV6Diagnostics["runtime"]["status"]): void { this.state.memoryStatus = value; }
   public setDrainCursor(value: CharacterAffectTurnDrainCursor | undefined): void { this.state.drainCursor = value; }
-  public setSessions(value: Session[]): void { this.state.sessions = value; }
+  public setSessions(value: Session[]): void {
+    const nextById = new Map(value.map((session) => [session.id, session]));
+    for (const previous of this.state.sessions) {
+      const next = nextById.get(previous.id);
+      if (!next || getSessionIncarnationId(next) !== getSessionIncarnationId(previous)) {
+        this.executionSelections.forgetParent(previous.id);
+      }
+    }
+    this.executionSelections.retainParents(value);
+    this.state.sessions = value.map((session) => this.executionSelections.apply(session));
+  }
   public setActivePersistentStoreOwner(value: PersistentStoreBundle | null): void { this.state.owner = value; }
   public setWalMaintenanceTimer(value: ReturnType<typeof setInterval> | null): void { this.state.walTimer = value; }
   public startWalMaintenance(truncate: (owner: V6StorageWorkerBundle | null, dbPath: string) => Promise<void>, intervalMs: number): void {
@@ -116,6 +128,7 @@ export class MainStoreContext {
   public setCharacterStorage(value: CharacterStorageAccess | null): void { this.state.characterStorage = value; }
 
   public activate(bundle: PersistentStoreBundle): void {
+    this.executionSelections.clear();
     this.state.owner = bundle;
     this.state.storageWorker = bundle.storageWorker ?? null;
     this.state.promptTemplateStorage = this.state.storageWorker?.stores.prompt ?? null;
@@ -134,6 +147,7 @@ export class MainStoreContext {
   }
 
   public clearReferences(): void {
+    this.executionSelections.clear();
     this.state = { ...this.state, sessions: [], owner: null, sessionStorage: null, sessionMemoryStorage: null, projectMemoryStorage: null, modelCatalogStorage: null, characterStorage: null, auditLogStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null, storageWorker: null, promptTemplateStorage: null, mateStorage: null, mateProfileItemStorage: null, settlement: null, drainCursor: undefined, walTimer: null };
   }
 }

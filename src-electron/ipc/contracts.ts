@@ -48,6 +48,15 @@ import type {
   SessionSummary,
 } from "../../src-shared/session/session-state.js";
 import type {
+  SetExecutionOptionsResult,
+  SetAuxiliaryExecutionOptionsRequest,
+  SetAuxiliaryMessageBookmarkRequest,
+  SetAuxiliaryTitleRequest,
+  SetSessionExecutionOptionsRequest,
+  SetSessionMessageBookmarkRequest,
+  SetSessionTitleRequest,
+} from "../../src-shared/session/session-mutation-contract.js";
+import type {
   AuxiliarySession,
   AuxiliarySessionSummary,
   CreateAuxiliarySessionInput,
@@ -310,7 +319,7 @@ export type MainIpcSettingsDeps = MainIpcEventWindowDeps &
     updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
     updateChatLayoutPreference(
       update: ChatLayoutPreferenceUpdate,
-    ): Awaitable<AppSettings>;
+    ): Awaitable<void>;
     getAppDatabaseDiagnostics(): Awaitable<AppDatabaseDiagnostics>;
     getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
     installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -391,6 +400,9 @@ export type MainIpcAuxiliaryDeps = MainIpcEventWindowDeps &
     updateAuxiliarySession?(
       session: AuxiliarySession,
     ): Awaitable<AuxiliarySession>;
+    setAuxiliaryExecutionOptions?(request: SetAuxiliaryExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
+    setAuxiliaryTitle?(request: SetAuxiliaryTitleRequest): Awaitable<void>;
+    setAuxiliaryMessageBookmark?(request: SetAuxiliaryMessageBookmarkRequest): Awaitable<void>;
     closeAuxiliarySession?(
       auxiliarySessionId: string,
     ): Awaitable<AuxiliarySession>;
@@ -603,6 +615,9 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
     ): void;
     createSession(input: CreateSessionRequest): Awaitable<Session>;
     updateSession(session: Session): Awaitable<Session>;
+    setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
+    setSessionTitle(request: SetSessionTitleRequest): Awaitable<void>;
+    setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Awaitable<void>;
     setSessionPinned(request: SetSessionPinnedRequest): Awaitable<SessionSummary>;
     deleteSession(sessionId: string): Awaitable<void>;
     deleteSessionsLastActiveBefore(

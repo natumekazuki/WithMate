@@ -112,6 +112,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - Settings Window の古い Session 削除の確認文言と戻り値解釈は `home-settings-actions` が担当し、削除 orchestration は Main Process 側の session command API に委譲する
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する。完了後に常設の成功説明を残さない
 - Settings の save が成功しても、その待機中に加えられた変更は上書きせず、`Unsaved Changes` として draft に残す
+- Session Windowから変更するHeader・Action Dock・Side Paneの復元設定は即時適用する。Mainは変更項目の現在値を保持して設定再取得へ反映し、DBへの任意checkpointは別ラインで行う。保存失敗は診断ログへ残し、表示や操作は巻き戻さない。Settings Windowの明示的なSaveとは保存保証を分ける
 - Memory V6 diagnostics は Main Process 側の `getMemoryV6Diagnostics()` が集約し、renderer 側の `HomeApp.tsx` が初回表示時と Settings 保存成功後に再取得する
 - Memory V6 diagnostics は`generatedAt`、`runtime`、`cliShim`、`lastErrors`の4 fieldだけを持つread-only projectionとして扱う
 - Settings Window の Diagnostics 表示は`SettingsContent.tsx`が担当し、操作導線はfolder open、Memory Review、CLI shim操作、Settings saveに限定する

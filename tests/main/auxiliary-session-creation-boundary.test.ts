@@ -9,8 +9,11 @@ import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.j
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { AuxiliarySessionService } from "../../src-electron/auxiliary/auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
+import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character/character-affect-turn-ownership-coordinator.js";
 import { ProviderRuntimeOperationCoordinator } from "../../src-electron/providers/provider-runtime-operation-coordinator.js";
 
@@ -73,7 +76,7 @@ function createService(options: {
   getParent: () => ReturnType<typeof parent> | null | Promise<ReturnType<typeof parent> | null>;
   getStorage: () => AuxiliarySessionStorage;
   resolveSelection: () => Promise<ReturnType<typeof selection>>;
-  getCatalog?: () => ModelCatalogSnapshot;
+  getCatalog?: () => ModelCatalogSnapshot | Promise<ModelCatalogSnapshot>;
   listActiveCharacters?: () => readonly CharacterCatalogEntry[];
   provider: ProviderRuntimeOperationCoordinator;
   affect: CharacterAffectTurnOwnershipCoordinator;
@@ -84,6 +87,8 @@ function createService(options: {
     generationId: string;
     auxiliarySessionId?: string;
   }) => void;
+  rememberExecutionOptions?: (session: AuxiliarySessionSummary, options: SessionExecutionOptions) => void;
+  overlayCurrentExecutionOptions?: <T extends AuxiliarySessionSummary>(session: T) => T;
 }) {
   const activeCharacters: readonly CharacterCatalogEntry[] = [{
     id: "aux-character",
@@ -107,6 +112,8 @@ function createService(options: {
     createCharacterRuntimeSnapshot: (id) => character(id, "Auxiliary"),
     randomCharacter: () => 0,
     onCreationStateChanged: options.onCreationStateChanged,
+    rememberExecutionOptions: options.rememberExecutionOptions,
+    overlayCurrentExecutionOptions: options.overlayCurrentExecutionOptions,
   });
 }
 
@@ -1118,6 +1125,125 @@ test("Auxiliaryの取消レコードは回収し、遅延要求を拒否して�
     storage.listAuxiliarySessions = originalList;
     await creation?.catch(() => {});
     storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliaryの軽量変更は履歴を再読込せず、実行中の確定messageのbookmarkを更新でき、失敗や遅延検証・checkpointの後も最後の実行設定選択を保持する"
+// oracle = { type = "contract", ref = "Auxiliary current execution selection and narrow mutation boundary" }
+// fault = "軽量変更が全履歴をhydrationする、実行中のbookmarkを拒否する、または失敗・遅延検証・checkpointで現在選択を消す"
+// observable = "title/bookmark保存結果とservice summary・storageの実行設定"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-narrow-mutations"
+// lifecycle = "permanent"
+// impact = "大量履歴の読み込み遅延または次Turnで旧model選択の実行を招く"
+// distinction = "保存値だけを見るstorage testではserviceのhydration境界とmemory選択を検出できない"
+// @end-test-value
+test("Auxiliary軽量変更は全履歴を読まずcheckpoint失敗後も現在選択を保持する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-narrow-mutation-"));
+  const dbPath = path.join(directory, "app.db");
+  const sessionStorage = new SessionStorageV6(dbPath);
+  sessionStorage.upsertSession(parent({ characterId: "", characterRuntimeSnapshot: null }));
+  const storage = new AuxiliarySessionStorage(dbPath);
+  const selected = new Map<string, SessionExecutionOptions>();
+  let delayNextCatalog = false;
+  let releaseCatalog!: () => void;
+  const catalogGate = new Promise<void>((resolve) => { releaseCatalog = resolve; });
+  let catalogEntered!: () => void;
+  const catalogStarted = new Promise<void>((resolve) => { catalogEntered = resolve; });
+  const service = createService({
+    getParent: () => parent(),
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => {
+      if (delayNextCatalog) {
+        delayNextCatalog = false;
+        catalogEntered();
+        return catalogGate.then(() => catalog(1));
+      }
+      return catalog(1);
+    },
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+    rememberExecutionOptions: (session, options) => { selected.set(session.id, options); },
+    overlayCurrentExecutionOptions: (session) => {
+      const options = selected.get(session.id);
+      return options ? { ...session, ...options } : session;
+    },
+  });
+  const originalGet = storage.getAuxiliarySession.bind(storage);
+  const originalCheckpoint = storage.updateAuxiliaryExecutionOptionsIfMatches.bind(storage);
+  try {
+    const created = await service.createAuxiliarySession({ parentSessionId: parent().id, provider: "codex" });
+    storage.upsertAuxiliarySession({ ...created, messages: [{ role: "user", text: "question" }] });
+    storage.getAuxiliarySession = () => { throw new Error("full Auxiliary hydration is forbidden"); };
+    const identity = { auxiliarySessionId: created.id, parentSessionId: created.parentSessionId, createdAt: created.createdAt };
+    await service.setAuxiliaryTitle({ ...identity, title: "renamed" });
+    await service.setAuxiliaryMessageBookmark({ ...identity, messageIndex: 0, isBookmarked: true });
+    const chosen: SessionExecutionOptions = {
+      catalogRevision: 1, model: "gpt-5.4", reasoningEffort: "medium",
+      approvalMode: created.approvalMode, codexSandboxMode: created.codexSandboxMode,
+      codexSpeed: created.codexSpeed, codexReviewer: created.codexReviewer,
+      customAgentName: created.customAgentName,
+    };
+    storage.updateAuxiliaryExecutionOptionsIfMatches = () => { throw new Error("checkpoint unavailable"); };
+    assert.deepEqual(await service.setAuxiliaryExecutionOptions({ ...identity, executionOptions: chosen }), {
+      status: "accepted", checkpointSaved: false,
+    });
+    assert.equal((await service.getAuxiliarySessionSummary(created.id))?.reasoningEffort, "medium");
+    assert.equal((await service.getAuxiliarySessionSummary(created.id))?.title, "renamed");
+    storage.getAuxiliarySession = originalGet;
+    assert.equal(storage.getAuxiliarySession(created.id)?.messages[0]?.isBookmarked, true);
+
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let firstEntered!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstEntered = resolve; });
+    let checkpointCount = 0;
+    storage.updateAuxiliaryExecutionOptionsIfMatches = (async (input: Parameters<typeof originalCheckpoint>[0]) => {
+      checkpointCount += 1;
+      if (checkpointCount === 1) {
+        firstEntered();
+        await firstGate;
+      }
+      return originalCheckpoint(input);
+    }) as unknown as typeof storage.updateAuxiliaryExecutionOptionsIfMatches;
+    const earlier = service.setAuxiliaryExecutionOptions({ ...identity, executionOptions: { ...chosen, reasoningEffort: "high" } });
+    await firstStarted;
+    const later = service.setAuxiliaryExecutionOptions({ ...identity, executionOptions: chosen });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal((await service.getAuxiliarySessionSummary(created.id))?.reasoningEffort, "medium");
+    releaseFirst();
+    await Promise.all([earlier, later]);
+    assert.equal(storage.getAuxiliarySession(created.id)?.reasoningEffort, "medium");
+
+    storage.updateAuxiliaryExecutionOptionsIfMatches = originalCheckpoint;
+    delayNextCatalog = true;
+    const stale = service.setAuxiliaryExecutionOptions({ ...identity, executionOptions: { ...chosen, reasoningEffort: "high" } });
+    await catalogStarted;
+    await service.setAuxiliaryExecutionOptions({ ...identity, executionOptions: chosen });
+    releaseCatalog();
+    assert.deepEqual(await stale, { status: "superseded" });
+    assert.equal(storage.getAuxiliarySession(created.id)?.reasoningEffort, "medium");
+
+    storage.upsertAuxiliarySession({ ...storage.getAuxiliarySession(created.id)!, runState: "running" });
+    await service.setAuxiliaryMessageBookmark({ ...identity, messageIndex: 0, isBookmarked: false });
+    assert.equal(storage.getAuxiliarySession(created.id)?.messages[0]?.isBookmarked, undefined);
+    await service.setAuxiliaryMessageBookmark({ ...identity, messageIndex: 0, isBookmarked: true });
+    assert.equal(storage.getAuxiliarySession(created.id)?.messages[0]?.isBookmarked, true);
+    await assert.rejects(service.setAuxiliaryExecutionOptions({
+      ...identity,
+      executionOptions: { ...chosen, approvalMode: "never" },
+    }), /A running Auxiliary Session cannot change these execution options/);
+    assert.equal(selected.get(created.id)?.approvalMode, chosen.approvalMode);
+  } finally {
+    releaseCatalog();
+    storage.getAuxiliarySession = originalGet;
+    storage.updateAuxiliaryExecutionOptionsIfMatches = originalCheckpoint;
+    storage.close();
+    sessionStorage.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

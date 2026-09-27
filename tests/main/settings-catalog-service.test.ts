@@ -16,10 +16,16 @@ import type { ProviderRuntimeMetadataPatch } from "../../src-electron/providers/
 import { AppSettingsStorage } from "../../src-electron/app/app-settings-storage.js";
 import { SettingsCatalogService as SettingsCatalogServiceImpl } from "../../src-electron/settings/settings-catalog-service.js";
 import type { SettingsCatalogServiceDeps } from "../../src-electron/settings/settings-catalog-service.js";
+import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
 type SettingsCatalogDeps = SettingsCatalogServiceDeps;
 type DefaultedSettingsCatalogDependency =
+  | "applyCurrentExecutionCatalog"
+  | "updateChatLayoutPreference"
   | "runProviderRuntimeOperationExclusive"
+  | "listSessionCredentialThreads"
+  | "listAuxiliaryCredentialThreads"
   | "updateSessionThreadIfMatches"
   | "updateAuxiliarySessionThreadIfMatches"
   | "updateSessionRuntimeMetadataIfMatches"
@@ -41,7 +47,11 @@ type SettingsCatalogTestDeps = Omit<SettingsCatalogDeps, DefaultedSettingsCatalo
   & Partial<Pick<SettingsCatalogDeps, DefaultedSettingsCatalogDependency>>;
 
 const defaultSettingsCatalogDependencies: Pick<SettingsCatalogDeps, DefaultedSettingsCatalogDependency> = {
+  applyCurrentExecutionCatalog() {},
+  updateChatLayoutPreference() {},
   runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+  listSessionCredentialThreads: async () => { throw new Error("unexpected listSessionCredentialThreads"); },
+  listAuxiliaryCredentialThreads: async () => { throw new Error("unexpected listAuxiliaryCredentialThreads"); },
   updateSessionThreadIfMatches: async () => { throw new Error("unexpected updateSessionThreadIfMatches"); },
   updateAuxiliarySessionThreadIfMatches: async () => { throw new Error("unexpected updateAuxiliarySessionThreadIfMatches"); },
   updateSessionRuntimeMetadataIfMatches: async () => { throw new Error("unexpected updateSessionRuntimeMetadataIfMatches"); },
@@ -66,6 +76,24 @@ class SettingsCatalogService extends SettingsCatalogServiceImpl {
     const completeDeps: SettingsCatalogDeps = {
       ...defaultSettingsCatalogDependencies,
       ...deps,
+      listSessionCredentialThreads: deps.listSessionCredentialThreads ?? (async () =>
+        (await deps.listSessions()).map((session) => ({
+          id: session.id,
+          incarnationId: getSessionIncarnationId(session),
+          provider: session.provider,
+          threadId: session.threadId,
+          status: session.status,
+          runState: session.runState,
+        }))),
+      listAuxiliaryCredentialThreads: deps.listAuxiliaryCredentialThreads ?? (async () =>
+        (await deps.listAuxiliarySessions()).map((session) => ({
+          id: session.id,
+          parentSessionId: session.parentSessionId,
+          createdAt: session.createdAt,
+          provider: session.provider,
+          threadId: session.threadId,
+          runState: session.runState,
+        }))),
       updateSessionThreadIfMatches: deps.updateSessionThreadIfMatches ?? (async (input: SessionThreadPatchInput) => {
         const sessions = await deps.listSessions();
         const target = sessions.find((session) =>
@@ -240,6 +268,264 @@ function createCatalogSnapshot(revision = 1): ModelCatalogSnapshot {
 
 describe("SettingsCatalogService", () => {
   // @test-value v2
+  // kind = "contract"
+  // claim = "任意のchat layout checkpointが保留・失敗しDB読込応答が遅れても、再読込・Settings保存・表示設定以外のresetは現在の表示選択を返す"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // fault = "再open時やSettings保存結果がDBの旧layoutへ戻る、またはcheckpoint失敗を診断できない"
+  // observable = "serviceのsettings projection、broadcast、DB値、失敗診断"
+  // observation_boundary = "public-boundary"
+  // scope = "settings-catalog-chat-layout-current"
+  // lifecycle = "permanent"
+  // impact = "保存失敗によって利用者が選択した表示が同一アプリ内の再表示で失われる"
+  // distinction = "Renderer局所stateとSQLite単体testでは検出できないMainの現在値projectionを確認する"
+  // @end-test-value
+  it("chat layout checkpoint が失敗しても再読込とSettings保存は現在値を維持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-layout-current-"));
+    const storage = new AppSettingsStorage(path.join(tempDirectory, "withmate.db"));
+    const writeStarted = createDeferred();
+    const rejectWrite = createDeferred();
+    const diagnosticReceived = createDeferred();
+    const allowRetryWrite = createDeferred();
+    const secondWriteCompleted = createDeferred();
+    const allowFinalWrite = createDeferred();
+    const finalWriteCompleted = createDeferred();
+    const delayedReadStarted = createDeferred();
+    const releaseDelayedRead = createDeferred();
+    const newerWriteCompleted = createDeferred();
+    const diagnostics: string[] = [];
+    const broadcasts: AppSettings[] = [];
+    let writeAttempt = 0;
+    let delayNextRead = false;
+    try {
+      const service = new SettingsCatalogService({
+        hasInFlightSessionRuns: () => false,
+        isSessionRunInFlight: () => false,
+        isRunningSession: () => false,
+        listSessions: () => [],
+        listAuxiliarySessions: () => [],
+        async getAppSettings() {
+          const snapshot = storage.getSettings();
+          if (delayNextRead) {
+            delayNextRead = false;
+            delayedReadStarted.resolve();
+            await releaseDelayedRead.promise;
+          }
+          return snapshot;
+        },
+        updateAppSettings: (settings) => storage.updateSettings(settings),
+        async updateChatLayoutPreference(update) {
+          writeAttempt += 1;
+          if (writeAttempt === 1) {
+            writeStarted.resolve();
+            await rejectWrite.promise;
+            throw new Error(`checkpoint failed: ${update.target}`);
+          }
+          if (writeAttempt === 2) await allowRetryWrite.promise;
+          if (writeAttempt === 4) await allowFinalWrite.promise;
+          storage.updateChatLayoutPreference(update);
+          if (writeAttempt === 3) secondWriteCompleted.resolve();
+          if (writeAttempt === 4) finalWriteCompleted.resolve();
+          if (writeAttempt === 5) newerWriteCompleted.resolve();
+        },
+        onChatLayoutPreferenceSaveError(update, error) {
+          diagnostics.push(`${update.target}: ${String(error)}`);
+          diagnosticReceived.resolve();
+        },
+        clearProjectMemories: () => {},
+        getModelCatalog: () => createCatalogSnapshot(),
+        ensureModelCatalogSeeded: () => createCatalogSnapshot(),
+        importModelCatalogDocument: () => createCatalogSnapshot(),
+        exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+        replaceAuxiliarySessions: (sessions) => sessions,
+        clearProviderQuotaTelemetry: () => {},
+        clearSessionContextTelemetry: () => {},
+        invalidateProviderSessionThread: () => {},
+        broadcastSessions: () => {},
+        broadcastAppSettings: (settings) => { if (settings) broadcasts.push(settings); },
+        broadcastModelCatalog: () => {},
+      });
+
+      service.updateChatLayoutPreference({ target: "header", value: "visible" });
+      await writeStarted.promise;
+      assert.equal((await service.getAppSettings()).chatLayoutPreference.header, "visible");
+      assert.equal(storage.getSettings().chatLayoutPreference.header, "hidden");
+
+      const saved = await service.updateAppSettings({ ...storage.getSettings(), launchAtLoginEnabled: true });
+      assert.equal(saved.chatLayoutPreference.header, "visible");
+      assert.equal(broadcasts.at(-1)?.chatLayoutPreference.header, "visible");
+      assert.equal(storage.getSettings().chatLayoutPreference.header, "hidden");
+
+      rejectWrite.resolve();
+      await diagnosticReceived.promise;
+      assert.match(diagnostics[0] ?? "", /header: Error: checkpoint failed: header/);
+      assert.equal((await service.getAppSettings()).chatLayoutPreference.header, "visible");
+      assert.equal(storage.getSettings().chatLayoutPreference.header, "hidden");
+
+      const reset = await service.resetAppDatabase({ targets: ["projectMemory"] });
+      assert.equal(reset.appSettings.chatLayoutPreference.header, "visible");
+      assert.equal(broadcasts.at(-1)?.chatLayoutPreference.header, "visible");
+
+      service.updateChatLayoutPreference({ target: "header", value: "visible" });
+      service.updateChatLayoutPreference({ target: "header", value: "hidden" });
+      service.updateChatLayoutPreference({ target: "header", value: "visible" });
+      allowRetryWrite.resolve();
+      await secondWriteCompleted.promise;
+      assert.equal(storage.getSettings().chatLayoutPreference.header, "hidden");
+      assert.equal((await service.getAppSettings()).chatLayoutPreference.header, "visible");
+      allowFinalWrite.resolve();
+      await finalWriteCompleted.promise;
+      assert.equal(storage.getSettings().chatLayoutPreference.header, "visible");
+
+      delayNextRead = true;
+      const delayedRead = service.getAppSettings();
+      await delayedReadStarted.promise;
+      service.updateChatLayoutPreference({ target: "header", value: "hidden" });
+      await newerWriteCompleted.promise;
+      releaseDelayedRead.resolve();
+      assert.equal((await delayedRead).chatLayoutPreference.header, "hidden");
+    } finally {
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "明示的なApp Settings resetは任意chat layout checkpointの完了を待たず、未dispatchの旧checkpointを適用しない"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // fault = "任意保存が未完了の間resetが停止する、またはreset後に旧表示選択が戻る"
+  // observable = "reset実行到達、settings projection、storage write呼出数"
+  // observation_boundary = "public-boundary"
+  // scope = "settings-catalog-chat-layout-reset"
+  // lifecycle = "permanent"
+  // impact = "利用者の明示resetを任意checkpointが妨げるか、resetの表示結果が覆る"
+  // distinction = "通常のSettings reset testでは任意保存が未完了の条件を通さない"
+  // @end-test-value
+  it("App Settings reset は任意chat layout checkpointを待たず旧queueを破棄する", async () => {
+    let storedSettings = createDefaultAppSettings();
+    let writes = 0;
+    const checkpointStarted = createDeferred();
+    const releaseCheckpoint = createDeferred();
+    const resetReached = createDeferred();
+    const failedCheckpointObserved = createDeferred();
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns: () => false,
+      isSessionRunInFlight: () => false,
+      isRunningSession: () => false,
+      listSessions: () => [],
+      listAuxiliarySessions: () => [],
+      getAppSettings: () => storedSettings,
+      updateAppSettings: (settings) => { storedSettings = settings; return settings; },
+      async updateChatLayoutPreference() {
+        writes += 1;
+        checkpointStarted.resolve();
+        await releaseCheckpoint.promise;
+        throw new Error("checkpoint unavailable");
+      },
+      onChatLayoutPreferenceSaveError: () => failedCheckpointObserved.resolve(),
+      resetAppSettings: () => {
+        storedSettings = createDefaultAppSettings();
+        resetReached.resolve();
+        return storedSettings;
+      },
+      getModelCatalog: () => createCatalogSnapshot(),
+      ensureModelCatalogSeeded: () => createCatalogSnapshot(),
+      importModelCatalogDocument: () => createCatalogSnapshot(),
+      exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+      replaceAuxiliarySessions: (sessions) => sessions,
+      clearProviderQuotaTelemetry: () => {},
+      clearAllProviderQuotaTelemetry: () => {},
+      clearSessionContextTelemetry: () => {},
+      invalidateProviderSessionThread: () => {},
+      broadcastSessions: () => {},
+      broadcastAppSettings: () => {},
+      broadcastModelCatalog: () => {},
+    });
+
+    service.updateChatLayoutPreference({ target: "header", value: "visible" });
+    await checkpointStarted.promise;
+    service.updateChatLayoutPreference({ target: "sidePane", value: "context" });
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const reset = service.resetAppDatabase({ targets: ["appSettings"] });
+      await Promise.race([
+        resetReached.promise,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error("App Settings reset waited for an optional checkpoint")), 500);
+        }),
+      ]);
+      await reset;
+      assert.deepEqual((await service.getAppSettings()).chatLayoutPreference, createDefaultAppSettings().chatLayoutPreference);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      releaseCheckpoint.resolve();
+    }
+    await failedCheckpointObserved.promise;
+    await Promise.resolve();
+    assert.equal(writes, 1);
+    assert.deepEqual((await service.getAppSettings()).chatLayoutPreference, createDefaultAppSettings().chatLayoutPreference);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "旧storage ownerの未dispatch chat layout checkpointは新しいstorage generationへ送られない"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // fault = "旧serviceのqueueが遅延後にrequireAppSettingsStorageを再解決し新DBへ旧選択を書き込む"
+  // observable = "checkpoint callbackの呼出回数と取得したstorage identity"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-catalog-chat-layout-storage-owner"
+  // lifecycle = "permanent"
+  // impact = "DB再生成後の初期表示設定が閉鎖前の古い選択で上書きされる"
+  // distinction = "reset epochのtestではservice owner自体が置換された場合を検出できない"
+  // @end-test-value
+  it("旧storage ownerの未dispatch chat layout checkpointは新generationへ送らない", async () => {
+    const oldOwner = {};
+    let currentOwner = oldOwner;
+    const dispatchedOwners: object[] = [];
+    const firstWriteStarted = createDeferred();
+    const releaseFirstWrite = createDeferred();
+    const firstWriteFinished = createDeferred();
+    const service = new SettingsCatalogService({
+      captureStorageIdentity: () => currentOwner,
+      isStorageIdentityCurrent: (identity) => identity === currentOwner,
+      hasInFlightSessionRuns: () => false,
+      isSessionRunInFlight: () => false,
+      isRunningSession: () => false,
+      listSessions: () => [],
+      listAuxiliarySessions: () => [],
+      getAppSettings: () => createDefaultAppSettings(),
+      updateAppSettings: (settings) => settings,
+      async updateChatLayoutPreference() {
+        const dispatchOwner = currentOwner;
+        dispatchedOwners.push(dispatchOwner);
+        firstWriteStarted.resolve();
+        await releaseFirstWrite.promise;
+        firstWriteFinished.resolve();
+      },
+      getModelCatalog: () => createCatalogSnapshot(),
+      ensureModelCatalogSeeded: () => createCatalogSnapshot(),
+      importModelCatalogDocument: () => createCatalogSnapshot(),
+      exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+      replaceAuxiliarySessions: (sessions) => sessions,
+      clearProviderQuotaTelemetry: () => {},
+      clearSessionContextTelemetry: () => {},
+      invalidateProviderSessionThread: () => {},
+      broadcastSessions: () => {},
+      broadcastAppSettings: () => {},
+      broadcastModelCatalog: () => {},
+    });
+
+    service.updateChatLayoutPreference({ target: "header", value: "visible" });
+    await firstWriteStarted.promise;
+    service.updateChatLayoutPreference({ target: "sidePane", value: "context" });
+    currentOwner = {};
+    releaseFirstWrite.resolve();
+    await firstWriteFinished.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(dispatchedOwners, [oldOwner]);
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "credential変更は対象providerのMain実行・Auxiliary実行・Auxiliary admission予約が完了するまで保存しない"
   // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
@@ -291,10 +577,10 @@ describe("SettingsCatalogService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "通常 settings 更新は並行保存された chat layout を巻き戻さない"
+  // claim = "credential不変の通常 settings 更新はSession/Aux一覧を読まず、並行保存された chat layout を巻き戻さない"
   // oracle = { type = "contract", ref = "Concurrent settings projection" }
-  // fault = "stale snapshot が最新 layout を上書きする"
-  // observable = "settings 更新後の chatLayoutPreference"
+  // fault = "不要な全Session/Aux一覧を読み、またはstale snapshot が最新 layout を上書きする"
+  // observable = "一覧読取なしで完了した settings 更新後の chatLayoutPreference"
   // observation_boundary = "public-boundary"
   // scope = "settings-catalog-layout-concurrency"
   // lifecycle = "permanent"
@@ -321,17 +607,17 @@ describe("SettingsCatalogService", () => {
           return false;
         },
         listSessions() {
-          return [];
+          throw new Error("credential-unchanged settings save must not hydrate Sessions");
         },
-        async listAuxiliarySessions() {
-          auxiliarySessionsRequested.resolve();
-          await resumeAuxiliarySessions.promise;
-          return [];
+        listAuxiliarySessions() {
+          throw new Error("credential-unchanged settings save must not hydrate Auxiliary sessions");
         },
         getAppSettings() {
           return storage.getSettings();
         },
-        updateAppSettings(settings) {
+        async updateAppSettings(settings) {
+          auxiliarySessionsRequested.resolve();
+          await resumeAuxiliarySessions.promise;
           return storage.updateSettings(settings);
         },
         getModelCatalog() {
@@ -1405,9 +1691,9 @@ describe("SettingsCatalogService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "catalog cleanup rollback後は復元したcatalog snapshotを再broadcastする"
-  // fault = "成功側catalog broadcast後のcleanup失敗で永続値だけrollbackしrenderer投影を残す"
-  // observable = "catalog broadcast revision sequenceと重複しない親Session ID通知"
+  // claim = "catalog importとcleanup rollbackは現在選択をactive revisionへ揃えてからsnapshotを通知する"
+  // fault = "永続値だけ変更して現在選択を旧revisionに残すか、rollbackで元の選択を失う"
+  // observable = "通知時のMain/Auxiliary選択とcatalog revision sequence、親Session ID通知"
   // observation_boundary = "component-behavior"
   // scope = "catalog-rollback-rebroadcast"
   // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
@@ -1421,6 +1707,11 @@ describe("SettingsCatalogService", () => {
     let catalog = createCatalogSnapshot(1);
     const broadcasts: number[] = [];
     const sessionNotifications: string[][] = [];
+    const selections = new CurrentExecutionSelections();
+    const options = captureSessionExecutionOptions({ ...session, model: "gpt-5.4-mini", reasoningEffort: "low" });
+    selections.remember(session, options);
+    selections.remember(auxiliary, options);
+    const observedSelections: Array<[number, string, string]> = [];
     const service = new SettingsCatalogService({
       hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
       listSessions: () => [session], listAuxiliarySessions: () => [auxiliary],
@@ -1435,12 +1726,21 @@ describe("SettingsCatalogService", () => {
       clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {},
       invalidateProviderSessionThread: async () => { throw new Error("catalog cleanup failed"); },
       broadcastSessions: (ids) => { sessionNotifications.push(ids ? [...ids] : []); }, broadcastAppSettings: () => {},
-      broadcastModelCatalog: (snapshot) => { if (snapshot) broadcasts.push(snapshot.revision); },
+      applyCurrentExecutionCatalog: (snapshot) => selections.setModelCatalog(snapshot),
+      broadcastModelCatalog: (snapshot) => {
+        if (snapshot) broadcasts.push(snapshot.revision);
+        const main = selections.apply(session);
+        const aux = selections.apply(auxiliary);
+        observedSelections.push([main.catalogRevision, main.model, aux.model]);
+      },
       });
-    await assert.rejects(service.importModelCatalogDocument({ providers: createCatalogSnapshot(2).providers }), /catalog cleanup failed/);
+    const imported = createCatalogSnapshot(2);
+    imported.providers[0]!.models = imported.providers[0]!.models.filter((model) => model.id !== "gpt-5.4-mini");
+    await assert.rejects(service.importModelCatalogDocument({ providers: imported.providers }), /catalog cleanup failed/);
     assert.deepEqual(broadcasts, [2, 3]);
     assert.equal(catalog.revision, 3);
     assert.deepEqual(sessionNotifications, [[session.id], [session.id]]);
+    assert.deepEqual(observedSelections, [[2, "gpt-5.4", "gpt-5.4"], [3, "gpt-5.4-mini", "gpt-5.4-mini"]]);
   });
 
   // @test-value v2

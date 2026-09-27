@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import { createDefaultSessionMemory, type ProjectMemoryEntry } from "../../src-shared/memory/session-memory-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -76,6 +77,18 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("composeProviderPrompt", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "promptは実行workspaceとSessionFolderおよび許可directoryをsystem側へ配置する"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "保存workspaceまたは許可外directoryをpromptに載せる"
+  // observable = "systemBodyTextの各section"
+  // observation_boundary = "component-behavior"
+  // scope = "実行 workspace を基準に"
+  // lifecycle = "permanent"
+  // impact = "providerが誤workspaceやdirectoryを前提に動く"
+  // distinction = "添付path解決testとは異なるprompt本文を観測する"
+  // @end-test-value
   it("実行 workspace を基準に Workspace / SessionFolder / Additional Directories を system 側へ置く", () => {
     const session = buildNewSession({
       id: "session-1",
@@ -96,6 +109,7 @@ describe("composeProviderPrompt", () => {
     });
     const prompt = composeProviderPrompt({
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       executionWorkspacePath: "execution-workspace",
       sessionFolderPath: "F:/user-data/session-files/session-1",
       sessionMemory: createDefaultSessionMemory(session),
@@ -117,6 +131,18 @@ describe("composeProviderPrompt", () => {
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Conversation TimingはUser Input直前のinput側へ置きsystem側へ入れない"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "timingを固定system promptへ混入する"
+  // observable = "systemBodyText/inputBodyTextのsection順序"
+  // observation_boundary = "component-behavior"
+  // scope = "Conversation Timingをinput側"
+  // lifecycle = "permanent"
+  // impact = "可変timingがsystem session cacheへ固定される"
+  // distinction = "timingの位置をprompt本文で直接観測する"
+  // @end-test-value
   it("Conversation Timingをinput側のUser Input直前へ置き、system側へ入れない", () => {
     const session = buildNewSession({
       taskTitle: "task",
@@ -131,6 +157,7 @@ describe("composeProviderPrompt", () => {
     });
     const prompt = composeProviderPrompt({
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
       providerCatalog,
@@ -174,6 +201,18 @@ describe("composeProviderPrompt", () => {
     ]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "履歴と共同作業時間が無くても基準時刻を出し未取得行を省略する"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "未取得情報を虚偽の値としてpromptへ出す"
+  // observable = "inputBodyTextのtiming行"
+  // observation_boundary = "component-behavior"
+  // scope = "履歴と共同作業時間がない時"
+  // lifecycle = "permanent"
+  // impact = "providerが存在しない活動履歴を前提にする"
+  // distinction = "timing情報欠落時のprojectionを観測する"
+  // @end-test-value
   it("履歴と共同作業時間がない時も基準時刻だけを出し、未取得行は省略する", () => {
     const session = buildNewSession({
       taskTitle: "task",
@@ -188,6 +227,7 @@ describe("composeProviderPrompt", () => {
     });
     const prompt = composeProviderPrompt({
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
       providerCatalog,
@@ -214,6 +254,18 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.inputBodyText, /never/);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "User Input sectionは明示しMemoryは再注入しない"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "Memoryを毎turn promptへ重複注入する"
+  // observable = "logicalPrompt/inputBodyTextのsection"
+  // observation_boundary = "component-behavior"
+  // scope = "User Input 境界を明示"
+  // lifecycle = "permanent"
+  // impact = "Providerの会話文脈が重複または混乱する"
+  // distinction = "境界とMemory不在をprompt本文で観測する"
+  // @end-test-value
   it("User Input 境界を明示し、Memory は注入しない", () => {
     const session = buildNewSession({
       taskTitle: "task",
@@ -237,6 +289,7 @@ describe("composeProviderPrompt", () => {
 
     const prompt = composeProviderPrompt({
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       sessionMemory,
       projectMemoryEntries: [
         makeProjectMemoryEntry({
@@ -274,6 +327,18 @@ describe("composeProviderPrompt", () => {
     assertSectionOrder(prompt.logicalPrompt.composedText, ["# User Input", "approval UI の次を進めて"]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "空白だけのuser inputではUser Input見出しを作らない"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "空入力を有効本文としてpromptへ混ぜる"
+  // observable = "inputBodyTextのUser Input section"
+  // observation_boundary = "component-behavior"
+  // scope = "空白のみの user input"
+  // lifecycle = "permanent"
+  // impact = "空のuser指示がproviderへ送られる"
+  // distinction = "通常入力時の境界testと異なる空入力case"
+  // @end-test-value
   it("空白のみの user input では User Input 見出しだけを注入しない", () => {
     const session = buildNewSession({
       taskTitle: "task",
@@ -289,6 +354,7 @@ describe("composeProviderPrompt", () => {
 
     const prompt = composeProviderPrompt({
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
       providerCatalog,
@@ -303,6 +369,18 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.inputBodyText, /# User Input/);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character不在でもfolder contextはsystem promptへ残る"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "Character欠落を理由にworkspace contextまで落とす"
+  // observable = "systemBodyTextのfolder section"
+  // observation_boundary = "component-behavior"
+  // scope = "Character がなくても folder context"
+  // lifecycle = "permanent"
+  // impact = "providerが作業場所を把握できない"
+  // distinction = "Character有無の分岐を観測する"
+  // @end-test-value
   it("Character がなくても folder context を system prompt に残す", () => {
     const session = buildNewSession({
       taskTitle: "task",
@@ -318,6 +396,7 @@ describe("composeProviderPrompt", () => {
 
     const prompt = composeProviderPrompt({
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
       providerCatalog,
@@ -353,6 +432,18 @@ describe("composeProviderPrompt", () => {
     ]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "保存済みCharacter snapshotのcharacter.mdだけをsystem promptへ注入する"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "現在のCharacter profileや別fieldを代用する"
+  // observable = "systemBodyTextのCharacter Definition Snapshot section"
+  // observation_boundary = "component-behavior"
+  // scope = "保存済み CharacterRuntimeSnapshot"
+  // lifecycle = "permanent"
+  // impact = "Session開始時のCharacter定義から逸脱する"
+  // distinction = "snapshot由来文面をprompt本文で観測する"
+  // @end-test-value
   it("保存済み CharacterRuntimeSnapshot の character.md だけを system prompt に注入する", () => {
     const session = buildNewSession({
       taskTitle: "task",
@@ -381,6 +472,7 @@ describe("composeProviderPrompt", () => {
 
     const prompt = composeProviderPrompt({
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
       providerCatalog,
@@ -427,6 +519,18 @@ describe("composeProviderPrompt", () => {
     ]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "character-authoring sessionでは通常Character成果物境界を注入しない"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "authoring対象に通常SessionのCharacter制約を混入する"
+  // observable = "systemBodyTextのCharacter/Output Boundary sections"
+  // observation_boundary = "component-behavior"
+  // scope = "character-authoring session では"
+  // lifecycle = "permanent"
+  // impact = "Character編集作業への不要な制約が混ざる"
+  // distinction = "通常sessionとauthoring sessionのprompt分岐を観測する"
+  // @end-test-value
   it("character-authoring session では Character の成果物境界を注入しない", () => {
     const session = buildNewSession({
       taskTitle: "task",
@@ -449,6 +553,7 @@ describe("composeProviderPrompt", () => {
 
     const prompt = composeProviderPrompt({
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
       providerCatalog,
@@ -475,11 +580,13 @@ describe("composeProviderPrompt", () => {
     ]);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
   // claim = "provider promptのCharacter Affect Contextはidentityを含めず、baseline・affect version・全effective component・Memory previewを契約どおり投影する"
   // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md:59-61" }
-  // failure_mode = "公開contextから除いたuser・Character・Session identityまたはMemory非公開fieldをprompt assemblyが再投影し、providerへ漏らす"
+  // fault = "公開contextから除いたuser・Character・Session identityまたはMemory非公開fieldをprompt assemblyが再投影し、providerへ漏らす"
+  // observable = "provider向けCharacter Affect Context JSON envelopeとsystem section順序"
+  // observation_boundary = "component-behavior"
   // scope = "composeProviderPrompt Character Affect Context projection"
   // lifecycle = "permanent"
   // distinction = "application responseのfield制限ではなく、provider向けJSON envelopeがidentityを再構成しないことを検証する"
@@ -500,6 +607,7 @@ describe("composeProviderPrompt", () => {
     const evaluatedAt = "2026-08-09T06:00:00.000Z";
     const prompt = composeProviderPrompt({
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
       providerCatalog,
@@ -639,6 +747,7 @@ describe("composeProviderPrompt", () => {
     };
     const baseInput = {
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
       providerCatalog,
@@ -711,6 +820,18 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(toolCallPresenceOff.logicalPrompt.composedText, /# Tool Call Presence/);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character定義内のcode fenceより長い外側fenceでsnapshotを囲む"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "内側fenceが外側を閉じprompt境界を壊す"
+  // observable = "systemBodyTextのfence長と囲み位置"
+  // observation_boundary = "component-behavior"
+  // scope = "character.md 内の code fence"
+  // lifecycle = "permanent"
+  // impact = "Character定義の一部が別prompt sectionとして解釈される"
+  // distinction = "単純なMarkdown本文testではfence衝突を観測しない"
+  // @end-test-value
   it("character.md 内の code fence より長い外側 fence で snapshot を囲む", () => {
     const session = buildNewSession({
       taskTitle: "task",
@@ -737,6 +858,7 @@ describe("composeProviderPrompt", () => {
 
     const prompt = composeProviderPrompt({
       session,
+      executionOptions: captureSessionExecutionOptions(session),
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
       providerCatalog,

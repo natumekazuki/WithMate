@@ -8,6 +8,8 @@ Sessionの実行と失敗を後から確認するため、turnの監査情報は
 
 providerへ渡す論理promptとtransport payload、操作、raw items、usageなどのdetailは監査用に区別して保存し、一覧では重い本文を全件読まない。Session／Auxiliaryの監査一覧はbounded pageを取得し、対象を開いたときにdetail fragmentを遅延取得する。監査情報のstorage実装は`src-electron/session/audit-log-storage-v6.ts`、turn保存の順序と結果不明時の扱いは[Session Run Lifecycle](session-run-lifecycle.md)を参照する。
 
+実行中turnのprovider outputは更新ごとに同じ内容の行を保持し、変化した出力だけを更新・追加する。出力順は`seq`で維持し、同種の操作が複数ある場合も各操作のdetailを順番に取得できる。別経路が保存したprovider output種別はturn snapshot更新の対象外とする。
+
 ## 表示とデータ保護
 
 Session WindowのAudit Logは保存済みの結果を表示し、実行中のlive stateと区別する。失敗を成功として表示したり、未保存のstreamを確定監査情報とみなしたりしない。Character Affectの評価ログと通常turnの監査情報も同一視しない。

@@ -66,17 +66,27 @@ export type LoadProjectedMessageArtifactOptions = {
   loadSessionArtifact: (
     messageIndex: number,
   ) => ProjectedMessageArtifact | null | undefined | Promise<ProjectedMessageArtifact | null | undefined>;
+  loadAuxiliaryArtifact?: (
+    sessionId: string,
+    messageIndex: number,
+  ) => ProjectedMessageArtifact | null | undefined | Promise<ProjectedMessageArtifact | null | undefined>;
 };
 
 export function loadProjectedMessageArtifact({
   source,
   loadSessionArtifact,
+  loadAuxiliaryArtifact,
 }: LoadProjectedMessageArtifactOptions): Promise<ProjectedMessageArtifact | null> {
   if (!source) {
     return Promise.resolve(null);
   }
 
   if (source.kind === "auxiliary") {
+    if (source.artifact?.detailAvailable) {
+      return loadAuxiliaryArtifact
+        ? Promise.resolve(loadAuxiliaryArtifact(source.sessionId, source.messageIndex)).then((artifact) => artifact ?? null)
+        : Promise.resolve(null);
+    }
     return Promise.resolve(source.artifact ?? null);
   }
 
@@ -85,6 +95,22 @@ export function loadProjectedMessageArtifact({
   }
 
   return Promise.resolve(loadSessionArtifact(source.messageIndex)).then((artifact) => artifact ?? null);
+}
+
+export async function loadOwnedAuxiliaryMessageArtifact(input: {
+  owner: Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "messages"> | null;
+  getCurrentOwner: () => Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt"> | null;
+  messageIndex: number;
+  loadArtifact: (sessionId: string, messageIndex: number) => Promise<ProjectedMessageArtifact | null>;
+}): Promise<ProjectedMessageArtifact | null> {
+  const owner = input.owner;
+  const matchesOwner = () => {
+    const current = input.getCurrentOwner();
+    return !!owner && current?.id === owner.id && current.parentSessionId === owner.parentSessionId && current.createdAt === owner.createdAt;
+  };
+  if (!owner || !Number.isInteger(input.messageIndex) || input.messageIndex < 0 || !owner.messages[input.messageIndex] || !matchesOwner()) return null;
+  const detail = await input.loadArtifact(owner.id, input.messageIndex);
+  return matchesOwner() ? detail : null;
 }
 
 export function resolvePendingAuxiliaryMessageGroupId(

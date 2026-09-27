@@ -8,11 +8,29 @@ Homeは`listSessionSummaryPage()`でrecent、pinned、open Sessionと検索結�
 
 ## 書込みとowner
 
+ドロップが許されない確定データと、次回復元のための任意checkpointを区別する。任意checkpointは現在値の適用・使用とは別ラインで保存し、保存の遅延・失敗を現在値の巻戻し、操作や実行の待機条件にしない。再起動時に未保存の現在値を復元できないことは許容する。
+
+Session identity、確定message、turnの実行記録・Audit、provider thread、Auxiliary draft、Character定義、Bookmark等の明示的な整理操作、Settingsの明示的なSave、catalog更新は必須保存の契約を維持する。任意保存との切分けは、入力検証、owner照合、実行中の操作制約を緩和しない。
+
 ### SessionPersistenceService
 
 `SessionPersistenceService`が作成、既存行更新、削除、期間削除を担当する。owner付きstorage command、cache projection、Window side effectの組み立ては`src-electron/session/session-persistence-assembly.ts`が担う。実行中のturnとcancelは`SessionRuntimeService`、Windowのclose／quitは`SessionWindowBridge`とlifecycle側で扱う。作成と既存行限定更新を分け、削除済み行を遅延更新で再作成しない。
 
+### 実行設定と Send
+
+Main / Auxiliary の表示中の実行設定は現在選択であり、Model・Depth・Approval・SandboxのいずれもDBへの保存完了を表示・送信の前提にしない。Send は非同期処理を始める前に `executionOptions` を捕捉する。Main は provider / catalog / model / reasoning / 権限設定を検証し、その turn の prompt、Provider adapter、Audit に同じ設定を渡す。DB の Session、開始保存の応答、terminal 保存の応答から実行設定を再決定しない。
+
+Main の `CurrentExecutionSelections` は会話 owner ごとの小さい選択値だけを保持する。同じアプリ内で Window を開き直した場合はこの値を復元し、storage generation の変更、owner の削除・incarnation の変更では破棄する。新規会話の初期値は provider ごとの現在選択を優先し、存在しなければ保存済みの直近値を使う。アプリ再起動では保存済み checkpoint から復元する。
+
+選択 checkpoint は対象 metadata だけを更新する任意保存である。受理済みの選択では checkpoint 失敗を報告するが、現在選択の巻戻しや Send の阻止には使わない。選択自体が拒否された場合は、現在選択を再取得して表示を戻し、理由を示す。開始時の user message と実行記録の必須保存とは区別する。新しい選択が C、実行中 turn の捕捉値が B の場合、Provider と Audit は B、UI と次の Send は C を維持する。
+
+タイトルと Bookmark は対象 metadata / message だけを更新し、会話全体の置換を行わない。metadata の条件付き更新結果も必要な項目だけを返す。
+
 ### SettingsCatalogService
+
+Header・Action Dock・Side Paneの復元設定は、Rendererへ即時適用し、Mainでも変更された項目の現在値を保持する。DB保存は任意checkpointとして別ラインで行い、同じアプリ内の設定再取得では現在値を重ねる。保存失敗は診断ログへ残すが、表示を巻き戻さない。Settings Windowの明示的なSaveの必須保存とは区別する。
+
+layoutの現在値はserviceの寿命中保持し、App SettingsまたはDB全体のreset成功時に破棄する。resetは任意checkpointの完了を待たず、未開始の旧checkpointを失効させる。dispatch前には既存のstorage ownerを照合し、旧serviceのqueueを新しいDB世代へ持ち越さない。
 
 Settingsのcredential変更でthreadをresetする場合は、MainのID・incarnation・provider・元thread、AuxiliaryのID・親・作成時刻・provider・元threadをtransaction内で照合し、対象fieldだけを条件付き更新する。本文、draft、messages、無関係な削除は全collection snapshotで巻き戻さない。後段失敗時は更新成功を確認できた行だけreverse CASし、結果不明の書込みへ無条件の逆書込みをしない。catalog import／resetでSession runtime metadataを反映する場合も同じ対象限定とowner照合を守る。
 

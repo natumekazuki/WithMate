@@ -108,9 +108,9 @@ test("startModelCatalogSubscription は初回取得と購読更新を反映す�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "購読更新後の遅い初回取得は新しいcatalog revisionを巻き戻さない"
-// oracle = { type = "contract", ref = "src/settings/model-catalog-subscription.ts" }
-// fault = "遅い初回取得が新しい購読snapshotを上書きする"
+// claim = "購読はrevisionが下がるresetも反映し、購読後の遅い初回取得はrevisionの大小にかかわらずactive catalogを上書きしない"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#現行の反映" }
+// fault = "revision比較でreset通知を破棄するか、遅い初回取得が購読済snapshotを上書きする"
 // observable = "applied snapshot sequence"
 // observation_boundary = "public-boundary"
 // scope = "model-catalog-stale-initial"
@@ -137,12 +137,14 @@ test("startModelCatalogSubscription は購読更新後に遅い初回取得で�
     applyModelCatalog: (snapshot) => updates.push(snapshot),
   });
   if (control.subscribedListener) control.subscribedListener(nextModelCatalogSnapshot);
-  resolveInitialSnapshot(modelCatalogSnapshot);
+  if (control.subscribedListener) control.subscribedListener(modelCatalogSnapshot);
+  resolveInitialSnapshot({ revision: 4, providers: [] });
   await flushPromises();
   cleanup();
 
   assert.deepEqual(updates, [
     nextModelCatalogSnapshot,
+    modelCatalogSnapshot,
   ]);
 });
 

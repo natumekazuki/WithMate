@@ -1,3 +1,4 @@
+import type { IpcMainInvokeEvent } from "electron";
 import type { RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 
 import type {
@@ -19,6 +20,9 @@ import {
   WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL,
   WITHMATE_GET_AUXILIARY_CREATION_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL,
+  WITHMATE_SET_AUXILIARY_TITLE_CHANNEL,
+  WITHMATE_SET_AUXILIARY_MESSAGE_BOOKMARK_CHANNEL,
   WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
@@ -37,6 +41,11 @@ import {
   assertAuxiliaryCreateModeForOwner,
   getAuxiliarySessionForMutation,
 } from "./shared.js";
+import type {
+  SetAuxiliaryExecutionOptionsRequest,
+  SetAuxiliaryMessageBookmarkRequest,
+  SetAuxiliaryTitleRequest,
+} from "../../src-shared/session/session-mutation-contract.js";
 
 export type MainIpcAuxiliaryServiceDeps = Omit<
   MainIpcAuxiliaryDeps,
@@ -256,6 +265,53 @@ export function registerAuxiliaryHandlers(
         deps,
       );
       return auxiliaryDeps.updateAuxiliarySession(session);
+    },
+  );
+  const assertAuxiliaryMutationOwner = async (
+    event: IpcMainInvokeEvent,
+    request: { auxiliarySessionId: string; parentSessionId: string; createdAt: string },
+  ): Promise<void> => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    const status = await auxiliaryDeps.getAuxiliarySessionStatus(
+      request.auxiliarySessionId,
+    );
+    if (
+      !status ||
+      status.parentSessionId !== request.parentSessionId ||
+      status.createdAt !== request.createdAt
+    ) {
+      throw new Error("The Auxiliary Session identity is stale or invalid.");
+    }
+    assertAuxiliaryOwnerWindowSender(event, status.parentSessionId, deps);
+  };
+  ipcMain.handle(
+    WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL,
+    async (event, request: SetAuxiliaryExecutionOptionsRequest) => {
+      if (!deps.setAuxiliaryExecutionOptions) {
+        throw new Error("Auxiliary execution options mutation is not configured.");
+      }
+      await assertAuxiliaryMutationOwner(event, request);
+      return deps.setAuxiliaryExecutionOptions(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_SET_AUXILIARY_TITLE_CHANNEL,
+    async (event, request: SetAuxiliaryTitleRequest) => {
+      if (!deps.setAuxiliaryTitle) {
+        throw new Error("Auxiliary title mutation is not configured.");
+      }
+      await assertAuxiliaryMutationOwner(event, request);
+      return deps.setAuxiliaryTitle(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_SET_AUXILIARY_MESSAGE_BOOKMARK_CHANNEL,
+    async (event, request: SetAuxiliaryMessageBookmarkRequest) => {
+      if (!deps.setAuxiliaryMessageBookmark) {
+        throw new Error("Auxiliary bookmark mutation is not configured.");
+      }
+      await assertAuxiliaryMutationOwner(event, request);
+      return deps.setAuxiliaryMessageBookmark(request);
     },
   );
   ipcMain.handle(

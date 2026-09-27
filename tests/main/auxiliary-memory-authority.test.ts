@@ -64,6 +64,13 @@ it("Auxiliary runtime sessionからMemory public actor authorityをowner別に�
     getParentSession: () => parent,
     getStorage: () => ({
       getAuxiliarySession: (id: string) => sessions.get(id) ?? null,
+      getAuxiliarySessionSummary: () => { throw new Error("unused"); },
+      listAuxiliaryCredentialThreads: () => { throw new Error("unused"); },
+      getAuxiliaryMessageArtifactDetail: () => { throw new Error("unused"); },
+      updateAuxiliaryTitleIfMatches: () => { throw new Error("unused"); },
+      updateAuxiliaryMessageBookmarkIfMatches: () => { throw new Error("unused"); },
+      updateAuxiliaryExecutionOptionsIfMatches: () => { throw new Error("unused"); },
+      updateAuxiliaryDisplayAnchorIfMatches: () => { throw new Error("unused"); },
       listAllAuxiliarySessions: () => [],
       getActiveAuxiliarySession: () => null,
       listAuxiliarySessions: () => [],

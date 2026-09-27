@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import type { AuditLogEntry, ComposerPreview, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
@@ -32,6 +33,8 @@ function createSession(overrides?: Partial<Session>): Session {
     ...overrides,
   };
 }
+
+const TEST_EXECUTION_OPTIONS = captureSessionExecutionOptions(createSession());
 
 function createCharacterRuntimeSnapshot(name: string): CharacterRuntimeSnapshot {
   return {
@@ -177,7 +180,7 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
     },
   }));
 
-  const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+  const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" });
 
   assert.equal(result.runState, "error");
   assert.equal(timingResolverCalls, 0);
@@ -237,7 +240,7 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
       },
     }));
 
-    const partialResult = await partialService.runSessionTurn(session.id, { userMessage: "お願い" });
+    const partialResult = await partialService.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" });
     assert.equal(partialResult.runState, "error");
     assert.ok(composedInput);
     return { timingCalls, affectCalls, composedInput: composedInput! };
@@ -263,11 +266,13 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
   assert.equal((affectOff.composedInput as RunSessionTurnInput).characterContext, undefined);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "invalid authoring snapshotの専用metadata transactionが失敗した場合はcomposer、thread invalidation、running開始保存、providerへ進まない"
 // oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
-// failure_mode = "snapshot/thread clearがcommitできていないのにvalidationまたはprovider外部副作用を開始する"
+// fault = "snapshot/thread clearがcommitできていないのにvalidationまたはprovider外部副作用を開始する"
+// observable = "composer・invalidation・running保存・provider・auditの呼出フラグ"
+// observation_boundary = "component-behavior"
 // scope = "SessionRuntimeService.runSessionTurn"
 // lifecycle = "permanent"
 // distinction = "running開始transactionではなくcomposerより前の専用metadata transaction failure timingを観測する"
@@ -311,7 +316,7 @@ it("invalid authoring snapshotのmetadata clear失敗時はcomposerもthread inv
   }));
 
   await assert.rejects(
-    service.runSessionTurn(session.id, { userMessage: "お願い" }),
+    service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" }),
     /metadata clear failed/,
   );
   assert.equal(composerResolved, false);
@@ -321,11 +326,13 @@ it("invalid authoring snapshotのmetadata clear失敗時はcomposerもthread inv
   assert.equal(runningAuditCreated, false);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
 // claim = "invalid authoring snapshotは専用metadata transactionで永続clearし、thread cache無効化後のcomposer validationが失敗してもclear済み状態を維持する"
 // oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
-// failure_mode = "composer validation失敗時に古いsnapshotまたはprovider threadを永続状態やprocess-local cacheへ残す"
+// fault = "composer validation失敗時に古いsnapshotまたはprovider threadを永続状態やprocess-local cacheへ残す"
+// observable = "永続Sessionのsnapshot/thread/messages/runStateとinvalidation・provider呼出履歴"
+// observation_boundary = "component-behavior"
 // scope = "SessionRuntimeService.runSessionTurn"
 // lifecycle = "permanent"
 // distinction = "metadata transaction failureではなく、clear commit後のcomposer validation failureとuser message非保存を観測する"
@@ -375,7 +382,7 @@ it("invalid authoring snapshotはcomposerより前に永続clearし、validation
   }));
 
   await assert.rejects(
-    service.runSessionTurn(session.id, { userMessage: "お願い" }),
+    service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" }),
     /attachment invalid/,
   );
   assert.equal(genericUpsertCalled, false);
@@ -389,11 +396,13 @@ it("invalid authoring snapshotはcomposerより前に永続clearし、validation
   assert.deepEqual(events, ["metadata-clear", "thread-invalidated", "composer-validation"]);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "authoring snapshotの専用clear commit後にthreadをinvalidateし、composerとrunning開始保存の成功後だけproviderをdispatchする"
 // oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
-// failure_mode = "snapshot clearのcommit前にthreadをinvalidateするか、古いthreadを保持したままproviderを開始する"
+// fault = "snapshot clearのcommit前にthreadをinvalidateするか、古いthreadを保持したままproviderを開始する"
+// observable = "metadata clearからterminalまでのevent順序と保存Session"
+// observation_boundary = "component-behavior"
 // scope = "SessionRuntimeService.runSessionTurn"
 // lifecycle = "permanent"
 // distinction = "composer validation failureではなく、metadata clear、invalidation、composer、running開始、provider、terminalの成功順序を観測する"
@@ -441,7 +450,7 @@ it("snapshot clearをcommitしてthreadをinvalidateした後にproviderをdispa
     },
   }));
 
-  const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+  const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" });
 
   assert.equal(result.runState, "error");
   assert.deepEqual(events, [

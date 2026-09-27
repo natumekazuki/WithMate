@@ -82,6 +82,24 @@ export function createAuxiliaryApi(
         session,
       );
     },
+    setAuxiliaryExecutionOptions(request) {
+      return ipcRenderer.invoke(
+        channels.WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL,
+        request,
+      );
+    },
+    setAuxiliaryTitle(request) {
+      return ipcRenderer.invoke(
+        channels.WITHMATE_SET_AUXILIARY_TITLE_CHANNEL,
+        request,
+      );
+    },
+    setAuxiliaryMessageBookmark(request) {
+      return ipcRenderer.invoke(
+        channels.WITHMATE_SET_AUXILIARY_MESSAGE_BOOKMARK_CHANNEL,
+        request,
+      );
+    },
     closeAuxiliarySession(auxiliarySessionId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,

@@ -84,7 +84,7 @@ MainとAuxiliaryはmessages、composer draft、live run、pending approval／eli
 
 Main / Auxiliary の入力は会話種別と stable ID をキーとする共通 Composer controller が所有する。draft、編集 revision、selection、IME、preview、保存状態は対象 Composer だけが購読し、Session shell / transcript / Auxiliary 一覧へ文字入力を通知しない。Paste、Quote、Skill、Template、添付、retry、送信後 clear も同じ操作へ接続する。Main draft は従来どおり Window 内のローカル状態であり、新しい永続化対象にしない。
 
-Auxiliary の永続 draft は会話 payload と独立した保存単位を唯一の正本とする。専用の小さい読込み・保存 command を既存 storage Worker で実行し、owner / incarnation / durable revision を照合する。保存では transcript や Character snapshot を取得・直列化せず、小さい ack だけを返す。renderer の編集 revision と DB の durable revision は別である。full Session の読込みでは draft を合成するが、通常更新・runtime / terminal 保存・Settings 変更から合成 draft を書き戻さない。
+Auxiliary の永続 draft は会話 metadata と独立した保存単位を唯一の正本とする。専用の小さい読込み・保存 command を既存 storage Worker で実行し、owner / incarnation / durable revision を照合する。保存では transcript や Character snapshot を取得・直列化せず、小さい ack だけを返す。renderer の編集 revision と DB の durable revision は別である。full Session の読込みでは draft を合成するが、通常更新・runtime / terminal 保存・Settings 変更から合成 draft を書き戻さない。
 
 保存は owner ごとに進行中 1 件と未送信の最新値 1 件へ集約する。表示値と IME は即時更新し、永続化・preview のみ遅延可能とする。保存失敗・結果不明は local draft を保持し、Composer 内に英語の簡潔な失敗表示と明示的な再試行を用意する。異なる owner の ack や、古い load / preview は現在の編集を変更しない。
 
@@ -106,21 +106,13 @@ draft の使用時刻は本文と別に扱う。最初の編集で必要な順�
 
 Auxiliary の作成準備は provider / ownership coordinator の外で行う。commit 時だけ親の incarnation、Character identity、provider runtime selection、current storage generation、request identity を再検証し、失敗時に親や既存会話を削除・snapshot 復元しない。Main Session の保存後に初期 Auxiliary の準備または commit が失敗した場合は、Main Session を削除せず、作成済み Main と Auxiliary 結果未確定または失敗を明示する。
 
-既存 Auxiliary の更新・runtime 保存・終了・中断復旧は、非同期読込み時に捕捉した storage へ update-only で送る。transaction 内で読込み済み payload と現行行、親の生存を照合し、削除後の再挿入や並行変更の上書きを行わない。時刻ラベルは分精度のため、更新時刻だけを変更検知の根拠にしない。通常の作成・明示的な collection 置換と、この既存行更新を区別する。
+既存 Auxiliary の更新・runtime 保存・終了・中断復旧は、非同期読込み時に捕捉した storage へ update-only で送る。transaction 内で読込み済み会話と現行行、親の生存を照合し、削除後の再挿入や並行変更の上書きを行わない。時刻ラベルは分精度のため、更新時刻だけを変更検知の根拠にしない。通常の作成・明示的な collection 置換と、この既存行更新を区別する。
 
-`auxiliary_sessions`は少なくとも次をpayloadへ保存する。
+`auxiliary_sessions` は会話の metadata を列として保存する。provider / model / runtime option、thread、表示anchor、Character identity と snapshot、作成request identityを保持し、Character snapshotと作成requestの詳細だけを専用 JSON 列へ置く。`auxiliary_session_messages` は会話順序と軽量本文を行ごとに保存し、artifact 詳細は対象行の `artifact_body` に分離する。詳細は対象を開いたときに取得する。
 
-- `id`, `parentSessionId`, `status`, `createdAt`, `updatedAt`, `closedAt`
-- provider / model / runtime option / allowed additional directories
-- `threadId`, `messages`, `displayAfterMessageIndex`
-- `characterId`, `characterRuntimeSnapshot`, `characterIconPath`
-- `preview`, `clientRequestId`
+`composerDraft` は `auxiliary_session_drafts` の単一正本から全会話読込み時に合成する。既存の payload 形式は起動時に transaction 内で metadata、message、artifact、draft へ変換し、旧 payload と派生 summary の列を同時に除去する。不正な行があれば変換全体を rollback し、部分移行や黙った破棄をしない。
 
-`composerDraft` は `auxiliary_session_drafts` の単一正本から読込み時に合成する。payload 内の旧 draft を通常更新の入力として受け入れない。
-
-一覧用の`summary_json`はpayloadの派生projectionであり、messages、draft、Character定義本文を含めない。upsert時にpayloadと同時更新し、既存行は初回migrationで一度だけ補完する。Auxiliary一覧、active一覧、running一覧はsummary列だけを読み、全transcriptや定義本文を毎回走査しない。会話本文の取得とruntime復元だけがpayloadを読む。
-
-既存行の summary 補完は storage owner の明示的な bounded maintenance command で実行する。1 command は指定 batch 以下だけを処理し、進捗は `summary_json` と残件数で再開可能にする。payload の不正や projection 失敗を残件なしとして扱わず、エラーと残件を保持する。通常の一覧読み取りで全履歴を暗黙に backfill しない。
+Auxiliary一覧、active一覧、running一覧は metadata 列だけを読み、transcriptやCharacter定義本文を走査しない。title、Bookmark、実行設定のcheckpointは対象列・対象message行だけを更新する。
 
 Auxiliaryは最終使用順（`updatedAt DESC, id DESC`）で並べる。実行、draft、preview更新で順序を更新する。選択状態はindexではなくstable IDで保持する。
 
@@ -136,4 +128,4 @@ previewはProvider呼び出しを行わず、確定した最終assistant応答�
 
 ## Validation boundary
 
-実装で確認する対象は、複数Auxiliaryの保存・追加・切り替え、Main除外Character抽選、snapshot固定、同時run、親削除時の全会話cleanup、summary列の再読込、preview更新競合である。Electron GUI、Provider実機、cross-provider並行実行の未実施確認は、実施済みとして扱わない。
+実装で確認する対象は、複数Auxiliaryの保存・追加・切り替え、Main除外Character抽選、snapshot固定、同時run、親削除時の全会話cleanup、metadata列の再読込、preview更新競合である。Electron GUI、Provider実機、cross-provider並行実行の未実施確認は、実施済みとして扱わない。

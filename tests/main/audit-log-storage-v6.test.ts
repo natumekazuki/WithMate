@@ -111,6 +111,92 @@ function seedAuxiliarySession(dbPath: string): void {
 }
 
 describe("AuditLogStorageV6", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "turnの途中更新は不変のprovider output行を保持し、変更した出力と終端情報を順序どおり取得できる"
+  // oracle = { type = "contract", ref = "docs/design/audit-log.md#保存と所有" }
+  // fault = "更新時に全output行を削除して再挿入するか、重複operationや追加された終端情報を誤対応させる"
+  // observable = "provider outputのidとseq、およびaudit detailとoperation detailの値"
+  // observation_boundary = "public-boundary"
+  // scope = "AuditLogStorageV6のrunningからterminalへの保存と読み出し"
+  // lifecycle = "permanent"
+  // impact = "既存outputの識別子が失われ、表示対象のoperationや監査detailが欠落・入れ替わる"
+  // distinction = "既存のdetail読取テストは更新をまたぐ行ID保持と重複操作の対応を確認しない"
+  // @end-test-value
+  it("incremental update は既存output行を保持して重複操作と終端detailを更新する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-incremental-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      seedSession(dbPath);
+      const storage = new AuditLogStorageV6(dbPath);
+      const db = new DatabaseSync(dbPath);
+      try {
+        const operation = { type: "shell", summary: "same", details: "running" };
+        const initial = baseAuditLog({
+          phase: "running",
+          assistantText: "",
+          operations: [operation, operation],
+          rawItemsJson: "partial",
+        });
+        const created = storage.createAuditLog(initial);
+        const rows = () => db.prepare(`
+          SELECT id, seq, kind, payload_json FROM session_turn_provider_outputs_v6
+          WHERE turn_id = ? ORDER BY seq
+        `).all(created.id) as Array<{ id: number; seq: number; kind: string; payload_json: string }>;
+        const before = rows();
+
+        storage.updateAuditLog(created.id, { ...initial, rawItemsJson: "partial-2" });
+        const streaming = rows();
+        assert.deepEqual(streaming.filter((row) => row.kind !== "raw_items"), before.filter((row) => row.kind !== "raw_items"));
+        assert.equal(streaming.find((row) => row.kind === "raw_items")?.id, before.find((row) => row.kind === "raw_items")?.id);
+
+        db.prepare(`
+          INSERT INTO session_turn_provider_outputs_v6
+            (turn_id, seq, provider_id, kind, summary, payload_json, created_at)
+          VALUES (?, ?, 'codex', 'context_telemetry', 'context', ?, ?)
+        `).run(created.id, streaming.length, JSON.stringify({ value: "retained" }), initial.createdAt);
+        const contextId = rows().find((row) => row.kind === "context_telemetry")?.id;
+        storage.updateAuditLog(created.id, {
+          ...initial,
+          operations: [{ ...operation, details: "running-2" }, operation],
+          rawItemsJson: "partial-2",
+        });
+        assert.deepEqual(rows().filter((row) => row.kind === "operation").map((row) => row.id), before.filter((row) => row.kind === "operation").map((row) => row.id));
+
+        const terminal = { ...initial,
+          phase: "completed" as const,
+          assistantText: "done",
+          transportPayload: { summary: "request", fields: [] },
+          operations: [{ ...operation, details: "running-2" }, { ...operation, details: "completed" }],
+          rawItemsJson: "final",
+          usage: { inputTokens: 3, cachedInputTokens: 0, outputTokens: 4 },
+          errorMessage: "provider failed",
+        };
+        storage.updateAuditLog(created.id, terminal);
+        const after = rows();
+        assert.equal(after.find((row) => row.kind === "logical_prompt")?.id, before.find((row) => row.kind === "logical_prompt")?.id);
+        assert.deepEqual(after.filter((row) => row.kind === "operation").map((row) => row.id), before.filter((row) => row.kind === "operation").map((row) => row.id));
+        assert.equal(after.find((row) => row.kind === "context_telemetry")?.id, contextId);
+        assert.equal(after.find((row) => row.kind === "context_telemetry")?.payload_json, JSON.stringify({ value: "retained" }));
+        assert.deepEqual(after.map((row) => row.seq), after.map((_, index) => index));
+        assert.deepEqual(
+          [0, 1].map((index) => storage.getSessionAuditLogOperationDetail("session-v6", created.id, index)?.details),
+          ["running-2", "completed"],
+        );
+        const detail = storage.getSessionAuditLogDetail("session-v6", created.id);
+        assert.equal(detail?.rawItemsJson, "final");
+        assert.equal(detail?.assistantText, "done");
+        assert.equal(detail?.errorMessage, "provider failed");
+        assert.deepEqual(detail?.usage, terminal.usage);
+      } finally {
+        db.close();
+        storage.close();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("atomic terminal markerをstaleなrunning audit更新で巻き戻さない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-terminal-marker-"));
     try {

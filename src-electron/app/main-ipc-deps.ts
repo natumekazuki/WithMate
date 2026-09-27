@@ -96,6 +96,15 @@ import type {
   SetSessionPinnedRequest,
 } from "../../src-shared/session/session-state.js";
 import type {
+  SetExecutionOptionsResult,
+  SetAuxiliaryExecutionOptionsRequest,
+  SetAuxiliaryMessageBookmarkRequest,
+  SetAuxiliaryTitleRequest,
+  SetSessionExecutionOptionsRequest,
+  SetSessionMessageBookmarkRequest,
+  SetSessionTitleRequest,
+} from "../../src-shared/session/session-mutation-contract.js";
+import type {
   ImageFilePickerPurpose,
   OpenPathOptions,
   DeleteSessionsLastActiveBeforeRequest,
@@ -220,7 +229,7 @@ export type MainIpcCatalogDepsArgs = {
 export type MainIpcSettingsDepsArgs = {
   getAppSettings(): Awaitable<AppSettings>;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
-  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<void>;
   getAppDatabaseDiagnostics(): Awaitable<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -325,6 +334,9 @@ export type MainIpcAuxiliaryDepsArgs = {
   cancelAuxiliaryCreation(request: import("../../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
   getAuxiliaryCreation(request: import("../../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
   updateAuxiliarySession(session: AuxiliarySession): Awaitable<AuxiliarySession>;
+  setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
+  setAuxiliaryTitle(request: SetAuxiliaryTitleRequest): Awaitable<void>;
+  setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Awaitable<void>;
   closeAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
   cancelAuxiliarySessionRun(auxiliarySessionId: string): Awaitable<void>;
@@ -342,6 +354,9 @@ export type MainIpcSessionRuntimeDepsArgs = {
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
   createSession(input: CreateSessionRequest): Awaitable<Session>;
   updateSession(session: Session): Awaitable<Session>;
+  setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
+  setSessionTitle(request: SetSessionTitleRequest): Awaitable<void>;
+  setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Awaitable<void>;
   setSessionPinned(request: SetSessionPinnedRequest): Awaitable<SessionSummary>;
   deleteSession(sessionId: string): Awaitable<void>;
   deleteSessionsLastActiveBefore(
@@ -403,6 +418,9 @@ function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
     cancelAuxiliaryCreation: throwUnavailable,
     getAuxiliaryCreation: throwUnavailable,
     updateAuxiliarySession: throwUnavailable,
+    setAuxiliaryExecutionOptions: throwUnavailable,
+    setAuxiliaryTitle: throwUnavailable,
+    setAuxiliaryMessageBookmark: throwUnavailable,
     closeAuxiliarySession: throwUnavailable,
     runAuxiliarySessionTurn: throwUnavailable,
     cancelAuxiliarySessionRun: throwUnavailable,

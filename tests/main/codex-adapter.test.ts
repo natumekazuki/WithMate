@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import type { Codex, CodexOptions } from "@openai/codex-sdk";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogProvider, ModelReasoningEffort } from "../../src-shared/settings/model-catalog.js";
@@ -145,11 +146,10 @@ function createCodexBackgroundPromptInput(
 }
 
 function createCodexRunSessionTurnInput(workspacePath: string): RunSessionTurnInput {
+  const session = { ...createSession({ threadId: "" }), workspacePath };
   return {
-    session: {
-      ...createSession({ threadId: "" }),
-      workspacePath,
-    },
+    session,
+    executionOptions: captureSessionExecutionOptions(session),
     sessionMemory: {
       sessionId: "session-1",
       workspacePath,
@@ -1380,6 +1380,18 @@ describe("CodexAdapter thread settings", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "modelとreasoning変更後のthread optionsとcache keyは新値を反映する"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Thread-Management" }
+  // fault = "modelまたはdepth変更後も旧thread optionsを再利用する"
+  // observable = "Codex thread optionsのmodel/depthとsettingsKey"
+  // observation_boundary = "component-behavior"
+  // scope = "model / reasoning 変更後の thread settings"
+  // lifecycle = "permanent"
+  // impact = "異なるmodel/depthでturnが走る"
+  // distinction = "送信値とSessionが一致する場合のSDK settings更新を直接確認する"
+  // @end-test-value
   it("model / reasoning 変更後の thread settings は新 options と settingsKey を反映する", () => {
     const previousSession = createSession({
       threadId: "thread-1",
@@ -1392,19 +1404,45 @@ describe("CodexAdapter thread settings", () => {
       reasoningEffort: "low",
     });
 
-    const previousSettings = buildCodexThreadSettings(previousSession, CODEX_PROVIDER_CATALOG, "client-key");
-    const nextSettings = buildCodexThreadSettings(nextSession, CODEX_PROVIDER_CATALOG, "client-key");
+    const previousSettings = buildCodexThreadSettings(previousSession, CODEX_PROVIDER_CATALOG, "client-key", captureSessionExecutionOptions(previousSession));
+    const nextSettings = buildCodexThreadSettings(nextSession, CODEX_PROVIDER_CATALOG, "client-key", captureSessionExecutionOptions(nextSession));
 
     assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
     assert.equal(nextSettings.options.model, "gpt-5.4-mini");
     assert.equal(nextSettings.options.modelReasoningEffort, "low");
   });
 
-  // @test-value v1
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Codex thread settingsは保存済みSessionの実行欄ではなくturn送信値をSDK optionsとcache keyへ使う"
+  // oracle = { type = "contract", ref = "Issue #738 turn execution options boundary" }
+  // fault = "Sessionのmodel/approval/sandbox/speed/reviewerを再取得して送信値を無視する"
+  // observable = "thread optionsとsettingsKey"
+  // observation_boundary = "component-behavior"
+  // scope = "Codex foreground thread settings"
+  // lifecycle = "permanent"
+  // impact = "表示選択と異なる権限またはmodelでCodex turnを実行する"
+  // distinction = "既存testはSessionと送信値が一致しており二つの入力源を区別しない"
+  // @end-test-value
+  it("保存済みSession Aに対して送信値BをCodex thread settingsへ使う", () => {
+    const session = createSession({ model: "gpt-5.4", reasoningEffort: "high", approvalMode: "untrusted", codexSandboxMode: "read-only" });
+    const selected = { ...captureSessionExecutionOptions(session), model: "gpt-5.4-mini", reasoningEffort: "low" as const, approvalMode: "never" as const, codexSandboxMode: "workspace-write" as const, codexSpeed: "fast" as const, codexReviewer: "auto-review" as const };
+    const settings = buildCodexThreadSettings(session, CODEX_PROVIDER_CATALOG, "client-key", selected);
+    assert.equal(settings.options.model, "gpt-5.4-mini");
+    assert.equal(settings.options.modelReasoningEffort, "low");
+    assert.equal(settings.options.approvalPolicy, "never");
+    assert.equal(settings.options.sandboxMode, "workspace-write");
+    assert.match(settings.settingsKey, /fast/);
+    assert.match(settings.settingsKey, /auto_review/);
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "SpeedまたはReviewerが異なるSessionは異なるthread settings identityを持つ"
   // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-4" }
-  // failure_mode = "Reviewer変更後も旧client/thread settingsを再利用して異なるreviewer設定でturnを実行する"
+  // fault = "Reviewer変更後も旧client/thread settingsを再利用して異なるreviewer設定でturnを実行する"
+  // observable = "Speed/ReviewerごとのsettingsKey"
+  // observation_boundary = "component-behavior"
   // scope = "codex-thread-settings"
   // lifecycle = "permanent"
   // @end-test-value
@@ -1417,9 +1455,9 @@ describe("CodexAdapter thread settings", () => {
       codexReviewer: "auto-review",
     });
 
-    const standardSettings = buildCodexThreadSettings(standard, CODEX_PROVIDER_CATALOG, "client-key");
-    const fastSettings = buildCodexThreadSettings(fast, CODEX_PROVIDER_CATALOG, "client-key");
-    const autoReviewSettings = buildCodexThreadSettings(autoReview, CODEX_PROVIDER_CATALOG, "client-key");
+    const standardSettings = buildCodexThreadSettings(standard, CODEX_PROVIDER_CATALOG, "client-key", captureSessionExecutionOptions(standard));
+    const fastSettings = buildCodexThreadSettings(fast, CODEX_PROVIDER_CATALOG, "client-key", captureSessionExecutionOptions(fast));
+    const autoReviewSettings = buildCodexThreadSettings(autoReview, CODEX_PROVIDER_CATALOG, "client-key", captureSessionExecutionOptions(autoReview));
 
     assert.notEqual(standardSettings.settingsKey, fastSettings.settingsKey);
     assert.notEqual(standardSettings.settingsKey, autoReviewSettings.settingsKey);
@@ -1427,6 +1465,18 @@ describe("CodexAdapter thread settings", () => {
     assert.deepEqual(buildCodexSpeedRunCheck("fast"), { label: "speed", value: "fast" });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "maxとultraをCodex SDK thread optionsへ保持して渡す"
+  // oracle = { type = "contract", ref = "docs/design/model-catalog.md" }
+  // fault = "高いreasoning effortを低い値へclampする"
+  // observable = "thread optionsのmodelReasoningEffort"
+  // observation_boundary = "component-behavior"
+  // scope = "max / ultra を Codex thread options"
+  // lifecycle = "permanent"
+  // impact = "選択したreasoning effortが失われる"
+  // distinction = "catalogにある高depthの変換を確認する"
+  // @end-test-value
   it("max / ultra を Codex thread options へそのまま渡す", () => {
     for (const reasoningEffort of ["max", "ultra"] as const) {
       const session = createSession({
@@ -1434,13 +1484,25 @@ describe("CodexAdapter thread settings", () => {
         reasoningEffort,
       });
 
-      const settings = buildCodexThreadSettings(session, CODEX_PROVIDER_CATALOG, "client-key");
+      const settings = buildCodexThreadSettings(session, CODEX_PROVIDER_CATALOG, "client-key", captureSessionExecutionOptions(session));
 
       assert.equal(settings.options.model, "gpt-5.6-sol");
       assert.equal(settings.options.modelReasoningEffort, reasoningEffort);
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "approval、sandbox、additional directoriesの変更はthread optionsとcache keyへ反映される"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Thread-Management" }
+  // fault = "旧権限または旧directoryのthread cacheを再利用する"
+  // observable = "thread optionsとsettingsKey"
+  // observation_boundary = "component-behavior"
+  // scope = "approval / sandbox / additional directories 変更後"
+  // lifecycle = "permanent"
+  // impact = "意図しない権限・access scopeでturnが走る"
+  // distinction = "model/depth cache key testでは権限とdirectoryを観測しない"
+  // @end-test-value
   it("approval / sandbox / additional directories 変更後の thread settings は新 options と settingsKey を反映する", () => {
     const previousSession = createSession({
       threadId: "thread-1",
@@ -1455,8 +1517,8 @@ describe("CodexAdapter thread settings", () => {
       allowedAdditionalDirectories: ["F:/external-b"],
     });
 
-    const previousSettings = buildCodexThreadSettings(previousSession, CODEX_PROVIDER_CATALOG, "client-key");
-    const nextSettings = buildCodexThreadSettings(nextSession, CODEX_PROVIDER_CATALOG, "client-key");
+    const previousSettings = buildCodexThreadSettings(previousSession, CODEX_PROVIDER_CATALOG, "client-key", captureSessionExecutionOptions(previousSession));
+    const nextSettings = buildCodexThreadSettings(nextSession, CODEX_PROVIDER_CATALOG, "client-key", captureSessionExecutionOptions(nextSession));
 
     assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
     assert.equal(nextSettings.options.approvalPolicy, "never");
@@ -1486,8 +1548,8 @@ describe("CodexAdapter thread settings", () => {
       model: "gpt-5.4-mini",
       reasoningEffort: "low",
     });
-    const previousSettings = buildCodexThreadSettings(previousSession, CODEX_PROVIDER_CATALOG, "client-key");
-    const nextSettings = buildCodexThreadSettings(nextSession, CODEX_PROVIDER_CATALOG, "client-key");
+    const previousSettings = buildCodexThreadSettings(previousSession, CODEX_PROVIDER_CATALOG, "client-key", captureSessionExecutionOptions(previousSession));
+    const nextSettings = buildCodexThreadSettings(nextSession, CODEX_PROVIDER_CATALOG, "client-key", captureSessionExecutionOptions(nextSession));
     const resumeCalls: Array<{ threadId: string; options: CodexThreadOptions }> = [];
     const startCalls: unknown[] = [];
     const resumedThread = { id: "thread-1" } as never;
@@ -1567,6 +1629,7 @@ describe("CodexAdapter service tier clients", () => {
     try {
       const fastInput = createCodexRunSessionTurnInput(workspacePath);
       fastInput.session.codexSpeed = "fast";
+      fastInput.executionOptions = captureSessionExecutionOptions(fastInput.session);
       const fastResult = await adapter.runSessionTurn(fastInput);
       assert.ok(fastResult.threadId);
       await adapter.runBackgroundStructuredPrompt(createCodexBackgroundPromptInput({ workspacePath }));
@@ -1575,6 +1638,7 @@ describe("CodexAdapter service tier clients", () => {
       standardInput.session.threadId = fastResult.threadId;
       standardInput.session.codexSpeed = "standard";
       standardInput.session.codexReviewer = "auto-review";
+      standardInput.executionOptions = captureSessionExecutionOptions(standardInput.session);
       const autoReviewResult = await adapter.runSessionTurn(standardInput);
       assert.ok(autoReviewResult.threadId);
       const userInput = createCodexRunSessionTurnInput(workspacePath);
@@ -1582,6 +1646,7 @@ describe("CodexAdapter service tier clients", () => {
       userInput.session.threadId = autoReviewResult.threadId;
       userInput.session.codexSpeed = "standard";
       userInput.session.codexReviewer = "user";
+      userInput.executionOptions = captureSessionExecutionOptions(userInput.session);
       const userResult = await adapter.runSessionTurn(userInput);
 
       assert.deepEqual(createdOptions.map((options) => options.config?.service_tier), ["fast", "default", "default", "default"]);

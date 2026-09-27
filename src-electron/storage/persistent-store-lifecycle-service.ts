@@ -77,14 +77,18 @@ export type SessionStorageRead = AwaitableStorageMethods<
 > & Pick<SessionStorage, "close"> & {
   listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
+  listSessionCredentialThreads?(): Awaitable<import("../session/session-storage-v6.js").SessionCredentialThreadInfo[]>;
 };
 export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
 > & SessionStorageRead & {
   updateSession?(session: Session): Awaitable<Session>;
-  updateSessionThreadIfMatches?(input: import("../session/session-storage-v6.js").SessionThreadPatchInput): Awaitable<Session | null>;
-  updateSessionRuntimeMetadataIfMatches?(input: import("../session/session-storage-v6.js").SessionRuntimeMetadataPatchInput): Awaitable<Session | null>;
+  updateSessionThreadIfMatches?(input: import("../session/session-storage-v6.js").SessionThreadPatchInput): Awaitable<import("../session/session-storage-v6.js").SessionThreadPatchResult | null>;
+  updateSessionRuntimeMetadataIfMatches?(input: import("../session/session-storage-v6.js").SessionRuntimeMetadataPatchInput): Awaitable<import("../session/session-storage-v6.js").SessionRuntimeMetadataPatchResult | null>;
+  setSessionTitle?(sessionId: string, incarnationId: string, title: string): Awaitable<void>;
+  setSessionMessageBookmark?(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): Awaitable<void>;
+  setSessionExecutionOptions?(sessionId: string, incarnationId: string, options: import("../../src-shared/session/session-execution-options.js").SessionExecutionOptions): Awaitable<void>;
   updateTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
@@ -119,11 +123,18 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "saveAuxiliaryDraft"
   | "consumeAuxiliaryDraft"
   | "getAuxiliarySessionStatus"
+  | "getAuxiliarySessionSummary"
+  | "listAuxiliaryCredentialThreads"
+  | "getAuxiliaryMessageArtifactDetail"
+  | "updateAuxiliaryTitleIfMatches"
+  | "updateAuxiliaryMessageBookmarkIfMatches"
+  | "updateAuxiliaryExecutionOptionsIfMatches"
+  | "updateAuxiliaryDisplayAnchorIfMatches"
 > & Pick<AuxiliarySessionStorage, "close"> & {
-  updateAuxiliarySessionThreadIfMatches?(input: import("../auxiliary/auxiliary-session-storage.js").AuxiliarySessionThreadPatchInput): Awaitable<AuxiliarySession | null>;
+  updateAuxiliarySessionThreadIfMatches?(input: import("../auxiliary/auxiliary-session-storage.js").AuxiliarySessionThreadPatchInput): Awaitable<Awaited<ReturnType<AuxiliarySessionStorage["updateAuxiliarySessionThreadIfMatches"]>>>;
   updateAuxiliarySessionRuntimeMetadataIfMatches?(
     input: import("../auxiliary/auxiliary-session-storage.js").AuxiliarySessionRuntimeMetadataPatchInput,
-  ): Awaitable<AuxiliarySession | null>;
+  ): Awaitable<Awaited<ReturnType<AuxiliarySessionStorage["updateAuxiliarySessionRuntimeMetadataIfMatches"]>>>;
 };
 export type CharacterStorageAsyncAccess = AwaitableStorageMethods<
   CharacterStorage,
@@ -236,10 +247,6 @@ export class PersistentStoreLifecycleService {
     if (storageWorker) {
       try {
         workerInitial = await storageWorker.initialize() as { activeModelCatalog: ModelCatalogSnapshot; sessions: Session[] };
-        const maintenance = await storageWorker.runAuxiliarySummaryMaintenance();
-        if (maintenance.stopped || maintenance.remaining > 0) {
-          console.warn("Auxiliary summary maintenance stopped with remaining rows", maintenance);
-        }
       } catch (error) {
         await storageWorker.client.close().catch(() => undefined);
         throw error;
@@ -462,6 +469,28 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
   getAuxiliaryDraft(): null { return null; }
 
   getAuxiliarySessionStatus(): null { return null; }
+
+  getAuxiliarySessionSummary(): null { return null; }
+
+  listAuxiliaryCredentialThreads(): [] { return []; }
+
+  getAuxiliaryMessageArtifactDetail(): null { return null; }
+
+  updateAuxiliaryTitleIfMatches(): never {
+    throw new Error("Auxiliary Sessions are not available in legacy databases.");
+  }
+
+  updateAuxiliaryMessageBookmarkIfMatches(): never {
+    throw new Error("Auxiliary Sessions are not available in legacy databases.");
+  }
+
+  updateAuxiliaryExecutionOptionsIfMatches(): never {
+    throw new Error("Auxiliary Sessions are not available in legacy databases.");
+  }
+
+  updateAuxiliaryDisplayAnchorIfMatches(): never {
+    throw new Error("Auxiliary Sessions are not available in legacy databases.");
+  }
 
   saveAuxiliaryDraft(): never {
     throw new Error("Auxiliary drafts are not available in legacy databases.");

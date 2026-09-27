@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import type { PermissionRequest } from "@github/copilot-sdk";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import type { LiveRunStep } from "../../src-shared/session/runtime-state.js";
 import type { LiveBackgroundTask, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
@@ -194,6 +195,7 @@ function createRunSessionInput(options?: {
 
   return {
     session,
+    executionOptions: captureSessionExecutionOptions(session),
     sessionMemory: createDefaultSessionMemory(session),
     projectMemoryEntries: [],
     character: {} as never,
@@ -1813,6 +1815,18 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
   });
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Copilot final projectionはbinding referenceを除去しlogical promptを保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Audit-Logging" }
+// fault = "binding referenceがassistant/operations/raw itemsへ漏れる"
+// observable = "resultのlogicalPromptとassistant/artifact/operations/rawItems"
+// observation_boundary = "component-behavior"
+// scope = "Copilot final projectionはbinding reference"
+// lifecycle = "permanent"
+// impact = "binding referenceが利用者表示または監査へ漏れる"
+// distinction = "bootstrap失敗projectionでは通常final projectionを観測しない"
+// @end-test-value
 it("Copilot final projectionはbinding referenceを除去しlogical promptは変更しない", async () => {
   const bindingReference = "opaque-reference-copilot-redaction-probe";
   const input = createRunSessionInput({
@@ -1869,6 +1883,7 @@ it("Copilot final projectionはbinding referenceを除去しlogical promptは変
       rawItemsValue: ReturnType<typeof buildCopilotStableRawItems>,
       workspacePath: string,
       session: RunSessionTurnInput["session"],
+      executionOptions: RunSessionTurnInput["executionOptions"],
       providerCatalog: RunSessionTurnInput["providerCatalog"],
       selectionValue: ResolvedModelSelection,
       beforeSnapshot: Map<string, string>,
@@ -1889,6 +1904,7 @@ it("Copilot final projectionはbinding referenceを除去しlogical promptは変
     rawItems,
     input.session.workspacePath,
     input.session,
+    input.executionOptions,
     input.providerCatalog,
     selection,
     disabledSnapshot.snapshot,
@@ -2055,6 +2071,29 @@ describe("CopilotAdapter session settings", () => {
 
   // @test-value v2
   // kind = "invariant"
+  // claim = "Copilot session settingsは保存済みSessionの実行欄ではなくturn送信値をSDK configとcache keyへ使う"
+  // oracle = { type = "contract", ref = "Issue #738 turn execution options boundary" }
+  // fault = "Sessionのmodel/depth/approval/custom agentを再取得して送信値を無視する"
+  // observable = "SessionConfigとsettingsKey"
+  // observation_boundary = "component-behavior"
+  // scope = "Copilot foreground session settings"
+  // lifecycle = "permanent"
+  // impact = "表示選択と異なるmodelまたはagentでCopilot turnを実行する"
+  // distinction = "既存testはSessionと送信値が一致しており二つの入力源を区別しない"
+  // @end-test-value
+  it("保存済みSession Aに対して送信値BをCopilot session settingsへ使う", () => {
+    const input = createRunSessionInput({ model: "gpt-4.1", reasoningEffort: "high", customAgentName: "reviewer" });
+    input.executionOptions = { ...input.executionOptions, model: "gpt-4.1-mini", reasoningEffort: "low", approvalMode: "never", customAgentName: "planner" };
+    const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    assert.equal(settings.config.model, "gpt-4.1-mini");
+    assert.equal(settings.config.reasoningEffort, "low");
+    assert.equal(settings.config.agent, "planner");
+    assert.match(settings.settingsKey, /never/);
+    assert.match(settings.settingsKey, /planner/);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "Copilot の system 側 prompt context 変更は session settings key を分け、input 側 Conversation Timing 変更は同じ key を使う"
   // oracle = { type = "contract", ref = "Copilot prompt cache boundary" }
   // fault = "system message の切替で古い session を再利用するか、timing の変化だけで不要な session 再接続を起こす"
@@ -2090,9 +2129,22 @@ describe("CopilotAdapter session settings", () => {
     assert.equal(withLaterTiming.config.systemMessage?.content, promptWithContext.systemBodyText);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "never approvalはCopilot write permission requestをapprove-onceへ変換する"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Approval-Modes" }
+  // fault = "never送信値を無視してwriteを拒否する"
+  // observable = "onPermissionRequestのdecision"
+  // observation_boundary = "component-behavior"
+  // scope = "allow-all permission handler"
+  // lifecycle = "permanent"
+  // impact = "選択したpermission policyと実行が食い違う"
+  // distinction = "untrusted/on-requestのpermission testとは異なるpolicy branch"
+  // @end-test-value
   it("allow-all permission handler は legacy approve-once を返す", async () => {
     const input = createRunSessionInput();
     input.session.approvalMode = "never";
+    input.executionOptions = captureSessionExecutionOptions(input.session);
     const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
 
     assert.ok(settings.config.onPermissionRequest);
@@ -2102,9 +2154,22 @@ describe("CopilotAdapter session settings", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "untrusted approvalはreadを許可しwriteを拒否する"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Approval-Modes" }
+  // fault = "readを拒否またはwriteを許可する"
+  // observable = "read/write requestごとのpermission decision"
+  // observation_boundary = "component-behavior"
+  // scope = "safety permission handler"
+  // lifecycle = "permanent"
+  // impact = "安全設定でwriteを許してしまう"
+  // distinction = "never/on-requestのpermission testとは異なるpolicy branch"
+  // @end-test-value
   it("safety permission handler は read を legacy approve-once / write を reject で返す", async () => {
     const input = createRunSessionInput();
     input.session.approvalMode = "untrusted";
+    input.executionOptions = captureSessionExecutionOptions(input.session);
     const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
 
     assert.ok(settings.config.onPermissionRequest);
@@ -2130,6 +2195,7 @@ describe("CopilotAdapter session settings", () => {
     const approvedInput = createRunSessionInput();
     const bindingReference = approvedInput.agentRuntimeBinding?.bindingReference ?? "";
     approvedInput.session.approvalMode = "on-request";
+    approvedInput.executionOptions = captureSessionExecutionOptions(approvedInput.session);
     const approvalRequests: unknown[] = [];
     approvedInput.onApprovalRequest = async (request) => {
       approvalRequests.push(request);
@@ -2152,6 +2218,7 @@ describe("CopilotAdapter session settings", () => {
 
     const deniedInput = createRunSessionInput();
     deniedInput.session.approvalMode = "on-request";
+    deniedInput.executionOptions = captureSessionExecutionOptions(deniedInput.session);
     deniedInput.onApprovalRequest = async () => "deny" as LiveApprovalDecision;
     const deniedSettings = buildCopilotSessionSettings(deniedInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const deniedWriteResult = await deniedSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
@@ -2159,6 +2226,7 @@ describe("CopilotAdapter session settings", () => {
 
     const missingHandlerInput = createRunSessionInput();
     missingHandlerInput.session.approvalMode = "on-request";
+    missingHandlerInput.executionOptions = captureSessionExecutionOptions(missingHandlerInput.session);
     const missingHandlerSettings = buildCopilotSessionSettings(missingHandlerInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const missingHandlerResult = await missingHandlerSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
     assert.deepEqual(missingHandlerResult, { kind: "user-not-available" });

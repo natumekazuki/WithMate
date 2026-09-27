@@ -10,6 +10,7 @@ import type { SessionMemoryExtractionPrompt } from "../session/session-memory-ex
 import type { ConversationTimingContext } from "../session/conversation-timing.js";
 import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
 export type ProviderPromptComposition = {
   systemBodyText: string;
@@ -21,6 +22,7 @@ export type ProviderPromptComposition = {
 
 export type RunSessionTurnInput = {
   session: Session;
+  executionOptions: SessionExecutionOptions;
   executionWorkspacePath?: string;
   sessionFolderPath?: string;
   sessionMemory: SessionMemory;

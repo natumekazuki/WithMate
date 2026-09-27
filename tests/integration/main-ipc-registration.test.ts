@@ -79,6 +79,12 @@ import {
   WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL,
+  WITHMATE_SET_AUXILIARY_TITLE_CHANNEL,
+  WITHMATE_SET_AUXILIARY_MESSAGE_BOOKMARK_CHANNEL,
+  WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
+  WITHMATE_SET_SESSION_TITLE_CHANNEL,
+  WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL,
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
@@ -646,10 +652,10 @@ test("pick-image-file IPC は Character icon purpose を伝播し、不正な pu
 
 // @test-value v2
 // kind = "invariant"
-// claim = "chat layout IPC は現行 target の列挙値だけを専用更新処理へ渡す"
+// claim = "chat layout IPC は現行targetの列挙値だけを専用のvoid更新処理へ渡す"
 // oracle = { type = "contract", ref = "Chat layout preference IPC boundary" }
 // fault = "不正な target/value または余分な payload が storage update へ到達する"
-// observable = "専用更新処理へ渡された updates"
+// observable = "専用更新処理へ渡されたupdatesとIPCのvoid応答"
 // observation_boundary = "public-boundary"
 // scope = "chat-layout-ipc"
 // lifecycle = "permanent"
@@ -662,7 +668,6 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
   const { deps } = createDeps({
     updateChatLayoutPreference: (update: unknown) => {
       updates.push(update);
-      return { chatLayoutPreference: update };
     },
   });
 
@@ -673,21 +678,21 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
       target: "sidePane",
       value: "files",
     }),
-    { chatLayoutPreference: { target: "sidePane", value: "files" } },
+    undefined,
   );
   assert.deepEqual(
     await handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
       target: "header",
       value: "visible",
     }),
-    { chatLayoutPreference: { target: "header", value: "visible" } },
+    undefined,
   );
   assert.deepEqual(
     await handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
       target: "actionDock",
       value: "expanded",
     }),
-    { chatLayoutPreference: { target: "actionDock", value: "expanded" } },
+    undefined,
   );
   await assert.rejects(
     () =>
@@ -1628,6 +1633,102 @@ test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC �
   await handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", { userMessage: "hello" });
 
   assert.deepEqual(calls, ["runSessionTurn:session-1,[object Object]"]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "narrow session mutation IPC は対象Session windowのsenderだけを許可し、Auxiliary identityをstatus queryで照合する"
+// oracle = { type = "contract", ref = "Session mutation IPC sender ownership" }
+// fault = "別Session windowからnarrow mutationを実行できる、またはAuxiliary requestの親・createdAt不一致が mutation service に到達する"
+// observable = "mutation service呼出しと、Auxiliary Session full hydrationなしの拒否"
+// observation_boundary = "public-boundary"
+// scope = "session-mutation-ipc"
+// lifecycle = "permanent"
+// impact = "誤ったwindowからの変更がsession間で混線する"
+// distinction = "既存generic update IPCではなく専用mutation channelのowner identityとlightweight Auxiliary status guardを検証する"
+// @end-test-value
+test("narrow session mutation IPC はowner windowとmutation identityを確認する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("http://localhost:5173/?sessionId=session-1");
+  const otherWindow = createWindowStub("http://localhost:5173/?sessionId=session-2");
+  let currentWindow: ReturnType<typeof createWindowStub> = ownerWindow;
+  const mutationCalls: string[] = [];
+  let fullAuxiliaryReads = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : otherWindow,
+    setSessionExecutionOptions: (request: { sessionId: string }) => mutationCalls.push(`session-options:${request.sessionId}`),
+    setSessionTitle: (request: { sessionId: string }) => mutationCalls.push(`session-title:${request.sessionId}`),
+    setSessionMessageBookmark: (request: { sessionId: string }) => mutationCalls.push(`session-bookmark:${request.sessionId}`),
+    getAuxiliarySessionStatus: async () => ({
+      id: "aux-1",
+      parentSessionId: "session-1",
+      status: "active",
+      createdAt: "2026-07-04T00:00:00.000Z",
+      incarnation: "aux-incarnation-1",
+      runState: "idle",
+    }),
+    getAuxiliarySession: async () => {
+      fullAuxiliaryReads += 1;
+      return createAuxiliarySessionStub();
+    },
+    setAuxiliaryExecutionOptions: (request: { auxiliarySessionId: string }) => mutationCalls.push(`aux-options:${request.auxiliarySessionId}`),
+    setAuxiliaryTitle: (request: { auxiliarySessionId: string }) => mutationCalls.push(`aux-title:${request.auxiliarySessionId}`),
+    setAuxiliaryMessageBookmark: (request: { auxiliarySessionId: string }) => mutationCalls.push(`aux-bookmark:${request.auxiliarySessionId}`),
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+  const sessionIdentity = { sessionId: "session-1", incarnationId: "incarnation-1" };
+  await handlers.get(WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL)?.({}, {
+    ...sessionIdentity,
+    executionOptions: {},
+  });
+  await handlers.get(WITHMATE_SET_SESSION_TITLE_CHANNEL)?.({}, { ...sessionIdentity, title: "Updated" });
+  await handlers.get(WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL)?.({}, {
+    ...sessionIdentity,
+    messageIndex: 2,
+    isBookmarked: true,
+  });
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SET_SESSION_TITLE_CHANNEL)?.({}, { ...sessionIdentity, title: "Rejected" }) as Promise<unknown>,
+    /target Session window/,
+  );
+  currentWindow = ownerWindow;
+
+  const auxiliaryIdentity = {
+    auxiliarySessionId: "aux-1",
+    parentSessionId: "session-1",
+    createdAt: "2026-07-04T00:00:00.000Z",
+  };
+  await handlers.get(WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL)?.({}, {
+    ...auxiliaryIdentity,
+    executionOptions: {},
+  });
+  await handlers.get(WITHMATE_SET_AUXILIARY_TITLE_CHANNEL)?.({}, { ...auxiliaryIdentity, title: "Updated" });
+  await handlers.get(WITHMATE_SET_AUXILIARY_MESSAGE_BOOKMARK_CHANNEL)?.({}, {
+    ...auxiliaryIdentity,
+    messageIndex: 3,
+    isBookmarked: true,
+  });
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SET_AUXILIARY_TITLE_CHANNEL)?.({}, {
+      ...auxiliaryIdentity,
+      createdAt: "stale-created-at",
+      title: "Rejected",
+    }) as Promise<unknown>,
+    /identity is stale or invalid/,
+  );
+
+  assert.deepEqual(mutationCalls, [
+    "session-options:session-1",
+    "session-title:session-1",
+    "session-bookmark:session-1",
+    "aux-options:aux-1",
+    "aux-title:aux-1",
+    "aux-bookmark:aux-1",
+  ]);
+  assert.equal(fullAuxiliaryReads, 0);
 });
 
 test("run-session-turn IPC拒否ログは本文を含めずclient request IDを相関情報として渡す", async () => {

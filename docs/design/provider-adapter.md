@@ -47,7 +47,7 @@ providerごとの差は次。
   - character prompt は `SessionConfig.systemMessage` `mode: "append"` に載せ、`session.send()` には user input 本文を送る
   - `file / folder` は Copilot SDK `attachments` (`file` / `directory`) へ変換して送る
   - `image` も `attachments` の `file` として送り、専用 UI 分岐は持たない
-  - custom agent は `~/.copilot/agents` と workspace `.github/agents` を探索し、picker には `user-invocable: true` の定義だけを出す。session metadata の選択値は `customAgents` / `agent` に変換する
+  - custom agent は `~/.copilot/agents` と workspace `.github/agents` を探索し、picker には `user-invocable: true` の定義だけを出す。turn の送信値は `customAgents` / `agent` に変換する
   - rich command timeline は未対応
   - `on-request` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
   - `elicitation.requested` が来た場合は、Main Process の `onElicitationRequest` bridge を通して Session UI の form / url card へ中継し、user の `accept / decline / cancel` を RPC で返す
@@ -90,14 +90,14 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
 
 ## Session Flow
 
-1. Renderer が `runSessionTurn(sessionId, { userMessage })` を IPC で Main Process に送る
-2. Main Process が session store から session metadata を引く
+1. Renderer が送信時の表示選択を `executionOptions` に固定し、`runSessionTurn(sessionId, { userMessage, executionOptions })` を IPC で Main Process に送る。Main Session と Auxiliary Session は同じ実行契約を使う
+2. Main Process が session store から thread、workspace、Character などの session context を引く。保存済みの実行設定はこの turn の実行値にしない
 3. 保存済みCharacter snapshotとturn contextを解決する
 4. Main Process が textarea 内の `@path` を解決し、file / folder / image を正規化する
    - workspace 外 path は `allowedAdditionalDirectories` 配下だけを許可する
 5. prompt composer がCharacter context、user inputと添付referenceをproviderへ渡す形式に正規化する
-6. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
-7. `MainProviderFacade` が coding plane adapter を解決し、`model / reasoningEffort` を検証したうえで provider-native SDK 実行へ変換する
+6. Main Process が送信された `executionOptions.catalogRevision` と session の `provider` から provider catalog を解決し、revision、model、reasoning depth、実行 option 値を検証する。model が存在しない、depth が非対応などの不正な選択は turn 開始保存・Provider 起動前に拒否し、default や保存値へ置換しない
+7. 検証済み `executionOptions` を独立した turn snapshot として prompt、coding plane adapter、監査ログへ渡し、provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder の workspace 外 access は session metadata `allowedAdditionalDirectories` だけを `additionalDirectories` へ変換し、画像は structured input にして `thread.runStreamed()` を実行する
    - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時はaudit logにdebug metadataを残す
 8. Main Process が stream event から live state と provider telemetry を組み立て、IPC で Session Window へ中継する
@@ -133,8 +133,8 @@ the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動�
 - session に `threadId` がある場合は `resumeThread(threadId)` を使う
 - ない場合は `startThread()` で新規作成する
 - 実行後に `thread.id` を session store へ保存する
-- model または reasoning depth を変更した場合も、その session の `threadId` は維持し、次回 turn は新しい runtime parameter で既存 thread / session の resume を試す
-- Codex の `approvalMode` / `codexSandboxMode` は thread settings key に含める。変更後の turn では既存 thread cache を再利用せず、選択された runtime parameter で `resumeThread()` または `startThread()` する
+- model または reasoning depth を変更した場合も、その session の `threadId` は維持し、次回 turn は送信された runtime parameter で既存 thread / session の resume を試す
+- Codex の `approvalMode` / `codexSandboxMode` は thread settings key に含める。変更後の turn では既存 thread cache を再利用せず、送信された runtime parameter で `resumeThread()` または `startThread()` する
 - provider ごとの coding credential は `AppSettings.codingProviderSettings[providerId].apiKey` から解決して SDK client へ渡す
 - coding credential が変わった provider では既存 thread / adapter cache を再利用しないため、対象 session の `threadId` を空に戻す
 
@@ -147,19 +147,16 @@ the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動�
 
 ## Session Metadata Dependency
 
-adapter 実行に最低限必要な session 情報:
+adapter 実行に必要な保存済み session context:
 
 - `session.id`
 - `session.workspacePath`
-- `session.catalogRevision`
 - `session.provider`
-- `session.approvalMode`
-- `session.codexSandboxMode`
-- `session.model`
-- `session.reasoningEffort`
 - `session.allowedAdditionalDirectories`
 - `session.characterId`
 - `session.threadId`
+
+実行値は保存済み session とは独立した送信時の `executionOptions` を正本にする。これは `catalogRevision / model / reasoningEffort / approvalMode / codexSandboxMode / codexSpeed / codexReviewer / customAgentName` を含む。
 
 ## Approval Modes
 
@@ -195,10 +192,11 @@ Codex session は `codexSandboxMode` を持つ。UI では Codex provider のと
 
 ## Model Resolution Policy
 
-- session metadata には user selection として `provider / model / reasoningEffort / catalogRevision` を保存する
-- adapter 実行時に session が参照している catalog revision を使って `provider / model / reasoningEffort` を検証する
+- session metadata は選択状態を保存するが、turn の Provider 実行値は Main / Auxiliary の送信要求に含まれる `executionOptions` を使う
+- Main Process は送信された catalog revision と session provider の catalog を解決し、snapshot revision、model、reasoning effort を実行開始前に検証する
 - model 自体が見つからない場合はそのままエラーにする
 - selected depth が非対応ならそのままエラーにする
+- 保存済みの値、catalog default、depth clamp への暗黙の置換はしない
 - provider 実行時に拒否された場合も、そのまま session error として扱う
 
 詳細は `docs/design/model-catalog.md` を参照する。
@@ -293,7 +291,7 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 
 - slash command は provider SDK へそのまま渡さない
 - Renderer / Main Process が先に app command または session setting command として解釈する
-- adapter は slash command 自体を parse せず、更新済み metadata を provider-native option へ変換する
+- adapter は slash command 自体を parse せず、送信時に固定された実行 option を provider-native option へ変換する
 
 ## Agent / Skill Mapping
 
@@ -307,7 +305,7 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
   - Copilot: explicit skill directive を prompt へ付加
 - `agent` は provider 専用 command とする
   - Codex: 未対応
-  - Copilot: custom agent selection を session metadata に保存し、`~/.copilot/agents` と workspace `.github/agents` から探索した agent catalog を adapter が `customAgents` / `agent` に変換する
+  - Copilot: custom agent selection を session metadata に保存し、送信時に固定した選択値と `~/.copilot/agents`・workspace `.github/agents` から探索した agent catalog を adapter が `customAgents` / `agent` に変換する
 
 ## References
 

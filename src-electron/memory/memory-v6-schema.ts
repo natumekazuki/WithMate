@@ -51,7 +51,8 @@ export type MemoryV6TagRow = {
   tag_value_canonical: string;
 };
 
-export const MEMORY_V6_ENTRY_SELECT_COLUMNS = `
+export function memoryV6EntrySelectColumns(includeBody = true): string {
+  return `
   id,
   owner_type,
   owner_id,
@@ -59,7 +60,7 @@ export const MEMORY_V6_ENTRY_SELECT_COLUMNS = `
   scope_id,
   kind,
   title,
-  body,
+  ${includeBody ? "body" : "'' AS body"},
   body_sha256,
   preview,
   state,
@@ -73,6 +74,9 @@ export const MEMORY_V6_ENTRY_SELECT_COLUMNS = `
   updated_at,
   forgotten_at
 `;
+}
+
+export const MEMORY_V6_ENTRY_SELECT_COLUMNS = memoryV6EntrySelectColumns();
 
 export function targetWhereSql(alias: string, targets: readonly MemoryV6ResolvedTarget[]): { sql: string; params: SQLInputValue[] } {
   if (targets.length === 0) {
