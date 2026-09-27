@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { type SessionMessageColumnProps } from "./conversation/session-message-column.js";
 import { useSessionMessageListFollowing } from "./shell/session-chat-layout-hooks.js";
 import { StableSessionMessageColumn } from "./stable-session-message-column.js";
-import { buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "./auxiliary/auxiliary-session-message-projection.js";
+import { buildLiveAssistantProjectionKey, buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "./auxiliary/auxiliary-session-message-projection.js";
 import { buildMessageCollapseTargets, buildMessageNavigatorEntries, type MessageCollapseStateEntry, type MessageJumpRequest, type MessageNavigatorEntry } from "./conversation/session-message-collapse.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
@@ -123,6 +123,12 @@ export function useConversationMessageColumn({
     liveAssistant: bridge,
     primaryMessageSourceKind: messageSourceKind,
   }), [messages, sessionId, messageSourceKind, bridge?.threadId, bridge?.messageIndex, bridge?.text]);
+  // 保存済みbridgeのkeyは終了後も維持するが、後続promptの待機表示には使わない。
+  const pendingResponseMessageKey = bridge && !messages.some((message, index) => (
+    index > bridge.messageIndex && message.role === "user"
+  ))
+    ? buildLiveAssistantProjectionKey(bridge.sessionId, bridge.threadId, bridge.messageIndex)
+    : null;
   const messageScrollSignature = useMemo(
     () => `${projection.keys.join("\u001f")}:${projection.messages.map((message) => message.text.length).join(",")}`,
     [projection],
@@ -252,6 +258,7 @@ export function useConversationMessageColumn({
     character: columnCharacter,
     messages: projection.messages,
     messageKeys: projection.keys,
+    pendingResponseMessageKey,
     messageGroups: projection.groups,
     messageCollapseTargets: collapseTargets,
     collapsedMessageKeys,

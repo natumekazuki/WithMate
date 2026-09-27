@@ -66,6 +66,7 @@ export type SessionMessageColumnProps = {
   character: CharacterProfile;
   messages: Message[];
   messageKeys?: string[];
+  pendingResponseMessageKey?: string | null;
   messageCollapseTargets?: readonly MessageCollapseTarget[];
   collapsedMessageKeys?: ReadonlySet<string>;
   messageJumpRequest?: MessageJumpRequest | null;
@@ -395,6 +396,7 @@ export function SessionMessageColumn({
   character,
   messages,
   messageKeys,
+  pendingResponseMessageKey = null,
   messageCollapseTargets = [],
   collapsedMessageKeys = new Set(),
   messageJumpRequest = null,
@@ -407,7 +409,6 @@ export function SessionMessageColumn({
   approvalActionRequestId,
   liveElicitationRequest,
   elicitationActionRequestId,
-  liveRunAssistantText,
   hasLiveRunAssistantText,
   liveRunErrorMessage,
   pendingMessageText = "",
@@ -544,8 +545,12 @@ export function SessionMessageColumn({
     setMessageJumpHighlightKey(null);
     handledMessageJumpRequestIdRef.current = null;
   }, [sessionId]);
+  const pendingResponseMessageIndex = isRunning && pendingResponseMessageKey !== null
+    ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1
+    : -1;
   const hasPendingMessageText =
     pendingMessageTextVisible &&
+    pendingResponseMessageIndex < 0 &&
     !hasLiveRunAssistantText &&
     liveApprovalRequest === null &&
     liveElicitationRequest === null &&
@@ -571,13 +576,6 @@ export function SessionMessageColumn({
       : ""),
     [hasFindQuery, hasPendingMessageText, isRunning, messageViewMode, pendingMessageText],
   );
-  const pendingResponseMessageIndex = isRunning && hasLiveRunAssistantText
-    ? messages.findLastIndex((message, index) => (
-        message.role === "assistant" &&
-        message.text === liveRunAssistantText &&
-        (messageGroups?.[index]?.id ?? null) === pendingMessageGroupId
-      ))
-    : -1;
   const pendingMessageGroupEndIndex = useMemo(
     () => {
       if (!isRunning || pendingMessageGroupId === null) {
