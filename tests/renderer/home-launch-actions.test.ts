@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { startHomeLaunch } from "../../src/home/home-launch-actions.js";
+import { buildHomeLaunchProjection } from "../../src/home/home-launch-projection.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   createClosedLaunchDraft,
   setLaunchWorkspaceFromPath,
@@ -160,6 +162,81 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
 }
 
 describe("home-launch-actions", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Randomは履歴とopen Window一覧の両取得成功時だけ開始でき、固定Characterはこの2取得に依存しない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog / docs/adr/004-launch-character-random-selection.md Decision" }
+  // fault = "Startの有効判定と実行guardが食い違うか、取得失敗を0件としてRandomを開始するか、固定選択を不要に妨げる"
+  // observable = "全取得状態の組合せでのcanStartSession、createSession呼出回数、作成Character ID、起動中状態"
+  // observation_boundary = "public-boundary"
+  // scope = "Home launch readiness projection and action"
+  // lifecycle = "permanent"
+  // impact = "押せるのに開始できない操作と、履歴取得失敗による不正な抽選を防ぐ"
+  // distinction = "既存の個別guard testでは検出しない表示判定との一致、固定選択、取得済み0件とneutralを小さな状態表で検証する"
+  // @end-test-value
+  it("Randomと固定選択の取得前提がprojectionと開始処理で一致する", async () => {
+    const states = [
+      ["loading", "loading", false],
+      ["loading", "error", false],
+      ["loading", "loaded", false],
+      ["error", "loading", false],
+      ["error", "error", false],
+      ["error", "loaded", false],
+      ["loaded", "loading", false],
+      ["loaded", "error", false],
+      ["loaded", "loaded", true],
+    ] as const;
+    const selections = [
+      { mode: "random", entries: createCharacterEntries(), characterId: "mia" },
+      { mode: "specific", entries: createCharacterEntries(), characterId: "mia" },
+      { mode: "random", entries: [], characterId: "withmate-neutral-character" },
+    ] as const;
+    for (const selection of selections) {
+      for (const [usageStatus, windowStatus, randomReady] of states) {
+        const expectedReady = selection.mode === "specific" || randomReady;
+        const label = `${selection.mode}/${selection.entries.length}/${usageStatus}/${windowStatus}`;
+        const requests: string[] = [];
+        const harness = createStartHomeLaunchHarness({
+          draft: { ...createReadyDraft(), characterSelectionMode: selection.mode },
+          characterEntries: selection.entries,
+          sessionCharacterUsageLoadStatus: usageStatus,
+          openSessionWindowIdsLoadStatus: windowStatus,
+          random: () => 0,
+          createSession: async (input) => {
+            requests.push(input.characterId);
+            return createSessionSummary({ characterId: input.characterId });
+          },
+        });
+        const projection = buildHomeLaunchProjection({
+          launchProviderId: harness.input.draft.providerId,
+          launchTitle: harness.input.draft.title,
+          launchWorkspace: harness.input.draft.workspace,
+          launchCharacterId: harness.input.draft.characterId,
+          launchCharacterSelectionMode: selection.mode,
+          characterEntries: selection.entries,
+          charactersLoaded: true,
+          characterLoadStatus: "loaded",
+          sessionCharacterUsageLoadStatus: usageStatus,
+          openSessionWindowIdsLoadStatus: windowStatus,
+          appSettings: createDefaultAppSettings(),
+          modelCatalog: {
+            revision: 1,
+            providers: [{
+              id: "codex", label: "Codex", defaultModelId: "gpt-5.4",
+              defaultReasoningEffort: "high",
+              models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
+            }],
+          },
+        });
+
+        assert.equal(projection.canStartSession, expectedReady, label);
+        await startHomeLaunch(harness.input);
+        assert.deepEqual(requests, expectedReady ? [selection.characterId] : [], label);
+        assert.deepEqual(harness.startingStates, expectedReady ? [true, false] : [], label);
+      }
+    }
+  });
+
   it("起動中は何もしない", async () => {
     const harness = createStartHomeLaunchHarness({ launchStarting: true });
 

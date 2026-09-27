@@ -140,6 +140,8 @@ describe("home-launch-handlers", () => {
       launchCharacterSelectionMode: "random",
       characterEntries,
       charactersLoaded,
+      sessionCharacterUsageLoadStatus: "loaded",
+      openSessionWindowIdsLoadStatus: "loaded",
       appSettings: createDefaultAppSettings(),
       modelCatalog: { revision: 1, providers: [createProvider()] },
     }).canStartSession;
