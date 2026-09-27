@@ -1,7 +1,7 @@
 import { SelectionActionOverlayContext } from "./selection-action-overlay-context.js";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type ReactNode, type RefObject, type UIEventHandler } from "react";
 import { createPortal } from "react-dom";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 
 import type { ChangedFile, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse } from "../../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
@@ -489,11 +489,25 @@ export function SessionMessageColumn({
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
   );
+  const pendingResponseMessageIndex = isRunning && pendingResponseMessageKey !== null
+    ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1
+    : -1;
+  const elicitationMessageIndex = liveElicitationRequest !== null ? pendingResponseMessageIndex : -1;
+  const extractMessageRange = useCallback((range: Range) => {
+    const indexes = defaultRangeExtractor(range);
+    // 未送信の回答を保持するため、入力待ちの応答行はviewport外でもunmountしない。
+    if (elicitationMessageIndex >= 0 && !indexes.includes(elicitationMessageIndex)) {
+      indexes.push(elicitationMessageIndex);
+      indexes.sort((left, right) => left - right);
+    }
+    return indexes;
+  }, [elicitationMessageIndex]);
   const messageVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => messageListRef.current,
     estimateSize: () => SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT,
     getItemKey: getMessageKey,
+    rangeExtractor: extractMessageRange,
     overscan: SESSION_MESSAGE_OVERSCAN,
     anchorTo: isMessageListFollowing ? "end" : "start",
     followOnAppend: false,
@@ -545,9 +559,6 @@ export function SessionMessageColumn({
     setMessageJumpHighlightKey(null);
     handledMessageJumpRequestIdRef.current = null;
   }, [sessionId]);
-  const pendingResponseMessageIndex = isRunning && pendingResponseMessageKey !== null
-    ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1
-    : -1;
   const hasPendingMessageText =
     pendingMessageTextVisible &&
     pendingResponseMessageIndex < 0 &&

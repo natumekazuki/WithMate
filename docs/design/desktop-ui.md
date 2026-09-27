@@ -314,6 +314,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - pending bubble には provider-native pending item を差し込める
   - `approvalRequest`: `Allow Once / Reject`
   - `elicitationRequest`: form の `Submit` または URL completion の `Complete` と、`Reject / Close`
+  - Elicitationの入力待ちでは、応答行が履歴の表示範囲外へ出ても同一requestの未送信回答を保持する。入力待ちの応答行だけを仮想化の描画対象に残し、requestの解決・run終了後は通常の描画範囲へ戻す。異なるrequestへ回答を持ち越さない
   - Approval / Elicitation の解決中は既存 pending item 内の spinner と `aria-busy` で待機を示し、同じ対象の状態文を重複表示しない
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する

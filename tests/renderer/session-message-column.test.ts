@@ -350,6 +350,7 @@ type MountedSessionMessageColumn = {
     messages?: Message[];
     isRunning?: boolean;
     liveRunAssistantText?: string;
+    liveElicitationRequest?: LiveElicitationRequest | null;
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
     pendingMessageGroupId?: string | null;
@@ -369,6 +370,8 @@ async function mountSessionMessageColumn(options: {
   component?: ComponentType<SessionMessageColumnProps>;
   isRunning?: boolean;
   liveRunAssistantText?: string;
+  liveElicitationRequest?: LiveElicitationRequest | null;
+  onResolveLiveElicitation?: SessionMessageColumnProps["onResolveLiveElicitation"];
   messageGroups?: SessionMessageColumnProps["messageGroups"];
   messageKeys?: SessionMessageColumnProps["messageKeys"];
   messageCollapseTargets?: SessionMessageColumnProps["messageCollapseTargets"];
@@ -538,6 +541,7 @@ async function mountSessionMessageColumn(options: {
     messages?: Message[];
     isRunning?: boolean;
     liveRunAssistantText?: string;
+    liveElicitationRequest?: LiveElicitationRequest | null;
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
     pendingMessageGroupId?: string | null;
@@ -560,7 +564,9 @@ async function mountSessionMessageColumn(options: {
           isRunning: callbacks.isRunning ?? options.isRunning ?? false,
           liveApprovalRequest: null,
           approvalActionRequestId: null,
-          liveElicitationRequest: null,
+          liveElicitationRequest: callbacks.liveElicitationRequest !== undefined
+            ? callbacks.liveElicitationRequest
+            : options.liveElicitationRequest ?? null,
           elicitationActionRequestId: null,
           liveRunAssistantText: callbacks.liveRunAssistantText ?? options.liveRunAssistantText ?? "",
           hasLiveRunAssistantText: !!(callbacks.liveRunAssistantText ?? options.liveRunAssistantText),
@@ -577,7 +583,7 @@ async function mountSessionMessageColumn(options: {
           onToggleArtifact() {},
           onOpenDiff() {},
           onResolveLiveApproval() {},
-          onResolveLiveElicitation() {},
+          onResolveLiveElicitation: options.onResolveLiveElicitation ?? (() => {}),
           onOpenPath: undefined,
           onCopyMessageText: callbacks.onCopyMessageText,
           onQuoteMessageText: callbacks.onQuoteMessageText,
@@ -2303,6 +2309,91 @@ test("SessionMessageColumn は内容未到着でも末尾に処理中bubbleを�
   assert.equal(new JSDOM(html).window.document.querySelectorAll(".pending-row .message-avatar").length, 1);
   assert.ok(html.indexOf("message 1") < html.indexOf("pending-row"));
   assert.ok(html.indexOf("pending-row") < html.indexOf("message-list-bottom-anchor"));
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryの実行中応答内のelicitationは、履歴スクロール後も同一requestの未送信回答を保持して送信し、新しいrequestには持ち越さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: pending中のlive activity / streaming response; docs/manual-test-checklist.md: MT-017D" }
+// fault = "仮想化で入力formが再mountされて選択が初期値へ戻り、意図しない回答を送信するか、request終了後も応答行を保持し続ける"
+// observable = "実projectionを通した履歴の往復scroll後のselect値と送信payload、次requestの初期値、request終了後の仮想rowの解放"
+// observation_boundary = "component-behavior"
+// scope = "conversation-elicitation-virtualization"
+// lifecycle = "permanent"
+// impact = "過去の会話を参照しただけで入力が失われ、別のブランチへの操作など誤った回答につながる"
+// distinction = "既存のpending配置testは入力状態と仮想範囲の往復を扱わない。2種類の会話で実DOM操作と送信結果を検証し、全履歴の常時mountによる代替も検出する"
+// @end-test-value
+test("ConversationMessageColumn は履歴スクロールを挟んでも elicitation の未送信回答を保持する", async () => {
+  for (const messageSourceKind of ["session", "auxiliary"] as const) {
+    function Column(props: SessionMessageColumnProps) {
+      return React.createElement(ConversationMessageColumn, {
+        session: { id: messageSourceKind, messages: props.messages, runState: "running" },
+        messageSourceKind,
+        baseProps: props,
+        enabled: true,
+      });
+    }
+    const request: LiveElicitationRequest = {
+      ...createLiveElicitationRequest(),
+      fields: [{
+        type: "select", name: "branch", title: "Branch", required: true, defaultValue: "main",
+        options: [{ value: "main", label: "main" }, { value: "feature/review-draft", label: "feature/review-draft" }],
+      }],
+    };
+    const responses: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
+    const mounted = await mountSessionMessageColumn({
+      component: Column,
+      messages: createMessages(100),
+      isRunning: true,
+      liveRunAssistantText: "対象ブランチの確認が必要です。",
+      liveElicitationRequest: request,
+      onResolveLiveElicitation: (...args) => responses.push(args),
+    });
+    try {
+      const { container, dom } = mounted;
+      const messageList = container.querySelector<HTMLDivElement>(".session-message-list");
+      assert.ok(messageList);
+      const scrollTo = async (top: number) => {
+        await act(async () => {
+          messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: top - messageList.scrollTop, bubbles: true }));
+          messageList.scrollTop = top;
+          messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+        });
+      };
+      const getSelect = () => {
+        const select = container.querySelector<HTMLSelectElement>(".message-row.assistant .live-elicitation-card select");
+        assert.ok(select, messageSourceKind);
+        return select;
+      };
+      const select = getSelect();
+      assert.equal(select.value, "main");
+      await act(async () => {
+        select.value = "feature/review-draft";
+        select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      });
+      await scrollTo(0);
+      assert.ok(container.querySelector('.session-message-virtual-row[data-index="0"]'));
+      assert.ok(container.querySelectorAll(".session-message-virtual-row").length < 30, "履歴全体を常時mountしない");
+      await scrollTo(messageList.scrollHeight - messageList.clientHeight);
+      assert.equal(getSelect().value, "feature/review-draft", messageSourceKind);
+      assert.equal(container.querySelectorAll(".live-elicitation-card").length, 1);
+      assert.equal(container.querySelectorAll(".pending-row").length, 0);
+      const submit = [...container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button")]
+        .find((button) => button.textContent === "Submit");
+      assert.ok(submit);
+      await act(async () => submit.click());
+      assert.deepEqual(responses, [[request, { action: "accept", content: { branch: "feature/review-draft" } }]]);
+
+      await mounted.rerender({ liveElicitationRequest: { ...request, requestId: "elicitation-2" } });
+      assert.equal(getSelect().value, "main", "異なるrequestには回答を持ち越さない");
+      await scrollTo(0);
+      await mounted.rerender({ liveElicitationRequest: null });
+      assert.equal(container.querySelectorAll(".live-elicitation-card").length, 0);
+      assert.equal(container.querySelector('.session-message-virtual-row[data-index="100"]'), null, "入力待ちが終われば通常の仮想化へ戻す");
+    } finally {
+      await mounted.cleanup();
+    }
+  }
 });
 
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {
