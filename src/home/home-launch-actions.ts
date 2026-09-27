@@ -11,6 +11,24 @@ import {
 } from "./home-launch-state.js";
 
 export type HomeLaunchSessionCreator = (input: CreateSessionRequest) => Promise<Session | SessionSummary | null>;
+export type HomeLaunchFeedbackSource = "launch" | "readiness";
+
+export function resolveRandomHomeLaunchFeedback(
+  characterUsageStatus: SessionSummariesLoadStatus,
+  openSessionsStatus: OpenSessionWindowIdsLoadStatus,
+): string {
+  if (characterUsageStatus !== "loaded") {
+    return characterUsageStatus === "loading"
+      ? "Session history is not ready yet. Try again when it finishes."
+      : "Session history is unavailable, so random selection cannot start.";
+  }
+  if (openSessionsStatus !== "loaded") {
+    return openSessionsStatus === "loading"
+      ? "Open session windows are not ready yet. Try again when the check finishes."
+      : "Open session windows are unavailable, so random selection cannot start.";
+  }
+  return "";
+}
 
 
 export type StartHomeLaunchInput = {
@@ -28,7 +46,7 @@ export type StartHomeLaunchInput = {
   createSession: HomeLaunchSessionCreator;
   openSessionWindow: (sessionId: string) => Promise<void>;
   closeLaunchDialog: () => void;
-  setLaunchFeedback: (message: string) => void;
+  setLaunchFeedback: (message: string, source?: HomeLaunchFeedbackSource) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
   upsertSessionSummary: (summary: HomeSessionSummary) => void;
   random?: () => number;
@@ -50,21 +68,11 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     return;
   }
 
-  if (input.draft.characterSelectionMode === "random" && input.sessionCharacterUsageLoadStatus !== "loaded") {
-    input.setLaunchFeedback(
-      input.sessionCharacterUsageLoadStatus === "loading"
-        ? "Session history is not ready yet. Try again when it finishes."
-        : "Session history is unavailable, so random selection cannot start.",
-    );
-    return;
-  }
-
-  if (input.draft.characterSelectionMode === "random" && input.openSessionWindowIdsLoadStatus !== "loaded") {
-    input.setLaunchFeedback(
-      input.openSessionWindowIdsLoadStatus === "loading"
-        ? "Open session windows are not ready yet. Try again when the check finishes."
-        : "Open session windows are unavailable, so random selection cannot start.",
-    );
+  const readinessFeedback = input.draft.characterSelectionMode === "random"
+    ? resolveRandomHomeLaunchFeedback(input.sessionCharacterUsageLoadStatus, input.openSessionWindowIdsLoadStatus)
+    : "";
+  if (readinessFeedback) {
+    input.setLaunchFeedback(readinessFeedback, "readiness");
     return;
   }
 

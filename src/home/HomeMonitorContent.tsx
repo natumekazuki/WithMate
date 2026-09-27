@@ -19,6 +19,7 @@ export type HomeMonitorContentProps = {
   runningEmptyMessage?: string;
   nonRunningEmptyMessage?: string;
   feedback?: string;
+  onRetry?: () => void;
   onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowContextMenu: (
     kind: SessionMonitorEntryKind,
@@ -104,6 +105,7 @@ export function HomeMonitorContent({
   runningEmptyMessage = "",
   nonRunningEmptyMessage = "",
   feedback = "",
+  onRetry,
   onOpenSession,
   onShowContextMenu,
 }: HomeMonitorContentProps) {
@@ -257,11 +259,18 @@ export function HomeMonitorContent({
       aria-busy={isLoading}
     >
       {statusFeedback ? (
-        <p className="settings-feedback" role="status" aria-live="polite">
-          {statusFeedback}
-        </p>
+        <div className="home-session-list-feedback">
+          <p className="settings-feedback" role="status" aria-live="polite">
+            {statusFeedback}
+          </p>
+          {onRetry ? (
+            <button className="launch-toggle home-session-retry-button" type="button" disabled={isLoading} onClick={onRetry}>
+              Retry
+            </button>
+          ) : null}
+        </div>
       ) : null}
-      {!feedback && isLoading ? (
+      {!feedback && isLoading && (auxiliaryDataState === "loading" || (runningEntries.length === 0 && nonRunningEntries.length === 0)) ? (
         <div className="home-session-list-load-status" role="status" aria-live="polite">
           <span className="home-session-list-load-spinner" aria-hidden="true" />
           <span className="sr-only">{loadingMessage}</span>

@@ -95,6 +95,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
   - Auxiliary一覧の取得状態はMonitor領域のstatus feedbackで示す。未取得の親cardに架空のAuxiliary集約を作らず、既に取得したsummaryがある場合は既知のrun状態を保持して取得errorと区別する
+  - open Session summaryの取得失敗もMonitor領域へ表示し、`Retry`で再取得できる。取得済みのcardは再取得中も保持する
   - open な SessionWindow がないときは、正常なempty本文を出さず、Monitorのshellと必要なstatus/accessibilityだけを保つ
   - `MonitorWindow` button から独立した monitor window を開ける
 - `RecentSessions`
@@ -104,6 +105,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
     - `taskTitle / workspace / kind label`
     - 部分一致
   - 検索欄と`New Session`は固定し、上下に余白を持たせたsession listだけをスクロールする
+  - Recent、Pinned、open Session summary、Random用のCharacter利用履歴は取得結果と失敗を分離する。Recent／Pinnedの取得・追加page取得の失敗は既存rowの有無によらず一覧のfeedbackと`Retry`へ表示し、New Sessionの開始エラーには混入させない。追加pageの失敗は自動再試行を続けず、`Retry`で続きの取得を再試行する
   - session list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない。検索0件でも本文を埋める説明文は出さない
   - `sessionKind === "character-authoring"` の Character authoring session は通常 session と同じ削除・再開導線へ到達できるよう表示する
   - session card の常時表示情報
@@ -138,6 +140,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Home の `New Session`、Character authoring、Auxiliary の provider picker は同じ状態境界を使う。取得中は picker 内の spinner と busy / accessible statusだけを表示して開始buttonをdisabledにし、取得失敗はprovider errorだけをalertで示して開始不可にする。取得成功後の0件だけ作成不可の説明を表示し、loading / error / ready 0 件を混同しない。開始処理中は各確定button内のspinnerとbusyだけを示し、busyをalertへ変換しない
   - Home `New Session`、Character authoring、Auxiliary の launch-section は意味上のgroupとして維持するが、装飾用のnested cardを描画しない
   - Character selector は開くたびにランダムを初期選択する。明示選択したactive Characterはそのまま使い、Characterが0件の場合はneutral fallbackを使う。詳細はADR 004を参照する
+  - Random開始には取得済みの利用履歴とopen Session情報が必要で、再取得中・失敗時は開始を拒否する。使用中Characterはopen summaryから判定し、表示用Recent／Pinnedの失敗だけではRandomを止めない。取得回復時は取得由来のfeedbackだけを解消し、Session作成など別の操作失敗は保持する
   - Homeの管理用Character一覧は初回とWindow再フォーカス時に再取得する。New Sessionは開くたびに取得した一覧と取得状態を閉じるまで保持し、表示・選択・起動候補に同じ一覧を使う。Homeの再取得や外部のCharacter変更は開いているdialogへ反映せず、閉じて再度開いた時に最新化する
   - New Sessionを開く時のCharacter取得に失敗した場合は保持済みの一覧を起動候補として使わず、Character selectorに取得失敗を示してSession作成を無効にする。取得成功後の0件だけneutral fallbackを使う
   - Random選択の`Start`はCharacter利用履歴とopen Session Window一覧の両方が取得成功した場合だけ有効にする。どちらかがloading / errorの間は開始不可とし、固定Character選択にはこの2取得を要求しない。選択と取得状態の変化に開始可否が追従し、実行時も同じ取得条件を再検証する。取得成功後の0件と未取得・取得失敗を区別する

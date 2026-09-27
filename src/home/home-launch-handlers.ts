@@ -13,7 +13,7 @@ import {
   updateLaunchDraftForProviderSelection,
   updateLaunchDraftForRandomCharacterSelection,
 } from "./home-launch-state.js";
-import { startHomeLaunch } from "./home-launch-actions.js";
+import { startHomeLaunch, type HomeLaunchFeedbackSource } from "./home-launch-actions.js";
 
 type HomeLaunchHandlersContext = {
   launchDraft: HomeLaunchDraft;
@@ -30,7 +30,7 @@ type HomeLaunchHandlersContext = {
   sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
   refreshCharacterEntries: () => Promise<readonly CharacterCatalogEntry[]>;
   setLaunchCharacterCatalog: (catalog: HomeLaunchCharacterCatalog) => void;
-  setLaunchFeedback: (message: string) => void;
+  setLaunchFeedback: (message: string, source?: HomeLaunchFeedbackSource) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
   setLaunchDraft: (updater: HomeLaunchDraft | ((draft: HomeLaunchDraft) => HomeLaunchDraft)) => void;
   pickWorkspaceDirectory: () => Promise<string | null> | string | null;

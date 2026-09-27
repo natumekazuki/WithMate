@@ -13,6 +13,7 @@ export type HomeMonitorContentInput = {
   runningEmptyMessage?: string;
   nonRunningEmptyMessage?: string;
   feedback?: string;
+  onRetry?: () => void;
   onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowContextMenu: (
     kind: SessionMonitorEntryKind,
@@ -29,6 +30,7 @@ export function buildHomeMonitorContentProps({
   runningEmptyMessage,
   nonRunningEmptyMessage,
   feedback,
+  onRetry,
   onOpenSession,
   onShowContextMenu,
 }: HomeMonitorContentInput): HomeMonitorContentProps {
@@ -40,6 +42,7 @@ export function buildHomeMonitorContentProps({
     runningEmptyMessage,
     nonRunningEmptyMessage,
     feedback,
+    onRetry,
     onOpenSession,
     onShowContextMenu,
   };

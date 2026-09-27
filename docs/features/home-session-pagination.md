@@ -16,11 +16,15 @@ Sessionのtitle、pin、実行状態などが更新された場合は一覧を�
 
 再取得後も可能な限りscroll位置を維持します。削除や検索条件の変更でrow集合が変わった場合は、現在の結果に合わせて位置を調整します。
 
+Recent／Pinnedの取得失敗は、表示済みrowを保持したまま一覧領域に表示します。`Retry`で再取得でき、追加pageの失敗時は続きのpageを再試行します。取得エラーはNew Sessionの開始エラーとは別に管理し、対象の取得が成功すると解消します。
+
 ## queryの分離
 
 Home用summary page、open Sessionの詳細、検索条件は別の契約として扱います。Home一覧の性能改善を理由に、Session Windowが必要とする詳細情報をsummaryへ追加しません。
 
 database更新通知にはquery generationを使用します。古いgenerationの非同期結果を、更新後の一覧へ反映しません。
+
+Recent、Pinned、open Session summary、Character利用履歴の成功・失敗は独立して反映します。追加pageの取得は、進行中のopen summaryや利用履歴の結果を失効させません。Random開始は表示用pageではなく専用の利用履歴とopen summaryを使い、その情報が取得中・取得失敗なら開始しません。
 
 ## 関連文書
 
