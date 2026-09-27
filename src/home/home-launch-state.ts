@@ -33,6 +33,11 @@ export type LaunchCharacterSelectionMode = "specific" | "random";
 export type HomeLaunchWorkspaceValidationState = "idle" | "debouncing" | "pending" | "valid" | "invalid";
 export type HomeCharacterLoadStatus = "loading" | "loaded" | "error";
 
+export type HomeLaunchCharacterCatalog = {
+  entries: readonly CharacterCatalogEntry[];
+  status: HomeCharacterLoadStatus;
+};
+
 export type HomeLaunchDraft = {
   open: boolean;
   title: string;
