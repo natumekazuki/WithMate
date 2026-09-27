@@ -68,8 +68,9 @@ export class MainStoreContext {
   public setMemoryRuntimeStatus(value: MemoryV6Diagnostics["runtime"]["status"]): void { this.state.memoryStatus = value; }
   public setDrainCursor(value: CharacterAffectTurnDrainCursor | undefined): void { this.state.drainCursor = value; }
   public setSessions(value: Session[]): void {
+    const nextById = new Map(value.map((session) => [session.id, session]));
     for (const previous of this.state.sessions) {
-      const next = value.find((session) => session.id === previous.id);
+      const next = nextById.get(previous.id);
       if (!next || getSessionIncarnationId(next) !== getSessionIncarnationId(previous)) {
         this.executionSelections.forgetParent(previous.id);
       }

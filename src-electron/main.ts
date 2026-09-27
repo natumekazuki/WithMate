@@ -1837,7 +1837,7 @@ async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
 }
 
 async function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<void> {
-  return requireAppSettingsStorage().updateChatLayoutPreference(update);
+  requireSettingsCatalogService().updateChatLayoutPreference(update);
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
@@ -2267,7 +2267,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       isSessionRunInFlight,
       isRunningSession,
       listSessions: listFullStoredSessionsForMaintenance,
-      listAuxiliarySessions: () => requireAuxiliarySessionService().listAllAuxiliarySessions(),
+      listAuxiliarySessions: () => requireAuxiliarySessionStorage().listAllAuxiliarySessions(),
       listSessionCredentialThreads: () => {
         const storage = requireSessionStorage();
         if (!storage.listSessionCredentialThreads) throw new Error("Credential thread projection requires V6 storage.");
@@ -2276,6 +2276,15 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       listAuxiliaryCredentialThreads: () => requireAuxiliarySessionStorage().listAuxiliaryCredentialThreads(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       updateAppSettings,
+      updateChatLayoutPreference: (update) => requireAppSettingsStorage().updateChatLayoutPreference(update),
+      onChatLayoutPreferenceSaveError: (update, error) => writeAppLog({
+        level: "error",
+        kind: "chat.layout-preference-save-failed",
+        process: "main",
+        message: "Chat layout preference save failed",
+        data: { update },
+        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
+      }),
       getModelCatalog,
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       importModelCatalogDocument: (document, source) => requireModelCatalogStorage().importCatalogDocument(document, source),
@@ -2315,6 +2324,10 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       },
       broadcastSessions,
       broadcastAppSettings,
+      applyCurrentExecutionCatalog: (snapshot) => {
+        mainStoreContext.executionSelections.setModelCatalog(snapshot);
+        mainStoreContext.setSessions(mainStoreContext.sessions);
+      },
       broadcastModelCatalog,
     });
   }

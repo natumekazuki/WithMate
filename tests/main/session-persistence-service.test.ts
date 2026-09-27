@@ -133,14 +133,14 @@ describe("SessionPersistenceService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "実行オプション選択は任意checkpoint失敗後もメモリ正本に残り、後続のstale retry・terminal保存へ重ねられる"
-  // oracle = { type = "contract", ref = "docs/design/database-schema.md: Session実行オプションとturn保存" }
+  // claim = "Approval・Sandboxを含む実行オプション選択は任意checkpoint失敗後もメモリ正本に残り、後続のstale retry・terminal保存へ重ねられる"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send" }
   // fault = "checkpoint失敗で選択を巻き戻す、または後続の古いSession保存が新しい選択を上書きする"
   // observable = "選択memory、checkpoint失敗、retry/terminal storage引数と最終保存値、checkpoint通知数"
   // observation_boundary = "component-behavior"
   // scope = "session-persistence-service-selection-overlay"
   // lifecycle = "permanent"
-  // impact = "次turnの選択と保存状態が食い違い、古いmodel/depthで実行される"
+  // impact = "表示・後続保存に旧設定が残り、利用者の実行設定選択が失われる"
   // distinction = "SQL列更新テストでなく、同じmutation queue内の選択記憶と後続upsertの競合を確認する"
   // @end-test-value
   it("checkpoint失敗後も選択を保持しstale保存へoverlayする", async () => {
@@ -176,9 +176,15 @@ describe("SessionPersistenceService", () => {
       closeSessionWindow: () => undefined,
       broadcastSessions: (ids) => broadcasts.push(Array.from(ids ?? [])),
     });
-    const selected = { ...captureSessionExecutionOptions(session), reasoningEffort: "high" as const };
-    await assert.rejects(service.setSessionExecutionOptions(session.id, "owner-a", selected), /checkpoint unavailable/);
-    assert.equal(selections.apply(session).reasoningEffort, "high");
+    const selected = {
+      ...captureSessionExecutionOptions(session), reasoningEffort: "high" as const,
+      approvalMode: "never" as const, codexSandboxMode: "danger-full-access" as const,
+    };
+    assert.deepEqual(await service.setSessionExecutionOptions(session.id, "owner-a", selected), {
+      status: "accepted", checkpointSaved: false,
+    });
+    assert.deepEqual(captureSessionExecutionOptions(selections.apply(session)), selected);
+    assert.deepEqual(captureSessionExecutionOptions(cached[0]!), selected);
     assert.deepEqual(broadcasts, []);
     await service.upsertSessionPreservingPin({ ...session, reasoningEffort: "medium" });
     await service.upsertTerminalSession({ ...session, status: "idle", reasoningEffort: "medium" }, {
@@ -186,7 +192,7 @@ describe("SessionPersistenceService", () => {
       threadId: "", errorMessage: "", completedAt: "2026-09-27T00:00:00.000Z",
     });
     assert.deepEqual(storedModels, ["codex-default:high", "codex-default:high"]);
-    assert.equal(stored.reasoningEffort, "high");
+    assert.deepEqual(captureSessionExecutionOptions(stored), selected);
   });
 
   // @test-value v2

@@ -4,6 +4,7 @@ import { MainStoreContext } from "../../src-electron/app/main-store-context.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 
 function createSession() {
   return buildNewSession({
@@ -66,4 +67,49 @@ it("Auxiliaryの現在選択を親ownerへ閉じる", () => {
   context.setSessions([{ ...session, incarnationId: "new-parent" }]);
   assert.equal(context.executionSelections.apply(auxiliary).model, "model-a");
   assert.equal(context.executionSelections.latestForProvider("codex"), null);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "catalog変更はMainとAuxiliaryの現在選択をactive revisionへ投影し、rollback・旧checkpoint・revisionが下がるresetにも追従する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#現行の反映" }
+// fault = "保存されていない選択を旧revisionに固定するか、importの一時的な正規化でrollback前の選択を失う"
+// observable = "Main/Auxiliaryのmodel・depth・catalogRevisionと新規会話用の初期選択"
+// observation_boundary = "component-behavior"
+// scope = "current-selection-catalog-reconciliation"
+// lifecycle = "permanent"
+// @end-test-value
+it("catalog importとrollbackは現在選択を新revisionへ揃える", () => {
+  const context = new MainStoreContext();
+  const main = createSession();
+  const aux = { ...main, id: "aux-selection", parentSessionId: main.id, createdAt: "2026-09-27" } as unknown as AuxiliarySessionSummary;
+  const selected = captureSessionExecutionOptions({ ...main, model: "model-b", reasoningEffort: "medium" });
+  context.setSessions([main]);
+  context.executionSelections.remember(main, selected);
+  context.executionSelections.remember(aux, selected);
+  const catalog: ModelCatalogSnapshot = { revision: 2, providers: [{
+    id: "codex", label: "Codex", defaultModelId: "model-c", defaultReasoningEffort: "high",
+    models: [{ id: "model-c", label: "C", reasoningEfforts: ["high"] }],
+  }] };
+  context.executionSelections.setModelCatalog(catalog);
+  context.setSessions([main]);
+  assert.equal(context.sessions[0]?.model, "model-c");
+  assert.equal(context.sessions[0]?.catalogRevision, 2);
+  assert.equal(context.executionSelections.apply(aux).reasoningEffort, "high");
+  assert.equal(context.executionSelections.latestForProvider("codex")?.model, "model-c");
+  context.executionSelections.setModelCatalog({ ...catalog, revision: 3, providers: [{ ...catalog.providers[0]!,
+    models: [...catalog.providers[0]!.models, { id: "model-b", label: "B", reasoningEfforts: ["medium"] }],
+  }] });
+  context.setSessions([main]);
+  assert.equal(context.sessions[0]?.model, "model-b");
+  assert.equal(context.sessions[0]?.catalogRevision, 3);
+  assert.equal(context.executionSelections.apply(aux).model, "model-b");
+  assert.equal(context.executionSelections.apply(aux).catalogRevision, 3);
+  assert.equal(context.executionSelections.latestForProvider("codex")?.reasoningEffort, "medium");
+  context.executionSelections.setModelCatalog({ ...catalog, revision: 1 });
+  context.setSessions([main]);
+  assert.equal(context.sessions[0]?.catalogRevision, 1);
+  assert.equal(context.sessions[0]?.model, "model-c");
+  assert.equal(context.executionSelections.apply(aux).catalogRevision, 1);
+  assert.equal(context.executionSelections.apply(aux).model, "model-c");
 });

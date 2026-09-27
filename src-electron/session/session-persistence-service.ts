@@ -30,6 +30,7 @@ import { SessionIdCollisionError, SessionNotFoundError } from "./session-storage
 import type { RunCharacterAffectTurnOwnershipExclusive } from "../character/character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import type { SetExecutionOptionsResult } from "../../src-shared/session/session-mutation-contract.js";
 import type {
   SessionCharacterAuthoringRuntimeClearInput,
   SessionCharacterAuthoringRuntimeClearResult,
@@ -258,7 +259,7 @@ export class SessionPersistenceService {
     });
   }
 
-  async setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions): Promise<void> {
+  async setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions): Promise<SetExecutionOptionsResult> {
     const revision = (this.selectionRequestRevisions.get(sessionId) ?? 0) + 1;
     this.selectionRequestRevisions.set(sessionId, revision);
     const catalog = await this.deps.getModelCatalogSnapshot();
@@ -290,6 +291,9 @@ export class SessionPersistenceService {
     this.selectionCheckpoints.set(sessionId, checkpoint);
     try {
       await checkpoint;
+      return { status: "accepted", checkpointSaved: true };
+    } catch {
+      return { status: "accepted", checkpointSaved: false };
     } finally {
       if (this.selectionCheckpoints.get(sessionId) === checkpoint) this.selectionCheckpoints.delete(sessionId);
     }

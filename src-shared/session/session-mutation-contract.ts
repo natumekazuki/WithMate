@@ -6,6 +6,10 @@ export type SetSessionExecutionOptionsRequest = {
   executionOptions: SessionExecutionOptions;
 };
 
+export type SetExecutionOptionsResult =
+  | { status: "accepted"; checkpointSaved: boolean }
+  | { status: "superseded" };
+
 export type SetSessionTitleRequest = {
   sessionId: string;
   incarnationId: string;

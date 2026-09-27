@@ -986,17 +986,21 @@ rejectSessionA!(new Error("load failed"));
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "quit準備後のWindow closeでもsettled open snapshotを破棄しない"
+  // claim = "Window復元候補の保存が未完了でもopenとquit準備を完了し、quit準備後のcloseで保存候補を空にしない"
   // oracle = { type = "contract", ref = "SessionWindowBridge#prepareSnapshotForQuit" }
-  // fault = "quit準備中の遅延closeでrestore snapshotを空にして再起動時のWindowを失う"
-  // observable = "保存されたopen Session Window ID"
+  // fault = "任意保存をopenやquitの待機条件にする、またはquit準備中のcloseで復元候補を空にする"
+  // observable = "保存未完了中のopen・quit準備の完了と、保存へ渡されたWindow ID"
   // observation_boundary = "public-boundary"
   // scope = "session-window-restore"
   // lifecycle = "permanent"
+  // impact = "復元情報の保存遅延だけでWindow操作やアプリ終了が停止する"
+  // distinction = "本文を保護するdraft flushとは別に、復元候補の保存待ちを制御可能なPromiseで観測する"
   // @end-test-value
-  it("quit前に現在集合を保存し、その後のWindow closeではsnapshotを空にしない", async () => {
+  it("復元候補の保存を待たずopenとquit準備を完了し、closeで候補を空にしない", async () => {
     const session = createSession();
     const savedSnapshots: string[][] = [];
+    let finishSave!: () => void;
+    const saving = new Promise<void>((resolve) => { finishSave = resolve; });
     const bridge = new SessionWindowBridge({
       createWindow: () => new StubWindow(),
       async loadChatEntry() {},
@@ -1007,16 +1011,29 @@ rejectSessionA!(new Error("load failed"));
       broadcastOpenSessionWindowIds() {},
       async persistOpenSessionWindowIds(sessionIds) {
         savedSnapshots.push([...sessionIds]);
+        await saving;
       },
     });
 
-    const window = await bridge.openSessionWindow(session.id);
-    savedSnapshots.splice(0);
-    await bridge.prepareSnapshotForQuit();
-    window.close();
-    await new Promise((resolve) => setImmediate(resolve));
-
-    assert.deepEqual(savedSnapshots, [[session.id]]);
+    let opened = false;
+    const opening = bridge.openSessionWindow(session.id).then((window) => { opened = true; return window; });
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(opened, true);
+      const window = await opening;
+      savedSnapshots.splice(0);
+      let prepared = false;
+      const preparing = bridge.prepareSnapshotForQuit().then(() => { prepared = true; });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(prepared, true);
+      await preparing;
+      window.close();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(savedSnapshots, [[session.id]]);
+    } finally {
+      finishSave();
+      await opening;
+    }
   });
 
   // @test-value v2

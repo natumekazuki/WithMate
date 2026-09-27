@@ -17,6 +17,8 @@ export type SessionChatRuntimeFeatureInput = {
   onRecheckWorkspaceAvailability: () => void;
   inlinePathFeedback: string;
   onDismissInlinePathFeedback: () => void;
+  executionOptionsFeedback?: string;
+  onDismissExecutionOptionsFeedback?: () => void;
   contextPane: SessionContextPaneProps;
 };
 
@@ -51,6 +53,15 @@ export function buildSessionChatRuntimeFeature(
           message: input.inlinePathFeedback,
           dismissLabel: "Dismiss path result",
           onDismiss: input.onDismissInlinePathFeedback,
+        }]
+      : []),
+    ...(input.executionOptionsFeedback?.trim()
+      ? [{
+          id: "execution-options",
+          message: input.executionOptionsFeedback,
+          relatedControl: "composer" as const,
+          dismissLabel: "Dismiss execution options error",
+          onDismiss: input.onDismissExecutionOptionsFeedback,
         }]
       : []),
   ];

@@ -20,10 +20,9 @@ import {
   DEFAULT_CODEX_SANDBOX_MODE,
 } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { CODEX_SPEED_VALUES, DEFAULT_CODEX_SPEED } from "../../src-shared/settings/codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER, resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-reviewer.js";
+import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer.js";
 import {
   coerceModelSelection,
-  getModelCatalogItem,
   getProviderCatalog,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
@@ -31,6 +30,7 @@ import {
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type {
+  SetExecutionOptionsResult,
   SetAuxiliaryExecutionOptionsRequest,
   SetAuxiliaryTitleRequest,
   SetAuxiliaryMessageBookmarkRequest,
@@ -116,23 +116,6 @@ function buildInterruptedMessages(messages: AuxiliarySession["messages"]): Auxil
       accent: true,
     },
   ];
-}
-
-async function isRuntimeMetadataInCatalog(
-  session: AuxiliarySession,
-  snapshot: ModelCatalogSnapshot | null | undefined,
-): Promise<boolean> {
-  if (!snapshot || session.catalogRevision !== snapshot.revision) {
-    return false;
-  }
-
-  const providerCatalog = getProviderCatalog(snapshot.providers, session.provider);
-  if (!providerCatalog || providerCatalog.id !== session.provider) {
-    return false;
-  }
-
-  const model = getModelCatalogItem(providerCatalog, session.model);
-  return model?.reasoningEfforts.includes(session.reasoningEffort) ?? false;
 }
 
 function resolveInitialModelSelection(input: CreateAuxiliarySessionInput, providerCatalog: ModelCatalogProvider) {
@@ -412,20 +395,20 @@ export class AuxiliarySessionService {
     if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
   }
 
-  async setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Promise<void> {
+  async setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Promise<SetExecutionOptionsResult> {
     const selectionKey = `${request.auxiliarySessionId}:${request.createdAt}`;
     const revision = (this.selectionRequestRevisions.get(selectionKey) ?? 0) + 1;
     this.selectionRequestRevisions.set(selectionKey, revision);
     const { storage, identity, session } = await this.getMutationTarget(request);
     const snapshot = await this.deps.getModelCatalogSnapshot?.();
-    if (this.selectionRequestRevisions.get(selectionKey) !== revision) return;
+    if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
     const current = await storage.getAuxiliarySessionSummary(request.auxiliarySessionId);
     this.assertStorageIdentity(storage, identity);
     if (!current || current.parentSessionId !== request.parentSessionId
       || current.createdAt !== request.createdAt || current.status !== "active") {
       throw new Error("The Auxiliary Session could not be found or has changed.");
     }
-    if (this.selectionRequestRevisions.get(selectionKey) !== revision) return;
+    if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
     const fresh = this.overlayExecutionOptions(current);
     const provider = getProviderCatalog(snapshot?.providers ?? [], fresh.provider);
     if (!snapshot || !provider || provider.id !== session.provider) {
@@ -433,7 +416,7 @@ export class AuxiliarySessionService {
     }
     const options = validateSessionExecutionOptions(request.executionOptions, provider, snapshot.revision);
     this.assertStorageIdentity(storage, identity);
-    if (this.selectionRequestRevisions.get(selectionKey) !== revision) return;
+    if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
     if (fresh.runState === "running" || this.deps.isAuxiliaryRunInFlight?.(fresh.id)) {
       if (options.approvalMode !== fresh.approvalMode || options.codexSandboxMode !== fresh.codexSandboxMode
         || options.codexSpeed !== fresh.codexSpeed || options.codexReviewer !== fresh.codexReviewer
@@ -455,6 +438,9 @@ export class AuxiliarySessionService {
     this.selectionCheckpoints.set(session.id, checkpoint);
     try {
       await checkpoint;
+      return { status: "accepted", checkpointSaved: true };
+    } catch {
+      return { status: "accepted", checkpointSaved: false };
     } finally {
       if (this.selectionCheckpoints.get(session.id) === checkpoint) this.selectionCheckpoints.delete(session.id);
     }
@@ -1144,39 +1130,26 @@ export class AuxiliarySessionService {
     if (isRuntimeStalePayload) {
       return this.overlayExecutionOptions(current);
     }
-    const hasRuntimeMetadataChange =
-      session.provider !== current.provider ||
-      session.catalogRevision !== current.catalogRevision ||
-      session.model !== current.model ||
-      session.reasoningEffort !== current.reasoningEffort;
-    const isExplicitRuntimeMetadataUpdate =
-      hasRuntimeMetadataChange &&
-      await isRuntimeMetadataInCatalog(session, await this.deps.getModelCatalogSnapshot?.());
-    const shouldPreserveRuntimeMetadata =
-      hasRuntimeMetadataChange &&
-      !isExplicitRuntimeMetadataUpdate;
-    const shouldResetRuntimeThread = hasRuntimeMetadataChange && !shouldPreserveRuntimeMetadata;
-
-    const next: AuxiliarySession = this.overlayExecutionOptions({
+    const next: AuxiliarySession = {
       ...current,
       status: "active",
       closedAt: "",
       title: session.title,
-      provider: shouldPreserveRuntimeMetadata ? current.provider : session.provider,
-      catalogRevision: shouldPreserveRuntimeMetadata ? current.catalogRevision : session.catalogRevision,
-      model: shouldPreserveRuntimeMetadata ? current.model : session.model,
-      reasoningEffort: shouldPreserveRuntimeMetadata ? current.reasoningEffort : session.reasoningEffort,
-      approvalMode: session.approvalMode,
-      codexSandboxMode: session.codexSandboxMode,
-      codexSpeed: session.codexSpeed,
-      codexReviewer: resolveCodexReviewerUpdate(current, session.codexReviewer),
-      customAgentName: session.customAgentName,
+      provider: current.provider,
+      catalogRevision: current.catalogRevision,
+      model: current.model,
+      reasoningEffort: current.reasoningEffort,
+      approvalMode: current.approvalMode,
+      codexSandboxMode: current.codexSandboxMode,
+      codexSpeed: current.codexSpeed,
+      codexReviewer: current.codexReviewer,
+      customAgentName: current.customAgentName,
       allowedAdditionalDirectories: [...session.allowedAdditionalDirectories],
       composerDraft: current.composerDraft,
       displayAfterMessageIndex: session.displayAfterMessageIndex,
-      threadId: shouldResetRuntimeThread ? "" : current.threadId,
+      threadId: current.threadId,
       updatedAt: currentTimestampLabel(),
-    });
+    };
     const updated = await storage.updateAuxiliarySessionIfMatches({
       session: next,
       expectedSession: current,

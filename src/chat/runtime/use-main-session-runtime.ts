@@ -9,6 +9,8 @@ import type { RunSessionTurnRequest } from "../../../src-shared/session/runtime-
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
+import { applyExecutionOptionsCatalog } from "../../../src-shared/session/execution-options-catalog.js";
+import type { ModelCatalogSnapshot } from "../../../src-shared/settings/model-catalog.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type {
   ComposerControllerRegistry,
@@ -38,6 +40,7 @@ export function useMainSessionRuntime({
   api,
   selectedId,
   composerRegistry,
+  onExecutionOptionsError,
 }: {
   api: Pick<
     WithMateWindowApi,
@@ -53,18 +56,21 @@ export function useMainSessionRuntime({
   > | null;
   selectedId: string | null;
   composerRegistry: ComposerControllerRegistry;
+  onExecutionOptionsError?: (sessionId: string, message: string) => void;
 }) {
   const [sessions, setSessionsBase] = useState<Session[]>([]);
   const currentSessionRef = useRef<Session | null>(null);
   const localSelectionRef = useRef<{ id: string; incarnationId: string; options: SessionExecutionOptions } | null>(null);
+  const activeCatalogRef = useRef<ModelCatalogSnapshot | null>(null);
+  const selectionRequestRevisionRef = useRef(0);
   const mergeLocalSelection = useCallback((next: Session): Session => {
     const selection = localSelectionRef.current;
-    if (!selection || selection.id !== next.id) return next;
+    if (!selection || selection.id !== next.id) return applyExecutionOptionsCatalog(next, activeCatalogRef.current);
     if (selection.incarnationId !== getSessionIncarnationId(next)) {
       localSelectionRef.current = null;
-      return next;
+      return applyExecutionOptionsCatalog(next, activeCatalogRef.current);
     }
-    return { ...next, ...selection.options };
+    return applyExecutionOptionsCatalog({ ...next, ...selection.options }, activeCatalogRef.current);
   }, []);
   const applySessions = useCallback((update: SetStateAction<Session[]>) => {
     setSessionsBase((previous) => {
@@ -74,6 +80,10 @@ export function useMainSessionRuntime({
       return merged;
     });
   }, [mergeLocalSelection, selectedId]);
+  const applyModelCatalog = useCallback((catalog: ModelCatalogSnapshot) => {
+    activeCatalogRef.current = catalog;
+    applySessions((current) => current);
+  }, [applySessions]);
   const mutationRevisionRef = useRef(new StateMutationRevision());
   const projectionRevisionRef = useRef(new StateMutationRevision());
   const refetchRevisionRef = useRef(new LatestRequestRevision());
@@ -102,17 +112,42 @@ export function useMainSessionRuntime({
 
   const selectExecutionOptions = useCallback((session: Session) => {
     const options = captureSessionExecutionOptions(session);
-    localSelectionRef.current = { id: session.id, incarnationId: getSessionIncarnationId(session), options };
+    const incarnationId = getSessionIncarnationId(session);
+    const revision = ++selectionRequestRevisionRef.current;
+    localSelectionRef.current = { id: session.id, incarnationId, options };
     currentSessionRef.current = session;
     applySessions((current) => current.map((candidate) => candidate.id === session.id ? { ...candidate, ...options } : candidate));
     if (api) {
-      void api.setSessionExecutionOptions({ sessionId: session.id, incarnationId: getSessionIncarnationId(session), executionOptions: options })
+      void api.setSessionExecutionOptions({ sessionId: session.id, incarnationId, executionOptions: options })
+        .then((result) => {
+          if (result.status === "accepted" && !result.checkpointSaved) {
+            void api.reportRendererLog({ level: "error", kind: "renderer.session-execution-options.failed", message: "Session execution options could not be saved", data: { sessionId: session.id } });
+          }
+        })
         .catch((error) => {
-          void api.reportRendererLog({ level: "error", kind: "renderer.session-execution-options.failed", message: "Session execution options could not be saved", data: { sessionId: session.id }, error: { name: error instanceof Error ? error.name : "UnknownError", message: error instanceof Error ? error.message : String(error) } });
+          if (selectionRequestRevisionRef.current !== revision || currentSessionRef.current?.id !== session.id
+            || getSessionIncarnationId(currentSessionRef.current) !== incarnationId) return;
+          const message = error instanceof Error ? error.message : String(error);
+          onExecutionOptionsError?.(session.id, `Execution options were not changed: ${message}`);
+          void api.getSession(session.id).then((accepted) => {
+            if (selectionRequestRevisionRef.current !== revision || currentSessionRef.current?.id !== session.id
+              || getSessionIncarnationId(currentSessionRef.current) !== incarnationId) return;
+            if (accepted && getSessionIncarnationId(accepted) !== incarnationId) return;
+            if (!accepted) {
+              localSelectionRef.current = null;
+              setAuthoritativeSessions((sessions) => selectionRequestRevisionRef.current === revision ? [] : sessions);
+              return;
+            }
+            const acceptedOptions = captureSessionExecutionOptions(accepted);
+            localSelectionRef.current = { id: session.id, incarnationId, options: acceptedOptions };
+            applySessions((sessions) => sessions.map((candidate) => candidate.id === session.id
+              && getSessionIncarnationId(candidate) === incarnationId
+              ? { ...candidate, ...acceptedOptions } : candidate));
+          }).catch(() => undefined);
         });
     }
     return session;
-  }, [api, applySessions]);
+  }, [api, applySessions, onExecutionOptionsError, setAuthoritativeSessions]);
 
   useEffect(() => {
     let active = true;
@@ -283,6 +318,7 @@ export function useMainSessionRuntime({
 
   return {
     sessions,
+    applyModelCatalog,
     getCurrentSession: () => currentSessionRef.current,
     selectExecutionOptions,
     updateSessionProjection: (sessionId: string, patch: (current: Session) => Session) => {

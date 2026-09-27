@@ -403,7 +403,6 @@ export function buildAuxiliarySessionRunningTransition(input: {
   parentMessageCount: number | null;
   updatedAt: string;
 }): {
-  anchorUpdateSession: AuxiliarySession | null;
   runningSession: AuxiliarySession;
 } {
   const displayAfterMessageIndex = resolveAuxiliarySessionDisplayAfterMessageIndex({
@@ -413,9 +412,6 @@ export function buildAuxiliarySessionRunningTransition(input: {
   });
 
   return {
-    anchorUpdateSession: displayAfterMessageIndex !== input.session.displayAfterMessageIndex
-      ? { ...input.session, displayAfterMessageIndex }
-      : null,
     runningSession: buildRunningAuxiliarySessionTurn({
       session: input.session,
       userMessage: input.userMessage,

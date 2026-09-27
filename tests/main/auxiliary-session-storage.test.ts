@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../../src-shared/settings/approval-mode.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-draft-contract.js";
@@ -27,6 +28,7 @@ import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js
 import { appendSessionFilesDirectoryForSessionId, resolveSessionFilesDirectory } from "../../src-electron/files/session-files.js";
 import { SessionStorage } from "../../src-electron/session/session-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
+import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
 
 type AuxiliarySessionServiceDeps = ConstructorParameters<typeof AuxiliarySessionServiceImpl>[0];
 
@@ -1260,16 +1262,23 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       text: "draft saved before model change",
       updatedAt: "2026-05-23T00:03:00.000Z",
     });
-    const explicitModelChange = await service.updateAuxiliarySession({
-      ...draftBeforeModelChange,
-      catalogRevision: 3,
-      model: "gpt-5.4-mini",
-      reasoningEffort: "medium",
+    await service.setAuxiliaryExecutionOptions({
+      auxiliarySessionId: draftBeforeModelChange.id,
+      parentSessionId: draftBeforeModelChange.parentSessionId,
+      createdAt: draftBeforeModelChange.createdAt,
+      executionOptions: {
+        ...captureSessionExecutionOptions(draftBeforeModelChange),
+        catalogRevision: 3,
+        model: "gpt-5.4-mini",
+        reasoningEffort: "medium",
+      },
     });
+    const explicitModelChange = await service.getAuxiliarySession(draftBeforeModelChange.id);
+    assert.ok(explicitModelChange);
     assert.equal(explicitModelChange.catalogRevision, 3);
     assert.equal(explicitModelChange.model, "gpt-5.4-mini");
     assert.equal(explicitModelChange.reasoningEffort, "medium");
-    assert.equal(explicitModelChange.threadId, "");
+    assert.equal(explicitModelChange.threadId, "thread-before-model-change");
     assert.equal((await service.getAuxiliarySession(explicitModelChange.id))?.composerDraft, "draft saved before model change");
 
     const userChangedModelWithDraft = auxiliaryStorage.upsertAuxiliarySession({
@@ -1612,11 +1621,18 @@ test("Auxiliary Reviewerは親から継承した後に独立して保存する",
     assert.equal(auxiliary.codexSpeed, "fast");
     assert.equal(auxiliary.codexReviewer, "auto-review");
 
-    const updated = await service.updateAuxiliarySession({
-      ...auxiliary,
-      codexSpeed: "standard",
-      codexReviewer: "user",
+    await service.setAuxiliaryExecutionOptions({
+      auxiliarySessionId: auxiliary.id,
+      parentSessionId: auxiliary.parentSessionId,
+      createdAt: auxiliary.createdAt,
+      executionOptions: {
+        ...captureSessionExecutionOptions(auxiliary),
+        codexSpeed: "standard",
+        codexReviewer: "user",
+      },
     });
+    const updated = await service.getAuxiliarySession(auxiliary.id);
+    assert.ok(updated);
     assert.equal(updated.codexSpeed, "standard");
     assert.equal((await service.getAuxiliarySession(auxiliary.id))?.codexSpeed, "standard");
     assert.equal(parent.codexSpeed, "fast");
@@ -1699,10 +1715,10 @@ test("Auxiliary更新は保存済みApprovalがneverの間Reviewerを保持す�
 
 // @test-value v2
 // kind = "contract"
-// claim = "指定parent集合のAuxiliary一覧は全statusを軽量summary列から返し、payload transcriptを再parseしない"
+// claim = "指定parent集合のAuxiliary一覧は全statusを軽量metadataから返し、正規化message本文をsummaryへ混ぜない"
 // oracle = { type = "contract", ref = "issue-710-lightweight-summary-read-path" }
-// fault = "closedを除外する、summaryへmessagesを混ぜる、または一覧取得のたびにpayload_jsonを読み直してtranscriptを投影する"
-// observable = "listAuxiliarySessionSummariesとlistActiveAuxiliarySessionSummariesの返却順・status・JSON.parse入力"
+// fault = "closedを除外する、summaryへmessagesを混ぜる、または一覧取得のたびにmessage本文を投影する"
+// observable = "listAuxiliarySessionSummariesとlistActiveAuxiliarySessionSummariesの返却順・status・messages不在とJSON.parse入力"
 // observation_boundary = "implementation"
 // scope = "auxiliary-session-storage-summary"
 // lifecycle = "permanent"
@@ -2375,6 +2391,91 @@ test("Auxiliary draft migration はactive/closedを移行しmalformed payloadを
     }
   } finally {
     await removeDirectoryWithRetry(directory);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "AuxiliaryのApproval・Sandboxを含む実行設定はcheckpoint失敗でも現在値として保持され、Additional Directory更新は保存済みprovider threadを維持する"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send" }
+// fault = "checkpoint失敗で現在選択を戻すか、一般更新が現在選択と保存済みmodelの差をruntime変更と誤認してthreadIdを消す"
+// observable = "checkpoint失敗とdirectory更新後の現在選択、および保存済みmodelとthreadId"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-service"
+// lifecycle = "permanent"
+// impact = "現在選択やproviderの会話履歴再開に必要なthreadIdが失われる"
+// distinction = "既存の一般更新testはcheckpoint失敗による現在選択と保存値の乖離を作らない"
+// @end-test-value
+test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthreadを維持する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-checkpoint-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  const sessionStorage = new SessionStorage(dbPath);
+  const auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+  try {
+    const parent = {
+      ...buildNewSession({
+        id: "checkpoint-parent",
+        taskTitle: "Checkpoint parent",
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "mate",
+        character: "Mate",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      }),
+      provider: "codex",
+    };
+    sessionStorage.upsertSession(parent);
+    const selections = new CurrentExecutionSelections();
+    const service = new AuxiliarySessionService({
+      getParentSession: (parentSessionId) => sessionStorage.getSession(parentSessionId),
+      getStorage: () => auxiliaryStorage,
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+      rememberExecutionOptions: (session, options) => selections.remember(session, options),
+      overlayCurrentExecutionOptions: (session) => selections.apply(session),
+    });
+    const auxiliary = await service.createAuxiliarySession({
+      parentSessionId: parent.id,
+      provider: parent.provider,
+    });
+    const withThread = auxiliaryStorage.upsertAuxiliarySession({ ...auxiliary, threadId: "existing-provider-thread" });
+    const selectedOptions = {
+      ...captureSessionExecutionOptions(withThread),
+      model: "gpt-5.4-mini",
+      reasoningEffort: "medium" as const,
+      approvalMode: "never" as const,
+      codexSandboxMode: "danger-full-access" as const,
+    };
+    auxiliaryStorage.updateAuxiliaryExecutionOptionsIfMatches = () => {
+      throw new Error("checkpoint unavailable");
+    };
+    const checkpointResult = await service.setAuxiliaryExecutionOptions({
+      auxiliarySessionId: withThread.id,
+      parentSessionId: withThread.parentSessionId,
+      createdAt: withThread.createdAt,
+      executionOptions: selectedOptions,
+    });
+    assert.deepEqual(checkpointResult, { status: "accepted", checkpointSaved: false });
+
+    const currentSelection = await service.getAuxiliarySession(withThread.id);
+    assert.ok(currentSelection);
+    assert.deepEqual(captureSessionExecutionOptions(currentSelection), selectedOptions);
+    assert.equal(auxiliaryStorage.getAuxiliarySession(withThread.id)?.model, withThread.model);
+    const updated = await service.updateAuxiliarySession({
+      ...currentSelection,
+      allowedAdditionalDirectories: ["C:/review-context"],
+    });
+    assert.deepEqual(updated.allowedAdditionalDirectories, ["C:/review-context"]);
+    assert.deepEqual(captureSessionExecutionOptions(updated), selectedOptions);
+    assert.equal(updated.threadId, "existing-provider-thread");
+    assert.equal(auxiliaryStorage.getAuxiliarySession(withThread.id)?.threadId, "existing-provider-thread");
+    assert.equal(auxiliaryStorage.getAuxiliarySession(withThread.id)?.model, withThread.model);
+  } finally {
+    auxiliaryStorage.close();
+    sessionStorage.close();
+    await removeDirectoryWithRetry(tempDirectory);
   }
 });
 

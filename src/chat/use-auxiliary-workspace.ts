@@ -11,6 +11,8 @@ import type { SessionMessageColumnProps } from "./conversation/session-message-c
 import { setMessageBookmarked, type MessageArtifact } from "../../src-shared/session/session-state.js";
 import { mergeMessageBookmarkProjection } from "./runtime/session-submit-coordinator.js";
 import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { applyExecutionOptionsCatalog } from "../../src-shared/session/execution-options-catalog.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 
 export type AuxiliaryWorkspaceApi = {
@@ -54,6 +56,7 @@ export type AuxiliaryWorkspace = {
   refreshSummaries(): Promise<void>;
   touchRecency(id: string, updatedAt: string): void;
   getBinding(id: string | null): AuxiliarySessionBinding;
+  applyModelCatalog(catalog: ModelCatalogSnapshot): void;
   buildConcurrentChats(input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps;
 };
 
@@ -180,15 +183,17 @@ export function useAuxiliaryWorkspace(input: {
   const detailsRef = useRef(new Map<string, AuxiliarySession>());
   const bindingsRef = useRef(new Map<string, AuxiliarySessionBinding>());
   const executionSelectionsRef = useRef(new Map<string, { createdAt: string; options: SessionExecutionOptions }>());
+  const activeCatalogRef = useRef<ModelCatalogSnapshot | null>(null);
   const mergeExecutionSelection = useCallback((session: AuxiliarySession): AuxiliarySession => {
     const selection = executionSelectionsRef.current.get(session.id);
-    if (!selection) return session;
+    if (!selection) return applyExecutionOptionsCatalog(session, activeCatalogRef.current);
     if (selection.createdAt !== session.createdAt) {
       executionSelectionsRef.current.delete(session.id);
-      return session;
+      return applyExecutionOptionsCatalog(session, activeCatalogRef.current);
     }
-    if (Object.entries(selection.options).every(([key, value]) => session[key as keyof SessionExecutionOptions] === value)) return session;
-    return { ...session, ...selection.options };
+    const selected = Object.entries(selection.options).every(([key, value]) => session[key as keyof SessionExecutionOptions] === value)
+      ? session : { ...session, ...selection.options };
+    return applyExecutionOptionsCatalog(selected, activeCatalogRef.current);
   }, []);
   const loadRevisionRef = useRef(0);
   const listRevisionRef = useRef(0);
@@ -641,6 +646,11 @@ export function useAuxiliaryWorkspace(input: {
     return binding;
   }, [mergeExecutionSelection]);
 
+  const applyModelCatalog = useCallback((catalog: ModelCatalogSnapshot) => {
+    activeCatalogRef.current = catalog;
+    for (const session of detailsRef.current.values()) getBinding(session.id).setSession(session);
+  }, [getBinding]);
+
   const buildConcurrentChats = useCallback((input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps => {
     const mainSessionId = input.mainSession?.id ?? input.messageColumn.sessionId;
     const mainMessages = input.mainSession?.messages ?? input.messageColumn.messages;
@@ -717,6 +727,7 @@ export function useAuxiliaryWorkspace(input: {
     refreshSummaries,
     touchRecency,
     getBinding,
+    applyModelCatalog,
     buildConcurrentChats,
-  }), [addSession, buildConcurrentChats, commitWidthRatio, detailError, detailLoading, error, getBinding, loading, refreshSummaries, requestSessionSelection, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, touchRecency, widthRatio]);
+  }), [addSession, applyModelCatalog, buildConcurrentChats, commitWidthRatio, detailError, detailLoading, error, getBinding, loading, refreshSummaries, requestSessionSelection, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, touchRecency, widthRatio]);
 }

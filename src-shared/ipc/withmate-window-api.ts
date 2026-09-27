@@ -3,6 +3,7 @@ import type { AppSettings } from "../settings/provider-settings-state.js";
 import type { CharacterProfile } from "../character/character-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, SessionCharacterUsage, Session, SessionSummaryInvalidation, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary, SetSessionPinnedRequest } from "../session/session-state.js";
 import type {
+  SetExecutionOptionsResult,
   SetAuxiliaryExecutionOptionsRequest,
   SetAuxiliaryMessageBookmarkRequest,
   SetAuxiliaryTitleRequest,
@@ -204,7 +205,7 @@ export type WithMateWindowSessionApi = {
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
-  setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Promise<void>;
+  setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
   setSessionTitle(request: SetSessionTitleRequest): Promise<void>;
   setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Promise<void>;
   setSessionPinned(request: SetSessionPinnedRequest): Promise<SessionSummary>;
@@ -252,7 +253,7 @@ export type WithMateWindowAuxiliaryApi = {
   cancelAuxiliaryCreation(request: import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Promise<import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
   getAuxiliaryCreation(request: import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Promise<import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
   updateAuxiliarySession(session: AuxiliarySession): Promise<AuxiliarySession>;
-  setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Promise<void>;
+  setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
   setAuxiliaryTitle(request: SetAuxiliaryTitleRequest): Promise<void>;
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Promise<void>;
   closeAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession>;

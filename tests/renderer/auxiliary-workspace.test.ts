@@ -17,6 +17,7 @@ import {
   createStaticTextConversationMessageColumnProps,
 } from "../../src/chat/chat-window-adapter.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 
 type AuxiliaryWorkspaceApi = Omit<WorkspaceApi, "getAuxiliarySessionStatus"> & Partial<Pick<WorkspaceApi, "getAuxiliarySessionStatus">>;
 
@@ -128,6 +129,53 @@ function deferred<T>() {
   const promise = new Promise<T>((next) => { resolve = next; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "catalog変更は表示中と非表示のAuxiliaryへ反映され、旧snapshotで戻らずrollbackやrevisionが下がるresetにも追従する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#現行の反映" }
+// fault = "現在選択が新catalogを上書きするか、表示中の会話だけ更新して他の会話を旧revisionに残す"
+// observable = "両bindingとselectedSessionのmodel、depth、catalogRevision"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-catalog-selection"
+// lifecycle = "permanent"
+// @end-test-value
+test("catalog更新を表示中と非表示のAuxiliaryへ反映する", async () => {
+  const a = session("a", "2026-01-01");
+  const b = session("b", "2026-01-02");
+  const view = setup({ listAuxiliarySessions: async () => [a, b], getAuxiliarySession: async (id) => id === "a" ? a : b }, "parent-1", "a");
+  const catalog: ModelCatalogSnapshot = { revision: 2, providers: [{
+    id: "codex", label: "Codex", defaultModelId: "imported", defaultReasoningEffort: "high",
+    models: [{ id: "imported", label: "Imported", reasoningEfforts: ["high"] }],
+  }] };
+  try {
+    await view.render();
+    await act(async () => { view.current.selectSession("b"); });
+    await act(async () => {
+      view.current.getBinding("a").setExecutionSelection({ ...a, model: "chosen" });
+      view.current.getBinding("b").setExecutionSelection({ ...b, model: "chosen" });
+      view.current.applyModelCatalog(catalog);
+    });
+    assert.equal(view.current.selectedSession?.model, "imported");
+    assert.equal(view.current.getBinding("a").getSession()?.model, "imported");
+    await act(async () => { view.current.getBinding("a").setSession(a); });
+    assert.equal(view.current.getBinding("a").getSession()?.catalogRevision, 2);
+    await act(async () => { view.current.applyModelCatalog({ ...catalog, revision: 3, providers: [{ ...catalog.providers[0]!,
+      models: [...catalog.providers[0]!.models, { id: "chosen", label: "Chosen", reasoningEfforts: ["medium"] }],
+    }] }); });
+    assert.equal(view.current.selectedSession?.model, "chosen");
+    assert.equal(view.current.getBinding("a").getSession()?.model, "chosen");
+    assert.equal(view.current.getBinding("a").getSession()?.reasoningEffort, "medium");
+    assert.equal(view.current.selectedSession?.catalogRevision, 3);
+    await act(async () => { view.current.applyModelCatalog({ ...catalog, revision: 1 }); });
+    assert.equal(view.current.selectedSession?.catalogRevision, 1);
+    assert.equal(view.current.selectedSession?.model, "imported");
+    assert.equal(view.current.getBinding("a").getSession()?.catalogRevision, 1);
+    assert.equal(view.current.getBinding("a").getSession()?.model, "imported");
+  } finally {
+    await view.unmount();
+  }
+});
 
 // @test-value v2
 // kind = "contract"

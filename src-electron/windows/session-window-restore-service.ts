@@ -39,7 +39,6 @@ export class SessionWindowRestoreService {
 
   async getSnapshot(): Promise<string[]> {
     await this.restoreSetLoaded;
-    await this.writeTail;
     return [...this.restoreSet];
   }
 

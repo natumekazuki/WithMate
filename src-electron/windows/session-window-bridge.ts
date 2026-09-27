@@ -182,7 +182,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       const openedWindow = await openingPromise;
       if (this.sessionWindows.get(sessionId) === window && !window.isDestroyed()) {
         this.snapshotEligibleWindows.add(window);
-        await this.persistSnapshotBestEffort();
+        void this.persistSnapshotBestEffort();
       }
       return openedWindow;
     } finally {
@@ -299,7 +299,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
 
   async prepareSnapshotForQuit(): Promise<void> {
     this.snapshotUpdatesSuspended = true;
-    await this.persistSnapshotBestEffort(true);
+    void this.persistSnapshotBestEffort(true);
   }
 
   private async loadSessionWindow(

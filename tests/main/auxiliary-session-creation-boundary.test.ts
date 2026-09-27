@@ -1189,7 +1189,9 @@ test("Auxiliary軽量変更は全履歴を読まずcheckpoint失敗後も現在�
       customAgentName: created.customAgentName,
     };
     storage.updateAuxiliaryExecutionOptionsIfMatches = () => { throw new Error("checkpoint unavailable"); };
-    await assert.rejects(service.setAuxiliaryExecutionOptions({ ...identity, executionOptions: chosen }), /checkpoint unavailable/);
+    assert.deepEqual(await service.setAuxiliaryExecutionOptions({ ...identity, executionOptions: chosen }), {
+      status: "accepted", checkpointSaved: false,
+    });
     assert.equal((await service.getAuxiliarySessionSummary(created.id))?.reasoningEffort, "medium");
     assert.equal((await service.getAuxiliarySessionSummary(created.id))?.title, "renamed");
     storage.getAuxiliarySession = originalGet;
@@ -1223,7 +1225,7 @@ test("Auxiliary軽量変更は全履歴を読まずcheckpoint失敗後も現在�
     await catalogStarted;
     await service.setAuxiliaryExecutionOptions({ ...identity, executionOptions: chosen });
     releaseCatalog();
-    await stale;
+    assert.deepEqual(await stale, { status: "superseded" });
     assert.equal(storage.getAuxiliarySession(created.id)?.reasoningEffort, "medium");
 
     storage.upsertAuxiliarySession({ ...storage.getAuxiliarySession(created.id)!, runState: "running" });

@@ -2747,22 +2747,22 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionComposerExpandedのrunning/idle DOMは実行中だけCancel slotをactiveにし、Main / Auxiliary直前の位置を保ち、Sendは実行中だけdisabledになり、running中はtitle属性を持つ"
+// claim = "running中はCancelを主操作にしてSendと実行時固定設定を抑止しつつ、writableなModel/Depthの現在選択だけ次回Send用に変更できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "running/idleでCancel slotのactive・aria・button有無が誤る、target直前位置が崩れる、running中のSend title属性が欠ける、またはisSendDisabled=falseのSendがrunningでenabledかidleでdisabledになる"
-// observable = "running/idleでrender済みSessionComposerExpanded DOMのCancel slot class・aria・button有無、target slot位置、composer-control-row直下のSend disabled状態とrunning時のtitle属性"
+// fault = "Cancel/Sendのrunning状態が誤る、Approval/Sandboxがrunning中に変更できる、Model/Depthまでrunningだけで変更不可になる、またはread-onlyでも変更できる"
+// observable = "running/idle/read-onlyのCancel slot、Send disabled/title、Approval/Sandbox/Model/Depth select disabled属性"
 // observation_boundary = "component-behavior"
 // scope = "expanded ActionDock primary action"
 // lifecycle = "permanent"
-// impact = "SessionComposerExpandedのrunning/idle DOMでCancelの相対位置を揃え、実行中の下段Send枠の消失によるレイアウトシフトを防ぐ"
-// distinction = "このtestはSessionComposerExpanded単体のrunning/idle DOMを確認し、typecheck/buildや実画面確認では得られない状態別の構成を補う"
+// impact = "実行中turnの設定変更を防ぎつつ、次回送信のModel/Depthだけは予約できる。CancelとSendの位置も維持する"
+// distinction = "Composer単体の実描画属性をrunning/idleで確認し、Main側の設定捕捉や保存の検査とは役割を分ける"
 // @end-test-value
 test("SessionComposerExpanded は実行中の操作後に jump button と表示切替を右側 group へ描画する", () => {
-  const renderComposer = (isRunning: boolean) => renderToStaticMarkup(
+  const renderComposer = (isRunning: boolean, composerBlocked = false) => renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
       isRunning,
       targetDock: React.createElement("span", { className: "test-target-dock" }, "Main / Auxiliary"),
-      composerBlocked: false,
+      composerBlocked,
       canSelectCustomAgent: true,
       showCustomAgentPicker: true,
       showSkillPicker: true,
@@ -2861,6 +2861,11 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.ok(sendButton.getAttribute("title"), "running中のSendはblocked reason titleを持つ");
   assert.equal(sendButton.classList.contains("danger"), false);
   assert.equal(controlRow.querySelectorAll(":scope > button.session-send-button").length, 1);
+  const runningSelect = (className: string) => controlRow.querySelector<HTMLSelectElement>(`.${className} select`);
+  assert.equal(runningSelect("composer-setting-approval")?.disabled, true);
+  assert.equal(runningSelect("composer-setting-sandbox")?.disabled, true);
+  assert.equal(runningSelect("composer-setting-model")?.disabled, false);
+  assert.equal(runningSelect("composer-setting-depth")?.disabled, false);
 
   const idleHtml = renderComposer(false);
   const idleDocument = new JSDOM(idleHtml).window.document;
@@ -2879,6 +2884,12 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.equal(idleCancelSlot.querySelector("button"), null);
   assert.equal(idleCancelSlot.nextElementSibling, idleTargetSlot);
   assert.equal(idleSendButton.disabled, false);
+  assert.equal(idleControlRow.querySelector<HTMLSelectElement>(".composer-setting-model select")?.disabled, false);
+  assert.equal(idleControlRow.querySelector<HTMLSelectElement>(".composer-setting-depth select")?.disabled, false);
+
+  const readOnlyDocument = new JSDOM(renderComposer(true, true)).window.document;
+  assert.equal(readOnlyDocument.querySelector<HTMLSelectElement>(".composer-setting-model select")?.disabled, true);
+  assert.equal(readOnlyDocument.querySelector<HTMLSelectElement>(".composer-setting-depth select")?.disabled, true);
 });
 
 // @test-value v2
@@ -3167,10 +3178,10 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
 
 // @test-value v2
 // kind = "contract"
-// claim = "Composerがfreezeされたとき、入力を変更するtrigger・候補をdisabledにし、空欄shortcutの強制feedbackを表示する"
+// claim = "Composerがfreezeされたとき、入力・Model/Depthを変更するtrigger・候補をdisabledにし、空欄shortcutの強制feedbackを表示する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: close/app quit flush; docs/design/desktop-ui.md: composer feedback" }
-// fault = "終了flush中にpicker・template・directory操作が実行可能なまま残る、または空欄shortcutのMessage is empty表示が失われる"
-// observable = "freeze済みComposerの各操作buttonのdisabled属性と、forceComposerBlockedFeedback=trueで描画されたcomposer-sendability-feedbackの本文・textarea aria-describedby"
+// fault = "終了flush中にpicker・template・directory・Model/Depth操作が実行可能なまま残る、または空欄shortcutのMessage is empty表示が失われる"
+// observable = "freeze済みComposerの各操作buttonとModel/Depth selectのdisabled属性、composer-sendability-feedbackの本文・textarea aria-describedby"
 // observation_boundary = "component-behavior"
 // scope = "frozen composer mutation controls and forced sendability feedback"
 // lifecycle = "permanent"
@@ -3204,8 +3215,9 @@ test("SessionComposerExpanded はfreeze中の変更操作を無効化し、強�
   for (const selector of [
     ".composer-attachments-toolbar button", ".composer-agent-toolbar button",
     ".composer-path-match-list button",
+    ".composer-setting-model select", ".composer-setting-depth select",
   ]) {
-    const controls = Array.from(renderedDocument.querySelectorAll<HTMLButtonElement>(selector));
+    const controls = Array.from(renderedDocument.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(selector));
     assert.ok(controls.length > 0, selector);
     assert.ok(controls.every((control) => control.disabled), selector);
   }

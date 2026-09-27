@@ -96,6 +96,7 @@ import type {
   SetSessionPinnedRequest,
 } from "../../src-shared/session/session-state.js";
 import type {
+  SetExecutionOptionsResult,
   SetAuxiliaryExecutionOptionsRequest,
   SetAuxiliaryMessageBookmarkRequest,
   SetAuxiliaryTitleRequest,
@@ -333,7 +334,7 @@ export type MainIpcAuxiliaryDepsArgs = {
   cancelAuxiliaryCreation(request: import("../../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
   getAuxiliaryCreation(request: import("../../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
   updateAuxiliarySession(session: AuxiliarySession): Awaitable<AuxiliarySession>;
-  setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Awaitable<void>;
+  setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
   setAuxiliaryTitle(request: SetAuxiliaryTitleRequest): Awaitable<void>;
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Awaitable<void>;
   closeAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
@@ -353,7 +354,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
   createSession(input: CreateSessionRequest): Awaitable<Session>;
   updateSession(session: Session): Awaitable<Session>;
-  setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Awaitable<void>;
+  setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
   setSessionTitle(request: SetSessionTitleRequest): Awaitable<void>;
   setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Awaitable<void>;
   setSessionPinned(request: SetSessionPinnedRequest): Awaitable<SessionSummary>;

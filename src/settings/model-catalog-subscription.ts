@@ -13,7 +13,7 @@ export function startModelCatalogSubscription(input: {
   onInitialLoadError?: (error: unknown) => void;
 }): () => void {
   let active = true;
-  let latestAppliedRevision: number | null = null;
+  let receivedNotification = false;
 
   if (!input.api || !input.enabled) {
     return () => {
@@ -21,38 +21,20 @@ export function startModelCatalogSubscription(input: {
     };
   }
 
-  const applyFreshSnapshot = (snapshot: ModelCatalogSnapshot | null): void => {
-    if (!active) {
-      return;
-    }
-
-    if (snapshot === null) {
-      if (latestAppliedRevision !== null) {
-        return;
-      }
-      input.applyModelCatalog(null);
-      return;
-    }
-
-    if (latestAppliedRevision !== null && snapshot.revision < latestAppliedRevision) {
-      return;
-    }
-
-    latestAppliedRevision = snapshot.revision;
-    input.applyModelCatalog(snapshot);
-  };
-
   void input.api.getModelCatalog(null).then((snapshot) => {
-    applyFreshSnapshot(snapshot);
+    if (active && !receivedNotification) input.applyModelCatalog(snapshot);
   }).catch((error: unknown) => {
-    if (active && latestAppliedRevision === null) {
+    if (active && !receivedNotification) {
       input.onInitialLoadError?.(error);
     }
   });
 
   const unsubscribe = input.subscribe && input.api.subscribeModelCatalog
     ? input.api.subscribeModelCatalog((snapshot) => {
-      applyFreshSnapshot(snapshot);
+      if (!active) return;
+      // Reset can restart revision numbering; notifications supersede the initial read.
+      receivedNotification = true;
+      input.applyModelCatalog(snapshot);
     })
     : null;
 

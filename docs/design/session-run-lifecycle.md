@@ -118,7 +118,7 @@ window は上の状態機械とは分離する。
 - admission の開始予約後の Worker 読込み・最終排他取得、setup または provider が cancel grace 後も生存する場合、表示上の turn は収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
 - chat にはキャンセル結果を 1 件追加する
 - 監査ログは同じ turn record を先に最小 `phase = canceled` へ更新し、`errorMessage` にユーザーキャンセルを残す。詳細は bounded enrichment として後段で更新する
-- 実行中は approval を含む session 設定変更を受け付けない
+- 実行中の設定変更は上記 Behavior Requirements の制約に従う。model / depth の現在選択は次の Send 用に変更でき、実行中 turn の設定は変えない
 - stale thread / session 起因エラー、または meaningful partial を持たない Codex bootstrap failure を Main Process が検知した場合だけ、同一 turn の内部で `threadId clear + provider cache invalidate` を行って 1 回だけ再試行する
 - internal retry は same turn の処理として扱い、user message / assistant message / audit log record を二重化しない
 - Main Session の保存が確定した後に初期 Auxiliary の準備または commit が失敗した場合、Main Session や他の既存会話を削除・巻き戻ししない。呼出し元には Main 保存済み、Auxiliary の結果未確定または失敗という部分結果を返し、Auxiliary の commit 結果は request identity の再照会でのみ確定する。

@@ -28,6 +28,7 @@ import type { SessionThreadPatchInput, SessionRuntimeMetadataPatchResult } from 
 import type { AuxiliarySessionThreadPatchInput, AuxiliaryRuntimeMetadataPatchResult } from "../auxiliary/auxiliary-session-storage.js";
 import type { AuxiliarySessionRuntimeMetadataPatchInput } from "../auxiliary/auxiliary-session-storage.js";
 import type { ProviderRuntimeMetadata } from "../providers/provider-runtime-metadata-patch.js";
+import { isChatLayoutPreferenceUpdate, type ChatLayoutPreference, type ChatLayoutPreferenceUpdate } from "../../src-shared/settings/chat-layout-preference.js";
 
 export type SessionCredentialThreadInfo = {
   id: string;
@@ -62,6 +63,8 @@ export type SettingsCatalogServiceDeps = {
   listAuxiliaryCredentialThreads(): Awaitable<AuxiliaryCredentialThreadInfo[]>;
   getAppSettings(): Awaitable<AppSettings>;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<void>;
+  onChatLayoutPreferenceSaveError?(update: ChatLayoutPreferenceUpdate, error: unknown): void;
   getModelCatalog(revision?: number | null): Awaitable<ModelCatalogSnapshot | null>;
   ensureModelCatalogSeeded(): Awaitable<ModelCatalogSnapshot>;
   importModelCatalogDocument(
@@ -104,6 +107,7 @@ export type SettingsCatalogServiceDeps = {
   applyAppSettingsSideEffects?: (settings: AppSettings) => void;
   broadcastSessions(sessionIds?: Iterable<string>): void;
   broadcastAppSettings(settings?: AppSettings): Awaitable<void>;
+  applyCurrentExecutionCatalog(snapshot: ModelCatalogSnapshot): void;
   broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): Awaitable<void>;
 };
 
@@ -171,6 +175,8 @@ type DeferredProviderCleanup<T> = {
 
 export class SettingsCatalogService {
   private readonly affectedProviders = new Map<string, number>();
+  private chatLayoutCurrent: Partial<ChatLayoutPreference> = {};
+  private chatLayoutWriteTail: Promise<void> = Promise.resolve();
   private rollbackEpoch = 0;
 
   constructor(private readonly deps: SettingsCatalogServiceDeps) {}
@@ -211,7 +217,34 @@ export class SettingsCatalogService {
   }
 
   async getAppSettings(): Promise<AppSettings> {
-    return await this.deps.getAppSettings();
+    return this.withCurrentChatLayout(await this.deps.getAppSettings());
+  }
+
+  private withCurrentChatLayout(settings: AppSettings): AppSettings {
+    return {
+      ...settings,
+      chatLayoutPreference: { ...settings.chatLayoutPreference, ...this.chatLayoutCurrent },
+    };
+  }
+
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): void {
+    if (!isChatLayoutPreferenceUpdate(update)) {
+      throw new TypeError("Invalid chat layout preference update.");
+    }
+    this.chatLayoutCurrent = { ...this.chatLayoutCurrent, [update.target]: update.value };
+    const epoch = this.rollbackEpoch;
+    const storageIdentity = this.captureStorageIdentity();
+    const write = this.chatLayoutWriteTail.then(() => {
+      if (epoch !== this.rollbackEpoch || (this.deps.isStorageIdentityCurrent && !this.deps.isStorageIdentityCurrent(storageIdentity))) return;
+      return this.deps.updateChatLayoutPreference(update);
+    });
+    this.chatLayoutWriteTail = write.then(() => {}, (error: unknown) => {
+      try {
+        this.deps.onChatLayoutPreferenceSaveError?.(update, error);
+      } catch {
+        // A diagnostic failure must not break later preference checkpoints.
+      }
+    });
   }
 
   async getModelCatalog(revision?: number | null): Promise<ModelCatalogSnapshot | null> {
@@ -334,7 +367,7 @@ export class SettingsCatalogService {
           ...appliedAuxiliaryPatches.map(({ current }) => current.parentSessionId),
         ]));
       }
-      const currentSettings = await this.deps.getAppSettings();
+      const currentSettings = await this.getAppSettings();
       await this.deps.broadcastAppSettings(currentSettings);
       const cleanupTargets = [
         ...previousSessions.filter((session) => providersWithApiKeyChangeSet.has(session.provider)),
@@ -385,7 +418,7 @@ export class SettingsCatalogService {
             ...appliedSessionPatches.map(({ previous }) => previous.id),
             ...appliedAuxiliaryPatches.map(({ previous }) => previous.parentSessionId),
           ]));
-          await this.deps.broadcastAppSettings(previousSettings);
+          await this.deps.broadcastAppSettings(this.withCurrentChatLayout(previousSettings));
         },
       };
     } catch (error) {
@@ -518,6 +551,7 @@ export class SettingsCatalogService {
           appliedAuxiliarySessions.push({ previous, current });
         }
       }
+      this.deps.applyCurrentExecutionCatalog(nextSnapshot);
       this.deps.broadcastSessions(new Set([
         ...appliedSessions.map(({ current }) => current.id),
         ...appliedAuxiliarySessions.map(({ current }) => current.parentSessionId),
@@ -572,6 +606,7 @@ export class SettingsCatalogService {
               next: getProviderRuntimeMetadata(previous),
             });
           }
+          this.deps.applyCurrentExecutionCatalog(restoredSnapshot);
           this.deps.broadcastSessions(new Set([
             ...appliedSessions.map(({ previous }) => previous.id),
             ...appliedAuxiliarySessions.map(({ previous }) => previous.parentSessionId),
@@ -587,7 +622,7 @@ export class SettingsCatalogService {
       try {
         this.assertRollbackEpochCurrent(rollbackEpoch);
         this.assertStorageIdentityCurrent(storageIdentity);
-        await this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
+        const restoredSnapshot = await this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
         for (const { previous, current } of appliedSessions) {
           await this.deps.updateSessionRuntimeMetadataIfMatches({
             sessionId: previous.id,
@@ -605,6 +640,12 @@ export class SettingsCatalogService {
             next: getProviderRuntimeMetadata(previous),
           });
         }
+        this.deps.applyCurrentExecutionCatalog(restoredSnapshot);
+        this.deps.broadcastSessions(new Set([
+          ...appliedSessions.map(({ previous }) => previous.id),
+          ...appliedAuxiliarySessions.map(({ previous }) => previous.parentSessionId),
+        ]));
+        await this.deps.broadcastModelCatalog(restoredSnapshot);
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
@@ -655,6 +696,7 @@ export class SettingsCatalogService {
 
     if (areAllResetAppDatabaseTargetsSelected(resetTargets)) {
       modelCatalog = await this.deps.recreateDatabaseFile();
+      this.chatLayoutCurrent = {};
       this.dismissSessionTurnNotifications(previousSessionNotificationIds);
       this.deps.resetSessionRuntime();
       this.deps.clearAllSessionBackgroundActivities();
@@ -677,6 +719,7 @@ export class SettingsCatalogService {
       }
       if (appliedTargets.has("appSettings")) {
         await this.deps.resetAppSettings();
+        this.chatLayoutCurrent = {};
         this.deps.clearAllProviderQuotaTelemetry();
       }
       if (appliedTargets.has("modelCatalog")) {
@@ -736,7 +779,9 @@ export class SettingsCatalogService {
       appSettings = await this.deps.getAppSettings();
     }
 
+    appSettings = this.withCurrentChatLayout(appSettings);
     this.deps.applyAppSettingsSideEffects?.(appSettings);
+    this.deps.applyCurrentExecutionCatalog(modelCatalog);
     this.deps.broadcastSessions(previousSessionIds);
     await this.deps.broadcastAppSettings(appSettings);
     await this.deps.broadcastModelCatalog(modelCatalog);

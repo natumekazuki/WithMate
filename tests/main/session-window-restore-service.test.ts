@@ -75,8 +75,19 @@ function createBridge(input: {
 }
 
 describe("SessionWindowRestoreService", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "保存済みのWindow復元候補はruntime再生成後に各1Windowとして復元され、close後の保存では残ったWindowだけが候補になる"
+  // oracle = { type = "contract", ref = "src-electron/windows/session-window-restore-service.ts" }
+  // fault = "復元候補を読み戻せないか、重複Windowを開くか、close済みWindowを次回候補に残す"
+  // observable = "runtime再生成後の復元結果、生成Window数、保存完了後に読み戻した候補"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-restore"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("A/B snapshotをruntime再生成後に各1Windowとして一括復元し、closeを次回snapshotへ反映する", async () => {
     const root = await mkdtemp(join(tmpdir(), "withmate-session-window-restore-"));
+    const pendingWrites: Promise<void>[] = [];
     try {
       const firstStorage = new SessionWindowRestoreStorage(root);
       const firstService = new SessionWindowRestoreService({
@@ -87,13 +98,18 @@ describe("SessionWindowRestoreService", () => {
       });
       const firstCreated = new Map<string, StubWindow[]>();
       const firstBridge = createBridge({
-        persist: (sessionIds) => firstService.saveSnapshot(sessionIds),
+        persist: (sessionIds) => {
+          const write = firstService.saveSnapshot(sessionIds);
+          pendingWrites.push(write);
+          return write;
+        },
         created: firstCreated,
       });
 
       await firstBridge.openSessionWindow("session-a");
       await firstBridge.openSessionWindow("session-b");
       await firstBridge.openSessionWindow("session-a");
+      await Promise.all(pendingWrites);
       assert.deepEqual(await firstStorage.loadSnapshot(), ["session-a", "session-b"]);
 
       const secondStorage = new SessionWindowRestoreStorage(root);
@@ -106,7 +122,11 @@ describe("SessionWindowRestoreService", () => {
         openSessionWindow: (sessionId) => secondBridge.openSessionWindow(sessionId),
       });
       secondBridge = createBridge({
-        persist: (sessionIds) => secondService.saveSnapshot(sessionIds),
+        persist: (sessionIds) => {
+          const write = secondService.saveSnapshot(sessionIds);
+          pendingWrites.push(write);
+          return write;
+        },
         created: secondCreated,
       });
 
@@ -123,9 +143,10 @@ describe("SessionWindowRestoreService", () => {
       assert.deepEqual(await secondService.getSnapshot(), []);
 
       secondBridge.closeSessionWindow("session-a");
-      await secondService.getSnapshot();
+      await Promise.all(pendingWrites);
       assert.deepEqual(await secondStorage.loadSnapshot(), ["session-b"]);
     } finally {
+      await Promise.allSettled(pendingWrites);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -190,16 +211,18 @@ describe("SessionWindowRestoreService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "起動時snapshotの読み込み完了前に現在集合の保存で復元集合を上書きしない"
+  // claim = "起動時復元集合を現在集合で上書きせず、現在集合の任意保存が未完了でも読み込んだ候補を復元できる"
   // oracle = { type = "contract", ref = "src-electron/windows/session-window-restore-service.ts" }
-  // fault = "初期loadとsaveが競合し、次回起動の復元対象を失う"
-  // observable = "永続化snapshotとrestore後のrequestedSessionIds"
+  // fault = "初期load前の保存で候補を失うか、現在集合の保存待ちを復元操作へ伝播させる"
+  // observable = "保存未完了中の復元結果と、保存へ渡された現在集合"
   // observation_boundary = "public-boundary"
   // scope = "session-window-restore"
   // lifecycle = "permanent"
   // @end-test-value
-  it("起動時の復元集合を先に読み込み、現在集合の保存では上書きしない", async () => {
+  it("起動時復元集合は先に読み込み、現在集合の保存を待たず復元できる", async () => {
     const initialSnapshotControl = { resolve: undefined as ((sessionIds: string[]) => void) | undefined };
+    let finishSave!: () => void;
+    const saving = new Promise<void>((resolve) => { finishSave = resolve; });
     const durableSnapshots: string[][] = [];
     const opened: string[] = [];
     const service = new SessionWindowRestoreService({
@@ -209,6 +232,7 @@ describe("SessionWindowRestoreService", () => {
         }),
         async saveSnapshot(sessionIds) {
           durableSnapshots.push([...sessionIds]);
+          await saving;
         },
       },
       getSession: (sessionId) => ({ id: sessionId }),
@@ -224,12 +248,19 @@ describe("SessionWindowRestoreService", () => {
 
     assert.ok(initialSnapshotControl.resolve);
     initialSnapshotControl.resolve(["session-a", "session-b"]);
-    await saveCurrentSnapshot;
-
-    assert.deepEqual(durableSnapshots, [["session-c"]]);
-    assert.deepEqual(await service.getSnapshot(), ["session-a", "session-b"]);
-    assert.deepEqual((await service.restoreSnapshot()).requestedSessionIds, ["session-a", "session-b"]);
-    assert.deepEqual(opened, ["session-a", "session-b"]);
+    let restored = false;
+    const restoring = service.restoreSnapshot().then((result) => { restored = true; return result; });
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(restored, true);
+      assert.deepEqual(durableSnapshots, [["session-c"]]);
+      assert.deepEqual((await restoring).requestedSessionIds, ["session-a", "session-b"]);
+      assert.deepEqual(opened, ["session-a", "session-b"]);
+    } finally {
+      finishSave();
+      await saveCurrentSnapshot;
+      await restoring;
+    }
   });
 
   it("保存失敗をsettleして復元集合のreadと後続保存を維持する", async () => {

@@ -356,7 +356,16 @@ export default function AgentSessionWindowApp() {
   }
   const composerRegistry = composerRegistryRef.current;
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
-  const mainSessionRuntime = useMainSessionRuntime({ api: withmateApi, selectedId, composerRegistry });
+  const [executionOptionsFeedback, setExecutionOptionsFeedback] = useState<{
+    ownerId: string;
+    message: string;
+  } | null>(null);
+  const mainSessionRuntime = useMainSessionRuntime({
+    api: withmateApi,
+    selectedId,
+    composerRegistry,
+    onExecutionOptionsError: (ownerId, message) => setExecutionOptionsFeedback({ ownerId, message }),
+  });
   const {
     sessions,
     pendingSubmitSessionId,
@@ -369,6 +378,7 @@ export default function AgentSessionWindowApp() {
     getCurrentSession: getCurrentMainSession,
     selectExecutionOptions: selectMainExecutionOptions,
     updateSessionProjection,
+    applyModelCatalog: applyMainExecutionCatalog,
   } = mainSessionRuntime;
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [modelCatalogLoadStatus, setModelCatalogLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
@@ -473,6 +483,7 @@ export default function AgentSessionWindowApp() {
   const activityMonitorSignatureRef = useRef("");
   const activityMonitorSessionIdRef = useRef<string | null>(null);
   const activeAuxiliarySessionRef = auxiliaryBinding.sessionRef;
+  const auxiliaryExecutionOptionsRequestRevisionsRef = useRef(new Map<string, number>());
   const auxiliarySessionMutationRevisionRef = auxiliaryBinding.mutationRevision;
   const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
   const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
@@ -873,6 +884,10 @@ export default function AgentSessionWindowApp() {
       enabled: true,
       subscribe: true,
       applyModelCatalog: (snapshot) => {
+        if (snapshot) {
+          applyMainExecutionCatalog(snapshot);
+          auxiliaryWorkspace.applyModelCatalog(snapshot);
+        }
         setModelCatalog(snapshot);
         setModelCatalogLoadStatus("loaded");
         setModelCatalogLoadError("");
@@ -883,7 +898,7 @@ export default function AgentSessionWindowApp() {
         setModelCatalogLoadError(error instanceof Error ? error.message : "Could not load model catalog.");
       },
     });
-  }, [selectedSession?.id, withmateApi]);
+  }, [selectedSession?.id, withmateApi, applyMainExecutionCatalog, auxiliaryWorkspace.applyModelCatalog]);
 
   useEffect(() => {
     return startAppSettingsSubscription({
@@ -1331,7 +1346,10 @@ export default function AgentSessionWindowApp() {
       providerCatalog: selectedProviderCatalog,
       catalogRevision: modelCatalog?.revision ?? null,
       option,
-      persist: (nextSession) => Promise.resolve(selectMainExecutionOptions(nextSession)),
+      persist: (nextSession) => {
+        setExecutionOptionsFeedback(null);
+        return Promise.resolve(selectMainExecutionOptions(nextSession));
+      },
       createTimestampLabel: currentTimestampLabel,
     });
   };
@@ -1369,15 +1387,34 @@ export default function AgentSessionWindowApp() {
       next.codexReviewer !== current.codexReviewer
     )) || (current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer)) return;
     const executionOptions = captureSessionExecutionOptions(next);
+    const selectionKey = `${current.id}:${current.createdAt}`;
+    const revision = (auxiliaryExecutionOptionsRequestRevisionsRef.current.get(selectionKey) ?? 0) + 1;
+    auxiliaryExecutionOptionsRequestRevisionsRef.current.set(selectionKey, revision);
+    setExecutionOptionsFeedback(null);
     auxiliaryBinding.setExecutionSelection(next);
     void withmateApi.setAuxiliaryExecutionOptions({
         auxiliarySessionId: current.id,
         parentSessionId: current.parentSessionId,
         createdAt: current.createdAt,
         executionOptions,
+      }).then((result) => {
+        if (result.status === "accepted" && !result.checkpointSaved) {
+          void withmateApi.reportRendererLog({ level: "error", kind: "renderer.auxiliary-execution-options.failed", message: "Auxiliary execution options could not be saved", data: { auxiliarySessionId: current.id } });
+        }
       }).catch((error) => {
-      void withmateApi.reportRendererLog({ level: "error", kind: "renderer.auxiliary-execution-options.failed", message: "Auxiliary execution options could not be saved", data: { auxiliarySessionId: current.id }, error: { name: error instanceof Error ? error.name : "UnknownError", message: error instanceof Error ? error.message : String(error) } });
-    });
+        const selected = auxiliaryBinding.getSession();
+        if (auxiliaryExecutionOptionsRequestRevisionsRef.current.get(selectionKey) !== revision || selected?.id !== current.id
+          || selected.createdAt !== current.createdAt) return;
+        const message = error instanceof Error ? error.message : String(error);
+        setExecutionOptionsFeedback({ ownerId: current.id, message: `Execution options were not changed: ${message}` });
+        void withmateApi.getAuxiliarySession(current.id).then((accepted) => {
+          const latest = auxiliaryBinding.getSession();
+          if (auxiliaryExecutionOptionsRequestRevisionsRef.current.get(selectionKey) !== revision || latest?.id !== current.id
+            || latest.createdAt !== current.createdAt || accepted?.id !== current.id
+            || accepted.createdAt !== current.createdAt) return;
+          auxiliaryBinding.setExecutionSelection({ ...latest, ...captureSessionExecutionOptions(accepted) });
+        }).catch(() => undefined);
+      });
   };
 
   const handleToggleMessageBookmark = createMessageBookmarkHandler({
@@ -2342,6 +2379,9 @@ export default function AgentSessionWindowApp() {
       inlinePathOperationRevisionRef.current.advance();
       setInlinePathError((current) => current?.ownerSessionId === renderedSession.id ? null : current);
     },
+    executionOptionsFeedback: executionOptionsFeedback?.ownerId === renderedSession.id
+      ? executionOptionsFeedback.message : "",
+    onDismissExecutionOptionsFeedback: () => setExecutionOptionsFeedback(null),
     contextPane: contextPaneProps,
   });
   const sessionModals = (
