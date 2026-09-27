@@ -1,5 +1,6 @@
 .session-action-dock.compact {
   gap: 0;
+  cursor: pointer;
 }
 
 .session-action-dock-compact-row {

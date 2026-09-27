@@ -584,6 +584,139 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "compact dockの空白clickは展開し、内包する操作ボタンとexpanded dockのclickは展開を併発しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
+// fault = "Cancel予約領域や操作間の余白から展開できない、またはCancel・target・表示切替等の操作にも展開が混入する"
+// observable = "dock各領域と内包buttonのclick後のcallback列、表示modeのaria-pressed"
+// observation_boundary = "component-behavior"
+// scope = "ChatWindow compact dock click routing"
+// lifecycle = "permanent"
+// impact = "クリック位置によって余白が反応しない、または別操作でdockが開き会話表示領域が変わる"
+// distinction = "単体の展開button testでは検出できないdock外周のevent伝播と内包操作の優先を実際のChatWindowで検証する"
+// @end-test-value
+test("ChatWindow はcompact dockの空白全体から展開し内包する操作を優先する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const previousResizeObserver = globalThis.ResizeObserver;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  let root: Root | null = null;
+  const events: string[] = [];
+  const props = createChatWindowProps({ messages: [] });
+  props.isActionDockExpanded = false;
+  props.compactActionDockProps = {
+    ...props.compactActionDockProps,
+    showJumpToBottom: true,
+    onExpand: () => events.push("expand"),
+    onCancel: () => events.push("cancel"),
+    onJumpToBottom: () => events.push("jump"),
+  };
+
+  try {
+    root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+    for (const isRunning of [false, true]) {
+      props.compactActionDockProps.isRunning = isRunning;
+      await act(async () => root?.render(React.createElement(ChatWindow, props)));
+      const dock = dom.window.document.querySelector<HTMLElement>(".session-action-dock");
+      assert.ok(dock);
+      const compact = dock.querySelector<HTMLElement>(".session-action-dock-compact-content");
+      assert.ok(compact);
+
+      const blankRegions = [dock, compact,
+        compact.querySelector<HTMLElement>(".session-action-dock-compact-row"),
+        compact.querySelector<HTMLElement>(".session-action-dock-compact-actions"),
+        compact.querySelector<HTMLElement>(".session-action-dock-compact-expand-button"),
+      ];
+      if (!isRunning) {
+        blankRegions.push(compact.querySelector<HTMLElement>(".session-action-dock-cancel-slot"));
+      }
+      for (const region of blankRegions) {
+        assert.ok(region);
+        events.length = 0;
+        await act(async () => region.click());
+        assert.deepEqual(events, ["expand"]);
+      }
+
+      const jumpButton = compact.querySelector<HTMLButtonElement>(".message-jump-bottom-button");
+      assert.ok(jumpButton);
+      events.length = 0;
+      await act(async () => jumpButton.click());
+      assert.deepEqual(events, ["jump"]);
+      if (isRunning) {
+        const cancelButton = compact.querySelector<HTMLButtonElement>(".session-action-dock-cancel-slot button");
+        assert.ok(cancelButton);
+        events.length = 0;
+        await act(async () => cancelButton.click());
+        assert.deepEqual(events, ["cancel"]);
+      }
+      for (const mode of ["Source", "Preview"]) {
+        const button: HTMLButtonElement | undefined = [...compact.querySelectorAll<HTMLButtonElement>(".composer-message-view-mode-button")]
+          .find((candidate) => candidate.textContent === mode);
+        assert.ok(button);
+        events.length = 0;
+        await act(async () => button.click());
+        assert.equal(button.getAttribute("aria-pressed"), "true");
+        assert.deepEqual(events, []);
+      }
+    }
+
+    props.concurrentChats = {
+      main: props.messageColumnProps,
+      auxiliary: null,
+      auxiliarySession: { id: "auxiliary", runState: "running" },
+      selectedAuxiliaryId: "auxiliary",
+      auxiliaryItems: [],
+      target: "main",
+      widthRatio: 0,
+      onSelectAuxiliary: noop,
+      onTargetChange: (target) => events.push(target),
+      onWidthRatioChange: noop,
+    };
+    await act(async () => root?.render(React.createElement(ChatWindow, props)));
+    const targetIndicator = dom.window.document.querySelector<HTMLElement>(
+      ".session-action-dock-compact-content .concurrent-chat-loading-spinner",
+    );
+    assert.ok(targetIndicator);
+    events.length = 0;
+    await act(async () => targetIndicator.click());
+    assert.deepEqual(events, ["auxiliary"]);
+
+    props.isActionDockExpanded = true;
+    await act(async () => root?.render(React.createElement(ChatWindow, props)));
+    events.length = 0;
+    const expandedDock = dom.window.document.querySelector<HTMLElement>(".session-action-dock");
+    assert.ok(expandedDock);
+    await act(async () => expandedDock.click());
+    assert.deepEqual(events, []);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  }
+});
+
 test("ChatWindow は button とshortcutで共有表示modeを双方向に切り替える", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
