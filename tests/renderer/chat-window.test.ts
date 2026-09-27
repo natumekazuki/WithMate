@@ -689,12 +689,12 @@ test("ChatWindow はcompact dockの空白全体から展開し内包する操作
       onWidthRatioChange: noop,
     };
     await act(async () => root?.render(React.createElement(ChatWindow, props)));
-    const targetIndicator = dom.window.document.querySelector<HTMLElement>(
-      ".session-action-dock-compact-content .concurrent-chat-loading-spinner",
-    );
-    assert.ok(targetIndicator);
+    const auxiliaryTargetButton = [...dom.window.document.querySelectorAll<HTMLButtonElement>(
+      ".session-action-dock-compact-content [aria-label='Chat target'] button",
+    )].find((button) => button.textContent === "Auxiliary");
+    assert.ok(auxiliaryTargetButton);
     events.length = 0;
-    await act(async () => targetIndicator.click());
+    await act(async () => auxiliaryTargetButton.click());
     assert.deepEqual(events, ["auxiliary"]);
 
     props.isActionDockExpanded = true;
@@ -1334,10 +1334,10 @@ test("SessionActionDockCompactRow は通常時の chat notice を下書き表示
 
 // @test-value v2
 // kind = "contract"
-// claim = "Concurrent chat shell はActionDockのMain/Auxiliary操作対象、本文のある非対象Main列のoverlay、空列でのoverlay不在、Auxiliary一覧、および未選択実行対象の状態を同じWindowへ投影する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "対象切替や一覧が中央列へ接続されない、空列が不要に暗くなる、または未選択実行対象の状態が消えるか選択対象のindicatorと重複する"
-// observable = "expanded/compact ActionDock操作対象ボタンとcallback、未選択実行対象のtarget付きaccessible labelとinline indicator、本文のある非対象Main列内のoverlayと空列での不在、一覧triggerと会話列"
+// claim = "Concurrent chat shell は実行状態によらずMain/Auxiliaryのラベル・accessible nameと選択対象を維持し、対象切替、本文のある非対象Main列のoverlay、空列でのoverlay不在、Auxiliary一覧を同じWindowへ投影する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main / Auxiliaryのtarget切替button; docs/design/auxiliary-session.md: UI flow" }
+// fault = "実行状態によって操作対象の名前や選択状態が変わる、対象切替や一覧が中央列へ接続されない、または空列が不要に暗くなる"
+// observable = "Main/Auxiliaryの実行状態4通りと選択対象2通りでのexpanded/compact操作対象ボタンのラベル・accessible name・aria-pressedとcallback、本文のある非対象Main列内のoverlayと空列での不在、一覧triggerと会話列"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -1422,7 +1422,7 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
     const container = dom.window.document.getElementById("root") as HTMLElement;
     const html = container.innerHTML;
     assert.match(html, /Chat target/);
-    assert.match(html, />Main(?:<span class="concurrent-chat-loading-spinner"[^>]*><\/span>)?<\/button>/);
+    assert.match(html, />Main<\/button>/);
     assert.match(html, />Auxiliary<\/button>/);
     assert.doesNotMatch(html, /action-dock-mode-badge/);
     assert.match(html, /concurrent-chat-target-overlay/);
@@ -1435,50 +1435,38 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
     assert.match(html, /session-auxiliary-chat-pane/);
     assert.match(html, /aria-controls="session-auxiliary-chat-pane"/);
 
-    const targetDocks = [
-      container.querySelector(".composer-target-dock-slot .concurrent-chat-target-dock"),
-      container.querySelector(".session-action-dock-target-slot .concurrent-chat-target-dock"),
-    ];
-    assert.ok(targetDocks[0]);
-    assert.ok(targetDocks[1]);
-    for (const targetDock of targetDocks) {
-      assert.ok(targetDock);
-      const targetButtons = [...targetDock.querySelectorAll<HTMLButtonElement>("button")];
-      assert.deepEqual(targetButtons.map((button) => button.textContent), ["Main", "Auxiliary"]);
-      const mainButton = targetButtons[0];
-      const auxiliaryButton = targetButtons[1];
-      assert.equal(mainButton.getAttribute("aria-label"), "Main is running");
-      assert.ok(mainButton.querySelector(".concurrent-chat-loading-spinner"));
-      assert.equal(auxiliaryButton.getAttribute("aria-label"), null);
-      assert.equal(auxiliaryButton.querySelector(".concurrent-chat-loading-spinner"), null);
-      assert.equal(targetDock.querySelectorAll(".concurrent-chat-loading-spinner").length, 1);
-      await act(async () => targetButtons[0].click());
-      await act(async () => targetButtons[1].click());
-    }
-    assert.deepEqual(targetChanges, ["main", "auxiliary", "main", "auxiliary"]);
-
-    await act(async () => {
-      root?.render(React.createElement(ChatWindow, {
-        ...props,
-        concurrentChats: { ...concurrentChats, target: "main" },
-      }));
-    });
-    const mainTargetDocks = [
-      container.querySelector(".composer-target-dock-slot .concurrent-chat-target-dock"),
-      container.querySelector(".session-action-dock-target-slot .concurrent-chat-target-dock"),
-    ];
-    for (const targetDock of mainTargetDocks) {
-      assert.ok(targetDock);
-      const mainButton = targetDock.querySelector<HTMLButtonElement>("button");
-      const auxiliaryButton = targetDock.querySelectorAll<HTMLButtonElement>("button")[1];
-      assert.ok(mainButton);
-      assert.ok(auxiliaryButton);
-      assert.equal(mainButton.className, "is-active");
-      assert.equal(mainButton.getAttribute("aria-label"), null);
-      assert.equal(mainButton.querySelector(".concurrent-chat-loading-spinner"), null);
-      assert.equal(auxiliaryButton.getAttribute("aria-label"), "Auxiliary is running");
-      assert.ok(auxiliaryButton.querySelector(".concurrent-chat-loading-spinner"));
-      assert.equal(targetDock.querySelectorAll(".concurrent-chat-loading-spinner").length, 1);
+    for (const mainRunning of [false, true]) {
+      for (const auxiliaryRunning of [false, true]) {
+        for (const target of ["main", "auxiliary"] as const) {
+          for (const isActionDockExpanded of [false, true]) {
+            await act(async () => {
+              root?.render(React.createElement(ChatWindow, {
+                ...props,
+                isActionDockExpanded,
+                concurrentChats: {
+                  ...concurrentChats,
+                  target,
+                  mainSession: { id: "main", runState: mainRunning ? "running" : "idle" },
+                  auxiliarySession: { id: "aux-b", runState: auxiliaryRunning ? "running" : "idle" },
+                  mainLiveRun: mainRunning ? concurrentChats.mainLiveRun : null,
+                  auxiliaryLiveRun: auxiliaryRunning ? concurrentChats.auxiliaryLiveRun : null,
+                },
+              }));
+            });
+            const targetDock = container.querySelector(".session-action-dock-content.is-active [aria-label='Chat target']");
+            assert.ok(targetDock);
+            const targetButtons = [...targetDock.querySelectorAll<HTMLButtonElement>("button")];
+            assert.deepEqual(targetButtons.map((button) => button.textContent), ["Main", "Auxiliary"]);
+            assert.deepEqual(targetButtons.map((button) => button.getAttribute("aria-label") ?? button.textContent), ["Main", "Auxiliary"]);
+            assert.deepEqual(targetButtons.map((button) => button.getAttribute("aria-pressed")), [String(target === "main"), String(target === "auxiliary")]);
+            assert.equal(targetButtons[target === "main" ? 0 : 1].className, "is-active");
+            targetChanges.length = 0;
+            await act(async () => targetButtons[0].click());
+            await act(async () => targetButtons[1].click());
+            assert.deepEqual(targetChanges, ["main", "auxiliary"]);
+          }
+        }
+      }
     }
 
     const emptyChats = {

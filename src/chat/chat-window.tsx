@@ -172,12 +172,10 @@ function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps 
     {
       id: "main" as const,
       label: "Main",
-      isRunning: chats.mainSession?.runState === "running" || Boolean(chats.mainLiveRun),
     },
     {
       id: "auxiliary" as const,
       label: "Auxiliary",
-      isRunning: chats.auxiliarySession?.runState === "running" || Boolean(chats.auxiliaryLiveRun),
     },
   ];
 
@@ -185,7 +183,6 @@ function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps 
     <div className="concurrent-chat-target-dock" role="group" aria-label="Chat target">
       {targets.map((target) => {
         const isActive = chats.target === target.id;
-        const showRunningIndicator = target.isRunning && !isActive;
         return (
           <button
             key={target.id}
@@ -193,10 +190,8 @@ function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps 
             className={isActive ? "is-active" : ""}
             aria-pressed={isActive}
             onClick={() => chats.onTargetChange(target.id)}
-            aria-label={showRunningIndicator ? `${target.label} is running` : undefined}
           >
             {target.label}
-            {showRunningIndicator ? <span className="concurrent-chat-loading-spinner" aria-hidden="true" /> : null}
           </button>
         );
       })}

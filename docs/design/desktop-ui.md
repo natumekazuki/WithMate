@@ -336,7 +336,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
 - 応答内のdot bubbleは `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後もrun中は維持する
-- 未選択のMain / Auxiliaryが実行中の場合は、そのtarget切替buttonに局所spinnerと対象付きaccessible nameを示す。選択中targetではmessage listの末尾行へ集約し、他のAuxiliaryは一覧の既存processing indicatorで識別する
+- Main / Auxiliaryのtarget切替buttonは送信・操作対象の選択に専念し、実行状態によらずlabelとaccessible nameを維持する。実行状態は主にHomeのMonitorで確認し、会話内の処理中表示、Auxiliary一覧のprocessing indicator、選択対象のCancelは維持する。片側の会話欄が非表示の場合やPreview表示中も、target切替内に実行状態の表示や通知を追加しない
 - 実行中bubbleは `runState !== "running"` になった時点で消し、success固定の完了表現にはしない
 - `assistantText`未着でもright paneの `Latest Command` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、末尾のdot bubbleとaccessible statusで待機を示す
 - screen readerには会話本文全体でなく末尾行の状態変化を通知する。Action Dockから重複して通知しない
