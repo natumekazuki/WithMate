@@ -4,7 +4,7 @@ import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-s
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import type { OpenSessionWindowIdsLoadStatus } from "../app/open-session-window-subscription.js";
-import type { HomeLaunchDraft } from "./home-launch-state.js";
+import type { HomeLaunchCharacterCatalog, HomeLaunchDraft } from "./home-launch-state.js";
 import {
   closeLaunchDraft,
   openLaunchDraft,
@@ -29,8 +29,7 @@ type HomeLaunchHandlersContext = {
   openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
   sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
   refreshCharacterEntries: () => Promise<readonly CharacterCatalogEntry[]>;
-  setCharactersLoaded: (loaded: boolean) => void;
-  setCharacterLoadStatus?: (status: "loading" | "loaded" | "error") => void;
+  setLaunchCharacterCatalog: (catalog: HomeLaunchCharacterCatalog) => void;
   setLaunchFeedback: (message: string) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
   setLaunchDraft: (updater: HomeLaunchDraft | ((draft: HomeLaunchDraft) => HomeLaunchDraft)) => void;
@@ -69,8 +68,7 @@ export function buildHomeLaunchHandlers({
   openSessionWindowIdsLoadStatus,
   sessionCharacterUsageLoadStatus,
   refreshCharacterEntries,
-  setCharactersLoaded,
-  setCharacterLoadStatus,
+  setLaunchCharacterCatalog,
   setLaunchFeedback,
   setLaunchStarting,
   setLaunchDraft,
@@ -94,11 +92,14 @@ export function buildHomeLaunchHandlers({
   const onOpenLaunchDialog = async () => {
     cancelWorkspaceValidation();
     setLaunchFeedback("");
-    await refreshCharacterEntries().catch((error) => {
-      setCharactersLoaded(false);
-      setCharacterLoadStatus?.("error");
+    setLaunchCharacterCatalog({ entries: [], status: "loading" });
+    try {
+      const entries = await refreshCharacterEntries();
+      setLaunchCharacterCatalog({ entries, status: "loaded" });
+    } catch (error) {
+      setLaunchCharacterCatalog({ entries: [], status: "error" });
       setLaunchFeedback(error instanceof Error ? error.message : "Could not refresh characters.");
-    });
+    }
     setLaunchDraft((current) =>
       openLaunchDraft(
         current,
@@ -111,6 +112,7 @@ export function buildHomeLaunchHandlers({
     cancelWorkspaceValidation();
     setLaunchFeedback("");
     setLaunchStarting(false);
+    setLaunchCharacterCatalog({ entries: [], status: "loading" });
     setLaunchDraft((current) => closeLaunchDraft(current));
   };
 

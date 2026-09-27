@@ -30,8 +30,8 @@ import {
   applyLaunchWorkspacePathValidation,
   beginLaunchWorkspacePathValidation,
   markLaunchWorkspacePathValidationPending,
-  resolveLaunchCharacterId,
   type HomeCharacterLoadStatus,
+  type HomeLaunchCharacterCatalog,
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
 import {
@@ -211,11 +211,14 @@ export default function HomeApp() {
   const [appSettingsLoadError, setAppSettingsLoadError] = useState("");
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
   const [characterListFeedback, setCharacterListFeedback] = useState("");
-  const [charactersLoaded, setCharactersLoaded] = useState(false);
   const [characterLoadStatus, setCharacterLoadStatus] = useState<HomeCharacterLoadStatus>("loading");
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoadSettled, setModelCatalogLoadSettled] = useState(!isSettingsWindowMode);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
+  const [launchCharacterCatalog, setLaunchCharacterCatalog] = useState<HomeLaunchCharacterCatalog>({
+    entries: [],
+    status: "loading",
+  });
   const [launchFeedback, setLaunchFeedback] = useState("");
   const [launchStarting, setLaunchStarting] = useState(false);
   const [mateState, setMateState] = useState<MateStorageState | null>(null);
@@ -291,14 +294,6 @@ export default function HomeApp() {
     setMateDisplayName,
     setMateAvatarUpdating,
   });
-
-  const applyLoadedCharacterEntries = (entries: CharacterCatalogEntry[]) => {
-    setCharacterEntries(entries);
-    setLaunchDraft((current) => ({
-      ...current,
-      characterId: resolveLaunchCharacterId(entries, current.characterId),
-    }));
-  };
 
   const refreshBoundedSessionSummaries = async (
     mode: HomeSessionSummaryRefreshMode = "preserve",
@@ -460,9 +455,8 @@ export default function HomeApp() {
     setCharacterListFeedback("");
     try {
       const entries = await api.listCharacters();
-      applyLoadedCharacterEntries(entries);
+      setCharacterEntries(entries);
       setCharacterListFeedback("");
-      setCharactersLoaded(true);
       setCharacterLoadStatus("loaded");
       return entries;
     } catch (error) {
@@ -761,9 +755,9 @@ export default function HomeApp() {
       workspaceValidationMessage: launchDraft.workspaceValidationMessage,
       launchCharacterId: launchDraft.characterId,
       launchCharacterSelectionMode: launchDraft.characterSelectionMode,
-      characterEntries,
-      charactersLoaded,
-      characterLoadStatus,
+      characterEntries: launchCharacterCatalog.entries,
+      charactersLoaded: launchCharacterCatalog.status === "loaded",
+      characterLoadStatus: launchCharacterCatalog.status,
       appSettings,
       modelCatalog,
       providerLoadStatus: modelCatalogLoadStatus === "error" || appSettingsLoadStatus === "error"
@@ -781,9 +775,7 @@ export default function HomeApp() {
       appSettings,
       appSettingsLoadError,
       appSettingsLoadStatus,
-      characterEntries,
-      characterLoadStatus,
-      charactersLoaded,
+      launchCharacterCatalog,
       launchDraft,
       modelCatalog,
       modelCatalogLoadError,
@@ -818,7 +810,7 @@ export default function HomeApp() {
     mateState,
     mateProfile,
     enabledLaunchProviders,
-    characterEntries,
+    characterEntries: launchCharacterCatalog.entries,
     selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
     sessions,
     sessionCharacterUsage: sessionSummariesState.characterUsage,
@@ -832,8 +824,7 @@ export default function HomeApp() {
       }
       return refreshCharacterEntries(api);
     },
-    setCharactersLoaded,
-    setCharacterLoadStatus,
+    setLaunchCharacterCatalog,
     setLaunchFeedback,
     setLaunchStarting,
     setLaunchDraft,

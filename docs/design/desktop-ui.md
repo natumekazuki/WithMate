@@ -138,7 +138,8 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Home の `New Session`、Character authoring、Auxiliary の provider picker は同じ状態境界を使う。取得中は picker 内の spinner と busy / accessible statusだけを表示して開始buttonをdisabledにし、取得失敗はprovider errorだけをalertで示して開始不可にする。取得成功後の0件だけ作成不可の説明を表示し、loading / error / ready 0 件を混同しない。開始処理中は各確定button内のspinnerとbusyだけを示し、busyをalertへ変換しない
   - Home `New Session`、Character authoring、Auxiliary の launch-section は意味上のgroupとして維持するが、装飾用のnested cardを描画しない
   - Character selector は開くたびにランダムを初期選択する。明示選択したactive Characterはそのまま使い、Characterが0件の場合はneutral fallbackを使う。詳細はADR 004を参照する
-  - HomeのCharacter一覧は初回とWindow再フォーカス時に再取得する。再取得に失敗した場合は保持済みの一覧を起動候補として使わず、Character selectorに取得失敗を示してSession作成を無効にする。取得成功後の0件だけneutral fallbackを使う
+  - Homeの管理用Character一覧は初回とWindow再フォーカス時に再取得する。New Sessionは開くたびに取得した一覧と取得状態を閉じるまで保持し、表示・選択・起動候補に同じ一覧を使う。Homeの再取得や外部のCharacter変更は開いているdialogへ反映せず、閉じて再度開いた時に最新化する
+  - New Sessionを開く時のCharacter取得に失敗した場合は保持済みの一覧を起動候補として使わず、Character selectorに取得失敗を示してSession作成を無効にする。取得成功後の0件だけneutral fallbackを使う
   - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
   - open 時は dialog 内の最初の主要入力へ focus する。Home の `New Session` は入力途中の意図しないdismissを避けるため、footerの`Cancel`で閉じ、backdrop clickや`Escape`では閉じない
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
