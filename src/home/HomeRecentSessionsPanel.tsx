@@ -22,6 +22,8 @@ export type HomeRecentSessionsPanelProps = {
   pendingSessionPinIds?: readonly string[];
   canUsePrimaryFeatures?: boolean;
   sessionSummaryLoadStatus?: SessionSummariesLoadStatus;
+  feedback?: string;
+  onRetry?: () => void;
 };
 
 const HOME_SESSION_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -93,6 +95,8 @@ export function HomeRecentSessionsPanel({
   pendingSessionPinIds = [],
   canUsePrimaryFeatures = true,
   sessionSummaryLoadStatus = "loaded",
+  feedback = "",
+  onRetry,
 }: HomeRecentSessionsPanelProps) {
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
 
@@ -142,9 +146,9 @@ export function HomeRecentSessionsPanel({
   });
   const hasVisibleEntries = visibleSessionEntries.length > 0;
   const isLoading = sessionSummaryLoadStatus === "loading";
-  const loadErrorMessage = sessionSummaryLoadStatus === "error"
+  const loadErrorMessage = feedback || (sessionSummaryLoadStatus === "error"
     ? "Could not load sessions."
-    : "";
+    : "");
 
   return (
     <section className="panel session-list-panel home-session-list-panel rise-3">
@@ -175,6 +179,16 @@ export function HomeRecentSessionsPanel({
         </button>
       </div>
 
+      {loadErrorMessage ? (
+        <div className="home-session-list-feedback">
+          <p className="settings-feedback" role="status" aria-live="polite">{loadErrorMessage}</p>
+          {onRetry ? (
+            <button className="launch-toggle home-session-retry-button" type="button" disabled={isLoading || loadingMore} onClick={onRetry}>
+              Retry
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div
         className="session-card-list home-session-card-list"
         aria-busy={isLoading || loadingMore}
@@ -241,9 +255,6 @@ export function HomeRecentSessionsPanel({
             <span className="home-session-list-load-spinner" aria-hidden="true" />
             <span className="sr-only">Loading sessions…</span>
           </div>
-        ) : null}
-        {!hasVisibleEntries && loadErrorMessage ? (
-          <p className="home-session-list-empty">{loadErrorMessage}</p>
         ) : null}
         {hasMore ? <div ref={loadMoreSentinelRef} className="home-session-list-load-sentinel" aria-hidden="true" /> : null}
         {loadingMore ? (

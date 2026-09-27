@@ -24,6 +24,8 @@ export type HomeRecentSessionsPanelPropsInput = {
   onLoadMore?: () => void;
   pendingSessionPinIds?: readonly string[];
   sessionSummaryLoadStatus?: SessionSummariesLoadStatus;
+  feedback?: string;
+  onRetry?: () => void;
 };
 
 export function buildHomeRecentSessionsPanelProps({
@@ -38,6 +40,8 @@ export function buildHomeRecentSessionsPanelProps({
   onLoadMore,
   pendingSessionPinIds,
   sessionSummaryLoadStatus,
+  feedback,
+  onRetry,
 }: HomeRecentSessionsPanelPropsInput): HomeRecentSessionsPanelProps {
   return {
     filteredSessionEntries,
@@ -54,5 +58,7 @@ export function buildHomeRecentSessionsPanelProps({
     onLoadMore,
     pendingSessionPinIds,
     sessionSummaryLoadStatus,
+    feedback,
+    onRetry,
   };
 }

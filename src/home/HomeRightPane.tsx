@@ -19,6 +19,7 @@ export type HomeRightPaneProps = {
   monitorRunningEmptyMessage?: string;
   monitorNonRunningEmptyMessage?: string;
   sessionMonitorFeedback?: string;
+  onRetrySessionSummaries?: () => void;
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
   characterLoadStatus?: HomeCharacterLoadStatus;
@@ -50,6 +51,7 @@ export function HomeRightPane({
   monitorRunningEmptyMessage = "",
   monitorNonRunningEmptyMessage = "",
   sessionMonitorFeedback = "",
+  onRetrySessionSummaries,
   monitorWindowIcon,
   characterEntries,
   characterLoadStatus = "loaded",
@@ -162,6 +164,7 @@ export function HomeRightPane({
             runningEmptyMessage={monitorRunningEmptyMessage}
             nonRunningEmptyMessage={monitorNonRunningEmptyMessage}
             feedback={sessionMonitorFeedback}
+            onRetry={onRetrySessionSummaries}
             onOpenSession={openSession}
             onShowContextMenu={showSessionMonitorContextMenu}
           />

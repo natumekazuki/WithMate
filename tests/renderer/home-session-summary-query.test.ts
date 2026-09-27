@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   buildHomeSessionSummaryEntries,
   fetchHomeSessionSummaryPages,
-  fetchHomeSessionSummarySnapshot,
+  listOpenSessionSummaryEntries,
   mergeSessionSummaryEntries,
 } from "../../src/home/home-session-summary-query.js";
 import type { SessionSummary, SessionSummaryPageRequest } from "../../src-shared/session/session-state.js";
@@ -17,10 +17,10 @@ function summary(id: string): SessionSummary {
 // kind = "contract"
 // claim = "Home summary queryはopen Session IDを100件単位で取得し重複を除く"
 // oracle = { type = "contract", ref = "src/home/home-session-summary-query.ts" }
-// fault = "open IDが一括送信される、分割数が誤る、重複entryが残る、またはcharacter usageが失われる"
-// observable = "open request sizes、snapshot.openの件数とID、characterUsage"
+// fault = "open IDが一括送信される、分割数が誤る、または重複entryが残る"
+// observable = "open request sizes、open summaryの件数とID、検索条件"
 // observation_boundary = "public-boundary"
-// scope = "fetchHomeSessionSummarySnapshot open paging"
+// scope = "listOpenSessionSummaryEntries open paging"
 // lifecycle = "permanent"
 // @end-test-value
 test("Home summary query は open Session ID を100件ずつ取得し、重複を除く", async () => {
@@ -44,20 +44,18 @@ test("Home summary query は open Session ID を100件ずつ取得し、重複�
         hasMore: false,
       };
     },
-    listSessionCharacterUsage: async () => [{ characterId: "char-1", sessionKind: "default" as const }],
   };
   const openSessionIds = [
     ...Array.from({ length: 101 }, (_, index) => `session-${index}`),
     "session-0",
   ];
 
-  const snapshot = await fetchHomeSessionSummarySnapshot(api, "Task", openSessionIds);
+  const open = await listOpenSessionSummaryEntries(api, openSessionIds);
 
   assert.deepEqual(openRequests.map((request) => request.length), [100, 1]);
   assert.deepEqual(openSearchTexts, ["", ""]);
-  assert.equal(snapshot.open.length, 101);
-  assert.equal(new Set(snapshot.open.map(({ id }) => id)).size, snapshot.open.length);
-  assert.deepEqual(snapshot.characterUsage, [{ characterId: "char-1", sessionKind: "default" }]);
+  assert.equal(open.length, 101);
+  assert.equal(new Set(open.map(({ id }) => id)).size, open.length);
 });
 
 test("Home summary merge は pinned を先に置き、Session IDでdedupeする", () => {

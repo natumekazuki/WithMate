@@ -1,18 +1,10 @@
 import type {
   HomeSessionSummary,
-  SessionCharacterUsage,
   HomeSessionSummaryPageResult,
 } from "../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 export const HOME_SESSION_SUMMARY_OPEN_ID_CHUNK_SIZE = 100;
-
-export type HomeSessionSummarySnapshot = {
-  recent: HomeSessionSummaryPageResult;
-  pinned: HomeSessionSummaryPageResult;
-  open: HomeSessionSummary[];
-  characterUsage: SessionCharacterUsage[];
-};
 
 export type HomeLoadedSessionSummaryPage = {
   requestCursor: string | null;
@@ -27,7 +19,7 @@ export type HomeSessionSummaryPageCollection = {
 
 export type HomeSessionSummaryQueryApi = Pick<
   WithMateWindowApi,
-  "listSessionSummaryPage" | "listSessionCharacterUsage"
+  "listSessionSummaryPage"
 >;
 
 function chunkSessionIds(sessionIds: readonly string[]): string[][] {
@@ -78,21 +70,6 @@ export async function listOpenSessionSummaryEntries(
     searchText: "",
   })));
   return mergeSessionSummaryEntries(...pages.map((page) => page.entries));
-}
-
-export async function fetchHomeSessionSummarySnapshot(
-  api: HomeSessionSummaryQueryApi,
-  searchText: string,
-  openSessionIds: readonly string[],
-  options: { includeCharacterUsage?: boolean } = {},
-): Promise<HomeSessionSummarySnapshot> {
-  const [recent, pinned, open, characterUsage] = await Promise.all([
-    api.listSessionSummaryPage({ scope: "recent", searchText }),
-    api.listSessionSummaryPage({ scope: "pinned", searchText }),
-    listOpenSessionSummaryEntries(api, openSessionIds),
-    options.includeCharacterUsage === false ? Promise.resolve([]) : api.listSessionCharacterUsage(),
-  ]);
-  return { recent, pinned, open, characterUsage };
 }
 
 export async function fetchHomeSessionSummaryPage(
