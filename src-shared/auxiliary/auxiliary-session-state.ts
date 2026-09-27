@@ -14,6 +14,7 @@ import {
   type ModelReasoningEffort,
 } from "../settings/model-catalog.js";
 import { normalizeMessage, type Message } from "../session/session-state.js";
+import { createOptimisticRunningSessionState } from "../session/session-run-transition.js";
 import {
   normalizeCharacterRuntimeSnapshot,
 } from "../character/character-runtime-snapshot.js";
@@ -388,11 +389,8 @@ export function buildRunningAuxiliarySessionTurn(input: {
   updatedAt: string;
 }): AuxiliarySession {
   return {
-    ...input.session,
-    runState: "running",
+    ...createOptimisticRunningSessionState(input.session, input.userMessage, input.updatedAt),
     composerDraft: "",
-    updatedAt: input.updatedAt,
-    messages: [...input.session.messages, { role: "user", text: input.userMessage }],
     displayAfterMessageIndex: input.displayAfterMessageIndex,
   };
 }

@@ -7,15 +7,12 @@ import {
   type AuxiliarySessionSendTargetResolution,
 } from "../../../src-shared/auxiliary/auxiliary-session-state.js";
 import {
-  applyActiveAuxiliarySessionUpdate,
-  createActiveAuxiliarySessionUpdateApplier,
   enqueueAuxiliarySessionSaveWithQueue,
 } from "./auxiliary-session-update-operation.js";
 import {
   clearOwnedLiveSessionRunState,
-  createOwnedPendingLiveSessionRunState,
+  applyOptimisticSessionRunUpdate,
   type OwnedLiveSessionRunState,
-  type PendingLiveRunSessionIdentity,
 } from "../runtime/session-live-run-state.js";
 
 export type AuxiliarySessionSendOperationResult =
@@ -40,37 +37,29 @@ export type AuxiliarySessionSendOperationResult =
     };
 
 export function createAuxiliarySessionRunningApplier(input: {
-  activeSessionRef: { current: AuxiliarySession | null };
   setActiveSession: (session: AuxiliarySession) => void;
   updateLiveRunState: (
     updater: (current: OwnedLiveSessionRunState) => OwnedLiveSessionRunState,
   ) => void;
-  buildRuntimeSession: (runningSession: AuxiliarySession) => PendingLiveRunSessionIdentity;
 }): (runningSession: AuxiliarySession) => void {
   return (runningSession) => {
-    applyActiveAuxiliarySessionUpdate({
-      session: runningSession,
-      activeSessionRef: input.activeSessionRef,
-      setActiveSession: input.setActiveSession,
+    applyOptimisticSessionRunUpdate({
+      runningSession,
+      applyRunningSession: input.setActiveSession,
+      updateLiveRunState: input.updateLiveRunState,
     });
-    input.updateLiveRunState((current) => createOwnedPendingLiveSessionRunState(
-      input.buildRuntimeSession(runningSession),
-      current,
-    ));
   };
 }
 
 export function createAuxiliarySessionSendResultAppliers(input: {
-  activeSessionRef: { current: AuxiliarySession | null };
   setActiveSession: (session: AuxiliarySession) => void;
 }): {
   applySavedSession: (session: AuxiliarySession) => void;
   restoreSessionAfterError: (session: AuxiliarySession) => void;
 } {
-  const applyActiveSession = createActiveAuxiliarySessionUpdateApplier(input);
   return {
-    applySavedSession: applyActiveSession,
-    restoreSessionAfterError: applyActiveSession,
+    applySavedSession: input.setActiveSession,
+    restoreSessionAfterError: input.setActiveSession,
   };
 }
 

@@ -1,5 +1,4 @@
 import type { LiveSessionRunState } from "../../../src-shared/session/runtime-state.js";
-import type { Message } from "../../../src-shared/session/session-state.js";
 
 export type PendingLiveRunSessionIdentity = {
   id: string;
@@ -11,76 +10,18 @@ export type OwnedLiveSessionRunState = {
   state: LiveSessionRunState | null;
 };
 
-export type OptimisticRunningSessionBase = {
-  messages: Message[];
-  runState: string;
-  updatedAt: string;
-};
-
 export function resolveSessionRunErrorMessage(error: unknown, fallbackMessage: string): string {
   return error instanceof Error ? error.message : fallbackMessage;
 }
 
-export function createOptimisticRunningSessionState<TSession extends OptimisticRunningSessionBase>(
-  session: TSession,
-  userMessage: string,
-  updatedAt: string,
-  options: { status?: string } = {},
-): TSession {
-  return {
-    ...session,
-    ...(options.status !== undefined ? { status: options.status } : {}),
-    updatedAt,
-    runState: "running",
-    messages: [...session.messages, { role: "user", text: userMessage }],
-  } as TSession;
-}
-
-export function buildOptimisticSessionRunUpdate<
-  TSession extends OptimisticRunningSessionBase & PendingLiveRunSessionIdentity,
->({
-  session,
-  userMessage,
-  updatedAt,
-  status,
-}: {
-  session: TSession;
-  userMessage: string;
-  updatedAt: string;
-  status?: string;
-}): {
-  runningSession: TSession;
-  createPendingLiveRunState: (
-    current?: OwnedLiveSessionRunState | null,
-  ) => OwnedLiveSessionRunState;
-} {
-  const runningSession = createOptimisticRunningSessionState(
-    session,
-    userMessage,
-    updatedAt,
-    status !== undefined ? { status } : {},
-  );
-  return {
-    runningSession,
-    createPendingLiveRunState: (current) =>
-      createOwnedPendingLiveSessionRunState(runningSession, current),
-  };
-}
-
 export function applyOptimisticSessionRunUpdate<
-  TSession extends OptimisticRunningSessionBase & PendingLiveRunSessionIdentity,
+  TSession extends PendingLiveRunSessionIdentity,
 >({
-  session,
-  userMessage,
-  updatedAt,
-  status,
+  runningSession,
   updateLiveRunState,
   applyRunningSession,
 }: {
-  session: TSession;
-  userMessage: string;
-  updatedAt: string;
-  status?: string;
+  runningSession: TSession;
   updateLiveRunState: (
     createPendingLiveRunState: (
       current?: OwnedLiveSessionRunState | null,
@@ -88,15 +29,9 @@ export function applyOptimisticSessionRunUpdate<
   ) => void;
   applyRunningSession: (runningSession: TSession) => void;
 }): TSession {
-  const update = buildOptimisticSessionRunUpdate({
-    session,
-    userMessage,
-    updatedAt,
-    status,
-  });
-  updateLiveRunState(update.createPendingLiveRunState);
-  applyRunningSession(update.runningSession);
-  return update.runningSession;
+  applyRunningSession(runningSession);
+  updateLiveRunState((current) => createOwnedPendingLiveSessionRunState(runningSession, current));
+  return runningSession;
 }
 
 export function rollbackOptimisticSessionRunUpdate({

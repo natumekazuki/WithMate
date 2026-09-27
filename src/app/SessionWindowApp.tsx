@@ -54,7 +54,6 @@ import {
   restoreComposerTextareaFocusAndCaret,
   restoreCurrentComposerTextareaFocusToEnd,
 } from "../chat/composer/composer-textarea-focus.js";
-import { buildMainAuxiliaryRuntimeSession } from "../chat/auxiliary/auxiliary-runtime-projection.js";
 import {
   useMainAuxiliaryRuntimeSession,
 } from "../chat/auxiliary/auxiliary-render-projections.js";
@@ -124,7 +123,6 @@ import {
   observePreviewChatMessageCount,
 } from "../file-explorer/preview-chat-activity.js";
 import {
-  createOwnedPendingLiveSessionRunState,
   resolveSessionRunErrorMessage,
 } from "../chat/runtime/session-live-run-state.js";
 import {
@@ -1336,7 +1334,6 @@ export default function AgentSessionWindowApp() {
       activeSession: activeAuxiliarySession,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
       getApi: () => withmateApi,
-      activeSessionRef: activeAuxiliarySessionRef,
       setActiveSession: setActiveAuxiliarySession,
       draftSaveQueue: auxiliaryDraftSaveQueueRef,
       sessionSaveQueue: auxiliarySessionSaveQueueRef,
@@ -1633,13 +1630,8 @@ export default function AgentSessionWindowApp() {
         }
       },
       applyRunningSession: createAuxiliarySessionRunningApplier({
-        activeSessionRef: activeAuxiliarySessionRef,
         setActiveSession: setActiveAuxiliarySession,
         updateLiveRunState: (update) => setLiveRunState(update),
-        buildRuntimeSession: (runningSession) => buildMainAuxiliaryRuntimeSession(
-          selectedSession!,
-          runningSession,
-        ),
       }),
       afterRunningSessionApplied: (runningSession) => {
         if (isCentralPreviewActive) {
@@ -1651,7 +1643,6 @@ export default function AgentSessionWindowApp() {
         }
       },
       ...createAuxiliarySessionSendResultAppliers({
-        activeSessionRef: activeAuxiliarySessionRef,
         setActiveSession: setActiveAuxiliarySession,
       }),
       clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({

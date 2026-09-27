@@ -60,6 +60,14 @@ Windowsの通常Session Windowがfocus中でない間にAuxiliaryのturnが完�
 
 メッセージの投影、折りたたみ状態、一覧からの移動要求、スクロール位置は各会話Columnが所有する。送信時の末尾追従は既存の設定に従って対象Columnへ一度だけ通知する。個別の折りたたみ状態はメッセージ一覧にも反映し、一覧選択は同じ会話の対象メッセージへ移動する。実行制御のため親が購読している会話はそのlive snapshotをColumnへ渡し、Columnでは二重購読しない。親が購読しない会話はColumnが購読し、非対象側のlive表示も更新する。ContextPaneの一覧選択callbackも共通画面へ渡し、選択した内容を表示へ反映する。
 
+### 送信直後の共通反映
+
+Main / Auxiliary は送信文の追加と `running` 状態の生成を共通化する。生成した Session を各会話の状態 owner へ適用してから、同じ会話 ID の Pending を反映する。Provider の応答を待たず、Pending と送信した user message を対象 Column に表示する。
+
+Auxiliary の状態更新は workspace の binding setter を入口とし、呼び出し側から binding の ref を先に書き換えない。setter が ref、詳細 cache、選択中の React state、一覧 summary、詳細取得の更新世代をまとめて更新する。送信前に開始した古い詳細取得や状態取得で本文を巻き戻さず、会話切替後も送信文を保持する。確定結果は Session の置換で反映し、送信文を二重追加しない。
+
+共通化するのは送信直後の表示遷移と適用順序までとする。Main の再取得・完了収束、Auxiliary の保存 queue・draft revision・失敗復元はそれぞれの owner が保持する。失敗時は Pending を解除して送信前の会話を復元し、入力復元では後続の編集を上書きしない。
+
 ## Context boundary
 
 初期値としてworkspace/cwd、parentのsession files、作成時点のAdditional Directory許可、provider、model、reasoning、approval、sandbox、custom agentを受け継ぐ。作成後のMain／兄弟変更は追従しない。Auxiliaryで追加した許可は他会話へ伝播しない。

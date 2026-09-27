@@ -51,13 +51,19 @@ function createQueueRefs(): {
 }
 
 describe("runAuxiliarySessionSendOperation", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliaryの送信完了と失敗復元は指定された状態ownerへSessionを反映する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信直後の共通反映" }
+  // fault = "送信結果または失敗復元を状態ownerへ渡さず会話を更新しない"
+  // observable = "ownerへ渡された保存済Sessionと復元Session"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-send-result-owner"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("send result appliers は saved と error restore で同じ active session 更新を使う", () => {
-    const activeSessionRef = {
-      current: makeAuxiliarySession({ id: "before" }) as AuxiliarySession | null,
-    };
     const appliedSessions: AuxiliarySession[] = [];
     const { applySavedSession, restoreSessionAfterError } = createAuxiliarySessionSendResultAppliers({
-      activeSessionRef,
       setActiveSession: (session) => {
         appliedSessions.push(session);
       },
@@ -68,7 +74,6 @@ describe("runAuxiliarySessionSendOperation", () => {
     applySavedSession(saved);
     restoreSessionAfterError(restored);
 
-    assert.equal(activeSessionRef.current, restored);
     assert.deepEqual(appliedSessions, [saved, restored]);
   });
 
@@ -204,15 +209,22 @@ describe("runAuxiliarySessionSendOperation", () => {
     assert.deepEqual(events, ["blocked:empty", "target:running", "error"]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliaryのrunning adapterはSessionとPendingを同じ会話IDとthreadへ反映する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信直後の共通反映" }
+  // fault = "親SessionのidentityでPendingを生成するか会話の状態ownerを呼ばない"
+  // observable = "適用されたSessionとPendingのsessionId/threadId"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-running-owner"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("running applier は active session と pending live run を同じ running session から反映する", () => {
     const runningSession = makeAuxiliarySession({
       runState: "running",
       threadId: "thread-running",
       updatedAt: "running",
     });
-    const activeSessionRef = {
-      current: makeAuxiliarySession({ updatedAt: "before" }) as AuxiliarySession | null,
-    };
     const appliedSessions: AuxiliarySession[] = [];
     const liveRunStates: OwnedLiveSessionRunState[] = [];
     let currentLiveRunState: OwnedLiveSessionRunState = {
@@ -231,7 +243,6 @@ describe("runAuxiliarySessionSendOperation", () => {
       },
     };
     const applyRunningSession = createAuxiliarySessionRunningApplier({
-      activeSessionRef,
       setActiveSession: (session) => {
         appliedSessions.push(session);
       },
@@ -239,21 +250,16 @@ describe("runAuxiliarySessionSendOperation", () => {
         currentLiveRunState = updater(currentLiveRunState);
         liveRunStates.push(currentLiveRunState);
       },
-      buildRuntimeSession: (session) => ({
-        id: `runtime:${session.id}`,
-        threadId: `runtime:${session.threadId}`,
-      }),
     });
 
     applyRunningSession(runningSession);
 
-    assert.equal(activeSessionRef.current, runningSession);
     assert.deepEqual(appliedSessions, [runningSession]);
     assert.deepEqual(liveRunStates, [{
-      ownerSessionId: "runtime:aux-1",
+      ownerSessionId: "aux-1",
       state: {
-        sessionId: "runtime:aux-1",
-        threadId: "runtime:thread-running",
+        sessionId: "aux-1",
+        threadId: "thread-running",
         assistantText: "",
         reasoningText: "",
         steps: [],
