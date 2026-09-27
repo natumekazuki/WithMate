@@ -1,7 +1,7 @@
 import { SelectionActionOverlayContext } from "./selection-action-overlay-context.js";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type ReactNode, type RefObject, type UIEventHandler } from "react";
 import { createPortal } from "react-dom";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 
 import type { ChangedFile, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse } from "../../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
@@ -66,6 +66,7 @@ export type SessionMessageColumnProps = {
   character: CharacterProfile;
   messages: Message[];
   messageKeys?: string[];
+  pendingResponseMessageKey?: string | null;
   messageCollapseTargets?: readonly MessageCollapseTarget[];
   collapsedMessageKeys?: ReadonlySet<string>;
   messageJumpRequest?: MessageJumpRequest | null;
@@ -395,6 +396,7 @@ export function SessionMessageColumn({
   character,
   messages,
   messageKeys,
+  pendingResponseMessageKey = null,
   messageCollapseTargets = [],
   collapsedMessageKeys = new Set(),
   messageJumpRequest = null,
@@ -487,11 +489,25 @@ export function SessionMessageColumn({
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
   );
+  const pendingResponseMessageIndex = isRunning && pendingResponseMessageKey !== null
+    ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1
+    : -1;
+  const elicitationMessageIndex = liveElicitationRequest !== null ? pendingResponseMessageIndex : -1;
+  const extractMessageRange = useCallback((range: Range) => {
+    const indexes = defaultRangeExtractor(range);
+    // 未送信の回答を保持するため、入力待ちの応答行はviewport外でもunmountしない。
+    if (elicitationMessageIndex >= 0 && !indexes.includes(elicitationMessageIndex)) {
+      indexes.push(elicitationMessageIndex);
+      indexes.sort((left, right) => left - right);
+    }
+    return indexes;
+  }, [elicitationMessageIndex]);
   const messageVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => messageListRef.current,
     estimateSize: () => SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT,
     getItemKey: getMessageKey,
+    rangeExtractor: extractMessageRange,
     overscan: SESSION_MESSAGE_OVERSCAN,
     anchorTo: isMessageListFollowing ? "end" : "start",
     followOnAppend: false,
@@ -545,6 +561,7 @@ export function SessionMessageColumn({
   }, [sessionId]);
   const hasPendingMessageText =
     pendingMessageTextVisible &&
+    pendingResponseMessageIndex < 0 &&
     !hasLiveRunAssistantText &&
     liveApprovalRequest === null &&
     liveElicitationRequest === null &&
@@ -570,11 +587,6 @@ export function SessionMessageColumn({
       : ""),
     [hasFindQuery, hasPendingMessageText, isRunning, messageViewMode, pendingMessageText],
   );
-  const hasPendingInlineContent =
-    liveApprovalRequest !== null ||
-    liveElicitationRequest !== null ||
-    liveRunErrorMessage.trim().length > 0 ||
-    hasPendingMessageText;
   const pendingMessageGroupEndIndex = useMemo(
     () => {
       if (!isRunning || pendingMessageGroupId === null) {
@@ -622,6 +634,7 @@ export function SessionMessageColumn({
   );
   const activeCurrentFindMatch = clampFindMatchIndex(currentFindMatch, messageFindMatches.length);
   const canRenderGroupedPending =
+    pendingResponseMessageIndex < 0 &&
     pendingMessageGroupEndIndex >= 0 &&
     virtualMessages.some((virtualMessage) => virtualMessage.index === pendingMessageGroupEndIndex);
   const getFindMatchScrollIndex = useCallback((match: (typeof messageFindMatches)[number] | undefined) => {
@@ -897,41 +910,49 @@ export function SessionMessageColumn({
     });
   };
 
-  const renderPendingRow = (className = "") => (
+  const renderPendingContent = () => (
+    <div className="pending-response-content">
+      <LiveRequestSurface
+        liveApprovalRequest={liveApprovalRequest}
+        approvalActionRequestId={approvalActionRequestId}
+        liveElicitationRequest={liveElicitationRequest}
+        elicitationActionRequestId={elicitationActionRequestId}
+        onResolveLiveApproval={onResolveLiveApproval}
+        onResolveLiveElicitation={onResolveLiveElicitation}
+        onOpenPath={onOpenPath}
+      />
+      {hasPendingMessageText ? (
+        <div
+          data-message-body="true"
+          data-message-text-actions={canUsePendingMessageTextActions ? "true" : undefined}
+          data-pending-message-body="true"
+        >
+          <MessageRichText
+            text={pendingMessageText}
+            forceFullRender={findOpen && hasFindQuery}
+            displayMode={messageViewMode}
+            onOpenPath={onOpenPath}
+            markdownLinkFileContext={markdownLinkFileContext}
+            glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+            glossaryAnnotationScopeKey={`${sessionId}:pending:${pendingMessageGroupId ?? "main"}`}
+            onActivateGlossaryEntry={onActivateGlossaryEntry}
+          />
+        </div>
+      ) : null}
+      {liveRunErrorMessage ? (
+        <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
+      ) : null}
+      <PendingRunIndicator announcement={pendingRunIndicatorAnnouncement} />
+    </div>
+  );
+
+  const renderPendingResponse = (className = "") => (
     <article className={`message-row assistant pending-row${className ? ` ${className}` : ""}`}>
-      <CharacterAvatar character={character} size="small" className="message-avatar" />
-      <div className={`message-card assistant pending-message-card${hasPendingInlineContent ? "" : " is-indicator-only"}`}>
-        <LiveRequestSurface
-          liveApprovalRequest={liveApprovalRequest}
-          approvalActionRequestId={approvalActionRequestId}
-          liveElicitationRequest={liveElicitationRequest}
-          elicitationActionRequestId={elicitationActionRequestId}
-          onResolveLiveApproval={onResolveLiveApproval}
-          onResolveLiveElicitation={onResolveLiveElicitation}
-          onOpenPath={onOpenPath}
-        />
-        {hasPendingMessageText ? (
-          <div
-            data-message-body="true"
-            data-message-text-actions={canUsePendingMessageTextActions ? "true" : undefined}
-            data-pending-message-body="true"
-          >
-            <MessageRichText
-              text={pendingMessageText}
-              forceFullRender={findOpen && hasFindQuery}
-              displayMode={messageViewMode}
-              onOpenPath={onOpenPath}
-              markdownLinkFileContext={markdownLinkFileContext}
-              glossaryAnnotationMatcher={glossaryAnnotationMatcher}
-              glossaryAnnotationScopeKey={`${sessionId}:pending:${pendingMessageGroupId ?? "main"}`}
-              onActivateGlossaryEntry={onActivateGlossaryEntry}
-            />
-          </div>
-        ) : null}
-        {liveRunErrorMessage ? (
-          <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
-        ) : null}
-        <PendingRunIndicator announcement={pendingRunIndicatorAnnouncement} />
+      <div className="message-avatar-stack">
+        <CharacterAvatar character={character} size="small" className="message-avatar" />
+      </div>
+      <div className="message-card assistant pending-message-card">
+        {renderPendingContent()}
       </div>
     </article>
   );
@@ -1233,15 +1254,16 @@ export function SessionMessageColumn({
                       ) : null}
                       </section>
                     ) : null}
+                    {isRunning && absoluteIndex === pendingResponseMessageIndex ? renderPendingContent() : null}
                   </div>
                 </div>
                 </article>
-                {shouldRenderGroupedPending ? renderPendingRow("auxiliary-message-group-item auxiliary-message-group-end") : null}
+                {shouldRenderGroupedPending ? renderPendingResponse("auxiliary-message-group-item auxiliary-message-group-end") : null}
               </div>
             );
           })}
             </div>
-            {isRunning && !canRenderGroupedPending ? renderPendingRow() : null}
+            {isRunning && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}

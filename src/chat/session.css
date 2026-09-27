@@ -1317,11 +1317,11 @@
   background: #ffffff;
 }
 
-.session-page .message-row:not(.auxiliary-message-group-item) .message-card.assistant:not(.pending-message-card) {
+.session-page .message-row:not(.auxiliary-message-group-item) .message-card.assistant {
   border-color: transparent;
   border-left: 3px solid var(--character-main);
-  border-radius: 0;
-  background: transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--character-main) 8%, rgba(20, 25, 34, 0.96));
   box-shadow: none;
 }
 
@@ -1337,7 +1337,7 @@
   box-shadow: none;
 }
 
-.session-page .message-jump-highlight .message-row:not(.auxiliary-message-group-item) .message-card.assistant:not(.pending-message-card),
+.session-page .message-jump-highlight .message-row:not(.auxiliary-message-group-item) .message-card.assistant,
 .session-page .message-jump-highlight .message-row:not(.auxiliary-message-group-item) .message-card.user {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--character-main) 28%, transparent);
 }
@@ -1857,29 +1857,12 @@
   align-items: flex-start;
 }
 
-.pending-message-card {
+.pending-response-content {
   display: grid;
   gap: 12px;
-  background: rgba(255, 255, 255, 0.96);
-  border-color: rgba(148, 163, 184, 0.28);
 }
 
-.session-page .pending-message-card {
-  border-color: color-mix(in srgb, var(--character-sub) 22%, rgba(203, 213, 225, 0.18));
-  background: color-mix(in srgb, var(--character-sub-soft) 38%, rgba(15, 19, 26, 0.98));
-  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 78%, transparent);
-}
-
-.session-page .pending-message-card.is-indicator-only,
-.session-page .message-row.auxiliary-message-group-item .pending-message-card.is-indicator-only {
-  width: max-content;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.session-page .pending-message-card .pending-run-indicator {
+.session-page .pending-response-content .pending-run-indicator {
   justify-self: start;
   min-height: 36px;
   padding: 8px 12px;

@@ -309,10 +309,12 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - `selectedSession.id` 切替時は follow / unread state をリセットする
   - `Jump to latest` で末尾へ移動して追従へ復帰できる
 - pending 中の live activity / streaming response
-- streamingの`assistantText`は会話本文として表示する。run開始直後からmessage list末尾にCharacter avatarとdot bubbleを置き、本文の到着後もrun中は維持する。同じrunの既定待機文を会話本文へ重ねない
+- streamingの`assistantText`は会話本文として表示する。run開始直後から応答用のassistant行にCharacter avatarとdot bubbleを置き、本文の到着後は同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
+- 処理中表示の所属は、投影が会話ID・thread・メッセージ位置から生成するmessage keyで識別する。保存済み本文とlive本文が異なる場合も対象の応答枠を使い、本文一致や最後のassistantから推測しない。Main／Auxiliaryで所属を分離し、完了・失敗・キャンセル後は本文を重複させず処理中表示を消す
 - pending bubble には provider-native pending item を差し込める
   - `approvalRequest`: `Allow Once / Reject`
   - `elicitationRequest`: form の `Submit` または URL completion の `Complete` と、`Reject / Close`
+  - Elicitationの入力待ちでは、応答行が履歴の表示範囲外へ出ても同一requestの未送信回答を保持する。入力待ちの応答行だけを仮想化の描画対象に残し、requestの解決・run終了後は通常の描画範囲へ戻す。異なるrequestへ回答を持ち越さない
   - Approval / Elicitation の解決中は既存 pending item 内の spinner と `aria-busy` で待機を示し、同じ対象の状態文を重複表示しない
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
@@ -333,7 +335,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Copilot Usage` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
-- message list末尾のdot bubbleは `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後もrun中は維持する
+- 応答内のdot bubbleは `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後もrun中は維持する
 - 未選択のMain / Auxiliaryが実行中の場合は、そのtarget切替buttonに局所spinnerと対象付きaccessible nameを示す。選択中targetではmessage listの末尾行へ集約し、他のAuxiliaryは一覧の既存processing indicatorで識別する
 - 実行中bubbleは `runState !== "running"` になった時点で消し、success固定の完了表現にはしない
 - `assistantText`未着でもright paneの `Latest Command` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、末尾のdot bubbleとaccessible statusで待機を示す
@@ -369,7 +371,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - approval chip は `Auto Run / Provider Controlled / Safety Focused`
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`
-- assistant本文は装飾cardやgradientで囲まず、`main`の細い左線とavatarの縁でCharacterを示す。user本文は控えめなsurfaceで区別し、pendingとAuxiliary groupの状態表現は維持する
+- assistant本文はgradientを使わず、`main`の細い左線とavatarの縁、控えめな背景色で周囲から区別する。user本文は控えめなsurfaceで区別し、通常のassistantとuserの枠は同じ丸みを持つ。pendingとAuxiliary groupの状態表現は維持する
 - composer settings は独立したaccent背景を持たず、周囲のsurfaceと同じ背景を使う
 - `Send / Cancel` は mate `main`
 - sendability 判定は共通resolverへ寄せ、Composer内の購読と送信shortcutで最新draft・preview・強制feedback条件を使う。入力のたびにSession shellを更新せず、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う
