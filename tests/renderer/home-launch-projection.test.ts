@@ -64,6 +64,16 @@ describe("home-launch-projection", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "有効providerがない場合は選択providerなしとなりSessionを開始できない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog" }
+  // fault = "無効providerを開始候補に含める"
+  // observable = "enabledLaunchProviders、selectedLaunchProvider、canStartSession"
+  // observation_boundary = "public-boundary"
+  // scope = "Home launch provider availability"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("provider と start 可否を返す", () => {
     const settings = createDefaultAppSettings();
     settings.codingProviderSettings.codex = {
@@ -79,6 +89,8 @@ describe("home-launch-projection", () => {
       characterEntries: createCharacters(),
       appSettings: settings,
       modelCatalog: createCatalog(),
+      sessionCharacterUsageLoadStatus: "loaded",
+      openSessionWindowIdsLoadStatus: "loaded",
     });
 
     assert.deepEqual(projection.enabledLaunchProviders.map((provider) => provider.id), []);
@@ -115,6 +127,8 @@ describe("home-launch-projection", () => {
       characterEntries: createCharacters(),
       appSettings: settings,
       modelCatalog: createCatalog(),
+      sessionCharacterUsageLoadStatus: "loaded",
+      openSessionWindowIdsLoadStatus: "loaded",
     });
 
     assert.deepEqual(enabledOnlyCodex.enabledLaunchProviders.map((provider) => provider.id), ["codex"]);
@@ -145,6 +159,8 @@ describe("home-launch-projection", () => {
       characterEntries: createCharacters(),
       appSettings: createDefaultAppSettings(),
       modelCatalog: createCatalog(),
+      sessionCharacterUsageLoadStatus: "loaded",
+      openSessionWindowIdsLoadStatus: "loaded",
     });
 
     assert.equal(projection.launchWorkspacePathLabel, "Session Folder");
@@ -153,6 +169,16 @@ describe("home-launch-projection", () => {
     assert.equal(projection.canStartSession, true);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Random選択は固定Character選択と排他で、取得前提と入力が揃えば開始できる"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog" }
+  // fault = "Randomと固定Characterを同時選択にするか、準備済みのRandomを開始不可にする"
+  // observable = "selectedCharacter、randomCharacterSelected、canStartSession"
+  // observation_boundary = "public-boundary"
+  // scope = "Home launch random selection projection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("random character選択時は固定Characterを選択状態にしない", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
@@ -163,6 +189,8 @@ describe("home-launch-projection", () => {
       characterEntries: createCharacters(),
       appSettings: createDefaultAppSettings(),
       modelCatalog: createCatalog(),
+      sessionCharacterUsageLoadStatus: "loaded",
+      openSessionWindowIdsLoadStatus: "loaded",
     });
 
     assert.equal(projection.selectedCharacter, null);
@@ -170,6 +198,16 @@ describe("home-launch-projection", () => {
     assert.equal(projection.canStartSession, true);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "固定Characterがactive一覧に存在しない場合はSessionを開始できない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog" }
+  // fault = "不存在のCharacterを選択済みとして開始可能にする"
+  // observable = "selectedCharacter、randomCharacterSelected、canStartSession"
+  // observation_boundary = "public-boundary"
+  // scope = "Home launch specific Character validity"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("specific Character がactive一覧に存在しない場合は開始不可にする", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
@@ -180,6 +218,8 @@ describe("home-launch-projection", () => {
       characterEntries: createCharacters(),
       appSettings: createDefaultAppSettings(),
       modelCatalog: createCatalog(),
+      sessionCharacterUsageLoadStatus: "loaded",
+      openSessionWindowIdsLoadStatus: "loaded",
     });
 
     assert.equal(projection.selectedCharacter, null);
@@ -187,6 +227,16 @@ describe("home-launch-projection", () => {
     assert.equal(projection.canStartSession, false);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character catalogが未取得の間は履歴等が取得済みでもSessionを開始できない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog" }
+  // fault = "未取得catalogを正常0件としてneutralで開始可能にする"
+  // observable = "charactersLoaded、selectedCharacter、canStartSession"
+  // observation_boundary = "public-boundary"
+  // scope = "Home launch Character catalog readiness"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Character catalog 読み込み前は開始不可にする", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
@@ -196,6 +246,8 @@ describe("home-launch-projection", () => {
       charactersLoaded: false,
       appSettings: createDefaultAppSettings(),
       modelCatalog: createCatalog(),
+      sessionCharacterUsageLoadStatus: "loaded",
+      openSessionWindowIdsLoadStatus: "loaded",
     });
 
     assert.equal(projection.charactersLoaded, false);
@@ -221,6 +273,8 @@ describe("home-launch-projection", () => {
       characterEntries: [],
       appSettings: createDefaultAppSettings(),
       modelCatalog: createCatalog(),
+      sessionCharacterUsageLoadStatus: "loaded",
+      openSessionWindowIdsLoadStatus: "loaded",
     });
 
     assert.equal(projection.selectedLaunchProvider?.id, "codex");

@@ -145,6 +145,8 @@ describe("home-launch-handlers", () => {
       characterEntries: catalog.entries,
       charactersLoaded: catalog.status === "loaded",
       characterLoadStatus: catalog.status,
+      sessionCharacterUsageLoadStatus: "loaded",
+      openSessionWindowIdsLoadStatus: "loaded",
       appSettings: createDefaultAppSettings(),
       modelCatalog: { revision: 1, providers: [createProvider()] },
     }).canStartSession;

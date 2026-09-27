@@ -1,6 +1,8 @@
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { OpenSessionWindowIdsLoadStatus } from "../app/open-session-window-subscription.js";
+import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import {
@@ -48,6 +50,8 @@ export function buildHomeLaunchProjection({
   characterEntries = [],
   charactersLoaded = true,
   characterLoadStatus,
+  sessionCharacterUsageLoadStatus,
+  openSessionWindowIdsLoadStatus,
   appSettings,
   modelCatalog,
   providerLoadStatus,
@@ -64,6 +68,8 @@ export function buildHomeLaunchProjection({
   characterEntries?: readonly CharacterCatalogEntry[];
   charactersLoaded?: boolean;
   characterLoadStatus?: HomeCharacterLoadStatus;
+  sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
+  openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
   appSettings: AppSettings;
   modelCatalog: ModelCatalogSnapshot | null;
   providerLoadStatus?: ProviderLaunchLoadStatus;
@@ -81,6 +87,9 @@ export function buildHomeLaunchProjection({
     ? null
     : activeCharacterEntries.find((character) => character.id === selectedCharacterId) ?? null;
   const validCharacterSelection = launchCharacterSelectionMode === "random" || selectedCharacter !== null;
+  const randomSelectionReady = launchCharacterSelectionMode !== "random" || (
+    sessionCharacterUsageLoadStatus === "loaded" && openSessionWindowIdsLoadStatus === "loaded"
+  );
   const sessionFolderSelected = isSessionFolderLaunchWorkspace(launchWorkspace);
   const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
   const resolvedProviderLoadStatus = providerLoadStatus ?? "loaded";
@@ -110,6 +119,7 @@ export function buildHomeLaunchProjection({
       !!launchTitle.trim() &&
       !!launchWorkspace &&
       !!selectedLaunchProvider &&
-      validCharacterSelection,
+      validCharacterSelection &&
+      randomSelectionReady,
   };
 }

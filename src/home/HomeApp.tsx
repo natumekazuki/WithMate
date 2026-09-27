@@ -758,6 +758,8 @@ export default function HomeApp() {
       characterEntries: launchCharacterCatalog.entries,
       charactersLoaded: launchCharacterCatalog.status === "loaded",
       characterLoadStatus: launchCharacterCatalog.status,
+      sessionCharacterUsageLoadStatus: sessionSummariesState.characterUsageStatus,
+      openSessionWindowIdsLoadStatus: openSessionWindowIdsState.status,
       appSettings,
       modelCatalog,
       providerLoadStatus: modelCatalogLoadStatus === "error" || appSettingsLoadStatus === "error"
@@ -780,6 +782,8 @@ export default function HomeApp() {
       modelCatalog,
       modelCatalogLoadError,
       modelCatalogLoadStatus,
+      openSessionWindowIdsState.status,
+      sessionSummariesState.characterUsageStatus,
     ],
   );
   const { enabledLaunchProviders, selectedLaunchProvider } = launchProjection;

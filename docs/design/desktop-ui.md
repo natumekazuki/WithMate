@@ -140,6 +140,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Character selector は開くたびにランダムを初期選択する。明示選択したactive Characterはそのまま使い、Characterが0件の場合はneutral fallbackを使う。詳細はADR 004を参照する
   - Homeの管理用Character一覧は初回とWindow再フォーカス時に再取得する。New Sessionは開くたびに取得した一覧と取得状態を閉じるまで保持し、表示・選択・起動候補に同じ一覧を使う。Homeの再取得や外部のCharacter変更は開いているdialogへ反映せず、閉じて再度開いた時に最新化する
   - New Sessionを開く時のCharacter取得に失敗した場合は保持済みの一覧を起動候補として使わず、Character selectorに取得失敗を示してSession作成を無効にする。取得成功後の0件だけneutral fallbackを使う
+  - Random選択の`Start`はCharacter利用履歴とopen Session Window一覧の両方が取得成功した場合だけ有効にする。どちらかがloading / errorの間は開始不可とし、固定Character選択にはこの2取得を要求しない。選択と取得状態の変化に開始可否が追従し、実行時も同じ取得条件を再検証する。取得成功後の0件と未取得・取得失敗を区別する
   - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
   - open 時は dialog 内の最初の主要入力へ focus する。Home の `New Session` は入力途中の意図しないdismissを避けるため、footerの`Cancel`で閉じ、backdrop clickや`Escape`では閉じない
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
