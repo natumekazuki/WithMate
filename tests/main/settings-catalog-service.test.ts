@@ -20,6 +20,8 @@ import type { SettingsCatalogServiceDeps } from "../../src-electron/settings/set
 type SettingsCatalogDeps = SettingsCatalogServiceDeps;
 type DefaultedSettingsCatalogDependency =
   | "runProviderRuntimeOperationExclusive"
+  | "listSessionCredentialThreads"
+  | "listAuxiliaryCredentialThreads"
   | "updateSessionThreadIfMatches"
   | "updateAuxiliarySessionThreadIfMatches"
   | "updateSessionRuntimeMetadataIfMatches"
@@ -42,6 +44,8 @@ type SettingsCatalogTestDeps = Omit<SettingsCatalogDeps, DefaultedSettingsCatalo
 
 const defaultSettingsCatalogDependencies: Pick<SettingsCatalogDeps, DefaultedSettingsCatalogDependency> = {
   runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+  listSessionCredentialThreads: async () => { throw new Error("unexpected listSessionCredentialThreads"); },
+  listAuxiliaryCredentialThreads: async () => { throw new Error("unexpected listAuxiliaryCredentialThreads"); },
   updateSessionThreadIfMatches: async () => { throw new Error("unexpected updateSessionThreadIfMatches"); },
   updateAuxiliarySessionThreadIfMatches: async () => { throw new Error("unexpected updateAuxiliarySessionThreadIfMatches"); },
   updateSessionRuntimeMetadataIfMatches: async () => { throw new Error("unexpected updateSessionRuntimeMetadataIfMatches"); },
@@ -66,6 +70,24 @@ class SettingsCatalogService extends SettingsCatalogServiceImpl {
     const completeDeps: SettingsCatalogDeps = {
       ...defaultSettingsCatalogDependencies,
       ...deps,
+      listSessionCredentialThreads: deps.listSessionCredentialThreads ?? (async () =>
+        (await deps.listSessions()).map((session) => ({
+          id: session.id,
+          incarnationId: getSessionIncarnationId(session),
+          provider: session.provider,
+          threadId: session.threadId,
+          status: session.status,
+          runState: session.runState,
+        }))),
+      listAuxiliaryCredentialThreads: deps.listAuxiliaryCredentialThreads ?? (async () =>
+        (await deps.listAuxiliarySessions()).map((session) => ({
+          id: session.id,
+          parentSessionId: session.parentSessionId,
+          createdAt: session.createdAt,
+          provider: session.provider,
+          threadId: session.threadId,
+          runState: session.runState,
+        }))),
       updateSessionThreadIfMatches: deps.updateSessionThreadIfMatches ?? (async (input: SessionThreadPatchInput) => {
         const sessions = await deps.listSessions();
         const target = sessions.find((session) =>
@@ -291,10 +313,10 @@ describe("SettingsCatalogService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "通常 settings 更新は並行保存された chat layout を巻き戻さない"
+  // claim = "credential不変の通常 settings 更新はSession/Aux一覧を読まず、並行保存された chat layout を巻き戻さない"
   // oracle = { type = "contract", ref = "Concurrent settings projection" }
-  // fault = "stale snapshot が最新 layout を上書きする"
-  // observable = "settings 更新後の chatLayoutPreference"
+  // fault = "不要な全Session/Aux一覧を読み、またはstale snapshot が最新 layout を上書きする"
+  // observable = "一覧読取なしで完了した settings 更新後の chatLayoutPreference"
   // observation_boundary = "public-boundary"
   // scope = "settings-catalog-layout-concurrency"
   // lifecycle = "permanent"
@@ -321,17 +343,17 @@ describe("SettingsCatalogService", () => {
           return false;
         },
         listSessions() {
-          return [];
+          throw new Error("credential-unchanged settings save must not hydrate Sessions");
         },
-        async listAuxiliarySessions() {
-          auxiliarySessionsRequested.resolve();
-          await resumeAuxiliarySessions.promise;
-          return [];
+        listAuxiliarySessions() {
+          throw new Error("credential-unchanged settings save must not hydrate Auxiliary sessions");
         },
         getAppSettings() {
           return storage.getSettings();
         },
-        updateAppSettings(settings) {
+        async updateAppSettings(settings) {
+          auxiliarySessionsRequested.resolve();
+          await resumeAuxiliarySessions.promise;
           return storage.updateSettings(settings);
         },
         getModelCatalog() {

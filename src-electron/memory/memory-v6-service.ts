@@ -437,6 +437,7 @@ export class MemoryV6Service {
     }
     const result = await this.deps.storage.listEntries({
       target: resolved.target,
+      includeBody: validated.value.includeBody === true,
       states: validated.value.states,
       kinds: validated.value.kinds,
       tags: validated.value.tags,

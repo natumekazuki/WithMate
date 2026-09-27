@@ -59,6 +59,30 @@ function createLatestSessionSummary(
 describe("SessionLaunchSelectionService", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "新規Sessionの初期設定は保存完了前でも同providerの現在選択を優先する"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send" }
+  // fault = "現在選択があるのにDBの古い値を初期値に使う"
+  // observable = "resolveが返すmodel、reasoningEffort、speed、reviewer"
+  // observation_boundary = "public-boundary"
+  // scope = "session-launch-selection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("checkpoint未完了でも現在選択から新規会話を開始する", async () => {
+    const service = new SessionLaunchSelectionService({
+      getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { codex: { enabled: true } } }),
+      getModelCatalogSnapshot: createModelCatalogSnapshot,
+      getCurrentExecutionOptions: () => ({ catalogRevision: 7, model: "gpt-5.6", reasoningEffort: "xhigh", approvalMode: "untrusted", codexSandboxMode: "workspace-write", codexSpeed: "fast", codexReviewer: "auto-review", customAgentName: "" }),
+      getLatestSessionSummaryForProvider: () => createLatestSessionSummary({ provider: "codex", model: "gpt-5.6", reasoningEffort: "high", codexSpeed: "standard", codexReviewer: "user" }),
+    });
+    const selection = await service.resolve("codex");
+    assert.equal(selection.model, "gpt-5.6");
+    assert.equal(selection.reasoningEffort, "xhigh");
+    assert.equal(selection.codexSpeed, "fast");
+    assert.equal(selection.codexReviewer, "auto-review");
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "同じproviderの新規Sessionは直近SessionのFastとAuto-reviewをCodex speedとReviewerとして継承する"
   // oracle = { type = "contract", ref = "accepted behavior: new Session runtime selection inheritance" }
   // fault = "Session launch selection serviceが直近SessionのcodexSpeedまたはcodexReviewerを破棄して既定値を返す"

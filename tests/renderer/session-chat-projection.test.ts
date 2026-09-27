@@ -168,7 +168,7 @@ test("session header owner は auxiliary の parent 操作を隠し action callb
       selectedSession: createSession(),
       isReadOnly: false,
       runState: "idle",
-      persistSession: async (session) => session,
+      updateTitle: async () => undefined,
       closeWindow: noop,
     });
     return null;

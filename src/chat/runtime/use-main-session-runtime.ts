@@ -7,6 +7,8 @@ import {
 } from "react";
 import type { RunSessionTurnRequest } from "../../../src-shared/session/runtime-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
+import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type {
   ComposerControllerRegistry,
@@ -47,11 +49,31 @@ export function useMainSessionRuntime({
     | "getLiveSessionRun"
     | "updateSession"
     | "setSessionPinned"
+    | "setSessionExecutionOptions"
   > | null;
   selectedId: string | null;
   composerRegistry: ComposerControllerRegistry;
 }) {
   const [sessions, setSessionsBase] = useState<Session[]>([]);
+  const currentSessionRef = useRef<Session | null>(null);
+  const localSelectionRef = useRef<{ id: string; incarnationId: string; options: SessionExecutionOptions } | null>(null);
+  const mergeLocalSelection = useCallback((next: Session): Session => {
+    const selection = localSelectionRef.current;
+    if (!selection || selection.id !== next.id) return next;
+    if (selection.incarnationId !== getSessionIncarnationId(next)) {
+      localSelectionRef.current = null;
+      return next;
+    }
+    return { ...next, ...selection.options };
+  }, []);
+  const applySessions = useCallback((update: SetStateAction<Session[]>) => {
+    setSessionsBase((previous) => {
+      const next = typeof update === "function" ? update(previous) : update;
+      const merged = next.map(mergeLocalSelection);
+      currentSessionRef.current = merged.find((session) => session.id === selectedId) ?? null;
+      return merged;
+    });
+  }, [mergeLocalSelection, selectedId]);
   const mutationRevisionRef = useRef(new StateMutationRevision());
   const projectionRevisionRef = useRef(new StateMutationRevision());
   const refetchRevisionRef = useRef(new LatestRequestRevision());
@@ -66,17 +88,31 @@ export function useMainSessionRuntime({
   const setAuthoritativeSessions = useCallback(
     (update: SetStateAction<Session[]>) => {
       mutationRevisionRef.current.advance();
-      setSessionsBase(update);
+      applySessions(update);
     },
-    [],
+    [applySessions],
   );
   const setSessionProjection = useCallback(
     (update: SetStateAction<Session[]>) => {
       projectionRevisionRef.current.advance();
-      setSessionsBase(update);
+      applySessions(update);
     },
-    [],
+    [applySessions],
   );
+
+  const selectExecutionOptions = useCallback((session: Session) => {
+    const options = captureSessionExecutionOptions(session);
+    localSelectionRef.current = { id: session.id, incarnationId: getSessionIncarnationId(session), options };
+    currentSessionRef.current = session;
+    applySessions((current) => current.map((candidate) => candidate.id === session.id ? { ...candidate, ...options } : candidate));
+    if (api) {
+      void api.setSessionExecutionOptions({ sessionId: session.id, incarnationId: getSessionIncarnationId(session), executionOptions: options })
+        .catch((error) => {
+          void api.reportRendererLog({ level: "error", kind: "renderer.session-execution-options.failed", message: "Session execution options could not be saved", data: { sessionId: session.id }, error: { name: error instanceof Error ? error.name : "UnknownError", message: error instanceof Error ? error.message : String(error) } });
+        });
+    }
+    return session;
+  }, [api, applySessions]);
 
   useEffect(() => {
     let active = true;
@@ -135,6 +171,7 @@ export function useMainSessionRuntime({
     const unsubscribe = api.subscribeSessionInvalidation((payload) => {
       if (
         !active ||
+        payload.detailChanged === false ||
         (payload.scope === "ids" && !payload.sessionIds.includes(selectedId))
       )
         return;
@@ -246,6 +283,13 @@ export function useMainSessionRuntime({
 
   return {
     sessions,
+    getCurrentSession: () => currentSessionRef.current,
+    selectExecutionOptions,
+    updateSessionProjection: (sessionId: string, patch: (current: Session) => Session) => {
+      const current = currentSessionRef.current;
+      if (current?.id === sessionId) currentSessionRef.current = patch(current);
+      setSessionProjection((sessions) => sessions.map((session) => session.id === sessionId ? patch(session) : session));
+    },
     pendingSubmitSessionId,
     forceComposerBlockedFeedback,
     setForceComposerBlockedFeedback,

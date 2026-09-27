@@ -11,6 +11,7 @@ import {
 } from "../../src/chat/auxiliary/auxiliary-session-send-operation.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { OwnedLiveSessionRunState } from "../../src/chat/runtime/session-live-run-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
 function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
   return {
@@ -42,15 +43,61 @@ function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxili
 
 function createQueueRefs(): {
   draftSaveQueue: { current: Promise<void> };
-  sessionSaveQueue: { current: Promise<void> };
 } {
   return {
     draftSaveQueue: { current: Promise.resolve() },
-    sessionSaveQueue: { current: Promise.resolve() },
   };
 }
 
 describe("runAuxiliarySessionSendOperation", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary送信の古い成功応答と失敗復旧snapshotは実行中のBookmark付与・解除を保持する"
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md" }
+  // fault = "送信結果の旧Bookmarkで現行の確定messageを上書きする"
+  // observable = "適用されたSessionの確定本文とBookmark"
+  // observation_boundary = "component-behavior"
+  // scope = "auxiliary-send-bookmark-convergence"
+  // lifecycle = "permanent"
+  // impact = "実行中のBookmark変更が結果到着で消えるか解除済みBookmarkが復活する"
+  // distinction = "実行オプション維持testはmessageのBookmarkを観測しない"
+  // @end-test-value
+  it("古い送信結果と失敗復旧はBookmark付与・解除を巻き戻さない", () => {
+    const before = { role: "assistant" as const, text: "before" };
+    const activeSessionRef = { current: makeAuxiliarySession({ messages: [{ ...before, isBookmarked: true }] }) as AuxiliarySession | null };
+    const applied: AuxiliarySession[] = [];
+    const appliers = createAuxiliarySessionSendResultAppliers({ activeSessionRef, setActiveSession: (next) => { applied.push(next); activeSessionRef.current = next; } });
+    appliers.applySavedSession(makeAuxiliarySession({ messages: [before, { role: "assistant", text: "done" }] }));
+    assert.equal(applied.at(-1)?.messages[0]?.isBookmarked, true);
+    assert.equal(applied.at(-1)?.messages[1]?.text, "done");
+    activeSessionRef.current = makeAuxiliarySession({ messages: [before] });
+    appliers.restoreSessionAfterError(makeAuxiliarySession({ messages: [{ ...before, isBookmarked: true }] }));
+    assert.equal(applied.at(-1)?.messages[0]?.isBookmarked, undefined);
+  });
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliaryのturn結果が遅れて届いても送信後に選んだ実行オプションは保持される"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 実行オプションとturn" }
+  // fault = "Bで送信したturnの保存結果が後から選んだCを上書きする"
+  // observable = "完了会話のmessagesとmodel選択"
+  // observation_boundary = "component-behavior"
+  // scope = "auxiliary-send-convergence"
+  // lifecycle = "permanent"
+  // impact = "次の送信が利用者表示と異なるモデルで実行される"
+  // distinction = "turn結果とローカル選択の非同期競合は型検査では観測できない"
+  // @end-test-value
+  it("遅れたturn結果は後続の実行選択を戻さず本文を反映する", () => {
+    const activeSessionRef = { current: makeAuxiliarySession({ model: "model-c" }) as AuxiliarySession | null };
+    const applied: AuxiliarySession[] = [];
+    const { applySavedSession } = createAuxiliarySessionSendResultAppliers({
+      activeSessionRef,
+      setActiveSession: (session) => { applied.push(session); },
+    });
+    applySavedSession(makeAuxiliarySession({ model: "model-b", messages: [{ role: "assistant", text: "done" }] }));
+    assert.equal(applied[0].model, "model-c");
+    assert.deepEqual(applied[0].messages, [{ role: "assistant", text: "done" }]);
+  });
+
   it("send result appliers は saved と error restore で同じ active session 更新を使う", () => {
     const activeSessionRef = {
       current: makeAuxiliarySession({ id: "before" }) as AuxiliarySession | null,
@@ -204,6 +251,17 @@ describe("runAuxiliarySessionSendOperation", () => {
     assert.deepEqual(events, ["blocked:empty", "target:running", "error"]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary実行開始時に会話状態とpending live runが同じ送信対象へ反映される"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 実行中状態" }
+  // fault = "実行対象とは別のAuxiliaryにpending状態を表示する"
+  // observable = "active sessionのrunStateとlive run owner"
+  // observation_boundary = "component-behavior"
+  // scope = "auxiliary-send-running-projection"
+  // lifecycle = "permanent"
+  // distinction = "実行前のUI状態投影はproviderの結果testでは検出できない"
+  // @end-test-value
   it("running applier は active session と pending live run を同じ running session から反映する", () => {
     const runningSession = makeAuxiliarySession({
       runState: "running",
@@ -247,7 +305,7 @@ describe("runAuxiliarySessionSendOperation", () => {
 
     applyRunningSession(runningSession);
 
-    assert.equal(activeSessionRef.current, runningSession);
+    assert.deepEqual(activeSessionRef.current, runningSession);
     assert.deepEqual(appliedSessions, [runningSession]);
     assert.deepEqual(liveRunStates, [{
       ownerSessionId: "runtime:aux-1",
@@ -266,8 +324,19 @@ describe("runAuxiliarySessionSendOperation", () => {
     }]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary送信は親会話anchorと本文をturn要求へ渡し、完了結果を会話へ反映する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信と表示位置" }
+  // fault = "anchorまたは本文を落として別位置へ応答を表示する"
+  // observable = "turn要求の本文とanchor、完了会話"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-send"
+  // lifecycle = "permanent"
+  // distinction = "型検査では要求値と会話状態の対応を保証できない"
+  // @end-test-value
   it("running transition を反映して turn 実行結果を active session へ反映する", async () => {
-    const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
+    const { draftSaveQueue } = createQueueRefs();
     const mutationRevision = { current: 0 };
     let currentSession = makeAuxiliarySession();
     const savedSession = makeAuxiliarySession({
@@ -280,18 +349,17 @@ describe("runAuxiliarySessionSendOperation", () => {
       displayAfterMessageIndex: 2,
       updatedAt: "saved",
     });
-    const pendingUpdates: AuxiliarySession[] = [];
     const runningSessions: AuxiliarySession[] = [];
     const appliedSavedSessions: AuxiliarySession[] = [];
-    const runRequests: Array<{ sessionId: string; userMessage: string }> = [];
+    const runRequests: Array<{ sessionId: string; userMessage: string; anchor: number | undefined }> = [];
 
     const result = await runAuxiliarySessionSendOperation({
       activeSession: currentSession,
+      executionOptions: captureSessionExecutionOptions(currentSession),
       messageText: "  hello  ",
       parentMessageCount: 3,
       updatedAt: "running",
       draftSaveQueue,
-      sessionSaveQueue,
       mutationRevision,
       getCurrentSession: () => currentSession,
       applyRunningSession: (session) => {
@@ -306,12 +374,8 @@ describe("runAuxiliarySessionSendOperation", () => {
         currentSession = session;
       },
       clearPendingLiveRun: () => undefined,
-      updateAuxiliarySession: async (session) => {
-        pendingUpdates.push(session);
-        return session;
-      },
       runAuxiliarySessionTurn: async (sessionId, request) => {
-        runRequests.push({ sessionId, userMessage: request.userMessage });
+        runRequests.push({ sessionId, userMessage: request.userMessage, anchor: request.displayAnchorParentMessageCount });
         return savedSession;
       },
     });
@@ -321,10 +385,6 @@ describe("runAuxiliarySessionSendOperation", () => {
       saved: savedSession,
     });
     assert.equal(mutationRevision.current, 1);
-    assert.deepEqual(pendingUpdates, [{
-      ...makeAuxiliarySession(),
-      displayAfterMessageIndex: 2,
-    }]);
     assert.deepEqual(runningSessions, [{
       ...makeAuxiliarySession(),
       runState: "running",
@@ -333,13 +393,24 @@ describe("runAuxiliarySessionSendOperation", () => {
       displayAfterMessageIndex: 2,
       updatedAt: "running",
     }]);
-    assert.deepEqual(runRequests, [{ sessionId: "aux-1", userMessage: "hello" }]);
+    assert.deepEqual(runRequests, [{ sessionId: "aux-1", userMessage: "hello", anchor: 3 }]);
     assert.deepEqual(appliedSavedSessions, [savedSession]);
     assert.equal(currentSession, savedSession);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary送信adapterはcaptured execution optionsを同一turn要求へ渡す"
+  // oracle = { type = "contract", ref = "src-shared/session/runtime-state.ts: RunSessionTurnRequest" }
+  // fault = "adapterで実行選択値を落とし、保存済み値で実行する"
+  // observable = "adapterが渡すturn要求のexecutionOptions"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-send-adapter"
+  // lifecycle = "permanent"
+  // distinction = "Main APIへのadapter経路を直接検査する"
+  // @end-test-value
   it("API adapter 経由でも update と turn 実行を呼び出す", async () => {
-    const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
+    const { draftSaveQueue } = createQueueRefs();
     const mutationRevision = { current: 0 };
     let currentSession = makeAuxiliarySession();
     const savedSession = makeAuxiliarySession({
@@ -352,16 +423,15 @@ describe("runAuxiliarySessionSendOperation", () => {
       displayAfterMessageIndex: 2,
       updatedAt: "saved",
     });
-    const apiUpdates: AuxiliarySession[] = [];
-    const apiRuns: Array<{ sessionId: string; userMessage: string }> = [];
+    const apiRuns: Array<{ sessionId: string; userMessage: string; model: string }> = [];
 
     const result = await runAuxiliarySessionSendOperationWithApi({
       activeSession: currentSession,
+      executionOptions: captureSessionExecutionOptions(currentSession),
       messageText: "hello",
       parentMessageCount: 3,
       updatedAt: "running",
       draftSaveQueue,
-      sessionSaveQueue,
       mutationRevision,
       getCurrentSession: () => currentSession,
       applyRunningSession: (session) => {
@@ -375,12 +445,8 @@ describe("runAuxiliarySessionSendOperation", () => {
       },
       clearPendingLiveRun: () => undefined,
       api: {
-        updateAuxiliarySession: async (session) => {
-          apiUpdates.push(session);
-          return session;
-        },
         runAuxiliarySessionTurn: async (sessionId, request) => {
-          apiRuns.push({ sessionId, userMessage: request.userMessage });
+          apiRuns.push({ sessionId, userMessage: request.userMessage, model: request.executionOptions.model });
           return savedSession;
         },
       },
@@ -390,27 +456,34 @@ describe("runAuxiliarySessionSendOperation", () => {
       status: "completed",
       saved: savedSession,
     });
-    assert.deepEqual(apiUpdates, [{
-      ...makeAuxiliarySession(),
-      displayAfterMessageIndex: 2,
-    }]);
-    assert.deepEqual(apiRuns, [{ sessionId: "aux-1", userMessage: "hello" }]);
+    assert.deepEqual(apiRuns, [{ sessionId: "aux-1", userMessage: "hello", model: "gpt-5.4" }]);
     assert.equal(currentSession, savedSession);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "送信不能なAuxiliary入力はdraft消費とturn開始を行わない"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+  // fault = "blocked入力でも送信開始副作用を起こす"
+  // observable = "blocked結果、mutation revision、副作用回数"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-send-preflight"
+  // lifecycle = "permanent"
+  // distinction = "UI disabled状態だけでは操作関数のguardを保証できない"
+  // @end-test-value
   it("preflight で block された場合は副作用なしで返す", async () => {
-    const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
+    const { draftSaveQueue } = createQueueRefs();
     const mutationRevision = { current: 0 };
     let sideEffectCount = 0;
 
     const result = await runAuxiliarySessionSendOperation({
       activeSession: makeAuxiliarySession(),
+      executionOptions: captureSessionExecutionOptions(makeAuxiliarySession()),
       composerBlockedReason: "blocked",
       messageText: "hello",
       parentMessageCount: 1,
       updatedAt: "running",
       draftSaveQueue,
-      sessionSaveQueue,
       mutationRevision,
       getCurrentSession: () => makeAuxiliarySession(),
       applyRunningSession: () => {
@@ -425,7 +498,6 @@ describe("runAuxiliarySessionSendOperation", () => {
       clearPendingLiveRun: () => {
         sideEffectCount += 1;
       },
-      updateAuxiliarySession: async (session) => session,
       runAuxiliarySessionTurn: async () => makeAuxiliarySession(),
     });
 
@@ -435,6 +507,17 @@ describe("runAuxiliarySessionSendOperation", () => {
     assert.equal(sideEffectCount, 0);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "draft保存待機中にAuxiliaryが変更された送信は古いcaptureを実行しない"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+  // fault = "古いdraftと別の会話状態でturnを開始する"
+  // observable = "stale結果とturn実行有無"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-send-revision"
+  // lifecycle = "permanent"
+  // distinction = "非同期revision変更は型やstatic checkで検出できない"
+  // @end-test-value
   it("queue 待機中に revision が変わった場合は送信しない", async () => {
     const mutationRevision = { current: 0 };
     const draftSaveQueue = {
@@ -442,16 +525,15 @@ describe("runAuxiliarySessionSendOperation", () => {
         mutationRevision.current += 1;
       }),
     };
-    const sessionSaveQueue = { current: Promise.resolve() };
     let didRun = false;
 
     const result = await runAuxiliarySessionSendOperation({
       activeSession: makeAuxiliarySession(),
+      executionOptions: captureSessionExecutionOptions(makeAuxiliarySession()),
       messageText: "hello",
       parentMessageCount: 1,
       updatedAt: "running",
       draftSaveQueue,
-      sessionSaveQueue,
       mutationRevision,
       getCurrentSession: () => makeAuxiliarySession(),
       applyRunningSession: () => {
@@ -466,7 +548,6 @@ describe("runAuxiliarySessionSendOperation", () => {
       clearPendingLiveRun: () => {
         didRun = true;
       },
-      updateAuxiliarySession: async (session) => session,
       runAuxiliarySessionTurn: async () => {
         didRun = true;
         return makeAuxiliarySession();
@@ -479,31 +560,29 @@ describe("runAuxiliarySessionSendOperation", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "保存queue待機中に終了凍結した送信は本文をconsumeせず、凍結解除後の明示送信で同じ本文を送れる"
+  // claim = "draft queue待機中に終了凍結した送信は本文をconsumeせず、凍結解除後の明示送信で同じ本文を送れる"
   // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
-  // fault = "保存queue前だけ送信可否を確認して凍結後にdraftをclear/consumeする"
+  // fault = "draft queue前だけ送信可否を確認して凍結後にdraftをclear/consumeする"
   // observable = "凍結時のstale結果と本文保持、解凍後のcompleted結果と送信本文"
   // observation_boundary = "public-boundary"
   // scope = "auxiliary-send-queue-freeze"
   // lifecycle = "permanent"
   // impact = "終了待ちに後発送信が入り、保存済み下書きがconsumeされるデータ消失を防ぐ"
-  // distinction = "Appのdraft保存前処理より後に待機する会話保存queue境界を検証する。型検査では非同期の凍結順序を保証できない"
+  // distinction = "Appのdraft保存前処理より後のdraft queue境界を検証する。型検査では非同期の凍結順序を保証できない"
   // @end-test-value
   it("保存queue待機中の終了凍結は本文を保持し、解凍後に送信できる", async () => {
     let frozen = false;
     let draft = "kept draft";
     const sent: string[] = [];
     const input = {
-      activeSession: makeAuxiliarySession(), messageText: draft, parentMessageCount: 1, updatedAt: "running",
-      draftSaveQueue: { current: Promise.resolve() },
-      sessionSaveQueue: { current: Promise.resolve().then(() => { frozen = true; }) },
+      activeSession: makeAuxiliarySession(), executionOptions: captureSessionExecutionOptions(makeAuxiliarySession()), messageText: draft, parentMessageCount: 1, updatedAt: "running",
+      draftSaveQueue: { current: Promise.resolve().then(() => { frozen = true; }) },
       mutationRevision: { current: 0 },
       getCurrentSession: () => makeAuxiliarySession(),
       canStartRun: () => !frozen,
       beforeRunningSessionApplied: () => { draft = ""; },
       applyRunningSession: () => {}, applySavedSession: () => {},
       restoreSessionAfterError: () => {}, clearPendingLiveRun: () => {},
-      updateAuxiliarySession: async (session: AuxiliarySession) => session,
       runAuxiliarySessionTurn: async (_id: string, request: { userMessage: string }) => {
         sent.push(request.userMessage);
         return makeAuxiliarySession();
@@ -518,18 +597,29 @@ describe("runAuxiliarySessionSendOperation", () => {
     assert.deepEqual(sent, ["kept draft"]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "保存待機後に実行中となったAuxiliaryへ重複turnを開始しない"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 実行中状態" }
+  // fault = "先行runが始まった同じ会話へ別turnを重ねる"
+  // observable = "target-blocked結果とturn未実行"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-send-running-guard"
+  // lifecycle = "permanent"
+  // distinction = "操作時点の状態だけでなく保存待機後の再確認を検証する"
+  // @end-test-value
   it("保存後の current session が running の場合は target-blocked を返す", async () => {
-    const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
+    const { draftSaveQueue } = createQueueRefs();
     const mutationRevision = { current: 0 };
     let didRun = false;
 
     const result = await runAuxiliarySessionSendOperation({
       activeSession: makeAuxiliarySession(),
+      executionOptions: captureSessionExecutionOptions(makeAuxiliarySession()),
       messageText: "hello",
       parentMessageCount: 1,
       updatedAt: "running",
       draftSaveQueue,
-      sessionSaveQueue,
       mutationRevision,
       getCurrentSession: () => makeAuxiliarySession({ runState: "running" }),
       applyRunningSession: () => {
@@ -544,7 +634,6 @@ describe("runAuxiliarySessionSendOperation", () => {
       clearPendingLiveRun: () => {
         didRun = true;
       },
-      updateAuxiliarySession: async (session) => session,
       runAuxiliarySessionTurn: async () => {
         didRun = true;
         return makeAuxiliarySession();
@@ -557,8 +646,19 @@ describe("runAuxiliarySessionSendOperation", () => {
     assert.equal(didRun, false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary turn失敗時はpending live runを消し会話を復旧する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 実行失敗とdraft復旧" }
+  // fault = "失敗後もrunning表示や楽観本文が残る"
+  // observable = "clear対象と復旧session"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-send-error-recovery"
+  // lifecycle = "permanent"
+  // distinction = "成功時だけのtestでは失敗後の表示復旧を検出できない"
+  // @end-test-value
   it("turn 実行失敗時は live run を clear して送信前 session へ戻す", async () => {
-    const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
+    const { draftSaveQueue } = createQueueRefs();
     const mutationRevision = { current: 0 };
     const error = new Error("run failed");
     const beforeSession = makeAuxiliarySession({
@@ -571,11 +671,11 @@ describe("runAuxiliarySessionSendOperation", () => {
 
     const result = await runAuxiliarySessionSendOperation({
       activeSession: beforeSession,
+      executionOptions: captureSessionExecutionOptions(beforeSession),
       messageText: "hello",
       parentMessageCount: 3,
       updatedAt: "running",
       draftSaveQueue,
-      sessionSaveQueue,
       mutationRevision,
       getCurrentSession: () => currentSession,
       applyRunningSession: (session) => {
@@ -591,7 +691,6 @@ describe("runAuxiliarySessionSendOperation", () => {
       clearPendingLiveRun: (sessionId) => {
         clearedSessionIds.push(sessionId);
       },
-      updateAuxiliarySession: async (session) => session,
       runAuxiliarySessionTurn: async () => {
         throw error;
       },

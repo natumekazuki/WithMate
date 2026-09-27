@@ -24,10 +24,28 @@ import type {
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "../providers/provider-runtime-operation-coordinator.js";
-import type { SessionThreadPatchInput } from "../session/session-storage-v6.js";
-import type { AuxiliarySessionThreadPatchInput } from "../auxiliary/auxiliary-session-storage.js";
+import type { SessionThreadPatchInput, SessionRuntimeMetadataPatchResult } from "../session/session-storage-v6.js";
+import type { AuxiliarySessionThreadPatchInput, AuxiliaryRuntimeMetadataPatchResult } from "../auxiliary/auxiliary-session-storage.js";
 import type { AuxiliarySessionRuntimeMetadataPatchInput } from "../auxiliary/auxiliary-session-storage.js";
 import type { ProviderRuntimeMetadata } from "../providers/provider-runtime-metadata-patch.js";
+
+export type SessionCredentialThreadInfo = {
+  id: string;
+  incarnationId: string;
+  provider: string;
+  threadId: string;
+  status: string;
+  runState: string;
+};
+
+export type AuxiliaryCredentialThreadInfo = {
+  id: string;
+  parentSessionId: string;
+  createdAt: string;
+  provider: string;
+  threadId: string;
+  runState: string;
+};
 
 export type SettingsCatalogServiceDeps = {
   /** Captures the storage owner/generation used by a deferred operation. */
@@ -40,6 +58,8 @@ export type SettingsCatalogServiceDeps = {
   isRunningSession(session: Session): boolean;
   listSessions(): Awaitable<Session[]>;
   listAuxiliarySessions(): Awaitable<AuxiliarySession[]>;
+  listSessionCredentialThreads(): Awaitable<SessionCredentialThreadInfo[]>;
+  listAuxiliaryCredentialThreads(): Awaitable<AuxiliaryCredentialThreadInfo[]>;
   getAppSettings(): Awaitable<AppSettings>;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getModelCatalog(revision?: number | null): Awaitable<ModelCatalogSnapshot | null>;
@@ -62,10 +82,10 @@ export type SettingsCatalogServiceDeps = {
     incarnationId: string;
     expected: ProviderRuntimeMetadata;
     next: ProviderRuntimeMetadata;
-  }): Awaitable<Session | null>;
-  updateAuxiliarySessionRuntimeMetadataIfMatches(input: AuxiliarySessionRuntimeMetadataPatchInput): Awaitable<AuxiliarySession | null>;
-  updateSessionThreadIfMatches(input: SessionThreadPatchInput): Awaitable<Session | null>;
-  updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): Awaitable<AuxiliarySession | null>;
+  }): Awaitable<SessionRuntimeMetadataPatchResult | null>;
+  updateAuxiliarySessionRuntimeMetadataIfMatches(input: AuxiliarySessionRuntimeMetadataPatchInput): Awaitable<AuxiliaryRuntimeMetadataPatchResult | null>;
+  updateSessionThreadIfMatches(input: SessionThreadPatchInput): Awaitable<Pick<Session, "id" | "threadId"> | null>;
+  updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): Awaitable<Pick<AuxiliarySession, "id" | "parentSessionId" | "threadId"> | null>;
   clearProviderQuotaTelemetry(providerId: string): void;
   clearSessionContextTelemetry(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
@@ -231,14 +251,18 @@ export class SettingsCatalogService {
     const rollbackEpoch = this.rollbackEpoch;
     const nextSettings = normalizeAppSettings(nextSettingsInput);
     const providersWithApiKeyChange = getProvidersWithApiKeyChange(previousSettings, nextSettings);
-    const previousSessions = await this.deps.listSessions();
-    const previousAuxiliarySessions = await this.deps.listAuxiliarySessions();
+    const previousSessions = providersWithApiKeyChange.length > 0
+      ? await this.deps.listSessionCredentialThreads()
+      : [];
+    const previousAuxiliarySessions = providersWithApiKeyChange.length > 0
+      ? await this.deps.listAuxiliaryCredentialThreads()
+      : [];
 
     if (providersWithApiKeyChange.length > 0) {
       const hasBlockedSession = previousSessions.some(
         (session) =>
           providersWithApiKeyChange.includes(session.provider) &&
-          (this.deps.isSessionRunInFlight(session.id) || this.deps.isRunningSession(session)),
+          (this.deps.isSessionRunInFlight(session.id) || session.status === "running" || session.runState === "running"),
       );
       const hasBlockedAuxiliary = previousAuxiliarySessions.some((session) =>
         providersWithApiKeyChange.includes(session.provider) &&
@@ -256,8 +280,8 @@ export class SettingsCatalogService {
     const auxiliaryThreadResetTargets = previousAuxiliarySessions.filter((session) =>
       providersWithApiKeyChangeSet.has(session.provider) && session.threadId
     );
-    const appliedSessionPatches: Array<{ previous: Session; current: Session }> = [];
-    const appliedAuxiliaryPatches: Array<{ previous: AuxiliarySession; current: AuxiliarySession }> = [];
+    const appliedSessionPatches: Array<{ previous: SessionCredentialThreadInfo; current: Pick<Session, "id" | "threadId"> }> = [];
+    const appliedAuxiliaryPatches: Array<{ previous: AuxiliaryCredentialThreadInfo; current: Pick<AuxiliarySession, "id" | "parentSessionId" | "threadId"> }> = [];
     const updateSessionThreadIfMatches = this.deps.updateSessionThreadIfMatches;
     const updateAuxiliarySessionThreadIfMatches = this.deps.updateAuxiliarySessionThreadIfMatches;
 
@@ -280,7 +304,7 @@ export class SettingsCatalogService {
       for (const previous of sessionThreadResetTargets) {
         const current = await updateSessionThreadIfMatches({
           sessionId: previous.id,
-          incarnationId: getSessionIncarnationId(previous),
+          incarnationId: previous.incarnationId,
           provider: previous.provider,
           expectedThreadId: previous.threadId,
           nextThreadId: "",
@@ -339,7 +363,7 @@ export class SettingsCatalogService {
           for (const { previous, current: applied } of appliedSessionPatches) {
             await updateSessionThreadIfMatches({
               sessionId: previous.id,
-              incarnationId: getSessionIncarnationId(previous),
+              incarnationId: previous.incarnationId,
               provider: previous.provider,
               expectedThreadId: applied.threadId,
               nextThreadId: previous.threadId,
@@ -376,7 +400,7 @@ export class SettingsCatalogService {
         for (const { previous, current } of appliedSessionPatches) {
           await updateSessionThreadIfMatches({
             sessionId: previous.id,
-            incarnationId: getSessionIncarnationId(previous),
+            incarnationId: previous.incarnationId,
             provider: previous.provider,
             expectedThreadId: current.threadId,
             nextThreadId: previous.threadId,
@@ -452,8 +476,8 @@ export class SettingsCatalogService {
     }
 
     let importedSnapshot: ModelCatalogSnapshot | null = null;
-    const appliedSessions: Array<{ previous: Session; current: Session }> = [];
-    const appliedAuxiliarySessions: Array<{ previous: AuxiliarySession; current: AuxiliarySession }> = [];
+    const appliedSessions: Array<{ previous: Session; current: SessionRuntimeMetadataPatchResult }> = [];
+    const appliedAuxiliarySessions: Array<{ previous: AuxiliarySession; current: AuxiliaryRuntimeMetadataPatchResult }> = [];
     try {
       importedSnapshot = await this.deps.importModelCatalogDocument(normalizedDocument, "imported");
       const nextSnapshot = importedSnapshot;

@@ -9,6 +9,7 @@ import {
   type AuxiliarySessionSummary,
 } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { CURRENT_SESSION_SCHEMA_VERSION, isReadOnlySession } from "../../src-shared/session/session-state.js";
+import { normalizeMessage, summarizeMessageArtifact, type Message, type MessageArtifact } from "../../src-shared/session/session-state.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import type { ProviderRuntimeMetadataPatch } from "../providers/provider-runtime-metadata-patch.js";
 import type {
@@ -29,18 +30,37 @@ type LegacyAuditEntryForPreview = {
 };
 
 type AuxiliarySessionRow = {
+  id: string;
+  parent_session_id: string;
+  status: "active" | "closed";
   created_at: string;
   updated_at: string;
-  payload_json: string;
+  title: string;
+  run_state: "idle" | "running" | "error";
+  preview: string;
+  provider_id: string;
+  catalog_revision: number;
+  model_id: string;
+  reasoning_effort: string;
+  approval_mode: string;
+  codex_sandbox_mode: string;
+  codex_speed: string;
+  codex_reviewer: string;
+  custom_agent_name: string;
+  allowed_additional_directories_json: string;
+  thread_id: string;
+  display_after_message_index: number | null;
+  closed_at: string;
+  character_id: string | null;
+  character_snapshot_json: string | null;
+  character_snapshot_invalid: number;
+  character_icon_path: string | null;
+  client_request_id: string | null;
+  creation_context_json: string | null;
+  creation_request_json: string | null;
 };
 
-type AuxiliarySessionSummaryRow = {
-  created_at: string;
-  updated_at: string;
-  effective_updated_at?: string;
-  summary_json: string;
-  payload_json?: string;
-};
+type AuxiliarySessionSummaryRow = AuxiliarySessionRow & { effective_updated_at?: string };
 
 type AuxiliaryDraftRow = {
   id: string;
@@ -76,6 +96,24 @@ export type AuxiliarySessionUpdateIfMatchesInput = {
   expectedSession: AuxiliarySession;
 };
 
+export type AuxiliaryIdentityPatchInput = {
+  auxiliarySessionId: string;
+  parentSessionId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AuxiliaryExecutionOptions = Pick<AuxiliarySession,
+  "provider" | "catalogRevision" | "model" | "reasoningEffort" | "approvalMode"
+  | "codexSandboxMode" | "codexSpeed" | "codexReviewer" | "customAgentName">;
+
+export type AuxiliaryCredentialThreadInfo = Pick<AuxiliarySession,
+  "id" | "parentSessionId" | "createdAt" | "provider" | "threadId" | "runState">;
+export type AuxiliaryThreadPatchResult = Pick<AuxiliarySession, "id" | "parentSessionId" | "threadId">;
+export type AuxiliaryRuntimeMetadataPatchResult = Pick<AuxiliarySession,
+  "id" | "parentSessionId" | "createdAt" | "provider" | "catalogRevision" | "model"
+  | "reasoningEffort" | "threadId" | "updatedAt">;
+
 type TableInfoRow = {
   name: string;
 };
@@ -87,10 +125,52 @@ const CREATE_AUXILIARY_SESSIONS_TABLE_SQL = `
     status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    summary_json TEXT NOT NULL DEFAULT ''
+    title TEXT NOT NULL DEFAULT '',
+    run_state TEXT NOT NULL DEFAULT 'idle' CHECK (run_state IN ('idle', 'running', 'error')),
+    preview TEXT NOT NULL DEFAULT '',
+    provider_id TEXT NOT NULL DEFAULT 'codex',
+    catalog_revision INTEGER NOT NULL DEFAULT 1,
+    model_id TEXT NOT NULL DEFAULT '',
+    reasoning_effort TEXT NOT NULL DEFAULT 'medium',
+    approval_mode TEXT NOT NULL DEFAULT '',
+    codex_sandbox_mode TEXT NOT NULL DEFAULT '',
+    codex_speed TEXT NOT NULL DEFAULT '',
+    codex_reviewer TEXT NOT NULL DEFAULT '',
+    custom_agent_name TEXT NOT NULL DEFAULT '',
+    allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]',
+    thread_id TEXT NOT NULL DEFAULT '',
+    display_after_message_index INTEGER,
+    closed_at TEXT NOT NULL DEFAULT '',
+    character_id TEXT,
+    character_snapshot_json TEXT,
+    character_snapshot_invalid INTEGER NOT NULL DEFAULT 0,
+    character_icon_path TEXT,
+    client_request_id TEXT,
+    creation_context_json TEXT,
+    creation_request_json TEXT
   )
 `;
+
+const CREATE_AUXILIARY_MESSAGES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS auxiliary_session_messages (
+    auxiliary_session_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    body TEXT NOT NULL CHECK (json_valid(body)),
+    artifact_body TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (auxiliary_session_id, seq),
+    FOREIGN KEY (auxiliary_session_id) REFERENCES auxiliary_sessions(id) ON DELETE CASCADE
+  )
+`;
+
+const AUXILIARY_SUMMARY_COLUMNS = `a.id, a.parent_session_id, a.status, a.created_at, a.updated_at,
+  a.title, a.run_state, a.preview, a.provider_id, a.catalog_revision, a.model_id,
+  a.reasoning_effort, a.approval_mode, a.codex_sandbox_mode, a.codex_speed,
+  a.codex_reviewer, a.custom_agent_name, a.allowed_additional_directories_json,
+  a.thread_id, a.display_after_message_index, a.closed_at, a.character_id,
+  NULL AS character_snapshot_json, 0 AS character_snapshot_invalid, a.character_icon_path,
+  a.client_request_id, NULL AS creation_context_json, NULL AS creation_request_json`;
 
 const CREATE_AUXILIARY_SESSION_PARENT_UPDATED_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
@@ -133,13 +213,13 @@ export class AuxiliarySessionStorage {
   listAllAuxiliarySessions(): AuxiliarySession[] {
     return this.withDb((db) => {
       const rows = db.prepare(`
-        SELECT a.created_at, a.updated_at, a.payload_json
+        SELECT a.*
         FROM auxiliary_sessions a
         LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
         ORDER BY MAX(d.updated_at, a.updated_at) DESC, a.id DESC
       `).all() as AuxiliarySessionRow[];
       return rows
-        .map((row) => parseAuxiliarySessionRow(row))
+        .map((row) => readAuxiliarySession(db, row))
         .map((session) => session ? this.composeDraft(db, session) : null)
         .filter((session): session is AuxiliarySession => session !== null);
     });
@@ -148,9 +228,7 @@ export class AuxiliarySessionStorage {
   listAuxiliarySessions(parentSessionId: string): AuxiliarySessionSummary[] {
     return this.withDb((db) => {
       const rows = db.prepare(`
-        SELECT a.created_at, a.updated_at, a.summary_json,
-          MAX(d.updated_at, a.updated_at) AS effective_updated_at,
-          CASE WHEN a.summary_json = '' THEN a.payload_json ELSE '' END AS payload_json
+        SELECT ${AUXILIARY_SUMMARY_COLUMNS}, MAX(d.updated_at, a.updated_at) AS effective_updated_at
         FROM auxiliary_sessions a
         LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
         WHERE a.parent_session_id = ?
@@ -175,14 +253,12 @@ export class AuxiliarySessionStorage {
     return this.withDb((db) => {
       const placeholders = normalizedParentSessionIds.map(() => "?").join(", ");
       const rows = db.prepare(`
-        SELECT a.parent_session_id, a.created_at, a.updated_at, a.summary_json,
-          MAX(d.updated_at, a.updated_at) AS effective_updated_at,
-          CASE WHEN a.summary_json = '' THEN a.payload_json ELSE '' END AS payload_json
+        SELECT ${AUXILIARY_SUMMARY_COLUMNS}, MAX(d.updated_at, a.updated_at) AS effective_updated_at
         FROM auxiliary_sessions a
         LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
         WHERE a.parent_session_id IN (${placeholders})
         ORDER BY a.parent_session_id ASC, MAX(d.updated_at, a.updated_at) ASC, a.id ASC
-      `).all(...normalizedParentSessionIds) as Array<ScopedAuxiliarySessionRow & { summary_json: string }>;
+      `).all(...normalizedParentSessionIds) as AuxiliarySessionSummaryRow[];
       return rows.flatMap((row) => {
         const summary = parseAuxiliarySessionSummaryRow(row);
         if (!summary || summary.parentSessionId !== row.parent_session_id) {
@@ -206,15 +282,13 @@ export class AuxiliarySessionStorage {
     return this.withDb((db) => {
       const placeholders = normalizedParentSessionIds.map(() => "?").join(", ");
       const rows = db.prepare(`
-        SELECT a.parent_session_id, a.created_at, a.updated_at, a.summary_json,
-          MAX(d.updated_at, a.updated_at) AS effective_updated_at,
-          CASE WHEN a.summary_json = '' THEN a.payload_json ELSE '' END AS payload_json
+        SELECT ${AUXILIARY_SUMMARY_COLUMNS}, MAX(d.updated_at, a.updated_at) AS effective_updated_at
         FROM auxiliary_sessions a
         LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
         WHERE a.status = 'active'
           AND a.parent_session_id IN (${placeholders})
         ORDER BY MAX(d.updated_at, a.updated_at) DESC, a.id DESC
-      `).all(...normalizedParentSessionIds) as Array<ScopedAuxiliarySessionRow & { summary_json: string }>;
+      `).all(...normalizedParentSessionIds) as AuxiliarySessionSummaryRow[];
       return rows.flatMap((row) => {
         const session = parseAuxiliarySessionSummaryRow(row);
         if (
@@ -232,9 +306,7 @@ export class AuxiliarySessionStorage {
   listRunningActiveAuxiliarySessions(): AuxiliarySessionSummary[] {
     return this.withDb((db) => {
       const rows = db.prepare(`
-        SELECT a.created_at, a.updated_at, summary_json,
-          MAX(d.updated_at, a.updated_at) AS effective_updated_at,
-          CASE WHEN summary_json = '' THEN payload_json ELSE '' END AS payload_json
+        SELECT ${AUXILIARY_SUMMARY_COLUMNS}, MAX(d.updated_at, a.updated_at) AS effective_updated_at
         FROM auxiliary_sessions a
         LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
         WHERE a.status = 'active'
@@ -249,7 +321,7 @@ export class AuxiliarySessionStorage {
   getActiveAuxiliarySession(parentSessionId: string): AuxiliarySession | null {
     return this.withDb((db) => {
       const row = db.prepare(`
-        SELECT a.created_at, a.updated_at, a.payload_json
+        SELECT a.*
         FROM auxiliary_sessions a
         LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
         WHERE a.parent_session_id = ?
@@ -257,7 +329,7 @@ export class AuxiliarySessionStorage {
         ORDER BY MAX(d.updated_at, a.updated_at) DESC, a.id DESC
         LIMIT 1
       `).get(parentSessionId) as AuxiliarySessionRow | undefined;
-      const session = row ? parseAuxiliarySessionRow(row) : null;
+      const session = row ? readAuxiliarySession(db, row) : null;
       return session ? this.composeDraft(db, session) : null;
     });
   }
@@ -265,11 +337,11 @@ export class AuxiliarySessionStorage {
   getAuxiliarySession(auxiliarySessionId: string): AuxiliarySession | null {
     return this.withDb((db) => {
       const row = db.prepare(`
-        SELECT created_at, updated_at, payload_json
+        SELECT *
         FROM auxiliary_sessions
         WHERE id = ?
       `).get(auxiliarySessionId) as AuxiliarySessionRow | undefined;
-      const session = row ? parseAuxiliarySessionRow(row) : null;
+      const session = row ? readAuxiliarySession(db, row) : null;
       return session ? this.composeDraft(db, session) : null;
     });
   }
@@ -289,21 +361,19 @@ export class AuxiliarySessionStorage {
   getAuxiliarySessionStatus(auxiliarySessionId: string): AuxiliarySessionStatus | null {
     return this.withDb((db) => {
       const row = db.prepare(`
-        SELECT a.id, a.parent_session_id, a.status, a.created_at, a.summary_json, d.incarnation
+        SELECT a.id, a.parent_session_id, a.status, a.created_at, a.run_state, d.incarnation
         FROM auxiliary_sessions a LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
         WHERE a.id = ?
-      `).get(auxiliarySessionId) as { id: string; parent_session_id: string; status: "active" | "closed"; created_at: string; summary_json: string; incarnation?: string } | undefined;
+      `).get(auxiliarySessionId) as { id: string; parent_session_id: string; status: "active" | "closed"; created_at: string; run_state: AuxiliarySession["runState"]; incarnation?: string } | undefined;
       if (!row) return null;
-      let summary: { runState?: unknown; createdAt?: unknown } | null = null;
-      try { summary = JSON.parse(row.summary_json) as { runState?: unknown; createdAt?: unknown }; } catch { return null; }
-      return typeof summary.runState === "string" ? {
+      return {
         id: row.id,
         parentSessionId: row.parent_session_id,
         status: row.status,
-        createdAt: typeof summary.createdAt === "string" && summary.createdAt ? summary.createdAt : row.created_at,
+        createdAt: row.created_at,
         incarnation: row.incarnation ?? "",
-        runState: summary.runState as AuxiliarySession["runState"],
-      } : null;
+        runState: row.run_state,
+      };
     });
   }
 
@@ -312,9 +382,9 @@ export class AuxiliarySessionStorage {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         const session = db.prepare(`
-          SELECT id, parent_session_id, status, created_at, summary_json
+          SELECT id, parent_session_id, status, created_at, run_state
           FROM auxiliary_sessions WHERE id = ?
-        `).get(input.auxiliarySessionId) as { id: string; parent_session_id: string; status: "active" | "closed"; created_at: string; summary_json: string } | undefined;
+        `).get(input.auxiliarySessionId) as { id: string; parent_session_id: string; status: "active" | "closed"; created_at: string; run_state: string } | undefined;
         const row = db.prepare(`
           SELECT auxiliary_session_id AS id, parent_session_id, incarnation,
             durable_revision, draft_text, updated_at
@@ -324,17 +394,12 @@ export class AuxiliarySessionStorage {
           db.exec("ROLLBACK");
           return { outcome: "not-found" };
         }
-        let summary: { runState?: unknown };
-        try { summary = JSON.parse(session.summary_json) as { runState?: unknown }; } catch {
-          db.exec("ROLLBACK");
-          return { outcome: "rejected" };
-        }
         if (!session || !hasWritableAuxiliaryParent(db, session.parent_session_id)) {
           db.exec("ROLLBACK");
           return { outcome: "rejected" };
         }
         if (session.parent_session_id !== input.parentSessionId
-          || summary.runState === "running") {
+          || session.run_state === "running") {
           db.exec("ROLLBACK");
           return { outcome: "not-found" };
         }
@@ -368,7 +433,6 @@ export class AuxiliarySessionStorage {
           db.exec("ROLLBACK");
           return { outcome: "stale", ack: toDraftAck(current) };
         }
-        touchAuxiliarySummaryRecency(db, next.auxiliarySessionId, next.updatedAt);
         db.exec("COMMIT");
         return { outcome: "saved", ack: toDraftAck(next) };
       } catch (error) {
@@ -383,17 +447,12 @@ export class AuxiliarySessionStorage {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         const session = db.prepare(`
-          SELECT parent_session_id, status, created_at, summary_json
+          SELECT parent_session_id, status, created_at, run_state
           FROM auxiliary_sessions WHERE id = ?
-        `).get(input.auxiliarySessionId) as { parent_session_id: string; status: "active" | "closed"; created_at: string; summary_json: string } | undefined;
+        `).get(input.auxiliarySessionId) as { parent_session_id: string; status: "active" | "closed"; created_at: string; run_state: string } | undefined;
         if (!session) {
           db.exec("ROLLBACK");
           return { outcome: "not-found" };
-        }
-        let summary: { runState?: unknown };
-        try { summary = JSON.parse(session.summary_json) as { runState?: unknown }; } catch {
-          db.exec("ROLLBACK");
-          return { outcome: "rejected" };
         }
         if (!session || !hasWritableAuxiliaryParent(db, session.parent_session_id)) {
           db.exec("ROLLBACK");
@@ -406,7 +465,7 @@ export class AuxiliarySessionStorage {
           WHERE auxiliary_session_id = ?
         `).get(input.auxiliarySessionId) as AuxiliaryDraftRow | undefined;
         if (session.parent_session_id !== input.parentSessionId
-          || summary.runState === "running" || !row || row.parent_session_id !== input.parentSessionId) {
+          || session.run_state === "running" || !row || row.parent_session_id !== input.parentSessionId) {
           db.exec("ROLLBACK");
           return { outcome: "not-found" };
         }
@@ -428,31 +487,30 @@ export class AuxiliarySessionStorage {
     });
   }
 
-  updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): AuxiliarySession | null {
+  updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): AuxiliaryThreadPatchResult | null {
     return this.withDb((db) => {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         const row = db.prepare(`
-          SELECT created_at, updated_at, payload_json
+          SELECT id, parent_session_id, created_at, updated_at, provider_id, thread_id
           FROM auxiliary_sessions
           WHERE id = ? AND parent_session_id = ?
-        `).get(input.auxiliarySessionId, input.parentSessionId) as AuxiliarySessionRow | undefined;
-        const current = row ? parseAuxiliarySessionRow(row) : null;
-        if (!current || current.provider !== input.provider || current.threadId !== input.expectedThreadId || (input.createdAt !== undefined && current.createdAt !== input.createdAt)) {
+        `).get(input.auxiliarySessionId, input.parentSessionId) as Pick<AuxiliarySessionRow,
+          "id" | "parent_session_id" | "created_at" | "updated_at" | "provider_id" | "thread_id"> | undefined;
+        if (!row || row.provider_id !== input.provider || row.thread_id !== input.expectedThreadId || (input.createdAt !== undefined && row.created_at !== input.createdAt)) {
           db.exec("ROLLBACK");
           return null;
         }
-        const next = { ...current, threadId: input.nextThreadId, updatedAt: input.updatedAt };
         const result = db.prepare(`
-          UPDATE auxiliary_sessions SET updated_at = ?, payload_json = ?, summary_json = ?
+          UPDATE auxiliary_sessions SET updated_at = ?, thread_id = ?
           WHERE id = ? AND parent_session_id = ? AND updated_at = ?
-        `).run(input.updatedAt, serializeAuxiliarySessionPayload(next), JSON.stringify(projectAuxiliarySessionSummary(next)), input.auxiliarySessionId, input.parentSessionId, current.updatedAt);
+        `).run(input.updatedAt, input.nextThreadId, input.auxiliarySessionId, input.parentSessionId, row.updated_at);
         if (Number(result.changes) !== 1) {
           db.exec("ROLLBACK");
           return null;
         }
         db.exec("COMMIT");
-        return this.composeDraft(db, next);
+        return { id: row.id, parentSessionId: row.parent_session_id, threadId: input.nextThreadId };
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
@@ -462,55 +520,48 @@ export class AuxiliarySessionStorage {
 
   updateAuxiliarySessionRuntimeMetadataIfMatches(
     input: AuxiliarySessionRuntimeMetadataPatchInput,
-  ): AuxiliarySession | null {
+  ): AuxiliaryRuntimeMetadataPatchResult | null {
     return this.withDb((db) => {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         const row = db.prepare(`
-          SELECT created_at, updated_at, payload_json
+          SELECT id, parent_session_id, created_at, updated_at, provider_id, catalog_revision, model_id, reasoning_effort, thread_id
           FROM auxiliary_sessions
           WHERE id = ? AND parent_session_id = ?
-        `).get(input.auxiliarySessionId, input.parentSessionId) as AuxiliarySessionRow | undefined;
-        const current = row ? parseAuxiliarySessionRow(row) : null;
+        `).get(input.auxiliarySessionId, input.parentSessionId) as Pick<AuxiliarySessionRow,
+          "id" | "parent_session_id" | "created_at" | "updated_at" | "provider_id" | "catalog_revision" | "model_id" | "reasoning_effort" | "thread_id"> | undefined;
         if (
-          !current ||
-          current.createdAt !== input.createdAt ||
-          current.provider !== input.expected.provider ||
-          current.catalogRevision !== input.expected.catalogRevision ||
-          current.model !== input.expected.model ||
-          current.reasoningEffort !== input.expected.reasoningEffort ||
-          current.threadId !== input.expected.threadId
+          !row ||
+          row.created_at !== input.createdAt ||
+          row.provider_id !== input.expected.provider ||
+          row.catalog_revision !== input.expected.catalogRevision ||
+          row.model_id !== input.expected.model ||
+          row.reasoning_effort !== input.expected.reasoningEffort ||
+          row.thread_id !== input.expected.threadId
         ) {
           db.exec("ROLLBACK");
           return null;
         }
-        const next = {
-          ...current,
-          provider: input.next.provider,
-          catalogRevision: input.next.catalogRevision,
-          model: input.next.model,
-          reasoningEffort: input.next.reasoningEffort,
-          threadId: input.next.threadId,
-          updatedAt: input.next.updatedAt,
-        };
         const result = db.prepare(`
-          UPDATE auxiliary_sessions SET updated_at = ?, payload_json = ?, summary_json = ?
+          UPDATE auxiliary_sessions SET updated_at = ?, provider_id = ?, catalog_revision = ?,
+            model_id = ?, reasoning_effort = ?, thread_id = ?
           WHERE id = ? AND parent_session_id = ? AND created_at = ? AND updated_at = ?
         `).run(
-          next.updatedAt,
-          serializeAuxiliarySessionPayload(next),
-          JSON.stringify(projectAuxiliarySessionSummary(next)),
+          input.next.updatedAt,
+          input.next.provider, input.next.catalogRevision, input.next.model, input.next.reasoningEffort, input.next.threadId,
           input.auxiliarySessionId,
           input.parentSessionId,
           input.createdAt,
-          current.updatedAt,
+          row.updated_at,
         );
         if (Number(result.changes) !== 1) {
           db.exec("ROLLBACK");
           return null;
         }
         db.exec("COMMIT");
-        return this.composeDraft(db, next);
+        return { id: row.id, parentSessionId: row.parent_session_id, createdAt: row.created_at,
+          provider: input.next.provider, catalogRevision: input.next.catalogRevision, model: input.next.model,
+          reasoningEffort: input.next.reasoningEffort, threadId: input.next.threadId, updatedAt: input.next.updatedAt };
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
@@ -523,11 +574,11 @@ export class AuxiliarySessionStorage {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         const row = db.prepare(`
-          SELECT created_at, updated_at, payload_json
+          SELECT *
           FROM auxiliary_sessions
-          WHERE id = ? AND parent_session_id = ? AND created_at = ? AND updated_at = ?
-        `).get(input.expectedSession.id, input.expectedSession.parentSessionId, input.expectedSession.createdAt, input.expectedSession.updatedAt) as AuxiliarySessionRow | undefined;
-        const current = row ? parseAuxiliarySessionRow(row) : null;
+          WHERE id = ? AND parent_session_id = ? AND created_at = ?
+        `).get(input.expectedSession.id, input.expectedSession.parentSessionId, input.expectedSession.createdAt) as AuxiliarySessionRow | undefined;
+        const current = row ? readAuxiliarySession(db, row) : null;
         const parentTables = (db.prepare(`
           SELECT name FROM sqlite_master
           WHERE type = 'table' AND name IN ('sessions_v6', 'sessions')
@@ -541,29 +592,37 @@ export class AuxiliarySessionStorage {
         const draftRow = db.prepare("SELECT draft_text FROM auxiliary_session_drafts WHERE auxiliary_session_id = ?")
           .get(input.expectedSession.id) as { draft_text: string } | undefined;
         const currentWithDraft = current && draftRow ? { ...current, composerDraft: draftRow.draft_text } : current;
-        const currentRuntime = currentWithDraft && { ...currentWithDraft, composerDraft: "" };
-        const expectedRuntime = expected && { ...expected, composerDraft: "" };
-        if (!current || !expected || input.session.id !== expected.id || input.session.parentSessionId !== expected.parentSessionId
+        const currentRuntime = currentWithDraft && { ...currentWithDraft, updatedAt: input.expectedSession.updatedAt,
+          composerDraft: "", preview: currentWithDraft.preview ?? "",
+          messages: currentWithDraft.messages.map((message) => ({ ...message, isBookmarked: undefined })) };
+        const expectedRuntime = expected && { ...expected, composerDraft: "", preview: expected.preview ?? current?.preview ?? "",
+          messages: expected.messages.map((message) => ({ ...message,
+            artifact: message.artifact ? summarizeMessageArtifact(message.artifact) : undefined,
+            isBookmarked: undefined })) };
+        if (!row || !current || !expected || input.session.id !== expected.id || input.session.parentSessionId !== expected.parentSessionId
           || input.session.createdAt !== expected.createdAt || JSON.stringify(currentRuntime) !== JSON.stringify(expectedRuntime) || !parent) {
           db.exec("ROLLBACK");
           return null;
         }
         const result = db.prepare(`
           UPDATE auxiliary_sessions
-          SET parent_session_id = ?, status = ?, created_at = ?, updated_at = ?, payload_json = ?, summary_json = ?
+          SET updated_at = ?
           WHERE id = ? AND parent_session_id = ? AND created_at = ? AND updated_at = ?
         `).run(
-          input.session.parentSessionId, input.session.status, input.session.createdAt, input.session.updatedAt,
-          serializeAuxiliarySessionPayload(input.session),
-          JSON.stringify(projectAuxiliarySessionSummary({ ...input.session, composerDraft: currentWithDraft?.composerDraft ?? input.session.composerDraft })),
-          input.session.id, input.expectedSession.parentSessionId, input.expectedSession.createdAt, input.expectedSession.updatedAt,
+          input.session.updatedAt,
+          input.session.id, input.expectedSession.parentSessionId, input.expectedSession.createdAt, row.updated_at,
         );
         if (Number(result.changes) !== 1) {
           db.exec("ROLLBACK");
           return null;
         }
+        writeAuxiliaryMetadata(db, input.session);
+        writeAuxiliaryMessages(db, input.session);
+        const storedRow = db.prepare(`SELECT * FROM auxiliary_sessions WHERE id = ?`).get(input.session.id) as AuxiliarySessionRow | undefined;
+        const stored = storedRow ? readAuxiliarySession(db, storedRow) : null;
+        if (!stored) throw new Error("The Auxiliary Session could not be read after saving.");
         db.exec("COMMIT");
-        return { ...input.session, composerDraft: currentWithDraft?.composerDraft ?? "" };
+        return { ...stored, composerDraft: currentWithDraft?.composerDraft ?? "" };
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
@@ -576,28 +635,14 @@ export class AuxiliarySessionStorage {
       const existing = db.prepare("SELECT draft_text FROM auxiliary_session_drafts WHERE auxiliary_session_id = ?")
         .get(session.id) as { draft_text: string } | undefined;
       const persisted = existing ? { ...session, composerDraft: existing.draft_text } : session;
-      const payload = serializeAuxiliarySessionPayload(persisted);
-      const summary = JSON.stringify(projectAuxiliarySessionSummary(persisted));
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
-        db.prepare(`
-          INSERT INTO auxiliary_sessions (
-            id,
-            parent_session_id,
-            status,
-            created_at,
-            updated_at,
-            payload_json,
-            summary_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            parent_session_id = excluded.parent_session_id,
-            status = excluded.status,
-            created_at = excluded.created_at,
-            updated_at = excluded.updated_at,
-            payload_json = excluded.payload_json,
-            summary_json = excluded.summary_json
-        `).run(session.id, session.parentSessionId, session.status, session.createdAt, session.updatedAt, payload, summary);
+        db.prepare(`INSERT OR IGNORE INTO auxiliary_sessions
+          (id, parent_session_id, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?)`)
+          .run(session.id, session.parentSessionId, session.status, session.createdAt, session.updatedAt);
+        writeAuxiliaryMetadata(db, persisted);
+        writeAuxiliaryMessages(db, persisted);
         db.prepare(`
           INSERT OR IGNORE INTO auxiliary_session_drafts
             (auxiliary_session_id, parent_session_id, incarnation, durable_revision, draft_text, updated_at)
@@ -647,11 +692,94 @@ export class AuxiliarySessionStorage {
     this.withDb((db) => {
       db.exec(CREATE_AUXILIARY_SESSIONS_TABLE_SQL);
       ensureAuxiliarySessionCreatedAtColumn(db);
-      ensureAuxiliarySessionSummaryColumn(db);
       db.exec(CREATE_AUXILIARY_SESSION_PARENT_UPDATED_INDEX_SQL);
       db.exec(CREATE_AUXILIARY_SESSION_DRAFTS_TABLE_SQL);
-      migrateAuxiliaryDrafts(db);
+      migrateAuxiliaryStorage(db, this.resolveLegacyPreview);
       db.exec("DROP INDEX IF EXISTS idx_auxiliary_sessions_parent_created");
+    });
+  }
+
+  getAuxiliarySessionSummary(auxiliarySessionId: string): AuxiliarySessionSummary | null {
+    return this.withDb((db) => {
+      const row = db.prepare(`SELECT ${AUXILIARY_SUMMARY_COLUMNS} FROM auxiliary_sessions a WHERE a.id = ?`)
+        .get(auxiliarySessionId) as AuxiliarySessionRow | undefined;
+      return row ? parseAuxiliarySessionSummaryRow(row) : null;
+    });
+  }
+
+  listAuxiliaryCredentialThreads(): AuxiliaryCredentialThreadInfo[] {
+    return this.withDb((db) => (db.prepare(`SELECT id, parent_session_id, created_at,
+      provider_id, thread_id, run_state FROM auxiliary_sessions`)
+      .all() as Array<Pick<AuxiliarySessionRow,
+        "id" | "parent_session_id" | "created_at" | "provider_id" | "thread_id" | "run_state">>).map((row) => {
+      return { id: row.id, parentSessionId: row.parent_session_id, createdAt: row.created_at,
+        provider: row.provider_id, threadId: row.thread_id, runState: row.run_state };
+    }));
+  }
+
+  getAuxiliaryMessageArtifactDetail(auxiliarySessionId: string, messageIndex: number): MessageArtifact | null {
+    return this.withDb((db) => {
+      const row = db.prepare(`SELECT artifact_body FROM auxiliary_session_messages
+        WHERE auxiliary_session_id = ? AND seq = ?`).get(auxiliarySessionId, messageIndex) as { artifact_body: string | null } | undefined;
+      if (!row?.artifact_body) return null;
+      const message = normalizeMessage({ role: "assistant", text: "", artifact: JSON.parse(row.artifact_body) });
+      return message?.artifact ?? null;
+    });
+  }
+
+  updateAuxiliaryTitleIfMatches(input: AuxiliaryIdentityPatchInput & { title: string }): boolean {
+    return this.updateScalarIfMatches(input, "title = ?", [input.title], true);
+  }
+
+  updateAuxiliaryExecutionOptionsIfMatches(input: AuxiliaryIdentityPatchInput & { options: AuxiliaryExecutionOptions }): boolean {
+    const options = input.options;
+    return this.updateScalarIfMatches(input,
+      `provider_id = ?, catalog_revision = ?, model_id = ?, reasoning_effort = ?, approval_mode = ?,
+        codex_sandbox_mode = ?, codex_speed = ?, codex_reviewer = ?, custom_agent_name = ?`,
+      [options.provider, options.catalogRevision, options.model, options.reasoningEffort,
+        options.approvalMode, options.codexSandboxMode, options.codexSpeed, options.codexReviewer, options.customAgentName]);
+  }
+
+  updateAuxiliaryDisplayAnchorIfMatches(input: AuxiliaryIdentityPatchInput & { displayAfterMessageIndex: number | null }): boolean {
+    return this.updateScalarIfMatches(input, "display_after_message_index = ?", [input.displayAfterMessageIndex]);
+  }
+
+  updateAuxiliaryMessageBookmarkIfMatches(input: AuxiliaryIdentityPatchInput & {
+    messageIndex: number; isBookmarked: boolean;
+  }): boolean {
+    return this.withDb((db) => {
+      db.exec("BEGIN IMMEDIATE TRANSACTION");
+      try {
+        const owner = hasWritableAuxiliaryParent(db, input.parentSessionId)
+          ? db.prepare(`SELECT id FROM auxiliary_sessions WHERE id = ? AND parent_session_id = ? AND created_at = ? AND status = 'active'`)
+          .get(input.auxiliarySessionId, input.parentSessionId, input.createdAt)
+          : undefined;
+        const row = owner ? db.prepare(`SELECT body FROM auxiliary_session_messages WHERE auxiliary_session_id = ? AND seq = ?`)
+          .get(input.auxiliarySessionId, input.messageIndex) as { body: string } | undefined : undefined;
+        if (!row) { db.exec("ROLLBACK"); return false; }
+        const message = normalizeMessage(JSON.parse(row.body));
+        if (!message) throw new Error("Invalid Auxiliary message.");
+        db.prepare(`UPDATE auxiliary_session_messages SET body = ? WHERE auxiliary_session_id = ? AND seq = ?`)
+          .run(JSON.stringify({ ...message, isBookmarked: input.isBookmarked ? true : undefined }), input.auxiliarySessionId, input.messageIndex);
+        db.prepare(`UPDATE auxiliary_sessions SET updated_at = ? WHERE id = ?`).run(input.updatedAt, input.auxiliarySessionId);
+        db.exec("COMMIT");
+        return true;
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+    });
+  }
+
+  private updateScalarIfMatches(input: AuxiliaryIdentityPatchInput, assignments: string,
+    values: Array<string | number | null>, requireIdle = false): boolean {
+    return this.withDb((db) => {
+      db.exec("BEGIN IMMEDIATE TRANSACTION");
+      try {
+        if (!hasWritableAuxiliaryParent(db, input.parentSessionId)) { db.exec("ROLLBACK"); return false; }
+        const result = db.prepare(`UPDATE auxiliary_sessions SET ${assignments}, updated_at = ?
+          WHERE id = ? AND parent_session_id = ? AND created_at = ? AND status = 'active' ${requireIdle ? "AND run_state <> 'running'" : ""}`)
+          .run(...values, input.updatedAt, input.auxiliarySessionId, input.parentSessionId, input.createdAt);
+        db.exec("COMMIT");
+        return Number(result.changes) === 1;
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
     });
   }
 
@@ -659,62 +787,6 @@ export class AuxiliarySessionStorage {
     const row = db.prepare(`SELECT draft_text FROM auxiliary_session_drafts WHERE auxiliary_session_id = ?`)
       .get(session.id) as { draft_text: string } | undefined;
     return row ? { ...session, composerDraft: row.draft_text } : session;
-  }
-
-  /**
-   * Projects at most one bounded batch. Callers may invoke this repeatedly
-   * until `remaining` reaches zero. Keeping the progress in the database
-   * (summary_json) makes interruption and restart resumable without passing
-   * callbacks or functions through the storage-worker boundary.
-   */
-  backfillAuxiliarySessionSummaries(options: { batchSize?: number } = {}): {
-    processed: number;
-    updated: number;
-    remaining: number;
-    error?: { id: string; message: string };
-  } {
-    const batchSize = Math.max(1, Math.floor(options.batchSize ?? 100));
-    const batch = this.withDb((db) => db.prepare(`
-      SELECT id, payload_json
-      FROM auxiliary_sessions
-      WHERE summary_json = ''
-      ORDER BY updated_at ASC, id ASC
-      LIMIT ?
-    `).all(batchSize) as Array<{ id: string; payload_json: string }>);
-    let updated = 0;
-    let error: { id: string; message: string } | undefined;
-    this.withDb((db) => {
-      db.exec("BEGIN IMMEDIATE TRANSACTION");
-      try {
-        const update = db.prepare("UPDATE auxiliary_sessions SET payload_json = ?, summary_json = ? WHERE id = ? AND summary_json = ''");
-        for (const row of batch) {
-          const session = parseAuxiliarySessionPayload(row.payload_json);
-          if (!session) {
-            error = { id: row.id, message: "Auxiliary session backfill payload is invalid." };
-            break;
-          }
-          const confirmedFinalAssistantText = this.resolveLegacyPreview?.(row.id) ?? null;
-          const preview = confirmedFinalAssistantText
-            ? buildAuxiliaryPreview(session.messages, confirmedFinalAssistantText)
-            : buildAuxiliaryPreview(session.messages);
-          const migratedSession = { ...session, preview };
-          const result = update.run(
-            serializeAuxiliarySessionPayload(migratedSession),
-            JSON.stringify(projectAuxiliarySessionSummary(migratedSession)),
-            row.id,
-          );
-          updated += Number(result.changes);
-        }
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-    });
-    const remaining = this.withDb((db) => (
-      db.prepare("SELECT COUNT(*) AS count FROM auxiliary_sessions WHERE summary_json = ''").get() as { count: number }
-    ).count);
-    return { processed: batch.length, updated, remaining, ...(error ? { error } : {}) };
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
@@ -735,21 +807,108 @@ function parseAuxiliarySessionPayload(payloadJson: string): AuxiliarySession | n
 }
 
 function parseAuxiliarySessionRow(row: AuxiliarySessionRow): AuxiliarySession | null {
-  const session = parseAuxiliarySessionPayload(row.payload_json);
-  if (!session) {
+  try {
+    return normalizeAuxiliarySession({
+      id: row.id,
+      parentSessionId: row.parent_session_id,
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      title: row.title,
+      runState: row.run_state,
+      preview: row.preview,
+      provider: row.provider_id,
+      catalogRevision: row.catalog_revision,
+      model: row.model_id,
+      reasoningEffort: row.reasoning_effort,
+      approvalMode: row.approval_mode,
+      codexSandboxMode: row.codex_sandbox_mode,
+      codexSpeed: row.codex_speed,
+      codexReviewer: row.codex_reviewer,
+      customAgentName: row.custom_agent_name,
+      allowedAdditionalDirectories: JSON.parse(row.allowed_additional_directories_json),
+      threadId: row.thread_id,
+      displayAfterMessageIndex: row.display_after_message_index,
+      closedAt: row.closed_at,
+      characterId: row.character_id ?? undefined,
+      characterRuntimeSnapshot: row.character_snapshot_json ? JSON.parse(row.character_snapshot_json) : undefined,
+      characterRuntimeSnapshotInvalid: row.character_snapshot_invalid === 1,
+      characterIconPath: row.character_icon_path ?? undefined,
+      clientRequestId: row.client_request_id ?? undefined,
+      creationContext: row.creation_context_json ? JSON.parse(row.creation_context_json) : undefined,
+      creationRequest: row.creation_request_json ? JSON.parse(row.creation_request_json) : undefined,
+      messages: [],
+    });
+  } catch {
     return null;
   }
-
-  return {
-    ...session,
-    createdAt: session.createdAt || row.created_at,
-    updatedAt: session.updatedAt || row.updated_at,
-  };
 }
 
-function serializeAuxiliarySessionPayload(session: AuxiliarySession): string {
-  const { composerDraft: _composerDraft, ...payload } = session;
-  return JSON.stringify(payload);
+function readAuxiliarySession(db: DatabaseSync, row: AuxiliarySessionRow): AuxiliarySession | null {
+  const session = parseAuxiliarySessionRow(row);
+  if (!session) return null;
+  const messages = db.prepare(`SELECT role, body FROM auxiliary_session_messages
+    WHERE auxiliary_session_id = ? ORDER BY seq ASC`).all(row.id) as Array<{ role: string; body: string }>;
+  return { ...session, messages: messages.map(({ body }) => {
+    const message = normalizeMessage(JSON.parse(body));
+    if (!message) throw new Error(`Invalid Auxiliary message: ${row.id}`);
+    return message;
+  }) };
+}
+
+function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession): void {
+  db.prepare(`UPDATE auxiliary_sessions SET parent_session_id = ?, status = ?, created_at = ?, updated_at = ?,
+    title = ?, run_state = ?, preview = ?, provider_id = ?, catalog_revision = ?, model_id = ?, reasoning_effort = ?,
+    approval_mode = ?, codex_sandbox_mode = ?, codex_speed = ?, codex_reviewer = ?, custom_agent_name = ?,
+    allowed_additional_directories_json = ?, thread_id = ?, display_after_message_index = ?, closed_at = ?,
+    character_id = ?, character_snapshot_json = ?, character_snapshot_invalid = ?, character_icon_path = ?,
+    client_request_id = ?, creation_context_json = ?, creation_request_json = ? WHERE id = ?`).run(
+    session.parentSessionId, session.status, session.createdAt, session.updatedAt,
+    session.title, session.runState, session.preview ?? buildAuxiliaryPreview(session.messages),
+    session.provider, session.catalogRevision, session.model, session.reasoningEffort,
+    session.approvalMode, session.codexSandboxMode, session.codexSpeed, session.codexReviewer,
+    session.customAgentName, JSON.stringify(session.allowedAdditionalDirectories), session.threadId,
+    session.displayAfterMessageIndex, session.closedAt, session.characterId ?? null,
+    session.characterRuntimeSnapshot === undefined ? null : JSON.stringify(session.characterRuntimeSnapshot),
+    session.characterRuntimeSnapshotInvalid ? 1 : 0, session.characterIconPath ?? null,
+    session.clientRequestId ?? null,
+    session.creationContext ? JSON.stringify(session.creationContext) : null,
+    session.creationRequest ? JSON.stringify(session.creationRequest) : null, session.id,
+  );
+}
+
+function writeAuxiliaryMessages(db: DatabaseSync, session: AuxiliarySession): void {
+  const existing = new Map((db.prepare(`SELECT seq, role, body, artifact_body FROM auxiliary_session_messages
+    WHERE auxiliary_session_id = ?`).all(session.id) as Array<{
+      seq: number; role: string; body: string; artifact_body: string | null;
+    }>).map((row) => [row.seq, row] as const));
+  const insert = db.prepare(`INSERT INTO auxiliary_session_messages
+    (auxiliary_session_id, seq, role, body, artifact_body, created_at) VALUES (?, ?, ?, ?, ?, ?)`);
+  const update = db.prepare(`UPDATE auxiliary_session_messages SET role = ?, body = ?, artifact_body = ?
+    WHERE auxiliary_session_id = ? AND seq = ?`);
+  session.messages.forEach((message, seq) => {
+    const summary = message.artifact ? summarizeMessageArtifact(message.artifact) : undefined;
+    let artifactBody = message.artifact ? JSON.stringify(message.artifact) : null;
+    const oldRow = existing.get(seq);
+    const oldMessage = oldRow ? normalizeMessage(JSON.parse(oldRow.body)) : null;
+    if (oldRow && !oldMessage) throw new Error("Invalid Auxiliary message.");
+    const preservedBookmark = oldMessage?.role === message.role && oldMessage.text === message.text
+      ? oldMessage.isBookmarked === true : message.isBookmarked === true;
+    if (message.artifact?.detailAvailable && oldRow?.artifact_body) {
+      const old = JSON.parse(oldRow.artifact_body) as MessageArtifact;
+      if (JSON.stringify(summarizeMessageArtifact(old)) === JSON.stringify(summary)) artifactBody = oldRow.artifact_body;
+    }
+    const body = JSON.stringify({ ...message, artifact: summary, isBookmarked: preservedBookmark ? true : undefined });
+    if (!oldRow) {
+      insert.run(session.id, seq, message.role, body, artifactBody, session.updatedAt);
+    } else if (oldRow.role !== message.role || oldRow.body !== body || oldRow.artifact_body !== artifactBody) {
+      update.run(message.role, body, artifactBody, session.id, seq);
+    }
+  });
+  if ([...existing.keys()].some((seq) => seq >= session.messages.length)) {
+    db.prepare("DELETE FROM auxiliary_session_messages WHERE auxiliary_session_id = ? AND seq >= ?")
+      .run(session.id, session.messages.length);
+  }
 }
 
 function toDraftRecord(row: AuxiliaryDraftRow): AuxiliaryDraftRecord {
@@ -774,8 +933,6 @@ function toDraftAck(row: AuxiliaryDraftRow | AuxiliaryDraftRecord): AuxiliaryDra
 }
 
 function migrateAuxiliaryDrafts(db: DatabaseSync): void {
-  db.exec("BEGIN IMMEDIATE TRANSACTION");
-  try {
     const rows = db.prepare(`
       SELECT id, parent_session_id, updated_at, payload_json
       FROM auxiliary_sessions
@@ -806,24 +963,74 @@ function migrateAuxiliaryDrafts(db: DatabaseSync): void {
       delete payload.composerDraft;
       clearPayload.run(JSON.stringify(payload), row.id);
     }
+}
+
+function migrateAuxiliaryStorage(db: DatabaseSync, resolveLegacyPreview?: LegacyAuxiliaryPreviewResolver): void {
+  const columns = new Set((db.prepare("PRAGMA table_info(auxiliary_sessions)").all() as TableInfoRow[]).map(({ name }) => name));
+  db.exec("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    db.exec(CREATE_AUXILIARY_MESSAGES_TABLE_SQL);
+    if (columns.has("payload_json")) {
+      migrateAuxiliaryDrafts(db);
+      if (!columns.has("title")) db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''");
+      if (!columns.has("run_state")) db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN run_state TEXT NOT NULL DEFAULT 'idle'");
+      if (!columns.has("preview")) db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN preview TEXT NOT NULL DEFAULT ''");
+      const additions: Array<[string, string]> = [
+        ["provider_id", "TEXT NOT NULL DEFAULT 'codex'"],
+        ["catalog_revision", "INTEGER NOT NULL DEFAULT 1"],
+        ["model_id", "TEXT NOT NULL DEFAULT ''"],
+        ["reasoning_effort", "TEXT NOT NULL DEFAULT 'medium'"],
+        ["approval_mode", "TEXT NOT NULL DEFAULT ''"],
+        ["codex_sandbox_mode", "TEXT NOT NULL DEFAULT ''"],
+        ["codex_speed", "TEXT NOT NULL DEFAULT ''"],
+        ["codex_reviewer", "TEXT NOT NULL DEFAULT ''"],
+        ["custom_agent_name", "TEXT NOT NULL DEFAULT ''"],
+        ["allowed_additional_directories_json", "TEXT NOT NULL DEFAULT '[]'"],
+        ["thread_id", "TEXT NOT NULL DEFAULT ''"],
+        ["display_after_message_index", "INTEGER"],
+        ["closed_at", "TEXT NOT NULL DEFAULT ''"],
+        ["character_id", "TEXT"],
+        ["character_snapshot_json", "TEXT"],
+        ["character_snapshot_invalid", "INTEGER NOT NULL DEFAULT 0"],
+        ["character_icon_path", "TEXT"],
+        ["client_request_id", "TEXT"],
+        ["creation_context_json", "TEXT"],
+        ["creation_request_json", "TEXT"],
+      ];
+      for (const [name, definition] of additions) {
+        if (!columns.has(name)) db.exec(`ALTER TABLE auxiliary_sessions ADD COLUMN ${name} ${definition}`);
+      }
+      const summaryExpression = columns.has("summary_json") ? "summary_json" : "'' AS summary_json";
+      const rows = db.prepare(`SELECT id, parent_session_id, status, created_at, updated_at, payload_json, ${summaryExpression} FROM auxiliary_sessions`)
+        .all() as Array<{ id: string; parent_session_id: string; status: string; created_at: string; updated_at: string; payload_json: string; summary_json: string }>;
+      for (const row of rows) {
+        const raw = JSON.parse(row.payload_json) as Record<string, unknown>;
+        if (!raw || typeof raw !== "object" || Array.isArray(raw) || !Array.isArray(raw.messages)) {
+          throw new Error(`Invalid Auxiliary migration payload: ${row.id}`);
+        }
+        const session = parseAuxiliarySessionPayload(row.payload_json);
+        if (!session || session.id !== row.id || session.parentSessionId !== row.parent_session_id
+          || session.messages.length !== raw.messages.length) {
+          throw new Error(`Invalid Auxiliary migration payload: ${row.id}`);
+        }
+        const existingSummary = row.summary_json ? JSON.parse(row.summary_json) as { preview?: unknown } : null;
+        const confirmed = resolveLegacyPreview?.(row.id) ?? null;
+        const preview = typeof existingSummary?.preview === "string" ? existingSummary.preview
+          : confirmed ? buildAuxiliaryPreview(session.messages, confirmed) : buildAuxiliaryPreview(session.messages);
+        const migrated = { ...session, createdAt: session.createdAt || row.created_at,
+          updatedAt: session.updatedAt || row.updated_at, status: row.status as AuxiliarySession["status"], preview };
+        writeAuxiliaryMetadata(db, migrated);
+        writeAuxiliaryMessages(db, migrated);
+      }
+      if (columns.has("summary_json")) db.exec("ALTER TABLE auxiliary_sessions DROP COLUMN summary_json");
+      db.exec("ALTER TABLE auxiliary_sessions DROP COLUMN payload_json");
+    }
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length) throw new Error("Auxiliary migration foreign key check failed.");
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
-  }
-}
-
-function touchAuxiliarySummaryRecency(db: DatabaseSync, auxiliarySessionId: string, updatedAt: string): void {
-  const row = db.prepare("SELECT summary_json FROM auxiliary_sessions WHERE id = ?")
-    .get(auxiliarySessionId) as { summary_json: string } | undefined;
-  if (!row || !row.summary_json) return;
-  try {
-    const summary = JSON.parse(row.summary_json) as Record<string, unknown>;
-    summary.updatedAt = updatedAt;
-    db.prepare("UPDATE auxiliary_sessions SET summary_json = ? WHERE id = ?")
-      .run(JSON.stringify(summary), auxiliarySessionId);
-  } catch (error) {
-    throw error instanceof Error ? error : new Error("Auxiliary draft recency projection failed.");
   }
 }
 
@@ -921,20 +1128,11 @@ function containsRawItemTruncationMarker(value: unknown): boolean {
 function parseAuxiliarySessionSummaryRow(
   row: AuxiliarySessionSummaryRow,
 ): AuxiliarySessionSummary | null {
-  try {
-    const value = row.summary_json
-      ? JSON.parse(row.summary_json) as unknown
-      : row.payload_json
-        ? JSON.parse(row.payload_json) as unknown
-        : null;
-    const normalized = normalizeAuxiliarySession(value);
-    if (!normalized) return null;
-    const summary = projectAuxiliarySessionSummary(normalized);
-    return row.effective_updated_at ? { ...summary, updatedAt: row.effective_updated_at } : summary;
-  } catch {
-    return null;
-  }
-
+  const session = parseAuxiliarySessionRow({ ...row,
+    character_snapshot_json: null, creation_context_json: null, creation_request_json: null });
+  if (!session) return null;
+  const summary = projectAuxiliarySessionSummary(session);
+  return row.effective_updated_at ? { ...summary, updatedAt: row.effective_updated_at } : summary;
 }
 
 export function ensureAuxiliarySessionCreatedAtColumn(db: DatabaseSync): void {
@@ -944,11 +1142,4 @@ export function ensureAuxiliarySessionCreatedAtColumn(db: DatabaseSync): void {
   }
 
   db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
-}
-
-export function ensureAuxiliarySessionSummaryColumn(db: DatabaseSync): void {
-  const columns = db.prepare("PRAGMA table_info(auxiliary_sessions)").all() as TableInfoRow[];
-  if (!columns.some((column) => column.name === "summary_json")) {
-    db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN summary_json TEXT NOT NULL DEFAULT ''");
-  }
 }

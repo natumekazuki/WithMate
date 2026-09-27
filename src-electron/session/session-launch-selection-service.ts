@@ -15,6 +15,7 @@ import {
 } from "../../src-shared/settings/model-catalog.js";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { SessionSummary } from "../../src-shared/session/session-state.js";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 
 export type SessionLaunchSelection = {
@@ -33,6 +34,7 @@ type SessionLaunchSelectionServiceDeps = {
   getAppSettings(): Awaitable<AppSettings>;
   getModelCatalogSnapshot(): Awaitable<ModelCatalogSnapshot>;
   getLatestSessionSummaryForProvider(providerId: string): Awaitable<SessionSummary | null>;
+  getCurrentExecutionOptions?(providerId: string): SessionExecutionOptions | null;
 };
 
 function resolveEnabledProviderCatalog(
@@ -70,7 +72,8 @@ export class SessionLaunchSelectionService {
       await this.deps.getAppSettings(),
       requestedProviderId,
     );
-    const latestSession = await this.deps.getLatestSessionSummaryForProvider(provider.id);
+    const latestSession = this.deps.getCurrentExecutionOptions?.(provider.id)
+      ?? await this.deps.getLatestSessionSummaryForProvider(provider.id);
     const modelSelection = resolveModelSelection(
       provider,
       latestSession?.model ?? provider.defaultModelId,

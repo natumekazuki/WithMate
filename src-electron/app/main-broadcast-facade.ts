@@ -24,7 +24,7 @@ type MainBroadcastFacadeDeps<TWindow extends BroadcastWindowLike> = {
 export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
   constructor(private readonly deps: MainBroadcastFacadeDeps<TWindow>) {}
 
-  broadcastSessions(sessionIds?: Iterable<string>): void {
+  broadcastSessions(sessionIds?: Iterable<string>, detailChanged?: false): void {
     const invalidatedSessionIds = sessionIds === undefined
       ? []
       : Array.from(new Set(Array.from(sessionIds).map((sessionId) => sessionId.trim()).filter(Boolean)));
@@ -35,7 +35,7 @@ export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
       ? { scope: "all" }
       : { scope: "ids", sessionIds: invalidatedSessionIds };
     const windowBroadcastService = this.deps.getWindowBroadcastService();
-    windowBroadcastService.broadcastSessionInvalidation(invalidation);
+    windowBroadcastService.broadcastSessionInvalidation(detailChanged === false ? { ...invalidation, detailChanged } : invalidation);
   }
 
   async broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): Promise<void> {

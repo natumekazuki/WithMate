@@ -26,6 +26,9 @@ import {
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
+  WITHMATE_SET_SESSION_TITLE_CHANNEL,
+  WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL,
   WITHMATE_SET_SESSION_PINNED_CHANNEL,
 } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import { type DeleteSessionsLastActiveBeforeRequest } from "../../src-shared/window/withmate-window-types.js";
@@ -39,8 +42,14 @@ import type {
   MainIpcSettingsWindowDeps,
   MainIpcWorkspaceValidationDeps,
 } from "./contracts.js";
+import type {
+  SetSessionExecutionOptionsRequest,
+  SetSessionMessageBookmarkRequest,
+  SetSessionTitleRequest,
+} from "../../src-shared/session/session-mutation-contract.js";
 import {
   assertHomeWindowSender,
+  assertOwningSessionWindowSender,
   assertSessionDeleteSender,
   assertSettingsWindowSender,
   assertUsableWorkspaceDirectory,
@@ -139,6 +148,27 @@ export function registerSessionRuntimeHandlers(
   );
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) =>
     deps.updateSession(session),
+  );
+  ipcMain.handle(
+    WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
+    (event, request: SetSessionExecutionOptionsRequest) => {
+      assertOwningSessionWindowSender(event, request.sessionId, deps);
+      return deps.setSessionExecutionOptions(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_SET_SESSION_TITLE_CHANNEL,
+    (event, request: SetSessionTitleRequest) => {
+      assertOwningSessionWindowSender(event, request.sessionId, deps);
+      return deps.setSessionTitle(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL,
+    (event, request: SetSessionMessageBookmarkRequest) => {
+      assertOwningSessionWindowSender(event, request.sessionId, deps);
+      return deps.setSessionMessageBookmark(request);
+    },
   );
   ipcMain.handle(
     WITHMATE_SET_SESSION_PINNED_CHANNEL,

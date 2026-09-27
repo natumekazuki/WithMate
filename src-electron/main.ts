@@ -850,11 +850,11 @@ async function listSessionCharacterUsage(): Promise<SessionCharacterUsage[]> {
   return requireMainQueryService().listSessionCharacterUsage();
 }
 
-async function listFullStoredSessions(): Promise<Session[]> {
+async function listFullStoredSessionsForMaintenance(): Promise<Session[]> {
   const storage = requireSessionStorage();
   const summaries = await storage.listSessionSummaries();
-  const hydrated = await Promise.all(summaries.map((summary) => storage.getSession(summary.id)));
-  return hydrated.filter((session): session is Session => session !== null);
+  const sessions = await Promise.all(summaries.map((summary) => storage.getSession(summary.id)));
+  return sessions.filter((session): session is Session => session !== null);
 }
 
 function isRunningSession(session: Session): boolean {
@@ -1270,6 +1270,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireAuxiliarySessionService().saveAuxiliaryDraft(input),
                 getAuxiliarySessionStatus: (auxiliarySessionId) =>
                   requireAuxiliarySessionService().getAuxiliarySessionStatus(auxiliarySessionId),
+                setAuxiliaryTitle: (request) => requireAuxiliarySessionService().setAuxiliaryTitle(request),
+                setAuxiliaryMessageBookmark: (request) => requireAuxiliarySessionService().setAuxiliaryMessageBookmark(request),
+                setAuxiliaryExecutionOptions: (request) => requireAuxiliarySessionService().setAuxiliaryExecutionOptions(request),
                 createAuxiliarySession: async (input) => {
                   if (databaseMaintenanceRequested) {
                     throw new Error("A database maintenance operation is in progress, so an Auxiliary Session cannot be created.");
@@ -1318,6 +1321,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     "auxiliary-session-close",
                   );
                   agentRuntimeBindingRegistry.revokeSession(auxiliarySessionId);
+                  mainStoreContext.executionSelections.forget(auxiliarySessionId);
                   await invalidateProviderSessionThread(current?.provider ?? closed.provider, auxiliarySessionId);
                   requireMainWindowFacade().closeFilePreviewWindowsForSession(auxiliarySessionId);
                   broadcastSessions([closed.parentSessionId]);
@@ -1349,9 +1353,13 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                         incarnation: request.auxiliaryDraftIncarnation,
                         expectedDurableRevision: request.auxiliaryDraftDurableRevision,
                         userMessage: request.userMessage,
+                        displayAnchorParentMessageCount: request.displayAnchorParentMessageCount,
                         run: () => requireAuxiliarySessionRuntimeService().runSessionTurn(auxiliarySessionId, request).then(() => undefined),
                       });
                     } else {
+                      if (request.displayAnchorParentMessageCount !== undefined) {
+                        await requireAuxiliarySessionService().setAuxiliaryDisplayAnchor(auxiliarySessionId, request.displayAnchorParentMessageCount);
+                      }
                       await requireAuxiliarySessionRuntimeService().runSessionTurn(auxiliarySessionId, request);
                     }
                     const session = await requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
@@ -1375,6 +1383,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveLiveElicitation,
                 createSession: (input) => requireMainSessionCommandFacade().createSessionFromRequest(input),
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
+                setSessionTitle: (request) => requireSessionPersistenceService().setSessionTitle(request.sessionId, request.incarnationId, request.title),
+                setSessionMessageBookmark: (request) => requireSessionPersistenceService().setSessionMessageBookmark(request.sessionId, request.incarnationId, request.messageIndex, request.isBookmarked),
+                setSessionExecutionOptions: (request) => requireSessionPersistenceService().setSessionExecutionOptions(request.sessionId, request.incarnationId, request.executionOptions),
                 setSessionPinned: (request) => requireMainSessionCommandFacade().setSessionPinned(request),
                 deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
                 deleteSessionsLastActiveBefore: (request) =>
@@ -1596,6 +1607,7 @@ function requireSessionLaunchSelectionService(): SessionLaunchSelectionService {
       getModelCatalogSnapshot: async () => await getModelCatalog(null) ?? await requireModelCatalogStorage().ensureSeeded(),
       getLatestSessionSummaryForProvider: (providerId) =>
         requireSessionStorage().getLatestSessionSummaryForProvider(providerId),
+      getCurrentExecutionOptions: (providerId) => mainStoreContext.executionSelections.latestForProvider(providerId),
     });
   }
 
@@ -1654,6 +1666,14 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
     const owner = requireActivePersistentStoreOwnerForFactory("Auxiliary session service");
     const storage = owner.auxiliarySessionStorage;
     auxiliarySessionService = new AuxiliarySessionService({
+      isAuxiliaryRunInFlight: (id) => auxiliaryRunParents.has(id) || auxiliarySessionRuntimeService?.isRunInFlight(id) === true,
+      captureStorageIdentity: () => owner,
+      isStorageIdentityCurrent: (captured) => mainStoreContext.activePersistentStoreOwner === captured,
+      overlayCurrentExecutionOptions: (session) => mainStoreContext.executionSelections.apply(session),
+      rememberExecutionOptions: (session, options) => {
+        assertPersistentStoreOwnerIsActive(owner, "Auxiliary current execution selection");
+        mainStoreContext.executionSelections.remember(session, options);
+      },
       onCreationStateChanged: (event) => writeAppLog({
         level: "info",
         kind: "auxiliary.creation",
@@ -1816,7 +1836,7 @@ async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   return savedSettings;
 }
 
-async function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<AppSettings> {
+async function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<void> {
   return requireAppSettingsStorage().updateChatLayoutPreference(update);
 }
 
@@ -2183,6 +2203,8 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         getSessions: () => mainStoreContext.sessions,
         setSessions: (nextSessions) => mainStoreContext.setSessions(nextSessions),
         getSession,
+        overlayCurrentExecutionOptions: (session) => mainStoreContext.executionSelections.apply(session),
+        rememberExecutionOptions: (session, options) => mainStoreContext.executionSelections.remember(session, options),
       },
       runtime: {
         isSessionRunInFlight,
@@ -2244,8 +2266,14 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       hasInFlightSessionRuns,
       isSessionRunInFlight,
       isRunningSession,
-      listSessions: listFullStoredSessions,
+      listSessions: listFullStoredSessionsForMaintenance,
       listAuxiliarySessions: () => requireAuxiliarySessionService().listAllAuxiliarySessions(),
+      listSessionCredentialThreads: () => {
+        const storage = requireSessionStorage();
+        if (!storage.listSessionCredentialThreads) throw new Error("Credential thread projection requires V6 storage.");
+        return storage.listSessionCredentialThreads();
+      },
+      listAuxiliaryCredentialThreads: () => requireAuxiliarySessionStorage().listAuxiliaryCredentialThreads(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       updateAppSettings,
       getModelCatalog,
@@ -2710,7 +2738,8 @@ async function listSessionCustomAgents(sessionId: string): Promise<DiscoveredCus
 }
 
 function getSession(sessionId: string): Session | null {
-  return mainStoreContext.sessions.find((session) => session.id === sessionId) ?? null;
+  const session = mainStoreContext.sessions.find((session) => session.id === sessionId);
+  return session ? mainStoreContext.executionSelections.apply(session) : null;
 }
 
 async function getSessionFileExplorerContext(sessionId: string): Promise<SessionFileExplorerContext | null> {
@@ -2764,7 +2793,8 @@ async function getDisplaySession(sessionId: string): Promise<Session | null> {
     return liveSession;
   }
 
-  return await requireMainQueryService().getSession(sessionId) ?? liveSession ?? null;
+  const session = await requireMainQueryService().getSession(sessionId) ?? liveSession ?? null;
+  return session ? mainStoreContext.executionSelections.apply(session) : null;
 }
 
 async function getRuntimeSession(sessionId: string): Promise<Session | null> {
@@ -2777,6 +2807,10 @@ async function getSessionMessageArtifact(sessionId: string, messageIndex: number
     return liveArtifact;
   }
 
+  const auxiliary = await requireAuxiliarySessionStorage().getAuxiliarySessionSummary(sessionId);
+  if (auxiliary) {
+    return requireAuxiliarySessionStorage().getAuxiliaryMessageArtifactDetail(sessionId, messageIndex);
+  }
   return requireMainQueryService().getSessionMessageArtifact(sessionId, messageIndex);
 }
 
@@ -2784,8 +2818,8 @@ async function openSessionTerminal(sessionId: string): Promise<void> {
   await requireMainQueryService().openSessionTerminal(sessionId);
 }
 
-function broadcastSessions(sessionIds?: Iterable<string>): void {
-  requireMainBroadcastFacade().broadcastSessions(sessionIds);
+function broadcastSessions(sessionIds?: Iterable<string>, detailChanged?: false): void {
+  requireMainBroadcastFacade().broadcastSessions(sessionIds, detailChanged);
 }
 
 async function broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): Promise<void> {

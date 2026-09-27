@@ -37,14 +37,14 @@ function createIpcRendererStub() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "preloadの代表的なinvoke APIはrequestを対応するIPC channelへ変換し、親とAuxiliaryの選択を保持して渡す"
+// claim = "preloadのsession mutation APIはowner識別子を含むrequestを専用のIPC channelへ渡す"
 // oracle = { type = "contract", ref = "src-electron/preload/preload-api.ts#createWithMateWindowApi" }
 // fault = "代表的なrenderer requestが別channelへ送られるか、親・Auxiliary識別子を欠落してMainへ到達する"
 // observable = "ipcRenderer.invokeへ渡されたchannelと引数"
 // observation_boundary = "public-boundary"
 // scope = "preload invoke API"
 // lifecycle = "permanent"
-// distinction = "公開API全体のkey inventoryではなく、session open・review open・context menuの代表的なchannelと引数を実際に観測する"
+// distinction = "session mutationの専用channelとowner identity伝達を実際に観測し、旧generic APIの網羅検査とは区別する"
 // @end-test-value
 test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる", async () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -418,6 +418,66 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     clientRequestId: "preload-create-1",
     creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
   } as const;
+  const sessionExecutionOptions = {
+    catalogRevision: 1,
+    model: "gpt-5",
+    reasoningEffort: "medium" as const,
+    approvalMode: "never" as const,
+    codexSandboxMode: "workspace-write" as const,
+    codexSpeed: "standard" as const,
+    codexReviewer: "user" as const,
+    customAgentName: "",
+  };
+  const sessionExecutionOptionsRequest = {
+    sessionId: "session-1",
+    incarnationId: "incarnation-1",
+    executionOptions: sessionExecutionOptions,
+  };
+  assert.deepEqual(await api.setSessionExecutionOptions(sessionExecutionOptionsRequest), {
+    channel: "withmate:set-session-execution-options",
+    args: [sessionExecutionOptionsRequest],
+  });
+  const sessionTitleRequest = { sessionId: "session-1", incarnationId: "incarnation-1", title: "Renamed" };
+  assert.deepEqual(await api.setSessionTitle(sessionTitleRequest), {
+    channel: "withmate:set-session-title",
+    args: [sessionTitleRequest],
+  });
+  const sessionBookmarkRequest = { sessionId: "session-1", incarnationId: "incarnation-1", messageIndex: 4, isBookmarked: true };
+  assert.deepEqual(await api.setSessionMessageBookmark(sessionBookmarkRequest), {
+    channel: "withmate:set-session-message-bookmark",
+    args: [sessionBookmarkRequest],
+  });
+  const auxiliaryExecutionOptionsRequest = {
+    auxiliarySessionId: "aux-1",
+    parentSessionId: "session-1",
+    createdAt: "2026-07-04T00:00:00.000Z",
+    executionOptions: sessionExecutionOptions,
+  };
+  assert.deepEqual(await api.setAuxiliaryExecutionOptions(auxiliaryExecutionOptionsRequest), {
+    channel: "withmate:set-auxiliary-execution-options",
+    args: [auxiliaryExecutionOptionsRequest],
+  });
+  const auxiliaryTitleRequest = {
+    auxiliarySessionId: "aux-1",
+    parentSessionId: "session-1",
+    createdAt: "2026-07-04T00:00:00.000Z",
+    title: "Auxiliary renamed",
+  };
+  assert.deepEqual(await api.setAuxiliaryTitle(auxiliaryTitleRequest), {
+    channel: "withmate:set-auxiliary-title",
+    args: [auxiliaryTitleRequest],
+  });
+  const auxiliaryBookmarkRequest = {
+    auxiliarySessionId: "aux-1",
+    parentSessionId: "session-1",
+    createdAt: "2026-07-04T00:00:00.000Z",
+    messageIndex: 2,
+    isBookmarked: false,
+  };
+  assert.deepEqual(await api.setAuxiliaryMessageBookmark(auxiliaryBookmarkRequest), {
+    channel: "withmate:set-auxiliary-message-bookmark",
+    args: [auxiliaryBookmarkRequest],
+  });
   assert.deepEqual(await api.createAuxiliarySession(creationRequest), {
     channel: "withmate:create-auxiliary-session",
     args: [creationRequest],
@@ -434,9 +494,12 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-auxiliary-creation",
     args: [creationRequest],
   });
-  assert.deepEqual(await api.runAuxiliarySessionTurn("aux-1", { userMessage: "review" }), {
+  assert.deepEqual(await api.runAuxiliarySessionTurn("aux-1", {
+    userMessage: "review",
+    executionOptions: sessionExecutionOptions,
+  }), {
     channel: "withmate:run-auxiliary-session-turn",
-    args: ["aux-1", { userMessage: "review" }],
+    args: ["aux-1", { userMessage: "review", executionOptions: sessionExecutionOptions }],
   });
   assert.deepEqual(await api.cancelAuxiliarySessionRun("aux-1"), {
     channel: "withmate:cancel-auxiliary-session-run",
@@ -669,6 +732,12 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "uninstallMemoryV6CliShim",
     "updateAppSettings",
     "updateChatLayoutPreference",
+    "setAuxiliaryExecutionOptions",
+    "setAuxiliaryMessageBookmark",
+    "setAuxiliaryTitle",
+    "setSessionExecutionOptions",
+    "setSessionMessageBookmark",
+    "setSessionTitle",
     "updateAuxiliarySession",
     "updateCharacterDefinition",
     "updateCharacterMetadata",

@@ -29,13 +29,14 @@ import type {
 import { SessionIdCollisionError, SessionNotFoundError } from "./session-storage-errors.js";
 import type { RunCharacterAffectTurnOwnershipExclusive } from "../character/character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
+import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type {
   SessionCharacterAuthoringRuntimeClearInput,
   SessionCharacterAuthoringRuntimeClearResult,
   SessionRunningTurnStartInput,
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
-import type { SessionRuntimeMetadataPatchInput, SessionThreadPatchInput } from "./session-storage-v6.js";
+import type { SessionRuntimeMetadataPatchInput, SessionRuntimeMetadataPatchResult, SessionThreadPatchInput, SessionThreadPatchResult } from "./session-storage-v6.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -57,8 +58,13 @@ export type SessionPersistenceServiceDeps = {
     parentSessionIds: readonly string[],
   ): Awaitable<readonly { id: string; parentSessionId: string; provider: string }[]>;
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
-  updateStoredSessionThreadIfMatches?(input: SessionThreadPatchInput): Awaitable<Session | null>;
-  updateStoredSessionRuntimeMetadataIfMatches?(input: SessionRuntimeMetadataPatchInput): Awaitable<Session | null>;
+  setStoredSessionTitle?(sessionId: string, incarnationId: string, title: string): Awaitable<void>;
+  setStoredSessionMessageBookmark?(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): Awaitable<void>;
+  setStoredSessionExecutionOptions?(sessionId: string, incarnationId: string, options: SessionExecutionOptions): Awaitable<void>;
+  overlayCurrentExecutionOptions?(session: Session): Session;
+  rememberExecutionOptions?(session: Session, options: SessionExecutionOptions): void;
+  updateStoredSessionThreadIfMatches?(input: SessionThreadPatchInput): Awaitable<SessionThreadPatchResult | null>;
+  updateStoredSessionRuntimeMetadataIfMatches?(input: SessionRuntimeMetadataPatchInput): Awaitable<SessionRuntimeMetadataPatchResult | null>;
   upsertStoredTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendStoredRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
   clearStoredCharacterAuthoringRuntimeState?(
@@ -80,7 +86,7 @@ export type SessionPersistenceServiceDeps = {
   revokeSessionAgentRuntimeBindings?(sessionId: string): void;
   closeSessionWindow(sessionId: string): void;
   discardSessionWindow?(sessionId: string): void;
-  broadcastSessions(sessionIds?: Iterable<string>): void;
+  broadcastSessions(sessionIds?: Iterable<string>, detailChanged?: false): void;
   runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
 };
 
@@ -114,6 +120,8 @@ type CommittedSessionDeletion = {
 
 export class SessionPersistenceService {
   private sessionMutationQueue: Promise<void> = Promise.resolve();
+  private readonly selectionRequestRevisions = new Map<string, number>();
+  private readonly selectionCheckpoints = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: SessionPersistenceServiceDeps) {}
 
@@ -223,6 +231,70 @@ export class SessionPersistenceService {
     return updatedSession;
   }
 
+  async setSessionTitle(sessionId: string, incarnationId: string, title: string): Promise<void> {
+    return this.enqueueSessionMutation(async () => {
+      const current = this.deps.getSession(sessionId);
+      if (!current || getSessionIncarnationId(current) !== incarnationId) throw new SessionNotFoundError(sessionId);
+      assertSessionWritable(current);
+      if (this.deps.isSessionRunInFlight(sessionId) || isRunningSession(current)) {
+        throw new Error("A running session cannot be updated.");
+      }
+      if (!title.trim()) throw new Error("The Session title cannot be empty.");
+      if (!this.deps.setStoredSessionTitle) throw new Error("Session title storage is unavailable.");
+      await this.deps.setStoredSessionTitle(sessionId, incarnationId, title);
+      this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
+        ? { ...session, taskTitle: title } : session));
+      this.deps.broadcastSessions([sessionId], false);
+    });
+  }
+
+  async setSessionMessageBookmark(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): Promise<void> {
+    return this.enqueueSessionMutation(async () => {
+      const current = this.deps.getSession(sessionId);
+      if (!current || getSessionIncarnationId(current) !== incarnationId) throw new SessionNotFoundError(sessionId);
+      assertSessionWritable(current);
+      if (!this.deps.setStoredSessionMessageBookmark) throw new Error("Session bookmark storage is unavailable.");
+      await this.deps.setStoredSessionMessageBookmark(sessionId, incarnationId, messageIndex, isBookmarked);
+    });
+  }
+
+  async setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions): Promise<void> {
+    const revision = (this.selectionRequestRevisions.get(sessionId) ?? 0) + 1;
+    this.selectionRequestRevisions.set(sessionId, revision);
+    const catalog = await this.deps.getModelCatalogSnapshot();
+    if (this.selectionRequestRevisions.get(sessionId) !== revision) {
+      throw new Error("The Session execution option selection was superseded.");
+    }
+    const current = this.deps.getSession(sessionId);
+    if (!current || getSessionIncarnationId(current) !== incarnationId) throw new SessionNotFoundError(sessionId);
+    assertSessionWritable(current);
+    const fresh = this.deps.overlayCurrentExecutionOptions?.(current) ?? current;
+    const provider = catalog.providers.find((entry) => entry.id === fresh.provider);
+    if (!provider) throw new Error("The Session provider is not in the model catalog.");
+    const validated = validateSessionExecutionOptions(options, provider, catalog.revision);
+    if (this.deps.isSessionRunInFlight(sessionId) || isRunningSession(fresh)) {
+      if (
+        validated.approvalMode !== fresh.approvalMode || validated.codexSandboxMode !== fresh.codexSandboxMode
+        || validated.codexSpeed !== fresh.codexSpeed || validated.codexReviewer !== fresh.codexReviewer
+        || validated.customAgentName !== fresh.customAgentName
+      ) throw new Error("A running session cannot change these execution options.");
+    }
+    this.deps.rememberExecutionOptions?.(fresh, validated);
+    this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
+      ? { ...session, ...validated } : session));
+    const previous = this.selectionCheckpoints.get(sessionId) ?? Promise.resolve();
+    const checkpoint = previous.catch(() => undefined).then(async () => {
+      if (!this.deps.setStoredSessionExecutionOptions) throw new Error("Session execution option storage is unavailable.");
+      await this.deps.setStoredSessionExecutionOptions(sessionId, incarnationId, validated);
+    });
+    this.selectionCheckpoints.set(sessionId, checkpoint);
+    try {
+      await checkpoint;
+    } finally {
+      if (this.selectionCheckpoints.get(sessionId) === checkpoint) this.selectionCheckpoints.delete(sessionId);
+    }
+  }
+
   async setSessionPinned(sessionId: string, isPinned: boolean): Promise<SessionSummary> {
     return this.enqueueSessionMutation(() => this.setSessionPinnedNow(sessionId, isPinned));
   }
@@ -235,7 +307,7 @@ export class SessionPersistenceService {
     this.deps.setSessions(this.deps.getSessions().map((session) => (
       session.id === stored.id ? { ...session, isPinned: stored.isPinned } : session
     )));
-    this.deps.broadcastSessions([stored.id]);
+    this.deps.broadcastSessions([stored.id], false);
     return projectSessionSummary(stored);
   }
 
@@ -258,7 +330,7 @@ export class SessionPersistenceService {
     return this.finishSessionDeletion(committed);
   }
 
-  async updateSessionThreadIfMatches(input: SessionThreadPatchInput): Promise<Session | null> {
+  async updateSessionThreadIfMatches(input: SessionThreadPatchInput): Promise<SessionThreadPatchResult | null> {
     return this.enqueueSessionMutation(async () => {
       if (!this.deps.updateStoredSessionThreadIfMatches) {
         throw new Error("Conditional Session thread update storage is unavailable.");
@@ -282,7 +354,7 @@ export class SessionPersistenceService {
     });
   }
 
-  async updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Promise<Session | null> {
+  async updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Promise<SessionRuntimeMetadataPatchResult | null> {
     return this.enqueueSessionMutation(async () => {
       if (!this.deps.updateStoredSessionRuntimeMetadataIfMatches) {
         throw new Error("Conditional Session runtime metadata update storage is unavailable.");
@@ -563,6 +635,7 @@ export class SessionPersistenceService {
     return this.upsertSessionNow({
       ...nextSession,
       isPinned: currentSession?.isPinned ?? nextSession.isPinned,
+      taskTitle: currentSession?.taskTitle ?? nextSession.taskTitle,
     }, "upsert", terminalCommit);
   }
 
@@ -577,7 +650,9 @@ export class SessionPersistenceService {
       assertSessionWritable(currentSession);
     }
 
-    const sessionToStore = await this.mergeStoredMessagesForSummaryOnlySession(nextSession);
+    const sessionToStore = await this.mergeStoredMessagesForSummaryOnlySession(
+      operation === "create" ? nextSession : this.deps.overlayCurrentExecutionOptions?.(nextSession) ?? nextSession,
+    );
     const storeStartedAt = Date.now();
     const normalizedSession = {
       ...sessionToStore,

@@ -8,7 +8,9 @@ import type { LiveSessionRunState } from "../../src-shared/session/runtime-state
 import type { ConcurrentChatWindowProps } from "./chat-window.js";
 import type { ConversationColumnSession, ConversationMessageColumnApi } from "./conversation-message-column.js";
 import type { SessionMessageColumnProps } from "./conversation/session-message-column.js";
-import type { MessageArtifact } from "../../src-shared/session/session-state.js";
+import { setMessageBookmarked, type MessageArtifact } from "../../src-shared/session/session-state.js";
+import { mergeMessageBookmarkProjection } from "./runtime/session-submit-coordinator.js";
+import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 
 export type AuxiliaryWorkspaceApi = {
@@ -27,12 +29,15 @@ export type AuxiliarySessionBinding = {
   draftSaveQueue: { current: Promise<void> };
   sessionSaveQueue: { current: Promise<void> };
   setSession(update: SetStateAction<AuxiliarySession | null>): void;
+  setMessageBookmark(messageIndex: number, isBookmarked: boolean): void;
   getSession(): AuxiliarySession | null;
+  setExecutionSelection(session: AuxiliarySession): void;
 };
 
 export type AuxiliaryWorkspace = {
   summaries: AuxiliarySessionSummary[];
   selectedId: string | null;
+  getCurrentSelectedId(): string | null;
   selectedSession: AuxiliarySession | null;
   loading: boolean;
   error: Error | null;
@@ -41,6 +46,7 @@ export type AuxiliaryWorkspace = {
   target: AuxiliaryWorkspaceTarget;
   widthRatio: number;
   setWidthRatio(ratio: number): void;
+  commitWidthRatio(): void;
   selectSession(id: string | null): void;
   requestSessionSelection(id: string): void;
   setTarget(target: AuxiliaryWorkspaceTarget): void;
@@ -58,10 +64,9 @@ export type AuxiliaryConcurrentChatSurfaceInput = {
   mainLiveRun?: LiveSessionRunState | null;
   auxiliaryLiveRun?: LiveSessionRunState | null;
   messageColumn: SessionMessageColumnProps;
-  mainOnToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
+  onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
   mainOnLoadArtifactDetail?: (index: number) => Promise<MessageArtifact | null>;
   mainOnOpenPath?: (target: string) => void;
-  auxiliaryOnToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
   auxiliaryOnLoadArtifactDetail?: (index: number) => Promise<MessageArtifact | null>;
   auxiliaryOnOpenPath?: (target: string) => void;
   onAddAuxiliary?: () => void;
@@ -96,6 +101,10 @@ function writePrefs(parentSessionId: string, prefs: WorkspacePrefs): void {
   } catch {
     // Storage availability is optional; in-memory state remains authoritative.
   }
+}
+
+function samePrefs(left: WorkspacePrefs, right: WorkspacePrefs): boolean {
+  return left.selectedId === right.selectedId && left.widthRatio === right.widthRatio;
 }
 
 function sortByLastUsed(summaries: AuxiliarySessionSummary[], recency?: ReadonlyMap<string, string>): AuxiliarySessionSummary[] {
@@ -156,19 +165,37 @@ export function useAuxiliaryWorkspace(input: {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<Error | null>(null);
   const [target, setTargetState] = useState<AuxiliaryWorkspaceTarget>("main");
-  const prefsRef = useRef<WorkspacePrefs>(parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO });
-  const widthRatioRef = useRef(prefsRef.current.widthRatio);
+  const prefsRef = useRef<WorkspacePrefs | null>(null);
+  if (prefsRef.current === null) {
+    prefsRef.current = parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO };
+  }
+  const initialPrefs = prefsRef.current;
+  const persistedPrefsRef = useRef<WorkspacePrefs>(initialPrefs);
+  const prefsParentSessionIdRef = useRef(parentSessionId);
+  const widthRatioRef = useRef(initialPrefs.widthRatio);
   const [widthRatio, setWidthRatioState] = useState(widthRatioRef.current);
   const selectedIdRef = useRef<string | null>(null);
   const requestedSelectionRef = useRef<string | null>(null);
   const pendingSelectionIdRef = useRef<string | null>(normalizedInitialSelectedId);
   const detailsRef = useRef(new Map<string, AuxiliarySession>());
   const bindingsRef = useRef(new Map<string, AuxiliarySessionBinding>());
+  const executionSelectionsRef = useRef(new Map<string, { createdAt: string; options: SessionExecutionOptions }>());
+  const mergeExecutionSelection = useCallback((session: AuxiliarySession): AuxiliarySession => {
+    const selection = executionSelectionsRef.current.get(session.id);
+    if (!selection) return session;
+    if (selection.createdAt !== session.createdAt) {
+      executionSelectionsRef.current.delete(session.id);
+      return session;
+    }
+    if (Object.entries(selection.options).every(([key, value]) => session[key as keyof SessionExecutionOptions] === value)) return session;
+    return { ...session, ...selection.options };
+  }, []);
   const loadRevisionRef = useRef(0);
   const listRevisionRef = useRef(0);
   const mutationRevisionRef = useRef(0);
   const workspaceGenerationRef = useRef(0);
   const detailMutationEpochRef = useRef(new Map<string, number>());
+  const bookmarkRevisionRef = useRef(new Map<string, number>());
   const terminalRevisionRef = useRef(new Map<string, number>());
   const recencyRef = useRef(new Map<string, string>());
   const mountedRef = useRef(true);
@@ -178,8 +205,14 @@ export function useAuxiliaryWorkspace(input: {
   }, []);
 
   const persistPrefs = useCallback((next: Partial<WorkspacePrefs>) => {
-    prefsRef.current = { ...prefsRef.current, ...next };
-    if (parentSessionId) writePrefs(parentSessionId, prefsRef.current);
+    const current = prefsRef.current;
+    if (!current) return;
+    prefsRef.current = { ...current, ...next };
+    const persisted = persistedPrefsRef.current;
+    const updatedPersisted = { ...persisted, ...next };
+    if (samePrefs(persisted, updatedPersisted)) return;
+    persistedPrefsRef.current = updatedPersisted;
+    if (parentSessionId) writePrefs(parentSessionId, updatedPersisted);
   }, [parentSessionId]);
 
   const refreshSummaries = useCallback(async () => {
@@ -204,7 +237,7 @@ export function useAuxiliaryWorkspace(input: {
       ) return;
       setSummaries(next);
       summariesRef.current = next;
-      const preferred = prefsRef.current.selectedId;
+      const preferred = prefsRef.current?.selectedId ?? null;
       const requested = requestedSelectionRef.current;
       const requestedId = pendingSelectionIdRef.current;
       const hasRequestedId = requestedId !== null && next.some((summary) => summary.id === requestedId);
@@ -239,9 +272,14 @@ export function useAuxiliaryWorkspace(input: {
   }, [api, parentSessionId, persistPrefs]);
 
   useEffect(() => {
-    prefsRef.current = parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO };
-    widthRatioRef.current = prefsRef.current.widthRatio;
-    setWidthRatioState(widthRatioRef.current);
+    if (prefsParentSessionIdRef.current !== parentSessionId) {
+      prefsParentSessionIdRef.current = parentSessionId;
+      const nextPrefs = parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO };
+      prefsRef.current = nextPrefs;
+      persistedPrefsRef.current = nextPrefs;
+      widthRatioRef.current = nextPrefs.widthRatio;
+      setWidthRatioState(widthRatioRef.current);
+    }
     selectedIdRef.current = null;
     requestedSelectionRef.current = null;
     pendingSelectionIdRef.current = normalizedInitialSelectedId;
@@ -251,8 +289,10 @@ export function useAuxiliaryWorkspace(input: {
     setSummaries([]);
     setTargetState("main");
     detailsRef.current.clear();
+    executionSelectionsRef.current.clear();
     bindingsRef.current.clear();
     detailMutationEpochRef.current.clear();
+    bookmarkRevisionRef.current.clear();
     terminalRevisionRef.current.clear();
     recencyRef.current.clear();
     workspaceGenerationRef.current += 1;
@@ -290,14 +330,15 @@ export function useAuxiliaryWorkspace(input: {
     }
     void api.getAuxiliarySession(id).then((session) => {
       if (!mountedRef.current || revision !== loadRevisionRef.current || selectedIdRef.current !== id) return;
-      if (session && detailEpoch === (detailMutationEpochRef.current.get(id) ?? 0)) {
-        detailsRef.current.set(id, session);
+      const mergedSession = session ? mergeExecutionSelection(session) : null;
+      if (mergedSession && detailEpoch === (detailMutationEpochRef.current.get(id) ?? 0)) {
+        detailsRef.current.set(id, mergedSession);
         const binding = bindingsRef.current.get(id);
-        if (binding) binding.sessionRef.current = session;
+        if (binding) binding.sessionRef.current = mergedSession;
       }
       if (detailEpoch === (detailMutationEpochRef.current.get(id) ?? 0)) {
-        if (session) {
-          setSelectedSession(session);
+        if (mergedSession) {
+          setSelectedSession(mergedSession);
           setDetailError(null);
         } else {
           setDetailError(new Error(`Auxiliary session ${id} was not found`));
@@ -311,17 +352,24 @@ export function useAuxiliaryWorkspace(input: {
       setDetailError(detailCause);
       setDetailLoading(false);
     });
-  }, [api, selectedId]);
+  }, [api, mergeExecutionSelection, selectedId]);
 
   useEffect(() => {
     if (!api?.subscribeLiveSessionRun) return;
     const subscriptionGeneration = workspaceGenerationRef.current;
     const statusRequests = new Map<string, { pending: boolean }>();
     const terminalLoads = new Map<string, number>();
-    const applySession = (id: string, session: AuxiliarySession, terminalRevision: number, terminalEpoch: number) => {
+    const applySession = (id: string, session: AuxiliarySession, terminalRevision: number, terminalEpoch: number, bookmarkRevision: number) => {
       if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
         || terminalRevision !== terminalRevisionRef.current.get(id)
         || terminalEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
+      session = mergeExecutionSelection(session);
+      if (bookmarkRevision !== (bookmarkRevisionRef.current.get(id) ?? 0)) {
+        const projected = detailsRef.current.get(id);
+        if (projected?.createdAt === session.createdAt) {
+          session = { ...session, messages: mergeMessageBookmarkProjection(projected.messages, session.messages) };
+        }
+      }
       const nextSummaries = replaceSummary(summariesRef.current, id, projectAuxiliarySessionSummary(session), recencyRef.current);
       if (nextSummaries !== summariesRef.current) {
         summariesRef.current = nextSummaries;
@@ -394,6 +442,7 @@ export function useAuxiliaryWorkspace(input: {
       const pendingStatus = statusRequests.get(id);
       if (pendingStatus) pendingStatus.pending = false;
       const terminalStartEpoch = detailMutationEpochRef.current.get(id) ?? 0;
+      const terminalBookmarkRevision = bookmarkRevisionRef.current.get(id) ?? 0;
       void api.getAuxiliarySession(id).then((session) => {
         if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
           || terminalRevision !== terminalRevisionRef.current.get(id)) return;
@@ -404,7 +453,7 @@ export function useAuxiliaryWorkspace(input: {
           const resolvedEpoch = terminalStartEpoch + 1;
           detailMutationEpochRef.current.set(id, resolvedEpoch);
           if (session) {
-            applySession(id, session, terminalRevision, resolvedEpoch);
+            applySession(id, session, terminalRevision, resolvedEpoch, terminalBookmarkRevision);
             return;
           }
           detailsRef.current.delete(id);
@@ -431,7 +480,7 @@ export function useAuxiliaryWorkspace(input: {
         if (terminalLoads.get(id) === terminalRevision) terminalLoads.delete(id);
       });
     });
-  }, [api, parentSessionId, refreshSummaries]);
+  }, [api, mergeExecutionSelection, parentSessionId, refreshSummaries]);
 
   const touchRecency = useCallback((id: string, updatedAt: string) => {
     const current = summariesRef.current;
@@ -490,9 +539,14 @@ export function useAuxiliaryWorkspace(input: {
 
   const setWidthRatio = useCallback((ratio: number) => {
     const next = clampAuxiliaryWidthRatio(ratio);
+    if (widthRatioRef.current === next) return;
     widthRatioRef.current = next;
     setWidthRatioState(next);
-    persistPrefs({ widthRatio: next });
+    if (prefsRef.current) prefsRef.current = { ...prefsRef.current, widthRatio: next };
+  }, []);
+
+  const commitWidthRatio = useCallback(() => {
+    persistPrefs({ widthRatio: widthRatioRef.current });
   }, [persistPrefs]);
 
   const setTarget = useCallback((next: AuxiliaryWorkspaceTarget) => {
@@ -527,7 +581,9 @@ export function useAuxiliaryWorkspace(input: {
         draftSaveQueue: { current: Promise.resolve() },
         sessionSaveQueue: { current: Promise.resolve() },
         setSession() {},
+        setMessageBookmark() {},
         getSession() { return null; },
+        setExecutionSelection() {},
       };
       bindingsRef.current.set(emptyId, emptyBinding);
       return emptyBinding;
@@ -543,8 +599,10 @@ export function useAuxiliaryWorkspace(input: {
       setSession(update) {
         if (bindingGeneration !== workspaceGenerationRef.current) return;
         const current = binding.sessionRef.current;
-        const next = typeof update === "function" ? update(current) : update;
-        if (next === current) return;
+        const candidate = typeof update === "function" ? update(current) : update;
+        const next = candidate ? mergeExecutionSelection(candidate) : candidate;
+        // Operation appliers may stage sessionRef before publishing the state.
+        if (next === (detailsRef.current.get(id) ?? null)) return;
         binding.sessionRef.current = next;
         detailMutationEpochRef.current.set(id, (detailMutationEpochRef.current.get(id) ?? 0) + 1);
         if (next) detailsRef.current.set(id, next);
@@ -559,10 +617,29 @@ export function useAuxiliaryWorkspace(input: {
       getSession() {
         return binding.sessionRef.current;
       },
+      setMessageBookmark(messageIndex, isBookmarked) {
+        if (bindingGeneration !== workspaceGenerationRef.current) return;
+        const current = binding.sessionRef.current;
+        if (!current || !Number.isInteger(messageIndex) || messageIndex < 0 || messageIndex >= current.messages.length) return;
+        const message = current.messages[messageIndex];
+        if ((message.isBookmarked === true) === isBookmarked) return;
+        const messages = current.messages.slice();
+        messages[messageIndex] = setMessageBookmarked(message, isBookmarked);
+        const next = { ...current, messages };
+        binding.sessionRef.current = next;
+        detailsRef.current.set(id, next);
+        bookmarkRevisionRef.current.set(id, (bookmarkRevisionRef.current.get(id) ?? 0) + 1);
+        setSelectedSession((selected) => selected?.id === id && selected.createdAt === current.createdAt ? next : selected);
+      },
+      setExecutionSelection(session) {
+        if (bindingGeneration !== workspaceGenerationRef.current) return;
+        executionSelectionsRef.current.set(id, { createdAt: session.createdAt, options: captureSessionExecutionOptions(session) });
+        binding.setSession(session);
+      },
     };
     bindingsRef.current.set(id, binding);
     return binding;
-  }, []);
+  }, [mergeExecutionSelection]);
 
   const buildConcurrentChats = useCallback((input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps => {
     const mainSessionId = input.mainSession?.id ?? input.messageColumn.sessionId;
@@ -572,7 +649,7 @@ export function useAuxiliaryWorkspace(input: {
       ...input.messageColumn,
       sessionId: mainSessionId,
       messages: mainMessages,
-      onToggleMessageBookmark: input.mainOnToggleMessageBookmark,
+      onToggleMessageBookmark: input.onToggleMessageBookmark,
       onLoadArtifactDetail: input.mainOnLoadArtifactDetail,
       onOpenPath: input.mainOnOpenPath,
     };
@@ -581,7 +658,7 @@ export function useAuxiliaryWorkspace(input: {
           ...input.messageColumn,
           sessionId: input.auxiliarySession.id,
           messages: auxiliaryMessages,
-          onToggleMessageBookmark: input.auxiliaryOnToggleMessageBookmark,
+          onToggleMessageBookmark: input.onToggleMessageBookmark,
           onLoadArtifactDetail: input.auxiliaryOnLoadArtifactDetail,
           onOpenPath: input.auxiliaryOnOpenPath,
         }
@@ -614,14 +691,16 @@ export function useAuxiliaryWorkspace(input: {
       onSelectAuxiliary: selectSession,
       onTargetChange: setTarget,
       onWidthRatioChange: setWidthRatio,
+      onWidthRatioCommit: commitWidthRatio,
       loading: loading || detailLoading,
       error: detailError?.message ?? error?.message ?? null,
     };
-  }, [detailError, detailLoading, error, loading, selectSession, selectedId, setTarget, setWidthRatio, summaries, target, widthRatio]);
+  }, [commitWidthRatio, detailError, detailLoading, error, loading, selectSession, selectedId, setTarget, setWidthRatio, summaries, target, widthRatio]);
 
   return useMemo(() => ({
     summaries,
     selectedId,
+    getCurrentSelectedId: () => selectedIdRef.current,
     selectedSession: selectedSession?.id === selectedId ? selectedSession : null,
     loading,
     error,
@@ -630,6 +709,7 @@ export function useAuxiliaryWorkspace(input: {
     target,
     widthRatio,
     setWidthRatio,
+    commitWidthRatio,
     selectSession,
     requestSessionSelection,
     setTarget,
@@ -638,5 +718,5 @@ export function useAuxiliaryWorkspace(input: {
     touchRecency,
     getBinding,
     buildConcurrentChats,
-  }), [addSession, buildConcurrentChats, detailError, detailLoading, error, getBinding, loading, refreshSummaries, requestSessionSelection, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, touchRecency, widthRatio]);
+  }), [addSession, buildConcurrentChats, commitWidthRatio, detailError, detailLoading, error, getBinding, loading, refreshSummaries, requestSessionSelection, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, touchRecency, widthRatio]);
 }

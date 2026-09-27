@@ -22,6 +22,7 @@ import {
 import type { Session } from "../../src-shared/session/session-state.js";
 import { ComposerControllerRegistry, type ComposerOwner } from "../../src/chat/composer-controller.js";
 import { runMainSessionTurnOperation } from "../../src/chat/runtime/run-main-session-turn-operation.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { resolveComposerSendabilityState } from "../../src/chat/composer/session-composer-feedback.js";
 import type { OwnedLiveSessionRunState } from "../../src/chat/runtime/session-live-run-state.js";
 
@@ -105,7 +106,7 @@ function createTurnOperationHarness() {
     api,
     sessionId: selectedSession.id,
     selectedSession,
-    request: { userMessage: "retry message", submitSource: "composer" },
+    request: { userMessage: "retry message", submitSource: "composer", executionOptions: captureSessionExecutionOptions(selectedSession) },
     composerRegistry: registry,
     composerOwner: owner,
     submitCoordinator: coordinator,
@@ -140,6 +141,91 @@ function createTurnOperationHarness() {
   };
   return { input, api, state, registry, owner, coordinator, revisions };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "preview待機中と実行中に変更したBookmarkは、古い楽観Sessionとturn成功応答で巻き戻らない"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md" }
+// fault = "送信開始時のsnapshotで楽観状態を作る、または古い成功応答をそのまま適用する"
+// observable = "送信中と成功後の確定messageのBookmarkと最終本文"
+// observation_boundary = "component-behavior"
+// scope = "main-send-bookmark-race"
+// lifecycle = "permanent"
+// impact = "送信先に関係なく付けたBookmarkが実行中に消える"
+// distinction = "merge helper単体ではpreview前の楽観状態作成と結果適用の接続を検証できない"
+// @end-test-value
+test("Main送信のpreview待機と成功応答はBookmark変更を巻き戻さない", async () => {
+  const harness = createTurnOperationHarness();
+  const before = { role: "assistant" as const, text: "before" };
+  harness.input.selectedSession = createSession({ messages: [before] });
+  harness.state.sessions = [harness.input.selectedSession];
+  let resolvePreview!: (value: { attachments: []; errors: [] }) => void;
+  const preview = new Promise<{ attachments: []; errors: [] }>((resolve) => { resolvePreview = resolve; });
+  harness.api.previewComposerInput = async () => preview;
+  let resolveTurn!: (value: Session) => void;
+  harness.api.runSessionTurn = async () => new Promise<Session>((resolve) => { resolveTurn = resolve; });
+  const running = runMainSessionTurnOperation(harness.input);
+  harness.state.sessions = [{ ...harness.state.sessions[0], messages: [{ ...before, isBookmarked: true }] }];
+  harness.revisions.projection.advance();
+  resolvePreview({ attachments: [], errors: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.state.sessions[0].messages[0]?.isBookmarked, true);
+  resolveTurn(createSession({ messages: [before, { role: "user", text: "retry message" }, { role: "assistant", text: "done" }] }));
+  await running;
+  assert.equal(harness.state.sessions[0].messages[0]?.isBookmarked, true);
+  assert.equal(harness.state.sessions[0].messages.at(-1)?.text, "done");
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Mainの古い再取得・失敗復旧はBookmark解除を再付与せず、同じ確定本文の新しい付与も保持する"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md" }
+// fault = "遅いsnapshotのBookmarkを採用し、解除済みを復活させるか付与済みを消す"
+// observable = "再取得と失敗復旧後のBookmarkおよび追加本文"
+// observation_boundary = "public-boundary"
+// scope = "main-bookmark-snapshot-convergence"
+// lifecycle = "permanent"
+// impact = "実行中に確定messageへ行ったBookmark変更が失われる"
+// distinction = "送信成功の接続testは古い再取得と失敗復旧経路を検証しない"
+// @end-test-value
+test("Mainの再取得と失敗復旧はBookmark付与・解除を維持する", () => {
+  const marked = { role: "assistant" as const, text: "before", isBookmarked: true };
+  const unmarked = { role: "assistant" as const, text: "before" };
+  const current = createSession({ messages: [unmarked] });
+  const stale = createSession({ messages: [marked, { role: "assistant", text: "done" }] });
+  const merged = mergeRefetchedSessionProjection(current, stale, true);
+  assert.equal(merged.messages[0]?.isBookmarked, undefined);
+  assert.equal(merged.messages[1]?.text, "done");
+  const optimistic = createSession({ status: "running", runState: "running", messages: [unmarked] });
+  const projected = createSession({ ...optimistic, messages: [marked] });
+  assert.equal(recoverRejectedSessionSnapshot(projected, optimistic, true)?.messages[0]?.isBookmarked, true);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main送信の実行選択snapshotはpreview待機後も後続のUI選択で上書きされない"
+// oracle = { type = "contract", ref = "src-shared/session/runtime-state.ts: RunSessionTurnRequest" }
+// fault = "preview後に現在sessionから実行選択を再取得してB送信をCへ変える"
+// observable = "runSessionTurn APIへ渡されたexecutionOptions"
+// observation_boundary = "public-boundary"
+// scope = "main-send-execution-snapshot"
+// lifecycle = "permanent"
+// impact = "画面で送信時に選んだmodelと異なるprovider設定で実行される"
+// distinction = "要求型だけでは非同期preview前後のsnapshot不変性を保証できない"
+// @end-test-value
+test("Main送信はpreview待機後もcaptured実行選択をそのまま渡す", async () => {
+  const { input, api } = createTurnOperationHarness();
+  const selected = createSession({ model: "model-c" });
+  input.selectedSession = selected;
+  input.request = { ...input.request, executionOptions: captureSessionExecutionOptions(createSession({ model: "model-b" })) };
+  let observedModel = "";
+  api.runSessionTurn = async (_sessionId, request) => {
+    observedModel = request.executionOptions.model;
+    return selected;
+  };
+  await runMainSessionTurnOperation(input);
+  assert.equal(observedModel, "model-b");
+});
 
 // @test-value v2
 // kind = "invariant"

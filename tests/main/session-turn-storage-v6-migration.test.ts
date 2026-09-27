@@ -51,15 +51,13 @@ function insertAuxiliarySession(db: DatabaseSync): void {
       parent_session_id,
       status,
       created_at,
-      updated_at,
-      payload_json
-    ) VALUES (?, ?, 'active', ?, ?, ?)
+      updated_at
+    ) VALUES (?, ?, 'active', ?, ?)
   `).run(
     "aux-1",
     "session-1",
     "2026-07-05T00:00:30.000Z",
     "2026-07-05T00:00:30.000Z",
-    "{}",
   );
 }
 

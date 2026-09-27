@@ -102,6 +102,7 @@ export type ConcurrentChatWindowProps = {
   isAddAuxiliaryDisabled?: boolean;
   onTargetChange: (target: "main" | "auxiliary") => void;
   onWidthRatioChange: (ratio: number) => void;
+  onWidthRatioCommit?: () => void;
   loading?: boolean;
   error?: string | null;
 };
@@ -109,7 +110,8 @@ export type ConcurrentChatWindowProps = {
 export function ConcurrentChatSplitter({
   widthRatio,
   onWidthRatioChange,
-}: Pick<ConcurrentChatWindowProps, "widthRatio" | "onWidthRatioChange">) {
+  onWidthRatioCommit,
+}: Pick<ConcurrentChatWindowProps, "widthRatio" | "onWidthRatioChange" | "onWidthRatioCommit">) {
   const dragRef = useRef<{ width: number; minRatio: number; maxRatio: number; startingRatio: number } | null>(null);
   const getRatioBounds = (splitter: HTMLButtonElement) => {
     const parent = splitter.parentElement;
@@ -141,6 +143,7 @@ export function ConcurrentChatSplitter({
       className="concurrent-chat-splitter"
       isPanelExpanded={widthRatio > 0 && widthRatio < 1}
       onPointerDown={handlePointerDown}
+      onPointerEnd={onWidthRatioCommit}
       onDrag={(_event, delta) => {
         const bounds = dragRef.current;
         if (!bounds) return;
@@ -149,7 +152,10 @@ export function ConcurrentChatSplitter({
           : next > (1 + bounds.maxRatio) / 2 ? 1
             : Math.min(bounds.maxRatio, Math.max(bounds.minRatio, next)));
       }}
-      onTogglePanel={() => onWidthRatioChange(widthRatio > 0 && widthRatio < 1 ? 0 : 0.5)}
+      onTogglePanel={() => {
+        onWidthRatioChange(widthRatio > 0 && widthRatio < 1 ? 0 : 0.5);
+        onWidthRatioCommit?.();
+      }}
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
         if (widthRatio <= 0 || widthRatio >= 1) return;
@@ -159,6 +165,7 @@ export function ConcurrentChatSplitter({
         const current = Math.min(bounds.maxRatio, Math.max(bounds.minRatio, widthRatio));
         const next = current + (event.key === "ArrowLeft" ? 0.02 : -0.02);
         onWidthRatioChange(next < bounds.minRatio ? 0 : next > bounds.maxRatio ? 1 : next);
+        onWidthRatioCommit?.();
       }}
       ariaLabel={widthRatio >= 1 ? "Open Main" : widthRatio > 0 ? "Collapse Auxiliary" : "Open Auxiliary"}
       ariaControls={widthRatio >= 1 ? "session-main-chat-pane" : "session-auxiliary-chat-pane"}
@@ -234,6 +241,7 @@ export type ChatDockSplitterProps = {
   canCollapse?: boolean;
   onActivate?: () => void;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  onPointerEnd?: PointerEventHandler<HTMLButtonElement>;
   onDrag?: (event: React.PointerEvent<HTMLButtonElement>, delta: { x: number; y: number }) => void;
   onKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
   onTogglePanel?: MouseEventHandler<HTMLButtonElement>;
@@ -689,6 +697,7 @@ export function ChatWindow({
         <ConcurrentChatSplitter
           widthRatio={concurrentChats.widthRatio}
           onWidthRatioChange={concurrentChats.onWidthRatioChange}
+          onWidthRatioCommit={concurrentChats.onWidthRatioCommit}
         />
       ) : null}
       isAuxiliaryVisible={Boolean(concurrentChats)}
@@ -771,6 +780,7 @@ export function ChatDockSplitter({
   canCollapse = true,
   onActivate,
   onPointerDown,
+  onPointerEnd,
   onDrag,
   onKeyDown,
   onTogglePanel,
@@ -852,12 +862,15 @@ export function ChatDockSplitter({
     }
     if (draggedRef.current) onDrag?.(event, { x: event.clientX - start.x, y: event.clientY - start.y });
   };
-  const handlePointerEnd = () => {
+  const handlePointerEnd: PointerEventHandler<HTMLButtonElement> = (event) => {
     pointerStartRef.current = null;
+    if (draggedRef.current) onPointerEnd?.(event);
   };
-  const handlePointerCancel = () => {
+  const handlePointerCancel: PointerEventHandler<HTMLButtonElement> = (event) => {
+    const didDrag = draggedRef.current;
     pointerStartRef.current = null;
     draggedRef.current = false;
+    if (didDrag) onPointerEnd?.(event);
   };
   const handleClick: MouseEventHandler<HTMLButtonElement> = (event) => {
     onActivate?.();

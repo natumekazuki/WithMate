@@ -7,6 +7,7 @@ import { ProviderTurnError, type ProviderCodingAdapter } from "../../src-electro
 import { SessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -31,6 +32,8 @@ function session(id: string, provider: string): Session {
     }),
   };
 }
+
+const TEST_EXECUTION_OPTIONS = captureSessionExecutionOptions(session("test", "codex"));
 
 function providerCatalog(id: string): ModelCatalogProvider {
   return {
@@ -205,9 +208,9 @@ describe("SessionRuntimeService parallel conversations", () => {
       const mainRuntime = makeRuntimeService(mainStored, adapters, mainConfirmedFinalTexts);
       const auxiliaryRuntime = makeRuntimeService(auxiliaryStored, adapters, auxiliaryConfirmedFinalTexts);
 
-      const mainRun = mainRuntime.runSessionTurn(main.id, { userMessage: "main" });
-      const aRun = auxiliaryRuntime.runSessionTurn(auxiliaryA.id, { userMessage: "a" });
-      const bRun = auxiliaryRuntime.runSessionTurn(auxiliaryB.id, { userMessage: "b" });
+      const mainRun = mainRuntime.runSessionTurn(main.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "main" });
+      const aRun = auxiliaryRuntime.runSessionTurn(auxiliaryA.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "a" });
+      const bRun = auxiliaryRuntime.runSessionTurn(auxiliaryB.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "b" });
       for (let attempt = 0; attempt < 100 && startedSessionIds.size < 3; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 0));
       }

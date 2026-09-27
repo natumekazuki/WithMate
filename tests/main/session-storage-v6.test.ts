@@ -103,9 +103,8 @@ function insertAuxiliarySessionRows(dbPath: string, rows: Array<{ id: string; pa
         parent_session_id,
         status,
         created_at,
-        updated_at,
-        payload_json
-      ) VALUES (?, ?, 'active', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', '{}')
+        updated_at
+      ) VALUES (?, ?, 'active', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z')
     `);
     for (const row of rows) {
       statement.run(row.id, row.parentSessionId);
@@ -338,6 +337,68 @@ describe("SessionStorageV6", () => {
       assert.equal(storage.getSession(session.id)?.messages[1]?.isBookmarked, undefined);
     } finally {
       storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Session title・bookmark・実行オプションの個別更新は既存message履歴と別incarnationの保存状態を壊さない"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md: Sessionとmessageの個別保存境界" }
+  // fault = "個別更新をSession全体の再保存へ戻し、本文または別incarnationへ影響させる"
+  // observable = "V6実DBの対象Session再読込、message本文、旧incarnation更新拒否"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-narrow-updates"
+  // lifecycle = "permanent"
+  // impact = "選択変更やbookmark操作で会話履歴が消える、または削除再作成後の別Sessionへ更新が流入する"
+  // distinction = "通常の全Session upsertではなく、個別metadata・message行更新とincarnation境界を実DBで確認する"
+  // @end-test-value
+  it("個別metadata更新は履歴とincarnation境界を保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-narrow-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    const storage = new SessionStorageV6(dbPath);
+    try {
+      const session = storage.insertSession({
+        ...buildNewSession({
+          id: "narrow-session", taskTitle: "Before", workspaceLabel: "workspace",
+          workspacePath: "C:/workspace", branch: "main", characterId: "char-a", character: "A",
+          characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        messages: [{ role: "user", text: "keep" }, { role: "assistant", text: "response" }],
+      });
+      const owner = getSessionIncarnationId(session);
+      storage.setSessionTitle(session.id, owner, "After");
+      storage.setSessionMessageBookmark(session.id, owner, 1, true);
+      storage.setSessionExecutionOptions(session.id, owner, {
+        catalogRevision: session.catalogRevision, model: "gpt-new", reasoningEffort: "medium",
+        approvalMode: session.approvalMode, codexSandboxMode: session.codexSandboxMode,
+        codexSpeed: session.codexSpeed, codexReviewer: session.codexReviewer,
+        customAgentName: "Custom",
+      });
+      const stored = storage.getSession(session.id)!;
+      assert.equal(stored.taskTitle, "After");
+      assert.equal(stored.model, "gpt-new");
+      assert.equal(stored.customAgentName, "Custom");
+      assert.deepEqual(stored.messages.map((message) => message.text), ["keep", "response"]);
+      assert.equal(stored.messages[1]?.isBookmarked, true);
+      storage.updateSession({
+        ...session,
+        messages: [...session.messages, { role: "assistant", text: "later" }],
+      });
+      assert.equal(storage.getSession(session.id)?.messages[1]?.isBookmarked, true);
+      storage.deleteSession(session.id);
+      storage.insertSession({ ...session, taskTitle: "Recreated" });
+      assert.throws(() => storage.setSessionTitle(session.id, owner, "Wrong"), /could not be found/i);
+      assert.throws(() => storage.setSessionMessageBookmark(session.id, owner, 0, true), /could not be found/i);
+      assert.throws(() => storage.setSessionExecutionOptions(session.id, owner, {
+        catalogRevision: session.catalogRevision, model: session.model, reasoningEffort: session.reasoningEffort,
+        approvalMode: session.approvalMode, codexSandboxMode: session.codexSandboxMode,
+        codexSpeed: session.codexSpeed, codexReviewer: session.codexReviewer, customAgentName: "",
+      }), /could not be found/i);
+      assert.equal(storage.getSession(session.id)?.taskTitle, "Recreated");
+    } finally {
+      storage.close();
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
@@ -1355,6 +1416,135 @@ describe("SessionStorageV6", () => {
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "terminal appendは未変更の履歴message行と作成時刻を保ち、bookmarkとartifact detailを失わない"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md: Session message保存" }
+  // fault = "terminal全体保存が全messageを削除再挿入し、既存行ID・時刻・bookmark・artifact detailを失う"
+  // observable = "session_messages_v6の既存行id/created_at/body/artifact_body、追加行、再読込bookmarkとartifact detail"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-terminal-message-diff"
+  // lifecycle = "permanent"
+  // impact = "長い履歴の無用な書込みが増え、既存会話のブックマークと詳細artifactが消える"
+  // distinction = "running開始のappend専用経路でなく、terminal full Session保存時の実DB行同一性を確認する"
+  // @end-test-value
+  it("terminal appendで既存message行とbookmark・artifact detailを保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-terminal-diff-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    const storage = new SessionStorageV6(dbPath);
+    try {
+      const initial = storage.insertSession({
+        ...buildNewSession({
+          id: "terminal-diff", taskTitle: "Terminal", workspaceLabel: "workspace",
+          workspacePath: "C:/workspace", branch: "main", characterId: "char-a", character: "A",
+          characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        updatedAt: "2026-09-27T00:00:00.000Z",
+        messages: [
+          { role: "user", text: "prompt" },
+          { role: "assistant", text: "prior answer", artifact: createArtifact() },
+        ],
+      });
+      storage.setSessionMessageBookmark(initial.id, getSessionIncarnationId(initial), 1, true);
+      const db = new DatabaseSync(dbPath);
+      try {
+        const before = db.prepare(`
+          SELECT id, seq, role, body, artifact_body, created_at
+          FROM session_messages_v6 WHERE session_id = ? ORDER BY seq
+        `).all(initial.id);
+        const auditLogId = Number(db.prepare(`
+          INSERT INTO session_turns_v6 (session_id, phase, started_at, updated_at)
+          VALUES (?, 'running', ?, ?)
+        `).run(initial.id, "2026-09-27T00:01:00.000Z", "2026-09-27T00:01:00.000Z").lastInsertRowid);
+        storage.upsertTerminalSession({
+          ...initial,
+          status: "idle",
+          runState: "idle",
+          updatedAt: "2026-09-27T00:02:00.000Z",
+          messages: [...initial.messages, { role: "assistant", text: "new answer" }],
+        }, {
+          auditLogId, sessionId: initial.id, phase: "completed", assistantMessageSeq: 2,
+          threadId: initial.threadId, errorMessage: "", completedAt: "2026-09-27T00:02:00.000Z",
+        });
+        const after = db.prepare(`
+          SELECT id, seq, role, body, artifact_body, created_at
+          FROM session_messages_v6 WHERE session_id = ? ORDER BY seq
+        `).all(initial.id);
+        assert.deepEqual(after.slice(0, 2), before);
+        assert.equal(after.length, 3);
+        assert.equal(after[2]?.created_at, "2026-09-27T00:02:00.000Z");
+        assert.equal(storage.getSession(initial.id)?.messages[1]?.isBookmarked, true);
+        assert.equal(storage.getSessionMessageArtifact(initial.id, 1)?.operationTimeline?.[0]?.details, "large operation details");
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "実行中の確定Main messageのBookmark追加と解除は古いruntime snapshotの実行中・終端保存後も保持される"
+  // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D9A 実行中確定messageのBookmark" }
+  // fault = "runtimeの古いmessage配列を再保存してbookmarkの追加または解除を巻き戻す"
+  // observable = "upsertSessionとupsertTerminalSessionの返却値および実DB再読込のmessage bookmark値"
+  // observation_boundary = "public-boundary"
+  // scope = "main-running-message-bookmark"
+  // lifecycle = "permanent"
+  // impact = "実行中に行ったBookmark操作がturn進行または完了で消える"
+  // distinction = "単独のbookmark更新testでは古いruntime snapshotによる後続保存を検出できない"
+  // @end-test-value
+  it("Main実行中Bookmarkは古いruntime snapshotの保存で巻き戻らない", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-main-running-bookmark-"));
+    const dbPath = path.join(directory, "app.db");
+    const storage = new SessionStorageV6(dbPath);
+    try {
+      const initial = storage.insertSession({
+        ...buildNewSession({
+          id: "running-bookmark-main", taskTitle: "Bookmark", workspaceLabel: "workspace",
+          workspacePath: "C:/workspace", branch: "main", characterId: "mate", character: "Mate",
+          characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        status: "running", runState: "running",
+        messages: [{ role: "user", text: "confirmed" }],
+      });
+      const owner = getSessionIncarnationId(initial);
+      storage.setSessionMessageBookmark(initial.id, owner, 0, true);
+      const running = storage.upsertSession({
+        ...initial, messages: [...initial.messages, { role: "assistant", text: "confirmed response" }],
+      });
+      assert.equal(running.messages[0]?.isBookmarked, true);
+      assert.equal(storage.getSession(initial.id)?.messages[0]?.isBookmarked, true);
+
+      storage.setSessionMessageBookmark(initial.id, owner, 0, false);
+      const db = new DatabaseSync(dbPath);
+      try {
+        const auditLogId = Number(db.prepare(`
+          INSERT INTO session_turns_v6 (session_id, phase, started_at, updated_at)
+          VALUES (?, 'running', ?, ?)
+        `).run(initial.id, "2026-09-27T00:01:00.000Z", "2026-09-27T00:01:00.000Z").lastInsertRowid);
+        const terminal = storage.upsertTerminalSession({
+          ...running, status: "idle", runState: "idle", updatedAt: "2026-09-27T00:02:00.000Z",
+          messages: [...running.messages, { role: "assistant", text: "final response" }],
+        }, {
+          auditLogId, sessionId: initial.id, phase: "completed", assistantMessageSeq: 2,
+          threadId: initial.threadId, errorMessage: "", completedAt: "2026-09-27T00:02:00.000Z",
+        });
+        assert.equal(terminal.messages[0]?.isBookmarked, undefined);
+        assert.equal(storage.getSession(initial.id)?.messages[0]?.isBookmarked, undefined);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage.close();
+      await removeDirectoryWithRetry(directory);
+    }
+  });
+
   // @test-value v2
   // kind = "invariant"
   // claim = "SessionStorageV6 runtime metadata CAS は対象metadataだけを更新し、本文とpinを保持してstale patchを拒否する"

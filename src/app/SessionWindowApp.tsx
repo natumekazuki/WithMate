@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
+import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill, LiveSessionRunState, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { getAuxiliarySessionIdFromLocation, getSessionIdFromLocation } from "./session-location.js";
 import {
@@ -28,10 +29,10 @@ import {
   type DiffPreviewPayload,
   type Message,
   isReadOnlySession,
-  setMessageBookmarked,
+  getSessionIncarnationId,
   type Session,
 } from "../../src-shared/session/session-state.js";
-import type { MessageCollapseTarget } from "../chat/conversation/session-message-collapse.js";
+import { createMessageBookmarkHandler } from "../chat/conversation/session-message-bookmark-operation.js";
 import {
   getProviderCatalog,
   getReasoningEffortOptionsForModel,
@@ -169,7 +170,7 @@ import {
   type RetryBannerKind,
   type RetryBannerState,
 } from "../chat/retry-state.js";
-import { resolvePendingAuxiliaryMessageGroupId } from "../chat/auxiliary/auxiliary-session-message-projection.js";
+import { loadOwnedAuxiliaryMessageArtifact, resolvePendingAuxiliaryMessageGroupId } from "../chat/auxiliary/auxiliary-session-message-projection.js";
 import {
   createGuardedActiveAuxiliarySessionUpdater,
   enqueueAuxiliarySessionSaveWithQueue,
@@ -365,6 +366,9 @@ export default function AgentSessionWindowApp() {
     toggleSessionPin,
     isSessionPinPending,
     runMainSessionTurn: runMainSessionTurnFromRuntime,
+    getCurrentSession: getCurrentMainSession,
+    selectExecutionOptions: selectMainExecutionOptions,
+    updateSessionProjection,
   } = mainSessionRuntime;
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [modelCatalogLoadStatus, setModelCatalogLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
@@ -693,14 +697,22 @@ export default function AgentSessionWindowApp() {
   );
   const isSelectedSessionReadOnly = selectedSession ? isReadOnlySession(selectedSession) : false;
   const persistSession = useCallback(async (nextSession: Session) => {
-    return persistMainSessionState(nextSession, isSelectedSessionReadOnly);
-  }, [isSelectedSessionReadOnly, persistMainSessionState]);
+    const current = getCurrentMainSession();
+    const withCurrentSelection = current?.id === nextSession.id && getSessionIncarnationId(current) === getSessionIncarnationId(nextSession)
+      ? { ...nextSession, ...captureSessionExecutionOptions(current) }
+      : nextSession;
+    return persistMainSessionState(withCurrentSelection, isSelectedSessionReadOnly);
+  }, [getCurrentMainSession, isSelectedSessionReadOnly, persistMainSessionState]);
   const sessionHeader = useSessionHeaderOperations({
     api: withmateApi,
     selectedSession,
     isReadOnly: isSelectedSessionReadOnly,
     runState: selectedSessionRunState,
-    persistSession,
+    updateTitle: async (session, title) => {
+      if (!withmateApi) return;
+      await withmateApi.setSessionTitle({ sessionId: session.id, incarnationId: getSessionIncarnationId(session), title });
+      updateSessionProjection(session.id, (current) => ({ ...current, taskTitle: title }));
+    },
     closeWindow: () => window.close(),
   });
   const {
@@ -1130,20 +1142,21 @@ export default function AgentSessionWindowApp() {
     messageText: string,
     options?: { clearDraft?: boolean; collapseActionDock?: boolean; submitSource?: "composer" | "retry" },
   ) => {
-    if (!withmateApi || !selectedSession) {
+    const sendSession = getCurrentMainSession() ?? selectedSession;
+    if (!withmateApi || !sendSession) {
       return;
     }
-    const sessionId = selectedSession.id;
+    const sessionId = sendSession.id;
     const clientRequestId = createSessionTurnClientRequestId();
     const request: RunSessionTurnRequest = {
       userMessage: messageText,
       clientRequestId,
       submitSource: options?.submitSource ?? "composer",
-      codexReviewer: selectedSession.codexReviewer,
+      executionOptions: captureSessionExecutionOptions(sendSession),
     };
     await runMainSessionTurnFromRuntime({
       sessionId,
-      selectedSession,
+      selectedSession: sendSession,
       request,
       composerOwner,
       clearDraft: options?.clearDraft ?? true,
@@ -1154,7 +1167,7 @@ export default function AgentSessionWindowApp() {
       blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly,
       currentTimestamp: currentTimestampLabel(),
-      validateWorkspace: () => validateSessionWorkspace(selectedSession, true),
+      validateWorkspace: () => validateSessionWorkspace(sendSession, true),
       liveRun: { getRevision: getLiveRunRevision, setState: setLiveRunState },
       acknowledgePreviewChatMessageCount: (id, count) => setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(current, id, count)),
       collapseActionDock: () => setIsActionDockPinnedExpanded(false),
@@ -1312,13 +1325,13 @@ export default function AgentSessionWindowApp() {
   const runMainRuntimeOption = async (option: MainRuntimeOption) => {
     if (!withmateApi) return;
     await runMainRuntimeOptionOperation({
-      session: selectedSession,
+      session: getCurrentMainSession() ?? selectedSession,
       isReadOnly: isSelectedSessionReadOnly,
       runState: selectedSessionRunState,
       providerCatalog: selectedProviderCatalog,
       catalogRevision: modelCatalog?.revision ?? null,
       option,
-      persist: persistSession,
+      persist: (nextSession) => Promise.resolve(selectMainExecutionOptions(nextSession)),
       createTimestampLabel: currentTimestampLabel,
     });
   };
@@ -1344,56 +1357,36 @@ export default function AgentSessionWindowApp() {
     })(recipe);
   };
 
-  const handleToggleMessageBookmark = async (target: MessageCollapseTarget): Promise<void> => {
-    const nextIsBookmarked = !target.isBookmarked;
-    if (target.source.kind === "auxiliary") {
-      if (
-        isSelectedSessionReadOnly
-        || !activeAuxiliarySession
-        || activeAuxiliarySession.runState === "running"
-        || activeAuxiliarySession.id !== target.source.sessionId
-      ) {
-        return;
-      }
-
-      await updateActiveAuxiliarySession((current) => {
-        const message = current.messages[target.source.messageIndex];
-        if (!message) {
-          return current;
-        }
-
-        return {
-          ...current,
-          updatedAt: currentTimestampLabel(),
-          messages: current.messages.map((currentMessage, index) => (
-            index === target.source.messageIndex
-              ? setMessageBookmarked(currentMessage, nextIsBookmarked)
-              : currentMessage
-          )),
-        };
-      });
-      return;
-    }
-
-    if (!selectedSession || isSelectedSessionReadOnly || selectedSessionRunState === "running") {
-      return;
-    }
-
-    const message = selectedSession.messages[target.source.messageIndex];
-    if (!message) {
-      return;
-    }
-
-    await persistSession({
-      ...selectedSession,
-      updatedAt: currentTimestampLabel(),
-      messages: selectedSession.messages.map((currentMessage, index) => (
-        index === target.source.messageIndex
-          ? setMessageBookmarked(currentMessage, nextIsBookmarked)
-          : currentMessage
-      )),
+  const updateAuxiliaryExecutionOptions = async (recipe: (current: AuxiliarySession) => AuxiliarySession) => {
+    const current = activeAuxiliarySessionRef.current;
+    if (!withmateApi || !current || isSelectedSessionReadOnly) return;
+    const next = recipe(current);
+    if (next === current) return;
+    if ((current.runState === "running" && (
+      next.approvalMode !== current.approvalMode ||
+      next.codexSandboxMode !== current.codexSandboxMode ||
+      next.codexSpeed !== current.codexSpeed ||
+      next.codexReviewer !== current.codexReviewer
+    )) || (current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer)) return;
+    const executionOptions = captureSessionExecutionOptions(next);
+    auxiliaryBinding.setExecutionSelection(next);
+    void withmateApi.setAuxiliaryExecutionOptions({
+        auxiliarySessionId: current.id,
+        parentSessionId: current.parentSessionId,
+        createdAt: current.createdAt,
+        executionOptions,
+      }).catch((error) => {
+      void withmateApi.reportRendererLog({ level: "error", kind: "renderer.auxiliary-execution-options.failed", message: "Auxiliary execution options could not be saved", data: { auxiliarySessionId: current.id }, error: { name: error instanceof Error ? error.name : "UnknownError", message: error instanceof Error ? error.message : String(error) } });
     });
   };
+
+  const handleToggleMessageBookmark = createMessageBookmarkHandler({
+    api: withmateApi,
+    mainSession: selectedSession,
+    isReadOnly: isSelectedSessionReadOnly,
+    getAuxiliaryBinding: auxiliaryWorkspace.getBinding,
+    updateSessionProjection,
+  });
 
   const handleSelectAuxiliaryCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
     if (composerRegistry.isFrozen) return;
@@ -1404,7 +1397,7 @@ export default function AgentSessionWindowApp() {
       updateCustomAgent: async (customAgentName) => {
         await runAuxiliaryCustomAgentPatchOperation({
           customAgentName,
-          updateActiveAuxiliarySession,
+          updateActiveAuxiliarySession: updateAuxiliaryExecutionOptions,
           createTimestampLabel: currentTimestampLabel,
         });
       },
@@ -1574,17 +1567,20 @@ export default function AgentSessionWindowApp() {
 
   const sendAuxiliaryMessage = (messageText: string): Promise<void> => {
     if (composerRegistry.isFrozen) return Promise.resolve();
-    return auxiliaryDraftPersistence.trackSend(performAuxiliarySend(messageText));
+    const selected = activeAuxiliarySessionRef.current;
+    if (!selected) return Promise.resolve();
+    const executionOptions = captureSessionExecutionOptions(selected);
+    return auxiliaryDraftPersistence.trackSend(performAuxiliarySend(messageText, selected, executionOptions));
   };
 
-  const performAuxiliarySend = async (messageText: string) => {
-    if (!withmateApi || !activeAuxiliarySession) {
+  const performAuxiliarySend = async (messageText: string, sendSession: AuxiliarySession, executionOptions: SessionExecutionOptions) => {
+    if (!withmateApi) {
       return;
     }
 
     const sendCapture = composerRegistry.capture(composerOwner);
     messageText = sendCapture.draft;
-    const draftOwner = auxiliaryDraftPersistence.getOwner(activeAuxiliarySession);
+    const draftOwner = auxiliaryDraftPersistence.getOwner(sendSession);
     try {
       await draftOwner?.flush();
       await draftOwner?.ensureLoaded();
@@ -1608,7 +1604,8 @@ export default function AgentSessionWindowApp() {
 
     let clearedRevision: number | null = null;
     const result = await runAuxiliarySessionSendOperationWithApi({
-      activeSession: activeAuxiliarySession,
+      activeSession: sendSession,
+      executionOptions,
       composerBlockedReason: sessionExecutionBlockedReason,
       messageText,
       auxiliaryDraftIncarnation: durableDraft.incarnation,
@@ -1616,7 +1613,6 @@ export default function AgentSessionWindowApp() {
       parentMessageCount: selectedSession?.messages.length ?? null,
       updatedAt: currentTimestampLabel(),
       draftSaveQueue: auxiliaryDraftSaveQueueRef,
-      sessionSaveQueue: auxiliarySessionSaveQueueRef,
       mutationRevision: auxiliarySessionMutationRevisionRef,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
       canStartRun: () => !composerRegistry.isFrozen,
@@ -1628,7 +1624,7 @@ export default function AgentSessionWindowApp() {
         if (clearedRevision !== null) {
           const restoredRevision = composerRegistry.restoreIfRevision(composerOwner, clearedRevision, () => sendCapture.draft);
           if (restoredRevision !== null) {
-            void auxiliaryDraftPersistence.observeSave(activeAuxiliarySession.id, restoredRevision, draftOwner.enqueue(sendCapture.draft, durableDraft));
+            void auxiliaryDraftPersistence.observeSave(sendSession.id, restoredRevision, draftOwner.enqueue(sendCapture.draft, durableDraft));
           }
         }
       },
@@ -2226,7 +2222,7 @@ export default function AgentSessionWindowApp() {
         },
         auxiliary: {
           session: activeAuxiliarySession,
-          update: updateActiveAuxiliarySession,
+          update: updateAuxiliaryExecutionOptions,
           catalogRevision: modelCatalog?.revision ?? null,
           timestamp: currentTimestampLabel,
         },
@@ -2378,19 +2374,17 @@ export default function AgentSessionWindowApp() {
     mainLiveRun: auxiliaryWorkspace.target === "auxiliary" ? undefined : selectedSessionLiveRun,
     auxiliaryLiveRun: auxiliaryWorkspace.target === "auxiliary" ? selectedSessionLiveRun : undefined,
     messageColumn: chatWindowProps.messageColumnProps,
-    mainOnToggleMessageBookmark: auxiliaryWorkspace.target === "main"
-      && !isSelectedSessionReadOnly
-      && !isSelectedSessionRunning
-      ? handleToggleMessageBookmark
-      : undefined,
+    onToggleMessageBookmark: handleToggleMessageBookmark,
     mainOnLoadArtifactDetail: (index) => withmateApi?.getSessionMessageArtifact(selectedSession.id, index) ?? Promise.resolve(null),
     mainOnOpenPath: (target) => handleOpenInlinePath(target, selectedSession.id),
-    auxiliaryOnToggleMessageBookmark: auxiliaryWorkspace.target === "auxiliary"
-      && !isSelectedSessionReadOnly
-      && auxiliaryWorkspace.selectedSession?.runState !== "running"
-      ? handleToggleMessageBookmark
-      : undefined,
-    auxiliaryOnLoadArtifactDetail: (index) => Promise.resolve(auxiliaryWorkspace.selectedSession?.messages[index]?.artifact ?? null),
+    auxiliaryOnLoadArtifactDetail: (index) => loadOwnedAuxiliaryMessageArtifact({
+      owner: auxiliaryWorkspace.selectedSession?.id === auxiliaryWorkspace.selectedId ? auxiliaryWorkspace.selectedSession : null,
+      getCurrentOwner: () => auxiliaryWorkspace.getCurrentSelectedId() === auxiliaryWorkspace.selectedId
+        ? auxiliaryBinding.getSession()
+        : null,
+      messageIndex: index,
+      loadArtifact: (sessionId, messageIndex) => withmateApi?.getSessionMessageArtifact(sessionId, messageIndex) ?? Promise.resolve(null),
+    }),
     auxiliaryOnOpenPath: (target) => handleOpenInlinePath(target, auxiliaryWorkspace.selectedId),
     onAddAuxiliary: handleOpenAuxiliaryLaunchDialog,
     isAddAuxiliaryDisabled: isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable,

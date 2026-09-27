@@ -15,12 +15,12 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 | 設定・catalog | `app_settings`、`prompt_templates`、`model_catalog_*`、`characters` |
 | Project | `project_scopes_v6` |
 | Main Session | `sessions_v6`、`session_messages_v6` |
-| Auxiliary | `auxiliary_sessions`、`auxiliary_session_drafts` |
+| Auxiliary | `auxiliary_sessions`、`auxiliary_session_messages`、`auxiliary_session_drafts` |
 | Turn・監査 | `session_turns_v6`、`session_turn_interims_v6`、`session_turn_provider_outputs_v6` |
 | Memory | `memory_*_v6` |
 | Character Affect | `character_affect_*_v6`、turn settlement |
 
-Mainの`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存行限定の更新とAffect owner検証はIDだけでなくincarnationを照合する。Auxiliaryは親Sessionに従属し、会話payloadと一覧用`summary_json`を分離する。独立draftの正本は`auxiliary_session_drafts`であり、一覧の最終使用順には会話更新時刻とdraft更新時刻の新しい方を使う。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
+Mainの`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存行限定の更新とAffect owner検証はIDだけでなくincarnationを照合する。Auxiliaryは親Sessionに従属し、metadataと順序付きmessage行、artifact詳細を分離する。独立draftの正本は`auxiliary_session_drafts`であり、一覧の最終使用順には会話更新時刻とdraft更新時刻の新しい方を使う。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
 
 turnはMainまたはAuxiliaryの一方だけをownerとし、terminal marker、interim、provider outputを別tableへ保存する。Session表示に必要な軽量messageと重いartifact detailも分け、detailは対象を開いたときに取得する。通常turnと監査の契約は[Session Run Lifecycle](session-run-lifecycle.md)と[Audit Log](audit-log.md)を参照する。
 

@@ -10,6 +10,8 @@ import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.j
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character/character-affect-turn-ownership-coordinator.js";
 import { SessionPersistenceService } from "../../src-electron/session/session-persistence-service.js";
+import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -77,6 +79,280 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("SessionPersistenceService", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "titleとbookmarkのservice更新は履歴を全体保存せず、running/開始中のtitle変更を拒否してcacheへ反映する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md: Session metadataとmessage保存境界" }
+  // fault = "titleまたはbookmark更新がfull read/writeを経由する、またはrunning/開始中のtitle変更を保存する"
+  // observable = "狭いstorage呼出し、cache title、broadcast対象、running/開始中の拒否とfull read/write呼出し数"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-service-narrow-metadata"
+  // lifecycle = "permanent"
+  // impact = "長い履歴の操作が重くなり、並行するturnの本文を上書きする"
+  // distinction = "V6 SQLテストとは異なり、serviceからfull read/writeへ戻らない接続経路を観測する"
+  // @end-test-value
+  it("titleとbookmarkは狭いstorage呼出しだけを行う", async () => {
+    const session = createSession({ id: "narrow-service", incarnationId: "owner-a" });
+    let cached = [session];
+    let inFlight = false;
+    const writes: string[] = [];
+    const broadcasts: string[][] = [];
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      getStoredSession: () => { throw new Error("full read"); },
+      isSessionRunInFlight: () => inFlight,
+      upsertStoredSession: () => { throw new Error("full write"); },
+      setStoredSessionTitle: (id, owner, title) => { writes.push(`title:${id}:${owner}:${title}`); },
+      setStoredSessionMessageBookmark: (id, owner, index, bookmarked) => { writes.push(`bookmark:${id}:${owner}:${index}:${bookmarked}`); },
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => [],
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: (ids) => broadcasts.push(Array.from(ids ?? [])),
+    });
+    await service.setSessionTitle(session.id, "owner-a", "Updated");
+    await service.setSessionMessageBookmark(session.id, "owner-a", 3, true);
+    assert.deepEqual(writes, ["title:narrow-service:owner-a:Updated", "bookmark:narrow-service:owner-a:3:true"]);
+    assert.equal(cached[0]?.taskTitle, "Updated");
+    assert.deepEqual(broadcasts, [[session.id]]);
+    inFlight = true;
+    await assert.rejects(service.setSessionTitle(session.id, "owner-a", "Starting title"), /running session cannot be updated/);
+    inFlight = false;
+    cached = [{ ...cached[0]!, status: "running", runState: "running" }];
+    await assert.rejects(service.setSessionTitle(session.id, "owner-a", "Running title"), /running session cannot be updated/);
+    assert.deepEqual(writes, ["title:narrow-service:owner-a:Updated", "bookmark:narrow-service:owner-a:3:true"]);
+    assert.equal(cached[0]?.taskTitle, "Updated");
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "実行オプション選択は任意checkpoint失敗後もメモリ正本に残り、後続のstale retry・terminal保存へ重ねられる"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md: Session実行オプションとturn保存" }
+  // fault = "checkpoint失敗で選択を巻き戻す、または後続の古いSession保存が新しい選択を上書きする"
+  // observable = "選択memory、checkpoint失敗、retry/terminal storage引数と最終保存値、checkpoint通知数"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-service-selection-overlay"
+  // lifecycle = "permanent"
+  // impact = "次turnの選択と保存状態が食い違い、古いmodel/depthで実行される"
+  // distinction = "SQL列更新テストでなく、同じmutation queue内の選択記憶と後続upsertの競合を確認する"
+  // @end-test-value
+  it("checkpoint失敗後も選択を保持しstale保存へoverlayする", async () => {
+    const session = createSession({
+      id: "selection-service", incarnationId: "owner-a", provider: "codex",
+      catalogRevision: 2, model: "codex-default", reasoningEffort: "low",
+      messages: [{ role: "user", text: "prompt" }],
+    });
+    let cached = [session];
+    let stored = session;
+    const selections = new CurrentExecutionSelections();
+    const broadcasts: string[][] = [];
+    const storedModels: string[] = [];
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      getStoredSession: () => { throw new Error("full read"); },
+      isSessionRunInFlight: () => false,
+      upsertStoredSession: (next) => { storedModels.push(`${next.model}:${next.reasoningEffort}`); stored = next; return next; },
+      upsertStoredTerminalSession: (next) => { storedModels.push(`${next.model}:${next.reasoningEffort}`); stored = next; return next; },
+      setStoredSessionExecutionOptions: () => { throw new Error("checkpoint unavailable"); },
+      overlayCurrentExecutionOptions: (next) => selections.apply(next),
+      rememberExecutionOptions: (next, options) => selections.remember(next, options),
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => [stored],
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: (ids) => broadcasts.push(Array.from(ids ?? [])),
+    });
+    const selected = { ...captureSessionExecutionOptions(session), reasoningEffort: "high" as const };
+    await assert.rejects(service.setSessionExecutionOptions(session.id, "owner-a", selected), /checkpoint unavailable/);
+    assert.equal(selections.apply(session).reasoningEffort, "high");
+    assert.deepEqual(broadcasts, []);
+    await service.upsertSessionPreservingPin({ ...session, reasoningEffort: "medium" });
+    await service.upsertTerminalSession({ ...session, status: "idle", reasoningEffort: "medium" }, {
+      auditLogId: 1, sessionId: session.id, phase: "completed", assistantMessageSeq: 0,
+      threadId: "", errorMessage: "", completedAt: "2026-09-27T00:00:00.000Z",
+    });
+    assert.deepEqual(storedModels, ["codex-default:high", "codex-default:high"]);
+    assert.equal(stored.reasoningEffort, "high");
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "先行する実行オプションcheckpointが保留中でも新選択はメモリへ即時反映され、turn保存をglobal queueで塞がない"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md: Session実行オプションとturn保存" }
+  // fault = "selection受理をcheckpoint完了まで直列化し、次の選択またはturn保存を古いcheckpointで待たせる"
+  // observable = "B checkpoint保留中のC memory/cache、turn保存到達、checkpoint順序と最終選択"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-service-selection-checkpoint-order"
+  // lifecycle = "permanent"
+  // impact = "UIを開き直すと古い選択が見え、送信が任意checkpointに妨げられる"
+  // distinction = "storage成功後の値だけでなく、pending checkpoint中のメモリ正本とSend進行を観測する"
+  // @end-test-value
+  it("B checkpoint保留中にC選択を受理しturn保存を進める", async () => {
+    const session = createSession({
+      id: "selection-pending", incarnationId: "owner-a", provider: "codex",
+      catalogRevision: 2, model: "codex-default", reasoningEffort: "low",
+      messages: [{ role: "user", text: "prompt" }],
+    });
+    let cached = [session];
+    const selections = new CurrentExecutionSelections();
+    let releaseB!: () => void;
+    let reachedB!: () => void;
+    const bWait = new Promise<void>((resolve) => { releaseB = resolve; });
+    const bReached = new Promise<void>((resolve) => { reachedB = resolve; });
+    const checkpoints: string[] = [];
+    let turnSaved = false;
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession: (next) => { turnSaved = true; return next; },
+      setStoredSessionExecutionOptions: async (_id, _owner, options) => {
+        checkpoints.push(options.reasoningEffort);
+        if (options.reasoningEffort === "medium") { reachedB(); await bWait; }
+      },
+      overlayCurrentExecutionOptions: (next) => selections.apply(next),
+      rememberExecutionOptions: (next, options) => selections.remember(next, options),
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => cached,
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: () => undefined,
+    });
+    const base = captureSessionExecutionOptions(session);
+    const b = service.setSessionExecutionOptions(session.id, "owner-a", { ...base, reasoningEffort: "medium" });
+    await bReached;
+    const c = service.setSessionExecutionOptions(session.id, "owner-a", { ...base, reasoningEffort: "high" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(selections.apply(session).reasoningEffort, "high");
+    assert.equal(cached[0]?.reasoningEffort, "high");
+    const send = service.upsertSessionPreservingPin({ ...session, reasoningEffort: "low" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(turnSaved, true);
+    assert.equal((await send).reasoningEffort, "high");
+    releaseB();
+    await Promise.all([b, c]);
+    assert.deepEqual(checkpoints, ["medium", "high"]);
+    assert.equal(selections.apply(session).reasoningEffort, "high");
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "古いcatalog取得が後から完了しても、後続の検証済み実行オプション選択を上書きしない"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md: Session実行オプションとturn保存" }
+  // fault = "先着Bの遅いcatalog応答が後着Cの受理後にBをremember/checkpointする"
+  // observable = "B superseded拒否、C memory、checkpointされたeffort一覧"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-service-selection-validation-order"
+  // lifecycle = "permanent"
+  // impact = "後のユーザー選択が古い非同期応答に戻される"
+  // distinction = "checkpointの直列順でなく、validation完了順が要求順と逆転する競合を固定する"
+  // @end-test-value
+  it("遅れたB catalog応答はC選択を戻さない", async () => {
+    const session = createSession({ id: "selection-catalog", incarnationId: "owner-a", provider: "codex", catalogRevision: 2, model: "codex-default" });
+    let cached = [session];
+    let releaseB!: (snapshot: ModelCatalogSnapshot) => void;
+    let catalogCalls = 0;
+    const bCatalog = new Promise<ModelCatalogSnapshot>((resolve) => { releaseB = resolve; });
+    const selections = new CurrentExecutionSelections();
+    const checkpoints: string[] = [];
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession: (next) => next,
+      setStoredSessionExecutionOptions: (_id, _owner, options) => { checkpoints.push(options.reasoningEffort); },
+      overlayCurrentExecutionOptions: (next) => selections.apply(next),
+      rememberExecutionOptions: (next, options) => selections.remember(next, options),
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => cached,
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: () => ++catalogCalls === 1 ? bCatalog : createSnapshot(),
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: () => undefined,
+    });
+    const base = captureSessionExecutionOptions(session);
+    const b = service.setSessionExecutionOptions(session.id, "owner-a", { ...base, reasoningEffort: "medium" });
+    await service.setSessionExecutionOptions(session.id, "owner-a", { ...base, reasoningEffort: "high" });
+    releaseB(createSnapshot());
+    await assert.rejects(b, /superseded/);
+    assert.equal(selections.apply(session).reasoningEffort, "high");
+    assert.deepEqual(checkpoints, ["high"]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "catalog待ちでSessionが同ID再作成された時、古いownerの選択はメモリにもstorageにも記録しない"
+  // oracle = { type = "contract", ref = "AGENTS.md: Session incarnationとデータ保護" }
+  // fault = "非同期catalog取得前に読んだ古いSessionを検証し、再作成された行へ選択を適用する"
+  // observable = "古いownerの拒否、remember/storage呼出しなし、新owner cache不変"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-service-selection-owner"
+  // lifecycle = "permanent"
+  // impact = "削除済みSessionの選択が新しい会話へ漏れて実行条件を変える"
+  // distinction = "storageのincarnation SQL guardだけでなく、その前のin-memory selection記憶を防ぐ"
+  // @end-test-value
+  it("catalog待ち中の同ID再作成では選択を記憶しない", async () => {
+    const old = createSession({ id: "owner-race", incarnationId: "old-owner", catalogRevision: 2, model: "codex-default" });
+    const recreated = { ...old, incarnationId: "new-owner", taskTitle: "New session" };
+    let cached = [old];
+    let releaseCatalog!: (snapshot: ModelCatalogSnapshot) => void;
+    let reachedCatalog!: () => void;
+    const catalogReady = new Promise<void>((resolve) => { reachedCatalog = resolve; });
+    const catalogWait = new Promise<ModelCatalogSnapshot>((resolve) => { releaseCatalog = resolve; });
+    const calls: string[] = [];
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession: (next) => next,
+      setStoredSessionExecutionOptions: () => { calls.push("storage"); },
+      rememberExecutionOptions: () => { calls.push("remember"); },
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => cached,
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: () => { reachedCatalog(); return catalogWait; },
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: () => undefined,
+    });
+    const update = service.setSessionExecutionOptions(old.id, "old-owner", captureSessionExecutionOptions(old));
+    await catalogReady;
+    cached = [recreated];
+    releaseCatalog(createSnapshot());
+    await assert.rejects(update, /could not be found/i);
+    assert.deepEqual(calls, []);
+    assert.equal(cached[0]?.taskTitle, "New session");
+  });
+
   it("setSessionPinnedは実行状態とupdatedAtを変えずにcacheとbroadcastを更新する", async () => {
     const session = createSession({
       id: "pin-target",

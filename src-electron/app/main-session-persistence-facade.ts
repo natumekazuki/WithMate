@@ -5,6 +5,8 @@ import type { SessionStorageRead } from "../storage/persistent-store-lifecycle-s
 import { sessionSummariesToSessions } from "../session/session-summary-adapter.js";
 import type { SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
 import type { SessionRuntimeMetadataPatchInput, SessionThreadPatchInput } from "../session/session-storage-v6.js";
+import type { SessionRuntimeMetadataPatchResult, SessionThreadPatchResult } from "../session/session-storage-v6.js";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
 type ReplaceAllSessionsOptions = {
   broadcast?: boolean;
@@ -57,6 +59,18 @@ export class MainSessionPersistenceFacade {
     return this.deps.getSessionPersistenceService().upsertSession(session);
   }
 
+  async setSessionTitle(sessionId: string, incarnationId: string, title: string): Promise<void> {
+    await this.deps.getSessionPersistenceService().setSessionTitle(sessionId, incarnationId, title);
+  }
+
+  async setSessionMessageBookmark(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): Promise<void> {
+    await this.deps.getSessionPersistenceService().setSessionMessageBookmark(sessionId, incarnationId, messageIndex, isBookmarked);
+  }
+
+  async setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions): Promise<void> {
+    await this.deps.getSessionPersistenceService().setSessionExecutionOptions(sessionId, incarnationId, options);
+  }
+
   async upsertTerminalSession(
     session: Session,
     terminalCommit: SessionTurnTerminalCommit,
@@ -80,11 +94,11 @@ export class MainSessionPersistenceFacade {
     return this.deps.getSessionPersistenceService().replaceAllSessions(nextSessions, options);
   }
 
-  async updateSessionThreadIfMatches(input: SessionThreadPatchInput): Promise<Session | null> {
+  async updateSessionThreadIfMatches(input: SessionThreadPatchInput): Promise<SessionThreadPatchResult | null> {
     return this.deps.getSessionPersistenceService().updateSessionThreadIfMatches(input);
   }
 
-  async updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Promise<Session | null> {
+  async updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Promise<SessionRuntimeMetadataPatchResult | null> {
     return this.deps.getSessionPersistenceService().updateSessionRuntimeMetadataIfMatches(input);
   }
 

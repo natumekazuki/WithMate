@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, it, mock } from "node:test";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import type { AuditLogEntry, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
@@ -59,6 +60,8 @@ function createSession(overrides?: Partial<Session>): Session {
     ...overrides,
   };
 }
+
+const TEST_EXECUTION_OPTIONS = captureSessionExecutionOptions(createSession());
 
 function createSessionMemory(sessionId: string): SessionMemory {
   return {
@@ -369,7 +372,7 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const firstRun = service.runSessionTurn(storedSession.id, {
+    const firstRun = service.runSessionTurn(storedSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
       userMessage: "first",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b1",
       submitSource: "composer",
@@ -384,7 +387,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(confirmedPreviewTexts[0], "完了");
     assert.equal(callOrder.some((entry) => entry === `pending-ready:turn:${storedSession.id}:audit:1`), false);
     assert.equal(callOrder.some((entry) => entry === "terminal-audit:1"), false);
-    await service.runSessionTurn(storedSession.id, {
+    await service.runSessionTurn(storedSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
       userMessage: "second",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b2",
       submitSource: "retry",
@@ -422,7 +425,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(callOrder.filter((entry) => entry === "appraisal-started").length, 2);
 
     blockCompletedAudit = true;
-    const completingRun = service.runSessionTurn(storedSession.id, {
+    const completingRun = service.runSessionTurn(storedSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
       userMessage: "third",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b3",
     });
@@ -433,7 +436,7 @@ describe("SessionRuntimeService", () => {
     assert.ok(releaseCompletedAuditNow, "provider完了後のaudit終了処理へ到達すること");
     assert.equal(thirdResult.runState, "idle");
     assert.equal(service.isRunInFlight(storedSession.id), false);
-    const followingResult = await service.runSessionTurn(storedSession.id, {
+    const followingResult = await service.runSessionTurn(storedSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
       userMessage: "background audit中の再送",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b4",
     });
@@ -606,7 +609,7 @@ describe("SessionRuntimeService", () => {
           assert.deepEqual(storage.listReadyPending(), []);
         },
       );
-      const successfulResult = await successful.service.runSessionTurn(successfulSession.id, {
+      const successfulResult = await successful.service.runSessionTurn(successfulSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
         userMessage: "保存して",
       });
       await waitForCondition(
@@ -625,7 +628,7 @@ describe("SessionRuntimeService", () => {
       const failing = createService(failingSession, () => {
         throw new Error("settlement storage unavailable");
       });
-      const failingResult = await failing.service.runSessionTurn(failingSession.id, {
+      const failingResult = await failing.service.runSessionTurn(failingSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
         userMessage: "保存に失敗して",
       });
 
@@ -667,7 +670,7 @@ describe("SessionRuntimeService", () => {
         },
       );
       let readinessRunResolved = false;
-      const readinessFailureRun = readinessFailure.service.runSessionTurn(readinessFailureSession.id, {
+      const readinessFailureRun = readinessFailure.service.runSessionTurn(readinessFailureSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
         userMessage: "ready化に失敗しても完了を維持して",
       });
       void readinessFailureRun.then(() => {
@@ -715,7 +718,7 @@ describe("SessionRuntimeService", () => {
           absentAppraisalCalls += 1;
         },
       );
-      const absentResult = await absent.service.runSessionTurn(absentSession.id, {
+      const absentResult = await absent.service.runSessionTurn(absentSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
         userMessage: "削除済みpendingは終端して",
       });
       await waitForCondition(() => absentReadyCalls === 1, "missing pendingのready化が一度だけ試行されること");
@@ -868,7 +871,7 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(staleSession.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(staleSession.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
 
     assert.equal(composeSessionName, "Fresh");
     assert.equal(runSessionName, "Fresh");
@@ -974,7 +977,7 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" });
 
     assert.equal(composeCalled, true);
     assert.equal(runCalled, true);
@@ -1077,7 +1080,7 @@ describe("SessionRuntimeService", () => {
     });
 
     await assert.rejects(
-      service.runSessionTurn(session.id, { userMessage: "お願い" }),
+      service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" }),
       /audit failed/,
     );
 
@@ -1252,7 +1255,7 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(() => auditUpdates.length === 3, "completed auditがbackgroundで保存されること");
 
     assert.equal(result.runState, "idle");
@@ -1420,7 +1423,7 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, {
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS,
       userMessage: "お願いします",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
       submitSource: "composer",
@@ -1577,7 +1580,7 @@ describe("SessionRuntimeService", () => {
         currentTimestampLabel,
       });
 
-      const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+      const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
       assert.equal(service.isRunInFlight(session.id), false);
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
       releaseRunningAudit();
@@ -1708,7 +1711,7 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
 
     assert.equal(result.threadId, "thread-new");
     assert.equal(storedSessions[1]?.threadId, "thread-new");
@@ -1818,13 +1821,13 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
 
     assert.equal(liveStates[0]?.reasoningText, "");
     assert.equal(liveStates.at(-1)?.threadId, "thread-new");
     assert.equal(liveStates.at(-1)?.reasoningText, "既存経路を確認してから表示へ流す");
 
-    await service.runSessionTurn(session.id, { userMessage: "二回目もお願いします" });
+    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "二回目もお願いします" });
 
     assert.equal(runCount, 2);
     assert.equal(liveStates.filter((state) => state?.reasoningText === "").length >= 2, true);
@@ -1980,7 +1983,7 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const run = service.runSessionTurn(baseSession.id, { userMessage: "お願いします" });
+    const run = service.runSessionTurn(baseSession.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     const result = await run;
     assert.equal(service.isRunInFlight(baseSession.id), false);
     assert.equal(detachedSessionId, baseSession.id);
@@ -2119,7 +2122,7 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const promise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const promise = service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(service.isRunInFlight(session.id), true);
     if (!resolveRun) {
@@ -2229,7 +2232,7 @@ describe("SessionRuntimeService", () => {
       providerCancelGraceMs: 5,
     });
 
-    const runPromise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const runPromise = service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (!resolveComposer) {
       throw new Error("composer setup が開始されていないよ。");
@@ -2243,7 +2246,7 @@ describe("SessionRuntimeService", () => {
 
     assert.equal(service.hasInFlightRuns(), true);
     await assert.rejects(
-      service.runSessionTurn(session.id, { userMessage: "再送" }),
+      service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "再送" }),
       /This session is already running/,
     );
     if (!resolveComposer) {
@@ -2373,7 +2376,7 @@ resolveComposer!({ attachments: [], errors: [] });
       currentTimestampLabel,
     });
 
-    const promise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const promise = service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await providerReady;
     if (!observedAbortSignal) {
       throw new Error("provider setup が開始されていないよ。");
@@ -2432,7 +2435,7 @@ resolveComposer!({ attachments: [], errors: [] });
     assert.equal(result.runState, "idle");
     assert.equal(service.hasInFlightRuns(), true);
     await assert.rejects(
-      service.runSessionTurn(session.id, { userMessage: "再送" }),
+      service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "再送" }),
       /This session is already running/,
     );
     if (!resolveProvider) {
@@ -2545,7 +2548,7 @@ resolveProvider!(createPartialResult());
       providerCancelGraceMs: 1_000,
     });
 
-    const runPromise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const runPromise = service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (!resolveProvider) {
       throw new Error("provider resolve が取得できていないよ。");
@@ -2654,7 +2657,7 @@ resolveProvider!(createPartialResult());
       providerCancelGraceMs: 1_000,
     });
 
-    const runPromise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const runPromise = service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (!rejectProvider) {
       throw new Error("provider reject が取得できていないよ。");
@@ -2832,7 +2835,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       },
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(() => auditUpdates.length === 2, "retry成功auditがbackgroundで完了すること");
 
     assert.equal(result.runState, "idle");
@@ -2971,7 +2974,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
 
     const runningUpdates = auditUpdates.filter((entry) => entry.phase === "running");
     assert.equal(runningUpdates.length, 3);
@@ -3122,7 +3125,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       currentTimestampLabel,
     });
 
-    const runPromise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const runPromise = service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await secondAttemptStarted;
     await new Promise((resolve) => setTimeout(resolve, 0));
 releaseSecondAttempt!();
@@ -3251,7 +3254,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(() => auditUpdates.length === 2, "bootstrap retry成功auditがbackgroundで完了すること");
 
     assert.equal(attempt, 2);
@@ -3369,7 +3372,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(() => auditUpdates.length === 2, "bootstrap failure auditがbackgroundで完了すること");
 
     assert.equal(attempt, 2);
@@ -3497,7 +3500,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(
       () => auditUpdates.some((entry) => entry.phase === "completed"),
       "approval履歴を含むcompleted auditがbackgroundで保存されること",
@@ -3639,7 +3642,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
 
     const runningUpdate = auditUpdates.find((entry) =>
       entry.phase === "running" && entry.operations.some((operation) => operation.type === "elicitation_request"),
@@ -3748,7 +3751,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(
       () => auditUpdates.some((entry) => entry.phase === "completed"),
       "重複command履歴を含むcompleted auditがbackgroundで保存されること",
@@ -3881,7 +3884,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(
       () => auditUpdates.some((entry) => entry.phase === "completed"),
       "elicitation履歴を含むcompleted auditがbackgroundで保存されること",
@@ -4015,7 +4018,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(() => auditUpdates.at(-1)?.phase === "failed", "failed auditがbackgroundで保存されること");
 
     assert.equal(result.runState, "error");
@@ -4129,7 +4132,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(() => auditUpdates.at(-1)?.phase === "failed", "usage limit auditがbackgroundで保存されること");
     const expectedMessage = "Codex usage limit reached.\nTry again at: Jun 12th, 2026 2:07 AM";
 
@@ -4232,7 +4235,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
 
     assert.equal(attempt, 1);
     assert.equal(result.runState, "error");
@@ -4335,7 +4338,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
 
     assert.equal(attempt, 1);
     assert.equal(result.runState, "error");
@@ -4488,7 +4491,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(
       () => auditUpdates.some((entry) => entry.phase === "completed"),
       "live progressを含むcompleted auditがbackgroundで保存されること",
@@ -4629,7 +4632,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
 
     assert.equal(result.threadId, "thread-completed");
     assert.ok(liveStates.at(-1));
@@ -4745,7 +4748,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
     await waitForCondition(
       () => auditUpdates.some((entry) => entry.phase === "completed"),
       "background task履歴を含むcompleted auditがbackgroundで保存されること",
@@ -4855,7 +4858,7 @@ releaseSecondAttempt!();
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" });
 
     assert.equal(result.runState, "idle");
     assert.equal(result.messages.at(-1)?.text, "完了したよ。");

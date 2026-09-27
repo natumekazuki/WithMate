@@ -397,10 +397,36 @@ describe("database-schema-v6", () => {
         "status",
         "created_at",
         "updated_at",
-        "payload_json",
+        "title",
+        "run_state",
+        "preview",
+        "provider_id",
+        "catalog_revision",
+        "model_id",
+        "reasoning_effort",
+        "approval_mode",
+        "codex_sandbox_mode",
+        "codex_speed",
+        "codex_reviewer",
+        "custom_agent_name",
+        "allowed_additional_directories_json",
+        "thread_id",
+        "display_after_message_index",
+        "closed_at",
+        "character_id",
+        "character_snapshot_json",
+        "character_snapshot_invalid",
+        "character_icon_path",
+        "client_request_id",
+        "creation_context_json",
+        "creation_request_json",
       ]);
       assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id"), undefined);
       assert.equal(tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')"), true);
+      assert.deepEqual(columnNames(db, "auxiliary_session_messages"), [
+        "auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at",
+      ]);
+      assert.equal(findForeignKey(db, "auxiliary_session_messages", "auxiliary_session_id")?.on_delete.toUpperCase(), "CASCADE");
 
       assert.deepEqual(columnNames(db, "session_turns_v6"), [
         "id",

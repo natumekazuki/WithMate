@@ -179,6 +179,24 @@ export function createSessionApi(
         session,
       );
     },
+    setSessionExecutionOptions(request) {
+      return ipcRenderer.invoke(
+        channels.WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
+        request,
+      );
+    },
+    setSessionTitle(request) {
+      return ipcRenderer.invoke(
+        channels.WITHMATE_SET_SESSION_TITLE_CHANNEL,
+        request,
+      );
+    },
+    setSessionMessageBookmark(request) {
+      return ipcRenderer.invoke(
+        channels.WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL,
+        request,
+      );
+    },
     setSessionPinned(request) {
       return ipcRenderer.invoke(
         channels.WITHMATE_SET_SESSION_PINNED_CHANNEL,

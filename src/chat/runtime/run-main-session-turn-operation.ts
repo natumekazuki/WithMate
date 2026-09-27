@@ -20,6 +20,7 @@ import {
   convergeResolvedSessionProjection,
   recoverRejectedSessionSnapshot,
   mergeRejectedSessionDraft,
+  mergeMessageBookmarkProjection,
   fingerprintSessionDraft,
   type SessionSubmitCoordinator,
 } from "./session-submit-coordinator.js";
@@ -106,7 +107,6 @@ export async function runMainSessionTurnOperation(input: {
   const request: RunSessionTurnRequest = {
     ...input.request,
     userMessage: messageText,
-    codexReviewer: selectedSession.codexReviewer,
   };
   const submitLease = submitCoordinator.tryAcquire(sessionId);
   if (!submitLease) {
@@ -114,6 +114,7 @@ export async function runMainSessionTurnOperation(input: {
     return null;
   }
   state.setPendingSubmitSessionId(sessionId);
+  const optimisticSessionProjectionRevision = revisions.projection.capture();
   const clientRequestId = input.request.clientRequestId;
   const investigationStartedAt = Date.now();
   log("renderer.send.start", {
@@ -176,10 +177,17 @@ export async function runMainSessionTurnOperation(input: {
       status: "running",
       updateLiveRunState: state.setLiveRunState,
       applyRunningSession: (runningSession) =>
-        state.setAuthoritativeSessions(() => [runningSession]),
+        state.setAuthoritativeSessions((current) => {
+          const projected = current.find((session) => session.id === runningSession.id);
+          return [{
+            ...runningSession,
+            messages: projected && projected.incarnationId === runningSession.incarnationId
+              ? mergeMessageBookmarkProjection(projected.messages, runningSession.messages)
+              : runningSession.messages,
+          }];
+        }),
     });
     const optimisticSessionMutationRevision = revisions.mutation.capture();
-    const optimisticSessionProjectionRevision = revisions.projection.capture();
     const optimisticLiveRunRevision = revisions.liveRun.capture();
     if (isCentralPreviewActive)
       state.acknowledgePreviewChatMessageCount(

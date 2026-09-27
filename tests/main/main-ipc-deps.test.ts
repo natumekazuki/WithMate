@@ -280,6 +280,9 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       resolveLiveElicitation: () => {},
       createSession: () => ({}) as never,
       updateSession: () => ({}) as never,
+      setSessionExecutionOptions: () => { throw new Error("not used"); },
+      setSessionTitle: () => { throw new Error("not used"); },
+      setSessionMessageBookmark: () => { throw new Error("not used"); },
       deleteSession: () => {},
       deleteSessionsLastActiveBefore: () => ({ deletedSessionIds: [], skippedRunningSessionIds: [] }),
       async runSessionTurn() {

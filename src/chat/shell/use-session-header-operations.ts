@@ -2,7 +2,6 @@ import { useCallback, useState, type KeyboardEventHandler } from "react";
 
 import type { Session } from "../../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
-import { currentTimestampLabel } from "../../../src-shared/time-state.js";
 import {
   createCancelTitleEditHandler,
   createStartTitleEditHandler,
@@ -41,7 +40,7 @@ export function useSessionHeaderOperations(input: {
   selectedSession: Session | null;
   isReadOnly: boolean;
   runState: Session["runState"] | null;
-  persistSession(nextSession: Session): Promise<Session>;
+  updateTitle(session: Session, title: string): Promise<void>;
   closeWindow(): void;
 }): SessionHeaderOperations {
   const [titleDraft, setTitleDraft] = useState("");
@@ -75,7 +74,7 @@ export function useSessionHeaderOperations(input: {
       setIsEditingTitle(false);
       return;
     }
-    await input.persistSession({ ...session, taskTitle: nextTitle, updatedAt: currentTimestampLabel() });
+    await input.updateTitle(session, nextTitle);
     setIsEditingTitle(false);
   }, [input, titleDraft]);
 

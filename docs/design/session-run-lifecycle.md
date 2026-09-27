@@ -29,7 +29,7 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - `Session Window` から実行中 session を明示キャンセルできる
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
-- 実行中 session の metadata 更新は制限し、少なくとも approval / model / depth / title / delete は UI と Main Process の両方でブロックする
+- 実行中 session の approval / sandbox / Reviewer / Speed / custom agent / title / delete の変更は UI と Main Process の両方でブロックする。model / depth の現在選択は次の Send 用に変更できるが、実行中 turn が捕捉した設定は変更しない。現在選択と保存 checkpoint の境界は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する。
 - Turn の admission は対象 session の開始登録と provider の利用中判定だけを短い ownership 境界で行う。provider 入力の準備、workspace / SessionFolder 操作、Character 読込、外部 provider 呼出し、長い SQLite command の完了待ちはその境界の外で行い、別 session の開始・削除を不要に待たせない。
 - admission は provider → ownership の順で開始予約を登録し、Worker の Session / 親読込みを排他外で待つ。その間は starting 判定が削除・設定変更・Auxiliary 終了から対象を保護する。読込み後は短い同順序の排他内で owner、maintenance、cancel、provider cleanup 状態を再確認する。予約より先に所有権を得た削除は読込み発行前に完了し、拒否時は予約を解放して provider を開始しない。
 - V6 の保存 command は current storage Worker generation に送る。close / reset / reopen 後の旧 generation からの応答は current DB へ書き換えず、commit 結果不明を自動 retry しない。

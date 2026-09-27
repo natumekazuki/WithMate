@@ -9,8 +9,12 @@ import {
 import {
   applyActiveAuxiliarySessionUpdate,
   createActiveAuxiliarySessionUpdateApplier,
-  enqueueAuxiliarySessionSaveWithQueue,
 } from "./auxiliary-session-update-operation.js";
+import type { SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
+import { captureSessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
+import type { RunSessionTurnRequest } from "../../../src-shared/session/runtime-state.js";
+import { createSessionTurnClientRequestId } from "../runtime/session-submit-coordinator.js";
+import { mergeMessageBookmarkProjection } from "../runtime/session-submit-coordinator.js";
 import {
   clearOwnedLiveSessionRunState,
   createOwnedPendingLiveSessionRunState,
@@ -48,8 +52,12 @@ export function createAuxiliarySessionRunningApplier(input: {
   buildRuntimeSession: (runningSession: AuxiliarySession) => PendingLiveRunSessionIdentity;
 }): (runningSession: AuxiliarySession) => void {
   return (runningSession) => {
+    const current = input.activeSessionRef.current;
+    const projected = current?.id === runningSession.id && current.createdAt === runningSession.createdAt
+      ? { ...runningSession, ...captureSessionExecutionOptions(current), messages: mergeMessageBookmarkProjection(current.messages, runningSession.messages) }
+      : runningSession;
     applyActiveAuxiliarySessionUpdate({
-      session: runningSession,
+      session: projected,
       activeSessionRef: input.activeSessionRef,
       setActiveSession: input.setActiveSession,
     });
@@ -68,9 +76,15 @@ export function createAuxiliarySessionSendResultAppliers(input: {
   restoreSessionAfterError: (session: AuxiliarySession) => void;
 } {
   const applyActiveSession = createActiveAuxiliarySessionUpdateApplier(input);
+  const applyWithCurrentSelection = (session: AuxiliarySession) => {
+    const current = input.activeSessionRef.current;
+    applyActiveSession(current?.id === session.id && current.createdAt === session.createdAt
+      ? { ...session, ...captureSessionExecutionOptions(current), messages: mergeMessageBookmarkProjection(current.messages, session.messages) }
+      : session);
+  };
   return {
-    applySavedSession: applyActiveSession,
-    restoreSessionAfterError: applyActiveSession,
+    applySavedSession: applyWithCurrentSelection,
+    restoreSessionAfterError: applyWithCurrentSelection,
   };
 }
 
@@ -105,6 +119,7 @@ export function handleAuxiliarySessionSendOperationResult(input: {
 
 export type AuxiliarySessionSendOperationInput = {
   activeSession: AuxiliarySession;
+  executionOptions: SessionExecutionOptions;
   composerBlockedReason?: string | null;
   messageText: string;
   auxiliaryDraftIncarnation?: string;
@@ -112,7 +127,6 @@ export type AuxiliarySessionSendOperationInput = {
   parentMessageCount: number | null;
   updatedAt: string;
   draftSaveQueue: { current: Promise<void> };
-  sessionSaveQueue: { current: Promise<void> };
   mutationRevision: { current: number };
   getCurrentSession: () => AuxiliarySession | null;
   canStartRun?: () => boolean;
@@ -123,13 +137,11 @@ export type AuxiliarySessionSendOperationInput = {
   applySavedSession: (session: AuxiliarySession) => void;
   restoreSessionAfterError: (session: AuxiliarySession) => void;
   clearPendingLiveRun: (sessionId: string) => void;
-  updateAuxiliarySession: (session: AuxiliarySession) => Promise<AuxiliarySession>;
-  runAuxiliarySessionTurn: (sessionId: string, request: { userMessage: string; submitSource?: "composer" | "retry"; auxiliaryDraftIncarnation?: string; auxiliaryDraftDurableRevision?: number }) => Promise<AuxiliarySession>;
+  runAuxiliarySessionTurn: (sessionId: string, request: RunSessionTurnRequest) => Promise<AuxiliarySession>;
 };
 
 export type AuxiliarySessionSendOperationApi = {
-  updateAuxiliarySession: (session: AuxiliarySession) => Promise<AuxiliarySession>;
-  runAuxiliarySessionTurn: (sessionId: string, request: { userMessage: string; submitSource?: "composer" | "retry"; auxiliaryDraftIncarnation?: string; auxiliaryDraftDurableRevision?: number }) => Promise<AuxiliarySession>;
+  runAuxiliarySessionTurn: (sessionId: string, request: RunSessionTurnRequest) => Promise<AuxiliarySession>;
 };
 
 export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSendOperationInput): Promise<AuxiliarySessionSendOperationResult> {
@@ -147,7 +159,6 @@ export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSe
 
   const sendStartRevision = input.mutationRevision.current;
   await input.draftSaveQueue.current.catch(() => undefined);
-  await input.sessionSaveQueue.current.catch(() => undefined);
   if (input.mutationRevision.current !== sendStartRevision || input.canStartRun?.() === false) {
     return { status: "stale" };
   }
@@ -165,7 +176,7 @@ export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSe
 
   const currentAuxiliarySession = sendTarget.session;
   input.beforeRunningSessionApplied?.();
-  const { anchorUpdateSession, runningSession } = buildAuxiliarySessionRunningTransition({
+  const { runningSession } = buildAuxiliarySessionRunningTransition({
     session: currentAuxiliarySession,
     userMessage: preflight.userMessage,
     parentMessageCount: input.parentMessageCount,
@@ -177,15 +188,12 @@ export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSe
   input.afterRunningSessionApplied?.(runningSession);
 
   try {
-    if (anchorUpdateSession) {
-      await enqueueAuxiliarySessionSaveWithQueue(
-        input.sessionSaveQueue,
-        () => input.updateAuxiliarySession(anchorUpdateSession),
-      );
-    }
     const saved = await input.runAuxiliarySessionTurn(currentAuxiliarySession.id, {
       userMessage: preflight.userMessage,
+      clientRequestId: createSessionTurnClientRequestId(),
       submitSource: "composer",
+      executionOptions: input.executionOptions,
+      displayAnchorParentMessageCount: input.parentMessageCount ?? undefined,
       auxiliaryDraftIncarnation: input.auxiliaryDraftIncarnation,
       auxiliaryDraftDurableRevision: input.auxiliaryDraftDurableRevision,
     });
@@ -218,13 +226,12 @@ export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSe
 }
 
 export async function runAuxiliarySessionSendOperationWithApi(
-  input: Omit<AuxiliarySessionSendOperationInput, "updateAuxiliarySession" | "runAuxiliarySessionTurn"> & {
+  input: Omit<AuxiliarySessionSendOperationInput, "runAuxiliarySessionTurn"> & {
     api: AuxiliarySessionSendOperationApi;
   },
 ): Promise<AuxiliarySessionSendOperationResult> {
   return runAuxiliarySessionSendOperation({
     ...input,
-    updateAuxiliarySession: (session) => input.api.updateAuxiliarySession(session),
     runAuxiliarySessionTurn: (sessionId, request) => input.api.runAuxiliarySessionTurn(sessionId, request),
   });
 }

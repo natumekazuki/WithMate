@@ -30,6 +30,7 @@ import {
 import { isValidV6Database } from "../storage/database-schema-v6.js";
 import {
   MEMORY_V6_ENTRY_SELECT_COLUMNS,
+  memoryV6EntrySelectColumns,
   tagIdentityKey,
   targetKey,
   targetWhereSql,
@@ -142,6 +143,7 @@ export type MemoryV6ListTargetsResult = {
 
 export type MemoryV6ListEntriesInput = {
   target: MemoryV6ResolvedTarget;
+  includeBody?: boolean;
   states?: readonly MemoryEntryState[];
   kinds?: readonly MemoryEntryKind[];
   tags?: readonly NormalizedMemoryTag[];
@@ -1031,7 +1033,7 @@ export class MemoryV6Storage {
       params.push(cursor.updatedAt, cursor.updatedAt, cursor.id);
     }
     const rows = this.db.prepare(`
-      SELECT ${MEMORY_V6_ENTRY_SELECT_COLUMNS}
+      SELECT ${memoryV6EntrySelectColumns(input.includeBody !== false)}
       FROM memory_entries_v6 AS e
       WHERE ${clauses.join(" AND ")}
       ORDER BY e.updated_at DESC, e.id DESC

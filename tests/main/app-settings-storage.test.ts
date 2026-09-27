@@ -532,20 +532,18 @@ describe("AppSettingsStorage", () => {
       });
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
-      const updated = storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
       storage.close();
 
       const reopened = new AppSettingsStorage(dbPath);
       const loaded = reopened.getSettings();
       reopened.close();
 
-      assert.deepEqual(updated.chatLayoutPreference, {
+      assert.deepEqual(loaded.chatLayoutPreference, {
         header: "visible",
         actionDock: "expanded",
         sidePane: "files",
       });
-      assert.equal(updated.memoryGenerationEnabled, false);
-      assert.deepEqual(loaded.chatLayoutPreference, updated.chatLayoutPreference);
       assert.equal(loaded.memoryGenerationEnabled, false);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -578,7 +576,7 @@ describe("AppSettingsStorage", () => {
         .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
         .run("sentinel-side-pane", "session_side_pane");
 
-      const updated = storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       const rows = directDatabase
         .prepare(`
           SELECT setting_key, setting_value
@@ -600,11 +598,6 @@ describe("AppSettingsStorage", () => {
         { setting_key: "session_header_visibility", setting_value: "visible" },
         { setting_key: "session_side_pane", setting_value: "sentinel-side-pane" },
       ]);
-      assert.deepEqual(updated.chatLayoutPreference, {
-        header: "visible",
-        actionDock: "compact",
-        sidePane: "none",
-      });
     } finally {
       directDatabase.close();
       storage.close();

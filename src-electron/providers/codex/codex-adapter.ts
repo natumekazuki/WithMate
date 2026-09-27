@@ -14,6 +14,7 @@ import type { AppSettings } from "../../../src-shared/settings/provider-settings
 import type { AuditLogOperation, AuditLogProviderMetadata, AuditTransportPayload, AuditLogUsage, ChangedFile, ProviderQuotaTelemetry, DiffRow, LiveRunStep, LiveSessionRunState, RunCheck } from "../../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
 import type { MessageArtifact, Session } from "../../../src-shared/session/session-state.js";
+import type { SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import type { SessionMemoryDelta } from "../../../src-shared/memory/session-memory-state.js";
 import { getProviderAppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import { mapApprovalModeToCodexPolicy, type ApprovalMode } from "../../../src-shared/settings/approval-mode.js";
@@ -757,7 +758,7 @@ function buildCodexTransportPayload(prompt: ProviderPromptComposition): AuditTra
 }
 
 function toRunChecks(
-  session: Session,
+  executionOptions: SessionExecutionOptions,
   usage: Usage | null,
   threadId: string | null,
   providerCatalog: ModelCatalogProvider,
@@ -767,9 +768,9 @@ function toRunChecks(
 ): RunCheck[] {
   const checks: RunCheck[] = [
     { label: "provider", value: providerCatalog.label },
-    { label: "approval", value: session.approvalMode },
-    { label: "reviewer", value: session.codexReviewer },
-    buildCodexSpeedRunCheck(session.codexSpeed),
+    { label: "approval", value: executionOptions.approvalMode },
+    { label: "reviewer", value: executionOptions.codexReviewer },
+    buildCodexSpeedRunCheck(executionOptions.codexSpeed),
     { label: "model", value: selection.resolvedModel },
     { label: "reasoning", value: reasoningEffortLabel(selection.resolvedReasoningEffort) },
   ];
@@ -819,6 +820,7 @@ function summarizeSnapshotWarning(stats: SnapshotCaptureStats): string {
 
 async function buildArtifact(
   session: Session,
+  executionOptions: SessionExecutionOptions,
   workspacePath: string,
   items: CodexTurnItem[],
   usage: Usage | null,
@@ -848,7 +850,7 @@ async function buildArtifact(
   const activitySummary = toActivitySummary(items);
   const operationTimeline = toAuditOperationsProjection(items);
   const runChecks = toRunChecks(
-    session,
+    executionOptions,
     usage,
     threadId,
     providerCatalog,
@@ -1075,8 +1077,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
       input.appSettings,
       input.agentRuntimeBinding,
       "foreground",
-      mapCodexSpeedToServiceTier(input.session.codexSpeed),
-      mapCodexReviewerToApprovalsReviewer(input.session.codexReviewer),
+      mapCodexSpeedToServiceTier(input.executionOptions.codexSpeed),
+      mapCodexReviewerToApprovalsReviewer(input.executionOptions.codexReviewer),
     );
     const previousClientKey = this.clientKeysBySession.get(input.session.id);
     if (previousClientKey && previousClientKey !== clientKey) {
@@ -1087,6 +1089,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       input.session,
       input.providerCatalog,
       clientKey,
+      input.executionOptions,
       resolveRunWorkspacePath(input),
     );
     const resolved = resolveCodexThreadForSettings({
@@ -1259,6 +1262,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       : snapshotResult;
     const artifact = await buildArtifact(
       input.session,
+      input.executionOptions,
       resolveRunWorkspacePath(input),
       finalItems,
       usage,
@@ -1587,22 +1591,23 @@ export function buildCodexThreadSettings(
   session: Session,
   providerCatalog: ModelCatalogProvider,
   clientKey: string,
+  executionOptions: SessionExecutionOptions,
   executionWorkspacePath?: string,
 ): CodexThreadSettings {
-  const selection = resolveModelSelection(providerCatalog, session.model, session.reasoningEffort);
+  const selection = resolveModelSelection(providerCatalog, executionOptions.model, executionOptions.reasoningEffort);
   const workspacePath = executionWorkspacePath?.trim() || session.workspacePath;
   const additionalDirectories = normalizeAllowedAdditionalDirectories(
     workspacePath,
     session.allowedAdditionalDirectories,
   );
-  const sandboxOptions = resolveCodexSandboxThreadOptions(session.codexSandboxMode);
-  const serviceTier = mapCodexSpeedToServiceTier(session.codexSpeed);
-  const approvalsReviewer = mapCodexReviewerToApprovalsReviewer(session.codexReviewer);
+  const sandboxOptions = resolveCodexSandboxThreadOptions(executionOptions.codexSandboxMode);
+  const serviceTier = mapCodexSpeedToServiceTier(executionOptions.codexSpeed);
+  const approvalsReviewer = mapCodexReviewerToApprovalsReviewer(executionOptions.codexReviewer);
   const options: CodexThreadOptions = {
     workingDirectory: workspacePath,
     skipGitRepoCheck: true,
     sandboxMode: sandboxOptions.sandboxMode,
-    approvalPolicy: mapApprovalModeToCodexPolicy(session.approvalMode),
+    approvalPolicy: mapApprovalModeToCodexPolicy(executionOptions.approvalMode),
     model: selection.resolvedModel,
     modelReasoningEffort: selection.resolvedReasoningEffort,
     ...(sandboxOptions.networkAccessEnabled ? { networkAccessEnabled: true } : {}),

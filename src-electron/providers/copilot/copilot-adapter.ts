@@ -17,6 +17,7 @@ import {
 
 import type { AuditLogOperation, AuditLogProviderMetadata, AuditLogUsage, AuditTransportPayload, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationField, LiveElicitationRequest, LiveElicitationResponse, LiveRunStep, ProviderQuotaSnapshot, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../../src-shared/session/runtime-state.js";
 import type { MessageArtifact, Session } from "../../../src-shared/session/session-state.js";
+import type { SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import type { SessionMemoryDelta } from "../../../src-shared/memory/session-memory-state.js";
 import { getProviderAppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import { normalizeApprovalMode } from "../../../src-shared/settings/approval-mode.js";
@@ -1226,7 +1227,7 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
 
 function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
   const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
-  switch (normalizeApprovalMode(input.session.approvalMode)) {
+  switch (normalizeApprovalMode(input.executionOptions.approvalMode)) {
     case "never":
       return () => toPermissionDecision("approved");
     case "untrusted":
@@ -1288,9 +1289,9 @@ function buildCopilotBootstrapDebugItems(
       message,
       cliPath,
       provider: input.providerCatalog.id,
-      model: input.session.model,
-      reasoningEffort: input.session.reasoningEffort,
-      approvalMode: input.session.approvalMode,
+      model: input.executionOptions.model,
+      reasoningEffort: input.executionOptions.reasoningEffort,
+      approvalMode: input.executionOptions.approvalMode,
       workspacePath: resolveRunWorkspacePath(input),
       threadId: input.session.threadId,
       hasApiKey: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length > 0,
@@ -1389,11 +1390,11 @@ export function buildCopilotSessionSettings(
   clientKey: string,
   resolveCustomAgents: typeof resolveSessionCustomAgentConfigs = resolveSessionCustomAgentConfigs,
 ): CopilotSessionSettings {
-  const selection = resolveModelSelection(input.providerCatalog, input.session.model, input.session.reasoningEffort);
+  const selection = resolveModelSelection(input.providerCatalog, input.executionOptions.model, input.executionOptions.reasoningEffort);
   const workspacePath = resolveRunWorkspacePath(input);
   const resolvedCustomAgents = resolveCustomAgents(
     workspacePath,
-    input.session.customAgentName,
+    input.executionOptions.customAgentName,
   );
   const systemMessage = buildCopilotSystemMessage(prompt);
   const config: SessionConfig = {
@@ -1415,10 +1416,10 @@ export function buildCopilotSessionSettings(
       config.model,
       config.reasoningEffort,
       config.workingDirectory,
-      input.session.approvalMode,
+      input.executionOptions.approvalMode,
       systemMessage?.mode ?? "",
       systemMessage?.content ?? "",
-      input.session.customAgentName,
+      input.executionOptions.customAgentName,
       resolvedCustomAgents.customAgents.map((agent) => JSON.stringify({
         name: agent.name,
         displayName: agent.displayName ?? "",
@@ -2116,6 +2117,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     rawItems: CopilotStableRawItem[],
     workspacePath: string,
     session: Session,
+    executionOptions: SessionExecutionOptions,
     providerCatalog: RunSessionTurnInput["providerCatalog"],
     selection: ResolvedModelSelection,
     beforeSnapshot: WorkspaceSnapshot,
@@ -2141,6 +2143,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
     const artifact = buildArtifactFromOperations({
       session,
+      executionOptions,
       operations,
       usage,
       threadId,
@@ -2192,7 +2195,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       logCopilotRuntime("session bootstrap failed", {
         cliPath,
         provider: input.providerCatalog.id,
-        model: input.session.model,
+        model: input.executionOptions.model,
         workspacePath,
         threadId: input.session.threadId,
         message: redactor.sanitizeText(message),
@@ -2266,7 +2269,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           .catch((error: unknown) => {
             logCopilotRuntime("elicitation handling failed", {
               provider: input.providerCatalog.id,
-              model: input.session.model,
+              model: input.executionOptions.model,
               workspacePath,
               threadId: session.sessionId,
               requestId: request.requestId,
@@ -2310,6 +2313,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           streamState.rawItems,
           workspacePath,
           input.session,
+          input.executionOptions,
           input.providerCatalog,
           selection,
           beforeSnapshot,
@@ -2335,6 +2339,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         streamState.rawItems,
         workspacePath,
         input.session,
+        input.executionOptions,
         input.providerCatalog,
         selection,
         beforeSnapshot,
@@ -2359,6 +2364,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         streamState.rawItems,
         workspacePath,
         input.session,
+        input.executionOptions,
         input.providerCatalog,
         selection,
         beforeSnapshot,
@@ -2368,7 +2374,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       logCopilotRuntime("turn execution failed", {
         cliPath,
         provider: input.providerCatalog.id,
-        model: input.session.model,
+        model: input.executionOptions.model,
         workspacePath,
         threadId: session.sessionId,
         message: redactor.sanitizeText(message),
@@ -2397,7 +2403,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
       logCopilotRuntime("retrying stale connection", {
         provider: input.providerCatalog.id,
-        model: input.session.model,
+        model: input.executionOptions.model,
         workspacePath: resolveRunWorkspacePath(input),
         threadId: input.session.threadId,
         message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import type { AuditLogOperation, AuditLogUsage } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
 import { buildArtifactFromOperations } from "../../src-electron/providers/provider-artifact.js";
 import type { SnapshotCaptureStats, WorkspaceSnapshot } from "../../src-electron/platform/snapshot-ignore.js";
@@ -52,6 +53,18 @@ function createSession(): Session {
 }
 
 describe("provider artifact", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "artifactはoperationsとsnapshot diffから変更ファイルとrun checksを組み立てる"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Artifact-Summary-Policy" }
+  // fault = "snapshot差分または操作をartifactから落とす"
+  // observable = "artifact changedFiles、operationTimeline、runChecks"
+  // observation_boundary = "component-behavior"
+  // scope = "operations と snapshot diff"
+  // lifecycle = "permanent"
+  // impact = "turn結果の変更内容を利用者が確認できない"
+  // distinction = "Provider SDK設定testではartifact projectionを観測しない"
+  // @end-test-value
   it("operations と snapshot diff から最小 artifact を組み立てる", () => {
     const beforeSnapshot: WorkspaceSnapshot = new Map();
     const afterSnapshot: WorkspaceSnapshot = new Map([["tmp/output.txt", "hello"]]);
@@ -88,6 +101,7 @@ describe("provider artifact", () => {
 
     const artifact = buildArtifactFromOperations({
       session: createSession(),
+      executionOptions: captureSessionExecutionOptions(createSession()),
       operations,
       usage,
       threadId: "thread-1",
