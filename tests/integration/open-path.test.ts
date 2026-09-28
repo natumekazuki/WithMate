@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   openLocalPathWithDefaultApp,
+  openResolvedDirectoryInFileManager,
   revealLocalPathInFileManager,
   resolveForwardSlashUncPathCandidate,
   resolveMarkdownLinkCopyTarget,
@@ -17,6 +18,74 @@ function localPathStat(kind: "file" | "directory") {
     isFile: () => kind === "file",
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "解決済みdirectoryは特殊文字を再解釈せずsender再確認後に同じpathでOSへ渡し、OS失敗を成功にしない"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Link Handling" }
+// fault = "canonical pathのfragmentやpercentを再parseする、認可前にopenする、またはshell errorを成功にする"
+// observable = "stat・realpath・sender確認・openの引数と順序およびtyped結果"
+// observation_boundary = "public-boundary"
+// scope = "openResolvedDirectoryInFileManager"
+// lifecycle = "permanent"
+// distinction = "汎用path openと異なりcanonical directory専用のOS副作用境界を副作用なしのstubで確認する"
+// @end-test-value
+it("directory linkはcanonical pathを再解釈せず認可後に開きOS失敗を返す", async () => {
+  const targetPath = process.platform === "win32" ? "C:\\別 Worktree #1 %25" : "/tmp/別 Worktree #1 %25:12";
+  for (const shellError of ["", "The file manager could not be started."]) {
+    const calls: string[] = [];
+    const result = await openResolvedDirectoryInFileManager(targetPath, {
+      async statTarget(value) { calls.push(`stat:${value}`); return localPathStat("directory"); },
+      async realpathTarget(value) { calls.push(`realpath:${value}`); return value; },
+      async assertSender() { calls.push("sender"); },
+      async openWithDefaultApp(value) { calls.push(`open:${value}`); return shellError; },
+    });
+    assert.deepEqual(calls, [`stat:${targetPath}`, `realpath:${targetPath}`, "sender", `open:${targetPath}`]);
+    assert.deepEqual(result, shellError
+      ? { status: "failed", targetType: "local-path", target: targetPath, message: shellError }
+      : { status: "opened", targetType: "local-path", target: targetPath });
+  }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "directory専用openは不正path、消失、アクセス拒否、file/specialへの差替、canonical path変更、sender失効でOSを呼ばない"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Link Handling" }
+// fault = "directory検証失敗でOSへfallbackするか、stale senderからshell openを開始する"
+// observable = "失敗結果、検査対象pathとshell open回数0"
+// observation_boundary = "public-boundary"
+// scope = "openResolvedDirectoryInFileManager rejection boundary"
+// lifecycle = "permanent"
+// impact = "明示directory操作がfile実行や別target・別WindowによるOS操作へ変わることを防ぐ"
+// distinction = "directory-only制約と非同期中の差替/失効は型検査やgeneric path testでは検証できず、短いstub testで保護する"
+// @end-test-value
+it("directory linkの不正・消失・差替・sender失効はOSで開かない", async () => {
+  const canonicalPath = process.platform === "win32" ? "C:\\outside:12" : "/tmp/outside:12";
+  for (const scenario of ["relative", "control", "missing", "denied", "file", "special", "retargeted", "sender"]) {
+    const targetPath = scenario === "relative" ? "relative" : scenario === "control" ? `${canonicalPath}\0` : canonicalPath;
+    const inspected: string[] = [];
+    let openCalls = 0;
+    const result = await openResolvedDirectoryInFileManager(targetPath, {
+      async statTarget(value) {
+        inspected.push(value);
+        if (scenario === "missing" || scenario === "denied") {
+          throw Object.assign(new Error(scenario), { code: scenario === "missing" ? "ENOENT" : "EACCES" });
+        }
+        return {
+          isDirectory: () => scenario !== "file" && scenario !== "special",
+          isFile: () => scenario === "file",
+        };
+      },
+      async realpathTarget(value) { return scenario === "retargeted" ? `${value}-other` : value; },
+      async assertSender() { if (scenario === "sender") throw new Error("The Preview resource changed."); },
+      async openWithDefaultApp() { openCalls += 1; return ""; },
+    });
+    assert.equal(result.status, scenario === "missing" ? "not-found" : "failed", scenario);
+    assert.ok(result.message, scenario);
+    assert.equal(openCalls, 0, scenario);
+    assert.deepEqual(inspected, scenario === "relative" || scenario === "control" ? [] : [targetPath], scenario);
+  }
+});
 
 describe("resolveOpenPathTarget", () => {
   it("http url はそのまま外部 URL として扱う", () => {

@@ -27,6 +27,11 @@ export type RevealLocalPathDeps = OpenLocalPathDeps & {
   revealInFileManager(targetPath: string): void;
 };
 
+export type OpenResolvedDirectoryDeps = OpenLocalPathDeps & {
+  realpathTarget(targetPath: string): Promise<string>;
+  assertSender(): Promise<void>;
+};
+
 function stripLocalPathFragment(target: string): string {
   const hashIndex = target.indexOf("#");
   const withoutFragment = hashIndex >= 0 ? target.slice(0, hashIndex) : target;
@@ -332,6 +337,38 @@ export async function openLocalPathWithDefaultApp(
   }
 
   return openExistingLocalPathWithDefaultApp(inspected.targetPath, deps.openWithDefaultApp);
+}
+
+// Only Main-resolved directory links enter here. Do not parse the canonical path as a URL again.
+export async function openResolvedDirectoryInFileManager(
+  targetPath: string,
+  deps: OpenResolvedDirectoryDeps,
+): Promise<OpenPathResult> {
+  try {
+    if (!path.isAbsolute(targetPath) || /[\u0000-\u001f\u007f]/u.test(targetPath)) {
+      throw new Error("The directory path is invalid.");
+    }
+    const targetStat = await deps.statTarget(targetPath);
+    if (!targetStat.isDirectory()) {
+      throw new Error("The link target is no longer a directory. Open the link again.");
+    }
+    if (await deps.realpathTarget(targetPath) !== targetPath) {
+      throw new Error("The directory path changed. Open the link again.");
+    }
+  } catch (error) {
+    return projectLocalPathStatError(targetPath, error);
+  }
+  try {
+    await deps.assertSender();
+  } catch (error) {
+    return {
+      status: "failed",
+      targetType: "local-path",
+      target: targetPath,
+      message: `The directory could not be opened: ${describeLocalPathError(error)}`,
+    };
+  }
+  return openExistingLocalPathWithDefaultApp(targetPath, deps.openWithDefaultApp);
 }
 
 export async function revealLocalPathInFileManager(

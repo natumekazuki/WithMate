@@ -292,6 +292,7 @@ export type MainIpcSessionQueryDepsArgs = {
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
   openSessionFilePreviewWindow(
     request: SessionFilePreviewWindowOpenRequest,
+    assertLinkSender: () => Promise<void>,
   ): Awaitable<SessionFilePreviewWindowOpenResult>;
   getSessionFilePreviewWindowPayload(token: string): SessionFilePreviewWindowPayload | null;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;

@@ -526,6 +526,7 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
     openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
     openSessionFilePreviewWindow(
       request: SessionFilePreviewWindowOpenRequest,
+      assertLinkSender: () => Promise<void>,
     ): Awaitable<SessionFilePreviewWindowOpenResult>;
     getSessionFilePreviewWindowPayload(
       token: string,

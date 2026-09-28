@@ -308,6 +308,7 @@ export function registerSessionQueryHandlers(
   ipcMain.handle(
     WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
     async (event, request: SessionFilePreviewWindowOpenRequest) => {
+      let assertLinkSender: () => Promise<void> = async () => {};
       if (
         !request ||
         (request.kind !== "resource" &&
@@ -376,8 +377,24 @@ export function registerSessionQueryHandlers(
           request.baseResource,
           deps,
         );
+        const authorizedWindow = deps.resolveEventWindow(event);
+        const linkRequest = request;
+        assertLinkSender = async () => {
+          if (deps.resolveEventWindow(event) !== authorizedWindow) {
+            throw new Error("File Preview navigation sender changed while resolving the link.");
+          }
+          await assertSessionFileLinkSender(
+            event,
+            linkRequest.sessionId,
+            linkRequest.baseResource,
+            deps,
+          );
+          if (deps.resolveEventWindow(event) !== authorizedWindow) {
+            throw new Error("File Preview navigation sender changed while resolving the link.");
+          }
+        };
       }
-      return deps.openSessionFilePreviewWindow(request);
+      return deps.openSessionFilePreviewWindow(request, assertLinkSender);
     },
   );
   ipcMain.handle(
