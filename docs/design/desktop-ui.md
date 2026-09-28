@@ -145,6 +145,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Random開始には取得済みの利用履歴とopen Session情報が必要で、再取得中・失敗時は開始を拒否する。使用中Characterはopen summaryから判定し、表示用Recent／Pinnedの失敗だけではRandomを止めない。取得回復時は取得由来のfeedbackだけを解消し、Session作成など別の操作失敗は保持する
   - Homeの管理用Character一覧は初回とWindow再フォーカス時に再取得する。New Sessionは開くたびに取得した一覧と取得状態を閉じるまで保持し、表示・選択・起動候補に同じ一覧を使う。Homeの再取得や外部のCharacter変更は開いているdialogへ反映せず、閉じて再度開いた時に最新化する
   - New Sessionを開く時のCharacter取得に失敗した場合は保持済みの一覧を起動候補として使わず、Character selectorに取得失敗を示してSession作成を無効にする。取得成功後の0件だけneutral fallbackを使う
+  - New SessionはCharacter取得を待たずに開き、取得中はCharacter selectorの既存loading表示と開始不可状態を使う。表示中の重複openは取得・入力初期化を行わず、取得完了で入力・選択・focusを作り直さない。Cancelは取得中も操作でき、終了した試行の遅延成功・失敗はdialogの一覧・feedbackへ反映しない。開き直しは新しい試行として最新一覧を取得する
   - Random選択の`Start`はCharacter利用履歴とopen Session Window一覧の両方が取得成功した場合だけ有効にする。どちらかがloading / errorの間は開始不可とし、固定Character選択にはこの2取得を要求しない。選択と取得状態の変化に開始可否が追従し、実行時も同じ取得条件を再検証する。取得成功後の0件と未取得・取得失敗を区別する
   - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に provider ごとの現在選択を優先して解決する。現在選択がなければ保存済みの直近 Session 一件を参照する。詳細は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する
   - open 時は dialog 内の最初の主要入力へ focus する。Home の `New Session` は入力途中の意図しないdismissを避けるため、footerの`Cancel`で閉じ、backdrop clickや`Escape`では閉じない
