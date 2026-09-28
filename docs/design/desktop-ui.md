@@ -153,6 +153,8 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Random選択の`Start`はCharacter利用履歴とopen Session Window一覧の両方が取得成功した場合だけ有効にする。どちらかがloading / errorの間は開始不可とし、固定Character選択にはこの2取得を要求しない。選択と取得状態の変化に開始可否が追従し、実行時も同じ取得条件を再検証する。取得成功後の0件と未取得・取得失敗を区別する
   - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に provider ごとの現在選択を優先して解決する。現在選択がなければ保存済みの直近 Session 一件を参照する。詳細は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する
   - open 時は dialog 内の最初の主要入力へ focus する。Home の `New Session` は入力途中の意図しないdismissを避けるため、footerの`Cancel`で閉じ、backdrop clickや`Escape`では閉じない
+  - 開始中も`Cancel`で閉じられるが、送信済みのSession作成は取り消さない。開始要求はそのdialog表示に所属し、閉じた要求の成功・失敗・busy解除で再表示後の入力・選択・feedback・開始中状態・focusを変更しない。同じ表示内の開始要求は同時に一つだけ受け付ける
+  - 閉じた要求がSessionを作成した場合はRecent Sessionsへ反映し、Windowは自動で開かない。作成結果・確認不能の失敗はtitle付きの独立した結果通知としてHome Window内のRecent Sessionsに保持し、利用者が`Dismiss`するまで表示する。通知自体はWindowをまたいで永続化しない。別のNew Session表示中は通知を保留し、閉じた後に表示する。`Dismiss`は通知だけを消し、Sessionを削除しない。結果不明の自動再送やrollbackは行わない
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
   - provider の single-select chip は矢印キーで選択を移動できる
 - `Settings` button
@@ -307,7 +309,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - 中央 preview と同じ `SessionFilePreview` / `SessionDiffPreview` を使用し、Quote と Action Dock は表示しない
   - live Git Diff の `Open preview` は対象 file を通常 preview として開く。detached file preview から開いた live Git Diff と Changes から直接開いた detached live Git Diff は、左向き icon または `Open preview` で同じ Window の preview へ戻る。独立 File Preview、snapshot Diff、Character Editor の Window 自体は native window chrome で閉じ、重複する app 内 Close 操作を置かない
   - Character Editor が dirty な状態で native window chrome から閉じようとした場合は、編集内容を保持したまま in-app の破棄確認を表示する。キャンセルでは編集へ戻り、明示的に破棄した場合だけ Window を閉じる
-  - `New Session` dialog はfooter左端の`Cancel`で作成せず閉じ、右端の`Start`で開始する。`Start`がdisabledでも`Cancel`は使用でき、重複する常設 Close control は置かない
+  - `New Session` dialog はfooter左端の`Cancel`で閉じ、右端の`Start`で開始する。開始前の`Cancel`では作成せず、開始後は送信済みの作成を取り消さない。`Start`がdisabledでも`Cancel`は使用でき、重複する常設 Close control は置かない
   - Auxiliary 起動 dialog と Audit Log overlay も backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
   - 破棄確認は単一の dialog surface に確認対象と操作を直接配置し、見出しと重複する補足文や装飾目的の card を置かない。破壊的操作は neutral なキャンセルと色・文言の両方で区別する
   - 同じ root-scoped resource は既存 Window を前面化し、異なる resource は複数 Window を開ける。navigation、認可、lifecycle の決定は ADR 020 を正本とする

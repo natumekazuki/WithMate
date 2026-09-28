@@ -12,6 +12,7 @@ import {
 
 export type HomeLaunchSessionCreator = (input: CreateSessionRequest) => Promise<Session | SessionSummary | null>;
 export type HomeLaunchFeedbackSource = "launch" | "readiness";
+export type HomeLaunchResult = { title: string; message: string };
 
 export function resolveRandomHomeLaunchFeedback(
   characterUsageStatus: SessionSummariesLoadStatus,
@@ -48,6 +49,8 @@ export type StartHomeLaunchInput = {
   closeLaunchDialog: () => void;
   setLaunchFeedback: (message: string, source?: HomeLaunchFeedbackSource) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
+  isCurrentAttempt: () => boolean;
+  onDetachedResult: (result: HomeLaunchResult) => void;
   upsertSessionSummary: (summary: HomeSessionSummary) => void;
   random?: () => number;
 };
@@ -79,6 +82,15 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
   input.setLaunchFeedback("");
   input.setLaunchStarting(true);
 
+  let createdSessionId: string | null = null;
+  const reportFailure = (message: string) => {
+    if (input.isCurrentAttempt()) {
+      input.setLaunchFeedback(message);
+    } else {
+      input.onDetachedResult({ title: input.draft.title, message });
+    }
+  };
+
   try {
     const openSessionWindowIdSet = new Set(input.openSessionWindowIds);
     const openSessionCharacterIds = input.sessions
@@ -101,16 +113,29 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
 
     const createdSession = await input.createSession(sessionInput);
     if (!createdSession) {
-      input.setLaunchFeedback("Could not start session.");
+      reportFailure("Could not confirm session creation. Check Recent Sessions before trying again.");
       return;
     }
 
+    createdSessionId = createdSession.id;
     input.upsertSessionSummary(projectHomeSessionSummary(createdSession));
+    if (!input.isCurrentAttempt()) {
+      input.onDetachedResult({
+        title: input.draft.title,
+        message: "Session created. Open it from Recent Sessions.",
+      });
+      return;
+    }
     input.closeLaunchDialog();
     await input.openSessionWindow(createdSession.id);
   } catch (error) {
-    input.setLaunchFeedback(error instanceof Error ? error.message : "Could not start session.");
+    const detail = error instanceof Error ? error.message : "Could not start session.";
+    reportFailure(createdSessionId
+      ? `Session created, but its window could not be opened. Open it from Recent Sessions. ${detail}`
+      : `Could not confirm session creation. Check Recent Sessions before trying again. ${detail}`);
   } finally {
-    input.setLaunchStarting(false);
+    if (input.isCurrentAttempt()) {
+      input.setLaunchStarting(false);
+    }
   }
 }

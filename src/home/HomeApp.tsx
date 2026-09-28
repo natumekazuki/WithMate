@@ -45,7 +45,8 @@ import {
   buildHomeSessionProjection,
   type HomeMonitorAuxiliaryDataState,
 } from "./home-session-projection.js";
-import { buildHomeLaunchHandlers } from "./home-launch-handlers.js";
+import { buildHomeLaunchHandlers, type HomeLaunchLifetime } from "./home-launch-handlers.js";
+import { HomeLaunchResults } from "./HomeLaunchResults.js";
 import {
   buildHomeProviderSettingRows,
   buildPersistedAppSettingsFromRows,
@@ -107,7 +108,7 @@ import {
   createHomeAuxiliarySessionRefresher,
   resolveHomeAuxiliarySessionSummariesState,
 } from "./home-active-auxiliary-refresh.js";
-import { resolveRandomHomeLaunchFeedback, type HomeLaunchFeedbackSource } from "./home-launch-actions.js";
+import { resolveRandomHomeLaunchFeedback, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
 
 type HomeRightPaneView = "monitor" | "characters";
 
@@ -245,6 +246,8 @@ export default function HomeApp() {
     setLaunchFeedbackState({ message, source });
   };
   const [launchStarting, setLaunchStarting] = useState(false);
+  const launchLifetimeRef = useRef<HomeLaunchLifetime>({ starting: false });
+  const [launchResults, setLaunchResults] = useState<HomeLaunchResult[]>([]);
   const [mateState, setMateState] = useState<MateStorageState | null>(null);
   const [mateProfile, setMateProfile] = useState<MateProfile | null>(null);
   const [mateDisplayName, setMateDisplayName] = useState("");
@@ -909,6 +912,8 @@ export default function HomeApp() {
     launchDraft,
     launchDialogAttemptRef,
     launchStarting,
+    launchLifetimeRef,
+    onDetachedResult: (result) => setLaunchResults((current) => [...current, result]),
     mateState,
     mateProfile,
     enabledLaunchProviders,
@@ -1117,6 +1122,12 @@ export default function HomeApp() {
       sessionSummaryLoadStatus: sessionListLoadStatus,
       feedback: sessionListFeedback,
       onRetry: retrySessionSummaryLoad,
+      launchResults: launchDraft.open ? null : (
+        <HomeLaunchResults
+          results={launchResults}
+          onDismiss={(result) => setLaunchResults((current) => current.filter((entry) => entry !== result))}
+        />
+      ),
     }),
     rightPane: buildHomeRightPaneProps({
       rightPaneView,

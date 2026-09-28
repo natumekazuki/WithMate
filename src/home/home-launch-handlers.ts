@@ -13,12 +13,16 @@ import {
   updateLaunchDraftForProviderSelection,
   updateLaunchDraftForRandomCharacterSelection,
 } from "./home-launch-state.js";
-import { startHomeLaunch, type HomeLaunchFeedbackSource } from "./home-launch-actions.js";
+import { startHomeLaunch, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
+
+export type HomeLaunchLifetime = { starting: boolean };
 
 type HomeLaunchHandlersContext = {
   launchDraft: HomeLaunchDraft;
   launchDialogAttemptRef: { current: object | null };
   launchStarting: boolean;
+  launchLifetimeRef: { current: HomeLaunchLifetime };
+  onDetachedResult: (result: HomeLaunchResult) => void;
   mateState: MateStorageState | null;
   mateProfile: MateProfile | null;
   enabledLaunchProviders: readonly ModelCatalogProvider[];
@@ -59,6 +63,8 @@ export function buildHomeLaunchHandlers({
   launchDraft,
   launchDialogAttemptRef,
   launchStarting,
+  launchLifetimeRef,
+  onDetachedResult,
   mateState,
   mateProfile,
   enabledLaunchProviders,
@@ -97,7 +103,10 @@ export function buildHomeLaunchHandlers({
     }
     const attempt = {};
     launchDialogAttemptRef.current = attempt;
+    const lifetime: HomeLaunchLifetime = { starting: false };
+    launchLifetimeRef.current = lifetime;
     cancelWorkspaceValidation();
+    setLaunchStarting(false);
     setLaunchFeedback("");
     setLaunchCharacterCatalog({ entries: [], status: "loading" });
     setLaunchDraft((current) =>
@@ -123,6 +132,7 @@ export function buildHomeLaunchHandlers({
 
   const onCloseLaunchDialog = () => {
     launchDialogAttemptRef.current = null;
+    launchLifetimeRef.current = { starting: false };
     cancelWorkspaceValidation();
     setLaunchFeedback("");
     setLaunchStarting(false);
@@ -136,25 +146,36 @@ export function buildHomeLaunchHandlers({
   };
 
   const onStartSession = async () => {
-    await startHomeLaunch({
-      draft: launchDraft,
-      launchStarting,
-      mateState,
-      mateProfile,
-      selectedProviderId: selectedLaunchProviderId,
-      characterEntries,
-      sessions,
-      sessionCharacterUsage,
-      openSessionWindowIds,
-      openSessionWindowIdsLoadStatus,
-      sessionCharacterUsageLoadStatus,
-      createSession,
-      openSessionWindow,
-      closeLaunchDialog: onCloseLaunchDialog,
-      setLaunchFeedback,
-      setLaunchStarting,
-      upsertSessionSummary,
-    });
+    const lifetime = launchLifetimeRef.current;
+    if (!launchDraft.open || launchStarting || lifetime.starting) {
+      return;
+    }
+    lifetime.starting = true;
+    try {
+      await startHomeLaunch({
+        draft: launchDraft,
+        launchStarting,
+        mateState,
+        mateProfile,
+        selectedProviderId: selectedLaunchProviderId,
+        characterEntries,
+        sessions,
+        sessionCharacterUsage,
+        openSessionWindowIds,
+        openSessionWindowIdsLoadStatus,
+        sessionCharacterUsageLoadStatus,
+        createSession,
+        openSessionWindow,
+        closeLaunchDialog: onCloseLaunchDialog,
+        setLaunchFeedback,
+        setLaunchStarting,
+        upsertSessionSummary,
+        isCurrentAttempt: () => launchLifetimeRef.current === lifetime,
+        onDetachedResult,
+      });
+    } finally {
+      lifetime.starting = false;
+    }
   };
 
   return {

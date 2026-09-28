@@ -50,9 +50,12 @@ function createLaunchHarness() {
   };
   const requests: ReturnType<typeof createDeferredCatalog>[] = [];
   const launchDialogAttemptRef: { current: object | null } = { current: null };
+  const launchLifetimeRef = { current: { starting: false } };
   const renderHandlers = () => buildHomeLaunchHandlers({
     launchDraft: state.draft,
     launchDialogAttemptRef,
+    launchLifetimeRef,
+    onDetachedResult: () => {},
     launchStarting: false,
     mateState: "active",
     mateProfile: null,
@@ -239,6 +242,8 @@ describe("home-launch-handlers", () => {
       launchDraft: draft,
       launchDialogAttemptRef: { current: null },
       launchStarting: false,
+      launchLifetimeRef: { current: { starting: false } },
+      onDetachedResult: () => {},
       mateState: "active",
       mateProfile: null,
       enabledLaunchProviders: [createProvider()],
@@ -336,6 +341,8 @@ describe("home-launch-handlers", () => {
       launchDraft: draft,
       launchDialogAttemptRef: { current: null },
       launchStarting: false,
+      launchLifetimeRef: { current: { starting: false } },
+      onDetachedResult: () => {},
       mateState: "active",
       mateProfile: null,
       enabledLaunchProviders: [createProvider()],
