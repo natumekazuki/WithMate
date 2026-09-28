@@ -80,6 +80,7 @@ export type ChatWindowProps = Omit<
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
   rightPaneProps?: SessionContextPaneProps;
+  renderRightPane?: (navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorSessionId" | "onJumpToMessage">) => ReactNode;
   mainContent?: ChatScreenProps["mainContent"];
   concurrentChats?: ConcurrentChatWindowProps;
 };
@@ -113,6 +114,7 @@ export function ConcurrentChatSplitter({
   onWidthRatioCommit,
 }: Pick<ConcurrentChatWindowProps, "widthRatio" | "onWidthRatioChange" | "onWidthRatioCommit">) {
   const dragRef = useRef<{ width: number; minRatio: number; maxRatio: number; startingRatio: number } | null>(null);
+  const pendingRatioRef = useRef<number | null>(null);
   const getRatioBounds = (splitter: HTMLButtonElement) => {
     const parent = splitter.parentElement;
     if (!parent) return null;
@@ -131,6 +133,7 @@ export function ConcurrentChatSplitter({
   };
   const handlePointerDown: PointerEventHandler<HTMLButtonElement> = (event) => {
     dragRef.current = null;
+    pendingRatioRef.current = null;
     if (widthRatio <= 0 || widthRatio >= 1) return;
     const bounds = getRatioBounds(event.currentTarget);
     if (!bounds) return;
@@ -143,14 +146,22 @@ export function ConcurrentChatSplitter({
       className="concurrent-chat-splitter"
       isPanelExpanded={widthRatio > 0 && widthRatio < 1}
       onPointerDown={handlePointerDown}
-      onPointerEnd={onWidthRatioCommit}
-      onDrag={(_event, delta) => {
+      onPointerEnd={() => {
+        if (pendingRatioRef.current !== null) onWidthRatioChange(pendingRatioRef.current);
+        pendingRatioRef.current = null;
+        dragRef.current = null;
+        onWidthRatioCommit?.();
+      }}
+      onDrag={(event, delta) => {
         const bounds = dragRef.current;
         if (!bounds) return;
         const next = bounds.startingRatio - delta.x / bounds.width;
-        onWidthRatioChange(next < bounds.minRatio / 2 ? 0
+        const ratio = next < bounds.minRatio / 2 ? 0
           : next > (1 + bounds.maxRatio) / 2 ? 1
-            : Math.min(bounds.maxRatio, Math.max(bounds.minRatio, next)));
+            : Math.min(bounds.maxRatio, Math.max(bounds.minRatio, next));
+        pendingRatioRef.current = ratio;
+        const columns = event.currentTarget.parentElement;
+        if (columns) columns.style.gridTemplateColumns = `minmax(0, ${1 - ratio}fr) var(--session-dock-splitter-size) minmax(0, ${ratio}fr)`;
       }}
       onTogglePanel={() => {
         onWidthRatioChange(widthRatio > 0 && widthRatio < 1 ? 0 : 0.5);
@@ -427,6 +438,7 @@ export function ChatWindow({
   skillPickerProps,
   compactActionDockProps,
   concurrentChats,
+  renderRightPane,
   ...screenProps
 }: ChatWindowProps) {
   const [messageViewMode, setMessageViewMode] = useState<MessageViewMode>("preview");
@@ -546,7 +558,15 @@ export function ChatWindow({
   return (
     <SessionChatScreen
       {...screenProps}
-      rightPane={resolvedRightPaneProps ? (
+      rightPane={renderRightPane ? (
+        <SessionPaneErrorBoundary>
+          {renderRightPane({
+            messageNavigatorEntries: targetColumnControls?.messageNavigatorEntries,
+            messageNavigatorSessionId: targetColumnControls?.sessionId ?? targetSessionId,
+            onJumpToMessage: targetColumnControls?.onJumpToMessage,
+          })}
+        </SessionPaneErrorBoundary>
+      ) : resolvedRightPaneProps ? (
         <SessionPaneErrorBoundary>
           <SessionContextPane {...resolvedRightPaneProps} />
         </SessionPaneErrorBoundary>
@@ -607,7 +627,7 @@ export function ChatWindow({
                   && concurrentChats.target === "main",
                 messageViewMode,
               }}
-              enabled
+              enabled={!screenProps.mainContent && (concurrentChats.widthRatio < 1)}
               api={concurrentChats.api}
               liveRun={concurrentChats.mainLiveRun}
               stateCache={conversationStateCacheRef.current}
@@ -674,7 +694,7 @@ export function ChatWindow({
                       && concurrentChats.target === "auxiliary",
                     messageViewMode,
                   }}
-                  enabled={concurrentChats.widthRatio > 0 || concurrentChats.target === "auxiliary"}
+                  enabled={!screenProps.mainContent && concurrentChats.widthRatio > 0}
                   api={concurrentChats.api}
                   liveRun={concurrentChats.auxiliaryLiveRun}
                   stateCache={conversationStateCacheRef.current}

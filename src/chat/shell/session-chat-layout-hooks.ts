@@ -116,6 +116,7 @@ export function useChatLayoutPresentation(input: {
   const [isActionDockPinnedExpanded, setActionDockExpandedState] = useState(initialActionDockExpanded);
   const headerExpandedRef = useRef(initialHeaderExpanded);
   const actionDockExpandedRef = useRef(initialActionDockExpanded);
+  const actionDockIntentRevisionRef = useRef(0);
   const headerInteractedRef = useRef(false);
   const actionDockInteractedRef = useRef(false);
   const headerInitializedRef = useRef(input.initialHeader !== null);
@@ -161,6 +162,7 @@ export function useChatLayoutPresentation(input: {
   const setIsActionDockPinnedExpanded = useCallback((next: boolean | ((current: boolean) => boolean)) => {
     const resolved = typeof next === "function" ? next(actionDockExpandedRef.current) : next;
     actionDockInteractedRef.current = true;
+    actionDockIntentRevisionRef.current += 1;
     if (actionDockExpandedRef.current === resolved) {
       return;
     }
@@ -169,11 +171,17 @@ export function useChatLayoutPresentation(input: {
     input.onActionDockChange?.(resolved ? "expanded" : "compact");
   }, [input.onActionDockChange]);
 
+  const captureActionDockIntent = useCallback(() => {
+    const revision = actionDockIntentRevisionRef.current;
+    return () => actionDockIntentRevisionRef.current === revision;
+  }, []);
+
   return {
     isHeaderExpanded,
     setIsHeaderExpanded,
     isActionDockPinnedExpanded,
     setIsActionDockPinnedExpanded,
+    captureActionDockIntent,
   };
 }
 
@@ -358,7 +366,7 @@ export function useSessionVerticalDockResize(input: {
         oppositeDockHeight: oppositeHeight,
       });
       actionDockHeightRef.current = nextHeight;
-      setActionDockHeight(nextHeight);
+      layout.style.setProperty("--session-action-dock-height", `${nextHeight}px`);
     };
 
     const handlePointerEnd = (event: PointerEvent) => {
@@ -368,6 +376,7 @@ export function useSessionVerticalDockResize(input: {
       }
       if (gesture.dragged) {
         lastActionDockDragEndAtRef.current = Date.now();
+        setActionDockHeight(actionDockHeightRef.current);
       }
       pointerGestureRef.current = {
         pointerId: null,
@@ -667,7 +676,7 @@ export function useSessionMessageListFollowing({
       observer.observe(messageListContent);
     }
     return () => observer.disconnect();
-  }, [enabled, ownerKey, scrollMessageListToBottom, scrollSignature]);
+  }, [enabled, ownerKey, scrollMessageListToBottom]);
 
   const handleMessageListScroll = useCallback(() => {
     const messageListElement = messageListRef.current;
@@ -914,12 +923,11 @@ export function useSessionSidePanes({
       );
       if (resizingSidePane === "files") {
         fileExplorerWidthRef.current = nextWidth;
-        setFileExplorerWidth(nextWidth);
+        workbenchElement.style.setProperty("--session-file-explorer-width", `${nextWidth}px`);
       } else {
         contextRailWidthRef.current = nextWidth;
-        setContextRailWidth(nextWidth);
+        workbenchElement.style.setProperty("--session-context-rail-width", `${nextWidth}px`);
       }
-      notifySidePaneVisibility(resizingSidePane === "context", resizingSidePane === "files");
     };
 
     const handlePointerEnd = (event: PointerEvent) => {
@@ -930,6 +938,8 @@ export function useSessionSidePanes({
 
       if (gesture.dragged) {
         lastSidePaneDragEndAtRef.current[resizingSidePane] = Date.now();
+        if (resizingSidePane === "files") setFileExplorerWidth(fileExplorerWidthRef.current);
+        else setContextRailWidth(contextRailWidthRef.current);
       }
       gesture.pointerId = null;
       gesture.dragged = false;
@@ -952,7 +962,7 @@ export function useSessionSidePanes({
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [enabled, notifySidePaneVisibility, resizingSidePane]);
+  }, [enabled, resizingSidePane]);
 
   const startSidePaneResize = useCallback((
     sidePane: Exclude<SessionSidePane, "none">,

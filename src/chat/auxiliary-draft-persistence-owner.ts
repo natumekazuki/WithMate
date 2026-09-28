@@ -22,6 +22,8 @@ export class AuxiliaryDraftPersistenceOwner {
   private pendingDirty = false;
   private pendingRecovery: AuxiliaryDraftPersistenceRecord | null = null;
   private operation: Promise<void> | null = null;
+  private releaseDebounce: (() => void) | null = null;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: AuxiliaryDraftPersistenceOwnerOptions) {
     this.options = options;
@@ -45,6 +47,7 @@ export class AuxiliaryDraftPersistenceOwner {
       if (this.pending === null) throw new Error("Auxiliary draft pending value is unavailable.");
       this.enqueue(this.pending, this.pendingRecovery ?? undefined);
     }
+    this.releaseDebounce?.();
     await this.operation;
   }
 
@@ -69,7 +72,16 @@ export class AuxiliaryDraftPersistenceOwner {
 
   private async run(): Promise<void> {
     try {
-      await new Promise((resolve) => setTimeout(resolve, this.debounceMs));
+      await new Promise<void>((resolve) => {
+        const release = () => {
+          if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
+          this.debounceTimer = null;
+          this.releaseDebounce = null;
+          resolve();
+        };
+        this.releaseDebounce = release;
+        this.debounceTimer = setTimeout(release, this.debounceMs);
+      });
       while (this.pendingDirty) {
         const text = this.pending;
         const recovery = this.pendingRecovery;

@@ -437,6 +437,7 @@ export function SessionMessageColumn({
   const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
   const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
   const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
+  const [selectionActive, setSelectionActive] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
@@ -657,15 +658,33 @@ export function SessionMessageColumn({
     }
     previousMessageViewModeRef.current = messageViewMode;
     setSelectionToolbar(null);
+    setSelectionActive(false);
   }, [messageViewMode]);
+
+  useEffect(() => {
+    if (!isContentActive) {
+      setSelectionToolbar(null);
+      setSelectionActive(false);
+    }
+  }, [isContentActive]);
 
   const handleMessageListScroll: UIEventHandler<HTMLDivElement> = (event) => {
     onMessageListScroll(event);
   };
 
   const updateSelectionToolbar = useCallback(() => {
+    if (!isContentActive) {
+      setSelectionActive(false);
+      setSelectionToolbar(null);
+      return;
+    }
     const messageListElement = messageListRef.current;
     const selectionDetails = getSelectionDetailsWithinMessageList(messageListElement);
+    setSelectionActive(Boolean(selectionDetails));
+    if (!selectionDetails) {
+      setSelectionToolbar(null);
+      return;
+    }
     const sourceRect = messageListElement?.getBoundingClientRect() ?? null;
     const overlayRect = selectionActionOverlay?.getBoundingClientRect() ?? null;
     const actionDockRect = document.getElementById(SESSION_ACTION_DOCK_ID)?.getBoundingClientRect() ?? null;
@@ -673,7 +692,6 @@ export function SessionMessageColumn({
       selectionToolbarRef.current?.getBoundingClientRect() ??
       { width: 112, height: 32 };
     if (
-      !selectionDetails ||
       !sourceRect ||
       !overlayRect ||
       !rectsIntersect(selectionDetails.anchorRect, sourceRect)
@@ -698,7 +716,7 @@ export function SessionMessageColumn({
       style,
       text: selectionDetails.text,
     });
-  }, [messageListRef, selectionActionOverlay]);
+  }, [isContentActive, messageListRef, selectionActionOverlay]);
 
   useLayoutEffect(() => {
     if (selectionToolbar) {
@@ -718,39 +736,35 @@ export function SessionMessageColumn({
       capture: true,
       passive: true,
     });
-    const actionDockElement = document.getElementById(SESSION_ACTION_DOCK_ID);
-    const resizeObserver = typeof window.ResizeObserver === "undefined"
-      ? null
-      : new window.ResizeObserver(updateSelectionToolbar);
-    if (messageListElement) {
-      resizeObserver?.observe(messageListElement);
-    }
-    if (selectionActionOverlay) {
-      resizeObserver?.observe(selectionActionOverlay);
-    }
-    if (actionDockElement) {
-      resizeObserver?.observe(actionDockElement);
-    }
-    const mutationObserver = messageListElement && typeof window.MutationObserver !== "undefined"
-      ? new window.MutationObserver(updateSelectionToolbar)
-      : null;
-    if (messageListElement) {
-      mutationObserver?.observe(messageListElement, {
-        attributeFilter: ["data-index", "style"],
-        attributes: true,
-        childList: true,
-        subtree: true,
-      });
-    }
-
     return () => {
       document.removeEventListener("selectionchange", updateSelectionToolbar);
       window.removeEventListener("resize", updateSelectionToolbar);
       messageListElement?.removeEventListener("scroll", updateSelectionToolbar, { capture: true });
+    };
+  }, [messageListRef, updateSelectionToolbar]);
+
+  useEffect(() => {
+    if (!isContentActive || !selectionActive || typeof window === "undefined") return;
+    const messageListElement = messageListRef.current;
+    const actionDockElement = document.getElementById(SESSION_ACTION_DOCK_ID);
+    const resizeObserver = typeof window.ResizeObserver === "undefined"
+      ? null : new window.ResizeObserver(updateSelectionToolbar);
+    if (messageListElement) resizeObserver?.observe(messageListElement);
+    if (selectionActionOverlay) resizeObserver?.observe(selectionActionOverlay);
+    if (actionDockElement) resizeObserver?.observe(actionDockElement);
+    const mutationObserver = messageListElement && typeof window.MutationObserver !== "undefined"
+      ? new window.MutationObserver(updateSelectionToolbar) : null;
+    if (messageListElement) mutationObserver?.observe(messageListElement, {
+      attributeFilter: ["data-index", "style"],
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+    return () => {
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
     };
-  }, [messageListRef, selectionActionOverlay, updateSelectionToolbar]);
+  }, [isContentActive, messageListRef, selectionActionOverlay, selectionActive, updateSelectionToolbar]);
 
   useEffect(() => {
     setCurrentFindMatch(0);

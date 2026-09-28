@@ -48,6 +48,47 @@ function createSubscribedApi(templates: PromptTemplate[]) {
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Template購読更新後に遅延した初期一覧が返っても選択肢は購読の新しい内容を保持する"
+// oracle = { type = "contract", ref = "Issue #737 SessionWindow asynchronous operation lifecycle" }
+// fault = "遅延した初期一覧を購読更新より後に適用して古いtemplateへ戻す"
+// observable = "pickerに表示されるtemplate名"
+// observation_boundary = "component-behavior"
+// scope = "PromptTemplateWorkspace initial load and subscription ordering"
+// lifecycle = "permanent"
+// impact = "別Windowで更新されたtemplateの古い文面を選択・挿入してしまう"
+// distinction = "型検査と通常の初期読込testでは通知が先行する順序を検出できない"
+// @end-test-value
+test("Template購読更新は遅い初期一覧に巻き戻されない", async () => {
+  const harness = createDomHarness();
+  let resolveInitial: (templates: PromptTemplate[]) => void = () => {};
+  let listener: ((templates: PromptTemplate[]) => void) | null = null;
+  const api: WithMateWindowPromptTemplateApi = {
+    ...createApi([]),
+    listPromptTemplates: () => new Promise((resolve) => { resolveInitial = resolve; }),
+    subscribePromptTemplates: (nextListener) => {
+      listener = nextListener;
+      return () => { listener = null; };
+    },
+  };
+  try {
+    await renderAndFlush(harness.root, <PromptTemplateWorkspace api={api} onBack={() => {}} onInsert={() => {}} />);
+    await act(async () => {
+      listener?.([{ ...FIRST_TEMPLATE, name: "新しいテンプレート" }]);
+    });
+    await act(async () => {
+      resolveInitial([FIRST_TEMPLATE]);
+    });
+    assert.match(harness.container.textContent ?? "", /新しいテンプレート/);
+    assert.doesNotMatch(harness.container.textContent ?? "", /レビュー依頼/);
+  } finally {
+    await act(async () => harness.root.unmount());
+    harness.dom.window.close();
+    harness.restore();
+  }
+});
+
 function createDomHarness() {
   const previousGlobals = {
     window: globalThis.window,

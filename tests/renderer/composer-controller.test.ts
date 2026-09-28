@@ -110,6 +110,62 @@ describe("ComposerControllerRegistry", () => {
   });
 
   // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary draft flushはdebounce timerを進めずに最新値の保存を開始し、進行中の保存と後続編集を直列に待つ"
+  // oracle = { type = "contract", ref = "Issue #737 Auxiliary draft send and close flush lifecycle" }
+  // fault = "flushが残りdebounceを待つ、またはin-flight保存と並列に後続値を保存する"
+  // observable = "fake timerをtickせずに開始した保存入力、保存最大同時数、flush完了状態"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-draft-persistence-owner flush"
+  // lifecycle = "permanent"
+  // impact = "入力直後の送信・closeが不要な待機を受けるか、保存順逆転で下書きを失う"
+  // distinction = "既存の直列保存testはdebounceMs=0で残りtimerのflush解除を検証しない"
+  // @end-test-value
+  it("flushはdebounceを解除して保存を直列に完了する", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const saves: string[] = [];
+    let activeSaves = 0;
+    let maximumActiveSaves = 0;
+    let firstStarted!: () => void;
+    let releaseFirst!: () => void;
+    let secondStarted!: () => void;
+    let releaseSecond!: () => void;
+    const firstSaveStarted = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const secondSaveStarted = new Promise<void>((resolve) => { secondStarted = resolve; });
+    const owner = new AuxiliaryDraftPersistenceOwner({
+      load: async () => ({ auxiliarySessionId: "a", parentSessionId: "p", incarnation: "i", durableRevision: 0, text: "", updatedAt: "" }),
+      now: () => "now",
+      save: async (record) => {
+        saves.push(record.text);
+        activeSaves += 1;
+        maximumActiveSaves = Math.max(maximumActiveSaves, activeSaves);
+        await new Promise<void>((resolve) => {
+          if (record.text === "AB") { releaseFirst = resolve; firstStarted(); }
+          else { releaseSecond = resolve; secondStarted(); }
+        });
+        activeSaves -= 1;
+        return { outcome: "saved" as const, record: { ...record, durableRevision: record.durableRevision + 1 } };
+      },
+    });
+    owner.enqueue("A");
+    owner.enqueue("AB");
+    let flushed = false;
+    const flush = owner.flush().then(() => { flushed = true; });
+    await firstSaveStarted;
+    assert.deepEqual(saves, ["AB"]);
+    owner.enqueue("ABC");
+    releaseFirst();
+    await secondSaveStarted;
+    assert.equal(flushed, false);
+    assert.deepEqual(saves, ["AB", "ABC"]);
+    assert.equal(maximumActiveSaves, 1);
+    releaseSecond();
+    await flush;
+    assert.equal(flushed, true);
+    assert.equal(owner.hasPending, false);
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "Send clear and failure restore are revision guarded against ABA and follow-up input"
   // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }

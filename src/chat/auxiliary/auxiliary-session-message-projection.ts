@@ -258,6 +258,31 @@ export function buildMessageListProjection(
   return { messages, sources, keys, groups };
 }
 
+export function projectLiveAssistantOnSessionHistory(
+  history: MessageListProjection,
+  sessionMessages: Message[],
+  sessionId: string,
+  liveAssistant: LiveAssistantProjection | null,
+): MessageListProjection {
+  const live = normalizeLiveAssistantProjection(liveAssistant);
+  if (!live || live.sessionId !== sessionId) return history;
+
+  const key = buildLiveAssistantProjectionKey(live.sessionId, live.threadId, live.messageIndex);
+  if (hasAssistantMessageAtIndex(sessionMessages, live.messageIndex)) {
+    if (history.keys[live.messageIndex] === key) return history;
+    const keys = [...history.keys];
+    keys[live.messageIndex] = key;
+    return { ...history, keys };
+  }
+
+  return {
+    messages: [...history.messages, { role: "assistant", text: live.text }],
+    sources: [...history.sources, { kind: "live-assistant", sessionId, threadId: live.threadId }],
+    keys: [...history.keys, key],
+    groups: [...history.groups, null],
+  };
+}
+
 export function buildLiveAssistantProjectionKey(
   sessionId: string,
   threadId: string | null,

@@ -70,6 +70,7 @@ export function PromptTemplateWorkspace({
 
   useEffect(() => {
     let active = true;
+    let receivedNotification = false;
     const applyTemplates = (nextTemplates: PromptTemplate[]) => {
       if (!active) {
         return;
@@ -96,9 +97,14 @@ export function PromptTemplateWorkspace({
         return nextTemplates[0] ? toEditorState(nextTemplates[0]) : EMPTY_EDITOR;
       });
     };
-    const unsubscribe = api.subscribePromptTemplates(applyTemplates);
-    void api.listPromptTemplates().then(applyTemplates).catch((loadError) => {
-      if (active) {
+    const unsubscribe = api.subscribePromptTemplates((nextTemplates) => {
+      receivedNotification = true;
+      applyTemplates(nextTemplates);
+    });
+    void api.listPromptTemplates().then((nextTemplates) => {
+      if (!receivedNotification) applyTemplates(nextTemplates);
+    }).catch((loadError) => {
+      if (active && !receivedNotification) {
         setIsLoading(false);
         setError(errorMessage(loadError));
       }

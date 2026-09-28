@@ -54,8 +54,12 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - Agent は chat layout に乗せ、機能側には state / service / adapter だけを置く
 - `chat/conversation/session-message-column.tsx` は会話本文、artifact、検索、仮想スクロールと pending row の配置を担当する。pending row 内の承認・入力要求は `chat/runtime/live-request-surface.tsx` が所有し、フォーム状態、validation、応答 payload、送信中の操作制御を conversation 列へ戻さない
 - artifact の展開状態と開閉操作は `chat/conversation/session-chat-conversation-feature.ts` が Window 内の message key ごとに所有する。会話の切り替えで展開状態を失わず、App は状態・setter・開閉 callback を構築しない
-- File Explorer と中央 file / Git preview の接続は `file-explorer/use-session-files-feature.tsx` が所有する。タブ、再読込、preview の選択と表示分岐を機能内へ閉じ、Session Window には表示面、開閉状態、composer への挿入接続だけを公開する
-- Glossary の検索・選択状態と pane props は `glossary/use-session-glossary.ts`、Audit Log の取得状態と modal props は `chat/runtime/session-audit-log-state.ts` がそれぞれ組み立てる。Window 側で個別フィールドへ展開して再構築しない
+- File Explorer と中央 file / Git preview は `file-explorer/session-files-feature.tsx` が独立した描画境界で `use-session-files-feature.tsx` を呼ぶ。タブ、再読込、preview requestと読込結果をその境界内に保持し、shellの安定したpane／preview hostへ表示する。Windowにはpreview有無、閉じる操作、composerへの挿入接続だけを渡す
+- `chat/runtime/session-context-feature.tsx` はContext tab、telemetry、Glossaryの検索・選択を所有する。会話へ必要なannotation matcherと用語を開く操作だけを共有し、検索入力や結果更新でWindowを再投影しない。`session-audit-feature.tsx` はAudit一覧・詳細取得とmodalを所有し、Retry／Latest Commandに必要な保存済みsummaryだけをWindowへ通知する
+- live本文・step・usageの表示snapshotは会話列、Context、Auditの表示ownerが購読する。Window shellの購読は実行有無、入力待ち、本文出力開始、command実行有無、errorという操作・通知に必要な変化だけを反映し、本文tokenごとに他機能を再構築しない
+- 会話列は確定履歴の投影とlive末尾を分離し、保存確定時のmessage key、Bookmark、検索、navigatorを保持する。Previewや幅0で見えない会話列は表示用live購読と追従を休止し、再表示時に最新snapshotへ追いつく。runとdraft保存の寿命は表示状態から独立する
+- selection toolbarの位置計測は対象列に選択がある時だけ行い、DOMのresize／mutation監視も選択中に限定する。選択・Copy／Quoteとkeyboard操作を維持する
+- splitterのdrag中は対象領域の寸法を局所更新し、pointer up／cancelで最後の表示値を状態ownerへ確定する。中央幅の保存も確定時だけ行い、clickとkeyboard変更はその操作内で確定する
 - Session Window は機能間の接続を担当し、Composer の入力・picker・表示 props、Context Pane の選択・表示投影、Shell の dock 操作・resize props は各機能 owner が組み立てる。`chat/session-chat-window-composition.tsx` は owner が返す表示面を共通 ChatWindow へ接続し、全機能の詳細状態を受け取る projection は持たない
 - `Session` という名前の UI 実装に provider 固有処理を詰め込まない。必要な差分は capability / adapter として注入する
 - Session context pane の `Messages` tab は session window が明示的に capability を有効化した場合だけ表示し、既存の `LatestCommand → Messages → Glossary → Reasoning → Tasks` 順を保つ
@@ -382,6 +386,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - assistant本文はgradientを使わず、`main`の細い左線とavatarの縁、控えめな背景色で周囲から区別する。user本文は控えめなsurfaceで区別し、通常のassistantとuserの枠は同じ丸みを持つ。pendingとAuxiliary groupの状態表現は維持する
 - composer settings は独立したaccent背景を持たず、周囲のsurfaceと同じ背景を使う
 - `Send / Cancel` は mate `main`
+- Main／Auxiliaryの送信時の自動折りたたみは共通の`Close Action Dock After Send`設定を使う。送信準備中に対象会話やpickerを切り替えた場合、または手動でdockを操作した場合は、その後に返った古い送信処理で新しい開閉意図を上書きしない
 - sendability 判定は共通resolverへ寄せ、Composer内の購読と送信shortcutで最新draft・preview・強制feedback条件を使う。入力のたびにSession shellを更新せず、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う
 - Send disabled 条件は submit button / `Ctrl+Enter` / `Cmd+Enter` guard で一致させ、blank / whitespace-only draft の no-op 送信を通さない
 - blank / whitespace-only draft は通常時は helper 文言を常時出さないが、blocked 送信ショートカットを押した時だけ inline reason を見せる

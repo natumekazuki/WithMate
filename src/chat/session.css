@@ -1,3 +1,7 @@
+.session-feature-host {
+  display: contents;
+}
+
 .session-action-dock.compact {
   gap: 0;
   cursor: pointer;
@@ -5,6 +9,7 @@
 
 .session-action-dock-compact-row {
   display: grid;
+  min-height: 40px;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;

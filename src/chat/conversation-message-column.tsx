@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { type SessionMessageColumnProps } from "./conversation/session-message-column.js";
 import { useSessionMessageListFollowing } from "./shell/session-chat-layout-hooks.js";
 import { StableSessionMessageColumn } from "./stable-session-message-column.js";
-import { buildLiveAssistantProjectionKey, buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "./auxiliary/auxiliary-session-message-projection.js";
+import { buildLiveAssistantProjectionKey, buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, projectLiveAssistantOnSessionHistory, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "./auxiliary/auxiliary-session-message-projection.js";
 import { buildMessageCollapseTargets, buildMessageNavigatorEntries, type MessageCollapseStateEntry, type MessageJumpRequest, type MessageNavigatorEntry } from "./conversation/session-message-collapse.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
@@ -119,23 +119,40 @@ export function useConversationMessageColumn({
     conversation.bridge && (hasSavedBridge || session?.runState === "running")
       ? conversation.bridge : null
   );
-  const projection = useMemo(() => buildMessageListProjection(messages, [], sessionId, {
-    liveAssistant: bridge,
+  const latestUserMessageIndex = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index].role === "user") return index;
+    }
+    return -1;
+  }, [messages]);
+  const historyProjection = useMemo(() => buildMessageListProjection(messages, [], sessionId, {
     primaryMessageSourceKind: messageSourceKind,
-  }), [messages, sessionId, messageSourceKind, bridge?.threadId, bridge?.messageIndex, bridge?.text]);
-  // 保存済みbridgeのkeyは終了後も維持するが、後続promptの待機表示には使わない。
-  const pendingResponseMessageKey = bridge && !messages.some((message, index) => (
-    index > bridge.messageIndex && message.role === "user"
-  ))
+  }), [messages, sessionId, messageSourceKind]);
+  const bridgeKey = bridge
     ? buildLiveAssistantProjectionKey(bridge.sessionId, bridge.threadId, bridge.messageIndex)
     : null;
-  const messageScrollSignature = useMemo(
-    () => `${projection.keys.join("\u001f")}:${projection.messages.map((message) => message.text.length).join(",")}`,
-    [projection],
+  const keyedHistory = useMemo(() => projectLiveAssistantOnSessionHistory(
+    historyProjection, messages, sessionId,
+    hasSavedBridge ? bridge : null,
+  ), [historyProjection, messages, sessionId, hasSavedBridge, bridgeKey]);
+  const projection = useMemo(() => hasSavedBridge
+    ? keyedHistory
+    : projectLiveAssistantOnSessionHistory(historyProjection, messages, sessionId, bridge),
+  [historyProjection, keyedHistory, messages, sessionId, hasSavedBridge, bridgeKey, bridge?.text]);
+  // 保存済みbridgeのkeyは終了後も維持するが、後続promptの待機表示には使わない。
+  const pendingResponseMessageKey = bridge && latestUserMessageIndex <= bridge.messageIndex
+    ? buildLiveAssistantProjectionKey(bridge.sessionId, bridge.threadId, bridge.messageIndex)
+    : null;
+  const historyScrollSignature = useMemo(
+    () => `${keyedHistory.keys.join("\u001f")}:${keyedHistory.messages.map((message) => message.text.length).join(",")}`,
+    [keyedHistory],
   );
+  const messageScrollSignature = projection.messages.length === keyedHistory.messages.length
+    ? historyScrollSignature
+    : `${historyScrollSignature}\u001f${bridgeKey}:${bridge?.text.length ?? 0}`;
   const previousTargets = useRef<SessionMessageColumnProps["messageCollapseTargets"]>([]);
-  const collapseTargets = useMemo(() => buildMessageCollapseTargets(projection.messages, projection.sources, projection.keys, previousTargets.current),
-    [projection]);
+  const collapseTargets = useMemo(() => buildMessageCollapseTargets(keyedHistory.messages, keyedHistory.sources, keyedHistory.keys, previousTargets.current),
+    [keyedHistory]);
   const columnCharacter = useMemo(() => session?.characterId ? {
     id: session.characterId,
     name: session.character ?? "",

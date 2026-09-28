@@ -19,13 +19,13 @@ export type SessionChatRuntimeFeatureInput = {
   onDismissInlinePathFeedback: () => void;
   executionOptionsFeedback?: string;
   onDismissExecutionOptionsFeedback?: () => void;
-  contextPane: SessionContextPaneProps;
+  contextPane?: SessionContextPaneProps;
 };
 
 export type SessionChatRuntimeFeature = {
   recoveryActions: ReturnType<typeof buildLiveSessionRecoveryActions>;
   errorNotices: ChatErrorNotice[];
-  rightPaneProps: ReturnType<typeof buildLiveSessionCommonContextPaneProps>;
+  rightPaneProps?: ReturnType<typeof buildLiveSessionCommonContextPaneProps>;
 };
 
 /**
@@ -72,6 +72,6 @@ export function buildSessionChatRuntimeFeature(
       composerFeedback: input.composerFeedback,
       additionalNotices,
     }),
-    rightPaneProps: buildLiveSessionCommonContextPaneProps(input.contextPane),
+    rightPaneProps: input.contextPane ? buildLiveSessionCommonContextPaneProps(input.contextPane) : undefined,
   };
 }

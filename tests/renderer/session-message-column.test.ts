@@ -1822,6 +1822,41 @@ test("SessionMessageColumn は未選択時に response action を描画しない
   assert.equal((html.match(/data-message-text-actions="true"/g) ?? []).length, 1);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "本文選択がない会話操作ではselection toolbar用のviewport矩形を読まない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: UI Implementation Boundary" }
+// fault = "未選択のscrollやDOM更新でもtoolbar位置のlayout計測を行う"
+// observable = "message listのgetBoundingClientRect呼び出し回数"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumn selection response actions"
+// lifecycle = "permanent"
+// impact = "通常の会話閲覧・streaming時に不要な同期layout計測が発生する"
+// distinction = "既存testはtoolbarの有無を検証するが、未選択時のgeometry readを観測しない"
+// @end-test-value
+test("SessionMessageColumn は未選択時にselection toolbarの矩形を計測しない", async () => {
+  const mounted = await mountSessionMessageColumn({
+    messages: [{ role: "assistant", text: "assistant result" }],
+    onCopyMessageText: () => {},
+  });
+  try {
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+    let geometryReads = 0;
+    Object.defineProperty(messageList, "getBoundingClientRect", {
+      configurable: true,
+      value: () => { geometryReads += 1; return createRect({ left: 0, top: 0, width: 500, height: 500 }); },
+    });
+    await act(async () => {
+      mounted.dom.window.document.dispatchEvent(new mounted.dom.window.Event("selectionchange"));
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll", { bubbles: true }));
+    });
+    assert.equal(geometryReads, 0);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
 test("SessionMessageColumn は保持された assistant text を run の終了状態に関係なく response action 対象にする", () => {
   const states = [
     { label: "cancel前", isRunning: true, liveRunErrorMessage: "" },

@@ -9,15 +9,15 @@ import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryの送信を相互にbusy扱いせず、同一Auxiliaryの重複送信を一度に抑止する。quitでは未確定送信と失敗復元の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは実行完了を待たず、凍結後の送信前保存からのrun開始と添付を止める"
+// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryの送信を相互にbusy扱いせず、同一Auxiliaryの重複送信を一度に抑止する。送信時のActionDockはMain/Auxiliaryとも設定を守り、保存待機中の手動開閉を遅い送信で巻き戻さない。quitでは未確定送信と失敗復元の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは実行完了を待たず、凍結後の送信前保存からのrun開始と添付を止める"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
-// fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの重複runを発行する、凍結中の失敗復元を表示しない、復元を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
-// observable = "textarea/feedback/Sendの状態、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数"
+// fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの重複runを発行する、設定無効でもActionDockを縮小する、保存待機後に新しい手動開閉を上書きする、凍結中の失敗復元を表示しない、復元を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
+// observable = "textarea/feedback/SendとActionDock expanded classの状態、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数"
 // observation_boundary = "component-behavior"
 // scope = "composer-window-input-wiring"
 // lifecycle = "permanent"
 // impact = "多数会話での入力遅延、切替による下書き消失、古い入力や別会話への誤送信を防ぐ"
-// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証し、A送信pending中のB送信、同一Aの重複入力、送信pending→quit待機→失敗復元保存→ACKの順序、非選択owner、closeとの違いも確認する。壁時計の性能値をCI合否にしない"
+// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証し、設定切替と保存待機中の手動開閉、A送信pending中のB送信、同一Aの重複入力、送信pending→quit待機→失敗復元保存→ACKの順序、非選択owner、closeとの違いも確認する。壁時計の性能値をCI合否にしない"
 // @end-test-value
 test("Session Windowの入力境界と切替後の最新値送信を実配線で守る", { timeout: 30_000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
@@ -48,6 +48,9 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     Buffer,
   });
   let summaryReads = 0;
+  let notifyAppSettings: Parameters<WithMateWindowApi["subscribeAppSettings"]>[0] | undefined;
+  api.subscribeAppSettings = (listener) => { notifyAppSettings = listener; return () => { notifyAppSettings = undefined; }; };
+  const initialSettings = await api.getAppSettings();
   let fullSaves = 0;
   const getAuxiliary = api.getAuxiliarySession;
   api.getAuxiliarySession = async (id) => {
@@ -173,8 +176,15 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.ok(button);
     await act(async () => { button.click(); });
   };
+  const dockExpanded = () => dom.window.document.querySelector(".session-action-dock-slot")?.classList.contains("is-expanded") === true;
+  const toggleDock = async () => {
+    const button = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Collapse Action Dock"], button[aria-label="Expand Action Dock"]');
+    assert.ok(button);
+    await act(async () => { button.click(); });
+  };
   try {
     await act(async () => { root.render(<App />); });
+    assert.equal(dockExpanded(), true);
     assert.equal(textarea().disabled, false);
     const beforeMain = summaryReads;
     for (const text of ["h", "he", "hello", "hello latest"]) await input(text);
@@ -191,6 +201,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(sent.length, 1, "a restored draft must be sendable without editing first");
     assert.equal(sent[0].text, "restored auxiliary draft");
     assert.equal(textarea().value, "");
+    assert.equal(dockExpanded(), true, "disabled auto-collapse keeps Auxiliary Action Dock expanded");
     const beforeAuxiliary = summaryReads;
     const auxiliarySaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "auxiliary draft") resolve(); }; });
     for (const text of ["a", "au", "auxiliary draft"]) await input(text);
@@ -206,6 +217,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
     assert.deepEqual(sent.at(-1), { id: "benchmark-main", text: "hello latest" });
     assert.equal(textarea().value, "");
+    assert.equal(dockExpanded(), true, "disabled auto-collapse keeps Main Action Dock expanded");
     await target("Auxiliary");
     await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
     assert.equal(sent.length, 3, "a second Auxiliary send must use the revision after the previous consume");
@@ -495,6 +507,31 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     });
     assert.deepEqual(sent.at(-1), { id: "benchmark-main", text: "fixed draft" }, "keyboard submission must read the same latest draft as Send");
     assert.deepEqual(alerts, []);
+
+    await act(async () => { notifyAppSettings?.({ ...initialSettings, autoCollapseActionDockOnSend: true }); });
+    await input("Main auto collapse");
+    await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
+    assert.equal(dockExpanded(), false, "a fresh Main send follows enabled auto-collapse");
+    await toggleDock();
+    assert.equal(dockExpanded(), true);
+    await target("Auxiliary");
+    heldSave = new Promise<void>((resolve) => { releaseSave = resolve; });
+    const dockSaveStarted = new Promise<void>((resolve) => { notifySaveStarted = resolve; });
+    await input("Auxiliary pending dock intent");
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
+      await dockSaveStarted;
+    });
+    await toggleDock();
+    await toggleDock();
+    assert.equal(dockExpanded(), true);
+    const dockRunCompleted = new Promise<void>((resolve) => { notifyRunCompleted = () => resolve(); });
+    await act(async () => { releaseSave(); await dockRunCompleted; });
+    assert.equal(dockExpanded(), true, "a delayed Auxiliary send preserves the newer manual dock intent");
+    notifyRunCompleted = undefined;
+    await input("Auxiliary auto collapse");
+    await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
+    assert.equal(dockExpanded(), false, "a fresh Auxiliary send follows enabled auto-collapse");
   } finally {
     await act(async () => { root.unmount(); });
     dom.window.close();

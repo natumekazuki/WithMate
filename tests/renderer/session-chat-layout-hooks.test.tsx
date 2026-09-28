@@ -765,14 +765,14 @@ test("useSessionSidePanes は左右ペインを排他表示し、閉じたペイ
 
 // @test-value v2
 // kind = "contract"
-// claim = "HeaderとActionDockの先行操作は遅い初期設定で巻き戻らず、後続snapshotにも追従しない"
-// oracle = { type = "contract", ref = "session chat layout presentation" }
-// fault = "遅延した初期設定がユーザー操作済みのHeaderまたはActionDock状態を上書きする"
-// observable = "Header/ActionDock stateとchange callback"
+// claim = "Headerの先行操作は遅い初期設定で巻き戻らず、初期化後のHeader/ActionDockは後続snapshotへ追従しない。ActionDock操作は同値操作でも捕捉済みの開閉意図を失効させる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock; UI Implementation Boundary" }
+// fault = "遅延した初期設定が操作済み状態を上書きする、または同値のActionDock操作を無視して古い送信後の開閉を適用する"
+// observable = "Header/ActionDock state、change callback、captureActionDockIntentの有効性"
 // observation_boundary = "component-behavior"
 // scope = "useChatLayoutPresentation"
 // lifecycle = "permanent"
-// impact = "チャットdockの表示状態がユーザー操作から意図せず変化する"
+// impact = "チャットdockの表示状態がユーザー操作や待機中の明示意図から意図せず変化する"
 // distinction = "priority配置は固定化され、このテストは表示状態の同期契約だけを検証する"
 // @end-test-value
 test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設定で巻き戻さず、後続snapshotへ追従しない", async () => {
@@ -796,6 +796,10 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
   let root: Root | null = null;
   const headerChanges: ChatHeaderVisibility[] = [];
   const actionDockChanges: ChatActionDockMode[] = [];
+  const dockIntent = {
+    capture: undefined as (() => () => boolean) | undefined,
+    setPinned: undefined as ((value: boolean) => void) | undefined,
+  };
 
   function Harness({
     initialHeader,
@@ -810,6 +814,8 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
       onHeaderChange: (value) => headerChanges.push(value),
       onActionDockChange: (value) => actionDockChanges.push(value),
     });
+    dockIntent.capture = state.captureActionDockIntent;
+    dockIntent.setPinned = state.setIsActionDockPinnedExpanded;
     return React.createElement(
       "div",
       null,
@@ -848,6 +854,8 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
     assert.ok(dockToggle);
     assert.ok(header);
     assert.ok(dock);
+    const beforeHydration = dockIntent.capture?.();
+    assert.ok(beforeHydration);
 
 
 
@@ -860,6 +868,7 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
         initialActionDock: "expanded",
       }));
     });
+    assert.equal(beforeHydration(), true);
     assert.equal(header.textContent, "visible");
     assert.equal(dock.textContent, "expanded");
 
@@ -872,8 +881,15 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
     assert.equal(header.textContent, "visible");
     assert.equal(dock.textContent, "expanded");
 
+    const beforeToggle = dockIntent.capture?.();
+    assert.ok(beforeToggle);
     await act(async () => dockToggle.click());
     assert.equal(dock.textContent, "compact");
+    assert.equal(beforeToggle(), false);
+    const beforeSameValueIntent = dockIntent.capture?.();
+    assert.ok(beforeSameValueIntent);
+    await act(async () => dockIntent.setPinned?.(false));
+    assert.equal(beforeSameValueIntent(), false);
     assert.deepEqual(headerChanges, ["visible"]);
     assert.deepEqual(actionDockChanges, ["compact"]);
   } finally {

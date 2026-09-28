@@ -6,10 +6,21 @@ import {
 } from "./session-live-run-subscription.js";
 import type { OwnedLiveSessionRunState } from "./session-live-run-state.js";
 
-export function useActiveSessionLiveRun(
+function sameRunControls(left: OwnedLiveSessionRunState["state"], right: OwnedLiveSessionRunState["state"]): boolean {
+  return Boolean(left) === Boolean(right)
+    && Boolean(left?.assistantText) === Boolean(right?.assistantText)
+    && Boolean(left?.approvalRequest) === Boolean(right?.approvalRequest)
+    && Boolean(left?.elicitationRequest) === Boolean(right?.elicitationRequest)
+    && left?.errorMessage === right?.errorMessage
+    && Boolean(left?.steps.some((step) => step.status === "in_progress"))
+      === Boolean(right?.steps.some((step) => step.status === "in_progress"));
+}
+
+function useSessionLiveRunSubscription(
   api: WithMateWindowApi | null,
   selectedSession: Session | null,
   activeRunSessionId: string | null,
+  controlsOnly = false,
 ): {
   hasSelectedSessionLiveRun: boolean;
   getLiveRunRevision: () => number;
@@ -17,18 +28,20 @@ export function useActiveSessionLiveRun(
   setLiveRunState: (update: SetStateAction<OwnedLiveSessionRunState>) => void;
 } {
   const [liveRunStates, setLiveRunStates] = useState<Record<string, OwnedLiveSessionRunState>>({});
+  const latestStatesRef = useRef<Record<string, OwnedLiveSessionRunState>>({});
   const liveRunRevisionRef = useRef(0);
   const setLiveRunForSession = useCallback((sessionId: string | null, update: SetStateAction<OwnedLiveSessionRunState>) => {
     if (!sessionId) {
       return;
     }
     liveRunRevisionRef.current += 1;
-    setLiveRunStates((current) => {
-      const previous = current[sessionId] ?? { ownerSessionId: sessionId, state: null };
-      const next = typeof update === "function" ? update(previous) : update;
-      return next.ownerSessionId === sessionId ? { ...current, [sessionId]: next } : current;
-    });
-  }, []);
+    const previous = latestStatesRef.current[sessionId] ?? { ownerSessionId: sessionId, state: null };
+    const next = typeof update === "function" ? update(previous) : update;
+    if (next.ownerSessionId !== sessionId) return;
+    latestStatesRef.current = { ...latestStatesRef.current, [sessionId]: next };
+    setLiveRunStates((current) => controlsOnly && sameRunControls(current[sessionId]?.state ?? null, next.state)
+      ? current : { ...current, [sessionId]: next });
+  }, [controlsOnly]);
   const liveRunState = liveRunStates[activeRunSessionId ?? ""] ?? { ownerSessionId: activeRunSessionId, state: null };
   const setLiveRunState = useCallback(
     (update: SetStateAction<OwnedLiveSessionRunState>) => setLiveRunForSession(activeRunSessionId, update),
@@ -55,4 +68,23 @@ export function useActiveSessionLiveRun(
   }, [activeRunSessionId, api, selectedSession?.id, setLiveRunState]);
 
   return { getLiveRunRevision, hasSelectedSessionLiveRun, selectedSessionLiveRun, setLiveRunState };
+}
+
+/** Full display snapshots belong to the conversation, context, or audit surface. */
+export function useActiveSessionLiveRun(api: WithMateWindowApi | null, selectedSession: Session | null, activeRunSessionId: string | null) {
+  return useSessionLiveRunSubscription(api, selectedSession, activeRunSessionId);
+}
+
+/** Shell consumers only react to changes that affect their controls and notices. */
+export function useSessionRunControls(api: WithMateWindowApi | null, selectedSession: Session | null, activeRunSessionId: string | null) {
+  const { selectedSessionLiveRun: liveRun, ...operations } = useSessionLiveRunSubscription(api, selectedSession, activeRunSessionId, true);
+  return {
+    ...operations,
+    hasLiveRun: Boolean(liveRun),
+    hasAssistantText: Boolean(liveRun?.assistantText),
+    hasApprovalRequest: Boolean(liveRun?.approvalRequest),
+    hasElicitationRequest: Boolean(liveRun?.elicitationRequest),
+    hasInProgressStep: Boolean(liveRun?.steps.some((step) => step.status === "in_progress")),
+    errorMessage: liveRun?.errorMessage ?? "",
+  };
 }
