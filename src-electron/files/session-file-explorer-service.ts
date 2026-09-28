@@ -453,16 +453,7 @@ export class SessionFileExplorerService {
     targetPath = selectedTargetPath;
 
     if (targetStats.isDirectory()) {
-      const directoryRoot = resolvedRoots.find(({ realPath: rootRealPath }) => (
-        isPathInside(rootRealPath, targetRealPath)
-      ));
-      return directoryRoot
-        ? { type: "directory", targetPath: targetRealPath }
-        : {
-            type: "not-previewable",
-            targetPath,
-            message: "The directory is outside the current Session file roots.",
-          };
+      return { type: "directory", targetPath: targetRealPath };
     }
     if (!targetStats.isFile()) {
       return { type: "not-previewable", targetPath, message: "The local path is not a file or directory." };

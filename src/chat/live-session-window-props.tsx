@@ -28,7 +28,7 @@ type LiveSessionWindowShellPropsInput = {
   leftSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
   isLeftPaneVisible?: boolean;
   isRightPaneVisible: boolean;
-  rightPaneProps: SessionContextPaneProps;
+  rightPaneProps?: SessionContextPaneProps;
   modals: ChatWindowProps["modals"];
   baseClassName?: string;
   isAuxiliaryMode?: boolean;

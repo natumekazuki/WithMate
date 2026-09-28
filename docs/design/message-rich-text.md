@@ -7,14 +7,17 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 ## Link Handling
 
 - `http://` / `https://` は外部ブラウザで開く
-- Session message のローカル絶対 path と workspace 相対 path は detached file preview で開く。外部 URL と directory は既存の OS 導線を維持する
+- Session message のローカル絶対 path と workspace 相対 path は、regular fileならroot内外ともdetached file previewで開く。directoryならroot内外とも明示的なlink操作でOSのfile managerへ渡す。表示やlink解決だけでは自動openしない
 - ローカル path link に `#L10` などの fragment が付いている場合は、少なくとも path 本体を開けるように fragment を無視して扱う。`:10` または `:10:4` 形式は、指定された path が存在しない場合だけ行番号または行番号と列番号として扱う
-- Markdown file preview の相対 link と相対 image は、その file の親 directory と同じ認可済み root の中で解決する
+- Markdown file previewの相対linkはそのfileの親directoryを基準に解決し、root外のfile／directoryにも明示的に移動できる。相対imageを含む自動local resource読込は登録root内だけに制限する
+- directory linkはMainでcanonical real pathへ解決し、symlink／junctionも解決先を使う。OS open前にdirectoryのkindとcanonical path、送信元Windowの同一性とSession所有／Preview baseを再確認する。既解決pathはURLや行番号suffixとして再解釈しない
+- macOSでは通常folderもapp bundle／packageもFinderで対象を選択表示する。`/usr/bin/open -R`へcanonical pathを独立した引数で渡し、既定appの起動へ委譲しない。commandの終了を待ち、失敗を成功扱いや既定openへのfallbackにしない。Windows／Linuxでは既存のdirectory openを使う
+- directoryを開いてもAdditional DirectoryやProviderのアクセス権限を追加せず、アプリ内directory列挙のroot制限は維持する。不正path、消失、file／special objectへの差替、canonical path変更、所有関係の不一致、OS open失敗は操作元のfeedbackへ返す。成功時は既存の操作元errorを消す
 - OS の既定アプリで file を開けない場合は理由を表示し、通常の Open から Explorer 表示へ自動で切り替えない
 - render 済み link の context menu は`Copy link`を提供する。protocol-relativeを含む外部 URL は表示 label ではなく `href` target を保ち、local / `file:` / Windows absolute path は通常の Open と同じ Main process の path 解決境界で decode・filesystem path 変換して clipboard へ渡す。最終的な copy target に制御文字を含む場合は clipboard を更新せず失敗として通知する
 - HTTP / HTTPS、`mailto:`、workspace 相対 path、`file:`、Windows absolute pathをcopy対象とし、unsafe schemeで除去されたlinkと同一pageの`#` anchorは対象にしない
 - context menuはmouseの右clickに加え、focusしたlinkからShift+F10またはContext Menu keyで到達できるnative menuとする。dismissはcopy成功として通知しない
-- detached preview の navigation と root authorization は `docs/adr/020-file-preview-window-navigation.md` を正本とする
+- detached previewのnavigationとroot authorizationの判断は[ADR 020](../adr/020-file-preview-window-navigation.md)、明示directory openの判断は[ADR 025](../adr/025-explicit-directory-link-open.md)を参照する
 
 ## Image Handling
 

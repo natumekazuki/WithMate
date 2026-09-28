@@ -240,8 +240,12 @@ export function useAuxiliaryWorkspace(input: {
         || requestParentId !== parentSessionIdRef.current
         || requestMutationRevision !== mutationRevisionRef.current
       ) return;
-      setSummaries(next);
-      summariesRef.current = next;
+      const previous = summariesRef.current;
+      const stable = next.length === previous.length && next.every((summary, index) =>
+        summary.id === previous[index].id && sameSummary(summary, previous[index]))
+        ? previous : next;
+      if (stable !== previous) setSummaries(stable);
+      summariesRef.current = stable;
       const preferred = prefsRef.current?.selectedId ?? null;
       const requested = requestedSelectionRef.current;
       const requestedId = pendingSelectionIdRef.current;
@@ -651,6 +655,17 @@ export function useAuxiliaryWorkspace(input: {
     for (const session of detailsRef.current.values()) getBinding(session.id).setSession(session);
   }, [getBinding]);
 
+  const auxiliaryItems = useMemo(() => summaries.map((summary) => ({
+    id: summary.id,
+    label: summary.preview?.trim() ?? "",
+    searchText: summary.preview?.trim() ?? "",
+    icon: createElement(CharacterAvatar, {
+      character: { name: "", iconPath: summary.characterIconPath ?? "" },
+      size: "tiny",
+    }),
+    isProcessing: summary.runState === "running",
+  })), [summaries]);
+
   const buildConcurrentChats = useCallback((input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps => {
     const mainSessionId = input.mainSession?.id ?? input.messageColumn.sessionId;
     const mainMessages = input.mainSession?.messages ?? input.messageColumn.messages;
@@ -683,16 +698,7 @@ export function useAuxiliaryWorkspace(input: {
       mainLiveRun: input.mainLiveRun,
       auxiliaryLiveRun: input.auxiliaryLiveRun,
       selectedAuxiliaryId: selectedId,
-      auxiliaryItems: summaries.map((summary) => ({
-        id: summary.id,
-        label: summary.preview?.trim() ?? "",
-        searchText: summary.preview?.trim() ?? "",
-        icon: createElement(CharacterAvatar, {
-          character: { name: "", iconPath: summary.characterIconPath ?? "" },
-          size: "tiny",
-        }),
-        isProcessing: summary.runState === "running",
-      })),
+      auxiliaryItems,
       onAddAuxiliary: input.onAddAuxiliary,
       isAddAuxiliaryDisabled: input.isAddAuxiliaryDisabled,
       target,
@@ -705,7 +711,7 @@ export function useAuxiliaryWorkspace(input: {
       loading: loading || detailLoading,
       error: detailError?.message ?? error?.message ?? null,
     };
-  }, [commitWidthRatio, detailError, detailLoading, error, loading, selectSession, selectedId, setTarget, setWidthRatio, summaries, target, widthRatio]);
+  }, [auxiliaryItems, commitWidthRatio, detailError, detailLoading, error, loading, selectSession, selectedId, setTarget, setWidthRatio, target, widthRatio]);
 
   return useMemo(() => ({
     summaries,

@@ -12,6 +12,7 @@ import {
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { OwnedLiveSessionRunState } from "../../src/chat/runtime/session-live-run-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
 
 function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
   return {
@@ -700,5 +701,66 @@ describe("runAuxiliarySessionSendOperation", () => {
     assert.deepEqual(clearedSessionIds, ["aux-1"]);
     assert.deepEqual(restoredSessions, [beforeSession]);
     assert.equal(currentSession, beforeSession);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary送信Aの遅い失敗はA→B→A切替後も送信元Aの未変更draftを復元し、Aに後続入力があれば上書きしない"
+  // oracle = { type = "contract", ref = "Issue #737 SessionWindow asynchronous operation lifecycle" }
+  // fault = "会話mutationのstale判定で送信元draftの復元を省く、またはowner revisionを無視して後続入力を上書きする"
+  // observable = "stale結果、A/B owner別draft、会話復旧callbackの呼出回数"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-send-late-error"
+  // lifecycle = "permanent"
+  // impact = "送信元Aの下書きが失われるか、後から入力した本文を古い送信で破壊する"
+  // distinction = "通常の失敗復旧testとComposerRegistry単体testでは会話mutation失効後の送信元owner復元を検出できない"
+  // @end-test-value
+  it("A→B→A後の失敗は送信元draftだけ復元し、後続入力を保護する", async () => {
+    for (const laterEdit of [false, true]) {
+      const registry = new ComposerControllerRegistry();
+      const ownerA = { kind: "auxiliary" as const, id: "aux-1" };
+      const ownerB = { kind: "auxiliary" as const, id: "aux-2" };
+      registry.setDraft(ownerA, "hello");
+      registry.setDraft(ownerB, "B draft");
+      const sendRevision = registry.capture(ownerA).revision;
+      let clearedRevision: number | null = null;
+      const beforeSession = makeAuxiliarySession();
+      const mutationRevision = { current: 0 };
+      let currentSession = beforeSession;
+      let sessionRecoveryCount = 0;
+      let rejectRun!: (error: Error) => void;
+      let signalRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { signalRunStarted = resolve; });
+      const runResult = new Promise<AuxiliarySession>((_resolve, reject) => { rejectRun = reject; });
+      const operation = runAuxiliarySessionSendOperation({
+        activeSession: beforeSession,
+        executionOptions: captureSessionExecutionOptions(beforeSession),
+        messageText: "hello",
+        parentMessageCount: 1,
+        updatedAt: "running",
+        draftSaveQueue: { current: Promise.resolve() },
+        mutationRevision,
+        getCurrentSession: () => currentSession,
+        beforeRunningSessionApplied: () => { clearedRevision = registry.clearIfRevision(ownerA, sendRevision); },
+        applyRunningSession: (session) => { currentSession = session; },
+        onRunError: () => {
+          if (clearedRevision !== null) registry.restoreIfRevision(ownerA, clearedRevision, () => "hello");
+        },
+        applySavedSession: () => { sessionRecoveryCount += 1; },
+        restoreSessionAfterError: () => { sessionRecoveryCount += 1; },
+        clearPendingLiveRun: () => { sessionRecoveryCount += 1; },
+        runAuxiliarySessionTurn: () => { signalRunStarted(); return runResult; },
+      });
+      await runStarted;
+      currentSession = makeAuxiliarySession({ id: "aux-2" });
+      mutationRevision.current += 1;
+      currentSession = beforeSession;
+      if (laterEdit) registry.setDraft(ownerA, "new A draft");
+      rejectRun(new Error("late failure"));
+      assert.deepEqual(await operation, { status: "stale" });
+      assert.equal(registry.capture(ownerA).draft, laterEdit ? "new A draft" : "hello");
+      assert.equal(registry.capture(ownerB).draft, "B draft");
+      assert.equal(sessionRecoveryCount, 0);
+    }
   });
 });

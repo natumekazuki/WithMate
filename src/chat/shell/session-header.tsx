@@ -323,6 +323,7 @@ export function SessionChatScreen({
     }
   }, [layoutRef, workbenchRef]);
   const layoutStyle = useMemo(() => ({ ...style, ...workbenchStyle }), [style, workbenchStyle]);
+  const actionDockHeight = (style as Record<string, unknown> | undefined)?.["--session-action-dock-height"];
   useLayoutEffect(() => {
     if (previousActionDockExpandedRef.current === isActionDockExpanded) {
       return;
@@ -373,7 +374,7 @@ export function SessionChatScreen({
     observer?.observe(layout);
     window.addEventListener("resize", measure);
     return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
-  }, [layoutStyle, isActionDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible]);
+  }, [actionDockHeight, isActionDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible]);
   const columnsRef = useRef<HTMLDivElement | null>(null);
   const [columnSizes, setColumnSizes] = useState({ width: 0, main: 0, auxiliary: 0, splitter: 0 });
   useLayoutEffect(() => {

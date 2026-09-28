@@ -2,6 +2,8 @@
 
 - Status: Accepted
 
+登録root外directoryを拒否する判断は適用対象外とし、[ADR 025](025-explicit-directory-link-open.md)で置換する。以下の当時の本文は保持し、file preview・自動resource・Window所有関係に関する判断は継続する。
+
 ## Context
 
 File Explorer already owns an in-session central preview, while chat file links previously delegated local paths directly to the operating system. A detached preview must not create a second renderer or path-authorization policy.

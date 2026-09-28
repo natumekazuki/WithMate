@@ -1,7 +1,11 @@
+import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import type { OpenPathOptions, OpenPathResult } from "../../src-shared/window/withmate-window-types.js";
+
+const execFileAsync = promisify(execFile);
 
 export type ResolvedOpenPathTarget =
   | {
@@ -25,6 +29,13 @@ export type OpenLocalPathDeps = {
 
 export type RevealLocalPathDeps = OpenLocalPathDeps & {
   revealInFileManager(targetPath: string): void;
+};
+
+export type OpenResolvedDirectoryDeps = OpenLocalPathDeps & {
+  realpathTarget(targetPath: string): Promise<string>;
+  assertSender(): Promise<void>;
+  platform?: NodeJS.Platform;
+  execFile?(file: string, args: string[]): Promise<unknown>;
 };
 
 function stripLocalPathFragment(target: string): string {
@@ -332,6 +343,52 @@ export async function openLocalPathWithDefaultApp(
   }
 
   return openExistingLocalPathWithDefaultApp(inspected.targetPath, deps.openWithDefaultApp);
+}
+
+// Only Main-resolved directory links enter here. Do not parse the canonical path as a URL again.
+export async function openResolvedDirectoryInFileManager(
+  targetPath: string,
+  deps: OpenResolvedDirectoryDeps,
+): Promise<OpenPathResult> {
+  try {
+    if (!path.isAbsolute(targetPath) || /[\u0000-\u001f\u007f]/u.test(targetPath)) {
+      throw new Error("The directory path is invalid.");
+    }
+    const targetStat = await deps.statTarget(targetPath);
+    if (!targetStat.isDirectory()) {
+      throw new Error("The link target is no longer a directory. Open the link again.");
+    }
+    if (await deps.realpathTarget(targetPath) !== targetPath) {
+      throw new Error("The directory path changed. Open the link again.");
+    }
+  } catch (error) {
+    return projectLocalPathStatError(targetPath, error);
+  }
+  try {
+    await deps.assertSender();
+  } catch (error) {
+    return {
+      status: "failed",
+      targetType: "local-path",
+      target: targetPath,
+      message: `The directory could not be opened: ${describeLocalPathError(error)}`,
+    };
+  }
+  if ((deps.platform ?? process.platform) === "darwin") {
+    try {
+      // Bundles are directories too. Reveal in Finder without default-app dispatch.
+      await (deps.execFile ?? execFileAsync)("/usr/bin/open", ["-R", targetPath]);
+      return { status: "opened", targetType: "local-path", target: targetPath };
+    } catch (error) {
+      return {
+        status: "failed",
+        targetType: "local-path",
+        target: targetPath,
+        message: `The directory could not be shown in Finder: ${describeLocalPathError(error)}`,
+      };
+    }
+  }
+  return openExistingLocalPathWithDefaultApp(targetPath, deps.openWithDefaultApp);
 }
 
 export async function revealLocalPathInFileManager(

@@ -10,7 +10,7 @@ import { SessionDiffModal } from "./runtime/session-diff.js";
 export type ChatSessionModalsProps = {
   selectedDiff: DiffPreviewPayload | null;
   selectedDiffThemeStyle: CSSProperties;
-  auditLogProps: SessionAuditLogModalProps;
+  auditLogProps?: SessionAuditLogModalProps;
   onCloseDiff: () => void;
   onOpenDiffWindow: (payload: DiffPreviewPayload) => void;
   children?: ReactNode;
@@ -33,7 +33,7 @@ export function ChatSessionModals({
         onOpenDiffWindow={onOpenDiffWindow}
       />
 
-      <SessionAuditLogModal {...auditLogProps} />
+      {auditLogProps ? <SessionAuditLogModal {...auditLogProps} /> : null}
 
       {children}
     </>

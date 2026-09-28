@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -9,7 +8,7 @@ import {
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import type { DiscoveredCustomAgent, DiscoveredSkill, LiveSessionRunState, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
+import type { AuditLogSummary, DiscoveredCustomAgent, DiscoveredSkill, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { getAuxiliarySessionIdFromLocation, getSessionIdFromLocation } from "./session-location.js";
 import {
   buildSessionWithAddedAdditionalDirectory,
@@ -115,8 +114,8 @@ import { persistChatLayoutPreference } from "../chat/chat-layout-preference.js";
 import type { SessionSidePane } from "../../src-shared/settings/session-side-pane.js";
 import { PromptTemplateWorkspace } from "../prompt-templates/PromptTemplateWorkspace.js";
 import { insertComposerTextAtSelection } from "../chat/message-text-actions.js";
-import { useSessionGlossary } from "../glossary/use-session-glossary.js";
-import { useSessionFilesFeature } from "../file-explorer/use-session-files-feature.js";
+import type { GlossaryAnnotationMatcher } from "../glossary/glossary-annotation-projection.js";
+import { SessionFilesFeature, type SessionFilesFeatureHandle } from "../file-explorer/session-files-feature.js";
 import {
   acknowledgePreviewChatMessageCount,
   beginPreviewChatActivity,
@@ -132,7 +131,7 @@ import {
 } from "../chat/runtime/session-submit-coordinator.js";
 import { useSessionChatConversationFeature } from "../chat/conversation/session-chat-conversation-feature.js";
 import { buildSessionChatRuntimeFeature } from "../chat/runtime/session-chat-runtime-feature.js";
-import { useSessionContextPaneFeature } from "../chat/runtime/use-session-context-pane-feature.js";
+import { SessionContextFeature, type SessionContextFeatureHandle } from "../chat/runtime/session-context-feature.js";
 import { composeAgentSessionChatWindow } from "../chat/session-chat-window-composition.js";
 import { useSessionChatShellFeature } from "../chat/shell/session-chat-shell-feature.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
@@ -144,14 +143,13 @@ import {
   resolveSessionWorkspaceUnavailableMessage,
 } from "../chat/runtime/session-workspace-availability.js";
 import { useSessionWorkspaceAvailability } from "../chat/runtime/session-window-workspace-hooks.js";
-import { useActiveSessionLiveRun } from "../chat/runtime/session-window-live-run-hooks.js";
+import { useSessionRunControls } from "../chat/runtime/session-window-live-run-hooks.js";
 import { useSessionRunActions } from "../chat/runtime/session-run-actions.js";
-import { useSessionAuditLogs } from "../chat/runtime/session-audit-log-state.js";
+import { SessionAuditFeature, type SessionAuditFeatureHandle } from "../chat/runtime/session-audit-feature.js";
 import {
   type AuxiliarySession,
 } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { createPastedSessionAttachmentHandler } from "../chat/composer-paste-handlers.js";
-import { useSessionTelemetry } from "../chat/runtime/session-window-telemetry-hooks.js";
 import {
   createCopyMessageTextHandler,
 } from "../chat/message-text-actions.js";
@@ -307,44 +305,6 @@ function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
 }
 
-function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): string {
-  if (!liveRun) {
-    return "";
-  }
-
-  return [
-    liveRun.assistantText,
-    liveRun.reasoningText ?? "",
-    liveRun.errorMessage,
-    liveRun.approvalRequest
-      ? [
-          liveRun.approvalRequest.requestId,
-          liveRun.approvalRequest.kind,
-          liveRun.approvalRequest.summary,
-          liveRun.approvalRequest.details ?? "",
-          liveRun.approvalRequest.warning ?? "",
-        ].join("\u001d")
-      : "",
-    liveRun.elicitationRequest
-      ? [
-          liveRun.elicitationRequest.requestId,
-          liveRun.elicitationRequest.mode,
-          liveRun.elicitationRequest.message,
-          liveRun.elicitationRequest.url ?? "",
-        ].join("\u001d")
-      : "",
-    liveRun.usage
-      ? [liveRun.usage.inputTokens, liveRun.usage.cachedInputTokens, liveRun.usage.outputTokens].join(":")
-      : "",
-    liveRun.steps
-      .map((step) => [step.id, step.type, step.status, step.summary, step.details ?? ""].join("\u001d"))
-      .join("\u001c"),
-    liveRun.backgroundTasks
-      .map((task) => [task.id, task.kind, task.status, task.title, task.details ?? "", task.updatedAt].join("\u001d"))
-      .join("\u001c"),
-  ].join("\u001b");
-}
-
 export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
@@ -399,8 +359,6 @@ export default function AgentSessionWindowApp() {
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [appSettingsLoadStatus, setAppSettingsLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
   const [appSettingsLoadError, setAppSettingsLoadError] = useState("");
-  const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
-  const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const handleHeaderPreferenceChange = useCallback((value: "hidden" | "visible") => {
     void persistChatLayoutPreference(withmateApi, { target: "header", value });
@@ -477,9 +435,6 @@ export default function AgentSessionWindowApp() {
     },
   });
   const { starting: auxiliaryCreationStarting, cancelling: auxiliaryCreationCancelling, status: auxiliaryCreationStatus } = auxiliaryCreation;
-  const activityMonitorRef = useRef<HTMLDivElement | null>(null);
-  const activityMonitorSignatureRef = useRef("");
-  const activityMonitorSessionIdRef = useRef<string | null>(null);
   const activeAuxiliarySessionRef = auxiliaryBinding.sessionRef;
   const auxiliaryExecutionOptionsRequestRevisionsRef = useRef(new Map<string, number>());
   const auxiliarySessionMutationRevisionRef = auxiliaryBinding.mutationRevision;
@@ -515,9 +470,14 @@ export default function AgentSessionWindowApp() {
   const {
     getLiveRunRevision,
     hasSelectedSessionLiveRun,
-    selectedSessionLiveRun,
+    hasLiveRun,
+    hasAssistantText: hasLiveRunAssistantText,
+    hasApprovalRequest: isApprovalRequestPending,
+    hasElicitationRequest: isElicitationRequestPending,
+    hasInProgressStep: hasInProgressLiveRunStep,
+    errorMessage: liveRunErrorMessage,
     setLiveRunState,
-  } = useActiveSessionLiveRun(withmateApi, selectedSession, activeRunSessionId);
+  } = useSessionRunControls(withmateApi, selectedSession, activeRunSessionId);
   const {
     approvalActionRequestId,
     elicitationActionRequestId,
@@ -530,10 +490,6 @@ export default function AgentSessionWindowApp() {
     setLiveRunState,
     onError: (message) => window.alert(message),
   });
-  const {
-    selectedProviderQuotaTelemetry,
-    selectedSessionContextTelemetry,
-  } = useSessionTelemetry(withmateApi, displayedSession?.provider, activeRunSessionId);
   const composerOwner = useMemo<ComposerOwner>(
     () => ({
       kind: auxiliaryWorkspace.target === "auxiliary" ? "auxiliary" : "main",
@@ -582,20 +538,12 @@ export default function AgentSessionWindowApp() {
   } = composerFeature;
   const activeRunMessageCount = activeAuxiliarySession?.messages.length ?? selectedSession?.messages.length ?? 0;
   const prepareCentralSurfaceOpenRef = useRef<() => boolean>(() => false);
-  const fileRootPreview = useSessionFilesFeature({
-    api: withmateApi,
-    activeRunSessionId,
-    prepareCentralSurfaceOpen: () => prepareCentralSurfaceOpenRef.current(),
-    workspacePath: selectedSession?.workspacePath ?? null,
-    additionalDirectories: activeAuxiliarySession?.allowedAdditionalDirectories
-      ?? selectedSession?.allowedAdditionalDirectories
-      ?? [],
-    enabled: selectedSession
-      ? isSessionWorkspaceAvailable(workspaceAvailability, selectedSession.id, selectedSession.workspacePath)
-      : false,
-  });
-  const closeFilePreviews = fileRootPreview.closeFilePreviews;
-  const isCentralPreviewActive = fileRootPreview.isPreviewActive
+  const filesFeatureRef = useRef<SessionFilesFeatureHandle>(null);
+  const [filesPaneHost, setFilesPaneHost] = useState<HTMLDivElement | null>(null);
+  const [filesPreviewHost, setFilesPreviewHost] = useState<HTMLDivElement | null>(null);
+  const [isFilePreviewActive, setIsFilePreviewActive] = useState(false);
+  const closeFilePreviews = useCallback(() => filesFeatureRef.current?.closePreviews(), []);
+  const isCentralPreviewActive = isFilePreviewActive
     || isPromptTemplateWorkspaceOpen;
   const closeCentralPreview = useCallback(() => {
     closeFilePreviews();
@@ -664,30 +612,13 @@ export default function AgentSessionWindowApp() {
     displayedSession,
     parentSourceLabel: "Main session",
   });
-  const {
-    modalProps: auditLogModalProps,
-    setAuditLogsOpen,
-    persistedEntries: selectedSessionAuditLogs,
-  } = useSessionAuditLogs({
-    withmateApi,
-    selectedSession: auditLogSession,
-    ownerSessionId: auditLogOwnerSessionId,
-    cacheScopeKey: "session",
-    sourceLabel: auditLogSourceLabel,
-    liveRun: selectedSessionLiveRun,
-  });
+  const auditFeatureRef = useRef<SessionAuditFeatureHandle>(null);
+  const [selectedSessionAuditLogs, setSelectedSessionAuditLogs] = useState<AuditLogSummary[]>([]);
   const selectedSessionRunState: Session["runState"] | null = resolveSelectedSessionRunState({
     runState: selectedSession?.runState,
     hasLiveRun: hasSelectedSessionLiveRun,
   });
   const visibleSessionRunState: Session["runState"] | null = activeAuxiliarySession?.runState ?? selectedSessionRunState;
-  const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
-  const liveApprovalRequest = selectedSessionLiveRun?.approvalRequest ?? null;
-  const liveElicitationRequest = selectedSessionLiveRun?.elicitationRequest ?? null;
-  const isApprovalRequestPending = !!liveApprovalRequest;
-  const isElicitationRequestPending = !!liveElicitationRequest;
-  const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
-
   const selectedSessionCharacter = useMemo(
     () =>
       displayedSession
@@ -839,19 +770,9 @@ export default function AgentSessionWindowApp() {
     setTitleDraft(selectedSession.taskTitle);
   }, [isEditingTitle, selectedSession]);
 
-  const glossary = useSessionGlossary({
-    api: withmateApi,
-    selectedSession: selectedSession ? {
-      id: selectedSession.id,
-      revision: selectedSession.updatedAt,
-      workspaceLabel: selectedSession.workspaceLabel,
-      branch: selectedSession.branch,
-    } : null,
-    onActivatePane: () => contextPaneFeature.showGlossary(),
-  });
-  const sessionGlossaryPaneProps = glossary.paneProps;
-  const handleActivateGlossaryEntry = glossary.actions.onActivateGlossaryEntry;
-  const glossaryAnnotationMatcher = glossary.annotationMatcher;
+  const contextFeatureRef = useRef<SessionContextFeatureHandle>(null);
+  const [glossaryAnnotationMatcher, setGlossaryAnnotationMatcher] = useState<GlossaryAnnotationMatcher>();
+  const handleActivateGlossaryEntry = useCallback((term: string) => contextFeatureRef.current?.activateGlossaryEntry(term), []);
 
   useEffect(() => {
     applySessionDocumentTitle(resolveAgentSessionDocumentTitle({
@@ -916,18 +837,12 @@ export default function AgentSessionWindowApp() {
   }, [withmateApi]);
 
   const displayedMessages: Message[] = displayedSession?.messages ?? [];
-  const activityMonitorScrollSignature = useMemo(
-    () => buildLiveRunScrollSignature(selectedSessionLiveRun),
-    [selectedSessionLiveRun],
-  );
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const isMessageListFollowing = true;
   const handleMessageListScroll = useCallback(() => {}, []);
   const followMessageListLatest = useCallback(() => {}, []);
 
   useEffect(() => {
-    setIsActivityMonitorFollowing(true);
-    setHasActivityMonitorUnread(false);
     setIsRetryDraftReplacePending(false);
   }, [selectedSession?.provider, selectedSessionId]);
 
@@ -936,50 +851,6 @@ export default function AgentSessionWindowApp() {
       setIsRetryDraftReplacePending(false);
     }
   }, [draft]);
-
-  useLayoutEffect(() => {
-    const isActivityMonitorVisible = visibleSessionRunState === "running";
-    const activityMonitorElement = activityMonitorRef.current;
-    const currentSignature = activityMonitorScrollSignature;
-    const wasSameSession = activityMonitorSessionIdRef.current === selectedSessionId;
-    const hasSignatureChanged = activityMonitorSignatureRef.current !== currentSignature;
-
-    if (!isActivityMonitorVisible) {
-      activityMonitorSessionIdRef.current = selectedSessionId;
-      activityMonitorSignatureRef.current = currentSignature;
-      setIsActivityMonitorFollowing(true);
-      setHasActivityMonitorUnread(false);
-      return;
-    }
-
-    if (!activityMonitorElement) {
-      activityMonitorSessionIdRef.current = selectedSessionId;
-      activityMonitorSignatureRef.current = currentSignature;
-      return;
-    }
-
-    if (!wasSameSession) {
-      activityMonitorSessionIdRef.current = selectedSessionId;
-      activityMonitorSignatureRef.current = currentSignature;
-      setIsActivityMonitorFollowing(true);
-      setHasActivityMonitorUnread(false);
-      activityMonitorElement.scrollTop = activityMonitorElement.scrollHeight;
-      return;
-    }
-
-    if (!hasSignatureChanged) {
-      return;
-    }
-
-    activityMonitorSignatureRef.current = currentSignature;
-
-    if (isActivityMonitorFollowing) {
-      activityMonitorElement.scrollTop = activityMonitorElement.scrollHeight;
-      return;
-    }
-
-    setHasActivityMonitorUnread(true);
-  }, [activityMonitorScrollSignature, isActivityMonitorFollowing, visibleSessionRunState, selectedSessionId]);
 
   const selectedProviderCatalog = useMemo(
     () => (modelCatalog && displayedSession ? getProviderCatalog(modelCatalog.providers, displayedSession.provider) : null),
@@ -1023,24 +894,6 @@ export default function AgentSessionWindowApp() {
   const contextRenderedIsRunning = activeAuxiliarySession
     ? activeAuxiliarySession.runState === "running"
     : resolveSelectedSessionIsRunning({ runState: selectedSessionRunState });
-  const contextPaneFeature = useSessionContextPaneFeature({
-    selectedSession,
-    displayedSession,
-    activeRunSessionId,
-    character: selectedSessionCharacter,
-    liveRun: selectedSessionLiveRun,
-    auditLogEntries: selectedSessionAuditLogs,
-    selectedSessionContextTelemetry,
-    selectedProviderQuotaTelemetry,
-    availableReasoningEfforts,
-    renderedIsRunning: contextRenderedIsRunning,
-    glossaryPaneProps: sessionGlossaryPaneProps,
-    onShowContextRail: handleShowContextRail,
-  });
-  const {
-    rightPaneProps: contextPaneProps,
-    hasInProgressLiveRunStep,
-  } = contextPaneFeature;
   const retryBanner = useMemo<RetryBannerState | null>(() => {
     if (!selectedSession || !shouldShowRetryBanner({
       hasActiveAuxiliarySession: !!activeAuxiliarySession,
@@ -1133,6 +986,25 @@ export default function AgentSessionWindowApp() {
     handleExpandActionDock,
     handleToggleActionDock,
   } = chatShellFeature;
+  const dockContextRef = useRef({ activeRunSessionId, isAgentPickerOpen, isSkillPickerOpen, isRetryDraftReplacePending });
+  if (dockContextRef.current.activeRunSessionId !== activeRunSessionId
+    || dockContextRef.current.isAgentPickerOpen !== isAgentPickerOpen
+    || dockContextRef.current.isSkillPickerOpen !== isSkillPickerOpen
+    || dockContextRef.current.isRetryDraftReplacePending !== isRetryDraftReplacePending) {
+    dockContextRef.current = { activeRunSessionId, isAgentPickerOpen, isSkillPickerOpen, isRetryDraftReplacePending };
+  }
+  const autoCollapseRef = useRef(appSettings.autoCollapseActionDockOnSend);
+  autoCollapseRef.current = appSettings.autoCollapseActionDockOnSend;
+  const captureSendDockCollapse = () => {
+    const context = dockContextRef.current;
+    const isCurrentIntent = layoutPresentation.captureActionDockIntent();
+    const autoCollapse = appSettings.autoCollapseActionDockOnSend;
+    return () => {
+      if (autoCollapse && autoCollapseRef.current && context === dockContextRef.current && isCurrentIntent()) {
+        setIsActionDockPinnedExpanded(false);
+      }
+    };
+  };
   useEffect(() => {
     if (!retryBanner) {
       setIsRetryDraftReplacePending(false);
@@ -1160,6 +1032,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
     const sessionId = sendSession.id;
+    const collapseSentActionDock = captureSendDockCollapse();
     const clientRequestId = createSessionTurnClientRequestId();
     const request: RunSessionTurnRequest = {
       userMessage: messageText,
@@ -1175,7 +1048,7 @@ export default function AgentSessionWindowApp() {
       clearDraft: options?.clearDraft ?? true,
       shouldCollapseActionDock: options?.collapseActionDock ?? false,
       isCentralPreviewActive,
-      hasLiveRun: !!selectedSessionLiveRun,
+      hasLiveRun,
       selectedSessionRunState,
       blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly,
@@ -1183,7 +1056,7 @@ export default function AgentSessionWindowApp() {
       validateWorkspace: () => validateSessionWorkspace(sendSession, true),
       liveRun: { getRevision: getLiveRunRevision, setState: setLiveRunState },
       acknowledgePreviewChatMessageCount: (id, count) => setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(current, id, count)),
-      collapseActionDock: () => setIsActionDockPinnedExpanded(false),
+      collapseActionDock: collapseSentActionDock,
       log: logSessionRunStuckInvestigation,
     });
   };
@@ -1612,6 +1485,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
+    const collapseSentActionDock = captureSendDockCollapse();
     const sendCapture = composerRegistry.capture(composerOwner);
     messageText = sendCapture.draft;
     const draftOwner = auxiliaryDraftPersistence.getOwner(sendSession);
@@ -1652,7 +1526,7 @@ export default function AgentSessionWindowApp() {
       canStartRun: () => !composerRegistry.isFrozen,
       beforeRunningSessionApplied: () => {
         clearedRevision = composerRegistry.clearIfRevision(composerOwner, sendCapture.revision);
-        setIsActionDockPinnedExpanded(false);
+        collapseSentActionDock();
       },
       onRunError: () => {
         if (clearedRevision !== null) {
@@ -2010,33 +1884,6 @@ export default function AgentSessionWindowApp() {
     cancelTitleEdit: handleCancelTitleEdit,
   });
 
-  const scrollActivityMonitorToBottom = () => {
-    const activityMonitorElement = activityMonitorRef.current;
-    if (!activityMonitorElement) {
-      return;
-    }
-
-    activityMonitorElement.scrollTop = activityMonitorElement.scrollHeight;
-  };
-
-  const handleActivityMonitorScroll = () => {
-    const activityMonitorElement = activityMonitorRef.current;
-    if (!activityMonitorElement) {
-      return;
-    }
-
-    const bottomGap = Math.max(
-      0,
-      activityMonitorElement.scrollHeight - activityMonitorElement.clientHeight - activityMonitorElement.scrollTop,
-    );
-    const nextFollowing = bottomGap <= 48;
-
-    setIsActivityMonitorFollowing((current) => (current === nextFollowing ? current : nextFollowing));
-    if (nextFollowing) {
-      setHasActivityMonitorUnread(false);
-    }
-  };
-
   const handleOpenSessionTerminal = async () => {
     if (!withmateApi || !selectedSession) {
       return;
@@ -2077,12 +1924,6 @@ export default function AgentSessionWindowApp() {
     alertError: (message) => window.alert(message),
     fallbackErrorMessage: "Could not open the Session files directory.",
   });
-
-  const handleJumpToActivityMonitorBottom = () => {
-    setIsActivityMonitorFollowing(true);
-    setHasActivityMonitorUnread(false);
-    scrollActivityMonitorToBottom();
-  };
 
   const pendingRunIndicatorAnnouncement = isApprovalRequestPending || isElicitationRequestPending
     ? "Waiting for approval"
@@ -2160,22 +2001,19 @@ export default function AgentSessionWindowApp() {
   const canInsertFileTreePathReference = activeAuxiliarySession
     ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason
     : !isComposerDisabled;
-  const fileExplorerPane = fileRootPreview.renderPane({
-    canInsertPathReference: canInsertFileTreePathReference,
-    insertReferencePaths,
-  });
-  const previewChatNotice = liveApprovalRequest
+  const fileExplorerPane = <div ref={setFilesPaneHost} className="session-feature-host" />;
+  const previewChatNotice = isApprovalRequestPending
     ? "Approval required"
-    : liveElicitationRequest
+    : isElicitationRequestPending
       ? "Input required"
       : renderedIsRunning
         ? "Running"
         : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
           ? "New Messages"
           : "";
-  const actionDockChatNotice = liveApprovalRequest
+  const actionDockChatNotice = isApprovalRequestPending
     ? "Approval required"
-    : liveElicitationRequest
+    : isElicitationRequestPending
       ? "Input required"
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
         ? "New Messages"
@@ -2190,12 +2028,7 @@ export default function AgentSessionWindowApp() {
       onBack={closeCentralPreview}
       onInsert={handleInsertPromptTemplate}
     />
-  ) : fileRootPreview.renderPreview({
-    onBack: closeCentralPreview,
-    onCopyText: handleCopyMessageText,
-    onQuoteText: handleQuoteMessageText,
-    chatNotice: previewChatNotice,
-  });
+  ) : isFilePreviewActive ? <div ref={setFilesPreviewHost} className="session-feature-host" /> : undefined;
 
   const chatHeaderFeature = sessionHeader.buildChatHeader({
     isRunning: isSelectedSessionRunning,
@@ -2204,7 +2037,7 @@ export default function AgentSessionWindowApp() {
     isPinPending: isSessionPinPending,
     isAuxiliaryMode,
     isWorkspaceAvailable: isSelectedWorkspaceAvailable,
-    onOpenAuditLog: () => setAuditLogsOpen(true),
+    onOpenAuditLog: () => auditFeatureRef.current?.open(),
     onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
     onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
     onOpenSessionFilesTerminal: () => void handleOpenSessionFilesTerminal(),
@@ -2318,13 +2151,13 @@ export default function AgentSessionWindowApp() {
     messageJumpRequest: null,
     isRunning: renderedIsRunning,
     pendingRunIndicatorAnnouncement,
-    liveApprovalRequest,
+    liveApprovalRequest: null,
     approvalActionRequestId,
-    liveElicitationRequest,
+    liveElicitationRequest: null,
     elicitationActionRequestId,
-    liveRunAssistantText,
+    liveRunAssistantText: "",
     hasLiveRunAssistantText,
-    liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
+    liveRunErrorMessage,
     pendingMessageText,
     pendingMessageTextVisible: false,
     pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
@@ -2375,16 +2208,23 @@ export default function AgentSessionWindowApp() {
     executionOptionsFeedback: executionOptionsFeedback?.ownerId === renderedSession.id
       ? executionOptionsFeedback.message : "",
     onDismissExecutionOptionsFeedback: () => setExecutionOptionsFeedback(null),
-    contextPane: contextPaneProps,
   });
   const sessionModals = (
     <ChatSessionModals
       selectedDiff={selectedDiff}
       selectedDiffThemeStyle={selectedDiffThemeStyle}
-      auditLogProps={auditLogModalProps}
       onCloseDiff={() => setSelectedDiff(null)}
       onOpenDiffWindow={(payload) => void handleOpenDiffWindow(payload)}
-    />
+    >
+      {auditLogSession ? <SessionAuditFeature
+        ref={auditFeatureRef}
+        api={withmateApi}
+        session={auditLogSession}
+        ownerSessionId={auditLogOwnerSessionId}
+        sourceLabel={auditLogSourceLabel}
+        onEntriesChange={setSelectedSessionAuditLogs}
+      /> : null}
+    </ChatSessionModals>
   );
   const chatShellSurface = chatShellFeature.buildSurface({
     mainContent: filePreviewContent,
@@ -2404,8 +2244,6 @@ export default function AgentSessionWindowApp() {
     mainSession: selectedSession,
     auxiliarySession: auxiliaryWorkspace.selectedSession ? selectedAuxiliaryRuntimeSession : null,
     api: withmateApi ?? undefined,
-    mainLiveRun: auxiliaryWorkspace.target === "auxiliary" ? undefined : selectedSessionLiveRun,
-    auxiliaryLiveRun: auxiliaryWorkspace.target === "auxiliary" ? selectedSessionLiveRun : undefined,
     messageColumn: chatWindowProps.messageColumnProps,
     onToggleMessageBookmark: handleToggleMessageBookmark,
     mainOnLoadArtifactDetail: (index) => withmateApi?.getSessionMessageArtifact(selectedSession.id, index) ?? Promise.resolve(null),
@@ -2429,6 +2267,20 @@ export default function AgentSessionWindowApp() {
       <>
       <ChatWindow
         {...chatWindowProps}
+        renderRightPane={(navigator) => <SessionContextFeature
+          ref={contextFeatureRef}
+          api={withmateApi}
+          selectedSession={selectedSession}
+          displayedSession={renderedSession}
+          activeRunSessionId={activeRunSessionId}
+          character={selectedSessionCharacter}
+          auditLogEntries={selectedSessionAuditLogs}
+          availableReasoningEfforts={availableReasoningEfforts}
+          renderedIsRunning={contextRenderedIsRunning}
+          onShowContextRail={handleShowContextRail}
+          navigator={navigator}
+          onAnnotationMatcherChange={setGlossaryAnnotationMatcher}
+        />}
         rightPane={isAuxiliaryTargetUnavailable
           ? <div className="concurrent-chat-state" role="status">{sessionExecutionBlockedReason}</div>
           : chatWindowProps.rightPane}
@@ -2441,6 +2293,21 @@ export default function AgentSessionWindowApp() {
           showDeleteButton: true,
         }}
         concurrentChats={concurrentChats}
+      />
+      <SessionFilesFeature
+        ref={filesFeatureRef}
+        api={withmateApi}
+        activeRunSessionId={activeRunSessionId}
+        prepareCentralSurfaceOpen={() => prepareCentralSurfaceOpenRef.current()}
+        workspacePath={selectedSession.workspacePath}
+        additionalDirectories={activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories ?? []}
+        enabled={isSelectedWorkspaceAvailable}
+        paneHost={filesPaneHost}
+        previewHost={filesPreviewHost}
+        composer={{ canInsertPathReference: canInsertFileTreePathReference, insertReferencePaths }}
+        previewBindings={{ onBack: closeCentralPreview, onCopyText: handleCopyMessageText, onQuoteText: handleQuoteMessageText, chatNotice: previewChatNotice }}
+        previewEnabled={!isPromptTemplateWorkspaceOpen}
+        onPreviewActiveChange={setIsFilePreviewActive}
       />
       <AuxiliaryLaunchProviderDialog
         open={auxiliaryLaunchDialogOpen}

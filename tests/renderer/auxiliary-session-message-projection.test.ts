@@ -6,12 +6,44 @@ import {
   hasPersistedLiveAssistantMessage,
   loadOwnedAuxiliaryMessageArtifact,
   loadProjectedMessageArtifact,
+  projectLiveAssistantOnSessionHistory,
   resolveLiveAssistantMessageIndex,
   resolvePendingAuxiliaryMessageGroupId,
   shouldProjectLiveAssistantBridge,
 } from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { Message, MessageArtifact } from "../../src-shared/session/session-state.js";
+
+// @test-value v2
+// kind = "invariant"
+// claim = "live本文だけが変わる間、投影済み履歴のmessage要素参照を保持し、保存確定時は同じ応答keyへ引き継ぐ"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: UI Implementation Boundary" }
+// fault = "live末尾の合成で履歴message要素の参照を変える、または保存確定時に応答keyが変わる"
+// observable = "投影済み履歴message要素の同一参照、live末尾本文、保存済みassistantのkey"
+// observation_boundary = "component-behavior"
+// scope = "conversation-history-projection"
+// lifecycle = "permanent"
+// impact = "streaming中の履歴message参照が不安定になり、保存時に折りたたみ・bookmark等の応答identityを失う"
+// distinction = "既存の全文投影testはlive更新間の履歴参照と保存確定への引継ぎを検証しない"
+// @end-test-value
+test("live assistant projection は確定履歴を保持して保存済み応答へkeyを引き継ぐ", () => {
+  const messages: Message[] = [{ role: "user", text: "request" }];
+  const history = buildMessageListProjection(messages, [], "session-1");
+  const bridge = { sessionId: "session-1", threadId: "thread-1", messageIndex: 1, text: "first" };
+  const first = projectLiveAssistantOnSessionHistory(history, messages, "session-1", bridge);
+  const second = projectLiveAssistantOnSessionHistory(history, messages, "session-1", { ...bridge, text: "first second" });
+  assert.equal(first.messages[0], history.messages[0]);
+  assert.equal(second.messages[0], history.messages[0]);
+  assert.equal(second.messages[1]?.text, "first second");
+  assert.equal(first.keys[1], second.keys[1]);
+
+  const savedMessages: Message[] = [...messages, { role: "assistant", text: "final" }];
+  const savedHistory = buildMessageListProjection(savedMessages, [], "session-1");
+  const saved = projectLiveAssistantOnSessionHistory(savedHistory, savedMessages, "session-1", bridge);
+  assert.equal(saved.messages, savedHistory.messages);
+  assert.equal(saved.keys[1], first.keys[1]);
+  assert.equal(saved.messages.length, 2);
+});
 
 function createAuxiliarySession(
   messages: Message[],

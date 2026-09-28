@@ -2114,10 +2114,10 @@ test("ChatWindow はcomposer入力後もMain/Auxiliaryの表示済み画像DOM�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Concurrent splitterは保存幅を表示最小幅へ補正し、両端へのドラッグで片側全幅へ切り替え、クリックとドラッグを分離しpointer完了を確定callbackへ伝える"
-// oracle = { type = "contract", ref = "issue-710-ui-shell" }
-// fault = "ドラッグ後のクリックで意図せず閉じる、両側表示で最小幅を割る、片側全幅へ切り替わらない、またはpointer完了を確定callbackへ伝えない"
-// observable = "Main/AuxiliaryのCSS最小幅を反映したonWidthRatioChangeの値とpointer完了callback回数"
+// claim = "Concurrent splitterはドラッグ中の表示幅を局所更新し、pointer完了時だけ最小幅で補正した幅を通知する。両端の片側全幅、cancel確定、クリックとの分離を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Auxiliary Session (Issue #710)" }
+// fault = "drag中に保存ownerへ中間値を通知する、表示幅が更新されない、最小幅を割る、片側全幅へ切り替わらない、またはpointer完了を確定callbackへ伝えない"
+// observable = "drag中のcolumnsのgridTemplateColumns、onWidthRatioChangeの値とpointer完了callback回数"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -2180,6 +2180,12 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
     await act(async () => {
       splitter.dispatchEvent(pointerEvent("pointerdown", 500));
       splitter.dispatchEvent(pointerEvent("pointermove", 510));
+    });
+    assert.equal(ratios.length, 0, "intermediate geometry must not update the saved width owner");
+    assert.equal(commits, 0);
+    assert.equal(splitter.parentElement?.style.gridTemplateColumns,
+      `minmax(0, ${1 - 360 / 980}fr) var(--session-dock-splitter-size) minmax(0, ${360 / 980}fr)`);
+    await act(async () => {
       splitter.dispatchEvent(pointerEvent("pointerup", 510));
     });
     assert.ok(ratios.length > 0);

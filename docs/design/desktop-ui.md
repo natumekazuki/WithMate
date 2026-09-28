@@ -54,8 +54,12 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - Agent は chat layout に乗せ、機能側には state / service / adapter だけを置く
 - `chat/conversation/session-message-column.tsx` は会話本文、artifact、検索、仮想スクロールと pending row の配置を担当する。pending row 内の承認・入力要求は `chat/runtime/live-request-surface.tsx` が所有し、フォーム状態、validation、応答 payload、送信中の操作制御を conversation 列へ戻さない
 - artifact の展開状態と開閉操作は `chat/conversation/session-chat-conversation-feature.ts` が Window 内の message key ごとに所有する。会話の切り替えで展開状態を失わず、App は状態・setter・開閉 callback を構築しない
-- File Explorer と中央 file / Git preview の接続は `file-explorer/use-session-files-feature.tsx` が所有する。タブ、再読込、preview の選択と表示分岐を機能内へ閉じ、Session Window には表示面、開閉状態、composer への挿入接続だけを公開する
-- Glossary の検索・選択状態と pane props は `glossary/use-session-glossary.ts`、Audit Log の取得状態と modal props は `chat/runtime/session-audit-log-state.ts` がそれぞれ組み立てる。Window 側で個別フィールドへ展開して再構築しない
+- File Explorer と中央 file / Git preview は `file-explorer/session-files-feature.tsx` が独立した描画境界で `use-session-files-feature.tsx` を呼ぶ。タブ、再読込、preview requestと読込結果をその境界内に保持し、shellの安定したpane／preview hostへ表示する。Windowにはpreview有無、閉じる操作、composerへの挿入接続だけを渡す
+- `chat/runtime/session-context-feature.tsx` はContext tab、telemetry、Glossaryの検索・選択を所有する。会話へ必要なannotation matcherと用語を開く操作だけを共有し、検索入力や結果更新でWindowを再投影しない。`session-audit-feature.tsx` はAudit一覧・詳細取得とmodalを所有し、Retry／Latest Commandに必要な保存済みsummaryだけをWindowへ通知する
+- live本文・step・usageの表示snapshotは会話列、Context、Auditの表示ownerが購読する。Window shellの購読は実行有無、入力待ち、本文出力開始、command実行有無、errorという操作・通知に必要な変化だけを反映し、本文tokenごとに他機能を再構築しない
+- 会話列は確定履歴の投影とlive末尾を分離し、保存確定時のmessage key、Bookmark、検索、navigatorを保持する。Previewや幅0で見えない会話列は表示用live購読と追従を休止し、再表示時に最新snapshotへ追いつく。runとdraft保存の寿命は表示状態から独立する
+- selection toolbarの位置計測は対象列に選択がある時だけ行い、DOMのresize／mutation監視も選択中に限定する。選択・Copy／Quoteとkeyboard操作を維持する
+- splitterのdrag中は対象領域の寸法を局所更新し、pointer up／cancelで最後の表示値を状態ownerへ確定する。中央幅の保存も確定時だけ行い、clickとkeyboard変更はその操作内で確定する
 - Session Window は機能間の接続を担当し、Composer の入力・picker・表示 props、Context Pane の選択・表示投影、Shell の dock 操作・resize props は各機能 owner が組み立てる。`chat/session-chat-window-composition.tsx` は owner が返す表示面を共通 ChatWindow へ接続し、全機能の詳細状態を受け取る projection は持たない
 - `Session` という名前の UI 実装に provider 固有処理を詰め込まない。必要な差分は capability / adapter として注入する
 - Session context pane の `Messages` tab は session window が明示的に capability を有効化した場合だけ表示し、既存の `LatestCommand → Messages → Glossary → Reasoning → Tasks` 順を保つ
@@ -145,9 +149,12 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Random開始には取得済みの利用履歴とopen Session情報が必要で、再取得中・失敗時は開始を拒否する。使用中Characterはopen summaryから判定し、表示用Recent／Pinnedの失敗だけではRandomを止めない。取得回復時は取得由来のfeedbackだけを解消し、Session作成など別の操作失敗は保持する
   - Homeの管理用Character一覧は初回とWindow再フォーカス時に再取得する。New Sessionは開くたびに取得した一覧と取得状態を閉じるまで保持し、表示・選択・起動候補に同じ一覧を使う。Homeの再取得や外部のCharacter変更は開いているdialogへ反映せず、閉じて再度開いた時に最新化する
   - New Sessionを開く時のCharacter取得に失敗した場合は保持済みの一覧を起動候補として使わず、Character selectorに取得失敗を示してSession作成を無効にする。取得成功後の0件だけneutral fallbackを使う
+  - New SessionはCharacter取得を待たずに開き、取得中はCharacter selectorの既存loading表示と開始不可状態を使う。表示中の重複openは取得・入力初期化を行わず、取得完了で入力・選択・focusを作り直さない。Cancelは取得中も操作でき、終了した試行の遅延成功・失敗はdialogの一覧・feedbackへ反映しない。開き直しは新しい試行として最新一覧を取得する
   - Random選択の`Start`はCharacter利用履歴とopen Session Window一覧の両方が取得成功した場合だけ有効にする。どちらかがloading / errorの間は開始不可とし、固定Character選択にはこの2取得を要求しない。選択と取得状態の変化に開始可否が追従し、実行時も同じ取得条件を再検証する。取得成功後の0件と未取得・取得失敗を区別する
   - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に provider ごとの現在選択を優先して解決する。現在選択がなければ保存済みの直近 Session 一件を参照する。詳細は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する
   - open 時は dialog 内の最初の主要入力へ focus する。Home の `New Session` は入力途中の意図しないdismissを避けるため、footerの`Cancel`で閉じ、backdrop clickや`Escape`では閉じない
+  - 開始中も`Cancel`で閉じられるが、送信済みのSession作成は取り消さない。開始要求はそのdialog表示に所属し、閉じた要求の成功・失敗・busy解除で再表示後の入力・選択・feedback・開始中状態・focusを変更しない。同じ表示内の開始要求は同時に一つだけ受け付ける
+  - 閉じた要求がSessionを作成した場合はRecent Sessionsへ反映し、Windowは自動で開かない。作成結果・確認不能の失敗はtitle付きの独立した結果通知としてHome Window内のRecent Sessionsに保持し、利用者が`Dismiss`するまで表示する。通知自体はWindowをまたいで永続化しない。別のNew Session表示中は通知を保留し、閉じた後に表示する。`Dismiss`は通知だけを消し、Sessionを削除しない。結果不明の自動再送やrollbackは行わない
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
   - provider の single-select chip は矢印キーで選択を移動できる
 - `Settings` button
@@ -299,10 +306,11 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Skill 候補のような一時 surface は右上の × と具体的な accessible name を使い、`Escape` でも dismiss できる。view 間 navigation の Back とは表現を分ける
 - detached file preview
   - File Explorer は通常 click で中央 preview、Ctrl+click / Cmd+click で detached preview を開く。Changes は通常 click で中央 live Git Diff（untracked は中央 file preview）、Ctrl+click / Cmd+click で detached live Git Diff（untracked は detached file preview）を開く。Session message の local-file link は detached preview を開く
+  - Session messageとMarkdown previewのdirectory linkは、登録root内外とも明示clickでOSのfile managerを開く。macOSは通常folderとapp bundle／packageを区別せずFinderで対象を選択表示し、アプリの起動は行わない。追加dialogやAdditional Directoryの自動登録は行わず、アプリ内列挙とProvider権限は変えない。成功時は操作元の既存errorを消し、失敗時は同じfeedbackへ理由を表示する。対象検証は[Message Rich Text](message-rich-text.md#link-handling)を参照する
   - 中央 preview と同じ `SessionFilePreview` / `SessionDiffPreview` を使用し、Quote と Action Dock は表示しない
   - live Git Diff の `Open preview` は対象 file を通常 preview として開く。detached file preview から開いた live Git Diff と Changes から直接開いた detached live Git Diff は、左向き icon または `Open preview` で同じ Window の preview へ戻る。独立 File Preview、snapshot Diff、Character Editor の Window 自体は native window chrome で閉じ、重複する app 内 Close 操作を置かない
   - Character Editor が dirty な状態で native window chrome から閉じようとした場合は、編集内容を保持したまま in-app の破棄確認を表示する。キャンセルでは編集へ戻り、明示的に破棄した場合だけ Window を閉じる
-  - `New Session` dialog はfooter左端の`Cancel`で作成せず閉じ、右端の`Start`で開始する。`Start`がdisabledでも`Cancel`は使用でき、重複する常設 Close control は置かない
+  - `New Session` dialog はfooter左端の`Cancel`で閉じ、右端の`Start`で開始する。開始前の`Cancel`では作成せず、開始後は送信済みの作成を取り消さない。`Start`がdisabledでも`Cancel`は使用でき、重複する常設 Close control は置かない
   - Auxiliary 起動 dialog と Audit Log overlay も backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
   - 破棄確認は単一の dialog surface に確認対象と操作を直接配置し、見出しと重複する補足文や装飾目的の card を置かない。破壊的操作は neutral なキャンセルと色・文言の両方で区別する
   - 同じ root-scoped resource は既存 Window を前面化し、異なる resource は複数 Window を開ける。navigation、認可、lifecycle の決定は ADR 020 を正本とする
@@ -382,6 +390,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - assistant本文はgradientを使わず、`main`の細い左線とavatarの縁、控えめな背景色で周囲から区別する。user本文は控えめなsurfaceで区別し、通常のassistantとuserの枠は同じ丸みを持つ。pendingとAuxiliary groupの状態表現は維持する
 - composer settings は独立したaccent背景を持たず、周囲のsurfaceと同じ背景を使う
 - `Send / Cancel` は mate `main`
+- Main／Auxiliaryの送信時の自動折りたたみは共通の`Close Action Dock After Send`設定を使う。送信準備中に対象会話やpickerを切り替えた場合、または手動でdockを操作した場合は、その後に返った古い送信処理で新しい開閉意図を上書きしない
 - sendability 判定は共通resolverへ寄せ、Composer内の購読と送信shortcutで最新draft・preview・強制feedback条件を使う。入力のたびにSession shellを更新せず、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う
 - Send disabled 条件は submit button / `Ctrl+Enter` / `Cmd+Enter` guard で一致させ、blank / whitespace-only draft の no-op 送信を通さない
 - blank / whitespace-only draft は通常時は helper 文言を常時出さないが、blocked 送信ショートカットを押した時だけ inline reason を見せる

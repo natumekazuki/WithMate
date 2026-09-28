@@ -24,6 +24,7 @@ export type HomeRecentSessionsPanelProps = {
   sessionSummaryLoadStatus?: SessionSummariesLoadStatus;
   feedback?: string;
   onRetry?: () => void;
+  launchResults?: ReactNode;
 };
 
 const HOME_SESSION_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -97,6 +98,7 @@ export function HomeRecentSessionsPanel({
   sessionSummaryLoadStatus = "loaded",
   feedback = "",
   onRetry,
+  launchResults,
 }: HomeRecentSessionsPanelProps) {
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
 
@@ -193,6 +195,7 @@ export function HomeRecentSessionsPanel({
         className="session-card-list home-session-card-list"
         aria-busy={isLoading || loadingMore}
       >
+        {launchResults}
         {visibleSessionEntries.map((item) => {
           const { session, state } = item.entry;
           const isReadOnly = isReadOnlySession(session);
