@@ -11,6 +11,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - ローカル path link に `#L10` などの fragment が付いている場合は、少なくとも path 本体を開けるように fragment を無視して扱う。`:10` または `:10:4` 形式は、指定された path が存在しない場合だけ行番号または行番号と列番号として扱う
 - Markdown file previewの相対linkはそのfileの親directoryを基準に解決し、root外のfile／directoryにも明示的に移動できる。相対imageを含む自動local resource読込は登録root内だけに制限する
 - directory linkはMainでcanonical real pathへ解決し、symlink／junctionも解決先を使う。OS open前にdirectoryのkindとcanonical path、送信元Windowの同一性とSession所有／Preview baseを再確認する。既解決pathはURLや行番号suffixとして再解釈しない
+- macOSでは通常folderもapp bundle／packageもFinderで対象を選択表示する。`/usr/bin/open -R`へcanonical pathを独立した引数で渡し、既定appの起動へ委譲しない。commandの終了を待ち、失敗を成功扱いや既定openへのfallbackにしない。Windows／Linuxでは既存のdirectory openを使う
 - directoryを開いてもAdditional DirectoryやProviderのアクセス権限を追加せず、アプリ内directory列挙のroot制限は維持する。不正path、消失、file／special objectへの差替、canonical path変更、所有関係の不一致、OS open失敗は操作元のfeedbackへ返す。成功時は既存の操作元errorを消す
 - OS の既定アプリで file を開けない場合は理由を表示し、通常の Open から Explorer 表示へ自動で切り替えない
 - render 済み link の context menu は`Copy link`を提供する。protocol-relativeを含む外部 URL は表示 label ではなく `href` target を保ち、local / `file:` / Windows absolute path は通常の Open と同じ Main process の path 解決境界で decode・filesystem path 変換して clipboard へ渡す。最終的な copy target に制御文字を含む場合は clipboard を更新せず失敗として通知する

@@ -23,3 +23,12 @@
 - root外専用の確認dialogは、クリック以外の新しい権限を与えない操作へ反復確認を追加するため不採用。
 
 永続化形式とProvider契約は変更しない。現行操作は[Message Rich Text](../design/message-rich-text.md#link-handling)、実機確認は[Manual Test Checklist](../manual-test-checklist.md)を参照する。
+
+## macOSのfile manager表示
+
+directoryの閲覧だけを許可する判断は、macOSのapp bundle／packageにも適用する。これらもfilesystem上はdirectoryであり、既定openへ渡すとアプリが起動し得るため、macOSではすべてのdirectory linkをFinderの選択表示にそろえる。
+
+- Mainから`/usr/bin/open -R`をshellを介さず実行し、canonical pathを独立した引数として渡す。通常folderも親folder内で選択表示する。
+- commandの終了を待って結果を返し、実行失敗・非zero終了を既存feedbackへ返す。成功結果はOSへの表示依頼の成功であり、Finder実描画の検証結果ではない。
+- bundle拡張子の列挙による判定は行わず、command失敗時も既定app openへfallbackしない。Windows／Linuxのdirectory open、汎用`openPath`、Provider権限は変更しない。
+- Electronの`showItemInFolder`は戻り値による失敗通知がないため、このdirectory linkの失敗feedbackには使用しない。

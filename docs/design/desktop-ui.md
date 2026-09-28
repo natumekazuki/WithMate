@@ -299,7 +299,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Skill 候補のような一時 surface は右上の × と具体的な accessible name を使い、`Escape` でも dismiss できる。view 間 navigation の Back とは表現を分ける
 - detached file preview
   - File Explorer は通常 click で中央 preview、Ctrl+click / Cmd+click で detached preview を開く。Changes は通常 click で中央 live Git Diff（untracked は中央 file preview）、Ctrl+click / Cmd+click で detached live Git Diff（untracked は detached file preview）を開く。Session message の local-file link は detached preview を開く
-  - Session messageとMarkdown previewのdirectory linkは、登録root内外とも明示clickでOSのfile managerを開く。追加dialogやAdditional Directoryの自動登録は行わず、アプリ内列挙とProvider権限は変えない。成功時は操作元の既存errorを消し、失敗時は同じfeedbackへ理由を表示する。対象検証は[Message Rich Text](message-rich-text.md#link-handling)を参照する
+  - Session messageとMarkdown previewのdirectory linkは、登録root内外とも明示clickでOSのfile managerを開く。macOSは通常folderとapp bundle／packageを区別せずFinderで対象を選択表示し、アプリの起動は行わない。追加dialogやAdditional Directoryの自動登録は行わず、アプリ内列挙とProvider権限は変えない。成功時は操作元の既存errorを消し、失敗時は同じfeedbackへ理由を表示する。対象検証は[Message Rich Text](message-rich-text.md#link-handling)を参照する
   - 中央 preview と同じ `SessionFilePreview` / `SessionDiffPreview` を使用し、Quote と Action Dock は表示しない
   - live Git Diff の `Open preview` は対象 file を通常 preview として開く。detached file preview から開いた live Git Diff と Changes から直接開いた detached live Git Diff は、左向き icon または `Open preview` で同じ Window の preview へ戻る。独立 File Preview、snapshot Diff、Character Editor の Window 自体は native window chrome で閉じ、重複する app 内 Close 操作を置かない
   - Character Editor が dirty な状態で native window chrome から閉じようとした場合は、編集内容を保持したまま in-app の破棄確認を表示する。キャンセルでは編集へ戻り、明示的に破棄した場合だけ Window を閉じる

@@ -21,7 +21,7 @@ function localPathStat(kind: "file" | "directory") {
 
 // @test-value v2
 // kind = "contract"
-// claim = "解決済みdirectoryは特殊文字を再解釈せずsender再確認後に同じpathでOSへ渡し、OS失敗を成功にしない"
+// claim = "Windows/Linuxの解決済みdirectoryは特殊文字を再解釈せずsender再確認後に同じpathでOSへ渡し、OS失敗を成功にしない"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Link Handling" }
 // fault = "canonical pathのfragmentやpercentを再parseする、認可前にopenする、またはshell errorを成功にする"
 // observable = "stat・realpath・sender確認・openの引数と順序およびtyped結果"
@@ -32,13 +32,18 @@ function localPathStat(kind: "file" | "directory") {
 // @end-test-value
 it("directory linkはcanonical pathを再解釈せず認可後に開きOS失敗を返す", async () => {
   const targetPath = process.platform === "win32" ? "C:\\別 Worktree #1 %25" : "/tmp/別 Worktree #1 %25:12";
-  for (const shellError of ["", "The file manager could not be started."]) {
+  for (const [platform, shellError] of [
+    ["win32", ""], ["win32", "The file manager could not be started."],
+    ["linux", ""], ["linux", "The file manager could not be started."],
+  ] as const) {
     const calls: string[] = [];
     const result = await openResolvedDirectoryInFileManager(targetPath, {
+      platform,
       async statTarget(value) { calls.push(`stat:${value}`); return localPathStat("directory"); },
       async realpathTarget(value) { calls.push(`realpath:${value}`); return value; },
       async assertSender() { calls.push("sender"); },
       async openWithDefaultApp(value) { calls.push(`open:${value}`); return shellError; },
+      async execFile() { assert.fail("Windows/Linux must not invoke the macOS file manager command."); },
     });
     assert.deepEqual(calls, [`stat:${targetPath}`, `realpath:${targetPath}`, "sender", `open:${targetPath}`]);
     assert.deepEqual(result, shellError
@@ -49,10 +54,53 @@ it("directory linkはcanonical pathを再解釈せず認可後に開きOS失敗�
 
 // @test-value v2
 // kind = "security"
+// claim = "macOSのdirectory linkはbundle/packageを含めFinderの選択表示だけを行い、command失敗で既定openへfallbackしない"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Link Handling" }
+// fault = "directoryを既定openへ渡してappを実行する、suffixだけで例外化する、shell文字列へpathを埋め込む、またはcommand失敗を成功にする"
+// observable = "sender再確認後に/usr/bin/openの-Rとcanonical pathを別引数で渡し、command成功/失敗に対応するtyped結果を返す"
+// observation_boundary = "public-boundary"
+// scope = "openResolvedDirectoryInFileManager macOS boundary"
+// lifecycle = "permanent"
+// impact = "閲覧のみを許可するroot外directory linkからのアプリ実行を防ぎ、失敗を操作元へ返す"
+// distinction = "実行可能なbundleもstatではdirectoryになるため型検査や汎用open testでは検出できない。OS command stubだけで実行を伴わず検査する"
+// @end-test-value
+it("macOSのdirectory linkはFinderで選択表示しbundleを起動せずcommand失敗を返す", async () => {
+  for (const [name, commandError] of [
+    ["別 Worktree #1 %25:12", ""],
+    ["Example.app", ""],
+    ["Example.bundle", ""],
+    ["NoSuffix '$(`command`)", ""],
+    ["Example.app", "Finder could not be started."],
+  ]) {
+    const targetPath = `/tmp/${name}`;
+    const calls: unknown[] = [];
+    const result = await openResolvedDirectoryInFileManager(targetPath, {
+      platform: "darwin",
+      async statTarget(value) { calls.push(["stat", value]); return localPathStat("directory"); },
+      async realpathTarget(value) { calls.push(["realpath", value]); return value; },
+      async assertSender() { calls.push(["sender"]); },
+      async openWithDefaultApp(value) { calls.push(["default-open", value]); return ""; },
+      async execFile(file, args) {
+        calls.push(["execFile", file, args]);
+        if (commandError) throw new Error(commandError);
+      },
+    });
+    assert.deepEqual(calls, [
+      ["stat", targetPath], ["realpath", targetPath], ["sender"],
+      ["execFile", "/usr/bin/open", ["-R", targetPath]],
+    ]);
+    assert.deepEqual(result, commandError
+      ? { status: "failed", targetType: "local-path", target: targetPath, message: `The directory could not be shown in Finder: ${commandError}` }
+      : { status: "opened", targetType: "local-path", target: targetPath });
+  }
+});
+
+// @test-value v2
+// kind = "security"
 // claim = "directory専用openは不正path、消失、アクセス拒否、file/specialへの差替、canonical path変更、sender失効でOSを呼ばない"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Link Handling" }
 // fault = "directory検証失敗でOSへfallbackするか、stale senderからshell openを開始する"
-// observable = "失敗結果、検査対象pathとshell open回数0"
+// observable = "失敗結果、検査対象pathと全platformのOS操作回数0"
 // observation_boundary = "public-boundary"
 // scope = "openResolvedDirectoryInFileManager rejection boundary"
 // lifecycle = "permanent"
@@ -61,29 +109,33 @@ it("directory linkはcanonical pathを再解釈せず認可後に開きOS失敗�
 // @end-test-value
 it("directory linkの不正・消失・差替・sender失効はOSで開かない", async () => {
   const canonicalPath = process.platform === "win32" ? "C:\\outside:12" : "/tmp/outside:12";
-  for (const scenario of ["relative", "control", "missing", "denied", "file", "special", "retargeted", "sender"]) {
-    const targetPath = scenario === "relative" ? "relative" : scenario === "control" ? `${canonicalPath}\0` : canonicalPath;
-    const inspected: string[] = [];
-    let openCalls = 0;
-    const result = await openResolvedDirectoryInFileManager(targetPath, {
-      async statTarget(value) {
-        inspected.push(value);
-        if (scenario === "missing" || scenario === "denied") {
-          throw Object.assign(new Error(scenario), { code: scenario === "missing" ? "ENOENT" : "EACCES" });
-        }
-        return {
-          isDirectory: () => scenario !== "file" && scenario !== "special",
-          isFile: () => scenario === "file",
-        };
-      },
-      async realpathTarget(value) { return scenario === "retargeted" ? `${value}-other` : value; },
-      async assertSender() { if (scenario === "sender") throw new Error("The Preview resource changed."); },
-      async openWithDefaultApp() { openCalls += 1; return ""; },
-    });
-    assert.equal(result.status, scenario === "missing" ? "not-found" : "failed", scenario);
-    assert.ok(result.message, scenario);
-    assert.equal(openCalls, 0, scenario);
-    assert.deepEqual(inspected, scenario === "relative" || scenario === "control" ? [] : [targetPath], scenario);
+  for (const platform of ["win32", "linux", "darwin"] as const) {
+    for (const scenario of ["relative", "control", "missing", "denied", "file", "special", "retargeted", "sender"]) {
+      const targetPath = scenario === "relative" ? "relative" : scenario === "control" ? `${canonicalPath}\0` : canonicalPath;
+      const inspected: string[] = [];
+      let openCalls = 0;
+      const result = await openResolvedDirectoryInFileManager(targetPath, {
+        platform,
+        async statTarget(value) {
+          inspected.push(value);
+          if (scenario === "missing" || scenario === "denied") {
+            throw Object.assign(new Error(scenario), { code: scenario === "missing" ? "ENOENT" : "EACCES" });
+          }
+          return {
+            isDirectory: () => scenario !== "file" && scenario !== "special",
+            isFile: () => scenario === "file",
+          };
+        },
+        async realpathTarget(value) { return scenario === "retargeted" ? `${value}-other` : value; },
+        async assertSender() { if (scenario === "sender") throw new Error("The Preview resource changed."); },
+        async openWithDefaultApp() { openCalls += 1; return ""; },
+        async execFile() { openCalls += 1; },
+      });
+      assert.equal(result.status, scenario === "missing" ? "not-found" : "failed", scenario);
+      assert.ok(result.message, scenario);
+      assert.equal(openCalls, 0, scenario);
+      assert.deepEqual(inspected, scenario === "relative" || scenario === "control" ? [] : [targetPath], scenario);
+    }
   }
 });
 

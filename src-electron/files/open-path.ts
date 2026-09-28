@@ -1,7 +1,11 @@
+import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import type { OpenPathOptions, OpenPathResult } from "../../src-shared/window/withmate-window-types.js";
+
+const execFileAsync = promisify(execFile);
 
 export type ResolvedOpenPathTarget =
   | {
@@ -30,6 +34,8 @@ export type RevealLocalPathDeps = OpenLocalPathDeps & {
 export type OpenResolvedDirectoryDeps = OpenLocalPathDeps & {
   realpathTarget(targetPath: string): Promise<string>;
   assertSender(): Promise<void>;
+  platform?: NodeJS.Platform;
+  execFile?(file: string, args: string[]): Promise<unknown>;
 };
 
 function stripLocalPathFragment(target: string): string {
@@ -367,6 +373,20 @@ export async function openResolvedDirectoryInFileManager(
       target: targetPath,
       message: `The directory could not be opened: ${describeLocalPathError(error)}`,
     };
+  }
+  if ((deps.platform ?? process.platform) === "darwin") {
+    try {
+      // Bundles are directories too. Reveal in Finder without default-app dispatch.
+      await (deps.execFile ?? execFileAsync)("/usr/bin/open", ["-R", targetPath]);
+      return { status: "opened", targetType: "local-path", target: targetPath };
+    } catch (error) {
+      return {
+        status: "failed",
+        targetType: "local-path",
+        target: targetPath,
+        message: `The directory could not be shown in Finder: ${describeLocalPathError(error)}`,
+      };
+    }
   }
   return openExistingLocalPathWithDefaultApp(targetPath, deps.openWithDefaultApp);
 }
