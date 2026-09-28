@@ -128,6 +128,8 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
     input: {
       draft: createReadyDraft(),
       launchStarting: false,
+      isCurrentAttempt: () => true,
+      onDetachedResult: () => {},
       mateState: "active" as const,
       mateProfile: createMateProfile(),
       characterEntries: createCharacterEntries(),
@@ -162,6 +164,43 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
 }
 
 describe("home-launch-actions", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "閉じた開始要求が結果を返さない時は未作成と断定せず、現在のdialogを変更せずに確認不能の結果を通知する"
+  // oracle = { type = "contract", ref = "GitHub Issue #753 / docs/design/desktop-ui.md New Session dialog" }
+  // fault = "null結果を現在のfeedbackへ混入させる、busyを解除する、または自動再作成する"
+  // observable = "所属済み結果通知、createSession回数、dialog feedbackとbusyの通知履歴、closeとopenの呼出数"
+  // observation_boundary = "public-boundary"
+  // scope = "startHomeLaunchの遅延したnull結果"
+  // lifecycle = "permanent"
+  // impact = "結果不明の作成を再送して重複Sessionを作ることと、新しい試行の状態破壊を防ぐ"
+  // distinction = "Electron APIの成功型にはないnullを返し得るrenderer adapter境界を、型検査や正常系と分けて小さなPromiseで検証する"
+  // @end-test-value
+  it("閉じた要求のnull結果は新しいdialogへ反映せず確認不能として通知する", async () => {
+    let current = true;
+    let resolve!: (value: null) => void;
+    let createCount = 0;
+    const results: Array<{ title: string; message: string }> = [];
+    const harness = createStartHomeLaunchHarness({
+      isCurrentAttempt: () => current,
+      onDetachedResult: (result) => results.push(result),
+      createSession: () => {
+        createCount += 1;
+        return new Promise<null>((done) => { resolve = done; });
+      },
+    });
+    const pending = startHomeLaunch(harness.input);
+    current = false;
+    resolve(null);
+    await pending;
+    assert.equal(createCount, 1);
+    assert.deepEqual(results, [{ title: "Task", message: "Could not confirm session creation. Check Recent Sessions before trying again." }]);
+    assert.deepEqual(harness.feedback, [""]);
+    assert.deepEqual(harness.startingStates, [true]);
+    assert.equal(harness.closeCount, 0);
+    assert.deepEqual(harness.openedSessions, []);
+  });
+
   // @test-value v2
   // kind = "invariant"
   // claim = "Randomは履歴とopen Window一覧の両取得成功時だけ開始でき、固定Characterはこの2取得に依存しない"

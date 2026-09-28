@@ -59,6 +59,8 @@ describe("home-launch-handlers", () => {
     const handlers = buildHomeLaunchHandlers({
       launchDraft: draft,
       launchStarting: false,
+      launchLifetimeRef: { current: { starting: false } },
+      onDetachedResult: () => {},
       mateState: "active",
       mateProfile: null,
       enabledLaunchProviders: [createProvider()],
@@ -155,6 +157,8 @@ describe("home-launch-handlers", () => {
     const handlers = buildHomeLaunchHandlers({
       launchDraft: draft,
       launchStarting: false,
+      launchLifetimeRef: { current: { starting: false } },
+      onDetachedResult: () => {},
       mateState: "active",
       mateProfile: null,
       enabledLaunchProviders: [createProvider()],

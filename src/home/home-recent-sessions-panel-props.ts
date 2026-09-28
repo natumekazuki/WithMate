@@ -26,6 +26,7 @@ export type HomeRecentSessionsPanelPropsInput = {
   sessionSummaryLoadStatus?: SessionSummariesLoadStatus;
   feedback?: string;
   onRetry?: () => void;
+  launchResults?: ReactNode;
 };
 
 export function buildHomeRecentSessionsPanelProps({
@@ -42,6 +43,7 @@ export function buildHomeRecentSessionsPanelProps({
   sessionSummaryLoadStatus,
   feedback,
   onRetry,
+  launchResults,
 }: HomeRecentSessionsPanelPropsInput): HomeRecentSessionsPanelProps {
   return {
     filteredSessionEntries,
@@ -60,5 +62,6 @@ export function buildHomeRecentSessionsPanelProps({
     sessionSummaryLoadStatus,
     feedback,
     onRetry,
+    launchResults,
   };
 }
