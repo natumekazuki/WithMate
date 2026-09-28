@@ -1,4 +1,4 @@
-import { readFile, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -93,6 +93,7 @@ import { areDirectoryPathsEquivalent } from "./files/additional-directories.js";
 import { ModelCatalogStorage } from "./settings/model-catalog-storage.js";
 import {
   openLocalPathWithDefaultApp,
+  openResolvedDirectoryInFileManager,
   revealLocalPathInFileManager,
   resolveProtocolRelativeExternalFallbackAfterLocalOpen,
   resolveOpenPathTarget,
@@ -3169,6 +3170,7 @@ async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserW
 
 async function openSessionFilePreviewWindow(
   request: SessionFilePreviewWindowOpenRequest,
+  assertLinkSender: () => Promise<void>,
 ): Promise<SessionFilePreviewWindowOpenResult> {
   if (request.kind === "history-diff") {
     const result = await createFileRootGitChangesService().getHistoryDiff(request.request);
@@ -3232,7 +3234,12 @@ async function openSessionFilePreviewWindow(
           };
     }
     if (resolution.type === "directory") {
-      const opened = await openPathTarget(resolution.targetPath);
+      const opened = await openResolvedDirectoryInFileManager(resolution.targetPath, {
+        statTarget: stat,
+        realpathTarget: realpath,
+        assertSender: assertLinkSender,
+        openWithDefaultApp: (targetPath) => shell.openPath(targetPath),
+      });
       return opened.status === "opened"
         ? { status: "opened", targetType: "local-directory", target: opened.target }
         : {

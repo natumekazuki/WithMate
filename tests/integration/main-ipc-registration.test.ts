@@ -1149,6 +1149,82 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   );
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "リンク解決中にSession所有者・Preview resource・送信元windowが変わると、遅延したOS open前の再認可が失敗する"
+// oracle = { type = "contract", ref = "ADR 020 File preview window navigation: current Preview resource and owning Session authority" }
+// fault = "初回認可だけでリンク解決後の古いrequestからOS openへ進む"
+// observable = "非同期解決後の再認可拒否とOS open相当の呼び出し回数"
+// observation_boundary = "public-boundary"
+// scope = "File preview link IPC sender reauthorization"
+// lifecycle = "permanent"
+// impact = "閉じた・切り替わったPreviewや所有者変更後のSessionから外部directoryをOSで開けてしまう"
+// distinction = "既存testの初回sender/base拒否では検出できない、service待機後のauthority変化を検証する"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("File preview link IPC は非同期解決後も同じsender authorityを要求する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///session.html?sessionId=session-2");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview-1");
+  let currentWindow = ownerWindow;
+  let ownerSessionId = "session-1";
+  const baseResource = { sessionId: "aux-1", absolutePath: "C:/outside/current.md" };
+  let currentPreviewResource = baseResource;
+  let afterResolution = () => {};
+  let openedCount = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => (
+      sessionId === "session-1" ? ownerWindow : sessionId === "session-2" ? otherWindow : null
+    ),
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => (
+      sessionId === "aux-1" ? ownerSessionId : null
+    ),
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? currentPreviewResource : null
+    ),
+    openSessionFilePreviewWindow: async (
+      _request: unknown,
+      assertLinkSender: () => Promise<void>,
+    ) => {
+      await Promise.resolve();
+      afterResolution();
+      await assertLinkSender();
+      openedCount += 1;
+      return { status: "opened", targetType: "local-directory", target: "C:/outside/docs" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = {
+    kind: "link",
+    sessionId: "aux-1",
+    target: "C:/outside/docs",
+    baseResource,
+  };
+  const open = () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, request) as Promise<unknown>;
+
+  assert.deepEqual(await open(), {
+    status: "opened", targetType: "local-directory", target: "C:/outside/docs",
+  });
+  assert.equal(openedCount, 1);
+
+  afterResolution = () => { ownerSessionId = "session-2"; };
+  await assert.rejects(open, /current Preview resource as its base/);
+  assert.equal(openedCount, 1);
+
+  ownerSessionId = "session-1";
+  currentWindow = previewWindow;
+  afterResolution = () => { currentPreviewResource = { ...baseResource, absolutePath: "C:/outside/other.md" }; };
+  await assert.rejects(open, /current Preview resource as its base/);
+  assert.equal(openedCount, 1);
+
+  currentPreviewResource = baseResource;
+  afterResolution = () => { currentWindow = otherWindow; };
+  await assert.rejects(open, /sender changed/);
+  assert.equal(openedCount, 1);
+});
+
 test("Glossary IPCはtarget Session windowだけをauthorityとし、renderer pathを受け取らない", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("http://localhost/?sessionId=session-1");

@@ -397,7 +397,19 @@ test("SessionFileExplorerService は absolute preview resource を同じ実体�
   }
 });
 
-test("SessionFileExplorerService は root 内 symlink file を absolute preview resource へ解決する", async () => {
+// @test-value v2
+// kind = "security"
+// claim = "root外へ向くsymlink/junctionは明示linkでcanonical file/directoryへ解決するがdirectory列挙のroot制限は維持する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Link Handling" }
+// fault = "junction directoryの明示openが拒否されるか、そのlink解決によってroot外directoryの列挙まで許可される"
+// observable = "file/directoryのcanonical解決結果とlistDirectoryの拒否"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService link resolution and directory listing"
+// lifecycle = "permanent"
+// impact = "別Worktreeの明示openを可能にしつつエージェントとアプリの自動参照範囲を拡張しない"
+// distinction = "実filesystemのsymlink/junction越しの解決と列挙を比較するため型検査では代替できない"
+// @end-test-value
+test("SessionFileExplorerService は root 外への symlink link を解決し列挙は拒否する", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-preview-link-escape-"));
   const workspacePath = path.join(basePath, "workspace");
   const outsidePath = path.join(basePath, "outside");
@@ -430,10 +442,84 @@ test("SessionFileExplorerService は root 内 symlink file を absolute preview 
         absolutePath: await realpath(path.join(junctionPath, "secret.txt")),
       },
     });
-    assert.equal((await service.resolvePreviewTarget("session-1", "outside-link")).type, "not-previewable");
+    assert.deepEqual(await service.resolvePreviewTarget("session-1", "outside-link"), {
+      type: "directory",
+      targetPath: await realpath(outsidePath),
+    });
+    await assert.rejects(() => service.listDirectory({
+      sessionId: "session-1", rootId: "workspace", relativePath: "outside-link",
+    }), /outside the file root/);
     assert.equal(probedPaths.includes(path.join(junctionPath, "secret.txt")), true);
   } finally {
     await rm(basePath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "明示directory linkはroot内外・相対・file URL・preview基準から既存directoryへ解決し、root登録や自動openは行わない"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Link Handling" }
+// fault = "Session外directoryを拒否する、preview基準を無視する、または解決だけでOS openやroot拡張を行う"
+// observable = "canonical directory解決結果、missing/invalid結果、rootsとopen呼出数"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService.resolvePreviewTarget"
+// lifecycle = "permanent"
+// distinction = "実filesystemと登録rootを使って明示navigationと自動参照権限の分離を低コストで確認する"
+// @end-test-value
+test("SessionFileExplorerService は root 内外のdirectory linkを権限追加なしで解決する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-directory-link-"));
+  const workspacePath = path.join(tempDirectory, "workspace");
+  const outsidePath = path.join(tempDirectory, "別 Worktree #1 %25");
+  const additionalPath = path.join(tempDirectory, "additional");
+  let openCalls = 0;
+  const context = { workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [additionalPath] };
+  try {
+    await mkdir(path.join(workspacePath, "docs"), { recursive: true });
+    await mkdir(outsidePath);
+    await mkdir(additionalPath);
+    await writeFile(path.join(workspacePath, "docs", "README.md"), "links");
+    await writeFile(path.join(outsidePath, "README.md"), "links");
+    const service = new SessionFileExplorerService({
+      userDataPath: path.join(tempDirectory, "user-data"),
+      async getSessionContext(sessionId) { return sessionId === "session-1" ? context : null; },
+      async openResolvedPath(targetPath) {
+        openCalls += 1;
+        return { status: "opened", targetType: "local-path", target: targetPath };
+      },
+    });
+    const roots = await service.listRoots("session-1");
+    const sessionFolder = roots.find((root) => root.kind === "session-folder")!;
+    await mkdir(sessionFolder.displayPath, { recursive: true });
+    for (const directoryPath of [workspacePath, outsidePath, additionalPath, sessionFolder.displayPath]) {
+      assert.deepEqual(await service.resolvePreviewTarget("session-1", pathToFileURL(directoryPath).href), {
+        type: "directory", targetPath: await realpath(directoryPath),
+      });
+    }
+    assert.deepEqual(await service.resolvePreviewTarget("session-1", "../additional"), {
+      type: "directory", targetPath: await realpath(additionalPath),
+    });
+    for (const baseResource of [
+      { sessionId: "session-1", rootId: "workspace", relativePath: "docs/README.md" },
+      { sessionId: "session-1", absolutePath: await realpath(path.join(outsidePath, "README.md")) },
+    ]) {
+      const target = "rootId" in baseResource ? "../../additional" : "../additional";
+      assert.deepEqual(await service.resolvePreviewTarget("session-1", target, baseResource), {
+        type: "directory", targetPath: await realpath(additionalPath),
+      });
+    }
+    assert.equal((await service.resolvePreviewTarget("session-1", "../missing-directory")).type, "not-found");
+    for (const target of ["", "file://%/invalid"]) {
+      assert.equal((await service.resolvePreviewTarget("session-1", target)).type, "failed");
+    }
+    assert.equal((await service.resolvePreviewTarget("missing-session", outsidePath)).type, "failed");
+    assert.equal((await service.resolvePreviewTarget("session-1", "../additional", {
+      sessionId: "other-session", absolutePath: path.join(outsidePath, "README.md"),
+    })).type, "failed");
+    assert.deepEqual(await service.listRoots("session-1"), roots);
+    assert.deepEqual(context.allowedAdditionalDirectories, [additionalPath]);
+    assert.equal(openCalls, 0);
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
   }
 });
 
