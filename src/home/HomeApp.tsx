@@ -229,6 +229,10 @@ export default function HomeApp() {
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoadSettled, setModelCatalogLoadSettled] = useState(!isSettingsWindowMode);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
+  const launchDialogAttemptRef = useRef<object | null>(null);
+  useEffect(() => () => {
+    launchDialogAttemptRef.current = null;
+  }, []);
   const [launchCharacterCatalog, setLaunchCharacterCatalog] = useState<HomeLaunchCharacterCatalog>({
     entries: [],
     status: "loading",
@@ -903,6 +907,7 @@ export default function HomeApp() {
 
   const homeLaunchHandlers = buildHomeLaunchHandlers({
     launchDraft,
+    launchDialogAttemptRef,
     launchStarting,
     mateState,
     mateProfile,

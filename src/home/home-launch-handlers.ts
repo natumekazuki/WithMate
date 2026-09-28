@@ -17,6 +17,7 @@ import { startHomeLaunch, type HomeLaunchFeedbackSource } from "./home-launch-ac
 
 type HomeLaunchHandlersContext = {
   launchDraft: HomeLaunchDraft;
+  launchDialogAttemptRef: { current: object | null };
   launchStarting: boolean;
   mateState: MateStorageState | null;
   mateProfile: MateProfile | null;
@@ -56,6 +57,7 @@ export type HomeLaunchHandlers = {
 
 export function buildHomeLaunchHandlers({
   launchDraft,
+  launchDialogAttemptRef,
   launchStarting,
   mateState,
   mateProfile,
@@ -90,25 +92,37 @@ export function buildHomeLaunchHandlers({
   };
 
   const onOpenLaunchDialog = async () => {
+    if (launchDialogAttemptRef.current !== null) {
+      return;
+    }
+    const attempt = {};
+    launchDialogAttemptRef.current = attempt;
     cancelWorkspaceValidation();
     setLaunchFeedback("");
     setLaunchCharacterCatalog({ entries: [], status: "loading" });
-    try {
-      const entries = await refreshCharacterEntries();
-      setLaunchCharacterCatalog({ entries, status: "loaded" });
-    } catch (error) {
-      setLaunchCharacterCatalog({ entries: [], status: "error" });
-      setLaunchFeedback(error instanceof Error ? error.message : "Could not refresh characters.");
-    }
     setLaunchDraft((current) =>
       openLaunchDraft(
         current,
         enabledLaunchProviders[0]?.id ?? "",
       ),
     );
+    try {
+      const entries = await refreshCharacterEntries();
+      if (launchDialogAttemptRef.current !== attempt) {
+        return;
+      }
+      setLaunchCharacterCatalog({ entries, status: "loaded" });
+    } catch (error) {
+      if (launchDialogAttemptRef.current !== attempt) {
+        return;
+      }
+      setLaunchCharacterCatalog({ entries: [], status: "error" });
+      setLaunchFeedback(error instanceof Error ? error.message : "Could not refresh characters.");
+    }
   };
 
   const onCloseLaunchDialog = () => {
+    launchDialogAttemptRef.current = null;
     cancelWorkspaceValidation();
     setLaunchFeedback("");
     setLaunchStarting(false);
