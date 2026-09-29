@@ -213,12 +213,12 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Settingsのapp settings、model catalog、Memory diagnosticsは独立して読込・回復し、未完了readや一方の失敗で準備済みの操作を塞がない"
+// claim = "Settingsのapp settingsとmodel catalogは個別に読込・回復し、その未完了や失敗でMemory diagnosticsの表示と準備済みの操作を塞がずcatalogの購読更新も画面へ反映する"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md#runtime-policy and GitHub Issue #744" }
-// fault = "Settingsの初回readを一括待機し、別領域の内容や操作を隠すか、失敗後の再取得をできなくする"
-// observable = "deferred API応答中のSettings section、独立したLoadError/LoadingIndicator、Import Models操作、Retry後のprovider row"
+// fault = "Settingsの初回readを一括待機し、別領域の内容や操作を隠すか、失敗後の再取得またはcatalog購読更新の表示をできなくする"
+// observable = "deferred API応答中のSettings section、独立したLoadError/LoadingIndicator、Import Models操作、Retry後と購読更新後のprovider row"
 // observation_boundary = "component-behavior"
-// scope = "Settings Window independent initial reads and recovery"
+// scope = "Settings Window independent initial reads, recovery and model catalog subscription"
 // lifecycle = "permanent"
 // @end-test-value
 test("Settingsは独立したreadのpending/error中も準備済み領域を表示・操作できる", async () => {
@@ -236,6 +236,7 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
   const firstCatalogLoad = createDeferred<ModelCatalogSnapshot | null>();
   let settingsCalls = 0;
   let catalogCalls = 0;
+  const catalogListeners = new Set<(snapshot: ModelCatalogSnapshot) => void>();
   let imports = 0;
   const savedSettings: ReturnType<typeof createDefaultAppSettings>[] = [];
   const originalSettings = {
@@ -266,7 +267,10 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
       if (catalogCalls === 1) return firstCatalogLoad.promise;
       return catalog;
     },
-    subscribeModelCatalog: () => () => {},
+    subscribeModelCatalog: (listener) => {
+      catalogListeners.add(listener);
+      return () => { catalogListeners.delete(listener); };
+    },
     getMemoryV6Diagnostics: async () => ({
       generatedAt: "",
       runtime: {
@@ -336,6 +340,18 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     assert.equal(catalogCalls, 2);
     assert.ok(rootElement.textContent?.includes("Codex"));
+
+    assert.equal(catalogListeners.size, 1);
+    await act(async () => {
+      for (const listener of catalogListeners) {
+        listener({
+          ...catalog,
+          revision: 3,
+          providers: catalog.providers.map((provider) => ({ ...provider, label: "Updated Codex" })),
+        });
+      }
+    });
+    assert.ok(rootElement.textContent?.includes("Updated Codex"));
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
