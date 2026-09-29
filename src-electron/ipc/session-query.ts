@@ -36,6 +36,7 @@ import {
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_SUMMARY_CHANNEL,
   WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
@@ -207,6 +208,12 @@ export function registerSessionQueryHandlers(
       return null;
     }
     return deps.getSession(sessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_SESSION_SUMMARY_CHANNEL, (_event, sessionId: string) => {
+    if (!sessionId) {
+      return null;
+    }
+    return deps.getSessionSummary(sessionId);
   });
   ipcMain.handle(
     WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,

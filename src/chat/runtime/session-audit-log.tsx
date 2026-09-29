@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, t
 import type { AuditLogDetailFragment, AuditLogDetailSection, AuditLogSummary } from "../../../src-shared/session/runtime-state.js";
 
 import { useDialogA11y } from "../../ui/a11y.js";
+import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
 function displayApprovalValue(value: string): string { return value.trim() || "-"; }
 
@@ -84,12 +85,7 @@ function AuditLogTextPreview({ value, maxChars }: { value: string; maxChars?: nu
 }
 
 function AuditLogLoadingIndicator({ label }: { label: string }) {
-  return (
-    <span className="settings-loading-inline" role="status" aria-label={label}>
-      <span className="settings-action-spinner" aria-hidden="true" />
-      <span className="visually-hidden">{label}</span>
-    </span>
-  );
+  return <LoadingIndicator inline className="settings-loading-inline" label={label} />;
 }
 
 function AuditLogLogicalPromptFieldFold({
@@ -363,10 +359,11 @@ export function SessionAuditLogModal({
           <div className="audit-log-page-status">
             <span>{entries.length} / {total}</span>
             {refreshing ? (
-              <span className="audit-log-page-status-refreshing settings-loading-inline" role="status" aria-label="Refreshing audit log">
-                <span className="settings-action-spinner" aria-hidden="true" />
-                <span className="visually-hidden">Refreshing audit log.</span>
-              </span>
+              <LoadingIndicator
+                inline
+                className="audit-log-page-status-refreshing settings-loading-inline"
+                label="Refreshing audit log"
+              />
             ) : null}
             {errorMessage ? <span className="audit-log-page-error" role="alert">{errorMessage}</span> : null}
           </div>

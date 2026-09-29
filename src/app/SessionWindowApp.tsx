@@ -87,6 +87,9 @@ import {
   type MainRuntimeOption,
 } from "../chat/runtime/main-session-mutation-operations.js";
 import { useMainSessionRuntime } from "../chat/runtime/use-main-session-runtime.js";
+import { useSessionSummaryRead } from "../chat/runtime/use-session-summary-read.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { LoadError } from "../ui/load-error.js";
 import { useSessionHeaderOperations } from "../chat/shell/use-session-header-operations.js";
 import {
   buildComposerSendabilityState,
@@ -314,6 +317,7 @@ export default function AgentSessionWindowApp() {
   }
   const composerRegistry = composerRegistryRef.current;
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
+  const sessionSummaryRead = useSessionSummaryRead(withmateApi, selectedId);
   const [executionOptionsFeedback, setExecutionOptionsFeedback] = useState<{
     ownerId: string;
     message: string;
@@ -441,10 +445,16 @@ export default function AgentSessionWindowApp() {
   const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
   const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
   const auxiliarySendInFlightIdsRef = useRef<Set<string>>(new Set());
-  const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
+  const loadedSession = useMemo(
+    () => sessions.find((session) => session.id === selectedId) ?? null,
     [selectedId, sessions],
   );
+  // This projection is display-only until the conversation read succeeds.
+  const selectedSession = useMemo<Session | null>(() => {
+    if (loadedSession) return loadedSession;
+    if (mainSessionRuntime.readStatus === "ready" || !sessionSummaryRead.summary) return null;
+    return { ...sessionSummaryRead.summary, characterRuntimeSnapshot: null, messages: [], stream: [] };
+  }, [loadedSession, mainSessionRuntime.readStatus, sessionSummaryRead.summary]);
   const {
     workspaceAvailability,
     workspaceAvailabilityCheckRevision,
@@ -638,6 +648,9 @@ export default function AgentSessionWindowApp() {
   const isSelectedSessionReadOnly = selectedSession ? isReadOnlySession(selectedSession) : false;
   const persistSession = useCallback(async (nextSession: Session) => {
     const current = getCurrentMainSession();
+    if (!current || current.id !== nextSession.id) {
+      throw new Error("Wait for the conversation to load before changing this session.");
+    }
     const withCurrentSelection = current?.id === nextSession.id && getSessionIncarnationId(current) === getSessionIncarnationId(nextSession)
       ? { ...nextSession, ...captureSessionExecutionOptions(current) }
       : nextSession;
@@ -646,7 +659,7 @@ export default function AgentSessionWindowApp() {
   const sessionHeader = useSessionHeaderOperations({
     api: withmateApi,
     selectedSession,
-    isReadOnly: isSelectedSessionReadOnly,
+    isReadOnly: isSelectedSessionReadOnly || !loadedSession,
     runState: selectedSessionRunState,
     updateTitle: async (session, title) => {
       if (!withmateApi) return;
@@ -745,6 +758,14 @@ export default function AgentSessionWindowApp() {
       return auxiliaryWorkspace.detailError?.message ?? auxiliaryWorkspace.error?.message ?? "";
     }
 
+    if (auxiliaryWorkspace.target === "main" && !loadedSession) {
+      return mainSessionRuntime.readError;
+    }
+
+    if (appSettingsLoadStatus !== "loaded" || modelCatalogLoadStatus !== "loaded") {
+      return appSettingsLoadError || modelCatalogLoadError;
+    }
+
     if (!isSelectedProviderEnabled) {
       return "Provider is disabled. Enable it in Settings.";
     }
@@ -754,9 +775,13 @@ export default function AgentSessionWindowApp() {
     }
 
     return "";
-  }, [activeAuxiliarySession, auxiliaryWorkspace.detailError, auxiliaryWorkspace.error, auxiliaryWorkspace.target, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate]);
+  }, [activeAuxiliarySession, auxiliaryWorkspace.detailError, auxiliaryWorkspace.error, auxiliaryWorkspace.target, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate, loadedSession, mainSessionRuntime.readError, appSettingsLoadStatus, modelCatalogLoadStatus, appSettingsLoadError, modelCatalogLoadError]);
   const composerBusyReason = pendingSubmitSessionId !== null && pendingSubmitSessionId === activeRunSessionId
     ? "Message submission is in progress."
+    : auxiliaryWorkspace.target === "main" && !loadedSession && !mainSessionRuntime.readError
+      ? "The conversation is loading."
+    : appSettingsLoadStatus === "loading" || modelCatalogLoadStatus === "loading"
+      ? "Execution settings are loading."
     : workspaceExecutionGate.isPending
       ? "Workspace availability is being checked."
       : "";
@@ -817,7 +842,7 @@ export default function AgentSessionWindowApp() {
         setModelCatalogLoadError(error instanceof Error ? error.message : "Could not load model catalog.");
       },
     });
-  }, [selectedSession?.id, withmateApi, applyMainExecutionCatalog, auxiliaryWorkspace.applyModelCatalog]);
+  }, [withmateApi, applyMainExecutionCatalog, auxiliaryWorkspace.applyModelCatalog]);
 
   useEffect(() => {
     return startAppSettingsSubscription({
@@ -1027,7 +1052,7 @@ export default function AgentSessionWindowApp() {
     messageText: string,
     options?: { clearDraft?: boolean; collapseActionDock?: boolean; submitSource?: "composer" | "retry" },
   ) => {
-    const sendSession = getCurrentMainSession() ?? selectedSession;
+    const sendSession = getCurrentMainSession();
     if (!withmateApi || !sendSession) {
       return;
     }
@@ -1203,6 +1228,7 @@ export default function AgentSessionWindowApp() {
     }
     try {
       await toggleSessionPin(selectedSession);
+      if (!loadedSession) sessionSummaryRead.retry();
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Could not update the pin.");
     }
@@ -1211,7 +1237,7 @@ export default function AgentSessionWindowApp() {
   const runMainRuntimeOption = async (option: MainRuntimeOption) => {
     if (!withmateApi) return;
     await runMainRuntimeOptionOperation({
-      session: getCurrentMainSession() ?? selectedSession,
+      session: getCurrentMainSession(),
       isReadOnly: isSelectedSessionReadOnly,
       runState: selectedSessionRunState,
       providerCatalog: selectedProviderCatalog,
@@ -1995,6 +2021,14 @@ export default function AgentSessionWindowApp() {
   }
 
   if (!selectedSession || !renderedSession || !selectedSessionCharacter) {
+    if (selectedId && mainSessionRuntime.readStatus !== "ready") {
+      const error = sessionSummaryRead.error || mainSessionRuntime.readError;
+      return <ChatWindowStatusScreen message="">
+        {error
+          ? <LoadError message={error} onRetry={() => { sessionSummaryRead.retry(); mainSessionRuntime.retryRead(); }} />
+          : <LoadingIndicator label="Loading session" />}
+      </ChatWindowStatusScreen>;
+    }
     return <ChatWindowStatusScreen message="No session is selected. Open a session from the Home Window." />;
   }
 
@@ -2056,7 +2090,8 @@ export default function AgentSessionWindowApp() {
       auxiliaryRunState: activeAuxiliarySession?.runState ?? null,
       busyReason: composerBusyReason,
       blockedReason: sessionExecutionBlockedReason,
-      isReadOnly: isSelectedSessionReadOnly,
+      isReadOnly: isSelectedSessionReadOnly || (!activeAuxiliarySession && !loadedSession)
+        || appSettingsLoadStatus !== "loaded" || modelCatalogLoadStatus !== "loaded",
       forceBlockedFeedback: forceComposerBlockedFeedback,
       isMessageListFollowing,
       isPromptTemplateWorkspaceOpen,
@@ -2192,7 +2227,11 @@ export default function AgentSessionWindowApp() {
       onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,
       onCancelRetryDraftReplace: handleCancelRetryDraftReplace,
     },
-    composerFeedback: chatComposerFeature.composer.composerSendability,
+    composerFeedback: {
+      ...chatComposerFeature.composer.composerSendability,
+      shouldShowFeedback: chatComposerFeature.composer.composerSendability.shouldShowFeedback
+        && !(auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError),
+    },
     workspaceAvailabilityMessage,
     isWorkspaceAvailabilityCheckPending,
     onRecheckWorkspaceAvailability: () => {
@@ -2261,12 +2300,21 @@ export default function AgentSessionWindowApp() {
     isAddAuxiliaryDisabled: isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable,
     scrollToLatestOnSend: appSettings.scrollToLatestOnSend,
   });
+  concurrentChats.mainContentReady = loadedSession !== null;
+  concurrentChats.mainReadFeedback = mainSessionRuntime.readError
+    ? <LoadError id="session-main-read-error" message={mainSessionRuntime.readError} onRetry={mainSessionRuntime.retryRead} />
+    : !loadedSession ? <LoadingIndicator label="Loading conversation" /> : null;
 
   return (
     <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
       <>
       <ChatWindow
         {...chatWindowProps}
+        composerProps={{
+          ...chatWindowProps.composerProps,
+          externalErrorDescriptionIds: auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError
+            ? "session-main-read-error" : undefined,
+        }}
         renderRightPane={(navigator) => <SessionContextFeature
           ref={contextFeatureRef}
           api={withmateApi}
@@ -2288,7 +2336,7 @@ export default function AgentSessionWindowApp() {
           ...chatWindowProps.headerProps,
           taskTitle: selectedSession.taskTitle,
           isRunning: isSelectedSessionRunning,
-          isReadOnly: isSelectedSessionReadOnly,
+          isReadOnly: isSelectedSessionReadOnly || !loadedSession,
           showRenameButton: true,
           showDeleteButton: true,
         }}

@@ -219,16 +219,22 @@ export default function HomeApp() {
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [memoryV6Diagnostics, setMemoryV6Diagnostics] = useState<MemoryV6Diagnostics | null>(null);
+  const [memoryV6DiagnosticsLoadStatus, setMemoryV6DiagnosticsLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
+  const [memoryV6DiagnosticsLoadError, setMemoryV6DiagnosticsLoadError] = useState("");
+  const [memoryV6DiagnosticsRetry, setMemoryV6DiagnosticsRetry] = useState(0);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [modelCatalogLoadStatus, setModelCatalogLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
   const [modelCatalogLoadError, setModelCatalogLoadError] = useState("");
+  const [modelCatalogRetry, setModelCatalogRetry] = useState(0);
   const [appSettingsLoadStatus, setAppSettingsLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
   const [appSettingsLoadError, setAppSettingsLoadError] = useState("");
+  const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
+  const [appSettingsRetry, setAppSettingsRetry] = useState(0);
+  const [homeStateRetry, setHomeStateRetry] = useState(0);
+  const [characterRetry, setCharacterRetry] = useState(0);
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
   const [characterListFeedback, setCharacterListFeedback] = useState("");
   const [characterLoadStatus, setCharacterLoadStatus] = useState<HomeCharacterLoadStatus>("loading");
-  const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
-  const [modelCatalogLoadSettled, setModelCatalogLoadSettled] = useState(!isSettingsWindowMode);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
   const launchDialogAttemptRef = useRef<object | null>(null);
   useEffect(() => () => {
@@ -249,6 +255,8 @@ export default function HomeApp() {
   const launchLifetimeRef = useRef<HomeLaunchLifetime>({ starting: false });
   const [launchResults, setLaunchResults] = useState<HomeLaunchResult[]>([]);
   const [mateState, setMateState] = useState<MateStorageState | null>(null);
+  const [mateLoadStatus, setMateLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
+  const [mateLoadError, setMateLoadError] = useState("");
   const [mateProfile, setMateProfile] = useState<MateProfile | null>(null);
   const [mateDisplayName, setMateDisplayName] = useState("");
   const [mateCreating, setMateCreating] = useState(false);
@@ -332,12 +340,12 @@ export default function HomeApp() {
 
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
+    setSettingsDraftLoaded(true);
     setSettingsDraft((current) => {
       const shouldHydrateDrafts =
         options?.force || !isSettingsWindowMode || !settingsHydratedRef.current || !settingsDirtyRef.current;
       return shouldHydrateDrafts ? settings : current;
     });
-    setSettingsDraftLoaded(true);
     if (options?.force || !isSettingsWindowMode || !settingsHydratedRef.current || !settingsDirtyRef.current) {
       settingsHydratedRef.current = true;
     }
@@ -559,7 +567,16 @@ export default function HomeApp() {
   const refreshMemoryV6Diagnostics = async (
     api: NonNullable<ReturnType<typeof getWithMateApi>>,
   ): Promise<void> => {
-    setMemoryV6Diagnostics(await api.getMemoryV6Diagnostics());
+    setMemoryV6DiagnosticsLoadStatus("loading");
+    setMemoryV6DiagnosticsLoadError("");
+    try {
+      setMemoryV6Diagnostics(await api.getMemoryV6Diagnostics());
+      setMemoryV6DiagnosticsLoadStatus("loaded");
+    } catch (error) {
+      setMemoryV6DiagnosticsLoadStatus("error");
+      setMemoryV6DiagnosticsLoadError(error instanceof Error ? error.message : "Could not load Memory V6 diagnostics.");
+      throw error;
+    }
   };
 
   useEffect(() => {
@@ -572,76 +589,84 @@ export default function HomeApp() {
       };
     }
 
-    void refreshMateStatus(withmateApi, { isActive: () => active }).then(() => {
-      if (!active) {
-        return;
-      }
-    }).catch((error) => {
-      if (!active) {
-        return;
-      }
+    if (!isSettingsWindowMode && !isMonitorWindowMode && !isMemoryReviewWindowMode) {
+      setMateLoadStatus("loading");
+      setMateLoadError("");
+      void refreshMateStatus(withmateApi, { isActive: () => active }).then(() => {
+        if (active) setMateLoadStatus("loaded");
+      }).catch((error) => {
+        if (!active) return;
+        const message = error instanceof Error ? error.message : "Could not load app state.";
+        setMateLoadError(message);
+        setMateLoadStatus("error");
+      });
+    }
 
-      setMateState("not_created");
-      setMateProfile(null);
-      setMateCreationFeedback(error instanceof Error ? error.message : "Could not load app state.");
+    if (isSettingsWindowMode) {
+      void refreshMemoryV6Diagnostics(withmateApi).catch(() => undefined);
+    }
+
+    return () => { active = false; };
+  }, [homeStateRetry, isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode, memoryV6DiagnosticsRetry]);
+
+  useEffect(() => {
+    if (isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) return;
+    const api = getWithMateApi();
+    if (!api) return;
+    let active = true;
+    void refreshCharacterEntries(api).catch((error) => {
+      if (active) setCharacterListFeedback(error instanceof Error ? error.message : "Could not load characters.");
     });
+    return () => { active = false; };
+  }, [characterRetry, isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
 
-    void refreshCharacterEntries(withmateApi).catch((error) => {
-      if (!active) {
-        return;
-      }
-
-      setCharacterListFeedback(error instanceof Error ? error.message : "Could not load characters.");
-    });
-    void refreshMemoryV6Diagnostics(withmateApi).catch((error) => {
-      if (!active) {
-        return;
-      }
-
-      setSettingsFeedback(error instanceof Error ? error.message : "Could not load Memory V6 diagnostics.");
-    });
-
-    const unsubscribeModelCatalog = startModelCatalogSubscription({
-      api: withmateApi,
+  useEffect(() => {
+    if (isMonitorWindowMode || isMemoryReviewWindowMode) return;
+    const api = getWithMateApi();
+    if (!api) return;
+    let active = true;
+    const unsubscribe = startModelCatalogSubscription({
+      api,
       enabled: true,
       subscribe: true,
       applyModelCatalog: (snapshot) => {
+        if (!active) return;
         setModelCatalog(snapshot);
         setModelCatalogLoadStatus("loaded");
         setModelCatalogLoadError("");
-        setModelCatalogLoadSettled(true);
       },
       onInitialLoadError: (error) => {
-        const message = error instanceof Error ? error.message : "Could not load model catalog.";
+        if (!active) return;
         setModelCatalog(null);
         setModelCatalogLoadStatus("error");
-        setModelCatalogLoadError(message);
-        setModelCatalogLoadSettled(true);
-        setSettingsFeedback(message);
+        setModelCatalogLoadError(error instanceof Error ? error.message : "Could not load model catalog.");
       },
     });
-    const unsubscribeAppSettings = startAppSettingsSubscription({
-      api: withmateApi,
+    return () => { active = false; unsubscribe(); };
+  }, [isMemoryReviewWindowMode, isMonitorWindowMode, modelCatalogRetry]);
+
+  useEffect(() => {
+    if (isMonitorWindowMode || isMemoryReviewWindowMode) return;
+    const api = getWithMateApi();
+    if (!api) return;
+    let active = true;
+    const unsubscribe = startAppSettingsSubscription({
+      api,
       loadInitial: true,
       applyAppSettings: (settings) => {
+        if (!active) return;
         setAppSettingsLoadStatus("loaded");
         setAppSettingsLoadError("");
         applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
       },
       onInitialLoadError: (error) => {
-        const message = error instanceof Error ? error.message : "Could not load app state.";
+        if (!active) return;
         setAppSettingsLoadStatus("error");
-        setAppSettingsLoadError(message);
-        setMateCreationFeedback(message);
+        setAppSettingsLoadError(error instanceof Error ? error.message : "Could not load app settings.");
       },
     });
-
-    return () => {
-      active = false;
-      unsubscribeModelCatalog();
-      unsubscribeAppSettings();
-    };
-  }, []);
+    return () => { active = false; unsubscribe(); };
+  }, [appSettingsRetry, isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
 
   useEffect(() => {
     if (isSettingsWindowMode || isMemoryReviewWindowMode || !getWithMateApi()) {
@@ -687,6 +712,7 @@ export default function HomeApp() {
   }, [isMemoryReviewWindowMode, isSettingsWindowMode]);
 
   useEffect(() => {
+    if (isSettingsWindowMode || isMemoryReviewWindowMode) return;
     const withmateApi = getWithMateApi();
     if (!withmateApi || isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) {
       return;
@@ -710,6 +736,7 @@ export default function HomeApp() {
   }, [isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
 
   useHomeOpenWindowSubscriptions({
+    enabled: !isSettingsWindowMode && !isMemoryReviewWindowMode,
     getApi: getWithMateApi,
     setOpenSessionWindowIdsState,
   });
@@ -764,6 +791,7 @@ export default function HomeApp() {
   };
 
   useEffect(() => {
+    if (isSettingsWindowMode || isMemoryReviewWindowMode) return;
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
       setAuxiliarySessionSummaries([]);
@@ -808,7 +836,7 @@ export default function HomeApp() {
       unsubscribeLiveRun();
       unsubscribeSessionInvalidation();
     };
-  }, [openSessionWindowIds]);
+  }, [isMemoryReviewWindowMode, isSettingsWindowMode, openSessionWindowIds]);
 
   const sessionProjection = useMemo(
     () => buildHomeSessionProjection(
@@ -983,12 +1011,12 @@ export default function HomeApp() {
     ],
   );
   const persistedSettingsDraft = useMemo(
-    () => buildPersistedAppSettingsFromRows(settingsDraft, providerSettingRows),
-    [providerSettingRows, settingsDraft],
+    () => modelCatalogLoadStatus === "loaded"
+      ? buildPersistedAppSettingsFromRows(settingsDraft, providerSettingRows)
+      : settingsDraft,
+    [modelCatalogLoadStatus, providerSettingRows, settingsDraft],
   );
   persistedSettingsDraftRef.current = persistedSettingsDraft;
-  const settingsWindowReady =
-    settingsDraftLoaded && modelCatalogLoadSettled;
   const settingsDirty = useMemo(() => {
     return JSON.stringify(persistedSettingsDraft) !== JSON.stringify(appSettings);
   }, [appSettings, persistedSettingsDraft]);
@@ -1015,13 +1043,10 @@ export default function HomeApp() {
       if (!api) {
         return;
       }
-      void refreshMemoryV6Diagnostics(api).catch((error) => {
-        setSettingsFeedback(error instanceof Error ? error.message : "Could not refresh Memory V6 diagnostics.");
-      });
+      void refreshMemoryV6Diagnostics(api).catch(() => undefined);
     },
   });
 
-  const isMateStateLoading = mateState === null;
   const canUsePrimaryFeatures = mateState !== null;
 
   const baseSettingsContentProps: HomeSettingsContentBaseProps = {
@@ -1029,6 +1054,27 @@ export default function HomeApp() {
     providerSettingRows,
     modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
     memoryV6Diagnostics,
+    settingsDraftLoaded,
+    memoryV6DiagnosticsLoadStatus,
+    memoryV6DiagnosticsLoadError,
+    onRetryMemoryV6Diagnostics: () => {
+      setMemoryV6DiagnosticsLoadStatus("loading");
+      setMemoryV6DiagnosticsRetry((current) => current + 1);
+    },
+    appSettingsLoadStatus,
+    appSettingsLoadError,
+    onRetryAppSettings: () => {
+      setAppSettingsLoadStatus("loading");
+      setAppSettingsLoadError("");
+      setAppSettingsRetry((current) => current + 1);
+    },
+    modelCatalogLoadStatus,
+    modelCatalogLoadError,
+    onRetryModelCatalog: () => {
+      setModelCatalogLoadStatus("loading");
+      setModelCatalogLoadError("");
+      setModelCatalogRetry((current) => current + 1);
+    },
     settingsDirty,
     settingsFeedback,
     sessionCleanupCutoffDate,
@@ -1114,7 +1160,7 @@ export default function HomeApp() {
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onSetSessionPinned: (sessionId, isPinned) => void setSessionPinned(sessionId, isPinned),
       },
-      canUsePrimaryFeatures,
+      canCreateSession: canUsePrimaryFeatures,
       hasMore: sessionSummariesState.hasMoreRecent || sessionSummariesState.hasMorePinned,
       loadingMore: sessionSummariesState.loadingRecentPage || sessionSummariesState.loadingPinnedPage,
       onLoadMore: loadNextSessionSummaryPage,
@@ -1153,10 +1199,13 @@ export default function HomeApp() {
         onOpenSession: openMonitorSession,
         onShowSessionMonitorContextMenu: showSessionMonitorContextMenu,
       },
-      canUsePrimaryFeatures,
       sessionWindowRestoreIds: pendingSessionWindowRestoreIds,
       sessionWindowRestorePending,
       sessionWindowRestoreFeedback,
+      mateLoadStatus,
+      mateLoadError,
+      onRetryMateStatus: () => setHomeStateRetry((current) => current + 1),
+      onRetryCharacters: () => setCharacterRetry((current) => current + 1),
     }),
     launchDialog: buildHomeLaunchDialogProps({
       draft: launchDraft,
@@ -1183,9 +1232,7 @@ export default function HomeApp() {
       isSettingsWindowMode={isSettingsWindowMode}
       isMemoryReviewWindowMode={isMemoryReviewWindowMode}
       getMemoryReviewApi={getWithMateApi}
-      settingsWindowReady={settingsWindowReady}
       settingsContent={settingsContent}
-      isMateStateLoading={isMateStateLoading}
       mateProfileEditorOpen={mateProfileEditorOpen}
       mateSetupContent={mateSetupContent}
       isMonitorWindowMode={isMonitorWindowMode}

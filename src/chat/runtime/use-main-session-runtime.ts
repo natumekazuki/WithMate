@@ -12,6 +12,7 @@ import { captureSessionExecutionOptions, type SessionExecutionOptions } from "..
 import { applyExecutionOptionsCatalog } from "../../../src-shared/session/execution-options-catalog.js";
 import type { ModelCatalogSnapshot } from "../../../src-shared/settings/model-catalog.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
+import type { ReadStatus } from "../../ui/loading-indicator.js";
 import type {
   ComposerControllerRegistry,
   ComposerOwner,
@@ -59,6 +60,10 @@ export function useMainSessionRuntime({
   onExecutionOptionsError?: (sessionId: string, message: string) => void;
 }) {
   const [sessions, setSessionsBase] = useState<Session[]>([]);
+  const [readRevision, setReadRevision] = useState(0);
+  const [readState, setReadState] = useState<{ ownerId: string | null; status: ReadStatus; error: string }>({
+    ownerId: selectedId, status: "loading", error: "",
+  });
   const currentSessionRef = useRef<Session | null>(null);
   const localSelectionRef = useRef<{ id: string; incarnationId: string; options: SessionExecutionOptions } | null>(null);
   const activeCatalogRef = useRef<ModelCatalogSnapshot | null>(null);
@@ -157,6 +162,7 @@ export function useMainSessionRuntime({
       };
     if (!selectedId) {
       setAuthoritativeSessions([]);
+      setReadState({ ownerId: selectedId, status: "ready", error: "" });
       return () => {
         active = false;
       };
@@ -165,6 +171,7 @@ export function useMainSessionRuntime({
       const requestRevision = refetchRevisionRef.current.start();
       const mutationRevision = mutationRevisionRef.current.capture();
       const projectionRevision = projectionRevisionRef.current.capture();
+      setReadState({ ownerId: selectedId, status: "loading", error: "" });
       void api
         .getSession(selectedId)
         .then((session) => {
@@ -188,8 +195,15 @@ export function useMainSessionRuntime({
                 ]
               : [],
           );
+          setReadState({ ownerId: selectedId, status: "ready", error: "" });
         })
         .catch((error) => {
+          if (!active || !refetchRevisionRef.current.isCurrent(requestRevision)
+            || !mutationRevisionRef.current.isCurrent(mutationRevision)) return;
+          setReadState({
+            ownerId: selectedId, status: "error",
+            error: `Conversation could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+          });
           void api?.reportRendererLog({
             level: "error",
             kind: "renderer.session-refetch.failed",
@@ -216,7 +230,7 @@ export function useMainSessionRuntime({
       active = false;
       unsubscribe();
     };
-  }, [api, selectedId, setAuthoritativeSessions]);
+  }, [api, selectedId, setAuthoritativeSessions, readRevision]);
 
   const persistSession = useCallback(
     async (session: Session, isReadOnly: boolean) => {
@@ -318,6 +332,9 @@ export function useMainSessionRuntime({
 
   return {
     sessions,
+    readStatus: readState.ownerId === selectedId ? readState.status : "loading" as const,
+    readError: readState.ownerId === selectedId ? readState.error : "",
+    retryRead: () => setReadRevision((current) => current + 1),
     applyModelCatalog,
     getCurrentSession: () => currentSessionRef.current,
     selectExecutionOptions,

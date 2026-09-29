@@ -8,6 +8,7 @@ import type { CharacterProfile } from "../../../src-shared/character/character-s
 import type { Message, MessageArtifact } from "../../../src-shared/session/session-state.js";
 
 import { MessageRichText, type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
+import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { GlossaryAnnotationMatcher } from "../../glossary/glossary-annotation-projection.js";
 import { approvalModeLabel, CharacterAvatar, operationTypeLabel } from "../../ui/ui-utils.js";
 
@@ -1178,8 +1179,8 @@ export function SessionMessageColumn({
                       {artifactExpanded ? (
                         <div id={`artifact-panel-${artifactKey}`} className="artifact-block">
                           {artifactLoading ? (
-                            <div className="artifact-detail-loading" role="status" aria-label="Loading details">
-                              <span className="glossary-pane-spinner" aria-hidden="true" />
+                            <div className="artifact-detail-loading">
+                              <LoadingIndicator inline label="Loading details" />
                             </div>
                           ) : null}
                           <div className="artifact-grid artifact-grid-single">

@@ -106,8 +106,8 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - renderer 側の provider settings draft 更新は `home-settings-draft` の pure function を経由する
 - provider file settings の directory / file picker は、`Root Directory` 配下で選ばれた path だけを相対 path として draft へ反映する
 - `HomeApp.tsx` は provider settings を別 state で持たず、単一の `AppSettings draft` を編集する
-- save 時の payload は `home-settings-view-model` が resolved model / reasoning を反映した `persisted settings` として組み立てる
-- Settings Window の `loading` 派生状態は `HomeApp.tsx` が組み立て、表示は対象領域のspinnerとaccessible status/busyへ集約する。正常な読込中にLoading文字列を重ねない
+- save 時の payload は `settings-view-model` が resolved model / reasoning を反映した `persisted settings` として組み立てる。catalog未取得時は保存済みのprovider設定を保持し、一般設定の保存で未取得項目を消さない
+- Settings Windowはapp settings、model catalog、Memory diagnosticsを独立して取得する。設定draftが取得できればcatalogやdiagnosticsを待たず編集でき、失敗は対象領域で再試行する。無関係な取得の完了や再試行で編集中draftを初期化しない。表示は共通spinnerとaccessible status/busyへ集約し、正常な読込中にLoading文字列を重ねない
 - Settings Window の `import / export / save` の文言組み立てと戻り値解釈は `home-settings-actions` が担当する
 - Settings Window の古い Session 削除の確認文言と戻り値解釈は `home-settings-actions` が担当し、削除 orchestration は Main Process 側の session command API に委譲する
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する。完了後に常設の成功説明を残さない

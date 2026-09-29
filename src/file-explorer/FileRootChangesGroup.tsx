@@ -11,6 +11,7 @@ import type {
   FileRootGitChangeScope,
   SessionFileRoot,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 const ROOT_HEADER_ESTIMATED_HEIGHT = 48;
 const ROOT_GROUP_MIN_HEIGHT = 168;
@@ -231,11 +232,8 @@ export function FileRootChangesGroup({
           {rootChange.status === "pending" ? (
             <span
               className="workspace-changes-root-pending"
-              role="status"
-              aria-live="polite"
-              aria-label={`Refreshing changes for ${rootChange.root.label}`}
             >
-              <span className="workspace-changes-root-spinner" aria-hidden="true" />
+              <LoadingIndicator inline label={`Refreshing changes for ${rootChange.root.label}`} />
             </span>
           ) : rootChange.status === "idle" || (rootChange.status === "failed" && rootChange.entries.length === 0) ? null : (
             <span className="workspace-changes-root-count" aria-label={`${rootChange.entries.length} changed files`}>

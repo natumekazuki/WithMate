@@ -2969,7 +2969,7 @@ test("SessionComposerExpanded は busy 中の Send を spinner と status にす
   assert.equal(sendButton.disabled, true);
   assert.equal(sendButton.getAttribute("aria-busy"), "true");
   assert.equal(sendButton.getAttribute("title"), null);
-  assert.ok(sendButton.querySelector(".concurrent-chat-loading-spinner"));
+  assert.ok(sendButton.querySelector(".loading-indicator-spinner[aria-hidden='true']"));
   assert.equal(sendButton.textContent, "Send");
   assert.equal(textarea.getAttribute("aria-busy"), "true");
   assert.equal(status.textContent, busyReason);

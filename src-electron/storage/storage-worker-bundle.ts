@@ -25,7 +25,7 @@ type AsyncStore<T extends object> = {
 const STORE_METHODS = {
   session: [
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
-    "getLatestSessionSummaryForProvider", "getSession", "setSessionPinned", "getSessionMessageArtifact",
+    "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "setSessionPinned", "getSessionMessageArtifact",
     "listSessionIdsLastActiveBefore", "upsertSession", "updateSessionThreadIfMatches",
     "listSessionCredentialThreads", "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
     "updateSessionRuntimeMetadataIfMatches", "updateSession", "upsertTerminalSession", "updateTerminalSession",

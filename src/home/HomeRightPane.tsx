@@ -9,6 +9,8 @@ import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-ses
 import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { LoadError } from "../ui/load-error.js";
 
 export type HomeRightPaneProps = {
   rightPaneView: "monitor" | "characters";
@@ -24,6 +26,7 @@ export type HomeRightPaneProps = {
   characterEntries: CharacterCatalogEntry[];
   characterLoadStatus?: HomeCharacterLoadStatus;
   characterListFeedback?: string;
+  onRetryCharacters?: () => void;
   onChangeRightPaneView: (view: "monitor" | "characters") => void;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
@@ -36,10 +39,12 @@ export type HomeRightPaneProps = {
     sessionId: string,
     point: SessionMonitorContextMenuPoint,
   ) => void;
-  canUsePrimaryFeatures?: boolean;
   sessionWindowRestoreIds?: readonly string[];
   sessionWindowRestorePending?: boolean;
   sessionWindowRestoreFeedback?: string;
+  mateLoadStatus?: "loading" | "loaded" | "error";
+  mateLoadError?: string;
+  onRetryMateStatus?: () => void;
 };
 
 export function HomeRightPane({
@@ -56,6 +61,7 @@ export function HomeRightPane({
   characterEntries,
   characterLoadStatus = "loaded",
   characterListFeedback = "",
+  onRetryCharacters,
   onChangeRightPaneView,
   onOpenSessionMonitorWindow,
   onOpenSettingsWindow,
@@ -64,45 +70,27 @@ export function HomeRightPane({
   onEditCharacter,
   onOpenSession,
   onShowSessionMonitorContextMenu,
-  canUsePrimaryFeatures = true,
   sessionWindowRestoreIds = [],
   sessionWindowRestorePending = false,
   sessionWindowRestoreFeedback = "",
+  mateLoadStatus = "loaded",
+  mateLoadError = "",
+  onRetryMateStatus,
 }: HomeRightPaneProps) {
-  const openSessionMonitorWindow = () => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
-    onOpenSessionMonitorWindow();
-  };
-  const openSession = (sessionId: string, auxiliarySessionId?: string) => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
-    onOpenSession(sessionId, auxiliarySessionId);
-  };
-  const showSessionMonitorContextMenu = (
-    kind: SessionMonitorEntryKind,
-    sessionId: string,
-    point: SessionMonitorContextMenuPoint,
-  ) => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
-    onShowSessionMonitorContextMenu(kind, sessionId, point);
-  };
-
   return (
     <section className="panel home-right-pane rise-3">
       <div className="home-settings-rail">
+        {mateLoadStatus === "loading" ? <LoadingIndicator label="Loading app state" inline /> : null}
+        {mateLoadStatus === "error" ? (
+          <LoadError message={mateLoadError || "Could not load app state."} onRetry={onRetryMateStatus} />
+        ) : null}
         <div className="home-settings-actions">
           <button
             className="restore-session-windows-button"
             type="button"
             onClick={onRestoreSessionWindows}
             disabled={
-              !canUsePrimaryFeatures
-              || sessionWindowRestorePending
+              sessionWindowRestorePending
               || sessionWindowRestoreIds.length === 0
             }
             aria-busy={sessionWindowRestorePending}
@@ -117,9 +105,7 @@ export function HomeRightPane({
             type="button"
             aria-label="Open session monitor window"
             title="Open session monitor window"
-            onClick={openSessionMonitorWindow}
-            aria-disabled={!canUsePrimaryFeatures}
-            disabled={!canUsePrimaryFeatures}
+            onClick={onOpenSessionMonitorWindow}
           >
             {monitorWindowIcon}
           </button>
@@ -165,8 +151,8 @@ export function HomeRightPane({
             nonRunningEmptyMessage={monitorNonRunningEmptyMessage}
             feedback={sessionMonitorFeedback}
             onRetry={onRetrySessionSummaries}
-            onOpenSession={openSession}
-            onShowContextMenu={showSessionMonitorContextMenu}
+            onOpenSession={onOpenSession}
+            onShowContextMenu={onShowSessionMonitorContextMenu}
           />
         </section>
       ) : (
@@ -175,6 +161,7 @@ export function HomeRightPane({
             characters={characterEntries}
             characterLoadStatus={characterLoadStatus}
             feedback={characterListFeedback}
+            onRetry={onRetryCharacters}
             onCreateCharacter={onCreateCharacter}
             onEditCharacter={onEditCharacter}
           />

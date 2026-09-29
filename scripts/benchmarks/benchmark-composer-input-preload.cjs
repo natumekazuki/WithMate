@@ -86,6 +86,10 @@ const draftRecords = new Map();
 
 function resultFor(name, args) {
   if (name === "getSession") return mainSession;
+  if (name === "getSessionSummary") {
+    const { messages, stream, characterRuntimeSnapshot, ...summary } = mainSession;
+    return summary;
+  }
   if (name === "listAuxiliarySessions") return auxiliarySessions.map(({ messages, composerDraft, characterRuntimeSnapshot, ...summary }) => summary);
   if (name === "getAuxiliarySession") {
     counters.getAuxiliarySession += 1;
@@ -145,7 +149,7 @@ function resultFor(name, args) {
 
 const api = {};
 const names = [
-  "getSession", "listAuxiliarySessions", "getAuxiliarySession", "updateAuxiliarySession", "getAppSettings", "getModelCatalog",
+  "getSession", "getSessionSummary", "listAuxiliarySessions", "getAuxiliarySession", "updateAuxiliarySession", "getAppSettings", "getModelCatalog",
   "getSessionGlossaryProjection", "previewComposerInput", "subscribeSessionInvalidation", "subscribeLiveSessionRun",
   "subscribeAuxiliarySessionNavigation", "subscribeSessionGlossary", "getLiveSessionRun", "getSessionMessageArtifact",
   "listSessionSkills", "listSessionCustomAgents", "listWorkspaceSkills", "listWorkspaceCustomAgents", "validateSessionWorkspace",

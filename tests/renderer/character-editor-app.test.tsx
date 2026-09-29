@@ -149,11 +149,11 @@ test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区
     await act(async () => {
       improveButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     });
-    assert.match(rootElement.textContent ?? "", /Loading coding providers\./);
+    assert.ok(rootElement.querySelector('[role="status"][aria-label="Loading coding providers"]'));
     assert.doesNotMatch(rootElement.textContent ?? "", /No enabled coding providers\./);
     const providerStatus = rootElement.querySelector('[role="status"][aria-busy="true"]');
     assert.ok(providerStatus);
-    assert.ok(providerStatus.querySelector(".chat-skill-picker-spinner"));
+    assert.ok(providerStatus.querySelector(".loading-indicator-spinner"));
 
     await act(async () => {
       catalogDeferred.reject(new Error("catalog request failed"));

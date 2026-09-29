@@ -489,6 +489,19 @@ export class SessionStorageV6 {
     return row ? this.rowToSession(row) : null;
   }
 
+  getSessionSummary(sessionId: string): SessionSummary | null {
+    const row = this.db.prepare(`
+      SELECT id, incarnation_id, title, state, session_kind, provider_id,
+        catalog_revision, model_id, reasoning_effort, custom_agent_name,
+        approval_mode, codex_sandbox_mode, allowed_additional_directories_json,
+        runtime_policy_json, thread_id, character_id, character_snapshot_json,
+        workspace_path, is_pinned, updated_at, last_active_at
+      FROM sessions_v6
+      WHERE id = ?
+    `).get(sessionId) as SessionV6Row | undefined;
+    return row ? this.rowToSessionSummary(row) : null;
+  }
+
   listSessionCredentialThreads(): SessionCredentialThreadInfo[] {
     const rows = this.db.prepare(`
       SELECT id, incarnation_id, provider_id, thread_id, state, runtime_policy_json

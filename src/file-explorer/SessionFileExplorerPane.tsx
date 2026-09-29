@@ -18,6 +18,7 @@ import type {
   SessionFileRoot,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 type FileExplorerApi = Pick<
   WithMateWindowApi,
@@ -420,8 +421,8 @@ export function SessionFileExplorerPane({
           <p className="session-file-tree-feedback" role="status" aria-live="polite">{feedbackMessage}</p>
         ) : null}
         {rootsLoadState === "loading" ? (
-          <p className="session-file-tree-status" role="status" aria-live="polite" aria-label="Loading files">
-            <span className="workspace-changes-root-spinner" aria-hidden="true" />
+          <p className="session-file-tree-status">
+            <LoadingIndicator inline label="Loading files" />
           </p>
         ) : null}
         <div className="session-file-tree-virtual" style={{ height: treeVirtualizer.getTotalSize() }}>
@@ -444,11 +445,9 @@ export function SessionFileExplorerPane({
                 {row.kind === "status" ? (
                   <div
                     className="session-file-tree-status"
-                    role="status"
-                    aria-label="Loading directory"
                     style={{ paddingLeft: `${10 + row.depth * 14}px` }}
                   >
-                    <span className="workspace-changes-root-spinner" aria-hidden="true" />
+                    <LoadingIndicator inline label="Loading directory" />
                   </div>
                 ) : row.kind === "root" ? (
                   <button

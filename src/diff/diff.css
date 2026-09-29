@@ -453,19 +453,13 @@
     --session-dock-motion-duration: 0ms;
   }
 
-  .workspace-changes-spinner,
-  .workspace-changes-root-spinner,
-  .concurrent-chat-loading-spinner {
+  .workspace-changes-root-spinner {
     animation: none;
   }
 
   .file-preview-loading-title,
   .file-preview-loading-actions,
   .file-preview-loading-content span {
-    animation: none;
-  }
-
-  .session-file-preview-spinner {
     animation: none;
   }
 

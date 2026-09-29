@@ -69,6 +69,16 @@ describe("HomeSettingsContent", () => {
       providerSettingRows={params?.providerSettingRows ?? providerSettingRows}
       modelCatalogRevisionLabel={String(modelCatalog.revision)}
       memoryV6Diagnostics={params?.memoryV6Diagnostics ?? null}
+      memoryV6DiagnosticsLoadStatus="loaded"
+      memoryV6DiagnosticsLoadError=""
+      onRetryMemoryV6Diagnostics={noOp}
+      appSettingsLoadStatus="loaded"
+      settingsDraftLoaded={true}
+      appSettingsLoadError=""
+      onRetryAppSettings={noOp}
+      modelCatalogLoadStatus="loaded"
+      modelCatalogLoadError=""
+      onRetryModelCatalog={noOp}
       settingsDirty={false}
       settingsFeedback={params?.settingsFeedback ?? ""}
       sessionCleanupCutoffDate=""
@@ -971,7 +981,7 @@ describe("HomeLaunchDialog", () => {
   // claim = "New sessionのCharacter catalog読み込み中は既存spinnerとaccessible statusを出し、取得済み空一覧のNeutral fallbackを出さない"
   // oracle = { type = "contract", ref = "Issue #731 Home/New session data-state distinction" }
   // fault = "初期loadingをNeutralへ投影して未取得状態を空一覧と混同させる"
-  // observable = "既存spinner、Loading characters…のaccessible status、およびNeutralの不在"
+  // observable = "共通spinner、Loading charactersのaccessible status、およびNeutralの不在"
   // observation_boundary = "component-behavior"
   // scope = "HomeLaunchDialog character catalog loading state"
   // lifecycle = "permanent"
@@ -981,8 +991,8 @@ describe("HomeLaunchDialog", () => {
   it("Character catalog 読み込み前は neutral fallback を表示しない", () => {
     const html = renderHomeLaunchDialog([], false);
 
-    assert.ok(html.includes("home-session-list-load-spinner"));
-    assert.ok(html.includes("Loading characters…"));
+    assert.ok(html.includes("loading-indicator-spinner"));
+    assert.ok(html.includes('aria-label="Loading characters"'));
     assert.ok(!html.includes("Neutral"));
   });
 
@@ -1003,7 +1013,7 @@ describe("HomeLaunchDialog", () => {
 
     assert.ok(html.includes("Unavailable"));
     assert.ok(html.includes("Could not load characters."));
-    assert.ok(!html.includes("Loading characters…"));
+    assert.ok(!html.includes('aria-label="Loading characters"'));
     assert.ok(!html.includes("Neutral"));
   });
 
@@ -1038,8 +1048,8 @@ describe("HomeLaunchDialog", () => {
       "Could not load model catalog.",
     );
 
-    assert.ok(loading.includes("chat-skill-picker-spinner"));
-    assert.ok(loading.includes("Loading coding providers."));
+    assert.ok(loading.includes("loading-indicator-spinner"));
+    assert.ok(loading.includes('aria-label="Loading coding providers"'));
     assert.ok(loading.includes('aria-busy="true"'));
     assert.ok(!loading.includes("No enabled coding providers."));
     assert.equal(new JSDOM(loading).window.document.querySelector(".start-session-button")?.hasAttribute("disabled"), true);
@@ -1081,7 +1091,7 @@ describe("HomeRecentSessionsPanel", () => {
     codexReviewer: partial.codexReviewer ?? "auto-review",
   });
   const renderHomeRecentSessions = ({
-    canUsePrimaryFeatures = true,
+    canCreateSession = true,
     filteredSessionEntries = [],
     normalizedSessionSearch = "",
     searchText = "",
@@ -1089,7 +1099,7 @@ describe("HomeRecentSessionsPanel", () => {
     loadingMore = false,
     onLoadMore = noOp,
   }: {
-    canUsePrimaryFeatures?: boolean;
+    canCreateSession?: boolean;
     filteredSessionEntries?: React.ComponentProps<typeof HomeRecentSessionsPanel>["filteredSessionEntries"];
     normalizedSessionSearch?: string;
     searchText?: string;
@@ -1106,7 +1116,7 @@ describe("HomeRecentSessionsPanel", () => {
       onOpenLaunchDialog={noOp}
       onOpenSession={noOp}
       onSetSessionPinned={noOp}
-      canUsePrimaryFeatures={canUsePrimaryFeatures}
+      canCreateSession={canCreateSession}
       hasMore={hasMore}
       loadingMore={loadingMore}
       onLoadMore={onLoadMore}
@@ -1189,8 +1199,18 @@ describe("HomeRecentSessionsPanel", () => {
     }
   });
 
-  it("canUsePrimaryFeatures false の時は New Session が無効化される", () => {
-    const html = renderHomeRecentSessions({ canUsePrimaryFeatures: false });
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Session作成の準備が未完了の間はNew Session操作を無効化する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+  // fault = "Session作成に必要な状態を取得する前に作成操作を許可する"
+  // observable = "New Session buttonのdisabled属性"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeRecentSessionsPanel creation readiness"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Session作成の準備が未完了の時は New Session が無効化される", () => {
+    const html = renderHomeRecentSessions({ canCreateSession: false });
     const disabledButtons = html.match(/<button class="start-session-button"[^>]*disabled=""/g);
     assert.equal(disabledButtons?.length, 1);
   });
@@ -1420,7 +1440,10 @@ describe("HomeRecentSessionsPanel", () => {
     assert.equal((html.match(/character-avatar tiny home-session-card-avatar/g) ?? []).length, 1);
     assert.ok(html.includes("mate.png"));
     assert.ok(html.includes("Read Only"));
-    assert.match(html, /class="home-session-card-open"[^>]*aria-disabled="false"/);
+    const openButton = new JSDOM(html).window.document.querySelector(".home-session-card-open");
+    assert.ok(openButton);
+    assert.equal(openButton.hasAttribute("disabled"), false);
+    assert.notEqual(openButton.getAttribute("aria-disabled"), "true");
     assert.match(html, /class="session-card home-session-card/);
   });
 
@@ -1707,7 +1730,7 @@ describe("HomeMonitorContent", () => {
   // claim = "Auxiliary summaryが未確定でもAuxiliaryなしの親カードへ誤った集約を表示せず、loading/errorをMonitor feedbackで知らせる"
   // oracle = { type = "contract", ref = "issue-722 auxiliary summary loading feedback" }
   // fault = "loading/errorをAuxiliary存在として各親カードへ重複表示するか、未確定状態を0件・待機として隠す、またはfeedbackのaccessible statusを欠落させる"
-  // observable = "loading/error各状態でのAuxiliary status clusterの不在とrole=status feedbackの文言"
+  // observable = "loading/error各状態でのAuxiliary status clusterの不在とloading statusのaccessible nameまたはerror alertの文言"
   // observation_boundary = "component-behavior"
   // scope = "HomeMonitorContent auxiliary data state"
   // lifecycle = "permanent"
@@ -1722,7 +1745,7 @@ describe("HomeMonitorContent", () => {
       auxiliarySessions: [],
     }];
     for (const [auxiliaryDataState, expectedFeedback] of [
-      ["loading", "Loading Auxiliary sessions…"],
+      ["loading", "Loading Auxiliary sessions"],
       ["error", "Could not load Auxiliary sessions."],
     ] as const) {
       const html = renderToStaticMarkup(
@@ -1737,7 +1760,13 @@ describe("HomeMonitorContent", () => {
       const document = new JSDOM(html).window.document;
 
       assert.equal(document.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
-      assert.equal(document.querySelector('[role="status"]')?.textContent, expectedFeedback);
+      if (auxiliaryDataState === "loading") {
+        assert.equal(document.querySelector('[role="status"]')?.getAttribute("aria-label"), expectedFeedback);
+        assert.equal(document.querySelector('[role="alert"]'), null);
+      } else {
+        assert.equal(document.querySelector('[role="alert"]')?.textContent, expectedFeedback);
+        assert.equal(document.querySelector('[role="status"]'), null);
+      }
     }
   });
 
@@ -2063,7 +2092,6 @@ describe("HomeRightPane", () => {
     updatedAt: "2026-01-01T00:00:00.000Z",
     archivedAt: null,
   }],
-    canUsePrimaryFeatures = true,
     characterListFeedback = "",
     sessionWindowRestoreIds: readonly string[] = [],
     sessionWindowRestorePending = false,
@@ -2088,7 +2116,6 @@ describe("HomeRightPane", () => {
       onEditCharacter={noOp}
       onOpenSession={noOp}
       onShowSessionMonitorContextMenu={noOp}
-      canUsePrimaryFeatures={canUsePrimaryFeatures}
       sessionWindowRestoreIds={sessionWindowRestoreIds}
       sessionWindowRestorePending={sessionWindowRestorePending}
       sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
@@ -2201,11 +2228,11 @@ describe("HomeRightPane", () => {
   // distinction = "候補配列の長さだけでなく、明示load stateによる表示分岐を検証する"
   // @end-test-value
   it("Character list は初期取得中と取得失敗を空状態と区別する", () => {
-    const loadingHtml = renderHomeRightPane("characters", [], true, "", [], false, "", "", "loading");
-    const errorHtml = renderHomeRightPane("characters", [], true, "", [], false, "", "", "error");
+    const loadingHtml = renderHomeRightPane("characters", [], "", [], false, "", "", "loading");
+    const errorHtml = renderHomeRightPane("characters", [], "", [], false, "", "", "error");
 
-    assert.ok(loadingHtml.includes("home-session-list-load-spinner"));
-    assert.ok(loadingHtml.includes("Loading characters…"));
+    assert.ok(loadingHtml.includes("loading-indicator-spinner"));
+    assert.ok(loadingHtml.includes('aria-label="Loading characters"'));
     assert.ok(!loadingHtml.includes("No characters yet."));
     assert.ok(errorHtml.includes("Could not load characters."));
     assert.ok(!errorHtml.includes("No characters yet."));
@@ -2224,7 +2251,7 @@ describe("HomeRightPane", () => {
   // distinction = "汎用feedback stateではなく、Characters panel内のエラー表示とCTA共存を確認する"
   // @end-test-value
   it("Characters panel は一覧読み込み error を panel 内に表示する", () => {
-    const html = renderHomeRightPane("characters", [], true, "Could not refresh characters.");
+    const html = renderHomeRightPane("characters", [], "Could not refresh characters.");
 
     assert.ok(html.includes("Could not refresh characters."));
     assert.ok(html.includes("home-create-icon"));
@@ -2260,11 +2287,10 @@ describe("HomeRightPane", () => {
   // @end-test-value
   it("一括復元操作を上部へ常設し、対象なし・処理中をdisabledにする", () => {
     const emptyHtml = renderHomeRightPane("monitor");
-    const enabledHtml = renderHomeRightPane("monitor", undefined, true, "", ["session-a", "session-b"]);
+    const enabledHtml = renderHomeRightPane("monitor", undefined, "", ["session-a", "session-b"]);
     const pendingHtml = renderHomeRightPane(
       "monitor",
       undefined,
-      true,
       "",
       ["session-a", "session-b"],
       true,
@@ -2290,11 +2316,10 @@ describe("HomeRightPane", () => {
   // distinction = "builderの文字列だけでなく、空文字によるDOM非表示と失敗文字列のlive status描画を確認する"
   // @end-test-value
   it("復元feedbackは正常系でstatusを描画せず、失敗時だけlive statusを描画する", () => {
-    const successHtml = renderHomeRightPane("monitor", undefined, true, "", ["session-a"]);
+    const successHtml = renderHomeRightPane("monitor", undefined, "", ["session-a"]);
     const failureHtml = renderHomeRightPane(
       "monitor",
       undefined,
-      true,
       "",
       ["session-b"],
       false,
@@ -2324,7 +2349,6 @@ describe("HomeRightPane", () => {
     const html = renderHomeRightPane(
       "monitor",
       undefined,
-      true,
       "",
       [],
       false,
@@ -2355,8 +2379,4 @@ describe("HomeRightPane", () => {
     assert.ok(!html.includes("<img"));
   });
 
-  it("canUsePrimaryFeatures false の時は主要アクションを無効化する", () => {
-    const html = renderHomeRightPane("monitor", undefined, false);
-    assert.match(html, /<button class="launch-toggle home-monitor-window-button"[^>]*disabled=""/);
-  });
 });

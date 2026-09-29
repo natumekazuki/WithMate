@@ -501,7 +501,7 @@ export function useSessionComposerFeature(input: {
       canSelectCustomAgent,
       additionalDirectoryCount: bridge.session.allowedAdditionalDirectories.length,
       isRunning: bridge.runtime.isRunning,
-      composerBlocked: !!bridge.runtime.blockedReason,
+      composerBlocked: bridge.runtime.isReadOnly || !!bridge.runtime.blockedReason,
       isAgentPickerOpen,
       isSkillPickerOpen,
       isPromptTemplateWorkspaceOpen: bridge.runtime.isPromptTemplateWorkspaceOpen,
@@ -599,6 +599,7 @@ export function useSessionComposerFeature(input: {
         ),
         isInteractionDisabled:
           bridge.runtime.isRunning
+          || bridge.runtime.isReadOnly
           || !!bridge.runtime.blockedReason
           || isComposerFrozen,
         onRemove: onRemoveAdditionalDirectory,

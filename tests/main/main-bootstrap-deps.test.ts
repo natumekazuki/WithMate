@@ -162,6 +162,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         async listWorkspaceCustomAgents() { return []; },
         listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextCursor: null, hasMore: false }),
         getSession: () => null,
+        getSessionSummary: () => null,
         getSessionGlossaryProjection: (sessionId: string) => ({
           sessionId,
           scopeRevision: "scope",

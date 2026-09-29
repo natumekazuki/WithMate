@@ -13,9 +13,7 @@ type HomeAppRouterProps = {
   isSettingsWindowMode: boolean;
   isMemoryReviewWindowMode: boolean;
   getMemoryReviewApi: ComponentProps<typeof MemoryV6ReviewScreen>["getApi"];
-  settingsWindowReady: boolean;
   settingsContent: ReactNode;
-  isMateStateLoading: boolean;
   mateProfileEditorOpen: boolean;
   mateSetupContent: ReactNode;
   isMonitorWindowMode: boolean;
@@ -31,9 +29,7 @@ export function HomeAppRouter({
   isSettingsWindowMode,
   isMemoryReviewWindowMode,
   getMemoryReviewApi,
-  settingsWindowReady,
   settingsContent,
-  isMateStateLoading,
   mateProfileEditorOpen,
   mateSetupContent,
   isMonitorWindowMode,
@@ -50,7 +46,6 @@ export function HomeAppRouter({
     return (
       <SettingsWindowScreen
         homePageClassName={homePageClassName}
-        ready={settingsWindowReady}
         content={settingsContent}
       />
     );
@@ -58,10 +53,6 @@ export function HomeAppRouter({
 
   if (isMemoryReviewWindowMode) {
     return <MemoryV6ReviewScreen homePageClassName={homePageClassName} getApi={getMemoryReviewApi} />;
-  }
-
-  if (isMateStateLoading) {
-    return <HomeStatusScreen homePageClassName={homePageClassName} message="Loading app state…" loading />;
   }
 
   if (mateProfileEditorOpen) {

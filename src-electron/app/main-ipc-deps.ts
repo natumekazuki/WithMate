@@ -278,6 +278,7 @@ export type MainIpcSessionQueryDepsArgs = {
     request?: OpenSessionWindowIdsPageRequest | null,
   ): OpenSessionWindowIdsPageResult;
   getSession(sessionId: string): Awaitable<Session | null>;
+  getSessionSummary(sessionId: string): Awaitable<SessionSummary | null>;
   getSessionGlossaryProjection(sessionId: string): Awaitable<SessionGlossaryProjection>;
   searchSessionGlossary(
     sessionId: string,

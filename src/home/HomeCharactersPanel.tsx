@@ -4,11 +4,14 @@ import type { CharacterCatalogEntry } from "../../src-shared/character/character
 import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
 import { renderHomePlusIcon, renderHomeSearchIcon } from "./home-icons.js";
 import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { LoadError } from "../ui/load-error.js";
 
 export type HomeCharactersPanelProps = {
   characters: readonly CharacterCatalogEntry[];
   characterLoadStatus?: HomeCharacterLoadStatus;
   feedback?: string;
+  onRetry?: () => void;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
 };
@@ -27,6 +30,7 @@ export function HomeCharactersPanel({
   characters,
   characterLoadStatus = "loaded",
   feedback = "",
+  onRetry,
   onCreateCharacter,
   onEditCharacter,
 }: HomeCharactersPanelProps) {
@@ -62,16 +66,13 @@ export function HomeCharactersPanel({
             </button>
           </div>
         </div>
-        {feedback ? <p className="settings-feedback" role="status" aria-live="polite">{feedback}</p> : null}
+        {feedback && characterLoadStatus !== "error" ? (
+          <p className="settings-feedback" role="status" aria-live="polite">{feedback}</p>
+        ) : null}
         {characterLoadStatus === "loading" ? (
-          <div className="home-session-list-load-status home-monitor-empty" role="status" aria-live="polite">
-            <span className="home-session-list-load-spinner" aria-hidden="true" />
-            <span className="sr-only">Loading characters…</span>
-          </div>
+          <LoadingIndicator label="Loading characters" className="home-monitor-empty" />
         ) : characterLoadStatus === "error" ? (
-          feedback ? null : (
-            <p className="home-monitor-empty" role="status" aria-live="polite">Could not load characters.</p>
-          )
+          <LoadError message={feedback || "Could not load characters."} onRetry={onRetry} className="home-monitor-empty" />
         ) : characters.length === 0 ? (
           null
         ) : visibleCharacters.length === 0 ? (

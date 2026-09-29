@@ -1,4 +1,5 @@
 import { focusRovingItemByKey } from "../ui/a11y.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LAUNCH_EMPTY_PROVIDER_MESSAGE } from "./launch-feedback.js";
 
 type Provider = {
@@ -32,12 +33,8 @@ export function ProviderLaunchPicker({
       <div
         id={id}
         className="chat-skill-picker-state"
-        role="status"
-        aria-live="polite"
-        aria-busy="true"
       >
-        <span className="chat-skill-picker-spinner" aria-hidden="true" />
-        <span className="visually-hidden">Loading coding providers.</span>
+        <LoadingIndicator label="Loading coding providers" />
       </div>
     );
   }

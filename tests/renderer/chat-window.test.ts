@@ -220,7 +220,7 @@ test("ChatWindow は submit pending を非表示の busy status として通知�
   assert.match(html, /class="visually-hidden" role="status"[^>]*>Message submission is in progress\.<\/span>/);
   const sendButton = new JSDOM(html).window.document.querySelector(".session-send-button");
   assert.equal(sendButton?.getAttribute("aria-busy"), "true");
-  assert.ok(sendButton?.querySelector(".concurrent-chat-loading-spinner[aria-hidden='true']"));
+  assert.ok(sendButton?.querySelector(".loading-indicator-spinner[aria-hidden='true']"));
   assert.doesNotMatch(html, /chat-error-surface/);
   assert.doesNotMatch(html, /composer-sendability-feedback/);
 });
@@ -420,7 +420,7 @@ test("ChatSkillPickerPanel は loading・error状態を区別する", () => {
 
   assert.match(loadingHtml, /role="status"/);
   assert.match(loadingHtml, /aria-busy="true"/);
-  assert.match(loadingHtml, /chat-skill-picker-spinner/);
+  assert.match(loadingHtml, /loading-indicator-spinner/);
   assert.match(loadingHtml, /class="surface-close-button"/);
   assert.match(loadingHtml, /aria-label="Close skill picker"/);
   assert.match(errorHtml, /class="chat-skill-picker-state error">Skill error/);

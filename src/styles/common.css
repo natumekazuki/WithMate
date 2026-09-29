@@ -1,3 +1,50 @@
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: var(--muted);
+}
+
+.loading-indicator-inline {
+  display: inline-flex;
+  padding: 0;
+  vertical-align: middle;
+}
+
+.loading-indicator-spinner {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: loading-indicator-spin 720ms linear infinite;
+}
+
+.load-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px;
+  color: var(--ink);
+}
+
+.load-error p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@keyframes loading-indicator-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-indicator-spinner { animation: none; }
+}
+
 .session-pin-toggle.is-active {
   border-color: color-mix(in srgb, var(--character-main) 46%, rgba(203, 213, 225, 0.2));
   background: color-mix(in srgb, var(--character-main) 18%, rgba(255, 255, 255, 0.04));

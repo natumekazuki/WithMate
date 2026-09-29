@@ -5,6 +5,7 @@ import { getDiffTokenFromLocation } from "../app/session-location.js";
 import { DiffViewer } from "../ui/DiffViewer.js";
 import { getWithMateApi, isDesktopRuntime } from "../app/renderer-withmate-api.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 type DiffPreviewLoadState = "loading" | "ready" | "unavailable" | "error";
 
@@ -68,8 +69,8 @@ export default function DiffApp() {
   if (loadState === "loading") {
     return (
       <div className="page-shell diff-page">
-        <section className="panel empty-session-card rise-1" role="status" aria-live="polite" aria-label="Loading diff">
-          <span className="workspace-changes-spinner" aria-hidden="true" />
+        <section className="panel empty-session-card rise-1">
+          <LoadingIndicator label="Loading diff" />
         </section>
       </div>
     );

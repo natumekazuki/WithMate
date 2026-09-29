@@ -34,6 +34,9 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## 表示言語・操作・状態
 
+- データの読込中は共通の`LoadingIndicator`を使い、対象を示すaccessible statusと`aria-busy`を持たせる。reduced motionではspinnerを停止する。既存の専用skeletonや実行・保存操作のbusyとは区別する。
+- 読込状態はパーツ単位で持ち、必要なデータが揃ったパーツから表示・操作できるようにする。未取得を正常emptyとして描画せず、失敗時は対象パーツにerrorと再試行導線を置く。再取得中や失敗時も取得済みの内容を保持し、無関係なパーツを画面全体のgateで隠さない。
+- Sessionは基本情報からheaderとFilesを表示し、会話は独立して読み込む。会話取得が成功するまで会話全体を必要とする編集・送信を行わない。Homeの一覧はapp stateの取得を待たず、Settingsの設定draft、Model Catalog、Diagnosticsはそれぞれの取得状態を持つ。
 - アプリ内UIのユーザー向け表示文字列は英語を標準とする。Character定義、ユーザー入力・生成コンテンツ、provider向け指示、ログ、テストデータ、開発者向け文書は対象外とする。
 - アプリ所有の短い表示文、見出し、label、button、option、status名は単語間に空白を入れたTitle Caseを使う。長いerror・safety説明、screen reader向けの自然文、ユーザーが入力・生成する内容は読みやすい文章を維持する。検索inputのplaceholderは表示せず、accessible nameは残す。ブランドとAPI / CLI / JSON / MCP / URL / HEAD等の正式表記は維持する。
 - theme tokenと既存CSS variableを優先する。新しいsurface・badge・button等の色を追加する時は、その上のtext・icon・borderのcontrastを同時に確認する。disabled、muted、placeholder、secondary textと、hover、selected、active、focus、error、warning、successの状態も背景へ埋もれないようにする。

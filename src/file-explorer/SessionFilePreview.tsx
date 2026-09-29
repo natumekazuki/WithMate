@@ -16,6 +16,7 @@ import { AppNotification, type AppNotificationState } from "../ui/app-notificati
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import { ImageViewport, ImageZoomControls, useImageViewport } from "../ui/image-viewport.js";
 import { SelectionTextActionSurface } from "../chat/conversation/session-message-column.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type {
   SessionFileDescriptor,
@@ -1392,8 +1393,8 @@ export function SessionFilePreview({
       ) : null}
 
       {loadState.status === "inspecting" ? (
-        <div className="session-file-preview-loading" role="status" aria-live="polite" aria-label="Inspecting file">
-          <span className="session-file-preview-spinner" aria-hidden="true" />
+        <div className="session-file-preview-loading">
+          <LoadingIndicator label="Inspecting file" />
         </div>
       ) : null}
       {loadState.status === "loading" ? (
@@ -1764,8 +1765,8 @@ export function SessionDiffPreview({
         onClose={() => setFindOpen(false)}
       />
       {loading ? (
-        <div className="session-file-preview-loading" role="status" aria-live="polite" aria-label="Loading Git diff">
-          <span className="session-file-preview-spinner" aria-hidden="true" />
+        <div className="session-file-preview-loading">
+          <LoadingIndicator label="Loading Git diff" />
         </div>
       ) : viewMode === "split" ? (
         <VirtualizedSplitDiffContent
