@@ -25,6 +25,10 @@ runtimeはshared contractの上に次の2 adapterを持つ。
 - `CodexAdapter`
 - `CopilotAdapter`
 
+対応ProviderとAdapterの対応表は`src-electron/providers/provider-support.ts`を正本とし、capability、Coding / Backgroundの解決、Session launchで共有する。未知のProvider IDは実行前に明示的に拒否し、Codexへ置き換えない。実行用catalogは指定Providerとの完全一致で解決し、未登録の場合も別Providerへfallbackしない。Adapter・実行用catalogのProvider指定を省略した場合だけCodexを既定とする。
+
+カスタムcatalogや保存済みSession内の未対応Provider定義は削除しない。新規Sessionで未対応Providerを明示した場合、または有効な対応Providerがない場合はlaunchを拒否する。
+
 `ProviderCodingAdapter`はprompt composition、quota取得、thread invalidation、live turn実行を担う。`ProviderBackgroundAdapter`は権限を制限したstructured promptによるcompleted turn後のCharacter Affect評価を担う。型と入力・出力の正本は`src-electron/providers/provider-runtime.ts`に置く。
 
 Provider 実行が失敗した場合、adapter は `ProviderTurnError` を投げる。`canceled` は既存の session phase / retry / invalidation 判定のため boolean として維持し、失敗分類は `reason` で渡す。

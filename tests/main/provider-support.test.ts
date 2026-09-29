@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 
 import type {
   ProviderCodingAdapter,
@@ -61,13 +62,14 @@ test("resolveProviderCatalogOrThrow は指定 provider の catalog を返す", (
 
 // @test-value v2
 // kind = "contract"
-// claim = "providerIdに応じてcoding/background adapterを対応providerへ解決する"
-// oracle = { type = "contract", ref = "src/provider-support.ts: resolveProvider adapters" }
+// claim = "coding/backgroundは対応providerだけを返し、未知IDはcapabilityと一致して拒否する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
 // fault = "provider adapterを取り違え、別providerの実行経路を呼び出す"
-// observable = "codex/copilotのcodingとbackground adapter identity"
+// observable = "coding/background adapter identity、未知IDの例外とproviderSupported"
 // observation_boundary = "public-boundary"
 // scope = "provider-adapter-resolution"
 // lifecycle = "permanent"
+// impact = "選択していないProviderへのprompt送信と利用枠消費を防ぐ"
 // distinction = "adapter内部動作では検出できないprovider routingを確認する"
 // @end-test-value
 test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は providerId に応じて adapter を返す", () => {
@@ -122,6 +124,45 @@ test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は prov
     }),
     copilotAdapter,
   );
+
+  for (const resolve of [resolveProviderCodingAdapter, resolveProviderBackgroundAdapter]) {
+    for (const providerId of [null, undefined]) {
+      assert.equal(resolve({ providerId, codexAdapter, copilotAdapter }), codexAdapter);
+    }
+    for (const providerId of ["unknown", "claude", "", " codex ", "__proto__", "constructor"]) {
+      assert.equal(getProviderRuntimeCapabilities({ providerId }).providerSupported, false);
+      assert.throws(() => resolve({ providerId, codexAdapter, copilotAdapter }), /Unsupported provider:/);
+    }
+    for (const providerId of ["codex", "copilot"]) {
+      assert.equal(getProviderRuntimeCapabilities({ providerId }).providerSupported, true);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "実行用catalog解決は未知Providerとcatalogにない対応Providerを別Providerへ置き換えない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
+// fault = "catalog共通helperのdefault fallbackで指定とは異なるProviderを返す"
+// observable = "resolveProviderCatalogOrThrowのrejectと指定省略時のProvider ID"
+// observation_boundary = "public-boundary"
+// scope = "provider-runtime-catalog"
+// lifecycle = "permanent"
+// impact = "保存Sessionと実行Providerの不一致による誤送信を防ぐ"
+// distinction = "同じstring型のIDを扱うため型検査では検出できず、adapter単独のtestはcatalogでの置換を通らない"
+// @end-test-value
+test("実行用catalogは指定Providerが見つからなければ拒否する", async () => {
+  const providers: ModelCatalogProvider[] = [{ id: "codex", label: "Codex", defaultModelId: "gpt-5.4", defaultReasoningEffort: "high", models: [] }];
+  for (const includeCustomProvider of [false, true]) {
+    const catalog = { revision: 1, providers: includeCustomProvider ? [...providers, { ...providers[0]!, id: "custom" }] : providers };
+    const deps = {
+      getModelCatalog: () => catalog,
+      ensureSeeded: () => catalog,
+    };
+    await assert.rejects(resolveProviderCatalogOrThrow({ ...deps, providerId: "custom" }), /Unsupported provider: custom/);
+    await assert.rejects(resolveProviderCatalogOrThrow({ ...deps, providerId: "copilot" }), /Provider copilot is not available/);
+    assert.equal((await resolveProviderCatalogOrThrow({ ...deps, providerId: undefined })).provider.id, "codex");
+  }
 });
 
 // @test-value v2

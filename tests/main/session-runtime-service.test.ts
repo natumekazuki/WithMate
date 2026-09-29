@@ -17,6 +17,7 @@ import { type ModelCatalogProvider } from "../../src-shared/settings/model-catal
 import {
   ProviderTurnError,
   type ProviderCodingAdapter,
+  type ProviderTurnAdapter,
   type RunSessionTurnResult,
 } from "../../src-electron/providers/provider-runtime.js";
 import {
@@ -33,6 +34,7 @@ import type { SessionTurnTerminalCommit } from "../../src-electron/session/sessi
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
 import { AppLifecycleService } from "../../src-electron/app/app-lifecycle-service.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "../../src-electron/session/session-run-timeouts.js";
+import { MainProviderFacade } from "../../src-electron/app/main-provider-facade.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -191,6 +193,75 @@ describe("SessionRuntimeService stale retry helpers", () => {
   });
 });
 describe("SessionRuntimeService", () => {
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "保存済みSessionのProviderが未対応なら、Codexでも有効なmodelでも実行開始・保存・binding発行前に拒否する"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
+  // fault = "保存ProviderをcatalogまたはAdapterでCodexへ置き換えてturnを開始する"
+  // observable = "runSessionTurnのreject、adapter呼出し回数、保存とbinding発行回数"
+  // observation_boundary = "public-boundary"
+  // scope = "session-runtime-provider-identity"
+  // lifecycle = "permanent"
+  // impact = "誤った契約へのprompt送信・課金・Session履歴変更を防止する"
+  // distinction = "resolverとlaunchの単体testだけでは保存済みSessionからの本番Facade経由の実行を保証できない"
+  // @end-test-value
+  it("未対応Providerの保存Sessionは実Adapterを呼ばずturn開始前に拒否する", async () => {
+    const session = createSession({ provider: "custom", model: "gpt-5.4" });
+    let adapterCalls = 0;
+    let writes = 0;
+    let bindingIssues = 0;
+    const unexpectedAdapterCall = (): never => { adapterCalls += 1; throw new Error("Unexpected adapter call"); };
+    const adapter: ProviderTurnAdapter = {
+      composePrompt: unexpectedAdapterCall,
+      getProviderQuotaTelemetry: unexpectedAdapterCall,
+      invalidateSessionThread: unexpectedAdapterCall,
+      invalidateAllSessionThreads: unexpectedAdapterCall,
+      runSessionTurn: unexpectedAdapterCall,
+      getBackgroundStructuredPromptPolicy: unexpectedAdapterCall,
+      extractSessionMemoryDelta: unexpectedAdapterCall,
+      runBackgroundStructuredPrompt: unexpectedAdapterCall,
+    };
+    const catalog = { revision: 1, providers: [createProviderCatalog(), createProviderCatalog("custom")] };
+    const facade = new MainProviderFacade({
+      codexAdapter: adapter,
+      copilotAdapter: adapter,
+      getModelCatalog: () => catalog,
+      ensureModelCatalogSeeded: () => catalog,
+    });
+    const unexpectedWrite = (): never => { writes += 1; throw new Error("Unexpected write"); };
+    const service = new SessionRuntimeService({
+      getSession: () => session,
+      upsertSession: unexpectedWrite,
+      resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
+      getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { custom: { enabled: true } } }),
+      resolveProviderCatalog: (id, revision) => facade.resolveProviderCatalog(id, revision),
+      getProviderCodingAdapter: (id) => facade.getProviderCodingAdapter(id),
+      getProviderAgentRuntimeBinding: () => { bindingIssues += 1; return null; },
+      getSessionMemory: () => createSessionMemory(session.id),
+      resolveProjectMemoryEntriesForPrompt: () => [],
+      createAuditLog: unexpectedWrite,
+      updateAuditLog: unexpectedWrite,
+      getLiveSessionRun: () => null,
+      setLiveSessionRun: () => {},
+      waitForApprovalDecision: () => "deny",
+      waitForElicitationResponse: () => ({ action: "cancel" }),
+      setProviderQuotaTelemetry: () => {},
+      setSessionContextTelemetry: () => {},
+      invalidateProviderSessionThread: (id, sessionId) => facade.invalidateProviderSessionThread(id, sessionId),
+      scheduleProviderQuotaTelemetryRefresh: () => {},
+      broadcastLiveSessionRun: () => {},
+      resolvePendingApprovalRequest: () => {},
+      resolvePendingElicitationRequest: () => {},
+    });
+    await assert.rejects(service.runSessionTurn(session.id, {
+      userMessage: "Test provider identity",
+      executionOptions: TEST_EXECUTION_OPTIONS,
+    }), /Unsupported provider: custom/);
+    assert.equal(adapterCalls, 0);
+    assert.equal(writes, 0);
+    assert.equal(bindingIssues, 0);
+  });
 
   // @test-value v2
   // kind = "invariant"

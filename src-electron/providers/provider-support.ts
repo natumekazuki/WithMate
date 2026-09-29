@@ -1,7 +1,6 @@
 import type { ProviderQuotaTelemetry } from "../../src-shared/session/runtime-state.js";
 import {
   DEFAULT_PROVIDER_ID,
-  getProviderCatalog,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
@@ -42,22 +41,39 @@ export type ProviderRuntimeCapabilities = {
   agentRuntimeBindingTransport: "env" | "unsupported";
 };
 
-const MATE_SUPPORTED_PROVIDER_IDS = new Set(["codex", "copilot"]);
+const PROVIDER_ADAPTER_KEYS = {
+  codex: "codexAdapter",
+  copilot: "copilotAdapter",
+} as const;
+
+export function isProviderSupported(providerId: string): providerId is keyof typeof PROVIDER_ADAPTER_KEYS {
+  return Object.hasOwn(PROVIDER_ADAPTER_KEYS, providerId);
+}
+
+export function requireSupportedProviderId(providerId: string | null | undefined): keyof typeof PROVIDER_ADAPTER_KEYS {
+  const resolvedProviderId = providerId ?? DEFAULT_PROVIDER_ID;
+  if (!isProviderSupported(resolvedProviderId)) {
+    throw new Error(`Unsupported provider: ${resolvedProviderId}. Select a supported provider in Settings.`);
+  }
+  return resolvedProviderId;
+}
 
 export async function resolveProviderCatalogOrThrow(
   args: ResolveProviderCatalogArgs,
 ): Promise<{ snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider }> {
+  const providerId = requireSupportedProviderId(args.providerId);
   const snapshot = (await args.getModelCatalog(args.revision)) ?? (await args.ensureSeeded());
-  const provider = getProviderCatalog(snapshot.providers, args.providerId ?? DEFAULT_PROVIDER_ID);
+  const provider = snapshot.providers.find((entry) => entry.id === providerId);
   if (!provider) {
-    throw new Error("No usable model catalog provider was found.");
+    throw new Error(`Provider ${providerId} is not available in the model catalog.`);
   }
 
   return { snapshot, provider };
 }
 
 function resolveProviderAdapter(args: ResolveProviderAdapterArgs): ProviderTurnAdapter {
-  return args.providerId === "copilot" ? args.copilotAdapter : args.codexAdapter;
+  const providerId = requireSupportedProviderId(args.providerId);
+  return args[PROVIDER_ADAPTER_KEYS[providerId]];
 }
 
 export function resolveProviderCodingAdapter(args: ResolveProviderAdapterArgs): ProviderCodingAdapter {
@@ -78,7 +94,7 @@ export async function fetchProviderQuotaTelemetry(
 }
 
 export function getProviderRuntimeCapabilities(args: { providerId: string }): ProviderRuntimeCapabilities {
-  const providerSupported = MATE_SUPPORTED_PROVIDER_IDS.has(args.providerId);
+  const providerSupported = isProviderSupported(args.providerId);
   const bindingCapability = getProviderAgentRuntimeBindingCapability(args.providerId);
   return {
     providerId: args.providerId,

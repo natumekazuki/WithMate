@@ -54,7 +54,7 @@ export class MainProviderFacade {
   }
 
   getProviderRuntimeCapabilities(providerId: string | null | undefined): ProviderRuntimeCapabilities {
-    const resolvedProviderId = providerId?.trim() || DEFAULT_PROVIDER_ID;
+    const resolvedProviderId = providerId ?? DEFAULT_PROVIDER_ID;
     return getProviderRuntimeCapabilities({
       providerId: resolvedProviderId,
     });
@@ -65,7 +65,7 @@ export class MainProviderFacade {
   }
 
   async invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void> {
-    this.deps.revokeProviderExecution?.(sessionId, providerId?.trim() || DEFAULT_PROVIDER_ID);
+    this.deps.revokeProviderExecution?.(sessionId, providerId ?? DEFAULT_PROVIDER_ID);
     await this.getProviderCodingAdapter(providerId).invalidateSessionThread(sessionId);
   }
 
