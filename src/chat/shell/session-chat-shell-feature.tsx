@@ -30,6 +30,7 @@ export function useSessionChatShellFeature(input: {
   isEditingTitle: boolean;
   forceActionDockExpanded: readonly boolean[];
   focusComposer: () => void;
+  terminalDock?: { isExpanded: boolean; onToggle: () => void };
 }) {
   const { isActionDockExpanded, canCollapseActionDock } = buildActionDockRuntimeState({
     isActionDockPinnedExpanded: input.presentation.isActionDockPinnedExpanded,
@@ -40,6 +41,8 @@ export function useSessionChatShellFeature(input: {
     ownerKey: input.ownerKey,
     isHeaderExpanded,
     isActionDockExpanded,
+    isTerminalDockExpanded: input.terminalDock?.isExpanded,
+    sidePaneLayoutKey: `${input.sidePanes.activeSidePane}:${JSON.stringify(input.sidePanes.sessionWorkbenchStyle)}`,
   });
   const handleExpandActionDock = createActionDockExpandHandler({
     setPinnedExpanded: input.presentation.setIsActionDockPinnedExpanded,
@@ -57,6 +60,9 @@ export function useSessionChatShellFeature(input: {
   const handleToggleActionDock = () => dock.handleActionDockSplitterClick(
     isActionDockExpanded ? handleCollapseActionDock : handleExpandActionDock,
   );
+  const handleToggleTerminalDock = () => dock.handleTerminalDockSplitterClick(
+    () => input.terminalDock?.onToggle(),
+  );
 
   const buildSurface = (content: {
     mainContent?: ReactNode;
@@ -64,17 +70,33 @@ export function useSessionChatShellFeature(input: {
     themeStyle: CSSProperties | undefined;
     modals: ChatWindowProps["modals"];
     isAuxiliaryMode: boolean;
+    terminalContent?: ReactNode;
   }): SessionChatShellFeature => ({
     mode: "agent",
     style: { ...content.themeStyle, ...dock.sessionDockLayoutStyle },
     layoutRef: dock.sessionDockLayoutRef,
     headerDockRef: dock.headerDockRef,
     actionDockRef: dock.actionDockRef,
+    terminalDockRef: dock.terminalDockRef,
     isHeaderExpanded,
+    isSidePaneBudgetCollapsed: dock.isSidePaneBudgetCollapsed,
     workbenchRef: input.sidePanes.sessionWorkbenchRef,
     workbenchStyle: input.sidePanes.sessionWorkbenchStyle,
     mainContent: content.mainContent,
     isActionDockExpanded,
+    isTerminalDockExpanded: input.terminalDock?.isExpanded ?? false,
+    terminalContent: content.terminalContent,
+    terminalDockSplitterProps: {
+      className: "session-terminal-dock-splitter",
+      isActive: dock.isTerminalDockResizing,
+      isPanelExpanded: input.terminalDock?.isExpanded ?? false,
+      onPointerDown: dock.handleStartTerminalDockResize,
+      onKeyDown: dock.handleTerminalDockKeyDown,
+      onTogglePanel: handleToggleTerminalDock,
+      ariaLabel: input.terminalDock?.isExpanded ? "Collapse Terminal" : "Expand Terminal",
+      ariaControls: "session-terminal-dock",
+      title: input.terminalDock?.isExpanded ? "Click to collapse Terminal; drag or use arrow keys to resize" : "Click to expand Terminal",
+    },
     headerSplitterProps: {
       isPanelExpanded: isHeaderExpanded,
       canCollapse: !input.isEditingTitle,
@@ -85,6 +107,7 @@ export function useSessionChatShellFeature(input: {
       isPanelExpanded: isActionDockExpanded,
       canCollapse: canCollapseActionDock,
       onPointerDown: dock.handleStartActionDockResize,
+      onKeyDown: dock.handleActionDockKeyDown,
       onTogglePanel: handleToggleActionDock,
     },
     splitterProps: buildLiveSessionSplitterProps({

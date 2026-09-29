@@ -1,5 +1,6 @@
 import type { AuditLogEntry, AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogSummary, AuditLogOperationDetailFragment, AuditLogSummaryPageRequest, AuditLogSummaryPageResult, ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
 import type { AppSettings } from "../settings/provider-settings-state.js";
+import type { CreateTerminalRequest, TerminalEvent } from "../terminal/terminal-contract.js";
 import type { CharacterProfile } from "../character/character-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, SessionCharacterUsage, Session, SessionSummaryInvalidation, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary, SetSessionPinnedRequest } from "../session/session-state.js";
 import type {
@@ -372,4 +373,15 @@ export type WithMateWindowApi =
   & WithMateWindowPickerApi
   & WithMateWindowSubscriptionApi
   & WithMateWindowMateApi
-  & WithMateWindowCharacterApi;
+  & WithMateWindowCharacterApi
+  & WithMateWindowTerminalApi;
+
+export type WithMateWindowTerminalApi = {
+  createTerminal(request: CreateTerminalRequest): Promise<{ shellName: string }>;
+  writeTerminalInput(terminalId: string, data: string): void;
+  resizeTerminal(terminalId: string, cols: number, rows: number): void;
+  acknowledgeTerminalOutput(terminalId: string, characters: number): void;
+  closeTerminal(terminalId: string): Promise<boolean>;
+  releaseTerminal(terminalId: string): Promise<void>;
+  subscribeTerminalEvents(listener: (event: TerminalEvent) => void): () => void;
+};

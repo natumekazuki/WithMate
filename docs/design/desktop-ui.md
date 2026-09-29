@@ -249,16 +249,16 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
 - wide desktop (`1920x1080` baseline) では Session 本体を、中央の `message list または preview` と上下左右の dock に分ける
-  - HeaderとActionDockは常に全幅を使い、外側をカードの枠・背景で囲まない。左右paneはその間で中央surfaceと並び、splitter操作やdockの開閉で配置を変更しない
-  - HeaderとActionDockはclickで開閉する。左右paneは排他表示とし、clickで開閉する。閉じた領域からのdrag展開は行わない。開いた領域のdragと矢印キーによる調整は、領域側が定義する最小サイズと中央領域に必要なサイズを守る。ActionDockはHeaderとsplitter以外の残余高を使い、中央領域が160px未満になる場合は中央を高さ0で非表示にし、160px以上に戻ると会話stateとスクロール位置を保って再表示する
-  - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
+  - Header、Terminal、ActionDockは常に全幅を使い、外側をカードの枠・背景で囲まない。中央surfaceと左右paneの下にTerminal splitter、Terminal、ActionDock splitter、ActionDockを配置する
+  - Header、Terminal、ActionDockはclickで開閉する。左右paneは排他表示とし、clickで開閉する。閉じた領域からのdrag展開は行わない。TerminalとActionDockは開いた状態でdragと上下矢印キーによる高さ調整ができ、通常resizeは他方の現在高を維持する。最大高はHeader、他方のdock、splitterを除いた残余高。中央領域が160px未満になる場合は高さ0で非表示にし、戻すと会話stateとスクロール位置を保って再表示する
+  - TerminalとActionDockの高さ、Terminalタブ、左右paneの幅はWindow local stateとし、別Windowや再起動へ引き継がない。最大まで開いたdockに加えて他方を開く時とWindow縮小時は、必要な領域を確保するよう両dockを補正する
   - Header、ActionDock、side pane の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
   - title 編集などの強制表示は保存済み preference を変更しない
-  - wide layout では中央 surface の最小高さを160pxとし、中央が160px未満になるサイズでは中央を高さ0で非表示にする。ActionDockの高さはHeaderとsplitter以外の残余高まで使用できる。narrow layoutではactive side paneとwork surfaceの縦stackを維持する
+  - wide layoutでは中央surfaceの最小高さを160pxとし、それ未満では中央を高さ0で非表示にする。narrow layoutではactive side paneとwork surfaceを縦stackにし、dockの必要高を確保できない場合はside paneも状態を保って一時的に畳む
   - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
   - 左右splitterはclickで開閉し、開いた領域をdragと矢印キーでサイズ調整する。幅0でもclick用の操作領域を残す
-  - 中央が高さ0の間はHeaderとActionDockのsplitterだけを表示し、それ以外のsplitterは操作不可とする
+  - 中央が高さ0の間もHeader、Terminal、ActionDockのsplitterを操作可能に保つ。中央内のsplitterは操作不可とする
   - ActionDockの展開時最小高さは296pxとし、実行設定は常時表示する。展開時もtextarea自体は最低100pxを保ち、feedbackの高さは別に確保する。候補一覧は既存の高さ上限内で表示し、縮めて消さない。高さが不足する場合は内部スクロールで設定と送信操作へ到達できるようにする
   - 最小サイズは各領域のCSS custom propertyで所有し、レイアウト側が読み取る。File Explorerの最小幅は260px、Context paneは360px、縦stack時は各200px、中央の最小高さは160pxとする。Main／Auxiliaryは各360pxで、両側表示中に中央の実幅が両者とsplitterの合計未満なら送信対象側だけを表示する。中央splitterは1本とし、端へ寄せて片側の要求幅が最小幅の半分未満になるとその側を閉じ、反対側を全幅表示する。閉じた側はclickで両側表示へ戻す。表示比率と送信対象は独立して保持する
   - pane を隠した時も splitter は再表示 affordance として残す
@@ -268,6 +268,14 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Session Windowの最小サイズは1100x720 DIPとし、current minimumはsplit-screenを考慮して到達性を維持する
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
+- `Terminal`
+  - 初期状態は折りたたみで、最初に開くまでシェルを起動しない。Workspaceの`Terminal`は組み込みdockを開き、`Open External Terminal`は既存の外部起動を行う。Session Folderの外部Terminal起動は変更しない
+  - xterm.js本体・標準CSS・FitAddonの公開APIを使う。ANSI解釈、描画、選択、IME、scrollback、シェルの履歴・補完は標準機能へ任せる。専用の最大化モードや端末独自の入力欄は持たない
+  - 1タブにつき独立したxtermとPTYを持ち、親SessionのWorkspaceから起動する。Main／Auxiliaryの切り替えは端末の選択・cwd・processへ影響しない
+  - dock内の1段タブバーはタブ部分だけ横scrollし、右端の`New Terminal`は固定する。選択タブ、終了ボタン、新規追加へkeyboardで到達でき、端末本文から`Ctrl+Shift+Tab`でタブへfocusを戻せる
+  - 表示の折りたたみ・タブ切り替えではprocessを維持する。`Close Terminal`は生存中の終了を確認し、取消では維持する。最後のタブを閉じるとdockを畳み、自動再起動しない。自然終了は`Exited`と終了結果、失敗は`Failed`と理由を表示し、出力を残す
+  - 入力はAI実行と独立し、端末scopeでは会話のshortcutを発火させない。`Ctrl+C`と`Escape`はシェルへ渡し、`Ctrl+Shift+C/V`はコピー／貼り付け、macOSの標準コピー／貼り付けはOS/xtermに従う
+  - ローカルシェルはアプリのOS権限で動き、Providerのapproval／sandboxとは独立する。Workspaceは開始cwdであってアクセス制限ではない
 - `Top Bar`
   - default は hidden とする
   - 上 splitter を押すと Header の表示と `Rename / Audit Log / Terminal / Delete` を切り替える

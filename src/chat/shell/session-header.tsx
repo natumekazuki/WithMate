@@ -24,6 +24,7 @@ export type SessionHeaderProps = {
   onTogglePin?: () => void;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
+  onOpenExternalTerminal?: () => void;
   onTitleDraftChange: (value: string) => void;
   onTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement>;
   onSaveTitle: () => void;
@@ -51,6 +52,7 @@ export function SessionHeader({
   onTogglePin,
   onOpenAuditLog,
   onOpenTerminal,
+  onOpenExternalTerminal,
   onTitleDraftChange,
   onTitleInputKeyDown,
   onSaveTitle,
@@ -123,6 +125,16 @@ export function SessionHeader({
                     disabled={isTerminalDisabled}
                   >
                     Terminal
+                  </button>
+                ) : null}
+                {showTerminalButton && onOpenExternalTerminal ? (
+                  <button
+                    className="drawer-toggle compact secondary"
+                    type="button"
+                    onClick={onOpenExternalTerminal}
+                    disabled={isTerminalDisabled}
+                  >
+                    Open External Terminal
                   </button>
                 ) : null}
               </div>
@@ -236,6 +248,7 @@ export const SESSION_RIGHT_PANE_ID = "session-right-pane";
 export const SESSION_LEFT_PANE_ID = "session-left-pane";
 export const SESSION_HEADER_DOCK_ID = "session-header-dock";
 export const SESSION_ACTION_DOCK_ID = "session-action-dock";
+export const SESSION_TERMINAL_DOCK_ID = "session-terminal-dock";
 
 export type SessionChatScreenProps = {
   mode: ChatWindowModeKind;
@@ -244,6 +257,7 @@ export type SessionChatScreenProps = {
   header: ReactNode;
   headerSplitter: ReactNode;
   isHeaderVisible: boolean;
+  isSidePaneBudgetCollapsed?: boolean;
   messageColumn: ReactNode;
   auxiliaryHeader?: ReactNode;
   auxiliaryMessageColumn?: ReactNode;
@@ -258,6 +272,9 @@ export type SessionChatScreenProps = {
   recoveryActions?: ReactNode;
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
+  terminalDockSplitter?: ReactNode;
+  terminalContent?: ReactNode;
+  isTerminalDockExpanded?: boolean;
   isActionDockExpanded: boolean;
   leftPane?: ReactNode;
   leftSplitter?: ReactNode;
@@ -268,6 +285,7 @@ export type SessionChatScreenProps = {
   layoutRef?: RefObject<HTMLDivElement | null>;
   headerDockRef?: RefObject<HTMLDivElement | null>;
   actionDockRef?: RefObject<HTMLDivElement | null>;
+  terminalDockRef?: RefObject<HTMLDivElement | null>;
   workbenchRef?: RefObject<HTMLDivElement | null>;
   workbenchStyle?: CSSProperties;
   modals?: ReactNode;
@@ -280,6 +298,7 @@ export function SessionChatScreen({
   header,
   headerSplitter,
   isHeaderVisible,
+  isSidePaneBudgetCollapsed = false,
   messageColumn,
   auxiliaryHeader = null,
   auxiliaryMessageColumn = null,
@@ -294,6 +313,9 @@ export function SessionChatScreen({
   recoveryActions = null,
   actionDock,
   actionDockSplitter,
+  terminalDockSplitter,
+  terminalContent,
+  isTerminalDockExpanded = false,
   isActionDockExpanded,
   leftPane = null,
   leftSplitter = null,
@@ -304,6 +326,7 @@ export function SessionChatScreen({
   layoutRef,
   headerDockRef,
   actionDockRef,
+  terminalDockRef,
   workbenchRef,
   workbenchStyle,
   modals,
@@ -324,6 +347,15 @@ export function SessionChatScreen({
   }, [layoutRef, workbenchRef]);
   const layoutStyle = useMemo(() => ({ ...style, ...workbenchStyle }), [style, workbenchStyle]);
   const actionDockHeight = (style as Record<string, unknown> | undefined)?.["--session-action-dock-height"];
+  const terminalDockHeight = (style as Record<string, unknown> | undefined)?.["--session-terminal-dock-height"];
+  useLayoutEffect(() => {
+    if (isTerminalDockExpanded) return;
+    const dock = terminalDockRef?.current;
+    const active = dock?.ownerDocument.activeElement;
+    if (active && dock?.contains(active)) {
+      ownLayoutRef.current?.querySelector<HTMLButtonElement>(".session-terminal-dock-splitter")?.focus();
+    }
+  }, [isTerminalDockExpanded, terminalDockRef]);
   useLayoutEffect(() => {
     if (previousActionDockExpandedRef.current === isActionDockExpanded) {
       return;
@@ -358,15 +390,17 @@ export function SessionChatScreen({
       const pixel = (value: string) => Number.parseFloat(value) || 0;
       const height = layout.clientHeight - pixel(css.paddingTop) - pixel(css.paddingBottom);
       const narrow = view.innerWidth < 1400;
-      const sideHeight = narrow
+      const sideHeight = narrow && !isSidePaneBudgetCollapsed
         ? pixel(css.getPropertyValue("--session-left-pane-track-width"))
           + pixel(css.getPropertyValue("--session-right-pane-track-width")) : 0;
       const remaining = height - sideHeight
         - pixel(css.getPropertyValue("--session-header-dock-row-height"))
-        - pixel(css.getPropertyValue("--session-dock-splitter-size")) * (narrow ? 4 : 2)
-        - pixel(css.getPropertyValue("--session-action-dock-height"));
+        - pixel(css.getPropertyValue("--session-dock-splitter-size")) * (narrow ? 5 : 3)
+        - (isActionDockExpanded ? pixel(css.getPropertyValue("--session-action-dock-height"))
+          : pixel(css.getPropertyValue("--session-action-dock-compact-height")))
+        - (isTerminalDockExpanded ? pixel(css.getPropertyValue("--session-terminal-dock-height")) : 0);
       const minimum = pixel(view.getComputedStyle(central).getPropertyValue("--session-region-min-height"));
-      setIsCentralCollapsed(isActionDockExpanded && remaining < minimum);
+      setIsCentralCollapsed(remaining < minimum);
     };
     measure();
     const Observer = layout.ownerDocument.defaultView?.ResizeObserver;
@@ -374,7 +408,7 @@ export function SessionChatScreen({
     observer?.observe(layout);
     window.addEventListener("resize", measure);
     return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
-  }, [actionDockHeight, isActionDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible]);
+  }, [actionDockHeight, terminalDockHeight, isActionDockExpanded, isTerminalDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible, isSidePaneBudgetCollapsed]);
   const columnsRef = useRef<HTMLDivElement | null>(null);
   const [columnSizes, setColumnSizes] = useState({ width: 0, main: 0, auxiliary: 0, splitter: 0 });
   useLayoutEffect(() => {
@@ -413,11 +447,12 @@ export function SessionChatScreen({
       ref={setLayoutElementRefs}
       className={`page-shell session-page session-chat-layout${isHeaderVisible ? " is-header-visible" : ""}${
         isActionDockExpanded ? " is-action-dock-expanded" : ""
+      }${isTerminalDockExpanded ? " is-terminal-dock-expanded" : ""
       }${isActionDockTransitioning ? " is-action-dock-transitioning" : ""}${
         isLeftPaneVisible ? " is-left-pane-visible" : ""
       }${
         isRightPaneVisible ? " is-right-pane-visible" : ""
-      }${isCentralCollapsed ? " is-central-collapsed" : ""}${className ? ` ${className}` : ""}`}
+      }${isCentralCollapsed ? " is-central-collapsed" : ""}${isSidePaneBudgetCollapsed ? " is-side-pane-budget-collapsed" : ""}${className ? ` ${className}` : ""}`}
       style={layoutStyle}
       data-session-mode={mode}
       onTransitionEnd={handleLayoutTransitionEnd}
@@ -438,8 +473,8 @@ export function SessionChatScreen({
       <div
         id={SESSION_LEFT_PANE_ID}
         className={`session-left-pane-slot${isLeftPaneVisible ? "" : " is-hidden"}`}
-        aria-hidden={!isLeftPaneVisible}
-        inert={!isLeftPaneVisible}
+        aria-hidden={!isLeftPaneVisible || isSidePaneBudgetCollapsed}
+        inert={!isLeftPaneVisible || isSidePaneBudgetCollapsed}
       >
         {leftPane}
       </div>
@@ -501,10 +536,21 @@ export function SessionChatScreen({
       <div
         id={SESSION_RIGHT_PANE_ID}
         className={`session-right-pane-slot${isRightPaneVisible ? "" : " is-hidden"}`}
-        aria-hidden={!isRightPaneVisible}
-        inert={!isRightPaneVisible}
+        aria-hidden={!isRightPaneVisible || isSidePaneBudgetCollapsed}
+        inert={!isRightPaneVisible || isSidePaneBudgetCollapsed}
       >
         {rightPane}
+      </div>
+
+      {terminalDockSplitter}
+      <div
+        id={SESSION_TERMINAL_DOCK_ID}
+        ref={terminalDockRef}
+        className={`session-terminal-dock-slot${isTerminalDockExpanded ? " is-expanded" : " is-hidden"}`}
+        aria-hidden={!isTerminalDockExpanded}
+        inert={!isTerminalDockExpanded}
+      >
+        {terminalContent}
       </div>
 
       {actionDockSplitter}

@@ -497,6 +497,9 @@ function isAltGraphEvent(event: KeyboardEvent): boolean {
 }
 
 function getBlockedKeyboardEventReason(event: KeyboardEvent): string | null {
+  if (isWithinEditingTargetScope(event.target, "terminal")) {
+    return "terminal-input";
+  }
   if (event.defaultPrevented) {
     return "default-prevented";
   }

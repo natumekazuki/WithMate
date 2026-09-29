@@ -29,6 +29,7 @@ export type MainWindowRuntimeDeps = {
   readSession(sessionId: string): Awaitable<Session | null>;
   getSettingsCatalog(): SettingsCatalogPort;
   isSessionRunInFlight(sessionId: string): boolean;
+  getLiveTerminalCount?(window: BrowserWindow): number;
   cancelInFlightSessionRuns(): void;
   waitForPendingDraftSends(): Promise<boolean>;
   onSessionWindowClosed?(sessionId: string): void;
@@ -118,6 +119,7 @@ export class MainWindowRuntime {
       waitForPendingDraftSends: deps.waitForPendingDraftSends,
       getSession: deps.getSession,
       isRunInFlight: deps.isSessionRunInFlight,
+      getLiveTerminalCount: deps.getLiveTerminalCount,
       onSessionWindowClosed: deps.onSessionWindowClosed,
       confirmCloseWhileRunning: deps.confirmCloseWhileRunning,
       broadcastOpenSessionWindowIds: (sessionIds) => this.windowBroadcastService.broadcastOpenSessionWindowIds(sessionIds),

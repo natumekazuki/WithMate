@@ -34,6 +34,7 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   ): void;
   getSession(sessionId: string): Session | null;
   isRunInFlight(sessionId: string): boolean;
+  getLiveTerminalCount?(window: TWindow): number;
   confirmCloseWhileRunning(window: TWindow, sessionId: string): boolean;
   broadcastOpenSessionWindowIds(openSessionIds: string[]): void;
   persistOpenSessionWindowIds?(openSessionIds: readonly string[]): Promise<void>;
@@ -334,7 +335,9 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       return;
     }
 
-    if (this.deps.isRunInFlight(sessionId)) {
+    const hasRunningSession = this.deps.isRunInFlight(sessionId);
+    const hasLiveTerminals = (this.deps.getLiveTerminalCount?.(window) ?? 0) > 0;
+    if (hasRunningSession || hasLiveTerminals) {
       event.preventDefault();
       if (!this.deps.confirmCloseWhileRunning(window, sessionId)) {
         this.resolveCloseRequest(window, false);
@@ -343,7 +346,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     if (!this.deps.sendDraftFlushRequest || !this.deps.getWindowSender) {
-      if (this.deps.isRunInFlight(sessionId)) {
+      if (hasRunningSession || hasLiveTerminals) {
         this.allowCloseSessionWindows.add(window);
         window.close();
       }

@@ -2560,7 +2560,7 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(renderScreen(552));
+      root.render(renderScreen(532));
     });
     const button = dom.window.document.querySelector<HTMLButtonElement>("[data-central-state='true']");
     assert.ok(button);
@@ -2570,14 +2570,14 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
     await act(async () => button.click());
     assert.equal(button.textContent, "state:1");
 
-    await act(async () => root?.render(renderScreen(553)));
+    await act(async () => root?.render(renderScreen(533)));
     assert.equal(dom.window.document.querySelector(".session-message-stack")?.getAttribute("aria-hidden"), "true");
     assert.ok(central.hasAttribute("inert"));
     assert.ok(dom.window.document.querySelector(".session-chat-layout.is-central-collapsed"));
     assert.equal(dom.window.document.querySelector("[data-central-state='true']"), button);
     assert.equal(button.textContent, "state:1");
 
-    await act(async () => root?.render(renderScreen(552)));
+    await act(async () => root?.render(renderScreen(532)));
     assert.equal(dom.window.document.querySelector("[data-central-state='true']"), button);
     assert.equal(button.textContent, "state:1");
     assert.equal(central.getAttribute("aria-hidden"), "false");
@@ -2586,7 +2586,7 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
     Object.defineProperty(dom.window, "innerWidth", { value: 1200, configurable: true });
     await act(async () => dom.window.dispatchEvent(new dom.window.Event("resize")));
     assert.equal(central.getAttribute("aria-hidden"), "true");
-    await act(async () => root?.render(renderScreen(496)));
+    await act(async () => root?.render(renderScreen(476)));
     assert.equal(central.getAttribute("aria-hidden"), "false");
     assert.equal(button.textContent, "state:1");
   } finally {

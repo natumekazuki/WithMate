@@ -634,6 +634,46 @@ describe("shortcut projection", () => {
 });
 
 describe("shortcut dispatcher", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "端末scopeのEscapeは会話shortcutへ配送されず、通常の会話入力ではEscapeを引き続き配送する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/740 入力とAI実行の独立" }
+  // fault = "terminal scopeを無視して編集対象でも有効なshortcut handlerを呼ぶ"
+  // observable = "handler呼出回数、KeyboardEvent.defaultPrevented"
+  // observation_boundary = "public-boundary"
+  // scope = "ShortcutDispatcher.dispatch"
+  // lifecycle = "permanent"
+  // impact = "端末のEscapeや入力中shortcutで会話操作が発火し、ユーザーの意図しない操作を行う"
+  // distinction = "型検査ではDOM上のfocus scopeとキー配送の組合せを検出できず、小さなDOM testで継続確認する"
+  // @end-test-value
+  it("terminal scopeの入力を会話shortcutへ渡さない", () => {
+    const dom = new JSDOM('<!doctype html><body><section data-shortcut-scope="terminal"><textarea></textarea></section><input></body>');
+    const restore = installDomGlobals(dom);
+    const terminalInput = dom.window.document.querySelector("textarea")!;
+    const chatInput = dom.window.document.querySelector("input")!;
+    const entry = createEntry({ allowInEditingTarget: true, accelerators: {
+      windows: { key: "Escape" }, linux: { key: "Escape" }, macos: { key: "Escape" },
+    } });
+    const dispatcher = new ShortcutDispatcher({ eventTarget: dom.window, entries: [entry] });
+    let calls = 0;
+    try {
+      dispatcher.registerScope(entry.scope);
+      dispatcher.registerHandler(entry.id, () => { calls += 1; });
+      const terminalEvent = createKeyboardEvent(dom, { key: "Escape" });
+      terminalInput.dispatchEvent(terminalEvent);
+      assert.equal(calls, 0);
+      assert.equal(terminalEvent.defaultPrevented, false);
+      const chatEvent = createKeyboardEvent(dom, { key: "Escape" });
+      chatInput.dispatchEvent(chatEvent);
+      assert.equal(calls, 1);
+      assert.equal(chatEvent.defaultPrevented, true);
+    } finally {
+      dispatcher.dispose();
+      restore();
+      dom.window.close();
+    }
+  });
+
   it("active scope、editing target、repeat、IME、dead key、AltGraph、defaultPreventedを判定する", () => {
     const dom = new JSDOM("<!doctype html><body></body>");
     const restore = installDomGlobals(dom);

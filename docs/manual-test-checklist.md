@@ -4,6 +4,20 @@
 
 複数Auxiliaryを追加して最終使用順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、実行中のAuxiliaryはicon内のprocessing indicatorで判別できること、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態ではAuxiliaryのタイトル枠・切り替えUI・追加`＋`を表示せず、Mainが残り幅を使うこと、中央のsplitterだけが残りクリックで既定幅へ戻せることを確認する。Auxiliaryを再度開いた後はタイトル枠、左右切り替え、追加`＋`が利用でき、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
 
+## 組み込みTerminal
+
+分離した検証用WithMateではREADMEのvisual-checkスクリプトを使う。配布物は専用の検証用user dataを用い、開発版の成功と区別する。
+
+| 操作 | 期待結果 |
+| --- | --- |
+| Workspaceの`Terminal`、Headerを隠してTerminal splitterをクリック | ActionDock直上に全幅で開く。初期は折りたたみで初回だけshellを作成する。`Open External Terminal`とSession Folderの外部起動も利用できる |
+| 1520×940、1400px境界の前後、1100×720で両dockのdrag・上下キーresize、追加展開、Window縮小 | 通常resizeは他方の高さを維持する。追加展開とWindow縮小では両dockを補正し、中央を畳んでもTerminalとActionDockのsplitterを操作できる。中央の復帰で会話・previewのstateとscroll位置を保持する |
+| タブを複数追加し、選択・折りたたみ・Main/Auxiliary切り替え・最小化を行う | 各shellは親Workspaceから独立して開始し、出力・cwd・processは維持される。多数タブでも1段でscrollでき、`New Terminal`と選択タブへ到達できる |
+| shell実行中に`Close Terminal`を押して取消／終了。自然終了、起動失敗も確認 | 取消では維持。終了済みタブは確認不要。自然終了は`Exited`と結果、失敗は`Failed`と理由を表示して出力を保持する。最後のタブを閉じると折りたたみ、自動再起動しない |
+| AI実行中もIME、Enter、Tab、Ctrl+C、Escape、コピー／貼り付けを操作。Ctrl+Shift+Tabでタブへ戻る | 端末入力が会話送信・検索・cancelへ流れない。タブ・本文・splitter間をkeyboardで移動でき、非表示端末へfocusが残らず、background出力でfocusを奪わない |
+| 大量出力と非選択端末の出力を続けながらresize・入力・停止 | チャットと端末の操作が応答し、隠した端末も詰まらない。出力がSession/Audit/Memory/診断ログへ複製されない |
+| 起動途中のタブ終了、Window closeの取消／確定、renderer破棄、Session削除、アプリ終了 | 起動完了が遅れてもPTYは孤立しない。Window closeは生存端末をまとめて確認し、破棄時にはownerの端末だけを解放する。既存のAI継続／中止契約を維持する |
+
 ## 目的
 
 - Electron 実行時の現行機能を人手で確認するためのチェックリスト
