@@ -107,6 +107,123 @@ test("conversation columns はlive eventとapprovalをsession IDごとに分離�
 
 // @test-value v2
 // kind = "invariant"
+// claim = "MainとAuxiliaryの承認・入力応答後、遅い再取得は後着の要求を消さず、競合のない再取得は解決済み要求を消す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 表示言語・操作・状態" }
+// fault = "応答後の古いlive snapshotが購読で届いた次の要求を上書きする、または通常の再取得で解決済み要求が残る"
+// observable = "各会話列のliveApprovalRequest・liveElicitationRequest・isRunning"
+// observation_boundary = "component-behavior"
+// scope = "conversation-message-column"
+// lifecycle = "permanent"
+// impact = "次の承認・入力面が消えるとProviderが利用者応答を待ったまま停止する"
+// distinction = "既存testは応答APIの宛先と購読表示だけを確認し、応答後の非同期再取得との到着順を検証しない"
+// @end-test-value
+test("conversation columns は応答後の遅い再取得から次の要求を守る", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  let root: Root | null = null;
+  const listeners = new Set<(id: string, state: LiveSessionRunState | null) => void>();
+  const fetchResolvers = new Map<string, (state: LiveSessionRunState | null) => void>();
+  const fetchCounts = new Map<string, number>();
+  const createRun = (sessionId: string, requestKind: "approval" | "elicitation" | null, requestId = ""): LiveSessionRunState => ({
+    sessionId,
+    threadId: `${sessionId}-thread`,
+    assistantText: "",
+    steps: [],
+    backgroundTasks: [],
+    usage: null,
+    errorMessage: "",
+    approvalRequest: requestKind === "approval" ? { requestId } as LiveSessionRunState["approvalRequest"] : null,
+    elicitationRequest: requestKind === "elicitation" ? { requestId } as LiveSessionRunState["elicitationRequest"] : null,
+  });
+  const api: ConversationMessageColumnApi = {
+    subscribeLiveSessionRun: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+    getLiveSessionRun: (sessionId) => {
+      const count = (fetchCounts.get(sessionId) ?? 0) + 1;
+      fetchCounts.set(sessionId, count);
+      if (count === 1) return Promise.resolve(null);
+      return new Promise((resolve) => { fetchResolvers.set(sessionId, resolve); });
+    },
+    resolveLiveApproval: async () => {},
+    resolveLiveElicitation: async () => {},
+  };
+  let main: SessionMessageColumnProps | null = null;
+  let auxiliary: SessionMessageColumnProps | null = null;
+  const emit = (sessionId: string, state: LiveSessionRunState | null) => {
+    listeners.forEach((listener) => listener(sessionId, state));
+  };
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(function Probe() {
+        main = useConversationMessageColumn({ session: { id: "main", runState: "running" }, baseProps: createBaseProps("main"), enabled: true, api });
+        auxiliary = useConversationMessageColumn({ session: { id: "aux", runState: "running" }, baseProps: createBaseProps("aux"), enabled: true, api });
+        return null;
+      }));
+    });
+
+    for (const scenario of [
+      { sessionId: "main", kind: "approval" as const, stale: null },
+      { sessionId: "aux", kind: "elicitation" as const, stale: createRun("aux", null) },
+    ]) {
+      const column = () => scenario.sessionId === "main" ? main : auxiliary;
+      const first = createRun(scenario.sessionId, scenario.kind, "r1");
+      const second = createRun(scenario.sessionId, scenario.kind, "r2");
+      await act(async () => emit(scenario.sessionId, first));
+      await act(async () => {
+        scenario.kind === "approval"
+          ? column()?.onResolveLiveApproval(first.approvalRequest!, "approve")
+          : column()?.onResolveLiveElicitation(first.elicitationRequest!, { action: "accept" });
+        await Promise.resolve();
+      });
+      assert.ok(fetchResolvers.has(scenario.sessionId));
+      await act(async () => emit(scenario.sessionId, second));
+      await act(async () => {
+        fetchResolvers.get(scenario.sessionId)?.(scenario.stale);
+        await Promise.resolve();
+      });
+      const currentRequest = scenario.kind === "approval" ? column()?.liveApprovalRequest : column()?.liveElicitationRequest;
+      assert.equal(currentRequest?.requestId, "r2", `${scenario.sessionId} must retain the later request`);
+      assert.equal(column()?.isRunning, true);
+
+      await act(async () => {
+        scenario.kind === "approval"
+          ? column()?.onResolveLiveApproval(second.approvalRequest!, "approve")
+          : column()?.onResolveLiveElicitation(second.elicitationRequest!, { action: "accept" });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        fetchResolvers.get(scenario.sessionId)?.(createRun(scenario.sessionId, null));
+        await Promise.resolve();
+      });
+      assert.equal(column()?.liveApprovalRequest, null);
+      assert.equal(column()?.liveElicitationRequest, null);
+      assert.equal(column()?.isRunning, true);
+    }
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "会話IDを切り替えてもstate cacheに保存したscroll位置を再表示時に復元する"
 // oracle = { type = "contract", ref = "issue-710-conversation-scroll-cache" }
 // fault = "Auxiliary表示へ切り替えた後にMainのscroll状態が消える"

@@ -57,7 +57,7 @@ import {
 import {
   useMainAuxiliaryRuntimeSession,
 } from "../chat/auxiliary/auxiliary-render-projections.js";
-import { ChatWindow, ChatWindowStatusScreen } from "../chat/chat-window.js";
+import { ChatWindow, ChatWindowStatusScreen, type ChatErrorNotice } from "../chat/chat-window.js";
 import { ChatSessionModals } from "../chat/chat-session-modals.js";
 import { useResourceDiscovery } from "../chat/use-resource-discovery.js";
 import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "../chat/window-title.js";
@@ -345,6 +345,7 @@ export default function AgentSessionWindowApp() {
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [modelCatalogLoadStatus, setModelCatalogLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
   const [modelCatalogLoadError, setModelCatalogLoadError] = useState("");
+  const [modelCatalogReadRevision, setModelCatalogReadRevision] = useState(0);
   const conversationFeature = useSessionChatConversationFeature();
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [isPromptTemplateWorkspaceOpen, setIsPromptTemplateWorkspaceOpen] = useState(false);
@@ -363,6 +364,7 @@ export default function AgentSessionWindowApp() {
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [appSettingsLoadStatus, setAppSettingsLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
   const [appSettingsLoadError, setAppSettingsLoadError] = useState("");
+  const [appSettingsReadRevision, setAppSettingsReadRevision] = useState(0);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const handleHeaderPreferenceChange = useCallback((value: "hidden" | "visible") => {
     void persistChatLayoutPreference(withmateApi, { target: "header", value });
@@ -842,7 +844,7 @@ export default function AgentSessionWindowApp() {
         setModelCatalogLoadError(error instanceof Error ? error.message : "Could not load model catalog.");
       },
     });
-  }, [withmateApi, applyMainExecutionCatalog, auxiliaryWorkspace.applyModelCatalog]);
+  }, [withmateApi, applyMainExecutionCatalog, auxiliaryWorkspace.applyModelCatalog, modelCatalogReadRevision]);
 
   useEffect(() => {
     return startAppSettingsSubscription({
@@ -859,7 +861,7 @@ export default function AgentSessionWindowApp() {
         setAppSettingsLoadError(error instanceof Error ? error.message : "Could not load app state.");
       },
     });
-  }, [withmateApi]);
+  }, [withmateApi, appSettingsReadRevision]);
 
   const displayedMessages: Message[] = displayedSession?.messages ?? [];
   const messageListRef = useRef<HTMLDivElement | null>(null);
@@ -2230,7 +2232,10 @@ export default function AgentSessionWindowApp() {
     composerFeedback: {
       ...chatComposerFeature.composer.composerSendability,
       shouldShowFeedback: chatComposerFeature.composer.composerSendability.shouldShowFeedback
-        && !(auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError),
+        && !(auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError)
+        && !(sessionExecutionBlockedReason && (
+          sessionExecutionBlockedReason === appSettingsLoadError || sessionExecutionBlockedReason === modelCatalogLoadError
+        )),
     },
     workspaceAvailabilityMessage,
     isWorkspaceAvailabilityCheckPending,
@@ -2279,6 +2284,33 @@ export default function AgentSessionWindowApp() {
     conversation: chatConversationFeature,
     runtime: chatRuntimeFeature,
   });
+  const settingsReadErrors: ChatErrorNotice[] = [];
+  if (appSettingsLoadStatus === "error") {
+    settingsReadErrors.push({
+      id: "app-settings-read",
+      message: `App settings could not be loaded: ${appSettingsLoadError}`,
+      relatedControl: "composer",
+      actionLabel: "Retry App Settings",
+      onAction: () => {
+        setAppSettingsLoadStatus("loading");
+        setAppSettingsLoadError("");
+        setAppSettingsReadRevision((revision) => revision + 1);
+      },
+    });
+  }
+  if (modelCatalogLoadStatus === "error") {
+    settingsReadErrors.push({
+      id: "model-catalog-read",
+      message: `Model catalog could not be loaded: ${modelCatalogLoadError}`,
+      relatedControl: "composer",
+      actionLabel: "Retry Model Catalog",
+      onAction: () => {
+        setModelCatalogLoadStatus("loading");
+        setModelCatalogLoadError("");
+        setModelCatalogReadRevision((revision) => revision + 1);
+      },
+    });
+  }
   const concurrentChats = auxiliaryWorkspace.buildConcurrentChats({
     mainSession: selectedSession,
     auxiliarySession: auxiliaryWorkspace.selectedSession ? selectedAuxiliaryRuntimeSession : null,
@@ -2310,6 +2342,7 @@ export default function AgentSessionWindowApp() {
       <>
       <ChatWindow
         {...chatWindowProps}
+        errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors]}
         composerProps={{
           ...chatWindowProps.composerProps,
           externalErrorDescriptionIds: auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError
