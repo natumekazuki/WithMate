@@ -339,6 +339,10 @@
   }
 }
 
+.session-chat-layout.is-central-collapsed.is-action-dock-expanded {
+  --session-action-dock-row-height: minmax(0, 1fr);
+}
+
 .session-chat-layout.is-central-collapsed {
   grid-template-rows: var(--session-header-dock-row-height) var(--session-dock-splitter-size)
     0px var(--session-dock-splitter-size) var(--session-action-dock-row-height);

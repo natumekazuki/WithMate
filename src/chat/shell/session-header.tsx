@@ -366,8 +366,8 @@ export function SessionChatScreen({
     const layout = ownLayoutRef.current;
     const central = centralRef.current;
     if (!layout || !central) return;
+    const view = layout.ownerDocument.defaultView!;
     const measure = () => {
-      const view = layout.ownerDocument.defaultView!;
       const css = view.getComputedStyle(layout);
       const pixel = (value: string) => Number.parseFloat(value) || 0;
       const height = layout.clientHeight - pixel(css.paddingTop) - pixel(css.paddingBottom);
@@ -384,14 +384,16 @@ export function SessionChatScreen({
       setIsCentralCollapsed(remaining < minimum);
     };
     measure();
-    const Observer = layout.ownerDocument.defaultView?.ResizeObserver;
+    const Observer = view.ResizeObserver;
     const observer = Observer ? new Observer(measure) : null;
     observer?.observe(layout);
     for (const dock of layout.querySelectorAll(".session-action-dock-slot")) {
       observer?.observe(dock);
     }
+    const styleObserver = new view.MutationObserver(measure);
+    styleObserver.observe(layout, { attributes: true, attributeFilter: ["style"] });
     window.addEventListener("resize", measure);
-    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+    return () => { observer?.disconnect(); styleObserver.disconnect(); window.removeEventListener("resize", measure); };
   }, [actionDockHeight, isActionDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible, isSidePaneBudgetCollapsed]);
   const columnsRef = useRef<HTMLDivElement | null>(null);
   const [columnSizes, setColumnSizes] = useState({ width: 0, main: 0, auxiliary: 0, splitter: 0 });

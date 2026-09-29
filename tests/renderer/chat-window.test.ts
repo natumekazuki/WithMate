@@ -2606,12 +2606,12 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
 // claim = "確定高さの変更と局所的なdock高さ更新のどちらでも、中央の残余高さが160px未満なら非表示・操作不可とし、160pxへの復帰で会話stateとscroll位置を保つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 中央表示最低高" }
 // fault = "最低高境界が逆転する、局所高さ更新を監視せず古い中央表示を使う、または非表示時のunmountで会話stateやscroll位置を失う"
-// observable = "prop変更とdock resize通知前後のaria-hidden、child instance、state、scrollTop、局所変更したCSS高さ"
+// observable = "prop変更と局所CSS属性変更前後のaria-hidden、child instance、state、scrollTop、局所変更したCSS高さ"
 // observation_boundary = "component-behavior"
 // scope = "SessionChatScreen central visibility lifecycle"
 // lifecycle = "permanent"
 // impact = "ActionDockを広げた後の会話継続位置と操作可能状態を守る"
-// distinction = "CSS描画寸法は対象外とし、propを確定しない局所CSS更新を実componentのobserver経路へ渡して高さ判定とReact instance保持を検証する"
+// distinction = "CSS描画寸法は対象外とし、寸法通知やprop確定なしの局所CSS更新を実componentへ渡す。native MutationObserverを通る表示判定と会話state保持は型検査やCSSのstatic checkで代替できず、小規模なJSDOM操作で確認する"
 // @end-test-value
 test("SessionChatScreen は中央160px境界で非表示と復帰を切り替えて状態を保持する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -2630,17 +2630,6 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
 
   Object.defineProperty(dom.window, "innerWidth", { value: 1600, configurable: true });
-  const observers = new Set<TestResizeObserver>();
-  class TestResizeObserver {
-    readonly targets = new Set<Element>();
-    constructor(readonly callback: () => void) { observers.add(this); }
-    observe(target: Element) { this.targets.add(target); }
-    disconnect() { observers.delete(this); }
-  }
-  Object.defineProperty(dom.window, "ResizeObserver", { configurable: true, value: TestResizeObserver });
-  const notifyResize = (target: Element) => {
-    for (const observer of observers) if (observer.targets.has(target)) observer.callback();
-  };
   Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", { configurable: true, get() { return 800; } });
   const style = dom.window.document.createElement("style");
   style.textContent = ".session-message-stack { --session-region-min-height: 160px; }";
@@ -2696,16 +2685,13 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
     assert.equal(central.scrollTop, 42);
     assert.equal(central.hasAttribute("inert"), false);
     const layout = dom.window.document.querySelector<HTMLElement>(".session-chat-layout")!;
-    const dock = layout.querySelector<HTMLElement>(".session-action-dock-slot")!;
     await act(async () => {
       layout.style.setProperty("--session-action-dock-height", "553px");
-      notifyResize(dock);
     });
     assert.equal(central.getAttribute("aria-hidden"), "true");
     assert.ok(central.hasAttribute("inert"));
     await act(async () => {
       layout.style.setProperty("--session-action-dock-height", "552px");
-      notifyResize(dock);
     });
     assert.equal(central.getAttribute("aria-hidden"), "false");
     assert.equal(central.hasAttribute("inert"), false);
