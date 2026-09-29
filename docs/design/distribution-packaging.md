@@ -54,6 +54,7 @@ WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packaging�
 - provider native package 本体は `files` の除外規則で app bundle 側から外し、`resources/provider-binaries/` 側だけを runtime の正本にする
 - `asar` は有効化する
 - provider native package は `scripts/build/stage-provider-binaries.ts` で `build/provider-binaries/` へ stage し、`extraResources` で `resources/provider-binaries/` 配下へ配布する
+- Claudeの公式実行物は`@anthropic-ai/claude-agent-sdk`に固定した版のoptional dependencyを未改変でstageする。Windows / macOSのx64 / arm64を対象にし、開発時は`node_modules`、配布時はASAR外の`resources/provider-binaries/@anthropic-ai/claude-agent-sdk-<platform>-<arch>/claude[.exe]`を解決する
 - packaged runtime の binary path 解決は `src-electron/providers/provider-binary-paths.ts` を正本にする
 - `Codex` は `codexPathOverride` で staged binary を明示し、`Copilot` は `cliPath` に staged binary を渡す
 
@@ -81,7 +82,7 @@ minimum の確認は次とする。
 2. `npm run dist:dir`
 3. Windows 環境では必要に応じて `npm run dist:win`
 4. Windows installer 導入後、Start Menu 検索で `WithMate` を入力して起動できることを確認する
-5. Windows unpacked 出力では `resources/provider-binaries/@openai/codex-win32-x64/vendor/.../codex.exe` と `resources/provider-binaries/@github/copilot-win32-x64/copilot.exe` が存在することを確認する
+5. Windows unpacked 出力では `resources/provider-binaries/@openai/codex-win32-x64/vendor/.../codex.exe`、`resources/provider-binaries/@github/copilot-win32-x64/copilot.exe`、`resources/provider-binaries/@anthropic-ai/claude-agent-sdk-win32-x64/claude.exe` が存在することを確認する
 
 macOS artifact の実確認は macOS 環境で次を行う。
 

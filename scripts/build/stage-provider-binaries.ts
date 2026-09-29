@@ -59,6 +59,7 @@ async function main(): Promise<void> {
 
   verifyCurrentPlatformBinary("codex");
   verifyCurrentPlatformBinary("copilot");
+  verifyCurrentPlatformBinary("claude");
 
   console.log("provider binary stage 完了:", path.relative(repoRoot, stageRoot));
 }

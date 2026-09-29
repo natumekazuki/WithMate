@@ -10,6 +10,54 @@ import {
 } from "../../src-electron/providers/provider-binary-paths.js";
 
 describe("provider-binary-paths", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Claudeの公式native packageを配布対象OSで解決し、開発時のpackage配置とASAR外の配布pathを返し、配布先に実行物がなければnullを返す"
+  // oracle = { type = "contract", ref = "docs/design/distribution-packaging.md#build-boundary" }
+  // fault = "Claudeを別Providerのpackageへ写す、配布先をASAR内にする、または配布先の不足した実行物を存在する扱いで返す"
+  // observable = "native package spec、stage対象一覧、開発時・配布時の実行pathと配布先不足時のnull"
+  // observation_boundary = "public-boundary"
+  // scope = "provider-binary-paths"
+  // lifecycle = "permanent"
+  // impact = "配布版で公式Claude実行物を起動できない、または別Providerへ接続する"
+  // distinction = "型検査ではpackage名と実ファイル配置の対応を検証できず、既存testはCodexとCopilotだけを対象にする"
+  // @end-test-value
+  it("Claude公式実行物を対応OSのpackageとASAR外のpathへ解決する", () => {
+    const packages = listSupportedProviderBinaryPackageSpecifiers();
+    for (const platform of ["win32", "darwin"] as const) {
+      for (const arch of ["x64", "arm64"]) {
+        const packageSpecifier = `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`;
+        const fileName = platform === "win32" ? "claude.exe" : "claude";
+        assert.deepEqual(resolveProviderBinarySpec("claude", platform, arch), {
+          packageSpecifier,
+          binaryRelativePath: [fileName],
+        });
+        assert.ok(packages.includes(packageSpecifier));
+        const packageRoot = path.join("work space 日本語", "node_modules", packageSpecifier);
+        assert.equal(resolveDevelopmentProviderBinaryPath(
+          "claude",
+          (specifier) => {
+            assert.equal(specifier, `${packageSpecifier}/package.json`);
+            return path.join(packageRoot, "package.json");
+          },
+          (candidate) => candidate === path.join(packageRoot, fileName),
+          platform,
+          arch,
+        ), path.join(packageRoot, fileName));
+        const resourcesPath = path.join("Program Files 日本語", "WithMate", "resources");
+        const expected = path.join(resourcesPath, "provider-binaries", packageSpecifier, fileName);
+        assert.equal(resolvePackagedProviderBinaryPath(
+          "claude", resourcesPath, (candidate) => candidate === expected, platform, arch,
+        ), expected);
+        assert.equal(resolvePackagedProviderBinaryPath(
+          "claude", resourcesPath, () => false, platform, arch,
+        ), null);
+      }
+    }
+    assert.equal(resolveProviderBinarySpec("claude", "win32", "ia32"), null);
+    assert.equal(resolveProviderBinarySpec("claude", "linux", "x64"), null);
+  });
+
   it("provider ごとの native package spec を返す", () => {
     assert.deepEqual(resolveProviderBinarySpec("codex", "win32", "x64"), {
       packageSpecifier: "@openai/codex-win32-x64",

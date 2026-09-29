@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-export type SupportedProviderBinary = "codex" | "copilot";
+export type SupportedProviderBinary = "codex" | "copilot" | "claude";
 
 type ProviderBinarySpec = {
   packageSpecifier: string;
@@ -117,12 +117,25 @@ export function resolveProviderBinarySpec(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
 ): ProviderBinarySpec | null {
-  return provider === "codex" ? resolveCodexSpec(platform, arch) : resolveCopilotSpec(platform, arch);
+  switch (provider) {
+    case "codex":
+      return resolveCodexSpec(platform, arch);
+    case "copilot":
+      return resolveCopilotSpec(platform, arch);
+    case "claude":
+      if (!["win32", "darwin"].includes(platform) || !["x64", "arm64"].includes(arch)) {
+        return null;
+      }
+      return {
+        packageSpecifier: `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`,
+        binaryRelativePath: [platform === "win32" ? "claude.exe" : "claude"],
+      };
+  }
 }
 
 export function listSupportedProviderBinaryPackageSpecifiers(): string[] {
   const specs = new Set<string>();
-  const providers: SupportedProviderBinary[] = ["codex", "copilot"];
+  const providers: SupportedProviderBinary[] = ["codex", "copilot", "claude"];
   const platforms: Array<{ platform: NodeJS.Platform; arches: string[] }> = [
     { platform: "win32", arches: ["x64", "arm64"] },
     { platform: "darwin", arches: ["x64", "arm64"] },
