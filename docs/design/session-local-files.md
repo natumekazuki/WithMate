@@ -2,7 +2,7 @@
 
 WithMateはSessionごとにrepository外のmanaged directory `session-files/{sessionId}/`を用意する。provider内部のsession stateやlog directoryとは分け、画像やfileをcomposerへ添付するときの保存先とする。`sessionId`は安全なpath segmentへ正規化し、directory traversalを許さない。
 
-`New Session`で`Session Folder`を選んだ場合、このdirectoryをSessionのworkspaceとする。選択時には作成せず、開始時に新しいSession IDへ排他的に作成してから保存する。既存の同名directoryやSession recordを上書き・再利用しない。
+Main Sessionの新規作成では、`New Session`のworkspace選択やCharacter authoringにかかわらず、新しいSession IDのdirectoryを排他的に作成してからSessionを保存する。既存の同名directoryやSession recordを上書き・再利用しない。directoryの準備はprovider operation coordinator外で行い、保存時にstorage identityと起動設定を再検証する。`New Session`で`Session Folder`を選んだ場合は、作成したdirectoryをSessionのworkspaceとする。未作成の既存Sessionでは、turnでproviderへpathを渡す前にdirectoryを作成する。
 
 ## Access Contract
 

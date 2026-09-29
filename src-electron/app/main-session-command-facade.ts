@@ -48,19 +48,29 @@ export class MainSessionCommandFacade {
   constructor(private readonly deps: MainSessionCommandFacadeDeps) {}
 
   async createSession(input: MainOwnedCreateSessionInput): Promise<Session> {
-    return this.persistCreatedSession({
-      ...input,
-      id: this.issueSessionId(),
-    });
+    return this.createSessionWithFilesDirectory(
+      input.provider,
+      (sessionId) => ({ ...input, id: sessionId }),
+    );
   }
 
   async createSessionFromRequest(input: CreateSessionRequest): Promise<Session> {
     const parsed = parseCreateSessionRequest(input);
-    const session = parsed.workspace?.kind === "session-folder"
-      ? await this.createSessionFolderSession(parsed.sessionInput)
-      : await this.deps.runProviderRuntimeOperationExclusive(
-        () => this.createSessionFromRequestExclusive(parsed),
-      );
+    const { workspace, sessionInput } = parsed;
+    if (workspace.kind === "directory" && (!workspace.label.trim() || !workspace.path.trim())) {
+      throw new Error("Workspace information is incomplete.");
+    }
+    const session = await this.createSessionWithFilesDirectory(
+      sessionInput.provider,
+      (sessionId, sessionFilesPath, launchSelection) => ({
+        ...sessionInput,
+        ...launchSelection,
+        id: sessionId,
+        workspaceLabel: workspace.kind === "session-folder" ? "SessionFolder" : workspace.label,
+        workspacePath: workspace.kind === "session-folder" ? sessionFilesPath : workspace.path,
+        branch: workspace.kind === "session-folder" ? "" : workspace.branch,
+      }),
+    );
     try {
       await this.deps.initializeCreatedSession(session);
       return session;
@@ -73,38 +83,15 @@ export class MainSessionCommandFacade {
     }
   }
 
-  private async createSessionFromRequestExclusive(
-    parsed: ReturnType<typeof parseCreateSessionRequest>,
-  ): Promise<Session> {
-    const { workspace, sessionInput: requestSessionInput } = parsed;
-    const launchSelection = await this.deps.resolveSessionLaunchSelection(requestSessionInput.provider);
-    const sessionInput = {
-      ...requestSessionInput,
-      ...launchSelection,
-    };
-    if (workspace?.kind === "directory") {
-      if (!workspace.label.trim() || !workspace.path.trim()) {
-        throw new Error("Workspace information is incomplete.");
-      }
-      return this.persistCreatedSession({
-        ...sessionInput,
-        id: this.issueSessionId(),
-        workspaceLabel: workspace.label,
-        workspacePath: workspace.path,
-        branch: workspace.branch,
-      });
-    }
-    throw new Error("Could not parse the workspace creation method.");
-  }
-
-  private async createSessionFolderSession(
-    requestSessionInput: ReturnType<typeof parseCreateSessionRequest>["sessionInput"],
+  private async createSessionWithFilesDirectory(
+    providerId: string | undefined,
+    buildInput: (sessionId: string, sessionFilesPath: string, launchSelection: SessionLaunchSelection) => CreateSessionInput & { id: string },
   ): Promise<Session> {
     const storageIdentity = this.deps.getSessionStorageIdentity();
-    const initialSelection = await this.deps.resolveSessionLaunchSelection(requestSessionInput.provider);
+    const initialSelection = await this.deps.resolveSessionLaunchSelection(providerId);
     const sessionId = this.issueSessionId();
-    const workspacePath = await this.deps.createSessionFilesDirectory(sessionId);
-    if (!workspacePath.trim()) {
+    const sessionFilesPath = await this.deps.createSessionFilesDirectory(sessionId);
+    if (!sessionFilesPath.trim()) {
       throw new Error("The SessionFolder could not be created.");
     }
 
@@ -114,22 +101,16 @@ export class MainSessionCommandFacade {
         if (this.deps.getSessionStorageIdentity() !== storageIdentity) {
           throw new Error("Session storage changed during creation. Try creating the session again.");
         }
-        const latestSelection = await this.deps.resolveSessionLaunchSelection(requestSessionInput.provider);
+        const latestSelection = await this.deps.resolveSessionLaunchSelection(providerId);
         if (!isDeepStrictEqual(latestSelection, initialSelection)) {
           throw new Error("Startup settings changed during creation. Try creating the session again.");
         }
         if (this.deps.getSessionStorageIdentity() !== storageIdentity) {
           throw new Error("Session storage changed during creation. Try creating the session again.");
         }
+        const input = buildInput(sessionId, sessionFilesPath, latestSelection);
         persistenceStarted = true;
-        return this.persistCreatedSession({
-          ...requestSessionInput,
-          ...latestSelection,
-          id: sessionId,
-          workspaceLabel: "SessionFolder",
-          workspacePath,
-          branch: "",
-        });
+        return this.persistCreatedSession(input);
       });
     } catch (error) {
       if (!persistenceStarted) {

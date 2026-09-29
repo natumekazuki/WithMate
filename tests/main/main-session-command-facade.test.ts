@@ -872,6 +872,93 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
 
 // @test-value v2
 // kind = "contract"
+// claim = "Character authoring の Main Session 作成も SessionFolder を provider 排他外で準備し、保存中は Settings 更新と直列化する"
+// oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+// fault = "Character authoring 経路だけ SessionFolder を作らない、または folder 準備中に Settings を塞ぐ"
+// observable = "folder 準備中の Settings 更新完了、保存中の更新待機、folder と同じ Session ID および Character workspace path の保存入力"
+// observation_boundary = "public-boundary"
+// scope = "main-session-character-authoring-create-boundary"
+// lifecycle = "permanent"
+// impact = "Character authoring 初回 turn に未作成の SessionFolder を渡すか、filesystem 待機が Settings 操作を塞ぐ"
+// distinction = "Character authoring が使う createSession 入口を実 coordinator と folder・persistence barrier で検証する"
+// @end-test-value
+test("Character authoring Session も SessionFolder 準備後に provider 排他内で保存する", async () => {
+  const coordinator = new ProviderRuntimeOperationCoordinator();
+  const folderEntered = createDeferred();
+  const releaseFolder = createDeferred();
+  const persistenceEntered = createDeferred();
+  const releasePersistence = createDeferred();
+  const events: string[] = [];
+  const persistedInputs: Parameters<SessionPersistenceService["createSession"]>[0][] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive: (operation) => coordinator.runExclusive(operation),
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({
+      async createSession(input: Parameters<SessionPersistenceService["createSession"]>[0]) {
+        persistedInputs.push(input);
+        persistenceEntered.resolve();
+        await releasePersistence.promise;
+        events.push("session:persist");
+        return input as never;
+      },
+    }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-authoring",
+    createSessionFilesDirectory: async (sessionId) => {
+      events.push(`folder:${sessionId}`);
+      folderEntered.resolve();
+      await releaseFolder.promise;
+      return "C:/WithMate/session-files/launch-authoring";
+    },
+    isSessionFilesWorkspace: () => false,
+  });
+
+  const creation = facade.createSession({
+    taskTitle: "authoring",
+    workspaceLabel: "Character authoring",
+    workspacePath: "C:/characters/char-muse",
+    branch: "main",
+    sessionKind: "character-authoring",
+    provider: "codex",
+    characterId: "char-muse",
+    character: "Muse",
+    characterIconPath: "",
+    characterThemeColors: { main: "#112233", sub: "#445566" },
+    approvalMode: "untrusted",
+  });
+  await folderEntered.promise;
+  await coordinator.runExclusive(() => {
+    events.push("settings:during-folder");
+  });
+  releaseFolder.resolve();
+  await persistenceEntered.promise;
+  const settingsDuringSave = coordinator.runExclusive(() => {
+    events.push("settings:during-save");
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["folder:launch-authoring", "settings:during-folder"]);
+  releasePersistence.resolve();
+  await Promise.all([creation, settingsDuringSave]);
+
+  assert.deepEqual(events, [
+    "folder:launch-authoring",
+    "settings:during-folder",
+    "session:persist",
+    "settings:during-save",
+  ]);
+  assert.equal(persistedInputs[0]?.id, "launch-authoring");
+  assert.equal(persistedInputs[0]?.workspacePath, "C:/characters/char-muse");
+  assert.equal(persistedInputs[0]?.sessionKind, "character-authoring");
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "SessionFolder準備後のcommitは初回に解決したstorage identityとlaunch selectionを再検証し、不一致時は保存せず今回のfolderだけを後始末する"
 // oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md" }
 // fault = "準備中のSettings/catalog/providerまたはDB resetの変更を検知せず古い選択でSessionを保存する、または再検証失敗後にfolderを残す"
@@ -986,15 +1073,16 @@ test("SessionFolder のcommit前再検証は selection と storage の変更を�
 
 // @test-value v2
 // kind = "contract"
-// claim = "directory launch selectionで選択されたworkspace pathとbranchを加工せずSession persistenceへ渡す"
-// oracle = { type = "contract", ref = "session launch selection workspace" }
-// fault = "Browseで選択したdirectoryを別pathへ置換する、またはworkspace label/path/branchを欠落させる"
-// observable = "createSessionへ渡されたid、workspaceLabel、workspacePath、branch"
+// claim = "Browseで選んだworkspaceを保持し、SessionFolderを作成してからSessionを保存する"
+// oracle = { type = "contract", ref = "docs/design/session-local-files.md" }
+// fault = "Browseのworkspaceを置換する、またはSessionFolderのないSessionを保存する"
+// observable = "folder作成と保存の呼出し順、保存入力のworkspaceLabel、workspacePath、branch"
 // observation_boundary = "public-boundary"
 // scope = "main-session-command-facade-directory-launch"
 // lifecycle = "permanent"
 // @end-test-value
 test("MainSessionCommandFacade は Browse で選んだ directory をそのまま session に使う", async () => {
+  const calls: string[] = [];
   const persisted = { input: null as Parameters<SessionPersistenceService["createSession"]>[0] | null };
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
@@ -1005,6 +1093,7 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
     getSessionPersistenceService: () =>
       ({
         createSession(input: Parameters<SessionPersistenceService["createSession"]>[0]) {
+          calls.push(`persist:${input.id}`);
           persisted.input = input;
           return input as never;
         },
@@ -1013,9 +1102,13 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
     getProviderQuotaTelemetry: () => null,
     isProviderQuotaTelemetryStale: () => false,
     refreshProviderQuotaTelemetry: async () => null,
-    createSessionId: () => "launch-directory",
-    createSessionFilesDirectory: () => {
-      throw new Error("directory workspace では SessionFolder を作成しない");
+    createSessionId: () => {
+      calls.push("issue-id");
+      return "launch-directory";
+    },
+    createSessionFilesDirectory: (sessionId) => {
+      calls.push(`mkdir:${sessionId}`);
+      return "C:/WithMate/session-files/launch-directory";
     },
     isSessionFilesWorkspace: () => false,
   });
@@ -1028,6 +1121,8 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
       branch: "main",
     }) as never,
   );
+
+  assert.deepEqual(calls, ["issue-id", "mkdir:launch-directory", "persist:launch-directory"]);
 
   assert.deepEqual(
     {
@@ -1085,9 +1180,7 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
     createSessionId: () => {
       return "launch-directory";
     },
-    createSessionFilesDirectory: () => {
-      throw new Error("directory workspace では SessionFolder を作成しない");
-    },
+    createSessionFilesDirectory: () => "C:/WithMate/session-files/launch-directory",
     isSessionFilesWorkspace: () => false,
   });
   const request = {
@@ -1184,12 +1277,12 @@ test("MainSessionCommandFacade は起動設定の取得失敗時に ID 発行・
 
 // @test-value v2
 // kind = "invariant"
-// claim = "SessionFolderの作成に失敗した場合、対応するSessionを永続化しない"
-// oracle = { type = "contract", ref = "src-electron/app/main-session-command-facade.ts session-folder creation" }
+// claim = "workspace種別に関係なくSessionFolderの作成に失敗した場合、Sessionを永続化しない"
+// oracle = { type = "contract", ref = "docs/design/session-local-files.md" }
 // fault = "folder作成例外後もSession persistenceを実行し、folderなしのSessionを残す"
 // observable = "folder作成errorとcreateSession呼出し回数"
 // observation_boundary = "public-boundary"
-// scope = "main-session-command-facade-session-folder-failure"
+// scope = "main-session-command-facade-folder-creation-failure"
 // lifecycle = "permanent"
 // @end-test-value
 test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を永続化しない", async () => {
@@ -1218,10 +1311,15 @@ test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を�
     isSessionFilesWorkspace: () => false,
   });
 
-  await assert.rejects(
-    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
-    /mkdir failed/,
-  );
+  for (const workspace of [
+    { kind: "session-folder" },
+    { kind: "directory", label: "repo", path: "C:/work/repo", branch: "main" },
+  ] as const) {
+    await assert.rejects(
+      facade.createSessionFromRequest(createSessionRequest(workspace) as never),
+      /mkdir failed/,
+    );
+  }
   assert.equal(persistCount, 0);
 });
 

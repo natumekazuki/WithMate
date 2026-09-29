@@ -18,7 +18,6 @@ import {
   type StartCharacterAuthoringSessionInput,
 } from "../../src-shared/character/character-authoring.js";
 import type { CreateSessionInput, Session } from "../../src-shared/session/session-state.js";
-import type { RunProviderRuntimeOperationExclusive } from "../providers/provider-runtime-operation-coordinator.js";
 import type { RunCharacterWorkspaceOperationExclusive } from "./character-workspace-operation-coordinator.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 
@@ -59,7 +58,6 @@ type CharacterAuthoringServiceDeps = {
   readBundledSkillFiles?: typeof readBundledCharacterAuthoringSkillFiles;
   resolveProvider(providerId: string): Promise<string> | string;
   runCharacterWorkspaceOperationExclusive: RunCharacterWorkspaceOperationExclusive;
-  runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
   writePreparedWorkspace?: (
     workspacePath: string,
     provider: string,
@@ -128,9 +126,7 @@ export class CharacterAuthoringService {
           ? this.deps.writePreparedWorkspace(prepared.workspacePath, prepared.input.provider, prepared.workspaceFiles)
           : this.writePreparedWorkspace(prepared.workspacePath, prepared.input.provider, prepared.workspaceFiles));
         await this.assertPreparedSessionCurrent(prepared);
-        return this.deps.runProviderRuntimeOperationExclusive(
-          () => this.createSessionExclusive(prepared),
-        );
+        return this.createSessionAfterPreparation(prepared);
       },
     );
   }
@@ -181,7 +177,7 @@ export class CharacterAuthoringService {
     };
   }
 
-  private async createSessionExclusive(
+  private async createSessionAfterPreparation(
     prepared: PreparedAuthoringSession,
   ): Promise<CharacterAuthoringSessionStartResult> {
     const { input, seed, runId, workspacePath } = prepared;

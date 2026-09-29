@@ -284,7 +284,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - Agent の `File Explorer`
   - `Workspace`、`Session Folder`、`Add Directory` で許可した directory を root として表示する
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する
-  - 未作成の `Session Folder` は root の初回展開時に空ディレクトリとして作成する
+  - 未作成の既存 `Session Folder` は root の初回展開時に空ディレクトリとして作成する
   - tree row は仮想化し、file 本文は選択時に 1 件だけ chunk read する
   - `Files | Changes | History` を切り替え、Changes は各 Git root の Working Tree / Staged を 1 file 単位で中央 live Git Diff へ開く。History は同じ File Explorer shellでcommit履歴とcommit時点のfileをread-only表示し、History内のCompareでlocal branch / remote-tracking branch / tag / HEAD / commitをDirect comparisonまたはBranch changesとして比較する。非 Git root は表示しない。包含関係にある root は独立した scope とし、同じ file も各 root からの相対 path で表示する
   - Historyのbranch selectorは現在選択中のbranchを`Current`で示し、branch名自体はraw valueのまま表示する

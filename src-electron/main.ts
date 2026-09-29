@@ -140,6 +140,7 @@ import {
   copyFilesToSessionFiles as copyFilesToSessionFilesStorage,
   createSessionFilesDirectory,
   deleteSessionFilesDirectory,
+  ensureSessionFilesDirectory as ensureManagedSessionFilesDirectory,
   resolveSessionFilesDirectory,
   saveSessionFile,
 } from "./files/session-files.js";
@@ -1885,8 +1886,6 @@ function requireCharacterAuthoringService(): CharacterAuthoringService {
       getSessionStorageIdentity: () => requireSessionStorage(),
       resolveProvider: (providerId) =>
         requireSessionPersistenceService().resolveCharacterAuthoringProvider(providerId),
-      runProviderRuntimeOperationExclusive: (operation) =>
-        providerRuntimeOperationCoordinator.runExclusive(operation),
     });
   }
 
@@ -2037,7 +2036,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(session, (characterId) => requireCharacterService().createRuntimeSnapshot(characterId)),
         resolveComposerPreview,
         resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
-        resolveSessionFolderPath: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
+        resolveSessionFolderPath: (sessionId) => ensureSessionFilesDirectory(sessionId),
         resolveProviderCatalog,
       },
       provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, provider, binding }) => binding ? glossaryRuntimeService.beginProviderTurn(session.id, binding) : undefined, endProviderAgentRuntimeTurn: (handle) => glossaryRuntimeService.endProviderTurn(handle as import("./glossary/glossary-proactive-turn.js").GlossaryProactiveTurnHandle) },
@@ -2160,7 +2159,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         resetProviderSessionThread,
         endProviderAgentRuntimeTurn: (handle) => glossaryRuntimeService.endProviderTurn(handle as import("./glossary/glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
         resolveProviderSession: (session, parentSessionId) => appendSessionFilesDirectoryForSessionId(app.getPath("userData"), session, parentSessionId),
-        resolveSessionFolderPath: (parentSessionId) => resolveSessionFilesDirectory(app.getPath("userData"), parentSessionId),
+        resolveSessionFolderPath: (parentSessionId) => ensureSessionFilesDirectory(parentSessionId),
         issueRuntimeBinding: async (session, provider) => await issueProviderAgentRuntimeBinding(session, provider.id),
         beginRuntimeTurn: ({ session, binding }) => binding ? glossaryRuntimeService.beginProviderTurn(session.id, binding) : undefined,
       },
@@ -3068,9 +3067,7 @@ async function savePastedSessionFile(request: SavePastedSessionFileRequest): Pro
 }
 
 function ensureSessionFilesDirectory(sessionId: string): string {
-  const directoryPath = resolveSessionFilesDirectory(app.getPath("userData"), sessionId);
-  mkdirSync(directoryPath, { recursive: true });
-  return directoryPath;
+  return ensureManagedSessionFilesDirectory(app.getPath("userData"), sessionId);
 }
 
 function isPathInsideOrEqual(parentPath: string, targetPath: string): boolean {

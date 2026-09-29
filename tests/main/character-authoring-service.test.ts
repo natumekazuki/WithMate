@@ -16,7 +16,6 @@ import {
   readBundledCharacterAuthoringSkillFiles,
   resolveCharacterAuthoringRuntimeSessionForTurn,
 } from "../../src-electron/character/character-authoring-service.js";
-import { ProviderRuntimeOperationCoordinator } from "../../src-electron/providers/provider-runtime-operation-coordinator.js";
 import { CharacterWorkspaceOperationCoordinator } from "../../src-electron/character/character-workspace-operation-coordinator.js";
 
 const resolveSelectedProvider = (providerId: string): string => providerId;
@@ -32,10 +31,6 @@ function deferred<T = void>(): { promise: Promise<T>; resolve(value: T extends v
     resolve = promiseResolve as typeof resolve;
   });
   return { promise, resolve };
-}
-
-async function runProviderOperationExclusive<T>(operation: () => T | Promise<T>): Promise<T> {
-  return operation();
 }
 
 function buildCharacter(overrides: Partial<CharacterDetail> = {}): CharacterDetail {
@@ -66,7 +61,6 @@ function createService(
     resolveProvider: resolveSelectedProvider,
     runCharacterWorkspaceOperationExclusive: (characterId, operation) =>
       testWorkspaceOperationCoordinator.runExclusive(characterId, operation),
-    runProviderRuntimeOperationExclusive: runProviderOperationExclusive,
     getCharacter: () => buildCharacter(),
     getCharacterDirectory: () => "C:/characters/char-muse",
     async createSession(input) {
@@ -637,92 +631,19 @@ description: "作業を一緒に進める相手"
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Character authoring の最終検証後の Session 保存が完了するまで Settings 更新を待機させる"
+  // claim = "Character authoring のin-memory Skill準備中にproviderが無効化された場合はcommitを拒否する"
   // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
-  // fault = "Session 保存前に Settings 更新が provider state を変更し、準備済みworkspaceだけが残るか、同時実行の順序が観測できない"
-  // observable = "createSession の遅延中に Settings 更新 promise が未完了であり、解放後に Session 保存と Settings 更新が完了すること"
-  // observation_boundary = "public-boundary"
-  // scope = "character-authoring-commit-serialization"
-  // lifecycle = "permanent"
-  // impact = "provider無効化とauthoring Session作成の競合で、開始結果と設定状態が食い違う"
-  // distinction = "実filesystemへの準備結果ではなく、Session保存完了とSettings更新の順序をdeferred createSessionと実coordinatorで観測する"
-  // @end-test-value
-  it("provider 確定から workspace 準備と Session 保存まで Settings 更新と直列化する", async () => {
-    const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
-    const coordinator = new ProviderRuntimeOperationCoordinator();
-    let providerEnabled = true;
-    const createSessionEntered = deferred();
-    const createSessionBarrier = deferred();
-    const completedOperations: string[] = [];
-    const service = createService({
-      resolveProvider(providerId) {
-        if (!providerEnabled) {
-          throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
-        }
-        return providerId;
-      },
-      runProviderRuntimeOperationExclusive: (operation) => coordinator.runExclusive(operation),
-      getCharacter: () => buildCharacter({ notesMarkdown: "" }),
-      getCharacterDirectory: () => workspacePath,
-      async createSession(input) {
-        if (!providerEnabled) {
-          throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
-        }
-        createSessionEntered.resolve();
-        await createSessionBarrier.promise;
-        completedOperations.push("session");
-        return buildNewSession(input);
-      },
-    });
-
-    try {
-      const authoringPromise = service.startSession({
-        mode: "improve",
-        characterId: "char-muse",
-        provider: "codex",
-      });
-      await createSessionEntered.promise;
-      const settingsUpdatePromise = coordinator.runExclusive(() => {
-        providerEnabled = false;
-        completedOperations.push("settings");
-      });
-
-      let settingsUpdateFinished = false;
-      void settingsUpdatePromise.then(() => {
-        settingsUpdateFinished = true;
-      });
-      await Promise.resolve();
-      assert.equal(settingsUpdateFinished, false);
-      createSessionBarrier.resolve();
-      const result = await authoringPromise;
-      await settingsUpdatePromise;
-
-      assert.deepEqual(completedOperations, ["session", "settings"]);
-      assert.equal(result.session.provider, "codex");
-      assert.equal(providerEnabled, false);
-      assert.match(await readFile(path.join(workspacePath, "AGENTS.md"), "utf8"), /Character Authoring Workspace/);
-    } finally {
-      createSessionBarrier.resolve();
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "Character authoring のin-memory Skill準備中は Settings 更新を待たせず、commit時にprovider変更を拒否する"
-  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
-  // fault = "固定Skillの準備読込をprovider operation lock内で実行し、Settings更新を不要に待たせるか、準備済み入力を無検証でcommitする"
-  // observable = "準備中に完了したSettings更新と、provider無効化後のauthoring拒否およびcanonical fileの内容"
+  // fault = "準備中に無効化されたproviderを再検証せず、古い準備済み入力でworkspaceまたはSessionを作成する"
+  // observable = "provider無効化後のauthoring拒否、Session作成回数およびcanonical fileの内容"
   // observation_boundary = "public-boundary"
   // scope = "character-authoring-preparation-boundary"
   // lifecycle = "permanent"
-  // impact = "Skill読込の待ち時間がSettingsを塞がず、provider変更後にworkspace/sessionを作らない"
-  // distinction = "実bundle readerに接続した制御barrierを使い、coordinatorの外側でSettings更新が完了することとcommit再検証を同じ公開結果から確認する"
+  // impact = "provider変更後にworkspace/sessionを作らない"
+  // distinction = "実bundle readerに接続した制御barrierの間にproviderを無効化し、commit再検証と既存filesの保持を確認する"
   // @end-test-value
-  it("Skill準備中はSettings更新を完了でき、provider変更後はcommitしない", { timeout: 10_000 }, async () => {
+  it("Skill準備中にproviderが無効化された場合はcommitしない", { timeout: 10_000 }, async () => {
     const { tempDirectory, workspacePath } = await createWorkspace();
     await seedManagedArtifacts(workspacePath);
-    const coordinator = new ProviderRuntimeOperationCoordinator();
     let providerEnabled = true;
     const readerEntered = deferred();
     const readerBarrier = deferred();
@@ -734,7 +655,6 @@ description: "作業を一緒に進める相手"
         }
         return providerId;
       },
-      runProviderRuntimeOperationExclusive: (operation) => coordinator.runExclusive(operation),
       readBundledSkillFiles: async (rootPath) => {
         readerEntered.resolve();
         await readerBarrier.promise;
@@ -754,9 +674,7 @@ description: "作業を一緒に進める相手"
         provider: "codex",
       });
       await readerEntered.promise;
-      await coordinator.runExclusive(() => {
-        providerEnabled = false;
-      });
+      providerEnabled = false;
       readerBarrier.resolve();
       await assert.rejects(authoringPromise, /provider.*無効/);
       assert.equal(sessionCreationCount, 0);
@@ -1224,19 +1142,18 @@ description: "作業を一緒に進める相手"
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Character authoring の managed write は provider 共通排他を塞がず、同一 Character mutation は完了まで待機する"
+  // claim = "Character authoring の managed write 中は同一 Character mutation を待機させる"
   // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
-  // fault = "workspace write を provider lock 内で行い、無関係な provider operation を待たせるか、同一 Character の更新を先行させる"
-  // observable = "write barrier 中の provider operation 完了、write 解放後の Session 保存、同一 Character operation の後続実行"
+  // fault = "workspace write 中に同一 Character の更新を先行させる"
+  // observable = "write barrier 解放後の Session 保存と同一 Character operation の後続実行"
   // observation_boundary = "public-boundary"
   // scope = "character-authoring-write-admission"
   // lifecycle = "permanent"
-  // impact = "workspace I/O が Settings 等の provider operation を不要に塞がず、同一 Character の catalog と files の競合を防ぐ"
-  // distinction = "実 CharacterAuthoringService の write seam と共有 Character coordinator を使い、provider と同一 key の順序を別々に観測する"
+  // impact = "同一 Character の catalog と files の競合を防ぐ"
+  // distinction = "実 CharacterAuthoringService の write seam と共有 Character coordinator を使い、同一 key の順序を観測する"
   // @end-test-value
-  it("managed write 中は provider operation を塞がず、同一 Character mutation は待機する", { timeout: 10_000 }, async () => {
+  it("managed write 中は同一 Character mutation を待機させる", { timeout: 10_000 }, async () => {
     const { tempDirectory, workspacePath } = await createWorkspace();
-    const providerCoordinator = new ProviderRuntimeOperationCoordinator();
     const workspaceCoordinator = new CharacterWorkspaceOperationCoordinator();
     const writeEntered = deferred();
     const releaseWrite = deferred();
@@ -1244,7 +1161,6 @@ description: "作業を一緒に進める相手"
     const service = createService({
       runCharacterWorkspaceOperationExclusive: (characterId, operation) =>
         workspaceCoordinator.runExclusive(characterId, operation),
-      runProviderRuntimeOperationExclusive: (operation) => providerCoordinator.runExclusive(operation),
       writePreparedWorkspace: async (targetPath, _provider, files) => {
         writeEntered.resolve();
         await releaseWrite.promise;
@@ -1263,18 +1179,14 @@ description: "作業を一緒に進める相手"
     try {
       const authoring = service.startSession({ mode: "improve", characterId: "char-muse", provider: "codex" });
       await writeEntered.promise;
-      const providerOperation = providerCoordinator.runExclusive(async () => {
-        events.push("provider");
-      });
       const characterMutation = workspaceCoordinator.runExclusive("char-muse", async () => {
         events.push("mutation");
       });
-      await providerOperation;
-      assert.deepEqual(events, ["provider"]);
+      assert.deepEqual(events, []);
       releaseWrite.resolve();
       await authoring;
       await characterMutation;
-      assert.deepEqual(events, ["provider", "session", "mutation"]);
+      assert.deepEqual(events, ["session", "mutation"]);
     } finally {
       releaseWrite.resolve();
       await rm(tempDirectory, { recursive: true, force: true });
