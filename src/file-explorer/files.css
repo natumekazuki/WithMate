@@ -221,6 +221,10 @@
   color: var(--session-file-error);
 }
 
+.session-file-mermaid .message-code-block-shell.mermaid > .message-mermaid {
+  padding-top: 12px;
+}
+
 ::highlight(withmate-find-match) {
   background: #fde68a;
   color: #1f2937;

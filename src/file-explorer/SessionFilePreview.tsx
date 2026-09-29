@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
+import { MermaidDiagram } from "../ui/markdown/markdown-code.js";
 import { AppNotification, type AppNotificationState } from "../ui/app-notification.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import { ImageViewport, ImageZoomControls, useImageViewport } from "../ui/image-viewport.js";
@@ -764,7 +765,12 @@ export function SessionFilePreview({
     (loaded.descriptor.kind === "text" || loaded.descriptor.kind === "markdown") &&
     isLikelyBinarySessionFile(loaded.bytes),
   );
-  const previewKind = loadedTextIsBinary ? "binary" : descriptor?.kind;
+  const previewKind = loadedTextIsBinary
+    ? "binary"
+    : descriptor?.kind === "text" && descriptor.name.toLocaleLowerCase("en-US").endsWith(".mmd")
+      ? "mermaid"
+      : descriptor?.kind;
+  const isRichPreview = previewKind === "markdown" || previewKind === "mermaid";
   const decodedText = useMemo(() => {
     if (!loaded || (loaded.descriptor.kind !== "text" && loaded.descriptor.kind !== "markdown")) {
       return "";
@@ -855,21 +861,26 @@ export function SessionFilePreview({
 
   useEffect(() => {
     const container = markdownSurfaceRef.current?.querySelector<HTMLElement>(".session-file-markdown") ?? null;
-    if (!container || markdownMode !== "preview" || previewKind !== "markdown") {
+    if (!container || markdownMode !== "preview" || !isRichPreview) {
       renderedMarkdownIndexRef.current = null;
       renderedMarkdownMatchesRef.current = { offsets: new Uint32Array(0), normalizedQueryLength: 0 };
       setRenderedMarkdownMatchCount(0);
       return;
     }
     const rebuildIndex = () => {
-      renderedMarkdownIndexRef.current = createRenderedTextSearchIndex(container);
+      renderedMarkdownIndexRef.current = createRenderedTextSearchIndex(
+        container,
+        previewKind === "mermaid"
+          ? (node) => !node.parentElement?.closest("svg style, svg defs")
+          : undefined,
+      );
       setRenderedMarkdownIndexRevision((current) => current + 1);
     };
     rebuildIndex();
     const observer = new MutationObserver(rebuildIndex);
     observer.observe(container, { childList: true, characterData: true, subtree: true });
     return () => observer.disconnect();
-  }, [decodedText, markdownMode, previewKind]);
+  }, [decodedText, isRichPreview, markdownMode, previewKind]);
 
   useEffect(() => {
     const index = renderedMarkdownIndexRef.current;
@@ -881,7 +892,7 @@ export function SessionFilePreview({
     setCurrentMatch(0);
   }, [findQuery, renderedMarkdownIndexRevision]);
 
-  const activeFindMatchCount = previewKind === "markdown" && markdownMode === "preview"
+  const activeFindMatchCount = isRichPreview && markdownMode === "preview"
     ? renderedMarkdownMatchCount
     : findMatches.length;
   const activeCurrentMatch = clampFindMatchIndex(currentMatch, activeFindMatchCount);
@@ -891,7 +902,7 @@ export function SessionFilePreview({
   }, [activeFindMatchCount]);
 
   useLayoutEffect(() => {
-    if (!findOpen || markdownMode !== "preview" || previewKind !== "markdown") {
+    if (!findOpen || markdownMode !== "preview" || !isRichPreview) {
       return;
     }
     const index = renderedMarkdownIndexRef.current;
@@ -904,7 +915,7 @@ export function SessionFilePreview({
     applyRenderedTextHighlights(document, resolvedMatches, resolvedCurrentMatch);
     scrollRenderedTextMatchIntoView(resolvedCurrentMatch);
     return () => clearRenderedTextHighlights(document);
-  }, [activeCurrentMatch, findOpen, markdownMode, previewKind, renderedMarkdownIndexRevision]);
+  }, [activeCurrentMatch, findOpen, isRichPreview, markdownMode, renderedMarkdownIndexRevision]);
 
   useEffect(() => {
     if (!loaded || (loaded.descriptor.kind !== "image" && loaded.descriptor.kind !== "svg")) {
@@ -918,11 +929,11 @@ export function SessionFilePreview({
 
   useShortcutScope("file-preview");
   useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewFind, () => {
-    if (previewKind === "text" || previewKind === "markdown") {
+    if (previewKind === "text" || isRichPreview) {
       setFindOpen(true);
       setFeedback("");
     } else {
-      setFeedback("Find is available for text, Markdown, and Git diff previews.");
+      setFeedback("Find is available for text, Markdown, Mermaid, and Git diff previews.");
     }
     return true;
   });
@@ -939,7 +950,7 @@ export function SessionFilePreview({
   });
 
   const navigateMatch = useCallback((direction: 1 | -1) => {
-    if (previewKind === "markdown" && markdownMode === "preview") {
+    if (isRichPreview && markdownMode === "preview") {
       const matches = renderedMarkdownMatchesRef.current;
       const index = renderedMarkdownIndexRef.current;
       if (!index || matches.offsets.length === 0) {
@@ -963,7 +974,7 @@ export function SessionFilePreview({
       + direction
       + findMatches.length
     ) % findMatches.length);
-  }, [findMatches.length, markdownMode, previewKind]);
+  }, [findMatches.length, isRichPreview, markdownMode]);
   const openCurrentFile = useCallback(async () => {
     if (!api || busyAction !== null) {
       return;
@@ -1250,7 +1261,7 @@ export function SessionFilePreview({
           {isSessionFileGitCommitResource(request) ? <span>Commit {request.commitId.slice(0, 7)}</span> : null}
         </div>
         <div className="session-file-preview-actions">
-          {descriptor && (previewKind === "text" || previewKind === "markdown") ? (
+          {descriptor && (previewKind === "text" || isRichPreview) ? (
             <select
               aria-label="Text encoding"
               value={encoding}
@@ -1259,8 +1270,8 @@ export function SessionFilePreview({
               {ENCODING_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           ) : null}
-          {previewKind === "markdown" ? (
-            <div className="session-file-preview-segmented" role="group" aria-label="Markdown display mode">
+          {isRichPreview ? (
+            <div className="session-file-preview-segmented" role="group" aria-label={`${previewKind === "mermaid" ? "Mermaid" : "Markdown"} display mode`}>
               <button type="button" className={markdownMode === "preview" ? "is-active" : ""} onClick={() => setMarkdownMode("preview")}>Preview</button>
               <button type="button" className={markdownMode === "source" ? "is-active" : ""} onClick={() => setMarkdownMode("source")}>Source</button>
             </div>
@@ -1324,7 +1335,7 @@ export function SessionFilePreview({
               {busyAction === "copy-file" ? <SessionFilePreviewBusyLabel label="Copying file" /> : "Copy File"}
             </button>
           ) : null}
-          {previewKind === "text" || previewKind === "markdown" ? (
+          {previewKind === "text" || isRichPreview ? (
             <button
               type="button"
               onClick={() => setFindOpen(true)}
@@ -1378,7 +1389,7 @@ export function SessionFilePreview({
         ) : null}
       </header>
 
-      {findOpen && descriptor && (previewKind === "text" || previewKind === "markdown") ? (
+      {findOpen && descriptor && (previewKind === "text" || isRichPreview) ? (
         <SessionContentFindBar
           open
           query={findQuery}
@@ -1470,7 +1481,7 @@ export function SessionFilePreview({
           syntaxTokens={displayedSyntaxTokens}
         />
       ) : null}
-      {loadState.status === "ready" && loaded && previewKind === "markdown" ? (
+      {loadState.status === "ready" && loaded && isRichPreview ? (
         markdownMode === "preview" ? (
           <SelectionTextActionSurface
             className="session-file-markdown-scroll"
@@ -1478,13 +1489,19 @@ export function SessionFilePreview({
             onQuoteText={onQuoteText}
             surfaceRef={markdownSurfaceRef}
           >
-            <MessageRichText
-              text={decodedText}
-              className="session-file-markdown"
-              onOpenPath={handleOpenMarkdownPath}
-              resolveImageSource={resolveMarkdownImageSource}
-              markdownLinkFileContext={markdownLinkFileContext}
-            />
+            {previewKind === "mermaid" ? (
+              <div className="session-file-markdown session-file-mermaid">
+                <MermaidDiagram source={decodedText} />
+              </div>
+            ) : (
+              <MessageRichText
+                text={decodedText}
+                className="session-file-markdown"
+                onOpenPath={handleOpenMarkdownPath}
+                resolveImageSource={resolveMarkdownImageSource}
+                markdownLinkFileContext={markdownLinkFileContext}
+              />
+            )}
           </SelectionTextActionSurface>
         ) : (
           <VirtualizedTextContent

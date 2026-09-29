@@ -293,14 +293,14 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Git rootがない、または変更が0件という正常状態はblankで表現する。Git repositoryのdiscovery・availability・rejectと、Changes / Historyの取得・diff操作の失敗は理由を持つ実エラーとして扱い、正常blankへ潰さない。File Explorerのroot読込失敗は`role="alert"`で示し、読込中はspinner/statusと区別する
 - 中央 file preview
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
-  - Text、Markdown、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
-  - Markdown は shared rich text renderer の Preview を既定とし、Source へ切り替えられる
+  - Text、Markdown、Mermaid（`.mmd`）、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
+  - Markdown は shared rich text renderer、Mermaid は shared Mermaid renderer の Preview を既定とし、Source へ切り替えられる
   - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。Markdown内画像とchat画像は対象外とする
   - File Explorerのroot、directory、regular file rowはnative context menuに`Copy path`と`Insert path`を表示する。pathはMain processが現在のSession rootから再解決し、copyはlexical absolute pathをclipboardへ書く。insertはworkspace内をworkspace相対、workspace外をslash正規化したabsolute pathとして、既存の`@path`挿入処理へ渡す。menu表示後にactive ownerまたはcomposerの書き込み可否が変わった場合は挿入しない。symbolic linkとother rowは対象外とする
   - Windowsでは、File Explorerのregular file rowでpath操作の後ろをseparatorで区切り、file preview header、root-scopedなMarkdown local-file linkと同じく、既存regular file一件をExplorer互換のfile objectとしてclipboardへcopyできる。directoryとroot外Markdown linkは対象外とし、Copy Imageやpath文字列のcopyとは別操作にする
   - File PreviewのCopy File / Copy Image結果は、共有`AppNotification` primitiveを使ったheader内のoverlayとして表示する。通知は操作列のflex配置に参加せず、操作列の直下・右寄せに重なるため、既存の操作ボタンを移動・折り返しさせない
   - Copy成功はsuccess toneと`role="status"` / `aria-live="polite"`、Copy失敗はerror toneと`role="alert"` / `aria-live="assertive"`で表示する。下端の`session-file-preview-feedback`はpreview自体のエラー専用で、Copy成功通知には使わない。`AppNotification`の現在のconsumerはFile Previewだけとし、他画面への適用は各UIの意味と配置を確認してから行う
-  - Ctrl+F は active な chat / Text / Markdown / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、live Git Diff の選択範囲には chat と同じ floating Copy / Quote を表示し、Quote は現在の writable composer へ挿入する。Preview 表示中の Ctrl+A は、Find input または Action Dock の入力中を除き、Window 全体ではなく表示中の document または diff の文字列だけを選択する
+  - Ctrl+F は active な chat / Text / Markdown / Mermaid / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、Mermaid、live Git Diff の選択範囲には chat と同じ floating Copy / Quote を表示し、Quote は現在の writable composer へ挿入する。Preview 表示中の Ctrl+A は、Find input または Action Dock の入力中を除き、Window 全体ではなく表示中の document または diff の文字列だけを選択する
   - file、live Git Diff、Template workspace から chat へ戻る操作は、左向き icon-only control と具体的な accessible name を持つ同じ navigation primitive を使う。run、approval、elicitation の状態は preview 中も確認できる
   - Template workspaceのSave / Deleteは可視labelと局所spinner、busy stateを使う。処理中は入力を固定し、成功・失敗後に操作を戻す。本文・template IDを表示文言の変更で書き換えない
   - Skill 候補のような一時 surface は右上の × と具体的な accessible name を使い、`Escape` でも dismiss できる。view 間 navigation の Back とは表現を分ける

@@ -316,6 +316,60 @@ async function renderPreview(
 
 // @test-value v2
 // kind = "contract"
+// claim = ".mmdのFile PreviewはMermaid表示経路を既定で選び、Sourceへ切り替えると元のテキストを読める"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#中央-file-preview" }
+// fault = ".mmdを通常テキストとしてだけ表示する、またはSource切替で元の記述を失う"
+// observable = "Mermaid preview container、display mode、Sourceの本文"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.mermaid"
+// lifecycle = "permanent"
+// impact = "ファイルプレビューから図を確認できない、または失敗時に記述を調べられない"
+// distinction = "Mermaid code blockのtestでは独立した.mmdファイルのpreview経路と切替を確認できない"
+// @end-test-value
+test("MMD File Preview はMermaid表示経路とSourceを切り替える", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileRootResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "docs/diagram.mmd",
+  };
+  const source = "flowchart TD\n  A --> B";
+  const api = createTextPreviewApi(request, "diagram.mmd", source, "mermaid-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.querySelector(".session-file-mermaid .message-mermaid") !== null);
+    const displayMode = container.querySelector<HTMLElement>("[aria-label='Mermaid display mode']");
+    assert.ok(displayMode);
+    assert.ok(displayMode.querySelector(".is-active")?.textContent === "Preview");
+
+    const sourceButton = Array.from(displayMode.querySelectorAll("button"))
+      .find((button) => button.textContent === "Source");
+    assert.ok(sourceButton);
+    await act(async () => sourceButton.click());
+    await waitFor(() => container.querySelector(".session-file-text-line code") !== null);
+    assert.equal(container.querySelector(".session-file-mermaid"), null);
+    assert.match(container.querySelector(".session-file-text-scroll")?.textContent ?? "", /flowchart TD[\s\S]*A --> B/);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "File Previewはheaderを維持したままinspection/content読込中のbusy状態とprogressを本文へ表示する"
 // oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
 // fault = "loading中にheaderを消す、aria-busy/statusを欠落させる、またはprogress上限を誤る"
