@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
@@ -18,6 +21,11 @@ import { SettingsCatalogService as SettingsCatalogServiceImpl } from "../../src-
 import type { SettingsCatalogServiceDeps } from "../../src-electron/settings/settings-catalog-service.js";
 import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
+import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
+import { ModelCatalogStorage } from "../../src-electron/settings/model-catalog-storage.js";
+import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
+import { buildHomeSessionProjection } from "../../src/home/home-session-projection.js";
 
 type SettingsCatalogDeps = SettingsCatalogServiceDeps;
 type DefaultedSettingsCatalogDependency =
@@ -267,6 +275,143 @@ function createCatalogSnapshot(revision = 1): ModelCatalogSnapshot {
 }
 
 describe("SettingsCatalogService", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "catalog import・正規化・失敗時rollback・resetはMain/Auxiliaryの最終利用時刻とHomeのUpdated表示・順序を維持する"
+  // oracle = { type = "contract", ref = "docs/design/model-catalog.md#現行の反映" }
+  // fault = "catalogの内部移行を利用更新として保存し、各sessionの活動時刻を上書きする"
+  // observable = "実DBの活動時刻・draft・messages、summary、Home markup、移行済みmetadataと失敗時の復元値"
+  // observation_boundary = "consumer"
+  // scope = "settings-catalog-session-activity"
+  // lifecycle = "permanent"
+  // impact = "最終利用時刻が失われ、未使用の会話が最近使った順へ繰り上がる"
+  // distinction = "storage単体とHome単体では検出できないcatalog serviceから保存・表示への伝播を小規模な一時DBで確認する"
+  // @end-test-value
+  it("catalog移行はMain/Auxiliaryの最終利用時刻とHomeのUpdated表示・順序を維持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-catalog-session-activity-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const sessions = new SessionStorageV6(dbPath);
+    const auxiliaries = new AuxiliarySessionStorage(dbPath);
+    const catalogs = new ModelCatalogStorage(dbPath, path.resolve("public/model-catalog.json"));
+    const db = new DatabaseSync(dbPath);
+    try {
+      const initialDocument = { providers: createCatalogSnapshot().providers };
+      const initial = catalogs.importCatalogDocument(initialDocument);
+      const older = sessions.insertSession(createSession({
+        id: "z-older", taskTitle: "Older", catalogRevision: initial.revision, updatedAt: "2026-09-01T00:00:00.000Z",
+      }));
+      const newer = sessions.insertSession(createSession({
+        id: "a-newer", taskTitle: "Newer", catalogRevision: initial.revision, updatedAt: "2026-09-02T00:00:00.000Z",
+        model: "gpt-5.4-mini", reasoningEffort: "low",
+      }));
+      for (const parent of [older, newer]) {
+        auxiliaries.upsertAuxiliarySession(createAuxiliarySession({
+          id: `aux-${parent.id}`, parentSessionId: parent.id, catalogRevision: initial.revision,
+          model: parent.model, reasoningEffort: parent.reasoningEffort, updatedAt: parent.updatedAt,
+          composerDraft: `draft-${parent.id}`,
+        }));
+      }
+      const readActivity = () => {
+        const summaries = sessions.listSessionSummaryPage().entries;
+        const projection = buildHomeSessionProjection(summaries, [], "");
+        return {
+          main: db.prepare("SELECT id, updated_at, last_active_at FROM sessions_v6 ORDER BY id").all(),
+          auxiliary: db.prepare("SELECT id, updated_at FROM auxiliary_sessions ORDER BY id").all(),
+          drafts: db.prepare("SELECT * FROM auxiliary_session_drafts ORDER BY auxiliary_session_id").all(),
+          mainMessages: db.prepare("SELECT * FROM session_messages_v6 ORDER BY session_id, seq").all(),
+          auxiliaryMessages: db.prepare("SELECT * FROM auxiliary_session_messages ORDER BY auxiliary_session_id, seq").all(),
+          summaries: summaries.map(({ id, updatedAt }) => ({ id, updatedAt })),
+          auxiliarySummaries: auxiliaries.listAuxiliarySessionSummaries([older.id, newer.id])
+            .map(({ id, updatedAt }) => ({ id, updatedAt })),
+          home: renderToStaticMarkup(createElement(HomeRecentSessionsPanel, {
+            filteredSessionEntries: projection.filteredSessionEntries, normalizedSessionSearch: "",
+            searchText: "", searchIcon: null, onChangeSearchText() {}, onOpenLaunchDialog() {},
+            onOpenSession() {}, onSetSessionPinned() {},
+          })).match(/<strong>[^<]*<\/strong>|Updated [^<]*/g),
+        };
+      };
+      const before = readActivity();
+      assert.deepEqual(before.summaries.map(({ id }) => id), [newer.id, older.id]);
+      const invalidated: string[] = [];
+      let failurePhase: "broadcast" | "cleanup" | null = null;
+      const service = new SettingsCatalogService({
+        hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
+        listSessions: () => sessions.listSessions(), listAuxiliarySessions: () => auxiliaries.listAllAuxiliarySessions(),
+        getAppSettings: () => createDefaultAppSettings(), updateAppSettings: (settings) => settings,
+        getModelCatalog: (revision) => catalogs.getCatalog(revision), ensureModelCatalogSeeded: () => catalogs.ensureSeeded(),
+        importModelCatalogDocument: (document, source) => catalogs.importCatalogDocument(document, source),
+        exportModelCatalogDocument: (revision) => catalogs.exportCatalogDocument(revision),
+        resetModelCatalogToBundled: () => catalogs.resetToBundled(),
+        updateSessionRuntimeMetadataIfMatches: (input) => sessions.updateSessionRuntimeMetadataIfMatches(input),
+        updateAuxiliarySessionRuntimeMetadataIfMatches: (input) => auxiliaries.updateAuxiliarySessionRuntimeMetadataIfMatches(input),
+        replaceAllSessions: () => { throw new Error("catalog migration must not replace conversations"); },
+        replaceAuxiliarySessions: () => { throw new Error("catalog migration must not replace conversations"); },
+        clearProviderQuotaTelemetry() {}, clearSessionContextTelemetry() {}, broadcastSessions() {}, broadcastAppSettings() {},
+        invalidateProviderSessionThread(_providerId, sessionId) {
+          invalidated.push(sessionId);
+          if (failurePhase === "cleanup") {
+            failurePhase = null;
+            throw new Error("catalog cleanup failed");
+          }
+        },
+        broadcastModelCatalog() {
+          if (failurePhase === "broadcast") {
+            failurePhase = null;
+            throw new Error("catalog broadcast failed");
+          }
+        },
+      });
+
+      const unchanged = await service.importModelCatalogDocument(initialDocument);
+      assert.ok(unchanged.revision > initial.revision);
+      assert.deepEqual(readActivity(), before);
+      for (const parent of [older, newer]) {
+        assert.equal(sessions.getSession(parent.id)?.catalogRevision, unchanged.revision);
+        assert.equal(sessions.getSession(parent.id)?.threadId, parent.threadId);
+        assert.equal(auxiliaries.getAuxiliarySession(`aux-${parent.id}`)?.catalogRevision, unchanged.revision);
+        assert.equal(auxiliaries.getAuxiliarySession(`aux-${parent.id}`)?.threadId, "aux-thread-1");
+      }
+
+      const normalizedDocument = { providers: createCatalogSnapshot().providers };
+      normalizedDocument.providers[0]!.defaultReasoningEffort = "medium";
+      normalizedDocument.providers[0]!.models = [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["medium"] }];
+      invalidated.length = 0;
+      const normalized = await service.importModelCatalogDocument(normalizedDocument);
+      assert.deepEqual(readActivity(), before);
+      for (const session of [...sessions.listSessions(), ...auxiliaries.listAllAuxiliarySessions()]) {
+        assert.equal(session.catalogRevision, normalized.revision);
+        assert.equal(session.model, "gpt-5.4");
+        assert.equal(session.reasoningEffort, "medium");
+        assert.equal(session.threadId, "");
+      }
+      assert.deepEqual([...invalidated].sort(), [older.id, newer.id, `aux-${older.id}`, `aux-${newer.id}`].sort());
+
+      const beforeRollback = { main: sessions.listSessions(), auxiliary: auxiliaries.listAllAuxiliarySessions() };
+      for (const phase of ["broadcast", "cleanup"] as const) {
+        const revision = catalogs.getActiveCatalog()!.revision;
+        failurePhase = phase;
+        await assert.rejects(service.importModelCatalogDocument(initialDocument), new RegExp(`catalog ${phase} failed`));
+        assert.ok(catalogs.getActiveCatalog()!.revision > revision);
+        assert.deepEqual(catalogs.exportCatalogDocument(), normalizedDocument);
+        assert.deepEqual({ main: sessions.listSessions(), auxiliary: auxiliaries.listAllAuxiliarySessions() }, beforeRollback);
+        assert.deepEqual(readActivity(), before);
+      }
+
+      const reset = await service.resetAppDatabase({ targets: ["modelCatalog"] });
+      assert.deepEqual(readActivity(), before);
+      assert.deepEqual(catalogs.exportCatalogDocument(), catalogs.exportCatalogDocument(reset.modelCatalog.revision));
+      for (const session of [...sessions.listSessions(), ...auxiliaries.listAllAuxiliarySessions()]) {
+        assert.equal(session.catalogRevision, reset.modelCatalog.revision);
+      }
+    } finally {
+      db.close();
+      catalogs.close();
+      auxiliaries.close();
+      sessions.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   // @test-value v2
   // kind = "contract"
   // claim = "任意のchat layout checkpointが保留・失敗しDB読込応答が遅れても、再読込・Settings保存・表示設定以外のresetは現在の表示選択を返す"

@@ -99,6 +99,7 @@ SQLite では次の 4 テーブルで保持する。
 - import後はUIと実行のcatalog revisionを揃える
 - import／reset／rollbackのactive revision変更は、MainとRendererの現在選択にも適用する。古いcheckpointの到着とは区別し、model／depthを新catalogで正規化する。保存失敗で未保存の選択も対象とし、importの一時的な正規化だけでは利用者の選択意図を書き換えない。
 - migration では provider / model / reasoningEffort を新 active revision に合わせて正規化し、選択が変わった runtime session は thread をリセットしてよい
+- catalog import／resetによる内部metadataの移行は会話・利用の更新ではないため、model／depthの正規化やthread resetを伴ってもMain／Auxiliaryの`updatedAt`とMainの`last_active_at`を維持する。通常の会話・明示的なSession操作による時刻更新とは区別する。
 
 ## Seed Policy
 
