@@ -143,7 +143,6 @@ function migrateProviderRuntimeMetadata<T extends ProviderRuntimeMetadata>(sessi
     model: selection.resolvedModel,
     reasoningEffort: selection.resolvedReasoningEffort,
     threadId: shouldResetThread ? "" : session.threadId,
-    updatedAt: shouldResetThread || session.catalogRevision !== snapshot.revision ? currentTimestampLabel() : session.updatedAt,
   };
 }
 
