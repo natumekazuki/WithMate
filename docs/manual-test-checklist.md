@@ -10,10 +10,10 @@
 
 | 操作 | 期待結果 |
 | --- | --- |
-| Workspaceの`Terminal`、Headerを隠してTerminal splitterをクリック | ActionDock直上に全幅で開く。初期は折りたたみで初回だけshellを作成する。`Open External Terminal`とSession Folderの外部起動も利用できる |
-| 1520×940、1400px境界の前後、1100×720で両dockのdrag・上下キーresize、追加展開、Window縮小。最大高から縮める途中でpointerを保持し、解除後と比較 | 通常resizeは他方の高さを維持する。drag保持中も中央の表示判定が追従し、解除でdockやsplitterの位置・高さが変わらない。追加展開とWindow縮小では両dockを補正し、中央を畳んでもTerminalとActionDockのsplitterを操作できる。中央の復帰で会話・previewのstateとscroll位置を保持する |
+| Workspaceの`Terminal`、Preview/Source右の`Prompt / Terminal`切替、Ctrl+Shift+T（macOSはCmd+Shift+T）をcomposerと端末本文から操作。Settingsでbindingも変更する | 共有下部パネルが選択modeへ切り替わり、展開してfocusする。初期Promptではshellを起動せず初回Terminal表示でだけ作成する。入力・selection・端末タブ・出力を保持し、切替shortcutをshellへ送らない。IME中とrepeatでは切り替えない。`Open External Terminal`とSession Folderの外部起動も利用できる |
+| 1520×940、1400px境界の前後、1100×720で共有splitterのdrag・上下キーresize、Prompt/Terminal切替、Window縮小。最大高から縮める途中でpointerを保持し、解除後と比較 | 切替で同じ高さと単一splitterを使う。drag保持中も中央の表示判定が追従し、解除でパネルやsplitterの位置・高さが変わらない。Window縮小では高さを補正し、中央を畳んでも共有splitterを操作できる。中央の復帰で会話・previewのstateとscroll位置を保持する |
 | 高解像度のWindowで500列または300行を超える端末を初回展開し、拡大・縮小して入力する | 正常なfit寸法で起動・resizeでき、`Failed`にならない。resize後も入力と出力を継続できる |
-| タブを複数追加し、選択・折りたたみ・Main/Auxiliary切り替え・最小化を行う | 各shellは親Workspaceから独立して開始し、出力・cwd・processは維持される。多数タブでも1段でscrollでき、`New Terminal`と選択タブへ到達できる |
+| タブを複数追加し、選択・折りたたみ・Prompt/Terminal切替・Main/Auxiliary切り替え・最小化を行う | 各shellは親Workspaceから独立して開始し、出力・cwd・processは維持される。多数タブでも1段でscrollでき、`New Terminal`と選択タブへ到達できる |
 | shell実行中に`Close Terminal`を押して取消／終了。自然終了、起動失敗も確認 | 取消では維持。終了済みタブは確認不要。自然終了は`Exited`と結果、失敗は`Failed`と理由を表示して出力を保持する。最後のタブを閉じると折りたたみ、自動再起動しない |
 | AI実行中もIME、Enter、Tab、Ctrl+C、Escape、コピー／貼り付けを操作。Ctrl+Shift+Tabでタブへ戻る | 端末入力が会話送信・検索・cancelへ流れない。タブ・本文・splitter間をkeyboardで移動でき、非表示端末へfocusが残らず、background出力でfocusを奪わない |
 | 大量出力と非選択端末の出力を続けながらresize・入力・停止。Windowsでは履歴を出力し、未確定のコマンドを入力したままTerminalを繰り返し拡大・縮小する | チャットと端末の操作が応答し、隠した端末も詰まらない。resizeだけで未確定のコマンドが実行されず、scrollbackの履歴を保持する。splitter操作後の上下キー・Enterはsplitterへ配送される。出力がSession/Audit/Memory/診断ログへ複製されない |

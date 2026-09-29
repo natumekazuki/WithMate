@@ -14,6 +14,7 @@ Settingsの`Keyboard shortcuts`では、変更可能なcommandの現在値を確
 - messageの一括縮小と展開
 - file preview内の検索
 - MarkdownのPreviewとSourceの切り替え
+- 下部パネルのPromptとTerminalの切り替え（既定はWindows／Linuxで`Ctrl+Shift+T`、macOSで`Cmd+Shift+T`）
 - message送信
 
 固定操作やOSと衝突しやすい操作は変更対象にしません。
@@ -23,6 +24,8 @@ Settingsの`Keyboard shortcuts`では、変更可能なcommandの現在値を確
 shortcut commandは、chat、file preview、入力欄、dialogなどのscopeを持ちます。同じキーに複数の候補がある場合も、現在activeなsurfaceだけを対象にします。
 
 入力要素がfocusされている場合、文字編集と競合するcommandは実行しません。中央surfaceが切り替わった場合、非表示surfaceのhandlerを候補に含めません。
+
+端末本文ではPrompt／Terminal切替だけをアプリshortcutとして扱い、会話送信・検索・cancelなどは横取りしません。切替はcomposer内でも利用でき、IME変換中とkey repeatでは発火しません。
 
 ## 登録時の検証
 

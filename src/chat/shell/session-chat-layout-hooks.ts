@@ -24,8 +24,7 @@ const SESSION_HORIZONTAL_SPLITTER_SIZE = 20;
 const SESSION_HEADER_DOCK_DEFAULT_HEIGHT = 48;
 const SESSION_ACTION_DOCK_DEFAULT_HEIGHT = 296;
 const SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT = 48;
-const SESSION_TERMINAL_DOCK_DEFAULT_HEIGHT = 240;
-const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 60;
+const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 40;
 const SESSION_MESSAGE_BOTTOM_EPSILON = 1;
 const SESSION_MESSAGE_SCROLL_INTENT_SETTLE_MS = 180;
 
@@ -97,9 +96,8 @@ function measureSidePaneAvailableSize(layout: HTMLElement): number {
   const headerHeight = header && !header.classList.contains("is-hidden")
     ? header.getBoundingClientRect().height : 0;
   const actionDockHeight = layout.querySelector<HTMLElement>(".session-action-dock-slot")?.getBoundingClientRect().height ?? 0;
-  const terminalDockHeight = layout.querySelector<HTMLElement>(".session-terminal-dock-slot")?.getBoundingClientRect().height ?? 0;
   return Math.max(0, measureSessionVerticalDockLayoutBounds(layout).height
-    - headerHeight - actionDockHeight - terminalDockHeight - SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT);
+    - headerHeight - actionDockHeight - SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT);
 }
 
 function measureSidePaneMinimums(layout: HTMLElement, sidePane: "files" | "context") {
@@ -264,47 +262,23 @@ export function clampSessionVerticalDockHeight(input: {
   return Math.min(maxHeight, Math.max(minHeight, input.requestedHeight));
 }
 
-export function allocateSessionVerticalDockHeights(input: {
-  availableHeight: number;
-  actionRequested: number;
-  actionMinimum: number;
-  terminalRequested: number;
-  terminalMinimum: number;
-  preferTerminal: boolean;
-}): { action: number; terminal: number } {
-  const available = Math.max(0, input.availableHeight);
-  const firstMinimum = input.preferTerminal ? input.terminalMinimum : input.actionMinimum;
-  const secondMinimum = input.preferTerminal ? input.actionMinimum : input.terminalMinimum;
-  const firstRequested = input.preferTerminal ? input.terminalRequested : input.actionRequested;
-  const secondRequested = input.preferTerminal ? input.actionRequested : input.terminalRequested;
-  const first = Math.min(Math.max(0, available - secondMinimum), Math.max(firstMinimum, firstRequested));
-  const second = Math.min(Math.max(0, available - first), Math.max(secondMinimum, secondRequested));
-  return input.preferTerminal ? { action: second, terminal: first } : { action: first, terminal: second };
-}
-
 export function useSessionVerticalDockResize(input: {
   ownerKey: string | null;
   isHeaderExpanded: boolean;
   isActionDockExpanded: boolean;
-  isTerminalDockExpanded?: boolean;
   sidePaneLayoutKey?: string;
 }) {
   const [actionDockHeight, setActionDockHeight] = useState(SESSION_ACTION_DOCK_DEFAULT_HEIGHT);
-  const [terminalDockHeight, setTerminalDockHeight] = useState(SESSION_TERMINAL_DOCK_DEFAULT_HEIGHT);
   const [actionDockCompactHeight, setActionDockCompactHeight] = useState(
     SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT,
   );
   const [isActionDockResizing, setIsActionDockResizing] = useState(false);
-  const [isTerminalDockResizing, setIsTerminalDockResizing] = useState(false);
   const [isSidePaneBudgetCollapsed, setIsSidePaneBudgetCollapsed] = useState(false);
   const isSidePaneBudgetCollapsedRef = useRef(false);
   const sessionDockLayoutRef = useRef<HTMLDivElement | null>(null);
   const headerDockRef = useRef<HTMLDivElement | null>(null);
   const actionDockRef = useRef<HTMLDivElement | null>(null);
-  const terminalDockRef = useRef<HTMLDivElement | null>(null);
   const actionDockHeightRef = useRef(SESSION_ACTION_DOCK_DEFAULT_HEIGHT);
-  const terminalDockHeightRef = useRef(SESSION_TERMINAL_DOCK_DEFAULT_HEIGHT);
-  const previousExpandedRef = useRef({ action: input.isActionDockExpanded, terminal: !!input.isTerminalDockExpanded });
   const pointerGestureRef = useRef({
     pointerId: null as number | null,
     startY: 0,
@@ -312,16 +286,10 @@ export function useSessionVerticalDockResize(input: {
     dragged: false,
   });
   const lastActionDockDragEndAtRef = useRef(0);
-  const terminalPointerGestureRef = useRef({ pointerId: null as number | null, startY: 0, startHeight: SESSION_TERMINAL_DOCK_DEFAULT_HEIGHT, dragged: false });
-  const lastTerminalDockDragEndAtRef = useRef(0);
 
   useEffect(() => {
     actionDockHeightRef.current = actionDockHeight;
   }, [actionDockHeight]);
-
-  useEffect(() => {
-    terminalDockHeightRef.current = terminalDockHeight;
-  }, [terminalDockHeight]);
 
   const clampDockHeights = useCallback(() => {
     const layout = sessionDockLayoutRef.current;
@@ -338,39 +306,20 @@ export function useSessionVerticalDockResize(input: {
     const actionMinimum = input.isActionDockExpanded
       ? readSessionRegionMinimum(layout, ".session-action-dock-slot", "--session-region-min-height")
       : actionDockCompactHeight;
-    const terminalMinimum = input.isTerminalDockExpanded
-      ? readSessionRegionMinimum(layout, ".session-terminal-dock-slot", "--session-region-min-height")
-      : 0;
-    const availableWithSide = Math.max(0, layoutHeight - visibleHeaderHeight - splitterHeight * 3 - measureNarrowSideTracks(layout));
-    const collapseSide = isNarrowSessionLayoutViewport() && availableWithSide < actionMinimum + terminalMinimum;
+    const availableWithSide = Math.max(0, layoutHeight - visibleHeaderHeight - splitterHeight * 2 - measureNarrowSideTracks(layout));
+    const collapseSide = isNarrowSessionLayoutViewport() && availableWithSide < actionMinimum;
     isSidePaneBudgetCollapsedRef.current = collapseSide;
     setIsSidePaneBudgetCollapsed(collapseSide);
     const totalAvailable = collapseSide
-      ? Math.max(0, layoutHeight - visibleHeaderHeight - splitterHeight * 3 - measureNarrowSideTracks(layout, false))
+      ? Math.max(0, layoutHeight - visibleHeaderHeight - splitterHeight * 2 - measureNarrowSideTracks(layout, false))
       : availableWithSide;
     const actionRequested = input.isActionDockExpanded ? actionDockHeightRef.current : actionDockCompactHeight;
-    const terminalRequested = input.isTerminalDockExpanded ? terminalDockHeightRef.current : 0;
-    const previous = previousExpandedRef.current;
-    const preferTerminal = !!input.isTerminalDockExpanded && !previous.terminal;
-    previousExpandedRef.current = { action: input.isActionDockExpanded, terminal: !!input.isTerminalDockExpanded };
-    const firstTerminal = preferTerminal || (!!input.isTerminalDockExpanded && !input.isActionDockExpanded);
-    const { action: nextActionDockHeight, terminal: nextTerminalDockHeight } = allocateSessionVerticalDockHeights({
-      availableHeight: totalAvailable,
-      actionRequested,
-      actionMinimum,
-      terminalRequested,
-      terminalMinimum,
-      preferTerminal: firstTerminal,
-    });
+    const nextActionDockHeight = Math.min(totalAvailable, Math.max(actionMinimum, actionRequested));
     if (input.isActionDockExpanded) {
       actionDockHeightRef.current = nextActionDockHeight;
       setActionDockHeight((current) => current === nextActionDockHeight ? current : nextActionDockHeight);
     }
-    if (input.isTerminalDockExpanded) {
-      terminalDockHeightRef.current = nextTerminalDockHeight;
-      setTerminalDockHeight((current) => current === nextTerminalDockHeight ? current : nextTerminalDockHeight);
-    }
-  }, [actionDockCompactHeight, input.isActionDockExpanded, input.isHeaderExpanded, input.isTerminalDockExpanded, input.sidePaneLayoutKey]);
+  }, [actionDockCompactHeight, input.isActionDockExpanded, input.isHeaderExpanded, input.sidePaneLayoutKey]);
 
   useLayoutEffect(() => {
     clampDockHeights();
@@ -434,8 +383,7 @@ export function useSessionVerticalDockResize(input: {
 
       const bounds = measureSessionVerticalDockLayoutBounds(layout);
       const oppositeHeight = measureVisibleHeaderDockHeight(layout, input.isHeaderExpanded)
-        + measureNarrowSideTracks(layout, !isSidePaneBudgetCollapsedRef.current)
-        + (input.isTerminalDockExpanded ? terminalDockHeightRef.current : 0);
+        + measureNarrowSideTracks(layout, !isSidePaneBudgetCollapsedRef.current);
       const nextHeight = clampSessionVerticalDockHeight({
         requestedHeight: gesture.startHeight + gesture.startY - event.clientY,
         layoutHeight: bounds.height,
@@ -479,51 +427,7 @@ export function useSessionVerticalDockResize(input: {
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [input.isActionDockExpanded, input.isHeaderExpanded, input.isTerminalDockExpanded, isActionDockResizing]);
-
-  useEffect(() => {
-    if (!isTerminalDockResizing) return;
-    const handleMove = (event: PointerEvent) => {
-      const gesture = terminalPointerGestureRef.current;
-      const layout = sessionDockLayoutRef.current;
-      if (gesture.pointerId !== event.pointerId || !layout) return;
-      if (!gesture.dragged && Math.abs(event.clientY - gesture.startY) < SESSION_CONTEXT_RAIL_DRAG_THRESHOLD) return;
-      gesture.dragged = true;
-      const next = clampSessionVerticalDockHeight({
-        requestedHeight: gesture.startHeight + gesture.startY - event.clientY,
-        layoutHeight: measureSessionVerticalDockLayoutBounds(layout).height,
-        minHeight: readSessionRegionMinimum(layout, ".session-terminal-dock-slot", "--session-region-min-height"),
-        oppositeDockHeight: measureVisibleHeaderDockHeight(layout, input.isHeaderExpanded)
-          + measureNarrowSideTracks(layout, !isSidePaneBudgetCollapsedRef.current)
-          + (input.isActionDockExpanded ? actionDockHeightRef.current : actionDockCompactHeight),
-      });
-      terminalDockHeightRef.current = next;
-      layout.style.setProperty("--session-terminal-dock-height", `${next}px`);
-    };
-    const handleEnd = (event: PointerEvent) => {
-      if (terminalPointerGestureRef.current.pointerId !== event.pointerId) return;
-      if (terminalPointerGestureRef.current.dragged) {
-        lastTerminalDockDragEndAtRef.current = Date.now();
-        setTerminalDockHeight(terminalDockHeightRef.current);
-      }
-      terminalPointerGestureRef.current.pointerId = null;
-      setIsTerminalDockResizing(false);
-    };
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleEnd);
-    window.addEventListener("pointercancel", handleEnd);
-    const previousCursor = document.body.style.cursor;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-    return () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleEnd);
-      window.removeEventListener("pointercancel", handleEnd);
-      document.body.style.cursor = previousCursor;
-      document.body.style.userSelect = previousUserSelect;
-    };
-  }, [actionDockCompactHeight, input.isActionDockExpanded, input.isHeaderExpanded, isTerminalDockResizing]);
+  }, [input.isActionDockExpanded, input.isHeaderExpanded, isActionDockResizing]);
 
   const handleStartActionDockResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || !sessionDockLayoutRef.current || !input.isActionDockExpanded) {
@@ -546,31 +450,6 @@ export function useSessionVerticalDockResize(input: {
       toggle();
     }
   }, []);
-  const handleStartTerminalDockResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 || !sessionDockLayoutRef.current || !input.isTerminalDockExpanded) return;
-    event.preventDefault();
-    terminalPointerGestureRef.current = { pointerId: event.pointerId, startY: event.clientY, startHeight: terminalDockHeightRef.current, dragged: false };
-    setIsTerminalDockResizing(true);
-  }, [input.isTerminalDockExpanded]);
-  const handleTerminalDockSplitterClick = useCallback((toggle: () => void) => {
-    if (Date.now() - lastTerminalDockDragEndAtRef.current >= SESSION_CONTEXT_RAIL_DRAG_CLICK_SUPPRESSION_MS) toggle();
-  }, []);
-  const handleTerminalDockKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (!input.isTerminalDockExpanded || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
-    const layout = sessionDockLayoutRef.current;
-    if (!layout) return;
-    event.preventDefault();
-    const next = clampSessionVerticalDockHeight({
-      requestedHeight: terminalDockHeightRef.current + (event.key === "ArrowUp" ? 20 : -20),
-      layoutHeight: measureSessionVerticalDockLayoutBounds(layout).height,
-      minHeight: readSessionRegionMinimum(layout, ".session-terminal-dock-slot", "--session-region-min-height"),
-      oppositeDockHeight: measureVisibleHeaderDockHeight(layout, input.isHeaderExpanded)
-        + measureNarrowSideTracks(layout, !isSidePaneBudgetCollapsedRef.current)
-        + (input.isActionDockExpanded ? actionDockHeightRef.current : actionDockCompactHeight),
-    });
-    terminalDockHeightRef.current = next;
-    setTerminalDockHeight(next);
-  }, [actionDockCompactHeight, input.isActionDockExpanded, input.isHeaderExpanded, input.isTerminalDockExpanded]);
   const handleActionDockKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (!input.isActionDockExpanded || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
     const layout = sessionDockLayoutRef.current;
@@ -581,34 +460,27 @@ export function useSessionVerticalDockResize(input: {
       layoutHeight: measureSessionVerticalDockLayoutBounds(layout).height,
       minHeight: readSessionRegionMinimum(layout, ".session-action-dock-slot", "--session-region-min-height"),
       oppositeDockHeight: measureVisibleHeaderDockHeight(layout, input.isHeaderExpanded)
-        + measureNarrowSideTracks(layout, !isSidePaneBudgetCollapsedRef.current)
-        + (input.isTerminalDockExpanded ? terminalDockHeightRef.current : 0),
+        + measureNarrowSideTracks(layout, !isSidePaneBudgetCollapsedRef.current),
     });
     actionDockHeightRef.current = next;
     setActionDockHeight(next);
-  }, [input.isActionDockExpanded, input.isHeaderExpanded, input.isTerminalDockExpanded]);
+  }, [input.isActionDockExpanded, input.isHeaderExpanded]);
 
   const sessionDockLayoutStyle = useMemo(() => ({
     ["--session-action-dock-height" as string]: `${actionDockHeight}px`,
-    ["--session-terminal-dock-height" as string]: `${terminalDockHeight}px`,
     ["--session-action-dock-compact-height" as string]: `${actionDockCompactHeight}px`,
-  }) as CSSProperties, [actionDockCompactHeight, actionDockHeight, terminalDockHeight]);
+  }) as CSSProperties, [actionDockCompactHeight, actionDockHeight]);
 
   return {
     sessionDockLayoutRef,
     headerDockRef,
     actionDockRef,
-    terminalDockRef,
     sessionDockLayoutStyle,
     isActionDockResizing,
-    isTerminalDockResizing,
     isSidePaneBudgetCollapsed,
     handleStartActionDockResize,
     handleHeaderSplitterClick,
     handleActionDockSplitterClick,
-    handleStartTerminalDockResize,
-    handleTerminalDockSplitterClick,
-    handleTerminalDockKeyDown,
     handleActionDockKeyDown,
   };
 }

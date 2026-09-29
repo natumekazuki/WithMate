@@ -341,8 +341,7 @@
 
 .session-chat-layout.is-central-collapsed {
   grid-template-rows: var(--session-header-dock-row-height) var(--session-dock-splitter-size)
-    0px var(--session-dock-splitter-size) var(--session-terminal-dock-row-height)
-    var(--session-dock-splitter-size) var(--session-action-dock-row-height);
+    0px var(--session-dock-splitter-size) var(--session-action-dock-row-height);
 }
 .session-chat-layout.is-central-collapsed .session-message-stack {
   visibility: hidden;
@@ -366,7 +365,6 @@
     grid-template-rows: var(--session-header-dock-row-height) var(--session-dock-splitter-size)
       var(--session-left-pane-track-width) var(--session-dock-splitter-size) 0px
       var(--session-dock-splitter-size) var(--session-right-pane-track-width)
-      var(--session-dock-splitter-size) var(--session-terminal-dock-row-height)
       var(--session-dock-splitter-size) var(--session-action-dock-row-height);
   }
 }

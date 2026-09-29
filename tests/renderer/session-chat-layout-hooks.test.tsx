@@ -5,7 +5,6 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import {
-  allocateSessionVerticalDockHeights,
   clampSessionVerticalDockHeight,
   measureSessionHorizontalLayoutBounds,
   measureSessionVerticalDockLayoutBounds,
@@ -19,9 +18,9 @@ import type { SessionSidePane } from "../../src-shared/settings/session-side-pan
 
 // @test-value v2
 // kind = "invariant"
-// claim = "高さclamp helperは、Header・両dockの3本のsplitter以外の残余高を上限にする"
+// claim = "高さclamp helperは、Headerと上下2本のsplitter以外の残余高を上限にする"
 // oracle = { type = "contract", ref = "ActionDock layout height bounds" }
-// fault = "Terminal splitterの占有高を無視してdockを画面外へ広げる"
+// fault = "上下splitterの占有高を無視してdockを画面外へ広げる"
 // observable = "clampSessionVerticalDockHeightが返すActionDock高さ"
 // observation_boundary = "component-behavior"
 // scope = "session-action-dock-height-clamp-helper"
@@ -35,44 +34,13 @@ test("vertical dock height はHeaderとsplitterを除く残余高を上限にす
     layoutHeight: 420,
     minHeight: 180,
     oppositeDockHeight: 64,
-  }), 296);
+  }), 316);
   assert.equal(clampSessionVerticalDockHeight({
     requestedHeight: 10000,
     layoutHeight: 6000,
     minHeight: 180,
     oppositeDockHeight: 64,
-  }), 5876);
-});
-
-// @test-value v2
-// kind = "invariant"
-// claim = "TerminalとActionDockは共有残余高を超えず、後から開くdockを確保しつつ他方の最小高を残す"
-// oracle = { type = "contract", ref = "GitHub Issue #740: independent dock resize and joint window clamp" }
-// fault = "両dockが独立に全高を占有し、片方を開くかWindowを縮めると他方が重なるか操作不能になる"
-// observable = "共有予算から配分したActionDockとTerminalの高さの和と各最小高"
-// observation_boundary = "component-behavior"
-// scope = "session-vertical-dock-joint-allocation"
-// lifecycle = "permanent"
-// impact = "最小WindowでもTerminalとActionDockの両方の操作導線と本文を使える"
-// distinction = "単独dockの上限helperやCSS宣言では、両dockを同時に開いた際の優先順位と共有予算を検証できない"
-// @end-test-value
-test("TerminalとActionDockは共有の高さ予算を配分する", () => {
-  assert.deepEqual(allocateSessionVerticalDockHeights({
-    availableHeight: 572,
-    actionRequested: 572,
-    actionMinimum: 296,
-    terminalRequested: 240,
-    terminalMinimum: 120,
-    preferTerminal: true,
-  }), { action: 332, terminal: 240 });
-  assert.deepEqual(allocateSessionVerticalDockHeights({
-    availableHeight: 416,
-    actionRequested: 572,
-    actionMinimum: 296,
-    terminalRequested: 240,
-    terminalMinimum: 120,
-    preferTerminal: false,
-  }), { action: 296, terminal: 120 });
+  }), 5896);
 });
 
 // @test-value v2
@@ -173,7 +141,7 @@ function dispatchPointerEvent(
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Terminal折りたたみ時のActionDock pointer resizeはHeaderと3本のsplitterを除く残余高・設定最小高さへclampする"
+// claim = "共通dockのpointer resizeはHeaderと上下2本のsplitterを除く残余高・設定最小高さへclampする"
 // oracle = { type = "contract", ref = "ActionDock drag resize contract" }
 // fault = "ドラッグ中に要求値をそのまま反映し、ActionDockが設定された最大高さを越えるか最小高さを下回る"
 // observable = "layoutの--session-action-dock-height CSS custom property"
@@ -226,7 +194,7 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
         },
         "data-testid": "layout",
       },
-      React.createElement("div", { className: "session-action-dock-slot", style: { "--session-region-min-height": "260px" } }),
+      React.createElement("div", { className: "session-action-dock-slot", style: { "--session-region-min-height": "296px" } }),
       React.createElement("button", {
         type: "button",
         onPointerDown: handleStartActionDockResize,
@@ -261,9 +229,9 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
 
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 1686));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 31));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "1827px");
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "1847px");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 1800));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "260px");
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "296px");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 1800));
   } finally {
     if (root) {

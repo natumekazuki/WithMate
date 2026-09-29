@@ -36,7 +36,7 @@ coding agentと作業する中心画面です。
 - approval、model、depthなどの実行オプションを変更
 - `LatestCommand`、Copilotのbackground tasks、usage情報を確認
 - Audit Log、Terminal、session title変更、session削除へ移動
-- ActionDock直上のタブ付きTerminalでローカルシェルを操作。外部Terminalの起動も利用可能
+- 下部パネルの`Prompt / Terminal`切り替えでローカルシェルを操作。外部Terminalの起動も利用可能
 - File Explorer、Repository Glossary、File Preview、Git Diffを同じ作業面から利用
 
 ### File ExplorerとFile Preview

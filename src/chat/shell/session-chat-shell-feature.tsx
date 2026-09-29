@@ -30,24 +30,36 @@ export function useSessionChatShellFeature(input: {
   isEditingTitle: boolean;
   forceActionDockExpanded: readonly boolean[];
   focusComposer: () => void;
-  terminalDock?: { isExpanded: boolean; onToggle: () => void };
+  terminalDock?: {
+    mode: "prompt" | "terminal";
+    onChange(mode: "prompt" | "terminal"): void;
+    focus(): void;
+  };
 }) {
   const { isActionDockExpanded, canCollapseActionDock } = buildActionDockRuntimeState({
     isActionDockPinnedExpanded: input.presentation.isActionDockPinnedExpanded,
-    forceReasons: input.forceActionDockExpanded,
+    forceReasons: input.terminalDock?.mode === "terminal" ? [] : input.forceActionDockExpanded,
   });
   const isHeaderExpanded = input.presentation.isHeaderExpanded || input.isEditingTitle;
   const dock = useSessionVerticalDockResize({
     ownerKey: input.ownerKey,
     isHeaderExpanded,
     isActionDockExpanded,
-    isTerminalDockExpanded: input.terminalDock?.isExpanded,
     sidePaneLayoutKey: `${input.sidePanes.activeSidePane}:${JSON.stringify(input.sidePanes.sessionWorkbenchStyle)}`,
   });
-  const handleExpandActionDock = createActionDockExpandHandler({
+  const expandPrompt = createActionDockExpandHandler({
     setPinnedExpanded: input.presentation.setIsActionDockPinnedExpanded,
     focusComposer: input.focusComposer,
   });
+  const handleExpandActionDock = (options?: { focusComposer?: boolean }) => {
+    input.terminalDock?.onChange("prompt");
+    expandPrompt(options);
+  };
+  const handleChangeActionDockMode = (mode: "prompt" | "terminal") => {
+    input.terminalDock?.onChange(mode);
+    input.presentation.setIsActionDockPinnedExpanded(true);
+    if (mode === "terminal") requestAnimationFrame(() => input.terminalDock?.focus());
+  };
   const handleCollapseActionDock = createActionDockCollapseHandler({
     canCollapse: canCollapseActionDock,
     setPinnedExpanded: input.presentation.setIsActionDockPinnedExpanded,
@@ -58,10 +70,10 @@ export function useSessionChatShellFeature(input: {
   });
   const handleToggleHeaderSplitter = () => dock.handleHeaderSplitterClick(toggleHeader);
   const handleToggleActionDock = () => dock.handleActionDockSplitterClick(
-    isActionDockExpanded ? handleCollapseActionDock : handleExpandActionDock,
-  );
-  const handleToggleTerminalDock = () => dock.handleTerminalDockSplitterClick(
-    () => input.terminalDock?.onToggle(),
+    isActionDockExpanded ? handleCollapseActionDock : () => {
+      if (input.terminalDock?.mode === "terminal") handleChangeActionDockMode("terminal");
+      else handleExpandActionDock();
+    },
   );
 
   const buildSurface = (content: {
@@ -77,26 +89,14 @@ export function useSessionChatShellFeature(input: {
     layoutRef: dock.sessionDockLayoutRef,
     headerDockRef: dock.headerDockRef,
     actionDockRef: dock.actionDockRef,
-    terminalDockRef: dock.terminalDockRef,
     isHeaderExpanded,
     isSidePaneBudgetCollapsed: dock.isSidePaneBudgetCollapsed,
     workbenchRef: input.sidePanes.sessionWorkbenchRef,
     workbenchStyle: input.sidePanes.sessionWorkbenchStyle,
     mainContent: content.mainContent,
     isActionDockExpanded,
-    isTerminalDockExpanded: input.terminalDock?.isExpanded ?? false,
     terminalContent: content.terminalContent,
-    terminalDockSplitterProps: {
-      className: "session-terminal-dock-splitter",
-      isActive: dock.isTerminalDockResizing,
-      isPanelExpanded: input.terminalDock?.isExpanded ?? false,
-      onPointerDown: dock.handleStartTerminalDockResize,
-      onKeyDown: dock.handleTerminalDockKeyDown,
-      onTogglePanel: handleToggleTerminalDock,
-      ariaLabel: input.terminalDock?.isExpanded ? "Collapse Terminal" : "Expand Terminal",
-      ariaControls: "session-terminal-dock",
-      title: input.terminalDock?.isExpanded ? "Click to collapse Terminal; drag or use arrow keys to resize" : "Click to expand Terminal",
-    },
+    actionDockModeControl: input.terminalDock ? { mode: input.terminalDock.mode, onChange: handleChangeActionDockMode } : undefined,
     headerSplitterProps: {
       isPanelExpanded: isHeaderExpanded,
       canCollapse: !input.isEditingTitle,
@@ -138,6 +138,7 @@ export function useSessionChatShellFeature(input: {
     canCollapseActionDock,
     handleExpandActionDock,
     handleCollapseActionDock,
+    handleChangeActionDockMode,
     handleToggleHeaderSplitter,
     handleToggleActionDock,
     buildSurface,

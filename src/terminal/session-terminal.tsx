@@ -10,6 +10,7 @@ import {
 import type { Terminal } from "@xterm/xterm";
 import type { WithMateWindowTerminalApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { TERMINAL_MAX_DIMENSION } from "../../src-shared/terminal/terminal-contract.js";
+import { getShortcutDispatcher } from "../settings/shortcut-registry.js";
 
 type TerminalTab = {
   id: string;
@@ -112,6 +113,7 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
         if (createRequested && !ended) api.writeTerminalInput(tab.id, data);
       });
       instance.attachCustomKeyEventHandler((event) => {
+        if (event.type === "keydown" && getShortcutDispatcher()?.dispatch(event)) return false;
         if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey) {
           if (event.key === "Tab") {
             if (event.type === "keydown") {
@@ -237,9 +239,9 @@ export function SessionTerminal({ api, expanded, onCollapse, ref }: {
   const stateRef = useRef({ tabs, selectedId });
   stateRef.current = { tabs, selectedId };
   const focusSelected = () => {
-    if (selectedId) panes.current.get(selectedId)?.focus();
+    if (expanded && selectedId) panes.current.get(selectedId)?.focus();
   };
-  useImperativeHandle(ref, () => ({ focus: focusSelected }), [selectedId]);
+  useImperativeHandle(ref, () => ({ focus: focusSelected }), [expanded, selectedId]);
 
   const addTerminal = useCallback(() => {
     const id = crypto.randomUUID();

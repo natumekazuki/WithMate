@@ -10,7 +10,6 @@ type LiveSessionWindowShellPropsInput = {
   layoutRef?: ChatWindowProps["layoutRef"];
   headerDockRef?: ChatWindowProps["headerDockRef"];
   actionDockRef?: ChatWindowProps["actionDockRef"];
-  terminalDockRef?: ChatWindowProps["terminalDockRef"];
   workbenchRef: RefObject<HTMLDivElement | null>;
   workbenchStyle?: ChatWindowProps["workbenchStyle"];
   headerProps: ChatWindowProps["headerProps"];
@@ -19,15 +18,14 @@ type LiveSessionWindowShellPropsInput = {
   recoveryActions?: ChatWindowProps["recoveryActions"];
   mainContent?: ReactNode;
   isActionDockExpanded: boolean;
-  isTerminalDockExpanded?: boolean;
   terminalContent?: ReactNode;
+  actionDockModeControl?: ChatWindowProps["actionDockModeControl"];
   composerProps: ChatWindowProps["composerProps"];
   additionalDirectoryListProps?: ChatWindowProps["additionalDirectoryListProps"];
   skillPickerProps: ChatWindowProps["skillPickerProps"];
   compactActionDockProps: ChatWindowProps["compactActionDockProps"];
   headerSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
   actionDockSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
-  terminalDockSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
   splitterProps: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
   leftPane?: ReactNode;
   leftSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
@@ -50,7 +48,6 @@ export function buildLiveSessionWindowShellProps(
     layoutRef: input.layoutRef,
     headerDockRef: input.headerDockRef,
     actionDockRef: input.actionDockRef,
-    terminalDockRef: input.terminalDockRef,
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
     isHeaderExpanded: input.isHeaderExpanded,
@@ -64,15 +61,14 @@ export function buildLiveSessionWindowShellProps(
     recoveryActions: input.recoveryActions,
     mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
-    isTerminalDockExpanded: input.isTerminalDockExpanded ?? false,
     terminalContent: input.terminalContent,
+    actionDockModeControl: input.actionDockModeControl,
     composerProps: input.composerProps,
     additionalDirectoryListProps: input.additionalDirectoryListProps,
     skillPickerProps: input.skillPickerProps,
     compactActionDockProps: input.compactActionDockProps,
     headerSplitter: <ChatDockSplitter edge="top" {...input.headerSplitterProps} />,
     actionDockSplitter: <ChatDockSplitter edge="bottom" {...input.actionDockSplitterProps} />,
-    terminalDockSplitter: <ChatDockSplitter edge="bottom" {...input.terminalDockSplitterProps} />,
     splitter: <ChatDockSplitter edge="right" {...input.splitterProps} />,
     leftPane: input.leftPane,
     leftSplitter: input.leftSplitterProps ? <ChatDockSplitter edge="left" {...input.leftSplitterProps} /> : null,

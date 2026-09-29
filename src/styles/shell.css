@@ -81,7 +81,6 @@
   --session-dock-splitter-size: 20px;
   --session-header-dock-row-height: 0px;
   --session-action-dock-row-height: var(--session-action-dock-compact-height, 48px);
-  --session-terminal-dock-row-height: 0px;
   --session-central-min-height: 160px;
   --session-left-pane-track-width: 0px;
   --session-right-pane-track-width: 0px;
@@ -90,8 +89,6 @@
     var(--session-header-dock-row-height)
     var(--session-dock-splitter-size)
     minmax(0, 1fr)
-    var(--session-dock-splitter-size)
-    var(--session-terminal-dock-row-height)
     var(--session-dock-splitter-size)
     var(--session-action-dock-row-height);
   transition:
@@ -117,8 +114,6 @@
     "header header header header header"
     "top-split top-split top-split top-split top-split"
     "left-pane left-split main right-split right-pane"
-    "terminal-split terminal-split terminal-split terminal-split terminal-split"
-    "terminal-dock terminal-dock terminal-dock terminal-dock terminal-dock"
     "bottom-split bottom-split bottom-split bottom-split bottom-split"
     "action-dock action-dock action-dock action-dock action-dock";
 }
@@ -172,25 +167,6 @@
   grid-area: bottom-split;
 }
 
-.session-chat-layout > .session-dock-splitter.session-terminal-dock-splitter {
-  grid-area: terminal-split;
-}
-
-.session-terminal-dock-slot {
-  grid-area: terminal-dock;
-  min-height: 0;
-  overflow: hidden;
-  --session-region-min-height: 120px;
-}
-
-.session-terminal-dock-slot.is-hidden {
-  visibility: hidden;
-}
-
-.session-chat-layout.is-terminal-dock-expanded {
-  --session-terminal-dock-row-height: var(--session-terminal-dock-height, 240px);
-}
-
 .session-action-dock-slot {
   grid-area: action-dock;
   --session-region-min-height: 296px;
@@ -210,8 +186,6 @@
         - var(--session-header-dock-row-height)
         - var(--session-dock-splitter-size)
         - var(--session-dock-splitter-size)
-        - var(--session-dock-splitter-size)
-        - var(--session-terminal-dock-row-height)
       )
     )
   );
@@ -258,6 +232,17 @@
 .session-action-dock-slot.is-expanded .composer {
   min-height: 0;
   height: 100%;
+}
+
+.session-action-dock-terminal-content.is-active {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  height: 100%;
+}
+
+.session-action-dock:has(.session-action-dock-terminal-content) .session-action-dock-content {
+  transition: none;
 }
 
 .session-action-dock-slot.is-expanded .composer {

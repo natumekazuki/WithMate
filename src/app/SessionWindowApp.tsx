@@ -312,7 +312,7 @@ function displayApprovalValue(value: string): string {
 export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
-  const [isTerminalExpanded, setIsTerminalExpanded] = useState(false);
+  const [actionDockMode, setActionDockMode] = useState<"prompt" | "terminal">("prompt");
   const terminalRef = useRef<SessionTerminalHandle>(null);
   const composerRegistryRef = useRef<ComposerControllerRegistry | null>(null);
   if (!composerRegistryRef.current) {
@@ -688,8 +688,16 @@ export default function AgentSessionWindowApp() {
     sidePanes,
     isEditingTitle,
     terminalDock: withmateApi ? {
-      isExpanded: isTerminalExpanded,
-      onToggle: () => setIsTerminalExpanded((current) => !current),
+      mode: actionDockMode,
+      onChange: (mode) => {
+        setActionDockMode(mode);
+        if (mode === "terminal") {
+          setIsAgentPickerOpen(false);
+          setIsSkillPickerOpen(false);
+          composerFeature.setIsAdditionalDirectoryListOpen(false);
+        }
+      },
+      focus: () => terminalRef.current?.focus(),
     } : undefined,
     forceActionDockExpanded: [
       isAgentPickerOpen,
@@ -2082,8 +2090,7 @@ export default function AgentSessionWindowApp() {
     isWorkspaceAvailable: isSelectedWorkspaceAvailable,
     onOpenAuditLog: () => auditFeatureRef.current?.open(),
     onOpenSessionTerminal: () => {
-      setIsTerminalExpanded(true);
-      if (isTerminalExpanded) terminalRef.current?.focus();
+      chatShellFeature.handleChangeActionDockMode("terminal");
     },
     onOpenExternalTerminal: () => void handleOpenSessionTerminal(),
     onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
@@ -2285,8 +2292,8 @@ export default function AgentSessionWindowApp() {
     terminalContent: withmateApi ? <SessionTerminal
       ref={terminalRef}
       api={withmateApi}
-      expanded={isTerminalExpanded}
-      onCollapse={() => setIsTerminalExpanded(false)}
+      expanded={actionDockMode === "terminal" && chatShellFeature.isActionDockExpanded}
+      onCollapse={chatShellFeature.handleCollapseActionDock}
     /> : undefined,
     mainContent: filePreviewContent,
     leftPane: fileExplorerPane,
