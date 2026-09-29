@@ -4,6 +4,11 @@ export type CreateTerminalRequest = {
   rows: number;
 };
 
+export type CreateTerminalResult = {
+  shellName: string;
+  windowsPty?: { buildNumber: number };
+};
+
 export type TerminalEvent =
   | { type: "data"; terminalId: string; data: string }
   | { type: "exit"; terminalId: string; exitCode: number; signal?: number }

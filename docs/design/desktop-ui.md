@@ -270,7 +270,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
 - `Terminal`
   - 初期状態は折りたたみで、最初に開くまでシェルを起動しない。Workspaceの`Terminal`は組み込みdockを開き、`Open External Terminal`は既存の外部起動を行う。Session Folderの外部Terminal起動は変更しない
-  - xterm.js本体・標準CSS・FitAddonの公開APIを使う。ANSI解釈、描画、選択、IME、scrollback、シェルの履歴・補完は標準機能へ任せる。専用の最大化モードや端末独自の入力欄は持たない
+  - xterm.js本体・標準CSS・FitAddonの公開APIを使う。WindowsではMainが取得したOS build情報を`windowsPty`へ渡し、resize時のscrollbackを標準のWindows向け処理へ任せる。ANSI解釈、描画、選択、IME、scrollback、シェルの履歴・補完は標準機能へ任せる。専用の最大化モードや端末独自の入力欄は持たない
   - 1タブにつき独立したxtermとPTYを持ち、親SessionのWorkspaceから起動する。Main／Auxiliaryの切り替えは端末の選択・cwd・processへ影響しない
   - dock内の1段タブバーはタブ部分だけ横scrollし、右端の`New Terminal`は固定する。選択タブ、終了ボタン、新規追加へkeyboardで到達でき、端末本文から`Ctrl+Shift+Tab`でタブへfocusを戻せる
   - 表示の折りたたみ・タブ切り替えではprocessを維持する。`Close Terminal`は生存中の終了を確認し、取消では維持する。最後のタブを閉じるとdockを畳み、自動再起動しない。自然終了は`Exited`と終了結果、失敗は`Failed`と理由を表示し、出力を残す

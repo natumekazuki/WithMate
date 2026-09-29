@@ -1,7 +1,8 @@
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
-import type { CreateTerminalRequest, TerminalEvent } from "../../src-shared/terminal/terminal-contract.js";
+import { release } from "node:os";
+import type { CreateTerminalRequest, CreateTerminalResult, TerminalEvent } from "../../src-shared/terminal/terminal-contract.js";
 import { createUtilityTerminalPty, type TerminalPty } from "./utility-terminal-pty.js";
 
 const OUTPUT_HIGH_WATER = 100_000;
@@ -23,7 +24,7 @@ export type TerminalServiceDeps<TWindow extends TerminalOwner> = {
   confirmClose(window: TWindow): boolean;
   sendEvent(window: TWindow, event: TerminalEvent): void;
   spawn(file: string, cwd: string, cols: number, rows: number, signal: AbortSignal): Promise<TerminalPty>;
-  resolveShell(): Promise<{ file: string; shellName: string }>;
+  resolveShell(): Promise<CreateTerminalResult & { file: string }>;
 };
 
 type TerminalEntry<TWindow extends TerminalOwner> = {
@@ -44,7 +45,7 @@ export class TerminalService<TWindow extends TerminalOwner> {
 
   constructor(private readonly deps: TerminalServiceDeps<TWindow>) {}
 
-  async create(sender: unknown, request: CreateTerminalRequest): Promise<{ shellName: string }> {
+  async create(sender: unknown, request: CreateTerminalRequest): Promise<CreateTerminalResult> {
     if (!request || !/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(request.terminalId)) {
       throw new TypeError("Terminal ID must be a UUID.");
     }
@@ -77,7 +78,7 @@ export class TerminalService<TWindow extends TerminalOwner> {
       entry.subscriptions.push(pty.onData((data) => this.onData(entry, data)));
       entry.subscriptions.push(pty.onExit(({ exitCode, signal }) => this.onExit(entry, exitCode, signal)));
       entry.subscriptions.push(pty.onError((error) => this.fail(entry, error)));
-      return { shellName: shell.shellName };
+      return { shellName: shell.shellName, ...(shell.windowsPty ? { windowsPty: shell.windowsPty } : {}) };
     } catch (error) {
       if (this.terminals.get(entry.id) === entry) entry.phase = "failed";
       throw error;
@@ -275,13 +276,13 @@ export class TerminalService<TWindow extends TerminalOwner> {
   }
 }
 
-export async function resolveTerminalShell(platform = process.platform): Promise<{ file: string; shellName: string }> {
+export async function resolveTerminalShell(platform = process.platform): Promise<CreateTerminalResult & { file: string }> {
   if (platform === "win32") {
     const windowsRoot = process.env.SystemRoot;
     if (!windowsRoot || !path.win32.isAbsolute(windowsRoot)) throw new Error("Windows system directory is unavailable.");
     const file = path.win32.join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
     await access(file, constants.X_OK);
-    return { file, shellName: "PowerShell" };
+    return { file, shellName: "PowerShell", windowsPty: { buildNumber: Number(release().split(".")[2]) } };
   }
   if (platform === "darwin") {
     await access("/bin/zsh", constants.X_OK);

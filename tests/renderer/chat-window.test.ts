@@ -1144,7 +1144,19 @@ test("ChatWindow は未選択Auxiliaryの可視labelを空にして作成入口�
   dom.window.close();
 });
 
-test("ChatDockSplitter は pointer と keyboard click の操作軸を通知する", async () => {
+// @test-value v2
+// kind = "contract"
+// claim = "splitterはpointerdownでfocusを取得し、resize handlerが既定動作を取消してもfocusを元の入力へ残さず、activate callbackを通知する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: dockのpointer・keyboard操作と端末入力の独立" }
+// fault = "resizeのpreventDefaultによってsplitterへfocusが移らず、その後のkeyboard操作が元の入力へ配送される"
+// observable = "pointerdown後のdocument.activeElementとpointerdown・click時のactivate callback"
+// observation_boundary = "component-behavior"
+// scope = "ChatDockSplitter pointer focus"
+// lifecycle = "permanent"
+// impact = "端末からsplitterへ操作対象を変えた後のEnterや矢印キーがshell入力になる"
+// distinction = "型検査や静的button markupは、pointer操作で既定focusが取消された場合のfocus移動を保証しない。JSDOMの軽量なfocus検証を既存test内に保持する"
+// @end-test-value
+test("ChatDockSplitter はpointer操作でfocusを取得してactivateを通知する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -1171,6 +1183,7 @@ test("ChatDockSplitter は pointer と keyboard click の操作軸を通知す�
         React.createElement(ChatDockSplitter, {
           edge: "left",
           onActivate: () => activations.push("side"),
+          onPointerDown: (event) => event.preventDefault(),
           onTogglePanel() {},
         }),
         React.createElement(ChatDockSplitter, {
@@ -1184,10 +1197,13 @@ test("ChatDockSplitter は pointer と keyboard click の操作軸を通知す�
     const bottomSplitter = dom.window.document.querySelector<HTMLButtonElement>(".edge-bottom");
     assert.ok(leftSplitter);
     assert.ok(bottomSplitter);
+    bottomSplitter.focus();
+    assert.equal(dom.window.document.activeElement, bottomSplitter);
 
     await act(async () => {
       leftSplitter.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true, button: 0 }));
     });
+    assert.equal(dom.window.document.activeElement, leftSplitter);
     await act(async () => bottomSplitter.click());
 
     assert.deepEqual(activations, ["side", "dock"]);
@@ -2502,15 +2518,15 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
 
 // @test-value v2
 // kind = "contract"
-// claim = "中央の残余高さが160px未満なら非表示・操作不可とし、160pxに復帰すると同じ会話stateとscroll位置を再表示する"
+// claim = "確定高さの変更とdrag中の局所的なdock高さ変更のどちらでも、中央の残余高さが160px未満なら非表示・操作不可とし、160pxへの復帰で会話stateとscroll位置を保つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 中央表示最低高" }
-// fault = "最低高境界が逆転するか、非表示時のunmountで会話stateやscroll位置を失う"
-// observable = "高さ変更前後のaria-hidden、child instance、state、scrollTop"
+// fault = "最低高境界が逆転する、局所resizeを監視せずpointerupまで古い中央表示を使う、または非表示時のunmountで会話stateやscroll位置を失う"
+// observable = "prop変更とdock resize通知前後のaria-hidden、child instance、state、scrollTop、局所変更したCSS高さ"
 // observation_boundary = "component-behavior"
 // scope = "SessionChatScreen central visibility lifecycle"
 // lifecycle = "permanent"
 // impact = "ActionDockを広げた後の会話継続位置と操作可能状態を守る"
-// distinction = "CSS描画寸法は対象外とし、実componentの高さ判定とReact instance保持を検証する"
+// distinction = "CSS描画寸法は対象外とし、propを確定しない局所CSS更新を実componentのobserver経路へ渡して高さ判定とReact instance保持を検証する"
 // @end-test-value
 test("SessionChatScreen は中央160px境界で非表示と復帰を切り替えて状態を保持する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -2529,6 +2545,17 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
 
   Object.defineProperty(dom.window, "innerWidth", { value: 1600, configurable: true });
+  const observers = new Set<TestResizeObserver>();
+  class TestResizeObserver {
+    readonly targets = new Set<Element>();
+    constructor(readonly callback: () => void) { observers.add(this); }
+    observe(target: Element) { this.targets.add(target); }
+    disconnect() { observers.delete(this); }
+  }
+  Object.defineProperty(dom.window, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  const notifyResize = (target: Element) => {
+    for (const observer of observers) if (observer.targets.has(target)) observer.callback();
+  };
   Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", { configurable: true, get() { return 800; } });
   const style = dom.window.document.createElement("style");
   style.textContent = ".session-message-stack { --session-region-min-height: 160px; }";
@@ -2549,7 +2576,8 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
     isHeaderVisible: true,
     messageColumn: React.createElement(StatefulCentral),
     rightPane: null,
-    style: { "--session-action-dock-height": `${height}px`, "--session-header-dock-row-height": "48px", "--session-dock-splitter-size": "20px" } as React.CSSProperties,
+    style: { "--session-action-dock-height": `${height}px`, "--session-terminal-dock-height": "120px", "--session-header-dock-row-height": "48px", "--session-dock-splitter-size": "20px" } as React.CSSProperties,
+    isTerminalDockExpanded: true,
     actionDock: React.createElement("div", null, "Composer"),
     actionDockSplitter: null,
     isActionDockExpanded: true,
@@ -2560,7 +2588,7 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(renderScreen(532));
+      root.render(renderScreen(412));
     });
     const button = dom.window.document.querySelector<HTMLButtonElement>("[data-central-state='true']");
     assert.ok(button);
@@ -2570,23 +2598,46 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
     await act(async () => button.click());
     assert.equal(button.textContent, "state:1");
 
-    await act(async () => root?.render(renderScreen(533)));
+    await act(async () => root?.render(renderScreen(413)));
     assert.equal(dom.window.document.querySelector(".session-message-stack")?.getAttribute("aria-hidden"), "true");
     assert.ok(central.hasAttribute("inert"));
     assert.ok(dom.window.document.querySelector(".session-chat-layout.is-central-collapsed"));
     assert.equal(dom.window.document.querySelector("[data-central-state='true']"), button);
     assert.equal(button.textContent, "state:1");
 
-    await act(async () => root?.render(renderScreen(532)));
+    await act(async () => root?.render(renderScreen(412)));
     assert.equal(dom.window.document.querySelector("[data-central-state='true']"), button);
     assert.equal(button.textContent, "state:1");
     assert.equal(central.getAttribute("aria-hidden"), "false");
     assert.equal(central.scrollTop, 42);
     assert.equal(central.hasAttribute("inert"), false);
+    const layout = dom.window.document.querySelector<HTMLElement>(".session-chat-layout")!;
+    for (const [property, selector, initialHeight] of [
+      ["--session-terminal-dock-height", ".session-terminal-dock-slot", 120],
+      ["--session-action-dock-height", ".session-action-dock-slot", 412],
+    ] as const) {
+      const dock = layout.querySelector<HTMLElement>(selector)!;
+      await act(async () => {
+        layout.style.setProperty(property, `${initialHeight + 1}px`);
+        notifyResize(dock);
+      });
+      assert.equal(central.getAttribute("aria-hidden"), "true");
+      assert.ok(central.hasAttribute("inert"));
+      assert.equal(layout.style.getPropertyValue(property), `${initialHeight + 1}px`);
+      await act(async () => {
+        layout.style.setProperty(property, `${initialHeight}px`);
+        notifyResize(dock);
+      });
+      assert.equal(central.getAttribute("aria-hidden"), "false");
+      assert.equal(central.hasAttribute("inert"), false);
+      assert.equal(dom.window.document.querySelector("[data-central-state='true']"), button);
+      assert.equal(button.textContent, "state:1");
+      assert.equal(central.scrollTop, 42);
+    }
     Object.defineProperty(dom.window, "innerWidth", { value: 1200, configurable: true });
     await act(async () => dom.window.dispatchEvent(new dom.window.Event("resize")));
     assert.equal(central.getAttribute("aria-hidden"), "true");
-    await act(async () => root?.render(renderScreen(476)));
+    await act(async () => root?.render(renderScreen(356)));
     assert.equal(central.getAttribute("aria-hidden"), "false");
     assert.equal(button.textContent, "state:1");
   } finally {

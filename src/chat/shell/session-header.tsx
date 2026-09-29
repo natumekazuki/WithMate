@@ -406,6 +406,9 @@ export function SessionChatScreen({
     const Observer = layout.ownerDocument.defaultView?.ResizeObserver;
     const observer = Observer ? new Observer(measure) : null;
     observer?.observe(layout);
+    for (const dock of layout.querySelectorAll(".session-terminal-dock-slot, .session-action-dock-slot")) {
+      observer?.observe(dock);
+    }
     window.addEventListener("resize", measure);
     return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
   }, [actionDockHeight, terminalDockHeight, isActionDockExpanded, isTerminalDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible, isSidePaneBudgetCollapsed]);

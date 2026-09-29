@@ -157,6 +157,7 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
       createRequested = true;
       const result = await api.createTerminal({ terminalId: tab.id, cols: instance.cols, rows: instance.rows });
       if (disposed) return;
+      if (result.windowsPty) instance.options.windowsPty = result.windowsPty;
       statusCallback.current(tab.id, { shellName: result.shellName, ...(!ended ? { status: "Running" } : {}) });
       if (!ended) instance.options.disableStdin = false;
       resize();

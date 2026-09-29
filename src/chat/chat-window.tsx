@@ -862,6 +862,7 @@ export function ChatDockSplitter({
     }
     pointerStartRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
     draggedRef.current = false;
+    event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture?.(event.pointerId);
     onActivate?.();
     onPointerDown?.(event);

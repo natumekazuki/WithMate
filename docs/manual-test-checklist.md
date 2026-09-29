@@ -11,11 +11,11 @@
 | 操作 | 期待結果 |
 | --- | --- |
 | Workspaceの`Terminal`、Headerを隠してTerminal splitterをクリック | ActionDock直上に全幅で開く。初期は折りたたみで初回だけshellを作成する。`Open External Terminal`とSession Folderの外部起動も利用できる |
-| 1520×940、1400px境界の前後、1100×720で両dockのdrag・上下キーresize、追加展開、Window縮小 | 通常resizeは他方の高さを維持する。追加展開とWindow縮小では両dockを補正し、中央を畳んでもTerminalとActionDockのsplitterを操作できる。中央の復帰で会話・previewのstateとscroll位置を保持する |
+| 1520×940、1400px境界の前後、1100×720で両dockのdrag・上下キーresize、追加展開、Window縮小。最大高から縮める途中でpointerを保持し、解除後と比較 | 通常resizeは他方の高さを維持する。drag保持中も中央の表示判定が追従し、解除でdockやsplitterの位置・高さが変わらない。追加展開とWindow縮小では両dockを補正し、中央を畳んでもTerminalとActionDockのsplitterを操作できる。中央の復帰で会話・previewのstateとscroll位置を保持する |
 | タブを複数追加し、選択・折りたたみ・Main/Auxiliary切り替え・最小化を行う | 各shellは親Workspaceから独立して開始し、出力・cwd・processは維持される。多数タブでも1段でscrollでき、`New Terminal`と選択タブへ到達できる |
 | shell実行中に`Close Terminal`を押して取消／終了。自然終了、起動失敗も確認 | 取消では維持。終了済みタブは確認不要。自然終了は`Exited`と結果、失敗は`Failed`と理由を表示して出力を保持する。最後のタブを閉じると折りたたみ、自動再起動しない |
 | AI実行中もIME、Enter、Tab、Ctrl+C、Escape、コピー／貼り付けを操作。Ctrl+Shift+Tabでタブへ戻る | 端末入力が会話送信・検索・cancelへ流れない。タブ・本文・splitter間をkeyboardで移動でき、非表示端末へfocusが残らず、background出力でfocusを奪わない |
-| 大量出力と非選択端末の出力を続けながらresize・入力・停止 | チャットと端末の操作が応答し、隠した端末も詰まらない。出力がSession/Audit/Memory/診断ログへ複製されない |
+| 大量出力と非選択端末の出力を続けながらresize・入力・停止。Windowsでは履歴を出力し、未確定のコマンドを入力したままTerminalを繰り返し拡大・縮小する | チャットと端末の操作が応答し、隠した端末も詰まらない。resizeだけで未確定のコマンドが実行されず、scrollbackの履歴を保持する。splitter操作後の上下キー・Enterはsplitterへ配送される。出力がSession/Audit/Memory/診断ログへ複製されない |
 | 起動途中のタブ終了、Window closeの取消／確定、renderer破棄、Session削除、アプリ終了 | 起動完了が遅れてもPTYは孤立しない。Window closeは生存端末をまとめて確認し、破棄時にはownerの端末だけを解放する。既存のAI継続／中止契約を維持する |
 
 ## 目的
