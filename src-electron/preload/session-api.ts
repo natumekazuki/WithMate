@@ -27,6 +27,12 @@ export function createSessionApi(
         sessionId,
       );
     },
+    getSessionSummary(sessionId) {
+      return ipcRenderer.invoke(
+        channels.WITHMATE_GET_SESSION_SUMMARY_CHANNEL,
+        sessionId,
+      );
+    },
     getSessionGlossaryProjection(sessionId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,

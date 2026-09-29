@@ -178,6 +178,60 @@ function listSessionTurnSummaries(dbPath: string): string[] {
 describe("SessionStorageV6", () => {
   // @test-value v2
   // kind = "invariant"
+  // claim = "Session summary のID指定読取は会話テーブルを参照せず、対象行の表示・実行metadataだけを返す"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#読取と通知" }
+  // fault = "summary読取がgetSessionを経由してmessage履歴まで走査する"
+  // observable = "会話テーブルが利用不能でも取得できる対象summaryと、存在しないIDのnull"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6"
+  // lifecycle = "permanent"
+  // impact = "長い会話の復元前にSessionのshellとfile/contextを表示できない"
+  // distinction = "型検査と既存の全Session読取testではDB会話テーブルへのアクセスを検出できない"
+  // @end-test-value
+  it("ID指定のsummary読取はmessage tableに依存しない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-summary-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const session = storage.insertSession({
+        ...buildNewSession({
+          taskTitle: "Summary only",
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          branch: "main",
+          characterId: "char-a",
+          character: "A",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        messages: [{ role: "user", text: "long conversation" }],
+      });
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.exec("ALTER TABLE session_messages_v6 RENAME TO inaccessible_session_messages_v6");
+      } finally {
+        db.close();
+      }
+
+      const summary = storage.getSessionSummary(session.id);
+      assert.equal(summary?.id, session.id);
+      assert.equal(summary?.taskTitle, "Summary only");
+      assert.equal(summary?.workspacePath, "C:/workspace");
+      assert.equal(summary ? "messages" in summary : true, false);
+      assert.equal(storage.getSessionSummary("missing-session"), null);
+      assert.throws(() => storage?.getSession(session.id), /session_messages_v6/);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "Main SessionのReviewerは新規作成でUserになり、V6 runtime policyでroundtripし未知値はUserへ正規化される"
   // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-2" }
   // fault = "Auto-review選択が再起動で消える、新規値がUser以外になる、または未知値がAuto-reviewへ昇格する"

@@ -37,6 +37,26 @@ function createIpcRendererStub() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Session summaryは対象IDを専用IPC channelへ渡し、会話全体の取得を要求しない"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md#読取と通知" }
+// fault = "summary APIをfull Sessionのchannelへ誤接続するか対象IDを欠落させる"
+// observable = "preloadからipcRenderer.invokeへ渡すchannelと対象ID"
+// observation_boundary = "public-boundary"
+// scope = "preload Session summary read"
+// lifecycle = "permanent"
+// distinction = "型はIPC channel文字列とpayloadのruntime接続を保証せず、storage testはpreloadを通らない"
+// @end-test-value
+test("Session summaryを対象IDで専用channelへ要求する", async () => {
+  const { ipcRenderer } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  assert.deepEqual(await api.getSessionSummary("session-1"), {
+    channel: "withmate:get-session-summary",
+    args: ["session-1"],
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "preloadのsession mutation APIはowner識別子を含むrequestを専用のIPC channelへ渡す"
 // oracle = { type = "contract", ref = "src-electron/preload/preload-api.ts#createWithMateWindowApi" }
 // fault = "代表的なrenderer requestが別channelへ送られるか、親・Auxiliary識別子を欠落してMainへ到達する"
@@ -569,7 +589,7 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
 // @test-value v2
 // kind = "contract"
 // claim = "preloadの公開API surfaceは列挙した現行WithMateWindowApi keyを過不足なくexposeし、列挙したremoved keyを公開しない"
-// oracle = { type = "contract", ref = "src/withmate-window-api.ts" }
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts" }
 // fault = "列挙した現行IPC methodがrendererへexposeされないか、列挙した廃止済みmethodが公開surfaceへ残る"
 // observable = "Object.keys(api)の公開key集合とremoved keyの不在"
 // observation_boundary = "public-boundary"
@@ -617,6 +637,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getModelCatalog",
     "getProviderQuotaTelemetry",
     "getSession",
+    "getSessionSummary",
     "getSessionWindowRestoreSet",
     "getSessionGlossaryProjection",
     "getSessionAuditLogDetail",

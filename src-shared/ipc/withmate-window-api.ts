@@ -157,6 +157,7 @@ export type WithMateWindowSessionApi = {
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
+  getSessionSummary(sessionId: string): Promise<SessionSummary | null>;
   getSessionGlossaryProjection(sessionId: string): Promise<SessionGlossaryProjection>;
   searchSessionGlossary(
     sessionId: string,

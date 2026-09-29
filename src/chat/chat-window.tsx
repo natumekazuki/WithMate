@@ -17,6 +17,7 @@ import { clampAuxiliaryWidthRatio } from "./use-auxiliary-workspace.js";
 import type { MessageViewMode } from "../ui/markdown/MessageRichText.js";
 import type { AdditionalDirectoryItem } from "./composer/session-composer-paths.js";
 import { CloseButton } from "../ui/close-button.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 import { SessionActionDockCompactRow, type SessionActionDockCompactRowProps } from "./approval/session-action-dock.js";
 import { SESSION_ACTION_DOCK_ID, SESSION_HEADER_DOCK_ID, SESSION_RIGHT_PANE_ID, SESSION_LEFT_PANE_ID, SessionHeader, SessionHeaderHandle, type SessionHeaderProps } from "./shell/session-header.js";
@@ -87,6 +88,8 @@ export type ChatWindowProps = Omit<
 
 export type ConcurrentChatWindowProps = {
   main: SessionMessageColumnProps;
+  mainContentReady?: boolean;
+  mainReadFeedback?: ReactNode;
   auxiliary: SessionMessageColumnProps | null;
   mainSession?: ConversationColumnSession | null;
   auxiliarySession?: ConversationColumnSession | null;
@@ -232,6 +235,7 @@ export type ChatHeaderHandleProps = ComponentProps<typeof SessionHeaderHandle>;
 export type ChatWindowStatusScreenProps = {
   message: string;
   className?: string;
+  children?: ReactNode;
 };
 
 export type ChatRightPaneShellProps = {
@@ -350,10 +354,7 @@ export function ChatSkillPickerPanel({
           aria-busy={isLoading || undefined}
         >
           {isLoading ? (
-            <div className="chat-skill-picker-state">
-              <span className="chat-skill-picker-spinner" aria-hidden="true" />
-              <span className="visually-hidden">Loading Skills</span>
-            </div>
+            <LoadingIndicator className="chat-skill-picker-state" label="Loading skills" />
           ) : errorMessage ? (
             <p className="chat-skill-picker-state error">{errorMessage}</p>
           ) : filteredItems.length > 0 ? (
@@ -617,7 +618,8 @@ export function ChatWindow({
       workSurfaceOverlay={skillPickerProps ? <ChatSkillPickerPanel {...skillPickerProps} /> : null}
       messageColumn={(
         <div id="session-main-chat-pane" className="concurrent-chat-column-content">
-          {concurrentChats ? (
+          {concurrentChats?.mainReadFeedback}
+          {concurrentChats && concurrentChats.mainContentReady === false ? null : concurrentChats ? (
             <ConversationMessageColumn
               session={concurrentChats.mainSession ?? { id: resolvedMessageColumnProps.sessionId }}
               messageSourceKind="session"
@@ -677,10 +679,8 @@ export function ChatWindow({
       auxiliaryMessageColumn={concurrentChats ? (
         <>
           <div id="session-auxiliary-chat-pane" className="concurrent-chat-column-content">
-            {concurrentChats.auxiliaryItems.length === 0 ? null : concurrentChats.loading ? (
-              <div className="concurrent-chat-state" role="status" aria-label="Loading Auxiliary">
-                <span className="concurrent-chat-loading-spinner" aria-hidden="true" />
-              </div>
+            {concurrentChats.loading ? (
+              <LoadingIndicator label="Loading Auxiliary" className="concurrent-chat-state" />
             ) : concurrentChats.error ? (
               <div className="concurrent-chat-state" role="alert">{concurrentChats.error}</div>
             ) : concurrentChats.auxiliary ? (
@@ -739,7 +739,7 @@ export function ChatWindow({
           >
             <SessionComposerExpanded
               {...composerProps}
-              externalErrorDescriptionIds={composerErrorDescriptionIds || undefined}
+              externalErrorDescriptionIds={[composerProps.externalErrorDescriptionIds, composerErrorDescriptionIds].filter(Boolean).join(" ") || undefined}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
               onJumpToBottom={targetColumnControls?.followLatest ?? composerProps.onJumpToBottom}
               onSendOrCancel={targetComposerSend}
@@ -777,11 +777,11 @@ export function ChatHeaderHandle(props: ChatHeaderHandleProps) {
   return <SessionHeaderHandle {...props} />;
 }
 
-export function ChatWindowStatusScreen({ message, className = "" }: ChatWindowStatusScreenProps) {
+export function ChatWindowStatusScreen({ message, className = "", children }: ChatWindowStatusScreenProps) {
   return (
     <main className={`page-shell session-page${className ? ` ${className}` : ""}`}>
       <section className="session-work-surface chat-panel" aria-live="polite">
-        <p className="session-message-empty">{message}</p>
+        {children ?? <p className="session-message-empty">{message}</p>}
       </section>
     </main>
   );

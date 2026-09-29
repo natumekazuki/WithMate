@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useDialogA11y } from "../ui/a11y.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { MemoryEntryKind, MemoryForgetReason } from "../../src-shared/memory/memory-contract.js";
 import type {
   MemoryV6ReviewApi,
@@ -464,10 +465,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
           <div className="memory-review-grid">
             <section className="memory-review-list" aria-label="Memory entries" aria-busy={loading || loadingMore || undefined}>
               {loading && items.length === 0 ? (
-                <div className="settings-loading-inline" role="status" aria-label="Loading Memory entries">
-                  <span className="settings-action-spinner" aria-hidden="true" />
-                  <span className="visually-hidden">Loading Memory entries.</span>
-                </div>
+                <LoadingIndicator inline className="settings-loading-inline" label="Loading Memory entries" />
               ) : null}
               {items.map((item) => (
                 <button
@@ -587,10 +585,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   </div>
                 </>
               ) : entryLoading ? (
-                <div className="settings-loading-inline" role="status" aria-label="Loading Memory entry">
-                  <span className="settings-action-spinner" aria-hidden="true" />
-                  <span className="visually-hidden">Loading Memory entry.</span>
-                </div>
+                <LoadingIndicator inline className="settings-loading-inline" label="Loading Memory entry" />
               ) : null}
             </section>
           </div>

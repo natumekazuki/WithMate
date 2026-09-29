@@ -18,7 +18,7 @@ export type HomeRecentSessionsPanelPropsInput = {
   searchText: string;
   searchIcon: ReactNode;
   handlers: HomeRecentSessionsPanelHandlers;
-  canUsePrimaryFeatures?: boolean;
+  canCreateSession?: boolean;
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
@@ -35,7 +35,7 @@ export function buildHomeRecentSessionsPanelProps({
   searchText,
   searchIcon,
   handlers,
-  canUsePrimaryFeatures,
+  canCreateSession,
   hasMore,
   loadingMore,
   onLoadMore,
@@ -54,7 +54,7 @@ export function buildHomeRecentSessionsPanelProps({
     onOpenLaunchDialog: handlers.onOpenLaunchDialog,
     onOpenSession: handlers.onOpenSession,
     onSetSessionPinned: handlers.onSetSessionPinned,
-    canUsePrimaryFeatures,
+    canCreateSession,
     hasMore,
     loadingMore,
     onLoadMore,

@@ -40,12 +40,24 @@ import {
   SETTINGS_TOOL_CALL_PRESENCE_LABEL,
 } from "./settings-ui.js";
 import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { LoadError } from "../ui/load-error.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
   modelCatalogRevisionLabel: string;
   memoryV6Diagnostics: MemoryV6Diagnostics | null;
+  settingsDraftLoaded: boolean;
+  memoryV6DiagnosticsLoadStatus: "loading" | "loaded" | "error";
+  memoryV6DiagnosticsLoadError: string;
+  onRetryMemoryV6Diagnostics: () => void;
+  appSettingsLoadStatus: "loading" | "loaded" | "error";
+  appSettingsLoadError: string;
+  onRetryAppSettings: () => void;
+  modelCatalogLoadStatus: "loading" | "loaded" | "error";
+  modelCatalogLoadError: string;
+  onRetryModelCatalog: () => void;
   settingsDirty: boolean;
   settingsFeedback: string;
   sessionCleanupCutoffDate: string;
@@ -141,6 +153,16 @@ export function HomeSettingsContent({
   providerSettingRows,
   modelCatalogRevisionLabel,
   memoryV6Diagnostics,
+  settingsDraftLoaded,
+  memoryV6DiagnosticsLoadStatus,
+  memoryV6DiagnosticsLoadError,
+  onRetryMemoryV6Diagnostics,
+  appSettingsLoadStatus,
+  appSettingsLoadError,
+  onRetryAppSettings,
+  modelCatalogLoadStatus,
+  modelCatalogLoadError,
+  onRetryModelCatalog,
   settingsDirty,
   settingsFeedback,
   sessionCleanupCutoffDate,
@@ -200,6 +222,33 @@ export function HomeSettingsContent({
       <div className="settings-panel settings-panel-window" aria-busy={isBusy}>
         <div className="settings-panel-window-scroll">
           <section className="settings-section">
+          {!settingsDraftLoaded ? (
+            <section className="settings-section-card">
+              <div className="settings-field">
+                <strong>App</strong>
+                {appSettingsLoadStatus === "loading" ? <LoadingIndicator label="Loading app settings" /> : null}
+                {appSettingsLoadStatus === "error" ? (
+                  <LoadError message={appSettingsLoadError || "Could not load app settings."} onRetry={onRetryAppSettings} />
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+          {!settingsDraftLoaded ? (
+            <section className="settings-section-card">
+              <div className="settings-field">
+                <strong>Coding Agent Providers</strong>
+                {modelCatalogLoadStatus === "loading" ? <LoadingIndicator label="Loading model catalog" /> : null}
+                {modelCatalogLoadStatus === "error" ? (
+                  <LoadError
+                    message={modelCatalogLoadError || "Could not load model catalog."}
+                    onRetry={onRetryModelCatalog}
+                  />
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+          <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
+          {settingsDraftLoaded ? <>
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>App</strong>
@@ -283,6 +332,13 @@ export function HomeSettingsContent({
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>Coding Agent Providers</strong>
+              {modelCatalogLoadStatus === "loading" ? <LoadingIndicator label="Loading model catalog" /> : null}
+              {modelCatalogLoadStatus === "error" ? (
+                <LoadError
+                  message={modelCatalogLoadError || "Could not load model catalog."}
+                  onRetry={onRetryModelCatalog}
+                />
+              ) : null}
               {providerSettingRows.length > 0 ? (
                 <div className="settings-provider-list">
                   {providerSettingRows.map(({ provider, settings }) => (
@@ -388,11 +444,14 @@ export function HomeSettingsContent({
               ) : null}
             </div>
           </section>
+          </> : null}
+          </fieldset>
 
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>{SETTINGS_DIAGNOSTICS_LABEL}</strong>
               {memoryV6Diagnostics ? (
+                <>
                 <div className="settings-diagnostics-grid">
                   <div className="settings-diagnostics-item">
                     <span>Memory API</span>
@@ -414,10 +473,25 @@ export function HomeSettingsContent({
                     <small>{memoryV6Diagnostics.lastErrors.length > 0 ? "Review the application log for details." : "No recorded Memory V6 errors."}</small>
                   </div>
                 </div>
+                {memoryV6DiagnosticsLoadStatus === "loading" ? (
+                  <LoadingIndicator label="Refreshing Memory V6 diagnostics" inline />
+                ) : null}
+                {memoryV6DiagnosticsLoadStatus === "error" ? (
+                  <LoadError
+                    message={memoryV6DiagnosticsLoadError || "Could not refresh Memory V6 diagnostics."}
+                    onRetry={onRetryMemoryV6Diagnostics}
+                  />
+                ) : null}
+                </>
+              ) : memoryV6DiagnosticsLoadStatus === "loading" ? (
+                <LoadingIndicator label="Loading Memory V6 diagnostics" inline />
+              ) : memoryV6DiagnosticsLoadStatus === "error" ? (
+                <LoadError
+                  message={memoryV6DiagnosticsLoadError || "Could not load Memory V6 diagnostics."}
+                  onRetry={onRetryMemoryV6Diagnostics}
+                />
               ) : (
-                <div className="settings-loading-inline" role="status" aria-label="Loading Memory V6 diagnostics">
-                  <span className="settings-action-spinner" aria-hidden="true" />
-                </div>
+                <p className="settings-empty-state">Diagnostics are unavailable.</p>
               )}
               <div className="settings-actions">
                 <button
@@ -531,6 +605,7 @@ export function HomeSettingsContent({
             </div>
           </section>
 
+          {settingsDraftLoaded ? <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>Repository Glossary</strong>
@@ -603,6 +678,7 @@ export function HomeSettingsContent({
             settings={settingsDraft.keyboardShortcuts}
             onChange={onChangeKeyboardShortcuts}
           />
+          </fieldset> : null}
 
           </section>
         </div>
@@ -616,7 +692,7 @@ export function HomeSettingsContent({
           className={`launch-toggle ${actionIsBusy("save-settings") ? "settings-action-busy" : ""}`.trim()}
           type="button"
           onClick={() => void runAction("save-settings", onSaveSettings)}
-          disabled={!settingsDirty || isBusy}
+          disabled={!settingsDirty || isBusy || appSettingsLoadStatus !== "loaded"}
           aria-busy={actionIsBusy("save-settings")}
           aria-label={actionIsBusy("save-settings") ? "Saving settings" : "Save Settings"}
         >

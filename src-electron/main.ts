@@ -1210,6 +1210,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainQueryService().listWorkspaceCustomAgents(providerId, workspacePath),
                 listOpenSessionWindowIdsPage: (request) => listOpenSessionWindowIdsPage(request),
                 getSession: (sessionId) => getDisplaySession(sessionId),
+                getSessionSummary: (sessionId) => getDisplaySessionSummary(sessionId),
                 getSessionGlossaryProjection: (sessionId) =>
                   glossarySessionProjectionService.load(sessionId),
                 searchSessionGlossary: (sessionId, request) =>
@@ -2809,6 +2810,15 @@ async function getDisplaySession(sessionId: string): Promise<Session | null> {
 
   const session = await requireMainQueryService().getSession(sessionId) ?? liveSession ?? null;
   return session ? mainStoreContext.executionSelections.apply(session) : null;
+}
+
+async function getDisplaySessionSummary(sessionId: string) {
+  const storage = requireSessionStorage();
+  if (!storage.getSessionSummary) {
+    throw new Error("Session summary reads are not available for this database.");
+  }
+  const summary = await storage.getSessionSummary(sessionId);
+  return summary ? mainStoreContext.executionSelections.apply(summary) : null;
 }
 
 async function getRuntimeSession(sessionId: string): Promise<Session | null> {

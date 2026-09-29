@@ -1,3 +1,5 @@
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+
 type HomeStatusScreenProps = {
   homePageClassName: string;
   message: string;
@@ -10,10 +12,7 @@ export function HomeStatusScreen({ homePageClassName, message, loading = false }
       <main className="home-layout home-layout-minimal">
         <section className="panel empty-list-card rise-1" aria-busy={loading}>
           {loading ? (
-            <div className="home-session-list-load-status" role="status" aria-live="polite">
-              <span className="home-session-list-load-spinner" aria-hidden="true" />
-              <span className="sr-only">{message}</span>
-            </div>
+            <LoadingIndicator label={message} />
           ) : (
             <p>{message}</p>
           )}

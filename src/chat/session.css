@@ -361,21 +361,6 @@
   color: var(--danger, #fca5a5);
 }
 
-.glossary-pane-spinner {
-  width: 18px;
-  height: 18px;
-  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: glossary-pane-spin 720ms linear infinite;
-}
-
-@keyframes glossary-pane-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .glossary-search-field input {
   width: 100%;
   min-height: 34px;
@@ -3300,18 +3285,6 @@
   margin-left: 0;
 }
 
-.concurrent-chat-loading-spinner {
-  display: inline-block;
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  box-sizing: border-box;
-  border: 3px solid color-mix(in srgb, currentColor 24%, transparent);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: workspace-changes-spin 720ms linear infinite;
-}
-
 .session-action-dock-target-slot .concurrent-chat-target-dock {
   transform: scale(0.9);
   transform-origin: right center;
@@ -4260,9 +4233,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .session-page .pending-run-indicator .typing-dots span,
-  .session-page .concurrent-chat-loading-spinner,
-  .session-page .chat-skill-picker-spinner,
-  .session-page .glossary-pane-spinner {
+  .session-page .chat-skill-picker-spinner {
     animation: none;
   }
 }

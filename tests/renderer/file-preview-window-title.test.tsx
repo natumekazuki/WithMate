@@ -240,7 +240,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
     assert.ok(loadingPreview);
     assert.equal(loadingPreview.querySelector(".session-file-preview-title strong")?.textContent, "src/notes.txt");
     assert.equal(loadingPreview.querySelector("[role='status']")?.getAttribute("aria-label"), "Loading Git diff");
-    assert.ok(loadingPreview.querySelector(".session-file-preview-spinner[aria-hidden='true']"));
+    assert.ok(loadingPreview.querySelector(".loading-indicator-spinner[aria-hidden='true']"));
     assert.equal(loadingPreview.querySelector(".file-preview-loading-content"), null);
     const loadingButtons = [...loadingPreview.querySelectorAll<HTMLButtonElement>("button")];
     assert.equal(loadingButtons.find((button) => button.textContent === "Find")?.disabled, true);

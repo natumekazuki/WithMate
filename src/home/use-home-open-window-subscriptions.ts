@@ -7,19 +7,22 @@ import {
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 type UseHomeOpenWindowSubscriptionsInput = {
+  enabled?: boolean;
   getApi: () => WithMateWindowApi | null;
   setOpenSessionWindowIdsState: (state: OpenSessionWindowIdsState) => void;
 };
 
 export function useHomeOpenWindowSubscriptions({
+  enabled = true,
   getApi,
   setOpenSessionWindowIdsState,
 }: UseHomeOpenWindowSubscriptionsInput): void {
   useEffect(() => {
+    if (!enabled) return;
     return startOpenSessionWindowIdsSubscription({
       api: getApi(),
       applyState: setOpenSessionWindowIdsState,
     });
-  }, [getApi, setOpenSessionWindowIdsState]);
+  }, [enabled, getApi, setOpenSessionWindowIdsState]);
 
 }

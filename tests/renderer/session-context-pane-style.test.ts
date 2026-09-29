@@ -388,14 +388,14 @@ test("file preview は条件付き find / feedback の有無にかかわらず�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "個別のfile preview windowは外周surfaceを維持し、Diff本文だけをloading表示にする"
-// oracle = { type = "contract", ref = "file preview window loading layout" }
-// fault = "loading中に外周surfaceまで置換される、またはDiff本文以外へloading表示が広がる"
-// observable = "file preview window surfaceとDiff本文のloading CSS宣言"
+// claim = "File Preview専用skeletonは本文に留まり、共通spinnerはreduced motionで停止する"
+// oracle = { type = "contract", ref = "src/file-explorer/files.css and src/styles/common.css: file preview loading" }
+// fault = "専用skeletonが外周surfaceを置換する、または共通spinnerがreduced motionでも動き続ける"
+// observable = "file preview surface/skeleton placementと共通loading-indicator spinner/reduced-motion CSS declarations"
 // observation_boundary = "declaration"
 // scope = "file-preview-window-loading-css"
 // lifecycle = "permanent"
-// distinction = "preview loading stateの生成ではなく、loading表示の影響範囲と外周containmentを確認する"
+// distinction = "preview固有のskeleton layoutと全画面共通spinner CSSを別々に確認する"
 // @end-test-value
 test("個別の file preview window は外周surfaceを保ちDiff本文だけをloading表示にする", async () => {
   const stylesSource = await readStylesheet();
@@ -411,7 +411,7 @@ test("個別の file preview window は外周surfaceを保ちDiff本文だけを
   assert.match(stylesSource, /\.file-preview-loading-content\s*{[\s\S]*?grid-area:\s*content;/);
   assert.match(
     stylesSource,
-    /\.session-file-preview-spinner\s*{[\s\S]*?width:\s*24px;[\s\S]*?animation:\s*session-file-preview-spin\s+720ms\s+linear\s+infinite;/,
+    /\.loading-indicator-spinner\s*{[\s\S]*?width:\s*1rem;[\s\S]*?animation:\s*loading-indicator-spin\s+720ms\s+linear\s+infinite;/,
   );
   assert.match(
     stylesSource,
@@ -419,7 +419,7 @@ test("個別の file preview window は外周surfaceを保ちDiff本文だけを
   );
   assert.match(
     stylesSource,
-    /@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.session-file-preview-spinner\s*{\s*animation:\s*none;/,
+    /@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.loading-indicator-spinner\s*{\s*animation:\s*none;/,
   );
 });
 

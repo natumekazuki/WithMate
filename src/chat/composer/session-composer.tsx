@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ClipboardEventHandler, type KeyboardE
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 
 import { focusRovingItemByKey } from "../../ui/a11y.js";
+import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { ApprovalMode } from "../../../src-shared/settings/approval-mode.js";
 
 import type { CodexSandboxMode } from "../../../src-shared/settings/codex-sandbox-mode.js";
@@ -491,9 +492,8 @@ export function SessionComposerExpanded({
           }}
         >
           {isCustomAgentListLoading ? (
-            <div className="chat-skill-picker-state" role="status" aria-label="Loading custom agents">
-              <span className="chat-skill-picker-spinner" aria-hidden="true" />
-              <span className="visually-hidden">Loading Custom Agents</span>
+            <div className="chat-skill-picker-state">
+              <LoadingIndicator label="Loading custom agents" />
             </div>
           ) : customAgentItems.length > 0 ? (
             customAgentItems.map((item) => (
@@ -709,7 +709,7 @@ export function SessionComposerExpanded({
                 )
           }
         >
-          {showBusySendState ? <span className="concurrent-chat-loading-spinner" aria-hidden="true" /> : null}
+          {showBusySendState ? <span className="loading-indicator-spinner" aria-hidden="true" /> : null}
           <span>Send</span>
         </button>
       </div>

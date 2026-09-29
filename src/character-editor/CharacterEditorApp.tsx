@@ -32,6 +32,7 @@ import { getProviderAppSettings, type AppSettings } from "../../src-shared/setti
 import { getWithMateApi, isDesktopRuntime } from "../app/renderer-withmate-api.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 function getCharacterEditorCharacterIdFromLocation(): string | null {
   if (typeof window === "undefined") {
@@ -594,13 +595,8 @@ export default function CharacterEditorApp() {
           aria-busy={loading || undefined}
         >
           {loading ? (
-            <div
-              className="character-editor-loading-state"
-              role="status"
-              aria-live="polite"
-              aria-label="Loading character"
-            >
-              <span className="chat-skill-picker-spinner" aria-hidden="true" />
+            <div className="character-editor-loading-state">
+              <LoadingIndicator label="Loading character" />
             </div>
           ) : null}
           {!loading && selectedTab === "profile" ? (

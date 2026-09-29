@@ -2,6 +2,8 @@ import { useEffect, useRef, type ReactNode } from "react";
 
 import { isReadOnlySession } from "../../src-shared/session/session-state.js";
 import type { HomeSessionSummary } from "../../src-shared/session/session-state.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { LoadError } from "../ui/load-error.js";
 import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import type { HomeSessionState } from "./home-session-projection.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
@@ -20,7 +22,7 @@ export type HomeRecentSessionsPanelProps = {
   loadingMore?: boolean;
   onLoadMore?: () => void;
   pendingSessionPinIds?: readonly string[];
-  canUsePrimaryFeatures?: boolean;
+  canCreateSession?: boolean;
   sessionSummaryLoadStatus?: SessionSummariesLoadStatus;
   feedback?: string;
   onRetry?: () => void;
@@ -94,7 +96,7 @@ export function HomeRecentSessionsPanel({
   loadingMore = false,
   onLoadMore,
   pendingSessionPinIds = [],
-  canUsePrimaryFeatures = true,
+  canCreateSession = true,
   sessionSummaryLoadStatus = "loaded",
   feedback = "",
   onRetry,
@@ -122,15 +124,12 @@ export function HomeRecentSessionsPanel({
   }, [hasMore, onLoadMore]);
 
   const openLaunchDialog = () => {
-    if (!canUsePrimaryFeatures) {
+    if (!canCreateSession) {
       return;
     }
     onOpenLaunchDialog();
   };
   const openSession = (sessionId: string) => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
     onOpenSession(sessionId);
   };
   const visibleSessionEntries = filteredSessionEntries.map((entry) => ({
@@ -171,8 +170,8 @@ export function HomeRecentSessionsPanel({
           className="start-session-button"
           type="button"
           onClick={openLaunchDialog}
-          aria-disabled={!canUsePrimaryFeatures}
-          disabled={!canUsePrimaryFeatures}
+          aria-disabled={!canCreateSession}
+          disabled={!canCreateSession}
           aria-label="New session"
           title="New session"
         >
@@ -182,14 +181,7 @@ export function HomeRecentSessionsPanel({
       </div>
 
       {loadErrorMessage ? (
-        <div className="home-session-list-feedback">
-          <p className="settings-feedback" role="status" aria-live="polite">{loadErrorMessage}</p>
-          {onRetry ? (
-            <button className="launch-toggle home-session-retry-button" type="button" disabled={isLoading || loadingMore} onClick={onRetry}>
-              Retry
-            </button>
-          ) : null}
-        </div>
+        <LoadError message={loadErrorMessage} onRetry={onRetry} retryDisabled={isLoading || loadingMore} className="home-session-list-feedback" />
       ) : null}
       <div
         className="session-card-list home-session-card-list"
@@ -211,8 +203,6 @@ export function HomeRecentSessionsPanel({
                 className="home-session-card-open"
                 type="button"
                 onClick={() => openSession(session.id)}
-                aria-disabled={!canUsePrimaryFeatures}
-                disabled={!canUsePrimaryFeatures}
               >
                 <CharacterAvatar
                   character={{ name: session.character, iconPath: session.characterIconPath }}
@@ -244,7 +234,7 @@ export function HomeRecentSessionsPanel({
                     ? `Updating pin for ${session.taskTitle}`
                     : `${session.isPinned ? "Unpin" : "Pin"} ${session.taskTitle}`}
                   aria-busy={isPinPending}
-                  disabled={!canUsePrimaryFeatures || isPinPending}
+                  disabled={isPinPending}
                   onClick={() => onSetSessionPinned(session.id, !session.isPinned)}
                 >
                   <PinIcon active={session.isPinned} pending={isPinPending} />
@@ -254,17 +244,11 @@ export function HomeRecentSessionsPanel({
           );
         })}
         {!hasVisibleEntries && isLoading ? (
-          <div className="home-session-list-load-status" role="status" aria-live="polite">
-            <span className="home-session-list-load-spinner" aria-hidden="true" />
-            <span className="sr-only">Loading sessions…</span>
-          </div>
+          <LoadingIndicator label="Loading sessions" className="home-session-list-load-status" />
         ) : null}
         {hasMore ? <div ref={loadMoreSentinelRef} className="home-session-list-load-sentinel" aria-hidden="true" /> : null}
         {loadingMore ? (
-          <div className="home-session-list-load-status" role="status" aria-live="polite">
-            <span className="home-session-list-load-spinner" aria-hidden="true" />
-            <span className="sr-only">Loading more sessions…</span>
-          </div>
+          <LoadingIndicator label="Loading more sessions" className="home-session-list-load-status" />
         ) : null}
       </div>
     </section>

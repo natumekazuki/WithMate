@@ -4,7 +4,9 @@ Session、Auxiliary、監査、設定、catalogの永続化はMainが公開す�
 
 ## 読取と通知
 
-Homeは`listSessionSummaryPage()`でrecent、pinned、open Sessionと検索結果をboundedに取得する。全Session本文をHomeへ送らない。Session Windowは対象Sessionを`getSession()`でhydrateし、変更通知を受けた対象を再取得する。summaryのinvalidationは`WindowBroadcastService`が`ids`または`all`として配信し、IDが上限を超えた場合は切り捨てず`all`へ切り替える。Homeは古いquery responseをgenerationで失効させ、既に取得したpageを必要範囲で再同期する。
+Homeは`listSessionSummaryPage()`でrecent、pinned、open Sessionと検索結果をboundedに取得する。全Session本文をHomeへ送らない。Session Windowは対象IDの`getSessionSummary()`で基本情報を取得し、`getSession()`による会話のhydrateと独立してheaderやFilesを表示する。summary取得はmessage、stream、artifactのtableを読まず、全件一覧も取得しない。summaryから作った表示用projectionを会話の保存・送信には使わない。変更通知を受けた対象を再取得し、会話取得の失敗は既に取得した情報を保持したまま局所的に再試行できる。
+
+summaryのinvalidationは`WindowBroadcastService`が`ids`または`all`として配信し、IDが上限を超えた場合は切り捨てず`all`へ切り替える。Homeは古いquery responseをgenerationで失効させ、既に取得したpageを必要範囲で再同期する。
 
 ## 書込みとowner
 

@@ -9,6 +9,7 @@ import type { LiveSessionRunState } from "../../src-shared/session/runtime-state
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
+import { replaceLiveRunAfterResolvedRequest } from "./runtime/session-live-run-state.js";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
   "messages" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors"
@@ -66,6 +67,7 @@ export function useConversationMessageColumn({
     caches.set(sessionId, cache);
   }
   const conversation = cache;
+  const liveRunEventRevision = useRef(0);
   const [, rerender] = useState(0);
   const displayedId = useRef(sessionId);
   displayedId.current = sessionId;
@@ -89,6 +91,7 @@ export function useConversationMessageColumn({
     const unsubscribe = api.subscribeLiveSessionRun((id, state) => {
       if (!active || id !== sessionId) return;
       receivedEvent = true;
+      liveRunEventRevision.current += 1;
       conversation.liveRun = state;
       refresh();
     });
@@ -233,8 +236,16 @@ export function useConversationMessageColumn({
       onJumpToMessage,
     });
   }, [allMessagesCollapsed, collapseTargets, conversation.collapsedMessageKeys, following.followMessageListLatest, following.handleMessageListSend, following.isMessageListFollowing, messageNavigatorEntries, onColumnControls, onJumpToMessage, sessionId]);
-  const reloadLiveRun = async () => {
-    if (api?.getLiveSessionRun) conversation.liveRun = await api.getLiveSessionRun(sessionId);
+  const reloadLiveRun = async (requestId: string, requestKind: "approval" | "elicitation", eventRevision: number) => {
+    if (!api?.getLiveSessionRun) return;
+    const latestLiveRun = await api.getLiveSessionRun(sessionId);
+    if (liveRunEventRevision.current !== eventRevision) return;
+    conversation.liveRun = replaceLiveRunAfterResolvedRequest({ ownerSessionId: sessionId, state: conversation.liveRun }, {
+      sessionId,
+      requestId,
+      requestKind,
+      latestLiveRun,
+    }).state;
   };
   const onResolveLiveApproval: SessionMessageColumnProps["onResolveLiveApproval"] = async (request, decision) => {
     if (!api?.resolveLiveApproval) return baseProps.onResolveLiveApproval(request, decision);
@@ -242,9 +253,10 @@ export function useConversationMessageColumn({
     conversation.approvalRequestId = request.requestId;
     conversation.error = "";
     refresh();
+    const eventRevision = liveRunEventRevision.current;
     try {
       await api.resolveLiveApproval(sessionId, request.requestId, decision);
-      await reloadLiveRun();
+      await reloadLiveRun(request.requestId, "approval", eventRevision);
     } catch (error) {
       conversation.error = error instanceof Error ? error.message : String(error);
     } finally {
@@ -258,9 +270,10 @@ export function useConversationMessageColumn({
     conversation.elicitationRequestId = request.requestId;
     conversation.error = "";
     refresh();
+    const eventRevision = liveRunEventRevision.current;
     try {
       await api.resolveLiveElicitation(sessionId, request.requestId, response);
-      await reloadLiveRun();
+      await reloadLiveRun(request.requestId, "elicitation", eventRevision);
     } catch (error) {
       conversation.error = error instanceof Error ? error.message : String(error);
     } finally {

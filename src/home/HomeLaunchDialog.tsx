@@ -5,6 +5,7 @@ import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-s
 import { ProviderLaunchField, type ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
 import type { HomeCharacterLoadStatus, HomeLaunchWorkspaceValidationState } from "./home-launch-state.js";
@@ -189,9 +190,8 @@ export function HomeLaunchDialog({
         <div className="launch-field">
           <span className="launch-field-label">Character</span>
           {resolvedCharacterLoadStatus === "loading" ? (
-            <div className="launch-character-neutral" role="status" aria-live="polite" aria-busy="true">
-              <span className="home-session-list-load-spinner" aria-hidden="true" />
-              <span className="sr-only">Loading characters…</span>
+            <div className="launch-character-neutral">
+              <LoadingIndicator label="Loading characters" inline />
             </div>
           ) : resolvedCharacterLoadStatus === "error" ? (
             <div className="launch-character-neutral" role="status">

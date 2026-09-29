@@ -10,6 +10,8 @@ import type {
   HomeSessionState,
 } from "./home-session-projection.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { LoadError } from "../ui/load-error.js";
 
 export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];
@@ -251,6 +253,7 @@ export function HomeMonitorContent({
         ? "Could not load Auxiliary sessions."
         : ""
   );
+  const hasReadError = sessionWindowsDataState === "error" || auxiliaryDataState === "error";
   const showEmptyState = sessionWindowsDataState !== "loading" && sessionWindowsDataState !== "error";
 
   return (
@@ -258,11 +261,11 @@ export function HomeMonitorContent({
       className="home-monitor-body"
       aria-busy={isLoading}
     >
-      {statusFeedback ? (
+      {statusFeedback ? hasReadError ? (
+        <LoadError message={statusFeedback} onRetry={onRetry} retryDisabled={isLoading} className="home-session-list-feedback" />
+      ) : (
         <div className="home-session-list-feedback">
-          <p className="settings-feedback" role="status" aria-live="polite">
-            {statusFeedback}
-          </p>
+          <p className="settings-feedback" role="status" aria-live="polite">{statusFeedback}</p>
           {onRetry ? (
             <button className="launch-toggle home-session-retry-button" type="button" disabled={isLoading} onClick={onRetry}>
               Retry
@@ -271,10 +274,7 @@ export function HomeMonitorContent({
         </div>
       ) : null}
       {!feedback && isLoading && (auxiliaryDataState === "loading" || (runningEntries.length === 0 && nonRunningEntries.length === 0)) ? (
-        <div className="home-session-list-load-status" role="status" aria-live="polite">
-          <span className="home-session-list-load-spinner" aria-hidden="true" />
-          <span className="sr-only">{loadingMessage}</span>
-        </div>
+        <LoadingIndicator label={loadingMessage.replace(/…$/, "")} className="home-session-list-load-status" />
       ) : null}
       <div className="home-monitor-sections">
         <section className="home-monitor-section" aria-labelledby="home-monitor-running">

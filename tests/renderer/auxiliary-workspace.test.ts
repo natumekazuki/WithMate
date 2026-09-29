@@ -372,7 +372,7 @@ test("Auxiliary詳細の待機・失敗・成功を共通chatへ投影する", a
     const pending = renderSurface();
     assert.equal(pending.surface.loading, true);
     assert.equal(pending.surface.error, null);
-    assert.ok(pending.document.querySelector('.concurrent-chat-state[role="status"] .concurrent-chat-loading-spinner'));
+    assert.ok(pending.document.querySelector('.concurrent-chat-state[role="status"] .loading-indicator-spinner[aria-hidden="true"]'));
 
     await act(async () => loadA.resolve(null));
     const failed = renderSurface();

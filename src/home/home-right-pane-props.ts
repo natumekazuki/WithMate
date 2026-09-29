@@ -38,11 +38,14 @@ export type HomeRightPanePropsInput = {
   characterEntries: CharacterCatalogEntry[];
   characterLoadStatus?: HomeCharacterLoadStatus;
   characterListFeedback?: string;
+  onRetryCharacters?: () => void;
   handlers: HomeRightPaneHandlers;
-  canUsePrimaryFeatures?: boolean;
   sessionWindowRestoreIds?: readonly string[];
   sessionWindowRestorePending?: boolean;
   sessionWindowRestoreFeedback?: string;
+  mateLoadStatus?: HomeRightPaneProps["mateLoadStatus"];
+  mateLoadError?: string;
+  onRetryMateStatus?: () => void;
 };
 
 export function buildHomeRightPaneProps({
@@ -59,11 +62,14 @@ export function buildHomeRightPaneProps({
   characterEntries,
   characterLoadStatus,
   characterListFeedback,
+  onRetryCharacters,
   handlers,
-  canUsePrimaryFeatures,
   sessionWindowRestoreIds,
   sessionWindowRestorePending,
   sessionWindowRestoreFeedback,
+  mateLoadStatus,
+  mateLoadError,
+  onRetryMateStatus,
 }: HomeRightPanePropsInput): HomeRightPaneProps {
   return {
     rightPaneView,
@@ -79,6 +85,7 @@ export function buildHomeRightPaneProps({
     characterEntries,
     characterLoadStatus,
     characterListFeedback,
+    onRetryCharacters,
     onChangeRightPaneView: handlers.onChangeRightPaneView,
     onOpenSessionMonitorWindow: handlers.onOpenSessionMonitorWindow,
     onOpenSettingsWindow: handlers.onOpenSettingsWindow,
@@ -87,9 +94,11 @@ export function buildHomeRightPaneProps({
     onEditCharacter: handlers.onEditCharacter,
     onOpenSession: handlers.onOpenSession,
     onShowSessionMonitorContextMenu: handlers.onShowSessionMonitorContextMenu,
-    canUsePrimaryFeatures,
     sessionWindowRestoreIds,
     sessionWindowRestorePending,
     sessionWindowRestoreFeedback,
+    mateLoadStatus,
+    mateLoadError,
+    onRetryMateStatus,
   };
 }

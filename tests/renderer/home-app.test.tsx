@@ -6,6 +6,8 @@ import type { Root } from "react-dom/client";
 
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { MateStorageState } from "../../src-shared/mate/mate-state.js";
 import { buildNewSession, type CreateSessionRequest } from "../../src-shared/session/session-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
@@ -171,7 +173,7 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
 
     await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
     assert.equal(listCalls, 3);
-    assert.match(homeCharacters.textContent ?? "", /Loading characters/);
+    assert.ok(homeCharacters.querySelector('[aria-label="Loading characters"]'));
     assertDialogStable();
     await act(async () => focusLoad.resolve(latestEntries));
     assert.match(homeCharacters.textContent ?? "", /Latest Character/);
@@ -202,6 +204,230 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
     assert.match(reopenedList.querySelector('[aria-checked="true"]')?.textContent ?? "", /Random/);
   } finally {
     await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Settingsのapp settings、model catalog、Memory diagnosticsは独立して読込・回復し、未完了readや一方の失敗で準備済みの操作を塞がない"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#runtime-policy and GitHub Issue #744" }
+// fault = "Settingsの初回readを一括待機し、別領域の内容や操作を隠すか、失敗後の再取得をできなくする"
+// observable = "deferred API応答中のSettings section、独立したLoadError/LoadingIndicator、Import Models操作、Retry後のprovider row"
+// observation_boundary = "component-behavior"
+// scope = "Settings Window independent initial reads and recovery"
+// lifecycle = "permanent"
+// @end-test-value
+test("Settingsは独立したreadのpending/error中も準備済み領域を表示・操作できる", async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
+    url: "https://withmate.local/?mode=settings",
+  });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+
+  const firstSettingsLoad = createDeferred<ReturnType<typeof createDefaultAppSettings>>();
+  const firstCatalogLoad = createDeferred<ModelCatalogSnapshot | null>();
+  let settingsCalls = 0;
+  let catalogCalls = 0;
+  let imports = 0;
+  const savedSettings: ReturnType<typeof createDefaultAppSettings>[] = [];
+  const originalSettings = {
+    ...createDefaultAppSettings(),
+    memoryExtractionProviderSettings: {
+      codex: {
+        ...createDefaultAppSettings().memoryExtractionProviderSettings.codex,
+        model: "preserve-this-memory-model",
+      },
+    },
+  };
+  const catalog: ModelCatalogSnapshot = {
+    revision: 2,
+    providers: [{
+      id: "codex", label: "Codex", defaultModelId: "gpt-5.4", defaultReasoningEffort: "high",
+      models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
+    }],
+  };
+  const api: Partial<WithMateWindowApi> = {
+    getAppSettings: async () => {
+      settingsCalls += 1;
+      if (settingsCalls === 1) return firstSettingsLoad.promise;
+      return originalSettings;
+    },
+    subscribeAppSettings: () => () => {},
+    getModelCatalog: async () => {
+      catalogCalls += 1;
+      if (catalogCalls === 1) return firstCatalogLoad.promise;
+      return catalog;
+    },
+    subscribeModelCatalog: () => () => {},
+    getMemoryV6Diagnostics: async () => ({
+      generatedAt: "",
+      runtime: {
+        status: "stopped", applicationInstanceId: null, runtimeGenerationId: null,
+        buildChannel: null, discoveryPublished: false,
+      },
+      cliShim: {
+        platform: "win32", commandName: "withmate-memory", supported: true,
+        status: "not-installed", pathContainsShimDirectory: false,
+      },
+      lastErrors: [],
+    }),
+    importModelCatalogFile: async () => { imports += 1; return null; },
+    updateAppSettings: async (settings) => { savedSettings.push(settings); return settings; },
+  };
+  dom.window.withmate = api as WithMateWindowApi;
+  const rootElement = dom.window.document.getElementById("root");
+  assert.ok(rootElement);
+  let root: Root | null = null;
+  try {
+    const [{ default: HomeApp }, { createRoot }] = await Promise.all([
+      import("../../src/home/HomeApp.js"),
+      import("react-dom/client"),
+    ]);
+    await act(async () => {
+      const mountedRoot = createRoot(rootElement);
+      root = mountedRoot;
+      mountedRoot.render(<HomeApp />);
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    assert.ok(rootElement.querySelector(".settings-window-shell"));
+    assert.ok(rootElement.querySelector('[aria-label="Loading app settings"]'));
+    assert.ok(rootElement.querySelector('[aria-label="Loading model catalog"]'));
+    assert.ok(rootElement.textContent?.includes("stopped"), "diagnostics should resolve independently");
+    const importButton = findButton(rootElement, "Import Models");
+    assert.equal(importButton.disabled, false);
+    await act(async () => importButton.click());
+    assert.equal(imports, 1);
+
+    await act(async () => firstSettingsLoad.reject(new Error("Settings unavailable")));
+    assert.match(rootElement.textContent ?? "", /Settings unavailable/);
+    await act(async () => firstCatalogLoad.reject(new Error("Catalog unavailable")));
+    assert.match(rootElement.textContent ?? "", /Catalog unavailable/);
+    assert.ok(rootElement.textContent?.includes("stopped"), "catalog error should not hide diagnostics");
+
+    const settingsRetry = rootElement.querySelector<HTMLButtonElement>(".load-error button");
+    assert.ok(settingsRetry);
+    await act(async () => settingsRetry.click());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.equal(settingsCalls, 2);
+    assert.ok(rootElement.querySelector('[aria-label="Save Settings"]'));
+
+    const appSettingToggle = rootElement.querySelector<HTMLInputElement>(
+      ".settings-app-settings-fieldset input[type=checkbox]",
+    );
+    assert.ok(appSettingToggle);
+    await act(async () => appSettingToggle.click());
+    await act(async () => findButton(rootElement, "Save Settings").click());
+    assert.equal(savedSettings[0]?.memoryExtractionProviderSettings.codex?.model, "preserve-this-memory-model");
+
+    const catalogError = Array.from(rootElement.querySelectorAll(".load-error"))
+      .find((error) => error.textContent?.includes("Catalog unavailable"));
+    const catalogRetry = catalogError?.querySelector<HTMLButtonElement>("button");
+    assert.ok(catalogRetry);
+    await act(async () => catalogRetry.click());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.equal(catalogCalls, 2);
+    assert.ok(rootElement.textContent?.includes("Codex"));
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Homeの既存Session一覧とopen操作はmate statusの未完了から独立して利用できる"
+// oracle = { type = "contract", ref = "GitHub Issue #744" }
+// fault = "mate statusをHome全体のgateとして、取得中に既存Sessionを隠すかopen操作を無効にする"
+// observable = "mate API readがpendingの間に描画された既存Session rowとopenSession API呼び出し"
+// observation_boundary = "component-behavior"
+// scope = "Home existing session operations during independent app-state read"
+// lifecycle = "permanent"
+// @end-test-value
+test("Homeのmate status read中も既存Sessionを開ける", async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
+    url: "https://withmate.local/",
+  });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+
+  const mateLoad = createDeferred<MateStorageState>();
+  const opened: string[] = [];
+  const session = buildNewSession({
+    id: "existing-during-mate-load",
+    taskTitle: "Existing task",
+    workspaceLabel: "Workspace",
+    workspacePath: "C:\\workspace",
+    branch: "main",
+    characterId: "character-1",
+    character: "Mia",
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    approvalMode: "on-request",
+  });
+  const api: Partial<WithMateWindowApi> = {
+    getMateState: () => mateLoad.promise,
+    getAppSettings: async () => new Promise(() => {}),
+    subscribeAppSettings: () => () => {},
+    getModelCatalog: async () => new Promise(() => {}),
+    subscribeModelCatalog: () => () => {},
+    listCharacters: async () => new Promise(() => {}),
+    listSessionSummaryPage: async (request) => ({
+      entries: request?.scope === "recent" ? [session] : [],
+      hasMore: false,
+      nextCursor: null,
+    }),
+    listSessionCharacterUsage: async () => [],
+    subscribeSessionInvalidation: () => () => {},
+    listOpenSessionWindowIds: async () => [],
+    subscribeOpenSessionWindowIds: () => () => {},
+    listOpenAuxiliarySessionSummaries: async () => [],
+    subscribeLiveSessionRun: () => () => {},
+    getSessionWindowRestoreSet: async () => [],
+    subscribeSessionWindowRestoreSet: () => () => {},
+    openSession: async (id) => { opened.push(id); },
+  };
+  dom.window.withmate = api as WithMateWindowApi;
+  const rootElement = dom.window.document.getElementById("root");
+  assert.ok(rootElement);
+  let root: Root | null = null;
+  try {
+    const [{ default: HomeApp }, { createRoot }] = await Promise.all([
+      import("../../src/home/HomeApp.js"),
+      import("react-dom/client"),
+    ]);
+    await act(async () => {
+      const mountedRoot = createRoot(rootElement);
+      root = mountedRoot;
+      mountedRoot.render(<HomeApp />);
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+
+    assert.ok(rootElement.textContent?.includes("Existing task"));
+    const openRow = rootElement.querySelector<HTMLButtonElement>(".home-session-card-open");
+    assert.ok(openRow);
+    assert.equal(openRow.disabled, false);
+    await act(async () => openRow.click());
+    assert.deepEqual(opened, ["existing-during-mate-load"]);
+    assert.ok(rootElement.querySelector('[aria-label="Loading app state"]'));
+  } finally {
+    await act(async () => root?.unmount());
+    mateLoad.resolve("active");
     dom.window.close();
     Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
     Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });

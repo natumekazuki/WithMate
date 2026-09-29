@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { focusRovingItemByKey } from "../ui/a11y.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import { CloseButton } from "../ui/close-button.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { PromptTemplate } from "../../src-shared/prompt-template.js";
 import type { WithMateWindowPromptTemplateApi } from "../../src-shared/ipc/withmate-window-api.js";
 
@@ -286,8 +287,7 @@ export function PromptTemplateWorkspace({
           >
             {isLoading ? (
               <div className="prompt-template-picker-state">
-                <span className="chat-skill-picker-spinner" aria-hidden="true" />
-                <span className="visually-hidden">Loading templates.</span>
+                <LoadingIndicator label="Loading templates" />
               </div>
             ) : error ? (
               <p className="prompt-template-picker-state error" role="alert">{error}</p>

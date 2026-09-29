@@ -239,11 +239,11 @@ test("FileRootChangesPane はrepository discovery中をspinnerで示す", async 
 
     const status = dom.window.document.querySelector("[role='status']");
     assert.ok(status);
-    const spinner = status.querySelector<HTMLElement>(".workspace-changes-spinner[aria-hidden='true']");
+    const spinner = status.querySelector<HTMLElement>(".loading-indicator-spinner[aria-hidden='true']");
     assert.ok(spinner);
     const spinnerStyle = dom.window.getComputedStyle(spinner);
-    assert.equal(spinnerStyle.width, "24px");
-    assert.equal(spinnerStyle.height, "24px");
+    assert.equal(spinnerStyle.width, "16px");
+    assert.equal(spinnerStyle.height, "16px");
     assert.equal(spinnerStyle.borderTopStyle, "solid");
     assert.equal(status.getAttribute("aria-label"), "Discovering Git repositories");
   } finally {
@@ -1080,13 +1080,14 @@ test("FileRootChangesPane は大量repositoryと連続Refreshをbounded scheduli
 
 // @test-value v2
 // kind = "contract"
-// claim = "reduced motion用media ruleはChangesのrepository局所spinnerのanimationをnoneにする"
-// oracle = { type = "contract", ref = "accepted behavior: repository-local pending status" }
-// fault = "repositoryのpending spinnerがreduced motion設定でも動き続ける"
-// observable = "prefers-reduced-motion media rule内のrepository-local pending spinner animation"
+// claim = "reduced motion用media ruleはChangesの共通loading spinnerのanimationをnoneにする"
+// oracle = { type = "contract", ref = "src/styles/common.css: LoadingIndicator" }
+// fault = "Changesの共通pending spinnerがreduced motion設定でも動き続ける"
+// observable = "prefers-reduced-motion media rule内のloading-indicator-spinner animation"
 // observation_boundary = "consumer"
 // scope = "Changes reduced-motion stylesheet contract"
 // lifecycle = "permanent"
+// distinction = "Changes固有CSSではなく、全ReadStatusが共有する共通spinner規則を検証する"
 // @end-test-value
 test("Changes pending indicator はreduced motionに配慮する", async () => {
   const styles = await readStylesheet();
@@ -1102,7 +1103,7 @@ test("Changes pending indicator はreduced motionに配慮する", async () => {
   const spinnerRule = reducedMotionRules.flatMap((rule) => Array.from(rule.cssRules)).find((rule) => (
     "selectorText" in rule
       && (rule as CSSStyleRule).selectorText.split(",").map((selector) => selector.trim())
-        .includes(".workspace-changes-root-spinner")
+        .includes(".loading-indicator-spinner")
   )) as CSSStyleRule | undefined;
   assert.ok(spinnerRule);
   assert.equal(spinnerRule.style.getPropertyValue("animation"), "none");

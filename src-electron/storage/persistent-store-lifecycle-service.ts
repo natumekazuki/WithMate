@@ -76,6 +76,7 @@ export type SessionStorageRead = AwaitableStorageMethods<
   | "listSessionIdsLastActiveBefore"
 > & Pick<SessionStorage, "close"> & {
   listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  getSessionSummary?(sessionId: string): Awaitable<import("../../src-shared/session/session-state.js").SessionSummary | null>;
   listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
   listSessionCredentialThreads?(): Awaitable<import("../session/session-storage-v6.js").SessionCredentialThreadInfo[]>;
 };

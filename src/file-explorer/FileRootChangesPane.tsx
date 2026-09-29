@@ -12,6 +12,7 @@ import type {
   SessionFileRoot,
   SessionFileRootResourceRequest,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 type FileRootChangesApi = Pick<
   WithMateWindowApi,
@@ -361,11 +362,8 @@ export function FileRootChangesPane({
       ) : repositoriesLoading || repositoryDiscoveryState === "pending" ? (
         <div
           className="workspace-changes-discovery-loading"
-          role="status"
-          aria-live="polite"
-          aria-label="Discovering Git repositories"
         >
-          <span className="workspace-changes-spinner" aria-hidden="true" />
+          <LoadingIndicator label="Discovering Git repositories" />
         </div>
       ) : repositoryDiscoveryState === "error" && !message && !repositoryMessage ? (
         <p className="workspace-changes-message" role="alert">Changes could not be loaded.</p>

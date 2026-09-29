@@ -30,6 +30,7 @@ import type {
   FileRootGitHistoryRepositoriesResult,
   FileRootGitHistoryRepository,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 type FileRootGitHistoryApi = Pick<
   WithMateWindowApi,
@@ -1178,8 +1179,8 @@ export function FileRootGitHistoryPane({
           </div>
           {comparisonMessage ? <p className="file-history-message" role="alert">{comparisonMessage}</p> : null}
           {comparisonLoading ? (
-            <div className="workspace-changes-loading" role="status" aria-live="polite" aria-label="Loading Git comparison">
-              <span className="workspace-changes-spinner" aria-hidden="true" />
+            <div className="workspace-changes-loading">
+              <LoadingIndicator label="Loading Git comparison" />
             </div>
           ) : comparison && comparisonRootChange && comparisonRootChange.status !== "empty" ? (
             <>
@@ -1290,8 +1291,8 @@ export function FileRootGitHistoryPane({
               </div>
               {detailMessage ? <p className="file-history-message" role="alert">{detailMessage}</p> : null}
               {loadingDetail ? (
-                <div className="workspace-changes-loading" role="status" aria-live="polite" aria-label="Loading commit detail">
-                  <span className="workspace-changes-spinner" aria-hidden="true" />
+                <div className="workspace-changes-loading">
+                  <LoadingIndicator label="Loading commit detail" />
                 </div>
               ) : rootChange ? (
                 <div className="file-history-changed-files">
@@ -1312,8 +1313,8 @@ export function FileRootGitHistoryPane({
               ) : null}
             </>
           ) : loadingDetail ? (
-            <div className="workspace-changes-loading" role="status" aria-live="polite" aria-label="Loading commit detail">
-              <span className="workspace-changes-spinner" aria-hidden="true" />
+            <div className="workspace-changes-loading">
+              <LoadingIndicator label="Loading commit detail" />
             </div>
           ) : detailMessage ? <p className="file-history-message" role="alert">{detailMessage}</p> : null}
         </div>
@@ -1330,8 +1331,8 @@ export function FileRootGitHistoryPane({
         >
           {listMessage ? <p className="file-history-message" role="alert">{listMessage}</p> : null}
           {loadingRepositories || repositoryState === "pending" || (loadingCommits && commits.length === 0) ? (
-            <div className="workspace-changes-loading" role="status" aria-live="polite" aria-label="Loading commit history">
-              <span className="workspace-changes-spinner" aria-hidden="true" />
+            <div className="workspace-changes-loading">
+              <LoadingIndicator label="Loading commit history" />
             </div>
           ) : repositoryState === "unavailable" ? null : repositoryState === "error" && !listMessage ? (
             <p className="file-history-message" role="alert">History could not be loaded.</p>
@@ -1377,8 +1378,8 @@ export function FileRootGitHistoryPane({
           {hasMore ? (
             <div className="file-history-list-sentinel" ref={sentinelRef}>
               {loadingMore ? (
-                <span className="workspace-changes-root-pending" role="status" aria-live="polite" aria-label="Loading more commits">
-                  <span className="workspace-changes-spinner" aria-hidden="true" />
+                <span className="workspace-changes-root-pending">
+                  <LoadingIndicator inline label="Loading more commits" />
                 </span>
               ) : null}
             </div>

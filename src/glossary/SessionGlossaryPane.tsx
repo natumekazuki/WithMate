@@ -5,6 +5,7 @@ import type {
   SessionGlossaryProjection,
 } from "../../src-shared/glossary/glossary-contract.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 export type SessionGlossaryPaneProps = {
   scrollContainerRef?: RefObject<HTMLDivElement | null>;
@@ -84,8 +85,8 @@ export function SessionGlossaryPane({
 
   if (!projection) {
     return (
-      <div className="glossary-pane-loading" role="status" aria-label="Loading glossary">
-        <span className="glossary-pane-spinner" aria-hidden="true" />
+      <div className="glossary-pane-loading">
+        <LoadingIndicator label="Loading glossary" />
       </div>
     );
   }
@@ -155,8 +156,8 @@ export function SessionGlossaryPane({
               </button>
             ))}
             {searchLoading ? (
-              <div className="glossary-search-loading" role="status" aria-label="Searching">
-                <span className="glossary-pane-spinner" aria-hidden="true" />
+              <div className="glossary-search-loading">
+                <LoadingIndicator label="Searching" />
               </div>
             ) : null}
             {visibleEntries.length < visibleTotal && !searchLoading ? (

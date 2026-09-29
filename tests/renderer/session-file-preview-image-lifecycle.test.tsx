@@ -319,7 +319,7 @@ async function renderPreview(
 // claim = "File Previewはheaderを維持したままinspection/content読込中のbusy状態とprogressを本文へ表示する"
 // oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
 // fault = "loading中にheaderを消す、aria-busy/statusを欠落させる、またはprogress上限を誤る"
-// observable = "previewのaria-busy、title、status text、spinner、progress max"
+// observable = "previewのaria-busy、title、status text、共通spinner、progress max"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview.loading"
 // lifecycle = "permanent"
@@ -387,7 +387,7 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
     assert.equal(preview.getAttribute("aria-busy"), "true");
     assert.equal(preview.querySelector(".session-file-preview-title strong")?.textContent, "notes.txt");
     assert.equal(preview.querySelector("[role='status']")?.getAttribute("aria-label"), "Inspecting file");
-    assert.ok(preview.querySelector(".session-file-preview-spinner[aria-hidden='true']"));
+    assert.ok(preview.querySelector(".loading-indicator-spinner[aria-hidden='true']"));
 
     await act(async () => inspectGate.resolve(descriptor));
     await waitFor(() => preview.querySelector("progress") !== null);
@@ -2214,7 +2214,7 @@ test("Git Diff世代切替後に古いReloadが完了しても現在のfeedback�
 // claim = "Git Diffは新しい対象の初回取得だけ本文spinnerを表示し、既存patchのReload中は本文を維持しつつbusyを示す"
 // oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
 // fault = "対象切替後の初回取得で本文を残す、Reload中に既存patchを消す、またはreloadPendingのbusyを示さない"
-// observable = "初回loading spinner、title、patch本文の有無、reload button disabled、aria-busy"
+// observable = "初回loading共通spinner、title、patch本文の有無、reload button disabled、aria-busy"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview.git-diff-loading-reload"
 // lifecycle = "permanent"
@@ -2251,7 +2251,7 @@ test("Git Diffは新しい対象の初回取得だけ本文spinnerへ切り替�
     assert.ok(preview);
     assert.equal(preview.getAttribute("aria-busy"), "true");
     assert.equal(preview.querySelector(".session-file-preview-title strong")?.textContent, "next.txt · Working Tree");
-    assert.ok(preview.querySelector(".session-file-preview-spinner"));
+    assert.ok(preview.querySelector(".loading-indicator-spinner"));
     assert.equal(preview.querySelector(".session-live-diff-split"), null);
     const initialReload = [...preview.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent === "Reload");
@@ -2270,7 +2270,7 @@ test("Git Diffは新しい対象の初回取得だけ本文spinnerへ切り替�
       }));
     });
     assert.equal(preview.getAttribute("aria-busy"), "true");
-    assert.equal(preview.querySelector(".session-file-preview-spinner"), null);
+    assert.equal(preview.querySelector(".loading-indicator-spinner"), null);
     assert.ok(preview.querySelector(".session-live-diff-split"));
     const pendingReload = [...preview.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.querySelector(".session-file-preview-action-spinner") !== null);
