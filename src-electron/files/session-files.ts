@@ -1,4 +1,4 @@
-import { constants, type Dirent } from "node:fs";
+import { constants, mkdirSync, type Dirent } from "node:fs";
 import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -43,6 +43,12 @@ export async function createSessionFilesDirectory(userDataPath: string, sessionI
     }
     throw error;
   }
+  return directoryPath;
+}
+
+export function ensureSessionFilesDirectory(userDataPath: string, sessionId: string): string {
+  const directoryPath = resolveSessionFilesDirectory(userDataPath, sessionId);
+  mkdirSync(directoryPath, { recursive: true });
   return directoryPath;
 }
 

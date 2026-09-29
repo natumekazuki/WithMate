@@ -1,6 +1,7 @@
 import {
   Children,
   isValidElement,
+  memo,
   useContext,
   useEffect,
   useId,
@@ -129,7 +130,7 @@ function CodeBlockShell({
     </div>
   );
 }
-function MermaidDiagram({ source }: { source: string }) {
+export const MermaidDiagram = memo(function MermaidDiagram({ source }: { source: string }) {
   const reactId = useId();
   const diagramId = useMemo(
     () => `message-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`,
@@ -188,7 +189,7 @@ function MermaidDiagram({ source }: { source: string }) {
       </div>
     </div>
   );
-}
+});
 export type MarkdownPreComponentProps = ComponentPropsWithoutRef<"pre"> & {
   node?: unknown;
 };
