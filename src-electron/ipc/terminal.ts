@@ -18,7 +18,7 @@ export function registerTerminalHandlers<TWindow extends TerminalOwner>(ipcMain:
     } catch (error) {
       if (!event.sender.isDestroyed()) {
         event.sender.send(WITHMATE_TERMINAL_EVENT, {
-          type: "error",
+          type: "operation-error",
           terminalId: id,
           message: error instanceof Error ? error.message : String(error),
         });

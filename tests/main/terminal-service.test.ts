@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { IpcMain, IpcMainEvent } from "electron";
+import { registerTerminalHandlers } from "../../src-electron/ipc/terminal.js";
+import { WITHMATE_RESIZE_TERMINAL_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import { TerminalService, type TerminalOwner } from "../../src-electron/terminal/terminal-service.js";
 import type { TerminalPty } from "../../src-electron/terminal/utility-terminal-pty.js";
 
@@ -47,24 +50,86 @@ function setup() {
     resume() { this.resumes++; },
   };
   let confirm = false;
+  const spawns: Array<[number, number]> = [];
   const service = new TerminalService({
     resolveOwner(sender) {
-      if (sender === "owner") return { window, sessionId: "session-a", workspacePath: "C:/saved path " };
+      if (sender === "owner" || (sender as { sender?: unknown })?.sender === window.webContents) return { window, sessionId: "session-a", workspacePath: "C:/saved path " };
       if (sender === "other") return { window: other, sessionId: "session-b", workspacePath: "C:/other" };
       return null;
     },
     confirmClose: () => confirm,
     sendEvent: (owner, event) => owner.webContents.send("terminal", event),
-    spawn: async (_file, cwd) => {
+    spawn: async (_file, cwd, cols, rows) => {
       assert.equal(cwd, "C:/saved path ");
+      spawns.push([cols, rows]);
       return pty as unknown as TerminalPty;
     },
     resolveShell: async () => ({ file: "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", shellName: "PowerShell" }),
   });
-  return { window, other, pty, service, approveClose: () => { confirm = true; } };
+  return { window, other, pty, service, spawns, approveClose: () => { confirm = true; } };
 }
 
 describe("TerminalService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "通常fitの大きな寸法はcreateとresizeでPTYへ渡り、native整数範囲外の寸法は生存PTYを保持して拒否する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
+  // fault = "500列・300行で正常なfitを拒否するか、不正寸法をPTYへ渡す"
+  // observable = "spawn寸法、PTY resize列、拒否後のlive数と入力"
+  // observation_boundary = "component-behavior"
+  // scope = "terminal-service geometry"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("accepts large fitted dimensions and rejects invalid native coordinates without ending the PTY", async () => {
+    const { service, pty, window, spawns } = setup();
+    await service.create("owner", { terminalId: TERMINAL_ID, cols: 625, rows: 400 });
+    assert.deepEqual(spawns, [[625, 400]]);
+    service.resize("owner", TERMINAL_ID, 1_000, 350);
+    service.resize("owner", TERMINAL_ID, 32_767, 1);
+    for (const [cols, rows] of [[0, 24], [80, -1], [80.5, 24], [80, NaN], [Infinity, 24], [32_768, 24], [80, 32_768]]) {
+      assert.throws(() => service.resize("owner", TERMINAL_ID, cols, rows), /Terminal size is invalid/);
+    }
+    assert.deepEqual(pty.resizes, [[1_000, 350], [32_767, 1]]);
+    assert.equal(service.countLive(window), 1);
+    service.write("owner", TERMINAL_ID, "still running");
+    assert.deepEqual(pty.writes, ["still running"]);
+    const rejected = setup();
+    await assert.rejects(rejected.service.create("owner", { terminalId: TERMINAL_ID, cols: 32_768, rows: 24 }), /Terminal size is invalid/);
+    assert.deepEqual(rejected.spawns, []);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "IPCの操作拒否はoperation-errorで通知し生存PTYを維持し、PTY障害はerror通知とlive除外を行う"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
+  // fault = "resize検証の拒否をPTY障害としてrendererへ通知する"
+  // observable = "登録済みIPC handlerが送るevent種別、後続resizeと入力、host障害後のlive数"
+  // observation_boundary = "public-boundary"
+  // scope = "terminal IPC operation failure"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("distinguishes rejected IPC operations from fatal PTY errors", async () => {
+    const { service, pty, window } = setup();
+    const listeners = new Map<string, (event: IpcMainEvent, id: string, cols: number, rows: number) => void>();
+    registerTerminalHandlers({
+      handle() {},
+      on(channel, listener) { listeners.set(channel, listener); return this as IpcMain; },
+    } as Pick<IpcMain, "handle" | "on"> as IpcMain, service);
+    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    const resize = listeners.get(WITHMATE_RESIZE_TERMINAL_CHANNEL)!;
+    const event = { sender: window.webContents } as unknown as IpcMainEvent;
+    resize(event, TERMINAL_ID, 0, 24);
+    assert.deepEqual(window.events, [{ type: "operation-error", terminalId: TERMINAL_ID, message: "Terminal size is invalid." }]);
+    assert.equal(service.countLive(window), 1);
+    resize(event, TERMINAL_ID, 625, 350);
+    service.write("owner", TERMINAL_ID, "recovered");
+    assert.deepEqual(pty.resizes, [[625, 350]]);
+    assert.deepEqual(pty.writes, ["recovered"]);
+    pty.error(new Error("host failed"));
+    assert.deepEqual(window.events.at(-1), { type: "error", terminalId: TERMINAL_ID, message: "host failed" });
+    assert.equal(service.countLive(window), 0);
+  });
+
   // @test-value v2
   // kind = "invariant"
   // claim = "端末を作成したSession Window以外から入力・resize・終了を実行できない"

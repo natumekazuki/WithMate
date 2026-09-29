@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { release } from "node:os";
 import type { CreateTerminalRequest, CreateTerminalResult, TerminalEvent } from "../../src-shared/terminal/terminal-contract.js";
+import { TERMINAL_MAX_DIMENSION } from "../../src-shared/terminal/terminal-contract.js";
 import { createUtilityTerminalPty, type TerminalPty } from "./utility-terminal-pty.js";
 
 const OUTPUT_HIGH_WATER = 100_000;
@@ -270,7 +271,8 @@ export class TerminalService<TWindow extends TerminalOwner> {
   }
 
   private assertSize(cols: number, rows: number): void {
-    if (!Number.isInteger(cols) || cols < 1 || cols > 500 || !Number.isInteger(rows) || rows < 1 || rows > 300) {
+    if (!Number.isInteger(cols) || cols < 1 || cols > TERMINAL_MAX_DIMENSION
+      || !Number.isInteger(rows) || rows < 1 || rows > TERMINAL_MAX_DIMENSION) {
       throw new TypeError("Terminal size is invalid.");
     }
   }

@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { WithMateWindowTerminalApi } from "../../src-shared/ipc/withmate-window-api.js";
+import { TERMINAL_MAX_DIMENSION } from "../../src-shared/terminal/terminal-contract.js";
 
 type TerminalTab = {
   id: string;
@@ -89,7 +90,12 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
       instance.open(host);
       const resize = () => {
         if (disposed || !activeRef.current || host.clientWidth <= 0 || host.clientHeight <= 0) return;
-        fit.fit();
+        const dimensions = fit.proposeDimensions();
+        if (!dimensions || !Number.isFinite(dimensions.cols) || !Number.isFinite(dimensions.rows)) return;
+        instance.resize(
+          Math.min(dimensions.cols, TERMINAL_MAX_DIMENSION),
+          Math.min(dimensions.rows, TERMINAL_MAX_DIMENSION),
+        );
       };
       const scheduleFit = () => {
         cancelAnimationFrame(animationFrame);
@@ -150,6 +156,8 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
             status: "Exited",
             detail: `Exit code ${event.exitCode}${event.signal === undefined ? "" : `, signal ${event.signal}`}`,
           });
+        } else if (event.type === "operation-error") {
+          setOperationError(`Terminal operation failed: ${event.message}`);
         } else {
           fail(new Error(event.message));
         }

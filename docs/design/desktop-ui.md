@@ -115,6 +115,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
     - 部分一致
   - 検索欄と`New Session`は固定し、上下に余白を持たせたsession listだけをスクロールする
   - Recent、Pinned、open Session summary、Random用のCharacter利用履歴は取得結果と失敗を分離する。Recent／Pinnedの取得・追加page取得の失敗は既存rowの有無によらず一覧のfeedbackと`Retry`へ表示し、New Sessionの開始エラーには混入させない。追加pageの失敗は自動再試行を続けず、`Retry`で続きの取得を再試行する
+  - 同じSession IDがopen summaryとPinned／Recentのpageにある場合は、page順序を維持してopen summaryの内容を一覧とMonitorへ反映する。pageの再取得失敗で保持したrowが、成功したopen取得の状態・titleを隠さない
   - session list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない。検索0件でも本文を埋める説明文は出さない
   - `sessionKind === "character-authoring"` の Character authoring session は通常 session と同じ削除・再開導線へ到達できるよう表示する
   - session card の常時表示情報
@@ -271,6 +272,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - `Terminal`
   - 初期状態は折りたたみで、最初に開くまでシェルを起動しない。Workspaceの`Terminal`は組み込みdockを開き、`Open External Terminal`は既存の外部起動を行う。Session Folderの外部Terminal起動は変更しない
   - xterm.js本体・標準CSS・FitAddonの公開APIを使う。WindowsではMainが取得したOS build情報を`windowsPty`へ渡し、resize時のscrollbackを標準のWindows向け処理へ任せる。ANSI解釈、描画、選択、IME、scrollback、シェルの履歴・補完は標準機能へ任せる。専用の最大化モードや端末独自の入力欄は持たない
+  - FitAddonの提案寸法をnative座標の上限32,767列・行までxtermへ適用し、同じ寸法をPTYへ渡す。Mainは正の整数と上限を検証する。IPC操作の拒否は端末内のエラー表示に留め、生存PTYの入力・resizeを維持する。PTY自体の障害は`Failed`として入力を停止する
   - 1タブにつき独立したxtermとPTYを持ち、親SessionのWorkspaceから起動する。Main／Auxiliaryの切り替えは端末の選択・cwd・processへ影響しない
   - dock内の1段タブバーはタブ部分だけ横scrollし、右端の`New Terminal`は固定する。選択タブ、終了ボタン、新規追加へkeyboardで到達でき、端末本文から`Ctrl+Shift+Tab`でタブへfocusを戻せる
   - 表示の折りたたみ・タブ切り替えではprocessを維持する。`Close Terminal`は生存中の終了を確認し、取消では維持する。最後のタブを閉じるとdockを畳み、自動再起動しない。自然終了は`Exited`と終了結果、失敗は`Failed`と理由を表示し、出力を残す
