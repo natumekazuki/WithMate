@@ -4,6 +4,21 @@
 
 複数Auxiliaryを追加して最終使用順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、実行中のAuxiliaryはicon内のprocessing indicatorで判別できること、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態ではAuxiliaryのタイトル枠・切り替えUI・追加`＋`を表示せず、Mainが残り幅を使うこと、中央のsplitterだけが残りクリックで既定幅へ戻せることを確認する。Auxiliaryを再度開いた後はタイトル枠、左右切り替え、追加`＋`が利用でき、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
 
+## 組み込みTerminal
+
+分離した検証用WithMateではREADMEのvisual-checkスクリプトを使う。配布物は専用の検証用user dataを用い、開発版の成功と区別する。
+
+| 操作 | 期待結果 |
+| --- | --- |
+| Workspaceの`Terminal`、Preview/Source右の`Prompt / Terminal`切替、Ctrl+Shift+T（macOSはCmd+Shift+T）をcomposerと端末本文から操作。Settingsでbindingも変更する | 共有下部パネルが選択modeへ切り替わり、展開してfocusする。初期Promptではshellを起動せず初回Terminal表示でだけ作成する。入力・selection・端末タブ・出力を保持し、切替shortcutをshellへ送らない。IME中とrepeatでは切り替えない。`Open External Terminal`とSession Folderの外部起動も利用できる |
+| 1520×940、1400px境界の前後、1100×720で共有splitterのdrag・上下キーresize、Prompt/Terminal切替、Window縮小。最大高から縮める途中でpointerを保持し、解除後と比較 | 切替で同じ高さと単一splitterを使う。drag保持中も中央の表示判定が追従し、解除でパネルやsplitterの位置・高さが変わらない。Window縮小では高さを補正し、中央を畳んでも共有splitterを操作できる。中央の復帰で会話・previewのstateとscroll位置を保持する |
+| 高解像度のWindowで500列または300行を超える端末を初回展開し、拡大・縮小して入力する | 正常なfit寸法で起動・resizeでき、`Failed`にならない。resize後も入力と出力を継続できる |
+| タブを複数追加し、選択・折りたたみ・Prompt/Terminal切替・Main/Auxiliary切り替え・最小化を行う | 各shellは親Workspaceから独立して開始し、出力・cwd・processは維持される。多数タブでも1段でscrollでき、`New Terminal`と選択タブへ到達できる |
+| shell実行中に`Close Terminal`を押して取消／終了。自然終了、起動失敗も確認 | 取消では維持。終了済みタブは確認不要。自然終了は`Exited`と結果、失敗は`Failed`と理由を表示して出力を保持する。最後のタブを閉じると折りたたみ、自動再起動しない |
+| AI実行中もIME、Enter、Tab、Ctrl+C、Escape、コピー／貼り付けを操作。Ctrl+Shift+Tabでタブへ戻る | 端末入力が会話送信・検索・cancelへ流れない。タブ・本文・splitter間をkeyboardで移動でき、非表示端末へfocusが残らず、background出力でfocusを奪わない |
+| 大量出力と非選択端末の出力を続けながらresize・入力・停止。Windowsでは履歴を出力し、未確定のコマンドを入力したままTerminalを繰り返し拡大・縮小する | チャットと端末の操作が応答し、隠した端末も詰まらない。resizeだけで未確定のコマンドが実行されず、scrollbackの履歴を保持する。splitter操作後の上下キー・Enterはsplitterへ配送される。出力がSession/Audit/Memory/診断ログへ複製されない |
+| 起動途中のタブ終了、Window closeの取消／確定、renderer破棄、Session削除、アプリ終了 | 起動完了が遅れてもPTYは孤立しない。Window closeは生存端末をまとめて確認し、破棄時にはownerの端末だけを解放する。既存のAI継続／中止契約を維持する |
+
 ## 目的
 
 - Electron 実行時の現行機能を人手で確認するためのチェックリスト
@@ -46,7 +61,7 @@ npm run electron:start
 | MT-003G | Character snapshot | Characterを選んでSessionを作成し、catalogの`character.md`を変更して既存Sessionで1 turn実行する | 既存Sessionは作成時点の保存済みsnapshotを使う |
 | MT-003H | Prompt boundary | `character.md`と`character-notes.md`を持つCharacterで1 turn実行し、Audit Logを確認する | system側にCharacter snapshotが入り、notesとMemoryは常設注入されない |
 | MT-003I | Character Markdown fence | `character.md`に3連・4連のbacktick fenceを入れて1 turn実行する | definitionが一つのMarkdown blockとして保持される |
-| MT-003J | Home summary error isolation / recovery | New Sessionを開いてtitleとworkspaceを入力し、focus復帰時にRecent、Pinned、open summaryの取得を一つずつ失敗させてから回復させる。初回取得失敗と追加page失敗でも表示と`Retry`を確認する | 成功した取得結果は反映され、既存rowを保持したまま一覧またはMonitorに失敗と`Retry`が出る。Recent／Pinnedの失敗だけではRandom開始を拒否せず、New Sessionの入力・Character選択を保持する。追加page失敗では自動再試行を続けず、`Retry`成功後に続きを表示して該当エラーを消す |
+| MT-003J | Home summary error isolation / recovery | New Sessionを開いてtitleとworkspaceを入力し、focus復帰時にRecent、Pinned、open summaryの取得を一つずつ失敗させてから回復させる。取得済みpageにもあるopen Sessionのtitle・run状態を変更し、Recent／Pinnedの失敗中にopen取得だけを成功させる。初回取得失敗と追加page失敗でも表示と`Retry`を確認する | 成功した取得結果は反映され、既存rowを保持したまま一覧またはMonitorに失敗と`Retry`が出る。同一IDのopen取得が成功すれば、page順序を維持して新しいtitleとRunning／Stopped分類を表示する。Recent／Pinnedの失敗だけではRandom開始を拒否せず、New Sessionの入力・Character選択を保持する。追加page失敗では自動再試行を続けず、`Retry`成功後に続きを表示して該当エラーを消す |
 | MT-003K | Random data readiness / feedback ownership | 利用履歴またはopen summaryの再取得を遅延・失敗させ、Random開始と固定Character開始を試す。その後取得を回復させる。別途Session作成失敗のmessageを出してから一覧取得を失敗・回復させる | 利用履歴またはopen Session情報が未確定ならRandomを開始せず、古い情報を成功扱いしない。固定Characterは開始できる。回復すると取得由来のfeedbackだけが解消し、使用中CharacterはRandom候補から除外される。Session作成失敗messageは無関係な一覧取得の成功・失敗で消えない |
 | MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、設定draft、Model Catalog、Diagnosticsそれぞれに読込状態が表示される。設定取得が完了すると他の取得を待たず編集できる。`App` / `Prompt Context` / `Coding Agent Providers` / `Diagnostics` / `Model Catalog` / `Repository Glossary` / `Storage Maintenance` が既存値で表示され、microcopyの編集UIや保存設定、Character editorは出ない。section/provider groupに入れ子の装飾card、重複見出し、説明だけの空行を置かない |
 | MT-004H | Settings window shell layout | `Settings Window` を wide 幅で開き、縦に長い内容まで scroll する | Window全面を本文と保存footerで使い、外側にdialog枠や余白を作らない。`Home / Close` の headerは出ない。本文はinner scrollで最後まで到達でき、scrollbarと保存footerが干渉しない |
@@ -130,7 +145,7 @@ npm run electron:start
 | MT-023D1A | Session header actions menu dismiss | expanded Header の `⋯` menuを開き、外側をpointer操作する。もう一度開いて`Escape`、triggerの再クリック、各menu項目の実行も試す | 外側操作、triggerの再クリック、項目実行でmenuが閉じる。`Escape`ではmenuが閉じてtriggerへfocusが戻り、pin / rename / audit / deleteの各操作は従来どおり実行される |
 | MT-023D1B | Auxiliary switcher title frame / add action | Session Window で Auxiliaryを作成し、Auxiliary列をsplitterで閉じた状態と開いた状態を順に確認する。Auxiliaryが0件の状態、既存Auxiliaryがある状態、追加不可の状態で、再展開後のタイトル枠の`＋`も操作する | Auxiliary列を閉じると中央のAuxiliaryタイトル枠、左右切り替えボタン、タイトル横の`＋`は表示されず、Mainが残り幅を使う。splitterの再展開導線だけが残り、クリックで既定幅へ戻る。Auxiliaryを開いた状態では`＋`が作成可能時にAuxiliary起動へつながり、作成不可時はdisabledになる。未選択Auxiliaryのtitle / previewは空のまま表示し、表示用fallback本文を追加しない。既存Auxiliaryがある場合はタイトル枠から一覧を開いて切り替えられる |
 | MT-023D1C | Auxiliary workspace preference persistence | 同じSession WindowでAuxiliaryをドラッグして幅を変え、pointer upとpointer cancelの両方を試す。クリックで閉じて再展開し、矢印キーでも幅を変更する。Main/Auxiliary targetを切り替えた後と、同じ親Sessionを開き直した後の幅・選択を確認し、別の親Sessionでも状態を確認する | ドラッグ中は幅が追従し、pointer up / cancelで最後に表示した幅が保存される。クリックと矢印キーによる変更も確定時に保存され、Main/Auxiliary target切替では幅・選択が変わらない。同じ親を再度開くと幅と選択が復元し、別の親の設定と混ざらない |
-| MT-023D2 | Session terminal launch | expanded header の `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
+| MT-023D2 | Session external terminal launch | expanded header の `Open External Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
 | MT-023D3 | Session header recollapse | expanded Header の上 splitterを押す | Header が閉じ、中央 surface の上に再表示用 splitterだけが残る |
 | MT-023D4 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |
 | MT-023D5 | File Explorer roots / lazy tree | Agent Session で File Explorer を開き、まだ添付を保存していない Session Folder、Workspace、Additional Directory と深い directory を順に展開する。root discoveryの失敗も再現する | 各 root が別項目で表示され、未作成の Session Folder は空 root として開く。正常なroot内の変更0件・空directoryはblank、読込中はspinner/status、root discovery / availability失敗は理由付きの`role="alert"`になる。dotfile、`.git`、ignore 対象も省略されない。directory は展開時に直下だけを読み、閉じた子孫を事前走査しない。大量行でも mounted row は viewport 周辺に限られる |

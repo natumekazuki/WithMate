@@ -42,6 +42,8 @@
     "@shikijs/langs": "^4.4.3",
     "@shikijs/themes": "^4.4.3",
     "@tanstack/react-virtual": "^3.14.10",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "ignore": "^7.0.8",
     "mdast-util-from-markdown": "^2.0.3",
     "mdast-util-frontmatter": "^2.0.1",
@@ -51,6 +53,7 @@
     "micromark-extension-frontmatter": "^2.0.0",
     "micromark-extension-gfm": "^3.0.0",
     "micromark-extension-math": "^3.1.0",
+    "node-pty": "^1.1.0",
     "prettier": "^3.9.6",
     "proper-lockfile": "^4.1.2",
     "react": "^19.2.8",
@@ -100,6 +103,7 @@
       "!node_modules/@github/copilot-linux-*/**"
     ],
     "asar": true,
+    "asarUnpack": ["node_modules/node-pty/prebuilds/**"],
     "extraResources": [
       {
         "from": "resources",

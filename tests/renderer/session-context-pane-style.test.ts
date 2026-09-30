@@ -185,9 +185,9 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "wide layoutはHeaderとActionDockを全幅に固定し、expanded ActionDock rowは残余領域を使う"
+// claim = "wide layoutはHeader・共通ActionDockを全幅に固定し、expanded rowはHeaderと上下splitterを除く残余領域を使う"
 // oracle = { type = "contract", ref = "ActionDock layout CSS bounds" }
-// fault = "wide layoutのfull-width dock gridまたはActionDock rowが崩れるか、中央最小高を失う"
+// fault = "Headerか共通ActionDockが全幅でなくなるか、expanded rowが上下splitterを差し引かず重なる"
 // observable = "wide layoutのfull-width dock class・grid、Header visibility boundary、expanded ActionDock rowのCSS宣言"
 // observation_boundary = "declaration"
 // scope = "wide-session-chat-layout-and-action-dock-css"
@@ -210,7 +210,7 @@ test("wide layout はHeaderとActionDockを全幅dockとして表示する", asy
   assert.match(stylesSource, /--session-central-min-height:\s*160px;/);
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 296px\),\s*calc\(\s*100%\s*-\s*var\(--session-header-dock-row-height\)\s*-\s*var\(--session-dock-splitter-size\)\s*-\s*var\(--session-dock-splitter-size\)\s*\)/,
+    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 296px\),\s*calc\(\s*100%\s*-\s*var\(--session-header-dock-row-height\)\s*(?:-\s*var\(--session-dock-splitter-size\)\s*){2}\)/,
   );
 });
 

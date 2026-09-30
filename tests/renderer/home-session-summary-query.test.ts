@@ -8,6 +8,7 @@ import {
   mergeSessionSummaryEntries,
 } from "../../src/home/home-session-summary-query.js";
 import type { SessionSummary, SessionSummaryPageRequest } from "../../src-shared/session/session-state.js";
+import { buildHomeSessionProjection } from "../../src/home/home-session-projection.js";
 
 function summary(id: string): SessionSummary {
   return { id } as SessionSummary;
@@ -104,24 +105,42 @@ test("Home summary background refresh はloaded page数ぶんcursor chainを再�
   ]);
 });
 
-test("Home summary page collection はloaded recent/pinned pageとopen special entryを保持して表示順へ合成する", () => {
+// @test-value v2
+// kind = "contract"
+// claim = "保持済みPinned/Recentと同じIDのopen summary更新が表示内容とMonitor分類へ反映され、page順序とcursorは保持される"
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md MT-003J" }
+// fault = "先勝ちdedupeが古いidle rowを残し、成功したopen取得のtitleとrunning状態を捨てるか、保持pageの順序と内容を変える"
+// observable = "合成entryの順序・title、Running/StoppedのID、保持pageのcursorと内容"
+// observation_boundary = "public-boundary"
+// scope = "Home partial summary refresh projection"
+// lifecycle = "permanent"
+// @end-test-value
+test("Homeはpage順序を保持したまま成功open summaryの内容をMonitorへ反映する", () => {
+  const stale = { ...summary("pinned-2"), taskTitle: "Old title", status: "idle", runState: "idle" } as SessionSummary;
+  const fresh = { ...stale, taskTitle: "New title", status: "running", runState: "running" } as SessionSummary;
   const pages = {
     pinned: [
       { requestCursor: null, page: { entries: [summary("pinned-1")], nextCursor: "pinned-2", hasMore: true } },
-      { requestCursor: "pinned-2", page: { entries: [summary("pinned-2")], nextCursor: null, hasMore: false } },
+      { requestCursor: "pinned-2", page: { entries: [stale], nextCursor: null, hasMore: false } },
     ],
     recent: [
-      { requestCursor: null, page: { entries: [summary("recent-1")], nextCursor: "recent-2", hasMore: true } },
+      { requestCursor: null, page: { entries: [stale, summary("recent-1")], nextCursor: "recent-2", hasMore: true } },
       { requestCursor: "recent-2", page: { entries: [summary("recent-2")], nextCursor: null, hasMore: false } },
     ],
-    open: [summary("open-not-in-page")],
+    open: [fresh, summary("open-not-in-page")],
   };
-
-  assert.deepEqual(buildHomeSessionSummaryEntries(pages).map(({ id }) => id), [
+  const retainedPages = structuredClone({ pinned: pages.pinned, recent: pages.recent });
+  const entries = buildHomeSessionSummaryEntries(pages);
+  assert.deepEqual(entries.map(({ id }) => id), [
     "pinned-1",
     "pinned-2",
     "recent-1",
     "recent-2",
     "open-not-in-page",
   ]);
+  assert.equal(entries[1], fresh);
+  const projection = buildHomeSessionProjection(entries, ["pinned-2"], "");
+  assert.deepEqual(projection.runningMonitorEntries.map(({ session }) => [session.id, session.taskTitle]), [["pinned-2", "New title"]]);
+  assert.deepEqual(projection.nonRunningMonitorEntries, []);
+  assert.deepEqual({ pinned: pages.pinned, recent: pages.recent }, retainedPages);
 });

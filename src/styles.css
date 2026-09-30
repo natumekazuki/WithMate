@@ -1,4 +1,5 @@
 @import "katex/dist/katex.min.css";
+@import "@xterm/xterm/css/xterm.css";
 
 @import "./styles/tokens.css";
 @import "./styles/shell.css";
@@ -8,6 +9,7 @@
 @import "./chat/session-shell.css";
 @import "./file-explorer/files.css";
 @import "./chat/session.css";
+@import "./terminal/terminal.css";
 @import "./diff/diff-shell.css";
 @import "./character-editor/character-editor.css";
 @import "./diff/diff.css";

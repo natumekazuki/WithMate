@@ -31,6 +31,7 @@ export const SHORTCUT_COMMAND_IDS = {
   messageToggleCollapse: "session.message.toggle-collapse",
   messageToggleViewMode: "session.message.toggle-view-mode",
   conversationToggleTarget: "session.conversation.toggle-target",
+  actionDockToggleMode: "session.action-dock.toggle-mode",
   filePreviewFind: "session.file-preview.find",
   filePreviewClose: "session.file-preview.close",
   filePreviewSelectAll: "session.file-preview.select-all",
@@ -162,6 +163,16 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     label: "Toggle Main Auxiliary",
     kind: "withmate",
     allowInEditingTarget: false,
+    allowRepeat: false,
+    showInHelp: true,
+    customizable: true,
+    assignment: "new",
+  },
+  {
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.actionDockToggleMode),
+    label: "Toggle Prompt Terminal",
+    kind: "withmate",
+    allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
     customizable: true,
@@ -620,6 +631,9 @@ export class ShortcutDispatcher {
     }
 
     const candidates = this.entries.filter((entry) => {
+      if (isWithinEditingTargetScope(event.target, "terminal") && entry.id !== SHORTCUT_COMMAND_IDS.actionDockToggleMode) {
+        return false;
+      }
       if (!this.activeScopes.has(entry.scope) || !this.handlers.has(entry.id)) {
         return false;
       }

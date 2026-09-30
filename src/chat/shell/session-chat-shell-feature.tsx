@@ -30,21 +30,36 @@ export function useSessionChatShellFeature(input: {
   isEditingTitle: boolean;
   forceActionDockExpanded: readonly boolean[];
   focusComposer: () => void;
+  terminalDock?: {
+    mode: "prompt" | "terminal";
+    onChange(mode: "prompt" | "terminal"): void;
+    focus(): void;
+  };
 }) {
   const { isActionDockExpanded, canCollapseActionDock } = buildActionDockRuntimeState({
     isActionDockPinnedExpanded: input.presentation.isActionDockPinnedExpanded,
-    forceReasons: input.forceActionDockExpanded,
+    forceReasons: input.terminalDock?.mode === "terminal" ? [] : input.forceActionDockExpanded,
   });
   const isHeaderExpanded = input.presentation.isHeaderExpanded || input.isEditingTitle;
   const dock = useSessionVerticalDockResize({
     ownerKey: input.ownerKey,
     isHeaderExpanded,
     isActionDockExpanded,
+    sidePaneLayoutKey: `${input.sidePanes.activeSidePane}:${JSON.stringify(input.sidePanes.sessionWorkbenchStyle)}`,
   });
-  const handleExpandActionDock = createActionDockExpandHandler({
+  const expandPrompt = createActionDockExpandHandler({
     setPinnedExpanded: input.presentation.setIsActionDockPinnedExpanded,
     focusComposer: input.focusComposer,
   });
+  const handleExpandActionDock = (options?: { focusComposer?: boolean }) => {
+    input.terminalDock?.onChange("prompt");
+    expandPrompt(options);
+  };
+  const handleChangeActionDockMode = (mode: "prompt" | "terminal") => {
+    input.terminalDock?.onChange(mode);
+    input.presentation.setIsActionDockPinnedExpanded(true);
+    if (mode === "terminal") requestAnimationFrame(() => input.terminalDock?.focus());
+  };
   const handleCollapseActionDock = createActionDockCollapseHandler({
     canCollapse: canCollapseActionDock,
     setPinnedExpanded: input.presentation.setIsActionDockPinnedExpanded,
@@ -55,7 +70,10 @@ export function useSessionChatShellFeature(input: {
   });
   const handleToggleHeaderSplitter = () => dock.handleHeaderSplitterClick(toggleHeader);
   const handleToggleActionDock = () => dock.handleActionDockSplitterClick(
-    isActionDockExpanded ? handleCollapseActionDock : handleExpandActionDock,
+    isActionDockExpanded ? handleCollapseActionDock : () => {
+      if (input.terminalDock?.mode === "terminal") handleChangeActionDockMode("terminal");
+      else handleExpandActionDock();
+    },
   );
 
   const buildSurface = (content: {
@@ -64,6 +82,7 @@ export function useSessionChatShellFeature(input: {
     themeStyle: CSSProperties | undefined;
     modals: ChatWindowProps["modals"];
     isAuxiliaryMode: boolean;
+    terminalContent?: ReactNode;
   }): SessionChatShellFeature => ({
     mode: "agent",
     style: { ...content.themeStyle, ...dock.sessionDockLayoutStyle },
@@ -71,10 +90,13 @@ export function useSessionChatShellFeature(input: {
     headerDockRef: dock.headerDockRef,
     actionDockRef: dock.actionDockRef,
     isHeaderExpanded,
+    isSidePaneBudgetCollapsed: dock.isSidePaneBudgetCollapsed,
     workbenchRef: input.sidePanes.sessionWorkbenchRef,
     workbenchStyle: input.sidePanes.sessionWorkbenchStyle,
     mainContent: content.mainContent,
     isActionDockExpanded,
+    terminalContent: content.terminalContent,
+    actionDockModeControl: input.terminalDock ? { mode: input.terminalDock.mode, onChange: handleChangeActionDockMode } : undefined,
     headerSplitterProps: {
       isPanelExpanded: isHeaderExpanded,
       canCollapse: !input.isEditingTitle,
@@ -85,6 +107,7 @@ export function useSessionChatShellFeature(input: {
       isPanelExpanded: isActionDockExpanded,
       canCollapse: canCollapseActionDock,
       onPointerDown: dock.handleStartActionDockResize,
+      onKeyDown: dock.handleActionDockKeyDown,
       onTogglePanel: handleToggleActionDock,
     },
     splitterProps: buildLiveSessionSplitterProps({
@@ -115,6 +138,7 @@ export function useSessionChatShellFeature(input: {
     canCollapseActionDock,
     handleExpandActionDock,
     handleCollapseActionDock,
+    handleChangeActionDockMode,
     handleToggleHeaderSplitter,
     handleToggleActionDock,
     buildSurface,

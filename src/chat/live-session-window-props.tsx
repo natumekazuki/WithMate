@@ -6,6 +6,7 @@ type LiveSessionWindowShellPropsInput = {
   mode: ChatWindowProps["mode"];
   style?: ChatWindowProps["style"];
   isHeaderExpanded: boolean;
+  isSidePaneBudgetCollapsed?: boolean;
   layoutRef?: ChatWindowProps["layoutRef"];
   headerDockRef?: ChatWindowProps["headerDockRef"];
   actionDockRef?: ChatWindowProps["actionDockRef"];
@@ -17,6 +18,8 @@ type LiveSessionWindowShellPropsInput = {
   recoveryActions?: ChatWindowProps["recoveryActions"];
   mainContent?: ReactNode;
   isActionDockExpanded: boolean;
+  terminalContent?: ReactNode;
+  actionDockModeControl?: ChatWindowProps["actionDockModeControl"];
   composerProps: ChatWindowProps["composerProps"];
   additionalDirectoryListProps?: ChatWindowProps["additionalDirectoryListProps"];
   skillPickerProps: ChatWindowProps["skillPickerProps"];
@@ -48,6 +51,7 @@ export function buildLiveSessionWindowShellProps(
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
     isHeaderExpanded: input.isHeaderExpanded,
+    isSidePaneBudgetCollapsed: input.isSidePaneBudgetCollapsed,
     headerProps: input.headerProps,
     messageColumnProps: {
       ...input.messageColumnProps,
@@ -57,6 +61,8 @@ export function buildLiveSessionWindowShellProps(
     recoveryActions: input.recoveryActions,
     mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
+    terminalContent: input.terminalContent,
+    actionDockModeControl: input.actionDockModeControl,
     composerProps: input.composerProps,
     additionalDirectoryListProps: input.additionalDirectoryListProps,
     skillPickerProps: input.skillPickerProps,

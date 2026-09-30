@@ -123,6 +123,17 @@ export const DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES: readonly KeyboardShortcut
     bindingKind: "letter",
   },
   {
+    id: "session.action-dock.toggle-mode",
+    scope: "session",
+    accelerators: {
+      windows: { key: "t", ctrlKey: true, shiftKey: true },
+      linux: { key: "t", ctrlKey: true, shiftKey: true },
+      macos: { key: "t", metaKey: true, shiftKey: true },
+    },
+    customizable: true,
+    bindingKind: "letter",
+  },
+  {
     id: "session.file-preview.find",
     scope: "file-preview",
     exclusiveScopeGroup: "session-content",

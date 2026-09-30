@@ -1,10 +1,48 @@
 import { type ReactNode } from "react";
 
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
+import { useShortcutSettings } from "../../settings/shortcut-settings-context.js";
+import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../../settings/shortcut-registry.js";
+
+export type SessionActionDockMode = "prompt" | "terminal";
+
+export function SessionActionDockModeSwitch({ mode, onChange }: {
+  mode: SessionActionDockMode;
+  onChange(mode: SessionActionDockMode): void;
+}) {
+  const settings = useShortcutSettings();
+  return (
+    <div
+      className="composer-message-view-mode"
+      role="group"
+      aria-label="Action dock mode"
+      title={appendShortcutLabel("Switch Prompt / Terminal", SHORTCUT_COMMAND_IDS.actionDockToggleMode, undefined, settings)}
+    >
+      <button
+        className="composer-message-view-mode-button"
+        type="button"
+        aria-pressed={mode === "prompt"}
+        onClick={() => onChange("prompt")}
+      >
+        Prompt
+      </button>
+      <button
+        className="composer-message-view-mode-button"
+        type="button"
+        aria-pressed={mode === "terminal"}
+        onClick={() => onChange("terminal")}
+      >
+        Terminal
+      </button>
+    </div>
+  );
+}
 
 export type SessionActionDockCompactRowProps = {
   isRunning: boolean;
   targetDock?: ReactNode;
+  dockModeSwitch?: ReactNode;
+  showExpandControl?: boolean;
   chatNotice?: string;
   showJumpToBottom: boolean;
   showMessageViewModeControls?: boolean;
@@ -19,6 +57,8 @@ export type SessionActionDockCompactRowProps = {
 export function SessionActionDockCompactRow({
   isRunning,
   targetDock = null,
+  dockModeSwitch = null,
+  showExpandControl = true,
   chatNotice,
   showJumpToBottom,
   showMessageViewModeControls = false,
@@ -31,7 +71,7 @@ export function SessionActionDockCompactRow({
 }: SessionActionDockCompactRowProps) {
   return (
     <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}`}>
-      <button
+      {showExpandControl ? <button
         className="session-action-dock-compact-meta session-action-dock-compact-expand-button"
         type="button"
         onClick={onExpand}
@@ -41,7 +81,7 @@ export function SessionActionDockCompactRow({
         {!isRunning && chatNotice ? (
           <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
         ) : null}
-      </button>
+      </button> : <span className="session-action-dock-compact-meta" aria-hidden="true" />}
       <div className="session-action-dock-compact-actions">
         <div
           className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}
@@ -56,7 +96,7 @@ export function SessionActionDockCompactRow({
             >
               Cancel
             </button>
-          ) : null}
+        ) : null}
         </div>
         {targetDock ? <div className="session-action-dock-target-slot">{targetDock}</div> : null}
         {isRunning && chatNotice ? (
@@ -91,6 +131,7 @@ export function SessionActionDockCompactRow({
             </button>
           </div>
           ) : null}
+        {dockModeSwitch}
       </div>
     </div>
   );

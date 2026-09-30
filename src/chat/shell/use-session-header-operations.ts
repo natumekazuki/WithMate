@@ -26,6 +26,7 @@ export type SessionHeaderOperations = {
     isWorkspaceAvailable: boolean;
     onOpenAuditLog: () => void;
     onOpenSessionTerminal: () => void;
+    onOpenExternalTerminal?: () => void;
     onOpenSessionFilesExplorer: () => void;
     onOpenSessionFilesTerminal: () => void;
     onTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement>;
@@ -106,6 +107,7 @@ export function useSessionHeaderOperations(input: {
       canViewAuditLog: true,
       onOpenAuditLog: view.onOpenAuditLog,
       onOpenTerminal: view.onOpenSessionTerminal,
+      onOpenExternalTerminal: view.onOpenExternalTerminal,
       isTerminalDisabled: !view.isWorkspaceAvailable,
       onOpenSessionFilesExplorer: view.onOpenSessionFilesExplorer,
       onOpenSessionFilesTerminal: view.onOpenSessionFilesTerminal,

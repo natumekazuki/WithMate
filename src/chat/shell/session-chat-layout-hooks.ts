@@ -76,6 +76,18 @@ function measureVisibleHeaderDockHeight(layout: HTMLElement, isHeaderExpanded: b
     ?? SESSION_HEADER_DOCK_DEFAULT_HEIGHT;
 }
 
+function measureNarrowSideTracks(layout: HTMLElement, includeSidePane = true): number {
+  if (!isNarrowSessionLayoutViewport()) return 0;
+  const styles = window.getComputedStyle(layout);
+  const sideHeight = includeSidePane
+    ? (layout.classList.contains("is-left-pane-visible")
+      ? readCssPixelValue(styles.getPropertyValue("--session-file-explorer-width")) || SESSION_FILE_EXPLORER_DEFAULT_WIDTH : 0)
+      + (layout.classList.contains("is-right-pane-visible")
+        ? readCssPixelValue(styles.getPropertyValue("--session-context-rail-width")) || SESSION_CONTEXT_RAIL_DEFAULT_WIDTH : 0)
+    : 0;
+  return sideHeight + 2 * (readCssPixelValue(styles.getPropertyValue("--session-dock-splitter-size")) || 20);
+}
+
 function measureSidePaneAvailableSize(layout: HTMLElement): number {
   if (!isNarrowSessionLayoutViewport()) {
     return measureSessionHorizontalLayoutBounds(layout).width;
@@ -254,12 +266,15 @@ export function useSessionVerticalDockResize(input: {
   ownerKey: string | null;
   isHeaderExpanded: boolean;
   isActionDockExpanded: boolean;
+  sidePaneLayoutKey?: string;
 }) {
   const [actionDockHeight, setActionDockHeight] = useState(SESSION_ACTION_DOCK_DEFAULT_HEIGHT);
   const [actionDockCompactHeight, setActionDockCompactHeight] = useState(
     SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT,
   );
   const [isActionDockResizing, setIsActionDockResizing] = useState(false);
+  const [isSidePaneBudgetCollapsed, setIsSidePaneBudgetCollapsed] = useState(false);
+  const isSidePaneBudgetCollapsedRef = useRef(false);
   const sessionDockLayoutRef = useRef<HTMLDivElement | null>(null);
   const headerDockRef = useRef<HTMLDivElement | null>(null);
   const actionDockRef = useRef<HTMLDivElement | null>(null);
@@ -287,15 +302,24 @@ export function useSessionVerticalDockResize(input: {
       return;
     }
     const visibleHeaderHeight = measureVisibleHeaderDockHeight(layout, input.isHeaderExpanded);
-    const nextActionDockHeight = clampSessionVerticalDockHeight({
-      requestedHeight: actionDockHeightRef.current,
-      layoutHeight,
-      minHeight: readSessionRegionMinimum(layout, ".session-action-dock-slot", "--session-region-min-height"),
-      oppositeDockHeight: visibleHeaderHeight,
-    });
-    actionDockHeightRef.current = nextActionDockHeight;
-    setActionDockHeight((current) => current === nextActionDockHeight ? current : nextActionDockHeight);
-  }, [input.isActionDockExpanded, input.isHeaderExpanded]);
+    const splitterHeight = readSessionRegionMinimum(layout, ".session-chat-layout", "--session-dock-splitter-size") || 20;
+    const actionMinimum = input.isActionDockExpanded
+      ? readSessionRegionMinimum(layout, ".session-action-dock-slot", "--session-region-min-height")
+      : actionDockCompactHeight;
+    const availableWithSide = Math.max(0, layoutHeight - visibleHeaderHeight - splitterHeight * 2 - measureNarrowSideTracks(layout));
+    const collapseSide = isNarrowSessionLayoutViewport() && availableWithSide < actionMinimum;
+    isSidePaneBudgetCollapsedRef.current = collapseSide;
+    setIsSidePaneBudgetCollapsed(collapseSide);
+    const totalAvailable = collapseSide
+      ? Math.max(0, layoutHeight - visibleHeaderHeight - splitterHeight * 2 - measureNarrowSideTracks(layout, false))
+      : availableWithSide;
+    const actionRequested = input.isActionDockExpanded ? actionDockHeightRef.current : actionDockCompactHeight;
+    const nextActionDockHeight = Math.min(totalAvailable, Math.max(actionMinimum, actionRequested));
+    if (input.isActionDockExpanded) {
+      actionDockHeightRef.current = nextActionDockHeight;
+      setActionDockHeight((current) => current === nextActionDockHeight ? current : nextActionDockHeight);
+    }
+  }, [actionDockCompactHeight, input.isActionDockExpanded, input.isHeaderExpanded, input.sidePaneLayoutKey]);
 
   useLayoutEffect(() => {
     clampDockHeights();
@@ -358,7 +382,8 @@ export function useSessionVerticalDockResize(input: {
       }
 
       const bounds = measureSessionVerticalDockLayoutBounds(layout);
-      const oppositeHeight = measureVisibleHeaderDockHeight(layout, input.isHeaderExpanded);
+      const oppositeHeight = measureVisibleHeaderDockHeight(layout, input.isHeaderExpanded)
+        + measureNarrowSideTracks(layout, !isSidePaneBudgetCollapsedRef.current);
       const nextHeight = clampSessionVerticalDockHeight({
         requestedHeight: gesture.startHeight + gesture.startY - event.clientY,
         layoutHeight: bounds.height,
@@ -425,6 +450,21 @@ export function useSessionVerticalDockResize(input: {
       toggle();
     }
   }, []);
+  const handleActionDockKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!input.isActionDockExpanded || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+    const layout = sessionDockLayoutRef.current;
+    if (!layout) return;
+    event.preventDefault();
+    const next = clampSessionVerticalDockHeight({
+      requestedHeight: actionDockHeightRef.current + (event.key === "ArrowUp" ? 20 : -20),
+      layoutHeight: measureSessionVerticalDockLayoutBounds(layout).height,
+      minHeight: readSessionRegionMinimum(layout, ".session-action-dock-slot", "--session-region-min-height"),
+      oppositeDockHeight: measureVisibleHeaderDockHeight(layout, input.isHeaderExpanded)
+        + measureNarrowSideTracks(layout, !isSidePaneBudgetCollapsedRef.current),
+    });
+    actionDockHeightRef.current = next;
+    setActionDockHeight(next);
+  }, [input.isActionDockExpanded, input.isHeaderExpanded]);
 
   const sessionDockLayoutStyle = useMemo(() => ({
     ["--session-action-dock-height" as string]: `${actionDockHeight}px`,
@@ -437,9 +477,11 @@ export function useSessionVerticalDockResize(input: {
     actionDockRef,
     sessionDockLayoutStyle,
     isActionDockResizing,
+    isSidePaneBudgetCollapsed,
     handleStartActionDockResize,
     handleHeaderSplitterClick,
     handleActionDockSplitterClick,
+    handleActionDockKeyDown,
   };
 }
 
@@ -843,6 +885,9 @@ export function useSessionSidePanes({
     const syncSidePaneWidths = () => {
       const workbenchElement = sessionWorkbenchRef.current;
       if (!workbenchElement) {
+        return;
+      }
+      if (workbenchElement.classList.contains("is-side-pane-budget-collapsed")) {
         return;
       }
       const workbenchWidth = measureSidePaneAvailableSize(workbenchElement);

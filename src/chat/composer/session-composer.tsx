@@ -59,6 +59,7 @@ export type SessionComposerExpandedProps = {
   onRetryComposerSave?: () => void;
   isRunning: boolean;
   targetDock?: ReactNode;
+  dockModeSwitch?: ReactNode;
   chatNotice?: string;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
@@ -140,6 +141,7 @@ export function SessionComposerExpanded({
   onRetryComposerSave,
   isRunning,
   targetDock = null,
+  dockModeSwitch = null,
   chatNotice,
   composerBlocked,
   canSelectCustomAgent,
@@ -426,7 +428,7 @@ export function SessionComposerExpanded({
               </button>
             </div>
           ) : null}
-          {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock ? (
+          {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock || dockModeSwitch ? (
             <div className="composer-toolbar-view-actions">
               <div
                 className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}
@@ -473,6 +475,7 @@ export function SessionComposerExpanded({
                   </button>
                 </div>
               ) : null}
+              {dockModeSwitch}
             </div>
           ) : null}
         </div>

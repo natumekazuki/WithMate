@@ -634,6 +634,103 @@ describe("shortcut projection", () => {
 });
 
 describe("shortcut dispatcher", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Prompt/Terminal切替は両入力scopeから既定または変更済みのshortcutで実行でき、IME中とrepeatでは実行しない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock Prompt / Terminal切替" }
+  // fault = "端末scopeで切替を拒否する、変更済みbindingを無視する、またはIME/repeatを切替として処理する"
+  // observable = "切替handlerの呼出回数とkeydown.defaultPrevented、getShortcutLabelの戻り値"
+  // observation_boundary = "public-boundary"
+  // scope = "ShortcutDispatcher Prompt/Terminal toggle"
+  // lifecycle = "permanent"
+  // impact = "キーボードだけで端末からプロンプトへ戻れなくなる、または文字入力で表示が意図せず切り替わる"
+  // distinction = "型検査と既存の端末入力隔離testは、明示的な切替commandの許可・設定反映・IME境界を検証しない"
+  // @end-test-value
+  it("Prompt/Terminal切替は両入力scopeとcustom bindingに対応する", () => {
+    const dom = new JSDOM('<body><section data-shortcut-scope="terminal"><textarea></textarea></section><textarea data-shortcut-scope="composer"></textarea></body>');
+    const restore = installDomGlobals(dom);
+    try {
+      for (const platform of ["windows", "macos"] as const) {
+        const dispatcher = new ShortcutDispatcher({ eventTarget: dom.window, platform });
+        let calls = 0;
+        dispatcher.registerScope("session");
+        dispatcher.registerHandler(SHORTCUT_COMMAND_IDS.actionDockToggleMode, () => { calls += 1; });
+        const modifiers = platform === "macos" ? { metaKey: true, shiftKey: true } : { ctrlKey: true, shiftKey: true };
+        try {
+          for (const input of dom.window.document.querySelectorAll("textarea")) {
+            const event = createKeyboardEvent(dom, { key: "t", ...modifiers });
+            input.dispatchEvent(event);
+            assert.equal(event.defaultPrevented, true);
+          }
+          assert.equal(calls, 2);
+          const terminal = dom.window.document.querySelector("textarea")!;
+          for (const guard of [{ isComposing: true }, { repeat: true }]) {
+            const event = createKeyboardEvent(dom, { key: "t", ...modifiers, ...guard });
+            terminal.dispatchEvent(event);
+            assert.equal(event.defaultPrevented, false);
+          }
+          assert.equal(calls, 2);
+          const settings = updateShortcutBinding(DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+            SHORTCUT_COMMAND_IDS.actionDockToggleMode, platform, { key: "x", ...modifiers });
+          dispatcher.setSettings(settings);
+          const old = createKeyboardEvent(dom, { key: "t", ...modifiers });
+          terminal.dispatchEvent(old);
+          assert.equal(old.defaultPrevented, false);
+          const custom = createKeyboardEvent(dom, { key: "x", ...modifiers });
+          terminal.dispatchEvent(custom);
+          assert.equal(custom.defaultPrevented, true);
+          assert.equal(calls, 3);
+          assert.match(getShortcutLabel(SHORTCUT_COMMAND_IDS.actionDockToggleMode, platform, settings), /X$/);
+        } finally {
+          dispatcher.dispose();
+        }
+      }
+    } finally {
+      restore();
+      dom.window.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "端末scopeのEscapeは会話shortcutへ配送されず、通常の会話入力ではEscapeを引き続き配送する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/740 入力とAI実行の独立" }
+  // fault = "terminal scopeを無視して編集対象でも有効なshortcut handlerを呼ぶ"
+  // observable = "handler呼出回数、KeyboardEvent.defaultPrevented"
+  // observation_boundary = "public-boundary"
+  // scope = "ShortcutDispatcher.dispatch"
+  // lifecycle = "permanent"
+  // impact = "端末のEscapeや入力中shortcutで会話操作が発火し、ユーザーの意図しない操作を行う"
+  // distinction = "型検査ではDOM上のfocus scopeとキー配送の組合せを検出できず、小さなDOM testで継続確認する"
+  // @end-test-value
+  it("terminal scopeの入力を会話shortcutへ渡さない", () => {
+    const dom = new JSDOM('<!doctype html><body><section data-shortcut-scope="terminal"><textarea></textarea></section><input></body>');
+    const restore = installDomGlobals(dom);
+    const terminalInput = dom.window.document.querySelector("textarea")!;
+    const chatInput = dom.window.document.querySelector("input")!;
+    const entry = createEntry({ allowInEditingTarget: true, accelerators: {
+      windows: { key: "Escape" }, linux: { key: "Escape" }, macos: { key: "Escape" },
+    } });
+    const dispatcher = new ShortcutDispatcher({ eventTarget: dom.window, entries: [entry] });
+    let calls = 0;
+    try {
+      dispatcher.registerScope(entry.scope);
+      dispatcher.registerHandler(entry.id, () => { calls += 1; });
+      const terminalEvent = createKeyboardEvent(dom, { key: "Escape" });
+      terminalInput.dispatchEvent(terminalEvent);
+      assert.equal(calls, 0);
+      assert.equal(terminalEvent.defaultPrevented, false);
+      const chatEvent = createKeyboardEvent(dom, { key: "Escape" });
+      chatInput.dispatchEvent(chatEvent);
+      assert.equal(calls, 1);
+      assert.equal(chatEvent.defaultPrevented, true);
+    } finally {
+      dispatcher.dispose();
+      restore();
+      dom.window.close();
+    }
+  });
+
   it("active scope、editing target、repeat、IME、dead key、AltGraph、defaultPreventedを判定する", () => {
     const dom = new JSDOM("<!doctype html><body></body>");
     const restore = installDomGlobals(dom);

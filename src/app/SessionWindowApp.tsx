@@ -138,6 +138,7 @@ import { SessionContextFeature, type SessionContextFeatureHandle } from "../chat
 import { composeAgentSessionChatWindow } from "../chat/session-chat-window-composition.js";
 import { useSessionChatShellFeature } from "../chat/shell/session-chat-shell-feature.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { SessionTerminal, type SessionTerminalHandle } from "../terminal/session-terminal.js";
 import { ShortcutSettingsProvider } from "../settings/shortcut-settings-context.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "../file-explorer/open-path-result.js";
 import {
@@ -311,6 +312,8 @@ function displayApprovalValue(value: string): string {
 export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
+  const [actionDockMode, setActionDockMode] = useState<"prompt" | "terminal">("prompt");
+  const terminalRef = useRef<SessionTerminalHandle>(null);
   const composerRegistryRef = useRef<ComposerControllerRegistry | null>(null);
   if (!composerRegistryRef.current) {
     composerRegistryRef.current = new ComposerControllerRegistry();
@@ -684,6 +687,18 @@ export default function AgentSessionWindowApp() {
     presentation: layoutPresentation,
     sidePanes,
     isEditingTitle,
+    terminalDock: withmateApi ? {
+      mode: actionDockMode,
+      onChange: (mode) => {
+        setActionDockMode(mode);
+        if (mode === "terminal") {
+          setIsAgentPickerOpen(false);
+          setIsSkillPickerOpen(false);
+          composerFeature.setIsAdditionalDirectoryListOpen(false);
+        }
+      },
+      focus: () => terminalRef.current?.focus(),
+    } : undefined,
     forceActionDockExpanded: [
       isAgentPickerOpen,
       isSkillPickerOpen,
@@ -2074,7 +2089,10 @@ export default function AgentSessionWindowApp() {
     isAuxiliaryMode,
     isWorkspaceAvailable: isSelectedWorkspaceAvailable,
     onOpenAuditLog: () => auditFeatureRef.current?.open(),
-    onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
+    onOpenSessionTerminal: () => {
+      chatShellFeature.handleChangeActionDockMode("terminal");
+    },
+    onOpenExternalTerminal: () => void handleOpenSessionTerminal(),
     onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
     onOpenSessionFilesTerminal: () => void handleOpenSessionFilesTerminal(),
     onTitleInputKeyDown: handleTitleInputKeyDown,
@@ -2271,6 +2289,12 @@ export default function AgentSessionWindowApp() {
     </ChatSessionModals>
   );
   const chatShellSurface = chatShellFeature.buildSurface({
+    terminalContent: withmateApi ? <SessionTerminal
+      ref={terminalRef}
+      api={withmateApi}
+      expanded={actionDockMode === "terminal" && chatShellFeature.isActionDockExpanded}
+      onCollapse={chatShellFeature.handleCollapseActionDock}
+    /> : undefined,
     mainContent: filePreviewContent,
     leftPane: fileExplorerPane,
     themeStyle: sessionThemeStyle,

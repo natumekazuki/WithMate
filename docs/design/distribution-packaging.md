@@ -53,6 +53,7 @@ WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packaging�
   - `package.json`
 - provider native package 本体は `files` の除外規則で app bundle 側から外し、`resources/provider-binaries/` 側だけを runtime の正本にする
 - `asar` は有効化する
+- `node-pty`のprebuildsとConPTY付随ファイルは`asarUnpack`でASAR外へ配置する。native moduleはelectron-builderの既定rebuildを利用し、Windowsでsource buildする環境にはMSVCのSpectre-mitigated librariesを用意する。
 - provider native package は `scripts/build/stage-provider-binaries.ts` で `build/provider-binaries/` へ stage し、`extraResources` で `resources/provider-binaries/` 配下へ配布する
 - packaged runtime の binary path 解決は `src-electron/providers/provider-binary-paths.ts` を正本にする
 - `Codex` は `codexPathOverride` で staged binary を明示し、`Copilot` は `cliPath` に staged binary を渡す
@@ -82,6 +83,7 @@ minimum の確認は次とする。
 3. Windows 環境では必要に応じて `npm run dist:win`
 4. Windows installer 導入後、Start Menu 検索で `WithMate` を入力して起動できることを確認する
 5. Windows unpacked 出力では `resources/provider-binaries/@openai/codex-win32-x64/vendor/.../codex.exe` と `resources/provider-binaries/@github/copilot-win32-x64/copilot.exe` が存在することを確認する
+6. Windows unpackedアプリのSession WindowでTerminalを開き、PowerShellの入力・出力、サイズ変更、タブ終了とWindow終了時のPTY解放を確認する。開発環境のnative loadだけで配布検証済みにしない
 
 macOS artifact の実確認は macOS 環境で次を行う。
 

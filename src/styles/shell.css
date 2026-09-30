@@ -234,6 +234,17 @@
   height: 100%;
 }
 
+.session-action-dock-terminal-content.is-active {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  height: 100%;
+}
+
+.session-action-dock:has(.session-action-dock-terminal-content) .session-action-dock-content {
+  transition: none;
+}
+
 .session-action-dock-slot.is-expanded .composer {
   overflow-y: auto;
   display: flex;
