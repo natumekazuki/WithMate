@@ -135,3 +135,43 @@ test("MermaidのFitはresizeへ追従し手動倍率は維持する", async () =
     assert.equal(container.querySelector<HTMLElement>(".message-mermaid-canvas")?.style.height, "200px");
   });
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "MermaidのCtrl＋wheelは対象のFit実効倍率から上下に拡縮し、通常wheelと別図の倍率を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 共通previewのCtrl＋wheel操作" }
+// fault = "wheelが倍率へ接続されない、逆方向へ拡縮する、通常wheelを奪う、または別図へ倍率が漏れる"
+// observable = "倍率button、SVG canvas寸法、wheelのdefaultPreventedと親への伝播"
+// observation_boundary = "component-behavior"
+// scope = "MermaidViewportの実DOM wheel入力と表示倍率"
+// lifecycle = "permanent"
+// distinction = "button操作testが通らないnative wheelの接続と通常scrollのイベント境界を確認する"
+// @end-test-value
+test("MermaidのCtrl＋wheelは対象だけを拡縮し通常wheelを保持する", async () => {
+  await withViewport(async ({ container }) => {
+    const [first, second] = Array.from(container.querySelectorAll<HTMLElement>(".message-mermaid"));
+    const viewport = first.querySelector<HTMLElement>("[role=region]")!;
+    const canvas = first.querySelector<HTMLElement>(".message-mermaid-canvas")!;
+    const Wheel = container.ownerDocument.defaultView!.WheelEvent;
+    let parentWheels = 0;
+    container.addEventListener("wheel", () => parentWheels++);
+    const wheel = async (deltaY: number, ctrlKey: boolean) => {
+      const event = new Wheel("wheel", { deltaY, ctrlKey, bubbles: true, cancelable: true });
+      await act(async () => viewport.dispatchEvent(event));
+      return event;
+    };
+    assert.equal((await wheel(-100, true)).defaultPrevented, true);
+    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "50%");
+    assert.equal(button(second, "Reset diagram zoom to 100%").textContent, "40%");
+    assert.equal(canvas.style.width, "1000px");
+    assert.equal((await wheel(100, true)).defaultPrevented, true);
+    assert.equal(canvas.style.width, "800px");
+    assert.equal(parentWheels, 0);
+    assert.equal((await wheel(100, false)).defaultPrevented, false);
+    assert.equal(parentWheels, 1);
+    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "40%");
+    assert.equal(button(second, "Reset diagram zoom to 100%").textContent, "40%");
+    await act(async () => button(first, "Fit diagram to preview").click());
+    assert.equal(button(first, "Fit diagram to preview").getAttribute("aria-pressed"), "true");
+  });
+});

@@ -6,6 +6,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from "react";
 
 export type ImageZoom = "fit" | number;
@@ -21,6 +22,35 @@ type ImagePanSession = {
 export const IMAGE_ZOOM_MIN = 10;
 export const IMAGE_ZOOM_MAX = 800;
 export const IMAGE_ZOOM_STEP = 10;
+
+function stepImageZoom(zoom: number, direction: -1 | 1): number {
+  if (direction < 0) return zoom <= IMAGE_ZOOM_MIN ? zoom : Math.max(IMAGE_ZOOM_MIN, zoom - IMAGE_ZOOM_STEP);
+  return zoom >= IMAGE_ZOOM_MAX ? zoom : Math.min(IMAGE_ZOOM_MAX, zoom + IMAGE_ZOOM_STEP);
+}
+
+export function useCtrlWheelZoom(
+  viewportRef: RefObject<HTMLDivElement | null>,
+  fitZoom: number,
+  setZoom: ImageViewportController["setZoom"],
+) {
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey || event.deltaY === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setZoom((currentZoom) => {
+        const effectiveZoom = typeof currentZoom === "number" ? currentZoom : fitZoom;
+        const nextZoom = stepImageZoom(effectiveZoom, event.deltaY < 0 ? 1 : -1);
+        return nextZoom === effectiveZoom ? currentZoom : nextZoom;
+      });
+    };
+    // React's passive wheel listener cannot cancel the browser's Ctrl+wheel zoom.
+    viewport.addEventListener("wheel", handleWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handleWheel);
+  }, [fitZoom, setZoom, viewportRef]);
+}
 
 export function calculateImageFitZoom(
   viewportWidth: number,
@@ -172,7 +202,7 @@ export function ImageZoomControls({
         aria-label={`Zoom ${target} out`}
         title={`Zoom ${target} out`}
         disabled={effectiveZoom <= IMAGE_ZOOM_MIN}
-        onClick={() => setZoom(Math.max(IMAGE_ZOOM_MIN, effectiveZoom - IMAGE_ZOOM_STEP))}
+        onClick={() => setZoom(stepImageZoom(effectiveZoom, -1))}
       >−</button>
       <button
         type="button"
@@ -187,7 +217,7 @@ export function ImageZoomControls({
         aria-label={`Zoom ${target} in`}
         title={`Zoom ${target} in`}
         disabled={effectiveZoom >= IMAGE_ZOOM_MAX}
-        onClick={() => setZoom(Math.min(IMAGE_ZOOM_MAX, effectiveZoom + IMAGE_ZOOM_STEP))}
+        onClick={() => setZoom(stepImageZoom(effectiveZoom, 1))}
       >＋</button>
       <button
         type="button"
@@ -233,6 +263,7 @@ export function ImageViewport({
     viewportRef,
     zoom,
   } = controller;
+  useCtrlWheelZoom(viewportRef, controller.fitZoom, controller.setZoom);
   return (
     <div
       ref={viewportRef}
