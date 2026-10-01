@@ -114,8 +114,8 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
       });
       instance.attachCustomKeyEventHandler((event) => {
         if (event.type === "keydown" && getShortcutDispatcher()?.dispatch(event)) return false;
-        if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey) {
-          if (event.key === "Tab") {
+        if (event.ctrlKey && !event.altKey && !event.metaKey) {
+          if (event.shiftKey && event.key === "Tab") {
             if (event.type === "keydown") {
               event.preventDefault();
               focusTabsCallback.current();
@@ -131,7 +131,7 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
             }
             return false;
           }
-          if (event.key.toLowerCase() === "v") {
+          if (event.shiftKey && event.key.toLowerCase() === "v") {
             if (event.type === "keydown") {
               event.preventDefault();
               void navigator.clipboard.readText().then((text) => {

@@ -276,7 +276,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - 1タブにつき独立したxtermとPTYを持ち、親SessionのWorkspaceから起動する。Main／Auxiliaryの切り替えは端末の選択・cwd・processへ影響しない
   - dock内の1段タブバーはタブ部分だけ横scrollし、右端の`New Terminal`は固定する。選択タブ、終了ボタン、新規追加へkeyboardで到達でき、端末本文から`Ctrl+Shift+Tab`でタブへfocusを戻せる
   - 表示の折りたたみ・Promptへの切り替え・タブ切り替えではprocessを維持する。`Close Terminal`は生存中の終了を確認し、取消では維持する。最後のタブを閉じると共有パネルを畳み、自動再起動しない。自然終了は`Exited`と終了結果、失敗は`Failed`と理由を表示し、出力を残す
-  - 入力はAI実行と独立し、端末scopeではPrompt／Terminal切替だけをアプリshortcutとして扱い、会話のshortcutを発火させない。`Ctrl+C`と`Escape`はシェルへ渡し、`Ctrl+Shift+C/V`はコピー／貼り付け、macOSの標準コピー／貼り付けはOS/xtermに従う
+  - 入力はAI実行と独立し、端末scopeではPrompt／Terminal切替だけをアプリshortcutとして扱い、会話のshortcutを発火させない。`Ctrl+C`は端末の文字選択があればその文字をコピーしてシェルへ送らず、選択がなければシェルへ渡す。`Escape`はシェルへ渡し、`Ctrl+Shift+C/V`はコピー／貼り付け、macOSの標準コピー／貼り付けはOS/xtermに従う
   - ローカルシェルはアプリのOS権限で動き、Providerのapproval／sandboxとは独立する。Workspaceは開始cwdであってアクセス制限ではない
 - `Top Bar`
   - default は hidden とする

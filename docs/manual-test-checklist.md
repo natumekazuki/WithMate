@@ -15,7 +15,7 @@
 | 高解像度のWindowで500列または300行を超える端末を初回展開し、拡大・縮小して入力する | 正常なfit寸法で起動・resizeでき、`Failed`にならない。resize後も入力と出力を継続できる |
 | タブを複数追加し、選択・折りたたみ・Prompt/Terminal切替・Main/Auxiliary切り替え・最小化を行う | 各shellは親Workspaceから独立して開始し、出力・cwd・processは維持される。多数タブでも1段でscrollでき、`New Terminal`と選択タブへ到達できる |
 | shell実行中に`Close Terminal`を押して取消／終了。自然終了、起動失敗も確認 | 取消では維持。終了済みタブは確認不要。自然終了は`Exited`と結果、失敗は`Failed`と理由を表示して出力を保持する。最後のタブを閉じると折りたたみ、自動再起動しない |
-| AI実行中もIME、Enter、Tab、Ctrl+C、Escape、コピー／貼り付けを操作。Ctrl+Shift+Tabでタブへ戻る | 端末入力が会話送信・検索・cancelへ流れない。タブ・本文・splitter間をkeyboardで移動でき、非表示端末へfocusが残らず、background出力でfocusを奪わない |
+| AI実行中もIME、Enter、Tab、Escape、コピー／貼り付けを操作。コマンド実行中に端末文字を選択してCtrl+C／Ctrl+Shift+Cでコピーし、選択なしでもCtrl+Cを押す。Ctrl+Shift+Tabでタブへ戻る | 選択中のコピーでは選択文字がclipboardへ入り、コマンドを中断しない。選択なしのCtrl+Cはシェルへ渡る。Ctrl+V／Ctrl+Shift+Vの貼り付けを維持する。端末入力が会話送信・検索・cancelへ流れない。タブ・本文・splitter間をkeyboardで移動でき、非表示端末へfocusが残らず、background出力でfocusを奪わない |
 | 大量出力と非選択端末の出力を続けながらresize・入力・停止。Windowsでは履歴を出力し、未確定のコマンドを入力したままTerminalを繰り返し拡大・縮小する | チャットと端末の操作が応答し、隠した端末も詰まらない。resizeだけで未確定のコマンドが実行されず、scrollbackの履歴を保持する。splitter操作後の上下キー・Enterはsplitterへ配送される。出力がSession/Audit/Memory/診断ログへ複製されない |
 | 起動途中のタブ終了、Window closeの取消／確定、renderer破棄、Session削除、アプリ終了 | 起動完了が遅れてもPTYは孤立しない。Window closeは生存端末をまとめて確認し、破棄時にはownerの端末だけを解放する。既存のAI継続／中止契約を維持する |
 
