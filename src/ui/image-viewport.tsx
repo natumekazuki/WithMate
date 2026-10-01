@@ -211,6 +211,7 @@ export function ImageViewport({
       onPointerUp={stopPan}
       onPointerCancel={stopPan}
       onLostPointerCapture={handlePanCaptureLoss}
+      title="Ctrl + left-drag to pan"
     >
       <div
         ref={canvasRef}

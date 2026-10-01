@@ -11,7 +11,7 @@ export function MermaidViewport({ svg }: { svg: string }) {
   const [zoom, setZoom] = useState<ImageZoom>("fit");
   const [fitZoom, setFitZoom] = useState(100);
   const effectiveZoom = typeof zoom === "number" ? zoom : fitZoom;
-  const pan = useViewportPan(svg, 2);
+  const pan = useViewportPan(svg);
   useCtrlWheelZoom(viewportRef, fitZoom, setZoom);
 
   useLayoutEffect(() => {
@@ -58,8 +58,7 @@ export function MermaidViewport({ svg }: { svg: string }) {
         onPointerUp={pan.stopPan}
         onPointerCancel={pan.stopPan}
         onLostPointerCapture={pan.handlePanCaptureLoss}
-        onContextMenu={pan.handlePanContextMenu}
-        title="Right-drag to pan"
+        title="Ctrl + left-drag to pan"
         role="region"
         aria-label="Mermaid diagram"
         tabIndex={0}

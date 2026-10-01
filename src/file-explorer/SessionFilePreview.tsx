@@ -869,12 +869,16 @@ export function SessionFilePreview({
       return;
     }
     const rebuildIndex = () => {
-      renderedMarkdownIndexRef.current = createRenderedTextSearchIndex(
+      const index = createRenderedTextSearchIndex(
         container,
         (node) => !node.parentElement?.closest(previewKind === "mermaid"
           ? ".message-mermaid-controls, svg style, svg defs"
           : ".message-mermaid-controls"),
       );
+      if (renderedMarkdownIndexRef.current?.normalizedText !== index.normalizedText) {
+        setCurrentMatch(0);
+      }
+      renderedMarkdownIndexRef.current = index;
       setRenderedMarkdownIndexRevision((current) => current + 1);
     };
     rebuildIndex();
@@ -890,7 +894,6 @@ export function SessionFilePreview({
       : { offsets: new Uint32Array(0), normalizedQueryLength: 0 };
     renderedMarkdownMatchesRef.current = matches;
     setRenderedMarkdownMatchCount(matches.offsets.length);
-    setCurrentMatch(0);
   }, [findQuery, renderedMarkdownIndexRevision]);
 
   const activeFindMatchCount = isRichPreview && markdownMode === "preview"

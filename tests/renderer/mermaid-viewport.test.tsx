@@ -178,16 +178,16 @@ test("MermaidのCtrl＋wheelは対象だけを拡縮し通常wheelを保持す�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Mermaidの右dragは対象だけを移動して終了・中断後に停止し、左dragと通常の右clickを奪わず、移動後のcontext menuだけ抑止する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Mermaidの右drag移動と左drag文字選択" }
-// fault = "右dragで移動しない、別図や終了後も移動する、左dragをcancelする、または通常の右clickを抑止してしまう"
-// observable = "scrollLeft／scrollTop、pointer capture、移動中class、pointerとcontextmenuのdefaultPreventedおよび親伝播"
+// claim = "MermaidのCtrl＋左dragは対象だけを移動して終了・中断後に停止し、通常の左drag文字選択と右clickを維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 共通previewのCtrl＋左drag移動" }
+// fault = "修飾keyやbuttonを区別せず移動する、Ctrl＋左dragで移動しない、または終了後も移動する"
+// observable = "scrollLeft／scrollTop、pointer capture、移動中class、pointerとcontextmenuのdefaultPrevented"
 // observation_boundary = "component-behavior"
-// scope = "MermaidViewportのpointer入力からscroll移動・終了・context menu制御への反映"
+// scope = "MermaidViewportのpointer入力からscroll移動・終了への反映"
 // lifecycle = "permanent"
-// distinction = "既存画像の左drag testと倍率testが確認しない右buttonとcontext menuの区別を実componentで検証する"
+// distinction = "倍率testでは観測できない共通panの修飾key条件、別図の独立性とpointer中断を実componentで検証する"
 // @end-test-value
-test("Mermaidは右dragだけで移動し文字選択と右clickを保持する", async () => {
+test("MermaidはCtrl＋左dragで移動し文字選択と右clickを保持する", async () => {
   await withViewport(async ({ container }) => {
     const [first, second] = Array.from(container.querySelectorAll<HTMLElement>(".message-mermaid"));
     const viewport = first.querySelector<HTMLElement>("[role=region]")!;
@@ -202,56 +202,47 @@ test("Mermaidは右dragだけで移動し文字選択と右clickを保持する"
     viewport.hasPointerCapture = (id) => captured === id;
     viewport.releasePointerCapture = () => { captured = null; };
     const Mouse = container.ownerDocument.defaultView!.MouseEvent;
-    const pointer = async (type: string, button = 2, x = 200, y = 160, id = 7) => {
-      const event = new Mouse(type, { button, clientX: x, clientY: y, bubbles: true, cancelable: true });
+    const pointer = async (type: string, button = 0, x = 200, y = 160, id = 7, ctrlKey = true) => {
+      const event = new Mouse(type, { button, ctrlKey, clientX: x, clientY: y, bubbles: true, cancelable: true });
       Object.defineProperty(event, "pointerId", { value: id });
       await act(async () => viewport.dispatchEvent(event));
       return event;
     };
-    let menus = 0;
-    container.parentElement!.addEventListener("contextmenu", () => menus++);
     await act(async () => button(first, "Reset diagram zoom to 100%").click());
     viewport.scrollLeft = 120;
     viewport.scrollTop = 90;
-    assert.equal((await pointer("pointerdown", 0)).defaultPrevented, false);
+    for (const [mouseButton, ctrlKey] of [[0, false], [2, false], [2, true]] as const) {
+      assert.equal((await pointer("pointerdown", mouseButton, 200, 160, 7, ctrlKey)).defaultPrevented, false);
+      await pointer("pointermove", mouseButton, 150, 120, 7, ctrlKey);
+      assert.deepEqual([viewport.scrollLeft, viewport.scrollTop, captured], [120, 90, null]);
+    }
+    assert.equal((await pointer("contextmenu", 2)).defaultPrevented, false);
+    assert.equal((await pointer("pointerdown")).defaultPrevented, true);
     await pointer("pointermove", 0, 150, 120);
-    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop, captured], [120, 90, null]);
-
-    await pointer("pointerdown");
-    await pointer("pointermove", 2, 201, 160);
-    await pointer("pointerup");
-    assert.equal((await pointer("contextmenu")).defaultPrevented, false);
-    assert.equal(menus, 1);
-    await pointer("pointerdown");
-    await pointer("pointermove", 2, 150, 120);
     assert.deepEqual([viewport.scrollLeft, viewport.scrollTop, captured], [170, 130, 7]);
     assert.deepEqual([other.scrollLeft, other.scrollTop], [0, 0]);
     assert.equal(viewport.classList.contains("is-panning"), true);
-    await pointer("pointermove", 2, 100, 80, 8);
+    await pointer("pointermove", 0, 100, 80, 8);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [170, 130]);
     await pointer("pointerup");
-    await pointer("pointermove", 2, 100, 80);
+    await pointer("pointermove", 0, 100, 80);
     assert.deepEqual([viewport.scrollLeft, viewport.scrollTop, captured], [170, 130, null]);
     assert.equal(viewport.classList.contains("is-panning"), false);
-    assert.equal((await pointer("contextmenu")).defaultPrevented, true);
-    assert.equal(menus, 1);
-    await pointer("pointerdown");
-    await pointer("pointerup");
-    assert.equal((await pointer("contextmenu")).defaultPrevented, false);
-    assert.equal(menus, 2);
+    assert.equal((await pointer("contextmenu", 2)).defaultPrevented, false);
 
     for (const ending of ["pointercancel", "lostpointercapture"]) {
       await pointer("pointerdown");
-      await pointer("pointermove", 2, 150, 120);
+      await pointer("pointermove", 0, 150, 120);
       await pointer(ending);
       const stoppedAt = [viewport.scrollLeft, viewport.scrollTop];
-      await pointer("pointermove", 2, 100, 80);
+      await pointer("pointermove", 0, 100, 80);
       assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], stoppedAt);
       assert.equal(viewport.classList.contains("is-panning"), false);
     }
     await act(async () => button(first, "Fit diagram to preview").click());
     assert.equal((await pointer("pointerdown")).defaultPrevented, false);
-    await pointer("pointermove", 2, 150, 120);
+    await pointer("pointermove", 0, 150, 120);
     assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [0, 0]);
-    assert.equal((await pointer("contextmenu")).defaultPrevented, false);
+    assert.equal((await pointer("contextmenu", 2)).defaultPrevented, false);
   });
 });
