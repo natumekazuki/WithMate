@@ -394,23 +394,24 @@ const mainWindowRuntime = new MainWindowRuntime({
   readSession: (sessionId) => requireSessionStorage().getSession(sessionId),
   getSettingsCatalog: () => requireSettingsCatalogService(),
   isSessionRunInFlight,
-  getLiveTerminalCount: (window) => terminalService?.countLive(window) ?? 0,
+  getTerminalCloseConfirmationCount: (window) => terminalService?.countRequiringCloseConfirmation(window) ?? 0,
   cancelInFlightSessionRuns,
   waitForPendingDraftSends: () => auxiliarySessionService?.waitForPendingDraftSends() ?? Promise.resolve(true),
   onSessionWindowClosed: (sessionId) => {
     terminalService?.releaseSession(sessionId);
     auxiliarySessionService?.releaseAuxiliaryCreationOwner(sessionId);
   },
-  confirmCloseWhileRunning: (window, sessionId) => {
+  confirmCloseWhileRunning: async (window, sessionId, signal) => {
     const hasRun = isSessionRunInFlight(sessionId);
     const liveTerminals = terminalService?.countLive(window) ?? 0;
-    const choice = dialog.showMessageBoxSync(window, {
+    const choice = await dialog.showMessageBox(window, {
+      signal,
       type: "warning",
       buttons: ["Keep Open", hasRun ? "Close And Continue" : "Close Window"],
       defaultId: 0,
       cancelId: 0,
-      title: hasRun ? "Session Is Running" : "Terminal Is Running",
-      message: hasRun && liveTerminals ? "The session and terminals are still running." : hasRun ? "This session is still running." : "Terminals are still running.",
+      title: hasRun ? "Session Is Running" : "Close Window",
+      message: hasRun && liveTerminals ? "The session is running and the terminals will close." : hasRun ? "This session is still running." : "Terminals may have work in progress.",
       detail: hasRun && liveTerminals
         ? "The session run will continue, but the terminals will stop when this window closes."
         : hasRun
@@ -418,7 +419,7 @@ const mainWindowRuntime = new MainWindowRuntime({
           : "The terminals will stop when this window closes.",
       noLink: true,
     });
-    return choice === 1;
+    return choice.response === 1;
   },
   persistSnapshotError: (error) => {
     writeAppLog({
@@ -444,16 +445,17 @@ terminalService = new TerminalService<BrowserWindow>({
     const session = getSession(sessionId);
     return session ? { window, sessionId, workspacePath: session.workspacePath } : null;
   },
-  confirmClose: (window) => dialog.showMessageBoxSync(window, {
+  confirmClose: async (window, signal) => (await dialog.showMessageBox(window, {
+    signal,
     type: "warning",
     buttons: ["Keep Open", "Close Terminal"],
     defaultId: 0,
     cancelId: 0,
     title: "Close Terminal",
-    message: "This terminal is still running.",
+    message: "This terminal may have work in progress.",
     detail: "Closing it will stop the shell and any processes it started.",
     noLink: true,
-  }) === 1,
+  })).response === 1,
   sendEvent: (window, event) => window.webContents.send(WITHMATE_TERMINAL_EVENT, event),
   spawn: spawnTerminalPty,
   resolveShell: resolveTerminalShell,

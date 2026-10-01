@@ -29,11 +29,11 @@ export type MainWindowRuntimeDeps = {
   readSession(sessionId: string): Awaitable<Session | null>;
   getSettingsCatalog(): SettingsCatalogPort;
   isSessionRunInFlight(sessionId: string): boolean;
-  getLiveTerminalCount?(window: BrowserWindow): number;
+  getTerminalCloseConfirmationCount?(window: BrowserWindow): number;
   cancelInFlightSessionRuns(): void;
   waitForPendingDraftSends(): Promise<boolean>;
   onSessionWindowClosed?(sessionId: string): void;
-  confirmCloseWhileRunning(window: BrowserWindow, sessionId: string): boolean;
+  confirmCloseWhileRunning(window: BrowserWindow, sessionId: string, signal: AbortSignal): boolean | Promise<boolean>;
   persistSnapshotError(error: unknown): void;
 };
 
@@ -119,7 +119,7 @@ export class MainWindowRuntime {
       waitForPendingDraftSends: deps.waitForPendingDraftSends,
       getSession: deps.getSession,
       isRunInFlight: deps.isSessionRunInFlight,
-      getLiveTerminalCount: deps.getLiveTerminalCount,
+      getTerminalCloseConfirmationCount: deps.getTerminalCloseConfirmationCount,
       onSessionWindowClosed: deps.onSessionWindowClosed,
       confirmCloseWhileRunning: deps.confirmCloseWhileRunning,
       broadcastOpenSessionWindowIds: (sessionIds) => this.windowBroadcastService.broadcastOpenSessionWindowIds(sessionIds),

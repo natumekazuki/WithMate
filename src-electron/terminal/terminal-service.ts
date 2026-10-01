@@ -22,7 +22,7 @@ export type TerminalOwner = {
 
 export type TerminalServiceDeps<TWindow extends TerminalOwner> = {
   resolveOwner(sender: unknown): { window: TWindow; sessionId: string; workspacePath: string } | null;
-  confirmClose(window: TWindow): boolean;
+  confirmClose(window: TWindow, signal: AbortSignal): Promise<boolean>;
   sendEvent(window: TWindow, event: TerminalEvent): void;
   spawn(file: string, cwd: string, cols: number, rows: number, signal: AbortSignal): Promise<TerminalPty>;
   resolveShell(): Promise<CreateTerminalResult & { file: string }>;
@@ -38,6 +38,7 @@ type TerminalEntry<TWindow extends TerminalOwner> = {
   startAbort: AbortController;
   pendingCharacters: number;
   paused: boolean;
+  closing: Promise<boolean> | null;
 };
 
 export class TerminalService<TWindow extends TerminalOwner> {
@@ -61,6 +62,7 @@ export class TerminalService<TWindow extends TerminalOwner> {
       phase: "starting",
       pendingCharacters: 0,
       paused: false,
+      closing: null,
       subscriptions: [],
       startAbort: new AbortController(),
     };
@@ -117,12 +119,25 @@ export class TerminalService<TWindow extends TerminalOwner> {
     }
   }
 
-  close(sender: unknown, terminalId: string): boolean {
+  async close(sender: unknown, terminalId: string): Promise<boolean> {
     const entry = this.findEntry(sender, terminalId);
     if (!entry) return true;
-    if ((entry.phase === "running" || entry.phase === "starting") && !this.deps.confirmClose(entry.window)) return false;
+    if (entry.closing) return entry.closing;
+    const closing = this.closeEntry(entry);
+    entry.closing = closing;
+    try { return await closing; }
+    finally { entry.closing = null; }
+  }
+
+  private async closeEntry(entry: TerminalEntry<TWindow>): Promise<boolean> {
+    if (this.requiresCloseConfirmation(entry) && !await this.deps.confirmClose(entry.window, entry.startAbort.signal)) return false;
     this.releaseEntry(entry);
     return true;
+  }
+
+  private requiresCloseConfirmation(entry: TerminalEntry<TWindow>): boolean {
+    return entry.phase === "starting"
+      || (entry.phase === "running" && entry.pty?.getActivity() !== "idle");
   }
 
   release(sender: unknown, terminalId: string): void {
@@ -159,6 +174,14 @@ export class TerminalService<TWindow extends TerminalOwner> {
     let count = 0;
     for (const entry of this.terminals.values()) {
       if (entry.window === window && (entry.phase === "starting" || entry.phase === "running")) count++;
+    }
+    return count;
+  }
+
+  countRequiringCloseConfirmation(window: TWindow): number {
+    let count = 0;
+    for (const entry of this.terminals.values()) {
+      if (entry.window === window && this.requiresCloseConfirmation(entry)) count++;
     }
     return count;
   }
