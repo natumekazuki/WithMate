@@ -132,7 +132,7 @@ node-ptyはタブごとのElectron utility process内で起動要求時にload�
 
 出力は専用eventからxtermの`write`へ渡し、その完了callbackで処理済み文字数を返す。PTYは未処理量のhigh/low watermarkでpause/resumeする。非選択・折りたたみ中も受信と処理を継続し、本文をReact state、Session保存、Audit Log、Memory、診断ログへ複製しない。端末の履歴はxtermのscrollback上限に従う。
 
-タブ終了、Window破棄、renderer終了・document navigation、Session削除、アプリ終了でownerのPTYと購読を解放する。起動待機中に解放された要求は、後からspawnが完了してもPTYを残さない。Window close時は生存端末の終了を一括確認し、AI実行中なら既存のWindowを閉じても実行を継続する確認へまとめる。
+タブ終了、Window破棄、renderer終了・document navigation、Session削除、アプリ終了でownerのPTYと購読を解放する。起動待機中に解放された要求は、後からspawnが完了してもPTYを残さない。Window close時も個別タブと同じ判定で、実行中・起動中・判別不能な端末があれば終了を非同期で一括確認する。入力待ち・終了済み端末だけなら端末理由の確認は省略し、AI実行中ならWindowを閉じても実行を継続する確認へまとめる。確認待ちの重複closeを抑止し、承認後も既存のdraft flushを待つ。確認結果は元のWindow identityへ限定する。
 
 ## URL Resolution
 

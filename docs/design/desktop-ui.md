@@ -275,7 +275,9 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - FitAddonの提案寸法をnative座標の上限32,767列・行までxtermへ適用し、同じ寸法をPTYへ渡す。Mainは正の整数と上限を検証する。IPC操作の拒否は端末内のエラー表示に留め、生存PTYの入力・resizeを維持する。PTY自体の障害は`Failed`として入力を停止する
   - 1タブにつき独立したxtermとPTYを持ち、親SessionのWorkspaceから起動する。Main／Auxiliaryの切り替えは端末の選択・cwd・processへ影響しない
   - dock内の1段タブバーはタブ部分だけ横scrollし、右端の`New Terminal`は固定する。選択タブ、終了ボタン、新規追加へkeyboardで到達でき、端末本文から`Ctrl+Shift+Tab`でタブへfocusを戻せる
-  - 表示の折りたたみ・Promptへの切り替え・タブ切り替えではprocessを維持する。`Close Terminal`は生存中の終了を確認し、取消では維持する。最後のタブを閉じると共有パネルを畳み、自動再起動しない。自然終了は`Exited`と終了結果、失敗は`Failed`と理由を表示し、出力を残す
+  - 表示の折りたたみ・Promptへの切り替え・タブ切り替えではprocessを維持する。`Close Terminal`は入力待ちと確認できた端末と終了済み端末を確認なしで閉じ、実行中・起動中・判別不能の場合は終了を確認する。確認は非同期で、Mainのイベント処理・AI更新・他端末の進行を待たせない。同じ端末の重複要求は一つの確認を共有し、取消では維持し、承認では対象の端末だけを閉じる。確認中の自然終了・owner破棄・起動完了は元の端末identityで扱う。最後のタブを閉じると共有パネルを畳み、自動再起動しない。自然終了は`Exited`と終了結果、失敗は`Failed`と理由を表示し、出力を残す
+  - 入力待ち検出はWindows PowerShellの`PSConsoleHostReadLine`を保持して包み、入力待ちへ入る時の未完了Job、同じconsoleのprocess、接続前も含む直下の子processを調べる。通常のトップレベルでこれらの作業がなく、read-line中の`PowerShell.OnIdle`で編集bufferが空かつconsoleに入力が残っていないと確認できた場合だけidleとする。read-line開始時点では貼付けの後続キーが残るためunknownとし、複数行・分割貼付けの未確定行や、処理を中断しているnested promptは確認する。PSReadLineの待機通知前に閉じる場合も確認する。単独のfocus-in/out通知はPTYへ転送しつつ状態を維持し、終了ボタンへのfocus移動だけでは確認を増やさない。実入力やfocus通知と混在した入力を送る時点でidleを失効させ、read-lineから戻った通知を挟まずに届いたidle通知は受理しない。コマンド名・プロンプト文字列・出力の静止時間では推測しない。通知は端末ごとに区別して出力から除き、分割された通知や終了時の未完出力も扱う。zsh、検出を使えないPowerShell、調査失敗、入力編集中は判別不能として確認する。Job・processの検出は入力待ちへ入る時点の状態であり、独立したprocessや入力待ち中に別経路で新たに始まる処理まで保証しない
+  - Session Window全体を閉じる時も同じ端末判定を使い、入力待ち・終了済み端末だけなら端末理由の確認を省略する。実行中・起動中・判別不能な端末があれば非同期で一括確認し、AI実行中ならWindowを閉じてもAI実行を継続する確認へまとめる。同じWindowの確認は重複させず、取消では維持し、承認後も下書きの保存完了を待ってからownerの端末を解放する。破棄済みWindowへの遅い承認を再作成したWindowへ適用しない
   - 入力はAI実行と独立し、端末scopeではPrompt／Terminal切替だけをアプリshortcutとして扱い、会話のshortcutを発火させない。`Ctrl+C`は端末の文字選択があればその文字をコピーしてシェルへ送らず、選択がなければシェルへ渡す。`Escape`はシェルへ渡し、`Ctrl+Shift+C/V`はコピー／貼り付け、macOSの標準コピー／貼り付けはOS/xtermに従う
   - ローカルシェルはアプリのOS権限で動き、Providerのapproval／sandboxとは独立する。Workspaceは開始cwdであってアクセス制限ではない
 - `Top Bar`

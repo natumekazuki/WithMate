@@ -27,11 +27,13 @@ class StubWindow implements TerminalOwner {
 
 const TERMINAL_ID = "87263983-5b1d-4b5d-8f08-2b04899dbb8d";
 
-function setup() {
+function setup(confirmClose?: () => Promise<boolean>) {
   const window = new StubWindow();
   const other = new StubWindow();
   other.id = 2;
   const pty = {
+    activity: "unknown" as "unknown" | "idle" | "busy",
+    getActivity() { return this.activity; },
     writes: [] as string[],
     resizes: [] as Array<[number, number]>,
     kills: 0,
@@ -57,7 +59,7 @@ function setup() {
       if (sender === "other") return { window: other, sessionId: "session-b", workspacePath: "C:/other" };
       return null;
     },
-    confirmClose: () => confirm,
+    confirmClose: confirmClose ?? (async () => confirm),
     sendEvent: (owner, event) => owner.webContents.send("terminal", event),
     spawn: async (_file, cwd, cols, rows) => {
       assert.equal(cwd, "C:/saved path ");
@@ -70,6 +72,144 @@ function setup() {
 }
 
 describe("TerminalService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Window終了の確認対象はそのownerの起動中・実行中・判別不能の端末だけで、入力待ちと終了済みは含めない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
+  // fault = "生存端末を一律集計して入力待ちでも警告するか、他Windowの端末を集計するか、起動中の端末を見落とす"
+  // observable = "spawn前後・activity変化・自然終了前後のowner別確認対象数と生存数"
+  // observation_boundary = "component-behavior"
+  // scope = "Terminal Session Window close confirmation policy"
+  // lifecycle = "permanent"
+  // impact = "Session Window終了で不要な確認が続く、または作業が確認なしで終了する"
+  // distinction = "個別closeのtestは複数owner向けWindow集計を通らず、型検査でもactivity別集計を保証できない"
+  // @end-test-value
+  it("counts only the owning Window's terminals requiring confirmation", async () => {
+    const { service, pty, window, other } = setup();
+    const creating = service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    assert.equal(service.countRequiringCloseConfirmation(window), 1);
+    assert.equal(service.countRequiringCloseConfirmation(other), 0);
+    await creating;
+    for (const activity of ["idle", "busy", "unknown"] as const) {
+      pty.activity = activity;
+      assert.equal(service.countLive(window), 1);
+      assert.equal(service.countRequiringCloseConfirmation(window), activity === "idle" ? 0 : 1);
+      assert.equal(service.countRequiringCloseConfirmation(other), 0);
+    }
+    pty.exit({ exitCode: 0 });
+    assert.equal(service.countRequiringCloseConfirmation(window), 0);
+    assert.equal(service.countLive(window), 0);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "入力待ちと確認できたPTYだけ確認を省略し、実行中・判別不能では取消によって保持する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
+  // fault = "シェル生存だけで全端末へ警告するか、判別不能を安全とみなして終了する"
+  // observable = "close戻り値、確認回数、PTY kill件数、live数"
+  // observation_boundary = "component-behavior"
+  // scope = "Terminal close activity policy"
+  // lifecycle = "permanent"
+  // impact = "不要な警告の常態化または利用者の実行中作業の消失"
+  // distinction = "型検査は状態別の確認判断を保証せず、3状態の小さな実行で分岐を直接検証する"
+  // @end-test-value
+  it("only skips confirmation for a known idle shell", async () => {
+    for (const activity of ["idle", "busy", "unknown"] as const) {
+      let confirmations = 0;
+      const { service, pty, window } = setup(async () => { confirmations++; return false; });
+      await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+      pty.activity = activity;
+      const idle = activity === "idle";
+      assert.equal(await service.close("owner", TERMINAL_ID), idle);
+      assert.equal(confirmations, idle ? 0 : 1);
+      assert.equal(pty.kills, idle ? 1 : 0);
+      assert.equal(service.countLive(window), idle ? 0 : 1);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "同じ端末の非同期確認を共有し、確認待ちでもPTYイベントを配送して取消後も入力できる"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
+  // fault = "確認中にイベントを保留するか、重複closeで別の確認を開くか、取消でPTYを停止する"
+  // observable = "確認回数、未解決close中のdata event、取消戻り値、PTY入力とkill件数"
+  // observation_boundary = "component-behavior"
+  // scope = "Terminal asynchronous close cancellation"
+  // lifecycle = "permanent"
+  // impact = "終了確認中に端末出力が止まるか、取消しても作業を失う"
+  // distinction = "実ダイアログの応答性は実機で別途確認し、この低コストtestはserviceの保留と取消を決定論的に検証する"
+  // @end-test-value
+  it("shares a pending confirmation while continuing terminal events and preserves cancellation", async () => {
+    let answer!: (close: boolean) => void;
+    let confirmations = 0;
+    const { service, pty, window } = setup(() => {
+      confirmations++;
+      return new Promise<boolean>((resolve) => { answer = resolve; });
+    });
+    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    const first = service.close("owner", TERMINAL_ID);
+    const second = service.close("owner", TERMINAL_ID);
+    pty.data("while confirming");
+    assert.deepEqual(window.events, [{ type: "data", terminalId: TERMINAL_ID, data: "while confirming" }]);
+    assert.equal(confirmations, 1);
+    assert.equal(pty.kills, 0);
+    answer(false);
+    assert.deepEqual(await Promise.all([first, second]), [false, false]);
+    service.write("owner", TERMINAL_ID, "still usable");
+    assert.deepEqual(pty.writes, ["still usable"]);
+    assert.equal(service.countLive(window), 1);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "確認中に解放された端末の遅延承認は同じIDで再作成された端末を終了しない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
+  // fault = "確認完了時に古いentryではなくIDだけで現端末をkillする"
+  // observable = "解放と遅延承認前後のkill件数、再作成後のlive数と入力"
+  // observation_boundary = "component-behavior"
+  // scope = "Terminal close identity race"
+  // lifecycle = "permanent"
+  // impact = "別の新しい端末の作業を誤って終了する"
+  // distinction = "通常の取消testと型検査はawaitを跨ぐ端末identityを保証しない"
+  // @end-test-value
+  it("does not release a replacement terminal after an old confirmation resolves", async () => {
+    let answer!: (close: boolean) => void;
+    const { service, pty, window } = setup(() => new Promise<boolean>((resolve) => { answer = resolve; }));
+    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    const closing = service.close("owner", TERMINAL_ID);
+    service.release("owner", TERMINAL_ID);
+    assert.equal(pty.kills, 1);
+    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    answer(true);
+    assert.equal(await closing, true);
+    assert.equal(pty.kills, 1);
+    assert.equal(service.countLive(window), 1);
+    service.write("owner", TERMINAL_ID, "replacement");
+    assert.deepEqual(pty.writes, ["replacement"]);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "非同期確認中の自然終了は出力と終了結果を保ち、承認時に終了済みPTYを再killしない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
+  // fault = "await前のPTYを保持して自然終了後にもkillするかexit eventを配送しない"
+  // observable = "確認中のexit event、close戻り値とPTY kill件数"
+  // observation_boundary = "component-behavior"
+  // scope = "Terminal close natural exit race"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("handles natural exit while a confirmation is pending", async () => {
+    let answer!: (close: boolean) => void;
+    const { service, pty, window } = setup(() => new Promise<boolean>((resolve) => { answer = resolve; }));
+    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    const closing = service.close("owner", TERMINAL_ID);
+    pty.exit({ exitCode: 0 });
+    assert.deepEqual(window.events, [{ type: "exit", terminalId: TERMINAL_ID, exitCode: 0 }]);
+    answer(true);
+    assert.equal(await closing, true);
+    assert.equal(pty.kills, 0);
+  });
+
   // @test-value v2
   // kind = "contract"
   // claim = "通常fitの大きな寸法はcreateとresizeでPTYへ渡り、native整数範囲外の寸法は生存PTYを保持して拒否する"
@@ -147,7 +287,7 @@ describe("TerminalService", () => {
     await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
     assert.throws(() => service.write("other", TERMINAL_ID, "bad"));
     assert.throws(() => service.resize("other", TERMINAL_ID, 100, 30));
-    assert.throws(() => service.close("other", TERMINAL_ID));
+    await assert.rejects(service.close("other", TERMINAL_ID));
     assert.throws(() => service.release("other", TERMINAL_ID));
     assert.deepEqual(pty.writes, []);
     assert.deepEqual(pty.resizes, []);
@@ -169,7 +309,7 @@ describe("TerminalService", () => {
   it("keeps a cancelled close and releases the PTY when its renderer is destroyed", async () => {
     const { service, pty, window } = setup();
     await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
-    assert.equal(service.close("owner", TERMINAL_ID), false);
+    assert.equal(await service.close("owner", TERMINAL_ID), false);
     assert.equal(service.countLive(window), 1);
     assert.equal(pty.kills, 0);
     window.destroyed = true;
@@ -217,7 +357,7 @@ describe("TerminalService", () => {
     let finishSpawn!: (value: TerminalPty) => void;
     const service = new TerminalService({
       resolveOwner: (sender) => sender === "owner" ? { window, sessionId: "a", workspacePath: "C:/saved path " } : null,
-      confirmClose: () => true,
+      confirmClose: async () => true,
       sendEvent: (owner, event) => owner.webContents.send("terminal", event),
       resolveShell: async () => ({ file: "C:/Windows/powershell.exe", shellName: "PowerShell" }),
       spawn: () => new Promise<TerminalPty>((resolve) => { finishSpawn = resolve; }),
@@ -253,7 +393,7 @@ describe("TerminalService", () => {
       spawn: async () => { throw new Error("must not spawn"); },
     });
     await assert.rejects(service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 }), /shell missing/);
-    assert.equal(service.close("owner", TERMINAL_ID), true);
+    assert.equal(await service.close("owner", TERMINAL_ID), true);
   });
 
   // @test-value v2
@@ -277,6 +417,6 @@ describe("TerminalService", () => {
       message: "Terminal host exited unexpectedly (code 1).",
     }]);
     assert.equal(service.countLive(window), 0);
-    assert.equal(service.close("owner", TERMINAL_ID), true);
+    assert.equal(await service.close("owner", TERMINAL_ID), true);
   });
 });

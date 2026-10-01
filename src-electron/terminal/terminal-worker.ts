@@ -1,6 +1,7 @@
 import type { ParentPort } from "electron";
 import type { IPty } from "node-pty";
 import type { TerminalWorkerCommand, TerminalWorkerEvent } from "./terminal-worker-protocol.js";
+import { createPowerShellActivityIntegration, TerminalActivityParser } from "./terminal-activity.js";
 
 let terminal: IPty | null = null;
 let stopping = false;
@@ -17,7 +18,9 @@ parentPort.on("message", async ({ data }: { data: TerminalWorkerCommand }) => {
     try {
       const pty = await import("node-pty");
       if (stopping) return;
-      const started = pty.spawn(data.file, [], {
+      const integration = process.platform === "win32" ? createPowerShellActivityIntegration() : null;
+      const parser = integration ? new TerminalActivityParser(integration.marker, (activity) => send({ type: "activity", activity })) : null;
+      const started = pty.spawn(data.file, integration?.args ?? [], {
         cwd: data.cwd,
         cols: data.cols,
         rows: data.rows,
@@ -25,8 +28,13 @@ parentPort.on("message", async ({ data }: { data: TerminalWorkerCommand }) => {
       });
       if (stopping) { started.kill(); return; }
       terminal = started;
-      started.onData((value) => send({ type: "data", data: value }));
+      started.onData((value) => {
+        const output = parser ? parser.push(value) : value;
+        if (output) send({ type: "data", data: output });
+      });
       started.onExit(({ exitCode, signal }) => {
+        const remaining = parser?.flush();
+        if (remaining) send({ type: "data", data: remaining });
         terminal = null;
         send({ type: "terminal-exit", exitCode, ...(signal === undefined ? {} : { signal }) });
         setTimeout(() => process.exit(0), 250);
