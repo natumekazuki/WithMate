@@ -67,6 +67,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.4.1",
     "@types/proper-lockfile": "^4.1.4",
@@ -103,6 +104,7 @@
       "!node_modules/@github/copilot-linux-*/**"
     ],
     "asar": true,
+    "beforePack": "./scripts/build/before-pack.mjs",
     "asarUnpack": ["node_modules/node-pty/prebuilds/**"],
     "extraResources": [
       {

@@ -53,7 +53,9 @@ WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packaging�
   - `package.json`
 - provider native package 本体は `files` の除外規則で app bundle 側から外し、`resources/provider-binaries/` 側だけを runtime の正本にする
 - `asar` は有効化する
-- `node-pty`のprebuildsとConPTY付随ファイルは`asarUnpack`でASAR外へ配置する。native moduleはelectron-builderの既定rebuildを利用し、Windowsでsource buildする環境にはMSVCのSpectre-mitigated librariesを用意する。
+- `node-pty`のprebuildsとConPTY付随ファイルは`asarUnpack`でASAR外へ配置する。
+- Windowsでは`beforePack` hookがtarget architectureの`node-pty`同梱prebuildと付随DLL／実行ファイルを確認し、`node-pty`だけを`@electron/rebuild`の対象から除外する。欠損・空ファイル時はpackagingを失敗させ、source buildへ自動fallbackしない。他のproduction／optional native依存はrebuild対象を維持する。処理後は`npmRebuild`だけを無効にし、electron-builderによるproduction依存の収集・同梱は維持する。
+- Windows artifactから`node-pty/build/`を除外し、ローカルのsource build結果より同梱prebuildが利用されるようにする。Windows以外はelectron-builderの既定rebuildを利用する。
 - provider native package は `scripts/build/stage-provider-binaries.ts` で `build/provider-binaries/` へ stage し、`extraResources` で `resources/provider-binaries/` 配下へ配布する
 - packaged runtime の binary path 解決は `src-electron/providers/provider-binary-paths.ts` を正本にする
 - `Codex` は `codexPathOverride` で staged binary を明示し、`Copilot` は `cliPath` に staged binary を渡す
