@@ -23,9 +23,9 @@ export const IMAGE_ZOOM_MIN = 10;
 export const IMAGE_ZOOM_MAX = 800;
 export const IMAGE_ZOOM_STEP = 10;
 
-function stepImageZoom(zoom: number, direction: -1 | 1): number {
-  if (direction < 0) return zoom <= IMAGE_ZOOM_MIN ? zoom : Math.max(IMAGE_ZOOM_MIN, zoom - IMAGE_ZOOM_STEP);
-  return zoom >= IMAGE_ZOOM_MAX ? zoom : Math.min(IMAGE_ZOOM_MAX, zoom + IMAGE_ZOOM_STEP);
+function stepImageZoom(zoom: number, direction: -1 | 1, step = IMAGE_ZOOM_STEP): number {
+  if (direction < 0) return zoom <= IMAGE_ZOOM_MIN ? zoom : Math.max(IMAGE_ZOOM_MIN, zoom - step);
+  return zoom >= IMAGE_ZOOM_MAX ? zoom : Math.min(IMAGE_ZOOM_MAX, Math.max(IMAGE_ZOOM_MIN, zoom + step));
 }
 
 export function useCtrlWheelZoom(
@@ -42,7 +42,7 @@ export function useCtrlWheelZoom(
       event.stopPropagation();
       setZoom((currentZoom) => {
         const effectiveZoom = typeof currentZoom === "number" ? currentZoom : fitZoom;
-        const nextZoom = stepImageZoom(effectiveZoom, event.deltaY < 0 ? 1 : -1);
+        const nextZoom = stepImageZoom(effectiveZoom, event.deltaY < 0 ? 1 : -1, 1);
         return nextZoom === effectiveZoom ? currentZoom : nextZoom;
       });
     };
