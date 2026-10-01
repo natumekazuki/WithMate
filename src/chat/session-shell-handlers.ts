@@ -340,7 +340,7 @@ export function applySkillPromptInsertionCommand(input: {
   input.restoreComposerTextareaFocusAndCaret(input.textarea, input.state.caret);
 }
 
-export function createSkillPromptInsertionHandler<TSkill extends { name: string }>(input: {
+export function createSkillPromptInsertionHandler<TSkill extends { name: string; sourcePath?: string }>(input: {
   getProvider: () => string | null | undefined;
   getDraft: () => string;
   getTextarea: () => HTMLTextAreaElement | null;
@@ -359,7 +359,7 @@ export function createSkillPromptInsertionHandler<TSkill extends { name: string 
       return;
     }
 
-    const nextState = buildSkillPromptInsertionState(provider, skill.name, input.getDraft());
+    const nextState = buildSkillPromptInsertionState(provider, skill.name, input.getDraft(), skill.sourcePath);
     applySkillPromptInsertionCommand({
       state: nextState,
       textarea: input.getTextarea(),

@@ -226,6 +226,7 @@ describe("SessionRuntimeService", () => {
     const facade = new MainProviderFacade({
       codexAdapter: adapter,
       copilotAdapter: adapter,
+      claudeAdapter: adapter,
       getModelCatalog: () => catalog,
       ensureModelCatalogSeeded: () => catalog,
     });

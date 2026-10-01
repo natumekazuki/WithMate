@@ -351,6 +351,11 @@ export function HomeSettingsContent({
                           onChange={(event) => onChangeProviderEnabled(provider.id, event.target.checked)}
                         />
                       </label>
+                      {provider.id === "claude" ? (
+                        <p className="settings-help">
+                          Uses local Claude Code authentication and billing settings. Sign in with the official CLI before starting a session.
+                        </p>
+                      ) : null}
                       <div className="settings-provider-file-settings">
                         <div>
                           <strong>{SETTINGS_PROVIDER_FILE_SETTINGS_LABEL}</strong>

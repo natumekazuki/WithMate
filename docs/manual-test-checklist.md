@@ -201,12 +201,12 @@ npm run electron:start
 | MT-058A | MonitorWindow open | Home の `MonitorWindow` icon を押す | 細く縦長の `Session Monitor Window` が開き、Home とは独立した window として表示される |
 | MT-058B | Monitor Window always-on-top | `Session Monitor Window` を開いたまま別の通常 window を前面に出す | monitor window が最前面を維持し、`Home` button を押すと通常の `Home Window` を前面へ戻せる |
 | MT-058C | Monitor Window content parity | open な Session Windowを増減しながら `Session Monitor Window` を確認し、親card groupを複数展開する。各親に6件以上のAuxiliaryを用意する。Running／Stoppedの件数差と片側0件も確認する | Home 右ペインの `Monitor` と同じtruth sourceで追従し、`Running` / `Stopped` の2 sectionを常に5:5で表示する。親ごとの独立展開、実行中先頭・最終使用順のAuxiliary表示、約5行の親内スクロール、親／Auxiliaryの個別openが維持される。closed Auxiliaryは待機と混同されず、読み込み中・失敗時はAuxiliaryなしの親へ誤ったAux表示を出さない |
-| MT-059 | NewSession runtime option inheritance | ある provider の会話で model / depth / approval / sandbox / Reviewer / Speed と、利用できる場合は custom agent を変更する。Home を再読込せずに同じ provider で新規 Session を作成し、続けて Session 履歴がない別 provider でも作成する | 同じ provider の新規 Session はMain Processに受理された現在選択を引き継ぐ。現在選択がなければ保存済みの直近 Session を参照する。どちらもない provider では model / depth は provider default、approval は `untrusted`（UI 表示は`Safety Focused`）、sandbox は `workspace-write`、Reviewerは`User`、Speedは`Standard`、custom agent は未選択になる |
+| MT-059 | NewSession runtime option inheritance | ある provider の会話で model / depth / approval / sandbox / Reviewer / Speed と、利用できる場合は custom agent を変更する。Home を再読込せずに同じ provider で新規 Session を作成し、続けて Session 履歴がない別 provider でも作成する | 同じ provider の新規 Session はMain Processに受理された現在選択を引き継ぐ。現在選択がなければ保存済みの直近 Session を参照する。どちらもない provider では model / depth は provider default、approval はClaudeが `on-request`（`Provider Controlled`）、その他は `untrusted`（`Safety Focused`）、sandbox は `workspace-write`、Reviewerは`User`、Speedは`Standard`、custom agent は未選択になる |
 | MT-059C | Runtime selection serialization | SessionFolderを使うNew Sessionの作成を開始し、folder準備中にSettings保存、model catalog import、またはmodel catalogを含むDB resetを実行する。逆にDB reset完了後からNew Session作成も行う | folder準備はSettings操作を広域排他で待たせない。保存前にprovider / catalog / 7項目とstorage ownerを再検証し、準備中の変更をまたいだ作成は拒否する。DB reset前からの試行を新DBへ付け替えず、reset完了後に開始した作成だけが新DBへ保存される |
 | MT-060 | provider-neutral approval UI | Session Window の composer approval chip、artifact `Run checks`、`Audit log` overlay を見比べる | approval がすべて `Auto Run / Provider Controlled / Safety Focused` の provider-neutral wording で揃う |
 | MT-061 | legacy approval normalize | legacy DB または既存 row に `never / untrusted / on-request` を含む session / audit log を読み込む | raw IDは保持したまま、session approval chip、Audit Log、artifact `Run checks` の表示が `Auto Run / Provider Controlled / Safety Focused` へ揃う |
 | MT-062 | Settings provider empty state | provider 0 件または `Model Catalog` 読み込み失敗の状態で `Settings Window` を開く | `Coding Agent Providers` section は消えず、provider 0 件の通常本文は表示しない。catalog 読み込み失敗などの実エラーは識別でき、復旧操作へ到達できる |
-| MT-063 | Skill picker と挿入 | Session Window の composer 上部にある `Skill` を開き、候補を選ぶ | skill 候補が dropdown で表示され、選択すると Codex では `$skill-name`、Copilot では skill directive が composer 先頭へ挿入される |
+| MT-063 | Skill picker と挿入 | Session Window の composer 上部にある `Skill` を開き、候補を選ぶ | skill 候補が dropdown で表示され、選択すると Codex では `$skill-name`、Copilot ではskill名のdirective、Claudeでは選択元の`SKILL.md` path付きdirectiveが composer 先頭へ挿入される |
 | MT-064 | Skill picker empty state | skill が 0 件の session で `Skill` を開く | 通常の空状態本文は表示せず、picker と textarea の通常入力や送信導線は固まらない |
 | MT-064A | navigation / dismiss / window close の意味対応 | Session Window で Template、file preview、live Git Diff を順に開き、Skill 候補を keyboard で開閉する。detached file preview から live Git Diff も開き、chat artifact の Diff Window も確認する | 中央 surface と detached live Git Diff は左向き icon-only control で一段前へ戻り、hover / accessibility tree では戻り先を区別できる。Skill 候補は右上の × と `Escape` で dismiss でき、focus が trigger へ戻る。独立 File Preview と snapshot Diff に app 内 Close はなく native window chrome で閉じられる |
 | MT-064B | dismiss / Character Editor close | New Session、Auxiliary起動、Audit Logを開いてClose controlの有無と backdrop click / `Escape` を確認する。新規 Character Editor で編集後、native window chrome の × を押し、確認をキャンセルしてから再度破棄する | New Sessionは常設Closeを置かず`Cancel`で閉じ、backdrop / `Escape`では閉じない。Auxiliary起動とAudit Logは常設Closeを置かず、backdrop / `Escape`で閉じる。Character Editor に app 内 Close はなく、dirty な native close では入れ子cardのない破棄確認が見え、キャンセル時は内容を保持し、破棄時だけ Window が閉じる |
@@ -218,6 +218,17 @@ npm run electron:start
 | MT-068A | Windows notification stale / fallback | 同じ Session で成功通知と error 通知を連続して発生させ、置き換え前の通知が操作可能なら古い通知と最新通知を順にクリックする。対象 Session Window が focus 中の error 終端と利用者 cancel も確認する。続けて通知後に対象 Session を削除する場合と、開く処理を失敗させる開発用条件を確認する | outcome が変わっても古い通知や同じ通知の多重activationはSessionを再openせず、最新通知の最初のactivationだけが対象を開く。対象 Session Window が focus 中の終端と利用者 cancel では通知しない。削除済みまたはopen失敗ではHomeが表示・focusされ、失敗が記録される |
 | MT-069 | Auxiliary processing indicator | Auxiliaryを3件以上用意して一覧を開き、表示中・非表示のAuxiliaryをそれぞれ実行する。実行中に一覧を開閉し、狭い幅と`prefers-reduced-motion`でも確認する | 実行中の行だけicon内に小さなprocessing indicatorが表示され、previewは既存の最大2行表示を維持し、indicator追加で行の高さとpreviewの幅は変わらない。待機中の行にindicatorは出ず、一覧を閉じても実行は継続する。reduced motionではindicatorが回転しない |
 
+
+## Claude Agent
+
+Claudeの追加確認は、検証用user dataとworkspaceを使い、本人の公式CLIログイン後に行う。
+
+- SettingsでClaude Agentを有効化し、Opus 5.5・depth・Provider Controlledを選べること、Codex専用sandbox等を表示しないことを確認する。
+- MainとAuxiliaryで個別に実行・再開し、会話IDと本文が混線せず、streamと確定本文が重複しないことを確認する。Character / Affect更新後は最新のsystem appendが反映されることを確認する。
+- AskUserQuestionで候補・自由入力・複数選択を回答し、拒否と質問待ちの取消も確認する。Write等の承認ではAllow Once / Rejectが実結果へ反映され、承認待ち取消後に書込みや遅着成功を確定しないことを確認する。
+- 設定済みMCP、repositoryのCLAUDE.md、native Skillと選択した別rootのSkillを使い、既存設定・認証を変更せず読めることを確認する。
+- Backgroundの構造化応答と、managed設定がある場合の実行前拒否を確認する。書込み・shell・MCP・承認待ちを起動せず、失敗を空の成功として扱わないことを確認する。
+- 配布物でも公式同梱runtimeで実行・再開・取消できること、SDK transcriptとWithMateの履歴が別であることを確認する。quota未取得をゼロと表示せず、API換算額を実請求額として表示しないことを確認する。
 
 ## Composer 入力性能の測定
 

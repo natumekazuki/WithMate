@@ -1,4 +1,5 @@
-import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../../src-shared/settings/approval-mode.js";
+import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
+import { getDefaultApprovalModeForProvider } from "../../src-shared/settings/provider-runtime-options.js";
 import {
   DEFAULT_CODEX_SANDBOX_MODE,
   type CodexSandboxMode,
@@ -91,7 +92,7 @@ export class SessionLaunchSelectionService {
       catalogRevision: snapshot.revision,
       model: modelSelection.resolvedModel,
       reasoningEffort: modelSelection.resolvedReasoningEffort,
-      approvalMode: latestSession?.approvalMode ?? DEFAULT_APPROVAL_MODE,
+      approvalMode: latestSession?.approvalMode ?? getDefaultApprovalModeForProvider(provider.id),
       codexSandboxMode: latestSession?.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
       codexSpeed: latestSession?.codexSpeed ?? DEFAULT_CODEX_SPEED,
       codexReviewer: latestSession?.codexReviewer ?? DEFAULT_CODEX_REVIEWER,

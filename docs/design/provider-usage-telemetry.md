@@ -8,6 +8,8 @@ providerのquotaはapp全体、context usageはSessionごとの一時的な観�
 
 Session WindowはCopilotの`Premium Requests`残量をcompactに示し、詳細でused／entitlement／resetを読めるようにする。`Context`は必要時に開き、token limit、current tokens、message数を確認する。まだ値がないときは利用不可として表示し、値を推測しない。表示の配置は[Desktop UI](desktop-ui.md)に従う。
 
-## Codexと境界
+## Codex・Claudeと境界
 
-現行`CodexAdapter.getProviderQuotaTelemetry()`は`null`を返す。quota残量やreset時刻をCopilotの値から推測せず、Codexのturn usageはprovider結果とAudit Logで扱う。providerごとの取得・実行責務は[Provider Adapter](provider-adapter.md)を参照する。
+`CodexAdapter.getProviderQuotaTelemetry()`と`ClaudeAdapter.getProviderQuotaTelemetry()`は`null`を返す。quota残量やreset時刻をCopilotの値から推測せず、各providerのturn usageはprovider結果とAudit Logで扱う。Claude SDKのAPI換算額は本人契約の実請求額として表示しない。Main・Auxiliary・Backgroundは同じClaude認証と課金設定を使い、補助処理も利用枠を消費する。providerごとの取得・実行責務は[Provider Adapter](provider-adapter.md)を参照する。
+
+Claudeの新規sessionはSDKのmodel別usageを合計する。resumeではmodel別usageが過去turnを含む累積になるため、当該turnのmain loopに限った`result.usage`を使い、subagentや内部補助処理の消費は含めない。いずれも契約全体の消費量や残量の計測ではない。

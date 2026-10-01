@@ -49,7 +49,7 @@ export function buildRuntimeSelectionOptions({
 }): RuntimeSelectionOptions {
   const approvalChoiceOptions = (() => {
     const options = getApprovalOptionsForProvider(providerId);
-    if (options.some((option) => option.value === selectedApprovalMode)) {
+    if (providerId === "claude" || options.some((option) => option.value === selectedApprovalMode)) {
       return options;
     }
 

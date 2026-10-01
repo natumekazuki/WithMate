@@ -1,4 +1,4 @@
-import { approvalModeOptions, type ApprovalMode } from "./approval-mode.js";
+import { DEFAULT_APPROVAL_MODE, approvalModeOptions, type ApprovalMode } from "./approval-mode.js";
 import { codexSandboxModeOptions, type CodexSandboxMode } from "./codex-sandbox-mode.js";
 
 export type RuntimeSelectOption<T extends string = string> = {
@@ -8,7 +8,16 @@ export type RuntimeSelectOption<T extends string = string> = {
 
 const COPILOT_APPROVAL_VALUES = new Set<ApprovalMode>(["never", "on-request", "untrusted"]);
 
+export function getDefaultApprovalModeForProvider(providerId: string | null | undefined): ApprovalMode {
+  return providerId === "claude" ? "on-request" : DEFAULT_APPROVAL_MODE;
+}
+
 export function getApprovalOptionsForProvider(providerId: string | null | undefined): RuntimeSelectOption<ApprovalMode>[] {
+  if (providerId === "claude") {
+    return approvalModeOptions
+      .filter((option) => option.id === "on-request")
+      .map((option) => ({ value: option.id, label: option.label }));
+  }
   if (providerId === "copilot") {
     return approvalModeOptions
       .filter((option) => COPILOT_APPROVAL_VALUES.has(option.id))

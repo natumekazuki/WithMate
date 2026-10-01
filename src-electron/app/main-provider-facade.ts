@@ -14,6 +14,7 @@ type MainProviderFacadeDeps = {
   ensureModelCatalogSeeded(): Awaitable<ModelCatalogSnapshot>;
   codexAdapter: ProviderTurnAdapter;
   copilotAdapter: ProviderTurnAdapter;
+  claudeAdapter: ProviderTurnAdapter;
   revokeProviderExecution?(sessionId: string, providerId: string): void;
   revokeAllProviderExecutions?(): void;
 };
@@ -42,6 +43,7 @@ export class MainProviderFacade {
       providerId,
       codexAdapter: this.deps.codexAdapter,
       copilotAdapter: this.deps.copilotAdapter,
+      claudeAdapter: this.deps.claudeAdapter,
     });
   }
 
@@ -50,6 +52,7 @@ export class MainProviderFacade {
       providerId,
       codexAdapter: this.deps.codexAdapter,
       copilotAdapter: this.deps.copilotAdapter,
+      claudeAdapter: this.deps.claudeAdapter,
     });
   }
 
@@ -74,6 +77,7 @@ export class MainProviderFacade {
     await Promise.all([
       this.deps.codexAdapter.invalidateAllSessionThreads(),
       this.deps.copilotAdapter.invalidateAllSessionThreads(),
+      this.deps.claudeAdapter.invalidateAllSessionThreads(),
     ]);
   }
 }

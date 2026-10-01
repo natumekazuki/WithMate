@@ -53,18 +53,21 @@ export function buildExclusiveComposerPickerToggleState(
   };
 }
 
-export function buildSkillPromptSnippet(providerId: string, skillName: string): string {
-  return providerId === "codex"
-    ? `$${skillName}`
-    : `Use the skill "${skillName}" for this task.`;
+export function buildSkillPromptSnippet(providerId: string, skillName: string, sourcePath?: string): string {
+  if (providerId === "codex") return `$${skillName}`;
+  if (providerId === "claude" && sourcePath) {
+    return `Use the skill "${skillName}" from "${sourcePath}/SKILL.md" for this task.`;
+  }
+  return `Use the skill "${skillName}" for this task.`;
 }
 
 export function buildSkillPromptInsertionState(
   providerId: string,
   skillName: string,
   draft: string,
+  sourcePath?: string,
 ): SkillPromptInsertionState {
-  const snippet = buildSkillPromptSnippet(providerId, skillName);
+  const snippet = buildSkillPromptSnippet(providerId, skillName, sourcePath);
   const trimmedDraft = draft.trimStart();
   const nextDraft = trimmedDraft ? `${snippet}\n\n${trimmedDraft}` : `${snippet}\n`;
 

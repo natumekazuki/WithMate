@@ -24,6 +24,7 @@ type ResolveProviderAdapterArgs = {
   providerId: string | null | undefined;
   codexAdapter: ProviderTurnAdapter;
   copilotAdapter: ProviderTurnAdapter;
+  claudeAdapter: ProviderTurnAdapter;
 };
 
 type FetchProviderQuotaTelemetryArgs = {
@@ -44,6 +45,7 @@ export type ProviderRuntimeCapabilities = {
 const PROVIDER_ADAPTER_KEYS = {
   codex: "codexAdapter",
   copilot: "copilotAdapter",
+  claude: "claudeAdapter",
 } as const;
 
 export function isProviderSupported(providerId: string): providerId is keyof typeof PROVIDER_ADAPTER_KEYS {

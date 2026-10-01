@@ -19,6 +19,7 @@ Electron 版 WithMate の現行実装に対して、人手で確認すべき項�
 - session 永続化
 - run lifecycle の保護
 - model catalog import / export
+- providerごとの有効化、model / depth / approval選択、承認・質問と再開（実施項目は`docs/manual-test-checklist.md`を正本とする）
 
 ## Non Goals
 

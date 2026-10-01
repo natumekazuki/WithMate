@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import type {
   LiveApprovalRequest,
@@ -73,9 +73,9 @@ function validateLiveElicitationField(
       return null;
     }
     case "select": {
-      const normalized = typeof value === "string" ? value : "";
+      const normalized = typeof value === "string" ? value.trim() : "";
       if (field.required && !normalized) {
-        return `Select ${field.title}.`;
+        return field.allowFreeText ? `Enter ${field.title}.` : `Select ${field.title}.`;
       }
       return null;
     }
@@ -168,6 +168,21 @@ function liveElicitationMultiSelectValue(value: LiveElicitationFieldValue | unde
   return Array.isArray(value) ? value : [];
 }
 
+function mergeFreeTextAnswers(
+  request: LiveElicitationRequest,
+  fieldValues: Record<string, LiveElicitationFieldValue>,
+  freeTextValues: Record<string, string>,
+): Record<string, LiveElicitationFieldValue> {
+  const answers = { ...fieldValues };
+  for (const field of request.fields) {
+    if (field.type !== "multi-select" || !field.allowFreeText) continue;
+    const freeText = (freeTextValues[field.name] ?? "").trim();
+    const selected = liveElicitationMultiSelectValue(fieldValues[field.name]);
+    answers[field.name] = freeText && !selected.includes(freeText) ? [...selected, freeText] : selected;
+  }
+  return answers;
+}
+
 type LiveElicitationCardProps = {
   request: LiveElicitationRequest;
   elicitationActionRequestId: string | null;
@@ -193,10 +208,13 @@ function LiveElicitationCard({
   const [fieldValues, setFieldValues] = useState<Record<string, LiveElicitationFieldValue>>(
     () => createLiveElicitationFormState(request),
   );
+  const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>({});
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
+  const fieldIdPrefix = useId();
 
   useEffect(() => {
     setFieldValues(createLiveElicitationFormState(request));
+    setFreeTextValues({});
     setValidationMessage(null);
   }, [request.requestId]);
 
@@ -204,8 +222,9 @@ function LiveElicitationCard({
 
   const handleSubmit = (action: LiveElicitationResponse["action"]) => {
     if (action === "accept") {
+      const answers = mergeFreeTextAnswers(request, fieldValues, freeTextValues);
       for (const field of request.fields) {
-        const validation = validateLiveElicitationField(field, fieldValues[field.name] ?? "");
+        const validation = validateLiveElicitationField(field, answers[field.name] ?? "");
         if (validation) {
           setValidationMessage(validation);
           return;
@@ -213,7 +232,7 @@ function LiveElicitationCard({
       }
 
       setValidationMessage(null);
-      const content = buildLiveElicitationResponseContent(request, fieldValues);
+      const content = buildLiveElicitationResponseContent(request, answers);
       onResolveLiveElicitation(request, {
         action,
         ...(Object.keys(content).length > 0 ? { content } : {}),
@@ -257,16 +276,22 @@ function LiveElicitationCard({
       ) : null}
       {request.mode === "form" && request.fields.length > 0 ? (
         <div className="live-elicitation-form">
-          {request.fields.map((field) => (
-            <label key={field.name} className="live-elicitation-field">
+          {request.fields.map((field, index) => (
+            <div key={field.name} className="live-elicitation-field">
               <span className="live-elicitation-label">
                 {field.title}
                 {field.required ? <strong> *</strong> : null}
               </span>
-              {field.description ? <span className="live-elicitation-description">{field.description}</span> : null}
+              {field.description ? (
+                <span id={`${fieldIdPrefix}-description-${index}`} className="live-elicitation-description">
+                  {field.description}
+                </span>
+              ) : null}
               {field.type === "text" ? (
                 field.maxLength !== undefined && field.maxLength > 120 ? (
                   <textarea
+                    aria-label={field.title}
+                    aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
                     value={liveElicitationTextValue(fieldValues[field.name])}
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                     disabled={isSubmitting}
@@ -274,6 +299,8 @@ function LiveElicitationCard({
                 ) : (
                   <input
                     type={field.format === "email" ? "email" : field.format === "uri" ? "url" : field.format === "date" ? "date" : "text"}
+                    aria-label={field.title}
+                    aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
                     value={liveElicitationTextValue(fieldValues[field.name])}
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                     disabled={isSubmitting}
@@ -283,6 +310,8 @@ function LiveElicitationCard({
               {field.type === "number" ? (
                 <input
                   type="number"
+                  aria-label={field.title}
+                  aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
                   step={field.numberKind === "integer" ? "1" : "any"}
                   value={typeof fieldValues[field.name] === "number" ? String(fieldValues[field.name]) : ""}
                   onChange={(event) =>
@@ -297,6 +326,8 @@ function LiveElicitationCard({
                 <span className="live-elicitation-checkbox">
                   <input
                     type="checkbox"
+                    aria-label={field.title}
+                    aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
                     checked={fieldValues[field.name] === true}
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.checked }))}
                     disabled={isSubmitting}
@@ -305,21 +336,47 @@ function LiveElicitationCard({
                 </span>
               ) : null}
               {field.type === "select" ? (
-                <select
-                  value={liveElicitationTextValue(fieldValues[field.name])}
-                  onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
-                  disabled={isSubmitting}
-                >
-                  {!field.required ? <option value="">No Selection</option> : null}
-                  {field.options.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                field.allowFreeText ? (
+                  <>
+                    <input
+                      type="text"
+                      aria-label={field.title}
+                      aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
+                      list={`${fieldIdPrefix}-choices-${index}`}
+                      value={liveElicitationTextValue(fieldValues[field.name])}
+                      onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
+                      disabled={isSubmitting}
+                    />
+                    <datalist id={`${fieldIdPrefix}-choices-${index}`}>
+                      {field.options.map((option) => (
+                        <option key={option.value} value={option.value} label={option.label} />
+                      ))}
+                    </datalist>
+                  </>
+                ) : (
+                  <select
+                    aria-label={field.title}
+                    aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
+                    value={liveElicitationTextValue(fieldValues[field.name])}
+                    onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
+                    disabled={isSubmitting}
+                  >
+                    {!field.required ? <option value="">No Selection</option> : null}
+                    {field.options.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                )
               ) : null}
               {field.type === "multi-select" ? (
-                <div className="live-elicitation-options">
+                <div
+                  className="live-elicitation-options"
+                  role="group"
+                  aria-label={field.title}
+                  aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
+                >
                   {field.options.map((option) => {
                     const selectedValues = liveElicitationMultiSelectValue(fieldValues[field.name]);
                     const checked = selectedValues.includes(option.value);
@@ -345,9 +402,21 @@ function LiveElicitationCard({
                       </label>
                     );
                   })}
+                  {field.allowFreeText ? (
+                    <label className="live-elicitation-field">
+                      <span>Other</span>
+                      <input
+                        type="text"
+                        aria-label={`${field.title} Other`}
+                        value={freeTextValues[field.name] ?? ""}
+                        onChange={(event) => setFreeTextValues((current) => ({ ...current, [field.name]: event.target.value }))}
+                        disabled={isSubmitting}
+                      />
+                    </label>
+                  ) : null}
                 </div>
               ) : null}
-            </label>
+            </div>
           ))}
         </div>
       ) : null}
