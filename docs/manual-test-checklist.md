@@ -15,6 +15,7 @@
 | 高解像度のWindowで500列または300行を超える端末を初回展開し、拡大・縮小して入力する | 正常なfit寸法で起動・resizeでき、`Failed`にならない。resize後も入力と出力を継続できる |
 | タブを複数追加し、選択・折りたたみ・Prompt/Terminal切替・Main/Auxiliary切り替え・最小化を行う | 各shellは親Workspaceから独立して開始し、出力・cwd・processは維持される。多数タブでも1段でscrollでき、`New Terminal`と選択タブへ到達できる |
 | Windows PowerShell起動後の入力待ち、空Enter後、通常コマンド完了後に終了ボタンをクリックして`Close Terminal`。起動途中、入力編集中、長時間の組込みコマンド、未完了Job、`Start-Process -NoNewWindow`直後、nested prompt、zshでも比較する | 入力待ちと確認できたPowerShellだけ確認なしで閉じる。focusを本文から終了ボタンへ移すだけでは確認不要の状態が失効しない。実行中・起動中・判別不能では確認し、取消で維持する。子processのconsole接続前や処理を中断した入力待ちでも確認する。Jobと子processの完了後にEnterで次の入力待ちへ進むと確認不要になる |
+| PowerShellで空行に続く`Write-Output unfinished`を末尾改行なしで貼り付け、Terminalの×とSession Windowの×を試す。複数の先行空行、空Enter直後に別の貼付け、矢印・履歴編集でも比較する | 先行行が完了しても末尾の編集中入力が残れば終了確認する。取消後も入力が残り、Enterで確定して空の入力待ち通知を受けると確認不要へ戻る。通知前の即時closeは安全側の確認を残す |
 | 別端末の継続出力とAI実行を開始し、作業中の端末で終了確認を開いたままにして取消／終了する | 確認中もMainのイベント処理・IPC配送・会話更新・他端末の出力が進む。同期確認時の停滞と区別して記録する。取消後も対象端末へ入力でき、承認は対象端末だけを終了する |
 | 終了確認の重複要求、確認中の自然終了・owner破棄、起動途中の確認取消／終了、起動失敗も確認 | 確認は重複せず、遅れた承認で別の端末を閉じない。終了済みタブは確認不要。自然終了は`Exited`と結果、失敗は`Failed`と理由を表示して出力を保持する。最後のタブを閉じると折りたたみ、自動再起動しない |
 | AI実行中もIME、Enter、Tab、Ctrl+C、Escape、コピー／貼り付けを操作。Ctrl+Shift+Tabでタブへ戻る | 端末入力が会話送信・検索・cancelへ流れない。タブ・本文・splitter間をkeyboardで移動でき、非表示端末へfocusが残らず、background出力でfocusを奪わない |

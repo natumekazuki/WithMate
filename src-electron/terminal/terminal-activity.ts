@@ -39,18 +39,34 @@ namespace WithMateTerminal {
 '@ -ErrorAction Stop
   $global:__WithMateReadLine = $function:PSConsoleHostReadLine
   if ($null -ne $global:__WithMateReadLine) {
+    Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -SupportEvent -Action {
+      if ($global:__WithMateReadLineIdleEligible) {
+        $activity = 'unknown'
+        try {
+          $buffer = $null
+          $cursor = 0
+          [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$buffer, [ref]$cursor)
+          if ($buffer.Length -eq 0 -and -not [Console]::KeyAvailable) { $activity = 'idle' }
+        } catch { $activity = 'unknown' }
+        [Console]::Write("$([char]27)]${marker}$activity$([char]7)")
+      }
+    } | Out-Null
     function global:PSConsoleHostReadLine {
-      $activity = 'unknown'
+      $global:__WithMateReadLineIdleEligible = $false
       try {
         $ids = New-Object System.UInt32[] 1
         $count = [WithMateTerminal.ConsoleProcesses]::GetConsoleProcessList($ids, 1)
         $jobs = @(Microsoft.PowerShell.Core\\Get-Job -ErrorAction Stop | Where-Object { $_.State -notin @('Completed', 'Failed', 'Stopped') })
         $children = @(CimCmdlets\\Get-CimInstance Win32_Process -Filter "ParentProcessId = $PID" -Property ProcessId -ErrorAction Stop)
-        if ($NestedPromptLevel -eq 0 -and $count -eq 1 -and $ids[0] -eq $PID -and $jobs.Count -eq 0 -and $children.Count -eq 0) { $activity = 'idle' }
-      } catch { $activity = 'unknown' }
-      [Console]::Write("$([char]27)]${marker}$activity$([char]7)")
+        $global:__WithMateReadLineIdleEligible = $NestedPromptLevel -eq 0 -and $count -eq 1 -and $ids[0] -eq $PID -and $jobs.Count -eq 0 -and $children.Count -eq 0
+      } catch { $global:__WithMateReadLineIdleEligible = $false }
+      # ReadLine may still have queued keys from a paste when it starts.
+      [Console]::Write("$([char]27)]${marker}unknown$([char]7)")
       try { $global:__WithMateReadLine.Invoke() }
-      finally { [Console]::Write("$([char]27)]${marker}busy$([char]7)") }
+      finally {
+        $global:__WithMateReadLineIdleEligible = $false
+        [Console]::Write("$([char]27)]${marker}busy$([char]7)")
+      }
     }
   }
 }
