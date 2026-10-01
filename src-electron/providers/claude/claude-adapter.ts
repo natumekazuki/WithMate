@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { extname } from "node:path";
 import { query, resolveSettings, type ElicitationRequest, type Options, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -26,6 +27,7 @@ import { boundAuditRawItem, stringifyBoundedAuditRawItems, toAuditTextPreview, t
 import { buildArtifactFromOperations } from "../provider-artifact.js";
 import { captureWorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
 import { createDisabledWorkspaceSnapshotCapture, WORKSPACE_DIFF_CAPTURE_ENABLED } from "../../files/workspace-diff-policy.js";
+import { buildLiveElicitationFieldFromMcpSchema } from "../mcp-elicitation.js";
 
 const require = createRequire(import.meta.url);
 const CANCEL_GRACE_MS = 2_000;
@@ -35,6 +37,7 @@ type ClaudeAdapterLogInput = { level: "info" | "warn" | "error"; message: string
 
 export type ClaudeAdapterOptions = {
   query?: ClaudeQuery;
+  spawnProcess?: typeof spawn;
   resolveSettings?: typeof resolveSettings;
   log?: (input: ClaudeAdapterLogInput) => void;
 };
@@ -73,6 +76,10 @@ function summarizeTool(name: string, input: unknown): string {
   const argumentsValue = objectOf(input);
   const target = textOf(argumentsValue.file_path) || textOf(argumentsValue.path) || textOf(argumentsValue.command);
   return target ? `${name}: ${toAuditTextPreview(target, 300)}` : name;
+}
+
+function commandOf(name: string, input: unknown): string | null {
+  return name === "Bash" ? textOf(objectOf(input).command) || null : null;
 }
 
 function appendRaw(trace: ClaudeTrace, type: string, data: Record<string, unknown>): void {
@@ -155,25 +162,9 @@ function mcpElicitationRequest(requestId: string, request: ElicitationRequest): 
   const required = new Set(Array.isArray(schema.required) ? schema.required.filter((name): name is string => typeof name === "string") : []);
   const fields: LiveElicitationField[] = [];
   for (const [name, unknownSpec] of Object.entries(properties)) {
-    const spec = objectOf(unknownSpec);
-    const title = textOf(spec.title) || name;
-    const description = textOf(spec.description) || undefined;
-    const base = { name, title, description, required: required.has(name) };
-    const choices = Array.isArray(spec.enum) ? spec.enum.filter((value): value is string => typeof value === "string") : null;
-    if (choices) {
-      fields.push({ ...base, type: "select", options: choices.map((value) => ({ value, label: value })) });
-    } else if (spec.type === "string") {
-      fields.push({ ...base, type: "text", ...(typeof spec.minLength === "number" ? { minLength: spec.minLength } : {}), ...(typeof spec.maxLength === "number" ? { maxLength: spec.maxLength } : {}) });
-    } else if (spec.type === "boolean") {
-      fields.push({ ...base, type: "boolean" });
-    } else if (spec.type === "number" || spec.type === "integer") {
-      fields.push({ ...base, type: "number", numberKind: spec.type });
-    } else if (spec.type === "array") {
-      const itemSpec = objectOf(spec.items);
-      const items = Array.isArray(itemSpec.enum) ? itemSpec.enum.filter((value): value is string => typeof value === "string") : null;
-      if (!items) return null;
-      fields.push({ ...base, type: "multi-select", options: items.map((value) => ({ value, label: value })) });
-    } else return null;
+    const field = buildLiveElicitationFieldFromMcpSchema(name, unknownSpec, required.has(name));
+    if (!field) return null;
+    fields.push(field);
   }
   return { requestId, provider: "claude", mode: "form", message: request.message, source: request.serverName, fields };
 }
@@ -209,11 +200,13 @@ export function resolveClaudeBinaryPath(): string {
 
 export class ClaudeAdapter implements ProviderTurnAdapter {
   private readonly runQuery: ClaudeQuery;
+  private readonly spawnProcess: typeof spawn;
   private readonly inspectSettings: typeof resolveSettings;
   private readonly log?: ClaudeAdapterOptions["log"];
 
   constructor(options: ClaudeAdapterOptions = {}) {
     this.runQuery = options.query ?? query;
+    this.spawnProcess = options.spawnProcess ?? spawn;
     this.inspectSettings = options.resolveSettings ?? resolveSettings;
     this.log = options.log;
   }
@@ -261,8 +254,9 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       }
       for (const block of content) {
         if (block.type !== "tool_use") continue;
-        const summary = summarizeTool(block.name, block.input);
-        trace.steps.set(block.id, { id: block.id, type: "tool_call", summary, status: "in_progress" });
+        const command = commandOf(block.name, block.input);
+        const summary = command ?? summarizeTool(block.name, block.input);
+        trace.steps.set(block.id, { id: block.id, type: command === null ? "tool_call" : "command_execution", summary, status: "in_progress" });
         appendRaw(trace, "tool.use", { id: block.id, name: block.name, summary });
       }
       if (text && trace.streamingId === message.message.id) {
@@ -278,7 +272,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         const failed = block.is_error === true;
         if (step) {
           step.status = failed ? "failed" : "completed";
-          trace.operations.push({ type: "command_execution", summary: step.summary, details: failed ? "Tool failed" : "Tool completed" });
+          trace.operations.push({ type: step.type, summary: step.summary, details: failed ? "Tool failed" : "Tool completed" });
         }
         appendRaw(trace, "tool.result", { id: block.tool_use_id, status: failed ? "failed" : "completed" });
       }
@@ -341,11 +335,22 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     const workspacePath = resolveRunWorkspacePath(input);
     const selection = resolveModelSelection(input.providerCatalog, input.executionOptions.model, input.executionOptions.reasoningEffort);
     const controller = new AbortController();
+    let childExited: Promise<void> | null = null;
     const abort = () => controller.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
     if (input.signal?.aborted) controller.abort();
     let approvalRequest: { requestId: string; provider: string; kind: string; title: string; summary: string; decisionMode: "direct-decision" } | null = null;
     let elicitationRequest: LiveElicitationRequest | null = null;
+    let interactionTail: Promise<void> = Promise.resolve();
+    const enqueueInteraction = <T>(signal: AbortSignal, action: () => Promise<T> | T): Promise<T> => {
+      const pending = interactionTail.then(() => {
+        if (signal.aborted) throw new Error("Canceled");
+        return action();
+      });
+      // Keep the single pending service slot occupied until its actual request settles.
+      interactionTail = pending.then(() => undefined, () => undefined);
+      return signalRace(pending, signal);
+    };
     const progress = () => {
       if (controller.signal.aborted || !onProgress) return;
       const state = {
@@ -375,6 +380,25 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       settingSources: ["user", "project", "local"],
       includePartialMessages: true,
       abortController: controller,
+      spawnClaudeCodeProcess: (spawnOptions) => {
+        const child = this.spawnProcess(spawnOptions.command, spawnOptions.args, {
+          cwd: spawnOptions.cwd,
+          env: spawnOptions.env,
+          signal: spawnOptions.signal,
+          stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
+        });
+        child.stderr?.on("error", () => undefined);
+        child.stderr?.resume();
+        childExited = new Promise<void>((resolve) => {
+          child.once("exit", () => resolve());
+          child.once("error", () => {
+            // AbortError may precede exit. Only a failed spawn has no child to await.
+            if (child.pid === undefined) resolve();
+          });
+        });
+        return child;
+      },
       hooks: {
         PreToolUse: [{ hooks: [async (hookInput) => {
           if (hookInput.hook_event_name !== "PreToolUse") return {};
@@ -393,10 +417,13 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         const requestId = context.toolUseID || `${input.session.id}:${Date.now()}`;
         if (toolName === "AskUserQuestion") {
           if (!input.onElicitationRequest) return { behavior: "deny", message: "Question UI is unavailable" };
-          elicitationRequest = redactor.sanitize(claudeQuestionRequest(requestId, toolInput));
-          progress();
           try {
-            const answer = await signalRace(input.onElicitationRequest(elicitationRequest), AbortSignal.any([controller.signal, context.signal]));
+            const answer = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async () => {
+              elicitationRequest = redactor.sanitize(claudeQuestionRequest(requestId, toolInput));
+              progress();
+              try { return await input.onElicitationRequest!(elicitationRequest); }
+              finally { elicitationRequest = null; progress(); }
+            });
             if (answer.action !== "accept") return { behavior: "deny", message: "Question declined" };
             const questions = Array.isArray(toolInput.questions) ? toolInput.questions.map(objectOf) : [];
             const entries = questions.map((question, index) => {
@@ -409,32 +436,35 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
             const answers = Object.fromEntries(entries);
             return { behavior: "allow", updatedInput: { ...toolInput, answers } };
           } catch { return { behavior: "deny", message: "Canceled" }; }
-          finally { elicitationRequest = null; progress(); }
         }
         if (input.executionOptions.approvalMode !== "on-request" || !input.onApprovalRequest) {
           return { behavior: "deny", message: "Tool approval is unavailable" };
         }
-        approvalRequest = redactor.sanitize({ requestId, provider: "claude", kind: toolName, title: `Allow ${toolName}?`, summary: summarizeTool(toolName, toolInput), decisionMode: "direct-decision" });
-        progress();
         try {
-          const decision = await signalRace(input.onApprovalRequest(approvalRequest), AbortSignal.any([controller.signal, context.signal]));
+          const decision = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async () => {
+            approvalRequest = redactor.sanitize({ requestId, provider: "claude", kind: toolName, title: `Allow ${toolName}?`, summary: summarizeTool(toolName, toolInput), decisionMode: "direct-decision" });
+            progress();
+            try { return await input.onApprovalRequest!(approvalRequest); }
+            finally { approvalRequest = null; progress(); }
+          });
           return decision === "approve" ? { behavior: "allow" } : { behavior: "deny", message: "Denied by user" };
         } catch { return { behavior: "deny", message: "Canceled" }; }
-        finally { approvalRequest = null; progress(); }
       },
       onElicitation: async (request, context) => {
         if (!input.onElicitationRequest || controller.signal.aborted) return { action: "decline" };
         const projected = redactor.sanitize(mcpElicitationRequest(context.requestId, request));
         if (!projected) return { action: "decline" };
-        elicitationRequest = projected;
-        progress();
         try {
-          const answer = await signalRace(input.onElicitationRequest(projected), AbortSignal.any([controller.signal, context.signal]));
+          const answer = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async () => {
+            elicitationRequest = projected;
+            progress();
+            try { return await input.onElicitationRequest!(projected); }
+            finally { elicitationRequest = null; progress(); }
+          });
           return answer.action === "accept"
             ? projected.mode === "url" ? { action: "accept" } : { action: "accept", content: answer.content ?? {} }
             : { action: answer.action };
         } catch { return { action: "cancel" }; }
-        finally { elicitationRequest = null; progress(); }
       },
     };
     const snapshotRoots = [workspacePath, ...prompt.additionalDirectories];
@@ -481,10 +511,9 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       throw new ProviderTurnError(redactor.sanitizeText(message), this.result(input, prompt, trace), canceled, providerErrorReason(message, canceled));
     } finally {
       input.signal?.removeEventListener("abort", abort);
-      if (iterator) {
-        await closeQuery(iterator, controller.signal.aborted || !trace.result);
-        controller.abort();
-      }
+      if (iterator) await closeQuery(iterator, controller.signal.aborted || !trace.result);
+      controller.abort();
+      if (input.signal?.aborted && childExited) await childExited;
     }
   }
 

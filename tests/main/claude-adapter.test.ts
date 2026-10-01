@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import type { spawn } from "node:child_process";
 import { it } from "node:test";
 import type { Options, ResolvedSettings, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapter.js";
@@ -103,8 +105,161 @@ it("records tool completion only from tool results and excludes subagent text", 
   const completed = await adapter.runSessionTurn(input());
   assert.equal(completed.assistantText, "Final");
   assert.deepEqual(completed.operations.map((operation) => operation.details), ["Tool failed"]);
+  assert.equal(completed.operations[0]?.type, "command_execution");
   assert.match(completed.rawItemsJson, /"status":"failed"/);
   assert.doesNotMatch(completed.rawItemsJson, /Internal/);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "ClaudeのBash入力中はLatest Commandへ生のコマンドが表示され、非Bash toolをコマンド監査へ混入しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md; Issue #751" }
+// fault = "Bashをtool_callとして扱う、または全tool結果をcommand_executionへ記録する"
+// observable = "進捗stepsと確定operations"
+// observation_boundary = "public-boundary"
+// scope = "claude-coding-turn"
+// lifecycle = "permanent"
+// impact = "実行中コマンドが利用者へ見えず、非コマンドを実行履歴と誤認する"
+// distinction = "既存provider testではClaude SDKのtool_use/result投影を通らない"
+// @end-test-value
+it("projects only Bash as a live command with the raw command", async () => {
+  const steps: Array<{ type: string; summary: string; status: string }> = [];
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+    yield sdkMessage({ type: "assistant", session_id: "thread-tools", uuid: "parent", parent_tool_use_id: null, message: { content: [
+      { type: "tool_use", id: "bash-1", name: "Bash", input: { command: "npm test" } },
+      { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "README.md" } },
+    ] } });
+    yield sdkMessage({ type: "user", session_id: "thread-tools", parent_tool_use_id: null, message: { content: [
+      { type: "tool_result", tool_use_id: "bash-1", content: "done" },
+      { type: "tool_result", tool_use_id: "read-1", content: "read" },
+    ] } });
+    yield result("thread-tools");
+  }) });
+  const completed = await adapter.runSessionTurn(input(), (state) => {
+    steps.push(...state.steps.map((step) => ({ type: step.type, summary: step.summary, status: step.status })));
+  });
+  assert.ok(steps.some((step) => step.type === "command_execution" && step.summary === "npm test" && step.status === "in_progress"));
+  assert.ok(steps.some((step) => step.type === "tool_call" && step.status === "in_progress"));
+  assert.deepEqual(completed.operations.map((operation) => operation.type), ["command_execution", "tool_call"]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Claudeの同一turnで承認と質問が並行到着しても単一pending枠へ順に渡す"
+// oracle = { type = "contract", ref = "src-electron/session/session-approval-service.ts; Issue #751" }
+// fault = "先の未回答要求を次の要求で上書きし回答不能にする"
+// observable = "callbackの呼出順、requestId、SDKへ返る判断"
+// observation_boundary = "public-boundary"
+// scope = "claude-coding-turn"
+// lifecycle = "permanent"
+// impact = "表示から消えた承認や質問がturnを停止させる"
+// distinction = "単独callback testと型検査は並行制御を検査しない"
+// @end-test-value
+it("serializes concurrent approvals and elicitation without losing request identity", async () => {
+  const active: string[] = [];
+  const seen: string[] = [];
+  const releases: Array<() => void> = [];
+  const request = input();
+  request.onApprovalRequest = (card) => {
+    active.push(card.requestId);
+    seen.push(card.requestId);
+    return new Promise((resolve) => releases.push(() => { active.pop(); resolve("approve"); }));
+  };
+  request.onElicitationRequest = (card) => {
+    active.push(card.requestId);
+    seen.push(card.requestId);
+    return new Promise((resolve) => releases.push(() => { active.pop(); resolve({ action: "accept", content: { answer: "yes" } }); }));
+  };
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
+    const context = (toolUseID: string) => ({ toolUseID, signal: new AbortController().signal }) as Parameters<NonNullable<Options["canUseTool"]>>[2];
+    const first = options.canUseTool!("Bash", { command: "one" }, context("approval-1"));
+    const second = options.canUseTool!("Bash", { command: "two" }, context("approval-2"));
+    const third = options.onElicitation!({ mode: "form", serverName: "test", message: "Choose", requestedSchema: { type: "object", properties: { answer: { type: "string" } } } } as Parameters<NonNullable<Options["onElicitation"]>>[0], { requestId: "elicitation-3", signal: new AbortController().signal } as Parameters<NonNullable<Options["onElicitation"]>>[1]);
+    assert.deepEqual(await Promise.all([first, second, third]), [{ behavior: "allow" }, { behavior: "allow" }, { action: "accept", content: { answer: "yes" } }]);
+    yield result("thread-queue");
+  }) });
+  const completed = adapter.runSessionTurn(request);
+  for (const expected of ["approval-1", "approval-2", "elicitation-3"]) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(active, [expected]);
+    releases.shift()?.();
+  }
+  await completed;
+  assert.deepEqual(seen, ["approval-1", "approval-2", "elicitation-3"]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "待機列内で取消されたClaude承認は後続のpending枠へ表示しない"
+// oracle = { type = "contract", ref = "src-electron/session/session-approval-service.ts; Issue #751" }
+// fault = "取消済み要求を先行回答後に再表示し、別のrequestIdへ回答を送る"
+// observable = "approval callbackのrequestId列とSDKのdeny結果"
+// observation_boundary = "public-boundary"
+// scope = "claude-coding-turn"
+// lifecycle = "permanent"
+// impact = "利用者が取消済み操作を誤承認する"
+// distinction = "並行要求の正常回答testでは待機中のcontext cancelを検査しない"
+// @end-test-value
+it("does not dispatch an approval canceled while queued", async () => {
+  const seen: string[] = [];
+  let releaseFirst: (() => void) | undefined;
+  const request = input();
+  request.onApprovalRequest = (card) => {
+    seen.push(card.requestId);
+    return new Promise((resolve) => { releaseFirst = () => resolve("approve"); });
+  };
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
+    const first = options.canUseTool!("Bash", { command: "one" }, { toolUseID: "first", signal: new AbortController().signal } as Parameters<NonNullable<Options["canUseTool"]>>[2]);
+    const canceled = new AbortController();
+    const second = options.canUseTool!("Bash", { command: "two" }, { toolUseID: "second", signal: canceled.signal } as Parameters<NonNullable<Options["canUseTool"]>>[2]);
+    canceled.abort();
+    assert.deepEqual(await Promise.all([first, second]), [{ behavior: "allow" }, { behavior: "deny", message: "Canceled" }]);
+    yield result("thread-queued-cancel");
+  }) });
+  const completed = adapter.runSessionTurn(request);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(seen, ["first"]);
+  releaseFirst?.();
+  await completed;
+  assert.deepEqual(seen, ["first"]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "ClaudeのMCP質問は共通field変換で選択肢・数値範囲・既定値を保持する"
+// oracle = { type = "contract", ref = "Issue #751; MCP elicitation requestedSchema" }
+// fault = "oneOfを自由入力化し、items.anyOfや数値制約を失う"
+// observable = "共通質問callbackへ渡るfieldsとSDKへ返る回答"
+// observation_boundary = "public-boundary"
+// scope = "claude-coding-turn"
+// lifecycle = "permanent"
+// impact = "Providerごとに同じMCP質問の回答可否や値検証が異なる"
+// distinction = "共通converterの単体testだけではClaude envelopeからの接続を検査しない"
+// @end-test-value
+it("preserves MCP selection and numeric constraints in Claude elicitation", async () => {
+  const request = input();
+  let fields: unknown;
+  request.onElicitationRequest = (card) => {
+    fields = card.fields;
+    return { action: "accept", content: { single: "a", multiple: ["x"], count: 2 } };
+  };
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
+    const response = await options.onElicitation!({
+      mode: "form", serverName: "mcp-test", message: "Choose", requestedSchema: { type: "object", required: ["single", "multiple", "count"], properties: {
+        single: { type: "string", oneOf: [{ const: "a", title: "Alpha" }] },
+        multiple: { type: "array", items: { anyOf: [{ const: "x", title: "X" }] } },
+        count: { type: "integer", minimum: 1, maximum: 3, default: 2 },
+      } },
+    } as Parameters<NonNullable<Options["onElicitation"]>>[0], { requestId: "mcp-1", signal: new AbortController().signal } as Parameters<NonNullable<Options["onElicitation"]>>[1]);
+    assert.deepEqual(response, { action: "accept", content: { single: "a", multiple: ["x"], count: 2 } });
+    yield result("thread-mcp");
+  }) });
+  await adapter.runSessionTurn(request);
+  assert.deepEqual((fields as Array<{ type: string }>).map((field) => field.type), ["select", "multi-select", "number"]);
+  assert.deepEqual((fields as Array<{ minimum?: number; maximum?: number; defaultValue?: number }>)[2], {
+    type: "number", numberKind: "integer", name: "count", title: "count", description: undefined,
+    required: true, defaultValue: 2, minimum: 1, maximum: 3,
+  });
 });
 
 // @test-value v2
@@ -132,6 +287,49 @@ it("lets cancellation dominate a later successful SDK result", async () => {
     assert.equal(error.partialResult.assistantText, "Partial");
     return true;
   });
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Claude取消後は子プロセスのabort errorだけでprovider Promiseを終了せず、exitまで再送guardの対象を保持する"
+// oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md" }
+// fault = "SDK closeかabort errorを子の実終了とみなしprovider Promiseを早期解決する"
+// observable = "abort error後とexit後のprovider Promise settled状態"
+// observation_boundary = "public-boundary"
+// scope = "claude-coding-turn"
+// lifecycle = "permanent"
+// impact = "取消済みでも生存する子と同じworkspaceへ新turnを送れてしまう"
+// distinction = "通常のfake Query取消testは子のexit時刻を観測しない"
+// @end-test-value
+it("keeps the canceled provider promise pending until child exit", async () => {
+  const controller = new AbortController();
+  const child = Object.assign(new EventEmitter(), { pid: 123, exitCode: null, stdin: {}, stdout: {}, killed: false, kill: () => true });
+  let nextCount = 0;
+  let closed = false;
+  const query = (({ options }: { options: Options }) => {
+    options.spawnClaudeCodeProcess!({ command: "unused", args: [], env: {}, signal: new AbortController().signal });
+    return {
+      next: () => ++nextCount === 1
+        ? Promise.resolve({ done: false, value: sdkMessage({ type: "assistant", session_id: "thread-exit", uuid: "partial", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Partial" }] } }) })
+        : new Promise(() => undefined),
+      close: () => { closed = true; },
+    };
+  }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query;
+  const adapter = new ClaudeAdapter({ query, spawnProcess: (() => child) as unknown as typeof spawn });
+  let settled = false;
+  const running = adapter.runSessionTurn(input("", controller.signal), (state) => {
+    if (state.assistantText === "Partial") controller.abort();
+  }).catch((error: unknown) => { settled = true; return error; });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  child.emit("error", Object.assign(new Error("aborted"), { name: "AbortError" }));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(closed, true);
+  assert.equal(settled, false);
+  child.emit("exit", null, "SIGTERM");
+  const error: unknown = await running;
+  assert.ok(error instanceof ProviderTurnError);
+  assert.equal(error.canceled, true);
+  assert.equal(error.partialResult.assistantText, "Partial");
 });
 
 // @test-value v2
