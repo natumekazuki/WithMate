@@ -5,19 +5,12 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
 
-export type ImageZoom = "fit" | number;
+import { useViewportPan } from "./viewport-pan.js";
 
-type ImagePanSession = {
-  pointerId: number;
-  clientX: number;
-  clientY: number;
-  scrollLeft: number;
-  scrollTop: number;
-};
+export type ImageZoom = "fit" | number;
 
 export const IMAGE_ZOOM_MIN = 10;
 export const IMAGE_ZOOM_MAX = 800;
@@ -68,8 +61,7 @@ export function calculateImageFitZoom(
 export function useImageViewport(sourceKey: string) {
   const [zoom, setZoom] = useState<ImageZoom>("fit");
   const [fitZoom, setFitZoom] = useState(100);
-  const [isPanning, setIsPanning] = useState(false);
-  const panSessionRef = useRef<ImagePanSession | null>(null);
+  const pan = useViewportPan(sourceKey);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -77,8 +69,6 @@ export function useImageViewport(sourceKey: string) {
   useEffect(() => {
     setZoom("fit");
     setFitZoom(100);
-    setIsPanning(false);
-    panSessionRef.current = null;
   }, [sourceKey]);
 
   const updateFitZoom = useCallback(() => {
@@ -114,68 +104,16 @@ export function useImageViewport(sourceKey: string) {
     return () => observer.disconnect();
   }, [sourceKey, updateFitZoom]);
 
-  const startPan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (
-      event.button !== 0
-      || (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth
-        && event.currentTarget.scrollHeight <= event.currentTarget.clientHeight)
-    ) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    panSessionRef.current = {
-      pointerId: event.pointerId,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      scrollLeft: event.currentTarget.scrollLeft,
-      scrollTop: event.currentTarget.scrollTop,
-    };
-    setIsPanning(true);
-  }, []);
-
-  const movePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const session = panSessionRef.current;
-    if (!session || session.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.scrollLeft = session.scrollLeft - (event.clientX - session.clientX);
-    event.currentTarget.scrollTop = session.scrollTop - (event.clientY - session.clientY);
-  }, []);
-
-  const stopPan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (panSessionRef.current?.pointerId !== event.pointerId) {
-      return;
-    }
-    panSessionRef.current = null;
-    setIsPanning(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  }, []);
-
-  const handlePanCaptureLoss = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (panSessionRef.current?.pointerId === event.pointerId) {
-      panSessionRef.current = null;
-      setIsPanning(false);
-    }
-  }, []);
-
   return {
     zoom,
     setZoom,
     fitZoom,
     effectiveZoom: typeof zoom === "number" ? zoom : fitZoom,
-    isPanning,
+    ...pan,
     imageRef,
     viewportRef,
     canvasRef,
     updateFitZoom,
-    startPan,
-    movePan,
-    stopPan,
-    handlePanCaptureLoss,
   };
 }
 

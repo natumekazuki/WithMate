@@ -1837,6 +1837,11 @@
   overflow: auto;
 }
 
+.message-mermaid-viewport.is-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
 .message-mermaid-canvas {
   margin: 0 auto;
 }
