@@ -310,20 +310,20 @@ export function SelectionTextActionSurface({
       return false;
     }
 
-    const resolvedText = selectAllText
-      ?? (typeof selectableBody.innerText === "string" ? selectableBody.innerText : selectableBody.textContent ?? "");
     surface.focus({ preventScroll: true });
     clearLogicalSelectAll();
     selection.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(selectableBody);
+    selection.addRange(range);
+    const resolvedText = selectAllText ?? selection.toString();
     if (!resolvedText.trim()) {
+      selection.removeAllRanges();
       setSelectionToolbar(null);
       return true;
     }
 
     logicalSelectAllTextRef.current = resolvedText;
-    const range = document.createRange();
-    range.selectNodeContents(selectableBody);
-    selection.addRange(range);
     updateSelectionToolbar();
     return true;
   }, [clearLogicalSelectAll, selectAllText, surfaceRef, updateSelectionToolbar]);

@@ -221,8 +221,35 @@
   color: var(--session-file-error);
 }
 
-.session-file-mermaid .message-code-block-shell.mermaid > .message-mermaid {
-  padding-top: 12px;
+.session-file-markdown-scroll:has(.session-file-mermaid) {
+  padding: 10px;
+}
+
+.session-file-markdown-scroll > [data-selection-copy-body]:has(> .session-file-mermaid),
+.session-file-mermaid,
+.session-file-mermaid > .message-code-block-shell.mermaid {
+  height: 100%;
+  min-height: 0;
+}
+
+.session-file-mermaid > .message-code-block-shell.mermaid {
+  content-visibility: visible;
+}
+
+.session-file-mermaid .message-mermaid:not(.fallback) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.session-file-mermaid .message-mermaid-controls {
+  flex-shrink: 0;
+}
+
+.session-file-mermaid .message-mermaid-viewport {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
 }
 
 ::highlight(withmate-find-match) {
