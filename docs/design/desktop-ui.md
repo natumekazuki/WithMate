@@ -310,6 +310,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
   - Text、Markdown、Mermaid（`.mmd`）、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
   - Markdown は shared rich text renderer、Mermaid は shared Mermaid renderer の Preview を既定とし、Source へ切り替えられる
+  - `.mmd`のFile Previewは、header・Find・feedbackを除く残りの表示領域を図の枠に割り当て、中央paneと独立Windowのresizeに追従する。Markdown／会話内の図は本文の流れを保つ高さ上限を持つ
   - Mermaidは中央・独立File PreviewとMarkdown／会話で共通の図単位のZoom Out／Zoom In、現在倍率兼100%リセット、Fitを持つ。初期表示はFitで、手動倍率は10%〜800%を10ポイント刻みで変更する。Fitは小さい図を拡大せず縦横を表示領域へ収め、領域のresizeへ追従する。拡大後は図内のnative scrollで移動し、toolbarはスクロール外へ置く。各buttonはTabとEnter／Spaceで操作し、図領域へのfocus後はkeyboardでもscrollできる。文字選択を保つためdragとwheelを独自のpan／zoomへ割り当てず、倍率・位置を他の図やWindowへ共有・永続化しない
   - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。Markdown内画像とchat画像は対象外とする
   - File Explorerのroot、directory、regular file rowはnative context menuに`Copy path`と`Insert path`を表示する。pathはMain processが現在のSession rootから再解決し、copyはlexical absolute pathをclipboardへ書く。insertはworkspace内をworkspace相対、workspace外をslash正規化したabsolute pathとして、既存の`@path`挿入処理へ渡す。menu表示後にactive ownerまたはcomposerの書き込み可否が変わった場合は挿入しない。symbolic linkとother rowは対象外とする
