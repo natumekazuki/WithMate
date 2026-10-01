@@ -32,7 +32,7 @@ export function calculateImageFitZoom(
     return 100;
   }
   const scale = Math.min(1, viewportWidth / imageWidth, viewportHeight / imageHeight);
-  return Math.max(0.1, Math.round(scale * 1_000) / 10);
+  return Math.max(0.1, Math.floor(scale * 1_000) / 10);
 }
 
 export function useImageViewport(sourceKey: string) {
@@ -152,38 +152,40 @@ export function useImageViewport(sourceKey: string) {
 export type ImageViewportController = ReturnType<typeof useImageViewport>;
 
 type ImageZoomControlsProps = {
-  controller: ImageViewportController;
+  controller: Pick<ImageViewportController, "effectiveZoom" | "setZoom" | "zoom">;
   className?: string;
   fitAriaLabel?: string;
+  target?: "image" | "diagram";
 };
 
 export function ImageZoomControls({
   controller,
   className,
   fitAriaLabel = "Fit image to viewport",
+  target = "image",
 }: ImageZoomControlsProps) {
   const { effectiveZoom, setZoom, zoom } = controller;
   return (
-    <div className={className} role="group" aria-label="Image zoom">
+    <div className={className} role="group" aria-label={target === "image" ? "Image zoom" : "Diagram zoom"}>
       <button
         type="button"
-        aria-label="Zoom image out"
-        title="Zoom image out"
+        aria-label={`Zoom ${target} out`}
+        title={`Zoom ${target} out`}
         disabled={effectiveZoom <= IMAGE_ZOOM_MIN}
         onClick={() => setZoom(Math.max(IMAGE_ZOOM_MIN, effectiveZoom - IMAGE_ZOOM_STEP))}
       >−</button>
       <button
         type="button"
-        aria-label="Reset image zoom to 100%"
-        title="Reset image zoom to 100%"
+        aria-label={`Reset ${target} zoom to 100%`}
+        title={`Reset ${target} zoom to 100%`}
         onClick={() => setZoom(100)}
       >
         {effectiveZoom}%
       </button>
       <button
         type="button"
-        aria-label="Zoom image in"
-        title="Zoom image in"
+        aria-label={`Zoom ${target} in`}
+        title={`Zoom ${target} in`}
         disabled={effectiveZoom >= IMAGE_ZOOM_MAX}
         onClick={() => setZoom(Math.min(IMAGE_ZOOM_MAX, effectiveZoom + IMAGE_ZOOM_STEP))}
       >＋</button>
@@ -191,6 +193,7 @@ export function ImageZoomControls({
         type="button"
         aria-label={fitAriaLabel}
         title={fitAriaLabel}
+        aria-pressed={zoom === "fit"}
         className={zoom === "fit" ? "is-active" : ""}
         onClick={() => setZoom("fit")}
       >Fit</button>

@@ -16,6 +16,7 @@ import {
   MarkdownRenderContext,
   type MessageCopyFeedback,
 } from "./markdown-context.js";
+import { MermaidViewport } from "./mermaid-viewport.js";
 
 type HastNode = {
   type?: string;
@@ -171,10 +172,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({ source }: { source:
   if (renderState.status === "ready")
     return (
       <div className="message-code-block-shell mermaid">
-        <div
-          className="message-mermaid"
-          dangerouslySetInnerHTML={{ __html: renderState.svg }}
-        />
+        <MermaidViewport key={diagramSource} svg={renderState.svg} />
       </div>
     );
   return (

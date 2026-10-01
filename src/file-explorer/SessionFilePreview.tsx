@@ -871,9 +871,9 @@ export function SessionFilePreview({
     const rebuildIndex = () => {
       renderedMarkdownIndexRef.current = createRenderedTextSearchIndex(
         container,
-        previewKind === "mermaid"
-          ? (node) => !node.parentElement?.closest("svg style, svg defs")
-          : undefined,
+        (node) => !node.parentElement?.closest(previewKind === "mermaid"
+          ? ".message-mermaid-controls, svg style, svg defs"
+          : ".message-mermaid-controls"),
       );
       setRenderedMarkdownIndexRevision((current) => current + 1);
     };
@@ -883,7 +883,7 @@ export function SessionFilePreview({
     return () => observer.disconnect();
   }, [decodedText, isRichPreview, markdownMode, previewKind]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const index = renderedMarkdownIndexRef.current;
     const matches = index
       ? findRenderedTextMatchOffsets(index, findQuery)
@@ -916,7 +916,7 @@ export function SessionFilePreview({
     applyRenderedTextHighlights(document, resolvedMatches, resolvedCurrentMatch);
     scrollRenderedTextMatchIntoView(resolvedCurrentMatch);
     return () => clearRenderedTextHighlights(document);
-  }, [activeCurrentMatch, findOpen, isRichPreview, markdownMode, renderedMarkdownIndexRevision]);
+  }, [activeCurrentMatch, findOpen, findQuery, isRichPreview, markdownMode, renderedMarkdownIndexRevision]);
 
   useEffect(() => {
     if (!loaded || (loaded.descriptor.kind !== "image" && loaded.descriptor.kind !== "svg")) {

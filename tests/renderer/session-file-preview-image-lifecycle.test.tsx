@@ -369,6 +369,73 @@ test("MMD File Preview はMermaid表示経路とSourceを切り替える", async
 });
 
 // @test-value v2
+// kind = "regression"
+// claim = "rich previewの検索は最初のqueryと同件数のquery変更でも一致箇所へscrollする"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/763 完了条件: 拡大後も既存の検索を阻害しない" }
+// fault = "一致件数やcurrent indexが変わらないquery更新でscroll処理を省略し、画面外の一致箇所を表示できない"
+// observable = "検索UIの1/1表示とscrollIntoViewへ渡された一致段落"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreviewのrich text検索queryから一致箇所へのnavigation"
+// lifecycle = "permanent"
+// distinction = "検索modelのunit testと異なりquery state更新からDOM navigationまでを確認し、実際の座標・描画はbrowser確認へ分離する"
+// @end-test-value
+test("rich preview検索は最初のqueryと同件数のquery変更でも一致箇所へ移動する", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.addEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.removeEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const api = createTextPreviewApi(MARKDOWN_REQUEST, "readme.md", "Alpha\n\nBeta", "find-r1");
+  const inspect = api.inspectSessionFile;
+  api.inspectSessionFile = async (request) => ({ ...await inspect(request), kind: "markdown" });
+  const scrolled: string[] = [];
+  dom.window.HTMLElement.prototype.scrollIntoView = function () {
+    scrolled.push(this.textContent ?? "");
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container);
+    await waitFor(() => container.querySelector(".session-file-markdown p") !== null);
+    const find = Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Find");
+    assert.ok(find);
+    await act(async () => find.click());
+    const input = container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
+    assert.ok(setValue);
+    for (const query of ["Beta", "Alpha"]) {
+      scrolled.length = 0;
+      await act(async () => {
+        setValue.call(input, query);
+        const event = new dom.window.Event("propertychange", { bubbles: true });
+        Object.defineProperty(event, "propertyName", { value: "value" });
+        input.dispatchEvent(event);
+      });
+      assert.equal(container.querySelector(".session-content-find-count")?.textContent, "1/1");
+      assert.equal(scrolled.at(-1), query);
+    }
+  } finally {
+    if (root) await act(async () => root?.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v2
 // kind = "contract"
 // claim = "File Previewはheaderを維持したままinspection/content読込中のbusy状態とprogressを本文へ表示する"
 // oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }

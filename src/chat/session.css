@@ -1793,15 +1793,59 @@
   background: transparent;
 }
 
-.message-code-block-shell.mermaid > .message-mermaid {
-  padding-top: 42px;
+.message-mermaid-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-bottom: 8px;
+  user-select: none;
 }
 
-.message-mermaid svg {
-  display: block;
-  max-width: 100%;
-  height: auto;
+.message-mermaid-controls button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.message-mermaid-controls button.is-active {
+  border-color: var(--teal);
+}
+
+.message-mermaid-controls button:hover:not(:disabled) {
+  border-color: var(--teal);
+}
+
+.message-mermaid-controls button:disabled {
+  opacity: 0.5;
+}
+
+.message-mermaid-controls button:focus-visible,
+.message-mermaid-viewport:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
+}
+
+.message-mermaid-viewport {
+  max-height: min(60vh, 480px);
+  overflow: auto;
+}
+
+.message-mermaid-canvas {
   margin: 0 auto;
+}
+
+.message-mermaid-canvas > svg {
+  display: block;
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
 }
 
 .message-mermaid-error {
