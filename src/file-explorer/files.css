@@ -217,7 +217,7 @@
   color: inherit;
 }
 
-.session-file-markdown .message-mermaid-error {
+.session-file-markdown .message-mermaid.fallback .message-mermaid-error {
   color: var(--session-file-error);
 }
 

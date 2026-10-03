@@ -176,26 +176,32 @@ test("Mermaid linkはraw targetを委譲しauxiliary clickとpanで遷移しな�
 // distinction = "Mermaidのsanitizer自体のtestではなくsanitization後のanchorを操作したときの利用者向け境界を確認する"
 // @end-test-value
 test("Mermaidの無効linkは図を保持してerrorを示す", async () => {
-  const opened: string[] = [];
-  await withViewport(async ({ container }) => {
-    const diagram = container.querySelector(".message-mermaid-canvas svg")!;
-    const Mouse = container.ownerDocument.defaultView!.MouseEvent;
-    for (const link of diagram.querySelectorAll("a")) {
-      const event = new Mouse("click", { bubbles: true, cancelable: true });
-      await act(async () => link.dispatchEvent(event));
-      assert.equal(event.defaultPrevented, true);
-      assert.equal(container.querySelector(".message-mermaid-canvas svg"), diagram);
-      if (link.getAttribute("href") === "#node") {
-        assert.equal(container.querySelector("[role=alert]"), null);
-      } else {
-        assert.match(container.querySelector("[role=alert]")?.textContent ?? "", /no supported destination/);
+  for (const invalidLink of [
+    '<a><text>Removed</text></a>',
+    '<a href="about:blank"><text>Unsupported</text></a>',
+  ]) {
+    const opened: string[] = [];
+    await withViewport(async ({ container }) => {
+      const diagram = container.querySelector(".message-mermaid-canvas svg")!;
+      const Mouse = container.ownerDocument.defaultView!.MouseEvent;
+      assert.equal(container.querySelector("[role=alert]"), null);
+      for (const link of diagram.querySelectorAll("a")) {
+        const event = new Mouse("click", { bubbles: true, cancelable: true });
+        await act(async () => link.dispatchEvent(event));
+        assert.equal(event.defaultPrevented, true);
+        assert.equal(container.querySelector(".message-mermaid-canvas svg"), diagram);
+        if (link.getAttribute("href") === "#node") {
+          assert.equal(container.querySelector("[role=alert]"), null);
+        } else {
+          assert.match(container.querySelector("[role=alert]")?.textContent ?? "", /no supported destination/);
+        }
       }
-    }
-    assert.deepEqual(opened, []);
-  }, {
-    onOpenPath: (target) => opened.push(target),
-    svg: '<svg viewBox="0 0 2000 1000"><a><text>Removed</text></a><a href="about:blank"><text>Unsupported</text></a><a href="#node"><text>Fragment</text></a></svg>',
-  });
+      assert.deepEqual(opened, []);
+    }, {
+      onOpenPath: (target) => opened.push(target),
+      svg: `<svg viewBox="0 0 2000 1000">${invalidLink}<a href="#node"><text>Fragment</text></a></svg>`,
+    });
+  }
 });
 
 // @test-value v2
