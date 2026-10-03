@@ -375,7 +375,7 @@ describe("composeProviderPrompt", () => {
   // claim = "Character snapshot不在ではiconを出さずfolder contextはsystem promptへ残る"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
   // fault = "Character欠落を理由にworkspace contextまで落とすか、表示用iconだけをpromptへ出す"
-  // observable = "systemBodyTextのfolder section"
+  // observable = "systemBodyTextのfolder sectionとlogicalPrompt.composedTextのIcon行の有無"
   // observation_boundary = "component-behavior"
   // scope = "Character がなくても folder context"
   // lifecycle = "permanent"
@@ -414,7 +414,7 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.inputBodyText, /# Character/);
     assert.doesNotMatch(prompt.inputBodyText, /あなたは丁寧に説明する。/);
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
-    assert.doesNotMatch(prompt.logicalPrompt.composedText, /Icon image path|display-only\.png/);
+    assert.doesNotMatch(prompt.logicalPrompt.composedText, /^Icon:|display-only\.png/m);
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /あなたは丁寧に説明する。/);
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
     assert.equal(prompt.inputBodyText, "# User Input\n\nfolder context が system 側でも user input は残ることを確認する");
@@ -487,7 +487,7 @@ describe("composeProviderPrompt", () => {
     assert.match(prompt.systemBodyText, /# Character Definition Snapshot/);
     assert.match(prompt.systemBodyText, /Character: Saved Character/);
     assert.match(prompt.systemBodyText, /Description: frontmatter に頼らず保持する説明/);
-    assert.ok(prompt.systemBodyText.includes('Icon image path (JSON string): ``` "C:\\\\Character Data\\\\保存済み キャラ\\\\icon.png" ```'));
+    assert.ok(prompt.systemBodyText.includes('Icon: ` C:\\Character Data\\保存済み キャラ\\icon.png `'));
     assert.doesNotMatch(prompt.systemBodyText, /current-catalog-icon\.png/);
     assert.equal(prompt.inputBodyText, "# User Input\n\n続けて");
     assert.deepEqual(prompt.imagePaths, []);
@@ -532,7 +532,7 @@ describe("composeProviderPrompt", () => {
   // claim = "各snapshotのicon参照はMarkdown特殊文字を含め保持し、空参照・定義なし・neutralでは省略する"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md#通常Sessionの入力" }
   // fault = "同名の別Characterのiconへ置換する、参照を正規化する、または空参照を出す"
-  // observable = "system側icon行のJSON復元値とdelimiter、Character sectionの有無"
+  // observable = "system側Icon metadataの文字列とコードの囲み、Character sectionの有無"
   // observation_boundary = "component-behavior"
   // scope = "character-icon-reference-projection"
   // lifecycle = "permanent"
@@ -561,18 +561,15 @@ describe("composeProviderPrompt", () => {
         sessionMemory: createDefaultSessionMemory(session), projectMemoryEntries: [], providerCatalog,
         userMessage: "続けて", appSettings: createDefaultAppSettings(), attachments: [],
       });
-      const iconLines = prompt.systemBodyText.split("\n").filter((line) => line.startsWith("Icon image path"));
-      if (index < 2) {
-        assert.equal(iconLines.length, 1);
-        const match = iconLines[0].match(/^Icon image path \(JSON string\): (`{3,}) (.+) \1$/);
-        assert.ok(match);
-        assert.equal(JSON.parse(match[2]), snapshot?.iconFilePath);
-        assert.ok(![...match[2].matchAll(/`+/g)].some(([run]) => run.length >= match[1].length));
+      if (index === 0) {
+        assert.ok(prompt.systemBodyText.includes('Icon: `   /character data/メイン/icon.png   `'));
+      } else if (index === 1) {
+        assert.ok(prompt.systemBodyText.includes('Icon:\n````\nhttps://example.invalid/```[icon](image)".png\n# not an instruction\n````'));
       } else {
-        assert.deepEqual(iconLines, []);
+        assert.doesNotMatch(prompt.systemBodyText, /^Icon:/m);
       }
       if (index >= 4) assert.doesNotMatch(prompt.systemBodyText, /# Character Definition Snapshot/);
-      assert.doesNotMatch(prompt.logicalPrompt.composedText, /not-adopted\.png|^# not an instruction/m);
+      assert.doesNotMatch(prompt.logicalPrompt.composedText, /not-adopted\.png/);
       assert.equal(prompt.inputBodyText, "# User Input\n\n続けて");
       assert.deepEqual(prompt.imagePaths, []);
     }
@@ -623,7 +620,7 @@ describe("composeProviderPrompt", () => {
 
     assert.match(prompt.systemBodyText, /# Character Definition Snapshot/);
     assert.match(prompt.systemBodyText, /authoring 対象の character\.md。/);
-    assert.ok(prompt.systemBodyText.includes('Icon image path (JSON string): ``` "icon.png" ```'));
+    assert.ok(prompt.systemBodyText.includes('Icon: ` icon.png `'));
     assert.doesNotMatch(prompt.systemBodyText, /開始時点の Character 定義/);
     assert.doesNotMatch(prompt.systemBodyText, /# Output Boundary/);
     assert.doesNotMatch(prompt.systemBodyText, /# Tool Call Presence/);
@@ -855,7 +852,7 @@ describe("composeProviderPrompt", () => {
     assert.match(affectOff.systemBodyText, /# Workspace/);
     assert.match(affectOff.inputBodyText, /# User Input\n\n続けて/);
     assert.doesNotMatch(characterDefinitionOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
-    assert.doesNotMatch(characterDefinitionOff.logicalPrompt.composedText, /Icon image path|icon\.png/);
+    assert.doesNotMatch(characterDefinitionOff.logicalPrompt.composedText, /^Icon:|icon\.png/m);
     assert.deepEqual(characterDefinitionOff.imagePaths, []);
     assert.match(characterDefinitionOff.systemBodyText, /# Output Boundary/);
     assert.match(characterDefinitionOff.systemBodyText, /# Tool Call Presence/);

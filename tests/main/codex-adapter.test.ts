@@ -1625,8 +1625,8 @@ it("Characterのicon参照をCodexのcomposed textへ渡し、画像添付へ追
       definitionSha256: "definition", definitionByteSize: 28, snapshotAt: "2026-10-03T00:00:00Z",
     };
     const result = await adapter.runSessionTurn(input);
-    assert.ok(result.logicalPrompt.systemText.includes('Icon image path (JSON string): ``` "C:/Character Data/キャラ/icon.png" ```'));
-    assert.doesNotMatch(result.logicalPrompt.inputText, /Icon image path|icon\.png/);
+    assert.ok(result.logicalPrompt.systemText.includes('Icon: ` C:/Character Data/キャラ/icon.png `'));
+    assert.doesNotMatch(result.logicalPrompt.inputText, /^Icon:|icon\.png/m);
     assert.deepEqual(sentInputs, [result.logicalPrompt.composedText]);
 
     const imagePath = path.join(workspacePath, "attached.png");

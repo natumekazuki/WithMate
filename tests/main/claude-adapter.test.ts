@@ -99,7 +99,7 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
     assert.equal(system.snapshot, false);
     assert.match(system.append!, new RegExp(`Definition ${marker}`));
     assert.match(system.append!, new RegExp(`Affect ${marker}`));
-    assert.ok(system.append!.includes(`Icon image path (JSON string): \`\`\` "C:/Character Data/${marker}/icon.png" \`\`\``));
+    assert.ok(system.append!.includes(`Icon: \` C:/Character Data/${marker}/icon.png \``));
     for (const old of ["FIRST", "SECOND", "EXPLICIT-RESUME"].filter((value) => value !== marker)) {
       assert.doesNotMatch(system.append!, new RegExp(`Definition ${old}|Affect ${old}`));
       assert.ok(!system.append!.includes(`C:/Character Data/${old}/icon.png`));

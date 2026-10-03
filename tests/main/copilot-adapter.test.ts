@@ -1070,10 +1070,10 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       content: prompt.systemBodyText,
     });
     assert.match(config.systemMessage?.content ?? "", /あなたは頼れる相棒です。/);
-    assert.ok(config.systemMessage?.content.includes('Icon image path (JSON string): ``` "C:/Character Data/キャラ/icon.png" ```'));
+    assert.ok(config.systemMessage?.content.includes('Icon: ` C:/Character Data/キャラ/icon.png `'));
     assert.doesNotMatch(config.systemMessage?.content ?? "", /Conversation Timing|2026-08-04|# User Input/);
     assert.match(prompt.inputBodyText, /# Conversation Timing[\s\S]*# User Input\n\nhello/);
-    assert.doesNotMatch(prompt.inputBodyText, /Icon image path|icon\.png/);
+    assert.doesNotMatch(prompt.inputBodyText, /^Icon:|icon\.png/m);
     assert.deepEqual(buildCopilotMessageAttachments(input.attachments), []);
     assert.deepEqual(prompt.imagePaths, []);
   });
