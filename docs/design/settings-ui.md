@@ -40,7 +40,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
     - `Notification Response Preview`
     - `Close Action Dock After Send`
     - `Scroll To Latest On Send`
-    - `Preview Ctrl+Wheel Zoom Step`
+    - `Preview Wheel Zoom Step`
   - `Prompt Context`
     - `Character Definition Snapshot`
     - `Character Affect Context`
@@ -72,7 +72,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 ## Current Scope
 
 - `App` の `Close Action Dock After Send` を含む表示設定の保存
-- `Preview Ctrl+Wheel Zoom Step`は画像／SVG／Mermaidの共通previewと画像lightboxのCtrl＋wheelの加算刻みを設定する。単位はpercentage points、既定値5、範囲は整数1〜100とする。空入力・小数・範囲外は入力欄にエラーを示して保存を止め、保存境界でも不正値を拒否する。設定項目がない既存データは5で初期化し、明示された不正な保存値を既定値へ置き換えない
+- `Preview Wheel Zoom Step`は画像／SVG／Mermaidの共通previewと画像lightboxのCtrl＋wheelの加算刻みを設定する。labelと3桁用の短い入力欄を横並びにし、通常時の説明文・単位表示は置かない。単位はpercentage points、既定値5、範囲は整数1〜100とする。空入力・小数・範囲外は入力欄にエラーを示して保存を止め、保存境界でも不正値を拒否する。設定項目がない既存データは5で初期化し、明示された不正な保存値を既定値へ置き換えない
 - 刻みはapp共通の`AppSettings.previewWheelZoomStep`として永続化し、保存後は開いているSession／独立File Previewへ通知する。次のCtrl＋wheelから新しい刻みを使い、現在倍率・Fit状態・pan位置、Zoom In／Outの10ポイント刻みは変えない。独立File Previewは初期取得と変更通知を購読し、設定取得中・失敗時はCtrl＋wheelの倍率変更だけを止める。preview本体と他の倍率操作は維持し、読込中表示と失敗時のRetryを提供する
 - `Prompt Context` の4項目を個別に保存し、既定値はすべて有効とする。表示labelは `Character Definition Snapshot` / `Character Affect Context` / `Conversation Timing` / `Tool Call Presence` とし、補足説明やHelp iconは表示しない。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
   - `Character Definition Snapshot` は Character の名前・説明・`character.md` 本文を切り替える。OFFでも通常 session の Character snapshot に対する `Output Boundary` は残す

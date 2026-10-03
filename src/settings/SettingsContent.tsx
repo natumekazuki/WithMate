@@ -304,8 +304,8 @@ export function HomeSettingsContent({
                 />
               </label>
               <div className="settings-provider-input">
-                <label htmlFor="settings-preview-wheel-zoom-step">Preview Ctrl+Wheel Zoom Step</label>
-                <div className="settings-inline-input-row">
+                <div className="settings-inline-input-row settings-preview-zoom-row">
+                  <label className="settings-provider-name" htmlFor="settings-preview-wheel-zoom-step">Preview Wheel Zoom Step</label>
                   <input
                     id="settings-preview-wheel-zoom-step"
                     type="number"
@@ -315,7 +315,7 @@ export function HomeSettingsContent({
                     required
                     value={invalidPreviewWheelZoomStep ?? settingsDraft.previewWheelZoomStep}
                     aria-invalid={previewWheelZoomStepInvalid}
-                    aria-describedby="settings-preview-wheel-zoom-step-help"
+                    aria-describedby={previewWheelZoomStepInvalid ? "settings-preview-wheel-zoom-step-error" : undefined}
                     onChange={(event) => {
                       const rawValue = event.target.value;
                       const value = event.target.valueAsNumber;
@@ -327,13 +327,10 @@ export function HomeSettingsContent({
                       }
                     }}
                   />
-                  <span className="settings-inline-unit">Percentage Points</span>
                 </div>
-                <p id="settings-preview-wheel-zoom-step-help" className="settings-help" role={previewWheelZoomStepInvalid ? "alert" : undefined}>
-                  {previewWheelZoomStepInvalid
-                    ? "Enter a whole number from 1 to 100."
-                    : "5 points changes 100% to 105%. Applies to image and Mermaid previews."}
-                </p>
+                {previewWheelZoomStepInvalid ? <p id="settings-preview-wheel-zoom-step-error" className="settings-help" role="alert">
+                  Enter a whole number from 1 to 100.
+                </p> : null}
               </div>
             </div>
           </section>
