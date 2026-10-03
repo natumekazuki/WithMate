@@ -1586,6 +1586,62 @@ describe("CodexAdapter thread settings", () => {
   });
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Codexは採用snapshotのicon参照を共通system textからcomposed textへ渡し、画像添付は明示された画像だけを送る"
+// oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+// fault = "Codex transportでicon参照を落とす、user本文へ移す、または画像添付を増やす"
+// observable = "SDK runStreamedへ渡すtext/local_imageとresult.logicalPrompt"
+// observation_boundary = "public-boundary"
+// scope = "codex-character-icon-transport"
+// lifecycle = "permanent"
+// impact = "CodexがCharacterの参照を受け取れないか、意図しない画像を送信する"
+// distinction = "composer単体では観測できないSDK入力までmock clientを通して確認する"
+// @end-test-value
+it("Characterのicon参照をCodexのcomposed textへ渡し、画像添付へ追加しない", async () => {
+  const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-character-icon-"));
+  const sentInputs: unknown[] = [];
+  const adapter = new CodexAdapter(undefined, {
+    createClient: () => {
+      const thread = {
+        id: "thread-icon",
+        run: async () => { throw new Error("Expected runStreamed"); },
+        runStreamed: async (input: unknown) => {
+          sentInputs.push(input);
+          return { events: createCodexStreamFromEvents([
+            { type: "item.completed", item: { id: "message", type: "agent_message", text: "done" } },
+            { type: "turn.completed", usage: null },
+          ]) };
+        },
+      };
+      return { startThread: () => thread, resumeThread: () => thread };
+    },
+  });
+  try {
+    const input = createCodexRunSessionTurnInput(workspacePath);
+    input.session.characterRuntimeSnapshot = {
+      characterId: "char-a", name: "A", description: "Saved metadata", iconFilePath: "C:/Character Data/キャラ/icon.png",
+      theme: input.session.characterThemeColors, definitionMarkdown: "# Character\nSaved definition",
+      definitionSha256: "definition", definitionByteSize: 28, snapshotAt: "2026-10-03T00:00:00Z",
+    };
+    const result = await adapter.runSessionTurn(input);
+    assert.ok(result.logicalPrompt.systemText.includes('Icon: ` C:/Character Data/キャラ/icon.png `'));
+    assert.doesNotMatch(result.logicalPrompt.inputText, /^Icon:|icon\.png/m);
+    assert.deepEqual(sentInputs, [result.logicalPrompt.composedText]);
+
+    const imagePath = path.join(workspacePath, "attached.png");
+    input.attachments = [{ id: "image", kind: "image", source: "text", absolutePath: imagePath,
+      displayPath: "attached.png", workspaceRelativePath: "attached.png", isOutsideWorkspace: false }];
+    const withImage = await adapter.runSessionTurn(input);
+    assert.deepEqual(sentInputs[1], [
+      { type: "text", text: withImage.logicalPrompt.composedText },
+      { type: "local_image", path: imagePath },
+    ]);
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true });
+  }
+});
+
 describe("CodexAdapter service tier clients", () => {
   // @test-value v2
   // kind = "invariant"

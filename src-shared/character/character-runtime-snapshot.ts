@@ -109,8 +109,8 @@ export function stringifyCharacterRuntimeSnapshot(
   return snapshot ? JSON.stringify(snapshot) : "";
 }
 
-function buildMarkdownFence(content: string): string {
-  const longestBacktickRun = Math.max(2, ...[...content.matchAll(/`+/g)].map((match) => match[0].length));
+function buildMarkdownFence(content: string, minimumLength = 3): string {
+  const longestBacktickRun = Math.max(minimumLength - 1, ...[...content.matchAll(/`+/g)].map((match) => match[0].length));
   return "`".repeat(longestBacktickRun + 1);
 }
 
@@ -128,6 +128,14 @@ export function buildCharacterRuntimePromptSection(
   const metadataLines = characterDescription
     ? [`Character: ${characterName}`, `Description: ${characterDescription}`]
     : [`Character: ${characterName}`];
+  const iconFilePath = snapshot?.iconFilePath ?? "";
+  if (iconFilePath.trim()) {
+    const multiline = /[\r\n]/.test(iconFilePath);
+    const iconFence = buildMarkdownFence(iconFilePath, multiline ? 3 : 1);
+    metadataLines.push(multiline
+      ? `Icon:\n${iconFence}\n${iconFilePath}\n${iconFence}`
+      : `Icon: ${iconFence} ${iconFilePath} ${iconFence}`);
+  }
   const includeRuntimeBoundary = options?.includeRuntimeBoundary ?? true;
 
   return [

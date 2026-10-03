@@ -50,9 +50,9 @@ function fakeQuery(
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Claudeの明示session再開は最新system appendを渡し、stream本文と確定本文を二重表示しない"
+// claim = "Claudeの明示session再開は採用snapshotのiconを含む最新system appendを渡し、stream本文と確定本文を二重表示しない"
 // oracle = { type = "contract", ref = "docs/design/prompt-composition.md; Issue #751" }
-// fault = "resumeで旧promptを使う、またはstreamとassistant本文を連結して二重化する"
+// fault = "resumeで旧promptやiconを使う、iconをuser入力へ混入する、またはstreamとassistant本文を連結して二重化する"
 // observable = "SDK query options、確定assistantText、進捗assistantText"
 // observation_boundary = "public-boundary"
 // scope = "claude-coding-turn"
@@ -77,7 +77,7 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
   let completed;
   for (const [index, marker] of ["FIRST", "SECOND", "EXPLICIT-RESUME"].entries()) {
     request.session.characterRuntimeSnapshot = {
-      characterId: "character", name: "Character", description: "Saved metadata", iconFilePath: "",
+      characterId: "character", name: "Character", description: "Saved metadata", iconFilePath: `C:/Character Data/${marker}/icon.png`,
       theme: { main: "#112233", sub: "#445566" }, definitionMarkdown: `Definition ${marker}`,
       definitionSha256: marker, definitionByteSize: marker.length, snapshotAt: "2026-10-03T00:00:00Z",
     };
@@ -99,10 +99,13 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
     assert.equal(system.snapshot, false);
     assert.match(system.append!, new RegExp(`Definition ${marker}`));
     assert.match(system.append!, new RegExp(`Affect ${marker}`));
+    assert.ok(system.append!.includes(`Icon: \` C:/Character Data/${marker}/icon.png \``));
     for (const old of ["FIRST", "SECOND", "EXPLICIT-RESUME"].filter((value) => value !== marker)) {
       assert.doesNotMatch(system.append!, new RegExp(`Definition ${old}|Affect ${old}`));
+      assert.ok(!system.append!.includes(`C:/Character Data/${old}/icon.png`));
     }
     assert.equal(seen[index].prompt, completed.logicalPrompt.inputText);
+    assert.equal(seen[index].prompt, "# User Input\n\nhello");
     request.session.threadId = completed.threadId!;
     if (index < 2) assert.equal(completed.assistantText, "Hello");
   }

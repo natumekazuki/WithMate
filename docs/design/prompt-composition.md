@@ -6,6 +6,10 @@ coding planeへ渡す指示の正本、順序、成果物境界を定める。Ch
 
 通常のMain／Auxiliaryでは送信開始時に確定した`CharacterRuntimeSnapshot`を使う。active Characterのcanonical `character.md`が前回snapshotから変わっていれば有効性を確認して定義部分だけを更新し、archived Characterでは保存済み定義を使う。Character名と説明は保存済みsnapshot metadata、定義本文はfrontmatterを除いた`character.md`から取り、system側の`Character Definition Snapshot`として渡す。継続threadでは当該turnの定義を過去turnの定義より優先させ、更新のためにthreadや会話履歴を破棄しない。`character-notes.md`とMemory entryは常設promptへ入れない。
 
+同sectionの`Icon:`には、各Main／Auxiliaryが採用したsnapshotの`iconFilePath`をそのままコード表記で添える。通常はインラインコード、改行を含む参照はコードブロックとし、値内のbacktickより長いdelimiterで囲む。空白・日本語・区切り文字を保持し、定義本文のfrontmatterへは埋め込まない。未設定・空白だけなら行を省略し、snapshot／有効な定義がない場合や`characterDefinitionEnabled`がOFFの場合はicon情報も出さない。authoringでも既存のsnapshot経路から同metadataを渡す。user本文・画像添付へは追加せず、catalogや親Mainのiconへ差し替えない。
+
+この値は既存参照の提示であり、画像の存在・現在の内容・agentからの読取可能性を保証しない。icon差し替えによって旧snapshotの参照先が削除される場合や、旧データにscheme参照が残る場合もある。画像実体の凍結・修復・最新化、pathの再解決、filesystem許可の追加は行わない。
+
 論理sectionは次の順序で構成する。存在しない値や無効化されたsectionの空見出しは残さない。
 
 1. `Character Definition Snapshot`（有効なCharacter snapshotがあるとき）
