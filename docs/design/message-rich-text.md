@@ -36,7 +36,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 
 ## Mermaid Images
 
-- 中央paneと独立File Previewの`.mmd`、およびMarkdown file内のMermaid flowchartは、標準のimage node記法で画像を表示する。HTMLの`img`埋込や独自構文は使わない。
+- `.mmd`、Markdown file内と会話内のMermaid flowchartは、標準のimage node記法とlabel内のHTML `img`で画像を表示する。HTML画像はnode、edge、subgraph見出しで使用できる。
 
 ```mermaid
 flowchart LR
@@ -45,17 +45,18 @@ flowchart LR
   A --> B
 ```
 
+- HTML画像は `A["<img src='file:///C:/work/icon.png' width='64' height='64' alt='画像'>"]` のように記述する。`src`は標準画像と同じresolverを使い、`alt`をaccessible name、省略時は所属node／edge／subgraphのIDを用いる。`width`、`height`とstrictが許可するstyleでサイズを指定でき、CSSサイズ指定がなければ不足する寸法を画像の縦横比から補う。node内の画像配置・幅調整はMermaidのHTML label処理に従い、`object-fit`未指定時は`contain`で画像内容の縦横比を保つ。`srcset`は使用せず、画像選択で共通resolverを迂回しない。
 - `img`もImage Handlingの共通解決規則に従う。Windowsの絶対pathは`C:/work/images/sample.png`、file URLは`file:///C:/work/images/sample.png`と記述できる。空白・日本語を含むpathは引用符で囲む。登録root外の画像と、root外absolute previewからの相対画像もMainの画像専用経路で読み込む。
 - local画像は既存File Previewと同じPNG、JPEG、GIF、WebP、BMP、ICO、AVIF、SVGを対象とし、ブラウザーがdecodeできるものを表示する。SVGは常にpassive image resourceとして扱い、画像内容をinline DOMへ入れない。
 - サイズ・label位置はMermaid標準の`w`、`h`、`constraint`、`pos`に従う。縦横比を保つ場合は`h`と`constraint: "on"`を指定する。`label`を可視の説明と画像のaccessible nameに使用し、省略時のaccessible nameはnode IDとする。図のZoom／Fit／scroll／Ctrl＋dragをそのまま利用できる。
 - 不存在・読込不可・未対応・decode失敗は画像ごとのplaceholderとnode ID・対象path・理由を表示し、残りの図を保持する。修正後はFile PreviewのReloadで再読込する。source変更・unmount時はstale resultを表示せず、所有するobject URLを解放する。
 - 共有rendererは呼出元の画像resolverを利用し、会話内も通常Markdown画像と同じlocal／外部画像を扱う。画像resolverのない表示面ではlocalを直接file URLで描画せず、解決できない理由を示す。
-- strictとsanitizationは維持する。標準parserから画像nodeを読み、認可・decode後に自然寸法だけを持つアプリ生成placeholderへ標準metadataで差し替えて通常renderする。strictで生成したSVGのexact placeholderに一致する`image`だけへ、検証済みresource URIとaccessible nameを設定する。元sourceのunsafe destinationや任意HTMLは復元しない。画像bytesをMermaid sourceへ埋め込まず、文字数上限も変更しない。
+- strictとsanitizationは維持する。標準parserから画像nodeを読み、認可・decode後に自然寸法だけを持つアプリ生成placeholderへ標準metadataで差し替えて通常renderする。HTML `img`のsrcはparse前に識別用placeholderへ置換し、parse済みlabelに残る画像だけを解決する。subgraphの配置前にも寸法を確保し、strictで生成したSVGのexact placeholderに一致する`image`／`img`だけへ検証済みresource URIとaccessible nameを設定する。sanitizerが除去したevent属性・link destination・任意HTMLは復元しない。画像bytesをMermaid sourceへ埋め込まず、文字数上限も変更しない。
 
 ## Non Goals
 
 - CommonMark 完全互換
-- HTML 埋め込み
+- 通常Markdown本文の任意HTML埋め込み（Mermaid label内のHTML画像とは別）
 
 ## Rendering Policy
 
