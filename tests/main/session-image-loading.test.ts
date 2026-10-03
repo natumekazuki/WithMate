@@ -54,6 +54,53 @@ test("local images use workspace or source parent and allow targets outside root
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "UTF-16LE/BE BOM付きSVGは画像専用APIでSVGとしてinspectされ、元bytesをchunkで読めるが、同encodingの非SVGは拡張子によらず拒否される"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling / Mermaid Images" }
+// fault = "SVG headerをUTF-8固定でdecodeしてUTF-16画像を拒否する、またはBOMや拡張子だけで非SVGを許可する"
+// observable = "inspectImageのkind・mimeType、readImageChunkのbytes・doneと非SVGに対する両APIの拒否"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService.inspectImage/readImageChunkのBOM付きUTF-16 SVG"
+// lifecycle = "permanent"
+// impact = "ブラウザーがdecodeできるUTF-16 SVGがchat・Markdown・Mermaidで表示不能になる、または画像読込が非画像textへ拡大する"
+// distinction = "UTF-8 SVGやgeneric fileの拡張子判定ではBOM decodeを観測できず、2 endianの小さい実filesystem fixtureで両APIを継続確認する"
+// @end-test-value
+test("local image reads recognize BOM-encoded UTF-16 SVG without accepting non-SVG text", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-utf16-images-"));
+  try {
+    const service = new SessionFileExplorerService({
+      userDataPath: path.join(directory, "data"),
+      async getSessionContext() {
+        return { workspacePath: directory, parentSessionId: "session", allowedAdditionalDirectories: [] };
+      },
+    });
+    for (const endian of ["le", "be"]) {
+      const imagePath = path.join(directory, `image-${endian}.svg`);
+      const fakePath = path.join(directory, `text-${endian}.svg`);
+      const encode = (text: string) => {
+        const bytes = Buffer.from(`\uFEFF${text}`, "utf16le");
+        return endian === "be" ? bytes.swap16() : bytes;
+      };
+      const image = encode("<?xml version='1.0' encoding='UTF-16'?><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><rect width='16' height='16' fill='red'/></svg>");
+      await writeFile(imagePath, image);
+      await writeFile(fakePath, encode("<?xml version='1.0' encoding='UTF-16'?><private>not an image</private>"));
+      const request = { sessionId: "session", target: imagePath };
+      const descriptor = await service.inspectImage(request);
+      assert.equal(descriptor.kind, "svg");
+      assert.equal(descriptor.mimeType, "image/svg+xml");
+      const chunk = await service.readImageChunk({ ...request, offset: 0, length: 1024, expectedRevision: descriptor.revision });
+      assert.deepEqual(Buffer.from(chunk.data), image);
+      assert.equal(chunk.done, true);
+      await assert.rejects(service.inspectImage({ sessionId: "session", target: fakePath }), /not a supported image/);
+      const fakeDescriptor = await service.inspectFile({ sessionId: "session", absolutePath: fakePath });
+      await assert.rejects(service.readImageChunk({ sessionId: "session", target: fakePath, offset: 0, length: 1024, expectedRevision: fakeDescriptor.revision }), /not a supported image/);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
 // kind = "security"
 // claim = "画像専用APIは画像でないbytes・directory・未知scheme・Git previewの相対targetとrevision不一致を拒否する"
 // oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: inspectImage/readImageChunk" }

@@ -2123,6 +2123,51 @@ test("MessageRichText はexternal画像を直接表示しresolverのないlocal�
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "通常MarkdownのWindows絶対画像pathはバックスラッシュのURL encode後もresolverに届き、解決した画像を表示する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#Image Handling" }
+// fault = "Markdown parserがencodeした区切りを未知のschemeとして除去し画像を欠落させる"
+// observable = "resolverが受け取るfile URLと画像DOMのalt/src"
+// observation_boundary = "component-behavior"
+// scope = "MessageRichText Windows image path parsing and resolution"
+// lifecycle = "permanent"
+// impact = "Windowsからコピーした画像pathが会話とMarkdown previewで消えることを防ぐ"
+// distinction = "URL transform単体では通らない実Markdown parserのencodingからcomponentの非同期解決までを小さい入力で確認する"
+// @end-test-value
+test("MessageRichText はバックスラッシュのWindows画像pathをresolverへ渡す", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  const resolved: string[] = [];
+  let root: Root | null = null;
+  const source = "data:image/png;base64,AAAA";
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: String.raw`![backslash](C:\workspace\sample.png)
+![slash](C:/workspace/sample.png)
+![encoded](C:%5cworkspace%5Csample.png)`,
+        async resolveImageSource(target) { resolved.push(target); return source; },
+      }));
+    });
+    assert.deepEqual(resolved, Array(3).fill("file:///C:/workspace/sample.png"));
+    assert.deepEqual(Array.from(container.querySelectorAll("img"), (image) => ({
+      alt: image.alt, src: image.getAttribute("src"),
+    })), ["backslash", "slash", "encoded"].map((alt) => ({ alt, src: source })));
+  } finally {
+    if (root) await act(async () => root?.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "MessageRichText はembedded imageを優先読込しremote imageは遅延読込する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }

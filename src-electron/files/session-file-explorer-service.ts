@@ -46,7 +46,9 @@ const MAX_PENDING_DIRECTORY_LISTINGS = 32;
 
 function detectLocalImageResource(bytes: Uint8Array): { kind: "image" | "svg"; mimeType: string } {
   const text = new TextDecoder("latin1").decode(bytes);
-  const svgHeader = new TextDecoder("utf-8").decode(bytes).trimStart().replace(/^<\?xml[\s\S]*?\?>\s*/i, "")
+  const svgEncoding = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le"
+    : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : "utf-8";
+  const svgHeader = new TextDecoder(svgEncoding).decode(bytes).trimStart().replace(/^<\?xml[\s\S]*?\?>\s*/i, "")
     .replace(/^(?:<!--[\s\S]*?-->\s*)+/, "")
     .replace(/^<!DOCTYPE\s+svg\b(?:[^>\[]|\[[\s\S]*?\])*>\s*/i, "")
     .replace(/^(?:<!--[\s\S]*?-->\s*)+/, "");

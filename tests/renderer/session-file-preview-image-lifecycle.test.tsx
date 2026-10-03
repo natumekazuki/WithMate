@@ -323,6 +323,108 @@ async function renderPreview(
 }
 
 // @test-value v2
+// kind = "invariant"
+// claim = "画像IPC待機中にReloadとencodingを変えてもhost全体で4並列を守り、旧処理完了後は最新世代の全画像だけを表示する"
+// oracle = { type = "contract", ref = "docs/adr/026-shared-image-resource-loading.md" }
+// fault = "resolver世代ごとに実行枠を増やす、古い待機画像を開始する、または新しい画像の読込が停止する"
+// observable = "inspect/chunkの保留件数と最大同時数、API呼出し数、生成blob数、画像DOM"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview image loader lifecycle across reload and encoding"
+// lifecycle = "permanent"
+// impact = "遅い画像読込中の再操作でfilesystem負荷が増え続けることとstale画像混入を防ぐ"
+// distinction = "loaderやqueue単体testで観測できない実previewの世代変更を通し、inspectとchunkの各待機点を制御する"
+// @end-test-value
+test("Markdown画像の4並列はReloadとencoding変更をまたいで維持される", async () => {
+  for (const pendingStage of ["inspect", "chunk"] as const) {
+    const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+      pretendToBeVisual: true, url: "http://localhost/",
+    });
+    const restoreGlobals = installDomGlobals(dom);
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    const bytes = new TextEncoder().encode(Array.from({ length: 6 }, (_, i) => `![image-${i}](./image-${i}.png)`).join("\n"));
+    const gates: ReturnType<typeof deferred<void>>[] = [];
+    let holding = true;
+    let active = 0;
+    let maximumActive = 0;
+    let inspections = 0;
+    let reads = 0;
+    let blobs = 0;
+    const hold = async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      try {
+        if (holding) {
+          const gate = deferred<void>();
+          gates.push(gate);
+          await gate.promise;
+        }
+      } finally { active -= 1; }
+    };
+    URL.createObjectURL = () => `blob:current-${++blobs}`;
+    URL.revokeObjectURL = () => {};
+    const api: PreviewApi = {
+      ...createPreviewApi(async () => IMAGE_DESCRIPTOR).api,
+      async inspectSessionFile() { return { ...MARKDOWN_DESCRIPTOR, byteLength: bytes.byteLength }; },
+      async readSessionFileChunk(request) {
+        return { data: copyArrayBuffer(bytes), offset: 0, nextOffset: bytes.byteLength,
+          totalBytes: bytes.byteLength, done: true, revision: request.expectedRevision };
+      },
+      async inspectSessionImage() {
+        inspections += 1;
+        if (pendingStage === "inspect") await hold();
+        return IMAGE_DESCRIPTOR;
+      },
+      async readSessionImageChunk(request) {
+        reads += 1;
+        if (pendingStage === "chunk") await hold();
+        return DEFAULT_IMAGE_COPY_API.readSessionImageChunk(request);
+      },
+    };
+    let root: Root | null = null;
+    try {
+      const container = dom.window.document.getElementById("root");
+      assert.ok(container);
+      root = await renderPreview(api, container);
+      await waitFor(() => gates.length === 4);
+      for (let i = 0; i < 2; i += 1) {
+        const reload: HTMLButtonElement | undefined = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Reload");
+        assert.ok(reload);
+        await act(async () => reload.click());
+        await waitFor(() => container.querySelectorAll(".message-image-shell").length === 6);
+        assert.equal(active, 4);
+        assert.equal(inspections, 4);
+      }
+      await changeEncoding(container, dom, "utf-8");
+      await waitFor(() => container.querySelectorAll(".message-image-shell").length === 6);
+      assert.equal(active, 4);
+      assert.equal(inspections, 4);
+      assert.equal(reads, pendingStage === "chunk" ? 4 : 0);
+      await act(async () => {
+        holding = false;
+        for (const gate of gates) gate.resolve();
+      });
+      await waitFor(() => container.querySelectorAll("img.message-image").length === 6);
+      assert.equal(maximumActive, 4);
+      assert.equal(active, 0);
+      assert.equal(inspections, 10);
+      assert.equal(reads, pendingStage === "chunk" ? 10 : 6);
+      assert.equal(blobs, 6);
+      assert.deepEqual(Array.from(container.querySelectorAll("img.message-image"), (image) => image.getAttribute("alt")),
+        Array.from({ length: 6 }, (_, i) => `image-${i}`));
+    } finally {
+      if (root) await act(async () => root?.unmount());
+      holding = false;
+      for (const gate of gates) gate.resolve();
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+      restoreGlobals();
+      dom.window.close();
+    }
+  }
+});
+
+// @test-value v2
 // kind = "contract"
 // claim = ".mmdのFile PreviewはMermaid表示経路を既定で選び、Sourceへ切り替えると元のテキストを読める"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#中央-file-preview" }

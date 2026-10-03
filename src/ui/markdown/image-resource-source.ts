@@ -10,7 +10,7 @@ export function resolveMarkdownImageTarget(target: string): MarkdownImageTarget 
   if (/^(?:https?:|data:image\/|blob:)/i.test(source)) {
     return { kind: "external", source };
   }
-  if (/^[a-zA-Z]:[\\/]/.test(source) || /^file:/i.test(source)) {
+  if (/^[a-zA-Z]:(?:[\\/]|%5c)/i.test(source) || /^file:/i.test(source)) {
     return { kind: "local", target: source };
   }
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(source)) return { kind: "unsupported" };

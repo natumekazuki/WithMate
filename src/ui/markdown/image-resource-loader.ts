@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { SessionImageResourceRequest } from "../../../src-shared/file-explorer/file-explorer-contract.js";
@@ -10,8 +10,11 @@ export type MarkdownImageResolver = (target: string, signal?: AbortSignal) => Pr
 export type MarkdownImageApi = Pick<WithMateWindowApi, "inspectSessionImage" | "readSessionImageChunk">;
 export type MarkdownImageContext = Omit<SessionImageResourceRequest, "target">;
 
-export function createMarkdownImageLoader(api: MarkdownImageApi | null, context: MarkdownImageContext) {
-  const queue = new PreviewResourceQueue(4);
+export function createMarkdownImageLoader(
+  api: MarkdownImageApi | null,
+  context: MarkdownImageContext,
+  queue = new PreviewResourceQueue(4),
+) {
   const accumulators = new Set<PreviewByteAccumulator>();
   const resolve: MarkdownImageResolver = async (target, signal) => {
     if (signal?.aborted) return null;
@@ -74,7 +77,8 @@ export function useMarkdownImageResolver(
   context: MarkdownImageContext,
   revision: string | number = "",
 ): MarkdownImageResolver {
-  const loader = useMemo(() => createMarkdownImageLoader(api, context), [api, context, revision]);
+  const [queue] = useState(() => new PreviewResourceQueue(4));
+  const loader = useMemo(() => createMarkdownImageLoader(api, context, queue), [api, context, revision, queue]);
   useLayoutEffect(() => () => loader.invalidate(), [loader]);
   return loader.resolve;
 }
