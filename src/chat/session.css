@@ -1408,7 +1408,8 @@
 }
 
 .rich-text a,
-.rich-text a:visited {
+.rich-text a:visited,
+.rich-text a .message-inline-code {
   color: inherit;
   text-decoration-line: underline;
   text-decoration-thickness: 1px;
@@ -1417,7 +1418,9 @@
 }
 
 .rich-text a:hover,
-.rich-text a:focus-visible {
+.rich-text a:focus-visible,
+.rich-text a:hover .message-inline-code,
+.rich-text a:focus-visible .message-inline-code {
   text-decoration-thickness: 2px;
 }
 
@@ -1428,9 +1431,6 @@
 
 .rich-text a .message-inline-code {
   max-width: 100%;
-  color: inherit;
-  text-decoration: inherit;
-  text-underline-offset: inherit;
 }
 
 .glossary-annotation {

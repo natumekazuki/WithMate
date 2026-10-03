@@ -425,25 +425,21 @@ test("個別の file preview window は外周surfaceを保ちDiff本文だけを
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Markdown previewは暗いsurface上でlinkとMermaid errorに読みやすいcontrast色を使う"
-// oracle = { type = "contract", ref = "markdown preview contrast tokens" }
-// fault = "linkまたはMermaid errorが暗いsurfaceに埋もれ、内容やエラーを識別できない"
-// observable = "preview link/error tokenとinline code、Mermaid errorのcolor/background CSS宣言"
+// claim = "Markdown linkと子孫inline codeには本文色と常時下線・操作状態を宣言し、previewのcodeとMermaid errorのcontrast色も維持する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Link Handling; docs/design/desktop-ui.md: 表示言語・操作・状態" }
+// fault = "code下線の親継承だけではstrong/em内で下線が消える。またはpreviewのcode/errorが暗い背景に埋もれる"
+// observable = "共通anchorと子孫codeのcolor/underline・hover/focus太さ・focus輪郭・折り返し、previewのcode/errorのCSS宣言"
 // observation_boundary = "declaration"
-// scope = "markdown-preview-contrast-css"
+// scope = "markdown-rich-text-style-css"
 // lifecycle = "permanent"
-// distinction = "Markdown parserやerror生成ではなく、暗色surface上の表示contrastを確認する"
+// distinction = "renderer testの構文やtargetではなく、linkの非色依存の識別とpreviewのcontrastの宣言を検査する。実描画はMT-023D6Aで確認する"
 // @end-test-value
-test("Markdown preview は暗いsurface上のlinkとMermaid errorへ高contrast色を使う", async () => {
+test("Markdown link は強調内codeにも下線を指定し、previewのcodeとerrorのcontrastを保つ", async () => {
   const stylesSource = await readStylesheet();
 
   assert.match(
     stylesSource,
-    /\.session-file-preview\s*{[\s\S]*?--session-file-link:\s*#93c5fd;[\s\S]*?--session-file-error:\s*#fca5a5;/,
-  );
-  assert.match(
-    stylesSource,
-    /\.session-file-markdown a,\s*\.session-file-markdown a:visited\s*{\s*color:\s*var\(--session-file-link\);\s*}/,
+    /\.session-file-preview\s*{[^{}]*--session-file-error:\s*#fca5a5;/,
   );
   assert.match(
     stylesSource,
@@ -451,12 +447,21 @@ test("Markdown preview は暗いsurface上のlinkとMermaid errorへ高contrast�
   );
   assert.match(
     stylesSource,
-    /\.session-file-markdown a \.message-inline-code\s*{\s*color:\s*inherit;\s*}/,
+    /\.session-file-markdown \.message-mermaid-error\s*{\s*color:\s*var\(--session-file-error\);\s*}/,
   );
   assert.match(
     stylesSource,
-    /\.session-file-markdown \.message-mermaid-error\s*{\s*color:\s*var\(--session-file-error\);\s*}/,
+    /\.rich-text a,\s*\.rich-text a:visited,\s*\.rich-text a \.message-inline-code\s*{\s*color:\s*inherit;\s*text-decoration-line:\s*underline;\s*text-decoration-thickness:\s*1px;\s*text-underline-offset:\s*0\.18em;\s*overflow-wrap:\s*anywhere;\s*}/,
   );
+  assert.match(
+    stylesSource,
+    /\.rich-text a:hover,\s*\.rich-text a:focus-visible,\s*\.rich-text a:hover \.message-inline-code,\s*\.rich-text a:focus-visible \.message-inline-code\s*{\s*text-decoration-thickness:\s*2px;\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.rich-text a:focus-visible\s*{\s*outline:\s*2px solid currentColor;\s*outline-offset:\s*2px;\s*}/,
+  );
+  assert.match(stylesSource, /\.rich-text a \.message-inline-code\s*{\s*max-width:\s*100%;\s*}/);
 });
 
 // @test-value v2
