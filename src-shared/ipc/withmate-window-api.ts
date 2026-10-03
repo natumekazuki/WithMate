@@ -85,6 +85,9 @@ import type {
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFilePin,
+  SessionFilePinReference,
+  SessionFileRootResourceRequest,
   SessionFileTreePathActionContextMenuResult,
   SessionFileTreePathActionRequest,
   FileRootChangesRequest,
@@ -166,6 +169,9 @@ export type WithMateWindowSessionApi = {
   ): Promise<GlossaryOperationResult<GlossaryListResult>>;
   validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;
   listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
+  listSessionFilePins(sessionId: string): Promise<SessionFilePin[]>;
+  pinSessionFile(request: SessionFileRootResourceRequest): Promise<SessionFilePin>;
+  unpinSessionFile(request: SessionFilePinReference & { sessionId: string }): Promise<void>;
   listSessionDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]>;
   inspectSessionFile(request: SessionFilePreviewResourceRequest): Promise<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;

@@ -37,6 +37,29 @@ function createIpcRendererStub() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Files Pinの公開APIはSessionとroot参照を専用channelへそのまま伝達する"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts: WithMateWindowSessionApi" }
+// fault = "Pin APIが誤channelを呼ぶかSessionやroot参照を欠落してMainへ送る"
+// observable = "ipcRenderer.invokeのchannelとpayload"
+// observation_boundary = "public-boundary"
+// scope = "preload File Pin API"
+// lifecycle = "permanent"
+// distinction = "公開key集合と型検査はruntimeのinvoke channelおよび引数伝達を保証しない"
+// @end-test-value
+test("Files Pin preload は専用channelへSessionと参照を渡す", async () => {
+  const { ipcRenderer } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  assert.deepEqual(await api.listSessionFilePins("aux-1"), {
+    channel: "withmate:list-session-file-pins", args: ["aux-1"],
+  });
+  const pin = { sessionId: "aux-1", rootId: "workspace", relativePath: "docs/file.txt" };
+  assert.deepEqual(await api.pinSessionFile(pin), { channel: "withmate:pin-session-file", args: [pin] });
+  const unpin = { sessionId: "aux-1", rootKind: "additional" as const, rootPath: "C:/removed", relativePath: "file.txt" };
+  assert.deepEqual(await api.unpinSessionFile(unpin), { channel: "withmate:unpin-session-file", args: [unpin] });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Session summaryは対象IDを専用IPC channelへ渡し、会話全体の取得を要求しない"
 // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#読取と通知" }
 // fault = "summary APIをfull Sessionのchannelへ誤接続するか対象IDを欠落させる"
@@ -715,6 +738,9 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "isSessionFileObjectCopyAvailable",
     "listSessionDirectory",
     "listSessionFileRoots",
+    "listSessionFilePins",
+    "pinSessionFile",
+    "unpinSessionFile",
     "readSessionFileChunk",
     "reportRendererLog",
     "releaseTerminal",

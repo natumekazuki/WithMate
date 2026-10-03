@@ -7,6 +7,8 @@ import type { SessionSummaryPageRequest } from "../../src-shared/session/session
 
 import type {
   SessionDirectoryRequest,
+  SessionFilePinReference,
+  SessionFileRootResourceRequest,
   SessionFileChunkRequest,
   SessionFileOpenRequest,
   SessionFilePreviewWindowOpenRequest,
@@ -40,6 +42,9 @@ import {
   WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
+  WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL,
+  WITHMATE_PIN_SESSION_FILE_CHANNEL,
+  WITHMATE_UNPIN_SESSION_FILE_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
@@ -270,6 +275,21 @@ export function registerSessionQueryHandlers(
       return deps.listSessionFileRoots(sessionId);
     },
   );
+  ipcMain.handle(WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL, async (event, sessionId: string) => {
+    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
+    await assertOwningSessionFileExplorerSender(event, sessionId, deps);
+    return deps.listSessionFilePins(sessionId);
+  });
+  ipcMain.handle(WITHMATE_PIN_SESSION_FILE_CHANNEL, async (event, request: SessionFileRootResourceRequest) => {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId) throw new TypeError("File Pin request is invalid.");
+    await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.pinSessionFile(request);
+  });
+  ipcMain.handle(WITHMATE_UNPIN_SESSION_FILE_CHANNEL, async (event, request: SessionFilePinReference & { sessionId: string }) => {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId) throw new TypeError("File Pin request is invalid.");
+    await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.unpinSessionFile(request);
+  });
   ipcMain.handle(
     WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
     async (event, request: SessionDirectoryRequest) => {

@@ -1,5 +1,19 @@
 export type SessionFileRootKind = "workspace" | "session-folder" | "additional";
 
+export type SessionFilePin = {
+  rootKind: SessionFileRootKind;
+  rootPath: string;
+  relativePath: string;
+  kind: "file" | "directory";
+  rootId: string | null;
+  rootLabel: string;
+  unavailableReason: string | null;
+};
+
+export type SessionFilePinReference = Pick<SessionFilePin, "rootKind" | "rootPath" | "relativePath">;
+export type StoredSessionFilePin = Pick<SessionFilePin, "rootKind" | "rootPath" | "relativePath" | "kind" | "rootLabel">;
+export type SessionFilePinOwner = { sessionId: string; incarnationId: string };
+
 export type SessionFileRoot = {
   id: string;
   kind: SessionFileRootKind;

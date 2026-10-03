@@ -178,6 +178,9 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         getSessionFileExplorerOwnerSessionId: async () => {
           throw new Error("unused session query fixture method");
         },
+        listSessionFilePins: async () => [],
+        pinSessionFile: async () => { throw new Error("unused"); },
+        unpinSessionFile: async () => {},
         listSessionFileRoots: async () => {
           throw new Error("unused session query fixture method");
         },

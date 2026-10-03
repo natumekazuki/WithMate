@@ -8,7 +8,14 @@ import {
   buildSessionFileExplorerRootsRevision,
   type SessionDirectoryEntry,
   type SessionFileRoot,
+  type SessionFilePin,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
+
+const emptyPinsApi = {
+  async listSessionFilePins(): Promise<SessionFilePin[]> { return []; },
+  async pinSessionFile(): Promise<SessionFilePin> { throw new Error("Unexpected pin mutation."); },
+  async unpinSessionFile(): Promise<void> { throw new Error("Unexpected pin mutation."); },
+};
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -180,6 +187,7 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
   let rejectRoots = false;
   let directoryCalls = 0;
   const api = {
+    ...emptyPinsApi,
     async showSessionFileTreeContextMenu(request: unknown) {
       pathMenuRequests.push(request);
       return (request as { nodeKind?: string }).nodeKind === "file"
@@ -509,11 +517,13 @@ test("SessionFileExplorerPane は path insertion result適用時にowner・root�
   assert.deepEqual(inserted, ["C:\\workspace\\docs\\report.md"]);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "非同期menu結果はReactへcommit済みのowner snapshotだけを参照してpathを挿入する"
 // oracle = { type = "contract", ref = "accepted behavior invariant 2: insertion targets the current active writable composer" }
-// failure_mode = "concurrent renderが中断されたとき、未commit renderのcallbackをcurrent ownerとしてpath挿入へ使う"
+// fault = "concurrent renderが中断されたとき、未commit renderのcallbackをcurrent ownerとしてpath挿入へ使う"
+// observable = "確定renderと未確定renderそれぞれの挿入callbackに届いたpath集合"
+// observation_boundary = "component-behavior"
 // scope = "SessionFileExplorerPane committed insertion owner snapshot"
 // lifecycle = "permanent"
 // distinction = "通常のowner切替ではなく、同じowner identityの中断renderがrefだけを先行更新する競合を観測する"
@@ -577,6 +587,7 @@ test("SessionFileExplorerPane は中断renderのowner callbackへpathを挿入�
   const committedInsertions: string[] = [];
   const uncommittedInsertions: string[] = [];
   const api = {
+    ...emptyPinsApi,
     async listSessionFileRoots() {
       return [{ id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:\\workspace" }];
     },
@@ -675,11 +686,13 @@ test("SessionFileExplorerPane は中断renderのowner callbackへpathを挿入�
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "SessionFileExplorerPaneはowner単位でtabをlazy mountし、tab切替では保持してowner変更時に破棄する"
 // oracle = { type = "contract", ref = "accepted behavior: in-window File Explorer tab state retention" }
-// failure_mode = "tab切替で取得結果が失われるか、Sessionまたはroot集合の変更後も旧panel stateが残る"
+// fault = "tab切替で取得結果が失われるか、Sessionまたはroot集合の変更後も旧panel stateが残る"
+// observable = "各tab panelのmount有無、buttonのlocal counter、Sessionとroot変更後のcounter初期化"
+// observation_boundary = "component-behavior"
 // scope = "SessionFileExplorerPane tab panel lifecycle"
 // lifecycle = "permanent"
 // distinction = "同一owner内のtab切替と、Session・root集合によるowner変更を一つのlifecycleとして扱う"
@@ -715,6 +728,7 @@ test("SessionFileExplorerPane は訪問済みtab panelを保持する", async ()
   }
 
   const api = {
+    ...emptyPinsApi,
     async listSessionFileRoots() {
       return [];
     },

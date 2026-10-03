@@ -1,10 +1,12 @@
 import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
 import type { OpenPathResult } from "../../src-shared/window/withmate-window-types.js";
+import type { SessionFilePinStorage } from "../storage/persistent-store-lifecycle-service.js";
 
 export type SessionFileExplorerRuntimeDeps = {
   userDataPath: string;
   getSessionContext(sessionId: string): Promise<SessionFileExplorerContext | null>;
+  getPinStorage?(): SessionFilePinStorage;
   openResolvedPath(targetPath: string, reveal: boolean): Promise<OpenPathResult>;
 };
 
@@ -17,6 +19,7 @@ export class SessionFileExplorerRuntime {
     this.explorer = new SessionFileExplorerService({
       userDataPath: deps.userDataPath,
       getSessionContext: deps.getSessionContext,
+      getPinStorage: deps.getPinStorage,
       openResolvedPath: deps.openResolvedPath,
     });
     this.gitChanges = new FileRootGitChangesService({

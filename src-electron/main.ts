@@ -161,6 +161,7 @@ import {
   type ProjectMemoryStorageAccess,
   type SessionMemoryStorageAccess,
   type SessionPinStorage,
+  type SessionFilePinStorage,
   type SessionStorageRead,
   type SessionStorageWrite,
 } from "./storage/persistent-store-lifecycle-service.js";
@@ -464,6 +465,7 @@ terminalService = new TerminalService<BrowserWindow>({
 const sessionFileExplorerRuntime = new SessionFileExplorerRuntime({
   userDataPath: fixedUserDataPath,
   getSessionContext: getSessionFileExplorerContext,
+  getPinStorage: requireSessionFilePinStorage,
   openResolvedPath: (targetPath, reveal) => openPathTarget(targetPath, { reveal }),
 });
 let appBootStatus: AppBootStatus = {
@@ -1268,6 +1270,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 ensureSessionGlossarySubscription,
                 getSessionFileExplorerOwnerSessionId,
                 listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
+                listSessionFilePins: (sessionId) => createSessionFileExplorerService().listSessionFilePins(sessionId),
+                pinSessionFile: (request) => createSessionFileExplorerService().pinSessionFile(request),
+                unpinSessionFile: (request) => createSessionFileExplorerService().unpinSessionFile(request),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
                 inspectSessionFile: (request) => isSessionFileGitCommitResource(request)
                   ? createFileRootGitChangesService().inspectHistoryFile(request)
@@ -1503,6 +1508,13 @@ function requireSessionPinStorage(): SessionPinStorage {
     return candidate as SessionPinStorage;
   }
   throw new Error("Pinning is not available for this session format.");
+}
+
+function requireSessionFilePinStorage(): SessionFilePinStorage {
+  const candidate = requireSessionStorage() as Partial<SessionFilePinStorage>;
+  if (typeof candidate.listSessionFilePins !== "function" || typeof candidate.pinSessionFile !== "function"
+    || typeof candidate.unpinSessionFile !== "function") throw new Error("File Pin storage is not available.");
+  return candidate as SessionFilePinStorage;
 }
 
 function isSessionStorageWritable(storage: SessionStorageRead): storage is SessionStorageWrite {
@@ -2828,6 +2840,7 @@ async function getSessionFileExplorerContext(sessionId: string): Promise<Session
     return {
       workspacePath: parentSession.workspacePath,
       parentSessionId: parentSession.id,
+      parentIncarnationId: getSessionIncarnationId(parentSession),
       allowedAdditionalDirectories: auxiliarySession.allowedAdditionalDirectories,
     };
   }
@@ -2837,6 +2850,7 @@ async function getSessionFileExplorerContext(sessionId: string): Promise<Session
     return {
       workspacePath: session.workspacePath,
       parentSessionId: session.id,
+      parentIncarnationId: getSessionIncarnationId(session),
       allowedAdditionalDirectories: session.allowedAdditionalDirectories,
     };
   }

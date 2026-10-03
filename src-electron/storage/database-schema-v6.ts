@@ -17,6 +17,7 @@ export const REQUIRED_V6_TABLES = [
   "project_scopes_v6",
   "sessions_v6",
   "session_messages_v6",
+  "session_file_pins_v6",
   "auxiliary_sessions",
   "auxiliary_session_messages",
   "session_turns_v6",
@@ -108,6 +109,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "last_active_at",
   ],
   session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
+  session_file_pins_v6: ["session_id", "root_kind", "root_path", "relative_path", "relative_path_key", "kind", "root_label"],
   auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at"],
   auxiliary_session_messages: ["auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at"],
   session_turns_v6: [
@@ -449,6 +451,7 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
   return hasForeignKey(db, "sessions_v6", "character_id", "characters")
     && hasForeignKey(db, "sessions_v6", "project_scope_id", "project_scopes_v6")
     && hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6")
+    && hasForeignKey(db, "session_file_pins_v6", "session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "auxiliary_session_messages", "auxiliary_session_id", "auxiliary_sessions")
     && hasForeignKey(db, "session_turns_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions")
@@ -546,6 +549,7 @@ function tableSql(db: DatabaseSync, tableName: string): string {
 
 function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionsSql = tableSql(db, "sessions_v6");
+  const filePinsSql = tableSql(db, "session_file_pins_v6");
   const auxiliarySessionsSql = tableSql(db, "auxiliary_sessions");
   const sessionTurnsSql = tableSql(db, "session_turns_v6");
   const sessionTurnInterimsSql = tableSql(db, "session_turn_interims_v6");
@@ -564,6 +568,12 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
       && !db.prepare("SELECT 1 FROM auxiliary_sessions WHERE status NOT IN ('active', 'closed') OR status IS NULL LIMIT 1").get());
 
   return sessionsSql.includes("json_valid(character_snapshot_json)")
+    && filePinsSql.includes("root_kind IN ('workspace', 'session-folder', 'additional')")
+    && filePinsSql.includes("kind IN ('file', 'directory')")
+    && filePinsSql.includes("root_path <> ''")
+    && filePinsSql.includes("relative_path <> ''")
+    && filePinsSql.includes("relative_path_key <> ''")
+    && filePinsSql.includes("PRIMARY KEY (session_id, root_kind, root_path, relative_path_key)")
     && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
     && auxiliaryStatusConstrained
     && sessionTurnsSql.includes("phase IN ('running', 'completed', 'failed', 'canceled')")
@@ -751,6 +761,20 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_sessions_character
     ON sessions_v6(character_id, last_active_at DESC);
+`;
+
+export const CREATE_V6_SESSION_FILE_PINS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_file_pins_v6 (
+    session_id TEXT NOT NULL,
+    root_kind TEXT NOT NULL CHECK (root_kind IN ('workspace', 'session-folder', 'additional')),
+    root_path TEXT NOT NULL CHECK (root_path <> ''),
+    relative_path TEXT NOT NULL CHECK (relative_path <> ''),
+    relative_path_key TEXT NOT NULL CHECK (relative_path_key <> ''),
+    kind TEXT NOT NULL CHECK (kind IN ('file', 'directory')),
+    root_label TEXT NOT NULL,
+    PRIMARY KEY (session_id, root_kind, root_path, relative_path_key),
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+  );
 `;
 
 export const CREATE_V6_SESSION_MESSAGES_TABLE_SQL = `
@@ -1345,6 +1369,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
+  CREATE_V6_SESSION_FILE_PINS_TABLE_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,

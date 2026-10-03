@@ -15,6 +15,7 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 | 設定・catalog | `app_settings`、`prompt_templates`、`model_catalog_*`、`characters` |
 | Project | `project_scopes_v6` |
 | Main Session | `sessions_v6`、`session_messages_v6` |
+| Files Pin | `session_file_pins_v6` |
 | Auxiliary | `auxiliary_sessions`、`auxiliary_session_messages`、`auxiliary_session_drafts` |
 | Turn・監査 | `session_turns_v6`、`session_turn_interims_v6`、`session_turn_provider_outputs_v6` |
 | Memory | `memory_*_v6` |
@@ -25,6 +26,14 @@ Mainの`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を�
 turnはMainまたはAuxiliaryの一方だけをownerとし、terminal marker、interim、provider outputを別tableへ保存する。Session表示に必要な軽量messageと重いartifact detailも分け、detailは対象を開いたときに取得する。通常turnと監査の契約は[Session Run Lifecycle](session-run-lifecycle.md)と[Audit Log](audit-log.md)を参照する。
 
 Memoryのowner、scope、忘却、idempotency、保護対象fileは[V6 Memory Foundation](v6-memory-foundation.md)と[V6 Memory Protected Objects](v6-memory-protected-objects.md)を参照する。Characterの定義fileは`<userData>/characters/<character-id>/`に置き、catalog metadataとsession snapshotの境界は[Character Storage](character-storage.md)を参照する。
+
+## Files Pin
+
+`session_file_pins_v6`は親Sessionごとにroot種別、正規化root path、相対path、対象種類、root表示名を保持する。MainとAuxiliaryは同じ親SessionのPinを使い、アクセス時にはそれぞれの現在root認可を適用する。親Sessionへのforeign keyは`ON DELETE CASCADE`で、削除時にPinも削除する。新規・既存V6のschema更新はstorage Worker内の`ensureV6Schema`が行い、Session本文等を作り直さない。
+
+root種別・root path・相対pathの識別keyを親Session内で一意にし、包含rootは別scopeとして扱う。Windowsではpathの識別をcase-insensitiveとし、相対pathの表示casingは保持する。Pinはpathへの目印で、rename追跡や内容固定を行わない。不存在・認可外でも参照を自動削除せず、一覧の利用不可状態と明示解除で扱う。
+
+list／追加／解除は既存のtyped IPCからstorage Workerへ渡し、親Session IDとincarnationを確認する。解除はrootが除去済みでも可能だが、別親SessionのPinは変更しない。本文読込・全件index・追加watcherは用いず、登録先のmetadata確認を最大4件ずつ並列実行する。保存結果不明・取得失敗はエラーとして伝え、空のPin集合へfallbackしない。
 
 ## 起動時の移行とデータ保護
 

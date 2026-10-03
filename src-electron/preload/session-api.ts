@@ -58,6 +58,15 @@ export function createSessionApi(
         sessionId,
       );
     },
+    listSessionFilePins(sessionId) {
+      return ipcRenderer.invoke(channels.WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL, sessionId);
+    },
+    pinSessionFile(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_PIN_SESSION_FILE_CHANNEL, request);
+    },
+    unpinSessionFile(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_UNPIN_SESSION_FILE_CHANNEL, request);
+    },
     listSessionDirectory(request) {
       return ipcRenderer.invoke(
         channels.WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,

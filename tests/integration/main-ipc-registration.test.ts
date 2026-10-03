@@ -45,6 +45,9 @@ import {
   WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
+  WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL,
+  WITHMATE_PIN_SESSION_FILE_CHANNEL,
+  WITHMATE_UNPIN_SESSION_FILE_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
@@ -179,6 +182,60 @@ function createAuxiliarySessionStub(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+// @test-value v2
+// kind = "security"
+// claim = "Files Pinの列挙・追加・解除はMain/Auxの親Session Windowだけを認可し他Windowや無効Sessionにはserviceを呼ばない"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md: Files Pin" }
+// fault = "他SessionやHome・Preview WindowからPinを変更できるかAuxの親Session Windowが拒否される"
+// observable = "各IPCの戻り値・拒否Errorとserviceへ届いたrequest集合"
+// observation_boundary = "public-boundary"
+// scope = "File Pin IPC sender authority"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// impact = "別Sessionから保存目印を変更する権限逸脱とAuxの主要機能不成立を防ぐ"
+// distinction = "serviceのfilesystem認可testでは保証しないElectron sender Window境界を直接検証する"
+// @end-test-value
+test("Files Pin IPC はMain/Auxの親Windowだけから利用できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const others = [createWindowStub("file:///session.html?sessionId=other"), createWindowStub("file:///home.html"), createWindowStub("file:///file-preview.html")];
+  let sender = owner;
+  const requests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    getSessionFileExplorerOwnerSessionId: async (id: string) => ["session-1", "aux-1"].includes(id) ? "session-1" : null,
+    listSessionFilePins: async (id: string) => { requests.push(id); return []; },
+    pinSessionFile: async (request: unknown) => { requests.push(request); return "pinned"; },
+    unpinSessionFile: async (request: unknown) => { requests.push(request); },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const list = handlers.get(WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL)!;
+  const pin = handlers.get(WITHMATE_PIN_SESSION_FILE_CHANNEL)!;
+  const unpin = handlers.get(WITHMATE_UNPIN_SESSION_FILE_CHANNEL)!;
+  const event = {};
+  for (const id of ["session-1", "aux-1"]) {
+    const pinRequest = { sessionId: id, rootId: "workspace", relativePath: "file.txt" };
+    const unpinRequest = { sessionId: id, rootKind: "additional", rootPath: "C:/removed", relativePath: "file.txt" };
+    assert.deepEqual(await list(event, id), []);
+    assert.equal(await pin(event, pinRequest), "pinned");
+    await unpin(event, unpinRequest);
+    assert.deepEqual(requests.splice(0), [id, pinRequest, unpinRequest]);
+    for (const other of others) {
+      sender = other;
+      await assert.rejects(async () => list(event, id), /owning Session window/);
+      await assert.rejects(async () => pin(event, pinRequest), /owning Session window/);
+      await assert.rejects(async () => unpin(event, unpinRequest), /owning Session window/);
+      assert.deepEqual(requests, []);
+    }
+    sender = owner;
+  }
+  await assert.rejects(async () => list(event, "missing"), /owning Session window/);
+  await assert.rejects(async () => pin(event, { sessionId: "missing" }), /owning Session window/);
+  await assert.rejects(async () => unpin(event, { sessionId: "missing" }), /owning Session window/);
+  assert.deepEqual(requests, []);
+});
 
 function createSessionRequest(workspace: Record<string, unknown>) {
   return {
