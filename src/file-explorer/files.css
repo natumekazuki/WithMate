@@ -818,6 +818,18 @@
   animation: workspace-changes-spin 720ms linear infinite;
 }
 
+@keyframes workspace-changes-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-changes-root-spinner {
+    animation: none;
+  }
+}
+
 .workspace-changes-group-header {
   padding: 4px 5px;
   color: var(--muted);
