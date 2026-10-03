@@ -17,6 +17,10 @@ import type {
   SessionFilePreviewTargetResolution,
   SessionFileRoot,
   SessionFileRootKind,
+  SessionFilePin,
+  SessionFilePinOwner,
+  SessionFilePinReference,
+  StoredSessionFilePin,
   SessionFileTreePathActionNodeKind,
   SessionFileTreePathActionTargetRequest,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
@@ -36,6 +40,7 @@ import {
 } from "./identity-bound-directory-listing.js";
 import { resolveSessionFilesDirectory } from "./session-files.js";
 import { resolveOpenPathTarget } from "./open-path.js";
+import type { SessionFilePinStorage } from "../storage/persistent-store-lifecycle-service.js";
 
 const MAX_CHUNK_BYTES = 1024 * 1024;
 const INSPECTION_BYTES = 8192;
@@ -100,6 +105,7 @@ function listDirectoryWithAdmission(
 export type SessionFileExplorerContext = {
   workspacePath: string;
   parentSessionId: string;
+  parentIncarnationId?: string;
   allowedAdditionalDirectories: string[];
 };
 
@@ -112,6 +118,7 @@ type ReadableFileHandle = {
 export type SessionFileExplorerServiceDeps = {
   userDataPath: string;
   getSessionContext(sessionId: string): Promise<SessionFileExplorerContext | null>;
+  getPinStorage?(): SessionFilePinStorage;
   statPath?(targetPath: string): Promise<Stats>;
   lstatPath?(targetPath: string): Promise<Stats>;
   openFile?(targetPath: string, flags: "r"): Promise<ReadableFileHandle>;
@@ -270,6 +277,93 @@ export class SessionFileExplorerService {
 
   async listRoots(sessionId: string): Promise<SessionFileRoot[]> {
     return (await this.resolveRoots(sessionId)).map(({ absolutePath: _absolutePath, ...root }) => root);
+  }
+
+  private async resolvePinOwner(sessionId: string): Promise<SessionFilePinOwner> {
+    const context = await this.deps.getSessionContext(sessionId);
+    if (!context?.parentIncarnationId) throw new Error("The File Pin owner session is not available.");
+    return { sessionId: context.parentSessionId, incarnationId: context.parentIncarnationId };
+  }
+
+  private pinStorage(): SessionFilePinStorage {
+    if (!this.deps.getPinStorage) throw new Error("File Pin storage is not available.");
+    return this.deps.getPinStorage();
+  }
+
+  private async inspectPinTarget(request: SessionFileRootResourceRequest): Promise<"file" | "directory"> {
+    const candidate = await this.resolveTargetCandidate(request, false);
+    const targetStats = await (this.deps.lstatPath ?? lstat)(candidate.unresolvedTargetPath);
+    const kind = targetStats.isFile() ? "file" : targetStats.isDirectory() ? "directory" : null;
+    if (!kind) throw new Error("Only regular files and directories can be pinned.");
+    const targetRealPath = await realpath(candidate.unresolvedTargetPath);
+    if (!isPathInside(candidate.rootRealPath, targetRealPath)) throw new Error("The pinned path is outside the authorized root.");
+    const confirmed = await this.resolveTargetCandidate(request, false);
+    const confirmedStats = await (this.deps.lstatPath ?? lstat)(confirmed.unresolvedTargetPath);
+    const confirmedTargetRealPath = await realpath(confirmed.unresolvedTargetPath);
+    if (pathKey(candidate.rootAbsolutePath) !== pathKey(confirmed.rootAbsolutePath)
+      || pathKey(candidate.rootRealPath) !== pathKey(confirmed.rootRealPath)
+      || pathKey(targetRealPath) !== pathKey(confirmedTargetRealPath)
+      || !isPathInside(confirmed.rootRealPath, confirmedTargetRealPath)
+      || !isSameFileIdentity(targetStats, confirmedStats)
+      || (kind === "file" ? !confirmedStats.isFile() : !confirmedStats.isDirectory())) {
+      throw new Error("File root changed during Pin authorization.");
+    }
+    return kind;
+  }
+
+  async pinSessionFile(request: SessionFileRootResourceRequest): Promise<SessionFilePin> {
+    validateRootFileResource(request);
+    const storage = this.pinStorage();
+    const owner = await this.resolvePinOwner(request.sessionId);
+    const root = await this.resolveRoot(request.sessionId, request.rootId);
+    if (!root) throw new Error("The specified file root is not available in the current session.");
+    const relativePath = normalizeRelativePath(request.relativePath, false);
+    const kind = await this.inspectPinTarget({ ...request, relativePath });
+    const currentRoot = await this.resolveRoot(request.sessionId, request.rootId);
+    if (!currentRoot || pathKey(currentRoot.absolutePath) !== pathKey(root.absolutePath)) throw new Error("File root changed during Pin authorization.");
+    const pin: StoredSessionFilePin = { rootKind: root.kind, rootPath: pathKey(root.absolutePath), relativePath, kind, rootLabel: root.label };
+    await storage.pinSessionFile(owner, pin);
+    return { ...pin, rootId: root.id, unavailableReason: null };
+  }
+
+  async unpinSessionFile(request: SessionFilePinReference & { sessionId: string }): Promise<void> {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId
+      || !["workspace", "session-folder", "additional"].includes(request.rootKind)
+      || typeof request.rootPath !== "string" || !path.isAbsolute(request.rootPath)) {
+      throw new TypeError("File Pin reference is invalid.");
+    }
+    const storage = this.pinStorage();
+    const owner = await this.resolvePinOwner(request.sessionId);
+    await storage.unpinSessionFile(owner, { rootKind: request.rootKind, rootPath: pathKey(request.rootPath), relativePath: normalizeRelativePath(request.relativePath, false) });
+  }
+
+  async listSessionFilePins(sessionId: string): Promise<SessionFilePin[]> {
+    const storage = this.pinStorage();
+    const owner = await this.resolvePinOwner(sessionId);
+    const pins = await storage.listSessionFilePins(owner);
+    const roots = await this.resolveRoots(sessionId);
+    const results = new Array<SessionFilePin>(pins.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(4, pins.length) }, async () => {
+      while (next < pins.length) {
+        const index = next++;
+        const pin = pins[index]!;
+        const root = roots.find((candidate) => candidate.kind === pin.rootKind && pathKey(candidate.absolutePath) === pin.rootPath);
+        let unavailableReason: string | null = root ? null : "The pinned root is not authorized in the current session.";
+        if (root) {
+          try {
+            const kind = await this.inspectPinTarget({ sessionId, rootId: root.id, relativePath: pin.relativePath });
+            if (kind !== pin.kind) throw new Error("The pinned path has a different file type.");
+            const currentRoot = await this.resolveRoot(sessionId, root.id);
+            if (!currentRoot || pathKey(currentRoot.absolutePath) !== pin.rootPath) throw new Error("The pinned root changed during authorization.");
+          } catch (error) {
+            unavailableReason = error instanceof Error ? error.message : "The pinned path could not be inspected.";
+          }
+        }
+        results[index] = { ...pin, rootId: root?.id ?? null, rootLabel: root?.label ?? pin.rootLabel, unavailableReason };
+      }
+    }));
+    return results;
   }
 
   async resolveRoot(sessionId: string, rootId: string): Promise<ResolvedSessionFileRoot | null> {

@@ -24,6 +24,7 @@ type AsyncStore<T extends object> = {
 
 const STORE_METHODS = {
   session: [
+    "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
     "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "setSessionPinned", "getSessionMessageArtifact",
     "listSessionIdsLastActiveBefore", "upsertSession", "updateSessionThreadIfMatches",
@@ -70,6 +71,7 @@ const STORE_METHODS = {
 } as const;
 
 const MUTATIONS = new Set([
+  "pinSessionFile", "unpinSessionFile",
   "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
   "setSessionPinned", "upsertSession", "updateSessionThreadIfMatches", "updateSessionRuntimeMetadataIfMatches", "updateSession",
   "upsertTerminalSession", "updateTerminalSession", "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "insertSession",

@@ -56,6 +56,9 @@ import type {
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFilePin,
+  SessionFilePinReference,
+  SessionFileRootResourceRequest,
   SessionFileTreePathActionContextMenuResult,
   SessionFileTreePathActionRequest,
   FileRootChangesRequest,
@@ -287,6 +290,9 @@ export type MainIpcSessionQueryDepsArgs = {
   ensureSessionGlossarySubscription(sessionId: string): Awaitable<void>;
   getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
+  listSessionFilePins(sessionId: string): Awaitable<SessionFilePin[]>;
+  pinSessionFile(request: SessionFileRootResourceRequest): Awaitable<SessionFilePin>;
+  unpinSessionFile(request: SessionFilePinReference & { sessionId: string }): Awaitable<void>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
   inspectSessionFile(request: SessionFilePreviewResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;

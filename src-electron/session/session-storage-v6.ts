@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { SessionFilePinOwner, SessionFilePinReference, StoredSessionFilePin } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -370,6 +371,38 @@ export class SessionStorageV6 {
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6Row[];
     return cloneSessions(rows.map((row) => this.rowToSession(row)));
+  }
+
+  private assertFilePinOwner(owner: SessionFilePinOwner): void {
+    if (!this.db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ? AND incarnation_id = ?").get(owner.sessionId, owner.incarnationId)) {
+      throw new Error("The File Pin owner session is no longer available.");
+    }
+  }
+
+  listSessionFilePins(owner: SessionFilePinOwner): StoredSessionFilePin[] {
+    this.assertFilePinOwner(owner);
+    return this.db.prepare(`SELECT root_kind AS rootKind, root_path AS rootPath,
+      relative_path AS relativePath, kind, root_label AS rootLabel
+      FROM session_file_pins_v6 WHERE session_id = ? ORDER BY root_kind, root_path, relative_path
+    `).all(owner.sessionId) as StoredSessionFilePin[];
+  }
+
+  pinSessionFile(owner: SessionFilePinOwner, pin: StoredSessionFilePin): void {
+    this.assertFilePinOwner(owner);
+    this.db.prepare(`INSERT INTO session_file_pins_v6
+      (session_id, root_kind, root_path, relative_path, relative_path_key, kind, root_label) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (session_id, root_kind, root_path, relative_path_key)
+      DO UPDATE SET kind = excluded.kind, root_label = excluded.root_label, relative_path = excluded.relative_path
+    `).run(owner.sessionId, pin.rootKind, pin.rootPath, pin.relativePath,
+      process.platform === "win32" ? pin.relativePath.toLocaleLowerCase("en-US") : pin.relativePath, pin.kind, pin.rootLabel);
+  }
+
+  unpinSessionFile(owner: SessionFilePinOwner, pin: SessionFilePinReference): void {
+    this.assertFilePinOwner(owner);
+    this.db.prepare(`DELETE FROM session_file_pins_v6 WHERE session_id = ?
+      AND root_kind = ? AND root_path = ? AND relative_path_key = ?
+    `).run(owner.sessionId, pin.rootKind, pin.rootPath,
+      process.platform === "win32" ? pin.relativePath.toLocaleLowerCase("en-US") : pin.relativePath);
   }
 
   listSessionSummaries(): SessionSummary[] {

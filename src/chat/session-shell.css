@@ -1233,6 +1233,7 @@
 
 .session-file-explorer-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -1246,7 +1247,8 @@
 }
 
 .session-file-explorer-tabs button,
-.session-file-explorer-refresh {
+.session-file-explorer-refresh,
+.session-file-pin-filter {
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
@@ -1263,6 +1265,109 @@
   border-color: color-mix(in srgb, var(--character-sub) 28%, transparent);
   background: color-mix(in srgb, var(--character-sub-soft) 22%, rgba(15, 23, 42, 0.5));
   color: var(--ink);
+}
+
+.session-file-explorer-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  gap: 2px;
+}
+
+.session-file-pin-filter {
+  display: flex;
+  align-items: center;
+  padding: 5px;
+}
+
+.session-file-pin-filter.is-active {
+  color: var(--ink);
+  border-color: var(--muted);
+  background: var(--character-sub-soft);
+}
+
+.session-file-pin-toggle {
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  max-height: 29px;
+  padding: 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.session-file-pin-toggle.is-pinned,
+.session-file-pin-toggle:hover {
+  color: var(--ink);
+}
+
+.session-file-pin-toggle:disabled { cursor: wait; opacity: 0.6; }
+.session-file-pin-toggle:focus-visible,
+.session-file-pin-filter:focus-visible,
+.session-file-tree-row:focus-visible,
+.session-file-root-row:focus-visible { outline: 2px solid var(--character-sub); outline-offset: -2px; }
+
+.session-file-pin-details {
+  flex: 1;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.session-file-pin-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.session-file-pin-root {
+  flex-shrink: 0;
+  max-width: 48%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.session-file-pin-path { direction: rtl; text-align: left; }
+
+.session-file-pin-path,
+.session-file-pin-unavailable {
+  color: var(--muted);
+  font-size: 0.72rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.session-file-pin-heading .session-file-tree-name { flex: 1; }
+.session-file-pin-unavailable { color: var(--ink); white-space: normal; overflow-wrap: anywhere; }
+.session-file-pinned-row { min-height: 58px; height: auto !important; padding-top: 8px; padding-bottom: 8px; }
+.session-file-pinned-row:disabled { cursor: default; opacity: 1; }
+
+.session-file-tree-error.session-file-pins-error {
+  color: var(--ink);
+  padding: 8px;
+  border-left: 2px solid currentColor;
+  overflow-wrap: anywhere;
+}
+
+.session-file-pins-error button {
+  margin-top: 6px;
+  display: block;
+  border: 1px solid var(--muted);
+  border-radius: 7px;
+  padding: 4px 8px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  cursor: pointer;
 }
 
 .session-file-explorer-body {

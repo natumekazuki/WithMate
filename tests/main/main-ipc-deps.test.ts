@@ -224,6 +224,9 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       getSessionFileExplorerOwnerSessionId: async () => {
         throw new Error("unused session query fixture method");
       },
+      listSessionFilePins: async () => [],
+      pinSessionFile: async () => { throw new Error("unused"); },
+      unpinSessionFile: async () => {},
       listSessionFileRoots: async () => {
         throw new Error("unused session query fixture method");
       },

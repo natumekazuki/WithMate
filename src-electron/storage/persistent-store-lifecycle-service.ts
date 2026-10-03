@@ -84,6 +84,9 @@ export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
 > & SessionStorageRead & {
+  listSessionFilePins?: SessionFilePinStorage["listSessionFilePins"];
+  pinSessionFile?: SessionFilePinStorage["pinSessionFile"];
+  unpinSessionFile?: SessionFilePinStorage["unpinSessionFile"];
   updateSession?(session: Session): Awaitable<Session>;
   updateSessionThreadIfMatches?(input: import("../session/session-storage-v6.js").SessionThreadPatchInput): Awaitable<import("../session/session-storage-v6.js").SessionThreadPatchResult | null>;
   updateSessionRuntimeMetadataIfMatches?(input: import("../session/session-storage-v6.js").SessionRuntimeMetadataPatchInput): Awaitable<import("../session/session-storage-v6.js").SessionRuntimeMetadataPatchResult | null>;
@@ -100,6 +103,9 @@ export type SessionStorageWrite = AwaitableStorageMethods<
 export type SessionPinStorage = {
   setSessionPinned(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
 };
+
+export type SessionFilePinStorage = AwaitableStorageMethods<SessionStorageV6,
+  "listSessionFilePins" | "pinSessionFile" | "unpinSessionFile">;
 
 /**
  * Public storage boundaries intentionally describe awaitable methods rather than

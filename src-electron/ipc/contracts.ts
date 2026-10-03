@@ -106,6 +106,9 @@ import type {
   SessionFilePreviewWindowPayload,
   SessionFilePreviewResourceRequest,
   SessionFileRoot,
+  SessionFilePin,
+  SessionFilePinReference,
+  SessionFileRootResourceRequest,
   SessionFileTreePathActionContextMenuResult,
   SessionFileTreePathActionRequest,
   FileRootChangesRequest,
@@ -515,6 +518,9 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
       sessionId: string,
     ): Awaitable<string | null>;
     listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
+    listSessionFilePins(sessionId: string): Awaitable<SessionFilePin[]>;
+    pinSessionFile(request: SessionFileRootResourceRequest): Awaitable<SessionFilePin>;
+    unpinSessionFile(request: SessionFilePinReference & { sessionId: string }): Awaitable<void>;
     listSessionDirectory(
       request: SessionDirectoryRequest,
     ): Awaitable<SessionDirectoryEntry[]>;
