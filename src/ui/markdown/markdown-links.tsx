@@ -16,6 +16,7 @@ import type {
   MarkdownLinkContextMenuResult,
 } from "../../../src-shared/window/markdown-link-context-menu.js";
 import { MarkdownRenderContext } from "./markdown-context.js";
+import { resolveMarkdownImageTarget } from "./image-resource-source.js";
 
 function decodeEncodedWindowsPathSeparators(target: string): string {
   return target.replace(/%5c/gi, "\\");
@@ -51,18 +52,10 @@ export function isAllowedMarkdownHref(target: string): boolean {
   return !hasUnsupportedUrlScheme(target);
 }
 function isAllowedMarkdownImageSource(target: string): boolean {
-  if (!target || target.startsWith("//") || isWindowsAbsolutePathTarget(target))
-    return true;
-  if (/^data:image\//i.test(target) || /^blob:/i.test(target)) return true;
-  return !hasUnsupportedUrlScheme(target);
+  return resolveMarkdownImageTarget(target).kind !== "unsupported";
 }
 export function isDirectMarkdownImageSource(target: string): boolean {
-  return Boolean(
-    target &&
-    (target.startsWith("//") ||
-      isWindowsAbsolutePathTarget(target) ||
-      /^(?:https?:|file:|data:image\/|blob:)/i.test(target)),
-  );
+  return resolveMarkdownImageTarget(target).kind === "external";
 }
 export function shouldLoadMarkdownImageEagerly(target: string): boolean {
   return /^(?:file:|data:image\/|blob:)/i.test(target);

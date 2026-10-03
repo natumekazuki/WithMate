@@ -73,6 +73,8 @@ import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
   SessionFileChunkRequest,
+  SessionImageResourceRequest,
+  SessionImageChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
   SessionFilePreviewImageActionRequest,
@@ -174,6 +176,8 @@ export type WithMateWindowSessionApi = {
   unpinSessionFile(request: SessionFilePinReference & { sessionId: string }): Promise<void>;
   listSessionDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]>;
   inspectSessionFile(request: SessionFilePreviewResourceRequest): Promise<SessionFileDescriptor>;
+  inspectSessionImage(request: SessionImageResourceRequest): Promise<SessionFileDescriptor>;
+  readSessionImageChunk(request: SessionImageChunkRequest): Promise<SessionFileChunkResult>;
   readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;
   getSessionFilePreviewWindowPayload(token: string): Promise<SessionFilePreviewWindowPayload | null>;

@@ -21,6 +21,7 @@ import {
   type MessageCopyFeedback,
 } from "./markdown-context.js";
 import { markdownUrlTransform } from "./markdown-links.js";
+import type { MarkdownImageResolver } from "./image-resource-loader.js";
 import {
   markdownComponents,
   renderMarkdownFrontmatter,
@@ -38,7 +39,7 @@ type MessageRichTextProps = {
   forceFullRender?: boolean;
   displayMode?: MessageViewMode;
   onOpenPath?: (target: string) => void;
-  resolveImageSource?: (target: string) => Promise<string | null>;
+  resolveImageSource?: MarkdownImageResolver;
   markdownLinkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
   glossaryAnnotationMatcher?: GlossaryAnnotationMatcher;
   glossaryAnnotationScopeKey?: string;

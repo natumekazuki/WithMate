@@ -8,6 +8,8 @@ import type {
   SessionDirectoryRequest,
   SessionFileChunkRequest,
   SessionFileChunkResult,
+  SessionImageResourceRequest,
+  SessionImageChunkRequest,
   SessionFileDescriptor,
   SessionFileOpenRequest,
   SessionFileAbsoluteResourceRequest,
@@ -46,6 +48,41 @@ const MAX_CHUNK_BYTES = 1024 * 1024;
 const INSPECTION_BYTES = 8192;
 const MAX_CONCURRENT_DIRECTORY_LISTINGS = 4;
 const MAX_PENDING_DIRECTORY_LISTINGS = 32;
+
+function detectLocalImageResource(bytes: Uint8Array): { kind: "image" | "svg"; mimeType: string } {
+  const text = new TextDecoder("latin1").decode(bytes);
+  const svgEncoding = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le"
+    : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : "utf-8";
+  const svgHeader = new TextDecoder(svgEncoding).decode(bytes).trimStart().replace(/^<\?xml[\s\S]*?\?>\s*/i, "")
+    .replace(/^(?:<!--[\s\S]*?-->\s*)+/, "")
+    .replace(/^<!DOCTYPE\s+svg\b(?:[^>\[]|\[[\s\S]*?\])*>\s*/i, "")
+    .replace(/^(?:<!--[\s\S]*?-->\s*)+/, "");
+  if (/^<svg\b/i.test(svgHeader)) {
+    return { kind: "svg", mimeType: "image/svg+xml" };
+  }
+  const signature = (...values: number[]) => values.every((value, index) => bytes[index] === value);
+  let mimeType: string | null = null;
+  if (signature(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) mimeType = "image/png";
+  else if (signature(0xff, 0xd8, 0xff)) mimeType = "image/jpeg";
+  else if (/^GIF8[79]a/.test(text)) mimeType = "image/gif";
+  else if (text.startsWith("RIFF") && text.slice(8, 12) === "WEBP") mimeType = "image/webp";
+  else if (signature(0x42, 0x4d)) mimeType = "image/bmp";
+  else if (signature(0, 0, 1, 0) && bytes.length >= 6 && (bytes[4] !== 0 || bytes[5] !== 0)) mimeType = "image/x-icon";
+  else if (text.slice(4, 8) === "ftyp") {
+    const boxLength = bytes.length >= 4 ? new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0) : 0;
+    for (let offset = 8; offset + 4 <= Math.min(bytes.length, boxLength); offset += 4) {
+      if (offset === 12) continue;
+      if (["avif", "avis"].includes(text.slice(offset, offset + 4))) {
+        mimeType = "image/avif";
+        break;
+      }
+    }
+  }
+  if (!mimeType) {
+    throw new Error("The local image target is not a supported image.");
+  }
+  return { kind: "image", mimeType };
+}
 
 type DirectoryListingJob = {
   supersessionKey: string;
@@ -801,6 +838,57 @@ export class SessionFileExplorerService {
 
   async inspectFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor> {
     const opened = await this.openLocalFile(request);
+    return this.inspectOpenedFile(request, opened);
+  }
+
+  private async openImage(request: SessionImageResourceRequest): Promise<AuthorizedOpenedFile> {
+    const context = await this.deps.getSessionContext(request.sessionId);
+    if (!context) {
+      throw new Error("The session could not be found.");
+    }
+    const target = request.target.trim();
+    const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(target)?.[1];
+    if (scheme && scheme.toLowerCase() !== "file" && !/^[a-zA-Z]:[\\/]/.test(target)) {
+      throw new Error("Local image requests must use a local path or file URL.");
+    }
+    const absoluteTarget = /^file:/i.test(target) || path.isAbsolute(target)
+      || /^[a-zA-Z]:[\\/]/.test(target) || /^\/[a-zA-Z]:[\\/]/.test(target);
+    let baseDirectory = context.workspacePath;
+    if (request.baseResource) {
+      if (request.baseResource.sessionId !== request.sessionId) {
+        throw new Error("Image base does not belong to this Session.");
+      }
+      if (!absoluteTarget) {
+        if (isSessionFileGitCommitResource(request.baseResource)) {
+          throw new Error("Relative images from a Git commit file preview are not available.");
+        }
+        const base = await this.openLocalFile(request.baseResource);
+        try {
+          baseDirectory = path.dirname(base.targetRealPath);
+        } finally {
+          await base.handle.close();
+        }
+      }
+    }
+    const resolved = resolveOpenPathTarget(target, { baseDirectory });
+    if (resolved.type !== "local-path") {
+      throw new Error("Local image requests must use a local path or file URL.");
+    }
+    return this.openAbsoluteFile({ sessionId: request.sessionId, absolutePath: resolved.targetPath });
+  }
+
+  async inspectImage(request: SessionImageResourceRequest): Promise<SessionFileDescriptor> {
+    const opened = await this.openImage(request);
+    return this.inspectOpenedFile(
+      { sessionId: request.sessionId, absolutePath: opened.targetRealPath }, opened, true,
+    );
+  }
+
+  private async inspectOpenedFile(
+    request: SessionFileResourceRequest,
+    opened: AuthorizedOpenedFile,
+    imageOnly = false,
+  ): Promise<SessionFileDescriptor> {
     try {
       const { handle, stats: fileStats, targetRealPath } = opened;
       const inspection = new Uint8Array(Math.min(INSPECTION_BYTES, fileStats.size));
@@ -810,7 +898,9 @@ export class SessionFileExplorerService {
       throw new Error("The file changed during inspection. Reload and try again.");
       }
       const inspectedBytes = inspection.subarray(0, bytesRead);
-      const resource = detectSessionFileResourceKind(targetRealPath, inspectedBytes);
+      const resource = imageOnly
+        ? detectLocalImageResource(inspectedBytes)
+        : detectSessionFileResourceKind(targetRealPath, inspectedBytes);
       return {
         ...request,
         name: path.basename(targetRealPath),
@@ -827,18 +917,41 @@ export class SessionFileExplorerService {
   }
 
   async readFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult> {
+    this.validateChunkRequest(request);
+    const opened = await this.openLocalFile(request);
+    return this.readOpenedFileChunk(request, opened);
+  }
+
+  async readImageChunk(request: SessionImageChunkRequest): Promise<SessionFileChunkResult> {
+    this.validateChunkRequest(request);
+    const opened = await this.openImage(request);
+    return this.readOpenedFileChunk(request, opened, true);
+  }
+
+  private validateChunkRequest(request: Pick<SessionFileChunkRequest, "offset" | "length">): void {
     if (!Number.isSafeInteger(request.offset) || request.offset < 0) {
       throw new Error("The file chunk offset is invalid.");
     }
     if (!Number.isSafeInteger(request.length) || request.length < 1 || request.length > MAX_CHUNK_BYTES) {
       throw new Error(`File chunk length must be between 1 and ${MAX_CHUNK_BYTES} bytes.`);
     }
-    const opened = await this.openLocalFile(request);
+  }
+
+  private async readOpenedFileChunk(
+    request: Pick<SessionFileChunkRequest, "offset" | "length" | "expectedRevision">,
+    opened: AuthorizedOpenedFile,
+    imageOnly = false,
+  ): Promise<SessionFileChunkResult> {
     try {
       const { handle, stats: fileStats } = opened;
       const revision = makeFileRevision(fileStats);
       if (request.expectedRevision !== revision) {
       throw new Error("The file changed while it was being read. Reload and try again.");
+      }
+      if (imageOnly) {
+        const header = new Uint8Array(Math.min(INSPECTION_BYTES, fileStats.size));
+        const inspection = await handle.read(header, 0, header.byteLength, 0);
+        detectLocalImageResource(header.subarray(0, inspection.bytesRead));
       }
       const bytes = new Uint8Array(Math.min(request.length, Math.max(0, fileStats.size - request.offset)));
       const { bytesRead } = await handle.read(bytes, 0, bytes.byteLength, request.offset);

@@ -3,6 +3,8 @@
 - 状態: Accepted
 - 日付: 2026-08-02
 
+画像の自動local resourceを登録root内へ制限する判断とchatの画像解決範囲は適用対象外とし、[ADR 026](026-shared-image-resource-loading.md)で置換する。以下の当時の本文は保持し、外部画像の自動通信とpassive SVGの判断は継続する。
+
 ## Context
 
 現行の shared Markdown renderer は画像を描画せず、Content Security Policy も HTTP / HTTPS image を許可していない。Session の file preview では Markdown 内の local image と external image を通常の Web content と同じように確認したい。また、chat と file preview で Markdown の構文、link、image の挙動を分岐させたくない。

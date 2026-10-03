@@ -1282,6 +1282,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 pinSessionFile: (request) => createSessionFileExplorerService().pinSessionFile(request),
                 unpinSessionFile: (request) => createSessionFileExplorerService().unpinSessionFile(request),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
+                inspectSessionImage: (request) => createSessionFileExplorerService().inspectImage(request),
+                readSessionImageChunk: (request) => createSessionFileExplorerService().readImageChunk(request),
                 inspectSessionFile: (request) => isSessionFileGitCommitResource(request)
                   ? createFileRootGitChangesService().inspectHistoryFile(request)
                   : createSessionFileExplorerService().inspectFile(request),

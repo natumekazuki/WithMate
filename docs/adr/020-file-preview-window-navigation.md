@@ -2,6 +2,8 @@
 
 - Status: Accepted
 
+画像の自動読込をroot-scopedに限定する判断は適用対象外とし、[ADR 026](026-shared-image-resource-loading.md)で置換する。汎用file resourceの認可とWindow所有関係は継続する。
+
 登録root外directoryを拒否する判断は適用対象外とし、[ADR 025](025-explicit-directory-link-open.md)で置換する。以下の当時の本文は保持し、file preview・自動resource・Window所有関係に関する判断は継続する。
 
 ## Context

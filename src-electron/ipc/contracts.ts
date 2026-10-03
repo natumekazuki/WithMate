@@ -95,6 +95,8 @@ import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
   SessionFileChunkRequest,
+  SessionImageResourceRequest,
+  SessionImageChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
   SessionFilePreviewImageActionRequest,
@@ -524,6 +526,8 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
     listSessionDirectory(
       request: SessionDirectoryRequest,
     ): Awaitable<SessionDirectoryEntry[]>;
+    inspectSessionImage(request: SessionImageResourceRequest): Awaitable<SessionFileDescriptor>;
+    readSessionImageChunk(request: SessionImageChunkRequest): Awaitable<SessionFileChunkResult>;
     inspectSessionFile(
       request: SessionFilePreviewResourceRequest,
     ): Awaitable<SessionFileDescriptor>;

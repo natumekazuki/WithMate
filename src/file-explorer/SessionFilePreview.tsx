@@ -13,6 +13,7 @@ import {
 
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
 import { MermaidDiagram } from "../ui/markdown/markdown-code.js";
+import { useMarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
 import { AppNotification, type AppNotificationState } from "../ui/app-notification.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import { ImageViewport, ImageZoomControls, useImageViewport } from "../ui/image-viewport.js";
@@ -22,7 +23,6 @@ import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api
 import type {
   SessionFileDescriptor,
   SessionFilePreviewResourceRequest,
-  SessionFileRoot,
   FileRootGitDiffScope,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import {
@@ -37,7 +37,6 @@ import {
   findPreviewTextMatches,
   formatFileByteLength,
   PreviewByteAccumulator,
-  resolveMarkdownImageTarget,
   SESSION_FILE_LARGE_WARNING_BYTES,
   SESSION_FILE_READ_CHUNK_BYTES,
   splitPreviewLines,
@@ -59,7 +58,6 @@ import {
   type RenderedTextMatchOffsets,
   type RenderedTextSearchIndex,
 } from "./rendered-text-search.js";
-import { PreviewResourceQueue } from "./preview-resource-queue.js";
 import { clampFindMatchIndex } from "../ui/find-text-matches.js";
 import {
   getShortcutTooltip,
@@ -85,8 +83,9 @@ import {
 
 type FilePreviewApi = Pick<
   WithMateWindowApi,
-  | "listSessionFileRoots"
   | "inspectSessionFile"
+  | "inspectSessionImage"
+  | "readSessionImageChunk"
   | "readSessionFileChunk"
   | "openSessionFile"
   | "openSessionFilePreviewWindow"
@@ -143,7 +142,6 @@ type StructuredTextProjectionState =
     rawTokens: PreviewSyntaxToken[][] | null;
   };
 
-const MARKDOWN_LOCAL_IMAGE_CONCURRENCY = 4;
 const ENCODING_OPTIONS: Array<{ value: SessionFileEncodingSelection; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "utf-8", label: "UTF-8" },
@@ -584,11 +582,6 @@ export function SessionFilePreview({
   const keyboardShortcuts = useShortcutSettings();
   const loadRevisionRef = useRef(0);
   const activePreviewAccumulatorRef = useRef<PreviewByteAccumulator | null>(null);
-  const markdownImageAccumulatorsRef = useRef(new Set<PreviewByteAccumulator>());
-  const markdownImageQueue = useMemo(
-    () => new PreviewResourceQueue(MARKDOWN_LOCAL_IMAGE_CONCURRENCY),
-    [],
-  );
   const [loadState, setLoadState] = useState<FileLoadState>({ status: "inspecting" });
   const [encoding, setEncoding] = useState<SessionFileEncodingSelection>("auto");
   const [markdownMode, setMarkdownMode] = useState<"preview" | "source">("preview");
@@ -597,13 +590,16 @@ export function SessionFilePreview({
     status: "idle",
   });
   const [imageObjectUrl, setImageObjectUrl] = useState("");
-  const [roots, setRoots] = useState<SessionFileRoot[]>([]);
   const [feedback, setFeedback] = useState("");
   const [copyFeedback, setCopyFeedback] = useState<AppNotificationState | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [currentMatch, setCurrentMatch] = useState(0);
   const [reloadRevision, setReloadRevision] = useState(0);
+  const imageContext = useMemo(() => ({ sessionId: request.sessionId, baseResource: request }), [request]);
+  const resolveMarkdownImageSource = useMarkdownImageResolver(
+    api, imageContext, `${reloadRevision}:${encoding}:${markdownMode}`,
+  );
   const [reloadPending, setReloadPending] = useState(false);
   const [busyAction, setBusyAction] = useState<PreviewAction | null>(null);
   const actionRevisionRef = useRef(0);
@@ -634,29 +630,6 @@ export function SessionFilePreview({
       setBusyAction(null);
     }
   }, []);
-
-  useLayoutEffect(() => {
-    for (const accumulator of markdownImageAccumulatorsRef.current) {
-      accumulator.release();
-    }
-    markdownImageAccumulatorsRef.current.clear();
-    markdownImageQueue.invalidate();
-    return () => {
-      for (const accumulator of markdownImageAccumulatorsRef.current) {
-        accumulator.release();
-      }
-      markdownImageAccumulatorsRef.current.clear();
-      markdownImageQueue.invalidate();
-    };
-  }, [
-    encoding,
-    markdownImageQueue,
-    markdownMode,
-    reloadRevision,
-    getSessionFileResourceDisplayPath(request),
-    request.sessionId,
-    roots,
-  ]);
 
   const loadDescriptor = useCallback(async (descriptor: SessionFileDescriptor, revision: number) => {
     if (!api) {
@@ -727,14 +700,10 @@ export function SessionFilePreview({
       };
     }
 
-    void Promise.all([
-      api.inspectSessionFile(request),
-      api.listSessionFileRoots(request.sessionId),
-    ]).then(async ([descriptor, nextRoots]) => {
+    void api.inspectSessionFile(request).then(async (descriptor) => {
       if (loadRevisionRef.current !== revision) {
         return;
       }
-      setRoots(nextRoots);
       if (descriptor.kind !== "binary" && descriptor.byteLength >= SESSION_FILE_LARGE_WARNING_BYTES) {
         setLoadState({ status: "large-warning", descriptor });
       } else {
@@ -1154,67 +1123,6 @@ export function SessionFilePreview({
       });
   }, [api, beginAction, busyAction, finishAction, request]);
 
-  const resolveMarkdownImageSource = useCallback(async (target: string): Promise<string | null> => {
-    if (!api) {
-      return null;
-    }
-    const imageTarget = resolveMarkdownImageTarget(
-      roots,
-      isSessionFileRootResource(request) ? request.rootId : "absolute-preview",
-      isSessionFileRootResource(request) ? request.relativePath : "",
-      target,
-    );
-    if (imageTarget.kind === "external") {
-      return imageTarget.source;
-    }
-    if (imageTarget.kind === "unsupported") {
-      return null;
-    }
-    if (imageTarget.resource.rootId === "absolute-preview") {
-      return null;
-    }
-    const revision = loadRevisionRef.current;
-    return markdownImageQueue.run(async (isQueueCurrent) => {
-      const isCurrent = () => isQueueCurrent() && loadRevisionRef.current === revision;
-      if (!isCurrent()) {
-        return null;
-      }
-      const resourceDescriptor = await api.inspectSessionFile({
-        sessionId: request.sessionId,
-        ...imageTarget.resource,
-      });
-      if (!isCurrent() || (resourceDescriptor.kind !== "image" && resourceDescriptor.kind !== "svg")) {
-        return null;
-      }
-      let bytes: Uint8Array;
-      const accumulator = new PreviewByteAccumulator();
-      markdownImageAccumulatorsRef.current.add(accumulator);
-      try {
-        bytes = await readWholeResource(api, resourceDescriptor, isCurrent, accumulator);
-      } catch (error) {
-        if (!isCurrent()) {
-          return null;
-        }
-        throw error;
-      } finally {
-        markdownImageAccumulatorsRef.current.delete(accumulator);
-        accumulator.release();
-      }
-      if (!isCurrent()) {
-        return null;
-      }
-      const objectUrl = URL.createObjectURL(new Blob(
-        [copyBytesToArrayBuffer(bytes)],
-        { type: resourceDescriptor.mimeType },
-      ));
-      if (!isCurrent()) {
-        URL.revokeObjectURL(objectUrl);
-        return null;
-      }
-      return objectUrl;
-    });
-  }, [api, encoding, markdownImageQueue, request, roots]);
-
   const openDiff = useCallback(async (scope: FileRootGitDiffScope) => {
     if (!onOpenDiff || busyAction !== null) {
       return;
@@ -1495,7 +1403,11 @@ export function SessionFilePreview({
           >
             {previewKind === "mermaid" ? (
               <div className="session-file-markdown session-file-mermaid">
-                <MermaidDiagram source={decodedText} onOpenPath={handleOpenMarkdownPath} />
+                <MermaidDiagram
+                  source={decodedText}
+                  onOpenPath={handleOpenMarkdownPath}
+                  resolveImageSource={resolveMarkdownImageSource}
+                />
               </div>
             ) : (
               <MessageRichText

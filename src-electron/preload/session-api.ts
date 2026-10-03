@@ -79,6 +79,12 @@ export function createSessionApi(
         request,
       );
     },
+    inspectSessionImage(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL, request);
+    },
+    readSessionImageChunk(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL, request);
+    },
     readSessionFileChunk(request) {
       return ipcRenderer.invoke(
         channels.WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
