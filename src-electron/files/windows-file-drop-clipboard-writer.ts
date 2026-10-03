@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 
 const POWERSHELL_TIMEOUT_MS = 8_000;
 const OPERATION_MARKER_FORMAT = "WithMate File Copy Operation";
@@ -28,10 +29,10 @@ $data.SetData("${OPERATION_MARKER_FORMAT}", $false, $marker)
 const VERIFY_FILE_DROP_SCRIPT = String.raw`
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+Add-Type -AssemblyName System.Windows.Forms
 $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $targetPath = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String([string]$request.pathBase64))
 $operationMarker = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String([string]$request.markerBase64))
-Add-Type -AssemblyName System.Windows.Forms
 $data = [System.Windows.Forms.Clipboard]::GetDataObject()
 $matches = $false
 if ($null -ne $data) {
@@ -78,7 +79,10 @@ export type NativeFileDropWriteResult =
 
 export type WindowsFileDropClipboardWriterDeps = {
   platform?: NodeJS.Platform;
-  runHelper?(request: ClipboardHelperProcessRequest): Promise<ClipboardHelperProcessResult>;
+  runHelper?(
+    request: ClipboardHelperProcessRequest,
+    waitForWrite?: Promise<boolean>,
+  ): Promise<ClipboardHelperProcessResult>;
   createOperationMarker?(): string;
   systemRoot?: string;
 };
@@ -100,23 +104,31 @@ export class WindowsFileDropClipboardWriter {
     } catch {
       return { status: "failed-before-write" };
     }
-    const runHelper = this.deps.runHelper
-      ?? ((request) => runPowerShellClipboardHelper(request, this.deps.systemRoot ?? process.env.SystemRoot));
-    let writeResult: ClipboardHelperProcessResult;
-    try {
-      writeResult = await runHelper({ mode: "write", payload });
-    } catch {
-      return { status: "failed-before-write" };
+    const executeHelper = this.deps.runHelper;
+    if (!executeHelper) {
+      const systemRoot = this.deps.systemRoot ?? process.env.SystemRoot;
+      if (!resolveWindowsPowerShellExecutablePath(systemRoot)) {
+        return { status: "failed-before-write" };
+      }
+      return copyFileInWorker(payload, systemRoot);
     }
-    if (!writeResult.started || !writeResult.stdout.includes(WRITE_READY_MARKER)) {
+    const runHelper = async (request: ClipboardHelperProcessRequest, waitForWrite?: Promise<boolean>) => {
+      try {
+        return await executeHelper(request, waitForWrite);
+      } catch {
+        return { started: false, exitCode: null, timedOut: false, stdout: "" };
+      }
+    };
+    const writePending = runHelper({ mode: "write", payload });
+    // Prepare the separate reader while the writer starts, but withhold its input
+    // until the writer has exited so read-back cannot race the clipboard write.
+    const waitForWrite = writePending.then((result) => (
+      result.started && result.stdout.includes(WRITE_READY_MARKER)
+    ));
+    const verificationPending = runHelper({ mode: "verify", payload }, waitForWrite);
+    const [writeStarted, verificationResult] = await Promise.all([waitForWrite, verificationPending]);
+    if (!writeStarted) {
       return { status: "failed-before-write" };
-    }
-
-    let verificationResult: ClipboardHelperProcessResult;
-    try {
-      verificationResult = await runHelper({ mode: "verify", payload });
-    } catch {
-      return { status: "effect-unknown" };
     }
     if (
       verificationResult.started
@@ -164,9 +176,11 @@ export function resolveWindowsPowerShellExecutablePath(systemRoot: string | unde
   );
 }
 
-function runPowerShellClipboardHelper(
+export function runPowerShellClipboardHelper(
   request: ClipboardHelperProcessRequest,
   systemRoot: string | undefined,
+  waitForWrite?: Promise<boolean>,
+  spawnProcess: typeof spawn = spawn,
 ): Promise<ClipboardHelperProcessResult> {
   const script = request.mode === "write" ? WRITE_FILE_DROP_SCRIPT : VERIFY_FILE_DROP_SCRIPT;
   const powerShellExecutablePath = resolveWindowsPowerShellExecutablePath(systemRoot);
@@ -178,7 +192,7 @@ function runPowerShellClipboardHelper(
     let settled = false;
     let timedOut = false;
     let stdout = "";
-    const child = spawn(
+    const child = spawnProcess(
       powerShellExecutablePath,
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-Sta", "-EncodedCommand", encodePowerShellScript(script)],
       {
@@ -213,6 +227,55 @@ function runPowerShellClipboardHelper(
     child.stdin.on("error", () => {
       // Process settlement determines whether the native write could have started.
     });
-    child.stdin.end(encodeClipboardHelperPayload(request.payload));
+    if (waitForWrite) {
+      void waitForWrite.then((writeStarted) => {
+        if (settled || timedOut) {
+          return;
+        }
+        if (writeStarted) {
+          child.stdin.end(encodeClipboardHelperPayload(request.payload));
+        } else {
+          child.kill();
+        }
+      });
+    } else {
+      child.stdin.end(encodeClipboardHelperPayload(request.payload));
+    }
+  });
+}
+
+function copyFileInWorker(
+  payload: ClipboardHelperProcessRequest["payload"],
+  systemRoot: string | undefined,
+): Promise<NativeFileDropWriteResult> {
+  return new Promise((resolve) => {
+    let worker: Worker;
+    try {
+      const sourceTypeScript = import.meta.url.endsWith(".ts");
+      worker = new Worker(new URL(
+        sourceTypeScript ? "./windows-file-drop-clipboard-worker.ts" : "./windows-file-drop-clipboard-worker.js",
+        import.meta.url,
+      ), {
+        ...(sourceTypeScript ? { execArgv: ["--import", "tsx"] } : {}),
+        workerData: { payload, systemRoot },
+      });
+    } catch {
+      resolve({ status: "failed-before-write" });
+      return;
+    }
+    let result: NativeFileDropWriteResult = { status: "effect-unknown" };
+    let failed = false;
+    worker.on("message", (message: NativeFileDropWriteResult) => {
+      if (message?.status === "copied" || message?.status === "failed-before-write" || message?.status === "effect-unknown") {
+        result = { status: message.status };
+      }
+    });
+    worker.once("error", () => {
+      failed = true;
+    });
+    // Settle only after the one-shot worker and its helper handles are gone.
+    worker.once("exit", (code) => {
+      resolve(failed || code !== 0 ? { status: "effect-unknown" } : result);
+    });
   });
 }

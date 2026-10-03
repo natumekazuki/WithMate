@@ -27,6 +27,8 @@ directory、存在しないfile、認可root外のMarkdown linkには表示し�
 
 Electronのclipboard APIだけではfile objectを表現できないため、Windows helperを使用してfile drop形式を書き込みます。日本語を含むfile名はUnicode形式で渡します。
 
+helperの起動はコピーごとのWorkerで行い、OSのprocess起動待ちでMain processを停滞させません。書き込み用と検証用helperの起動・初期化は並行しますが、検証用helperがclipboardを読むのは書き込み用helperの終了後です。別processによるfile-drop path、copy用drop effect、操作markerの一致と対象fileの現在性を確認してから成功を通知します。
+
 helperには認可済みの絶対path一件だけを渡します。shell command文字列を組み立てず、directoryや複数fileへ暗黙に拡張しません。
 
 ## 失敗時の扱い
