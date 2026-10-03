@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { it } from "node:test";
 import type { RebuildOptions } from "@electron/rebuild";
+import { Arch, type Configuration } from "electron-builder";
 import { prepareNativeDependencies } from "../../scripts/build/prepare-native-dependencies.js";
+import type { prepareNativePackaging } from "../../scripts/build/prepare-native-dependencies.js";
 
 const artifacts = [
   "conpty.node", "conpty_console_list.node", "pty.node", "winpty.dll", "winpty-agent.exe",
@@ -23,6 +25,61 @@ async function createApp(arch = "x64") {
   for (const file of artifacts) await writeFile(path.join(prebuildDirectory, file), "fixture");
   return { appDir, prebuildDirectory };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "設定されたbeforePack入口はWindowsで既定rebuildを止めてnode-pty/buildだけを既存filesから除外し、非Windowsでは既定rebuildと元のfilterを維持する"
+// oracle = { type = "contract", ref = "docs/design/distribution-packaging.md#build-boundary" }
+// fault = "wrapperがnpmRebuildを更新しないか、既存filesを除外専用matcherへ置き換えるか、Windowsの除外を重複追加または非Windowsへ残す"
+// observable = "package.jsonが指定するbeforePack呼出し後のpackager config全体、再呼出し後と非Windows切替後の設定"
+// observation_boundary = "public-boundary"
+// scope = "electron-builder beforePack native packaging configuration"
+// lifecycle = "permanent"
+// impact = "Windows配布物がsource buildへ依存するか、native依存収集やpackage対象の範囲を壊す"
+// distinction = "helperのrebuild引数testはwrapperを通らず、軽量なsynthetic appで実entryと設定の変更境界を直接検査する"
+// @end-test-value
+it("applies target-specific rebuild and file filters through the configured beforePack entry", async () => {
+  const packageUrl = new URL("../../package.json", import.meta.url);
+  const { build }: { build: Configuration } = JSON.parse(await readFile(packageUrl, "utf8"));
+  assert.equal(typeof build.beforePack, "string");
+  const { default: beforePack }: { default: typeof prepareNativePackaging } = await import(
+    new URL(build.beforePack as string, packageUrl).href
+  );
+  const { appDir } = await createApp();
+  try {
+    const exclusion = "!node_modules/node-pty/build/**";
+    const configs: Configuration[] = [
+      { npmRebuild: true, asar: true, files: [{ from: appDir, to: ".", filter: ["dist/**", "package.json"] }, { filter: "dist-electron/**" }] },
+      { npmRebuild: true, asar: true, files: { from: appDir, to: ".", filter: "dist/**" } },
+      { npmRebuild: true, asar: true, files: { from: appDir, to: "." } },
+    ];
+    const originalFilters = [
+      [{ from: appDir, to: ".", filter: ["dist/**", "package.json"] }, { filter: ["dist-electron/**"] }],
+      { from: appDir, to: ".", filter: ["dist/**"] },
+      { from: appDir, to: ".", filter: ["**/*"] },
+    ];
+    const windowsFilters = [
+      [{ from: appDir, to: ".", filter: ["dist/**", "package.json", exclusion] }, { filter: ["dist-electron/**", exclusion] }],
+      { from: appDir, to: ".", filter: ["dist/**", exclusion] },
+      { from: appDir, to: ".", filter: ["**/*", exclusion] },
+    ];
+    for (const [index, config] of configs.entries()) {
+      const run = (electronPlatformName: string) => beforePack({
+        packager: { info: { appDir }, config }, electronPlatformName, arch: Arch.x64,
+      } as unknown as Parameters<typeof prepareNativePackaging>[0]);
+      await run("win32");
+      assert.deepEqual(config, { files: windowsFilters[index], npmRebuild: false, asar: true });
+      await run("win32");
+      assert.deepEqual(config, { files: windowsFilters[index], npmRebuild: false, asar: true });
+      for (const platform of ["darwin", "linux"]) {
+        await run(platform);
+        assert.deepEqual(config, { files: originalFilters[index], npmRebuild: true, asar: true });
+      }
+    }
+  } finally {
+    await rm(appDir, { recursive: true, force: true });
+  }
+});
 
 // @test-value v2
 // kind = "contract"

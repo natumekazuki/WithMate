@@ -190,7 +190,7 @@ describe("TerminalService", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "非同期確認中の自然終了は出力と終了結果を保ち、承認時に終了済みPTYを再killしない"
+  // claim = "非同期確認中の自然終了は終了結果を配送し、承認時に終了済みPTYを再killしない"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
   // fault = "await前のPTYを保持して自然終了後にもkillするかexit eventを配送しない"
   // observable = "確認中のexit event、close戻り値とPTY kill件数"
@@ -320,24 +320,45 @@ describe("TerminalService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "出力の未処理量が上限に達するとPTYを一時停止し、ackによって下限以下になると再開する"
-  // oracle = { type = "contract", ref = "Issue #740 再描画・出力・リサイズ" }
-  // fault = "未処理出力が増え続けてもPTYを止めないかack後に再開しない"
-  // observable = "PTY pause/resume件数と送信されたdata event"
+  // claim = "現行watermark設定では未処理出力100000文字未満で停止せず、到達時に一度だけ停止し、ackで20000文字以下になるまで再開しない"
+  // oracle = { type = "contract", ref = "Issue #740 再描画・出力・リサイズ（流量制御要求）; src-electron/terminal/terminal-service.ts OUTPUT_HIGH_WATER / OUTPUT_LOW_WATER（現行watermark設定）" }
+  // fault = "任意出力でpauseするか任意ackでresumeするか、上下限の等号を誤るか、停止・再開を重複する"
+  // observable = "未処理量99999・100000・100001でのpause件数と20001・20000・19999でのresume件数、全data event"
   // observation_boundary = "component-behavior"
   // scope = "terminal-service"
   // lifecycle = "permanent"
   // impact = "大量出力でmainのメモリ・応答性が悪化するか端末が詰まる"
   // distinction = "buildと型検査は実際の出力流量制御を確認しない"
   // @end-test-value
-  it("pauses high output until xterm acknowledges it", async () => {
+  it("pauses and resumes only at the output watermarks", async () => {
     const { service, pty, window } = setup();
     await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
-    pty.data("x".repeat(100_000));
-    assert.equal(window.events.length, 1);
+    const initialOutput = "x".repeat(99_999);
+    pty.data(initialOutput);
+    assert.equal(pty.pauses, 0);
+    pty.data("y");
     assert.equal(pty.pauses, 1);
+    pty.data("z");
+    assert.equal(pty.pauses, 1);
+    assert.equal(pty.resumes, 0);
+    assert.deepEqual(window.events, [
+      { type: "data", terminalId: TERMINAL_ID, data: initialOutput },
+      { type: "data", terminalId: TERMINAL_ID, data: "y" },
+      { type: "data", terminalId: TERMINAL_ID, data: "z" },
+    ]);
     service.acknowledge("owner", TERMINAL_ID, 80_000);
+    assert.equal(pty.resumes, 0);
+    service.acknowledge("owner", TERMINAL_ID, 1);
     assert.equal(pty.resumes, 1);
+    service.acknowledge("owner", TERMINAL_ID, 1);
+    assert.equal(pty.resumes, 1);
+    const nextOutput = "w".repeat(80_002);
+    pty.data(nextOutput);
+    assert.equal(pty.pauses, 2);
+    assert.equal(pty.resumes, 1);
+    assert.deepEqual(window.events.at(-1), { type: "data", terminalId: TERMINAL_ID, data: nextOutput });
+    service.acknowledge("owner", TERMINAL_ID, 80_002);
+    assert.equal(pty.resumes, 2);
   });
 
   // @test-value v2
