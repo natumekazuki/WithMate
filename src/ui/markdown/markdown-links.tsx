@@ -40,7 +40,7 @@ function hasUnsupportedUrlScheme(target: string): boolean {
     scheme !== "tel"
   );
 }
-function isAllowedMarkdownHref(target: string): boolean {
+export function isAllowedMarkdownHref(target: string): boolean {
   if (
     !target ||
     target.startsWith("#") ||

@@ -131,7 +131,14 @@ function CodeBlockShell({
     </div>
   );
 }
-export const MermaidDiagram = memo(function MermaidDiagram({ source }: { source: string }) {
+export const MermaidDiagram = memo(function MermaidDiagram({
+  source,
+  onOpenPath,
+}: {
+  source: string;
+  onOpenPath?: (target: string) => void;
+}) {
+  const context = useContext(MarkdownRenderContext);
   const reactId = useId();
   const diagramId = useMemo(
     () => `message-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`,
@@ -172,7 +179,11 @@ export const MermaidDiagram = memo(function MermaidDiagram({ source }: { source:
   if (renderState.status === "ready")
     return (
       <div className="message-code-block-shell mermaid">
-        <MermaidViewport key={diagramSource} svg={renderState.svg} />
+        <MermaidViewport
+          key={diagramSource}
+          svg={renderState.svg}
+          onOpenPath={onOpenPath ?? context.onOpenPath}
+        />
       </div>
     );
   return (
