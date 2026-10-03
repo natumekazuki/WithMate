@@ -27,6 +27,7 @@ import {
   updateMemoryGenerationEnabled,
   updateKeyboardShortcuts,
   updateScrollToLatestOnSend,
+  updatePreviewWheelZoomStep,
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
   updateToolCallPresenceEnabled,
@@ -122,6 +123,10 @@ export function handleChangeKeyboardShortcuts(input: SettingsDraftActionInput & 
   keyboardShortcuts: KeyboardShortcutSettings;
 }): void {
   input.setSettingsDraft((current) => updateKeyboardShortcuts(current, input.keyboardShortcuts));
+}
+
+export function handleChangePreviewWheelZoomStep(input: SettingsDraftActionInput & { value: number }): void {
+  input.setSettingsDraft((current) => updatePreviewWheelZoomStep(current, input.value));
 }
 
 export function handleChangeLaunchAtLoginEnabled(input: SettingsDraftActionInput & {

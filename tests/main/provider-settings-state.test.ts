@@ -12,9 +12,39 @@ import {
   MEMORY_FILE_QUOTA_MIN_BYTES,
   getMateMemoryGenerationSettings,
   normalizeAppSettings,
+  isPreviewWheelZoomStep,
 } from "../../src-shared/settings/provider-settings-state.js";
 
 describe("provider-settings-state", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "preview wheelの刻みは既定5、欠落時のみ5を補い、1〜100の整数以外は拒否する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
+  // fault = "不正値を丸めるか既定値に置換し、意図しないzoom刻みを成功扱いする"
+  // observable = "defaultとnormalizeのpreviewWheelZoomStep、validatorのboolean、normalizeの例外"
+  // observation_boundary = "public-boundary"
+  // scope = "preview-wheel-zoom-step-settings-validation"
+  // lifecycle = "permanent"
+  // impact = "設定保存や全previewへ不正な刻みが伝わる"
+  // distinction = "型検査では検出できないIPC等のunknown入力と欠落設定のruntime境界を小さな入力集合で確認する"
+  // @end-test-value
+  it("preview wheel zoom stepは欠落時5で、1〜100の整数だけを受け入れる", () => {
+    assert.equal(createDefaultAppSettings().previewWheelZoomStep, 5);
+    assert.equal(normalizeAppSettings({}).previewWheelZoomStep, 5);
+    assert.equal(normalizeAppSettings({ previewWheelZoomStep: undefined }).previewWheelZoomStep, 5);
+    for (const value of [1, 5, 100]) {
+      assert.equal(isPreviewWheelZoomStep(value), true);
+      assert.equal(normalizeAppSettings({ previewWheelZoomStep: value }).previewWheelZoomStep, value);
+    }
+    for (const value of [0, -1, 101, 1.5, NaN, Infinity, -Infinity, "5", "", null, true, {}]) {
+      assert.equal(isPreviewWheelZoomStep(value), false);
+      assert.throws(
+        () => normalizeAppSettings({ previewWheelZoomStep: value }),
+        /Preview wheel zoom step must be an integer between 1 and 100/,
+      );
+    }
+  });
+
   // @test-value v2
   // kind = "invariant"
   // claim = "default AppSettings の chat layout は priority なしの canonical shape を持つ"

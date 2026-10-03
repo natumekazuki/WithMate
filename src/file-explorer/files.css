@@ -547,6 +547,21 @@
   border-radius: 0;
 }
 
+.file-preview-window-page.with-preview-settings {
+  display: flex;
+  flex-direction: column;
+}
+
+.file-preview-window-page.with-preview-settings > .session-file-preview {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.file-preview-settings-feedback {
+  padding: 12px;
+}
+
 .file-preview-loading-title,
 .file-preview-loading-actions,
 .file-preview-loading-content span {

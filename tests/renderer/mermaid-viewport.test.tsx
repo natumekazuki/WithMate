@@ -5,12 +5,13 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
 import { MermaidViewport } from "../../src/ui/markdown/mermaid-viewport.js";
+import { PreviewWheelZoomStepContext } from "../../src/settings/preview-zoom-settings-context.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 async function withViewport(run: (fixture: {
   container: HTMLElement;
-  render: (sourceKey?: string) => Promise<void>;
+  render: (sourceKey?: string, step?: number) => Promise<void>;
   resize: (width: number, height: number) => Promise<void>;
 }) => Promise<void>, options: {
   svg?: string;
@@ -39,15 +40,15 @@ async function withViewport(run: (fixture: {
   });
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
-  const render = async (sourceKey = "first") => {
-    await act(async () => root.render(<>
+  const render = async (sourceKey = "first", step = 5) => {
+    await act(async () => root.render(<PreviewWheelZoomStepContext.Provider value={step}>
       <MermaidViewport
         key={sourceKey}
         svg={options.svg ?? '<svg viewBox="0 0 2000 1000"><text>First diagram</text></svg>'}
         onOpenPath={options.onOpenPath}
       />
       <MermaidViewport key="second" svg='<svg viewBox="0 0 2000 1000"><text>Second diagram</text></svg>' />
-    </>));
+    </PreviewWheelZoomStepContext.Provider>));
   };
   try {
     await render();
@@ -234,7 +235,7 @@ test("MermaidのFitはresizeへ追従し手動倍率は維持する", async () =
 
 // @test-value v2
 // kind = "contract"
-// claim = "MermaidのCtrl＋wheelは対象のFit実効倍率から1ポイントずつ上下に拡縮し、通常wheelと別図の倍率を保持する"
+// claim = "MermaidのCtrl＋wheelは対象のFit実効倍率から既定5または設定された刻みで拡縮し、設定変更時の倍率、通常wheelと別図の倍率を保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 共通previewのCtrl＋wheel操作" }
 // fault = "wheelが倍率へ接続されない、逆方向へ拡縮する、通常wheelを奪う、または別図へ倍率が漏れる"
 // observable = "倍率button、SVG canvas寸法、wheelのdefaultPreventedと親への伝播"
@@ -244,7 +245,7 @@ test("MermaidのFitはresizeへ追従し手動倍率は維持する", async () =
 // distinction = "button操作testが通らないnative wheelの接続と通常scrollのイベント境界を確認する"
 // @end-test-value
 test("MermaidのCtrl＋wheelは対象だけを拡縮し通常wheelを保持する", async () => {
-  await withViewport(async ({ container }) => {
+  await withViewport(async ({ container, render }) => {
     const [first, second] = Array.from(container.querySelectorAll<HTMLElement>(".message-mermaid"));
     const viewport = first.querySelector<HTMLElement>("[role=region]")!;
     const canvas = first.querySelector<HTMLElement>(".message-mermaid-canvas")!;
@@ -257,9 +258,9 @@ test("MermaidのCtrl＋wheelは対象だけを拡縮し通常wheelを保持す�
       return event;
     };
     assert.equal((await wheel(-100, true)).defaultPrevented, true);
-    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "41%");
+    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "45%");
     assert.equal(button(second, "Reset diagram zoom to 100%").textContent, "40%");
-    assert.equal(canvas.style.width, "820px");
+    assert.equal(canvas.style.width, "900px");
     assert.equal((await wheel(100, true)).defaultPrevented, true);
     assert.equal(canvas.style.width, "800px");
     assert.equal(parentWheels, 0);
@@ -269,6 +270,16 @@ test("MermaidのCtrl＋wheelは対象だけを拡縮し通常wheelを保持す�
     assert.equal(button(second, "Reset diagram zoom to 100%").textContent, "40%");
     await act(async () => button(first, "Fit diagram to preview").click());
     assert.equal(button(first, "Fit diagram to preview").getAttribute("aria-pressed"), "true");
+    await render("first", 20);
+    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "40%");
+    assert.equal(button(first, "Fit diagram to preview").getAttribute("aria-pressed"), "true");
+    await wheel(-100, true);
+    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "60%");
+    assert.equal(button(second, "Reset diagram zoom to 100%").textContent, "40%");
+    await render("first", 1);
+    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "60%");
+    await wheel(100, true);
+    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "59%");
   });
 });
 
