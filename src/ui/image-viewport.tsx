@@ -15,6 +15,7 @@ export type ImageZoom = "fit" | number;
 export const IMAGE_ZOOM_MIN = 10;
 export const IMAGE_ZOOM_MAX = 800;
 export const IMAGE_ZOOM_STEP = 10;
+const IMAGE_WHEEL_ZOOM_STEP = 5;
 
 function stepImageZoom(zoom: number, direction: -1 | 1, step = IMAGE_ZOOM_STEP): number {
   if (direction < 0) return zoom <= IMAGE_ZOOM_MIN ? zoom : Math.max(IMAGE_ZOOM_MIN, zoom - step);
@@ -35,7 +36,9 @@ export function useCtrlWheelZoom(
       event.stopPropagation();
       setZoom((currentZoom) => {
         const effectiveZoom = typeof currentZoom === "number" ? currentZoom : fitZoom;
-        const nextZoom = stepImageZoom(effectiveZoom, event.deltaY < 0 ? 1 : -1, 1);
+        const nextZoom = effectiveZoom < IMAGE_ZOOM_MIN && event.deltaY < 0
+          ? IMAGE_ZOOM_MIN
+          : stepImageZoom(effectiveZoom, event.deltaY < 0 ? 1 : -1, IMAGE_WHEEL_ZOOM_STEP);
         return nextZoom === effectiveZoom ? currentZoom : nextZoom;
       });
     };

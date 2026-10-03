@@ -138,7 +138,7 @@ test("MermaidのFitはresizeへ追従し手動倍率は維持する", async () =
 
 // @test-value v2
 // kind = "contract"
-// claim = "MermaidのCtrl＋wheelは対象のFit実効倍率から1ポイントずつ上下に拡縮し、通常wheelと別図の倍率を保持する"
+// claim = "MermaidのCtrl＋wheelは対象のFit実効倍率から5ポイントずつ上下に拡縮し、通常wheelと別図の倍率を保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 共通previewのCtrl＋wheel操作" }
 // fault = "wheelが倍率へ接続されない、逆方向へ拡縮する、通常wheelを奪う、または別図へ倍率が漏れる"
 // observable = "倍率button、SVG canvas寸法、wheelのdefaultPreventedと親への伝播"
@@ -161,9 +161,9 @@ test("MermaidのCtrl＋wheelは対象だけを拡縮し通常wheelを保持す�
       return event;
     };
     assert.equal((await wheel(-100, true)).defaultPrevented, true);
-    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "41%");
+    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "45%");
     assert.equal(button(second, "Reset diagram zoom to 100%").textContent, "40%");
-    assert.equal(canvas.style.width, "820px");
+    assert.equal(canvas.style.width, "900px");
     assert.equal((await wheel(100, true)).defaultPrevented, true);
     assert.equal(canvas.style.width, "800px");
     assert.equal(parentWheels, 0);
