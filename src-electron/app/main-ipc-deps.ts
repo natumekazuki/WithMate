@@ -44,6 +44,8 @@ import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
   SessionFileChunkRequest,
+  SessionImageResourceRequest,
+  SessionImageChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
   SessionFilePreviewImageActionRequest,
@@ -289,6 +291,8 @@ export type MainIpcSessionQueryDepsArgs = {
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
   inspectSessionFile(request: SessionFilePreviewResourceRequest): Awaitable<SessionFileDescriptor>;
+  inspectSessionImage(request: SessionImageResourceRequest): Awaitable<SessionFileDescriptor>;
+  readSessionImageChunk(request: SessionImageChunkRequest): Awaitable<SessionFileChunkResult>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
   openSessionFilePreviewWindow(

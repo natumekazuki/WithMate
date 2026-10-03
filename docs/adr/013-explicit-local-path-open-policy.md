@@ -3,6 +3,8 @@
 - 状態: Accepted
 - 日付: 2026-08-02
 
+画像resourceの読込を登録root内に限定する判断は適用対象外とし、[ADR 026](026-shared-image-resource-loading.md)で置換する。以下の当時の本文は保持し、明示openと汎用file resourceの判断は継続する。
+
 ## Context
 
 Session File Explorer の preview は、認可済み root 内の file handle に読込対象を結び付ける。一方、「既定アプリで開く」「Explorer で表示」「ファイルをコピー」は Electron と OS が path を受け取る API であり、認可済み file handle をそのまま外部 application や clipboard consumer へ渡せない。

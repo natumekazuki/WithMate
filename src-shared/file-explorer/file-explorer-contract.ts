@@ -285,6 +285,18 @@ export type SessionFileChunkResult = {
   revision: string;
 };
 
+export type SessionImageResourceRequest = {
+  sessionId: string;
+  target: string;
+  baseResource?: SessionFilePreviewResourceRequest;
+};
+
+export type SessionImageChunkRequest = SessionImageResourceRequest & {
+  offset: number;
+  length: number;
+  expectedRevision: string;
+};
+
 export type FileRootGitDiffScope = "working-tree" | "staged";
 export type FileRootGitChangeScope = FileRootGitDiffScope | "commit";
 export type FileRootGitChangeKind =

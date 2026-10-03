@@ -1268,6 +1268,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionFileExplorerOwnerSessionId,
                 listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
+                inspectSessionImage: (request) => createSessionFileExplorerService().inspectImage(request),
+                readSessionImageChunk: (request) => createSessionFileExplorerService().readImageChunk(request),
                 inspectSessionFile: (request) => isSessionFileGitCommitResource(request)
                   ? createFileRootGitChangesService().inspectHistoryFile(request)
                   : createSessionFileExplorerService().inspectFile(request),

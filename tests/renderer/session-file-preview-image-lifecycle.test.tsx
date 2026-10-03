@@ -26,7 +26,21 @@ const DEFAULT_IMAGE_COPY_API: Pick<
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
   | "openSessionFilePreviewWindow"
+  | "inspectSessionImage"
+  | "readSessionImageChunk"
 > = {
+  async inspectSessionImage() {
+    return IMAGE_DESCRIPTOR;
+  },
+  async readSessionImageChunk(request) {
+    const chunk = IMAGE_BYTES.slice(request.offset, request.offset + request.length);
+    return {
+      data: copyArrayBuffer(chunk), offset: request.offset,
+      nextOffset: request.offset + chunk.byteLength, totalBytes: IMAGE_BYTES.byteLength,
+      done: request.offset + chunk.byteLength >= IMAGE_BYTES.byteLength,
+      revision: request.expectedRevision,
+    };
+  },
   isSessionFileObjectCopyAvailable() {
     return false;
   },
@@ -189,13 +203,10 @@ function createPreviewApi(
   let imageInspectCount = 0;
   const api: PreviewApi = {
     ...DEFAULT_IMAGE_COPY_API,
-    async listSessionFileRoots() {
-      return [{
-        id: "workspace",
-        kind: "workspace",
-        label: "Workspace",
-        displayPath: "C:\\workspace",
-      }];
+    async inspectSessionImage(request) {
+      assert.deepEqual(request, { sessionId: MARKDOWN_REQUEST.sessionId, baseResource: MARKDOWN_REQUEST, target: "./image.png" });
+      imageInspectCount += 1;
+      return inspectImage(imageInspectCount);
     },
     async inspectSessionFile(request) {
       if (resourcePath(request) === MARKDOWN_REQUEST.relativePath) {
@@ -238,9 +249,6 @@ function createTextPreviewApi(
   const bytes = new TextEncoder().encode(raw);
   return {
     ...DEFAULT_IMAGE_COPY_API,
-    async listSessionFileRoots() {
-      return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
-    },
     async inspectSessionFile() {
       return {
         ...request,
@@ -473,9 +481,6 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
   const readGate = deferred<void>();
   const api: PreviewApi = {
     ...DEFAULT_IMAGE_COPY_API,
-    async listSessionFileRoots() {
-      return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
-    },
     async inspectSessionFile() {
       return inspectGate.promise;
     },
@@ -768,9 +773,6 @@ test("Markdown preview の local file link は current resource を基準に det
   };
   const api: PreviewApi = {
     ...DEFAULT_IMAGE_COPY_API,
-    async listSessionFileRoots() {
-      return [];
-    },
     async inspectSessionFile() {
       return descriptor;
     },
@@ -916,9 +918,6 @@ test("binary commit file preview はmetadata内にもworking tree操作を表示
   };
   const api: PreviewApi = {
     ...DEFAULT_IMAGE_COPY_API,
-    async listSessionFileRoots() {
-      return [];
-    },
     async inspectSessionFile() {
       return descriptor;
     },
@@ -1348,6 +1347,17 @@ test("Mermaidのfile linkはpreview contextと失敗時の図を保持する", a
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "encoding切替で表示済みlocal画像を新しいpreview世代へ読み直し旧blobを解放する"
+// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
+// fault = "encoding切替でresolverを再実行しない、または旧blob resourceを保持する"
+// observable = "画像inspect回数、切替後img src、旧URLのrevoke呼出し"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview encoding image lifecycle"
+// lifecycle = "permanent"
+// distinction = "読込中の取消testとは異なり既に表示したresourceの置換と解放を確認する"
+// @end-test-value
 test("encoding 切替は表示済みの同一 local image を現行 generation へ再登録する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -1434,15 +1444,11 @@ test("Markdown File Preview のReloadは同一画像を現行generationへ再登
   ));
   const api: PreviewApi = {
     ...harness.api,
-    async readSessionFileChunk(request) {
-      const source = resourcePath(request) === MARKDOWN_REQUEST.relativePath
-        ? MARKDOWN_BYTES
-        : request.expectedRevision === changedImageDescriptor.revision
-          ? changedImageBytes
-          : IMAGE_BYTES;
-      if (resourcePath(request) === IMAGE_DESCRIPTOR.relativePath) {
-        imageReadRevisions.push(request.expectedRevision ?? "");
-      }
+    async readSessionImageChunk(request) {
+      const source = request.expectedRevision === changedImageDescriptor.revision
+        ? changedImageBytes
+        : IMAGE_BYTES;
+      imageReadRevisions.push(request.expectedRevision ?? "");
       const chunk = source.slice(request.offset, request.offset + request.length);
       const nextOffset = request.offset + chunk.byteLength;
       return {
@@ -1658,9 +1664,6 @@ test("inspection prefix より後ろで binary と判明した Markdown は rich
   };
   const api: PreviewApi = {
     ...DEFAULT_IMAGE_COPY_API,
-    async listSessionFileRoots() {
-      return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
-    },
     async inspectSessionFile() {
       return descriptor;
     },
@@ -1859,9 +1862,6 @@ test("寸法情報のあるSVGも初回はFitで表示する", async () => {
   };
   const api: PreviewApi = {
     ...DEFAULT_IMAGE_COPY_API,
-    async listSessionFileRoots() {
-      return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
-    },
     async inspectSessionFile() {
       return descriptor;
     },
@@ -2273,9 +2273,6 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
   const diffResult = deferred<string | null>();
   const api: PreviewApi = {
     ...DEFAULT_IMAGE_COPY_API,
-    async listSessionFileRoots() {
-      return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
-    },
     async inspectSessionFile(inspectRequest) {
       return {
         ...inspectRequest,

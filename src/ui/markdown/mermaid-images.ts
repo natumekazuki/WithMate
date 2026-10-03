@@ -1,4 +1,6 @@
 import type { Mermaid } from "mermaid";
+import type { MarkdownImageResolver } from "./image-resource-loader.js";
+import { resolveMarkdownImageTarget } from "./image-resource-source.js";
 
 type ImageVertex = { id: string; img?: string; text?: string; labelType?: string };
 export type MermaidImageError = {
@@ -6,7 +8,7 @@ export type MermaidImageError = {
   target: string;
   message: string;
 };
-export type MermaidImageResolver = (target: string) => Promise<string | null>;
+export type MermaidImageResolver = MarkdownImageResolver;
 
 // Mermaid's parser/config and render must not overlap with another diagram.
 let renderQueue: Promise<unknown> = Promise.resolve();
@@ -103,11 +105,10 @@ export async function renderMermaidWithImages(
           let size = { width: 160, height: 90 };
           let failed = false;
           try {
+            const imageTarget = resolveMarkdownImageTarget(target);
             resolved = resolveImageSource
-              ? await resolveImageSource(target)
-              : target.startsWith("//")
-                ? `https:${target}`
-                : target;
+              ? await resolveImageSource(target, signal)
+              : imageTarget.kind === "external" ? imageTarget.source : null;
             if (
               resolved &&
               resolved !== target &&
@@ -120,7 +121,7 @@ export async function renderMermaidWithImages(
             if (!resolved || !isImageResource(resolved)) {
               throw new Error(
                 resolveImageSource
-                  ? "Image format is unsupported or the path is outside the registered file roots."
+                  ? "Image source is unsupported or could not be loaded."
                   : "Local images require an authorized file preview.",
               );
             }

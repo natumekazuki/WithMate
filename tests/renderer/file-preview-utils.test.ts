@@ -7,9 +7,6 @@ import {
   findPreviewTextMatches,
   PreviewByteAccumulator,
   projectFileRootDiffAvailability,
-  resolveAuthorizedMarkdownResource,
-  resolveMarkdownImageTarget,
-  resolveRelativeMarkdownResourcePath,
 } from "../../src/file-explorer/file-preview-utils.js";
 import { detectSessionFileEncoding } from "../../src-shared/file-explorer/file-content-detection.js";
 
@@ -99,59 +96,5 @@ test("projectFileRootDiffAvailability は変更なしとGit失敗を区別する
   }, "src/app/SessionWindowApp.tsx"), {
     scopes: ["working-tree"],
     message: "",
-  });
-});
-
-test("resolveRelativeMarkdownResourcePath は Markdown 親基準で正規化し root 外へ出さない", () => {
-  assert.equal(resolveRelativeMarkdownResourcePath("docs/guide/readme.md", "../images/hero.png"), "docs/images/hero.png");
-  assert.equal(resolveRelativeMarkdownResourcePath("docs/readme.md", "images/hero%20one.png"), "docs/images/hero one.png");
-  assert.equal(resolveRelativeMarkdownResourcePath("readme.md", "../secret.png"), null);
-  assert.equal(resolveRelativeMarkdownResourcePath("readme.md", "%2e%2e/secret.png"), null);
-});
-
-test("resolveMarkdownImageTarget は external と認可済み local resource を一つの境界で分類する", () => {
-  const roots = [
-    { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:\\work" },
-    { id: "extra", kind: "additional" as const, label: "Assets", displayPath: "C:\\work\\assets" },
-  ];
-  assert.deepEqual(resolveMarkdownImageTarget(roots, "workspace", "docs/readme.md", "//example.com/a.png"), {
-    kind: "external",
-    source: "https://example.com/a.png",
-  });
-  assert.deepEqual(resolveMarkdownImageTarget(roots, "workspace", "docs/readme.md", "images/hero%20one.png"), {
-    kind: "local",
-    resource: { rootId: "workspace", relativePath: "docs/images/hero one.png" },
-  });
-  assert.deepEqual(resolveMarkdownImageTarget(roots, "workspace", "docs/readme.md", "file:///C:/work/assets/hero%20one.png"), {
-    kind: "local",
-    resource: { rootId: "extra", relativePath: "hero one.png" },
-  });
-  assert.deepEqual(resolveMarkdownImageTarget(roots, "workspace", "docs/readme.md", "C:/outside/secret.png"), {
-    kind: "unsupported",
-  });
-  assert.deepEqual(resolveMarkdownImageTarget(roots, "workspace", "readme.md", "%2e%2e/secret.png"), {
-    kind: "unsupported",
-  });
-});
-
-test("resolveAuthorizedMarkdownResource は登録 root 内の file URL と絶対 path だけを root request へ変換する", () => {
-  const roots = [
-    { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:\\work" },
-    { id: "extra", kind: "additional" as const, label: "Assets", displayPath: "C:\\work\\assets" },
-  ];
-  assert.deepEqual(resolveAuthorizedMarkdownResource(roots, "file:///C:/work/assets/hero%20one.png"), {
-    rootId: "extra",
-    relativePath: "hero one.png",
-  });
-  assert.deepEqual(resolveAuthorizedMarkdownResource(roots, "c:\\WORK\\docs\\diagram.svg"), {
-    rootId: "workspace",
-    relativePath: "docs/diagram.svg",
-  });
-  assert.equal(resolveAuthorizedMarkdownResource(roots, "C:\\outside\\secret.png"), null);
-  assert.deepEqual(resolveAuthorizedMarkdownResource([
-    { id: "unc", kind: "additional" as const, label: "Share", displayPath: "\\\\server\\share" },
-  ], "file://server/share/image.png"), {
-    rootId: "unc",
-    relativePath: "image.png",
   });
 });

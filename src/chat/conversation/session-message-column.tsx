@@ -8,6 +8,8 @@ import type { CharacterProfile } from "../../../src-shared/character/character-s
 import type { Message, MessageArtifact } from "../../../src-shared/session/session-state.js";
 
 import { MessageRichText, type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
+import { useMarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
+import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { GlossaryAnnotationMatcher } from "../../glossary/glossary-annotation-projection.js";
 import { approvalModeLabel, CharacterAvatar, operationTypeLabel } from "../../ui/ui-utils.js";
@@ -447,6 +449,7 @@ export function SessionMessageColumn({
   const previousMessageViewModeRef = useRef(messageViewMode);
   const handledMessageJumpRequestIdRef = useRef<number | null>(null);
   const markdownLinkFileContext = useMemo(() => ({ sessionId }), [sessionId]);
+  const resolveImageSource = useMarkdownImageResolver(getWithMateApi(), markdownLinkFileContext, messageViewMode);
   const messageCollapseTargetByKey = useMemo(
     () => new Map(messageCollapseTargets.map((target) => [target.key, target])),
     [messageCollapseTargets],
@@ -943,6 +946,7 @@ export function SessionMessageColumn({
           data-pending-message-body="true"
         >
           <MessageRichText
+            resolveImageSource={resolveImageSource}
             text={pendingMessageText}
             forceFullRender={findOpen && hasFindQuery}
             displayMode={messageViewMode}
@@ -1159,6 +1163,7 @@ export function SessionMessageColumn({
                       >
                         {shouldRenderFullMessage ? (
                           <MessageRichText
+                            resolveImageSource={resolveImageSource}
                             text={message.text}
                             forceFullRender={findOpen && hasFindQuery}
                             displayMode={messageViewMode}
@@ -1247,6 +1252,7 @@ export function SessionMessageColumn({
                                             {operation.type === "agent_message" ? (
                                               <div className="artifact-operation-message">
                                                 <MessageRichText
+                                                  resolveImageSource={resolveImageSource}
                                                   text={operation.summary}
                                                   onOpenPath={onOpenPath}
                                                   markdownLinkFileContext={markdownLinkFileContext}

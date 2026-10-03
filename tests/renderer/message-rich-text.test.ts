@@ -1,5 +1,6 @@
 import { readStylesheet } from "../support/read-stylesheet.js";
 import assert from "node:assert/strict";
+import { markdownUrlTransform } from "../../src/ui/markdown/markdown-links.js";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { JSDOM } from "jsdom";
@@ -2093,16 +2094,16 @@ test("MessageRichText は code literal 内の local path link 風テキストを
 
 // @test-value v2
 // kind = "contract"
-// claim = "MessageRichText は local / data / external Markdown image を既定表示する"
+// claim = "MessageRichText はdataとexternal画像を直接表示し、resolverのないlocal画像は読込errorを示す"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "許可されたlocal、data、external、protocol-relative imageのいずれかがimgとして表示されない、またはURL正規化が失われる"
-// observable = "img要素数と各imgのsrc属性"
+// fault = "local画像がMainの画像検査を通さず直接表示される、またはexternal画像のURL正規化が失われる"
+// observable = "3つのexternal img srcとlocal画像のerror表示"
 // observation_boundary = "component-behavior"
 // scope = "MessageRichTextのMarkdown image URL rendering"
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
-test("MessageRichText は local / data / external Markdown image を既定表示する", () => {
+test("MessageRichText はexternal画像を直接表示しresolverのないlocal画像はerrorを示す", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
       text: [
@@ -2114,8 +2115,8 @@ test("MessageRichText は local / data / external Markdown image を既定表示
     }),
   );
 
-  assert.equal((html.match(/<img\b/g) ?? []).length, 4);
-  assert.match(html, /src="file:\/\/\/C:\/tmp\/secret\.png"/);
+  assert.equal((html.match(/<img\b/g) ?? []).length, 3);
+  assert.match(html, /Image could not be loaded\./);
   assert.match(html, /src="data:image\/png;base64,AAAA"/);
   assert.match(html, /src="https:\/\/example\.test\/image\.png"/);
   assert.match(html, /src="https:\/\/cdn\.example\.test\/image\.png"/);
@@ -2123,20 +2124,19 @@ test("MessageRichText は local / data / external Markdown image を既定表示
 
 // @test-value v2
 // kind = "invariant"
-// claim = "MessageRichText は local image を優先読込し external image は遅延読込する"
+// claim = "MessageRichText はembedded imageを優先読込しremote imageは遅延読込する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "local/data imageがlazyになり、またはexternal imageがeagerになって通信優先度契約を破る"
+// fault = "data imageがlazyになり、またはremote imageがeagerになって通信優先度契約を破る"
 // observable = "各imgのloadingとfetchpriority属性"
 // observation_boundary = "component-behavior"
 // scope = "MessageRichTextのimage loading priority boundary"
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
-test("MessageRichText は local image を優先読込し external image は遅延読込する", () => {
+test("MessageRichText はembedded imageを優先読込しremote imageは遅延読込する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
       text: [
-        "![local](file:///C:/tmp/local.png)",
         "![embedded](data:image/png;base64,AAAA)",
         "![remote](https://example.test/image.png)",
       ].join("\n"),
@@ -2147,10 +2147,8 @@ test("MessageRichText は local image を優先読込し external image は遅�
 
   assert.equal(images[0]?.getAttribute("loading"), "eager");
   assert.equal(images[0]?.getAttribute("fetchpriority"), "high");
-  assert.equal(images[1]?.getAttribute("loading"), "eager");
-  assert.equal(images[1]?.getAttribute("fetchpriority"), "high");
-  assert.equal(images[2]?.getAttribute("loading"), "lazy");
-  assert.equal(images[2]?.getAttribute("fetchpriority"), "auto");
+  assert.equal(images[1]?.getAttribute("loading"), "lazy");
+  assert.equal(images[1]?.getAttribute("fetchpriority"), "auto");
 });
 
 // @test-value v2
@@ -3354,33 +3352,19 @@ test("MessageRichText は protocol-relative link を HTTPS に正規化する", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "MessageRichText は slash / backslash 形式の Windows absolute image path を file URL に変換する"
+// claim = "markdownUrlTransformはWindows absolute画像pathをresolverへ渡せるfile URLに正規化する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "Windows absolute image pathをfile URLへ変換せずimg srcへ不正なpathを残す"
-// observable = "render HTMLの2つのimg srcがfile:///... URLになること"
-// observation_boundary = "component-behavior"
-// scope = "MessageRichText Windows absolute image URL rendering"
+// fault = "Windows absolute画像pathが不正なURLになりresolverに正しい画像targetを渡せない"
+// observable = "URL transformの戻り値"
+// observation_boundary = "public-boundary"
+// scope = "markdownUrlTransform Windows absolute image URL"
 // lifecycle = "permanent"
-// distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
+// distinction = "Mainのpath解決testとは異なりMarkdown画像からresolver入力へのURL正規化を確認する"
 // @end-test-value
-test("MessageRichText は slash / backslash 形式の Windows absolute image path を file URL に変換する", () => {
-  const html = renderToStaticMarkup(
-    React.createElement(MessageRichText, {
-      text: [
-        "![slash](C:/workspace/image%20folder/sample.png)",
-        String.raw`![backslash](C:\workspace\image-folder\sample.png)`,
-      ].join("\n"),
-    }),
-  );
-
-  assert.match(
-    html,
-    /src="file:\/\/\/C:\/workspace\/image%20folder\/sample\.png"/,
-  );
-  assert.match(
-    html,
-    /src="file:\/\/\/C:\/workspace\/image-folder\/sample\.png"/,
-  );
+test("markdownUrlTransformはslashとbackslashのWindows画像pathをfile URLへ変換する", () => {
+  const node = { type: "element" as const, tagName: "img", properties: {}, children: [] };
+  assert.equal(markdownUrlTransform("C:/workspace/image%20folder/sample.png", "src", node), "file:///C:/workspace/image%20folder/sample.png");
+  assert.equal(markdownUrlTransform(String.raw`C:\workspace\image-folder\sample.png`, "src", node), "file:///C:/workspace/image-folder/sample.png");
 });
 
 // @test-value v2

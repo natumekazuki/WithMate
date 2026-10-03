@@ -15,6 +15,7 @@ import {
 } from "../image-viewport.js";
 import { useDialogA11y } from "../a11y.js";
 import { MarkdownRenderContext } from "./markdown-context.js";
+import type { MarkdownImageResolver } from "./image-resource-loader.js";
 import {
   isDirectMarkdownImageSource,
   shouldLoadMarkdownImageEagerly,
@@ -25,7 +26,7 @@ type MarkdownImageProps = {
   source: string;
   alt?: string;
   title?: string;
-  resolveImageSource?: (target: string) => Promise<string | null>;
+  resolveImageSource?: MarkdownImageResolver;
 };
 function MessageImageLightbox({
   source,
@@ -113,11 +114,12 @@ export const MarkdownImage = memo(function MarkdownImage({
   }, [canLoadDirectly, resolveImageSource, source]);
   useEffect(() => {
     if (!resolveImageSource) return;
+    const controller = new AbortController();
     let active = true;
     let ownedObjectUrl: string | null = null;
     setResolvedSource("");
     setLoadStatus("resolving");
-    void resolveImageSource(source)
+    void resolveImageSource(source, controller.signal)
       .then((resolved) => {
         if (!active) {
           if (resolved && resolved !== source && resolved.startsWith("blob:"))
@@ -143,6 +145,7 @@ export const MarkdownImage = memo(function MarkdownImage({
       });
     return () => {
       active = false;
+      controller.abort();
       if (ownedObjectUrl) URL.revokeObjectURL(ownedObjectUrl);
     };
   }, [clearLoadingIndicatorTimer, resolveImageSource, source]);

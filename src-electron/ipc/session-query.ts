@@ -8,6 +8,8 @@ import type { SessionSummaryPageRequest } from "../../src-shared/session/session
 import type {
   SessionDirectoryRequest,
   SessionFileChunkRequest,
+  SessionImageResourceRequest,
+  SessionImageChunkRequest,
   SessionFileOpenRequest,
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewResourceRequest,
@@ -42,6 +44,8 @@ import {
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
+  WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL,
+  WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
@@ -296,6 +300,36 @@ export function registerSessionQueryHandlers(
       return deps.inspectSessionFile(request);
     },
   );
+  const assertImageSender = async (event: Electron.IpcMainInvokeEvent, request: SessionImageResourceRequest) => {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId
+      || typeof request.target !== "string" || !request.target.trim()) {
+      throw new TypeError("Local image request is invalid.");
+    }
+    if (request.baseResource !== undefined) {
+      assertValidSessionFilePreviewResourceRequest(request.baseResource, request.sessionId);
+    }
+    await assertSessionFileLinkSender(event, request.sessionId, request.baseResource, deps);
+  };
+  ipcMain.handle(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL, async (event, request: SessionImageResourceRequest) => {
+    await assertImageSender(event, request);
+    const window = deps.resolveEventWindow(event);
+    const result = await deps.inspectSessionImage(request);
+    await assertImageSender(event, request);
+    if (deps.resolveEventWindow(event) !== window) {
+      throw new Error("Local image sender changed while inspecting the image.");
+    }
+    return result;
+  });
+  ipcMain.handle(WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL, async (event, request: SessionImageChunkRequest) => {
+    await assertImageSender(event, request);
+    const window = deps.resolveEventWindow(event);
+    const result = await deps.readSessionImageChunk(request);
+    await assertImageSender(event, request);
+    if (deps.resolveEventWindow(event) !== window) {
+      throw new Error("Local image sender changed while reading the image.");
+    }
+    return result;
+  });
   ipcMain.handle(
     WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
     async (event, request: SessionFileChunkRequest) => {

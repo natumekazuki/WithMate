@@ -47,6 +47,8 @@ import {
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
+  WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL,
+  WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
@@ -91,6 +93,66 @@ import {
 } from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 type Handler = (...args: unknown[]) => unknown;
+
+// @test-value v2
+// kind = "security"
+// claim = "画像専用IPCはowning Sessionまたはcurrent preview baseのみ許可し、読込中のbase変更を結果返却前に拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/shared.ts: assertSessionFileLinkSender" }
+// fault = "別windowや別session・stale preview baseへ自動画像読込を認可する、または画像権限をgeneric absolute readへ広げる"
+// observable = "画像IPCの返却値・拒否Error、service呼出数、generic read IPCの拒否Error"
+// observation_boundary = "public-boundary"
+// scope = "registered inspect/read image IPC and existing generic file IPC"
+// lifecycle = "permanent"
+// impact = "任意windowから画像や一般fileを読み取れてwindow/session権限を逸脱する"
+// distinction = "service testや型検査ではsenderとpreview lifecycleのIPC認可を実行確認できない;既存stubで低コストに確認する"
+// @end-test-value
+test("image IPC authorizes owner and current preview base without broadening generic reads", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  let currentBase = { sessionId: "aux-1", absolutePath: "/outside/source.md" };
+  let changeBaseDuringRead = false;
+  let calls = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? currentBase : null
+    ),
+    inspectSessionImage: async () => {
+      calls += 1;
+      return { mimeType: "image/png" };
+    },
+    readSessionImageChunk: async () => {
+      calls += 1;
+      if (changeBaseDuringRead) currentBase = { ...currentBase, absolutePath: "/outside/other.md" };
+      return { data: new ArrayBuffer(1) };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { sessionId: "aux-1", target: "/outside/image.png" };
+  assert.deepEqual(await handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, request), { mimeType: "image/png" });
+  await assert.rejects(() => handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, {
+    sessionId: "aux-1", absolutePath: "/outside/image.png", offset: 0, length: 1, expectedRevision: "revision",
+  }) as Promise<unknown>, /current Preview resource/);
+  currentWindow = otherWindow;
+  await assert.rejects(() => handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, request) as Promise<unknown>, /current Preview resource as its base/);
+  currentWindow = ownerWindow;
+  await assert.rejects(() => handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, { ...request, sessionId: "other" }) as Promise<unknown>);
+  assert.equal(calls, 1);
+  currentWindow = previewWindow;
+  await assert.rejects(() => handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, request) as Promise<unknown>, /current Preview resource as its base/);
+  const basedRequest = { ...request, baseResource: currentBase };
+  assert.deepEqual(await handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, basedRequest), { mimeType: "image/png" });
+  const chunkRequest = { ...basedRequest, offset: 0, length: 1, expectedRevision: "revision" };
+  assert.equal((await handlers.get(WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL)?.({}, chunkRequest) as { data: ArrayBuffer }).data.byteLength, 1);
+  changeBaseDuringRead = true;
+  await assert.rejects(() => handlers.get(WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL)?.({}, chunkRequest) as Promise<unknown>, /current Preview resource as its base/);
+  assert.equal(calls, 4);
+});
 
 function createIpcMainStub() {
   const handlers = new Map<string, Handler>();

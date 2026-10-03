@@ -14,7 +14,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - `http://` / `https://` は外部ブラウザで開く
 - Session message のローカル絶対 path と workspace 相対 path は、regular fileならroot内外ともdetached file previewで開く。directoryならroot内外とも明示的なlink操作でOSのfile managerへ渡す。表示やlink解決だけでは自動openしない
 - ローカル path link に `#L10` などの fragment が付いている場合は、少なくとも path 本体を開けるように fragment を無視して扱う。`:10` または `:10:4` 形式は、指定された path が存在しない場合だけ行番号または行番号と列番号として扱う
-- Markdown file previewの相対linkはそのfileの親directoryを基準に解決し、root外のfile／directoryにも明示的に移動できる。相対imageを含む自動local resource読込は登録root内だけに制限する
+- Markdown file previewの相対linkはそのfileの親directoryを基準に解決し、root外のfile／directoryにも明示的に移動できる。画像の自動読込は下記の共通画像経路を使用する
 - directory linkはMainでcanonical real pathへ解決し、symlink／junctionも解決先を使う。OS open前にdirectoryのkindとcanonical path、送信元Windowの同一性とSession所有／Preview baseを再確認する。既解決pathはURLや行番号suffixとして再解釈しない
 - macOSでは通常folderもapp bundle／packageもFinderで対象を選択表示する。`/usr/bin/open -R`へcanonical pathを独立した引数で渡し、既定appの起動へ委譲しない。commandの終了を待ち、失敗を成功扱いや既定openへのfallbackにしない。Windows／Linuxでは既存のdirectory openを使う
 - directoryを開いてもAdditional DirectoryやProviderのアクセス権限を追加せず、アプリ内directory列挙のroot制限は維持する。不正path、消失、file／special objectへの差替、canonical path変更、所有関係の不一致、OS open失敗は操作元のfeedbackへ返す。成功時は既存の操作元errorを消す
@@ -26,10 +26,11 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 
 ## Image Handling
 
-- absolute local path、`file:`、HTTP、HTTPS、data、blob image を既定表示する。protocol-relative URL は HTTPS に正規化する。Markdown file preview の local image は相対・絶対とも登録済み root へ対応付け、file の親 directory または対応する root から認可済み read を行う
-- external image の自動通信と CSP の判断は `docs/adr/012-markdown-resource-loading-policy.md` を正本とする
+- chatと中央／独立File Previewは、通常Markdown画像とMermaid画像に同じ画像resolverを使用する。local画像は登録root内外とも既定表示し、相対pathはchatではWorkspace、file previewでは元fileの親directory基準とする。絶対path、file URL、UNCを扱い、Additional DirectoriesやProvider権限を変更しない。Git commit previewの相対local画像は解決せず、絶対pathと外部画像のみを扱う
+- HTTP、HTTPS、data image、blobを許可し、protocol-relative URLはHTTPSへ正規化する。他のURL schemeは拒否する。外部通信の判断は[ADR 012](../adr/012-markdown-resource-loading-policy.md)、local画像の共通認可境界は[ADR 026](../adr/026-shared-image-resource-loading.md)を正本とする
 - SVG は `<img>` の resource として描画し、inline DOM へ挿入しない
-- file preview の local image 読込は Main process の root authorization と chunk read を経由し、preview 単位の固定同時数キューで実行する。file、reload、表示 mode、encoding の切替または unmount 後に待機処理を開始せず、実行中の stale read も次の chunk へ進めない。表示を継続する切替では resolver identity を current generation へ更新し、同じ source も再解決する
+- local画像はchat column／file previewごとに4並列、1MiB chunkで読み込む。file、reload、mode、encoding、画像sourceの切替またはunmountで待機中の旧処理を破棄し、実行中のstale readを次のchunkへ進めない。表示継続時もresolverを更新して再解決する。容量・画素・総枚数・timeoutの上限は設けず、全量保持のメモリー負荷は残る。画像表示による通信・私的画像の表示は自動的に起こり得る。
+- local画像はMainの画像専用inspect/chunk APIでSessionとbase resourceの所有関係、通常file、実path・identity・revision、画像headerを確認する。拡張子だけで認定せず、ブラウザーがdecodeできる画像を表示する。汎用file read・directory列挙のroot認可は維持する
 - 画像の resolving/loading はresourceの待機状態として保持し、表示開始から1,000ms未満は補助UIを表示しない。閾値を超えて未完了の場合だけ、画像領域内へ小さなspinnerを重ねて表示し、完了またはerrorで除去する。resolvingからloadingへ進む同一resourceの待機では表示タイマーをリセットしない。spinnerは`role="status"`相当の読み上げ名を持つが、本文の検索対象へ補助文字列を追加しない。errorは対象resourceを識別できる既存の失敗表示を維持する
 - Markdownの`img`、`a`、`pre` component typeはrenderごとに再生成せず、動的な操作callback、resource resolver、render modeだけを現在のcontextとして渡す。これによりcallback更新、本文末尾への追記、light/full切替では同じ位置の画像DOM・読み込みstate・lightbox stateを保持し、sourceまたはresource世代の変更では既存のresolver lifecycleに従って再読み込みする
 
@@ -44,11 +45,11 @@ flowchart LR
   A --> B
 ```
 
-- `img`の相対pathはプレビュー元fileの親directory基準。Windowsの絶対pathは`C:/work/images/sample.png`のようにslashで記述でき、`file:///C:/work/images/sample.png`も扱う。空白・日本語を含むpathは引用符で囲む。絶対pathとfile URLも登録rootへ対応付け、Mainの既存認可・chunk read・同時数キューを経由する。root外のfileを明示linkで開けることは画像の自動読込の許可にならない。root外のabsolute previewからの相対画像解決は行わない。
+- `img`もImage Handlingの共通解決規則に従う。Windowsの絶対pathは`C:/work/images/sample.png`、file URLは`file:///C:/work/images/sample.png`と記述できる。空白・日本語を含むpathは引用符で囲む。登録root外の画像と、root外absolute previewからの相対画像もMainの画像専用経路で読み込む。
 - local画像は既存File Previewと同じPNG、JPEG、GIF、WebP、BMP、ICO、AVIF、SVGを対象とし、ブラウザーがdecodeできるものを表示する。SVGは常にpassive image resourceとして扱い、画像内容をinline DOMへ入れない。
 - サイズ・label位置はMermaid標準の`w`、`h`、`constraint`、`pos`に従う。縦横比を保つ場合は`h`と`constraint: "on"`を指定する。`label`を可視の説明と画像のaccessible nameに使用し、省略時のaccessible nameはnode IDとする。図のZoom／Fit／scroll／Ctrl＋dragをそのまま利用できる。
-- 不存在・読込不可・未対応・decode失敗・許可範囲外は画像ごとのplaceholderとnode ID・対象path・理由を表示し、残りの図を保持する。修正後はFile PreviewのReloadで再読込する。file、reload、mode、encodingの切替・unmount時はstale resultを表示せず、所有するobject URLを解放する。
-- 共有rendererは呼出元の画像resolverを利用する。会話内のMermaidにはlocal resolverを追加せず、local画像は失敗表示になる。HTTP／HTTPS／data image／blobは既存の外部画像方針に従う。
+- 不存在・読込不可・未対応・decode失敗は画像ごとのplaceholderとnode ID・対象path・理由を表示し、残りの図を保持する。修正後はFile PreviewのReloadで再読込する。source変更・unmount時はstale resultを表示せず、所有するobject URLを解放する。
+- 共有rendererは呼出元の画像resolverを利用し、会話内も通常Markdown画像と同じlocal／外部画像を扱う。画像resolverのない表示面ではlocalを直接file URLで描画せず、解決できない理由を示す。
 - strictとsanitizationは維持する。標準parserから画像nodeを読み、認可・decode後に自然寸法だけを持つアプリ生成placeholderへ標準metadataで差し替えて通常renderする。strictで生成したSVGのexact placeholderに一致する`image`だけへ、検証済みresource URIとaccessible nameを設定する。元sourceのunsafe destinationや任意HTMLは復元しない。画像bytesをMermaid sourceへ埋め込まず、文字数上限も変更しない。
 
 ## Non Goals
