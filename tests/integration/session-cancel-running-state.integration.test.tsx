@@ -10,9 +10,9 @@ import type { Session } from "../../src-shared/session/session-state.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Mainの取消受付と終了待ちは保存SessionがidleでもCancelingと送信不可へ投影され、終了通知後は次のSendを受け付ける。遅い旧取消応答は次Turnを巻き戻さない"
+// claim = "Mainの取消受付と終了待ちは保存Sessionがidleでも、AuxiliaryからMainへ戻った再取得待ち中でもCancelingと送信不可へ投影される。終了通知後は次のSendを受け付け、遅い初回取得や旧取消応答は巻き戻さない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Mainの取消受付後; https://github.com/natumekazuki/WithMate/issues/773" }
-// fault = "liveの取消状態変更をshellが無視する、保存idleを優先してSendや再送を許す、解放後もbusyが残る、または遅い取消応答で新Turnをidleに戻す"
+// fault = "live取消状態を無視または再購読初期化で消去してSendや再送を許す、解放後もbusyが残る、または遅い初回取得や取消応答で新しい状態を巻き戻す"
 // observable = "実SessionWindowAppのexpanded/compact Canceling button、Send disabled、送信shortcutのrun呼出数、次Turnのrunning表示"
 // observation_boundary = "component-behavior"
 // scope = "Main cancellation live projection and composer actions"
@@ -111,6 +111,15 @@ test("Mainの取消完了までSendを止め、遅い取消応答は次Turnへ�
       sessionListeners.forEach((listener) => listener({ scope: "ids", sessionIds: [session.id] }));
     });
     assert.equal(send().disabled, true, "stored idle cannot enable Send before the runtime releases the run");
+    const pendingMainReads: Array<(value: LiveSessionRunState | null) => void> = [];
+    api.getLiveSessionRun = async (id) => id === session.id
+      ? new Promise<LiveSessionRunState | null>((resolve) => { pendingMainReads.push(resolve); })
+      : null;
+    await act(async () => { buttons("Auxiliary")[0]!.click(); });
+    await act(async () => { buttons("Main")[0]!.click(); });
+    assert.ok(pendingMainReads.length > 0, "Main's latest snapshot must still be pending after switching back");
+    assert.ok(buttons("Canceling").length >= 2, "resubscription must preserve cancellation in both docks until authoritative state arrives");
+    assert.equal(send().disabled, true, "a provisional subscription reset must not enable Send");
     const textarea = dom.window.document.querySelector<HTMLTextAreaElement>('textarea[data-shortcut-scope="composer"]')!;
     assert.ok(textarea);
     await act(async () => {
@@ -120,8 +129,12 @@ test("Mainの取消完了までSendを止め、遅い取消応答は次Turnへ�
       send().click();
     });
     assert.equal(sendCalls, 0);
+    const staleTerminatingState = live;
     await act(async () => { live = null; broadcastLive(); });
     assert.equal(buttons("Canceling").length, 0);
+    assert.equal(send().disabled, false);
+    await act(async () => { pendingMainReads.forEach((resolve) => resolve(staleTerminatingState)); });
+    assert.equal(buttons("Canceling").length, 0, "late initial reads must not restore cancellation after its release event");
     assert.equal(send().disabled, false);
     await act(async () => { send().click(); });
     assert.equal(sendCalls, 1);

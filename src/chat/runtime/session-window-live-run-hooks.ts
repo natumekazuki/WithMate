@@ -62,9 +62,12 @@ function useSessionLiveRunSubscription(
       return;
     }
 
+    const cachedState = latestStatesRef.current[activeRunSessionId]?.state;
     return startLiveSessionRunSubscription({
       sessionId: activeRunSessionId,
       api,
+      // Resubscription is not an authoritative cancellation release.
+      initialState: cachedState?.cancellationState ? cachedState : null,
       applyLiveRunState: setLiveRunState,
     });
   }, [activeRunSessionId, api, selectedSession?.id, setLiveRunState]);

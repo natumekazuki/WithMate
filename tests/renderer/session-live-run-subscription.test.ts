@@ -143,6 +143,44 @@ test("startLiveSessionRunSubscription は購読更新後に遅い初回取得で
   assert.deepEqual(refreshedSessionIds, ["session-1"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "再購読時に引き継いだ取消終了待ちは最新snapshotが未取得の間保持し、取得結果がnullなら解除する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Mainの取消受付後" }
+// fault = "初期化で取消状態を消去する、または終了eventを購読できなかった場合に最新nullを無視して取消待ちを残す"
+// observable = "consumerへ適用されたowner付きlive stateの列"
+// observation_boundary = "consumer"
+// scope = "live-run-subscription-cancellation-snapshot"
+// lifecycle = "permanent"
+// impact = "終了待ち中にSendが有効になる、または終了後もSendが使えず会話を継続できない"
+// distinction = "Appの解除event経路とは異なり、非表示中に終了して再取得snapshotだけで解除する順序を検証する。型検査では非同期の適用順を保証できない"
+// @end-test-value
+test("startLiveSessionRunSubscription は既知の取消状態を保持し最新snapshotで解除する", async () => {
+  const initialState: LiveSessionRunState = { ...createLiveRunState("partial"), cancellationState: "terminating" };
+  const updates: LiveSessionRunStateUpdate[] = [];
+  let resolveInitialLiveRun!: (state: LiveSessionRunState | null) => void;
+  const cleanup = startLiveSessionRunSubscription({
+    sessionId: "session-1",
+    initialState,
+    api: {
+      getLiveSessionRun: () => new Promise((resolve) => { resolveInitialLiveRun = resolve; }),
+      subscribeLiveSessionRun: () => () => undefined,
+    },
+    applyLiveRunState: (update) => updates.push(update),
+  });
+  try {
+    assert.deepEqual(updates, [{ ownerSessionId: "session-1", state: initialState }]);
+    resolveInitialLiveRun(null);
+    await flushPromises();
+    assert.deepEqual(updates, [
+      { ownerSessionId: "session-1", state: initialState },
+      { ownerSessionId: "session-1", state: null },
+    ]);
+  } finally {
+    cleanup();
+  }
+});
+
 test("startLiveSessionRunSubscription は cleanup 後の初回取得結果を反映しない", async () => {
   const updates: LiveSessionRunStateUpdate[] = [];
   const refreshedSessionIds: string[] = [];
