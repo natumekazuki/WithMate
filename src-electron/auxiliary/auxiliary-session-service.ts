@@ -572,12 +572,8 @@ export class AuxiliarySessionService {
         })();
       }
     }
-    const prepared = await this.prepareAuxiliarySession(input, parent, options);
-    return this.deps.runProviderRuntimeOperationExclusive(
-      () => this.deps.runCharacterAffectTurnOwnershipExclusive
-        ? this.deps.runCharacterAffectTurnOwnershipExclusive(() => this.commitAuxiliarySession(input, storage, prepared))
-        : this.commitAuxiliarySession(input, storage, prepared),
-    );
+    const prepared = await this.prepareAuxiliarySession(input, parent, options, storage);
+    return this.commitPreparedAuxiliarySession(input, storage, prepared);
   }
 
   private async runAuxiliaryCreation(
@@ -594,7 +590,7 @@ export class AuxiliarySessionService {
       if (input.creationContext && input.creationContext.parentIncarnationId !== getSessionIncarnationId(parent)) {
         throw new Error("Auxiliary Session creation was canceled because its parent session changed during creation.");
       }
-      prepared = await this.prepareAuxiliarySession(input, parent, options);
+      prepared = await this.prepareAuxiliarySession(input, parent, options, storage);
       if (record.cancelRequested) throw new Error("Auxiliary Session creation was canceled.");
     } catch (error) {
       if (record.status !== "expired") {
@@ -603,14 +599,8 @@ export class AuxiliarySessionService {
       }
       throw error;
     }
-    record.status = "queued";
-    this.notifyCreationState(record, "queued");
     try {
-      const result = await this.deps.runProviderRuntimeOperationExclusive(
-        () => this.deps.runCharacterAffectTurnOwnershipExclusive
-          ? this.deps.runCharacterAffectTurnOwnershipExclusive(() => this.commitAuxiliarySession(input, storage, prepared, record, normalizedInput))
-          : this.commitAuxiliarySession(input, storage, prepared, record, normalizedInput),
-      );
+      const result = await this.commitPreparedAuxiliarySession(input, storage, prepared, record, normalizedInput);
       record.status = "committed";
       record.auxiliarySessionId = result.id;
       this.notifyCreationState(record, "committed", result.id);
@@ -695,6 +685,7 @@ export class AuxiliarySessionService {
     input: CreateAuxiliarySessionInput,
     parent: Session,
     options: ReturnType<AuxiliarySessionService["validateAuxiliaryInput"]>,
+    storage: AuxiliarySessionStorageAccess,
   ): Promise<{
     parentIncarnationId: string;
     parentCharacterId: string;
@@ -712,7 +703,7 @@ export class AuxiliarySessionService {
         options.codexSpeed,
       );
 
-    const characterSelection = await this.resolveAuxiliaryCharacter(parent);
+    const characterSelection = await this.resolveAuxiliaryCharacter(parentCharacterId, storage, input.parentSessionId);
     return {
       parentIncarnationId,
       parentCharacterId,
@@ -721,18 +712,46 @@ export class AuxiliarySessionService {
     };
   }
 
-  private async commitAuxiliarySession(
+  private async commitPreparedAuxiliarySession(
     input: CreateAuxiliarySessionInput,
     storage: AuxiliarySessionStorageAccess,
-    prepared: {
-      parentIncarnationId: string;
-      parentCharacterId: string;
-      launchSelection: SessionLaunchSelection;
-    characterSelection: Awaited<ReturnType<AuxiliarySessionService["resolveAuxiliaryCharacter"]>>;
-    },
+    prepared: Awaited<ReturnType<AuxiliarySessionService["prepareAuxiliarySession"]>>,
     record?: AuxiliaryCreationRecord,
     normalizedInput?: AuxiliaryCreationRequestSnapshot,
   ): Promise<AuxiliarySession> {
+    for (;;) {
+      if (record?.cancelRequested) throw new Error("Auxiliary Session creation was canceled.");
+      if (record) {
+        record.status = "queued";
+        this.notifyCreationState(record, "queued");
+      }
+      const result = await this.deps.runProviderRuntimeOperationExclusive(
+        () => this.deps.runCharacterAffectTurnOwnershipExclusive
+          ? this.deps.runCharacterAffectTurnOwnershipExclusive(() => this.commitAuxiliarySession(input, storage, prepared, record, normalizedInput))
+          : this.commitAuxiliarySession(input, storage, prepared, record, normalizedInput),
+      );
+      if (result) return result;
+
+      // A sibling took this Character before commit. Prepare again outside the
+      // broad coordinators, then revalidate all commit boundaries on the next pass.
+      if (record?.cancelRequested) throw new Error("Auxiliary Session creation was canceled.");
+      if (record) {
+        record.status = "preparing";
+        this.notifyCreationState(record, "preparing");
+      }
+      prepared.characterSelection = await this.resolveAuxiliaryCharacter(
+        prepared.parentCharacterId, storage, input.parentSessionId,
+      );
+    }
+  }
+
+  private async commitAuxiliarySession(
+    input: CreateAuxiliarySessionInput,
+    storage: AuxiliarySessionStorageAccess,
+    prepared: Awaited<ReturnType<AuxiliarySessionService["prepareAuxiliarySession"]>>,
+    record?: AuxiliaryCreationRecord,
+    normalizedInput?: AuxiliaryCreationRequestSnapshot,
+  ): Promise<AuxiliarySession | null> {
     if (record?.cancelRequested) {
       throw new Error("Auxiliary Session creation was canceled.");
     }
@@ -754,9 +773,9 @@ export class AuxiliarySessionService {
       throw new Error("Auxiliary Session creation was canceled because its storage changed during creation.");
     }
     const requestId = input.clientRequestId?.trim() ?? "";
+    const existingAuxiliaries = await storage.listAuxiliarySessions(input.parentSessionId);
     if (requestId) {
-      const existing = (await storage.listAuxiliarySessions(input.parentSessionId))
-        .find((summary) => summary.clientRequestId === requestId);
+      const existing = existingAuxiliaries.find((summary) => summary.clientRequestId === requestId);
       if (existing) {
         return await this.getAuxiliarySession(existing.id) ?? (() => {
           throw new Error("The Auxiliary Session retry target could not be found.");
@@ -780,10 +799,17 @@ export class AuxiliarySessionService {
       throw new Error("Auxiliary Session creation was canceled because its storage changed during creation.");
     }
 
-    if (!(await this.deps.listActiveCharacters()).some((entry) =>
-      entry.id === prepared.characterSelection.characterId && entry.state === "active"
-    )) {
+    const activeCharacters = (await this.deps.listActiveCharacters()).filter((entry) => entry.state === "active");
+    if (!activeCharacters.some((entry) => entry.id === prepared.characterSelection.characterId)) {
       throw new Error("Auxiliary Session creation was canceled because its Character became unavailable.");
+    }
+    if (this.deps.getStorage() !== storage) {
+      throw new Error("Auxiliary Session creation was canceled because its storage changed during creation.");
+    }
+    const usedCharacterIds = new Set(existingAuxiliaries.map((session) => session.characterId));
+    if (usedCharacterIds.has(prepared.characterSelection.characterId)
+      && activeCharacters.some((entry) => entry.id !== prepared.parentCharacterId && !usedCharacterIds.has(entry.id))) {
+      return null;
     }
     if (record) {
       if (record.cancelRequested) {
@@ -863,17 +889,21 @@ export class AuxiliarySessionService {
     };
   }
 
-  private async resolveAuxiliaryCharacter(parent: Session): Promise<{
+  private async resolveAuxiliaryCharacter(
+    mainCharacterId: string,
+    storage: AuxiliarySessionStorageAccess,
+    parentSessionId: string,
+  ): Promise<{
     characterId?: string;
     characterRuntimeSnapshot: CharacterRuntimeSnapshot | null;
   }> {
     const listActiveCharacters = await this.deps.listActiveCharacters();
-    const mainCharacterId = parent.characterRuntimeSnapshot?.characterId || parent.characterId;
+    const existingAuxiliaries = await storage.listAuxiliarySessions(parentSessionId);
     const candidates = listActiveCharacters.filter((entry) => entry.id !== mainCharacterId);
     const selectedId = selectWeightedRandomLaunchCharacterId(
       candidates,
       [],
-      [],
+      existingAuxiliaries.flatMap((session) => session.characterId ? [session.characterId] : []),
       this.deps.randomCharacter ?? Math.random,
     );
     if (!selectedId) {
