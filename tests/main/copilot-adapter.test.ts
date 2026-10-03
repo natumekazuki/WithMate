@@ -22,7 +22,6 @@ import {
   collectCopilotLiveStepsFromEventsForTesting,
   collectCopilotReasoningTextFromEventsForTesting,
   getCopilotPermissionCompletedLiveStatus,
-  buildCopilotSystemMessage,
   buildCopilotStableRawItems,
   buildCopilotToolSummary,
   buildCopilotClientEnv,
@@ -1040,24 +1039,43 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     ]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Copilotの共通Character promptとiconはsession systemMessageへ渡し、timingとuser入力・添付から分離する"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "共通snapshotのiconをsystemMessageで落とすか、input・画像添付へ混入する"
+  // observable = "Copilot adapterのcomposePrompt結果とsession configのsystemMessage"
+  // observation_boundary = "consumer"
+  // scope = "copilot-system-message"
+  // lifecycle = "permanent"
+  // impact = "CopilotがCharacterの画像参照を受け取れないか、意図しない画像を送信する"
+  // distinction = "composer単体ではなくCopilotのsession設定へ渡す値を実際のcompose経路から確認する"
+  // @end-test-value
   it("character prompt だけをCopilot systemMessageへ変換し、可変timingはinput側に留める", () => {
-    const systemMessage = buildCopilotSystemMessage({
-      systemBodyText: "あなたは頼れる相棒です。",
-      inputBodyText: "# Conversation Timing\n\n- Observed local time: 2026-08-04T21:32:00+09:00\n\n# User Input\n\nhello",
-      logicalPrompt: {
-        systemText: "# System Prompt\n\nあなたは頼れる相棒です。",
-        inputText: "# User Input Prompt\n\nhello",
-        composedText: "# System Prompt\n\nあなたは頼れる相棒です。\n\n# User Input Prompt\n\nhello",
-      },
-      imagePaths: [],
-      additionalDirectories: [],
-    });
+    const input = createRunSessionInput();
+    input.session.characterRuntimeSnapshot = {
+      characterId: "char-a", name: "A", description: "Saved metadata", iconFilePath: "C:/Character Data/キャラ/icon.png",
+      theme: input.session.characterThemeColors, definitionMarkdown: "あなたは頼れる相棒です。",
+      definitionSha256: "definition", definitionByteSize: 48, snapshotAt: "2026-10-03T00:00:00Z",
+    };
+    input.conversationTimingContext = {
+      observedAt: "2026-08-04T21:32:00+09:00", observedDayOfWeek: "tuesday",
+      currentSession: null, sameCharacterOtherSession: null, sameCharacterSharedWork: null,
+    };
+    const prompt = new CopilotAdapter().composePrompt(input);
+    const { config } = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
 
-    assert.deepEqual(systemMessage, {
+    assert.deepEqual(config.systemMessage, {
       mode: "append",
-      content: "あなたは頼れる相棒です。",
+      content: prompt.systemBodyText,
     });
-    assert.doesNotMatch(systemMessage?.content ?? "", /Conversation Timing|2026-08-04/);
+    assert.match(config.systemMessage?.content ?? "", /あなたは頼れる相棒です。/);
+    assert.ok(config.systemMessage?.content.includes('Icon image path (JSON string): ``` "C:/Character Data/キャラ/icon.png" ```'));
+    assert.doesNotMatch(config.systemMessage?.content ?? "", /Conversation Timing|2026-08-04|# User Input/);
+    assert.match(prompt.inputBodyText, /# Conversation Timing[\s\S]*# User Input\n\nhello/);
+    assert.doesNotMatch(prompt.inputBodyText, /Icon image path|icon\.png/);
+    assert.deepEqual(buildCopilotMessageAttachments(input.attachments), []);
+    assert.deepEqual(prompt.imagePaths, []);
   });
 
   it("quota snapshot は Copilot の 0-1 percentage を 0-100 表示用へ正規化する", () => {

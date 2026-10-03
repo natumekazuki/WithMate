@@ -128,6 +128,11 @@ export function buildCharacterRuntimePromptSection(
   const metadataLines = characterDescription
     ? [`Character: ${characterName}`, `Description: ${characterDescription}`]
     : [`Character: ${characterName}`];
+  const iconFilePath = snapshot?.iconFilePath ?? "";
+  if (iconFilePath.trim()) {
+    const iconFence = buildMarkdownFence(iconFilePath);
+    metadataLines.push(`Icon image path (JSON string): ${iconFence} ${JSON.stringify(iconFilePath)} ${iconFence}`);
+  }
   const includeRuntimeBoundary = options?.includeRuntimeBoundary ?? true;
 
   return [
