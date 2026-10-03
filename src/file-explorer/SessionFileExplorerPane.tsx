@@ -56,7 +56,7 @@ type FileTreeRow =
 type DirectoryLoadRequest = {
   revision: number;
   requestId: number;
-  promise: Promise<void>;
+  promise: Promise<boolean>;
 };
 
 type RootsLoadState = "loading" | "ready" | "unavailable" | "error";
@@ -194,9 +194,9 @@ export function SessionFileExplorerPane({
     });
   }, [activeTab, tabOwnerKey]);
 
-  const loadDirectory = useCallback((rootId: string, relativePath: string, revision: number): Promise<void> => {
+  const loadDirectory = useCallback((rootId: string, relativePath: string, revision: number): Promise<boolean> => {
     if (!api || !sessionId) {
-      return Promise.resolve();
+      return Promise.resolve(false);
     }
     const key = directoryKey(rootId, relativePath);
     const existing = inFlightDirectoryLoadsRef.current.get(key);
@@ -216,7 +216,7 @@ export function SessionFileExplorerPane({
       try {
         const entries = await api.listSessionDirectory({ sessionId, rootId, relativePath });
         if (!isCurrentRequest()) {
-          return;
+          return false;
         }
         setEntriesByDirectory((current) => {
           const next = { ...current, [key]: entries };
@@ -224,10 +224,12 @@ export function SessionFileExplorerPane({
           return next;
         });
         setErrorMessage("");
+        return true;
       } catch (error) {
         if (isCurrentRequest()) {
           setErrorMessage(error instanceof Error ? error.message : "Directory could not be loaded.");
         }
+        return false;
       } finally {
         if (isCurrentRequest()) {
           setLoadingDirectories((current) => ({ ...current, [key]: false }));
@@ -308,8 +310,7 @@ export function SessionFileExplorerPane({
       const nextExpanded = { ...expandedDirectoriesRef.current, [key]: true };
       expandedDirectoriesRef.current = nextExpanded;
       setExpandedDirectories(nextExpanded);
-      if (!entriesByDirectoryRef.current[key]) await loadDirectory(pin.rootId, relativePath, revision);
-      if (!entriesByDirectoryRef.current[key]) return;
+      if (!entriesByDirectoryRef.current[key] && !await loadDirectory(pin.rootId, relativePath, revision)) return;
     }
     if (loadRevisionRef.current === revision) setRevealTarget(directoryKey(pin.rootId, pin.relativePath));
   };

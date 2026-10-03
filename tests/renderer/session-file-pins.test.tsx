@@ -16,7 +16,7 @@ const entry = (relativePath: string, kind: "file" | "directory" = "file"): Sessi
 
 async function withPane(api: NonNullable<PaneProps["api"]>, run: (harness: {
   document: Document;
-  render(sessionId: string): Promise<void>;
+  render(sessionId: string, rootsRevision?: string): Promise<void>;
   click(label: string): Promise<void>;
   until(condition: () => boolean): Promise<void>;
   opened: string[];
@@ -37,6 +37,9 @@ async function withPane(api: NonNullable<PaneProps["api"]>, run: (harness: {
   };
   for (const field of ["clientHeight", "offsetHeight"]) Object.defineProperty(dom.window.HTMLElement.prototype, field, { configurable: true, get() { return this.getBoundingClientRect().height; } });
   for (const field of ["clientWidth", "offsetWidth"]) Object.defineProperty(dom.window.HTMLElement.prototype, field, { configurable: true, get() { return 320; } });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", { configurable: true, get() {
+    return Math.max(this.clientHeight, Number.parseFloat(this.querySelector(".session-file-tree-virtual")?.style.height ?? "0"));
+  } });
   dom.window.HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number) {
     if (typeof options === "object") this.scrollTop = options.top ?? 0;
     this.dispatchEvent(new dom.window.Event("scroll"));
@@ -44,8 +47,8 @@ async function withPane(api: NonNullable<PaneProps["api"]>, run: (harness: {
   const { SessionFileExplorerPane: Pane } = await import("../../src/file-explorer/SessionFileExplorerPane.js");
   const root = createRoot(dom.window.document.getElementById("root")!);
   const opened: string[] = [];
-  const render = async (sessionId: string) => {
-    await act(async () => root.render(<Pane api={api} sessionId={sessionId} enabled rootsRevision={sessionId}
+  const render = async (sessionId: string, rootsRevision = sessionId) => {
+    await act(async () => root.render(<Pane api={api} sessionId={sessionId} enabled rootsRevision={rootsRevision}
       selectedFile={null} activeTab="files" onActiveTabChange={() => {}} onRefreshChanges={() => {}}
       onOpenFile={(request) => opened.push(request.relativePath)} canInsertPathReference={false} onInsertPathReference={() => {}} />));
   };
@@ -112,6 +115,131 @@ test("Pin優先と深いPin一覧はdirectoryの追加取得なしで切り替�
     await click("Pinned only");
     assert.equal(reads, 1);
   });
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "閉じた祖先配下のdirectory Pinは取得応答が遅れても一度の選択で通常treeの対象まで展開・scroll・focusできる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: File Explorer Pin" }
+// fault = "取得Promise完了をReact state反映完了とみなし、祖先取得後に展開を中断する"
+// observable = "directory取得path、filterのpressed state、対象の展開iconと子行、scrollTop、document.activeElement"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane asynchronous pinned directory reveal"
+// lifecycle = "permanent"
+// impact = "未展開の深いdirectoryへのPinからの到達とkeyboard操作の継続を保証する"
+// distinction = "file Pinの直接openや型検査では検出できない、非同期取得とReact描画・仮想tree移動の連携を検証する"
+// @end-test-value
+test("遅延取得でもdirectory Pinを一度選択すれば対象まで展開しfocusする", async () => {
+  const api = baseApi();
+  const reads: string[] = [];
+  api.listSessionFilePins = async () => [pin("closed/deep", "directory")];
+  api.listSessionDirectory = async ({ relativePath }) => {
+    reads.push(relativePath);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    if (relativePath === "") return [...Array.from({ length: 80 }, (_, index) => entry(`sibling-${index}`, "directory")), entry("closed", "directory")];
+    if (relativePath === "closed") return [entry("closed/deep", "directory")];
+    return [entry("closed/deep/note.md")];
+  };
+  await withPane(api, async ({ document, click, until, opened }) => {
+    await click("Pinned only");
+    await click("Workspace: closed/deep");
+    await until(() => document.activeElement?.getAttribute("title") === "closed/deep");
+    assert.deepEqual(reads, ["", "closed", "closed/deep"]);
+    assert.equal(document.querySelector("[aria-label='Pinned only']")?.getAttribute("aria-pressed"), "false");
+    assert.ok(document.querySelector("[title='closed/deep'] .is-expanded"));
+    assert.ok(document.querySelector("[title='closed/deep/note.md']"));
+    assert.ok(document.querySelector<HTMLDivElement>(".session-file-explorer-body")!.scrollTop > 0);
+    assert.deepEqual(opened, []);
+  });
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Pin directoryの祖先取得に失敗したらerrorを表示して子孫取得を停止し、再選択で取得を再試行できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: File Explorer Pin" }
+// fault = "取得失敗を成功として子孫へ進める、失敗を隠す、または失敗cacheで再試行を妨げる"
+// observable = "alert、directory取得path、再選択後の対象focusと子行"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane pinned directory load failure recovery"
+// lifecycle = "permanent"
+// impact = "filesystem取得失敗を利用者へ伝え、Pinを失わず対象へ再到達できる"
+// distinction = "Pin保存失敗のtestでは通らないdirectory取得の失敗と再選択の連携を確認する"
+// @end-test-value
+test("Pin directoryの取得失敗を表示して停止し再選択で回復する", async () => {
+  const api = baseApi();
+  const reads: string[] = [];
+  let fail = true;
+  api.listSessionFilePins = async () => [pin("closed/deep", "directory")];
+  api.listSessionDirectory = async ({ relativePath }) => {
+    reads.push(relativePath);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    if (relativePath === "") return [entry("closed", "directory")];
+    if (relativePath === "closed") {
+      if (fail) throw new Error("Directory read failed.");
+      return [entry("closed/deep", "directory")];
+    }
+    return [entry("closed/deep/note.md")];
+  };
+  await withPane(api, async ({ document, click, until }) => {
+    await click("Pinned only");
+    await click("Workspace: closed/deep");
+    await until(() => document.querySelector("[role='alert']")?.textContent === "Directory read failed.");
+    assert.deepEqual(reads, ["", "closed"]);
+    assert.equal(document.querySelector("[title='closed/deep']"), null);
+    fail = false;
+    await click("Pinned only");
+    await click("Workspace: closed/deep");
+    await until(() => document.activeElement?.getAttribute("title") === "closed/deep");
+    assert.deepEqual(reads, ["", "closed", "closed", "closed/deep"]);
+    assert.ok(document.querySelector("[title='closed/deep/note.md']"));
+    assert.equal(document.querySelector("[role='alert']"), null);
+  });
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "directory Pinの展開途中でSessionまたはroot revisionが変わったら旧取得結果を新treeへ適用せず、新しい展開・focusを保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: File Explorer PinのSession／root変更前の遅延応答" }
+// fault = "旧directory応答から子孫の取得を続ける、旧行を新treeへ追加する、または新しい選択のfocusを奪う"
+// observable = "API requestのSessionとpath、切替後のtree行とdocument.activeElement"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane pinned directory reveal owner boundary"
+// lifecycle = "permanent"
+// impact = "Sessionやrootを切り替えた利用者へ旧対象の内容や移動を持ち込まない"
+// distinction = "Pin一覧と保存の旧応答testでは通らないdirectory revealの継続処理を制御Promiseで確認する"
+// @end-test-value
+test("Pin directoryの旧応答はSessionとroot revisionの切替後へ展開を持ち込まない", async () => {
+  for (const change of ["session", "roots"] as const) {
+    const api = baseApi();
+    const reads: string[] = [];
+    let finish!: (entries: SessionDirectoryEntry[]) => void;
+    let current = false;
+    api.listSessionFilePins = async () => [pin(current ? "current" : "closed/deep", "directory")];
+    api.listSessionDirectory = async ({ sessionId, relativePath }) => {
+      reads.push(`${sessionId}:${relativePath}`);
+      if (!current) return new Promise<SessionDirectoryEntry[]>((resolve) => { finish = resolve; });
+      return relativePath === "" ? [entry("current", "directory")] : [entry("current/note.md")];
+    };
+    await withPane(api, async ({ document, render, click, until }) => {
+      await click("Pinned only");
+      await click("Workspace: closed/deep");
+      await until(() => !!finish);
+      current = true;
+      const nextSession = change === "session" ? "session-b" : "session-a";
+      await render(nextSession, "new-roots");
+      await click("Pinned only");
+      await click("Workspace: current");
+      await until(() => document.activeElement?.getAttribute("title") === "current");
+      await act(async () => {
+        finish([entry("closed", "directory")]);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+      assert.deepEqual(reads, ["session-a:", `${nextSession}:`, `${nextSession}:current`]);
+      assert.equal(document.querySelector("[title='closed']"), null);
+      assert.ok(document.querySelector("[title='current/note.md']"));
+      assert.equal(document.activeElement?.getAttribute("title"), "current");
+    });
+  }
 });
 
 // @test-value v2
