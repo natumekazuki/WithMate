@@ -8,6 +8,8 @@
 
 分離した検証用WithMateではREADMEのvisual-checkスクリプトを使う。配布物は専用の検証用user dataを用い、開発版の成功と区別する。
 
+Windowsでは同一TerminalのWSL起動前・WSL内・終了後で、無害な末尾改行なしの単一行テキストを`Ctrl+V`／`Ctrl+Shift+V`で貼り付ける。実Electronのキー操作から実WSLへ一度だけ届き、通常入力・選択なしの`Ctrl+C`・選択時のコピー・アプリshortcutの分離も維持されることを個別に確認する。WSL内はshellの入力待ちと実行プログラム中を分け、distribution、shell／プログラム、IME、WSL起動コマンドを記録する。PTYへの直接writeだけでキー操作確認済みとしない。
+
 | 操作 | 期待結果 |
 | --- | --- |
 | Workspaceの`Terminal`、Preview/Source右の`Prompt / Terminal`切替、Ctrl+Shift+T（macOSはCmd+Shift+T）をcomposerと端末本文から操作。Settingsでbindingも変更する | 共有下部パネルが選択modeへ切り替わり、展開してfocusする。初期Promptではshellを起動せず初回Terminal表示でだけ作成する。入力・selection・端末タブ・出力を保持し、切替shortcutをshellへ送らない。IME中とrepeatでは切り替えない。`Open External Terminal`とSession Folderの外部起動も利用できる |

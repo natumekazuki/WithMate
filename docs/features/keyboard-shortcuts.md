@@ -27,6 +27,8 @@ shortcut commandは、chat、file preview、入力欄、dialogなどのscopeを�
 
 端末本文ではPrompt／Terminal切替だけをアプリshortcutとして扱い、会話送信・検索・cancelなどは横取りしません。切替はcomposer内でも利用でき、IME変換中とkey repeatでは発火しません。
 
+端末への貼り付けは`Ctrl+Shift+V`、Windowsでは`Ctrl+V`も使えます。Windowsの`Ctrl+V`はWSL内でもClipboardの内容を貼り付け、シェルへの制御文字送信には使いません。macOSの標準貼り付けは`Cmd+V`を使い、macOS／Linuxの`Ctrl+V`はシェルへ渡します。
+
 ## 登録時の検証
 
 次のbindingは保存しません。

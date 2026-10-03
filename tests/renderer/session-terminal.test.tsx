@@ -9,17 +9,17 @@ import { SessionTerminal } from "../../src/terminal/session-terminal.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "選択中のCtrl+CとCtrl+Shift+Cは選択文字を一度コピーしてPTYへ入力せず、選択なしのCtrl+CはETXを送る"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 組み込みTerminalの入力とコピー" }
-// fault = "Shiftをコピーの必須条件にする、コピー時もPTYへキーを渡す、または選択なしでもCtrl+Cを横取りする"
-// observable = "clipboard.writeTextの引数と回数、writeTerminalInputの引数、keydown.defaultPrevented"
+// claim = "WindowsのCtrl+VとCtrl+Shift+VはClipboardを一度貼り付け、Ctrl+Cは選択時だけコピーし、非WindowsのCtrl+Vは制御入力を維持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/772; docs/design/desktop-ui.md: 組み込みTerminalの入力とコピー" }
+// fault = "WindowsのCtrl+VでClipboardではなく制御文字を送る、貼り付けを重複する、bracketed pasteを失う、コピー時もPTYへ送る、または非Windowsの制御入力を横取りする"
+// observable = "Clipboardの読取回数とコピー内容、writeTerminalInputの引数と回数、keydown.defaultPrevented、貼り付け失敗のalert"
 // observation_boundary = "component-behavior"
 // scope = "SessionTerminalの実xtermキーボード入力からclipboardとTerminal APIまで"
 // lifecycle = "permanent"
-// impact = "コピー操作で実行中のコマンドを意図せず中断する、または端末の割り込み操作ができなくなる"
-// distinction = "既存shortcut dispatcher testと型検査ではxtermのselectionとコピー・PTY配送の分岐を検証できない"
+// impact = "WSL内でClipboardを貼り付けられず、コピーでコマンドを意図せず中断する、または制御入力が使えなくなる"
+// distinction = "既存shortcut dispatcher testと型検査では実xtermのselection・bracketed paste・ClipboardとPTY配送の分岐を検証できない"
 // @end-test-value
-it("端末のCtrl+Cは選択があればコピーし、なければシェルへ渡す", async (context) => {
+it("端末のClipboard操作とシェルへの制御入力を分離する", async (context) => {
   const dom = new JSDOM('<!doctype html><body><div id="root"></div></body>', { pretendToBeVisual: true });
   const globals: Record<string, unknown> = {
     window: dom.window,
@@ -46,9 +46,18 @@ it("端末のCtrl+Cは選択があればコピーし、なければシェルへ�
     createLinearGradient: () => ({ addColorStop() {} }),
   }) });
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  Object.defineProperty(dom.window.navigator, "platform", { configurable: true, value: "Win32" });
   const copies: string[] = [];
+  let reads = 0;
+  let clipboardError: Error | undefined;
+  const clipboardText = "paste 日本語";
   Object.defineProperty(dom.window.navigator, "clipboard", { value: {
     writeText: async (text: string) => { copies.push(text); },
+    readText: async () => {
+      reads++;
+      if (clipboardError) throw clipboardError;
+      return clipboardText;
+    },
   } });
   const writes: Array<{ terminalId: string; data: string }> = [];
   let terminalId = "";
@@ -109,6 +118,50 @@ it("端末のCtrl+Cは選択があればコピーし、なければシェルへ�
     });
     assert.deepEqual(writes, [{ terminalId, data: "\u0003" }]);
     assert.deepEqual(copies, ["選択文字", "選択文字"]);
+
+    const pressPaste = async (shiftKey: boolean) => {
+      const keydown = new dom.window.KeyboardEvent("keydown", {
+        key: shiftKey ? "V" : "v", code: "KeyV", keyCode: 86, ctrlKey: true, shiftKey,
+        bubbles: true, cancelable: true,
+      });
+      await act(async () => {
+        input.dispatchEvent(keydown);
+        input.dispatchEvent(new dom.window.KeyboardEvent("keyup", {
+          key: shiftKey ? "V" : "v", code: "KeyV", keyCode: 86, ctrlKey: true, shiftKey, bubbles: true,
+        }));
+      });
+      return keydown;
+    };
+    // The shell controls bracketed-paste mode through its output, not platform detection.
+    for (const bracketed of [false, true, false]) {
+      await act(async () => {
+        await new Promise<void>((resolve) => terminal!.write(`\x1b[?2004${bracketed ? "h" : "l"}`, resolve));
+      });
+      for (const shiftKey of [false, true]) {
+        writes.length = 0;
+        const beforeReads = reads;
+        const event = await pressPaste(shiftKey);
+        assert.equal(event.defaultPrevented, true);
+        assert.equal(reads, beforeReads + 1, "each key chord reads the Clipboard once");
+        assert.deepEqual(writes, [{ terminalId, data: bracketed ? `\x1b[200~${clipboardText}\x1b[201~` : clipboardText }]);
+      }
+    }
+
+    for (const platform of ["MacIntel", "Linux x86_64"]) {
+      Object.defineProperty(dom.window.navigator, "platform", { configurable: true, value: platform });
+      writes.length = 0;
+      const beforeReads = reads;
+      await pressPaste(false);
+      assert.equal(reads, beforeReads);
+      assert.deepEqual(writes, [{ terminalId, data: "\u0016" }]);
+    }
+
+    Object.defineProperty(dom.window.navigator, "platform", { configurable: true, value: "Win32" });
+    clipboardError = new Error("Clipboard unavailable");
+    writes.length = 0;
+    await pressPaste(false);
+    assert.deepEqual(writes, []);
+    assert.match(dom.window.document.querySelector('[role="alert"]')?.textContent ?? "", /Paste failed:.*Clipboard unavailable/);
   } finally {
     await act(async () => { root.unmount(); });
     dom.window.close();
