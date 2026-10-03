@@ -26,6 +26,8 @@ import type { Message } from "../../src-shared/session/session-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
+import { buildRuntimeSelectionOptions } from "../../src/settings/runtime-selection-options.js";
+import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -115,6 +117,64 @@ function createComposerTestProps(
     ...overrides,
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "保存済みClaude非対応approvalは不正な選択値として表示され、明示選択でon-requestへ復旧できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: ClaudeのApproval" }
+// fault = "不正値をon-request表示に隠すか唯一の有効optionを選んでも変更callbackが動かない"
+// observable = "実composer selectの選択値・表示・aria-invalidと選択後callback値"
+// observation_boundary = "component-behavior"
+// scope = "claude-approval-recovery"
+// lifecycle = "permanent"
+// impact = "ユーザーが権限設定を誤認し送信不能な状態から復旧できない"
+// distinction = "options helperや型検査ではnative selectの表示とchange通知を確認できず短いDOM操作で維持する"
+// @end-test-value
+test("Claudeの不正Approvalを明示表示し有効値への操作で復旧する", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  let root: Root | null = null;
+  const changes: ApprovalMode[] = [];
+  function Fixture() {
+    const [approvalMode, setApprovalMode] = useState<ApprovalMode>("untrusted");
+    const options = buildRuntimeSelectionOptions({
+      providerId: "claude", providerCatalog: null, models: [], selectedModel: "model",
+      reasoningEfforts: [], selectedApprovalMode: approvalMode,
+      selectedCodexSandboxMode: "workspace-write", selectedCodexSpeed: "standard", selectedCodexReviewer: "user",
+    });
+    return React.createElement(SessionComposerExpanded, createComposerTestProps({
+      selectedApprovalMode: approvalMode, approvalOptions: options.approvalChoiceOptions,
+      onChangeApprovalMode(value) { changes.push(value); setApprovalMode(value); },
+    }));
+  }
+  try {
+    root = createRoot(dom.window.document.getElementById("root")!);
+    await act(async () => root?.render(React.createElement(Fixture)));
+    const select = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Approval"]')!;
+    assert.equal(select.value, "untrusted");
+    assert.equal(select.selectedOptions[0]?.textContent, "Unsupported (untrusted)");
+    assert.equal(select.selectedOptions[0]?.disabled, true);
+    assert.equal(select.getAttribute("aria-invalid"), "true");
+    assert.deepEqual(changes, []);
+    await act(async () => {
+      select.value = "on-request";
+      select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    });
+    assert.deepEqual(changes, ["on-request"]);
+    assert.equal(select.value, "on-request");
+    assert.equal(select.selectedOptions[0]?.textContent, "Provider Controlled");
+    assert.equal(select.getAttribute("aria-invalid"), null);
+    assert.equal(select.options.length, 1);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+  }
+});
 
 function createCharacterProfile(): CharacterProfile {
   return {

@@ -36,6 +36,14 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
       calls.push("copilot:all");
     },
   };
+  const claudeAdapter = {
+    async invalidateSessionThread(sessionId: string) {
+      calls.push(`claude:${sessionId}`);
+    },
+    async invalidateAllSessionThreads() {
+      calls.push("claude:all");
+    },
+  };
   const facade = new MainProviderFacade({
     getModelCatalog: () => catalogPromise,
     ensureModelCatalogSeeded: () => {
@@ -43,6 +51,7 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
     },
     codexAdapter: codexAdapter as never,
     copilotAdapter: copilotAdapter as never,
+    claudeAdapter: claudeAdapter as never,
     revokeProviderExecution(sessionId, providerId) {
       calls.push(`binding:${providerId}:${sessionId}`);
     },
@@ -75,19 +84,22 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
   });
   const resolved = await resolvedPromise;
   await facade.invalidateProviderSessionThread("copilot", "s-1");
+  await facade.invalidateProviderSessionThread("claude", "s-claude");
   await facade.resetProviderSessionThread("codex", "s-retry");
   await facade.invalidateProviderSessionThread("codex", "s-2");
   await facade.invalidateAllProviderSessionThreads();
 
   assert.equal(resolved.provider.id, "copilot");
   assert.deepEqual(calls.slice(0, 2), ["binding:copilot:s-1", "copilot:s-1"]);
-  assert.deepEqual(calls.slice(2, 3), ["codex:s-retry"]);
-  assert.deepEqual(calls.slice(3, 5), ["binding:codex:s-2", "codex:s-2"]);
+  assert.deepEqual(calls.slice(2, 4), ["binding:claude:s-claude", "claude:s-claude"]);
+  assert.deepEqual(calls.slice(4, 5), ["codex:s-retry"]);
+  assert.deepEqual(calls.slice(5, 7), ["binding:codex:s-2", "codex:s-2"]);
   const callIndex = (value: string) => (calls as string[]).indexOf(value);
   const revokeAllIndex = callIndex("binding:all");
   assert.ok(revokeAllIndex >= 0);
   assert.ok(revokeAllIndex < callIndex("codex:all"));
   assert.ok(revokeAllIndex < callIndex("copilot:all"));
+  assert.ok(revokeAllIndex < callIndex("claude:all"));
 });
 
 // @test-value v2
@@ -109,11 +121,24 @@ test("MainProviderFacade の reset は adapter の reject を伝播する", asyn
     ensureModelCatalogSeeded: () => { throw new Error("not used"); },
     codexAdapter: { invalidateSessionThread: async () => { throw error; } } as never,
     copilotAdapter: { invalidateSessionThread: async () => undefined } as never,
+    claudeAdapter: { invalidateSessionThread: async () => undefined } as never,
   });
 
-  await assert.rejects(() => facade.resetProviderSessionThread("codex", "s-retry"), error);
+  await assert.rejects(() => facade.resetProviderSessionThread("codex", "s-retry"), (actual) => actual === error);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "MainProviderFacadeは未知providerをunsupportedと報告し、登録Claudeは実行とruntime binding capabilityを公開する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime; src-electron/providers/provider-agent-runtime-binding.ts#getProviderAgentRuntimeBindingCapability" }
+// fault = "未知providerをCodexとして誤報告するか、登録Claudeのruntime binding capabilityをunsupportedにする"
+// observable = "getProviderRuntimeCapabilitiesのproviderSupported、agentRuntimeBindingSupported、transport"
+// observation_boundary = "public-boundary"
+// scope = "main-provider-facade-runtime-capabilities"
+// lifecycle = "permanent"
+// impact = "Claude sessionがagent runtime bindingなしで扱われるか、未知providerが別providerの契約を誤用する"
+// distinction = "provider routing testではFacadeが返すruntime capability projectionを確認しない"
+// @end-test-value
 test("MainProviderFacade は未対応 provider の runtime capability を codex として誤報告しない", () => {
   const codexAdapter = {
     getBackgroundStructuredPromptPolicy() {
@@ -144,6 +169,7 @@ test("MainProviderFacade は未対応 provider の runtime capability を codex 
     },
     codexAdapter: codexAdapter as never,
     copilotAdapter: copilotAdapter as never,
+    claudeAdapter: { getBackgroundStructuredPromptPolicy: () => ({}) } as never,
   });
 
   const capabilities = facade.getProviderRuntimeCapabilities("custom");
@@ -154,4 +180,8 @@ test("MainProviderFacade は未対応 provider の runtime capability を codex 
   assert.equal(capabilities.tokenUsageSupported, false);
   assert.equal(capabilities.agentRuntimeBindingSupported, false);
   assert.equal(capabilities.agentRuntimeBindingTransport, "unsupported");
+  const claudeCapabilities = facade.getProviderRuntimeCapabilities("claude");
+  assert.equal(claudeCapabilities.providerSupported, true);
+  assert.equal(claudeCapabilities.agentRuntimeBindingSupported, true);
+  assert.equal(claudeCapabilities.agentRuntimeBindingTransport, "env");
 });

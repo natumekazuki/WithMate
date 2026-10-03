@@ -89,6 +89,7 @@ import {
 } from "./character/character-authoring-service.js";
 import { CodexAdapter } from "./providers/codex/codex-adapter.js";
 import { CopilotAdapter } from "./providers/copilot/copilot-adapter.js";
+import { ClaudeAdapter } from "./providers/claude/claude-adapter.js";
 import { resolveComposerPreview } from "./files/composer-attachments.js";
 import { areDirectoryPathsEquivalent } from "./files/additional-directories.js";
 import { ModelCatalogStorage } from "./settings/model-catalog-storage.js";
@@ -351,6 +352,13 @@ const codexAdapter = new CodexAdapter((input) => writeAppLog({
 const copilotAdapter = new CopilotAdapter({
   log: (input) => writeAppLog({
     ...input,
+    process: "main",
+  }),
+});
+const claudeAdapter = new ClaudeAdapter({
+  log: (input) => writeAppLog({
+    ...input,
+    kind: "provider",
     process: "main",
   }),
 });
@@ -1616,6 +1624,7 @@ function requireMainProviderFacade(): MainProviderFacade {
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       codexAdapter,
       copilotAdapter,
+      claudeAdapter,
       revokeProviderExecution: (sessionId, providerId) =>
         agentRuntimeBindingRegistry.revokeProviderExecution(sessionId, providerId),
       revokeAllProviderExecutions: () => agentRuntimeBindingRegistry.revokeAll(),

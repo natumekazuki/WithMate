@@ -656,6 +656,34 @@ describe("applySkillPromptInsertionCommand", () => {
 describe("createSkillPromptInsertionHandler", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "Main composerのClaude Skill選択は検出済みsourcePathを生成draftへ渡す"
+  // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts: createSkillPromptInsertionHandler" }
+  // fault = "選択したSkillのsourcePathを捨て、Claudeへ名前だけの指示を挿入する"
+  // observable = "Main handlerがapplyDraftへ渡す文字列"
+  // observation_boundary = "component-behavior"
+  // scope = "main-composer-skill-selection"
+  // lifecycle = "permanent"
+  // impact = "MainのClaude turnで選択済みSkillの本文を特定できない"
+  // distinction = "snippet単体testではMain handlerからsourcePathが伝搬することを確認できない"
+  // @end-test-value
+  it("ClaudeのSkill選択ではMain draftに選択元pathを挿入する", () => {
+    const drafts: string[] = [];
+    const selectSkill = createSkillPromptInsertionHandler({
+      getProvider: () => "claude",
+      getDraft: () => "fix it",
+      getTextarea: () => null,
+      setActionDockPinnedExpanded() {},
+      setCaret() {},
+      setSkillPickerOpen() {},
+      applyDraft: (draft) => drafts.push(draft),
+      restoreComposerTextareaFocusAndCaret() {},
+    });
+    selectSkill({ name: "review", sourcePath: ".agents/skills/review" });
+    assert.deepEqual(drafts, ['Use the skill "review" from ".agents/skills/review/SKILL.md" for this task.\n\nfix it']);
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "providerがある場合はskill prompt handlerがdraftとUI stateを反映する"
   // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts" }
   // fault = "providerなしでもdraft/stateを更新する、またはproviderありの反映を欠落させる"

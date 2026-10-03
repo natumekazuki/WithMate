@@ -209,6 +209,7 @@ export type LiveElicitationSelectField = LiveElicitationFieldBase & {
   type: "select";
   options: LiveElicitationChoiceOption[];
   defaultValue?: string;
+  allowFreeText?: boolean;
 };
 
 export type LiveElicitationMultiSelectField = LiveElicitationFieldBase & {
@@ -217,6 +218,7 @@ export type LiveElicitationMultiSelectField = LiveElicitationFieldBase & {
   defaultValue?: string[];
   minItems?: number;
   maxItems?: number;
+  allowFreeText?: boolean;
 };
 
 export type LiveElicitationBooleanField = LiveElicitationFieldBase & {

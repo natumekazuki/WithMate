@@ -1,4 +1,5 @@
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../settings/approval-mode.js";
+import { getDefaultApprovalModeForProvider } from "../settings/provider-runtime-options.js";
 import {
   DEFAULT_CODEX_SANDBOX_MODE,
   normalizeCodexSandboxMode,
@@ -650,7 +651,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     characterThemeColors: normalizeCharacterThemeColors(input.characterThemeColors),
     characterRuntimeSnapshot,
     runState: "idle",
-    approvalMode: normalizeApprovalMode(input.approvalMode, DEFAULT_APPROVAL_MODE),
+    approvalMode: normalizeApprovalMode(input.approvalMode, getDefaultApprovalModeForProvider(input.provider)),
     codexSandboxMode: normalizeCodexSandboxMode(input.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE),
     codexSpeed: normalizeCodexSpeed(input.codexSpeed ?? DEFAULT_CODEX_SPEED),
     codexReviewer: normalizeCodexReviewer(input.codexReviewer ?? DEFAULT_CODEX_REVIEWER),

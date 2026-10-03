@@ -14,6 +14,7 @@ type MainProviderFacadeDeps = {
   ensureModelCatalogSeeded(): Awaitable<ModelCatalogSnapshot>;
   codexAdapter: ProviderTurnAdapter;
   copilotAdapter: ProviderTurnAdapter;
+  claudeAdapter: ProviderTurnAdapter;
   revokeProviderExecution?(sessionId: string, providerId: string): void;
   revokeAllProviderExecutions?(): void;
 };
@@ -42,6 +43,7 @@ export class MainProviderFacade {
       providerId,
       codexAdapter: this.deps.codexAdapter,
       copilotAdapter: this.deps.copilotAdapter,
+      claudeAdapter: this.deps.claudeAdapter,
     });
   }
 
@@ -50,11 +52,12 @@ export class MainProviderFacade {
       providerId,
       codexAdapter: this.deps.codexAdapter,
       copilotAdapter: this.deps.copilotAdapter,
+      claudeAdapter: this.deps.claudeAdapter,
     });
   }
 
   getProviderRuntimeCapabilities(providerId: string | null | undefined): ProviderRuntimeCapabilities {
-    const resolvedProviderId = providerId?.trim() || DEFAULT_PROVIDER_ID;
+    const resolvedProviderId = providerId ?? DEFAULT_PROVIDER_ID;
     return getProviderRuntimeCapabilities({
       providerId: resolvedProviderId,
     });
@@ -65,7 +68,7 @@ export class MainProviderFacade {
   }
 
   async invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void> {
-    this.deps.revokeProviderExecution?.(sessionId, providerId?.trim() || DEFAULT_PROVIDER_ID);
+    this.deps.revokeProviderExecution?.(sessionId, providerId ?? DEFAULT_PROVIDER_ID);
     await this.getProviderCodingAdapter(providerId).invalidateSessionThread(sessionId);
   }
 
@@ -74,6 +77,7 @@ export class MainProviderFacade {
     await Promise.all([
       this.deps.codexAdapter.invalidateAllSessionThreads(),
       this.deps.copilotAdapter.invalidateAllSessionThreads(),
+      this.deps.claudeAdapter.invalidateAllSessionThreads(),
     ]);
   }
 }

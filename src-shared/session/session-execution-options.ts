@@ -1,4 +1,5 @@
 import { APPROVAL_MODE_VALUES, type ApprovalMode } from "../settings/approval-mode.js";
+import { getApprovalOptionsForProvider } from "../settings/provider-runtime-options.js";
 import { CODEX_REVIEWER_VALUES, type CodexReviewer } from "../settings/codex-reviewer.js";
 import { CODEX_SANDBOX_MODE_VALUES, type CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
 import { CODEX_SPEED_VALUES, type CodexSpeed } from "../settings/codex-speed.js";
@@ -53,6 +54,9 @@ export function validateSessionExecutionOptions(
   }
   if (!APPROVAL_MODE_VALUES.includes(candidate.approvalMode as ApprovalMode)) {
     throw new Error("The selected approval mode is invalid.");
+  }
+  if (!getApprovalOptionsForProvider(providerCatalog.id).some((option) => option.value === candidate.approvalMode)) {
+    throw new Error("The selected approval mode is not supported by this provider.");
   }
   if (!CODEX_SANDBOX_MODE_VALUES.includes(candidate.codexSandboxMode as CodexSandboxMode)) {
     throw new Error("The selected sandbox mode is invalid.");

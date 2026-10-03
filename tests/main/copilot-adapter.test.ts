@@ -36,10 +36,8 @@ import {
   toCopilotReasoningEffort,
 } from "../../src-electron/providers/copilot/copilot-adapter.js";
 import { applyCopilotAssistantEvent } from "../../src-electron/providers/copilot/copilot-turn-events.js";
-import {
-  buildLiveElicitationFieldFromCopilotSchema,
-  buildLiveElicitationRequestFromCopilotEvent,
-} from "../../src-electron/providers/copilot/copilot-elicitation.js";
+import { buildLiveElicitationRequestFromCopilotEvent } from "../../src-electron/providers/copilot/copilot-elicitation.js";
+import { buildLiveElicitationFieldFromMcpSchema } from "../../src-electron/providers/mcp-elicitation.js";
 import {
   buildCopilotProviderQuotaTelemetry,
   buildCopilotSessionContextTelemetry,
@@ -1685,9 +1683,19 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     assert.deepEqual(resetCalls, [input.session.id]);
   });
 
-  it("Copilot elicitation schema の enum / anyOf / number を live field へ正規化する", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "MCP elicitation schema の選択肢と制約を共通live fieldへ保持する"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+  // fault = "Provider別変換の欠落でoneOf・anyOf・scalar制約がlive fieldから失われる"
+  // observable = "buildLiveElicitationFieldFromMcpSchemaの返却field"
+  // observation_boundary = "component-behavior"
+  // scope = "MCP elicitation field conversion"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("MCP elicitation schema の enum / oneOf / anyOf / number を共通live fieldへ正規化する", () => {
     assert.deepEqual(
-      buildLiveElicitationFieldFromCopilotSchema("environment", {
+      buildLiveElicitationFieldFromMcpSchema("environment", {
         type: "string",
         title: "Environment",
         enum: ["dev", "prod"],
@@ -1708,7 +1716,7 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       },
     );
     assert.deepEqual(
-      buildLiveElicitationFieldFromCopilotSchema("targets", {
+      buildLiveElicitationFieldFromMcpSchema("targets", {
         type: "array",
         title: "Targets",
         minItems: 1,
@@ -1735,7 +1743,7 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       },
     );
     assert.deepEqual(
-      buildLiveElicitationFieldFromCopilotSchema("retries", {
+      buildLiveElicitationFieldFromMcpSchema("retries", {
         type: "integer",
         title: "Retries",
         minimum: 0,
@@ -1752,6 +1760,29 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
         defaultValue: 1,
         minimum: 0,
         maximum: 3,
+      },
+    );
+    assert.deepEqual(
+      buildLiveElicitationFieldFromMcpSchema("destination", {
+        type: "string",
+        title: "Destination",
+        oneOf: [
+          { const: "local", title: "Local machine" },
+          { const: "remote", title: "Remote host" },
+        ],
+        default: "local",
+      }, true),
+      {
+        type: "select",
+        name: "destination",
+        title: "Destination",
+        description: undefined,
+        required: true,
+        options: [
+          { value: "local", label: "Local machine" },
+          { value: "remote", label: "Remote host" },
+        ],
+        defaultValue: "local",
       },
     );
   });

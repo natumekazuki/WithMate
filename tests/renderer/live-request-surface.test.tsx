@@ -1,10 +1,73 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { JSDOM } from "jsdom";
 import React from "react";
+import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
 import { LiveRequestSurface } from "../../src/chat/runtime/live-request-surface.js";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+async function mountElicitation(request: LiveElicitationRequest) {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousEvent = globalThis.Event;
+  const previousMouseEvent = globalThis.MouseEvent;
+  globalThis.window = dom.window as unknown as Window & typeof globalThis;
+  globalThis.document = dom.window.document;
+  globalThis.HTMLElement = dom.window.HTMLElement;
+  globalThis.Node = dom.window.Node;
+  globalThis.Event = dom.window.Event;
+  globalThis.MouseEvent = dom.window.MouseEvent;
+  const container = dom.window.document.getElementById("root")!;
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(container);
+  const responses: unknown[] = [];
+  const render = async (nextRequest: LiveElicitationRequest) => {
+    await act(async () => root.render(React.createElement(LiveRequestSurface, {
+      liveApprovalRequest: null,
+      approvalActionRequestId: null,
+      liveElicitationRequest: nextRequest,
+      elicitationActionRequestId: null,
+      onResolveLiveApproval() {},
+      onResolveLiveElicitation(_request, response) { responses.push(response); },
+    })));
+  };
+  await render(request);
+  return {
+    container, dom, responses, render,
+    async cleanup() {
+      await act(async () => root.unmount());
+      globalThis.window = previousWindow;
+      globalThis.document = previousDocument;
+      globalThis.HTMLElement = previousHTMLElement;
+      globalThis.Node = previousNode;
+      globalThis.Event = previousEvent;
+      globalThis.MouseEvent = previousMouseEvent;
+      dom.window.close();
+    },
+  };
+}
+
+async function enterText(dom: JSDOM, input: HTMLInputElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  });
+}
+
+async function submit(container: HTMLElement) {
+  const button = [...container.querySelectorAll<HTMLButtonElement>("button")]
+    .find((candidate) => candidate.textContent === "Submit");
+  assert.ok(button);
+  await act(async () => button.click());
+}
 
 const approvalRequest: LiveApprovalRequest = {
   requestId: "approval-1",
@@ -91,4 +154,84 @@ test("LiveRequestSurface はinput解決中のbusy announcementと操作labelを�
   assert.match(html, />Submit<\/button>/);
   assert.match(html, />Reject<\/button>/);
   assert.match(html, />Close<\/button>/);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "自由入力を許す単一選択は候補を残しつつ空の必須回答を拒否し、候補外の回答を文字列で送れる"
+// oracle = { type = "contract", ref = "Claude AskUserQuestion required free-text answer contract" }
+// fault = "候補が初期選択されたように見える、自由入力を拒否する、または空白を必須回答として送る"
+// observable = "候補付き入力の初期値・候補、validation、送信payload"
+// observation_boundary = "component-behavior"
+// scope = "live-elicitation-free-text-select"
+// lifecycle = "permanent"
+// impact = "利用者の意図しない候補が回答されるか、Claudeへの必須回答を自由に入力できない"
+// distinction = "型検査・静的markupだけでは入力後のvalidationとpayloadを確認できない"
+// @end-test-value
+test("LiveRequestSurface は自由入力の単一選択を候補付きで回答する", async () => {
+  const request: LiveElicitationRequest = {
+    requestId: "single-free", provider: "claude", mode: "form", message: "Choose direction",
+    fields: [{ type: "select", name: "direction", title: "Direction", required: true, allowFreeText: true,
+      options: [{ value: "north", label: "North" }] }],
+  };
+  const mounted = await mountElicitation(request);
+  try {
+    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Direction"]');
+    assert.ok(input);
+    assert.equal(input.value, "");
+    assert.equal(mounted.container.querySelector('datalist option[value="north"]')?.getAttribute("label"), "North");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, []);
+    assert.match(mounted.container.textContent ?? "", /Enter Direction\./);
+    await enterText(mounted.dom, input, "  ");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, []);
+    await enterText(mounted.dom, input, "northeast");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { direction: "northeast" } }]);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "自由入力を許す複数選択は選択肢だけ・自由入力だけ・双方を同じstring[] payloadで回答でき、空の必須回答を拒否する"
+// oracle = { type = "contract", ref = "Claude AskUserQuestion required free-text answer contract" }
+// fault = "自由入力のために既存選択肢を選ぶ必要がある、選択した候補を失う、または空回答を送る"
+// observable = "checkboxとOther入力のDOM操作、validation、送信payload"
+// observation_boundary = "component-behavior"
+// scope = "live-elicitation-free-text-multi-select"
+// lifecycle = "permanent"
+// impact = "利用者の意図した複数回答をClaudeへ伝えられない"
+// distinction = "単一選択の検査は選択肢と自由入力の結合や複数選択の必須判定を扱わない"
+// @end-test-value
+test("LiveRequestSurface は自由入力の複数選択を候補と併用できる", async () => {
+  const request: LiveElicitationRequest = {
+    requestId: "multi-free", provider: "claude", mode: "form", message: "Choose tools",
+    fields: [{ type: "multi-select", name: "tools", title: "Tools", required: true, allowFreeText: true,
+      options: [{ value: "editor", label: "Editor" }] }],
+  };
+  const mounted = await mountElicitation(request);
+  try {
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, []);
+    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Tools Other"]');
+    assert.ok(input);
+    await enterText(mounted.dom, input, "terminal");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { tools: ["terminal"] } }]);
+    const checkbox = mounted.container.querySelector<HTMLInputElement>('.live-elicitation-option input[type="checkbox"]');
+    assert.ok(checkbox);
+    await act(async () => checkbox.click());
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses[1], { action: "accept", content: { tools: ["editor", "terminal"] } });
+    await mounted.render({ ...request, requestId: "multi-free-next" });
+    assert.equal(input.value, "", "新しいrequestへ自由入力を持ち越さない");
+    await act(async () => checkbox.click());
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses[2], { action: "accept", content: { tools: ["editor"] } });
+  } finally {
+    await mounted.cleanup();
+  }
 });

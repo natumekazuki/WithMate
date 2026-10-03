@@ -53,6 +53,9 @@ export function buildRuntimeSelectionOptions({
       return options;
     }
 
+    if (providerId === "claude") {
+      return [{ value: selectedApprovalMode, label: `Unsupported (${selectedApprovalMode})`, disabled: true }, ...options];
+    }
     return [{ value: selectedApprovalMode, label: selectedApprovalMode }, ...options];
   })();
 

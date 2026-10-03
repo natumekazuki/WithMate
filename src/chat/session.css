@@ -2189,6 +2189,14 @@
   gap: 8px;
 }
 
+.live-elicitation-options .live-elicitation-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
 .activity-monitor-shell {
   display: grid;
   gap: 12px;

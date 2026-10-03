@@ -1,4 +1,5 @@
-import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../../src-shared/settings/approval-mode.js";
+import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
+import { getDefaultApprovalModeForProvider } from "../../src-shared/settings/provider-runtime-options.js";
 import {
   DEFAULT_CODEX_SANDBOX_MODE,
   type CodexSandboxMode,
@@ -7,7 +8,6 @@ import { DEFAULT_CODEX_SPEED, type CodexSpeed } from "../../src-shared/settings/
 import { DEFAULT_CODEX_REVIEWER, type CodexReviewer } from "../../src-shared/settings/codex-reviewer.js";
 import {
   DEFAULT_PROVIDER_ID,
-  getProviderCatalog,
   resolveModelSelection,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
@@ -17,6 +17,7 @@ import { getProviderAppSettings, type AppSettings } from "../../src-shared/setti
 import type { SessionSummary } from "../../src-shared/session/session-state.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
+import { isProviderSupported, requireSupportedProviderId } from "../providers/provider-support.js";
 
 export type SessionLaunchSelection = {
   provider: string;
@@ -42,7 +43,13 @@ function resolveEnabledProviderCatalog(
   appSettings: AppSettings,
   requestedProviderId?: string | null,
 ): ModelCatalogProvider {
-  const requestedProvider = requestedProviderId ? getProviderCatalog(snapshot.providers, requestedProviderId) : null;
+  const requestedId = requestedProviderId != null ? requireSupportedProviderId(requestedProviderId) : null;
+  const requestedProvider = requestedId != null
+    ? snapshot.providers.find((provider) => provider.id === requestedId)
+    : null;
+  if (requestedProviderId != null && !requestedProvider) {
+    throw new Error(`Provider ${requestedProviderId} is not available in the model catalog.`);
+  }
   if (requestedProvider && getProviderAppSettings(appSettings, requestedProvider.id).enabled) {
     return requestedProvider;
   }
@@ -53,13 +60,13 @@ function resolveEnabledProviderCatalog(
   }
 
   const firstEnabledProvider = snapshot.providers.find((provider) =>
-    getProviderAppSettings(appSettings, provider.id).enabled
+    isProviderSupported(provider.id) && getProviderAppSettings(appSettings, provider.id).enabled
   );
   if (firstEnabledProvider) {
     return firstEnabledProvider;
   }
 
-  throw new Error("No enabled provider is available in Settings.");
+  throw new Error("No enabled supported provider is available in Settings.");
 }
 
 export class SessionLaunchSelectionService {
@@ -85,7 +92,7 @@ export class SessionLaunchSelectionService {
       catalogRevision: snapshot.revision,
       model: modelSelection.resolvedModel,
       reasoningEffort: modelSelection.resolvedReasoningEffort,
-      approvalMode: latestSession?.approvalMode ?? DEFAULT_APPROVAL_MODE,
+      approvalMode: latestSession?.approvalMode ?? getDefaultApprovalModeForProvider(provider.id),
       codexSandboxMode: latestSession?.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
       codexSpeed: latestSession?.codexSpeed ?? DEFAULT_CODEX_SPEED,
       codexReviewer: latestSession?.codexReviewer ?? DEFAULT_CODEX_REVIEWER,

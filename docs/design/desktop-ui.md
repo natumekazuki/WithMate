@@ -412,6 +412,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - composer toolbar に `Add Directory` を置き、その横の toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
   - composer 下の runtime settings は shared chat composer を正本とし、`Approval / Sandbox / Model / Depth`を表示する。Codex providerでは`Approval`の直後にcompactな`Reviewer`選択、そのほかのruntime optionと同じ列に`Speed`選択を追加する。`Reviewer`は`User` / `Auto Review`、`Speed`は`Standard` / `Fast`をSession単位で保持する。Codex以外では両方を表示しない。`Reviewer`はrunning、read-only、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionは既存の制約に従う
   - approval chip は `Auto Run / Provider Controlled / Safety Focused`
+  - ClaudeのApprovalは`Provider Controlled`のみを選べる。保存値が非対応の場合は`Unsupported (保存値)`を選択表示し、invalid stateを保持する。ユーザーが`Provider Controlled`を選ぶことで有効値へ修正でき、黙って権限設定を置き換えない
   - `Model / Depth`はActionDockの対象会話がrunningの間、現在値を表示したままnative selectを無効にする。Cancel押下だけでは解除せず、通常完了・Cancel完了・エラー終了後に既存のblocked / freeze条件がなければ変更可能に戻る。Main / Auxiliaryの対象切替では表示値と変更可否を切り替え、別会話のrunningを待機中の対象へ波及させない
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`

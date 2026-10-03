@@ -41,6 +41,7 @@ characters/<character-id>/
   input.json
   .agents/skills/withmate-character-authoring/   # Codex
   .github/skills/withmate-character-authoring/  # Copilot
+  .claude/skills/withmate-character-authoring/  # Claude
 ```
 
 WithMate は起動ごとに選択 provider の Skill directory、`AGENTS.md`、`AUTHORING_PROMPT.md`、`input.json` を再生成する。managed authoring files 以外の root artifact は増やさない。

@@ -24,6 +24,19 @@ function createModelCatalogSnapshot(): ModelCatalogSnapshot {
         ],
       },
       {
+        id: "claude",
+        label: "Claude Agent",
+        defaultModelId: "claude-opus-5-5",
+        defaultReasoningEffort: "high",
+        models: [
+          {
+            id: "claude-opus-5-5",
+            label: "Claude Opus 5.5",
+            reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+          },
+        ],
+      },
+      {
         id: "copilot",
         label: "Copilot",
         defaultModelId: "claude-sonnet",
@@ -57,6 +70,65 @@ function createLatestSessionSummary(
 }
 
 describe("SessionLaunchSelectionService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "明示した未対応ProviderやcatalogにないProviderのlaunchを別Providerへ置き換えない"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
+  // fault = "catalog fallbackまたはenabled判定だけで未知Providerのlaunchを許可する"
+  // observable = "resolveのrejectと履歴取得回数"
+  // observation_boundary = "public-boundary"
+  // scope = "session-launch-provider-identity"
+  // lifecycle = "permanent"
+  // impact = "Codexでも有効なmodelを持つcustom Providerを誤って起動し、別契約を消費することを防ぐ"
+  // distinction = "resolver単独testではlaunch時の既定選択や履歴継承への進入を検出できない"
+  // @end-test-value
+  it("未対応Providerの明示指定をcatalog登録の有無にかかわらず拒否する", async () => {
+    const catalog = createModelCatalogSnapshot();
+    const codex = catalog.providers[0]!;
+    catalog.providers.push({ ...codex, id: "custom", label: "Custom" });
+    let historyReads = 0;
+    const service = new SessionLaunchSelectionService({
+      getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { codex: { enabled: true }, custom: { enabled: true } } }),
+      getModelCatalogSnapshot: () => catalog,
+      getLatestSessionSummaryForProvider: () => { historyReads += 1; return null; },
+    });
+    for (const providerId of ["custom", "unknown", "", "__proto__"]) {
+      await assert.rejects(service.resolve(providerId), /Unsupported provider:/);
+    }
+    catalog.providers = [codex];
+    await assert.rejects(service.resolve("copilot"), /Provider copilot is not available/);
+    assert.equal(historyReads, 0);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Provider未指定時はenabledな対応Providerだけを選び、なければ明示的に失敗する"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
+  // fault = "先頭のenabledな未知Providerを選ぶか、無効なCodexを暗黙に使う"
+  // observable = "resolveのProvider IDと対応Provider不在時のreject"
+  // observation_boundary = "public-boundary"
+  // scope = "session-launch-default-provider"
+  // lifecycle = "permanent"
+  // impact = "未対応Providerだけが有効なcatalogで別Providerを実行しない"
+  // distinction = "明示指定の拒否とは別の未指定時探索分岐を、外部runtimeなしで短時間に検証する"
+  // @end-test-value
+  it("未指定時は対応Providerだけを選び、未対応Providerのみ有効なら拒否する", async () => {
+    const catalog = createModelCatalogSnapshot();
+    catalog.providers.unshift({ ...catalog.providers[0]!, id: "custom", label: "Custom" });
+    const settings = normalizeAppSettings({ codingProviderSettings: { codex: { enabled: false }, copilot: { enabled: true }, custom: { enabled: true } } });
+    const service = new SessionLaunchSelectionService({
+      getAppSettings: () => settings,
+      getModelCatalogSnapshot: () => catalog,
+      getLatestSessionSummaryForProvider: () => null,
+    });
+    assert.equal((await service.resolve()).provider, "copilot");
+    settings.codingProviderSettings.codex!.enabled = true;
+    assert.equal((await service.resolve()).provider, "codex");
+    settings.codingProviderSettings.codex!.enabled = false;
+    settings.codingProviderSettings.copilot!.enabled = false;
+    await assert.rejects(service.resolve(), /No enabled supported provider/);
+  });
+
   // @test-value v2
   // kind = "contract"
   // claim = "新規Sessionの初期設定は保存完了前でも同providerの現在選択を優先する"
@@ -155,6 +227,32 @@ describe("SessionLaunchSelectionService", () => {
       codexReviewer: "user",
       customAgentName: "",
     });
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "履歴のないClaude Agent Sessionはcatalogのmodelを使いon-requestで開始する"
+  // oracle = { type = "contract", ref = "accepted behavior: Claude Agent SDK approval mode" }
+  // fault = "Claudeの新規Sessionに共通approval既定値のuntrustedを適用する"
+  // observable = "resolve()が返すProvider、model、approvalMode"
+  // observation_boundary = "public-boundary"
+  // scope = "claude-session-launch-defaults"
+  // lifecycle = "permanent"
+  // impact = "Claude Agent SDKが要求する承認modeと異なる設定でsessionを開始しない"
+  // distinction = "runtime option helperのtestではlaunchが実際に選ぶ既定値とcatalog selectionを検出できない"
+  // @end-test-value
+  it("履歴のないClaude Agent Sessionはon-requestとcatalog既定modelを使う", async () => {
+    const service = new SessionLaunchSelectionService({
+      getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
+      getModelCatalogSnapshot: createModelCatalogSnapshot,
+      getLatestSessionSummaryForProvider: () => null,
+    });
+
+    const selection = await service.resolve("claude");
+
+    assert.equal(selection.provider, "claude");
+    assert.equal(selection.model, "claude-opus-5-5");
+    assert.equal(selection.approvalMode, "on-request");
   });
 
   it("直近設定の取得失敗を既定値で隠さない", async () => {

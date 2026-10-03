@@ -238,7 +238,18 @@ describe("GLOSSARY-ATOMIC-MUTATION file service", () => {
     assert.deepEqual(snapshot.entries.map((entry) => entry.term), ["First", "Second"]);
   });
 
-  it("mutation failure後にcheckout queueを解放して後続操作を進める", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "同じcheckoutで先行mutationのrenameが失敗しても待機中のcreateが完了し、成功したentryだけが保存される"
+  // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md#glossary-atomic-mutation" }
+  // fault = "先行mutationの失敗時にqueueを解放せず後続createが完了しない、または失敗したentryを保存する"
+  // observable = "並行createの失敗effect・成功outcomeとreadで取得したentry集合"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-checkout-mutation-failure-release"
+  // lifecycle = "permanent"
+  // distinction = "成功する並行mutationの直列化testと異なり、実file renameの失敗後も待機中の操作が進むことを確認する"
+  // @end-test-value
+  it("mutation failure後にcheckout queueを解放して後続操作を進める", { timeout: 30_000 }, async () => {
     const { target } = await createRepository();
     let renameCount = 0;
     const service = new GlossaryApplicationService({
@@ -250,22 +261,16 @@ describe("GLOSSARY-ATOMIC-MUTATION file service", () => {
         await rename(oldPath, newPath);
       },
     });
-    const failed = await service.create(target, {
-      mode: "explicit",
-      entry: { term: "Failed", definition: "not applied" },
-    });
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    const applied = await Promise.race([
+    const [failed, applied] = await Promise.all([
+      service.create(target, {
+        mode: "explicit",
+        entry: { term: "Failed", definition: "not applied" },
+      }),
       service.create(target, {
         mode: "explicit",
         entry: { term: "Applied", definition: "applied after failure" },
       }),
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(() => reject(new Error("checkout mutation queue was not released")), 1_000);
-      }),
-    ]).finally(() => {
-      if (timeout) clearTimeout(timeout);
-    });
+    ]);
 
     assert.equal(failed.ok, false);
     if (!failed.ok) assert.equal(failed.effect, "none");

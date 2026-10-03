@@ -89,6 +89,19 @@
             ]
         },
         {
+            "id": "claude",
+            "label": "Claude Agent",
+            "defaultModelId": "claude-opus-5-5",
+            "defaultReasoningEffort": "high",
+            "models": [
+                {
+                    "id": "claude-opus-5-5",
+                    "label": "Opus 5.5",
+                    "reasoningEfforts": ["low", "medium", "high", "xhigh", "max"]
+                }
+            ]
+        },
+        {
             "id": "copilot",
             "label": "GitHub Copilot",
             "defaultModelId": "gpt-5-mini",

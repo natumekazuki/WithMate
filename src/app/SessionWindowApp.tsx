@@ -1368,6 +1368,7 @@ export default function AgentSessionWindowApp() {
         ? { ...activeAuxiliarySession, composerDraft: getComposerDraft() }
         : null,
       skillName: skill.name,
+      skillSourcePath: skill.sourcePath,
       applyUiState: (nextState) => {
         applySkillPromptInsertionUiState({
           state: nextState,

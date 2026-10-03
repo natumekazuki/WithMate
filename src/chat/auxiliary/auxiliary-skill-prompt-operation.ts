@@ -7,6 +7,7 @@ import {
 export async function runAuxiliarySkillPromptInsertionOperation(input: {
   activeSession: Pick<AuxiliarySession, "provider" | "composerDraft"> | null;
   skillName: string;
+  skillSourcePath?: string;
   applyUiState: (state: SkillPromptInsertionState) => void;
   updateDraft: (draft: string) => Promise<void>;
   afterDraftUpdated?: (state: SkillPromptInsertionState) => void;
@@ -19,6 +20,7 @@ export async function runAuxiliarySkillPromptInsertionOperation(input: {
     input.activeSession.provider,
     input.skillName,
     input.activeSession.composerDraft,
+    input.skillSourcePath,
   );
 
   input.applyUiState(nextState);

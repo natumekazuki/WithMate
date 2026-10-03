@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { getDefaultApprovalModeForProvider } from "../../src-shared/settings/provider-runtime-options.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import type {
   CharacterDetail,
@@ -24,6 +24,7 @@ import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js
 export const CHARACTER_AUTHORING_SKILL_NAME = "withmate-character-authoring";
 const CODEX_WORKSPACE_SKILL_ROOT = ".agents/skills";
 const COPILOT_WORKSPACE_SKILL_ROOT = ".github/skills";
+const CLAUDE_WORKSPACE_SKILL_ROOT = ".claude/skills";
 
 export async function resolveCharacterAuthoringRuntimeSessionForTurn(
   session: Session,
@@ -194,7 +195,7 @@ export class CharacterAuthoringService {
       character: seed.name,
       characterIconPath: prepared.character.iconFilePath,
       characterThemeColors: { ...prepared.character.theme },
-      approvalMode: input.approvalMode ?? DEFAULT_APPROVAL_MODE,
+      approvalMode: input.approvalMode ?? getDefaultApprovalModeForProvider(input.provider),
       codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
       provider: input.provider,
       model: input.model,
@@ -354,6 +355,7 @@ export class CharacterAuthoringService {
   }
 
   private resolveWorkspaceSkillRoot(providerId: string): string {
+    if (providerId === "claude") return CLAUDE_WORKSPACE_SKILL_ROOT;
     return providerId === "copilot" ? COPILOT_WORKSPACE_SKILL_ROOT : CODEX_WORKSPACE_SKILL_ROOT;
   }
 }

@@ -148,6 +148,53 @@ function characterCandidates(): CharacterCatalogEntry[] {
 }
 
 // @test-value v2
+// kind = "contract"
+// claim = "Claude Auxiliaryのexplicit作成は非対応approvalを保存前に拒否し、省略時はon-requestで作成する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+// fault = "共通enumだけを検証してClaude非対応値を永続化するかClaude既定値を変更する"
+// observable = "createAuxiliarySessionのreject、SQLiteの作成件数と保存approvalMode"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-explicit-claude-approval"
+// lifecycle = "permanent"
+// impact = "見かけ上正常な新規Auxiliaryが送信不能になることを防ぐ"
+// distinction = "共通enumや送信時validationでは作成APIが保存前に拒否することを保証できず、短い実DB確認で維持する"
+// @end-test-value
+test("Claude Auxiliaryは非対応approvalを保存せず既定on-requestで作成する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-claude-approval-"));
+  const sessionStorage = new SessionStorageV6(path.join(directory, "app.db"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  const main = parent({ characterRuntimeSnapshot: null });
+  const snapshot = catalog(1);
+  snapshot.providers[0] = { ...snapshot.providers[0]!, id: "claude", label: "Claude" };
+  const service = createService({
+    getParent: () => main,
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => snapshot,
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+  });
+  try {
+    sessionStorage.upsertSession(main);
+    for (const approvalMode of ["untrusted", "never"] as const) {
+      await assert.rejects(service.createAuxiliarySession({
+        parentSessionId: main.id, provider: "claude", runtimeSelection: "explicit", approvalMode,
+      }), /approval mode is not supported by this provider/);
+      assert.deepEqual(storage.listAuxiliarySessions(main.id), []);
+    }
+    const created = await service.createAuxiliarySession({
+      parentSessionId: main.id, provider: "claude", runtimeSelection: "explicit",
+    });
+    assert.equal(created.approvalMode, "on-request");
+    assert.equal(storage.getAuxiliarySession(created.id)?.approvalMode, "on-request");
+  } finally {
+    storage.close();
+    sessionStorage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "新規Auxiliaryは同じ親の保存済みactive/closed CharacterをIDで避け、枯渇時だけMain以外で重複できる"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#character-identity" }

@@ -32,3 +32,5 @@ coding planeへ渡す指示の正本、順序、成果物境界を定める。Ch
 composerの`@path`は手入力とpicker入力を同じ参照として検証する。通常file／folderの参照はworkspaceと許可済みAdditional Directoryの境界に従い、画像はprovider固有のstructured inputへ分ける。
 
 監査では`logicalPrompt`のsystem、input、composed textと、providerへ実際に渡した`transportPayload`を分けて保存する。画像やCopilotの`systemMessage`等の別送情報を、論理表示だけから実transportと同一だと推定しない。[Audit Log](audit-log.md)は取得・表示の境界を定める。
+
+Claude Agentでは、system側の共通sectionをSDKの`claude_code` presetへ`append`し、`snapshot: false`でturnごとに現在のCharacter snapshotとAffect / Memory contextへ置き換える。過去のAffectを追記し続けたり、WithMateの会話履歴を全文再送したりしない。この方式ではSDKのprompt cache効率や過去のthinking保持が変わり得る。user側の共通sectionはそのturnの入力として渡し、Claudeのnativeな`CLAUDE.md`やSkill、MCP設定の読込経路は書き換えない。

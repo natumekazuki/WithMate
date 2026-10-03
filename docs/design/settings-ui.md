@@ -82,11 +82,13 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - `Conversation Timing` は Copilot の system session cache を変えず、system 側の3項目は合成された system message の変更として扱う
 - `Launch At Login` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
+- Claude Agentは初期状態で無効とし、有効化した場合だけ新規Sessionのprovider候補に出す。Codexは既定のproviderとして維持する
 - coding provider ごとの `Provider File Settings`
   - `Root Directory` は provider ごとの file 設定の基準 directory として保持される
   - `Skill Relative Path` がある場合は root 配下の相対 path として解決される
   - `Instruction Relative Path` は root 配下の instruction file 設定として保持される
   - runtimeのskill探索にはskill folderを使い、instruction fileは設定値として保持する
+  - Claude Agentで設定したskill folderも既存のWithMate探索へ使うが、SDKのnative Skill探索元として自動登録しない。選択したskillだけをpathのdirectiveでturnへ渡す。Claude CLIの本人ログイン・native設定・repositoryの`CLAUDE.md`と`.claude/skills`はSDKが読み込み、Settingsはcredentialや独自OAuthを提供しない
 - Diagnostics の folder open
 - Diagnostics の Memory V6 read-only summary
   - runtime API は `running` / `stopped` / `failed` と、application instance、runtime generation、build channel、discovery publish状態を表示する

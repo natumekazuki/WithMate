@@ -611,14 +611,14 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
 
 // @test-value v2
 // kind = "contract"
-// claim = "preloadの公開API surfaceは列挙した現行WithMateWindowApi keyを過不足なくexposeし、列挙したremoved keyを公開しない"
+// claim = "preloadの公開API surfaceは列挙した現行WithMateWindowApi keyを過不足なくexposeする"
 // oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts" }
-// fault = "列挙した現行IPC methodがrendererへexposeされないか、列挙した廃止済みmethodが公開surfaceへ残る"
-// observable = "Object.keys(api)の公開key集合とremoved keyの不在"
+// fault = "現行IPC methodがrendererへexposeされないか、現行契約にないmethodが公開surfaceへ加わる"
+// observable = "Object.keys(api)の公開key集合"
 // observation_boundary = "public-boundary"
 // scope = "preload public API keys"
 // lifecycle = "permanent"
-// distinction = "tree path context menuを含む列挙済み公開method集合とremoved key不在を検証する"
+// distinction = "型検査では確認できない実際の公開objectを現行method集合と比較して余剰keyと不足keyを検出する"
 // @end-test-value
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -801,30 +801,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   ] satisfies Array<keyof WithMateWindowApi>;
 
   assert.deepEqual(keys, [...expectedKeys].sort());
-  const removedKeys = [
-    "applyPendingGrowth",
-    "correctMateGrowthEvent",
-    "deleteProjectMemoryEntry",
-    "deleteSessionMemory",
-    "disableMateGrowthEvent",
-    "forgetMateGrowthEvent",
-    "forgetMateProfileItem",
-    "getMateEmbeddingSettings",
-    "getMateGrowthSettings",
-    "getMemoryManagementPage",
-    "getMemoryManagementSnapshot",
-    "listMateGrowthEvents",
-    "listProviderInstructionTargets",
-    "openMateTalkWindow",
-    "openMemoryManagementWindow",
-    "runMateTalkTurn",
-    "startMateEmbeddingDownload",
-    "updateMateGrowthSettings",
-    "upsertProviderInstructionTarget",
-  ];
-  for (const key of removedKeys) {
-    assert.equal(key in api, false);
-  }
 });
 
 test("preload type surface は destructive storage maintenance API を Settings domain に置く", () => {

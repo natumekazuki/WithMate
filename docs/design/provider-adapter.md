@@ -20,10 +20,15 @@ WithMate では provider 実行境界を Main Process に置く。
 
 ## Current Runtime
 
-runtimeはshared contractの上に次の2 adapterを持つ。
+runtimeはshared contractの上に次の3 adapterを持つ。
 
 - `CodexAdapter`
 - `CopilotAdapter`
+- `ClaudeAdapter`
+
+対応ProviderとAdapterの対応表は`src-electron/providers/provider-support.ts`を正本とし、capability、Coding / Backgroundの解決、Session launchで共有する。未知のProvider IDは実行前に明示的に拒否し、Codexへ置き換えない。実行用catalogは指定Providerとの完全一致で解決し、未登録の場合も別Providerへfallbackしない。Adapter・実行用catalogのProvider指定を省略した場合だけCodexを既定とする。
+
+カスタムcatalogや保存済みSession内の未対応Provider定義は削除しない。新規Sessionで未対応Providerを明示した場合、または有効な対応Providerがない場合はlaunchを拒否する。
 
 `ProviderCodingAdapter`はprompt composition、quota取得、thread invalidation、live turn実行を担う。`ProviderBackgroundAdapter`は権限を制限したstructured promptによるcompleted turn後のCharacter Affect評価を担う。型と入力・出力の正本は`src-electron/providers/provider-runtime.ts`に置く。
 
@@ -59,6 +64,14 @@ providerごとの差は次。
   - `Context Usage` は `session.usage_info` を session local telemetry として Main Process memory に保持する
   - background task は `session.idle.backgroundTasks` と `system.notification` を `LiveSessionRunState.backgroundTasks` へ正規化し、Session 右ペインの Copilot 専用 `Tasks` tab へ流す
   - current slice は Copilot-only で、task の create/list/control RPC までは吸収しない。Codex current SDK に同等 surface は無い
+- `ClaudeAdapter`
+  - 公式SDK `0.3.285`と未改変の公式native実行物 `2.1.285`を使い、Windows / macOSの対象architecture向け実行物を配布物へ同梱する。CLIの既存ログインをSDKに任せ、WithMateはcredentialを読取・コピーせず、独自OAuthを行わない。SDKの認証・課金に関わる環境変数や設定の優先順位を上書きしない
+  - `query()`で1 turnを実行し、保存済みの明示session IDを`resume`へ渡す。履歴全件の再送、暗黙の最新会話`continue`は行わない。取消時はSDKの公開spawn hookで子プロセスの実終了を追跡し、実終了までprovider Promiseを保持してruntimeの再送guardにつなぐ。正常なterminal result後のcleanupは[ADR 002](../adr/002-provider-turn-terminal-and-cancellation.md)のbounded graceに従う
+  - `claude-opus-5-5`と`low / medium / high / xhigh / max`をcatalogで扱う。`permissionMode: "default"`と共通UIの`Provider Controlled`のみを用い、Codexのsandbox選択は提供しない
+  - 共通promptのsystem本文を`claude_code` presetの`append`へ渡し、`snapshot: false`でturnごとのCharacter / Affect / Memoryを反映する。既存のuser / project / local設定、repositoryの`CLAUDE.md`と`.claude/skills`、MCP設定をSDKのnative経路で読み込む
+  - SDKの`PreToolUse`でread-only以外をaskにし、native設定が自動許可する場合も`canUseTool`からWithMateの共通承認UIへ中継する。`AskUserQuestion`は選択肢と自由入力を保持した共通質問UIへ、MCP elicitationも共通UIへ中継する。同一turnの承認・質問は直列化し、未回答のpending要求を上書きしない。MCPのfield変換はCopilotと共有し、選択肢のlabel、既定値、入力制約を保持する。応答・tool操作・usageを共通live state、監査、artifactへ投影し、Bashだけをraw command付きの`command_execution`として扱う
+  - background planeは別の非永続sessionで構造化JSONを要求し、tools / MCP / hooksを無効化する。`resolveSettings({ cwd, settingSources: [] })`でmanaged sourceまたは設定検査失敗を検出した場合、実行物を起動せず拒否する。user / project / local設定は読まず、親プロセスの環境変数とSDKが参照する既存CLIログインを利用する。設定ファイルだけにある認証helperや認証・接続先設定は共有しない
+  - SDK transcriptはWithMateの履歴・workspaceとは別にClaude側が管理し、WithMateのsession削除で消さない。quota残量は取得不能としてtelemetryを`null`にし、token / cache usageのみturn単位で扱う。API換算USDは実請求額として表示しない。backgroundの補助処理も解決された認証先の利用枠を消費する。同じ契約枠になる条件は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う
 
 ## Plane Separation
 
@@ -100,6 +113,7 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
 7. 検証済み `executionOptions` を独立した turn snapshot として prompt、coding plane adapter、監査ログへ渡し、provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder の workspace 外 access は session metadata `allowedAdditionalDirectories` だけを `additionalDirectories` へ変換し、画像は structured input にして `thread.runStreamed()` を実行する
    - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時はaudit logにdebug metadataを残す
+   - `ClaudeAdapter`: 共通prompt、検証済み添付、実行optionをSDK `query()`へ渡す。`resume`は保存済みの明示session IDだけを使い、承認・質問を共通pending UIへ返す
 8. Main Process が stream event から live state と provider telemetry を組み立て、IPC で Session Window へ中継する
    - live state には `approvalRequest` と `elicitationRequest` を含められる
    - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する
@@ -110,7 +124,7 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
 
 ## Prompt Composition Constraint
 
-現時点の provider 差分は、添付の扱いで最も大きい。
+添付はproviderごとのtransportへ変換する。
 
 - `Codex`
   - file / folder: session metadata `allowedAdditionalDirectories` を `additionalDirectories` へ変換
@@ -118,6 +132,8 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
 - `Copilot`
   - SDK native には `attachments` として `file` / `directory` attachment がある
   - `CopilotAdapter` はfile / folderに加えてimageも`file` attachmentとして扱う
+- `Claude`
+  - file / folderは検証済みpathを入力へ渡し、imageはSDKの画像入力へ変換する
 
 workspace 外 path の access control は provider 任せにせず、WithMate が session metadata `allowedAdditionalDirectories` を正本にして先に判定する。
 
@@ -129,13 +145,11 @@ the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動�
 
 ## Thread Management
 
-- session ごとに 1 つの Codex thread を持つ
-- session に `threadId` がある場合は `resumeThread(threadId)` を使う
-- ない場合は `startThread()` で新規作成する
+- sessionごとにprovider固有の会話IDを保持する。Codexは`threadId`から`resumeThread()`し、未作成時は`startThread()`する。Claudeは同じ保存fieldの明示IDをSDK `resume`へ渡し、未作成時は新規`query()`を使う
 - 実行後に `thread.id` を session store へ保存する
 - model または reasoning depth を変更した場合も、その session の `threadId` は維持し、次回 turn は送信された runtime parameter で既存 thread / session の resume を試す
 - Codex の `approvalMode` / `codexSandboxMode` は thread settings key に含める。変更後の turn では既存 thread cache を再利用せず、送信された runtime parameter で `resumeThread()` または `startThread()` する
-- provider ごとの coding credential は `AppSettings.codingProviderSettings[providerId].apiKey` から解決して SDK client へ渡す
+- Codex / Copilotのcoding credentialは`AppSettings.codingProviderSettings[providerId].apiKey`から解決してSDK clientへ渡す。Claudeは既存CLI認証をSDKに任せ、WithMateのcredential設定へ取り込まない
 - coding credential が変わった provider では既存 thread / adapter cache を再利用しないため、対象 session の `threadId` を空に戻す
 
 理由:
@@ -175,6 +189,7 @@ approval mode は WithMate が対応する Codex policy 値を正本にする。
   - `provider-controlled -> on-request`
 - CodexAdapter は `approvalMode` を SDK `approvalPolicy` へそのまま渡す
 - CopilotAdapter は `never` を自動許可、`untrusted` を read-only 以外 rules deny、`on-request` を Session UI の approval card 中継として扱う
+- ClaudeAdapterは`on-request`だけを選択可能にし、SDKのdefault permissionと共通approval / elicitation UIで処理する
 - UIはSDK値をそのまま表示せず、`Auto Run` / `Provider Controlled` / `Safety Focused` のdisplay labelへ変換する。保存・API・adapter境界ではSDK policy値をrawのまま保持し、providerごとに出すchoicesを分ける
 
 これにより、session 作成、永続化、監査、artifact 表示、resume 復元では SDK 値を追跡しつつ、provider ごとの差異は provider-specific choices と adapter 実装で吸収する。
@@ -240,7 +255,7 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 
 ## Streaming Policy
 
-- provider 実行は `runStreamed()` を使い、turn 完了前の一時状態を Renderer へ中継する
+- provider固有のstreaming APIを使い、turn完了前の一時状態をRendererへ中継する
 - live state には少なくとも次を含める
   - 最新の assistant text
   - 実行中 / 完了 / 失敗の step 一覧
@@ -252,6 +267,7 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 - live state は Main Process の memory 上だけに持ち、session DB へは保存しない
 - Session Window を開き直した場合は、Main Process が保持している live state を再購読して復元する
 - Session Window から `Cancel` を押した場合は、Main Process が保持している `AbortController` で provider 実行を中断する
+- Claudeの個別approval / elicitation要求はSDKのrequest signalとturn signalを共通pending serviceまで渡す。要求取消ではresolverとlive表示を解除してから直列待機列の次要求を表示し、取消済みrequestIdへの回答は拒否する。待機列内の取消済み要求は表示せず、turn全体の取消・子プロセス実終了待ちとは区別する
 - Copilot の approval request は Main Process が pending resolver を保持し、Session UI の `今回だけ許可 / 拒否` を受けて permission handler を再開する
 - turn 完了時だけ session 本体と audit log を確定値で更新する
 - canceled / failed でも、途中まで取得できた `agent_message` と `turn.items` は partial result として回収し、Audit Log と `Details` に残す
@@ -304,6 +320,7 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 - adapter は選択済み skill を provider ごとの prompt / option へ変換する
   - Codex: `$skill-name` mention
   - Copilot: explicit skill directive を prompt へ付加
+  - Claude: 選択済みskillのpathを明示するdirectiveをpromptへ付加する。設定したskill root全体をSDKのnative Skill探索元として追加しない
 - `agent` は provider 専用 command とする
   - Codex: 未対応
   - Copilot: custom agent selection を session metadata に保存し、送信時に固定した選択値と `~/.copilot/agents`・workspace `.github/agents` から探索した agent catalog を adapter が `customAgents` / `agent` に変換する

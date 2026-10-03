@@ -81,10 +81,8 @@ import {
   readCopilotQuotaSnapshots,
   type CopilotQuotaSnapshotLike,
 } from "./copilot-quota-telemetry.js";
-import {
-  buildLiveElicitationFieldFromCopilotSchema as buildElicitationFieldProjection,
-  buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection,
-} from "./copilot-elicitation.js";
+import { buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection } from "./copilot-elicitation.js";
+import { buildLiveElicitationFieldFromMcpSchema as buildElicitationFieldProjection } from "../mcp-elicitation.js";
 import { applyCopilotAssistantEvent } from "./copilot-turn-events.js";
 
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
