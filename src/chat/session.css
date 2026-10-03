@@ -1407,6 +1407,32 @@
   line-height: 1.6;
 }
 
+.rich-text a,
+.rich-text a:visited {
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  overflow-wrap: anywhere;
+}
+
+.rich-text a:hover,
+.rich-text a:focus-visible {
+  text-decoration-thickness: 2px;
+}
+
+.rich-text a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.rich-text a .message-inline-code {
+  max-width: 100%;
+  color: inherit;
+  text-decoration: inherit;
+  text-underline-offset: inherit;
+}
+
 .glossary-annotation {
   border-radius: 3px;
   color: inherit;

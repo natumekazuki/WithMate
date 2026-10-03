@@ -1366,8 +1366,6 @@
 }
 
 .session-file-preview {
-  --session-file-link: #93c5fd;
-  --session-file-link-emphasis: #dbeafe;
   --session-file-error: #fca5a5;
   position: relative;
   display: grid;
