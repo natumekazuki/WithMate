@@ -33,6 +33,24 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - 画像の resolving/loading はresourceの待機状態として保持し、表示開始から1,000ms未満は補助UIを表示しない。閾値を超えて未完了の場合だけ、画像領域内へ小さなspinnerを重ねて表示し、完了またはerrorで除去する。resolvingからloadingへ進む同一resourceの待機では表示タイマーをリセットしない。spinnerは`role="status"`相当の読み上げ名を持つが、本文の検索対象へ補助文字列を追加しない。errorは対象resourceを識別できる既存の失敗表示を維持する
 - Markdownの`img`、`a`、`pre` component typeはrenderごとに再生成せず、動的な操作callback、resource resolver、render modeだけを現在のcontextとして渡す。これによりcallback更新、本文末尾への追記、light/full切替では同じ位置の画像DOM・読み込みstate・lightbox stateを保持し、sourceまたはresource世代の変更では既存のresolver lifecycleに従って再読み込みする
 
+## Mermaid Images
+
+- 中央paneと独立File Previewの`.mmd`、およびMarkdown file内のMermaid flowchartは、標準のimage node記法で画像を表示する。HTMLの`img`埋込や独自構文は使わない。
+
+```mermaid
+flowchart LR
+  A@{ img: "./画像 サンプル.png", label: "入力画像", h: 160, constraint: "on" }
+  B@{ img: "./result.svg", label: "処理結果", w: 240, h: 160, pos: "t" }
+  A --> B
+```
+
+- `img`の相対pathはプレビュー元fileの親directory基準。Windowsの絶対pathは`C:/work/images/sample.png`のようにslashで記述でき、`file:///C:/work/images/sample.png`も扱う。空白・日本語を含むpathは引用符で囲む。絶対pathとfile URLも登録rootへ対応付け、Mainの既存認可・chunk read・同時数キューを経由する。root外のfileを明示linkで開けることは画像の自動読込の許可にならない。root外のabsolute previewからの相対画像解決は行わない。
+- local画像は既存File Previewと同じPNG、JPEG、GIF、WebP、BMP、ICO、AVIF、SVGを対象とし、ブラウザーがdecodeできるものを表示する。SVGは常にpassive image resourceとして扱い、画像内容をinline DOMへ入れない。
+- サイズ・label位置はMermaid標準の`w`、`h`、`constraint`、`pos`に従う。縦横比を保つ場合は`h`と`constraint: "on"`を指定する。`label`を可視の説明と画像のaccessible nameに使用し、省略時のaccessible nameはnode IDとする。図のZoom／Fit／scroll／Ctrl＋dragをそのまま利用できる。
+- 不存在・読込不可・未対応・decode失敗・許可範囲外は画像ごとのplaceholderとnode ID・対象path・理由を表示し、残りの図を保持する。修正後はFile PreviewのReloadで再読込する。file、reload、mode、encodingの切替・unmount時はstale resultを表示せず、所有するobject URLを解放する。
+- 共有rendererは呼出元の画像resolverを利用する。会話内のMermaidにはlocal resolverを追加せず、local画像は失敗表示になる。HTTP／HTTPS／data image／blobは既存の外部画像方針に従う。
+- strictとsanitizationは維持する。標準parserから画像nodeを読み、認可・decode後に自然寸法だけを持つアプリ生成placeholderへ標準metadataで差し替えて通常renderする。strictで生成したSVGのexact placeholderに一致する`image`だけへ、検証済みresource URIとaccessible nameを設定する。元sourceのunsafe destinationや任意HTMLは復元しない。画像bytesをMermaid sourceへ埋め込まず、文字数上限も変更しない。
+
 ## Non Goals
 
 - CommonMark 完全互換

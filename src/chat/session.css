@@ -1886,6 +1886,14 @@
   line-height: 1.45;
 }
 
+.message-mermaid-image-errors {
+  flex-shrink: 0;
+  max-height: 7em;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding-left: 20px;
+}
+
 .session-page .message-mermaid {
   border-color: rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.92);

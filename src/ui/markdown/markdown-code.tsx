@@ -17,6 +17,7 @@ import {
   type MessageCopyFeedback,
 } from "./markdown-context.js";
 import { MermaidViewport } from "./mermaid-viewport.js";
+import { renderMermaidWithImages, type MermaidImageError, type MermaidImageResolver } from "./mermaid-images.js";
 
 type HastNode = {
   type?: string;
@@ -25,7 +26,7 @@ type HastNode = {
 };
 type MermaidRenderState =
   | { status: "pending" }
-  | { status: "ready"; svg: string }
+  | { status: "ready"; svg: string; imageErrors: MermaidImageError[] }
   | { status: "error"; message: string };
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
 function loadMermaid() {
@@ -134,11 +135,14 @@ function CodeBlockShell({
 export const MermaidDiagram = memo(function MermaidDiagram({
   source,
   onOpenPath,
+  resolveImageSource,
 }: {
   source: string;
   onOpenPath?: (target: string) => void;
+  resolveImageSource?: MermaidImageResolver;
 }) {
   const context = useContext(MarkdownRenderContext);
+  const imageResolver = resolveImageSource ?? context.resolveImageSource;
   const reactId = useId();
   const diagramId = useMemo(
     () => `message-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`,
@@ -150,6 +154,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
   });
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     if (!diagramSource) {
       setRenderState({ status: "error", message: "Empty Mermaid diagram." });
       return () => {
@@ -158,9 +163,9 @@ export const MermaidDiagram = memo(function MermaidDiagram({
     }
     setRenderState({ status: "pending" });
     loadMermaid()
-      .then((module) => module.default.render(diagramId, diagramSource))
-      .then(({ svg }) => {
-        if (!cancelled) setRenderState({ status: "ready", svg });
+      .then((module) => renderMermaidWithImages(module.default, diagramId, diagramSource, imageResolver, controller.signal))
+      .then(({ svg, imageErrors }) => {
+        if (!cancelled) setRenderState({ status: "ready", svg, imageErrors });
       })
       .catch((error: unknown) => {
         if (!cancelled)
@@ -174,8 +179,9 @@ export const MermaidDiagram = memo(function MermaidDiagram({
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [diagramId, diagramSource]);
+  }, [diagramId, diagramSource, imageResolver]);
   if (renderState.status === "ready")
     return (
       <div className="message-code-block-shell mermaid">
@@ -183,6 +189,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
           key={diagramSource}
           svg={renderState.svg}
           onOpenPath={onOpenPath ?? context.onOpenPath}
+          imageErrors={renderState.imageErrors}
         />
       </div>
     );
