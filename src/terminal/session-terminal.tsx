@@ -10,7 +10,7 @@ import {
 import type { Terminal } from "@xterm/xterm";
 import type { WithMateWindowTerminalApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { TERMINAL_MAX_DIMENSION } from "../../src-shared/terminal/terminal-contract.js";
-import { getShortcutDispatcher } from "../settings/shortcut-registry.js";
+import { detectShortcutPlatform, getShortcutDispatcher } from "../settings/shortcut-registry.js";
 
 type TerminalTab = {
   id: string;
@@ -131,7 +131,7 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
             }
             return false;
           }
-          if (event.shiftKey && event.key.toLowerCase() === "v") {
+          if (event.key.toLowerCase() === "v" && (event.shiftKey || detectShortcutPlatform() === "windows")) {
             if (event.type === "keydown") {
               event.preventDefault();
               void navigator.clipboard.readText().then((text) => {
