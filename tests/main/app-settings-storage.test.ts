@@ -12,6 +12,110 @@ import {
 import { AppSettingsStorage } from "../../src-electron/app/app-settings-storage.js";
 
 describe("AppSettingsStorage", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "preview wheelの刻みは新規と既存DBの欠落時に5となり、保存した境界値1と100を再open後も保持する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
+  // fault = "新しい設定keyの既定値補完やwrite/readが欠落し、再起動で選択した刻みか他の設定を失う"
+  // observable = "getSettingsとupdateSettingsのpreviewWheelZoomStep、再open後のlaunchAtLoginEnabledとkeyboardShortcuts"
+  // observation_boundary = "public-boundary"
+  // scope = "preview-wheel-zoom-step-sqlite-persistence"
+  // lifecycle = "permanent"
+  // impact = "利用者のzoom設定が再起動で変わるか、同時保存する他の設定が失われる"
+  // distinction = "normalizer単体や型検査では分からない実SQLiteの欠落key補完と再openによる永続化を確認する"
+  // @end-test-value
+  it("preview wheel zoom stepは欠落時5を補い、境界値を再open後も保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      assert.equal(storage.getSettings().previewWheelZoomStep, 5);
+      const keyboardShortcuts = storage.getSettings().keyboardShortcuts;
+      storage.updateSettings({ ...storage.getSettings(), launchAtLoginEnabled: true });
+      storage.close();
+      storage = undefined;
+
+      const database = new DatabaseSync(dbPath);
+      try {
+        database.prepare("DELETE FROM app_settings WHERE setting_key = ?").run("preview_wheel_zoom_step");
+      } finally {
+        database.close();
+      }
+      storage = new AppSettingsStorage(dbPath);
+      assert.equal(storage.getSettings().previewWheelZoomStep, 5);
+      for (const value of [1, 100]) {
+        assert.equal(
+          storage.updateSettings({ ...storage.getSettings(), previewWheelZoomStep: value }).previewWheelZoomStep,
+          value,
+        );
+        storage.close();
+        storage = undefined;
+        storage = new AppSettingsStorage(dbPath);
+        assert.equal(storage.getSettings().previewWheelZoomStep, value);
+        assert.equal(storage.getSettings().launchAtLoginEnabled, true);
+        assert.deepEqual(storage.getSettings().keyboardShortcuts, keyboardShortcuts);
+      }
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "preview wheelの不正な刻みは保存前とDB読取り時に拒否し、失敗した保存で既存設定を変更しない"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
+  // fault = "storageが不正な刻みを既定値として成功扱いするか、拒否前に他の設定まで書き換える"
+  // observable = "updateSettingsとgetSettingsの例外、失敗後のpreviewWheelZoomStepとlaunchAtLoginEnabled"
+  // observation_boundary = "public-boundary"
+  // scope = "preview-wheel-zoom-step-sqlite-rejection"
+  // lifecycle = "permanent"
+  // impact = "無効入力が保存済みと表示されるか、既存設定の一部が意図せず変わる"
+  // distinction = "normalizer単体では分からないstorage入口の拒否とDB読取りの不正値伝播を有限ケースで確認する"
+  // @end-test-value
+  it("preview wheel zoom stepの不正な保存値とDB値を拒否する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      for (const value of [0, 101, 1.5, NaN, Infinity]) {
+        assert.throws(
+          () => storage!.updateSettings({
+            ...storage!.getSettings(),
+            launchAtLoginEnabled: true,
+            previewWheelZoomStep: value,
+          }),
+          /Preview wheel zoom step must be an integer between 1 and 100/,
+        );
+        assert.equal(storage.getSettings().previewWheelZoomStep, 5);
+        assert.equal(storage.getSettings().launchAtLoginEnabled, false);
+      }
+      storage.close();
+      storage = undefined;
+      for (const value of ["", "invalid", "0", "101", "1.5", "NaN", "Infinity"]) {
+        const database = new DatabaseSync(dbPath);
+        try {
+          database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+            .run(value, "preview_wheel_zoom_step");
+        } finally {
+          database.close();
+        }
+        storage = new AppSettingsStorage(dbPath);
+        assert.throws(
+          () => storage!.getSettings(),
+          /Preview wheel zoom step must be an integer between 1 and 100/,
+        );
+        storage.close();
+        storage = undefined;
+      }
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("glossary proactive create limitは初期値5を保存し、0を維持し、欠落・不正値をfallbackしない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

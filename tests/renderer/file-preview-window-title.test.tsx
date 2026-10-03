@@ -16,6 +16,7 @@ import {
   type SessionFileDescriptor,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import { createDefaultAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
 test("resolveSessionFilePreviewWindowTitle は basename だけを返し不正な名前を fallback する", () => {
   assert.equal(resolveSessionFilePreviewWindowTitle("C:\\Users\\private\\notes.md"), "notes.md");
@@ -32,6 +33,17 @@ test("commit file previewのwindow titleは短縮commit hashを含む", () => {
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "独立file previewは設定を購読してpayloadをhydrateした後も対象ファイル名をdocument titleへ反映する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+// fault = "設定購読追加によってpreviewのhydrateが失敗するか、window titleが対象ファイルへ同期されない"
+// observable = "FilePreviewAppをmountして取得後のdocument.title"
+// observation_boundary = "component-behavior"
+// scope = "detached-file-preview-window-title"
+// lifecycle = "permanent"
+// distinction = "title解決関数の単体testでは検出できないWindow rootと非同期payload取得の接続を確認する"
+// @end-test-value
 test("FilePreviewApp は payload hydrate 後も document title を対象ファイル名に同期する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -55,6 +67,12 @@ test("FilePreviewApp は payload hydrate 後も document title を対象ファ�
     revision: "empty-r1",
   };
   const api = {
+    async getAppSettings() {
+      return createDefaultAppSettings();
+    },
+    subscribeAppSettings() {
+      return () => {};
+    },
     async getSessionFilePreviewWindowPayload() {
       return { resource, ownerSessionId: "session-1", windowTitle: "notes.md" };
     },
@@ -170,6 +188,12 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
     releaseDiff = resolve;
   });
   const api = {
+    async getAppSettings() {
+      return createDefaultAppSettings();
+    },
+    subscribeAppSettings() {
+      return () => {};
+    },
     async getSessionFilePreviewWindowPayload() {
       return {
         resource,
@@ -271,6 +295,132 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
     Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
       previousActEnvironment;
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "独立画像previewは設定未取得と失敗中も画像と倍率を保ち、Retry後の刻み20と保存通知の刻み1を次のCtrl＋wheelへ適用する"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
+// fault = "設定失敗を既定値で成功扱いする、再試行できない、通知が画像倍率をリセットする、またはwheelが固定刻みを使う"
+// observable = "FilePreviewAppの画像DOM、alertとRetry、倍率buttonの表示、画像style.zoom、wheel.defaultPrevented"
+// observation_boundary = "component-behavior"
+// scope = "detached-image-preview-settings-load-retry-and-live-step"
+// lifecycle = "permanent"
+// impact = "独立Windowが設定を無視するか、設定取得失敗で閲覧中の画像を失う"
+// distinction = "subscription単体では確認できないWindow rootからproduction画像previewとnative wheelまでの接続を小さな画像fixtureで検証する"
+// @end-test-value
+test("FilePreviewAppの画像は設定Retryと通知で次のwheel刻みだけを更新する", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+    url: "http://localhost/file-preview.html?token=preview-1",
+  });
+  const previousGlobals = Object.getOwnPropertyDescriptors(globalThis);
+  const globalNames = ["window", "document", "navigator", "HTMLElement", "Element", "Node", "IS_REACT_ACT_ENVIRONMENT"];
+  for (const name of globalNames) {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      value: name === "IS_REACT_ACT_ENVIRONMENT" ? true
+        : name === "window" ? dom.window
+          : (dom.window as unknown as Record<string, unknown>)[name],
+    });
+  }
+  const resource = { sessionId: "session-1", absolutePath: "C:/outside/image.png" };
+  const descriptor: SessionFileDescriptor = {
+    ...resource,
+    name: "image.png",
+    kind: "image",
+    byteLength: 1,
+    modifiedAt: "2026-10-03T00:00:00.000Z",
+    mimeType: "image/png",
+    suggestedEncoding: "utf-8",
+    revision: "image-r1",
+  };
+  let rejectInitial: ((error: Error) => void) | undefined;
+  const initialSettings = new Promise<AppSettings>((_resolve, reject) => { rejectInitial = reject; });
+  let settingsRequests = 0;
+  let settingsListener: ((settings: AppSettings) => void) | undefined;
+  const api = {
+    getAppSettings() {
+      settingsRequests += 1;
+      return settingsRequests === 1 ? initialSettings
+        : Promise.resolve({ ...createDefaultAppSettings(), previewWheelZoomStep: 20 });
+    },
+    subscribeAppSettings(listener: (settings: AppSettings) => void) {
+      settingsListener = listener;
+      return () => { settingsListener = undefined; };
+    },
+    async getSessionFilePreviewWindowPayload() {
+      return { resource, ownerSessionId: "session-1", windowTitle: "image.png" };
+    },
+    subscribeSessionFilePreviewNavigation() { return () => {}; },
+    async inspectSessionFile() { return descriptor; },
+    async listSessionFileRoots() { return []; },
+    async readSessionFileChunk() {
+      return { offset: 0, totalBytes: 1, data: [0], nextOffset: 1, done: true };
+    },
+  } as unknown as WithMateWindowApi;
+  Object.defineProperty(dom.window, "withmate", { configurable: true, value: api });
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<FilePreviewApp />));
+    const image = container.querySelector<HTMLImageElement>(".session-file-image");
+    assert.ok(image);
+    const viewport = container.querySelector<HTMLElement>(".session-file-image-scroll");
+    assert.ok(viewport);
+    Object.defineProperties(viewport, {
+      clientWidth: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 450 },
+    });
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, value: 800 },
+      naturalHeight: { configurable: true, value: 450 },
+    });
+    await act(async () => image.dispatchEvent(new dom.window.Event("load")));
+    const reset = container.querySelector<HTMLButtonElement>('button[aria-label="Reset image zoom to 100%"]');
+    assert.ok(reset);
+    const wheel = () => {
+      const event = new dom.window.WheelEvent("wheel", { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true });
+      image.dispatchEvent(event);
+      return event;
+    };
+    assert.ok(container.querySelector('[role="status"][aria-label="Loading preview settings"]'));
+    await act(async () => { assert.equal(wheel().defaultPrevented, true); });
+    assert.equal(reset.textContent, "100%");
+
+    await act(async () => rejectInitial?.(new Error("Settings unavailable")));
+    const alert = container.querySelector('[role="alert"]');
+    assert.ok(alert);
+    assert.match(alert.textContent ?? "", /Settings unavailable/);
+    assert.equal(container.querySelector(".session-file-image"), image);
+    await act(async () => { wheel(); });
+    assert.equal(reset.textContent, "100%");
+    const retry = alert.querySelector<HTMLButtonElement>("button");
+    assert.ok(retry);
+    assert.equal(retry.textContent, "Retry");
+    await act(async () => retry.click());
+    assert.equal(container.querySelector('[role="alert"]'), null);
+    assert.equal(container.querySelector(".session-file-image"), image);
+    assert.equal(reset.textContent, "100%");
+    await act(async () => { wheel(); });
+    assert.equal(reset.textContent, "120%");
+    assert.equal(image.style.zoom, "1.2");
+    assert.ok(settingsListener);
+    await act(async () => settingsListener?.({ ...createDefaultAppSettings(), previewWheelZoomStep: 1 }));
+    assert.equal(reset.textContent, "120%");
+    assert.equal(image.style.zoom, "1.2");
+    await act(async () => { wheel(); });
+    assert.equal(reset.textContent, "121%");
+    assert.equal(image.style.zoom, "1.21");
+  } finally {
+    await act(async () => root.unmount());
+    for (const name of globalNames) {
+      const previous = previousGlobals[name];
+      if (previous) Object.defineProperty(globalThis, name, previous);
+      else Reflect.deleteProperty(globalThis, name);
+    }
     dom.window.close();
   }
 });

@@ -28,6 +28,7 @@ export type AppSettings = {
   toolCallPresenceEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
   scrollToLatestOnSend: boolean;
+  previewWheelZoomStep: number;
   chatLayoutPreference: ChatLayoutPreference;
   keyboardShortcuts: KeyboardShortcutSettings;
   memoryFileQuotaBytes: number;
@@ -85,6 +86,17 @@ export const MEMORY_FILE_QUOTA_MAX_BYTES = 53_687_091_200;
 export const DEFAULT_GLOSSARY_PROACTIVE_CREATE_LIMIT = 5;
 export const GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN = 0;
 export const GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX = 100;
+export const PREVIEW_WHEEL_ZOOM_STEP_DEFAULT = 5;
+export const PREVIEW_WHEEL_ZOOM_STEP_MIN = 1;
+export const PREVIEW_WHEEL_ZOOM_STEP_MAX = 100;
+
+export function isPreviewWheelZoomStep(value: unknown): value is number {
+  return typeof value === "number"
+    && Number.isFinite(value)
+    && Number.isInteger(value)
+    && value >= PREVIEW_WHEEL_ZOOM_STEP_MIN
+    && value <= PREVIEW_WHEEL_ZOOM_STEP_MAX;
+}
 
 export const DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS: MemoryExtractionProviderSettings = {
   model: DEFAULT_MODEL_ID,
@@ -117,6 +129,7 @@ export function createDefaultAppSettings(): AppSettings {
     toolCallPresenceEnabled: true,
     autoCollapseActionDockOnSend: true,
     scrollToLatestOnSend: true,
+    previewWheelZoomStep: PREVIEW_WHEEL_ZOOM_STEP_DEFAULT,
     chatLayoutPreference: { ...DEFAULT_CHAT_LAYOUT_PREFERENCE },
     keyboardShortcuts: createDefaultKeyboardShortcutSettings(),
     memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
@@ -309,6 +322,12 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   }
 
   const candidate = value as Partial<AppSettings>;
+  const previewWheelZoomStep = candidate.previewWheelZoomStep === undefined
+    ? PREVIEW_WHEEL_ZOOM_STEP_DEFAULT
+    : candidate.previewWheelZoomStep;
+  if (!isPreviewWheelZoomStep(previewWheelZoomStep)) {
+    throw new Error("Preview wheel zoom step must be an integer between 1 and 100 percentage points");
+  }
   const rawCodingProviderSettings =
     candidate.codingProviderSettings && typeof candidate.codingProviderSettings === "object"
       ? candidate.codingProviderSettings
@@ -363,6 +382,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
     scrollToLatestOnSend:
       typeof candidate.scrollToLatestOnSend === "boolean" ? candidate.scrollToLatestOnSend : true,
+    previewWheelZoomStep,
     chatLayoutPreference: normalizeChatLayoutPreference(candidate.chatLayoutPreference),
     keyboardShortcuts: normalizeKeyboardShortcutSettings(candidate.keyboardShortcuts),
     memoryFileQuotaBytes: normalizeMemoryFileQuotaBytes(candidate.memoryFileQuotaBytes),

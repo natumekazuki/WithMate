@@ -3,6 +3,9 @@ import type { AppSettings } from "../../src-shared/settings/provider-settings-st
 import {
   GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
   GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN,
+  PREVIEW_WHEEL_ZOOM_STEP_MIN,
+  PREVIEW_WHEEL_ZOOM_STEP_MAX,
+  isPreviewWheelZoomStep,
 } from "../../src-shared/settings/provider-settings-state.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
@@ -67,6 +70,7 @@ export type HomeSettingsContentProps = {
   onChangeCharacterAffectContextEnabled: (enabled: boolean) => void;
   onChangeConversationTimingEnabled: (enabled: boolean) => void;
   onChangeScrollToLatestOnSend: (enabled: boolean) => void;
+  onChangePreviewWheelZoomStep: (value: number) => void;
   onChangeKeyboardShortcuts: (settings: KeyboardShortcutSettings) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
@@ -172,6 +176,7 @@ export function HomeSettingsContent({
   onChangeCharacterAffectContextEnabled,
   onChangeConversationTimingEnabled,
   onChangeScrollToLatestOnSend,
+  onChangePreviewWheelZoomStep,
   onChangeKeyboardShortcuts,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
@@ -199,6 +204,8 @@ export function HomeSettingsContent({
 }: HomeSettingsContentProps) {
   const [busyAction, setBusyAction] = useState<SettingsActionKey | null>(null);
   const busyActionRef = useRef<SettingsActionKey | null>(null);
+  const [invalidPreviewWheelZoomStep, setInvalidPreviewWheelZoomStep] = useState<string | null>(null);
+  const previewWheelZoomStepInvalid = invalidPreviewWheelZoomStep !== null;
   const memoryFileQuotaMegabytes = getMemoryFileQuotaMegabytes(settingsDraft);
   const memoryFileQuotaBounds = getMemoryFileQuotaMegabytesInputBounds();
   const runAction = async (action: SettingsActionKey, callback: () => void | Promise<void>) => {
@@ -296,6 +303,38 @@ export function HomeSettingsContent({
                   onChange={(event) => onChangeScrollToLatestOnSend(event.target.checked)}
                 />
               </label>
+              <div className="settings-provider-input">
+                <label htmlFor="settings-preview-wheel-zoom-step">Preview Ctrl+Wheel Zoom Step</label>
+                <div className="settings-inline-input-row">
+                  <input
+                    id="settings-preview-wheel-zoom-step"
+                    type="number"
+                    min={PREVIEW_WHEEL_ZOOM_STEP_MIN}
+                    max={PREVIEW_WHEEL_ZOOM_STEP_MAX}
+                    step={1}
+                    required
+                    value={invalidPreviewWheelZoomStep ?? settingsDraft.previewWheelZoomStep}
+                    aria-invalid={previewWheelZoomStepInvalid}
+                    aria-describedby="settings-preview-wheel-zoom-step-help"
+                    onChange={(event) => {
+                      const rawValue = event.target.value;
+                      const value = event.target.valueAsNumber;
+                      if (isPreviewWheelZoomStep(value)) {
+                        setInvalidPreviewWheelZoomStep(null);
+                        onChangePreviewWheelZoomStep(value);
+                      } else {
+                        setInvalidPreviewWheelZoomStep(rawValue);
+                      }
+                    }}
+                  />
+                  <span className="settings-inline-unit">Percentage Points</span>
+                </div>
+                <p id="settings-preview-wheel-zoom-step-help" className="settings-help" role={previewWheelZoomStepInvalid ? "alert" : undefined}>
+                  {previewWheelZoomStepInvalid
+                    ? "Enter a whole number from 1 to 100."
+                    : "5 points changes 100% to 105%. Applies to image and Mermaid previews."}
+                </p>
+              </div>
             </div>
           </section>
 
@@ -685,14 +724,14 @@ export function HomeSettingsContent({
       </div>
       <div className="launch-dialog-foot settings-dialog-foot">
         <div className="settings-footer-status" aria-live="polite">
-          {settingsDirty ? <span className="settings-dirty-state">Unsaved Changes</span> : null}
+          {settingsDirty || previewWheelZoomStepInvalid ? <span className="settings-dirty-state">Unsaved Changes</span> : null}
           {settingsFeedback ? <p className="settings-feedback settings-feedback-inline" role="status">{settingsFeedback}</p> : null}
         </div>
         <button
           className={`launch-toggle ${actionIsBusy("save-settings") ? "settings-action-busy" : ""}`.trim()}
           type="button"
           onClick={() => void runAction("save-settings", onSaveSettings)}
-          disabled={!settingsDirty || isBusy || appSettingsLoadStatus !== "loaded"}
+          disabled={!settingsDirty || previewWheelZoomStepInvalid || isBusy || appSettingsLoadStatus !== "loaded"}
           aria-busy={actionIsBusy("save-settings")}
           aria-label={actionIsBusy("save-settings") ? "Saving settings" : "Save Settings"}
         >

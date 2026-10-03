@@ -11,6 +11,7 @@ import {
   handleChangeLaunchAtLoginEnabled,
   handleChangeMemoryFileQuotaMegabytes,
   handleChangeScrollToLatestOnSend,
+  handleChangePreviewWheelZoomStep,
   handleChangeProviderInstructionRelativePath,
   handleChangeProviderEnabled,
   handleChangeProviderSkillRelativePath,
@@ -32,6 +33,7 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeCharacterDefinitionEnabled"
   | "onChangeConversationTimingEnabled"
   | "onChangeScrollToLatestOnSend"
+  | "onChangePreviewWheelZoomStep"
   | "onChangeKeyboardShortcuts"
   | "onChangeLaunchAtLoginEnabled"
   | "onChangeSessionTurnNotificationEnabled"
@@ -69,6 +71,9 @@ export function buildSettingsDraftHandlers({
     },
     onChangeScrollToLatestOnSend: (enabled) => {
       handleChangeScrollToLatestOnSend({ enabled, setSettingsDraft: updateSettingsDraft });
+    },
+    onChangePreviewWheelZoomStep: (value) => {
+      handleChangePreviewWheelZoomStep({ value, setSettingsDraft: updateSettingsDraft });
     },
     onChangeKeyboardShortcuts: (keyboardShortcuts: KeyboardShortcutSettings) => {
       handleChangeKeyboardShortcuts({ keyboardShortcuts, setSettingsDraft: updateSettingsDraft });

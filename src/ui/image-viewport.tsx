@@ -9,13 +9,13 @@ import {
 } from "react";
 
 import { useViewportPan } from "./viewport-pan.js";
+import { usePreviewWheelZoomStep } from "../settings/preview-zoom-settings-context.js";
 
 export type ImageZoom = "fit" | number;
 
 export const IMAGE_ZOOM_MIN = 10;
 export const IMAGE_ZOOM_MAX = 800;
 export const IMAGE_ZOOM_STEP = 10;
-const IMAGE_WHEEL_ZOOM_STEP = 5;
 
 function stepImageZoom(zoom: number, direction: -1 | 1, step = IMAGE_ZOOM_STEP): number {
   if (direction < 0) return zoom <= IMAGE_ZOOM_MIN ? zoom : Math.max(IMAGE_ZOOM_MIN, zoom - step);
@@ -27,6 +27,7 @@ export function useCtrlWheelZoom(
   fitZoom: number,
   setZoom: ImageViewportController["setZoom"],
 ) {
+  const wheelZoomStep = usePreviewWheelZoomStep();
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -34,18 +35,19 @@ export function useCtrlWheelZoom(
       if (!event.ctrlKey || event.deltaY === 0) return;
       event.preventDefault();
       event.stopPropagation();
+      if (wheelZoomStep === null) return;
       setZoom((currentZoom) => {
         const effectiveZoom = typeof currentZoom === "number" ? currentZoom : fitZoom;
         const nextZoom = effectiveZoom < IMAGE_ZOOM_MIN && event.deltaY < 0
           ? IMAGE_ZOOM_MIN
-          : stepImageZoom(effectiveZoom, event.deltaY < 0 ? 1 : -1, IMAGE_WHEEL_ZOOM_STEP);
+          : stepImageZoom(effectiveZoom, event.deltaY < 0 ? 1 : -1, wheelZoomStep);
         return nextZoom === effectiveZoom ? currentZoom : nextZoom;
       });
     };
     // React's passive wheel listener cannot cancel the browser's Ctrl+wheel zoom.
     viewport.addEventListener("wheel", handleWheel, { passive: false });
     return () => viewport.removeEventListener("wheel", handleWheel);
-  }, [fitZoom, setZoom, viewportRef]);
+  }, [fitZoom, setZoom, viewportRef, wheelZoomStep]);
 }
 
 export function calculateImageFitZoom(

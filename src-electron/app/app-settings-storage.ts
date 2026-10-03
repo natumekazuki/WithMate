@@ -22,6 +22,7 @@ const CONVERSATION_TIMING_ENABLED_KEY = "conversation_timing_enabled";
 const TOOL_CALL_PRESENCE_ENABLED_KEY = "tool_call_presence_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
 const SCROLL_TO_LATEST_ON_SEND_KEY = "scroll_to_latest_on_send";
+const PREVIEW_WHEEL_ZOOM_STEP_KEY = "preview_wheel_zoom_step";
 const SESSION_HEADER_VISIBILITY_KEY = "session_header_visibility";
 const SESSION_ACTION_DOCK_PRESENTATION_KEY = "session_action_dock_presentation";
 const SESSION_SIDE_PANE_KEY = "session_side_pane";
@@ -180,6 +181,13 @@ export class AppSettingsStorage {
         ON CONFLICT(setting_key) DO NOTHING
       `)
       .run(SCROLL_TO_LATEST_ON_SEND_KEY, String(DEFAULT_APP_SETTINGS.scrollToLatestOnSend), updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(PREVIEW_WHEEL_ZOOM_STEP_KEY, String(DEFAULT_APP_SETTINGS.previewWheelZoomStep), updatedAt);
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -349,6 +357,10 @@ export class AppSettingsStorage {
       }
       if (row.setting_key === MEMORY_FILE_QUOTA_BYTES_KEY) {
         settings.memoryFileQuotaBytes = Number(row.setting_value);
+        continue;
+      }
+      if (row.setting_key === PREVIEW_WHEEL_ZOOM_STEP_KEY) {
+        settings.previewWheelZoomStep = Number(row.setting_value);
         continue;
       }
       if (row.setting_key === GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY) {
@@ -543,6 +555,15 @@ export class AppSettingsStorage {
             updated_at = excluded.updated_at
         `)
         .run(SCROLL_TO_LATEST_ON_SEND_KEY, String(normalized.scrollToLatestOnSend), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(PREVIEW_WHEEL_ZOOM_STEP_KEY, String(normalized.previewWheelZoomStep), updatedAt);
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getWithMateApi, isDesktopRuntime } from "../app/renderer-withmate-api.js";
+import { startAppSettingsSubscription } from "../settings/app-settings-subscription.js";
+import { PreviewWheelZoomStepContext } from "../settings/preview-zoom-settings-context.js";
+import { LoadError } from "../ui/load-error.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { SessionDiffPreview, SessionFilePreview } from "./SessionFilePreview.js";
 import { projectFileRootDiffAvailability } from "./file-preview-utils.js";
 import type {
@@ -107,6 +111,21 @@ export default function FilePreviewApp() {
   const [diffLoadingScope, setDiffLoadingScope] = useState<FileRootGitDiffScope | null>(null);
   const [navigationMessage, setNavigationMessage] = useState("");
   const diffRequestRevisionRef = useRef(0);
+  const [wheelZoomStep, setWheelZoomStep] = useState<number | null>(null);
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsReadRevision, setSettingsReadRevision] = useState(0);
+
+  useEffect(() => startAppSettingsSubscription({
+    api,
+    loadInitial: true,
+    applyAppSettings: (settings) => {
+      setWheelZoomStep(settings.previewWheelZoomStep);
+      setSettingsError("");
+    },
+    onInitialLoadError: (error) => {
+      setSettingsError(error instanceof Error ? error.message : "Could not load preview settings.");
+    },
+  }), [api, settingsReadRevision]);
 
   useEffect(() => {
     let active = true;
@@ -309,7 +328,16 @@ export default function FilePreviewApp() {
   }
 
   return (
-    <main className="file-preview-window-page">
+    <PreviewWheelZoomStepContext.Provider value={wheelZoomStep}>
+    <main className="file-preview-window-page with-preview-settings">
+      {settingsError ? <LoadError
+        className="file-preview-settings-feedback"
+        message={settingsError}
+        onRetry={() => {
+          setSettingsError("");
+          setSettingsReadRevision((current) => current + 1);
+        }}
+      /> : wheelZoomStep === null ? <LoadingIndicator className="file-preview-settings-feedback" label="Loading preview settings" /> : null}
       {diffState ? (
         <SessionDiffPreview
           title={getSessionFileResourceDisplayPath(payload.resource)}
@@ -336,5 +364,6 @@ export default function FilePreviewApp() {
         />
       )}
     </main>
+    </PreviewWheelZoomStepContext.Provider>
   );
 }

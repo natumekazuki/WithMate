@@ -94,6 +94,10 @@ export function updateKeyboardShortcuts(
   };
 }
 
+export function updatePreviewWheelZoomStep(draft: AppSettings, value: number): AppSettings {
+  return { ...draft, previewWheelZoomStep: value };
+}
+
 export function updateSessionTurnNotificationEnabled(
   draft: AppSettings,
   enabled: boolean,

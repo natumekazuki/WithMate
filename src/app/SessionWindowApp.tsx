@@ -140,6 +140,7 @@ import { useSessionChatShellFeature } from "../chat/shell/session-chat-shell-fea
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { SessionTerminal, type SessionTerminalHandle } from "../terminal/session-terminal.js";
 import { ShortcutSettingsProvider } from "../settings/shortcut-settings-context.js";
+import { PreviewWheelZoomStepContext } from "../settings/preview-zoom-settings-context.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "../file-explorer/open-path-result.js";
 import {
   isSessionWorkspaceAvailable,
@@ -2363,7 +2364,7 @@ export default function AgentSessionWindowApp() {
 
   return (
     <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
-      <>
+      <PreviewWheelZoomStepContext.Provider value={isAppSettingsLoaded ? appSettings.previewWheelZoomStep : null}>
       <ChatWindow
         {...chatWindowProps}
         errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors]}
@@ -2430,7 +2431,7 @@ export default function AgentSessionWindowApp() {
         onSelectProvider={handleSelectAuxiliaryLaunchProvider}
         onStart={() => void handleStartAuxiliarySession()}
       />
-      </>
+      </PreviewWheelZoomStepContext.Provider>
     </ShortcutSettingsProvider>
   );
 }

@@ -5,12 +5,13 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
 import { ImageViewport, ImageZoomControls, useImageViewport } from "../../src/ui/image-viewport.js";
+import { PreviewWheelZoomStepContext } from "../../src/settings/preview-zoom-settings-context.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 // @test-value v2
 // kind = "contract"
-// claim = "画像のCtrl＋wheelはFitの実効倍率から5ポイントずつ連続入力を累積し、buttonの10ポイント刻みと10〜800%の限界、10%未満のFitを守る"
+// claim = "画像のCtrl＋wheelは既定5ポイントと設定変更後の刻みを使い、設定変更だけでは倍率を変えず、buttonの10ポイント刻みと10〜800%の限界、低倍率Fitを守る"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 共通previewのCtrl＋wheel操作、docs/manual-test-checklist.md: MT-023D7C" }
 // fault = "連続wheelが古い倍率を使って取りこぼされる、限界を超える、低倍率Fitで縮小すると拡大へ反転する、または通常wheelもcancelする"
 // observable = "倍率buttonのtextとFit状態、画像のstyle.zoom、wheelのdefaultPrevented"
@@ -28,12 +29,12 @@ test("画像のCtrl＋wheelはFitから拡縮し連続入力と上下限を守�
   });
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
-  function Harness() {
+  function Harness({ step = 5 }: { step?: number | null }) {
     const controller = useImageViewport("image");
-    return <>
+    return <PreviewWheelZoomStepContext.Provider value={step}>
       <ImageZoomControls controller={controller} />
       <ImageViewport controller={controller} src="data:image/png;base64,AAAA" alt="Zoom target" />
-    </>;
+    </PreviewWheelZoomStepContext.Provider>;
   }
   try {
     await act(async () => root.render(<Harness />));
@@ -98,6 +99,17 @@ test("画像のCtrl＋wheelはFitから拡縮し連続入力と上下限を守�
       assert.equal(reset.textContent, "10%");
       assert.equal(image.style.zoom, "0.1");
     }
+    await act(async () => root.render(<Harness step={20} />));
+    assert.equal(reset.textContent, "10%");
+    await act(async () => { dispatchWheel(-100); });
+    assert.equal(reset.textContent, "30%");
+    await act(async () => root.render(<Harness step={1} />));
+    assert.equal(reset.textContent, "30%");
+    await act(async () => { dispatchWheel(-100); });
+    assert.equal(reset.textContent, "31%");
+    await act(async () => root.render(<Harness step={null} />));
+    await act(async () => { assert.equal(dispatchWheel(-100).defaultPrevented, true); });
+    assert.equal(reset.textContent, "31%");
   } finally {
     await act(async () => root.unmount());
     for (const name of ["window", "document"]) {
