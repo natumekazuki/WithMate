@@ -82,7 +82,7 @@ test("Sessionは基本情報から描画し会話の失敗と空状態を独立�
     await act(async () => { summaryRead.resolve(summary); });
     assert.match(container.textContent!, /Composer input benchmark/);
     assert.ok(container.querySelector('[role="status"][aria-label="Loading conversation"][aria-busy="true"]'));
-    assert.equal(container.querySelector('[role="alert"]'), null, "Loading is not an error");
+    assert.equal(container.querySelectorAll('[role="alert"]').length, 0, container.querySelector('[role="alert"]')?.textContent ?? "Loading is not an error");
     assert.ok(filesCalls > 0, "Files read starts without waiting for conversation");
     const files = container.querySelector('[aria-label="File explorer"]')!;
     const changes = [...files.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent === "Changes")!;

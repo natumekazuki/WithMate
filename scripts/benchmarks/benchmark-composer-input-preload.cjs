@@ -154,7 +154,7 @@ const names = [
   "subscribeAuxiliarySessionNavigation", "subscribeSessionGlossary", "getLiveSessionRun", "getSessionMessageArtifact",
   "listSessionSkills", "listSessionCustomAgents", "listWorkspaceSkills", "listWorkspaceCustomAgents", "validateSessionWorkspace",
   "updateSession", "runSessionTurn", "cancelSessionRun", "cancelAuxiliarySessionRun", "setSessionPinned", "deleteSession",
-  "getFileRootDiff", "getFileRootGitHistoryDiff", "listFileRootChanges", "openSessionFilePreviewWindow", "openDiffWindow",
+  "getFileRootDiff", "getFileRootGitHistoryDiff", "listFileRootChanges", "listSessionFilePins", "openSessionFilePreviewWindow", "openDiffWindow",
   "openPath", "openSessionTerminal", "openSessionFilesDirectory", "openSessionFilesTerminal", "pickFiles", "pickSessionFiles",
   "pickSessionFolder", "pickSessionImageFile", "copyFilesToSessionFiles", "savePastedSessionFile", "reportRendererLog",
   "resolveLiveApproval", "resolveLiveElicitation", "searchSessionGlossary", "getAppBootStatus", "getMemoryV6Diagnostics",
