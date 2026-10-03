@@ -145,7 +145,7 @@ test("Files Pin は認可・owner世代・DB失敗の境界を維持する", asy
 // kind = "contract"
 // claim = "Pinの追加・列挙・解除は実storage Workerの許可commandとして永続化へ接続される"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md: Files Pin" }
-// fault = "Workerのallowlistまたはmutation登録を欠落しPin APIがMain単体では動いてもruntimeで拒否される"
+// fault = "Workerのallowlistまたはcommandの転送を欠落しPin APIがMain単体では動いてもruntimeで拒否される"
 // observable = "Worker store経由のPin一覧と解除後の空一覧"
 // observation_boundary = "public-boundary"
 // scope = "V6StorageWorkerBundleのSession file pin command"

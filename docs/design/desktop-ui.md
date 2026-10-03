@@ -304,7 +304,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - 未作成の既存 `Session Folder` は root の初回展開時に空ディレクトリとして作成する
   - tree row は仮想化し、file 本文は選択時に 1 件だけ chunk read する
   - Filesのregular file／directoryは行末の`Pin`／`Unpin`で目印を付与・解除する。Pin状態は塗りつぶしiconとpressed stateで示し、hoverや色だけに依存しない。TabとEnter／Spaceで操作でき、通常treeはroot順序と階層を保ったまま、同じ親直下でPinを第一条件、同条件で既存のdirectory優先・名前順とする
-  - `Pinned Only`はroot名と相対pathを併記するPinだけの一覧へ切り替える。未展開の祖先配下も表示し、Pin directoryの未Pin子孫は含めない。fileは既存previewへ開き、directoryは通常treeへ戻して対象まで展開・移動する。最後の解除後はfilterへfocusを戻す。Pinが0件なら本文はblankとし、filterのON/OFFと通常表示へ戻る操作は残す
+  - `Pinned Only`はroot名と相対pathを併記するPinだけの一覧へ切り替える。未展開の祖先配下も表示し、Pin directoryの未Pin子孫は含めない。fileは既存previewへ開き、directoryは通常treeへ戻して対象まで展開・移動する。解除後は次のPin、末尾なら直前のPinへfocusを移し、最後の解除後はfilterへ戻す。Pinが0件なら本文はblankとし、filterのON/OFFと通常表示へ戻る操作は残す
   - Pinは親Session内のMain／Auxiliaryで共有し、同Workspaceの別Sessionとは共有しない。再起動後も保持し、親Session削除時に削除する。filterはWindow内の一時状態で起動時OFF。保存構造は[Database SchemaのFiles Pin](database-schema.md#files-pin)を参照する
   - Pinはroot種別・root path・相対pathへの目印であり、本文の版やfile実体を固定しない。rename先や別rootの同名pathへ自動追従しない。削除・root除去・認可外・種類変更等は一覧に理由付きの利用不可項目として保持し、解除できる。元の認可済みpathが再び利用可能なら再読込後に使える。Pinによるroot追加やアクセス権拡大は行わない
   - Pin保存成功後に表示を確定する。読込・保存失敗時は取得済みPinを保持し、errorと`Retry Pins`を表示する。結果不明の保存も成功や未Pinへ変換せず、再取得後に変更を再開する。Session／root変更前の遅延応答は新しい表示に適用しない。Pin取得は登録参照先の検査だけに限定し、通常ソートとfilter切替は取得済み状態を利用する。再帰走査・本文読込・追加watcherは行わない

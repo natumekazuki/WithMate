@@ -314,11 +314,12 @@ export function SessionFileExplorerPane({
     if (loadRevisionRef.current === revision) setRevealTarget(directoryKey(pin.rootId, pin.relativePath));
   };
 
-  const removePin = async (pin: SessionFilePin, visibleIndex: number) => {
+  const removePin = async (pin: SessionFilePin, rowIndex: number) => {
     if (!await filePins.changePin(pin, true) || !pinnedOnly) return;
+    const nextIndex = Math.min(rowIndex, filePins.pins.length - 2);
     requestAnimationFrame(() => {
-      const buttons = treeScrollRef.current?.querySelectorAll<HTMLButtonElement>("[data-file-pin-toggle]");
-      (buttons?.[Math.min(visibleIndex, buttons.length - 1)] ?? pinFilterRef.current)?.focus();
+      const button = treeScrollRef.current?.querySelector<HTMLButtonElement>(`[data-file-pin-toggle="${nextIndex}"]`);
+      (button ?? pinFilterRef.current)?.focus();
     });
   };
 
@@ -567,7 +568,7 @@ export function SessionFileExplorerPane({
                     <button
                       type="button"
                       className="session-file-pin-toggle is-pinned"
-                      data-file-pin-toggle
+                      data-file-pin-toggle={virtualRow.index}
                       aria-label={`Unpin ${row.pin.relativePath}`}
                       title={`Unpin ${row.pin.rootPath}/${row.pin.relativePath}${row.pin.unavailableReason ? `\n${row.pin.unavailableReason}` : ""}`}
                       aria-pressed="true"

@@ -31,10 +31,11 @@ async function withPane(api: NonNullable<PaneProps["api"]>, run: (harness: {
   const originals = new Map(Object.keys(replacements).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(replacements)) Object.defineProperty(globalThis, key, { configurable: true, value });
   dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
-    const height = this.classList.contains("session-file-explorer-body") ? 480 : 31;
+    const height = this.classList.contains("session-file-explorer-body") ? 480
+      : this.querySelector(".session-file-pinned-row") ? 58 : 31;
     return { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: height, width: 320, height, toJSON: () => ({}) };
   };
-  for (const field of ["clientHeight", "offsetHeight"]) Object.defineProperty(dom.window.HTMLElement.prototype, field, { configurable: true, get() { return 480; } });
+  for (const field of ["clientHeight", "offsetHeight"]) Object.defineProperty(dom.window.HTMLElement.prototype, field, { configurable: true, get() { return this.getBoundingClientRect().height; } });
   for (const field of ["clientWidth", "offsetWidth"]) Object.defineProperty(dom.window.HTMLElement.prototype, field, { configurable: true, get() { return 320; } });
   dom.window.HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number) {
     if (typeof options === "object") this.scrollTop = options.top ?? 0;
@@ -147,6 +148,44 @@ test("利用不可Pinの解除失敗を保持し再取得後に解除できる",
     await until(() => document.activeElement?.getAttribute("aria-label") === "Pinned only");
     assert.equal(document.querySelectorAll(".session-file-pinned-row").length, 0);
     assert.equal(document.querySelector("[role='alert']"), null);
+  });
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "仮想化されたPin一覧の中間解除後は次のPin、末尾解除後は直前のPinへfocusを保ち連続操作できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: File Explorer Pinのkeyboard操作" }
+// fault = "一覧全体の行indexと描画範囲内のindexを混同し、解除後のfocusを離れたPinやfilterへ移す"
+// observable = "中間と末尾の解除後のdocument.activeElementのaccessible nameと解除対象の消失"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane virtualized Pin list focus"
+// lifecycle = "permanent"
+// impact = "多数Pinをkeyboardで連続解除するときの操作位置を維持する"
+// distinction = "少数Pinのempty確認や型検査では観測できない、scroll途中の仮想化とfocusの連携を確認する"
+// @end-test-value
+test("仮想Pin一覧の中間と末尾を解除して隣接Pinへfocusを保つ", async () => {
+  const api = baseApi();
+  let pins = Array.from({ length: 180 }, (_, index) => pin(`file-${index}.md`));
+  api.listSessionFilePins = async () => pins;
+  api.unpinSessionFile = async (request) => { pins = pins.filter((item) => item.relativePath !== request.relativePath); };
+  await withPane(api, async ({ document, click, until }) => {
+    await click("Pinned only");
+    await until(() => !!document.querySelector("[aria-label='Unpin file-0.md']"));
+    const scroll = document.querySelector<HTMLDivElement>(".session-file-explorer-body")!;
+    await act(async () => scroll.scrollTo({ top: 58 * 100 }));
+    await until(() => !!document.querySelector("[aria-label='Unpin file-100.md']"));
+    assert.equal(document.querySelector("[aria-label='Unpin file-0.md']"), null);
+    assert.ok(document.querySelectorAll(".session-file-pinned-row").length < pins.length);
+    for (const index of [100, 101]) {
+      await click(`Unpin file-${index}.md`);
+      await until(() => document.activeElement?.getAttribute("aria-label") === `Unpin file-${index + 1}.md`);
+      assert.equal(document.querySelector(`[aria-label='Unpin file-${index}.md']`), null);
+    }
+    await act(async () => scroll.scrollTo({ top: 58 * pins.length - 480 }));
+    await until(() => !!document.querySelector("[aria-label='Unpin file-179.md']"));
+    await click("Unpin file-179.md");
+    await until(() => document.activeElement?.getAttribute("aria-label") === "Unpin file-178.md");
+    assert.equal(document.querySelector("[aria-label='Unpin file-179.md']"), null);
   });
 });
 
