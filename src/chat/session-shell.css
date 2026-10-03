@@ -1236,19 +1236,20 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px;
   padding: 8px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 .session-file-explorer-tabs {
   display: flex;
-  gap: 4px;
+  gap: 2px;
 }
 
 .session-file-explorer-tabs button,
 .session-file-explorer-refresh,
 .session-file-pin-filter {
+  min-height: 28px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
@@ -1257,6 +1258,10 @@
   font-size: 0.78rem;
   padding: 5px 8px;
   cursor: pointer;
+}
+
+.session-file-explorer-tabs button {
+  padding-inline: 4px;
 }
 
 .session-file-explorer-tabs button:hover,
