@@ -168,11 +168,15 @@ export async function renderMermaidWithImages(
     // Strict strips blob: from SVG href. Keep sanitization intact, then attach only
     // prevalidated passive image resources to our exact generated placeholders.
     // Original image bytes never enter Mermaid source or its maxTextSize budget.
-    const document = new DOMParser().parseFromString(svg, "image/svg+xml");
-    if (document.querySelector("parsererror")) {
+    // Mermaid serializes foreignObject labels as HTML (for example <br>), not
+    // XML. Parse the sanitized output in an inert template like the HTML host.
+    const template = document.createElement("template");
+    template.innerHTML = svg;
+    const svgElement = template.content.firstElementChild;
+    if (svgElement?.localName !== "svg" || svgElement.namespaceURI !== "http://www.w3.org/2000/svg") {
       throw new Error("Mermaid did not produce a valid SVG diagram.");
     }
-    for (const image of document.querySelectorAll("image")) {
+    for (const image of svgElement.querySelectorAll("image")) {
       const resource = images.get(image.getAttribute("href") ?? "");
       if (!resource) continue;
       image.setAttribute("href", resource.source);
@@ -180,7 +184,7 @@ export async function renderMermaidWithImages(
       image.setAttribute("aria-label", resource.label);
     }
     return {
-      svg: new XMLSerializer().serializeToString(document.documentElement),
+      svg: svgElement.outerHTML,
       imageErrors,
     };
   } catch (error) {

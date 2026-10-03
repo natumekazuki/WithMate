@@ -65,8 +65,9 @@ after(() => {
 });
 
 function svgDocument(svg: string) {
-  const document = new dom.window.DOMParser().parseFromString(svg, "image/svg+xml");
-  assert.equal(document.querySelector("parsererror"), null);
+  // The preview consumes Mermaid's SVG with HTML foreignObject labels as HTML.
+  const document = new dom.window.DOMParser().parseFromString(svg, "text/html");
+  assert.equal(document.body.firstElementChild?.localName, "svg");
   return document;
 }
 
@@ -121,6 +122,46 @@ test("standard image nodes resolve Japanese paths with spaces and retain graph m
   controller.abort();
   assert.equal(revoked.filter((url) => url === "blob:resolved-1").length, 1);
   assert.equal(revoked.filter((url) => url === "blob:resolved-2").length, 1);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "画像nodeを含む図でもsubgraph・HTML改行label・相対click linkを保ったSVGを返す"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#Mermaid Images; docs/design/message-rich-text.md#Link Handling" }
+// fault = "Mermaidが出力するHTML改行をXMLとして拒否し、画像と通常label・linkを含む図全体が表示不能になる"
+// observable = "生成SVGの画像URI・subgraph・改行要素・label文字列・相対link URIと名前空間"
+// observation_boundary = "public-boundary"
+// scope = "renderMermaidWithImagesと実Mermaid strict rendererのHTML label出力"
+// lifecycle = "permanent"
+// impact = "画像付きの説明図で一般的な複数行labelとfile linkを併用できなくなる"
+// distinction = "既存の画像testは単一行labelと画像のみ、link viewport testは生成済みSVGが入力。実render一件で画像とHTML label・linkの共存を検証する"
+// @end-test-value
+test("image diagrams preserve subgraphs, HTML line breaks and relative links", async () => {
+  const controller = new AbortController();
+  try {
+    const result = await renderMermaidWithImages(mermaid, "images-html-label", [
+      "flowchart TB",
+      'subgraph GROUP[" "]',
+      'A@{ img: "./icon.png", label: "入力画像", h: 64, constraint: "on" }',
+      'B["仕様<br/>確認 &amp; 実装&nbsp;完了"]',
+      "A --> B",
+      "end",
+      'click B "./details.md" "詳細"',
+    ].join("\n"), async () => "blob:html-label-image", controller.signal);
+    assert.deepEqual(result.imageErrors, []);
+    const document = svgDocument(result.svg);
+    assert.equal(document.querySelector("svg")?.namespaceURI, "http://www.w3.org/2000/svg");
+    assert.equal(document.querySelectorAll(".cluster").length, 1);
+    assert.equal(document.querySelector("image")?.getAttribute("href"), "blob:html-label-image");
+    assert.equal(document.querySelector("image")?.getAttribute("aria-label"), "入力画像");
+    assert.equal(document.querySelector("foreignObject br")?.namespaceURI, "http://www.w3.org/1999/xhtml");
+    assert.match(document.documentElement.textContent ?? "", /仕様確認 & 実装\u00a0完了/);
+    const anchor = document.querySelector("a");
+    assert.equal(anchor?.getAttribute("href") ?? anchor?.getAttribute("xlink:href"), "./details.md");
+    assert.equal(document.querySelectorAll("path.flowchart-link").length, 1);
+  } finally {
+    controller.abort();
+  }
 });
 
 // @test-value v2
