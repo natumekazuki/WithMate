@@ -216,11 +216,14 @@ export class CharacterContextApplicationService {
   async getContext(
     request: unknown,
     transport: CharacterContextTransport = "internal",
+    turnSnapshot?: CharacterRuntimeSnapshot | null,
   ): Promise<CharacterContextServiceResult<CharacterContextResponse>> {
     return this.measure("character_context.get", transport, "none", async () => {
       const input = validateCharacterContextGetRequest(request);
-      const snapshot = await this.deps.resolveCharacterRuntimeSnapshot(input.characterId);
-      if (!snapshot) {
+      const snapshot = turnSnapshot === undefined
+        ? await this.deps.resolveCharacterRuntimeSnapshot(input.characterId)
+        : turnSnapshot;
+      if (!snapshot || snapshot.characterId !== input.characterId) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
           field: "characterId",
           retryable: false,

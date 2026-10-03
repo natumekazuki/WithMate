@@ -62,7 +62,9 @@ npm run electron:start
 | MT-003D | Character editor archive / dirty close | 既存 Character を編集し、未保存のまま close と archive をそれぞれ試す。New Sessionを開いたまま別のCharacter Editor Windowでarchiveし、Homeへの復帰とdialogの再表示を確認する | close は未保存変更の破棄確認を出し、archive は destructive confirmation を挟む。archive 後はHome復帰時の管理一覧から消える。開いているlaunch selectorの一覧と選択は維持され、dialogを閉じて再度開いた時にarchive済みCharacterが候補から消える |
 | MT-003E | Characterが0件 | Character catalogが0件の状態でHomeを起動し、New Sessionを開く | Characterを選ばないneutral sessionを開始できる |
 | MT-003F | Random Character | Characterを2件以上用意し、New Sessionを開き直す | Character選択の初期値はRandomで、開始時に利用可能なCharacterから選ぶ |
-| MT-003G | Character snapshot | Characterを選んでSessionを作成し、catalogの`character.md`を変更して既存Sessionで1 turn実行する | 既存Sessionは作成時点の保存済みsnapshotを使う |
+| MT-003G | Character snapshot更新 | Main／AuxiliaryのCharacterの`character.md`を変更して既存会話で送信する。同じ本文で再送信し、実行中にも定義を変更する | 送信開始時に有効な変更を採用し、snapshotの定義部分だけを保存する。同じ本文ではsnapshotのhash／時刻は変わらず、実行中の変更は次の送信から反映される。owner／表示metadata／履歴／threadは維持される |
+| MT-003G1 | Archive後のCharacter snapshot | 定義更新を採用したMain／AuxiliaryのCharacterをArchiveし、アプリ再起動後に同じ会話で送信する | canonical定義を読み直さず、各会話が最後に保存したsnapshotで継続できる |
+| MT-003G2 | Character snapshot更新失敗 | 分離した検証環境でactive Characterの定義を不正・欠落状態にして送信し、同じIDの定義を修復して再送信する | 更新失敗は明示されProviderを起動しない。保存済みsnapshot／履歴／threadを保持し、修復後は新しい有効な定義で送信できる |
 | MT-003H | Prompt boundary | `character.md`と`character-notes.md`を持つCharacterで1 turn実行し、Audit Logを確認する | system側にCharacter snapshotが入り、notesとMemoryは常設注入されない |
 | MT-003I | Character Markdown fence | `character.md`に3連・4連のbacktick fenceを入れて1 turn実行する | definitionが一つのMarkdown blockとして保持される |
 | MT-003J | Home summary error isolation / recovery | New Sessionを開いてtitleとworkspaceを入力し、focus復帰時にRecent、Pinned、open summaryの取得を一つずつ失敗させてから回復させる。取得済みpageにもあるopen Sessionのtitle・run状態を変更し、Recent／Pinnedの失敗中にopen取得だけを成功させる。初回取得失敗と追加page失敗でも表示と`Retry`を確認する | 成功した取得結果は反映され、既存rowを保持したまま一覧またはMonitorに失敗と`Retry`が出る。同一IDのopen取得が成功すれば、page順序を維持して新しいtitleとRunning／Stopped分類を表示する。Recent／Pinnedの失敗だけではRandom開始を拒否せず、New Sessionの入力・Character選択を保持する。追加page失敗では自動再試行を続けず、`Retry`成功後に続きを表示して該当エラーを消す |

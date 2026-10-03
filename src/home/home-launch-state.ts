@@ -1,6 +1,7 @@
 import type { CreateSessionRequest, HomeSessionSummary } from "../../src-shared/session/session-state.js";
 import { DEFAULT_CHARACTER_THEME_COLORS, type CharacterThemeColors } from "../../src-shared/character/character-state.js";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
+import { NEUTRAL_CHARACTER_ID } from "../../src-shared/character/character-owner.js";
 import {
   selectWeightedRandomLaunchCharacterId,
   type CharacterUsageSessionSource,
@@ -18,7 +19,6 @@ import {
   type WorkspaceDirectoryValidationResult,
 } from "../../src-shared/window/workspace-directory-validation.js";
 
-const NEUTRAL_CHARACTER_ID = "withmate-neutral-character";
 const NEUTRAL_CHARACTER_NAME = "WithMate";
 
 type LaunchCharacterSnapshot = {

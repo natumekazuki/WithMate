@@ -4,7 +4,7 @@ coding planeへ渡す指示の正本、順序、成果物境界を定める。Ch
 
 ## 通常Sessionの入力
 
-通常Sessionでは作成時に保存した`CharacterRuntimeSnapshot`を使い、catalogの後続編集には自動追従しない。Character名と説明はsnapshot metadata、定義本文はfrontmatterを除いた`character.md`から取り、system側の`Character Definition Snapshot`として渡す。`character-notes.md`とMemory entryは常設promptへ入れない。
+通常のMain／Auxiliaryでは送信開始時に確定した`CharacterRuntimeSnapshot`を使う。active Characterのcanonical `character.md`が前回snapshotから変わっていれば有効性を確認して定義部分だけを更新し、archived Characterでは保存済み定義を使う。Character名と説明は保存済みsnapshot metadata、定義本文はfrontmatterを除いた`character.md`から取り、system側の`Character Definition Snapshot`として渡す。継続threadでは当該turnの定義を過去turnの定義より優先させ、更新のためにthreadや会話履歴を破棄しない。`character-notes.md`とMemory entryは常設promptへ入れない。
 
 論理sectionは次の順序で構成する。存在しない値や無効化されたsectionの空見出しは残さない。
 

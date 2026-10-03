@@ -79,6 +79,7 @@ import {
   resolveLegacyAuxiliaryPreviewFromAuditEntries,
 } from "./auxiliary/auxiliary-session-storage.js";
 import { CharacterService } from "./character/character-service.js";
+import { refreshSessionCharacterRuntimeSnapshot } from "./character/character-runtime-service.js";
 import { CharacterWorkspaceOperationCoordinator } from "./character/character-workspace-operation-coordinator.js";
 import { CharacterStorage } from "./character/character-storage.js";
 import {
@@ -2088,7 +2089,9 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         upsertTerminalSession: (session, terminalCommit) => requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
       },
       resolution: {
-        resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(session, (characterId) => requireCharacterService().createRuntimeSnapshot(characterId)),
+        resolveRuntimeSessionForTurn: (session) => session.sessionKind === "character-authoring"
+          ? resolveCharacterAuthoringRuntimeSessionForTurn(session, (characterId) => requireCharacterService().createRuntimeSnapshot(characterId))
+          : refreshSessionCharacterRuntimeSnapshot(session, (characterId, previousSnapshot) => requireCharacterService().refreshRuntimeSnapshot(characterId, previousSnapshot)),
         resolveComposerPreview,
         resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
         resolveSessionFolderPath: (sessionId) => ensureSessionFilesDirectory(sessionId),
@@ -2198,6 +2201,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       auxiliary: {
         getRuntimeSession: (sessionId) => requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId),
         getSession: (sessionId) => requireAuxiliarySessionService().getAuxiliarySession(sessionId),
+        persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
         upsertRuntimeSession: async (session, options) => {
           const auxiliaryService = requireAuxiliarySessionService();
           await auxiliaryService.upsertAuxiliaryRuntimeSession(session, options);
@@ -2208,7 +2212,11 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         isAuxiliarySession: async (sessionId) => Boolean(await requireAuxiliarySessionService().getAuxiliarySession(sessionId)),
       },
       parent: { getSession: (sessionId) => Promise.resolve(owner.sessionStorage.getSession(sessionId)) },
-      resolution: { resolveComposerPreview, resolveProviderCatalog },
+      resolution: {
+        resolveComposerPreview,
+        resolveProviderCatalog,
+        resolveRuntimeSessionForTurn: (session) => refreshSessionCharacterRuntimeSnapshot(session, (characterId, previousSnapshot) => requireCharacterService().refreshRuntimeSnapshot(characterId, previousSnapshot)),
+      },
       provider: {
         getProviderCodingAdapter,
         resetProviderSessionThread,

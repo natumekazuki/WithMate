@@ -59,6 +59,7 @@ function createCharacterStorageStub(onClose: () => void = () => undefined): Char
     archiveCharacter: unavailable,
     resolveLaunchCharacter: unavailable,
     createRuntimeSnapshot: unavailable,
+    refreshRuntimeSnapshot: unavailable,
     deleteCharacterRootDirectory: unavailable,
     close: onClose,
   };

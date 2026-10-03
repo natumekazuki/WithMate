@@ -55,7 +55,7 @@ Git checkoutの`.withmate/glossary.yaml`にある用語、別名、定義をSess
 
 ### Character Editor Window
 
-Characterのprofile、icon、theme、`character.md`、`character-notes.md`を編集します。セッションは開始時点のCharacter snapshotを使うため、あとからCharacterを編集しても既存セッションへ自動反映されません。
+Characterのprofile、icon、theme、`character.md`、`character-notes.md`を編集します。通常のMain／Auxiliaryでは、active Characterの`character.md`の変更を次の送信開始時に反映します。CharacterのID、表示名、説明、icon、themeは保存済みの値を維持します。archived Characterでは保存済み定義を使い続けます。
 
 ### Settings Window
 

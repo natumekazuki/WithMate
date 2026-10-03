@@ -75,7 +75,7 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
       sessionId: session.id,
       query,
       memoryLimit: 3,
-    }, "lifecycle");
+    }, "lifecycle", session.characterRuntimeSnapshot);
     assertOwner("character context");
     if (isCharacterContextError(result)) {
       deps.memory.onCharacterContextFailure(session, result);

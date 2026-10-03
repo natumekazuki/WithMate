@@ -2,7 +2,7 @@
 
 ## 概要
 
-prompt送信時は、providerを起動する前にuser messageとrunning状態を永続化します。Character authoringを開始する場合は、同じ開始処理で使用するCharacter snapshotも固定します。
+prompt送信時は、providerを起動する前にuser messageとrunning状態を永続化します。通常のMain／AuxiliaryとCharacter authoringでは、同じ開始処理で使用するCharacter snapshotも確定します。
 
 ## 開始transaction
 
@@ -10,7 +10,7 @@ prompt送信時は、providerを起動する前にuser messageとrunning状態�
 
 - 追加するuser message
 - running状態とturn metadata
-- authoringに必要な最新Character snapshot
+- 当該turnで使用するCharacter snapshot
 - Sessionの更新日時など開始に伴うmetadata
 
 保存が完了する前にprovider実行を開始しません。
@@ -24,6 +24,8 @@ v2、v3、v6のstorage adapterは同じapplication serviceの入力を受け取�
 ## Character snapshot
 
 Character authoringを開始する場合は、開始時点の最新snapshotを保存します。以前のturnで使用したsnapshotや、validation前に残った一時値を再利用しません。
+
+通常のMain／Auxiliaryでは、送信開始時にactive Characterのcanonical定義を前回snapshotと比較し、変更があれば有効な定義部分だけを更新して保存します。archived Characterでは保存済みsnapshotを使います。owner、表示metadata、会話履歴、provider threadを維持する境界と失敗条件は[Character Storage](../design/character-storage.md#runtime-snapshot)に従います。
 
 validationまたは保存に失敗した場合は、開始transaction全体を失敗させます。user messageだけ、running状態だけ、またはsnapshot clearだけが先に確定する状態を作りません。
 

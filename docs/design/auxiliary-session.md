@@ -20,7 +20,7 @@ Auxiliaryは監査専用ではなく、通常のprovider chat/coding sessionと�
 - Auxiliary専用Window、横並びの多数tab、常設AUX rail。
 - 監査preset、固定reviewer role、handoff、自動結果転送、shared source競合管理。
 - AI要約、自動命名、preview用provider実行、AI backfill。
-- Auxiliary単独の削除／archive UI、手動Character picker、会話途中のCharacter変更。
+- Auxiliary単独の削除／archive UI、手動Character picker、会話途中のCharacter owner変更。
 
 ## Runtime Model
 
@@ -44,7 +44,7 @@ Shared ActionDock ──┘
 
 新規AuxiliaryはMain Processでactive Character候補からMainのstable Character IDを除外してweighted random選択する。他Auxiliaryと同じCharacterは許容する。候補が0件、snapshot生成失敗、catalog競合の場合は作成を失敗させ、Main／neutralへfallbackしない。
 
-作成時に`characterId`と`CharacterRuntimeSnapshot`を保存し、provider prompt、表示、一覧icon、Memory owner、binding解決で同じidentityを使う。catalog編集・archive後も既存snapshotを再生成しない。snapshotがない旧形式行だけは親の保存済みidentityを互換fallbackに使い、不正な新形式snapshotは親へ差し替えず明示的に失敗させる。
+作成時に`characterId`と初期`CharacterRuntimeSnapshot`を保存し、provider prompt、表示、一覧icon、Memory owner、binding解決で同じidentityを使う。送信開始時は[Character Storage](character-storage.md#runtime-snapshot)に従い、active Characterの変更された有効な定義部分だけを更新する。表示metadataとownerは維持し、archived Characterではcanonical fileを読まず保存済みsnapshotを使う。archivedでのsnapshot欠落、catalog欠落、active定義の読取り・validation失敗では明示的に送信を失敗させ、親や同名Characterへfallbackしない。既存snapshot、会話履歴、provider threadは保持する。汎用updateからownerやsnapshotを差し替えない。
 
 ## UI flow
 
@@ -130,4 +130,4 @@ previewはProvider呼び出しを行わず、確定した最終assistant応答�
 
 ## Validation boundary
 
-実装で確認する対象は、複数Auxiliaryの保存・追加・切り替え、Main除外Character抽選、snapshot固定、同時run、親削除時の全会話cleanup、metadata列の再読込、preview更新競合である。Electron GUI、Provider実機、cross-provider並行実行の未実施確認は、実施済みとして扱わない。
+実装で確認する対象は、複数Auxiliaryの保存・追加・切り替え、Main除外Character抽選、stable owner／表示metadataの維持と送信時の定義更新、同時run、親削除時の全会話cleanup、metadata列の再読込、preview更新競合である。Electron GUI、Provider実機、cross-provider並行実行の未実施確認は、実施済みとして扱わない。
