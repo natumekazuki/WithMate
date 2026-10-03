@@ -88,6 +88,7 @@ describe("HomeSettingsContent", () => {
       onChangeCharacterAffectContextEnabled={noOp}
       onChangeConversationTimingEnabled={noOp}
       onChangeScrollToLatestOnSend={noOp}
+      onChangePreviewWheelZoomStep={noOp}
       onChangeLaunchAtLoginEnabled={noOp}
       onChangeSessionTurnNotificationEnabled={noOp}
       onChangeSessionTurnNotificationResponsePreviewEnabled={noOp}

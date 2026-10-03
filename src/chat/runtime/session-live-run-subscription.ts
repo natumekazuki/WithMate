@@ -24,13 +24,14 @@ export type LiveSessionRunStateUpdate = {
 export function startLiveSessionRunSubscription(input: {
   sessionId: string;
   api: LiveSessionRunSubscriptionApi;
+  initialState?: LiveSessionRunState | null;
   applyLiveRunState: (update: LiveSessionRunStateUpdate) => void;
   onSessionRunUpdated?: (sessionId: string) => void;
 }): () => void {
   let active = true;
   let receivedSubscriptionUpdate = false;
 
-  input.applyLiveRunState({ ownerSessionId: input.sessionId, state: null });
+  input.applyLiveRunState({ ownerSessionId: input.sessionId, state: input.initialState ?? null });
   logSessionRunStuckInvestigation("renderer.live-run-subscription.start", {
     sessionId: input.sessionId,
   });

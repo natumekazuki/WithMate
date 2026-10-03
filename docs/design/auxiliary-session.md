@@ -20,7 +20,7 @@ Auxiliaryは監査専用ではなく、通常のprovider chat/coding sessionと�
 - Auxiliary専用Window、横並びの多数tab、常設AUX rail。
 - 監査preset、固定reviewer role、handoff、自動結果転送、shared source競合管理。
 - AI要約、自動命名、preview用provider実行、AI backfill。
-- Auxiliary単独の削除／archive UI、手動Character picker、会話途中のCharacter変更。
+- Auxiliary単独の削除／archive UI、手動Character picker、会話途中のCharacter owner変更。
 
 ## Runtime Model
 
@@ -42,9 +42,13 @@ Shared ActionDock ──┘
 
 ## Character identity
 
-新規AuxiliaryはMain Processでactive Character候補からMainのstable Character IDを除外してweighted random選択する。他Auxiliaryと同じCharacterは許容する。候補が0件、snapshot生成失敗、catalog競合の場合は作成を失敗させ、Main／neutralへfallbackしない。
+新規AuxiliaryはMain Processでactive Character候補からMainのstable Character IDを除外し、同じ親Sessionに保存されたAuxiliaryが未使用のCharacterを優先して既存のweighted random方式で選択する。使用状況は表示名ではなくstable Character IDで判定し、非表示・非実行中・`closed`の会話も含める。別の親Sessionでの使用状況は除外条件にしない。
 
-作成時に`characterId`と`CharacterRuntimeSnapshot`を保存し、provider prompt、表示、一覧icon、Memory owner、binding解決で同じidentityを使う。catalog編集・archive後も既存snapshotを再生成しない。snapshotがない旧形式行だけは親の保存済みidentityを互換fallbackに使い、不正な新形式snapshotは親へ差し替えず明示的に失敗させる。
+未使用候補が0件の場合は、Main以外のactive候補全体からweighted randomで選択し、既存Auxiliaryとの重複を許可して作成を継続する。件数上限は設けない。Main除外後の候補自体が0件、snapshot生成失敗、catalog競合の場合は作成を失敗させ、Main／neutralへfallbackしない。
+
+commitの排他境界内で同じ親の使用状況を再確認する。準備したCharacterが既存Auxiliaryで使用済みになり、未使用候補が残る場合は保存せず、coordinatorの外でCharacter選択とsnapshot準備をやり直す。再度commitするときも取消、storage、親identity、runtime selection、Characterのactive状態を検証する。既存Auxiliaryのidentity、snapshot、会話は変更しない。
+
+作成時に`characterId`と初期`CharacterRuntimeSnapshot`を保存し、provider prompt、表示、一覧icon、Memory owner、binding解決で同じidentityを使う。送信開始時は[Character Storage](character-storage.md#runtime-snapshot)に従い、active Characterの変更された有効な定義部分だけを更新する。表示metadataとownerは維持し、archived Characterではcanonical fileを読まず保存済みsnapshotを使う。archivedでのsnapshot欠落、catalog欠落、active定義の読取り・validation失敗では明示的に送信を失敗させ、親や同名Characterへfallbackしない。既存snapshot、会話履歴、provider threadは保持する。汎用updateからownerやsnapshotを差し替えない。
 
 ## UI flow
 
@@ -130,4 +134,4 @@ previewはProvider呼び出しを行わず、確定した最終assistant応答�
 
 ## Validation boundary
 
-実装で確認する対象は、複数Auxiliaryの保存・追加・切り替え、Main除外Character抽選、snapshot固定、同時run、親削除時の全会話cleanup、metadata列の再読込、preview更新競合である。Electron GUI、Provider実機、cross-provider並行実行の未実施確認は、実施済みとして扱わない。
+実装で確認する対象は、複数Auxiliaryの保存・追加・切り替え、Main除外と同じ親内の未使用Character優先抽選、並行作成の再選択、未使用候補枯渇後の作成継続、stable owner／表示metadataの維持と送信時の定義更新、同時run、親削除時の全会話cleanup、metadata列の再読込、preview更新競合である。Electron GUI、Provider実機、cross-provider並行実行の未実施確認は、実施済みとして扱わない。

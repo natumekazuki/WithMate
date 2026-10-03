@@ -53,6 +53,9 @@ WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packaging�
   - `package.json`
 - provider native package 本体は `files` の除外規則で app bundle 側から外し、`resources/provider-binaries/` 側だけを runtime の正本にする
 - `asar` は有効化する
+- `node-pty`のprebuildsとConPTY付随ファイルは`asarUnpack`でASAR外へ配置する。
+- Windowsでは`beforePack` hookがtarget architectureの`node-pty`同梱prebuildと付随DLL／実行ファイルを確認し、`node-pty`だけを`@electron/rebuild`の対象から除外する。欠損・空ファイル時はpackagingを失敗させ、source buildへ自動fallbackしない。他のproduction／optional native依存はrebuild対象を維持する。処理後は`npmRebuild`だけを無効にし、electron-builderによるproduction依存の収集・同梱は維持する。
+- Windows artifactから`node-pty/build/`を除外し、ローカルのsource build結果より同梱prebuildが利用されるようにする。Windows以外はelectron-builderの既定rebuildを利用する。
 - provider native package は `scripts/build/stage-provider-binaries.ts` で `build/provider-binaries/` へ stage し、`extraResources` で `resources/provider-binaries/` 配下へ配布する
 - Claudeの公式実行物は`@anthropic-ai/claude-agent-sdk`に固定した版のoptional dependencyを未改変でstageする。Windows / macOSのx64 / arm64を対象にし、開発時は`node_modules`、配布時はASAR外の`resources/provider-binaries/@anthropic-ai/claude-agent-sdk-<platform>-<arch>/claude[.exe]`を解決する
 - packaged runtime の binary path 解決は `src-electron/providers/provider-binary-paths.ts` を正本にする
@@ -83,6 +86,7 @@ minimum の確認は次とする。
 3. Windows 環境では必要に応じて `npm run dist:win`
 4. Windows installer 導入後、Start Menu 検索で `WithMate` を入力して起動できることを確認する
 5. Windows unpacked 出力では `resources/provider-binaries/@openai/codex-win32-x64/vendor/.../codex.exe`、`resources/provider-binaries/@github/copilot-win32-x64/copilot.exe`、`resources/provider-binaries/@anthropic-ai/claude-agent-sdk-win32-x64/claude.exe` が存在することを確認する
+6. Windows unpackedアプリのSession WindowでTerminalを開き、PowerShellの入力・出力、サイズ変更、タブ終了とWindow終了時のPTY解放を確認する。開発環境のnative loadだけで配布検証済みにしない
 
 macOS artifact の実確認は macOS 環境で次を行う。
 

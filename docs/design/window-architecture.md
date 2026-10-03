@@ -5,7 +5,7 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 | Window | 責務 |
 | --- | --- |
 | Home | Sessionの検索・再開・新規作成、Character catalog、SettingsとSession Monitorへの入口 |
-| Session | Main／Auxiliaryの共通chat shell、承認・実行設定、file／Git preview、Audit Log、会話操作 |
+| Session | Main／Auxiliaryの共通chat shell、承認・実行設定、file／Git preview、Audit Log、会話操作、Window所有の組み込みTerminal |
 | Character Editor | Character profile、icon、theme、`character.md`、`character-notes.md`の編集 |
 | Settings | app共通設定、provider設定、model catalog、診断 |
 | Session Monitor | 開いているSessionの状態をcompactに監視 |
@@ -16,9 +16,11 @@ Homeは作業中のchatを抱えず、Sessionはcatalogやapp共通設定の編�
 
 ## Sessionの起動と継続
 
-HomeのNew Sessionでtitle、workspace、provider、Characterを選び、保存済みSessionを作成してSession Windowを開く。Recent Sessionsからの再開では、同じSessionのWindowが開いていれば再利用・focusする。通常Sessionは作成時点のCharacter snapshotを保持し、catalog編集で暗黙に差し替えない。Character authoringでは専用のSession種別とworkspaceを使い、Windowの基本lifecycleは通常Sessionと共有する。
+HomeのNew Sessionでtitle、workspace、provider、Characterを選び、保存済みSessionを作成してSession Windowを開く。Recent Sessionsからの再開では、同じSessionのWindowが開いていれば再利用・focusする。通常Sessionはstable Character ownerと表示metadataを維持し、active Characterの定義変更だけを送信開始時に反映する。詳細は[Character Storage](character-storage.md#runtime-snapshot)を参照する。Character authoringでは専用のSession種別とworkspaceを使い、Windowの基本lifecycleは通常Sessionと共有する。
 
 Sessionの実行状態はMainが所有する。Windowを閉じてもSession recordは残り、実行中のcloseでは確認を経て継続または中止を選ぶ。close時のAuxiliary draft flush、アプリ終了、取消の詳細は[Session Run Lifecycle](session-run-lifecycle.md)に従う。
+
+組み込みTerminalはWindowの生存期間に属し、会話のrunとは独立する。通常のWindow closeでは個別タブと同じ入力待ち判定を使い、実行中・起動中・判別不能な端末があれば非同期で一括確認する。入力待ち・終了済み端末だけなら端末理由の確認を省略するが、会話のrunに対する確認と下書き保存は維持する。実際の破棄、Session削除、アプリ終了ではそのownerのPTYを解放する。dockの折りたたみ、タブ切り替え、最小化では終了しない。再起動やWindow再作成でシェルを復元しない。
 
 ## Windowの再利用と配置
 

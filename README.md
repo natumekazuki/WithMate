@@ -38,6 +38,7 @@ coding agentと作業する中心画面です。
 - approval、model、depthなどの実行オプションを変更
 - `LatestCommand`、Copilotのbackground tasks、usage情報を確認
 - Audit Log、Terminal、session title変更、session削除へ移動
+- 下部パネルの`Prompt / Terminal`切り替えでローカルシェルを操作。外部Terminalの起動も利用可能
 - File Explorer、Repository Glossary、File Preview、Git Diffを同じ作業面から利用
 
 ### File ExplorerとFile Preview
@@ -56,7 +57,7 @@ Git checkoutの`.withmate/glossary.yaml`にある用語、別名、定義をSess
 
 ### Character Editor Window
 
-Characterのprofile、icon、theme、`character.md`、`character-notes.md`を編集します。セッションは開始時点のCharacter snapshotを使うため、あとからCharacterを編集しても既存セッションへ自動反映されません。
+Characterのprofile、icon、theme、`character.md`、`character-notes.md`を編集します。通常のMain／Auxiliaryでは、active Characterの`character.md`の変更を次の送信開始時に反映します。CharacterのID、表示名、説明、icon、themeは保存済みの値を維持します。archived Characterでは保存済み定義を使い続けます。
 
 ### Settings Window
 

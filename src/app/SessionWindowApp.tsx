@@ -138,7 +138,9 @@ import { SessionContextFeature, type SessionContextFeatureHandle } from "../chat
 import { composeAgentSessionChatWindow } from "../chat/session-chat-window-composition.js";
 import { useSessionChatShellFeature } from "../chat/shell/session-chat-shell-feature.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { SessionTerminal, type SessionTerminalHandle } from "../terminal/session-terminal.js";
 import { ShortcutSettingsProvider } from "../settings/shortcut-settings-context.js";
+import { PreviewWheelZoomStepContext } from "../settings/preview-zoom-settings-context.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "../file-explorer/open-path-result.js";
 import {
   isSessionWorkspaceAvailable,
@@ -311,6 +313,8 @@ function displayApprovalValue(value: string): string {
 export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
+  const [actionDockMode, setActionDockMode] = useState<"prompt" | "terminal">("prompt");
+  const terminalRef = useRef<SessionTerminalHandle>(null);
   const composerRegistryRef = useRef<ComposerControllerRegistry | null>(null);
   if (!composerRegistryRef.current) {
     composerRegistryRef.current = new ComposerControllerRegistry();
@@ -482,6 +486,7 @@ export default function AgentSessionWindowApp() {
   const {
     getLiveRunRevision,
     hasSelectedSessionLiveRun,
+    selectedSessionCancellationState,
     hasLiveRun,
     hasAssistantText: hasLiveRunAssistantText,
     hasApprovalRequest: isApprovalRequestPending,
@@ -523,6 +528,7 @@ export default function AgentSessionWindowApp() {
     visibleRunState: activeAuxiliarySession?.runState ?? resolveSelectedSessionRunState({
       runState: selectedSession?.runState,
       hasLiveRun: hasSelectedSessionLiveRun,
+      isCancellationPending: !!selectedSessionCancellationState,
     }),
     auxiliaryDraftPersistence,
     setForceComposerBlockedFeedback,
@@ -629,6 +635,7 @@ export default function AgentSessionWindowApp() {
   const selectedSessionRunState: Session["runState"] | null = resolveSelectedSessionRunState({
     runState: selectedSession?.runState,
     hasLiveRun: hasSelectedSessionLiveRun,
+    isCancellationPending: !!selectedSessionCancellationState,
   });
   const visibleSessionRunState: Session["runState"] | null = activeAuxiliarySession?.runState ?? selectedSessionRunState;
   const selectedSessionCharacter = useMemo(
@@ -684,6 +691,18 @@ export default function AgentSessionWindowApp() {
     presentation: layoutPresentation,
     sidePanes,
     isEditingTitle,
+    terminalDock: withmateApi ? {
+      mode: actionDockMode,
+      onChange: (mode) => {
+        setActionDockMode(mode);
+        if (mode === "terminal") {
+          setIsAgentPickerOpen(false);
+          setIsSkillPickerOpen(false);
+          composerFeature.setIsAdditionalDirectoryListOpen(false);
+        }
+      },
+      focus: () => terminalRef.current?.focus(),
+    } : undefined,
     forceActionDockExpanded: [
       isAgentPickerOpen,
       isSkillPickerOpen,
@@ -1140,6 +1159,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelRun = async () => {
+    if (selectedSessionCancellationState) return;
     await cancelRun(buildRunningSessionCancelTarget({
       sessionId: selectedSession?.id,
       runState: selectedSessionRunState,
@@ -1954,7 +1974,9 @@ export default function AgentSessionWindowApp() {
     fallbackErrorMessage: "Could not open the Session files directory.",
   });
 
-  const pendingRunIndicatorAnnouncement = isApprovalRequestPending || isElicitationRequestPending
+  const pendingRunIndicatorAnnouncement = !activeAuxiliarySession && selectedSessionCancellationState
+    ? selectedSessionCancellationState === "terminating" ? "Waiting for the run to stop" : "Canceling run"
+    : isApprovalRequestPending || isElicitationRequestPending
     ? "Waiting for approval"
     : hasInProgressLiveRunStep
       ? "Working"
@@ -2075,7 +2097,10 @@ export default function AgentSessionWindowApp() {
     isAuxiliaryMode,
     isWorkspaceAvailable: isSelectedWorkspaceAvailable,
     onOpenAuditLog: () => auditFeatureRef.current?.open(),
-    onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
+    onOpenSessionTerminal: () => {
+      chatShellFeature.handleChangeActionDockMode("terminal");
+    },
+    onOpenExternalTerminal: () => void handleOpenSessionTerminal(),
     onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
     onOpenSessionFilesTerminal: () => void handleOpenSessionFilesTerminal(),
     onTitleInputKeyDown: handleTitleInputKeyDown,
@@ -2089,6 +2114,7 @@ export default function AgentSessionWindowApp() {
     target: auxiliaryWorkspace.target,
     runtime: {
       isRunning: renderedIsRunning,
+      isCanceling: !activeAuxiliarySession && !!selectedSessionCancellationState,
       selectedRunState: selectedSessionRunState,
       auxiliaryRunState: activeAuxiliarySession?.runState ?? null,
       busyReason: composerBusyReason,
@@ -2272,6 +2298,12 @@ export default function AgentSessionWindowApp() {
     </ChatSessionModals>
   );
   const chatShellSurface = chatShellFeature.buildSurface({
+    terminalContent: withmateApi ? <SessionTerminal
+      ref={terminalRef}
+      api={withmateApi}
+      expanded={actionDockMode === "terminal" && chatShellFeature.isActionDockExpanded}
+      onCollapse={chatShellFeature.handleCollapseActionDock}
+    /> : undefined,
     mainContent: filePreviewContent,
     leftPane: fileExplorerPane,
     themeStyle: sessionThemeStyle,
@@ -2340,7 +2372,7 @@ export default function AgentSessionWindowApp() {
 
   return (
     <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
-      <>
+      <PreviewWheelZoomStepContext.Provider value={isAppSettingsLoaded ? appSettings.previewWheelZoomStep : null}>
       <ChatWindow
         {...chatWindowProps}
         errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors]}
@@ -2407,7 +2439,7 @@ export default function AgentSessionWindowApp() {
         onSelectProvider={handleSelectAuxiliaryLaunchProvider}
         onStart={() => void handleStartAuxiliarySession()}
       />
-      </>
+      </PreviewWheelZoomStepContext.Provider>
     </ShortcutSettingsProvider>
   );
 }

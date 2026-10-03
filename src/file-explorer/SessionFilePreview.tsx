@@ -869,12 +869,16 @@ export function SessionFilePreview({
       return;
     }
     const rebuildIndex = () => {
-      renderedMarkdownIndexRef.current = createRenderedTextSearchIndex(
+      const index = createRenderedTextSearchIndex(
         container,
-        previewKind === "mermaid"
-          ? (node) => !node.parentElement?.closest("svg style, svg defs")
-          : undefined,
+        (node) => !node.parentElement?.closest(previewKind === "mermaid"
+          ? ".message-mermaid-controls, svg style, svg defs"
+          : ".message-mermaid-controls"),
       );
+      if (renderedMarkdownIndexRef.current?.normalizedText !== index.normalizedText) {
+        setCurrentMatch(0);
+      }
+      renderedMarkdownIndexRef.current = index;
       setRenderedMarkdownIndexRevision((current) => current + 1);
     };
     rebuildIndex();
@@ -883,14 +887,13 @@ export function SessionFilePreview({
     return () => observer.disconnect();
   }, [decodedText, isRichPreview, markdownMode, previewKind]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const index = renderedMarkdownIndexRef.current;
     const matches = index
       ? findRenderedTextMatchOffsets(index, findQuery)
       : { offsets: new Uint32Array(0), normalizedQueryLength: 0 };
     renderedMarkdownMatchesRef.current = matches;
     setRenderedMarkdownMatchCount(matches.offsets.length);
-    setCurrentMatch(0);
   }, [findQuery, renderedMarkdownIndexRevision]);
 
   const activeFindMatchCount = isRichPreview && markdownMode === "preview"
@@ -916,7 +919,7 @@ export function SessionFilePreview({
     applyRenderedTextHighlights(document, resolvedMatches, resolvedCurrentMatch);
     scrollRenderedTextMatchIntoView(resolvedCurrentMatch);
     return () => clearRenderedTextHighlights(document);
-  }, [activeCurrentMatch, findOpen, isRichPreview, markdownMode, renderedMarkdownIndexRevision]);
+  }, [activeCurrentMatch, findOpen, findQuery, isRichPreview, markdownMode, renderedMarkdownIndexRevision]);
 
   useEffect(() => {
     if (!loaded || (loaded.descriptor.kind !== "image" && loaded.descriptor.kind !== "svg")) {
@@ -1492,7 +1495,7 @@ export function SessionFilePreview({
           >
             {previewKind === "mermaid" ? (
               <div className="session-file-markdown session-file-mermaid">
-                <MermaidDiagram source={decodedText} />
+                <MermaidDiagram source={decodedText} onOpenPath={handleOpenMarkdownPath} />
               </div>
             ) : (
               <MessageRichText

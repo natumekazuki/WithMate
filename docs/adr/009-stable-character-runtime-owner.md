@@ -5,7 +5,7 @@
 
 ## 適用状態
 
-通常 Session の stable Character owner 契約は現行のまま適用する。本文中の Companion 固有記述は歴史的な判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。現行 Session / Auxiliary Session の owner と snapshot 契約を失効させるものではない。
+通常 Session の stable Character owner 契約と汎用updateでのowner／snapshot差し替え禁止は現行のまま適用する。通常Sessionのsnapshotをimmutableとする本文の判断は現行運用の適用対象外とし、後継の[Character Storage](../design/character-storage.md#runtime-snapshot)に従ってMain／Auxiliaryの内部送信開始経路が最新の有効な定義部分だけを更新する。authoring固有の更新・無効化契約は変更しない。本文中の Companion 固有記述は歴史的な判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。
 
 ## Context
 

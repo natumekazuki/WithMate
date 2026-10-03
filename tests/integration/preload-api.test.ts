@@ -604,9 +604,11 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   const keys = Object.keys(api).sort();
   const expectedKeys = [
     "acknowledgeSessionDraftFlush",
+    "acknowledgeTerminalOutput",
     "cancelAuxiliarySessionRun",
     "cancelSessionRun",
     "closeAuxiliarySession",
+    "closeTerminal",
     "copyFilesToSessionFiles",
     "copySessionFilePreviewImage",
     "copySessionFileObject",
@@ -617,6 +619,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "createCharacter",
     "createPromptTemplate",
     "createSession",
+    "createTerminal",
     "deleteSession",
     "deletePromptTemplate",
     "deleteSessionsLastActiveBefore",
@@ -714,6 +717,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionFileRoots",
     "readSessionFileChunk",
     "reportRendererLog",
+    "releaseTerminal",
+    "resizeTerminal",
     "resetAppDatabase",
     "restoreSessionWindows",
     "resolveLiveApproval",
@@ -749,6 +754,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeSessionDraftFlushRelease",
     "subscribeSessionDraftFlushRequest",
     "subscribeSessionGlossary",
+    "subscribeTerminalEvents",
     "forgetMemoryV6Entry",
     "uninstallMemoryV6CliShim",
     "updateAppSettings",
@@ -765,6 +771,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "updateMate",
     "updatePromptTemplate",
     "updateSession",
+    "writeTerminalInput",
   ] satisfies Array<keyof WithMateWindowApi>;
 
   assert.deepEqual(keys, [...expectedKeys].sort());

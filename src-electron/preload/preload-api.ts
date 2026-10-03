@@ -16,6 +16,7 @@ import {
   createSettingsApi,
 } from "./profile-api.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import { createTerminalApi } from "./terminal-api.js";
 
 export function createWithMateWindowApi(
   ipcRenderer: IpcRendererLike,
@@ -35,5 +36,6 @@ export function createWithMateWindowApi(
     ...createSubscriptionApi(ipcRenderer),
     ...createMateApi(ipcRenderer),
     ...createCharacterApi(ipcRenderer),
+    ...createTerminalApi(ipcRenderer),
   };
 }

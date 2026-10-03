@@ -770,6 +770,7 @@ rejectSessionA!(new Error("load failed"));
 
     await bridge.openSessionWindow(session.id);
     window.close();
+    await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(confirms.length, 1);
     assert.equal(window.destroyed, true);
@@ -812,12 +813,12 @@ rejectSessionA!(new Error("load failed"));
 
     await bridge.openSessionWindow(session.id);
     const closeResult = bridge.requestCloseSessionWindow(session.id);
+    assert.equal(await closeResult, true);
 
     assert.equal(confirmCount, 1);
     assert.equal(window.destroyed, true);
     assert.equal(window.closeCount, 2);
     assert.deepEqual(bridge.listOpenSessionWindowIds(), []);
-    assert.equal(await closeResult, true);
   });
 
   // @test-value v2
@@ -858,19 +859,172 @@ rejectSessionA!(new Error("load failed"));
 
     await bridge.openSessionWindow(session.id);
     const closeResult = bridge.requestCloseSessionWindow(session.id);
+    assert.equal(await closeResult, false);
 
     assert.equal(confirmCount, 1);
     assert.equal(window.destroyed, false);
     assert.equal(window.closeCount, 1);
     assert.deepEqual(bridge.listOpenSessionWindowIds(), [session.id]);
-    assert.equal(await closeResult, false);
   });
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "idle Sessionのcloseでは確認経路を起動せず、Window registry通知を更新する"
+  // claim = "確認が必要なTerminalを持つWindowの非同期closeは重複確認を作らず、承認後もdraft保存ACKまでWindowを維持する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal; docs/design/session-run-lifecycle.md" }
+  // fault = "確認待ちの重複closeが複数dialogを開くか、承認のみでdraft flushを飛ばしてWindowを破棄する"
+  // observable = "確認回数、close要求の同一Promise、draft flush要求とACK前後のWindow状態"
+  // observation_boundary = "public-boundary"
+  // scope = "Session Window close with terminal work and draft flush"
+  // lifecycle = "permanent"
+  // impact = "Terminal操作の確認が重複するか、保存前のAuxiliary draftを失う"
+  // distinction = "同期確認とidle closeの既存testでは非同期dialog中の重複と承認後の保存境界を観測できない"
+  // @end-test-value
+  it("Terminal確認待ちのcloseを一つにし、承認後もdraft保存を待つ", async () => {
+    const session = createSession();
+    const window = new StubWindow();
+    const requests: Array<{ requestId: string }> = [];
+    let confirmCount = 0;
+    let approve!: (value: boolean) => void;
+    const bridge = new SessionWindowBridge({
+      createWindow: () => window,
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getTerminalCloseConfirmationCount: () => 1,
+      confirmCloseWhileRunning: () => {
+        confirmCount += 1;
+        return new Promise<boolean>((resolve) => { approve = resolve; });
+      },
+      broadcastOpenSessionWindowIds() {},
+      getWindowSender: () => window,
+      sendDraftFlushRequest: (_window, request) => { requests.push(request); },
+    });
+
+    await bridge.openSessionWindow(session.id);
+    const first = bridge.requestCloseSessionWindow(session.id);
+    const repeated = bridge.requestCloseSessionWindow(session.id);
+    window.close();
+    assert.equal(first, repeated);
+    assert.equal(confirmCount, 1);
+    assert.equal(window.isDestroyed(), false);
+    assert.equal(requests.length, 0);
+
+    approve(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests.length, 1);
+    assert.equal(window.isDestroyed(), false);
+    bridge.acknowledgeDraftFlush(requests[0].requestId, window, true);
+    assert.equal(await first, true);
+    assert.equal(window.isDestroyed(), true);
+    assert.equal(confirmCount, 1);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "確認中に元Windowが破棄された場合、遅れた承認は同じSessionの新Windowを閉じない"
+  // oracle = { type = "contract", ref = "docs/design/window-architecture.md" }
+  // fault = "古い確認結果をSession IDだけで適用し、再作成済みWindowを閉じる"
+  // observable = "古いclose要求の結果、新Windowの生存、古い確認後のclose呼出し数"
+  // observation_boundary = "public-boundary"
+  // scope = "Session Window close confirmation identity"
+  // lifecycle = "permanent"
+  // impact = "別のWindowで再開したSessionとその入力を意図せず終了する"
+  // distinction = "通常closeと古いclosed通知の既存testでは保留中dialogの遅延承認を観測できない"
+  // @end-test-value
+  it("破棄済みWindowへの遅い承認を新Windowへ適用しない", async () => {
+    const session = createSession();
+    const windows: StubWindow[] = [];
+    let approve!: (value: boolean) => void;
+    let needsConfirmation = true;
+    const bridge = new SessionWindowBridge({
+      createWindow: () => {
+        const window = new StubWindow();
+        windows.push(window);
+        return window;
+      },
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getTerminalCloseConfirmationCount: () => needsConfirmation ? 1 : 0,
+      confirmCloseWhileRunning: () => new Promise<boolean>((resolve) => { approve = resolve; }),
+      broadcastOpenSessionWindowIds() {},
+    });
+
+    const oldWindow = await bridge.openSessionWindow(session.id);
+    const closing = bridge.requestCloseSessionWindow(session.id);
+    bridge.discardSessionWindow(session.id);
+    assert.equal(await closing, true);
+    needsConfirmation = false;
+    const newWindow = await bridge.openSessionWindow(session.id);
+    approve(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(oldWindow.closeCount, 2);
+    assert.equal(newWindow.isDestroyed(), false);
+    assert.equal(bridge.getWindow(session.id), newWindow);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "quit失敗で中止した通常closeの遅い承認はWindowを閉じず、新しいclose確認も無効化しない"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+  // fault = "quit失敗後の旧dialog承認でdraft flushとWindow closeを再開するか、新retryの確認を消す"
+  // observable = "quitと通常closeの結果、flush要求数、Window生存、新retryの確認結果"
+  // observation_boundary = "public-boundary"
+  // scope = "Session Window close confirmation and failed quit overlap"
+  // lifecycle = "permanent"
+  // impact = "中止済みの終了操作が後からWindowと作業中Terminalを終了する"
+  // distinction = "既存のclose/quit競合testはcloseの確認待ち中にquitが失敗する順序を扱わない"
+  // @end-test-value
+  it("quit失敗後の古い確認承認を無視して新しいclose確認を維持する", async () => {
+    const session = createSession();
+    const window = new StubWindow();
+    const confirmations: Array<(value: boolean) => void> = [];
+    const signals: AbortSignal[] = [];
+    const requests: Array<{ requestId: string; reason: "close" | "quit" }> = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => window,
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getTerminalCloseConfirmationCount: () => 1,
+      confirmCloseWhileRunning: (_window, _sessionId, signal) => {
+        signals.push(signal);
+        return new Promise<boolean>((resolve) => { confirmations.push(resolve); });
+      },
+      broadcastOpenSessionWindowIds() {},
+      getWindowSender: () => window,
+      sendDraftFlushRequest: (_window, request) => { requests.push(request); },
+    });
+
+    await bridge.openSessionWindow(session.id);
+    const oldClose = bridge.requestCloseSessionWindow(session.id);
+    const quitting = bridge.flushSessionWindowDrafts();
+    assert.deepEqual(requests.map((request) => request.reason), ["quit"]);
+    bridge.acknowledgeDraftFlush(requests[0].requestId, window, false);
+    assert.equal(await quitting, false);
+    assert.equal(await oldClose, false);
+    assert.equal(signals[0].aborted, true);
+
+    const retry = bridge.requestCloseSessionWindow(session.id);
+    assert.equal(confirmations.length, 2);
+    assert.equal(signals[1].aborted, false);
+    confirmations[0](true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(requests.map((request) => request.reason), ["quit"]);
+    assert.equal(window.isDestroyed(), false);
+    window.close();
+    assert.equal(confirmations.length, 2, "old approval must not remove the new confirmation guard");
+    assert.equal(signals[1].aborted, false);
+    confirmations[1](false);
+    assert.equal(await retry, false);
+    assert.equal(window.isDestroyed(), false);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "idle Sessionと確認不要なTerminalのcloseでは確認経路を起動せず、Window registry通知を更新する"
   // oracle = { type = "contract", ref = "SessionWindowBridge#handleWindowClose" }
-  // fault = "idle closeで不要な確認を起動する、またはregistry通知を失う"
+  // fault = "入力待ちTerminalを生存中というだけで確認する、またはregistry通知を失う"
   // observable = "確認呼出し回数とclose後のregistry通知"
   // observation_boundary = "public-boundary"
   // scope = "session-window-idle-close"
@@ -894,6 +1048,7 @@ rejectSessionA!(new Error("load failed"));
       isRunInFlight() {
         return false;
       },
+      getTerminalCloseConfirmationCount: () => 0,
 
       confirmCloseWhileRunning() {
         confirmCount += 1;

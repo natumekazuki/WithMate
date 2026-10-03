@@ -78,6 +78,8 @@ function createService(options: {
   resolveSelection: () => Promise<ReturnType<typeof selection>>;
   getCatalog?: () => ModelCatalogSnapshot | Promise<ModelCatalogSnapshot>;
   listActiveCharacters?: () => readonly CharacterCatalogEntry[];
+  createCharacterRuntimeSnapshot?: (id: string) => CharacterRuntimeSnapshot | null | Promise<CharacterRuntimeSnapshot | null>;
+  randomCharacter?: () => number;
   provider: ProviderRuntimeOperationCoordinator;
   affect: CharacterAffectTurnOwnershipCoordinator;
   onCreationStateChanged?: (result: {
@@ -109,8 +111,8 @@ function createService(options: {
     runProviderRuntimeOperationExclusive: (operation) => options.provider.runExclusive(operation),
     runCharacterAffectTurnOwnershipExclusive: (operation) => options.affect.runExclusive(operation),
     listActiveCharacters: options.listActiveCharacters ?? (() => activeCharacters),
-    createCharacterRuntimeSnapshot: (id) => character(id, "Auxiliary"),
-    randomCharacter: () => 0,
+    createCharacterRuntimeSnapshot: options.createCharacterRuntimeSnapshot ?? ((id) => character(id, "Auxiliary")),
+    randomCharacter: options.randomCharacter ?? (() => 0),
     onCreationStateChanged: options.onCreationStateChanged,
     rememberExecutionOptions: options.rememberExecutionOptions,
     overlayCurrentExecutionOptions: options.overlayCurrentExecutionOptions,
@@ -130,6 +132,283 @@ function selection(revision = 1) {
     customAgentName: "",
   };
 }
+
+function characterCandidates(): CharacterCatalogEntry[] {
+  return ["main-character", "archived-character", "aux-a", "aux-b", "aux-c"].map((id) => ({
+    id,
+    name: "Same display name",
+    description: "",
+    iconFilePath: "",
+    theme: { main: "#6f8cff", sub: "#6fb8c7" },
+    state: id === "archived-character" ? "archived" : "active",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: id === "archived-character" ? "2026-01-01T00:00:00.000Z" : null,
+  }));
+}
+
+// @test-value v2
+// kind = "invariant"
+// claim = "新規Auxiliaryは同じ親の保存済みactive/closed CharacterをIDで避け、枯渇時だけMain以外で重複できる"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#character-identity" }
+// fault = "表示名・他の親の使用状況を除外に使う、closedを無視する、または枯渇時に作成を拒否する"
+// observable = "作成結果のCharacter ID列、再取得した既存会話・snapshot・draft・threadの一致"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-character-selection"
+// lifecycle = "permanent"
+// impact = "再表示可能な会話との不要な重複と、Character数による作成制限を防ぐ"
+// distinction = "既存のMain除外testでは親別の保存済み使用状況と枯渇境界を検証できず、短い実DB testで保持する"
+// @end-test-value
+test("Auxiliary Characterは同じ親の保存済み使用状況を優先し枯渇時に重複を許可する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-character-usage-"));
+  const sessionStorage = new SessionStorageV6(path.join(directory, "app.db"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  const main = parent({ characterRuntimeSnapshot: null });
+  let currentParent = parent({ id: "other-parent", characterRuntimeSnapshot: null });
+  let random = 0.99;
+  const options = {
+    getParent: () => currentParent,
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    listActiveCharacters: characterCandidates,
+    randomCharacter: () => random,
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+  };
+  let service = createService(options);
+  const create = () => service.createAuxiliarySession({ parentSessionId: currentParent.id, provider: "codex", runtimeSelection: "latest-session" });
+  try {
+    sessionStorage.upsertSession(main);
+    sessionStorage.upsertSession(currentParent);
+    const other = await create();
+    assert.equal(other.characterId, "aux-c");
+    const preservedOther = storage.getAuxiliarySession(other.id);
+    currentParent = main;
+    random = 0;
+    const first = await create();
+    assert.equal(first.characterId, "aux-a");
+    storage.upsertAuxiliarySession({ ...first, threadId: "keep-thread", messages: [{ role: "user", text: "keep conversation" }] });
+    const draft = await service.getAuxiliaryDraft(first.id);
+    assert.ok(draft);
+    assert.equal((await service.saveAuxiliaryDraft({ auxiliarySessionId: first.id, parentSessionId: main.id, incarnation: draft.incarnation, expectedDurableRevision: draft.durableRevision, text: "keep draft", updatedAt: "2026-10-03T00:00:00.000Z" })).outcome, "saved");
+    await service.closeAuxiliarySession(first.id);
+    const preserved = storage.getAuxiliarySession(first.id);
+    assert.equal(preserved?.status, "closed");
+    assert.equal(preserved?.composerDraft, "keep draft");
+    const second = await create();
+    assert.equal(second.characterId, "aux-b");
+    assert.equal(second.runState, "idle");
+    const preservedSecond = storage.getAuxiliarySession(second.id);
+
+    service = createService(options);
+    const third = await create();
+    assert.equal(third.characterId, "aux-c");
+    random = 0.99;
+    assert.equal((await create()).characterId, "aux-c");
+    random = 0;
+    assert.equal((await create()).characterId, "aux-a");
+    assert.equal(storage.listAuxiliarySessions(main.id).length, 5);
+    assert.deepEqual(storage.getAuxiliarySession(first.id), preserved);
+    assert.deepEqual(storage.getAuxiliarySession(second.id), preservedSecond);
+    assert.deepEqual(storage.getAuxiliarySession(other.id), preservedOther);
+  } finally {
+    storage.close();
+    sessionStorage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "同じ候補から並行準備したAuxiliaryはcommit時に再選択し、未使用候補を使い切るまで重複せず保存する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#character-identity" }
+// fault = "古い使用状況のまま並行要求を保存する、再選択したIDとsnapshotを混同する、または同一要求の再送を増殖させる"
+// observable = "並行作成のID・Character ID・snapshot ID、保存行数、再送結果の同一ID"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-character-commit-race"
+// lifecycle = "permanent"
+// impact = "同時追加でも未使用Character優先と既存のrequest冪等性を維持する"
+// distinction = "逐次選択testでは生じない同一snapshot準備の競合をbarrierと実coordinatorで再現し、小さい実DBで検証する"
+// @end-test-value
+test("Auxiliary並行作成は未使用Characterを確定し枯渇後も作成を継続する", async () => {
+  for (const mode of ["context", "request-id", "no-request-id"] as const) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-character-race-"));
+    const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+    const gate = Promise.withResolvers<void>();
+    let initialSnapshots = 0;
+    const service = createService({
+      getParent: parent,
+      getStorage: () => storage,
+      resolveSelection: async () => selection(),
+      listActiveCharacters: characterCandidates,
+      createCharacterRuntimeSnapshot: async (id) => {
+        if (id === "aux-a" && initialSnapshots < 3) {
+          initialSnapshots += 1;
+          if (initialSnapshots === 3) gate.resolve();
+          await gate.promise;
+        }
+        return character(id, id);
+      },
+      provider: new ProviderRuntimeOperationCoordinator(),
+      affect: new CharacterAffectTurnOwnershipCoordinator(),
+    });
+    try {
+      const creationContext = mode === "context" ? await service.getAuxiliaryCreationContext(parent().id) : undefined;
+      const inputs = [0, 1, 2].map((index) => ({
+        parentSessionId: parent().id,
+        provider: "codex",
+        runtimeSelection: "latest-session" as const,
+        ...(mode !== "no-request-id" ? { clientRequestId: `parallel-${index}` } : {}),
+        ...(creationContext ? { creationContext } : {}),
+      }));
+      const created = await Promise.all(inputs.map((input) => service.createAuxiliarySession(input)));
+      assert.equal(initialSnapshots, 3);
+      assert.equal(new Set(created.map((session) => session.id)).size, 3);
+      assert.deepEqual(created.map((session) => session.characterId).sort(), ["aux-a", "aux-b", "aux-c"]);
+      for (const session of created) {
+        assert.equal(session.characterRuntimeSnapshot?.characterId, session.characterId);
+        const stored = storage.getAuxiliarySession(session.id);
+        assert.equal(stored?.characterId, session.characterId);
+        assert.deepEqual(stored?.characterRuntimeSnapshot, session.characterRuntimeSnapshot);
+      }
+      if (mode !== "no-request-id") {
+        assert.equal((await service.createAuxiliarySession(inputs[0]!)).id, created[0]!.id);
+      }
+      const exhausted = await service.createAuxiliarySession({ ...inputs[0]!, clientRequestId: "exhausted" });
+      assert.equal(exhausted.characterId, "aux-a");
+      assert.equal(storage.listAuxiliarySessions(parent().id).length, 4);
+    } finally {
+      gate.resolve();
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "未使用Characterへのsnapshot再準備は広域排他を塞がず、取消・snapshot失敗・親やstorageや設定やcatalogの変更時は保存しない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#character-identity" }
+// fault = "再準備をcoordinator内で待つ、再試行が最終検証を省略する、または保存前失敗をunknownや成功にする"
+// observable = "再準備中のprovider/ownership操作完了、作成拒否、状態通知、既存行の一致と保存件数"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-character-repreparation-boundary"
+// lifecycle = "permanent"
+// impact = "重複回避の再試行が取消や保存ownerを破り孤児会話を作ることを防ぐ"
+// distinction = "初回準備の境界testでは通らない再準備経路を決定的barrierで検証し、少数の実DB操作で安全条件を保つ"
+// @end-test-value
+test("Auxiliary Character再準備は排他を解放し取消と保存前の再検証を維持する", async () => {
+  for (const failure of ["snapshot", "cancel", "owner", "parent", "storage", "runtime", "archive"] as const) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-character-reprepare-"));
+    const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+    const replacement = new AuxiliarySessionStorage(path.join(directory, "replacement.db"));
+    let currentStorage = storage;
+    let currentParent = parent();
+    let revision = 1;
+    let entries = characterCandidates();
+    const provider = new ProviderRuntimeOperationCoordinator();
+    const affect = new CharacterAffectTurnOwnershipCoordinator();
+    const firstSnapshots = Promise.withResolvers<void>();
+    const repreparing = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let snapshotCount = 0;
+    const changes: Array<{ clientRequestId: string; status: string }> = [];
+    const service = createService({
+      getParent: () => currentParent,
+      getStorage: () => currentStorage,
+      resolveSelection: async () => selection(revision),
+      listActiveCharacters: () => entries,
+      createCharacterRuntimeSnapshot: async (id) => {
+        if (id === "aux-a") {
+          snapshotCount += 1;
+          if (snapshotCount === 2) firstSnapshots.resolve();
+          await firstSnapshots.promise;
+        } else {
+          repreparing.resolve();
+          await release.promise;
+          if (failure === "snapshot") return null;
+        }
+        return character(id, id);
+      },
+      provider,
+      affect,
+      onCreationStateChanged: (change) => { changes.push(change); },
+    });
+    let settled: Promise<PromiseSettledResult<unknown>[]> | undefined;
+    try {
+      const creationContext = await service.getAuxiliaryCreationContext(currentParent.id);
+      const inputs = ["first", "second"].map((clientRequestId) => ({ parentSessionId: currentParent.id, provider: "codex", runtimeSelection: "latest-session" as const, clientRequestId, creationContext }));
+      settled = Promise.allSettled(inputs.map((input) => service.createAuxiliarySession(input)));
+      await repreparing.promise;
+      const preserved = storage.listAllAuxiliarySessions();
+      assert.equal(preserved.length, 1);
+      const pendingInput = inputs.find((input) => input.clientRequestId !== preserved[0]!.clientRequestId)!;
+      await provider.runExclusive(() => affect.runExclusive(async () => {
+        if (failure === "cancel") assert.equal((await service.cancelAuxiliaryCreation(pendingInput)).status, "cancelled");
+        if (failure === "owner") service.releaseAuxiliaryCreationOwner(currentParent.id);
+        if (failure === "parent") currentParent = parent({ incarnationId: "replacement-parent" });
+        if (failure === "storage") currentStorage = replacement;
+        if (failure === "runtime") revision = 2;
+        if (failure === "archive") entries = entries.filter((entry) => entry.id !== "aux-b");
+      }));
+      release.resolve();
+      const results = await settled;
+      assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+      const rejected = results.find((result) => result.status === "rejected");
+      assert.ok(rejected?.status === "rejected");
+      assert.match(String(rejected.reason), failure === "snapshot" ? /Character snapshot could not be created/ : /creation was canceled/);
+      assert.equal(changes.filter((change) => change.clientRequestId === pendingInput.clientRequestId).at(-1)?.status,
+        failure === "cancel" ? "cancelled" : failure === "owner" ? "expired" : "failed");
+      assert.deepEqual(storage.listAllAuxiliarySessions(), preserved);
+      assert.equal(replacement.listAuxiliarySessions(parent().id).length, 0);
+    } finally {
+      firstSnapshots.resolve();
+      release.resolve();
+      await settled;
+      storage.close();
+      replacement.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Main除外後にactive候補がない場合と不一致snapshotの場合はAuxiliary作成を失敗させる"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#character-identity" }
+// fault = "Mainやarchived Characterへ置換して成功にする、または別Characterのsnapshotを保存する"
+// observable = "作成拒否のエラーと保存行数0"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-character-selection-failure"
+// lifecycle = "permanent"
+// impact = "意図しないCharacter identityで会話を開始することを防ぐ"
+// distinction = "既存のnull snapshot testにない候補0とidentity不一致を小さい実DBで検証する"
+// @end-test-value
+test("AuxiliaryはMain以外の候補0とsnapshot identity不一致を成功扱いしない", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-character-unavailable-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  let entries = characterCandidates().filter((entry) => !entry.id.startsWith("aux-"));
+  const service = createService({
+    getParent: parent,
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    listActiveCharacters: () => entries,
+    createCharacterRuntimeSnapshot: () => character("main-character", "Main"),
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+  });
+  try {
+    const creationContext = await service.getAuxiliaryCreationContext(parent().id);
+    const input = { parentSessionId: parent().id, provider: "codex", runtimeSelection: "latest-session" as const, creationContext };
+    await assert.rejects(service.createAuxiliarySession({ ...input, clientRequestId: "no-candidate" }), /No Character is available/);
+    entries = characterCandidates();
+    await assert.rejects(service.createAuxiliarySession({ ...input, clientRequestId: "invalid-snapshot" }), /Character snapshot could not be created/);
+    assert.equal(storage.listAuxiliarySessions(parent().id).length, 0);
+  } finally {
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 // @test-value v2
 // kind = "invariant"

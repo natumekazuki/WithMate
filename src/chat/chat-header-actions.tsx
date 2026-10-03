@@ -27,6 +27,7 @@ export type LiveSessionHeaderPropsInput = {
   isTerminalDisabled?: boolean;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
+  onOpenExternalTerminal?: () => void;
   onOpenSessionFilesExplorer: () => void;
   onOpenSessionFilesTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
@@ -113,6 +114,7 @@ export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput):
     isTerminalDisabled: input.isTerminalDisabled,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenTerminal,
+    onOpenExternalTerminal: input.onOpenExternalTerminal,
     sessionFilesActions: createSessionFilesActions({
       onOpenExplorer: input.onOpenSessionFilesExplorer,
       onOpenTerminal: input.onOpenSessionFilesTerminal,

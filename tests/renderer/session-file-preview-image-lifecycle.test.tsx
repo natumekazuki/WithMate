@@ -369,6 +369,73 @@ test("MMD File Preview はMermaid表示経路とSourceを切り替える", async
 });
 
 // @test-value v2
+// kind = "regression"
+// claim = "rich previewの検索は最初のqueryと同件数のquery変更でも一致箇所へscrollする"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/763 完了条件: 拡大後も既存の検索を阻害しない" }
+// fault = "一致件数やcurrent indexが変わらないquery更新でscroll処理を省略し、画面外の一致箇所を表示できない"
+// observable = "検索UIの1/1表示とscrollIntoViewへ渡された一致段落"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreviewのrich text検索queryから一致箇所へのnavigation"
+// lifecycle = "permanent"
+// distinction = "検索modelのunit testと異なりquery state更新からDOM navigationまでを確認し、実際の座標・描画はbrowser確認へ分離する"
+// @end-test-value
+test("rich preview検索は最初のqueryと同件数のquery変更でも一致箇所へ移動する", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.addEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.removeEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const api = createTextPreviewApi(MARKDOWN_REQUEST, "readme.md", "Alpha\n\nBeta", "find-r1");
+  const inspect = api.inspectSessionFile;
+  api.inspectSessionFile = async (request) => ({ ...await inspect(request), kind: "markdown" });
+  const scrolled: string[] = [];
+  dom.window.HTMLElement.prototype.scrollIntoView = function () {
+    scrolled.push(this.textContent ?? "");
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container);
+    await waitFor(() => container.querySelector(".session-file-markdown p") !== null);
+    const find = Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Find");
+    assert.ok(find);
+    await act(async () => find.click());
+    const input = container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
+    assert.ok(setValue);
+    for (const query of ["Beta", "Alpha"]) {
+      scrolled.length = 0;
+      await act(async () => {
+        setValue.call(input, query);
+        const event = new dom.window.Event("propertychange", { bubbles: true });
+        Object.defineProperty(event, "propertyName", { value: "value" });
+        input.dispatchEvent(event);
+      });
+      assert.equal(container.querySelector(".session-content-find-count")?.textContent, "1/1");
+      assert.equal(scrolled.at(-1), query);
+    }
+  } finally {
+    if (root) await act(async () => root?.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v2
 // kind = "contract"
 // claim = "File Previewはheaderを維持したままinspection/content読込中のbusy状態とprogressを本文へ表示する"
 // oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
@@ -1106,17 +1173,180 @@ function dispatchPointerEvent(
   dom: JSDOM,
   target: Element,
   type: string,
-  input: { pointerId: number; button?: number; clientX?: number; clientY?: number },
+  input: { pointerId: number; button?: number; ctrlKey?: boolean; clientX?: number; clientY?: number },
 ): void {
   const event = new dom.window.MouseEvent(type, {
     bubbles: true,
     button: input.button ?? 0,
+    ctrlKey: input.ctrlKey ?? false,
     clientX: input.clientX ?? 0,
     clientY: input.clientY ?? 0,
   });
   Object.defineProperty(event, "pointerId", { value: input.pointerId });
   target.dispatchEvent(event);
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Mermaid単体とMarkdown内の図でzoomしても検索中の一致位置を保持し、本文変更では検索を再構築する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: File Previewの検索と図の拡縮" }
+// fault = "倍率表示だけのmutationで先頭一致へ戻る、または本文更新も除外して一致を見失う"
+// observable = "検索countとscrollIntoViewの対象文字列"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreviewとMermaidViewportのzoom・rendered検索の連携"
+// lifecycle = "permanent"
+// impact = "検索で見つけたノードを拡大して読む際に別ノードへ移動してしまう"
+// distinction = "単独の倍率testとquery変更testでは検出できない実component間のMutationObserver連携を確認する"
+// @end-test-value
+test("rich previewは図の拡縮で検索位置を保持し本文更新には追従する", async () => {
+  const mermaid = (await import("mermaid")).default;
+  const originalRender = mermaid.render;
+  mermaid.render = async () => ({ svg: '<svg viewBox="0 0 2000 1000"><text>Node first</text><text>Node second</text></svg>', diagramType: "flowchart-v2" });
+  const originalResizeObserver = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  try {
+    for (const kind of ["mermaid", "markdown"] as const) {
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true, url: "http://localhost/" });
+      const restoreGlobals = installDomGlobals(dom);
+      Object.defineProperties(dom.window.HTMLElement.prototype, {
+        clientWidth: { configurable: true, get: () => 800 },
+        clientHeight: { configurable: true, get: () => 400 },
+        attachEvent: { configurable: true, value(this: HTMLElement, name: string, listener: EventListener) { this.addEventListener(name.replace(/^on/, ""), listener); } },
+        detachEvent: { configurable: true, value(this: HTMLElement, name: string, listener: EventListener) { this.removeEventListener(name.replace(/^on/, ""), listener); } },
+      });
+      Object.defineProperty(dom.window.SVGElement.prototype, "viewBox", { get: () => ({ baseVal: { width: 2000, height: 1000 } }) });
+      const scrolled: string[] = [];
+      dom.window.SVGElement.prototype.scrollIntoView = function () { scrolled.push(this.textContent ?? ""); };
+      const request = { ...MARKDOWN_REQUEST, relativePath: kind === "mermaid" ? "diagram.mmd" : "diagram.md" };
+      const source = kind === "mermaid" ? "flowchart TD\nA --> B" : "```mermaid\nflowchart TD\nA --> B\n```";
+      const api = createTextPreviewApi(request, request.relativePath, source, "diagram-r1");
+      const inspect = api.inspectSessionFile;
+      api.inspectSessionFile = async (resource) => ({ ...await inspect(resource), kind: kind === "markdown" ? "markdown" : "text" });
+      const container = dom.window.document.getElementById("root")!;
+      let root: Root | null = null;
+      try {
+        root = await renderPreview(api, container, request);
+        await waitFor(() => container.querySelector(".message-mermaid-canvas svg") !== null);
+        await act(async () => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Find")!.click());
+        const input = container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']")!;
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, "Node");
+          const event = new dom.window.Event("propertychange", { bubbles: true });
+          Object.defineProperty(event, "propertyName", { value: "value" });
+          input.dispatchEvent(event);
+        });
+        await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Next match"]')!.click());
+        assert.equal(container.querySelector(".session-content-find-count")?.textContent, "2/2");
+        assert.equal(scrolled.at(-1), "Node second");
+        scrolled.length = 0;
+        for (const label of ["Zoom diagram in", "Zoom diagram out", "Reset diagram zoom to 100%", "Fit diagram to preview"]) {
+          await act(async () => container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click());
+          assert.equal(container.querySelector(".session-content-find-count")?.textContent, "2/2");
+        }
+        assert.ok(scrolled.every((text) => text === "Node second"));
+        await act(async () => { container.querySelectorAll("svg text")[1].textContent = "Different label"; });
+        assert.equal(container.querySelector(".session-content-find-count")?.textContent, "1/1");
+        assert.equal(scrolled.at(-1), "Node first");
+      } finally {
+        if (root) await act(async () => root?.unmount());
+        restoreGlobals();
+        dom.window.close();
+      }
+    }
+  } finally {
+    mermaid.render = originalRender;
+    if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver;
+    else Reflect.deleteProperty(globalThis, "ResizeObserver");
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = ".mmdとMarkdown内Mermaidのlinkはcurrent resourceをbaseとして送信し、失敗後も図と操作を保持して再試行できる"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/768 受入条件: 相対基準・安全な経路・失敗通知と操作継続" }
+// fault = ".mmdへcallbackを注入しない、Markdown contextを失う、baseResourceを誤る、または失敗で図を置換する"
+// observable = "openSessionFilePreviewWindowのrequest、role=alertのfeedback、図DOM、成功後のerror解消"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreviewからMermaidDiagramとMermaidViewportを経由するrenderer navigation境界"
+// lifecycle = "permanent"
+// impact = "図内の相対linkが別directoryで解決されたり、失敗後に閲覧と再試行ができなくなる"
+// distinction = "SVG生成とMain応答だけをmockし、単体viewport testでは欠落するfile context注入とfailure feedbackの接続を確認する。実機の遷移と認可確認は代替しない"
+// @end-test-value
+test("Mermaidのfile linkはpreview contextと失敗時の図を保持する", async () => {
+  const mermaid = (await import("mermaid")).default;
+  const originalRender = mermaid.render;
+  mermaid.render = async () => ({
+    svg: '<svg viewBox="0 0 200 100"><a xlink:href="../next%20file.md#L10"><text>Next file</text></a></svg>',
+    diagramType: "flowchart-v2",
+  });
+  const originalResizeObserver = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+  try {
+    for (const extension of ["mmd", "md"]) {
+      for (const outsideRoot of [false, true]) {
+        const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true, url: "http://localhost/" });
+        const restoreGlobals = installDomGlobals(dom);
+        Object.defineProperty(dom.window.SVGElement.prototype, "viewBox", { get: () => ({ baseVal: { width: 200, height: 100 } }) });
+        const request: SessionFileResourceRequest = outsideRoot
+          ? { sessionId: "session-1", absolutePath: `C:/outside/docs/diagram.${extension}` }
+          : { ...MARKDOWN_REQUEST, relativePath: `docs/diagram.${extension}` };
+        const source = extension === "mmd" ? "flowchart TD\nA[Next file]" : "```mermaid\nflowchart TD\nA[Next file]\n```";
+        const api = createTextPreviewApi(request, `diagram.${extension}`, source, "links-r1");
+        const inspect = api.inspectSessionFile;
+        api.inspectSessionFile = async (resource) => ({
+          ...await inspect(resource), kind: extension === "md" ? "markdown" : "text",
+        });
+        const navigationRequests: unknown[] = [];
+        let failure: "missing" | "denied" | "rejected" | null = "missing";
+        api.openPath = async () => { assert.fail("File preview links must retain their base resource."); };
+        api.openSessionFilePreviewWindow = async (navigationRequest) => {
+          navigationRequests.push(navigationRequest);
+          if (failure === "rejected") throw new Error("The link could not be opened.");
+          if (failure) return {
+            status: failure === "missing" ? "not-found" : "failed",
+            targetType: "local-path",
+            target: "../next%20file.md#L10",
+            message: failure === "missing" ? "The local path was not found." : "The preview resource is not authorized.",
+          };
+          return { status: "opened", targetType: "preview-window", disposition: "created", resource: request };
+        };
+        const container = dom.window.document.getElementById("root")!;
+        let root: Root | null = null;
+        try {
+          root = await renderPreview(api, container, request);
+          await waitFor(() => container.querySelector(".message-mermaid-canvas a") !== null);
+          const diagram = container.querySelector(".message-mermaid-canvas svg");
+          for (const outcome of ["missing", "denied", "rejected", null] as const) {
+            failure = outcome;
+            const event = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true });
+            await act(async () => container.querySelector(".message-mermaid-canvas a text")!.dispatchEvent(event));
+            assert.equal(event.defaultPrevented, true);
+            assert.deepEqual(navigationRequests.at(-1), {
+              kind: "link", sessionId: request.sessionId, target: "../next%20file.md#L10", baseResource: request,
+            });
+            assert.equal(container.querySelector(".message-mermaid-canvas svg"), diagram);
+            const feedback = container.querySelector(".session-file-preview-feedback[role=alert]");
+            if (outcome === null) assert.equal(feedback, null);
+            else assert.match(feedback?.textContent ?? "", outcome === "missing" ? /not found/ : outcome === "denied" ? /not authorized/ : /could not be opened/);
+          }
+          assert.equal(navigationRequests.length, 4);
+        } finally {
+          if (root) await act(async () => root?.unmount());
+          restoreGlobals();
+          dom.window.close();
+        }
+      }
+    }
+  } finally {
+    mermaid.render = originalRender;
+    if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver;
+    else Reflect.deleteProperty(globalThis, "ResizeObserver");
+  }
+});
 
 test("encoding 切替は表示済みの同一 local image を現行 generation へ再登録する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
@@ -1670,7 +1900,18 @@ test("寸法情報のあるSVGも初回はFitで表示する", async () => {
   }
 });
 
-test("拡大画像を主ポインターでドラッグするとスクロール位置を移動し、終了後は停止する", async () => {
+// @test-value v2
+// kind = "contract"
+// claim = "画像previewはCtrl＋左dragのときだけscroll移動し、終了後は停止する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 共通previewのCtrl＋左drag移動" }
+// fault = "Ctrlなしの左dragを移動として奪う、Ctrl＋左dragで移動しない、または終了後も移動する"
+// observable = "scrollLeft／scrollTop、pointer capture、移動中class"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreviewの画像から共通pan hookへの接続"
+// lifecycle = "permanent"
+// distinction = "Mermaid側testでは検出できない画像consumerの接続とnative image drag無効化を確認する"
+// @end-test-value
+test("拡大画像をCtrl＋左ドラッグするとスクロール位置を移動し、終了後は停止する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
     url: "http://localhost/",
@@ -1714,8 +1955,15 @@ test("拡大画像を主ポインターでドラッグするとスクロール�
     scrollSurface.scrollTop = 90;
 
     await act(async () => {
+      dispatchPointerEvent(dom, scrollSurface, "pointerdown", { pointerId: 7, clientX: 200, clientY: 160 });
+      dispatchPointerEvent(dom, scrollSurface, "pointermove", { pointerId: 7, clientX: 150, clientY: 120 });
+    });
+    assert.deepEqual([scrollSurface.scrollLeft, scrollSurface.scrollTop, capturedPointerId], [120, 90, null]);
+
+    await act(async () => {
       dispatchPointerEvent(dom, scrollSurface, "pointerdown", {
         pointerId: 7,
+        ctrlKey: true,
         clientX: 200,
         clientY: 160,
       });

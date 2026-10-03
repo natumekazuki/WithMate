@@ -48,11 +48,12 @@ export function mergeSessionSummaryEntries(...sources: readonly HomeSessionSumma
 export function buildHomeSessionSummaryEntries(
   pages: HomeSessionSummaryPageCollection,
 ): HomeSessionSummary[] {
+  const openById = new Map(pages.open.map((summary) => [summary.id, summary]));
   return mergeSessionSummaryEntries(
     ...pages.pinned.map(({ page }) => page.entries),
     ...pages.recent.map(({ page }) => page.entries),
     pages.open,
-  );
+  ).map((summary) => openById.get(summary.id) ?? summary);
 }
 
 export async function listOpenSessionSummaryEntries(

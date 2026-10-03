@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 
 import { CharacterWorkspaceOperationCoordinator } from "../../src-electron/character/character-workspace-operation-coordinator.js";
+import { CharacterStorage } from "../../src-electron/character/character-storage.js";
+import { CharacterService } from "../../src-electron/character/character-service.js";
+import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -12,6 +18,55 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe("CharacterWorkspaceOperationCoordinator", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "送信snapshotのrefreshは同一Characterの定義編集とarchiveに対して直列化される"
+  // oracle = { type = "contract", ref = "docs/design/character-storage.md#runtime-snapshot" }
+  // fault = "serviceがrefreshをworkspace admission外で実行して編集またはarchiveを追い越す"
+  // observable = "refresh中と解放後に取得したcanonical本文・catalog stateとrefreshの結果"
+  // observation_boundary = "public-boundary"
+  // scope = "character-service-refresh-admission"
+  // lifecycle = "permanent"
+  // impact = "app内編集と送信の競合で定義の選択が不定になることを防ぐ"
+  // distinction = "coordinator単体testではCharacterServiceのrefreshと編集の共有admissionを確認できない"
+  // @end-test-value
+  it("refreshが完了するまで同一Characterの定義編集とarchiveを待機させる", async () => {
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-refresh-admission-"));
+    const entered = deferred();
+    const release = deferred();
+    class PausedRefreshStorage extends CharacterStorage {
+      override async refreshRuntimeSnapshot(id: string, previous: CharacterRuntimeSnapshot | null): Promise<CharacterRuntimeSnapshot> {
+        entered.resolve();
+        await release.promise;
+        return super.refreshRuntimeSnapshot(id, previous);
+      }
+    }
+    const storage = new PausedRefreshStorage(path.join(temporaryRoot, "withmate-v4.db"), temporaryRoot);
+    try {
+      const character = await storage.createCharacter({ name: "Mia" });
+      const previous = await storage.createRuntimeSnapshot(character.id);
+      assert.ok(previous);
+      const service = new CharacterService(storage);
+      const refresh = service.refreshRuntimeSnapshot(character.id, previous);
+      await entered.promise;
+      const changed = character.definitionMarkdown + "\n- edited instruction\n";
+      const edit = service.updateCharacterDefinition({ characterId: character.id, definitionMarkdown: changed });
+      const archive = service.archiveCharacter(character.id);
+      await Promise.resolve();
+      assert.equal((await storage.getCharacter(character.id))?.definitionMarkdown, character.definitionMarkdown);
+      assert.equal(storage.getCharacterCatalogEntry(character.id)?.state, "active");
+      release.resolve();
+      assert.deepEqual(await refresh, previous);
+      await Promise.all([edit, archive]);
+      assert.equal((await storage.getCharacter(character.id))?.definitionMarkdown, changed);
+      assert.equal(storage.getCharacterCatalogEntry(character.id)?.state, "archived");
+    } finally {
+      release.resolve();
+      storage.close();
+      await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
   // @test-value v2
   // kind = "invariant"
   // claim = "同じ Character key のworkspace operationを直列化し、別keyは並行受付する"

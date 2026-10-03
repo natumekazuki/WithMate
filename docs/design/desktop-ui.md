@@ -115,6 +115,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
     - 部分一致
   - 検索欄と`New Session`は固定し、上下に余白を持たせたsession listだけをスクロールする
   - Recent、Pinned、open Session summary、Random用のCharacter利用履歴は取得結果と失敗を分離する。Recent／Pinnedの取得・追加page取得の失敗は既存rowの有無によらず一覧のfeedbackと`Retry`へ表示し、New Sessionの開始エラーには混入させない。追加pageの失敗は自動再試行を続けず、`Retry`で続きの取得を再試行する
+  - 同じSession IDがopen summaryとPinned／Recentのpageにある場合は、page順序を維持してopen summaryの内容を一覧とMonitorへ反映する。pageの再取得失敗で保持したrowが、成功したopen取得の状態・titleを隠さない
   - session list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない。検索0件でも本文を埋める説明文は出さない
   - `sessionKind === "character-authoring"` の Character authoring session は通常 session と同じ削除・再開導線へ到達できるよう表示する
   - session card の常時表示情報
@@ -249,17 +250,17 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
 - wide desktop (`1920x1080` baseline) では Session 本体を、中央の `message list または preview` と上下左右の dock に分ける
-  - HeaderとActionDockは常に全幅を使い、外側をカードの枠・背景で囲まない。左右paneはその間で中央surfaceと並び、splitter操作やdockの開閉で配置を変更しない
-  - HeaderとActionDockはclickで開閉する。左右paneは排他表示とし、clickで開閉する。閉じた領域からのdrag展開は行わない。開いた領域のdragと矢印キーによる調整は、領域側が定義する最小サイズと中央領域に必要なサイズを守る。ActionDockはHeaderとsplitter以外の残余高を使い、中央領域が160px未満になる場合は中央を高さ0で非表示にし、160px以上に戻ると会話stateとスクロール位置を保って再表示する
-  - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
+  - HeaderとActionDockは常に全幅を使い、外側をカードの枠・背景で囲まない。中央surfaceと左右paneの下に単一のActionDock splitterと共有下部パネルを配置し、パネル内をPrompt／Terminalで切り替える
+  - Headerと共有下部パネルはclickで開閉する。左右paneは排他表示とし、clickで開閉する。閉じた領域からのdrag展開は行わない。共有下部パネルは開いた状態でdragと上下矢印キーによる高さ調整ができ、最大高はHeaderとsplitterを除いた残余高。中央領域が160px未満になる場合は高さ0で非表示にし、戻すと会話stateとスクロール位置を保って再表示する
+  - 共有下部パネルの高さ・Prompt／Terminal選択、Terminalタブ、左右paneの幅はWindow local stateとし、別Windowや再起動へ引き継がない。入力modeの切り替えで共通高さを維持し、Window縮小時には利用可能な高さへ補正する
   - Header、ActionDock、side pane の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
   - title 編集などの強制表示は保存済み preference を変更しない
-  - wide layout では中央 surface の最小高さを160pxとし、中央が160px未満になるサイズでは中央を高さ0で非表示にする。ActionDockの高さはHeaderとsplitter以外の残余高まで使用できる。narrow layoutではactive side paneとwork surfaceの縦stackを維持する
+  - wide layoutでは中央surfaceの最小高さを160pxとし、それ未満では中央を高さ0で非表示にする。narrow layoutではactive side paneとwork surfaceを縦stackにし、dockの必要高を確保できない場合はside paneも状態を保って一時的に畳む
   - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
   - 左右splitterはclickで開閉し、開いた領域をdragと矢印キーでサイズ調整する。幅0でもclick用の操作領域を残す
-  - 中央が高さ0の間はHeaderとActionDockのsplitterだけを表示し、それ以外のsplitterは操作不可とする
-  - ActionDockの展開時最小高さは296pxとし、実行設定は常時表示する。展開時もtextarea自体は最低100pxを保ち、feedbackの高さは別に確保する。候補一覧は既存の高さ上限内で表示し、縮めて消さない。高さが不足する場合は内部スクロールで設定と送信操作へ到達できるようにする
+  - 中央が高さ0の間もHeaderとActionDockのsplitterを操作可能に保つ。中央内のsplitterは操作不可とする
+  - 共有下部パネルの展開時最小高さは296pxとする。Promptでは実行設定を常時表示し、textarea自体は最低100pxを保ち、feedbackの高さは別に確保する。候補一覧は既存の高さ上限内で表示し、縮めて消さない。高さが不足する場合は内部スクロールで設定と送信操作へ到達できるようにする
   - 最小サイズは各領域のCSS custom propertyで所有し、レイアウト側が読み取る。File Explorerの最小幅は260px、Context paneは360px、縦stack時は各200px、中央の最小高さは160pxとする。Main／Auxiliaryは各360pxで、両側表示中に中央の実幅が両者とsplitterの合計未満なら送信対象側だけを表示する。中央splitterは1本とし、端へ寄せて片側の要求幅が最小幅の半分未満になるとその側を閉じ、反対側を全幅表示する。閉じた側はclickで両側表示へ戻す。表示比率と送信対象は独立して保持する
   - pane を隠した時も splitter は再表示 affordance として残す
   - side pane の表示状態は `files | context | none` の値として app 共通設定へ保存し、初期値は `none` とする。新しく開く Window は利用可能な永続値を初期値として使う
@@ -268,6 +269,17 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Session Windowの最小サイズは1100x720 DIPとし、current minimumはsplit-screenを考慮して到達性を維持する
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
+- `Terminal`
+  - 初期選択はPromptで、最初にTerminalを表示するまでシェルを起動しない。Workspaceの`Terminal`は共有下部パネルをTerminalへ切り替えて開き、`Open External Terminal`は既存の外部起動を行う。Session Folderの外部Terminal起動は変更しない
+  - xterm.js本体・標準CSS・FitAddonの公開APIを使う。WindowsではMainが取得したOS build情報を`windowsPty`へ渡し、resize時のscrollbackを標準のWindows向け処理へ任せる。ANSI解釈、描画、選択、IME、scrollback、シェルの履歴・補完は標準機能へ任せる。専用の最大化モードや端末独自の入力欄は持たない
+  - FitAddonの提案寸法をnative座標の上限32,767列・行までxtermへ適用し、同じ寸法をPTYへ渡す。Mainは正の整数と上限を検証する。IPC操作の拒否は端末内のエラー表示に留め、生存PTYの入力・resizeを維持する。PTY自体の障害は`Failed`として入力を停止する
+  - 1タブにつき独立したxtermとPTYを持ち、親SessionのWorkspaceから起動する。Main／Auxiliaryの切り替えは端末の選択・cwd・processへ影響しない
+  - dock内の1段タブバーはタブ部分だけ横scrollし、右端の`New Terminal`は固定する。選択タブ、終了ボタン、新規追加へkeyboardで到達でき、端末本文から`Ctrl+Shift+Tab`でタブへfocusを戻せる
+  - 表示の折りたたみ・Promptへの切り替え・タブ切り替えではprocessを維持する。`Close Terminal`は入力待ちと確認できた端末と終了済み端末を確認なしで閉じ、実行中・起動中・判別不能の場合は終了を確認する。確認は非同期で、Mainのイベント処理・AI更新・他端末の進行を待たせない。同じ端末の重複要求は一つの確認を共有し、取消では維持し、承認では対象の端末だけを閉じる。確認中の自然終了・owner破棄・起動完了は元の端末identityで扱う。最後のタブを閉じると共有パネルを畳み、自動再起動しない。自然終了は`Exited`と終了結果、失敗は`Failed`と理由を表示し、出力を残す
+  - 入力待ち検出はWindows PowerShellの`PSConsoleHostReadLine`を保持して包み、入力待ちへ入る時の未完了Job、同じconsoleのprocess、接続前も含む直下の子processを調べる。通常のトップレベルでこれらの作業がなく、read-line中の`PowerShell.OnIdle`で編集bufferが空かつconsoleに入力が残っていないと確認できた場合だけidleとする。read-line開始時点では貼付けの後続キーが残るためunknownとし、複数行・分割貼付けの未確定行や、処理を中断しているnested promptは確認する。PSReadLineの待機通知前に閉じる場合も確認する。単独のfocus-in/out通知はPTYへ転送しつつ状態を維持し、終了ボタンへのfocus移動だけでは確認を増やさない。実入力やfocus通知と混在した入力を送る時点でidleを失効させ、read-lineから戻った通知を挟まずに届いたidle通知は受理しない。コマンド名・プロンプト文字列・出力の静止時間では推測しない。通知は端末ごとに区別して出力から除き、分割された通知や終了時の未完出力も扱う。zsh、検出を使えないPowerShell、調査失敗、入力編集中は判別不能として確認する。Job・processの検出は入力待ちへ入る時点の状態であり、独立したprocessや入力待ち中に別経路で新たに始まる処理まで保証しない
+  - Session Window全体を閉じる時も同じ端末判定を使い、入力待ち・終了済み端末だけなら端末理由の確認を省略する。実行中・起動中・判別不能な端末があれば非同期で一括確認し、AI実行中ならWindowを閉じてもAI実行を継続する確認へまとめる。同じWindowの確認は重複させず、取消では維持し、承認後も下書きの保存完了を待ってからownerの端末を解放する。破棄済みWindowへの遅い承認を再作成したWindowへ適用しない
+  - 入力はAI実行と独立し、端末scopeではPrompt／Terminal切替だけをアプリshortcutとして扱い、会話のshortcutを発火させない。`Ctrl+C`は端末の文字選択があればその文字をコピーしてシェルへ送らず、選択がなければシェルへ渡す。`Escape`はシェルへ渡し、`Ctrl+Shift+C/V`はコピー／貼り付け、macOSの標準コピー／貼り付けはOS/xtermに従う。Windowsの`Ctrl+V`もアプリのClipboard貼り付けとして扱い、WSLを含むshell／実行プログラムへ制御文字として送らない。貼り付けはxtermの公開`paste` APIを通し、shellが指定するbracketed paste modeを維持する。macOS／Linuxの`Ctrl+V`は制御入力として維持する
+  - ローカルシェルはアプリのOS権限で動き、Providerのapproval／sandboxとは独立する。Workspaceは開始cwdであってアクセス制限ではない
 - `Top Bar`
   - default は hidden とする
   - 上 splitter を押すと Header の表示と `Rename / Audit Log / Terminal / Delete` を切り替える
@@ -277,13 +289,15 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
   - 常に全幅の下dockとして置く
-  - compact では末尾移動とmessage表示切替を必要に応じて操作列に残す。draft入力と`Send`はexpandedで表示し、実行中indicatorはmessage listに置く
-  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では86pxを使い、viewportが760px以下では操作列幅へ追従する。expanded の下段には disabled の `Send` を残し、開閉や Main / Auxiliary 切替で `Cancel` の位置を変えない
+  - Agent Sessionでは`Preview / Source`の右に同じ表示形式の`Prompt / Terminal`切替を置き、押したmodeを展開する。初期選択はPrompt。既定shortcutはWindows／Linuxの`Ctrl+Shift+T`、macOSの`Cmd+Shift+T`で、Settingsから変更できる。composerと端末本文のどちらにfocusがあっても切り替えられ、IME変換中とkey repeatでは発火しない
+  - PromptとTerminalは同時表示せず、非表示側をinertにしてmountを維持する。Promptのdraft・selectionとTerminalのタブ・出力・PTYを保持し、Promptへ戻るとcomposerへ、Terminalを選ぶと選択端末へfocusする。splitterで再展開した時は選択modeを維持する。Quote／参照挿入などcomposerを開く操作はPromptへ戻す
+  - compact では末尾移動とmessage表示切替を必要に応じて操作列に残す。draft入力と`Send`はPromptのexpandedで表示し、実行中indicatorはmessage listに置く
+  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` / `Canceling` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では114pxを使い、viewportが760px以下では操作列幅へ追従する。expanded の下段には disabled の `Send` を残し、開閉や Main / Auxiliary 切替で `Cancel` の位置を変えない
   - 開閉は下 splitter を主導線とし、compact では実行状態によらずdock全体の余白からも展開できる。非表示の `Cancel` 予約領域と操作間の隙間も対象とし、表示中の操作ボタンは自身の操作を優先してdockを展開しない。dock 内に `Hide` は置かない
-  - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる
+  - Promptのexpandedでは上部操作列と下部設定・送信列の高さを固定し、dragで中央のtextarea領域を伸縮させる。Terminalでは切替操作列とタブバーを固定し、端末本文へ残りの高さを割り当てる
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
-  - skill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
+  - Promptではskill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。Terminalへ切り替えるとpickerを閉じ、非表示Promptの候補やfeedbackは共有パネルの折りたたみを妨げない。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
 - Agent の `File Explorer`
   - `Workspace`、`Session Folder`、`Add Directory` で許可した directory を root として表示する
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する
@@ -298,12 +312,16 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
   - Text、Markdown、Mermaid（`.mmd`）、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
   - Markdown は shared rich text renderer、Mermaid は shared Mermaid renderer の Preview を既定とし、Source へ切り替えられる
+  - Mermaid内のlinkは通常のMarkdownと同じMainの解決・認可経路へ渡し、相対pathはpreview fileの親directoryを基準にする。diagramのanchorからWindow自体を遷移させず、無効・不存在・不許可の場合も図を保持してerrorを表示する。strictが除去したdestinationは復元しない。auxiliary clickとCtrl＋drag後のclickはopenしない
+  - `.mmd`のFile Previewは、header・Find・feedbackを除く残りの表示領域を図の枠に割り当て、中央paneと独立Windowのresizeに追従する。Markdown／会話内の図は本文の流れを保つ高さ上限を持つ
+  - Mermaidは中央・独立File PreviewとMarkdown／会話で共通の図単位のZoom Out／Zoom In、現在倍率兼100%リセット、Fitを持つ。初期表示はFitで、buttonによる手動倍率は10%〜800%を10ポイント刻みで変更する。Fitは小さい図を拡大せず縦横を表示領域へ収め、領域のresizeへ追従する。拡大後は図内のnative scrollで移動し、toolbarはスクロール外へ置く。各buttonはTabとEnter／Spaceで操作し、図領域へのfocus後はkeyboardでもscrollできる。Ctrlなしの左drag文字選択、通常の右clickとCtrlなしのwheelによるnative scrollを維持する。検索中に拡縮しても現在の一致位置を保持する。倍率・位置を他の図やWindowへ共有・永続化しない
+  - 共通の倍率操作を持つMermaid、中央・独立File Previewの画像／SVG、会話・Markdownの画像lightboxは、表示領域上のCtrl＋左dragでscroll位置を移動し、Ctrl＋上wheelで拡大、Ctrl＋下wheelで縮小する。wheelはSettingsの`Preview Wheel Zoom Step`で整数1〜100ポイントを選べ、既定は5ポイント刻み（100%→105%）。刻みはapp共通で保存し、保存後の次のwheel操作から適用するが、現在倍率・Fit状態・pan位置は変更しない。Zoom In／Out buttonは10ポイント刻みとし、上下限は共通の10%〜800%で、Fit中は現在の実効倍率を起点にする（10%未満のFitからwheelで拡大する際は10%へ移る）。Ctrlなしのwheelはnative scrollに任せ、Ctrl＋wheelは表示対象だけに作用させてWindow全体のzoomや親scroll操作へ渡さない
   - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。Markdown内画像とchat画像は対象外とする
   - File Explorerのroot、directory、regular file rowはnative context menuに`Copy path`と`Insert path`を表示する。pathはMain processが現在のSession rootから再解決し、copyはlexical absolute pathをclipboardへ書く。insertはworkspace内をworkspace相対、workspace外をslash正規化したabsolute pathとして、既存の`@path`挿入処理へ渡す。menu表示後にactive ownerまたはcomposerの書き込み可否が変わった場合は挿入しない。symbolic linkとother rowは対象外とする
   - Windowsでは、File Explorerのregular file rowでpath操作の後ろをseparatorで区切り、file preview header、root-scopedなMarkdown local-file linkと同じく、既存regular file一件をExplorer互換のfile objectとしてclipboardへcopyできる。directoryとroot外Markdown linkは対象外とし、Copy Imageやpath文字列のcopyとは別操作にする
   - File PreviewのCopy File / Copy Image結果は、共有`AppNotification` primitiveを使ったheader内のoverlayとして表示する。通知は操作列のflex配置に参加せず、操作列の直下・右寄せに重なるため、既存の操作ボタンを移動・折り返しさせない
   - Copy成功はsuccess toneと`role="status"` / `aria-live="polite"`、Copy失敗はerror toneと`role="alert"` / `aria-live="assertive"`で表示する。下端の`session-file-preview-feedback`はpreview自体のエラー専用で、Copy成功通知には使わない。`AppNotification`の現在のconsumerはFile Previewだけとし、他画面への適用は各UIの意味と配置を確認してから行う
-  - Ctrl+F は active な chat / Text / Markdown / Mermaid / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、Mermaid、live Git Diff の選択範囲には chat と同じ floating Copy / Quote を表示し、Quote は現在の writable composer へ挿入する。Preview 表示中の Ctrl+A は、Find input または Action Dock の入力中を除き、Window 全体ではなく表示中の document または diff の文字列だけを選択する
+  - Ctrl+F は active な chat / Text / Markdown / Mermaid / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、Mermaid、live Git Diff の選択範囲には chat と同じ floating Copy / Quote を表示し、Quote は現在の writable composer へ挿入する。Preview 表示中の Ctrl+A は、Find input または Action Dock の入力中を除き、Window 全体ではなく表示中の document または diff の文字列だけを選択する。rich previewのCopy／Quoteはブラウザーが選択した本文を使い、倍率toolbarなど選択不可の操作表示を含めない
   - file、live Git Diff、Template workspace から chat へ戻る操作は、左向き icon-only control と具体的な accessible name を持つ同じ navigation primitive を使う。run、approval、elicitation の状態は preview 中も確認できる
   - Template workspaceのSave / Deleteは可視labelと局所spinner、busy stateを使う。処理中は入力を固定し、成功・失敗後に操作を戻す。本文・template IDを表示文言の変更で書き換えない
   - Skill 候補のような一時 surface は右上の × と具体的な accessible name を使い、`Escape` でも dismiss できる。view 間 navigation の Back とは表現を分ける
@@ -366,6 +384,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - right pane 自体の描画失敗は pane 専用 fallback に切り替え、`Retry Right Pane` と `Reload Window` を出す
 - right pane は run 中の command 安全確認面として扱い、full timeline や `Turn Inspector` は常設しない
 - 実行中は上段に `Cancel` を表示し、下段には disabled の `Send` を残す
+- Mainの取消受付後は同じ位置をdisabledの`Canceling`とbusy stateにする。取消猶予後に保存済みSessionがidleになっても、Mainのlive取消状態が残る間はSend・送信shortcut・再送導線を有効にしない。元処理と必要な終了処理の解放通知後に通常の送信可能判定へ戻す。
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
   - `Changed files` は Details UIには表示しない。artifactの永続化、audit、Diff model、Changes paneのデータはこの表示変更だけでは削除しない
@@ -388,6 +407,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - composer toolbar に `Add Directory` を置き、その横の toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
   - composer 下の runtime settings は shared chat composer を正本とし、`Approval / Sandbox / Model / Depth`を表示する。Codex providerでは`Approval`の直後にcompactな`Reviewer`選択、そのほかのruntime optionと同じ列に`Speed`選択を追加する。`Reviewer`は`User` / `Auto Review`、`Speed`は`Standard` / `Fast`をSession単位で保持する。Codex以外では両方を表示しない。`Reviewer`はrunning、read-only、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionは既存の制約に従う
   - approval chip は `Auto Run / Provider Controlled / Safety Focused`
+  - `Model / Depth`はActionDockの対象会話がrunningの間、現在値を表示したままnative selectを無効にする。Cancel押下だけでは解除せず、通常完了・Cancel完了・エラー終了後に既存のblocked / freeze条件がなければ変更可能に戻る。Main / Auxiliaryの対象切替では表示値と変更可否を切り替え、別会話のrunningを待機中の対象へ波及させない
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`
 - assistant本文はgradientを使わず、`main`の細い左線とavatarの縁、控えめな背景色で周囲から区別する。user本文は控えめなsurfaceで区別し、通常のassistantとuserの枠は同じ丸みを持つ。pendingとAuxiliary groupの状態表現は維持する

@@ -19,7 +19,7 @@ import type { AdditionalDirectoryItem } from "./composer/session-composer-paths.
 import { CloseButton } from "../ui/close-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 
-import { SessionActionDockCompactRow, type SessionActionDockCompactRowProps } from "./approval/session-action-dock.js";
+import { SessionActionDockCompactRow, SessionActionDockModeSwitch, type SessionActionDockMode, type SessionActionDockCompactRowProps } from "./approval/session-action-dock.js";
 import { SESSION_ACTION_DOCK_ID, SESSION_HEADER_DOCK_ID, SESSION_RIGHT_PANE_ID, SESSION_LEFT_PANE_ID, SessionHeader, SessionHeaderHandle, type SessionHeaderProps } from "./shell/session-header.js";
 import { SessionChatScreen } from "./shell/session-header.js";
 import { SessionContextPane, SessionPaneErrorBoundary, type SessionContextPaneProps } from "./shell/session-context-pane.js";
@@ -76,6 +76,8 @@ export type ChatWindowProps = Omit<
   errorNotices?: readonly ChatErrorNotice[];
   recoveryActions?: ChatScreenProps["recoveryActions"];
   isActionDockExpanded: boolean;
+  terminalContent?: ReactNode;
+  actionDockModeControl?: { mode: SessionActionDockMode; onChange(mode: SessionActionDockMode): void };
   composerProps: SessionComposerExpandedProps;
   additionalDirectoryListProps?: ChatAdditionalDirectoryListProps;
   skillPickerProps?: ChatSkillPickerPanelProps;
@@ -434,6 +436,8 @@ export function ChatWindow({
   errorNotices = [],
   recoveryActions,
   isActionDockExpanded,
+  terminalContent,
+  actionDockModeControl,
   composerProps,
   additionalDirectoryListProps,
   skillPickerProps,
@@ -471,7 +475,27 @@ export function ChatWindow({
     },
     showMessageViewModeControls,
   );
-  useShortcutScope("session", Boolean(concurrentChats));
+  useShortcutScope("session", Boolean(concurrentChats || actionDockModeControl));
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.actionDockToggleMode,
+    () => {
+      actionDockModeControl?.onChange(actionDockModeControl.mode === "terminal" ? "prompt" : "terminal");
+      return true;
+    },
+    Boolean(actionDockModeControl),
+  );
+  const isTerminalMode = actionDockModeControl?.mode === "terminal";
+  const dockModeSwitch = actionDockModeControl ? <SessionActionDockModeSwitch {...actionDockModeControl} /> : null;
+  const previousDockModeRef = useRef(actionDockModeControl?.mode);
+  const previousDockExpandedRef = useRef(isActionDockExpanded);
+  useEffect(() => {
+    if (actionDockModeControl && !isTerminalMode && isActionDockExpanded
+      && (previousDockModeRef.current !== actionDockModeControl.mode || !previousDockExpandedRef.current)) {
+      composerProps.composerTextareaRef.current?.focus();
+    }
+    previousDockModeRef.current = actionDockModeControl?.mode;
+    previousDockExpandedRef.current = isActionDockExpanded;
+  }, [actionDockModeControl?.mode, isTerminalMode, isActionDockExpanded, composerProps.composerTextareaRef]);
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.conversationToggleTarget,
     () => {
@@ -727,15 +751,16 @@ export function ChatWindow({
               if (event.defaultPrevented || (event.target as Element).closest("button")) {
                 return;
               }
-              compactActionDockProps.onExpand();
+              if (isTerminalMode) actionDockModeControl?.onChange("terminal");
+              else compactActionDockProps.onExpand();
             }}
           >
           <div
             className={`session-action-dock-content session-action-dock-expanded-content${
-              isActionDockExpanded ? " is-active" : ""
+              isActionDockExpanded && !isTerminalMode ? " is-active" : ""
             }`}
-            aria-hidden={!isActionDockExpanded}
-            inert={!isActionDockExpanded}
+            aria-hidden={!isActionDockExpanded || isTerminalMode}
+            inert={!isActionDockExpanded || isTerminalMode}
           >
             <SessionComposerExpanded
               {...composerProps}
@@ -748,6 +773,7 @@ export function ChatWindow({
               messageViewMode={messageViewMode}
               onMessageViewModeChange={handleMessageViewModeChange}
               targetDock={concurrentChats ? <ConcurrentChatTargetDock chats={concurrentChats} /> : null}
+              dockModeSwitch={dockModeSwitch}
             />
           </div>
           <div
@@ -765,8 +791,26 @@ export function ChatWindow({
               messageViewMode={messageViewMode}
               onMessageViewModeChange={handleMessageViewModeChange}
               targetDock={concurrentChats ? <ConcurrentChatTargetDock chats={concurrentChats} /> : null}
+              dockModeSwitch={dockModeSwitch}
             />
           </div>
+          {terminalContent ? (
+            <div className={`session-action-dock-content session-action-dock-terminal-content${isActionDockExpanded && isTerminalMode ? " is-active" : ""}`}
+              aria-hidden={!isActionDockExpanded || !isTerminalMode} inert={!isActionDockExpanded || !isTerminalMode}>
+              <SessionActionDockCompactRow
+                {...compactActionDockProps}
+                showExpandControl={false}
+                showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
+                onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}
+                showMessageViewModeControls={showMessageViewModeControls}
+                messageViewMode={messageViewMode}
+                onMessageViewModeChange={handleMessageViewModeChange}
+                targetDock={concurrentChats ? <ConcurrentChatTargetDock chats={concurrentChats} /> : null}
+                dockModeSwitch={dockModeSwitch}
+              />
+              {terminalContent}
+            </div>
+          ) : null}
         </div>
       )}
     />
@@ -862,6 +906,7 @@ export function ChatDockSplitter({
     }
     pointerStartRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
     draggedRef.current = false;
+    event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture?.(event.pointerId);
     onActivate?.();
     onPointerDown?.(event);

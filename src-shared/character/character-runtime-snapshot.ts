@@ -137,6 +137,7 @@ export function buildCharacterRuntimePromptSection(
     "",
     ...(includeRuntimeBoundary
       ? [
+          "このTurnでは以下のCharacter定義を適用し、過去のTurnに含まれるCharacter定義を置き換えてください。",
           "ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。",
           "ファイル操作、検索、diff確認、test/build結果、repository instruction、未確認事実の扱いは通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。",
         ]

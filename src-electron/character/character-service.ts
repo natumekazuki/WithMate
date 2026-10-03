@@ -25,6 +25,7 @@ export type CharacterCatalogServiceStorage = {
   archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
   resolveLaunchCharacter(input: ResolveLaunchCharacterInput): Awaitable<CharacterDetail | null>;
   createRuntimeSnapshot(characterId: string): Awaitable<CharacterRuntimeSnapshot | null>;
+  refreshRuntimeSnapshot(characterId: string, previousSnapshot: CharacterRuntimeSnapshot | null): Awaitable<CharacterRuntimeSnapshot>;
   getCharacterDirectory(characterId: string): Awaitable<string | null>;
 };
 
@@ -91,5 +92,15 @@ export class CharacterService {
       return null;
     }
     return await this.storage.getCharacterDirectory(characterId);
+  }
+
+  async refreshRuntimeSnapshot(
+    characterId: string,
+    previousSnapshot: CharacterRuntimeSnapshot | null,
+  ): Promise<CharacterRuntimeSnapshot> {
+    return this.workspaceOperations(
+      characterId,
+      async () => await this.storage.refreshRuntimeSnapshot(characterId, previousSnapshot),
+    );
   }
 }

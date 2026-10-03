@@ -71,9 +71,9 @@
 }
 
 .session-action-dock-cancel-slot {
-  flex: 0 0 86px;
-  width: 86px;
-  min-width: 86px;
+  flex: 0 0 114px;
+  width: 114px;
+  min-width: 114px;
 }
 
 .session-action-dock-cancel-slot:not(.is-active) {
@@ -1407,6 +1407,32 @@
   line-height: 1.6;
 }
 
+.rich-text a,
+.rich-text a:visited,
+.rich-text a .message-inline-code {
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  overflow-wrap: anywhere;
+}
+
+.rich-text a:hover,
+.rich-text a:focus-visible,
+.rich-text a:hover .message-inline-code,
+.rich-text a:focus-visible .message-inline-code {
+  text-decoration-thickness: 2px;
+}
+
+.rich-text a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.rich-text a .message-inline-code {
+  max-width: 100%;
+}
+
 .glossary-annotation {
   border-radius: 3px;
   color: inherit;
@@ -1793,15 +1819,64 @@
   background: transparent;
 }
 
-.message-code-block-shell.mermaid > .message-mermaid {
-  padding-top: 42px;
+.message-mermaid-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-bottom: 8px;
+  user-select: none;
 }
 
-.message-mermaid svg {
-  display: block;
-  max-width: 100%;
-  height: auto;
+.message-mermaid-controls button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.message-mermaid-controls button.is-active {
+  border-color: var(--teal);
+}
+
+.message-mermaid-controls button:hover:not(:disabled) {
+  border-color: var(--teal);
+}
+
+.message-mermaid-controls button:disabled {
+  opacity: 0.5;
+}
+
+.message-mermaid-controls button:focus-visible,
+.message-mermaid-viewport:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
+}
+
+.message-mermaid-viewport {
+  max-height: min(60vh, 480px);
+  overflow: auto;
+}
+
+.message-mermaid-viewport.is-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.message-mermaid-canvas {
   margin: 0 auto;
+}
+
+.message-mermaid-canvas > svg {
+  display: block;
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
 }
 
 .message-mermaid-error {

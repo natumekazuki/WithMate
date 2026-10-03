@@ -79,6 +79,7 @@ import {
   resolveLegacyAuxiliaryPreviewFromAuditEntries,
 } from "./auxiliary/auxiliary-session-storage.js";
 import { CharacterService } from "./character/character-service.js";
+import { refreshSessionCharacterRuntimeSnapshot } from "./character/character-runtime-service.js";
 import { CharacterWorkspaceOperationCoordinator } from "./character/character-workspace-operation-coordinator.js";
 import { CharacterStorage } from "./character/character-storage.js";
 import {
@@ -150,6 +151,8 @@ import { MateProfileItemStorage } from "./mate/mate-profile-item-storage.js";
 import { WindowEntryLoader } from "./windows/window-entry-loader.js";
 import { AuxWindowService } from "./auxiliary/aux-window-service.js";
 import { registerMainIpcHandlers } from "./ipc/register-main-ipc.js";
+import { registerTerminalHandlers } from "./ipc/terminal.js";
+import { TerminalService, resolveTerminalShell, spawnTerminalPty } from "./terminal/terminal-service.js";
 import {
   PersistentStoreLifecycleService,
   type AuditLogStorageRead,
@@ -245,6 +248,7 @@ import {
   WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT,
   WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
+  WITHMATE_TERMINAL_EVENT,
 } from "../src-shared/ipc/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./storage/database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./storage/database-schema-v3.js";
@@ -389,6 +393,7 @@ const mainWindowComposition = new MainWindowComposition(
   mainLogComposition.attachWindowLogHandlers,
   (window) => requireWindowEntryLoader().loadBootEntry(window),
 );
+let terminalService: TerminalService<BrowserWindow> | null = null;
 const mainWindowRuntime = new MainWindowRuntime({
   composition: mainWindowComposition,
   devServerUrl,
@@ -398,21 +403,32 @@ const mainWindowRuntime = new MainWindowRuntime({
   readSession: (sessionId) => requireSessionStorage().getSession(sessionId),
   getSettingsCatalog: () => requireSettingsCatalogService(),
   isSessionRunInFlight,
+  getTerminalCloseConfirmationCount: (window) => terminalService?.countRequiringCloseConfirmation(window) ?? 0,
   cancelInFlightSessionRuns,
   waitForPendingDraftSends: () => auxiliarySessionService?.waitForPendingDraftSends() ?? Promise.resolve(true),
-  onSessionWindowClosed: (sessionId) => auxiliarySessionService?.releaseAuxiliaryCreationOwner(sessionId),
-  confirmCloseWhileRunning: (window) => {
-    const choice = dialog.showMessageBoxSync(window, {
+  onSessionWindowClosed: (sessionId) => {
+    terminalService?.releaseSession(sessionId);
+    auxiliarySessionService?.releaseAuxiliaryCreationOwner(sessionId);
+  },
+  confirmCloseWhileRunning: async (window, sessionId, signal) => {
+    const hasRun = isSessionRunInFlight(sessionId);
+    const liveTerminals = terminalService?.countLive(window) ?? 0;
+    const choice = await dialog.showMessageBox(window, {
+      signal,
       type: "warning",
-      buttons: ["Keep Open", "Close And Continue"],
+      buttons: ["Keep Open", hasRun ? "Close And Continue" : "Close Window"],
       defaultId: 0,
       cancelId: 0,
-      title: "Session Is Running",
-      message: "This session is still running.",
-      detail: "The run will continue after this window closes. Reopen the session later to check its progress.",
+      title: hasRun ? "Session Is Running" : "Close Window",
+      message: hasRun && liveTerminals ? "The session is running and the terminals will close." : hasRun ? "This session is still running." : "Terminals may have work in progress.",
+      detail: hasRun && liveTerminals
+        ? "The session run will continue, but the terminals will stop when this window closes."
+        : hasRun
+          ? "The run will continue after this window closes. Reopen the session later to check its progress."
+          : "The terminals will stop when this window closes.",
       noLink: true,
     });
-    return choice === 1;
+    return choice.response === 1;
   },
   persistSnapshotError: (error) => {
     writeAppLog({
@@ -423,6 +439,35 @@ const mainWindowRuntime = new MainWindowRuntime({
       error: appLogService.errorToLogError(error),
     });
   },
+});
+terminalService = new TerminalService<BrowserWindow>({
+  resolveOwner: (candidate) => {
+    if (!candidate || typeof candidate !== "object" || !("sender" in candidate)) return null;
+    const event = candidate as Electron.IpcMainEvent | Electron.IpcMainInvokeEvent;
+    if (event.senderFrame !== event.sender.mainFrame) return null;
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || window.isDestroyed()) return null;
+    const sessionId = mainWindowRuntime.getSessionWindowBridge().listOpenSessionWindowIds().find(
+      (candidate) => mainWindowRuntime.getSessionWindowBridge().getWindow(candidate) === window,
+    );
+    if (!sessionId) return null;
+    const session = getSession(sessionId);
+    return session ? { window, sessionId, workspacePath: session.workspacePath } : null;
+  },
+  confirmClose: async (window, signal) => (await dialog.showMessageBox(window, {
+    signal,
+    type: "warning",
+    buttons: ["Keep Open", "Close Terminal"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "Close Terminal",
+    message: "This terminal may have work in progress.",
+    detail: "Closing it will stop the shell and any processes it started.",
+    noLink: true,
+  })).response === 1,
+  sendEvent: (window, event) => window.webContents.send(WITHMATE_TERMINAL_EVENT, event),
+  spawn: spawnTerminalPty,
+  resolveShell: resolveTerminalShell,
 });
 const sessionFileExplorerRuntime = new SessionFileExplorerRuntime({
   userDataPath: fixedUserDataPath,
@@ -1072,7 +1117,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
         new MainBootstrapService(
           createMainBootstrapDeps({
             ipcMain,
-            registerMainIpcHandlers,
+            registerMainIpcHandlers: (ipc, deps) => {
+              registerMainIpcHandlers(ipc, deps);
+              if (!terminalService) throw new Error("Terminal service is unavailable.");
+              registerTerminalHandlers(ipc, terminalService);
+            },
             initializePersistentStores,
             recoverInterruptedSessions,
             broadcastModelCatalog,
@@ -1398,9 +1447,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 setSessionMessageBookmark: (request) => requireSessionPersistenceService().setSessionMessageBookmark(request.sessionId, request.incarnationId, request.messageIndex, request.isBookmarked),
                 setSessionExecutionOptions: (request) => requireSessionPersistenceService().setSessionExecutionOptions(request.sessionId, request.incarnationId, request.executionOptions),
                 setSessionPinned: (request) => requireMainSessionCommandFacade().setSessionPinned(request),
-                deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
-                deleteSessionsLastActiveBefore: (request) =>
-                  requireMainSessionCommandFacade().deleteSessionsLastActiveBefore(request),
+                deleteSession: async (sessionId) => {
+                  await requireMainSessionCommandFacade().deleteSession(sessionId);
+                  terminalService?.releaseSession(sessionId);
+                },
+                deleteSessionsLastActiveBefore: async (request) => {
+                  const result = await requireMainSessionCommandFacade().deleteSessionsLastActiveBefore(request);
+                  for (const sessionId of result.deletedSessionIds) terminalService?.releaseSession(sessionId);
+                  return result;
+                },
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
@@ -2043,7 +2098,9 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         upsertTerminalSession: (session, terminalCommit) => requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
       },
       resolution: {
-        resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(session, (characterId) => requireCharacterService().createRuntimeSnapshot(characterId)),
+        resolveRuntimeSessionForTurn: (session) => session.sessionKind === "character-authoring"
+          ? resolveCharacterAuthoringRuntimeSessionForTurn(session, (characterId) => requireCharacterService().createRuntimeSnapshot(characterId))
+          : refreshSessionCharacterRuntimeSnapshot(session, (characterId, previousSnapshot) => requireCharacterService().refreshRuntimeSnapshot(characterId, previousSnapshot)),
         resolveComposerPreview,
         resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
         resolveSessionFolderPath: (sessionId) => ensureSessionFilesDirectory(sessionId),
@@ -2153,6 +2210,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       auxiliary: {
         getRuntimeSession: (sessionId) => requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId),
         getSession: (sessionId) => requireAuxiliarySessionService().getAuxiliarySession(sessionId),
+        persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
         upsertRuntimeSession: async (session, options) => {
           const auxiliaryService = requireAuxiliarySessionService();
           await auxiliaryService.upsertAuxiliaryRuntimeSession(session, options);
@@ -2163,7 +2221,11 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         isAuxiliarySession: async (sessionId) => Boolean(await requireAuxiliarySessionService().getAuxiliarySession(sessionId)),
       },
       parent: { getSession: (sessionId) => Promise.resolve(owner.sessionStorage.getSession(sessionId)) },
-      resolution: { resolveComposerPreview, resolveProviderCatalog },
+      resolution: {
+        resolveComposerPreview,
+        resolveProviderCatalog,
+        resolveRuntimeSessionForTurn: (session) => refreshSessionCharacterRuntimeSnapshot(session, (characterId, previousSnapshot) => requireCharacterService().refreshRuntimeSnapshot(characterId, previousSnapshot)),
+      },
       provider: {
         getProviderCodingAdapter,
         resetProviderSessionThread,
@@ -3473,6 +3535,7 @@ if (!hasSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
+    terminalService?.releaseAll();
     writeAppLog({
       level: "info",
       kind: "app.will-quit",

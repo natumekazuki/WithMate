@@ -5,22 +5,50 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from "react";
 
-export type ImageZoom = "fit" | number;
+import { useViewportPan } from "./viewport-pan.js";
+import { usePreviewWheelZoomStep } from "../settings/preview-zoom-settings-context.js";
 
-type ImagePanSession = {
-  pointerId: number;
-  clientX: number;
-  clientY: number;
-  scrollLeft: number;
-  scrollTop: number;
-};
+export type ImageZoom = "fit" | number;
 
 export const IMAGE_ZOOM_MIN = 10;
 export const IMAGE_ZOOM_MAX = 800;
 export const IMAGE_ZOOM_STEP = 10;
+
+function stepImageZoom(zoom: number, direction: -1 | 1, step = IMAGE_ZOOM_STEP): number {
+  if (direction < 0) return zoom <= IMAGE_ZOOM_MIN ? zoom : Math.max(IMAGE_ZOOM_MIN, zoom - step);
+  return zoom >= IMAGE_ZOOM_MAX ? zoom : Math.min(IMAGE_ZOOM_MAX, Math.max(IMAGE_ZOOM_MIN, zoom + step));
+}
+
+export function useCtrlWheelZoom(
+  viewportRef: RefObject<HTMLDivElement | null>,
+  fitZoom: number,
+  setZoom: ImageViewportController["setZoom"],
+) {
+  const wheelZoomStep = usePreviewWheelZoomStep();
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey || event.deltaY === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (wheelZoomStep === null) return;
+      setZoom((currentZoom) => {
+        const effectiveZoom = typeof currentZoom === "number" ? currentZoom : fitZoom;
+        const nextZoom = effectiveZoom < IMAGE_ZOOM_MIN && event.deltaY < 0
+          ? IMAGE_ZOOM_MIN
+          : stepImageZoom(effectiveZoom, event.deltaY < 0 ? 1 : -1, wheelZoomStep);
+        return nextZoom === effectiveZoom ? currentZoom : nextZoom;
+      });
+    };
+    // React's passive wheel listener cannot cancel the browser's Ctrl+wheel zoom.
+    viewport.addEventListener("wheel", handleWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handleWheel);
+  }, [fitZoom, setZoom, viewportRef, wheelZoomStep]);
+}
 
 export function calculateImageFitZoom(
   viewportWidth: number,
@@ -32,14 +60,13 @@ export function calculateImageFitZoom(
     return 100;
   }
   const scale = Math.min(1, viewportWidth / imageWidth, viewportHeight / imageHeight);
-  return Math.max(0.1, Math.round(scale * 1_000) / 10);
+  return Math.max(0.1, Math.floor(scale * 1_000) / 10);
 }
 
 export function useImageViewport(sourceKey: string) {
   const [zoom, setZoom] = useState<ImageZoom>("fit");
   const [fitZoom, setFitZoom] = useState(100);
-  const [isPanning, setIsPanning] = useState(false);
-  const panSessionRef = useRef<ImagePanSession | null>(null);
+  const pan = useViewportPan(sourceKey);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -47,8 +74,6 @@ export function useImageViewport(sourceKey: string) {
   useEffect(() => {
     setZoom("fit");
     setFitZoom(100);
-    setIsPanning(false);
-    panSessionRef.current = null;
   }, [sourceKey]);
 
   const updateFitZoom = useCallback(() => {
@@ -84,113 +109,64 @@ export function useImageViewport(sourceKey: string) {
     return () => observer.disconnect();
   }, [sourceKey, updateFitZoom]);
 
-  const startPan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (
-      event.button !== 0
-      || (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth
-        && event.currentTarget.scrollHeight <= event.currentTarget.clientHeight)
-    ) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    panSessionRef.current = {
-      pointerId: event.pointerId,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      scrollLeft: event.currentTarget.scrollLeft,
-      scrollTop: event.currentTarget.scrollTop,
-    };
-    setIsPanning(true);
-  }, []);
-
-  const movePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const session = panSessionRef.current;
-    if (!session || session.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.scrollLeft = session.scrollLeft - (event.clientX - session.clientX);
-    event.currentTarget.scrollTop = session.scrollTop - (event.clientY - session.clientY);
-  }, []);
-
-  const stopPan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (panSessionRef.current?.pointerId !== event.pointerId) {
-      return;
-    }
-    panSessionRef.current = null;
-    setIsPanning(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  }, []);
-
-  const handlePanCaptureLoss = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (panSessionRef.current?.pointerId === event.pointerId) {
-      panSessionRef.current = null;
-      setIsPanning(false);
-    }
-  }, []);
-
   return {
     zoom,
     setZoom,
     fitZoom,
     effectiveZoom: typeof zoom === "number" ? zoom : fitZoom,
-    isPanning,
+    ...pan,
     imageRef,
     viewportRef,
     canvasRef,
     updateFitZoom,
-    startPan,
-    movePan,
-    stopPan,
-    handlePanCaptureLoss,
   };
 }
 
 export type ImageViewportController = ReturnType<typeof useImageViewport>;
 
 type ImageZoomControlsProps = {
-  controller: ImageViewportController;
+  controller: Pick<ImageViewportController, "effectiveZoom" | "setZoom" | "zoom">;
   className?: string;
   fitAriaLabel?: string;
+  target?: "image" | "diagram";
 };
 
 export function ImageZoomControls({
   controller,
   className,
   fitAriaLabel = "Fit image to viewport",
+  target = "image",
 }: ImageZoomControlsProps) {
   const { effectiveZoom, setZoom, zoom } = controller;
   return (
-    <div className={className} role="group" aria-label="Image zoom">
+    <div className={className} role="group" aria-label={target === "image" ? "Image zoom" : "Diagram zoom"}>
       <button
         type="button"
-        aria-label="Zoom image out"
-        title="Zoom image out"
+        aria-label={`Zoom ${target} out`}
+        title={`Zoom ${target} out`}
         disabled={effectiveZoom <= IMAGE_ZOOM_MIN}
-        onClick={() => setZoom(Math.max(IMAGE_ZOOM_MIN, effectiveZoom - IMAGE_ZOOM_STEP))}
+        onClick={() => setZoom(stepImageZoom(effectiveZoom, -1))}
       >−</button>
       <button
         type="button"
-        aria-label="Reset image zoom to 100%"
-        title="Reset image zoom to 100%"
+        aria-label={`Reset ${target} zoom to 100%`}
+        title={`Reset ${target} zoom to 100%`}
         onClick={() => setZoom(100)}
       >
         {effectiveZoom}%
       </button>
       <button
         type="button"
-        aria-label="Zoom image in"
-        title="Zoom image in"
+        aria-label={`Zoom ${target} in`}
+        title={`Zoom ${target} in`}
         disabled={effectiveZoom >= IMAGE_ZOOM_MAX}
-        onClick={() => setZoom(Math.min(IMAGE_ZOOM_MAX, effectiveZoom + IMAGE_ZOOM_STEP))}
+        onClick={() => setZoom(stepImageZoom(effectiveZoom, 1))}
       >＋</button>
       <button
         type="button"
         aria-label={fitAriaLabel}
         title={fitAriaLabel}
+        aria-pressed={zoom === "fit"}
         className={zoom === "fit" ? "is-active" : ""}
         onClick={() => setZoom("fit")}
       >Fit</button>
@@ -230,6 +206,7 @@ export function ImageViewport({
     viewportRef,
     zoom,
   } = controller;
+  useCtrlWheelZoom(viewportRef, controller.fitZoom, controller.setZoom);
   return (
     <div
       ref={viewportRef}
@@ -239,6 +216,7 @@ export function ImageViewport({
       onPointerUp={stopPan}
       onPointerCancel={stopPan}
       onLostPointerCapture={handlePanCaptureLoss}
+      title="Ctrl + left-drag to pan"
     >
       <div
         ref={canvasRef}

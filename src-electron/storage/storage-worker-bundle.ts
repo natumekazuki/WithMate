@@ -51,7 +51,7 @@ const STORE_METHODS = {
   character: [
     "getCharacterDirectory", "listCharacters", "getCharacterCatalogEntry", "getCharacter", "createCharacter",
     "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter", "resolveLaunchCharacter",
-    "createRuntimeSnapshot", "deleteCharacterRootDirectory",
+    "createRuntimeSnapshot", "refreshRuntimeSnapshot", "deleteCharacterRootDirectory",
   ],
   settings: ["getSettings", "updateSettings", "updateChatLayoutPreference", "resetSettings"],
   catalog: ["ensureSeeded", "getActiveCatalog", "getCatalog", "getProviderCatalog", "importCatalogDocument", "resetToBundled", "exportCatalogDocument"],

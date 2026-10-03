@@ -58,7 +58,9 @@ export type SessionComposerExpandedProps = {
   composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
   onRetryComposerSave?: () => void;
   isRunning: boolean;
+  isCanceling?: boolean;
   targetDock?: ReactNode;
+  dockModeSwitch?: ReactNode;
   chatNotice?: string;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
@@ -139,7 +141,9 @@ export function SessionComposerExpanded({
   composerController,
   onRetryComposerSave,
   isRunning,
+  isCanceling = false,
   targetDock = null,
+  dockModeSwitch = null,
   chatNotice,
   composerBlocked,
   canSelectCustomAgent,
@@ -426,7 +430,7 @@ export function SessionComposerExpanded({
               </button>
             </div>
           ) : null}
-          {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock ? (
+          {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock || dockModeSwitch ? (
             <div className="composer-toolbar-view-actions">
               <div
                 className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}
@@ -438,8 +442,10 @@ export function SessionComposerExpanded({
                     type="button"
                     onClick={onSendOrCancel}
                     title={sendButtonTitle}
+                    disabled={isCanceling}
+                    aria-busy={isCanceling || undefined}
                   >
-                    Cancel
+                    {isCanceling ? "Canceling" : "Cancel"}
                   </button>
                 ) : null}
               </div>
@@ -473,6 +479,7 @@ export function SessionComposerExpanded({
                   </button>
                 </div>
               ) : null}
+              {dockModeSwitch}
             </div>
           ) : null}
         </div>
@@ -641,7 +648,7 @@ export function SessionComposerExpanded({
             <select
               value={selectedModel}
               onChange={(event) => onChangeModel(event.target.value)}
-              disabled={composerBlocked || composerFrozen}
+              disabled={isRunning || composerBlocked || composerFrozen}
             >
               {modelOptions.length > 0 ? (
                 modelOptions.map((option) => (
@@ -660,7 +667,7 @@ export function SessionComposerExpanded({
             <select
               value={selectedReasoningEffort}
               onChange={(event) => onChangeReasoningEffort(event.target.value)}
-              disabled={composerBlocked || composerFrozen}
+              disabled={isRunning || composerBlocked || composerFrozen}
               aria-label="Reasoning depth"
             >
               {reasoningOptions.map((option) => (

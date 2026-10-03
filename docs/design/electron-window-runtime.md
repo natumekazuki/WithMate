@@ -120,8 +120,19 @@ current 実装の API surface は次の domain に分かれる。
 - `settings`
 - `picker`
 - `subscription`
+- `terminal`
 
 型定義の正本は `src-shared/ipc/withmate-window-api.ts` と `src-shared/window/withmate-window-types.ts` に置く。Bridgeの実装は`src-electron/preload/preload-api.ts`が担当し、rendererのURL queryからsession・auxiliary・diff tokenを読む処理は`src/app/session-location.ts`が担当する。
+
+## Embedded Terminal
+
+`src-electron/terminal/`がWindowと親Sessionに属するPTYの作成・入出力・終了を管理し、`src/terminal/`がタブとxtermを所有する。専用のtyped preload APIを使い、Mainは送信元が登録済みSession Windowのmain frameであることを確認する。rendererの指定したSession IDやcwdで起動せず、保存済み親Sessionのworkspaceを使う。他Windowの端末へ入力・resize・終了・出力購読を許可しない。
+
+node-ptyはタブごとのElectron utility process内で起動要求時にloadし、WindowsはSystemRoot内のWindows PowerShell、macOSは`/bin/zsh`を実行する。native moduleや非同期socketの異常をMain・他の端末から隔離し、hostの予期しない終了は当該タブの`Failed`として通知する。Mainとhostの接続にはElectronのメッセージAPIを使う。workspace内や相対PATHの同名プログラムをshellに選ばず、cwdの文字列をtrimしない。load・shell・cwd・spawnの失敗は端末単位の失敗として返し、外部Terminalへのfallbackや自動respawnは行わない。
+
+出力は専用eventからxtermの`write`へ渡し、その完了callbackで処理済み文字数を返す。PTYは未処理量のhigh/low watermarkでpause/resumeする。非選択・折りたたみ中も受信と処理を継続し、本文をReact state、Session保存、Audit Log、Memory、診断ログへ複製しない。端末の履歴はxtermのscrollback上限に従う。
+
+タブ終了、Window破棄、renderer終了・document navigation、Session削除、アプリ終了でownerのPTYと購読を解放する。起動待機中に解放された要求は、後からspawnが完了してもPTYを残さない。Window close時も個別タブと同じ判定で、実行中・起動中・判別不能な端末があれば終了を非同期で一括確認する。入力待ち・終了済み端末だけなら端末理由の確認は省略し、AI実行中ならWindowを閉じても実行を継続する確認へまとめる。確認待ちの重複closeを抑止し、承認後も既存のdraft flushを待つ。確認結果は元のWindow identityへ限定する。
 
 ## URL Resolution
 
@@ -158,7 +169,7 @@ preload API / IPC の成立を優先し、現行実装は `sandbox: false` を�
 - `openPath` は current UX を優先し、任意 target を受け取れる仕様を維持する
 - main process 側では target を external URL / local path へ正規化するが、path allowlist の強制ガードは入れない
 - `AddDirectory` は prompt / workspace 操作で許可対象ディレクトリを広げる既存機能であり、`openPath` 自体の強制ガードではない
-- `openSessionTerminal` は session の `workspacePath` を terminal で開く用途に限定する
+- `openSessionTerminal` はsessionの`workspacePath`を外部Terminalで開く用途に限定し、組み込みTerminalのAPIとは分離する
 - detached file preview は `openPath` へ local file link を直接渡さず、Main process が root-scoped resource または user-activated absolute-file resourceへ解決する。absolute-file preview は Additional Directory や provider 権限を変更しない。詳細は ADR 020 を参照する
 - したがって local path operation の制約は一律 block ではなく、renderer 導線と main process 正規化の責務分離で扱う
 

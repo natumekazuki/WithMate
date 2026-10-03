@@ -62,6 +62,7 @@ import type {
   SessionRunningTurnStartInput,
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
+import { assertCharacterDefinitionSnapshotUpdate } from "./session-running-turn-start.js";
 import type { ProviderRuntimeMetadataPatch } from "../providers/provider-runtime-metadata-patch.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
@@ -745,7 +746,7 @@ export class SessionStorageV6 {
       const currentRuntimeState = decodeSessionV6RuntimeState(currentRow);
       if (updatesCharacterSnapshot) {
         if (currentRow.session_kind !== "character-authoring") {
-      throw new Error("The Character snapshot owner does not match the Session.");
+          assertCharacterDefinitionSnapshotUpdate(currentRuntimeState.snapshot, nextCharacterSnapshot, currentRuntimeState.characterId);
         }
         if (
           nextCharacterSnapshot
@@ -775,7 +776,7 @@ export class SessionStorageV6 {
         ...parseJsonObject(currentRow.runtime_policy_json),
         appStatus: "running",
         runState: "running",
-        ...(nextCharacterSnapshot ? {
+        ...(nextCharacterSnapshot && currentRow.session_kind === "character-authoring" ? {
           characterName: nextCharacterSnapshot.name,
           characterIconPath: nextCharacterSnapshot.iconFilePath,
           characterThemeColors: nextCharacterSnapshot.theme,
@@ -786,7 +787,8 @@ export class SessionStorageV6 {
           ? stringifyCharacterRuntimeSnapshot(nextCharacterSnapshot)
           : null
         : currentRow.character_snapshot_json;
-      const clearsProviderThread = updatesCharacterSnapshot && nextCharacterSnapshot === null;
+      const clearsProviderThread = currentRow.session_kind === "character-authoring"
+        && updatesCharacterSnapshot && nextCharacterSnapshot === null;
       const updateResult = this.db.prepare(`
         UPDATE sessions_v6
         SET state = 'active',

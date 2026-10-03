@@ -21,7 +21,7 @@ provider間の対応状況は[Coding Agent Capability Matrix](coding-agent-capab
 
 ## Characterと継続性
 
-Characterはcatalogからsessionごとに選ぶ。通常sessionは開始時点のruntime snapshotを保持し、後のcatalog編集で既存会話の人格を暗黙に差し替えない。作成・編集はCharacter Editorで行い、Character authoringは専用の通常Sessionと管理されたSkillを使う。保存とsnapshotの境界は[Character Storage](character-storage.md)に記す。
+Characterはcatalogからsessionごとに選ぶ。通常sessionはstable ownerと表示metadataを維持し、active Characterの有効な定義変更を次の送信開始時に反映する。同名Characterへの切り替えや、更新のための会話履歴・provider threadの破棄は行わない。作成・編集はCharacter Editorで行い、Character authoringは専用の通常Sessionと管理されたSkillを使う。保存とsnapshotの境界は[Character Storage](character-storage.md)に記す。
 
 Memoryは通常のturnへ常設注入せず、権限を持つagentが必要なときに検索・追加・忘却するlocal serviceとする。Affectも永続eventとread-time projectionを区別する。正本、権限、privacy、データ保護は[V6 Memory Foundation](v6-memory-foundation.md)と関連ADRに従う。
 

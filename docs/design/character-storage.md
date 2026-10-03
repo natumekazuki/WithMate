@@ -1,7 +1,9 @@
 # Character Storage
 
 ## Auxiliary Character Snapshot
-新規AuxiliaryはMain Processでactive候補からMainのstable IDを除外してCharacterをweighted random選択し、`characterId`と`CharacterRuntimeSnapshot`を会話作成時に固定保存する。他Auxiliaryとの同一Characterは許容する。既存会話の切り替え、再表示、retry、再起動で再抽選・catalog再生成を行わない。snapshotがない旧形式行だけは親の保存済みidentityを互換利用し、不正な新形式snapshotは親へfallbackせず失敗として扱う。
+新規AuxiliaryはMain Processでactive候補からMainのstable IDを除外してCharacterをweighted random選択し、`characterId`と初期`CharacterRuntimeSnapshot`を会話作成時に保存する。他Auxiliaryとの同一Characterは許容する。既存会話の切り替え、再表示、再起動で再抽選を行わない。送信開始時の定義更新はMainと同じRuntime Snapshot契約に従い、親や同名Characterへ差し替えない。
+
+snapshotを持たない旧形式Auxiliaryは親の保存済みidentityを投影し、送信開始時に採用したsnapshotをAuxiliary自身へ保存する。不正な新形式snapshotを親へ差し替えることはしない。
 
 ## Goal
 
@@ -29,7 +31,7 @@
 | runtime definition body | `characters/<character-id>/character.md` |
 | authoring notes | `characters/<character-id>/character-notes.md` |
 | managed icon body | `characters/<character-id>/icon.<ext>` |
-| session runtime input | session 作成時に保存する `CharacterRuntimeSnapshot` |
+| session runtime input | sessionに保存する最新の `CharacterRuntimeSnapshot` |
 
 Renderer は filesystem を直接走査しない。Character catalog は Main Process service 経由で取得する。
 
@@ -107,6 +109,7 @@ storage service は次を提供する:
 - `archiveCharacter(characterId)`
 - `resolveLaunchCharacter({ characterId? })`
 - `createRuntimeSnapshot(characterId)`
+- 内部send-start用の`refreshRuntimeSnapshot(characterId, previousSnapshot)`
 
 `resolveLaunchCharacter` は、明示された `characterId` がactive Characterを指す場合だけ返す。Character未指定、不明、archivedの場合は`null`を返し、特定Characterや更新日時順の先頭へ暗黙にfallbackしない。
 
@@ -114,7 +117,13 @@ Sessionのランダム選択とactive Character 0件時のneutral fallbackはHom
 
 ## Runtime Snapshot
 
-通常 Session の `CharacterRuntimeSnapshot` は、作成時に保存する immutable input である。汎用 update は保存済み `characterId` と snapshot の差し替えを永続化前に拒否し、runtime prompt は catalog の現在値ではなく保存済み snapshot を使う。
+通常のMain／Auxiliaryはstable Character ownerと、最新1件の`CharacterRuntimeSnapshot`を保存する。作成時のsnapshotを初期値とし、送信開始時に保存済みsnapshotを前回値として扱う。作成時専用snapshotや版履歴は別保存しない。
+
+active Characterでは、送信開始時に同じstable IDのcanonical `character.md`を1回読み、保存済み`definitionMarkdown`と本文全体を比較する。同じ本文なら再生成しない。変更された有効な定義では、`definitionMarkdown`、`definitionSha256`、`definitionByteSize`、`snapshotAt`だけを更新し、ID、表示名、説明、icon、themeを維持する。snapshotが未保存のMainでは、有効なstable ownerのcatalog metadataと定義から初回snapshotを生成する。Auxiliaryは前述の旧形式投影と不正な新形式snapshotの拒否を維持する。更新したsnapshotはrunning turnの開始保存で確定し、そのturnのpromptに使う。会話履歴とprovider threadは保持する。
+
+archived Characterではcanonical fileを読まず、保存済みsnapshotで継続する。archived Characterの保存済みsnapshotがない場合、catalogにownerが存在しない場合、またはactive Characterの定義が欠落・読取り不能・不正な場合は送信を明示的に失敗させる。snapshot、履歴、threadを破棄せず、最新定義を反映したように扱わない。既存のneutral通常SessionはCharacterなしのまま継続する。
+
+汎用Session／Auxiliary updateは保存済み`characterId`とsnapshotの差し替えを永続化前に拒否する。通常の定義更新は内部の送信開始経路だけが所有し、同名Characterへのowner切り替えやcatalog metadataへの追従は行わない。既存の長期Sessionも保存済みsnapshotを前回値として扱い、DB migrationを必要としない。
 
 `character-authoring` Session は例外である。stable owner は `Session.characterId` に保持したまま、各 turn の開始時に canonical `character.md` から runtime snapshot を再生成する。定義が hard contract を満たさない、または必須ファイルが欠落した場合は snapshot を投影せず、古い snapshot と provider thread ID を composer / provider validation より前に破棄し、process-local thread cache も無効化する。
 
@@ -122,7 +131,7 @@ V6 の既存 row で stable owner と snapshot owner が一致しない場合は
 
 relational owner と runtime policy owner のどちらもない legacy row は、表示名や snapshot から Character ID を推測せず、Character ID の生成領域外にある予約 ID `withmate:unresolved-character-owner` へ回復する。この ID は public create と runtime snapshot 解決では拒否し、実 Character を再解決しない。
 
-snapshot の field shape は `src-shared/character/character-catalog.ts`、normalization と prompt projection は `src-shared/character/character-runtime-snapshot.ts`、authoring turn の再解決は `src-electron/character/character-authoring-service.ts` を正本とする。stable owner の判断理由は `docs/adr/009-stable-character-runtime-owner.md`、authoring 例外は `docs/adr/010-character-authoring-project-contract.md` を参照する。
+snapshot の field shape は `src-shared/character/character-catalog.ts`、normalization と prompt projection は `src-shared/character/character-runtime-snapshot.ts`、通常turnの更新は`src-electron/session/session-runtime-service.ts`とAuxiliary runtime、authoring turn の再解決は `src-electron/character/character-authoring-service.ts` を正本とする。stable owner の判断理由は `docs/adr/009-stable-character-runtime-owner.md`、authoring 固有契約は `docs/adr/010-character-authoring-project-contract.md` を参照する。
 
 ## Data Safety
 

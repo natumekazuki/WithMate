@@ -34,7 +34,8 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   ): void;
   getSession(sessionId: string): Session | null;
   isRunInFlight(sessionId: string): boolean;
-  confirmCloseWhileRunning(window: TWindow, sessionId: string): boolean;
+  getTerminalCloseConfirmationCount?(window: TWindow): number;
+  confirmCloseWhileRunning(window: TWindow, sessionId: string, signal: AbortSignal): boolean | Promise<boolean>;
   broadcastOpenSessionWindowIds(openSessionIds: string[]): void;
   persistOpenSessionWindowIds?(openSessionIds: readonly string[]): Promise<void>;
   onSnapshotPersistenceError?(error: unknown): void;
@@ -54,6 +55,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private readonly sessionWindows = new Map<string, TWindow>();
   private readonly openingSessionWindows = new Map<string, Promise<TWindow>>();
   private readonly allowCloseSessionWindows = new Set<TWindow>();
+  private readonly pendingCloseConfirmations = new Map<TWindow, AbortController>();
   private readonly snapshotEligibleWindows = new Set<TWindow>();
   private readonly pendingCloseRequests = new Map<TWindow, {
     promise: Promise<boolean>;
@@ -228,6 +230,10 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       this.deps.cancelInFlightSessionRuns?.();
     } catch {
       this.draftFlushGateActive = false;
+      for (const window of windows) {
+        this.cancelCloseConfirmation(window);
+        this.resolveCloseRequest(window, false);
+      }
       return false;
     }
     const flushing = windows.map((window) => {
@@ -247,6 +253,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     this.draftFlushGateActive = false;
     for (const candidate of windows) {
       this.releaseDraftFlush(candidate, false);
+      this.cancelCloseConfirmation(candidate);
       this.pendingDraftFlushWindows.delete(candidate);
       this.resolveCloseRequest(candidate, false);
     }
@@ -334,27 +341,56 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       return;
     }
 
-    if (this.deps.isRunInFlight(sessionId)) {
+    if (this.pendingCloseConfirmations.has(window) || this.pendingDraftFlushWindows.has(window)) {
       event.preventDefault();
-      if (!this.deps.confirmCloseWhileRunning(window, sessionId)) {
-        this.resolveCloseRequest(window, false);
-        return;
-      }
+      return;
+    }
+
+    const hasRunningSession = this.deps.isRunInFlight(sessionId);
+    const hasTerminalsRequiringConfirmation = (this.deps.getTerminalCloseConfirmationCount?.(window) ?? 0) > 0;
+    if (hasRunningSession || hasTerminalsRequiringConfirmation) {
+      event.preventDefault();
+      const confirmation = new AbortController();
+      this.pendingCloseConfirmations.set(window, confirmation);
+      void this.confirmWindowClose(sessionId, window, confirmation);
+      return;
     }
 
     if (!this.deps.sendDraftFlushRequest || !this.deps.getWindowSender) {
-      if (this.deps.isRunInFlight(sessionId)) {
-        this.allowCloseSessionWindows.add(window);
-        window.close();
+      return;
+    }
+    event.preventDefault();
+    this.startCloseDraftFlush(sessionId, window);
+  }
+
+  private async confirmWindowClose(sessionId: string, window: TWindow, confirmation: AbortController): Promise<void> {
+    let approved = false;
+    try {
+      approved = await this.deps.confirmCloseWhileRunning(window, sessionId, confirmation.signal);
+    } catch (error) {
+      if (!confirmation.signal.aborted) console.error("Session Window close confirmation failed:", error);
+    }
+    if (this.pendingCloseConfirmations.get(window) !== confirmation) return;
+    this.pendingCloseConfirmations.delete(window);
+    if (this.sessionWindows.get(sessionId) !== window || window.isDestroyed() || this.draftFlushGateActive) return;
+    if (!approved) {
+      this.resolveCloseRequest(window, false);
+      return;
+    }
+    if (!this.deps.sendDraftFlushRequest || !this.deps.getWindowSender) {
+      this.allowCloseSessionWindows.add(window);
+      try { window.close(); }
+      catch (error) {
+        this.allowCloseSessionWindows.delete(window);
+        this.resolveCloseRequest(window, false);
+        console.error("Session Window close failed after confirmation:", error);
       }
       return;
     }
-    if (this.pendingDraftFlushWindows.has(window)) {
-      event.preventDefault();
-      return;
-    }
+    this.startCloseDraftFlush(sessionId, window);
+  }
 
-    event.preventDefault();
+  private startCloseDraftFlush(sessionId: string, window: TWindow): void {
     this.pendingDraftFlushWindows.add(window);
     const closeFlush = this.flushDrafts(window, sessionId, "close");
     void closeFlush.then((flushed) => {
@@ -386,6 +422,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     this.draftFlushes.delete(window);
     this.resolveCloseRequest(window, true);
     this.allowCloseSessionWindows.delete(window);
+    this.cancelCloseConfirmation(window);
     this.pendingDraftFlushWindows.delete(window);
     if (this.sessionWindows.get(sessionId) !== window) {
       return;
@@ -458,6 +495,13 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     } catch {
       // A destroyed renderer has already lost its freeze channel.
     }
+  }
+
+  private cancelCloseConfirmation(window: TWindow): void {
+    const confirmation = this.pendingCloseConfirmations.get(window);
+    if (!confirmation) return;
+    this.pendingCloseConfirmations.delete(window);
+    confirmation.abort();
   }
 
   private resolveCloseRequest(window: TWindow, closed: boolean): void {

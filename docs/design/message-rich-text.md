@@ -6,6 +6,11 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 
 ## Link Handling
 
+- Mermaidのstrict rendererが生成したSVG linkも同じ明示open経路を使う。図のanchorはrawなhref／xlink:hrefを渡し、Mermaid file previewの相対linkはそのfileの親directory、会話内の相対linkはWorkspaceを基準にする。図内でElectron document自体を遷移させず、auxiliary clickとpan後のclickではopenしない。同一page fragmentはdocument navigationを行わない
+- Mermaidのstrict設定とsanitizationは維持する。sanitizerが除去したdestination（file URLやWindows drive表記を含む）は原文から復元せず、図を保持して開けない理由を表示する。対応する相対link等での不存在・認可失敗は既存の操作元feedbackへ返す
+
+- リンク表示はSession会話と中央／独立Markdown file previewで共通化する。通常・訪問済みとも周囲の本文色を継承し、常時実線の下線で本文と区別する。hover／keyboard focusでは下線を太くし、focusには同色の輪郭も表示する
+- リンク内のinline codeはリンク色と下線を保ち、長いURL／pathも表示幅内で折り返す。表示の調整は共通CSSで行い、利用者向け設定や保存項目は持たない
 - `http://` / `https://` は外部ブラウザで開く
 - Session message のローカル絶対 path と workspace 相対 path は、regular fileならroot内外ともdetached file previewで開く。directoryならroot内外とも明示的なlink操作でOSのfile managerへ渡す。表示やlink解決だけでは自動openしない
 - ローカル path link に `#L10` などの fragment が付いている場合は、少なくとも path 本体を開けるように fragment を無視して扱う。`:10` または `:10:4` 形式は、指定された path が存在しない場合だけ行番号または行番号と列番号として扱う

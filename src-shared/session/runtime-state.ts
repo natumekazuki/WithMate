@@ -262,6 +262,7 @@ export type LiveElicitationRequest = {
 export type LiveSessionRunState = {
   sessionId: string;
   threadId: string;
+  cancellationState?: "requested" | "terminating";
   assistantText: string;
   reasoningText?: string;
   steps: LiveRunStep[];

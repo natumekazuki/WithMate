@@ -193,36 +193,44 @@
   margin: 0;
 }
 
-.session-file-markdown a,
-.session-file-markdown a:visited {
-  color: var(--session-file-link);
-}
-
-.session-file-markdown a:hover,
-.session-file-markdown a:focus-visible {
-  color: var(--session-file-link-emphasis);
-}
-
-.session-file-markdown a:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
-}
-
 .session-file-markdown .message-inline-code {
   background: rgba(255, 255, 255, 0.08);
   color: var(--ink);
 }
 
-.session-file-markdown a .message-inline-code {
-  color: inherit;
-}
-
-.session-file-markdown .message-mermaid-error {
+.session-file-markdown .message-mermaid.fallback .message-mermaid-error {
   color: var(--session-file-error);
 }
 
-.session-file-mermaid .message-code-block-shell.mermaid > .message-mermaid {
-  padding-top: 12px;
+.session-file-markdown-scroll:has(.session-file-mermaid) {
+  padding: 10px;
+}
+
+.session-file-markdown-scroll > [data-selection-copy-body]:has(> .session-file-mermaid),
+.session-file-mermaid,
+.session-file-mermaid > .message-code-block-shell.mermaid {
+  height: 100%;
+  min-height: 0;
+}
+
+.session-file-mermaid > .message-code-block-shell.mermaid {
+  content-visibility: visible;
+}
+
+.session-file-mermaid .message-mermaid:not(.fallback) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.session-file-mermaid .message-mermaid-controls {
+  flex-shrink: 0;
+}
+
+.session-file-mermaid .message-mermaid-viewport {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
 }
 
 ::highlight(withmate-find-match) {
@@ -539,6 +547,21 @@
   border-radius: 0;
 }
 
+.file-preview-window-page.with-preview-settings {
+  display: flex;
+  flex-direction: column;
+}
+
+.file-preview-window-page.with-preview-settings > .session-file-preview {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.file-preview-settings-feedback {
+  padding: 12px;
+}
+
 .file-preview-loading-title,
 .file-preview-loading-actions,
 .file-preview-loading-content span {
@@ -789,6 +812,18 @@
   border-top-color: var(--muted);
   border-radius: 50%;
   animation: workspace-changes-spin 720ms linear infinite;
+}
+
+@keyframes workspace-changes-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-changes-root-spinner {
+    animation: none;
+  }
 }
 
 .workspace-changes-group-header {

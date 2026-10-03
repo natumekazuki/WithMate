@@ -278,6 +278,7 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 - 失敗時の `threadId` は既定では保持するが、`stale thread / session` または Codex の `Reading prompt from stdin...` のように「meaningful partial なしで再利用不能」と判定できる失敗では空へ戻す
 - ユーザーキャンセル時は監査ログに `phase=canceled` を記録する
 - setup 中の cancel intent も保持し、setup dependency または provider が abort 後に settle しない場合は cancel grace 後に呼び出しを収束させる。元処理が実際に終了するまでは同一 session の再送を拒否する
+- Main は取消受付を live run の `cancellationState = requested`、cancel grace 後も未終了の処理を `terminating` として投影する。terminal Session の保存が `idle` を返しても取消待ちを解除せず、元処理と終端保存が終了して admission guard が解放された時に live 取消状態を解除・通知する。重複取消は同一 turn の要求として扱う
 - 失敗時は監査ログにも `phase=failed` を記録し、`system / input / composed prompt` と error を残す
 - canceled / failed のどちらでも、取得済みの `assistant text` / operations / raw items / artifact があれば捨てずに残す
 - stale thread / session 起因エラー、または Codex の thread bootstrap 直後に `Reading prompt from stdin...` で落ちる再利用不能エラーに限り、`SessionRuntimeService` は同一 user turn 内で 1 回だけ internal retry できる
