@@ -228,9 +228,9 @@
   }
 
   .session-page .session-action-dock-compact-row .session-action-dock-cancel-slot {
-    flex: 1 1 86px;
+    flex: 1 1 114px;
     width: auto;
-    min-width: 86px;
+    min-width: 114px;
   }
 
   .session-action-dock-compact-meta {

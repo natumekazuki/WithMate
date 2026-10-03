@@ -71,9 +71,9 @@
 }
 
 .session-action-dock-cancel-slot {
-  flex: 0 0 86px;
-  width: 86px;
-  min-width: 86px;
+  flex: 0 0 114px;
+  width: 114px;
+  min-width: 114px;
 }
 
 .session-action-dock-cancel-slot:not(.is-active) {

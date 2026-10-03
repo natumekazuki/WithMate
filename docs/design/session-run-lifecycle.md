@@ -115,7 +115,9 @@ window は上の状態機械とは分離する。
 
 - `Session Window` の `Cancel` は Main Process の `AbortController` を通して provider 実行を止める
 - キャンセル後の session は `runState = idle` に戻る
-- admission の開始予約後の Worker 読込み・最終排他取得、setup または provider が cancel grace 後も生存する場合、表示上の turn は収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
+- admission の開始予約後の Worker 読込み・最終排他取得、setup または provider が cancel grace 後も生存する場合、turn 呼出しは収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
+- 取消受付直後は live run の `cancellationState = requested` を通知し、grace 後も元処理が未終了なら `terminating` を通知する。admission / setup 中に live run が未作成でも同じ状態を投影する。Renderer は保存済み `runState = idle` よりこの取消待ちを優先し、Send と重複 Cancel を無効化する
+- 終端保存中と全ての未終了処理が settle するまで取消待ちを保持する。最後の admission guard 解放時に live 取消状態を解除して通知し、次の Send を可能にする。繰り返しの Cancel は同じ turn の要求として冪等に扱い、旧 turn の遅延 progress / 応答を次 turn へ反映しない
 - chat にはキャンセル結果を 1 件追加する
 - 監査ログは同じ turn record を先に最小 `phase = canceled` へ更新し、`errorMessage` にユーザーキャンセルを残す。詳細は bounded enrichment として後段で更新する
 - 実行中の設定変更は上記 Behavior Requirements の制約に従う。model / depth の現在選択は次の Send 用に変更でき、実行中 turn の設定は変えない

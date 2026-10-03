@@ -40,6 +40,7 @@ export function SessionActionDockModeSwitch({ mode, onChange }: {
 
 export type SessionActionDockCompactRowProps = {
   isRunning: boolean;
+  isCanceling?: boolean;
   targetDock?: ReactNode;
   dockModeSwitch?: ReactNode;
   showExpandControl?: boolean;
@@ -56,6 +57,7 @@ export type SessionActionDockCompactRowProps = {
 
 export function SessionActionDockCompactRow({
   isRunning,
+  isCanceling = false,
   targetDock = null,
   dockModeSwitch = null,
   showExpandControl = true,
@@ -93,8 +95,10 @@ export function SessionActionDockCompactRow({
               type="button"
               onClick={onCancel}
               title={cancelButtonTitle}
+              disabled={isCanceling}
+              aria-busy={isCanceling || undefined}
             >
-              Cancel
+              {isCanceling ? "Canceling" : "Cancel"}
             </button>
         ) : null}
         </div>

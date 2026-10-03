@@ -110,9 +110,9 @@ test("Session composer の Cancel slot は固定幅と狭幅上書きを持つ",
     /\.session-action-dock-cancel-slot\s*{(?<body>[^}]*)}/,
   )?.groups?.body;
   assert.ok(cancelSlotRule, "Cancel slotの通常幅ruleを取得できる");
-  assert.match(cancelSlotRule, /flex:\s*0 0 86px;/, "Cancel領域は固定flex幅を予約する");
-  assert.match(cancelSlotRule, /width:\s*86px;/, "Cancel領域は固定widthを予約する");
-  assert.match(cancelSlotRule, /min-width:\s*86px;/, "Cancel領域は最小幅を固定する");
+  assert.match(cancelSlotRule, /flex:\s*0 0 114px;/, "Canceling labelを含む領域は固定flex幅を予約する");
+  assert.match(cancelSlotRule, /width:\s*114px;/, "Cancel領域は固定widthを予約する");
+  assert.match(cancelSlotRule, /min-width:\s*114px;/, "Cancel領域は最小幅を固定する");
 
   const cancelButtonRule = stylesSource.match(
     /\.session-action-dock-cancel-slot > \.session-send-button\s*{(?<body>[^}]*)}/,

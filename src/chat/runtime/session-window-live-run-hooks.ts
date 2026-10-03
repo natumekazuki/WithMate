@@ -12,6 +12,7 @@ function sameRunControls(left: OwnedLiveSessionRunState["state"], right: OwnedLi
     && Boolean(left?.approvalRequest) === Boolean(right?.approvalRequest)
     && Boolean(left?.elicitationRequest) === Boolean(right?.elicitationRequest)
     && left?.errorMessage === right?.errorMessage
+    && left?.cancellationState === right?.cancellationState
     && Boolean(left?.steps.some((step) => step.status === "in_progress"))
       === Boolean(right?.steps.some((step) => step.status === "in_progress"));
 }
@@ -23,6 +24,7 @@ function useSessionLiveRunSubscription(
   controlsOnly = false,
 ): {
   hasSelectedSessionLiveRun: boolean;
+  selectedSessionCancellationState: NonNullable<OwnedLiveSessionRunState["state"]>["cancellationState"];
   getLiveRunRevision: () => number;
   selectedSessionLiveRun: OwnedLiveSessionRunState["state"];
   setLiveRunState: (update: SetStateAction<OwnedLiveSessionRunState>) => void;
@@ -67,7 +69,13 @@ function useSessionLiveRunSubscription(
     });
   }, [activeRunSessionId, api, selectedSession?.id, setLiveRunState]);
 
-  return { getLiveRunRevision, hasSelectedSessionLiveRun, selectedSessionLiveRun, setLiveRunState };
+  return {
+    getLiveRunRevision,
+    hasSelectedSessionLiveRun,
+    selectedSessionCancellationState: liveRunStates[selectedSession?.id ?? ""]?.state?.cancellationState,
+    selectedSessionLiveRun,
+    setLiveRunState,
+  };
 }
 
 /** Full display snapshots belong to the conversation, context, or audit surface. */
