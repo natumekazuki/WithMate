@@ -73,13 +73,42 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
     throw new Error("Iterator was advanced after result");
   }, (options, prompt) => seen.push({ options, prompt })) });
   const progress: string[] = [];
-  const completed = await adapter.runSessionTurn(input("thread-1"), (state) => { progress.push(state.assistantText); });
-  assert.equal(seen[0].options.resume, "thread-1");
-  assert.deepEqual(seen[0].options.systemPrompt, { type: "preset", preset: "claude_code", append: completed.logicalPrompt.systemText, snapshot: false });
-  assert.equal(seen[0].prompt, completed.logicalPrompt.inputText);
-  assert.equal(completed.assistantText, "Hello");
+  const request = input();
+  let completed;
+  for (const [index, marker] of ["FIRST", "SECOND", "EXPLICIT-RESUME"].entries()) {
+    request.session.characterRuntimeSnapshot = {
+      characterId: "character", name: "Character", description: "Saved metadata", iconFilePath: "",
+      theme: { main: "#112233", sub: "#445566" }, definitionMarkdown: `Definition ${marker}`,
+      definitionSha256: marker, definitionByteSize: marker.length, snapshotAt: "2026-10-03T00:00:00Z",
+    };
+    request.characterContext = {
+      schemaVersion: "withmate-character-context-v1",
+      baseline: { definitionSha256: marker, snapshotAt: "2026-10-03T00:00:00Z" },
+      affect: { mode: "active", effective: [{ contributingLayers: ["session"], targetType: "user", targetId: "user", family: null,
+        label: `Affect ${marker}`, valence: 0.5, intensity: 0.5 }], evaluatedAt: "2026-10-03T00:00:00Z", version: marker, updatedAt: null },
+      memory: { items: [], updatedAt: null },
+    };
+    // Recreate the adapter for explicit resume: freshness must not rely on an in-memory query cache.
+    const currentAdapter = index === 2 ? new ClaudeAdapter({ query: fakeQuery(async function* () { yield result("thread-1"); },
+      (options, prompt) => seen.push({ options, prompt })) }) : adapter;
+    completed = await currentAdapter.runSessionTurn(request, (state) => { progress.push(state.assistantText); });
+    assert.equal(seen[index].options.resume, index === 0 ? undefined : "thread-1");
+    const system = seen[index].options.systemPrompt;
+    assert.ok(system && typeof system === "object" && !Array.isArray(system) && system.type === "preset");
+    assert.equal(system.preset, "claude_code");
+    assert.equal(system.snapshot, false);
+    assert.match(system.append!, new RegExp(`Definition ${marker}`));
+    assert.match(system.append!, new RegExp(`Affect ${marker}`));
+    for (const old of ["FIRST", "SECOND", "EXPLICIT-RESUME"].filter((value) => value !== marker)) {
+      assert.doesNotMatch(system.append!, new RegExp(`Definition ${old}|Affect ${old}`));
+    }
+    assert.equal(seen[index].prompt, completed.logicalPrompt.inputText);
+    request.session.threadId = completed.threadId!;
+    if (index < 2) assert.equal(completed.assistantText, "Hello");
+  }
   assert.ok(progress.includes("Hello"));
   assert.ok(progress.every((text) => text !== "Hello\n\nHello"));
+  assert.ok(completed);
   assert.equal(completed.usage?.inputTokens, 12);
 });
 
@@ -256,6 +285,8 @@ it("preserves MCP selection and numeric constraints in Claude elicitation", asyn
   }) });
   await adapter.runSessionTurn(request);
   assert.deepEqual((fields as Array<{ type: string }>).map((field) => field.type), ["select", "multi-select", "number"]);
+  assert.deepEqual((fields as Array<{ options?: unknown }>)[0].options, [{ value: "a", label: "Alpha" }]);
+  assert.deepEqual((fields as Array<{ options?: unknown }>)[1].options, [{ value: "x", label: "X" }]);
   assert.deepEqual((fields as Array<{ minimum?: number; maximum?: number; defaultValue?: number }>)[2], {
     type: "number", numberKind: "integer", name: "count", title: "count", description: undefined,
     required: true, defaultValue: 2, minimum: 1, maximum: 3,
@@ -385,7 +416,7 @@ it("gates managed settings before background query and constrains clean backgrou
   };
   let starts = 0;
   const managed = new ClaudeAdapter({
-    query: fakeQuery(async function* () { starts += 1; yield result("unused"); }),
+    query: fakeQuery(async function* () { yield result("unused"); }, () => { starts += 1; }),
     resolveSettings: async () => ({ sources: [{ source: "managed", settings: {} }], effective: {}, provenance: {} } as ResolvedSettings),
   });
   await assert.rejects(managed.runBackgroundStructuredPrompt(background), /managed settings/);

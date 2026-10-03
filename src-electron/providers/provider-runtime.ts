@@ -51,10 +51,12 @@ export type RunSessionTurnProgressHandler = (state: LiveSessionRunState) => void
 
 export type RunSessionTurnApprovalRequestHandler = (
   request: LiveApprovalRequest,
+  signal?: AbortSignal,
 ) => Promise<LiveApprovalDecision> | LiveApprovalDecision;
 
 export type RunSessionTurnElicitationRequestHandler = (
   request: LiveElicitationRequest,
+  signal?: AbortSignal,
 ) => Promise<LiveElicitationResponse> | LiveElicitationResponse;
 
 export type RunSessionTurnProviderQuotaTelemetryHandler = (

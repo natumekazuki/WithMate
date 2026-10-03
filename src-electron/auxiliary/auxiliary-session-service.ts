@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
-import { getDefaultApprovalModeForProvider } from "../../src-shared/settings/provider-runtime-options.js";
+import { getApprovalOptionsForProvider, getDefaultApprovalModeForProvider } from "../../src-shared/settings/provider-runtime-options.js";
 import type {
   AuxiliaryRuntimeSelectionMode,
   AuxiliarySession,
@@ -928,6 +928,9 @@ export class AuxiliarySessionService {
     const providerCatalog = getProviderCatalog(snapshot?.providers ?? [], input.provider);
     if (!snapshot || !providerCatalog || providerCatalog.id !== input.provider.trim()) {
       throw new Error("The Auxiliary Session provider is not in the model catalog.");
+    }
+    if (!getApprovalOptionsForProvider(providerCatalog.id).some((option) => option.value === approvalMode)) {
+      throw new Error("The selected approval mode is not supported by this provider.");
     }
     const modelSelection = resolveInitialModelSelection(input, providerCatalog);
     return {

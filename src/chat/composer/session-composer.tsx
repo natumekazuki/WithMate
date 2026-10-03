@@ -93,7 +93,7 @@ export type SessionComposerExpandedProps = {
   externalErrorDescriptionIds?: string;
   sendButtonTitle?: string;
   isComposerBlockedFeedbackActive: boolean;
-  approvalOptions: Array<{ value: ApprovalMode; label: string }>;
+  approvalOptions: Array<{ value: ApprovalMode; label: string; disabled?: boolean }>;
   selectedApprovalMode: ApprovalMode;
   reviewerOptions: Array<{ value: CodexReviewer; label: string }>;
   selectedCodexReviewer: CodexReviewer;
@@ -592,9 +592,10 @@ export function SessionComposerExpanded({
                   onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
                   disabled={isRunning || composerBlocked}
                   aria-label="Approval"
+                  aria-invalid={approvalOptions.some((option) => option.value === selectedApprovalMode && option.disabled) || undefined}
                 >
                   {approvalOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
+                    <option key={option.value} value={option.value} disabled={option.disabled}>
                       {option.label}
                     </option>
                   ))}

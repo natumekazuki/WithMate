@@ -252,6 +252,7 @@ npm run electron:start
 Claudeの追加確認は、検証用user dataとworkspaceを使い、本人の公式CLIログイン後に行う。
 
 - SettingsでClaude Agentを有効化し、Opus 5.5・depth・Provider Controlledを選べること、Codex専用sandbox等を表示しないことを確認する。
+- 検証用の保存済みClaude Main / Auxiliaryに非対応Approval値（`untrusted`等）がある場合、Approvalが`Unsupported (untrusted)`を表示して送信を拒否することを確認する。`Provider Controlled`を明示選択し、保存・Window再表示・送信へ復旧できることを確認する。通常の新規Claudeは`Provider Controlled`になり、他Providerの選択肢は変わらないことを確認する。
 - MainとAuxiliaryで個別に実行・再開し、会話IDと本文が混線せず、streamと確定本文が重複しないことを確認する。Character / Affect更新後は最新のsystem appendが反映されることを確認する。
 - AskUserQuestionで候補・自由入力・複数選択を回答し、拒否と質問待ちの取消も確認する。Write等の承認ではAllow Once / Rejectが実結果へ反映され、承認待ち取消後に書込みや遅着成功を確定しないことを確認する。
 - 設定済みMCP、repositoryのCLAUDE.md、native Skillと選択した別rootのSkillを使い、既存設定・認証を変更せず読めることを確認する。

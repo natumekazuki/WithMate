@@ -35,6 +35,10 @@ import { SessionWindowBridge } from "../../src-electron/windows/session-window-b
 import { AppLifecycleService } from "../../src-electron/app/app-lifecycle-service.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "../../src-electron/session/session-run-timeouts.js";
 import { MainProviderFacade } from "../../src-electron/app/main-provider-facade.js";
+import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapter.js";
+import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
+import { SessionElicitationService } from "../../src-electron/session/session-elicitation-service.js";
+import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -193,6 +197,159 @@ describe("SessionRuntimeService stale retry helpers", () => {
   });
 });
 describe("SessionRuntimeService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Claude個別要求取消は共通pending表示とresolverを解放してから後続を表示し、古い回答を拒否する"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md; Issue #751 F751-1" }
+  // fault = "SDKのみ取消してpendingを残す、queueを先に進めて上書きする、または旧requestIdへの回答を新要求へ適用する"
+  // observable = "共通serviceのlive要求IDと解除通知列、古い回答の例外、SDK判断、turn完了"
+  // observation_boundary = "public-boundary"
+  // scope = "ClaudeAdapter through SessionRuntimeService and shared pending services"
+  // lifecycle = "permanent"
+  // impact = "回答待ちの後続承認・質問が停止する、または取消済み操作の回答が別操作へ誤適用される"
+  // distinction = "adapter単独mockはMainのsignal接続と実pending cleanupを迂回するためこの軽量統合testで検査する"
+  // @end-test-value
+  it("Claude個別取消は共通pendingを解除し、後続要求とturn全体取消を区別する", async () => {
+    let stored = createSession({ provider: "claude", workspacePath: process.cwd(), approvalMode: "on-request" });
+    let live: LiveSessionRunState | null = null;
+    const displayed: Array<string | null> = [];
+    const update = (_id: string, recipe: (current: LiveSessionRunState) => LiveSessionRunState) => {
+      live = recipe(live!);
+      displayed.push(live.approvalRequest?.requestId ?? live.elicitationRequest?.requestId ?? null);
+      return live;
+    };
+    const approvals = new SessionApprovalService({ updateLiveSessionRun: update });
+    const questions = new SessionElicitationService({ updateLiveSessionRun: update });
+    const context = (id: string, signal: AbortSignal) => ({ toolUseID: id, signal }) as Parameters<NonNullable<Options["canUseTool"]>>[2];
+    let service!: SessionRuntimeService;
+    let turnCancelObservation: Promise<{ behavior: string | null; approvalRequest: LiveApprovalRequest | null | undefined }> | undefined;
+    const adapter = new ClaudeAdapter({ query: (({ options }: { options: Options }) => (async function* () {
+      const canceled = new AbortController();
+      const first = options.canUseTool!("Bash", { command: "first" }, context("first", canceled.signal));
+      const queued = new AbortController();
+      const skipped = options.canUseTool!("Bash", { command: "queued" }, context("queued", queued.signal));
+      const second = options.canUseTool!("AskUserQuestion", { questions: [{ question: "Choose", options: [{ label: "yes" }] }] }, context("second", new AbortController().signal));
+      await waitForCondition(() => live?.approvalRequest?.requestId === "first", "first approval displayed");
+      queued.abort();
+      canceled.abort();
+      assert.deepEqual(await first, { behavior: "deny", message: "Canceled" });
+      assert.deepEqual(await skipped, { behavior: "deny", message: "Canceled" });
+      await waitForCondition(() => live?.elicitationRequest?.requestId === "second", "second question displayed after cleanup");
+      assert.deepEqual(displayed.slice(0, 3), ["first", null, "second"]);
+      assert.throws(() => approvals.resolveLiveApproval(stored.id, "first", "approve"), /no longer exists/);
+      const questionCanceled = new AbortController();
+      const third = options.onElicitation!({ mode: "form", serverName: "test", message: "Third", requestedSchema: { type: "object", properties: { answer: { type: "string" } } } } as Parameters<NonNullable<Options["onElicitation"]>>[0],
+        { requestId: "third", signal: questionCanceled.signal } as Parameters<NonNullable<Options["onElicitation"]>>[1]);
+      questions.resolveLiveElicitation(stored.id, "second", { action: "accept", content: { "0": "yes" } });
+      const secondDecision = await second;
+      assert.ok(secondDecision);
+      assert.equal(secondDecision.behavior, "allow");
+      await waitForCondition(() => live?.elicitationRequest?.requestId === "third", "third question displayed");
+      const fourth = options.canUseTool!("Bash", { command: "fourth" }, context("fourth", new AbortController().signal));
+      questionCanceled.abort();
+      assert.deepEqual(await third, { action: "cancel" });
+      await waitForCondition(() => live?.approvalRequest?.requestId === "fourth", "fourth approval displayed");
+      assert.throws(() => questions.resolveLiveElicitation(stored.id, "third", { action: "accept" }), /no longer exists/);
+      assert.deepEqual(displayed.slice(-3), ["third", null, "fourth"]);
+      turnCancelObservation = fourth.then((decision) => ({
+        behavior: decision?.behavior ?? null,
+        approvalRequest: live?.approvalRequest,
+      }));
+      service.cancelRun(stored.id);
+      await turnCancelObservation;
+      yield { type: "result", subtype: "success", is_error: false, result: "done", session_id: "thread" } as SDKMessage;
+    })()) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
+    service = new SessionRuntimeService({
+      getSession: () => stored,
+      upsertSession: (next) => { stored = next; return next; },
+      resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
+      getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
+      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
+      getProviderCodingAdapter: () => adapter,
+      getSessionMemory: (session) => createSessionMemory(session.id),
+      resolveProjectMemoryEntriesForPrompt: () => [],
+      createAuditLog: createAuditLogBase,
+      updateAuditLog() {},
+      setLiveSessionRun: (_id, next) => { live = next; },
+      getLiveSessionRun: () => live,
+      waitForApprovalDecision: (id, request, signal) => approvals.waitForLiveApprovalDecision(id, request, signal),
+      waitForElicitationResponse: (id, request, signal) => questions.waitForLiveElicitationResponse(id, request, signal),
+      setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {},
+      async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest: (id, decision) => { if (live?.approvalRequest) approvals.resolveLiveApproval(id, live.approvalRequest.requestId, decision); },
+      resolvePendingElicitationRequest: (id, response) => { if (live?.elicitationRequest) questions.resolveLiveElicitation(id, live.elicitationRequest.requestId, response); },
+    });
+    const completed = await service.runSessionTurn(stored.id, { executionOptions: captureSessionExecutionOptions(stored), userMessage: "test" });
+    assert.equal(completed.status, "idle");
+    assert.equal(completed.runState, "idle", "request assertions must not become a failed provider outcome");
+    assert.ok(turnCancelObservation, "turn-wide cancellation was reached");
+    assert.deepEqual(await turnCancelObservation, { behavior: "deny", approvalRequest: null });
+    assert.ok(!displayed.includes("queued"));
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "送信開始時に更新されたCharacter定義と当turnのAffectはClaudeの継続・明示resume appendへ反映する"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md; Issue #775; Issue #751 T751-3" }
+  // fault = "runtimeが更新前Sessionをadapterへ渡す、またはClaudeが前turnのsystem appendを使い続ける"
+  // observable = "SDK queryのresume値・append内のturn固有定義とAffect、および保存snapshot identityとmetadata"
+  // observation_boundary = "public-boundary"
+  // scope = "Main runtime send-time refresh through Claude SDK query boundary"
+  // lifecycle = "permanent"
+  // impact = "Character編集とAffect更新が継続会話へ反映されず、ユーザーの設定に反する応答になる"
+  // distinction = "canonical snapshot更新単体testとadapter単体testの間にあるruntime配線を、実composerとSDK query captureで確認する"
+  // @end-test-value
+  it("送信時Character更新とAffectをClaudeの次turn・明示resume appendへ接続する", async () => {
+    let stored = createSession({ provider: "claude", workspacePath: process.cwd(), approvalMode: "on-request" });
+    let current = "old";
+    const seen: Options[] = [];
+    const makeAdapter = () => new ClaudeAdapter({ query: (({ options }: { options: Options }) => {
+      seen.push(options);
+      return (async function* () { yield { type: "result", subtype: "success", is_error: false, result: "done", session_id: "fresh-thread",
+        usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {} } as SDKMessage; })();
+    }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
+    let adapter = makeAdapter();
+    const service = new SessionRuntimeService({
+      getSession: () => stored,
+      upsertSession: (next) => { stored = next; return next; },
+      resolveRuntimeSessionForTurn: (session) => ({ ...session, characterRuntimeSnapshot: {
+        characterId: "char-a", name: "Saved name", description: "Saved description", iconFilePath: "",
+        theme: { main: "#112233", sub: "#445566" }, definitionMarkdown: `Definition ${current}`,
+        definitionSha256: current, definitionByteSize: current.length, snapshotAt: "2026-10-03T00:00:00Z",
+      } }),
+      resolveCharacterContext: () => ({ schemaVersion: "withmate-character-context-v1",
+        baseline: { definitionSha256: current, snapshotAt: "2026-10-03T00:00:00Z" },
+        affect: { mode: "active", effective: [{ contributingLayers: ["session"], targetType: "user", targetId: "user", family: null,
+          label: `Affect ${current}`, valence: 0.5, intensity: 0.5 }], evaluatedAt: "2026-10-03T00:00:00Z", version: current, updatedAt: null },
+        memory: { items: [], updatedAt: null } }),
+      resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
+      getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
+      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
+      getProviderCodingAdapter: () => adapter,
+      getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      createAuditLog: createAuditLogBase, updateAuditLog() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
+      waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
+      setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    });
+    for (const [index, marker] of ["old", "new", "resumed"].entries()) {
+      current = marker;
+      if (index === 2) adapter = makeAdapter();
+      const completed = await service.runSessionTurn(stored.id, { executionOptions: captureSessionExecutionOptions(stored), userMessage: marker });
+      assert.equal(completed.runState, "idle", JSON.stringify(completed.messages));
+      assert.equal(seen[index].resume, index === 0 ? undefined : "fresh-thread");
+      const system = seen[index].systemPrompt;
+      assert.ok(system && typeof system === "object" && !Array.isArray(system) && system.type === "preset");
+      assert.match(system.append!, new RegExp(`Definition ${marker}`));
+      assert.match(system.append!, new RegExp(`Affect ${marker}`));
+      for (const other of ["old", "new", "resumed"].filter((value) => value !== marker)) {
+        assert.doesNotMatch(system.append!, new RegExp(`Definition ${other}|Affect ${other}`));
+      }
+      assert.equal(completed.characterRuntimeSnapshot?.characterId, "char-a");
+      assert.equal(completed.characterRuntimeSnapshot?.name, "Saved name");
+      assert.equal(completed.characterRuntimeSnapshot?.description, "Saved description");
+    }
+  });
   // @test-value v2
   // kind = "contract"
   // claim = "取消はsetup・provider・終端保存の終了待ちをliveへ投影し、実終了後だけ再送と連続履歴を許可する"

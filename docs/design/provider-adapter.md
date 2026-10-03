@@ -267,6 +267,7 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 - live state は Main Process の memory 上だけに持ち、session DB へは保存しない
 - Session Window を開き直した場合は、Main Process が保持している live state を再購読して復元する
 - Session Window から `Cancel` を押した場合は、Main Process が保持している `AbortController` で provider 実行を中断する
+- Claudeの個別approval / elicitation要求はSDKのrequest signalとturn signalを共通pending serviceまで渡す。要求取消ではresolverとlive表示を解除してから直列待機列の次要求を表示し、取消済みrequestIdへの回答は拒否する。待機列内の取消済み要求は表示せず、turn全体の取消・子プロセス実終了待ちとは区別する
 - Copilot の approval request は Main Process が pending resolver を保持し、Session UI の `今回だけ許可 / 拒否` を受けて permission handler を再開する
 - turn 完了時だけ session 本体と audit log を確定値で更新する
 - canceled / failed でも、途中まで取得できた `agent_message` と `turn.items` は partial result として回収し、Audit Log と `Details` に残す

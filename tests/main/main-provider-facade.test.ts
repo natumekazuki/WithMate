@@ -124,7 +124,7 @@ test("MainProviderFacade の reset は adapter の reject を伝播する", asyn
     claudeAdapter: { invalidateSessionThread: async () => undefined } as never,
   });
 
-  await assert.rejects(() => facade.resetProviderSessionThread("codex", "s-retry"), error);
+  await assert.rejects(() => facade.resetProviderSessionThread("codex", "s-retry"), (actual) => actual === error);
 });
 
 // @test-value v2

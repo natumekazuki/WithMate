@@ -1298,8 +1298,9 @@ export class SessionRuntimeService {
         characterContext: characterContext ?? undefined,
         agentRuntimeBinding,
         signal: runAbortController.signal,
-        onApprovalRequest: (approvalRequest) => {
-          const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal);
+        onApprovalRequest: (approvalRequest, requestSignal) => {
+          const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
+          const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, signal);
           const currentLiveState = this.deps.getLiveSessionRun(sessionId);
           void syncRunningAuditFromLiveState({
             ...(currentLiveState ?? buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId)),
@@ -1310,8 +1311,9 @@ export class SessionRuntimeService {
           });
           return decision;
         },
-        onElicitationRequest: (elicitationRequest) => {
-          const response = this.deps.waitForElicitationResponse(sessionId, elicitationRequest, runAbortController.signal);
+        onElicitationRequest: (elicitationRequest, requestSignal) => {
+          const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
+          const response = this.deps.waitForElicitationResponse(sessionId, elicitationRequest, signal);
           const currentLiveState = this.deps.getLiveSessionRun(sessionId);
           void syncRunningAuditFromLiveState({
             ...(currentLiveState ?? buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId)),

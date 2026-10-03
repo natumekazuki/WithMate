@@ -342,10 +342,10 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     let approvalRequest: { requestId: string; provider: string; kind: string; title: string; summary: string; decisionMode: "direct-decision" } | null = null;
     let elicitationRequest: LiveElicitationRequest | null = null;
     let interactionTail: Promise<void> = Promise.resolve();
-    const enqueueInteraction = <T>(signal: AbortSignal, action: () => Promise<T> | T): Promise<T> => {
+    const enqueueInteraction = <T>(signal: AbortSignal, action: (signal: AbortSignal) => Promise<T> | T): Promise<T> => {
       const pending = interactionTail.then(() => {
         if (signal.aborted) throw new Error("Canceled");
-        return action();
+        return action(signal);
       });
       // Keep the single pending service slot occupied until its actual request settles.
       interactionTail = pending.then(() => undefined, () => undefined);
@@ -418,10 +418,10 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         if (toolName === "AskUserQuestion") {
           if (!input.onElicitationRequest) return { behavior: "deny", message: "Question UI is unavailable" };
           try {
-            const answer = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async () => {
+            const answer = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async (signal) => {
               elicitationRequest = redactor.sanitize(claudeQuestionRequest(requestId, toolInput));
               progress();
-              try { return await input.onElicitationRequest!(elicitationRequest); }
+              try { return await input.onElicitationRequest!(elicitationRequest, signal); }
               finally { elicitationRequest = null; progress(); }
             });
             if (answer.action !== "accept") return { behavior: "deny", message: "Question declined" };
@@ -441,10 +441,10 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
           return { behavior: "deny", message: "Tool approval is unavailable" };
         }
         try {
-          const decision = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async () => {
+          const decision = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async (signal) => {
             approvalRequest = redactor.sanitize({ requestId, provider: "claude", kind: toolName, title: `Allow ${toolName}?`, summary: summarizeTool(toolName, toolInput), decisionMode: "direct-decision" });
             progress();
-            try { return await input.onApprovalRequest!(approvalRequest); }
+            try { return await input.onApprovalRequest!(approvalRequest, signal); }
             finally { approvalRequest = null; progress(); }
           });
           return decision === "approve" ? { behavior: "allow" } : { behavior: "deny", message: "Denied by user" };
@@ -455,10 +455,10 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         const projected = redactor.sanitize(mcpElicitationRequest(context.requestId, request));
         if (!projected) return { action: "decline" };
         try {
-          const answer = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async () => {
+          const answer = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async (signal) => {
             elicitationRequest = projected;
             progress();
-            try { return await input.onElicitationRequest!(projected); }
+            try { return await input.onElicitationRequest!(projected, signal); }
             finally { elicitationRequest = null; progress(); }
           });
           return answer.action === "accept"

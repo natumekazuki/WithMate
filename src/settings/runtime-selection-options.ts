@@ -49,10 +49,13 @@ export function buildRuntimeSelectionOptions({
 }): RuntimeSelectionOptions {
   const approvalChoiceOptions = (() => {
     const options = getApprovalOptionsForProvider(providerId);
-    if (providerId === "claude" || options.some((option) => option.value === selectedApprovalMode)) {
+    if (options.some((option) => option.value === selectedApprovalMode)) {
       return options;
     }
 
+    if (providerId === "claude") {
+      return [{ value: selectedApprovalMode, label: `Unsupported (${selectedApprovalMode})`, disabled: true }, ...options];
+    }
     return [{ value: selectedApprovalMode, label: selectedApprovalMode }, ...options];
   })();
 

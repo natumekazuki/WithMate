@@ -4,6 +4,7 @@ import { codexSandboxModeOptions, type CodexSandboxMode } from "./codex-sandbox-
 export type RuntimeSelectOption<T extends string = string> = {
   value: T;
   label: string;
+  disabled?: boolean;
 };
 
 const COPILOT_APPROVAL_VALUES = new Set<ApprovalMode>(["never", "on-request", "untrusted"]);
