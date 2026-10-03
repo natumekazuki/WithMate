@@ -193,28 +193,9 @@
   margin: 0;
 }
 
-.session-file-markdown a,
-.session-file-markdown a:visited {
-  color: var(--session-file-link);
-}
-
-.session-file-markdown a:hover,
-.session-file-markdown a:focus-visible {
-  color: var(--session-file-link-emphasis);
-}
-
-.session-file-markdown a:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
-}
-
 .session-file-markdown .message-inline-code {
   background: rgba(255, 255, 255, 0.08);
   color: var(--ink);
-}
-
-.session-file-markdown a .message-inline-code {
-  color: inherit;
 }
 
 .session-file-markdown .message-mermaid.fallback .message-mermaid-error {
