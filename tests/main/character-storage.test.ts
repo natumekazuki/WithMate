@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -38,6 +39,114 @@ async function createTempPaths(): Promise<{ dbPath: string; userDataPath: string
 }
 
 describe("CharacterStorage", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "active定義の本文変更だけをsnapshotへ反映し、本文一致時は保存済みsnapshotを維持する"
+  // oracle = { type = "contract", ref = "docs/design/character-storage.md#runtime-snapshot" }
+  // fault = "catalog metadata変更がsession identityへ混入するか本文一致時にhashとtimestampを再生成する"
+  // observable = "refreshRuntimeSnapshotの全fieldと変更本文のSHA256およびbyte数"
+  // observation_boundary = "public-boundary"
+  // scope = "character-runtime-definition-refresh"
+  // lifecycle = "permanent"
+  // impact = "送信で最新定義を使いながら会話の表示identityを維持する"
+  // distinction = "作成snapshotの既存testでは送信時の本文比較とmetadata固定を観測できない"
+  // @end-test-value
+  it("定義変更だけをrefreshし、同一本文ではsnapshot全体を保持する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const storage = new CharacterStorage(dbPath, userDataPath);
+    try {
+      const character = await storage.createCharacter({ name: "Mia", definitionMarkdown: validDefinition("Mia") });
+      const initial = await storage.refreshRuntimeSnapshot(character.id, null);
+      assert.equal(initial.characterId, character.id);
+      assert.equal(initial.name, character.name);
+      const previous = { ...initial, snapshotAt: "2020-01-01T00:00:00.000Z" };
+      await storage.updateCharacterMetadata({
+        characterId: character.id, name: "Renamed", description: "new metadata",
+        iconFilePath: "new-icon.png", theme: { main: "#123456", sub: "#654321" },
+      });
+      assert.deepEqual(await storage.refreshRuntimeSnapshot(character.id, previous), previous);
+      const changed = validDefinition("Changed") + "\n- refreshed instruction\n";
+      await writeFile(path.join(storage.getCharacterDirectory(character.id), "character.md"), changed);
+      const refreshed = await storage.refreshRuntimeSnapshot(character.id, previous);
+      assert.deepEqual(refreshed, {
+        ...previous, definitionMarkdown: changed,
+        definitionSha256: createHash("sha256").update(changed, "utf8").digest("hex"),
+        definitionByteSize: Buffer.byteLength(changed, "utf8"), snapshotAt: refreshed.snapshotAt,
+      });
+      assert.notEqual(refreshed.snapshotAt, previous.snapshotAt);
+      assert.deepEqual(await storage.refreshRuntimeSnapshot(character.id, refreshed), refreshed);
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "archive済みCharacterは再起動後もcanonical欠落に依存せず保存済みsnapshotを使い、未保存なら失敗する"
+  // oracle = { type = "contract", ref = "docs/design/character-storage.md#runtime-snapshot" }
+  // fault = "archive済みの送信時にcanonicalを再読込するかsnapshot未保存でも代替定義を生成する"
+  // observable = "再open後refreshRuntimeSnapshotの戻り値と未保存snapshotのreject"
+  // observation_boundary = "public-boundary"
+  // scope = "character-runtime-archived-snapshot"
+  // lifecycle = "permanent"
+  // impact = "archiveと再起動後も既存会話の送信定義を保持する"
+  // distinction = "activeの本文refreshとは異なるarchive状態とfilesystem欠落を同時に検証する"
+  // @end-test-value
+  it("archive後の再起動ではcanonicalが欠落しても保存済みsnapshotを返す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage = new CharacterStorage(dbPath, userDataPath);
+    try {
+      const character = await storage.createCharacter({ name: "Mia" });
+      const previous = await storage.refreshRuntimeSnapshot(character.id, null);
+      await storage.archiveCharacter(character.id);
+      await rm(path.join(storage.getCharacterDirectory(character.id), "character.md"));
+      storage.close();
+      storage = new CharacterStorage(dbPath, userDataPath);
+      assert.deepEqual(await storage.refreshRuntimeSnapshot(character.id, previous), previous);
+      await assert.rejects(storage.refreshRuntimeSnapshot(character.id, null), /no saved runtime snapshot/);
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "active定義の無効化・読込失敗とowner不一致・metadata欠落ではrefreshを拒否し保存済みsnapshotを変更しない"
+  // oracle = { type = "contract", ref = "docs/design/character-storage.md#runtime-snapshot" }
+  // fault = "不正定義や未知ownerを保存済みsnapshotで救済するか失敗時に渡されたsnapshotを書き換える"
+  // observable = "refreshRuntimeSnapshotのrejectと入力snapshotの全field一致"
+  // observation_boundary = "public-boundary"
+  // scope = "character-runtime-refresh-failure"
+  // lifecycle = "permanent"
+  // impact = "別Characterの定義適用と壊れたcanonicalによる古い定義の黙示利用を防ぐ"
+  // distinction = "createRuntimeSnapshotのnull判定では送信refreshの失敗と入力保護を確認できない"
+  // @end-test-value
+  it("無効定義・読込失敗・owner不一致をrejectしsnapshotを保護する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const storage = new CharacterStorage(dbPath, userDataPath);
+    try {
+      const character = await storage.createCharacter({ name: "Mia" });
+      const previous = await storage.refreshRuntimeSnapshot(character.id, null);
+      const saved = structuredClone(previous);
+      const definitionPath = path.join(storage.getCharacterDirectory(character.id), "character.md");
+      await writeFile(definitionPath, "invalid");
+      await assert.rejects(storage.refreshRuntimeSnapshot(character.id, previous), /validation failed/);
+      await rm(definitionPath);
+      await assert.rejects(storage.refreshRuntimeSnapshot(character.id, previous), /ENOENT/);
+      await mkdir(definitionPath);
+      await assert.rejects(storage.refreshRuntimeSnapshot(character.id, previous));
+      await assert.rejects(storage.refreshRuntimeSnapshot("other", previous), /owner does not match/);
+      await assert.rejects(storage.refreshRuntimeSnapshot("missing", null), /could not be found/);
+      await assert.rejects(storage.refreshRuntimeSnapshot(UNKNOWN_CHARACTER_OWNER_ID, null), /unresolved/);
+      assert.deepEqual(previous, saved);
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
   // @test-value v2
   // kind = "contract"
   // claim = "Character の作成結果と定義ファイルを永続化し、一覧順と再読込結果を一致させる"

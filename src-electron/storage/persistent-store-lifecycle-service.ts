@@ -553,6 +553,10 @@ class LegacyCharacterStorage implements CharacterStorageAccess {
     return null;
   }
 
+  refreshRuntimeSnapshot(): never {
+    throw new Error("The Character catalog is not available in legacy databases.");
+  }
+
   getCharacterDirectory(): string {
     throw new Error("The Character catalog is not available in legacy databases.");
   }

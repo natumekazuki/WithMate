@@ -509,16 +509,16 @@ it("snapshot clearを含むrunning turn開始のsequence conflictはsnapshotとt
 
 // @test-value v2
 // kind = "invariant"
-// claim = "snapshot入力のundefinedは既存値を保持し、snapshot値またはnullを所有できるのはcharacter-authoring Sessionだけである"
+// claim = "snapshot入力のundefinedは既存値を保持し、通常Sessionの開始保存は固定identityを守って定義だけ更新する"
 // oracle = { type = "contract", ref = "running-turn-start-persistence#7,#8" }
-// fault = "undefinedをclearとして扱うか、通常Sessionのimmutable snapshotをrunning開始境界から更新またはclearする"
-// observable = "authoring Sessionのsnapshot/thread保持結果、通常Sessionの拒否例外、および拒否後のsnapshot/thread/message/status"
+// fault = "undefinedをclearとして扱うか、通常Sessionの固定metadata変更を受け入れるか、定義更新を保存しない"
+// observable = "authoringのsnapshot保持、通常Sessionの拒否後と定義更新後のsnapshot/thread/message/pin"
 // observation_boundary = "component-behavior"
 // scope = "SessionStorageV6.appendRunningTurnStart"
 // lifecycle = "permanent"
-// distinction = "authoringのvalue/null更新ではなく、三状態入力の非所有状態とSession kindによる拒否を観測する"
+// distinction = "authoringのvalue/null更新とは異なる通常Sessionの固定metadata検証と定義更新を実DBで観測する"
 // @end-test-value
-it("snapshot入力のundefinedは既存値を保持し、通常Sessionのvalueまたはnull更新を拒否する", async () => {
+it("snapshot入力のundefinedは保持し、通常Sessionは固定identityを守って定義だけ更新する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-running-snapshot-ownership-"));
   const dbPath = path.join(tempDirectory, "withmate-v6.db");
   const storage = new SessionStorageV6(dbPath);
@@ -557,13 +557,41 @@ it("snapshot入力のundefinedは既存値を保持し、通常Sessionのvalue�
         userMessage: { role: "user", text: "must reject" },
         updatedAt: "2026-08-30T00:01:00.000Z",
         characterRuntimeSnapshot: snapshotInput,
-      }), /Character snapshot owner/);
+      }), /Character definition update/);
     }
     const rejected = storage.getSession(defaultSession.id);
     assert.deepEqual(rejected?.characterRuntimeSnapshot, oldSnapshot);
     assert.equal(rejected?.threadId, "thread-default");
     assert.deepEqual(rejected?.messages, []);
     assert.equal(rejected?.status, "idle");
+    storage.setSessionPinned(defaultSession.id, true);
+    const updatedSnapshot = { ...oldSnapshot, definitionMarkdown: "# Updated definition", definitionSha256: "updated", definitionByteSize: 20, snapshotAt: "later" };
+    const updated = storage.appendRunningTurnStart({
+      sessionId: defaultSession.id, incarnationId: defaultSession.incarnationId,
+      expectedMessageCount: 0, userMessage: { role: "user", text: "allowed" },
+      updatedAt: "2026-08-30T00:02:00.000Z", characterRuntimeSnapshot: updatedSnapshot,
+    });
+    assert.deepEqual(updated.characterRuntimeSnapshot, updatedSnapshot);
+    assert.equal(updated.summary.isPinned, true);
+    assert.equal(updated.summary.threadId, "thread-default");
+    assert.deepEqual(storage.getSession(defaultSession.id)?.messages.map((message) => message.text), ["allowed"]);
+    assert.throws(() => storage.appendRunningTurnStart({
+      sessionId: defaultSession.id, incarnationId: defaultSession.incarnationId,
+      expectedMessageCount: 0, userMessage: { role: "user", text: "conflict" },
+      updatedAt: "later", characterRuntimeSnapshot: { ...updatedSnapshot, definitionMarkdown: "conflicting" },
+    }), SessionRunningTurnStartConflictError);
+    assert.deepEqual(storage.getSession(defaultSession.id)?.characterRuntimeSnapshot, updatedSnapshot);
+    const withoutSnapshot = storage.insertSession(createSessionInput("running-no-snapshot", []));
+    const initialDefinitionSnapshot = { ...updatedSnapshot, name: withoutSnapshot.character,
+      iconFilePath: withoutSnapshot.characterIconPath, theme: withoutSnapshot.characterThemeColors };
+    const firstSnapshot = storage.appendRunningTurnStart({
+      sessionId: withoutSnapshot.id, incarnationId: withoutSnapshot.incarnationId,
+      expectedMessageCount: 0, userMessage: { role: "user", text: "first definition" },
+      updatedAt: "later", characterRuntimeSnapshot: initialDefinitionSnapshot,
+    });
+    assert.deepEqual(firstSnapshot.characterRuntimeSnapshot, initialDefinitionSnapshot);
+    assert.equal(firstSnapshot.summary.character, withoutSnapshot.character);
+    assert.deepEqual(firstSnapshot.summary.characterThemeColors, withoutSnapshot.characterThemeColors);
   } finally {
     storage.close();
     await removeDirectoryWithRetry(tempDirectory);

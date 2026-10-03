@@ -652,6 +652,51 @@ export class CharacterStorage {
     };
   }
 
+  async refreshRuntimeSnapshot(
+    characterId: string,
+    previousSnapshot: CharacterRuntimeSnapshot | null,
+  ): Promise<CharacterRuntimeSnapshot> {
+    if (isUnknownCharacterOwnerId(characterId)) {
+      throw new Error("The Character owner is unresolved.");
+    }
+    if (previousSnapshot && previousSnapshot.characterId !== characterId) {
+      throw new Error("The Character snapshot owner does not match.");
+    }
+    const row = this.readCharacterRow(characterId);
+    if (!row) {
+      throw new Error("The Character could not be found.");
+    }
+    if (row.state === "archived") {
+      if (!previousSnapshot) {
+        throw new Error("The archived Character has no saved runtime snapshot.");
+      }
+      return previousSnapshot;
+    }
+
+    const definitionMarkdown = await this.readDefinitionMarkdown(characterId);
+    if (previousSnapshot?.definitionMarkdown === definitionMarkdown) {
+      return previousSnapshot;
+    }
+    const definitionResult = parseCharacterDefinitionMarkdown(definitionMarkdown);
+    if (!definitionResult.ok) {
+      throw new Error(`character.md validation failed: ${definitionResult.issues.map((issue) => issue.code).join(", ")}`);
+    }
+    const entry = this.toEntry(row);
+    return {
+      ...(previousSnapshot ?? {
+        characterId: entry.id,
+        name: entry.name,
+        description: entry.description,
+        iconFilePath: entry.iconFilePath,
+        theme: entry.theme,
+      }),
+      definitionMarkdown,
+      definitionSha256: sha256Hex(definitionMarkdown),
+      definitionByteSize: byteSize(definitionMarkdown),
+      snapshotAt: nowIso(),
+    };
+  }
+
   async deleteCharacterRootDirectory(): Promise<void> {
     await rm(this.characterRootPath, { recursive: true, force: true });
     await mkdir(this.characterRootPath, { recursive: true });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
+import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 
 import { AFFECT_SCHEMA_VERSION, type AffectEventInput } from "../../src-shared/character-affect/affect-contract.js";
 import {
@@ -29,6 +30,7 @@ function createFixture(options: {
   failEpisodeWrite?: boolean;
   failMemorySearch?: boolean;
   failAffectState?: boolean;
+  resolveCharacterRuntimeSnapshot?: (characterId: string) => CharacterRuntimeSnapshot | null;
   onUnexpectedError?(diagnostic: CharacterContextUnexpectedErrorDiagnostic): void;
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "withmate-character-context-"));
@@ -91,7 +93,7 @@ function createFixture(options: {
   const service = new CharacterContextApplicationService({
     memoryService,
     affectService,
-    resolveCharacterRuntimeSnapshot: (characterId) => characterId === "character-a"
+    resolveCharacterRuntimeSnapshot: options.resolveCharacterRuntimeSnapshot ?? ((characterId) => characterId === "character-a"
       ? {
           characterId,
           name: "A",
@@ -103,7 +105,7 @@ function createFixture(options: {
           definitionByteSize: 18,
           snapshotAt: "2026-08-09T00:00:00.000Z",
         }
-      : null,
+      : null),
     onUnexpectedError: options.onUnexpectedError,
   });
   return {
@@ -140,6 +142,39 @@ function affectCandidate(overrides: Partial<AffectEventInput> = {}): AffectEvent
 }
 
 describe("CharacterContextApplicationService", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "TurnのAffect contextは採用済みsnapshotのbaselineを使いcanonicalを再読込せず、別Characterのsnapshotは拒否する"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md#通常sessionの入力" }
+  // fault = "Archive後にcontextが消えるか、Turn途中のcanonical変更で定義とbaselineが食い違う"
+  // observable = "getContextのbaseline、resolver呼出とowner不一致時のerror"
+  // observation_boundary = "consumer"
+  // scope = "CharacterContextApplicationService lifecycle snapshot"
+  // lifecycle = "permanent"
+  // impact = "Providerへ渡す定義とCharacter Affectの参照元が不整合になる"
+  // distinction = "既存context testのcatalog解決とは別に送信時snapshotを固定した経路を確認する"
+  // @end-test-value
+  it("lifecycle contextはTurnで採用したsnapshotのbaselineを保持する", async () => {
+    const fixture = createFixture({ resolveCharacterRuntimeSnapshot: () => { throw new Error("must not reread canonical"); } });
+    const turnSnapshot: CharacterRuntimeSnapshot = {
+      characterId: "character-a", name: "A", description: "", iconFilePath: "",
+      theme: { main: "#000000", sub: "#ffffff" }, definitionMarkdown: "Turn definition",
+      definitionSha256: "adopted-definition", definitionByteSize: 15, snapshotAt: "2026-10-03T09:00:00.000Z",
+    };
+    const request = { schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, characterId: "character-a", sessionId: "session-a" };
+    try {
+      const context = await fixture.service.getContext(request, "lifecycle", turnSnapshot);
+      assert.equal(isCharacterContextError(context), false);
+      if (isCharacterContextError(context)) return;
+      assert.deepEqual(context.baseline, { definitionSha256: turnSnapshot.definitionSha256, snapshotAt: turnSnapshot.snapshotAt });
+      const wrongOwner = await fixture.service.getContext(request, "lifecycle", { ...turnSnapshot, characterId: "character-b" });
+      assert.equal(isCharacterContextError(wrongOwner), true);
+      if (isCharacterContextError(wrongOwner)) assert.equal(wrongOwner.error.code, "unknown_character");
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("session bindingは別Characterの存在有無をlookup前の同じauthority errorへ畳む", async () => {
     const fixture = createFixture();
     try {

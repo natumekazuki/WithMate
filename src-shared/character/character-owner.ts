@@ -1,4 +1,5 @@
 export const UNKNOWN_CHARACTER_OWNER_ID = "withmate:unresolved-character-owner";
+export const NEUTRAL_CHARACTER_ID = "withmate-neutral-character";
 
 export function normalizeCharacterOwnerId(value: unknown): string | null {
   if (typeof value !== "string") {

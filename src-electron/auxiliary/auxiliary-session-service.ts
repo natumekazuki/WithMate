@@ -43,6 +43,7 @@ import type { RunProviderRuntimeOperationExclusive } from "../providers/provider
 import type { RunCharacterAffectTurnOwnershipExclusive } from "../character/character-affect-turn-ownership-coordinator.js";
 import type { AuxiliarySessionThreadPatchInput, AuxiliaryThreadPatchResult, AuxiliaryRuntimeMetadataPatchResult } from "./auxiliary-session-storage.js";
 import type { AuxiliarySessionRuntimeMetadataPatchInput } from "./auxiliary-session-storage.js";
+import { assertCharacterDefinitionSnapshotUpdate } from "../session/session-running-turn-start.js";
 import type {
   AuxiliaryDraftConsumeInput,
   AuxiliaryDraftConsumeResult,
@@ -1096,6 +1097,41 @@ export class AuxiliarySessionService {
     }
     if (status.runState === "running") return { outcome: "rejected" };
     return await storage.consumeAuxiliaryDraft(input);
+  }
+
+  async persistRunningTurnStart(runtimeSession: Session, expectedMessageCount: number): Promise<Session> {
+    const storage = this.deps.getStorage();
+    const current = await storage.getAuxiliarySession(runtimeSession.id);
+    if (!current) throw new Error("The Auxiliary Session could not be found.");
+    this.assertCharacterSnapshotValid(current);
+    const savedRuntime = await this.toRuntimeSession(current);
+    const userMessage = runtimeSession.messages[expectedMessageCount];
+    if (!Number.isSafeInteger(expectedMessageCount) || expectedMessageCount < 0
+      || current.messages.length !== expectedMessageCount
+      || runtimeSession.messages.length !== expectedMessageCount + 1
+      || !userMessage || userMessage.role !== "user" || !userMessage.text.trim()
+      || runtimeSession.runState !== "running" || runtimeSession.status !== "running"
+      || runtimeSession.characterId !== savedRuntime.characterId
+      || getSessionIncarnationId(runtimeSession) !== getSessionIncarnationId(savedRuntime)) {
+      throw new Error("The Auxiliary Session changed before starting the running turn.");
+    }
+    assertCharacterDefinitionSnapshotUpdate(
+      savedRuntime.characterRuntimeSnapshot, runtimeSession.characterRuntimeSnapshot, savedRuntime.characterId,
+    );
+    const next: AuxiliarySession = this.overlayExecutionOptions({
+      ...current,
+      status: "active",
+      closedAt: "",
+      runState: "running",
+      characterId: runtimeSession.characterRuntimeSnapshot ? savedRuntime.characterId : current.characterId,
+      characterRuntimeSnapshot: runtimeSession.characterRuntimeSnapshot ?? current.characterRuntimeSnapshot,
+      messages: [...current.messages, userMessage],
+      updatedAt: runtimeSession.updatedAt,
+      preview: resolveAuxiliaryPreview([...current.messages, userMessage], current.preview),
+    });
+    const stored = await storage.updateAuxiliarySessionIfMatches({ session: next, expectedSession: current });
+    if (!stored) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+    return this.toRuntimeSession(this.overlayExecutionOptions(stored));
   }
 
   async upsertAuxiliaryRuntimeSession(

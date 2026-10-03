@@ -12,6 +12,9 @@ import type { CharacterRuntimeSnapshot } from "../../src-shared/character/charac
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { ProviderCodingAdapter, RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
+import { refreshSessionCharacterRuntimeSnapshot } from "../../src-electron/character/character-runtime-service.js";
+import { NEUTRAL_CHARACTER_ID } from "../../src-shared/character/character-owner.js";
 import {
   SessionRuntimeService,
   type SessionRuntimeServiceDeps,
@@ -131,6 +134,118 @@ function createAdapter(runSessionTurn: ProviderCodingAdapter["runSessionTurn"]):
     runSessionTurn,
   };
 }
+
+// @test-value v2
+// kind = "invariant"
+// claim = "各送信で採用したCharacter定義を保存してからProviderへ渡し、実行中の変更は次の送信から反映する"
+// oracle = { type = "contract", ref = "docs/design/character-storage.md#runtime-snapshot" }
+// fault = "更新snapshotを保存前に送る、保存時に旧定義へ戻す、または実行中に再解決して同じTurnの定義が変わる"
+// observable = "Provider入力の本文とthread、送信時点の保存snapshot、次Turnの入力"
+// observation_boundary = "consumer"
+// scope = "SessionRuntimeService send-time Character definition"
+// lifecycle = "permanent"
+// impact = "長期Sessionに古い定義が残るか、Archive後や再起動後に採用した定義を再現できない"
+// distinction = "storage単体と異なり解決・保存・prompt合成・Provider dispatchを通した入力を観測する"
+// @end-test-value
+it("送信時snapshotを先に保存し、Turn中の定義更新は次の送信で採用する", async () => {
+  const oldSnapshot = createCharacterRuntimeSnapshot("Saved");
+  let canonical = { ...oldSnapshot, definitionMarkdown: "# Latest definition", definitionSha256: "latest", snapshotAt: "latest" };
+  let persisted = createSession({ characterRuntimeSnapshot: oldSnapshot, threadId: "continuing-thread" });
+  let resolveCount = 0;
+  const prompts: string[] = [];
+  const adapter = createAdapter(async (input) => {
+    assert.deepEqual(input.session.characterRuntimeSnapshot, persisted.characterRuntimeSnapshot);
+    assert.equal(input.session.threadId, "continuing-thread");
+    const prompt = composeProviderPrompt(input);
+    prompts.push(prompt.systemBodyText);
+    const adoptedSnapshot = input.session.characterRuntimeSnapshot;
+    canonical = { ...canonical, definitionMarkdown: "# Following definition", definitionSha256: "following", snapshotAt: "following" };
+    assert.deepEqual(input.session.characterRuntimeSnapshot, adoptedSnapshot);
+    return {
+      threadId: "continuing-thread", assistantText: "done", logicalPrompt: prompt.logicalPrompt,
+      transportPayload: null, operations: [], rawItemsJson: "[]", usage: null,
+    };
+  });
+  adapter.composePrompt = composeProviderPrompt;
+  const runtime = new SessionRuntimeService(createRuntimeDeps(persisted, adapter, {
+    getSession: () => persisted,
+    resolveRuntimeSessionForTurn: (session) => refreshSessionCharacterRuntimeSnapshot(session, async () => {
+      resolveCount += 1;
+      return canonical;
+    }),
+    persistRunningTurnStart: (session, expectedMessageCount) => {
+      assert.equal(persisted.messages.length, expectedMessageCount);
+      persisted = structuredClone(session);
+      return persisted;
+    },
+    upsertSession: (session) => { persisted = structuredClone(session); return persisted; },
+  }));
+  const first = await runtime.runSessionTurn(persisted.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "first" });
+  assert.equal(first.runState, "idle");
+  assert.equal(first.characterRuntimeSnapshot?.definitionSha256, "latest");
+  assert.equal(first.characterRuntimeSnapshot?.name, oldSnapshot.name);
+  const second = await runtime.runSessionTurn(persisted.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "second" });
+  assert.equal(second.runState, "idle");
+  assert.equal(resolveCount, 2);
+  assert.match(prompts[0]!, /Latest definition/);
+  assert.doesNotMatch(prompts[0]!, /Following definition/);
+  assert.match(prompts[1]!, /Following definition/);
+  assert.match(prompts[1]!, /過去のTurnに含まれるCharacter定義を置き換え/);
+  assert.deepEqual(second.messages.map((message) => message.text), ["first", "done", "second", "done"]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "定義の解決または送信開始保存に失敗した場合、Providerは動かず保存済みsnapshotと会話を維持する"
+// oracle = { type = "contract", ref = "docs/design/character-storage.md#runtime-snapshot" }
+// fault = "更新失敗を旧snapshotへのfallbackで隠して実行する、または保存失敗後もProviderをdispatchする"
+// observable = "runSessionTurnのreject、Provider呼出数、元Sessionのsnapshotとmessages"
+// observation_boundary = "consumer"
+// scope = "SessionRuntimeService Character failure admission"
+// lifecycle = "permanent"
+// impact = "利用者が更新反映済みと誤認したまま操作を実行する"
+// distinction = "CharacterStorageの例外検証ではなく送信入口からProvider副作用までの停止を検証する"
+// @end-test-value
+it("Character解決またはsnapshot保存の失敗を送信成功へ読み替えない", async () => {
+  for (const stage of ["resolve", "persist"] as const) {
+    const snapshot = createCharacterRuntimeSnapshot("Saved");
+    const session = createSession({ characterRuntimeSnapshot: snapshot, threadId: "thread-kept" });
+    let dispatched = 0;
+    const adapter = createAdapter(async () => { dispatched += 1; throw new Error("must not dispatch"); });
+    const runtime = new SessionRuntimeService(createRuntimeDeps(session, adapter, {
+      resolveRuntimeSessionForTurn: async (current) => {
+        if (stage === "resolve") throw new Error("definition unavailable");
+        return { ...current, characterRuntimeSnapshot: { ...snapshot, definitionMarkdown: "updated" } };
+      },
+      persistRunningTurnStart: () => { throw new Error("snapshot persistence failed"); },
+    }));
+    await assert.rejects(runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "send" }),
+      stage === "resolve" ? /definition unavailable/ : /snapshot persistence failed/);
+    assert.equal(dispatched, 0);
+    assert.deepEqual(session.characterRuntimeSnapshot, snapshot);
+    assert.deepEqual(session.messages, []);
+    assert.equal(session.threadId, "thread-kept");
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Characterを選ばず作成したneutral Sessionはcatalog解決なしで継続できる"
+// oracle = { type = "contract", ref = "docs/design/character-storage.md#runtime-snapshot" }
+// fault = "neutralを削除済みCharacterと誤認して既存会話を使用不可にする"
+// observable = "turn用Sessionとresolver呼出の有無"
+// observation_boundary = "consumer"
+// scope = "refreshSessionCharacterRuntimeSnapshot neutral"
+// lifecycle = "permanent"
+// impact = "Characterが0件の環境で作成したSessionが送信不能になる"
+// distinction = "通常Characterの更新とは異なる既存neutral契約を最小のresolver境界で守る"
+// @end-test-value
+it("snapshotなしneutral SessionはCharacterの再解決を行わない", async () => {
+  const session = createSession({ characterId: NEUTRAL_CHARACTER_ID, characterRuntimeSnapshot: null });
+  assert.equal(await refreshSessionCharacterRuntimeSnapshot(session, async () => {
+    throw new Error("neutral must not resolve a Character");
+  }), session);
+});
 
 // @test-value v2
 // kind = "invariant"
