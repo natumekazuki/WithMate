@@ -85,6 +85,7 @@ export type SessionComposerFeatureBridge = {
   target: "main" | "auxiliary";
   runtime: {
     isRunning: boolean;
+    isCanceling?: boolean;
     selectedRunState: Session["runState"] | null;
     auxiliaryRunState: Session["runState"] | null;
     busyReason: string;
@@ -496,7 +497,9 @@ export function useSessionComposerFeature(input: {
     });
     const isComposerBlockedFeedbackActive = bridge.runtime.forceBlockedFeedback
       && composerSendability.feedbackTone === "blocked";
-    const sendButtonTitle = getComposerSendButtonTitle(composerSendability);
+    const sendButtonTitle = bridge.runtime.isCanceling
+      ? "Waiting for the run to stop"
+      : getComposerSendButtonTitle(composerSendability);
     const dock: LiveSessionComposerDockPropsInput = {
       canSelectCustomAgent,
       additionalDirectoryCount: bridge.session.allowedAdditionalDirectories.length,
@@ -583,6 +586,7 @@ export function useSessionComposerFeature(input: {
 
     const dockSurface = buildLiveSessionComposerDockProps({
       ...dock,
+      isCanceling: bridge.runtime.isCanceling,
       showCustomAgentPicker: canSelectCustomAgent,
       showSkillPicker: !bridge.isCharacterAuthoringSession,
       showPromptTemplateButton: true,

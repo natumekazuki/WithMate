@@ -191,6 +191,139 @@ describe("SessionRuntimeService stale retry helpers", () => {
   });
 });
 describe("SessionRuntimeService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "取消はsetup・provider・終端保存の終了待ちをliveへ投影し、実終了後だけ再送と連続履歴を許可する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-run-cancel" }
+  // fault = "取消連打で状態通知を二重化する、未終了中にSendを許可する、終了通知が欠ける、または次turnへ旧応答を混入する"
+  // observable = "live取消状態とbroadcast、Send結果、provider呼出件数、保存message列"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService cancellation lifecycle"
+  // lifecycle = "permanent"
+  // impact = "取消済み表示なのにSendを拒否する状態や、履歴欠損・同一会話の二重実行を防ぐ"
+  // distinction = "既存deadline testのguard確認に加え、live解除通知・連打の冪等性・実Send再開をdeferred境界で確認する"
+  // @end-test-value
+  it("取消待ちを実終了まで投影し、単発・連打後の次Sendを安全に再開する", async () => {
+    for (const phase of ["admission", "setup", "provider", "terminal"] as const) {
+      for (const lateOutcome of ["resolve", "reject"] as const) {
+        let stored = createSession();
+        let live: LiveSessionRunState | null = null;
+        const broadcasts: Array<LiveSessionRunState | null> = [];
+        let releaseGate!: () => void;
+        const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+        let announceGate!: () => void;
+        const gateReady = new Promise<void>((resolve) => { announceGate = resolve; });
+        let resolveProvider!: (result: RunSessionTurnResult) => void;
+        let rejectProvider!: (error: Error) => void;
+        let providerCalls = 0;
+        let emitLateProgress: (() => void) | undefined;
+        let announceNext!: () => void;
+        const nextReady = new Promise<void>((resolve) => { announceNext = resolve; });
+        let finishNext!: (result: RunSessionTurnResult) => void;
+        const readLive = (): LiveSessionRunState | null => live;
+        const adapter: ProviderCodingAdapter = {
+          composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
+          async getProviderQuotaTelemetry() { return null; },
+          async invalidateSessionThread() {},
+          async invalidateAllSessionThreads() {},
+          runSessionTurn(input, onProgress) {
+            providerCalls += 1;
+            if (input.userMessage === "next request") {
+              announceNext();
+              return new Promise<RunSessionTurnResult>((resolve) => { finishNext = resolve; });
+            }
+            if (phase === "provider" && providerCalls === 1) {
+              emitLateProgress = () => { void onProgress?.(createLiveRunState({ sessionId: stored.id, assistantText: "old late progress" })); };
+              announceGate();
+              return new Promise<RunSessionTurnResult>((resolve, reject) => { resolveProvider = resolve; rejectProvider = reject; });
+            }
+            return Promise.resolve(createPartialResult({ assistantText: "completed answer" }));
+          },
+        };
+        let firstAdmission = true;
+        let firstSetup = true;
+        let firstTerminal = true;
+        const service = new SessionRuntimeService({
+          providerCancelGraceMs: 5,
+          async runSessionAdmissionExclusive(_id, operation) {
+            if (phase === "admission" && firstAdmission) { firstAdmission = false; announceGate(); await gate; }
+            return operation();
+          },
+          getSession: () => stored,
+          upsertSession: (next) => { stored = next; return next; },
+          async upsertTerminalSession(next) {
+            if (phase === "terminal" && firstTerminal) { firstTerminal = false; announceGate(); await gate; }
+            stored = next;
+            return next;
+          },
+          async resolveComposerPreview() {
+            if (phase === "setup" && firstSetup) { firstSetup = false; announceGate(); await gate; }
+            return { attachments: [], errors: [] };
+          },
+          getAppSettings: () => normalizeAppSettings({}),
+          resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+          getProviderCodingAdapter: () => adapter,
+          getSessionMemory: (session) => createSessionMemory(session.id),
+          resolveProjectMemoryEntriesForPrompt: () => [],
+          createAuditLog: createAuditLogBase,
+          updateAuditLog() {},
+          setLiveSessionRun: (_id, next) => { live = next; },
+          getLiveSessionRun: () => live,
+          async waitForApprovalDecision() { return "approve" as const; },
+          async waitForElicitationResponse() { return { action: "cancel" } as const; },
+          setProviderQuotaTelemetry() {},
+          setSessionContextTelemetry() {},
+          async invalidateProviderSessionThread() {},
+          scheduleProviderQuotaTelemetryRefresh() {},
+          broadcastLiveSessionRun() { broadcasts.push(live); },
+          resolvePendingApprovalRequest() {},
+          resolvePendingElicitationRequest() {},
+        });
+        const firstRun = service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "first request" });
+        const firstOutcome = firstRun.then((session) => session, () => null);
+        await gateReady;
+        service.cancelRun(stored.id);
+        assert.equal(broadcasts.at(-1)?.cancellationState, "requested", phase);
+        const cancelBroadcastCount = broadcasts.length;
+        if (lateOutcome === "reject") {
+          service.cancelRun(stored.id);
+          service.cancelRun(stored.id);
+          assert.equal(broadcasts.length, cancelBroadcastCount, "repeated cancel is idempotent");
+        }
+        if (phase !== "terminal") {
+          await firstOutcome;
+          assert.equal(broadcasts.at(-1)?.cancellationState, "terminating", phase);
+        } else {
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          assert.equal(broadcasts.at(-1)?.cancellationState, "requested", "terminal persistence retains cancellation after grace");
+        }
+        assert.equal(service.isRunInFlight(stored.id), true);
+        await assert.rejects(service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "too early" }), /already running/);
+        if (phase === "provider") {
+          if (lateOutcome === "resolve") { resolveProvider(createPartialResult({ assistantText: "old late answer" })); }
+          else { rejectProvider(new Error("old late rejection")); }
+        } else { releaseGate(); }
+        await firstOutcome;
+        await waitForCondition(() => !service.isRunInFlight(stored.id), "original run must finish");
+        assert.equal(broadcasts.at(-1)?.cancellationState, undefined);
+        const historyBeforeNext = [...stored.messages];
+        const secondRun = service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "next request" });
+        await nextReady;
+        emitLateProgress?.();
+        assert.equal(readLive()?.assistantText.includes("old late"), false);
+        assert.equal(readLive()?.cancellationState, undefined);
+        finishNext(createPartialResult({ assistantText: "completed answer" }));
+        const second = await secondRun;
+        assert.deepEqual(second.messages.slice(0, historyBeforeNext.length), historyBeforeNext);
+        assert.equal(second.messages.at(-2)?.text, "next request");
+        assert.equal(second.messages.at(-1)?.text, "completed answer");
+        assert.equal(second.messages.some((message) => /old late/.test(message.text)), false);
+        assert.equal(broadcasts.at(-1)?.assistantText.includes("old late"), undefined);
+        assert.equal(providerCalls, phase === "setup" || phase === "admission" ? 1 : 2);
+      }
+    }
+  });
+
 
   // @test-value v2
   // kind = "invariant"

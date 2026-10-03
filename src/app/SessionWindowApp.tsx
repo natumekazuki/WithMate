@@ -485,6 +485,7 @@ export default function AgentSessionWindowApp() {
   const {
     getLiveRunRevision,
     hasSelectedSessionLiveRun,
+    selectedSessionCancellationState,
     hasLiveRun,
     hasAssistantText: hasLiveRunAssistantText,
     hasApprovalRequest: isApprovalRequestPending,
@@ -526,6 +527,7 @@ export default function AgentSessionWindowApp() {
     visibleRunState: activeAuxiliarySession?.runState ?? resolveSelectedSessionRunState({
       runState: selectedSession?.runState,
       hasLiveRun: hasSelectedSessionLiveRun,
+      isCancellationPending: !!selectedSessionCancellationState,
     }),
     auxiliaryDraftPersistence,
     setForceComposerBlockedFeedback,
@@ -632,6 +634,7 @@ export default function AgentSessionWindowApp() {
   const selectedSessionRunState: Session["runState"] | null = resolveSelectedSessionRunState({
     runState: selectedSession?.runState,
     hasLiveRun: hasSelectedSessionLiveRun,
+    isCancellationPending: !!selectedSessionCancellationState,
   });
   const visibleSessionRunState: Session["runState"] | null = activeAuxiliarySession?.runState ?? selectedSessionRunState;
   const selectedSessionCharacter = useMemo(
@@ -1155,6 +1158,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelRun = async () => {
+    if (selectedSessionCancellationState) return;
     await cancelRun(buildRunningSessionCancelTarget({
       sessionId: selectedSession?.id,
       runState: selectedSessionRunState,
@@ -1968,7 +1972,9 @@ export default function AgentSessionWindowApp() {
     fallbackErrorMessage: "Could not open the Session files directory.",
   });
 
-  const pendingRunIndicatorAnnouncement = isApprovalRequestPending || isElicitationRequestPending
+  const pendingRunIndicatorAnnouncement = !activeAuxiliarySession && selectedSessionCancellationState
+    ? selectedSessionCancellationState === "terminating" ? "Waiting for the run to stop" : "Canceling run"
+    : isApprovalRequestPending || isElicitationRequestPending
     ? "Waiting for approval"
     : hasInProgressLiveRunStep
       ? "Working"
@@ -2106,6 +2112,7 @@ export default function AgentSessionWindowApp() {
     target: auxiliaryWorkspace.target,
     runtime: {
       isRunning: renderedIsRunning,
+      isCanceling: !activeAuxiliarySession && !!selectedSessionCancellationState,
       selectedRunState: selectedSessionRunState,
       auxiliaryRunState: activeAuxiliarySession?.runState ?? null,
       busyReason: composerBusyReason,

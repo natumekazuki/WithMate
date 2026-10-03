@@ -800,6 +800,35 @@ export class SessionRuntimeService {
       || this.terminatingSessionRuns.has(sessionId);
   }
 
+  private cancellationState(sessionId: string): LiveSessionRunState["cancellationState"] {
+    if (this.terminatingSessionRuns.has(sessionId)) {
+      return "terminating";
+    }
+    return this.sessionRunControllers.get(sessionId)?.signal.aborted || this.pendingSessionRunCancels.has(sessionId)
+      ? "requested"
+      : undefined;
+  }
+
+  private setRuntimeLiveState(sessionId: string, state: LiveSessionRunState | null): void {
+    const cancellationState = this.cancellationState(sessionId);
+    this.deps.setLiveSessionRun(sessionId, cancellationState
+      ? { ...(state ?? buildEmptyLiveSessionRunState(sessionId, this.deps.getLiveSessionRun(sessionId)?.threadId ?? "")), cancellationState }
+      : state);
+  }
+
+  private releaseCancellationState(sessionId: string): void {
+    if (this.isRunInFlight(sessionId) || this.waitingSessionRunAdmissions.has(sessionId)) {
+      return;
+    }
+    const liveState = this.deps.getLiveSessionRun(sessionId);
+    if (!liveState?.cancellationState) {
+      return;
+    }
+    const { cancellationState: _cancellationState, ...rest } = liveState;
+    this.deps.setLiveSessionRun(sessionId, rest.backgroundTasks.length > 0 || (rest.reasoningText ?? "").trim().length > 0 ? rest : null);
+    this.deps.broadcastLiveSessionRun(sessionId);
+  }
+
   private trackTerminatingSessionRun(sessionId: string, promise: Promise<unknown>): void {
     const trackedPromises = this.terminatingSessionRuns.get(sessionId) ?? new Set<Promise<unknown>>();
     if (trackedPromises.has(promise)) {
@@ -807,15 +836,18 @@ export class SessionRuntimeService {
     }
     trackedPromises.add(promise);
     this.terminatingSessionRuns.set(sessionId, trackedPromises);
+    this.setRuntimeLiveState(sessionId, this.deps.getLiveSessionRun(sessionId));
+    this.deps.broadcastLiveSessionRun(sessionId);
     const release = () => {
       trackedPromises.delete(promise);
       if (trackedPromises.size === 0) {
         this.terminatingSessionRuns.delete(sessionId);
       }
-      if (!this.startingSessionRuns.has(sessionId) && !this.inFlightSessionRuns.has(sessionId)) {
+      if (!this.startingSessionRuns.has(sessionId) && !this.inFlightSessionRuns.has(sessionId) && !this.terminatingSessionRuns.has(sessionId)) {
         this.sessionRunControllers.delete(sessionId);
         this.pendingSessionRunCancels.delete(sessionId);
       }
+      this.releaseCancellationState(sessionId);
     };
     promise.then(release, release);
   }
@@ -837,17 +869,24 @@ export class SessionRuntimeService {
   }
 
   cancelRun(sessionId: string): void {
+    const controller = this.sessionRunControllers.get(sessionId);
+    if (controller?.signal.aborted || this.pendingSessionRunCancels.has(sessionId)) {
+      return;
+    }
     this.deps.resolvePendingApprovalRequest(sessionId, "deny");
     this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
-    const controller = this.sessionRunControllers.get(sessionId);
     if (!controller) {
       if (this.waitingSessionRunAdmissions.has(sessionId)) {
         this.pendingSessionRunCancels.add(sessionId);
+        this.setRuntimeLiveState(sessionId, this.deps.getLiveSessionRun(sessionId));
+        this.deps.broadcastLiveSessionRun(sessionId);
       }
       return;
     }
 
     controller.abort();
+    this.setRuntimeLiveState(sessionId, this.deps.getLiveSessionRun(sessionId));
+    this.deps.broadcastLiveSessionRun(sessionId);
   }
 
   cancelAllRuns(): void {
@@ -865,13 +904,29 @@ export class SessionRuntimeService {
     const { clientRequestId, submitSource } = normalizeSessionTurnCorrelation(request);
     const runAbortController = new AbortController();
     if (this.isRunInFlight(sessionId) || this.waitingSessionRunAdmissions.has(sessionId)) {
+      logSessionRunStuckInvestigation("runtime.admission.rejected", {
+        sessionId,
+        clientRequestId,
+        guard: "runtime-in-flight",
+        starting: this.startingSessionRuns.has(sessionId),
+        running: this.inFlightSessionRuns.has(sessionId),
+        terminating: this.terminatingSessionRuns.has(sessionId),
+        waitingAdmission: this.waitingSessionRunAdmissions.has(sessionId),
+        cancellationState: this.cancellationState(sessionId),
+      });
       throw new Error("This session is already running.");
     }
     let admitted = false;
     this.waitingSessionRunAdmissions.add(sessionId);
+    this.sessionRunControllers.set(sessionId, runAbortController);
     const admit = () => {
       this.waitingSessionRunAdmissions.delete(sessionId);
       if (this.isRunInFlight(sessionId)) {
+        logSessionRunStuckInvestigation("runtime.admission.rejected", {
+          sessionId,
+          clientRequestId,
+          guard: "admission-recheck",
+        });
         throw new Error("This session is already running.");
       }
       this.startingSessionRuns.add(sessionId);
@@ -888,6 +943,7 @@ export class SessionRuntimeService {
         } else {
           admit();
         }
+        throwIfRunCanceled(runAbortController.signal);
       } catch (error) {
         this.waitingSessionRunAdmissions.delete(sessionId);
         if (!admitted) {
@@ -895,21 +951,30 @@ export class SessionRuntimeService {
         }
         if (admitted) {
           this.startingSessionRuns.delete(sessionId);
-          if (this.sessionRunControllers.get(sessionId) === runAbortController) {
+          if (this.sessionRunControllers.get(sessionId) === runAbortController && !this.terminatingSessionRuns.has(sessionId)) {
             this.sessionRunControllers.delete(sessionId);
           }
           this.pendingSessionRunCancels.delete(sessionId);
         }
+        if (this.sessionRunControllers.get(sessionId) === runAbortController && !this.terminatingSessionRuns.has(sessionId)) {
+          this.sessionRunControllers.delete(sessionId);
+        }
+        this.releaseCancellationState(sessionId);
         throw error;
       }
     })();
-    await waitForSetupWithCancelDeadline(
-      admissionPromise,
-      runAbortController.signal,
-      this.deps.providerCancelGraceMs ?? DEFAULT_PROVIDER_CANCEL_GRACE_MS,
-      () => this.waitingSessionRunAdmissions.has(sessionId) || this.startingSessionRuns.has(sessionId),
-      (promise) => this.trackTerminatingSessionRun(sessionId, promise),
-    );
+    try {
+      await waitForSetupWithCancelDeadline(
+        admissionPromise,
+        runAbortController.signal,
+        this.deps.providerCancelGraceMs ?? DEFAULT_PROVIDER_CANCEL_GRACE_MS,
+        () => this.waitingSessionRunAdmissions.has(sessionId) || this.startingSessionRuns.has(sessionId),
+        (promise) => this.trackTerminatingSessionRun(sessionId, promise),
+      );
+    } catch (error) {
+      this.releaseCancellationState(sessionId);
+      throw error;
+    }
     logSessionRunStuckInvestigation("runtime.requested", {
       sessionId,
       clientRequestId,
@@ -931,6 +996,7 @@ export class SessionRuntimeService {
         this.sessionRunControllers.delete(sessionId);
         this.pendingSessionRunCancels.delete(sessionId);
       }
+      this.releaseCancellationState(sessionId);
     }
   }
 
@@ -975,6 +1041,11 @@ export class SessionRuntimeService {
     });
 
     if (session.runState === "running") {
+      logSessionRunStuckInvestigation("runtime.admission.rejected", {
+        sessionId,
+        clientRequestId,
+        guard: "stored-run-state",
+      });
       throw new Error("This session is already running.");
     }
 
@@ -1075,7 +1146,7 @@ export class SessionRuntimeService {
         backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
         reasoningText: "",
       };
-      this.deps.setLiveSessionRun(sessionId, initialLiveState);
+      this.setRuntimeLiveState(sessionId, initialLiveState);
       setupLiveRun = true;
 
       runningAuditEntry = buildRunningAuditEntry({
@@ -1100,9 +1171,8 @@ export class SessionRuntimeService {
       this.deps.resolvePendingApprovalRequest(sessionId, "deny");
       this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
       this.inFlightSessionRuns.delete(sessionId);
-      this.sessionRunControllers.delete(sessionId);
       if (setupLiveRun) {
-        this.deps.setLiveSessionRun(sessionId, null);
+        this.setRuntimeLiveState(sessionId, null);
       }
       if (setupRunningSessionSaved) {
         await Promise.resolve(this.deps.upsertSession({
@@ -1174,7 +1244,7 @@ export class SessionRuntimeService {
       if (terminalAuditSettled) {
         return;
       }
-      this.deps.setLiveSessionRun(sessionId, nextLiveState);
+      this.setRuntimeLiveState(sessionId, nextLiveState);
       if (!hasMeaningfulLiveRunAuditState(nextLiveState)) {
         return;
       }
@@ -1337,7 +1407,7 @@ export class SessionRuntimeService {
               updatedAt: currentTimestampLabel(),
             });
           }
-          this.deps.setLiveSessionRun(sessionId, {
+          this.setRuntimeLiveState(sessionId, {
             ...buildEmptyLiveSessionRunState(sessionId, ""),
             backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
           });
@@ -1752,13 +1822,13 @@ export class SessionRuntimeService {
       const preservedBackgroundTasks = currentLiveState?.backgroundTasks ?? [];
       const preservedReasoningText = currentLiveState?.reasoningText ?? "";
       if (preservedBackgroundTasks.length > 0 || preservedReasoningText.trim().length > 0) {
-        this.deps.setLiveSessionRun(sessionId, {
+        this.setRuntimeLiveState(sessionId, {
           ...buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId),
           backgroundTasks: preservedBackgroundTasks,
           reasoningText: preservedReasoningText,
         });
       } else {
-        this.deps.setLiveSessionRun(sessionId, null);
+        this.setRuntimeLiveState(sessionId, null);
       }
       this.deps.broadcastLiveSessionRun(sessionId);
       logSessionRunStuckInvestigation("runtime.finally.done", {

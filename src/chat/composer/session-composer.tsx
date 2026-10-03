@@ -58,6 +58,7 @@ export type SessionComposerExpandedProps = {
   composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
   onRetryComposerSave?: () => void;
   isRunning: boolean;
+  isCanceling?: boolean;
   targetDock?: ReactNode;
   dockModeSwitch?: ReactNode;
   chatNotice?: string;
@@ -140,6 +141,7 @@ export function SessionComposerExpanded({
   composerController,
   onRetryComposerSave,
   isRunning,
+  isCanceling = false,
   targetDock = null,
   dockModeSwitch = null,
   chatNotice,
@@ -440,8 +442,10 @@ export function SessionComposerExpanded({
                     type="button"
                     onClick={onSendOrCancel}
                     title={sendButtonTitle}
+                    disabled={isCanceling}
+                    aria-busy={isCanceling || undefined}
                   >
-                    Cancel
+                    {isCanceling ? "Canceling" : "Cancel"}
                   </button>
                 ) : null}
               </div>
