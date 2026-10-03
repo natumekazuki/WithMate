@@ -2782,14 +2782,14 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
 
 // @test-value v2
 // kind = "contract"
-// claim = "running中はCancelを主操作にしてSendと実行時固定設定を抑止しつつ、writableなModel/Depthの現在選択だけ次回Send用に変更できる"
+// claim = "running中はCancelを主操作にしてSendとApproval/Sandbox/Model/Depthを変更不可にし、idleとread-onlyでも対象の操作制約を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "Cancel/Sendのrunning状態が誤る、Approval/Sandboxがrunning中に変更できる、Model/Depthまでrunningだけで変更不可になる、またはread-onlyでも変更できる"
+// fault = "Cancel/Sendのrunning状態が誤る、Approval/Sandbox/Model/Depthがrunning中に変更できる、またはread-onlyでも変更できる"
 // observable = "running/idle/read-onlyのCancel slot、Send disabled/title、Approval/Sandbox/Model/Depth select disabled属性"
 // observation_boundary = "component-behavior"
 // scope = "expanded ActionDock primary action"
 // lifecycle = "permanent"
-// impact = "実行中turnの設定変更を防ぎつつ、次回送信のModel/Depthだけは予約できる。CancelとSendの位置も維持する"
+// impact = "実行中の設定と画面表示の混同を防ぎ、CancelとSendの位置を維持する"
 // distinction = "Composer単体の実描画属性をrunning/idleで確認し、Main側の設定捕捉や保存の検査とは役割を分ける"
 // @end-test-value
 test("SessionComposerExpanded は実行中の操作後に jump button と表示切替を右側 group へ描画する", () => {
@@ -2899,8 +2899,8 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   const runningSelect = (className: string) => controlRow.querySelector<HTMLSelectElement>(`.${className} select`);
   assert.equal(runningSelect("composer-setting-approval")?.disabled, true);
   assert.equal(runningSelect("composer-setting-sandbox")?.disabled, true);
-  assert.equal(runningSelect("composer-setting-model")?.disabled, false);
-  assert.equal(runningSelect("composer-setting-depth")?.disabled, false);
+  assert.equal(runningSelect("composer-setting-model")?.disabled, true);
+  assert.equal(runningSelect("composer-setting-depth")?.disabled, true);
 
   const idleHtml = renderComposer(false);
   const idleDocument = new JSDOM(idleHtml).window.document;
@@ -3208,6 +3208,52 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
     Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "ModelとDepthはrunning・blocked・freezeのいずれかで値を保持したまま変更不可となり、全制限がないときだけ変更できる"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/776; docs/design/desktop-ui.md: runtime settings" }
+// fault = "実行中のModel/Depthが編集可能になる、既存blocked/freeze制限が消える、または無効化で選択値が変わる"
+// observable = "実Composer DOMのModel/Depth selectのdisabled、value、selected optionの表示名"
+// observation_boundary = "component-behavior"
+// scope = "session-composer-model-depth-availability"
+// lifecycle = "permanent"
+// impact = "実行中の設定と画面表示の混同、利用制限中の編集、待機中の設定変更不能を防ぐ"
+// distinction = "型検査と既存freeze testではrunning単独や各制限の独立性を確認できない。既存fixtureの8組合せだけでnative selectの継続的な操作契約を低コストで確認する"
+// @end-test-value
+test("SessionComposerExpanded は Model/Depth の値を保持し各利用制限を独立に適用する", () => {
+  for (const isRunning of [false, true]) {
+    for (const composerBlocked of [false, true]) {
+      for (const frozen of [false, true]) {
+        const registry = new ComposerControllerRegistry();
+        if (frozen) registry.freeze();
+        const html = renderToStaticMarkup(React.createElement(SessionComposerExpanded, createComposerTestProps({
+          isRunning,
+          composerBlocked,
+          composerController: { owner: { kind: "main", id: "main-1" }, registry },
+          modelOptions: [
+            { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+            { value: "gpt-5.4", label: "GPT-5.4" },
+          ],
+          reasoningOptions: [{ value: "medium", label: "Medium" }, { value: "high", label: "High" }],
+        })));
+        const dom = new JSDOM(html);
+        try {
+          const context = JSON.stringify({ isRunning, composerBlocked, frozen });
+          for (const [setting, value, label] of [["model", "gpt-5.4", "GPT-5.4"], ["depth", "high", "High"]]) {
+            const select = dom.window.document.querySelector<HTMLSelectElement>(`.composer-setting-${setting} select`);
+            assert.ok(select, `${setting}: ${context}`);
+            assert.equal(select.disabled, isRunning || composerBlocked || frozen, `${setting}: ${context}`);
+            assert.equal(select.value, value, `${setting}: ${context}`);
+            assert.equal(select.selectedOptions[0]?.textContent, label, `${setting}: ${context}`);
+          }
+        } finally {
+          dom.window.close();
+        }
+      }
+    }
   }
 });
 
