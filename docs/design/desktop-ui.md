@@ -312,6 +312,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
   - Text、Markdown、Mermaid（`.mmd`）、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
   - Markdown は shared rich text renderer、Mermaid は shared Mermaid renderer の Preview を既定とし、Source へ切り替えられる
+  - Mermaid内のlinkは通常のMarkdownと同じMainの解決・認可経路へ渡し、相対pathはpreview fileの親directoryを基準にする。diagramのanchorからWindow自体を遷移させず、無効・不存在・不許可の場合も図を保持してerrorを表示する。strictが除去したdestinationは復元しない。auxiliary clickとCtrl＋drag後のclickはopenしない
   - `.mmd`のFile Previewは、header・Find・feedbackを除く残りの表示領域を図の枠に割り当て、中央paneと独立Windowのresizeに追従する。Markdown／会話内の図は本文の流れを保つ高さ上限を持つ
   - Mermaidは中央・独立File PreviewとMarkdown／会話で共通の図単位のZoom Out／Zoom In、現在倍率兼100%リセット、Fitを持つ。初期表示はFitで、buttonによる手動倍率は10%〜800%を10ポイント刻みで変更する。Fitは小さい図を拡大せず縦横を表示領域へ収め、領域のresizeへ追従する。拡大後は図内のnative scrollで移動し、toolbarはスクロール外へ置く。各buttonはTabとEnter／Spaceで操作し、図領域へのfocus後はkeyboardでもscrollできる。Ctrlなしの左drag文字選択、通常の右clickとCtrlなしのwheelによるnative scrollを維持する。検索中に拡縮しても現在の一致位置を保持する。倍率・位置を他の図やWindowへ共有・永続化しない
   - 共通の倍率操作を持つMermaid、中央・独立File Previewの画像／SVG、会話・Markdownの画像lightboxは、表示領域上のCtrl＋左dragでscroll位置を移動し、Ctrl＋上wheelで拡大、Ctrl＋下wheelで縮小する。wheelは1ポイント刻み、Zoom In／Out buttonは10ポイント刻みとし、上下限は共通の10%〜800%で、Fit中は現在の実効倍率を起点にする（10%未満のFitからwheelで拡大する際は10%へ移る）。Ctrlなしのwheelはnative scrollに任せ、Ctrl＋wheelは表示対象だけに作用させてWindow全体のzoomや親scroll操作へ渡さない

@@ -1495,7 +1495,7 @@ export function SessionFilePreview({
           >
             {previewKind === "mermaid" ? (
               <div className="session-file-markdown session-file-mermaid">
-                <MermaidDiagram source={decodedText} />
+                <MermaidDiagram source={decodedText} onOpenPath={handleOpenMarkdownPath} />
               </div>
             ) : (
               <MessageRichText

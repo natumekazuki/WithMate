@@ -1264,6 +1264,90 @@ test("rich previewは図の拡縮で検索位置を保持し本文更新には�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = ".mmdとMarkdown内Mermaidのlinkはcurrent resourceをbaseとして送信し、失敗後も図と操作を保持して再試行できる"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/768 受入条件: 相対基準・安全な経路・失敗通知と操作継続" }
+// fault = ".mmdへcallbackを注入しない、Markdown contextを失う、baseResourceを誤る、または失敗で図を置換する"
+// observable = "openSessionFilePreviewWindowのrequest、role=alertのfeedback、図DOM、成功後のerror解消"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreviewからMermaidDiagramとMermaidViewportを経由するrenderer navigation境界"
+// lifecycle = "permanent"
+// impact = "図内の相対linkが別directoryで解決されたり、失敗後に閲覧と再試行ができなくなる"
+// distinction = "SVG生成とMain応答だけをmockし、単体viewport testでは欠落するfile context注入とfailure feedbackの接続を確認する。実機の遷移と認可確認は代替しない"
+// @end-test-value
+test("Mermaidのfile linkはpreview contextと失敗時の図を保持する", async () => {
+  const mermaid = (await import("mermaid")).default;
+  const originalRender = mermaid.render;
+  mermaid.render = async () => ({
+    svg: '<svg viewBox="0 0 200 100"><a xlink:href="../next%20file.md#L10"><text>Next file</text></a></svg>',
+    diagramType: "flowchart-v2",
+  });
+  const originalResizeObserver = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+  try {
+    for (const extension of ["mmd", "md"]) {
+      for (const outsideRoot of [false, true]) {
+        const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true, url: "http://localhost/" });
+        const restoreGlobals = installDomGlobals(dom);
+        Object.defineProperty(dom.window.SVGElement.prototype, "viewBox", { get: () => ({ baseVal: { width: 200, height: 100 } }) });
+        const request: SessionFileResourceRequest = outsideRoot
+          ? { sessionId: "session-1", absolutePath: `C:/outside/docs/diagram.${extension}` }
+          : { ...MARKDOWN_REQUEST, relativePath: `docs/diagram.${extension}` };
+        const source = extension === "mmd" ? "flowchart TD\nA[Next file]" : "```mermaid\nflowchart TD\nA[Next file]\n```";
+        const api = createTextPreviewApi(request, `diagram.${extension}`, source, "links-r1");
+        const inspect = api.inspectSessionFile;
+        api.inspectSessionFile = async (resource) => ({
+          ...await inspect(resource), kind: extension === "md" ? "markdown" : "text",
+        });
+        const navigationRequests: unknown[] = [];
+        let failure: "missing" | "denied" | "rejected" | null = "missing";
+        api.openPath = async () => { assert.fail("File preview links must retain their base resource."); };
+        api.openSessionFilePreviewWindow = async (navigationRequest) => {
+          navigationRequests.push(navigationRequest);
+          if (failure === "rejected") throw new Error("The link could not be opened.");
+          if (failure) return {
+            status: failure === "missing" ? "not-found" : "failed",
+            targetType: "local-path",
+            target: "../next%20file.md#L10",
+            message: failure === "missing" ? "The local path was not found." : "The preview resource is not authorized.",
+          };
+          return { status: "opened", targetType: "preview-window", disposition: "created", resource: request };
+        };
+        const container = dom.window.document.getElementById("root")!;
+        let root: Root | null = null;
+        try {
+          root = await renderPreview(api, container, request);
+          await waitFor(() => container.querySelector(".message-mermaid-canvas a") !== null);
+          const diagram = container.querySelector(".message-mermaid-canvas svg");
+          for (const outcome of ["missing", "denied", "rejected", null] as const) {
+            failure = outcome;
+            const event = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true });
+            await act(async () => container.querySelector(".message-mermaid-canvas a text")!.dispatchEvent(event));
+            assert.equal(event.defaultPrevented, true);
+            assert.deepEqual(navigationRequests.at(-1), {
+              kind: "link", sessionId: request.sessionId, target: "../next%20file.md#L10", baseResource: request,
+            });
+            assert.equal(container.querySelector(".message-mermaid-canvas svg"), diagram);
+            const feedback = container.querySelector(".session-file-preview-feedback[role=alert]");
+            if (outcome === null) assert.equal(feedback, null);
+            else assert.match(feedback?.textContent ?? "", outcome === "missing" ? /not found/ : outcome === "denied" ? /not authorized/ : /could not be opened/);
+          }
+          assert.equal(navigationRequests.length, 4);
+        } finally {
+          if (root) await act(async () => root?.unmount());
+          restoreGlobals();
+          dom.window.close();
+        }
+      }
+    }
+  } finally {
+    mermaid.render = originalRender;
+    if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver;
+    else Reflect.deleteProperty(globalThis, "ResizeObserver");
+  }
+});
+
 test("encoding 切替は表示済みの同一 local image を現行 generation へ再登録する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,

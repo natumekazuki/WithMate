@@ -12,7 +12,10 @@ async function withViewport(run: (fixture: {
   container: HTMLElement;
   render: (sourceKey?: string) => Promise<void>;
   resize: (width: number, height: number) => Promise<void>;
-}) => Promise<void>) {
+}) => Promise<void>, options: {
+  svg?: string;
+  onOpenPath?: (target: string) => void;
+} = {}) {
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
   const previous = Object.getOwnPropertyDescriptors(globalThis);
   const callbacks = new Set<() => void>();
@@ -38,7 +41,11 @@ async function withViewport(run: (fixture: {
   const root = createRoot(container);
   const render = async (sourceKey = "first") => {
     await act(async () => root.render(<>
-      <MermaidViewport key={sourceKey} svg='<svg viewBox="0 0 2000 1000"><text>First diagram</text></svg>' />
+      <MermaidViewport
+        key={sourceKey}
+        svg={options.svg ?? '<svg viewBox="0 0 2000 1000"><text>First diagram</text></svg>'}
+        onOpenPath={options.onOpenPath}
+      />
       <MermaidViewport key="second" svg='<svg viewBox="0 0 2000 1000"><text>Second diagram</text></svg>' />
     </>));
   };
@@ -106,6 +113,95 @@ test("Mermaidの拡縮・100%・Fitは図ごとに独立する", async () => {
     assert.equal(secondViewport.scrollTop, 20);
     assert.equal(firstViewport.tabIndex, 0);
   });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "MermaidのSVGとHTML linkはraw targetを既存open処理へ渡し、auxiliary clickやpanはnavigationしない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/768 受入条件: 安全なリンク経路とzoom/pan維持" }
+// fault = "SVGのxlink:hrefを見落とす、browser解決後URLを渡す、またはmiddle-clickやpanでdocument遷移する"
+// observable = "clickのdefaultPrevented、open callbackのtargetと回数、panによるscroll位置"
+// observation_boundary = "component-behavior"
+// scope = "MermaidViewportのSVGとforeignObject内linkに対するevent委譲"
+// lifecycle = "permanent"
+// impact = "図からのリンク操作でElectronの表示面やファイル相対解決を失う"
+// distinction = "通常Markdownのanchor testでは通らないSVG DOMの委譲とpanの入力競合を小さいfixtureで確認する"
+// @end-test-value
+test("Mermaid linkはraw targetを委譲しauxiliary clickとpanで遷移しない", async () => {
+  const opened: string[] = [];
+  await withViewport(async ({ container }) => {
+    const viewport = container.querySelector<HTMLElement>("[role=region]")!;
+    const svgText = viewport.querySelector("a text")!;
+    const htmlText = viewport.querySelector("a span")!;
+    const Mouse = container.ownerDocument.defaultView!.MouseEvent;
+    const dispatch = async (target: Element, type: string, init: MouseEventInit = {}) => {
+      const event = new Mouse(type, { bubbles: true, cancelable: true, ...init });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      await act(async () => target.dispatchEvent(event));
+      return event;
+    };
+    assert.equal((await dispatch(svgText, "click")).defaultPrevented, true);
+    assert.equal((await dispatch(htmlText, "click", { detail: 0 })).defaultPrevented, true);
+    assert.deepEqual(opened, ["../target%20file.md#L10", "https://example.com/path"]);
+    assert.equal((await dispatch(svgText, "auxclick", { button: 1 })).defaultPrevented, true);
+    assert.equal((await dispatch(htmlText, "auxclick", { button: 2 })).defaultPrevented, true);
+    assert.equal(opened.length, 2);
+    Object.defineProperty(viewport, "scrollWidth", { get: () => 2000 });
+    viewport.setPointerCapture = () => {};
+    viewport.hasPointerCapture = () => false;
+    await dispatch(svgText, "pointerdown", { ctrlKey: true, clientX: 100, clientY: 100 });
+    await dispatch(viewport, "pointermove", { ctrlKey: true, clientX: 80, clientY: 90 });
+    await dispatch(viewport, "pointerup", { ctrlKey: true });
+    assert.equal((await dispatch(svgText, "click", { ctrlKey: true })).defaultPrevented, true);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop, opened.length], [20, 10, 2]);
+    await dispatch(svgText, "pointerdown");
+    await dispatch(svgText, "click");
+    assert.equal(opened.length, 3);
+  }, {
+    onOpenPath: (target) => opened.push(target),
+    svg: '<svg viewBox="0 0 2000 1000"><a xlink:href="../target%20file.md#L10"><text>File</text></a><foreignObject><a href="//example.com/path"><span>Website</span></a></foreignObject></svg>',
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Mermaidの除去済み・不許可destinationは画面遷移せずerrorを示し、同一page fragmentもdocument遷移しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/768 受入条件: 無効・許可されないリンクの画面保持と失敗通知" }
+// fault = "href除去後anchorや不許可schemeを開く、無言で捨てる、またはfragmentで履歴を変更する"
+// observable = "defaultPrevented、role=alertのerror、open callbackの回数、図のDOM保持"
+// observation_boundary = "component-behavior"
+// scope = "MermaidViewportの無効link feedbackとdocument遷移抑止"
+// lifecycle = "permanent"
+// impact = "開けないリンクから復帰不能になるか失敗理由を確認できなくなる"
+// distinction = "Mermaidのsanitizer自体のtestではなくsanitization後のanchorを操作したときの利用者向け境界を確認する"
+// @end-test-value
+test("Mermaidの無効linkは図を保持してerrorを示す", async () => {
+  for (const invalidLink of [
+    '<a><text>Removed</text></a>',
+    '<a href="about:blank"><text>Unsupported</text></a>',
+  ]) {
+    const opened: string[] = [];
+    await withViewport(async ({ container }) => {
+      const diagram = container.querySelector(".message-mermaid-canvas svg")!;
+      const Mouse = container.ownerDocument.defaultView!.MouseEvent;
+      assert.equal(container.querySelector("[role=alert]"), null);
+      for (const link of diagram.querySelectorAll("a")) {
+        const event = new Mouse("click", { bubbles: true, cancelable: true });
+        await act(async () => link.dispatchEvent(event));
+        assert.equal(event.defaultPrevented, true);
+        assert.equal(container.querySelector(".message-mermaid-canvas svg"), diagram);
+        if (link.getAttribute("href") === "#node") {
+          assert.equal(container.querySelector("[role=alert]"), null);
+        } else {
+          assert.match(container.querySelector("[role=alert]")?.textContent ?? "", /no supported destination/);
+        }
+      }
+      assert.deepEqual(opened, []);
+    }, {
+      onOpenPath: (target) => opened.push(target),
+      svg: `<svg viewBox="0 0 2000 1000">${invalidLink}<a href="#node"><text>Fragment</text></a></svg>`,
+    });
+  }
 });
 
 // @test-value v2
