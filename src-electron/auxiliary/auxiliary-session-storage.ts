@@ -26,6 +26,9 @@ import type {
 
 type LegacyAuxiliaryPreviewResolver = (auxiliarySessionId: string) => string | null;
 
+export type AuxiliaryDraftStorageSaveInput = AuxiliaryDraftSaveInput;
+export type AuxiliaryDraftStorageConsumeInput = AuxiliaryDraftConsumeInput & { allowRunningInput?: boolean };
+
 type LegacyAuditEntryForPreview = {
   phase: string;
   rawItemsJson: string;
@@ -405,14 +408,14 @@ export class AuxiliarySessionStorage {
     });
   }
 
-  saveAuxiliaryDraft(input: AuxiliaryDraftSaveInput): AuxiliaryDraftSaveResult {
+  saveAuxiliaryDraft(input: AuxiliaryDraftStorageSaveInput): AuxiliaryDraftSaveResult {
     return this.withDb((db) => {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         const session = db.prepare(`
-          SELECT id, parent_session_id, status, created_at, run_state
+          SELECT id, parent_session_id, status, created_at
           FROM auxiliary_sessions WHERE id = ?
-        `).get(input.auxiliarySessionId) as { id: string; parent_session_id: string; status: "active" | "closed"; created_at: string; run_state: string } | undefined;
+        `).get(input.auxiliarySessionId) as { id: string; parent_session_id: string; status: "active" | "closed"; created_at: string } | undefined;
         const row = db.prepare(`
           SELECT auxiliary_session_id AS id, parent_session_id, incarnation,
             durable_revision, draft_text, updated_at
@@ -426,8 +429,7 @@ export class AuxiliarySessionStorage {
           db.exec("ROLLBACK");
           return { outcome: "rejected" };
         }
-        if (session.parent_session_id !== input.parentSessionId
-          || session.run_state === "running") {
+        if (session.parent_session_id !== input.parentSessionId) {
           db.exec("ROLLBACK");
           return { outcome: "not-found" };
         }
@@ -470,7 +472,7 @@ export class AuxiliarySessionStorage {
     });
   }
 
-  consumeAuxiliaryDraft(input: AuxiliaryDraftConsumeInput): AuxiliaryDraftConsumeResult {
+  consumeAuxiliaryDraft(input: AuxiliaryDraftStorageConsumeInput): AuxiliaryDraftConsumeResult {
     return this.withDb((db) => {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
@@ -493,7 +495,7 @@ export class AuxiliarySessionStorage {
           WHERE auxiliary_session_id = ?
         `).get(input.auxiliarySessionId) as AuxiliaryDraftRow | undefined;
         if (session.parent_session_id !== input.parentSessionId
-          || session.run_state === "running" || !row || row.parent_session_id !== input.parentSessionId) {
+            || (session.run_state === "running" && input.allowRunningInput !== true) || !row || row.parent_session_id !== input.parentSessionId) {
           db.exec("ROLLBACK");
           return { outcome: "not-found" };
         }

@@ -3,6 +3,10 @@
 - 状態: Accepted
 - 日付: 2026-07-13
 
+## 現在の適用範囲
+
+terminal outcomeとtransport cleanupの分離、取消のbounded収束、admission guard、Audit / snapshot enrichmentの判断は維持する。本文のCodex SDK event名、iterator close、SDK childへのAbortControllerによる停止は現行Codexには適用しない。Codex App Serverのnative `turn/completed`、所有processのbounded cleanupとWindows Job Objectへの置換後の契約は[Provider Adapter](../design/provider-adapter.md)を正本とする。以下の本文は当時の判断として保持する。
+
 ## Context
 
 Codex SDK の streaming API は terminal event を返した後も、transport の EOF または child process の終了待ちを継続する場合がある。WithMate が EOF を turn 完了条件として待つと、provider 側では turn が完了していても Session が `running` のまま残り、Cancel も収束しない。

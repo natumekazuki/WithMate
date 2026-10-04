@@ -59,7 +59,8 @@ WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packaging�
 - provider native package は `scripts/build/stage-provider-binaries.ts` で `build/provider-binaries/` へ stage し、`extraResources` で `resources/provider-binaries/` 配下へ配布する
 - Claudeの公式実行物は`@anthropic-ai/claude-agent-sdk`に固定した版のoptional dependencyを未改変でstageする。Windows / macOSのx64 / arm64を対象にし、開発時は`node_modules`、配布時はASAR外の`resources/provider-binaries/@anthropic-ai/claude-agent-sdk-<platform>-<arch>/claude[.exe]`を解決する
 - packaged runtime の binary path 解決は `src-electron/providers/provider-binary-paths.ts` を正本にする
-- `Codex` は `codexPathOverride` で staged binary を明示し、`Copilot` は `cliPath` に staged binary を渡す
+- Codexは固定版`@openai/codex`の公式native実行物をstageし、SDKを経由せずstaged binaryの`app-server --listen stdio://`を直接起動する。Copilotは`cliPath`にstaged binaryを渡す
+- CodexのWindows process ownershipは`koffi`を通したJob Objectを使う。supervisorをJobへ割り当ててからCLIを起動し、root終了後の子孫も所有する。Job取得・割当て不能時は起動を失敗させ、非所有processへfallbackしない。`koffi`はproduction dependencyとして同梱する
 
 ## Platform Constraint
 
@@ -87,6 +88,7 @@ minimum の確認は次とする。
 4. Windows installer 導入後、Start Menu 検索で `WithMate` を入力して起動できることを確認する
 5. Windows unpacked 出力では `resources/provider-binaries/@openai/codex-win32-x64/vendor/.../codex.exe`、`resources/provider-binaries/@github/copilot-win32-x64/copilot.exe`、`resources/provider-binaries/@anthropic-ai/claude-agent-sdk-win32-x64/claude.exe` が存在することを確認する
 6. Windows unpackedアプリのSession WindowでTerminalを開き、PowerShellの入力・出力、サイズ変更、タブ終了とWindow終了時のPTY解放を確認する。開発環境のnative loadだけで配布検証済みにしない
+7. Windows unpackedアプリでCodex App Serverの起動・turn終了・取消を確認し、koffiのnative load、ElectronのNode-mode supervisor、Jobによる子孫終了が成立することを確認する。Node上のtransport testを配布物の実確認へ代替しない
 
 macOS artifact の実確認は macOS 環境で次を行う。
 

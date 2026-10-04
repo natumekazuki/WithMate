@@ -36,6 +36,8 @@ export type RunSessionTurnInput = {
   characterContext?: CharacterContextResponse;
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
   signal?: AbortSignal;
+  /** Resolves only after owned process cleanup is confirmed, independently of turn outcome. */
+  onCleanupPending?: (completion: Promise<void>) => void;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;
   onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;
@@ -165,6 +167,12 @@ export type ProviderCodingAdapter = {
   getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
   invalidateSessionThread(sessionId: string): Promise<void>;
   invalidateAllSessionThreads(): Promise<void>;
+  steerSessionTurn?(input: {
+    sessionId: string;
+    expectedTurnId: string;
+    userMessage: string;
+    attachments: ComposerAttachment[];
+  }): Promise<{ turnId: string }>;
   runSessionTurn(
     input: RunSessionTurnInput,
     onProgress?: RunSessionTurnProgressHandler,

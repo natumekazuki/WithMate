@@ -11,8 +11,11 @@ function sameRunControls(left: OwnedLiveSessionRunState["state"], right: OwnedLi
     && Boolean(left?.assistantText) === Boolean(right?.assistantText)
     && Boolean(left?.approvalRequest) === Boolean(right?.approvalRequest)
     && Boolean(left?.elicitationRequest) === Boolean(right?.elicitationRequest)
+    && left?.elicitationRequest?.blocking === right?.elicitationRequest?.blocking
     && left?.errorMessage === right?.errorMessage
     && left?.cancellationState === right?.cancellationState
+    && left?.turnId === right?.turnId
+    && left?.inputAvailable === right?.inputAvailable
     && Boolean(left?.steps.some((step) => step.status === "in_progress"))
       === Boolean(right?.steps.some((step) => step.status === "in_progress"));
 }
@@ -95,7 +98,9 @@ export function useSessionRunControls(api: WithMateWindowApi | null, selectedSes
     hasAssistantText: Boolean(liveRun?.assistantText),
     hasApprovalRequest: Boolean(liveRun?.approvalRequest),
     hasElicitationRequest: Boolean(liveRun?.elicitationRequest),
+    hasBlockingElicitationRequest: Boolean(liveRun?.elicitationRequest && liveRun.elicitationRequest.blocking !== false),
     hasInProgressStep: Boolean(liveRun?.steps.some((step) => step.status === "in_progress")),
     errorMessage: liveRun?.errorMessage ?? "",
+    inputTurnId: liveRun?.inputAvailable === true && !liveRun.cancellationState ? liveRun.turnId : undefined,
   };
 }

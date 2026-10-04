@@ -279,6 +279,9 @@ export function createSessionApi(
         request,
       );
     },
+    steerSessionTurn(sessionId, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_STEER_SESSION_TURN_CHANNEL, sessionId, request);
+    },
     cancelSessionRun(sessionId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_CANCEL_SESSION_RUN_CHANNEL,

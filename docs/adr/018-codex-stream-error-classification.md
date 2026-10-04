@@ -4,6 +4,10 @@
 - 日付: 2026-08-09
 - 更新対象: [ADR 002](002-provider-turn-terminal-and-cancellation.md) の Codex `error` event 終端判定
 
+## 現在の適用範囲
+
+本文のCodex SDK event名とiterator契約は現行Codexには適用しない。App Serverではnative `turn/completed`のstatusをterminal outcomeとし、`error`通知はdiagnosticとして保持する。terminal前の切断を成功としない判断は維持する。置換後の現行契約は[Provider Adapter](../design/provider-adapter.md)を参照し、以下の本文は当時の判断として保持する。
+
 ## Context
 
 Codex の streaming event では、transport の再接続を試みている途中にも `error` が通知される。これを最初の通知時点で terminal event とみなすと、SDK が後続の retry、item、`turn.completed`、`turn.failed` を返す前に WithMate が stream を閉じる。その結果、`Reconnecting... 2/5` のような途中経過が最終エラーとして保存され、実際の turn outcome を取得できない。

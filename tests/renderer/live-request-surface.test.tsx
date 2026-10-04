@@ -80,6 +80,34 @@ const approvalRequest: LiveApprovalRequest = {
   decisionMode: "direct-decision",
 };
 
+// @test-value v2
+// kind = "contract"
+// claim = "secret指定の入力質問は長文でもpassword inputにし、回答内容を既存formで送信する。nonblocking質問を必須待ちと表示しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Provider入力質問のsecret textとpassword input" }
+// fault = "secretをtextareaや平文inputで表示する、回答payloadを変える、またはnonblocking質問をInput Requiredと表示する"
+// observable = "password inputのtype、質問badge、Submit後の回答payload"
+// observation_boundary = "component-behavior"
+// scope = "live-elicitation-secret-text"
+// lifecycle = "permanent"
+// impact = "画面上に秘匿回答が露出し、実行が止まっていない質問を必須待ちと誤認する"
+// distinction = "schemaと型はDOM入力typeと長文分岐のマスクや実Submit payloadを保証できない"
+// @end-test-value
+test("LiveRequestSurfaceはsecret回答をmaskしnonblocking質問を区別する", async () => {
+  const mounted = await mountElicitation({
+    requestId: "secret-question", provider: "codex", mode: "form", blocking: false, message: "Enter private answer",
+    fields: [{ type: "text", name: "answer", title: "Private answer", required: true, secret: true, maxLength: 500 }],
+  });
+  try {
+    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Private answer"]');
+    assert.ok(input);
+    assert.equal(input.type, "password");
+    assert.match(mounted.container.textContent ?? "", /Input Requested/);
+    await enterText(mounted.dom, input, "private-answer");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { answer: "private-answer" } }]);
+  } finally { await mounted.cleanup(); }
+});
+
 const elicitationRequest: LiveElicitationRequest = {
   requestId: "input-1",
   provider: "codex",

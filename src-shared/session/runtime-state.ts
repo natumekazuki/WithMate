@@ -228,6 +228,7 @@ export type LiveElicitationBooleanField = LiveElicitationFieldBase & {
 
 export type LiveElicitationTextField = LiveElicitationFieldBase & {
   type: "text";
+  secret?: boolean;
   defaultValue?: string;
   minLength?: number;
   maxLength?: number;
@@ -256,12 +257,15 @@ export type LiveElicitationRequest = {
   message: string;
   source?: string;
   fields: LiveElicitationField[];
+  blocking?: boolean;
   url?: string;
 };
 
 export type LiveSessionRunState = {
   sessionId: string;
   threadId: string;
+  turnId?: string;
+  inputAvailable?: boolean;
   cancellationState?: "requested" | "terminating";
   assistantText: string;
   reasoningText?: string;
@@ -358,6 +362,16 @@ export type RunSessionTurnRequest = {
   auxiliaryDraftDurableRevision?: number;
   displayAnchorParentMessageCount?: number;
 };
+
+export type SteerSessionTurnRequest = {
+  expectedTurnId: string;
+  userMessage: string;
+  clientRequestId?: string;
+  auxiliaryDraftIncarnation?: string;
+  auxiliaryDraftDurableRevision?: number;
+};
+
+export type SteerSessionTurnResult = { turnId: string };
 
 const SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

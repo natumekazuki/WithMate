@@ -29,6 +29,7 @@ import { appendSessionFilesDirectoryForSessionId, resolveSessionFilesDirectory }
 import { SessionStorage } from "../../src-electron/session/session-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
+import { AuxiliaryDraftPersistenceOwner } from "../../src/chat/auxiliary-draft-persistence-owner.js";
 
 type AuxiliarySessionServiceDeps = ConstructorParameters<typeof AuxiliarySessionServiceImpl>[0];
 
@@ -501,6 +502,128 @@ test("Auxiliary turn draft operation は失敗時復元と後続save保全を行
     assert.equal(auxiliaryStorage.getAuxiliaryDraft(session.id)?.durableRevision, next.durableRevision + 2);
   } finally {
     auxiliaryStorage.close();
+    parentStorage.close();
+    await removeDirectoryWithRetry(directory);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "実行中Auxiliaryのdraft保存は受付状態から独立し、consumeはMainの許可を検証してsteer失敗時の本文をCAS復元する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// fault = "受付停止中のdraft保存を拒否する、rendererフラグで実行中consumeを許可する、またはsteer失敗時に本文を失う"
+// observable = "service save結果、steer callback回数、永続draft本文/revision"
+// observation_boundary = "public-boundary"
+// scope = "Auxiliary running input durable draft"
+// lifecycle = "permanent"
+// impact = "入力消失または権限を検証しない実行中送信"
+// distinction = "通常idle consume testはrunning中の保存とMainによるconsume受付検証を通らない"
+// @end-test-value
+test("Auxiliary実行中inputはMainの許可とdurable revisionを検証し失敗本文を保持する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-steer-draft-"));
+  const dbPath = path.join(directory, "app.db");
+  const parentStorage = new SessionStorage(dbPath);
+  const storage = new AuxiliarySessionStorage(dbPath);
+  const parent = parentStorage.upsertSession(buildNewSession({ id: "session-1", taskTitle: "parent", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: DEFAULT_APPROVAL_MODE }));
+  const session = storage.upsertAuxiliarySession(buildAuxiliarySession({ runState: "running", composerDraft: "additional" }));
+  let available = false;
+  const service = new AuxiliarySessionService({ getParentSession: () => parent, getStorage: () => storage, canAcceptAuxiliaryInput: () => available });
+  try {
+    const draft = storage.getAuxiliaryDraft(session.id)!;
+    assert.equal((await service.saveAuxiliaryDraft({ auxiliarySessionId: session.id, parentSessionId: parent.id, incarnation: draft.incarnation, expectedDurableRevision: draft.durableRevision, text: "input", updatedAt: "2026-10-04T00:00:00Z" })).outcome, "saved");
+    const saved = storage.getAuxiliaryDraft(session.id)!;
+    let calls = 0;
+    const input = { auxiliarySessionId: session.id, parentSessionId: parent.id, incarnation: saved.incarnation, expectedDurableRevision: saved.durableRevision, userMessage: "input", allowRunningInput: true, run: async () => { calls += 1; throw new Error("turn ended"); } };
+    await assert.rejects(service.runAuxiliaryInputWithDraft(input), /draft changed/);
+    assert.equal(calls, 0);
+    assert.deepEqual(storage.getAuxiliaryDraft(session.id), saved);
+    available = true;
+    await assert.rejects(service.runAuxiliaryInputWithDraft({ ...input, expectedDurableRevision: saved.durableRevision - 1 }), /draft changed/);
+    await assert.rejects(service.runAuxiliaryInputWithDraft(input), /turn ended/);
+    assert.equal(calls, 1);
+    const restored = storage.getAuxiliaryDraft(session.id)!;
+    assert.equal(restored.text, "input");
+    assert.equal(restored.durableRevision, saved.durableRevision + 2);
+    assert.equal(await service.waitForPendingDraftSends(), true);
+  } finally {
+    storage.close(); parentStorage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary入力のACK待ち中の編集は受付停止後も成功・拒否後のdurable revisionへ通常CAS保存される"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// fault = "terminalまたはcancel後のrunning行を理由にqueued編集の保存や失敗復元を拒否する"
+// observable = "owner flush完了、hasPending、永続draft本文/revision、stale保存結果"
+// observation_boundary = "public-boundary"
+// scope = "Auxiliary ACK and terminal draft persistence"
+// lifecycle = "permanent"
+// impact = "受付待ちの通常編集が未保存となり、終了時に失われたり不要なRetryを要求されたりする"
+// distinction = "owner単体testとidle保存testでは実serviceとSQLiteのrunning状態・consume・ACK待ち・受付停止の競合を通らない。小さい二通りの順序確認で保存境界を維持する"
+// @end-test-value
+test("Auxiliary ACK待ち中の編集は受付停止後も成功・拒否の現在revisionへ保存する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-ack-draft-"));
+  const dbPath = path.join(directory, "app.db");
+  const parentStorage = new SessionStorage(dbPath);
+  const storage = new AuxiliarySessionStorage(dbPath);
+  const parent = parentStorage.upsertSession(buildNewSession({ id: "session-1", taskTitle: "parent", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: DEFAULT_APPROVAL_MODE }));
+  let available = true;
+  const service = new AuxiliarySessionService({ getParentSession: () => parent, getStorage: () => storage, canAcceptAuxiliaryInput: () => available });
+  try {
+    for (const accepted of [true, false]) {
+      available = true;
+      const session = storage.upsertAuxiliarySession(buildAuxiliarySession({ id: `aux-ack-${accepted}`, runState: "running", composerDraft: "sent input" }));
+      const owner = new AuxiliaryDraftPersistenceOwner({
+        load: () => service.getAuxiliaryDraft(session.id),
+        save: async (record) => {
+          const result = await service.saveAuxiliaryDraft({ ...record, expectedDurableRevision: record.durableRevision });
+          return result.outcome === "saved" && result.ack
+            ? { outcome: "saved", record: { ...record, ...result.ack } }
+            : { outcome: result.outcome === "saved" ? "rejected" : result.outcome };
+        },
+        now: () => "2026-10-04T00:00:00Z",
+        debounceMs: 0,
+      });
+      const initial = (await owner.ensureLoaded())!;
+      let dispatch!: () => void;
+      const dispatched = new Promise<void>((resolve) => { dispatch = resolve; });
+      let finish!: () => void;
+      const ack = new Promise<void>((resolve) => { finish = resolve; });
+      const sending = owner.withDraftConsumption(() => service.runAuxiliaryInputWithDraft({
+        auxiliarySessionId: session.id,
+        parentSessionId: parent.id,
+        incarnation: initial.incarnation,
+        expectedDurableRevision: initial.durableRevision,
+        userMessage: initial.text,
+        run: async () => {
+          dispatch();
+          await ack;
+          if (!accepted) throw new Error("input rejected after dispatch");
+        },
+      }));
+      const sendResult = accepted ? sending : assert.rejects(sending, /input rejected after dispatch/);
+      await dispatched;
+      const queued = owner.enqueue("edited during ACK");
+      const flushing = owner.flush();
+      available = false;
+      assert.equal(storage.getAuxiliarySessionStatus(session.id)?.runState, "running");
+      assert.equal(storage.getAuxiliaryDraft(session.id)?.text, "");
+      finish();
+      await sendResult;
+      await queued;
+      await flushing;
+      assert.equal(owner.hasPending, false);
+      const persisted = storage.getAuxiliaryDraft(session.id)!;
+      assert.equal(persisted.text, "edited during ACK");
+      assert.equal(persisted.incarnation, initial.incarnation);
+      assert.equal(persisted.durableRevision, initial.durableRevision + (accepted ? 2 : 3));
+      assert.equal((await service.saveAuxiliaryDraft({ ...initial, expectedDurableRevision: initial.durableRevision, text: "stale edit" })).outcome, "stale");
+      assert.deepEqual(storage.getAuxiliaryDraft(session.id), persisted);
+    }
+  } finally {
+    storage.close();
     parentStorage.close();
     await removeDirectoryWithRetry(directory);
   }

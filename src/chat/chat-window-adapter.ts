@@ -317,7 +317,7 @@ export function buildLiveSessionComposerDockProps(
       ...(input.isCanceling !== undefined ? { isCanceling: input.isCanceling } : {}),
       chatNotice: input.chatNotice,
       showJumpToBottom,
-      cancelButtonTitle: input.sendButtonTitle,
+      cancelButtonTitle: input.canSendInput ? "Cancel run" : input.sendButtonTitle,
       onExpand: onExpandActionDock,
       onJumpToBottom: input.onJumpToBottom,
       onCancel: input.onSendOrCancel,

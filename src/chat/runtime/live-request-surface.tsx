@@ -248,12 +248,12 @@ function LiveElicitationCard({
     <section
       className="live-elicitation-card"
       role="group"
-      aria-label="Input required"
+      aria-label={request.blocking === false ? "Input requested" : "Input required"}
       aria-busy={isSubmitting || undefined}
     >
       <div className="live-approval-head">
         <div className="live-approval-copy">
-          <span className="live-approval-badge">Input Required</span>
+          <span className="live-approval-badge">{request.blocking === false ? "Input Requested" : "Input Required"}</span>
           <p className="live-approval-title">{request.message}</p>
         </div>
         <span className="live-approval-kind">{liveElicitationModeLabel(request.mode)}</span>
@@ -288,7 +288,7 @@ function LiveElicitationCard({
                 </span>
               ) : null}
               {field.type === "text" ? (
-                field.maxLength !== undefined && field.maxLength > 120 ? (
+                !field.secret && field.maxLength !== undefined && field.maxLength > 120 ? (
                   <textarea
                     aria-label={field.title}
                     aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
@@ -298,7 +298,7 @@ function LiveElicitationCard({
                   />
                 ) : (
                   <input
-                    type={field.format === "email" ? "email" : field.format === "uri" ? "url" : field.format === "date" ? "date" : "text"}
+                    type={field.secret ? "password" : field.format === "email" ? "email" : field.format === "uri" ? "url" : field.format === "date" ? "date" : "text"}
                     aria-label={field.title}
                     aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
                     value={liveElicitationTextValue(fieldValues[field.name])}

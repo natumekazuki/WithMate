@@ -7,7 +7,7 @@ export const CODEX_SANDBOX_MODE_VALUES = [
 
 export type CodexSandboxMode = (typeof CODEX_SANDBOX_MODE_VALUES)[number];
 
-export type CodexSdkSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+export type CodexSandboxBaseMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export const DEFAULT_CODEX_SANDBOX_MODE: CodexSandboxMode = "workspace-write";
 
@@ -40,7 +40,7 @@ export function codexSandboxModeLabel(value: string): string {
 }
 
 export function resolveCodexSandboxThreadOptions(mode: CodexSandboxMode): {
-  sandboxMode: CodexSdkSandboxMode;
+  sandboxMode: CodexSandboxBaseMode;
   networkAccessEnabled: boolean;
 } {
   if (mode === "workspace-write-network") {

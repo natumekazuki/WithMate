@@ -86,6 +86,8 @@ export type SessionComposerFeatureBridge = {
   runtime: {
     isRunning: boolean;
     isCanceling?: boolean;
+    canSendInput?: boolean;
+    inputError?: string;
     selectedRunState: Session["runState"] | null;
     auxiliaryRunState: Session["runState"] | null;
     busyReason: string;
@@ -112,6 +114,7 @@ export type SessionComposerFeatureBridge = {
       auxiliary: SessionComposerOperation;
       cancelMain: SessionComposerOperation;
       cancelAuxiliary: SessionComposerOperation;
+      input?: SessionComposerOperation;
     };
     runtimeOptions: {
       runMain: (option: MainRuntimeOption) => void | Promise<void>;
@@ -300,6 +303,7 @@ export function useSessionComposerFeature(input: {
     const composerSendability = bridge.target === "auxiliary"
       ? buildComposerSendabilityState({
           runState: bridge.runtime.auxiliaryRunState,
+          canSendInput: bridge.runtime.canSendInput,
           busyReason: bridge.runtime.busyReason,
           blockedReason: bridge.runtime.blockedReason,
           inputErrors: composerPreview.errors,
@@ -307,6 +311,7 @@ export function useSessionComposerFeature(input: {
         })
       : resolveComposerSendabilityState({
           runState: bridge.runtime.selectedRunState,
+          canSendInput: bridge.runtime.canSendInput,
           busyReason: bridge.runtime.busyReason,
           blockedReason: bridge.runtime.blockedReason,
           inputErrors: composerPreview.errors,
@@ -315,7 +320,7 @@ export function useSessionComposerFeature(input: {
         });
     const isComposerDisabled = bridge.runtime.isReadOnly
       || !!bridge.runtime.blockedReason
-      || composerSendability.isRunning;
+      || (composerSendability.isRunning && !bridge.runtime.canSendInput);
     const onSendOrCancel = buildAuxiliaryAwareSendOrCancelHandler({
       shouldSendAuxiliary: isAuxiliaryTarget,
       isAuxiliarySessionRunning: bridge.runtime.auxiliaryRunState === "running",
@@ -504,6 +509,9 @@ export function useSessionComposerFeature(input: {
       canSelectCustomAgent,
       additionalDirectoryCount: bridge.session.allowedAdditionalDirectories.length,
       isRunning: bridge.runtime.isRunning,
+      canSendInput: bridge.runtime.canSendInput,
+      submissionError: bridge.runtime.inputError,
+      onSendInput: () => void bridge.operations.send.input?.(),
       composerBlocked: bridge.runtime.isReadOnly || !!bridge.runtime.blockedReason,
       isAgentPickerOpen,
       isSkillPickerOpen,

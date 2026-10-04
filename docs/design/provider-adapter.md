@@ -15,7 +15,7 @@ WithMate では provider 実行境界を Main Process に置く。
 
 理由:
 - CLI ログイン状態を安全に引き継ぎやすい
-- Electron Renderer へ SDK 実行権限を持ち込まなくてよい
+- Electron Renderer へ provider 実行権限を持ち込まなくてよい
 - session store と thread id を同じ責務で管理できる
 
 ## Current Runtime
@@ -42,10 +42,14 @@ Main Processでは`MainProviderFacade`がcoding planeとbackground planeの入�
 providerごとの差は次。
 
 - `CodexAdapter`
-  - `thread.runStreamed()` を使い、workspace snapshot を含む artifact まで組み立てる
+  - turnごとに公式Codex CLIの`app-server --listen stdio://`を起動し、`initialize` / `initialized`後に`thread/start`または保存済みIDの`thread/resume`、`turn/start`を実行する。native item / delta / usage通知からlive state、監査、workspace snapshotを含むartifactを組み立てる
+  - command / file approval、permissions、user-input、MCP elicitationのserver requestを元のrequest IDとの対応を保持して共通GUIへ直列中継し、応答は元のIDへ返す。GUIのrequest IDは独立したopaque IDとする。`serverRequest/resolved`、turn終了、取消でpendingと待機列を解放し、二重回答・別turnへの回答を拒否する
+  - 実行中追加入力は現在のthread IDと`expectedTurnId`を使う`turn/steer`へ送る。terminal後は入力を受け付けない。dispatch済みsteerの応答はRPC timeoutの有界範囲で待ってからtransportを閉じ、terminalより遅れた成功ACKも受理結果として保持する。一致するACKで受理された本文・file/folder path・image入力は対応turnのRaw Itemsへ秘匿化・サイズ上限付きで保存する。開始時のlogical prompt / transport payloadとは区別し、拒否された入力は受理済みtraceへ含めない
+  - terminalはnative `turn/completed`のstatusを正本とし、受信済み通知は後続EOFでも到着順に処理する。EOF自体は成功の根拠にしない。終了・取消時は所有processと子孫をboundedに終了する。Windowsは起動前にJob Objectへsupervisorを割り当て、POSIXは専用process groupを使う。cleanup失敗は診断として独立して報告し、native terminal outcomeを上書きしない。所有processの終了確認まで同一Session・workspace・threadへの再実行を拒否し、Session runtimeの終了中guardを維持する
+  - background structured promptは独立した非継続thread、`read-only` / `never`、`outputSchema`で実行し、interactive requestを拒否する
   - `file / folder / image` 添付を shipped
   - workspace 外 access は session metadata `allowedAdditionalDirectories` を正本にして制御する
-  - packaged runtime では `src-electron/providers/provider-binary-paths.ts` を通して `resources/provider-binaries/` 配下の staged binary を `codexPathOverride` で明示する
+  - binary pathは`src-electron/providers/provider-binary-paths.ts`を正本とし、開発時は固定版`@openai/codex`のnative package、配布時は`resources/provider-binaries/`配下のstaged binaryを直接起動する。App Serverのenvironmentへcredentialとturnのruntime bindingを明示し、global `process.env`は書き換えない
 - `CopilotAdapter`
   - `session.send()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
   - 開始済みturnの取消ではsend応答とcompletionを並行して観測し、abort応答・`session.idle`・send応答の収束を取消専用の猶予内で確認する。取消受付時に当turnのsession/client cacheを同期的に切り離し、捕捉した旧sessionのdisconnectと旧clientのstop、必要時のforceStopへ進む。SDKのstdio clientには公開exit hookがないため、cleanupが破棄する前の`cliProcess`をreadonlyで捕捉する。forceStopのresolveを停止証明にせず、必要時はその旧childだけへSIGKILLを送り、実exitとsend/abort RPC終了までadapter Promiseと共通runtimeの再送guardを保持する。kill失敗も期限だけで解放せずexitを待つ。SDK childを捕捉できない場合は切断を停止証明にせず、元turnのidleとRPC終了を待つ
@@ -65,7 +69,7 @@ providerごとの差は次。
   - `Premium Requests` は `client.rpc.account.getQuota()` と `assistant.usage.quotaSnapshots` から app-wide telemetry として更新する
   - `Context Usage` は `session.usage_info` を session local telemetry として Main Process memory に保持する
   - background task は `session.idle.backgroundTasks` と `system.notification` を `LiveSessionRunState.backgroundTasks` へ正規化し、Session 右ペインの Copilot 専用 `Tasks` tab へ流す
-  - current slice は Copilot-only で、task の create/list/control RPC までは吸収しない。Codex current SDK に同等 surface は無い
+  - current sliceはCopilot-onlyで、taskのcreate/list/control RPCまでは吸収しない。Codex adapterは同等のTasks UIへ接続していない
 - `ClaudeAdapter`
   - 公式SDK `0.3.285`と未改変の公式native実行物 `2.1.285`を使い、Windows / macOSの対象architecture向け実行物を配布物へ同梱する。CLIの既存ログインをSDKに任せ、WithMateはcredentialを読取・コピーせず、独自OAuthを行わない。SDKの認証・課金に関わる環境変数や設定の優先順位を上書きしない
   - `query()`で1 turnを実行し、保存済みの明示session IDを`resume`へ渡す。履歴全件の再送、暗黙の最新会話`continue`は行わない。取消時はSDKの公開spawn hookで子プロセスの実終了を追跡し、実終了までprovider Promiseを保持してruntimeの再送guardにつなぐ。正常なterminal result後のcleanupは[ADR 002](../adr/002-provider-turn-terminal-and-cancellation.md)のbounded graceに従う
@@ -112,14 +116,14 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
    - workspace 外 path は `allowedAdditionalDirectories` 配下だけを許可する
 5. prompt composer がCharacter context、user inputと添付referenceをproviderへ渡す形式に正規化する
 6. Main Process が送信された `executionOptions.catalogRevision` と session の `provider` から provider catalog を解決し、revision、model、reasoning depth、実行 option 値を検証する。model が存在しない、depth が非対応などの不正な選択は turn 開始保存・Provider 起動前に拒否し、default や保存値へ置換しない
-7. 検証済み `executionOptions` を独立した turn snapshot として prompt、coding plane adapter、監査ログへ渡し、provider-native SDK 実行へ変換する
-   - `CodexAdapter`: file / folder の workspace 外 access は session metadata `allowedAdditionalDirectories` だけを `additionalDirectories` へ変換し、画像は structured input にして `thread.runStreamed()` を実行する
+7. 検証済み`executionOptions`を独立したturn snapshotとしてprompt、coding plane adapter、監査ログへ渡し、provider-native実行へ変換する
+   - `CodexAdapter`: file / folderのworkspace外accessはsession metadata `allowedAdditionalDirectories`からsandbox policyの`writableRoots`へ変換し、画像は`localImage` inputとして`turn/start`へ渡す。model、effort、approval、sandbox、service tier、reviewerは送信時の検証済み値を使う
    - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時はaudit logにdebug metadataを残す
    - `ClaudeAdapter`: 共通prompt、検証済み添付、実行optionをSDK `query()`へ渡す。`resume`は保存済みの明示session IDだけを使い、承認・質問を共通pending UIへ返す
 8. Main Process が stream event から live state と provider telemetry を組み立て、IPC で Session Window へ中継する
    - live state には `approvalRequest` と `elicitationRequest` を含められる
    - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する
-   - Codex は `turn.completed` / `turn.failed` / fatal `error` の最初の event を terminal outcome の正本とし、transport EOF は bounded cleanup として扱う
+   - Codexはnative `turn/completed`の`completed / failed / interrupted`をterminal outcomeの正本とする。`error`通知はdiagnosticとして扱い、terminal前の切断は失敗とする。transport終了はbounded cleanupとして扱う
 9. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
 10. Main Process が `running / completed / canceled / failed` の監査ログを 1 turn 1 record で SQLite に保存する。terminal phase の最小更新を先に確定し、詳細は bounded enrichment として後段で更新する
 11. Renderer は Session summary invalidation と live state 購読を使って再描画する
@@ -129,8 +133,8 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
 添付はproviderごとのtransportへ変換する。
 
 - `Codex`
-  - file / folder: session metadata `allowedAdditionalDirectories` を `additionalDirectories` へ変換
-  - image: structured input (`local_image`)
+  - file / folder: session metadata `allowedAdditionalDirectories`をsandbox policyの`writableRoots`へ変換
+  - image: structured input (`localImage`)
 - `Copilot`
   - SDK native には `attachments` として `file` / `directory` attachment がある
   - `CopilotAdapter` はfile / folderに加えてimageも`file` attachmentとして扱う
@@ -147,17 +151,17 @@ the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動�
 
 ## Thread Management
 
-- sessionごとにprovider固有の会話IDを保持する。Codexは`threadId`から`resumeThread()`し、未作成時は`startThread()`する。Claudeは同じ保存fieldの明示IDをSDK `resume`へ渡し、未作成時は新規`query()`を使う
-- 実行後に `thread.id` を session store へ保存する
+- sessionごとにprovider固有の会話IDを保持する。Codexはturnごとの新しいApp Serverで保存済み`threadId`を`thread/resume`へ渡し、未作成時は`thread/start`する。Claudeは同じ保存fieldの明示IDをSDK `resume`へ渡し、未作成時は新規`query()`を使う
+- 実行後にproviderが返した会話IDをsession storeへ保存する
 - model または reasoning depth を変更した場合も、その session の `threadId` は維持し、次回 turn は送信された runtime parameter で既存 thread / session の resume を試す
-- Codex の `approvalMode` / `codexSandboxMode` は thread settings key に含める。変更後の turn では既存 thread cache を再利用せず、送信された runtime parameter で `resumeThread()` または `startThread()` する
-- Codex / Copilotのcoding credentialは`AppSettings.codingProviderSettings[providerId].apiKey`から解決してSDK clientへ渡す。Claudeは既存CLI認証をSDKに任せ、WithMateのcredential設定へ取り込まない
+- Codexは毎turnの`thread/start` / `thread/resume`と`turn/start`へ送信時の実行optionを渡す
+- Codex / Copilotのcoding credentialは`AppSettings.codingProviderSettings[providerId].apiKey`から解決する。Codexは設定値を優先し、未設定時は継承した`CODEX_API_KEY`を使う。キーがある場合だけApp Serverを`cli_auth_credentials_store="ephemeral"`で起動し、initialize後の`account/login/start`へ渡す。認証はprocess内に限定し、保存済みCLI認証を変更しない。キーがなければ既存CLI認証を使う。CopilotはSDK clientへ渡す。Claudeは既存CLI認証をSDKに任せ、WithMateのcredential設定へ取り込まない
 - coding credential が変わった provider では既存 thread / adapter cache を再利用しないため、対象 session の `threadId` を空に戻す
 
 理由:
 - provider prompt は過去の `session.messages` を毎 turn 再送せず、会話継続は provider 側の `threadId` に依存するため、model / reasoning depth 変更だけで `threadId` を消すと履歴が途切れる
-- Copilot / Codex adapter は settings key 差分時に cache を切り替え、新しい runtime parameter 付きで `resumeSession(threadId, config)` / `resumeThread(threadId, options)` を試す
-- 既存 thread / session が失効または model-incompatible で拒否された場合は、runtime が meaningful partial の無い stale error だけを `threadId clear + provider cache invalidate + 1 回 internal retry` で新規 thread / session へ回復する
+- Copilotはsettings key差分時にcacheを切り替えて`resumeSession(threadId, config)`を試す。Codexは新しいApp Serverへ明示IDと今回のruntime parameterを渡す
+- Codexの`thread/resume`が拒否された場合は保存済みIDを保持してエラーを返し、自動で新threadへ切り替えない。Copilotのstale session回復はError Handlingに従う
 - coding credential を切り替えたあとに旧 client / 旧 thread 文脈を引き継ぐと runtime 差し替えが不透明になる
 - そのため model / reasoning depth 変更は conversation continuity を優先し、credential 変更は security boundary として thread を切り替える
 
@@ -184,17 +188,17 @@ approval mode は WithMate が対応する Codex policy 値を正本にする。
 
 方針:
 
-- renderer / shared state / session persistence / audit log では SDK policy 値を write-path の正本として扱う
+- renderer / shared state / session persistence / audit logではCodex policy値をwrite-pathの正本として扱う
 - 既存 row に残る legacy 値は read-path normalize で吸収する
   - `allow-all -> never`
   - `safety -> untrusted`
   - `provider-controlled -> on-request`
-- CodexAdapter は `approvalMode` を SDK `approvalPolicy` へそのまま渡す
+- CodexAdapterは`approvalMode`をApp Serverの`approvalPolicy`へそのまま渡す
 - CopilotAdapter は `never` を自動許可、`untrusted` を read-only 以外 rules deny、`on-request` を Session UI の approval card 中継として扱う
 - ClaudeAdapterは`on-request`だけを選択可能にし、SDKのdefault permissionと共通approval / elicitation UIで処理する
-- UIはSDK値をそのまま表示せず、`Auto Run` / `Provider Controlled` / `Safety Focused` のdisplay labelへ変換する。保存・API・adapter境界ではSDK policy値をrawのまま保持し、providerごとに出すchoicesを分ける
+- UIはpolicy値をそのまま表示せず、`Auto Run` / `Provider Controlled` / `Safety Focused`のdisplay labelへ変換する。保存・API・adapter境界ではpolicy値をrawのまま保持し、providerごとに出すchoicesを分ける
 
-これにより、session 作成、永続化、監査、artifact 表示、resume 復元では SDK 値を追跡しつつ、provider ごとの差異は provider-specific choices と adapter 実装で吸収する。
+session作成、永続化、監査、artifact表示、resume復元ではpolicy値を追跡し、providerごとの差異はprovider-specific choicesとadapter実装で吸収する。
 
 ## Sandbox Modes
 
@@ -205,7 +209,7 @@ Codex session は `codexSandboxMode` を持つ。UI では Codex provider のと
 - `workspace-write + network`
 - `danger-full-access`
 
-`workspace-write + network` は WithMate 側の UI option であり、Codex SDK へは `sandboxMode: "workspace-write"` と `networkAccessEnabled: true` の組み合わせで渡す。他の provider は現時点で sandbox dropdown を表示しない。
+`workspace-write + network`はWithMate側のUI optionであり、Codex App Serverへは`workspaceWrite` sandbox policyの`networkAccess: true`として渡す。他のproviderは現時点でsandbox dropdownを表示しない。
 
 ## Model Resolution Policy
 
@@ -220,11 +224,11 @@ Codex session は `codexSandboxMode` を持つ。UI では Codex provider のと
 
 ## Artifact Summary Policy
 
-Codex SDKの`turn.items`とworkspace snapshot差分からsummaryを組み立てる。
+Codex App Serverのnative itemsとworkspace snapshot差分からsummaryを組み立てる。
 
-- `file_change` + snapshot diff -> changed files
-- `command_execution` -> activity summary
-- `mcp_tool_call` / `web_search` / `todo_list` / `reasoning` -> activity summary
+- `fileChange` + snapshot diff -> changed files
+- `commandExecution` -> activity summary
+- `mcpToolCall` / `webSearch` / `plan` / `reasoning` -> activity summary
 - approval -> run checks の provider-neutral canonical value
 - usage -> run checks
 - model / reasoning -> run checks
@@ -234,12 +238,12 @@ CodexAdapter は `workspacePath + allowedAdditionalDirectories` ごとに proces
 
 turn 終了後の snapshot は provider outcome に対する enrichment である。取得が deadline を超えた場合は turn 自体を失敗へ変更せず、取得済み item から result を確定し、diff が不完全になり得ることを provider metadata と app log に残す。
 
-`file_change` だけで変更候補を確定でき、`command_execution` / `mcp_tool_call` のような副作用範囲が不明な operation が無い場合は、候補ファイルだけを trusted candidate として refresh する。副作用範囲が不明な場合でも、directory 構造と ignore source が変わっていなければ、known file の stat 差分から incremental refresh する。directory mtime 変化、ignore source 変化、snapshot limit 超過または limit hit 状態、不確定な ignore 状態がある場合は full rebuild へ fallback する。
+`fileChange`だけで変更候補を確定でき、`commandExecution` / `mcpToolCall`のような副作用範囲が不明なoperationが無い場合は、候補ファイルだけをtrusted candidateとしてrefreshする。副作用範囲が不明な場合でも、directory構造とignore sourceが変わっていなければ、known fileのstat差分からincremental refreshする。directory mtime変化、ignore source変化、snapshot limit超過またはlimit hit状態、不確定なignore状態がある場合はfull rebuildへfallbackする。
 
 - 実行前に `workspacePath + allowedAdditionalDirectories` 全体の text file snapshot を取る
 - 初回以降は `WorkspaceSnapshotIndex` の snapshot を before として使い、turn 前に index refresh で外部変更を反映する
-- 実行後は completed `file_change` の候補ファイルだけを trusted candidate として refresh できる場合がある
-- `command_execution` / `mcp_tool_call` がある場合も、directory 構造と ignore source が変わっていなければ known file の stat 差分だけで refresh する
+- 実行後はcompleted `fileChange`の候補ファイルだけをtrusted candidateとしてrefreshできる場合がある
+- `commandExecution` / `mcpToolCall`がある場合も、directory構造とignore sourceが変わっていなければknown fileのstat差分だけでrefreshする
 - directory 構造変化、ignore source 変化、limit 超過または limit hit 状態、不確定な ignore 状態では full rebuild へ戻す
 - snapshot の除外判定は、workspace から親方向へ探索した `.gitignore` を使う
 - `.git` は `.gitignore` に関係なく常に除外する
@@ -264,31 +268,27 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
   - usage
   - stream 中の error
   - 必要なら pending approval request
-- `turn.items` に `agent_message` が複数ある場合、Session UI に表示する assistant text は arrival 順に空行区切りで連結する
-- Raw Items と operations は各 `agent_message` を個別に保持し、監査では元の粒度を失わない
+- Codex native itemsに`agentMessage`が複数ある場合、Session UIに表示するassistant textはarrival順に空行区切りで連結する
+- Codexの一時的なstream errorは同一thread / turnの有効なitem activityで解除する。別scopeや未知itemへのdeltaでは解除せず、terminal後は確定した失敗理由を保持する
+- Raw Itemsとoperationsは各`agentMessage`を個別に保持し、監査では元の粒度を失わない
 - live state は Main Process の memory 上だけに持ち、session DB へは保存しない
 - Session Window を開き直した場合は、Main Process が保持している live state を再購読して復元する
 - Session Window から `Cancel` を押した場合は、Main Process が保持している `AbortController` で provider 実行を中断する
 - Claudeの個別approval / elicitation要求はSDKのrequest signalとturn signalを共通pending serviceまで渡す。要求取消ではresolverとlive表示を解除してから直列待機列の次要求を表示し、取消済みrequestIdへの回答は拒否する。待機列内の取消済み要求は表示せず、turn全体の取消・子プロセス実終了待ちとは区別する
 - Copilot の approval request は Main Process が pending resolver を保持し、Session UI の `今回だけ許可 / 拒否` を受けて permission handler を再開する
 - turn 完了時だけ session 本体と audit log を確定値で更新する
-- canceled / failed でも、途中まで取得できた `agent_message` と `turn.items` は partial result として回収し、Audit Log と `Details` に残す
+- canceled / failedでも、取得済みassistant textとnative itemsはpartial resultとして回収し、Audit Logと`Details`に残す
 
 ## Error Handling
 
 - provider 実行失敗時は Main Process が session を `runState=error` へ更新する
 - Renderer に raw stack trace は出さず、UI 向けの失敗メッセージへ整形する
-- 失敗時の `threadId` は既定では保持するが、`stale thread / session` または Codex の `Reading prompt from stdin...` のように「meaningful partial なしで再利用不能」と判定できる失敗では空へ戻す
+- Codexの失敗時は保存済み`threadId`を保持し、resume拒否を新threadの成功へ置き換えない。他providerのstale session回復は各adapterの契約に従う
 - ユーザーキャンセル時は監査ログに `phase=canceled` を記録する
 - setup 中の cancel intent も保持し、setup dependency または provider が abort 後に settle しない場合は cancel grace 後に呼び出しを収束させる。元処理が実際に終了するまでは同一 session の再送を拒否する
 - Main は取消受付を live run の `cancellationState = requested`、cancel grace 後も未終了の処理を `terminating` として投影する。terminal Session の保存が `idle` を返しても取消待ちを解除せず、元処理と終端保存が終了して admission guard が解放された時に live 取消状態を解除・通知する。重複取消は同一 turn の要求として扱う
 - 失敗時は監査ログにも `phase=failed` を記録し、`system / input / composed prompt` と error を残す
 - canceled / failed のどちらでも、取得済みの `assistant text` / operations / raw items / artifact があれば捨てずに残す
-- stale thread / session 起因エラー、または Codex の thread bootstrap 直後に `Reading prompt from stdin...` で落ちる再利用不能エラーに限り、`SessionRuntimeService` は同一 user turn 内で 1 回だけ internal retry できる
-  - 対象は `NotFound / expired / invalid-thread / model-incompatible` に加え、meaningful partial を持たない Codex startup failure の narrow classifier に限る
-  - retry 前には `threadId` を空へ戻し、provider cache invalidate を必ず同時に行う
-  - `assistantText` / operations / artifact.changedFiles などの meaningful partial が既に出ている場合は retry しない
-  - public API / renderer からの再送には広げない
 - `CopilotAdapter` は cached session 再利用中の `SessionNotFound` / stale connection も同一 turn 内で 1 回だけ internal retry できる
   - retry 前には cached `CopilotSession` と client cache を破棄する
   - retry 後は既存の `resumeSession(threadId)` を再試行し、missing session なら `createSession()` fallback へ落とす
@@ -301,14 +301,14 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 - prompt composer が作った `system / input / composed prompt` を監査ログへ保存する
 - 画像添付がある場合の `composed prompt` は text 部分のみで、画像 payload は別送される
  - Copilot の file / folder attachment も text prompt とは別送される
-- `turn.items` は読みやすい `operations` と raw の `raw_items_json` の両方で残す
+- provider itemsは読みやすい`operations`とrawの`raw_items_json`の両方で残す
 - Session Window から監査ログを overlay で閲覧できるようにする
 - stream 中の一時 step は監査ログへ逐次保存せず、turn 完了後の確定値だけを残す
 - Settings の DB reset を実行した場合は audit logs も初期化対象に含める
 
 ## Slash Command Routing
 
-- slash command は provider SDK へそのまま渡さない
+- slash commandはproviderへそのまま渡さない
 - Renderer / Main Process が先に app command または session setting command として解釈する
 - adapter は slash command 自体を parse せず、送信時に固定された実行 option を provider-native option へ変換する
 

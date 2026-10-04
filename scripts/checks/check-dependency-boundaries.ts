@@ -21,7 +21,7 @@ const root = process.cwd();
 const violations: string[] = [];
 const dependencies = new Map<string, { node: AstNode; source: AstNode | undefined }[]>();
 const nodeModules = new Set(builtinModules.map((name) => name.replace(/^node:/, "")));
-const providerPackages = ["@github/copilot-sdk", "@openai/codex-sdk"];
+const providerPackages = ["@github/copilot-sdk", "@openai/codex"];
 
 function isPackage(specifier: string, name: string): boolean {
   return specifier === name || specifier.startsWith(`${name}/`);

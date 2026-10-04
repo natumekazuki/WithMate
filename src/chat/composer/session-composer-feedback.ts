@@ -1,5 +1,6 @@
 export type ComposerSendabilityState = {
   isRunning: boolean;
+  canSendInput: boolean;
   isBlankDraft: boolean;
   isBusy: boolean;
   busyReason: string;
@@ -22,12 +23,14 @@ export const COMPOSER_SEND_BLOCKED_FALLBACK = "Message cannot be sent.";
 
 export function buildComposerSendabilityState({
   runState,
+  canSendInput = false,
   busyReason = "",
   blockedReason,
   inputErrors,
   draftText,
 }: {
   runState: string | null | undefined;
+  canSendInput?: boolean;
   busyReason?: string;
   blockedReason: string;
   inputErrors: string[];
@@ -40,9 +43,10 @@ export function buildComposerSendabilityState({
   const isBlankDraft = draftText.trim().length === 0;
   const isBusy = normalizedBusyReason.length > 0;
 
-  if (isRunning) {
+  if (isRunning && !canSendInput) {
     return {
       isRunning,
+      canSendInput: false,
       isBlankDraft,
       isBusy,
       busyReason: normalizedBusyReason,
@@ -69,6 +73,7 @@ export function buildComposerSendabilityState({
 
   return {
     isRunning,
+    canSendInput: isRunning && canSendInput,
     isBlankDraft,
     isBusy,
     busyReason: normalizedBusyReason,
@@ -86,7 +91,7 @@ export function withForcedComposerBlockedFeedback(
   state: ComposerSendabilityState,
   shouldForceBlockedFeedback: boolean,
 ): ComposerSendabilityState {
-  if (!shouldForceBlockedFeedback || state.isRunning || !state.isSendDisabled || state.shouldShowFeedback) {
+  if (!shouldForceBlockedFeedback || (state.isRunning && !state.canSendInput) || !state.isSendDisabled || state.shouldShowFeedback) {
     return state;
   }
 
@@ -105,6 +110,7 @@ export function withForcedComposerBlockedFeedback(
 
 export function resolveComposerSendabilityState({
   runState,
+  canSendInput,
   busyReason,
   blockedReason,
   inputErrors,
@@ -112,6 +118,7 @@ export function resolveComposerSendabilityState({
   forceBlockedFeedback,
 }: {
   runState: string | null | undefined;
+  canSendInput?: boolean;
   busyReason?: string;
   blockedReason: string;
   inputErrors: string[];
@@ -121,6 +128,7 @@ export function resolveComposerSendabilityState({
   return withForcedComposerBlockedFeedback(
     buildComposerSendabilityState({
       runState,
+      canSendInput,
       busyReason,
       blockedReason,
       inputErrors,
@@ -131,12 +139,12 @@ export function resolveComposerSendabilityState({
 }
 
 export function getComposerSendButtonTitle(state: ComposerSendabilityState): string | undefined {
-  if (state.isRunning) {
+  if (state.isRunning && !state.canSendInput) {
     return "Cancel run";
   }
 
   if (!state.isSendDisabled) {
-    return "Send message";
+    return state.canSendInput ? "Send input to the current turn" : "Send message";
   }
 
   if (state.isBusy && !state.primaryFeedback && state.inputErrors.length === 0 && !state.blockedReason) {

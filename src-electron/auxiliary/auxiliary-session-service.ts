@@ -44,9 +44,9 @@ import type { RunProviderRuntimeOperationExclusive } from "../providers/provider
 import type { RunCharacterAffectTurnOwnershipExclusive } from "../character/character-affect-turn-ownership-coordinator.js";
 import type { AuxiliarySessionThreadPatchInput, AuxiliaryThreadPatchResult, AuxiliaryRuntimeMetadataPatchResult } from "./auxiliary-session-storage.js";
 import type { AuxiliarySessionRuntimeMetadataPatchInput } from "./auxiliary-session-storage.js";
+import type { AuxiliaryDraftStorageSaveInput, AuxiliaryDraftStorageConsumeInput } from "./auxiliary-session-storage.js";
 import { assertCharacterDefinitionSnapshotUpdate } from "../session/session-running-turn-start.js";
 import type {
-  AuxiliaryDraftConsumeInput,
   AuxiliaryDraftConsumeResult,
   AuxiliaryDraftRecord,
   AuxiliaryDraftSaveInput,
@@ -68,6 +68,7 @@ type AuxiliarySessionServiceDeps = {
   captureStorageIdentity?(): unknown;
   isStorageIdentityCurrent?(identity: unknown): boolean;
   isAuxiliaryRunInFlight?(auxiliarySessionId: string): boolean;
+  canAcceptAuxiliaryInput?(auxiliarySessionId: string): boolean;
   rememberExecutionOptions?(session: AuxiliarySessionSummary, options: SessionExecutionOptions): void;
   overlayCurrentExecutionOptions?<T extends AuxiliarySessionSummary>(session: T): T;
 };
@@ -176,7 +177,7 @@ export class AuxiliarySessionService {
   private readonly creationRecords = new Map<string, AuxiliaryCreationRecord>();
   private readonly creationOwnerGenerations = new Map<string, string>();
   private readonly pendingDraftSends = new Set<Promise<void>>();
-  private readonly failedDraftRestores = new Set<AuxiliaryDraftSaveInput>();
+  private readonly failedDraftRestores = new Set<AuxiliaryDraftStorageSaveInput>();
   private creationStorage: AuxiliarySessionStorageAccess | null = null;
   private creationGenerationId = randomUUID();
   private readonly selectionCheckpoints = new Map<string, Promise<void>>();
@@ -980,7 +981,6 @@ export class AuxiliarySessionService {
     if (!status || status.parentSessionId !== input.parentSessionId || status.incarnation !== input.incarnation) {
       return { outcome: "not-found" };
     }
-    if (status.runState === "running") return { outcome: "rejected" };
     return await storage.saveAuxiliaryDraft(input);
   }
 
@@ -994,6 +994,17 @@ export class AuxiliarySessionService {
     run: () => Promise<void>;
   }): Promise<void> {
     return this.trackPendingDraftSend(() => this.runAuxiliaryTurnWithDraftInternal(input));
+  }
+
+  runAuxiliaryInputWithDraft(input: {
+    auxiliarySessionId: string;
+    parentSessionId: string;
+    incarnation: string;
+    expectedDurableRevision: number;
+    userMessage: string;
+    run: () => Promise<void>;
+  }): Promise<void> {
+    return this.trackPendingDraftSend(() => this.runAuxiliaryTurnWithDraftInternal(input, true));
   }
 
   async waitForPendingDraftSends(): Promise<boolean> {
@@ -1043,13 +1054,15 @@ export class AuxiliarySessionService {
       displayAnchorParentMessageCount?: number;
       run: () => Promise<void>;
     },
+    allowRunningInput = false,
   ): Promise<void> {
     const storage = this.deps.getStorage();
     const captured = await storage.getAuxiliaryDraft(input.auxiliarySessionId);
     if (!captured
       || captured.parentSessionId !== input.parentSessionId
       || captured.incarnation !== input.incarnation
-      || captured.durableRevision !== input.expectedDurableRevision) {
+      || captured.durableRevision !== input.expectedDurableRevision
+      || (allowRunningInput && captured.text !== input.userMessage)) {
       throw new Error("Sending was canceled because the Auxiliary draft changed.");
     }
     const consumed = await this.consumeAuxiliaryDraftWithStorage(storage, {
@@ -1057,6 +1070,7 @@ export class AuxiliarySessionService {
       parentSessionId: input.parentSessionId,
       incarnation: input.incarnation,
       expectedDurableRevision: input.expectedDurableRevision,
+      allowRunningInput,
     });
     if (consumed.outcome !== "consumed" || !consumed.ack) {
       throw new Error("Sending was canceled because the Auxiliary draft changed.");
@@ -1083,7 +1097,7 @@ export class AuxiliarySessionService {
       }
       await input.run();
     } catch (error) {
-      const restore: AuxiliaryDraftSaveInput = {
+      const restore: AuxiliaryDraftStorageSaveInput = {
         auxiliarySessionId: input.auxiliarySessionId,
         parentSessionId: input.parentSessionId,
         incarnation: consumed.ack.incarnation,
@@ -1104,13 +1118,13 @@ export class AuxiliarySessionService {
 
   private async consumeAuxiliaryDraftWithStorage(
     storage: AuxiliarySessionStorageAccess,
-    input: AuxiliaryDraftConsumeInput,
+    input: AuxiliaryDraftStorageConsumeInput,
   ): Promise<AuxiliaryDraftConsumeResult> {
     const status = await storage.getAuxiliarySessionStatus(input.auxiliarySessionId);
     if (!status || status.parentSessionId !== input.parentSessionId || status.incarnation !== input.incarnation) {
       return { outcome: "not-found" };
     }
-    if (status.runState === "running") return { outcome: "rejected" };
+    if (status.runState === "running" && (!input.allowRunningInput || this.deps.canAcceptAuxiliaryInput?.(input.auxiliarySessionId) !== true)) return { outcome: "rejected" };
     return await storage.consumeAuxiliaryDraft(input);
   }
 

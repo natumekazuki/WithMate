@@ -264,6 +264,50 @@ describe("ComposerControllerRegistry", () => {
 
   // @test-value v2
   // kind = "contract"
+  // claim = "consume後のdurable再取得に失敗しても後続draft保存は失敗を報告し、pendingを保持して明示flushで同じincarnationの現在revisionへ保存できる"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+  // fault = "consume後の再取得障害を保存成功扱いする、queued draftを捨てる、または再試行を古いdurable revisionへ送る"
+  // observable = "後続enqueueのreject、障害解除後の明示flush成功、hasPending、CAS保存先record"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-draft-consumption-persistence-error"
+  // lifecycle = "permanent"
+  // impact = "ACK待ち中に編集した未保存本文を保存障害で失ったり保存済みと誤認したりせず、利用者が明示再試行できる"
+  // distinction = "SessionWindowの正常ACK/拒否testではconsume後の再取得障害とpending保存失敗後のflush再試行を検証しない"
+  // @end-test-value
+  it("retains queued edits when consumption revision reload fails", async () => {
+    let durable = { auxiliarySessionId: "a", parentSessionId: "p", incarnation: "i", durableRevision: 7, text: "sent draft", updatedAt: "" };
+    let loadFailed = false;
+    let finish!: () => void;
+    const owner = new AuxiliaryDraftPersistenceOwner({
+      load: async () => { if (loadFailed) throw new Error("draft load failed"); return { ...durable }; },
+      now: () => "now", debounceMs: 0,
+      save: async (record) => {
+        if (record.incarnation !== durable.incarnation || record.durableRevision !== durable.durableRevision) return { outcome: "stale" };
+        durable = { ...record, durableRevision: record.durableRevision + 1 };
+        return { outcome: "saved", record: { ...durable } };
+      },
+    });
+    await owner.ensureLoaded();
+    const consuming = owner.withDraftConsumption(async () => {
+      durable = { ...durable, text: "", durableRevision: durable.durableRevision + 1 };
+      await new Promise<void>((resolve) => { finish = resolve; });
+    });
+    const queued = owner.enqueue("newer local draft");
+    const queuedFailure = assert.rejects(queued, /draft load failed/);
+    loadFailed = true;
+    finish();
+    await consuming;
+    await queuedFailure;
+    assert.equal(owner.hasPending, true);
+    assert.equal(durable.text, "");
+    loadFailed = false;
+    await owner.flush();
+    assert.equal(owner.hasPending, false);
+    assert.deepEqual(durable, { auxiliarySessionId: "a", parentSessionId: "p", incarnation: "i", durableRevision: 9, text: "newer local draft", updatedAt: "now" });
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "失敗送信の復元はconsumeした版だけへ保存し、復元済値を受理しつつ後続の永続編集と別incarnationを保護する"
   // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
   // fault = "復元をflushから漏らす、保存障害でpendingを捨てる、または再取得した新しいdraftを古い送信値で上書きする"
