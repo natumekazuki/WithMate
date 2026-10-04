@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { spawn } from "node:child_process";
+import { ChildProcess, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { PassThrough, Writable } from "node:stream";
 import { CodexAppServerTransport, CodexAppServerRpcError } from "../../src-electron/providers/codex/app-server-transport.js";
 import { spawnOwnedCodexProcess } from "../../src-electron/providers/codex/owned-process.js";
 
@@ -211,4 +212,102 @@ test("Windows ownership acquisition failure does not launch an unowned process",
     createJobObject: () => { throw new Error("Job unavailable"); },
   }), /Job unavailable/);
   assert.equal(launched, false);
+});
+
+function cleanupFaultTransport(fault: "terminate" | "exit" | "release") {
+  const child = new ChildProcess();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const stdin = new Writable({ write(chunk, _encoding, callback) {
+    const request = JSON.parse(String(chunk)) as { id?: number; method: string };
+    if (request.method === "initialize") stdout.write(`${JSON.stringify({ id: request.id,
+      result: { userAgent: "fixture", codexHome: process.cwd(), platformFamily: "fixture", platformOs: "fixture" } })}\n`);
+    callback();
+  } });
+  child.stdin = stdin;
+  child.stdout = stdout;
+  child.stderr = stderr;
+  const calls = { terminate: 0, release: 0 };
+  const sut = new CodexAppServerTransport({ executable: "owned-fixture", clientInfo: { name: "test", version: "1" }, closeTimeoutMs: 10 }, {
+    spawnOwnedProcess: () => ({ child: child as ChildProcessWithoutNullStreams, ready: Promise.resolve(),
+      terminate() {
+        calls.terminate++;
+        if (fault === "terminate") throw new Error("Injected terminate failure");
+        if (fault === "release") setImmediate(() => child.emit("close", 0, null));
+      },
+      release() {
+        calls.release++;
+        if (fault === "release" && calls.release === 1) throw new Error("Injected release failure");
+        if (fault !== "exit") setImmediate(() => child.emit("close", 0, null));
+      },
+    }),
+  });
+  return { sut, calls, streams: [stdin, stdout, stderr] };
+}
+
+// @test-value v2
+// kind = "invariant"
+// claim = "terminate失敗後も所有resourceのreleaseと全stream解放を試し失敗を呼出元へ返す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
+// fault = "terminate例外でcleanupを中断してJob handleまたはstdio streamを残す"
+// observable = "closeのAggregateError、release呼出回数、各streamのdestroyedとfailed状態"
+// observation_boundary = "public-boundary"
+// scope = "Codex transport OS cleanup failure"
+// lifecycle = "permanent"
+// impact = "OS終了API失敗時に子孫とJob handleがapp終了まで残り得る"
+// distinction = "成功系の実OS testでは終了API例外後のresource解放を確認できない;小さい所有境界fixtureで検出"
+// @end-test-value
+test("terminate failure still releases ownership and streams while reporting failure", async () => {
+  const { sut, calls, streams } = cleanupFaultTransport("terminate");
+  await sut.start();
+  await assert.rejects(sut.close(), error => error instanceof AggregateError && error.errors.some((cause: Error) => cause.message === "Injected terminate failure"));
+  assert.deepEqual(calls, { terminate: 1, release: 1 });
+  assert.ok(streams.every(stream => stream.destroyed));
+  assert.equal(sut.state, "failed");
+  await assert.rejects(sut.close(), /cleanup failed/);
+  assert.deepEqual(calls, { terminate: 1, release: 1 });
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "exit待ちtimeoutでもreleaseと全stream解放を済ませ有界に失敗を返す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
+// fault = "child closeが来ない場合にJob handleまたはstdio streamを残す"
+// observable = "closeのtimeoutを含むAggregateError、release回数、stream destroyedとfailed状態"
+// observation_boundary = "public-boundary"
+// scope = "Codex transport missing process-close notification"
+// lifecycle = "permanent"
+// impact = "終了待ち失敗で所有resourceが残りcleanupが収束しない"
+// distinction = "実OS成功系はprocess-close通知欠落を発生させない;10ms deadlineの小さいfixtureを使用"
+// @end-test-value
+test("exit timeout releases ownership and streams and remains a cleanup failure", async () => {
+  const { sut, calls, streams } = cleanupFaultTransport("exit");
+  await sut.start();
+  await assert.rejects(sut.close(), error => error instanceof AggregateError && error.errors.some((cause: Error) => /timed out/.test(cause.message)));
+  assert.deepEqual(calls, { terminate: 1, release: 1 });
+  assert.ok(streams.every(stream => stream.destroyed));
+  assert.equal(sut.state, "failed");
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "release失敗は初回closeへ通知し保持した所有handleを明示再closeで解放できる"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
+// fault = "reject済みclosePromiseを固定して未解放のJob handleを再試行できない"
+// observable = "初回closeのrelease failure、全stream destroyed、再closeのrelease回数とclosed状態"
+// observation_boundary = "public-boundary"
+// scope = "Codex transport retained ownership release"
+// lifecycle = "permanent"
+// impact = "一時的なCloseHandle失敗後に所有resourceが永久に残る"
+// distinction = "terminate/timeout fixtureとは異なるnative handleの保持・明示再解放を確認する"
+// @end-test-value
+test("release failure is reported and an explicitly repeated close releases the retained owner", async () => {
+  const { sut, calls, streams } = cleanupFaultTransport("release");
+  await sut.start();
+  await assert.rejects(sut.close(), error => error instanceof AggregateError && error.errors.length === 1 && error.errors[0].message === "Injected release failure");
+  assert.ok(streams.every(stream => stream.destroyed));
+  assert.equal(sut.state, "failed");
+  await sut.close();
+  assert.deepEqual(calls, { terminate: 2, release: 2 });
+  assert.equal(sut.state, "closed");
 });

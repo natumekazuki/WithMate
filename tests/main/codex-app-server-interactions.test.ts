@@ -159,18 +159,18 @@ test("projects nullable questions, secret input and one-option choices without a
 
 // @test-value v2
 // kind = "invariant"
-// claim = "承認は単回acceptかrequested permission subsetだけを与えbackgroundは拒否する"
+// claim = "helperは単回acceptかrequested permission subsetだけを与えcallback未設定のrequestを拒否する"
 // oracle = { type = "contract", ref = "Codex 0.159.0 approval response schemas and Issue #780 permission preservation" }
 // fault = "sessionへ権限を拡大またはcallbackなしでgrantする"
 // observable = "decision・permissions・scopeとcallback件数"
 // observation_boundary = "consumer"
-// scope = "Codex approval safety"
+// scope = "CodexTurnInteractions approval callbacks"
 // lifecycle = "permanent"
 // risk_tags = ["authorization"]
 // impact = "要求外のコマンド実行やfilesystem権限が許可される"
 // distinction = "response schemaではrequested subsetと利用者承認を保証できない"
 // @end-test-value
-test("honors available decisions, grants only requested turn permissions and denies unattended", async () => {
+test("helper honors available decisions, grants requested turn permissions and rejects requests without callbacks", async () => {
   let calls = 0;
   const helper = new CodexTurnInteractions({ onApprovalRequest: () => { calls++; return "approve"; } });
   const restricted = request(1, command, { availableDecisions: ["acceptForSession", "cancel"] });
@@ -192,7 +192,7 @@ test("honors available decisions, grants only requested turn permissions and den
 
 // @test-value v2
 // kind = "invariant"
-// claim = "MCP formは対応制約を検査し未対応schemaを成功にしない、URLは別modeで表示する"
+// claim = "MCP formはinteger・minimum・maximumの単独違反と未対応schemaを拒否し有効数値・URLを受け付ける"
 // oracle = { type = "contract", ref = "Codex 0.159.0 McpServerElicitationRequestParams and McpElicitationSchema" }
 // fault = "数値制約や未知schemaを無視してacceptを送信する"
 // observable = "MCP RPC action/content、rejectとUI mode"
@@ -204,14 +204,77 @@ test("honors available decisions, grants only requested turn permissions and den
 // @end-test-value
 test("validates MCP form constraints, unsupported shapes and URL mode", async () => {
   const modes: string[] = [];
-  const helper = new CodexTurnInteractions({ onElicitationRequest: (ui) => { modes.push(ui.mode); return { action: "accept", content: ui.mode === "url" ? undefined : { value: 1.5 } }; } });
-  const numeric = request(1, mcpMethod, { mode: "form", serverName: "s", message: "m", requestedSchema: { type: "object", properties: { value: { type: "integer", minimum: 2 } }, required: ["value"] } });
-  const unsupported = request(2, mcpMethod, { mode: "form", serverName: "s", message: "m", requestedSchema: { type: "object", properties: { value: { type: "string", pattern: "x" } } } });
-  const url = request(3, mcpMethod, { mode: "url", serverName: "s", message: "login", url: "https://example.test/verify" });
-  helper.accept(numeric.wire); helper.accept(unsupported.wire); helper.accept(url.wire); await setImmediate();
-  assert.equal(numeric.errors.length, 1); assert.deepEqual(numeric.results, []);
+  let value = 0;
+  const helper = new CodexTurnInteractions({ onElicitationRequest: (ui) => { modes.push(ui.mode); return { action: "accept", content: ui.mode === "url" ? undefined : { value } }; } });
+  for (const [index, candidate] of [2.5, 1, 5, 2].entries()) {
+    value = candidate;
+    const numeric = request(index, mcpMethod, { mode: "form", serverName: "s", message: "m", requestedSchema: { type: "object", properties: { value: { type: "integer", minimum: 2, maximum: 4 } }, required: ["value"] } });
+    helper.accept(numeric.wire); await setImmediate();
+    if (candidate === 2) {
+      assert.deepEqual(numeric.results, [{ action: "accept", content: { value: 2 } }]);
+      assert.deepEqual(numeric.errors, []);
+    } else {
+      assert.equal(numeric.errors.length, 1, `reject ${candidate}`); assert.deepEqual(numeric.results, []);
+    }
+  }
+  const unsupported = request(4, mcpMethod, { mode: "form", serverName: "s", message: "m", requestedSchema: { type: "object", properties: { value: { type: "string", pattern: "x" } } } });
+  const url = request(5, mcpMethod, { mode: "url", serverName: "s", message: "login", url: "https://example.test/verify" });
+  helper.accept(unsupported.wire); helper.accept(url.wire); await setImmediate();
   assert.equal(unsupported.errors.length, 1); assert.deepEqual(unsupported.results, []);
-  assert.deepEqual(modes, ["form", "url"]); assert.deepEqual(url.results, [{ action: "accept", content: null }]); helper.close();
+  assert.deepEqual(modes, ["form", "form", "form", "form", "url"]); assert.deepEqual(url.results, [{ action: "accept", content: null }]); helper.close();
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "MCP date/date-timeは実在する暦日とtimezone付き時刻を検査し有効値を変更せず返信する"
+// oracle = { type = "contract", ref = "Codex 0.159.0 McpElicitationStringFormat; RFC 3339 sections 5.6/5.7; Zod 4.5.4 ISO date/datetime validation" }
+// fault = "Date.parseの暦日補正やtimezone省略によって不正値をacceptする"
+// observable = "元RPCのaccept contentとreject件数"
+// observation_boundary = "consumer"
+// scope = "CodexTurnInteractions MCP date formats"
+// lifecycle = "permanent"
+// impact = "MCP serverへ存在しない日付や曖昧な時刻が送信される"
+// distinction = "callbackはbrowser inputを迂回できるためwire境界の暦日検査が必要"
+// @end-test-value
+test("validates MCP calendar dates and timezone-qualified datetimes at the reply boundary", async () => {
+  const cases: { format: "date" | "date-time"; value: string; valid: boolean }[] = [
+    { format: "date", value: "2025-02-31", valid: false },
+    { format: "date", value: "2025-02-29", valid: false },
+    { format: "date", value: "1900-02-29", valid: false },
+    { format: "date", value: "2024-04-31", valid: false },
+    { format: "date", value: "2024-13-01", valid: false },
+    { format: "date", value: "2024-01-00", valid: false },
+    { format: "date", value: "2024-02-29", valid: true },
+    { format: "date", value: "2000-02-29", valid: true },
+    { format: "date", value: "2025-04-30", valid: true },
+    { format: "date-time", value: "2025-02-31T12:30:00Z", valid: false },
+    { format: "date-time", value: "1900-02-29T12:30:00+09:00", valid: false },
+    { format: "date-time", value: "2024-04-31T12:30:00Z", valid: false },
+    { format: "date-time", value: "2024-02-29T24:00:00Z", valid: false },
+    { format: "date-time", value: "2024-02-29T12:60:00Z", valid: false },
+    { format: "date-time", value: "2024-02-29T12:30:00", valid: false },
+    { format: "date-time", value: "2024-02-29T12:30Z", valid: false },
+    { format: "date-time", value: "2024-02-29T12:30:00+0900", valid: false },
+    { format: "date-time", value: "2024-02-29T12:30:00+24:00", valid: false },
+    { format: "date-time", value: "2024-02-29T12:30:00+09:60", valid: false },
+    { format: "date-time", value: "2024-02-29T12:30:00Z", valid: true },
+    { format: "date-time", value: "2000-02-29T12:30:00.123456+09:00", valid: true },
+    { format: "date-time", value: "2025-04-30T12:30:00-05:30", valid: true },
+    { format: "date-time", value: "2024-02-29t12:30:00z", valid: true },
+  ];
+  for (const [id, candidate] of cases.entries()) {
+    const helper = new CodexTurnInteractions({ onElicitationRequest: () => ({ action: "accept", content: { value: candidate.value } }) });
+    const pending = request(id, mcpMethod, { mode: "form", serverName: "s", message: "Date", requestedSchema: { type: "object", properties: { value: { type: "string", format: candidate.format } }, required: ["value"] } });
+    helper.accept(pending.wire); await setImmediate();
+    if (candidate.valid) {
+      assert.deepEqual(pending.results, [{ action: "accept", content: { value: candidate.value } }], candidate.value);
+      assert.deepEqual(pending.errors, [], candidate.value);
+    } else {
+      assert.deepEqual(pending.results, [], candidate.value);
+      assert.equal(pending.errors.length, 1, candidate.value);
+    }
+    helper.close();
+  }
 });
 
 // @test-value v2

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { regexes } from "zod";
 import type { LiveElicitationField, LiveElicitationRequest, LiveElicitationResponse } from "../../../src-shared/session/runtime-state.js";
 import type { RunSessionTurnInput } from "../provider-runtime.js";
 import { buildLiveElicitationFieldFromMcpSchema } from "../mcp-elicitation.js";
@@ -13,6 +14,7 @@ export type CodexInteractionRequest = {
 
 type InteractionInput = Pick<RunSessionTurnInput, "onApprovalRequest" | "onElicitationRequest" | "signal">;
 type PendingRequest = { request: CodexInteractionRequest; controller: AbortController; responded: boolean };
+const mcpDateTimePattern = regexes.datetime({ offset: true });
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -48,8 +50,8 @@ function validField(field: LiveElicitationField, value: unknown): boolean {
       if ((field.minLength !== undefined && length < field.minLength) || (field.maxLength !== undefined && length > field.maxLength)) return false;
       if (field.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return false;
       if (field.format === "uri") { try { new URL(value); } catch { return false; } }
-      if (field.format === "date" && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value)))) return false;
-      if (field.format === "date-time" && (!/^\d{4}-\d{2}-\d{2}T/.test(value) || Number.isNaN(Date.parse(value)))) return false;
+      if (field.format === "date" && !regexes.date.test(value)) return false;
+      if (field.format === "date-time" && !mcpDateTimePattern.test(value.toUpperCase())) return false;
       return true;
     }
     case "select": return typeof value === "string" && Boolean(value.trim()) && (field.allowFreeText === true || field.options.some((option) => option.value === value));

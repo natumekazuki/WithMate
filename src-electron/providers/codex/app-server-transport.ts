@@ -48,8 +48,9 @@ export class CodexAppServerTransport {
   #serverRequests = new Set<string>();
   #queuedWriteBytes = 0;
   #options: CodexAppServerTransportOptions;
+  #spawnOwnedProcess: typeof spawnOwnedCodexProcess;
 
-  constructor(options: CodexAppServerTransportOptions) {
+  constructor(options: CodexAppServerTransportOptions, dependencies: { spawnOwnedProcess?: typeof spawnOwnedCodexProcess } = {}) {
     if (!options.executable || !options.clientInfo.name || !options.clientInfo.version) {
       throw new TypeError("Codex executable and clientInfo are required.");
     }
@@ -61,6 +62,7 @@ export class CodexAppServerTransport {
     this.#options = { ...options, clientInfo: { ...options.clientInfo },
       arguments: [...(options.arguments ?? CODEX_APP_SERVER_ARGUMENTS)],
       ...(options.env === undefined ? {} : { env: { ...options.env } }) };
+    this.#spawnOwnedProcess = dependencies.spawnOwnedProcess ?? spawnOwnedCodexProcess;
   }
 
   get state() { return this.#state; }
@@ -76,7 +78,7 @@ export class CodexAppServerTransport {
 
   async #start(signal?: AbortSignal): Promise<unknown> {
     try {
-      const owner = spawnOwnedCodexProcess({
+      const owner = this.#spawnOwnedProcess({
         executable: this.#options.executable, arguments: this.#options.arguments!,
         cwd: this.#options.cwd, env: this.#options.env,
       });
@@ -270,19 +272,36 @@ export class CodexAppServerTransport {
     if (this.#state === "closed") return Promise.resolve();
     this.#state = "closing";
     this.#settlePending(this.#terminalError ?? new Error("Codex transport closed."));
-    this.#closePromise = this.#close();
+    const attempt = this.#close();
+    this.#closePromise = attempt;
+    void attempt.catch(() => {
+      // Only a retained ownership handle can be safely retried; never kill by a retired PID.
+      if (this.#owner && this.#closePromise === attempt) this.#closePromise = undefined;
+    });
     return this.#closePromise;
   }
 
   async #close(): Promise<void> {
     const child = this.#child;
+    const failures: Error[] = [];
+    try { this.#owner?.terminate(); } catch (error) { failures.push(asError(error)); }
     try {
-      this.#owner?.terminate();
-      if (this.#exitPromise) await withTimeout(this.#exitPromise, this.#options.closeTimeoutMs ?? 5_000);
       this.#owner?.release();
-      child?.stdin.destroy(); child?.stdout.destroy(); child?.stderr.destroy();
-      this.#state = "closed";
-    } catch (error) { this.#state = "failed"; throw asError(error); }
+      this.#owner = undefined;
+    } catch (error) { failures.push(asError(error)); }
+    for (const stream of [child?.stdin, child?.stdout, child?.stderr]) {
+      try { stream?.destroy(); } catch (error) { failures.push(asError(error)); }
+    }
+    try {
+      if (this.#exitPromise) await withTimeout(this.#exitPromise, this.#options.closeTimeoutMs ?? 5_000);
+    } catch (error) { failures.push(asError(error)); }
+    if (failures.length) {
+      this.#state = "failed";
+      const failure = new AggregateError(failures, "Codex process cleanup failed.");
+      this.#terminalError ??= failure;
+      throw failure;
+    }
+    this.#state = "closed";
   }
 }
 

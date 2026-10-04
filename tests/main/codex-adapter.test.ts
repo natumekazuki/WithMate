@@ -16,6 +16,7 @@ import { ProviderTurnError, type RunBackgroundStructuredPromptInput, type RunSes
 import { applyCodexTurnEvent, createCodexTurnStreamState, getLiveCodexAssistantText } from "../../src-electron/providers/codex/codex-turn-events.js";
 import { CodexAppServerTransport, CodexAppServerRpcError, type CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
 import { SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA } from "../../src-electron/session/session-memory-extraction.js";
+import { AUDIT_RAW_ITEMS_JSON_LIMIT, AUDIT_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/audit-payload-limits.js";
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
   label: "OpenAI Codex",
@@ -222,15 +223,18 @@ it("native通知のthreadとturn scopeを保持する", () => {
   applyCodexTurnEvent(state, notification("item/completed", { threadId: "other", item: message("bad", "wrong") }));
   applyCodexTurnEvent(state, notification("item/completed", { turnId: "other", item: message("bad", "wrong") }));
   applyCodexTurnEvent(state, notification("thread/tokenUsage/updated", { tokenUsage: { last: { inputTokens: 10, outputTokens: 3, cachedInputTokens: 2, totalTokens: 13, reasoningOutputTokens: 1 } } }));
+  const foreignUsage = { inputTokens: 900, outputTokens: 800, cachedInputTokens: 700, totalTokens: 1700, reasoningOutputTokens: 600 };
+  applyCodexTurnEvent(state, notification("thread/tokenUsage/updated", { threadId: "other", tokenUsage: { total: foreignUsage, last: foreignUsage } }));
+  applyCodexTurnEvent(state, notification("thread/tokenUsage/updated", { turnId: "other", tokenUsage: { total: foreignUsage, last: foreignUsage } }));
   assert.equal(getLiveCodexAssistantText(state), "");
   assert.deepEqual(state.usage, { inputTokens: 10, outputTokens: 3, cachedInputTokens: 2, totalTokens: 13, reasoningOutputTokens: 1 });
 });
 // @test-value v2
 // kind = "invariant"
-// claim = "保存threadIdを明示resumeし固定実行設定をnative requestへ送る"
+// claim = "保存threadIdを明示resumeし失敗時も新規threadへ切替せず固定実行設定をnative requestへ送る"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "保存sessionを新規threadへ置換しsandbox rootsを落とす"
-// observable = "thread/resumeとturn/startの送信params"
+// observable = "thread/resumeとturn/startの送信params、resume失敗後のrequestとpartial threadId"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
@@ -257,6 +261,23 @@ it("foregroundは保存thread resumeとnative設定、監査結果を維持す�
   assert.equal(result.threadId, "thread-1");
   assert.match(result.rawItemsJson, /agentMessage/);
   assert.equal(transport.closed, true);
+  class ResumeFailureTransport extends FakeTransport {
+    override async request<T>(method: string, params?: unknown): Promise<T> {
+      if (method === "thread/resume") {
+        this.calls.push({ method, params });
+        throw new CodexAppServerRpcError(-32001, "saved thread unavailable");
+      }
+      return super.request<T>(method, params);
+    }
+  }
+  const failed = new ResumeFailureTransport();
+  await assert.rejects(new CodexAdapter(undefined, { createTransport: () => failed }).runSessionTurn(input), (error: unknown) => {
+    assert.ok(error instanceof ProviderTurnError);
+    assert.equal(error.partialResult.threadId, "thread-1");
+    return true;
+  });
+  assert.deepEqual(failed.calls.map((call) => call.method), ["thread/resume"]);
+  assert.equal(failed.closed, true);
 }));
 
 describe("workspace snapshot targeted capture", () => {
@@ -378,35 +399,45 @@ describe("workspace snapshot targeted capture", () => {
 });
 // @test-value v2
 // kind = "invariant"
-// claim = "provider切断時も取得済みassistantとoperationsをpartial resultへ残す"
+// claim = "retry通知後もterminal statusで成否を決め切断と失敗時は取得済み本文とoperationsをpartial resultへ残す"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "切断例外で収集済みnative itemを捨てる"
-// observable = "ProviderTurnError.partialResult"
+// fault = "retry中のerrorで成功terminalを失敗にするか終端時にpartialを捨て取消を誤分類する"
+// observable = "completed結果とProviderTurnErrorのpartialResult canceled message"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
 // impact = "Codex実行の会話継続、監査または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
-it("切断時のnative partial resultを監査へ回収する", async () => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  transport.events = [notification("item/completed", { item: message("answer", "partial") }), notification("item/completed", { item: { type: "commandExecution", id: "command", command: "echo done", aggregatedOutput: "done", exitCode: 0, status: "completed" } })];
-  transport.failure = new Error("disconnected");
-  const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-  await assert.rejects(adapter.runSessionTurn(createCodexRunSessionTurnInput(directory)), (error: unknown) => {
-    assert.ok(error instanceof ProviderTurnError);
-    assert.equal(error.partialResult.assistantText, "partial");
-    assert.ok(error.partialResult.operations.some((operation) => operation.type === "command_execution"));
-    assert.equal(error.canceled, false);
-    return true;
-  });
-  assert.equal(transport.closed, true);
+it("retry通知後はterminalで成否を決め切断と失敗時のpartialを回収する", async () => workspace(async (directory) => {
+  for (const status of ["completed", "disconnected", "failed", "interrupted"]) {
+    const transport = new FakeTransport();
+    transport.events = [notification("error", { error: { message: "Reconnecting transient failure" }, willRetry: true }), notification("item/completed", { item: message("answer", "partial") }), notification("item/completed", { item: { type: "commandExecution", id: "command", command: "echo done", aggregatedOutput: "done", exitCode: 0, status: "completed" } })];
+    if (status === "disconnected") transport.failure = new Error("disconnected");
+    else transport.events.push(completed([], status));
+    const run = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory));
+    if (status === "completed") {
+      const result = await run;
+      assert.equal(result.assistantText, "partial");
+      assert.ok(result.operations.some((operation) => operation.type === "command_execution"));
+    } else {
+      await assert.rejects(run, (error: unknown) => {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.partialResult.assistantText, "partial");
+        assert.ok(error.partialResult.operations.some((operation) => operation.type === "command_execution"));
+        assert.equal(error.canceled, status === "interrupted");
+        if (status === "failed") assert.equal(error.message, "provider failed");
+        return true;
+      });
+    }
+    assert.equal(transport.closed, true);
+  }
 }));
 // @test-value v2
 // kind = "invariant"
 // claim = "背景評価はcoding権限設定に関係なくread-only neverとschemaを使う"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "Sessionの書込権限とFast設定がbackgroundへ漏れる"
+// fault = "Sessionの書込権限がbackgroundへ漏れるか既定tierを変更する"
 // observable = "背景thread/startとturn/startの権限、schema、result"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
@@ -422,6 +453,9 @@ it("background structured promptはread-only never Standardを固定する", asy
   const result = await adapter.runBackgroundStructuredPrompt<{ answer: string }>(input);
   const start = transport.calls.find((call) => call.method === "turn/start")!.params as Record<string, any>;
   assert.equal(transport.calls[0].method, "thread/start");
+  const thread = transport.calls[0].params as Record<string, unknown>;
+  assert.equal(thread.sandbox, "read-only");
+  assert.equal(thread.approvalPolicy, "never");
   assert.deepEqual(start.sandboxPolicy, { type: "readOnly", networkAccess: false });
   assert.equal(start.approvalPolicy, "never");
   assert.equal(start.serviceTier, "default");
@@ -481,43 +515,73 @@ it("steerはexpectedTurnIdを送信しterminalで入口を閉じる", async () =
 
 // @test-value v2
 // kind = "invariant"
-// claim = "各turnのbinding envを分離しprovider由来のsecretはliveとauditから除去する"
+// claim = "異なるforeground ownerとbackgroundのbinding envを分離し親env不変でlive audit error logからsecretを除去する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "前turnのbindingを再利用し出力secretをUIへ公開する"
-// observable = "transport envとliveおよびaudit結果"
+// observable = "2 ownerのtransport env、process.env、live state、operations、raw、返却error、logger"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
 // impact = "会話監査とMCPのsession権限が誤ったSessionへ流れる"
 // distinction = "native通知と環境設定の実行時投影を確認し型検査では代替できない"
 // @end-test-value
-it("fresh process binding envとredactionをforeground backgroundで分離する", async () => workspace(async (directory) => {
+it("fresh process bindingを2 foreground ownerとbackgroundで分離し全出力境界をredactする", async () => workspace(async (directory) => {
+  const parentEnvironment = { ...process.env };
   const transports: FakeTransport[] = [];
   const environments: NodeJS.ProcessEnv[] = [];
-  const adapter = new CodexAdapter(undefined, { createTransport: (options) => {
+  const logs: unknown[] = [];
+  const secrets = ["owner-a-binding", "owner-a-capability", "owner-b-binding", "owner-b-capability"];
+  const adapter = new CodexAdapter((entry) => { logs.push(entry); }, { createTransport: (options) => {
     environments.push(options.env ?? {});
     const transport = new FakeTransport();
-    transport.events = [completed([message("answer", transports.length ? "{}" : "binding-secret capability-secret")])];
+    if (transports.length < 2) {
+      const echo = secrets.slice(transports.length * 2, transports.length * 2 + 2).join(" ");
+      transport.events = [
+        notification("item/completed", { item: message("answer", echo) }),
+        notification("item/completed", { item: { type: "commandExecution", id: "command", command: echo, aggregatedOutput: echo, exitCode: 0, status: "completed" } }),
+        notification("item/completed", { item: { type: "unsupported-" + echo, id: "unknown", payload: echo } }),
+        notification("turn/completed", { turn: { id: "turn-1", status: transports.length ? "failed" : "completed", items: [], error: transports.length ? { message: echo } : null } }),
+      ];
+    } else transport.events = [completed([message("answer", "{}")])];
     transports.push(transport);
     return transport;
   } });
-  const input = createCodexRunSessionTurnInput(directory);
-  input.agentRuntimeBinding = { bindingId: "binding", bindingReference: "binding-secret", turnCapability: "capability-secret", providerId: "codex", executionGeneration: "generation", transport: "env", expiresAt: null };
-  const progress: string[] = [];
-  const result = await adapter.runSessionTurn(input, (state) => { progress.push(state.assistantText); });
+  const progress: unknown[] = [];
+  const results: unknown[] = [];
+  for (let owner = 0; owner < 2; owner += 1) {
+    const input = createCodexRunSessionTurnInput(directory);
+    input.session.id = "owner-" + owner;
+    input.agentRuntimeBinding = { bindingId: "binding-" + owner, bindingReference: secrets[owner * 2], turnCapability: secrets[owner * 2 + 1], providerId: "codex", executionGeneration: "generation-" + owner, transport: "env", expiresAt: null };
+    const run = adapter.runSessionTurn(input, (state) => { progress.push(state); });
+    if (owner === 0) {
+      const result = await run;
+      results.push(result.assistantText, result.operations, result.rawItemsJson, result.providerMetadata, result.artifact);
+      assert.deepEqual(result.logicalPrompt, adapter.composePrompt(input).logicalPrompt);
+    } else {
+      await assert.rejects(run, (error: unknown) => {
+        assert.ok(error instanceof ProviderTurnError);
+        results.push(error.message, error.partialResult.assistantText, error.partialResult.operations, error.partialResult.rawItemsJson, error.partialResult.providerMetadata);
+        assert.ok(error.message.includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"));
+        return true;
+      });
+    }
+  }
   await adapter.runBackgroundStructuredPrompt(createCodexBackgroundPromptInput({ workspacePath: directory }));
-  assert.ok(Object.values(environments[0]).includes("binding-secret"));
-  assert.ok(Object.values(environments[0]).includes("capability-secret"));
-  assert.ok(!Object.values(environments[1]).includes("binding-secret"));
-  assert.ok(!Object.values(environments[1]).includes("capability-secret"));
-  assert.ok(progress.some((text) => text.includes("[WITHMATE_BINDING_REFERENCE_REDACTED]")));
-  assert.ok(!result.assistantText.includes("binding-secret"));
-  assert.ok(!result.rawItemsJson.includes("capability-secret"));
-  assert.deepEqual(result.logicalPrompt, adapter.composePrompt(input).logicalPrompt);
+  for (const [index, secret] of secrets.entries()) {
+    assert.ok(Object.values(environments[Math.floor(index / 2)]).includes(secret));
+    assert.ok(!Object.values(environments[1 - Math.floor(index / 2)]).includes(secret));
+    assert.ok(!Object.values(environments[2]).includes(secret));
+    for (const output of [progress, results, logs]) assert.ok(!JSON.stringify(output).includes(secret));
+  }
+  assert.ok(JSON.stringify(progress).includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"));
+  assert.ok(JSON.stringify(logs).includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"));
+  assert.ok(logs.length >= 2);
+  assert.deepEqual({ ...process.env }, parentEnvironment);
+  assert.ok(transports.every((transport) => transport.closed));
 }));
 // @test-value v2
 // kind = "invariant"
-// claim = "native fileChangeをartifactの変更一覧へ正規化しsnapshot停止中も保持する"
+// claim = "native fileChangeのkindをartifact変更一覧へ正規化しcollaborationをtimelineへ投影する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "App Serverのkind objectを解釈せず変更一覧を失う"
 // observable = "artifact.changedFilesとoperationTimeline"
@@ -539,6 +603,45 @@ it("native fileChangeとcollaborationをartifactへ投影する", async () => wo
   assert.deepEqual(result.artifact?.changedFiles.map((file) => ({ path: file.path, kind: file.kind })), [{ path: "changed.ts", kind: "edit" }]);
   assert.ok(result.artifact?.operationTimeline?.some((operation) => operation.type === "collab_tool_call"));
   assert.match(result.rawItemsJson, /move_path/);
+}));
+// @test-value v2
+// kind = "invariant"
+// claim = "大きいnative commandとMCP出力はlive audit previewとraw予算内に収め本文を保持する"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
+// fault = "Codexのnative itemを未制限でliveまたはauditへ投影する"
+// observable = "live steps、operations details、rawItemsJsonの長さとtruncation marker、assistant本文"
+// observation_boundary = "component-behavior"
+// scope = "codex-native-projection"
+// lifecycle = "permanent"
+// impact = "大きいtool出力がUIと監査保存のメモリを圧迫し会話本文を失わせる"
+// distinction = "shared予算helper testではCodexのnative projection配線を確認できない"
+// @end-test-value
+it("native commandとMCPの大きい出力をlive audit予算へ投影する", async () => workspace(async (directory) => {
+  const largeText = "x".repeat(AUDIT_TEXT_PREVIEW_LIMIT * 2);
+  const transport = new FakeTransport();
+  const command = { type: "commandExecution", id: "command", command: "echo large", aggregatedOutput: largeText, exitCode: 0, status: "completed" };
+  const mcps = Array.from({ length: 10 }, (_, index) => ({ type: "mcpToolCall", id: "mcp-" + index, server: "fixture", tool: "large", arguments: {}, result: { structuredContent: { text: largeText }, content: [] }, error: null, status: "completed" }));
+  transport.events = [notification("item/completed", { item: command }), ...mcps.map((item) => notification("item/completed", { item })), completed([message("answer", "本文保持")])];
+  const details: string[] = [];
+  const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory), (state) => {
+    for (const step of state.steps) if (step.details) details.push(step.details);
+  });
+  assert.ok(details.length > 0);
+  for (const detail of details) {
+    assert.ok(detail.length < largeText.length);
+    assert.match(detail, /truncated/);
+  }
+  for (const type of ["command_execution", "mcp_tool_call"]) {
+    const detail = result.operations.find((operation) => operation.type === type)?.details;
+    assert.ok(detail);
+    assert.ok(detail.length < largeText.length);
+    assert.match(detail, /truncated/);
+  }
+  assert.ok(result.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
+  const raw = JSON.parse(result.rawItemsJson) as unknown;
+  assert.match(JSON.stringify(raw), /truncated/);
+  assert.equal(result.assistantText, "本文保持");
+  assert.equal(transport.closed, true);
 }));
 // @test-value v2
 // kind = "invariant"
