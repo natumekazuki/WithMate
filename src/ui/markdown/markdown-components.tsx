@@ -4,7 +4,7 @@ import type { Node } from "unist";
 import {
   resolveMarkdownFrontmatterDisplay,
   formatMarkdownFrontmatterSource,
-} from "./markdown-frontmatter.js";
+} from "../../../src-shared/text/markdown-frontmatter.js";
 import { GlossaryAnnotationSpan } from "../../glossary/MessageGlossaryAnnotations.js";
 import { MarkdownRenderContext } from "./markdown-context.js";
 import { MarkdownPre } from "./markdown-code.js";

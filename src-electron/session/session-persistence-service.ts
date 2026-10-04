@@ -197,6 +197,13 @@ export class SessionPersistenceService {
     assertSessionWritable(currentSession);
 
     const storedCurrentSession = await this.deps.getStoredSession?.(nextSession.id) ?? currentSession;
+    if (getSessionIncarnationId(storedCurrentSession) !== getSessionIncarnationId(nextSession)) {
+      throw new SessionNotFoundError(nextSession.id);
+    }
+    if (nextSession.messageCount !== undefined || nextSession.messages.some((message) => message.historyIndex !== undefined)) {
+      const { messageCount: _count, ...metadata } = nextSession;
+      nextSession = { ...metadata, messages: storedCurrentSession.messages, stream: storedCurrentSession.stream };
+    }
     if (!hasSameCharacterRuntimeIdentity(storedCurrentSession, nextSession)) {
       throw new Error("A session's Character owner and runtime snapshot cannot be updated.");
     }

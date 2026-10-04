@@ -96,6 +96,7 @@ export type AuxiliarySession = {
   threadId: string;
   composerDraft: string;
   messages: Message[];
+  messageCount?: number;
   displayAfterMessageIndex: number | null;
   createdAt: string;
   updatedAt: string;
@@ -404,7 +405,7 @@ export function buildAuxiliarySessionRunningTransition(input: {
   runningSession: AuxiliarySession;
 } {
   const displayAfterMessageIndex = resolveAuxiliarySessionDisplayAfterMessageIndex({
-    auxiliaryMessageCount: input.session.messages.length,
+    auxiliaryMessageCount: input.session.messageCount ?? input.session.messages.length,
     currentDisplayAfterMessageIndex: input.session.displayAfterMessageIndex,
     parentMessageCount: input.parentMessageCount,
   });

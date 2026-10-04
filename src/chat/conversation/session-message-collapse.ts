@@ -1,9 +1,6 @@
 import { isMessageBookmarked, type Message } from "../../../src-shared/session/session-state.js";
 import type { MessageListSource } from "../auxiliary/auxiliary-session-message-projection.js";
-import { projectMessageRenderedSearchText } from "./message-rendered-search-text.js";
-
-export const MESSAGE_COLLAPSE_PREVIEW_MAX_LENGTH = 160;
-export const MESSAGE_COLLAPSE_EMPTY_PREVIEW = "No content";
+import { projectMessagePlainText } from "../../../src-shared/session/message-search.js";
 
 export type MessageCollapseTarget = Readonly<{
   key: string;
@@ -39,6 +36,7 @@ export type MessageJumpRequest = Readonly<{
   sessionId: string;
   key: string;
   requestId: number;
+  offset?: number;
 }>;
 
 function messageSourceIdentity(source: MessageListSource): string {
@@ -62,26 +60,6 @@ export function isMessageCollapseTarget(
     && (role === "user" || role === "assistant");
 }
 
-function normalizeMessagePlainText(text: string): string {
-  const normalized = text
-    .replace(/<[^>]*>/gu, "")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (!normalized) {
-    return MESSAGE_COLLAPSE_EMPTY_PREVIEW;
-  }
-
-  const codePoints = Array.from(normalized);
-  if (codePoints.length <= MESSAGE_COLLAPSE_PREVIEW_MAX_LENGTH) {
-    return normalized;
-  }
-
-  return `${codePoints.slice(0, MESSAGE_COLLAPSE_PREVIEW_MAX_LENGTH - 1).join("")}…`;
-}
-
-export function projectMessagePlainText(markdown: string): string {
-  return normalizeMessagePlainText(projectMessageRenderedSearchText(markdown.replace(/\r\n?|\n/gu, " ")));
-}
 
 export function buildMessageCollapseTargets(
   messages: readonly Message[],

@@ -256,6 +256,10 @@ export type MainIpcPromptTemplateDepsArgs = {
 };
 
 export type MainIpcSessionQueryDepsArgs = {
+  getConversationOwnerSessionId?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["getConversationOwnerSessionId"];
+  getConversationPage?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["getConversationPage"];
+  searchConversation?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["searchConversation"];
+  listConversationNavigator?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["listConversationNavigator"];
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;

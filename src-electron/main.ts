@@ -227,6 +227,7 @@ import { createElectronSafeStorageKeyProtector } from "./memory/memory-protected
 import { MemoryV6MainAssembly } from "./memory/memory-v6-main-assembly.js";
 import { AgentRuntimeBindingRegistry } from "./providers/agent-runtime-binding.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary/auxiliary-provider-runtime-lifecycle.js";
+import { toConversationView } from "./storage/conversation-query.js";
 import { getMemoryV6AgentRuntimeOperations } from "./memory/memory-v6-http-server.js";
 import { RuntimeDiscoveryRegistryError } from "./platform/runtime-discovery/runtime-discovery-contract.js";
 import {
@@ -1270,6 +1271,19 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainQueryService().listWorkspaceCustomAgents(providerId, workspacePath),
                 listOpenSessionWindowIdsPage: (request) => listOpenSessionWindowIdsPage(request),
                 getSession: (sessionId) => getDisplaySession(sessionId),
+                getConversationOwnerSessionId: async (sessionId) => (await requireAuxiliarySessionStorage().getAuxiliarySessionSummary(sessionId))?.parentSessionId ?? sessionId,
+                getConversationPage: async (sessionId, request) => {
+                  const auxiliary = await requireAuxiliarySessionStorage().getAuxiliarySessionSummary(sessionId);
+                  return auxiliary ? requireAuxiliarySessionStorage().getConversationPage(sessionId, request) : requireSessionStorage().getConversationPage!(sessionId, request);
+                },
+                searchConversation: async (sessionId, request) => {
+                  const auxiliary = await requireAuxiliarySessionStorage().getAuxiliarySessionSummary(sessionId);
+                  return auxiliary ? requireAuxiliarySessionStorage().searchConversation(sessionId, request) : requireSessionStorage().searchConversation!(sessionId, request);
+                },
+                listConversationNavigator: async (sessionId) => {
+                  const auxiliary = await requireAuxiliarySessionStorage().getAuxiliarySessionSummary(sessionId);
+                  return auxiliary ? requireAuxiliarySessionStorage().listConversationNavigator(sessionId) : requireSessionStorage().listConversationNavigator!(sessionId);
+                },
                 getSessionSummary: (sessionId) => getDisplaySessionSummary(sessionId),
                 getSessionGlossaryProjection: (sessionId) =>
                   glossarySessionProjectionService.load(sessionId),
@@ -1328,9 +1342,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   return requireAuxiliarySessionService().listAuxiliarySessionSummaries(parentSessionIds);
                 },
                 getActiveAuxiliarySession: (parentSessionId) =>
-                  requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId),
+                  requireAuxiliarySessionService().getActiveAuxiliarySessionView(parentSessionId),
                 getAuxiliarySession: (auxiliarySessionId) =>
-                  requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId),
+                  requireAuxiliarySessionService().getAuxiliarySessionView(auxiliarySessionId),
                 getAuxiliaryDraft: (auxiliarySessionId) =>
                   requireAuxiliarySessionService().getAuxiliaryDraft(auxiliarySessionId),
                 saveAuxiliaryDraft: (input) =>
@@ -1449,7 +1463,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveLiveApproval,
                 resolveLiveElicitation,
                 createSession: (input) => requireMainSessionCommandFacade().createSessionFromRequest(input),
-                updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
+                updateSession: async (session) => toConversationView(await requireMainSessionCommandFacade().updateSession(session)),
                 setSessionTitle: (request) => requireSessionPersistenceService().setSessionTitle(request.sessionId, request.incarnationId, request.title),
                 setSessionMessageBookmark: (request) => requireSessionPersistenceService().setSessionMessageBookmark(request.sessionId, request.incarnationId, request.messageIndex, request.isBookmarked),
                 setSessionExecutionOptions: (request) => requireSessionPersistenceService().setSessionExecutionOptions(request.sessionId, request.incarnationId, request.executionOptions),
@@ -1463,7 +1477,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   for (const sessionId of result.deletedSessionIds) terminalService?.releaseSession(sessionId);
                   return result;
                 },
-                runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
+                runSessionTurn: async (sessionId, request) => toConversationView(await requireMainSessionCommandFacade().runSessionTurn(sessionId, request)),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
               mate: {
@@ -1557,7 +1571,7 @@ function requireMainQueryService(): MainQueryService {
         }
         return storage.listSessionCharacterUsage();
       },
-      getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
+      getSession: (sessionId) => requireSessionStorage().getSessionView!(sessionId),
       getSessionMessageArtifact: (sessionId, messageIndex) =>
         requireSessionStorage().getSessionMessageArtifact(sessionId, messageIndex),
       getAuditLogs: (sessionId) => requireAuditLogStorage().listSessionAuditLogs(sessionId),
@@ -2891,7 +2905,7 @@ async function getAuxiliaryParentSession(parentSessionId: string): Promise<Sessi
 async function getDisplaySession(sessionId: string): Promise<Session | null> {
   const liveSession = getSession(sessionId);
   if (liveSession && (liveSession.messages.length > 0 || liveSession.stream.length > 0)) {
-    return liveSession;
+    return toConversationView(liveSession);
   }
 
   const session = await requireMainQueryService().getSession(sessionId) ?? liveSession ?? null;

@@ -1,5 +1,6 @@
 import type { AuditLogSummary } from "../../src-shared/session/runtime-state.js";
 import type { Message } from "../../src-shared/session/session-state.js";
+import { getMessageHistoryIndex } from "../../src-shared/session/conversation-page.js";
 import { isTerminalAuditLogPhase } from "./runtime/audit-log-phase.js";
 import { applyComposerDraftChangeCommand } from "./composer-draft-handlers.js";
 
@@ -152,6 +153,7 @@ export function resolveRetryBannerKind(input: {
 export function resolveRetryBannerSource(input: {
   sessionId: string | null | undefined;
   messages: readonly Message[];
+  latestUserMessage?: Message | null;
   auditLogs: readonly AuditLogSummary[];
   runState: string | null | undefined;
 }): RetryBannerSource | null {
@@ -160,11 +162,17 @@ export function resolveRetryBannerSource(input: {
   }
 
   let lastUserMessageSeq = -1;
+  let lastUserMessage: Message | null = null;
   for (let index = input.messages.length - 1; index >= 0; index -= 1) {
     if (input.messages[index]?.role === "user") {
-      lastUserMessageSeq = index;
+      lastUserMessageSeq = getMessageHistoryIndex(input.messages[index], index);
+      lastUserMessage = input.messages[index];
       break;
     }
+  }
+  if (!lastUserMessage && input.latestUserMessage?.role === "user") {
+    lastUserMessage = input.latestUserMessage;
+    lastUserMessageSeq = input.latestUserMessage.historyIndex ?? -1;
   }
   if (lastUserMessageSeq < 0) {
     return null;
@@ -183,7 +191,7 @@ export function resolveRetryBannerSource(input: {
   return kind
     ? {
         kind,
-        lastRequestText: input.messages[lastUserMessageSeq]?.text ?? "",
+        lastRequestText: lastUserMessage?.text ?? "",
         terminalAuditLog,
       }
     : null;

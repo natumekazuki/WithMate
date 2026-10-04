@@ -24,6 +24,7 @@ type AsyncStore<T extends object> = {
 
 const STORE_METHODS = {
   session: [
+    "getSessionView", "getConversationPage", "searchConversation", "listConversationNavigator",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
     "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "setSessionPinned", "getSessionMessageArtifact",
@@ -39,6 +40,7 @@ const STORE_METHODS = {
     "getSessionAuditLogDetailSection", "getSessionAuditLogOperationDetail", "clearAuditLogs",
   ],
   auxiliary: [
+    "getAuxiliarySessionView", "getConversationPage", "searchConversation", "listConversationNavigator",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
     "listActiveAuxiliarySessionSummaries", "listRunningActiveAuxiliarySessions", "getActiveAuxiliarySession",
     "getAuxiliarySession", "getAuxiliarySessionSummary", "listAuxiliaryCredentialThreads", "getAuxiliaryMessageArtifactDetail",

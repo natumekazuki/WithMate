@@ -1,6 +1,44 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+// @test-value v2
+// kind = "contract"
+// claim = "会話page・全履歴検索・navigatorはMainまたはAuxiliaryの親Session Windowだけが要求できる"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md#storage-overview" }
+// fault = "Auxiliaryを親へ解決せず認可するか、対象外Windowの要求を会話readへ渡す"
+// observable = "owner Windowのpage/search/navigator結果とread呼出回数、対象外Windowのrejection"
+// observation_boundary = "public-boundary"
+// scope = "conversation-read-ipc-authorization"
+// lifecycle = "permanent"
+// impact = "対象外Windowへの会話履歴公開を防ぐ"
+// distinction = "既存のdetail read認可testは独立したpage/search/navigator commandを通らない。小さいIPC stubで3commandの権限を保持する"
+// @end-test-value
+test("会話page/search/navigatorは親owner Windowだけが取得できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=parent");
+  const otherWindow = createWindowStub("http://localhost:5173/");
+  let eventWindow = ownerWindow;
+  const reads: string[] = [];
+  const page = { sessionId: "aux", incarnationId: "created", messages: [], startIndex: 0, totalCount: 0 };
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (id: string) => id === "parent" ? ownerWindow : null,
+    getConversationOwnerSessionId: async (id: string) => id === "aux" ? "parent" : id,
+    getConversationPage: async (id: string) => { reads.push(`page:${id}`); return page; },
+    searchConversation: async (id: string) => { reads.push(`search:${id}`); return [{ messageIndex: 3, occurrenceIndex: 0 }]; },
+    listConversationNavigator: async (id: string) => { reads.push(`navigator:${id}`); return []; },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  assert.deepEqual(await handlers.get(WITHMATE_GET_CONVERSATION_PAGE_CHANNEL)?.({}, "aux", { startIndex: 0 }), page);
+  assert.deepEqual(await handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)?.({}, "aux", { query: "x", mode: "source" }), [{ messageIndex: 3, occurrenceIndex: 0 }]);
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL)?.({}, "aux"), []);
+  eventWindow = otherWindow;
+  for (const channel of [WITHMATE_GET_CONVERSATION_PAGE_CHANNEL, WITHMATE_SEARCH_CONVERSATION_CHANNEL, WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL]) {
+    await assert.rejects(() => handlers.get(channel)?.({}, "aux", { query: "x", mode: "source" }) as Promise<unknown>);
+  }
+  assert.deepEqual(reads, ["page:aux", "search:aux", "navigator:aux"]);
+});
+
 import type { IpcMain } from "electron";
 
 import {
@@ -21,6 +59,9 @@ import {
   WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_CONVERSATION_PAGE_CHANNEL,
+  WITHMATE_SEARCH_CONVERSATION_CHANNEL,
+  WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL,
   WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
@@ -2632,6 +2673,7 @@ test("Auxiliary full read IPC は対象外 window から full read を返さず�
       return auxiliarySession;
     },
     getAuxiliarySession: async () => auxiliarySession,
+    getAuxiliarySessionStatus: async () => ({ id: auxiliarySession.id, parentSessionId: auxiliarySession.parentSessionId, status: auxiliarySession.status, createdAt: auxiliarySession.createdAt, incarnation: "test", runState: auxiliarySession.runState }),
   });
 
   registerMainIpcHandlers(ipcMain, deps);

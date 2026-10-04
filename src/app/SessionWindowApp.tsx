@@ -554,7 +554,9 @@ export default function AgentSessionWindowApp() {
     setIsSkillPickerOpen,
     closeSkillPicker,
   } = composerFeature;
-  const activeRunMessageCount = activeAuxiliarySession?.messages.length ?? selectedSession?.messages.length ?? 0;
+  const activeRunMessageCount = activeAuxiliarySession
+    ? activeAuxiliarySession.messageCount ?? activeAuxiliarySession.messages.length
+    : selectedSession?.messageCount ?? selectedSession?.messages.length ?? 0;
   const prepareCentralSurfaceOpenRef = useRef<() => boolean>(() => false);
   const filesFeatureRef = useRef<SessionFilesFeatureHandle>(null);
   const [filesPaneHost, setFilesPaneHost] = useState<HTMLDivElement | null>(null);
@@ -933,7 +935,7 @@ export default function AgentSessionWindowApp() {
   const lastUserMessage = useMemo(
     () =>
       selectedSession
-        ? [...selectedSession.messages].reverse().find((message) => message.role === "user") ?? null
+        ? [...selectedSession.messages].reverse().find((message) => message.role === "user") ?? selectedSession.latestUserMessage ?? null
         : null,
     [selectedSession],
   );
@@ -953,6 +955,7 @@ export default function AgentSessionWindowApp() {
     const source = resolveRetryBannerSource({
       sessionId: selectedSession.id,
       messages: selectedSession.messages,
+      latestUserMessage: selectedSession.latestUserMessage,
       auditLogs: selectedSessionAuditLogs,
       runState: selectedSessionRunState,
     });
@@ -1282,15 +1285,20 @@ export default function AgentSessionWindowApp() {
   };
 
   const updateActiveAuxiliarySession = async (recipe: (current: AuxiliarySession) => AuxiliarySession) => {
-    await createGuardedActiveAuxiliarySessionUpdater({
-      activeSession: activeAuxiliarySession,
-      getCurrentSession: () => activeAuxiliarySessionRef.current,
-      getApi: () => withmateApi,
-      setActiveSession: setActiveAuxiliarySession,
-      draftSaveQueue: auxiliaryDraftSaveQueueRef,
-      sessionSaveQueue: auxiliarySessionSaveQueueRef,
-      mutationRevision: auxiliarySessionMutationRevisionRef,
-    })(recipe);
+    const releaseDetail = auxiliaryBinding.retainDetail();
+    try {
+      await createGuardedActiveAuxiliarySessionUpdater({
+        activeSession: activeAuxiliarySession,
+        getCurrentSession: () => activeAuxiliarySessionRef.current,
+        getApi: () => withmateApi,
+        setActiveSession: setActiveAuxiliarySession,
+        draftSaveQueue: auxiliaryDraftSaveQueueRef,
+        sessionSaveQueue: auxiliarySessionSaveQueueRef,
+        mutationRevision: auxiliarySessionMutationRevisionRef,
+      })(recipe);
+    } finally {
+      releaseDetail();
+    }
   };
 
   const updateAuxiliaryExecutionOptions = async (recipe: (current: AuxiliarySession) => AuxiliarySession) => {
@@ -1526,7 +1534,8 @@ export default function AgentSessionWindowApp() {
     const selected = activeAuxiliarySessionRef.current;
     if (!selected) return Promise.resolve();
     const executionOptions = captureSessionExecutionOptions(selected);
-    return auxiliaryDraftPersistence.trackSend(performAuxiliarySend(messageText, selected, executionOptions));
+    const releaseDetail = auxiliaryBinding.retainDetail();
+    return auxiliaryDraftPersistence.trackSend(performAuxiliarySend(messageText, selected, executionOptions).finally(releaseDetail));
   };
 
   const performAuxiliarySend = async (messageText: string, sendSession: AuxiliarySession, executionOptions: SessionExecutionOptions) => {
@@ -1567,7 +1576,7 @@ export default function AgentSessionWindowApp() {
       messageText,
       auxiliaryDraftIncarnation: durableDraft.incarnation,
       auxiliaryDraftDurableRevision: durableDraft.durableRevision,
-      parentMessageCount: selectedSession?.messages.length ?? null,
+      parentMessageCount: selectedSession?.messageCount ?? selectedSession?.messages.length ?? null,
       updatedAt: currentTimestampLabel(),
       draftSaveQueue: auxiliaryDraftSaveQueueRef,
       mutationRevision: auxiliarySessionMutationRevisionRef,
@@ -1595,7 +1604,7 @@ export default function AgentSessionWindowApp() {
           setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(
             current,
             runningSession.id,
-            runningSession.messages.length,
+            runningSession.messageCount ?? runningSession.messages.length,
           ));
         }
       },

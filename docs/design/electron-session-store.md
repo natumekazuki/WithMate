@@ -4,7 +4,13 @@ Session、Auxiliary、監査、設定、catalogの永続化はMainが公開す�
 
 ## 読取と通知
 
-Homeは`listSessionSummaryPage()`でrecent、pinned、open Sessionと検索結果をboundedに取得する。全Session本文をHomeへ送らない。Session Windowは対象IDの`getSessionSummary()`で基本情報を取得し、`getSession()`による会話のhydrateと独立してheaderやFilesを表示する。summary取得はmessage、stream、artifactのtableを読まず、全件一覧も取得しない。summaryから作った表示用projectionを会話の保存・送信には使わない。変更通知を受けた対象を再取得し、会話取得の失敗は既に取得した情報を保持したまま局所的に再試行できる。
+Homeは`listSessionSummaryPage()`でrecent、pinned、open Sessionと検索結果をboundedに取得する。全Session本文をHomeへ送らない。Session Windowは対象IDの`getSessionSummary()`で基本情報を取得し、`getSession()`による会話の読込みと独立してheaderやFilesを表示する。summary取得はmessage、stream、artifactのtableを読まず、全件一覧も取得しない。summaryから作った表示用projectionを会話の保存・送信には使わない。変更通知を受けた対象を再取得し、会話取得の失敗は既に取得した情報を保持したまま局所的に再試行できる。
+
+Rendererの`getSession()`／`getAuxiliarySession()`は最新60件の表示用本文とmetadataを返す。storage Workerの専用readはSQLで取得範囲を限定し、全会話をhydrateしてから切り出さない。Mainの実行中cache、turn完了や更新のIPC応答も表示用の同じ範囲へ投影する。`messageCount`は全履歴件数、各messageの`historyIndex`は保存行の`seq`であり、ページ内の配列indexと区別する。Mainの再送用最新user messageは表示範囲外でも別途保持する。
+
+`getConversationPage()`は指定位置または最新の60件を返す。会話IDとincarnationを照合し、Rendererは取得中の会話切替・後続取得・Bookmark変更によって古くなった応答を適用しない。本文保持は最新tailと閲覧pageに限定し、artifact詳細は従来どおり必要時に取得する。1件の本文を切り詰めるbyte上限は設けず、保存本文を保持する。
+
+全文検索は`searchConversation()`でstorage Workerが履歴行を逐次走査する。Sourceの原文とPreviewのMarkdown投影はRendererと同じ純粋関数を使い、履歴indexと一致箇所番号だけを返す。Messages navigatorは利用時に`listConversationNavigator()`で履歴index、短いpreview、Bookmark等を取得し、移動先の本文だけをpage取得する。検索とnavigatorの走査時間・結果metadataは履歴量に依存するが、全履歴本文をRendererへ常駐させない。
 
 summaryのinvalidationは`WindowBroadcastService`が`ids`または`all`として配信し、IDが上限を超えた場合は切り捨てず`all`へ切り替える。Homeは古いquery responseをgenerationで失効させ、既に取得したpageを必要範囲で再同期する。
 
@@ -17,6 +23,8 @@ Session identity、確定message、turnの実行記録・Audit、provider thread
 ### SessionPersistenceService
 
 `SessionPersistenceService`が作成、既存行更新、削除、期間削除を担当する。owner付きstorage command、cache projection、Window side effectの組み立ては`src-electron/session/session-persistence-assembly.ts`が担う。実行中のturnとcancelは`SessionRuntimeService`、Windowのclose／quitは`SessionWindowBridge`とlifecycle側で扱う。作成と既存行限定更新を分け、削除済み行を遅延更新で再作成しない。
+
+表示用pageを全履歴の保存入力として扱わない。Rendererからの設定更新は現在の保存済み履歴を保ったままmetadataへ適用し、storageの全会話保存は`messageCount`／`historyIndex`を持つ部分projectionを拒否する。Providerの実行・保存は従来の完全な履歴を使用し、表示pageの取得・解放でLLMへ渡す文脈を変更しない。
 
 ### 実行設定と Send
 

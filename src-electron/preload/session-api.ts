@@ -27,6 +27,15 @@ export function createSessionApi(
         sessionId,
       );
     },
+    getConversationPage(sessionId, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_GET_CONVERSATION_PAGE_CHANNEL, sessionId, request ?? null);
+    },
+    searchConversation(sessionId, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_SEARCH_CONVERSATION_CHANNEL, sessionId, request);
+    },
+    listConversationNavigator(sessionId) {
+      return ipcRenderer.invoke(channels.WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL, sessionId);
+    },
     getSessionSummary(sessionId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_GET_SESSION_SUMMARY_CHANNEL,

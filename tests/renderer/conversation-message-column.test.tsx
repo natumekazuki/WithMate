@@ -38,6 +38,67 @@ function createBaseProps(id: string): SessionMessageColumnProps {
 }
 
 // @test-value v2
+// kind = "contract"
+// claim = "過去pageの閲覧は60件とglobal位置を維持し、live更新を混入せず、会話切替後の遅いpage応答を破棄し、旧会話のlive本文をcacheへ保持しない"
+// oracle = { type = "contract", ref = "Issue #781: bounded conversation pages" }
+// fault = "過去pageへliveをappendする、global keyをlocal位置へ戻す、旧会話のpageを新会話へ適用する、または非表示会話cacheへlive本文を保持する"
+// observable = "列propsのmessage件数・key・本文、page APIのstartIndex、旧会話cacheのliveRunと本文なしbridge"
+// observation_boundary = "component-behavior"
+// scope = "conversation-page-ownership"
+// lifecycle = "permanent"
+// impact = "過去履歴を読みながら実行を続け、会話を切替えても別会話本文を表示しない"
+// distinction = "storage testはrendererのlive投影・選択切替との応答競合を通らない"
+// @end-test-value
+test("conversation pages は過去閲覧と会話ownerを保持する", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
+  Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const messages = (start: number) => Array.from({ length: 60 }, (_, index) => ({ role: "user" as const, text: `message ${start + index}`, historyIndex: start + index }));
+  let resolvePage: ((page: NonNullable<Awaited<ReturnType<NonNullable<ConversationMessageColumnApi["getConversationPage"]>>>>) => void) | undefined;
+  const requests: number[] = [];
+  const cache = new Map<string, ConversationColumnCache>();
+  const api: ConversationMessageColumnApi = { getConversationPage: async (_id, request) => {
+    requests.push(request?.startIndex ?? -1);
+    return new Promise((resolve) => { resolvePage = resolve; });
+  } };
+  let latest: ReturnType<typeof useConversationMessageColumn> = null;
+  const getLatest = () => latest;
+  const liveStates = new Map<string, LiveSessionRunState>();
+  function Probe({ id, text }: { id: string; text: string }) {
+    if (!liveStates.has(text)) liveStates.set(text, { assistantText: text, threadId: "thread" } as LiveSessionRunState);
+    latest = useConversationMessageColumn({ session: { id, incarnationId: id, messages: messages(140), messageCount: 200, runState: "running" }, baseProps: createBaseProps(id), enabled: true, api, stateCache: cache, liveRun: liveStates.get(text) });
+    return React.createElement("div", { ref: latest?.messageListRef });
+  }
+  let root: Root | null = null;
+  try {
+    await act(async () => { root = createRoot(dom.window.document.getElementById("root")!); root.render(React.createElement(Probe, { id: "main", text: "live" })); });
+    await act(async () => latest?.conversationPaging?.onEarlier?.());
+    assert.deepEqual(requests, [110]);
+    await act(async () => resolvePage?.({ sessionId: "main", incarnationId: "main", startIndex: 110, totalCount: 200, messages: messages(110) }));
+    assert.equal(getLatest()?.messages.length, 60);
+    assert.equal(getLatest()?.messageKeys?.[0], "session-main-110");
+    await act(async () => root?.render(React.createElement(Probe, { id: "main", text: "live updated" })));
+    assert.equal(getLatest()?.messages.at(-1)?.text, "message 169");
+    assert.equal(getLatest()?.isRunning, false);
+    await act(async () => latest?.conversationPaging?.onEarlier?.());
+    const stale = resolvePage;
+    await act(async () => root?.render(React.createElement(Probe, { id: "other", text: "other live" })));
+    assert.equal(cache.get("main")?.liveRun, null);
+    assert.deepEqual(cache.get("main")?.bridge, { sessionId: "main", threadId: "thread", messageIndex: 200 });
+    await act(async () => stale?.({ sessionId: "main", incarnationId: "main", startIndex: 80, totalCount: 200, messages: messages(80) }));
+    assert.equal(getLatest()?.sessionId, "other");
+    assert.equal(getLatest()?.messageKeys?.[0], "session-other-140");
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    globals.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "同じWindowのMain/Auxiliary live eventは会話IDで分離され、非target会話へ混入しない"
 // oracle = { type = "contract", ref = "issue-710-conversation-live-ownership" }

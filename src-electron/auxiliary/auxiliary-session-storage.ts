@@ -1,4 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
+import { assertFullConversation, readConversationPage, searchStoredConversation, listStoredConversationNavigator } from "../storage/conversation-query.js";
+import type { ConversationPageRequest, ConversationSearchRequest } from "../../src-shared/session/conversation-page.js";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -346,6 +348,32 @@ export class AuxiliarySessionStorage {
     });
   }
 
+  getConversationPage(auxiliarySessionId: string, request?: ConversationPageRequest) {
+    return this.withDb((db) => {
+      const row = db.prepare("SELECT * FROM auxiliary_sessions WHERE id = ?").get(auxiliarySessionId) as AuxiliarySessionRow | undefined;
+      return row ? readConversationPage(db, "auxiliary_session_messages", row.id, row.created_at, request) : null;
+    });
+  }
+
+  getAuxiliarySessionView(auxiliarySessionId: string): AuxiliarySession | null {
+    return this.withDb((db) => {
+      const row = db.prepare("SELECT * FROM auxiliary_sessions WHERE id = ?").get(auxiliarySessionId) as AuxiliarySessionRow | undefined;
+      if (!row) return null;
+      const session = parseAuxiliarySessionRow(row);
+      if (!session) return null;
+      const page = readConversationPage(db, "auxiliary_session_messages", row.id, row.created_at);
+      return this.composeDraft(db, { ...session, messages: page.messages, messageCount: page.totalCount });
+    });
+  }
+
+  searchConversation(sessionId: string, request: ConversationSearchRequest) {
+    return this.withDb((db) => searchStoredConversation(db, "auxiliary_session_messages", sessionId, request));
+  }
+
+  listConversationNavigator(sessionId: string) {
+    return this.withDb((db) => listStoredConversationNavigator(db, "auxiliary_session_messages", sessionId));
+  }
+
   getAuxiliaryDraft(auxiliarySessionId: string): AuxiliaryDraftRecord | null {
     return this.withDb((db) => {
       const row = db.prepare(`
@@ -570,6 +598,8 @@ export class AuxiliarySessionStorage {
   }
 
   updateAuxiliarySessionIfMatches(input: AuxiliarySessionUpdateIfMatchesInput): AuxiliarySession | null {
+    assertFullConversation(input.session);
+    assertFullConversation(input.expectedSession);
     return this.withDb((db) => {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
@@ -631,6 +661,7 @@ export class AuxiliarySessionStorage {
   }
 
   upsertAuxiliarySession(session: AuxiliarySession): AuxiliarySession {
+    assertFullConversation(session);
     return this.withDb((db) => {
       const existing = db.prepare("SELECT draft_text FROM auxiliary_session_drafts WHERE auxiliary_session_id = ?")
         .get(session.id) as { draft_text: string } | undefined;
@@ -878,6 +909,7 @@ function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession): vo
 }
 
 function writeAuxiliaryMessages(db: DatabaseSync, session: AuxiliarySession): void {
+  assertFullConversation(session);
   const existing = new Map((db.prepare(`SELECT seq, role, body, artifact_body FROM auxiliary_session_messages
     WHERE auxiliary_session_id = ?`).all(session.id) as Array<{
       seq: number; role: string; body: string; artifact_body: string | null;

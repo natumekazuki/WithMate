@@ -2491,6 +2491,44 @@ test("ConversationMessageColumn は履歴スクロールを挟んでも elicitat
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "会話pageの移動は同じelicitation requestの未送信回答を保持して送信する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Elicitationの入力待ち" }
+// fault = "最新pageから過去pageへ移動した際にformを再mountして回答を消す"
+// observable = "過去pageのDOM内select値とSubmit応答payload"
+// observation_boundary = "component-behavior"
+// scope = "conversation-paging-elicitation"
+// lifecycle = "permanent"
+// impact = "履歴を参照しただけで操作対象の回答が初期化される誤送信を防ぐ"
+// distinction = "既存scroll testはmessagesのpage交換とpending rowの消滅を通らない"
+// @end-test-value
+test("SessionMessageColumn はpage交換でも入力待ち回答を保持する", async () => {
+  const request: LiveElicitationRequest = {
+    ...createLiveElicitationRequest(),
+    fields: [{ type: "select", name: "branch", title: "Branch", required: true, defaultValue: "main", options: [{ value: "main", label: "main" }, { value: "feature", label: "feature" }] }],
+  };
+  const responses: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
+  const paging = { startIndex: 60, endIndex: 120, totalCount: 120, loading: false, error: "", onRetry() {} };
+  function Column(props: SessionMessageColumnProps) {
+    return React.createElement(SessionMessageColumn, { ...props, conversationPaging: props.isRunning ? paging : { ...paging, startIndex: 0, endIndex: 60 } });
+  }
+  const mounted = await mountSessionMessageColumn({ component: Column, messages: createMessages(60), isRunning: true, liveElicitationRequest: request, onResolveLiveElicitation: (...args) => responses.push(args) });
+  try {
+    const select = mounted.container.querySelector<HTMLSelectElement>(".live-elicitation-card select");
+    assert.ok(select);
+    await act(async () => { select.value = "feature"; select.dispatchEvent(new mounted.dom.window.Event("change", { bubbles: true })); });
+    await mounted.rerender({ messages: createMessages(60).map((message) => ({ ...message, text: `Earlier ${message.text}` })), isRunning: false });
+    const after = mounted.container.querySelector<HTMLSelectElement>(".live-elicitation-card select");
+    assert.equal(after, select);
+    assert.equal(after?.value, "feature");
+    const submit = [...mounted.container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button")].find((button) => button.textContent === "Submit");
+    assert.ok(submit);
+    await act(async () => submit.click());
+    assert.deepEqual(responses, [[request, { action: "accept", content: { branch: "feature" } }]]);
+  } finally { await mounted.cleanup(); }
+});
+
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(1),

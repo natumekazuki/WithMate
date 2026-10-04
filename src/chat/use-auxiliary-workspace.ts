@@ -34,6 +34,7 @@ export type AuxiliarySessionBinding = {
   setMessageBookmark(messageIndex: number, isBookmarked: boolean): void;
   getSession(): AuxiliarySession | null;
   setExecutionSelection(session: AuxiliarySession): void;
+  retainDetail(): () => void;
 };
 
 export type AuxiliaryWorkspace = {
@@ -78,6 +79,7 @@ export type AuxiliaryConcurrentChatSurfaceInput = {
 };
 
 const DEFAULT_WIDTH_RATIO = 0;
+const HIDDEN_DETAIL_CACHE_LIMIT = 8;
 const PREFS_KEY_PREFIX = "withmate:auxiliary-workspace:";
 
 type WorkspacePrefs = { selectedId: string | null; widthRatio: number };
@@ -182,6 +184,31 @@ export function useAuxiliaryWorkspace(input: {
   const pendingSelectionIdRef = useRef<string | null>(normalizedInitialSelectedId);
   const detailsRef = useRef(new Map<string, AuxiliarySession>());
   const bindingsRef = useRef(new Map<string, AuxiliarySessionBinding>());
+  const dirtyDetailsRef = useRef(new Set<string>());
+  const detailOperationsRef = useRef(new Map<string, number>());
+  const operationWasDirtyRef = useRef(new Map<string, boolean>());
+  const detailQueuesRef = useRef(new Map<string, number>());
+  const terminalLoadingRef = useRef(new Set<string>());
+  const pruneDetails = useCallback(() => {
+    const reusable = [...detailsRef.current.keys()].filter((id) => id !== selectedIdRef.current
+      && detailsRef.current.get(id)?.runState !== "running"
+      && !dirtyDetailsRef.current.has(id)
+      && !detailOperationsRef.current.has(id)
+      && !detailQueuesRef.current.has(id)
+      && !terminalLoadingRef.current.has(id));
+    for (const id of reusable.slice(0, Math.max(0, reusable.length - HIDDEN_DETAIL_CACHE_LIMIT))) {
+      detailsRef.current.delete(id);
+      const binding = bindingsRef.current.get(id);
+      if (binding) binding.sessionRef.current = null;
+    }
+  }, []);
+  const cacheDetail = useCallback((id: string, session: AuxiliarySession) => {
+    detailsRef.current.delete(id);
+    detailsRef.current.set(id, session);
+    const binding = bindingsRef.current.get(id);
+    if (binding) binding.sessionRef.current = session;
+    pruneDetails();
+  }, [pruneDetails]);
   const executionSelectionsRef = useRef(new Map<string, { createdAt: string; options: SessionExecutionOptions }>());
   const activeCatalogRef = useRef<ModelCatalogSnapshot | null>(null);
   const mergeExecutionSelection = useCallback((session: AuxiliarySession): AuxiliarySession => {
@@ -300,6 +327,11 @@ export function useAuxiliaryWorkspace(input: {
     detailsRef.current.clear();
     executionSelectionsRef.current.clear();
     bindingsRef.current.clear();
+    dirtyDetailsRef.current.clear();
+    detailOperationsRef.current.clear();
+    operationWasDirtyRef.current.clear();
+    detailQueuesRef.current.clear();
+    terminalLoadingRef.current.clear();
     detailMutationEpochRef.current.clear();
     bookmarkRevisionRef.current.clear();
     terminalRevisionRef.current.clear();
@@ -318,12 +350,14 @@ export function useAuxiliaryWorkspace(input: {
     const revision = ++loadRevisionRef.current;
     if (!id) {
       setSelectedSession(null);
+      pruneDetails();
       setDetailLoading(false);
       setDetailError(null);
       return;
     }
     const cached = detailsRef.current.get(id) ?? bindingsRef.current.get(id)?.sessionRef.current ?? null;
     if (cached) {
+      cacheDetail(id, cached);
       setSelectedSession(cached);
       setDetailLoading(false);
       setDetailError(null);
@@ -341,9 +375,7 @@ export function useAuxiliaryWorkspace(input: {
       if (!mountedRef.current || revision !== loadRevisionRef.current || selectedIdRef.current !== id) return;
       const mergedSession = session ? mergeExecutionSelection(session) : null;
       if (mergedSession && detailEpoch === (detailMutationEpochRef.current.get(id) ?? 0)) {
-        detailsRef.current.set(id, mergedSession);
-        const binding = bindingsRef.current.get(id);
-        if (binding) binding.sessionRef.current = mergedSession;
+        cacheDetail(id, mergedSession);
       }
       if (detailEpoch === (detailMutationEpochRef.current.get(id) ?? 0)) {
         if (mergedSession) {
@@ -361,7 +393,7 @@ export function useAuxiliaryWorkspace(input: {
       setDetailError(detailCause);
       setDetailLoading(false);
     });
-  }, [api, mergeExecutionSelection, selectedId]);
+  }, [api, cacheDetail, mergeExecutionSelection, pruneDetails, selectedId]);
 
   useEffect(() => {
     if (!api?.subscribeLiveSessionRun) return;
@@ -384,9 +416,7 @@ export function useAuxiliaryWorkspace(input: {
         summariesRef.current = nextSummaries;
         setSummaries(nextSummaries);
       }
-      detailsRef.current.set(id, session);
-      const binding = bindingsRef.current.get(id);
-      if (binding) binding.sessionRef.current = session;
+      cacheDetail(id, session);
       if (selectedIdRef.current === id) {
         setSelectedSession(session);
         setDetailLoading(false);
@@ -427,6 +457,7 @@ export function useAuxiliaryWorkspace(input: {
           if (binding) binding.sessionRef.current = next;
           if (selectedIdRef.current === id) setSelectedSession(next);
         }
+        pruneDetails();
       }).catch((cause) => {
         if (mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
           && revision === terminalRevisionRef.current.get(id)) {
@@ -448,6 +479,7 @@ export function useAuxiliaryWorkspace(input: {
       const terminalRevision = (terminalRevisionRef.current.get(id) ?? 0) + 1;
       terminalRevisionRef.current.set(id, terminalRevision);
       terminalLoads.set(id, terminalRevision);
+      terminalLoadingRef.current.add(id);
       const pendingStatus = statusRequests.get(id);
       if (pendingStatus) pendingStatus.pending = false;
       const terminalStartEpoch = detailMutationEpochRef.current.get(id) ?? 0;
@@ -486,10 +518,16 @@ export function useAuxiliaryWorkspace(input: {
           }
         }
       }).finally(() => {
-        if (terminalLoads.get(id) === terminalRevision) terminalLoads.delete(id);
+        if (terminalLoads.get(id) === terminalRevision) {
+          terminalLoads.delete(id);
+          if (subscriptionGeneration === workspaceGenerationRef.current) {
+            terminalLoadingRef.current.delete(id);
+            pruneDetails();
+          }
+        }
       });
     });
-  }, [api, mergeExecutionSelection, parentSessionId, refreshSummaries]);
+  }, [api, cacheDetail, mergeExecutionSelection, parentSessionId, pruneDetails, refreshSummaries]);
 
   const touchRecency = useCallback((id: string, updatedAt: string) => {
     const current = summariesRef.current;
@@ -530,8 +568,9 @@ export function useAuxiliaryWorkspace(input: {
     selectedIdRef.current = id;
     setSelectedId(id);
     setSelectedSession(id ? detailsRef.current.get(id) ?? null : null);
+    pruneDetails();
     persistPrefs({ selectedId: id });
-  }, [persistPrefs, refreshSummaries, summaries]);
+  }, [persistPrefs, pruneDetails, refreshSummaries, summaries]);
 
   const requestSessionSelection = useCallback((id: string) => {
     const normalizedId = id.trim();
@@ -542,9 +581,10 @@ export function useAuxiliaryWorkspace(input: {
     selectedIdRef.current = normalizedId;
     setSelectedId(normalizedId);
     setSelectedSession(detailsRef.current.get(normalizedId) ?? null);
+    pruneDetails();
     setTargetState("auxiliary");
     persistPrefs({ selectedId: normalizedId });
-  }, [persistPrefs]);
+  }, [persistPrefs, pruneDetails]);
 
   const setWidthRatio = useCallback((ratio: number) => {
     const next = clampAuxiliaryWidthRatio(ratio);
@@ -567,17 +607,15 @@ export function useAuxiliaryWorkspace(input: {
     mutationRevisionRef.current += 1;
     setLoading(false);
     detailMutationEpochRef.current.set(saved.id, (detailMutationEpochRef.current.get(saved.id) ?? 0) + 1);
-    detailsRef.current.set(saved.id, saved);
-    const binding = bindingsRef.current.get(saved.id);
-    if (binding) binding.sessionRef.current = saved;
     const nextSummaries = sortByLastUsed([...summariesRef.current.filter((summary) => summary.id !== saved.id), projectAuxiliarySessionSummary(saved)], recencyRef.current);
     summariesRef.current = nextSummaries;
     setSummaries(nextSummaries);
     selectedIdRef.current = saved.id;
+    cacheDetail(saved.id, saved);
     setSelectedId(saved.id);
     setSelectedSession(saved);
     persistPrefs({ selectedId: saved.id });
-  }, [persistPrefs]);
+  }, [cacheDetail, persistPrefs]);
 
   const getBinding = useCallback((id: string | null): AuxiliarySessionBinding => {
     if (id === null) {
@@ -593,6 +631,7 @@ export function useAuxiliaryWorkspace(input: {
         setMessageBookmark() {},
         getSession() { return null; },
         setExecutionSelection() {},
+        retainDetail() { return () => {}; },
       };
       bindingsRef.current.set(emptyId, emptyBinding);
       return emptyBinding;
@@ -600,11 +639,30 @@ export function useAuxiliaryWorkspace(input: {
     const existing = bindingsRef.current.get(id);
     if (existing) return existing;
     const bindingGeneration = workspaceGenerationRef.current;
+    const trackedQueue = () => {
+      let current = Promise.resolve();
+      return {
+        get current() { return current; },
+        set current(operation: Promise<void>) {
+          current = operation;
+          if (bindingGeneration !== workspaceGenerationRef.current) return;
+          detailQueuesRef.current.set(id, (detailQueuesRef.current.get(id) ?? 0) + 1);
+          const settled = () => {
+            if (bindingGeneration !== workspaceGenerationRef.current) return;
+            const remaining = (detailQueuesRef.current.get(id) ?? 1) - 1;
+            if (remaining > 0) detailQueuesRef.current.set(id, remaining);
+            else detailQueuesRef.current.delete(id);
+            pruneDetails();
+          };
+          void operation.then(settled, settled);
+        },
+      };
+    };
     const binding: AuxiliarySessionBinding = {
       sessionRef: { current: detailsRef.current.get(id) ?? null },
       mutationRevision: { current: 0 },
-      draftSaveQueue: { current: Promise.resolve() },
-      sessionSaveQueue: { current: Promise.resolve() },
+      draftSaveQueue: trackedQueue(),
+      sessionSaveQueue: trackedQueue(),
       setSession(update) {
         if (bindingGeneration !== workspaceGenerationRef.current) return;
         const current = binding.sessionRef.current;
@@ -614,7 +672,10 @@ export function useAuxiliaryWorkspace(input: {
         if (next === (detailsRef.current.get(id) ?? null)) return;
         binding.sessionRef.current = next;
         detailMutationEpochRef.current.set(id, (detailMutationEpochRef.current.get(id) ?? 0) + 1);
-        if (next) detailsRef.current.set(id, next);
+        if (next) {
+          dirtyDetailsRef.current.add(id);
+          cacheDetail(id, next);
+        }
         else detailsRef.current.delete(id);
         setSelectedSession((selected) => selected?.id === id ? next : selected);
         const nextSummaries = replaceSummary(summariesRef.current, id, next ? projectAuxiliarySessionSummary(next) : null, recencyRef.current);
@@ -629,11 +690,13 @@ export function useAuxiliaryWorkspace(input: {
       setMessageBookmark(messageIndex, isBookmarked) {
         if (bindingGeneration !== workspaceGenerationRef.current) return;
         const current = binding.sessionRef.current;
-        if (!current || !Number.isInteger(messageIndex) || messageIndex < 0 || messageIndex >= current.messages.length) return;
-        const message = current.messages[messageIndex];
+        if (!current || !Number.isInteger(messageIndex) || messageIndex < 0) return;
+        const localIndex = current.messages.findIndex((message, index) => (message.historyIndex ?? index) === messageIndex);
+        if (localIndex < 0) return;
+        const message = current.messages[localIndex];
         if ((message.isBookmarked === true) === isBookmarked) return;
         const messages = current.messages.slice();
-        messages[messageIndex] = setMessageBookmarked(message, isBookmarked);
+        messages[localIndex] = setMessageBookmarked(message, isBookmarked);
         const next = { ...current, messages };
         binding.sessionRef.current = next;
         detailsRef.current.set(id, next);
@@ -642,18 +705,44 @@ export function useAuxiliaryWorkspace(input: {
       },
       setExecutionSelection(session) {
         if (bindingGeneration !== workspaceGenerationRef.current) return;
+        const wasDirty = dirtyDetailsRef.current.has(id);
         executionSelectionsRef.current.set(id, { createdAt: session.createdAt, options: captureSessionExecutionOptions(session) });
         binding.setSession(session);
+        if (!wasDirty) dirtyDetailsRef.current.delete(id);
+        pruneDetails();
+      },
+      retainDetail() {
+        if (bindingGeneration !== workspaceGenerationRef.current) return () => {};
+        if (!detailOperationsRef.current.has(id)) operationWasDirtyRef.current.set(id, dirtyDetailsRef.current.has(id));
+        detailOperationsRef.current.set(id, (detailOperationsRef.current.get(id) ?? 0) + 1);
+        let released = false;
+        return () => {
+          if (released || bindingGeneration !== workspaceGenerationRef.current) return;
+          released = true;
+          const remaining = (detailOperationsRef.current.get(id) ?? 1) - 1;
+          if (remaining > 0) detailOperationsRef.current.set(id, remaining);
+          else {
+            detailOperationsRef.current.delete(id);
+            if (!operationWasDirtyRef.current.get(id)) dirtyDetailsRef.current.delete(id);
+            operationWasDirtyRef.current.delete(id);
+          }
+          pruneDetails();
+        };
       },
     };
     bindingsRef.current.set(id, binding);
     return binding;
-  }, [mergeExecutionSelection]);
+  }, [cacheDetail, mergeExecutionSelection, pruneDetails]);
 
   const applyModelCatalog = useCallback((catalog: ModelCatalogSnapshot) => {
     activeCatalogRef.current = catalog;
-    for (const session of detailsRef.current.values()) getBinding(session.id).setSession(session);
-  }, [getBinding]);
+    for (const session of [...detailsRef.current.values()]) {
+      const wasDirty = dirtyDetailsRef.current.has(session.id);
+      getBinding(session.id).setSession(session);
+      if (!wasDirty) dirtyDetailsRef.current.delete(session.id);
+    }
+    pruneDetails();
+  }, [getBinding, pruneDetails]);
 
   const auxiliaryItems = useMemo(() => summaries.map((summary) => ({
     id: summary.id,
