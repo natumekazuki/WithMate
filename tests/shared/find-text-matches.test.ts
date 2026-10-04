@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clampFindMatchIndex, findTextMatches } from "../../src/ui/find-text-matches.js";
+import { clampFindMatchIndex, findTextMatches } from "../../src-shared/text/find-text-matches.js";
 
 test("findTextMatches は同じ文字列内の全一致を順番とsource offset付きで返す", () => {
   assert.deepEqual(findTextMatches("alpha alpha ALPHA", "alpha"), [

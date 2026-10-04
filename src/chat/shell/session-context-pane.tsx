@@ -60,6 +60,7 @@ export type SessionContextPaneProps = {
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onSelectContextPaneTab?: (tab: ContextPaneTabKey) => void;
   onJumpToMessage?: (key: string) => void;
+  onMessageNavigatorActiveChange?: (active: boolean) => void;
 };
 
 type SessionPaneErrorBoundaryProps = {
@@ -175,12 +176,16 @@ export function SessionContextPane({
   messageNavigatorEntries = [],
   messageNavigatorSessionId,
   messageNavigatorCharacter,
+  onMessageNavigatorActiveChange,
   glossaryPaneProps,
   onCycleContextPaneTab,
   onSelectContextPaneTab,
   onJumpToMessage,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    onMessageNavigatorActiveChange?.(activeContextPaneTab === "messages");
+  }, [activeContextPaneTab, onMessageNavigatorActiveChange]);
   const messageNavigatorButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [messageNavigatorFocusIndex, setMessageNavigatorFocusIndex] = useState(0);
   const [messageNavigatorFilter, setMessageNavigatorFilter] = useState<"all" | "bookmarks">("all");

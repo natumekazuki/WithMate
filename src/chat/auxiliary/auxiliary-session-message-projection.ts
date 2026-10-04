@@ -1,5 +1,6 @@
 import type { AuxiliarySession } from "../../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { Message } from "../../../src-shared/session/session-state.js";
+import { getMessageHistoryIndex } from "../../../src-shared/session/conversation-page.js";
 
 export type MessageListSource =
   | {
@@ -98,7 +99,7 @@ export function loadProjectedMessageArtifact({
 }
 
 export async function loadOwnedAuxiliaryMessageArtifact(input: {
-  owner: Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "messages"> | null;
+  owner: Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "messages"> & { messageCount?: number } | null;
   getCurrentOwner: () => Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt"> | null;
   messageIndex: number;
   loadArtifact: (sessionId: string, messageIndex: number) => Promise<ProjectedMessageArtifact | null>;
@@ -108,7 +109,7 @@ export async function loadOwnedAuxiliaryMessageArtifact(input: {
     const current = input.getCurrentOwner();
     return !!owner && current?.id === owner.id && current.parentSessionId === owner.parentSessionId && current.createdAt === owner.createdAt;
   };
-  if (!owner || !Number.isInteger(input.messageIndex) || input.messageIndex < 0 || !owner.messages[input.messageIndex] || !matchesOwner()) return null;
+  if (!owner || !Number.isInteger(input.messageIndex) || input.messageIndex < 0 || (owner.messageCount !== undefined ? input.messageIndex >= owner.messageCount : !owner.messages.some((message, index) => getMessageHistoryIndex(message, index) === input.messageIndex)) || !matchesOwner()) return null;
   const detail = await input.loadArtifact(owner.id, input.messageIndex);
   return matchesOwner() ? detail : null;
 }
@@ -138,6 +139,7 @@ export function buildMessageListProjection(
     : null;
 
   const addSessionMessage = (message: Message, messageIndex: number) => {
+    messageIndex = getMessageHistoryIndex(message, messageIndex);
     messages.push(message);
     sources.push(primaryMessageSourceKind === "auxiliary"
       ? {
@@ -150,7 +152,6 @@ export function buildMessageListProjection(
     keys.push(isMatchingPersistedLiveAssistantMessage({
       message,
       messageIndex,
-      messageCount: sessionMessages.length,
       targetSessionId: sessionId,
       liveAssistant,
     }) && liveAssistantKey
@@ -165,6 +166,7 @@ export function buildMessageListProjection(
       label: "Auxiliary",
     };
     auxiliarySession.messages.forEach((message, messageIndex) => {
+      messageIndex = getMessageHistoryIndex(message, messageIndex);
       messages.push({
         ...message,
         accent: true,
@@ -178,7 +180,6 @@ export function buildMessageListProjection(
       keys.push(isMatchingPersistedLiveAssistantMessage({
         message,
         messageIndex,
-        messageCount: auxiliarySession.messages.length,
         targetSessionId: auxiliarySession.id,
         liveAssistant,
       }) && liveAssistantKey
@@ -269,9 +270,10 @@ export function projectLiveAssistantOnSessionHistory(
 
   const key = buildLiveAssistantProjectionKey(live.sessionId, live.threadId, live.messageIndex);
   if (hasAssistantMessageAtIndex(sessionMessages, live.messageIndex)) {
-    if (history.keys[live.messageIndex] === key) return history;
+    const localIndex = sessionMessages.findIndex((message, index) => getMessageHistoryIndex(message, index) === live.messageIndex);
+    if (history.keys[localIndex] === key) return history;
     const keys = [...history.keys];
-    keys[live.messageIndex] = key;
+    keys[localIndex] = key;
     return { ...history, keys };
   }
 
@@ -331,10 +333,10 @@ export function resolveLiveAssistantMessageIndex(
     assistantText.length > 0 &&
     persistedTail?.role === "assistant"
   ) {
-    return persistedTailIndex;
+    return getMessageHistoryIndex(persistedTail, persistedTailIndex);
   }
 
-  return targetMessages.length;
+  return persistedTail ? getMessageHistoryIndex(persistedTail, persistedTailIndex) + 1 : 0;
 }
 
 export function shouldProjectLiveAssistantBridge({
@@ -363,26 +365,23 @@ function normalizeLiveAssistantProjection(
 function isMatchingPersistedLiveAssistantMessage({
   message,
   messageIndex,
-  messageCount,
   targetSessionId,
   liveAssistant,
 }: {
   message: Message;
   messageIndex: number;
-  messageCount: number;
   targetSessionId: string;
   liveAssistant: LiveAssistantProjection | null;
 }): boolean {
   return (
     liveAssistant?.sessionId === targetSessionId &&
     messageIndex === liveAssistant.messageIndex &&
-    messageIndex < messageCount &&
     message.role === "assistant"
   );
 }
 
 function hasAssistantMessageAtIndex(messages: Message[], messageIndex: number): boolean {
-  return messages[messageIndex]?.role === "assistant";
+  return messages.some((message, index) => getMessageHistoryIndex(message, index) === messageIndex && message.role === "assistant");
 }
 
 function compareAuxiliarySessions(left: MessageListAuxiliarySession, right: MessageListAuxiliarySession): number {

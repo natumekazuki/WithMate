@@ -75,6 +75,10 @@ export type SessionStorageRead = AwaitableStorageMethods<
   | "getSessionMessageArtifact"
   | "listSessionIdsLastActiveBefore"
 > & Pick<SessionStorage, "close"> & {
+  getSessionView?: AwaitableStorageMethods<SessionStorageV6, "getSessionView">["getSessionView"];
+  getConversationPage?: AwaitableStorageMethods<SessionStorageV6, "getConversationPage">["getConversationPage"];
+  searchConversation?: AwaitableStorageMethods<SessionStorageV6, "searchConversation">["searchConversation"];
+  listConversationNavigator?: AwaitableStorageMethods<SessionStorageV6, "listConversationNavigator">["listConversationNavigator"];
   listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   getSessionSummary?(sessionId: string): Awaitable<import("../../src-shared/session/session-state.js").SessionSummary | null>;
   listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
@@ -122,6 +126,10 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "listRunningActiveAuxiliarySessions"
   | "getActiveAuxiliarySession"
   | "getAuxiliarySession"
+  | "getAuxiliarySessionView"
+  | "getConversationPage"
+  | "searchConversation"
+  | "listConversationNavigator"
   | "upsertAuxiliarySession"
   | "updateAuxiliarySessionIfMatches"
   | "deleteAuxiliarySessionsForParent"
@@ -445,6 +453,10 @@ export class PersistentStoreLifecycleService {
 }
 
 class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
+  getAuxiliarySessionView(): null { return null; }
+  getConversationPage(): null { return null; }
+  searchConversation(): [] { return []; }
+  listConversationNavigator(): [] { return []; }
   listAllAuxiliarySessions(): AuxiliarySession[] {
     return [];
   }

@@ -40,6 +40,9 @@ import {
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_GET_CONVERSATION_PAGE_CHANNEL,
+  WITHMATE_SEARCH_CONVERSATION_CHANNEL,
+  WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL,
   WITHMATE_GET_SESSION_SUMMARY_CHANNEL,
   WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
@@ -217,6 +220,26 @@ export function registerSessionQueryHandlers(
       return null;
     }
     return deps.getSession(sessionId);
+  });
+  const authorizeConversation = async (event: Parameters<typeof assertOwningSessionWindowSender>[0], sessionId: string) => {
+    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
+    const owner = await deps.getConversationOwnerSessionId?.(sessionId) ?? sessionId;
+    assertOwningSessionWindowSender(event, owner, deps);
+  };
+  ipcMain.handle(WITHMATE_GET_CONVERSATION_PAGE_CHANNEL, async (event, sessionId, request) => {
+    await authorizeConversation(event, sessionId);
+    if (!deps.getConversationPage) throw new Error("Conversation page reads are unavailable.");
+    return deps.getConversationPage(sessionId, request);
+  });
+  ipcMain.handle(WITHMATE_SEARCH_CONVERSATION_CHANNEL, async (event, sessionId, request) => {
+    await authorizeConversation(event, sessionId);
+    if (!deps.searchConversation) throw new Error("Conversation search is unavailable.");
+    return deps.searchConversation(sessionId, request);
+  });
+  ipcMain.handle(WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL, async (event, sessionId) => {
+    await authorizeConversation(event, sessionId);
+    if (!deps.listConversationNavigator) throw new Error("Conversation navigation is unavailable.");
+    return deps.listConversationNavigator(sessionId);
   });
   ipcMain.handle(WITHMATE_GET_SESSION_SUMMARY_CHANNEL, (_event, sessionId: string) => {
     if (!sessionId) {

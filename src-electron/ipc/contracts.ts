@@ -508,6 +508,10 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
       request?: OpenSessionWindowIdsPageRequest | null,
     ): OpenSessionWindowIdsPageResult;
     getSession(sessionId: string): Awaitable<Session | null>;
+    getConversationOwnerSessionId?(sessionId: string): Awaitable<string>;
+    getConversationPage?(sessionId: string, request?: import("../../src-shared/session/conversation-page.js").ConversationPageRequest): Awaitable<import("../../src-shared/session/conversation-page.js").ConversationPage | null>;
+    searchConversation?(sessionId: string, request: import("../../src-shared/session/conversation-page.js").ConversationSearchRequest): Awaitable<import("../../src-shared/session/conversation-page.js").ConversationSearchMatch[]>;
+    listConversationNavigator?(sessionId: string): Awaitable<import("../../src-shared/session/conversation-page.js").ConversationNavigatorEntry[]>;
     getSessionSummary(sessionId: string): Awaitable<SessionSummary | null>;
     getSessionGlossaryProjection(
       sessionId: string,

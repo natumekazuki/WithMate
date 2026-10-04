@@ -19,7 +19,7 @@ export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput
   selectedSession: Session;
   displayedSession: Session;
   ref?: Ref<SessionContextFeatureHandle>;
-  navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorSessionId" | "onJumpToMessage">;
+  navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorSessionId" | "onJumpToMessage" | "onMessageNavigatorActiveChange">;
   onAnnotationMatcherChange: (matcher: GlossaryAnnotationMatcher | undefined) => void;
 }) {
   const { selectedSessionLiveRun } = useActiveSessionLiveRun(props.api, props.selectedSession, props.activeRunSessionId);

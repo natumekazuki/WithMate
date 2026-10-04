@@ -58,7 +58,7 @@ import {
   type RenderedTextMatchOffsets,
   type RenderedTextSearchIndex,
 } from "./rendered-text-search.js";
-import { clampFindMatchIndex } from "../ui/find-text-matches.js";
+import { clampFindMatchIndex } from "../../src-shared/text/find-text-matches.js";
 import {
   getShortcutTooltip,
   SHORTCUT_COMMAND_IDS,

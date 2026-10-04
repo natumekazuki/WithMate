@@ -227,9 +227,23 @@ export function appendRenderedTextMatches(
   }
 }
 
-export function scrollRenderedTextMatchIntoView(match: RenderedTextMatch | null): void {
+export function scrollRenderedTextMatchIntoView(match: RenderedTextMatch | null, scrollContainer?: HTMLElement): void {
   if (!match || !match.startNode.isConnected || !match.endNode.isConnected) {
     return;
+  }
+  if (scrollContainer) {
+    const range = createRange(match.startNode.ownerDocument, match);
+    if (range && typeof range.getClientRects === "function") {
+      const rect = Array.from(range.getClientRects()).find((rect) => rect.width > 0 && rect.height > 0);
+      if (!rect) return;
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const top = containerRect.top + scrollContainer.clientTop;
+      const bottom = top + scrollContainer.clientHeight;
+      if (rect.top < top || rect.bottom > bottom) {
+        scrollContainer.scrollTop += rect.top + rect.height / 2 - (top + scrollContainer.clientHeight / 2);
+      }
+      return;
+    }
   }
   const target = match.startNode.parentElement;
   if (typeof target?.scrollIntoView === "function") {

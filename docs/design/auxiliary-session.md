@@ -84,6 +84,10 @@ MainとAuxiliaryはmessages、composer draft、live run、pending approval／eli
 
 ## Persistence
 
+Rendererは再取得可能な非表示Auxiliaryの詳細を直近使用の8件まで保持する。選択中、実行中、未保存の詳細変更、送信・保存・terminal取得の処理中は退避対象にしない。退避時はworkspaceとbindingの本文参照を解放するが、stable ID、独立draft owner、実行・保存queue、runtime選択は維持する。draft ownerのclosureは会話本文を捕捉しない。再選択時は最新の表示用pageを取得し、保持しているdraft／caretと閲覧位置を復元する。保護対象が増えた場合は8件を超え得る。
+
+表示用の初回・terminal読込みは最新60件と全履歴件数を返し、過去は必要時だけ取得する。検索・Bookmark・artifactの対象はページ内indexではなく保存履歴上のindexを使う。取得・保存境界は[Electron Session Store](electron-session-store.md#読取と通知)を参照する。
+
 ### Composer の更新・保存境界
 
 Main / Auxiliary の入力は会話種別と stable ID をキーとする共通 Composer controller が所有する。draft、編集 revision、selection、IME、preview、保存状態は対象 Composer だけが購読し、Session shell / transcript / Auxiliary 一覧へ文字入力を通知しない。Paste、Quote、Skill、Template、添付、retry、送信後 clear も同じ操作へ接続する。Main draft は従来どおり Window 内のローカル状態であり、新しい永続化対象にしない。

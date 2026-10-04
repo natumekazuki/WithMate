@@ -1,4 +1,5 @@
-const { contextBridge } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
+const conversationLoading = process.argv.includes("--benchmark-conversation-loading");
 
 const now = new Date().toISOString();
 const countArg = process.argv.find((value) => value.startsWith("--benchmark-auxiliary-count="));
@@ -170,9 +171,13 @@ const names = [
   "listSessionAuditLogSummaryPage",
   "getAuxiliaryDraft", "saveAuxiliaryDraft", "getAuxiliarySessionStatus",
   "acknowledgeSessionDraftFlush",
+  "getConversationPage", "searchConversation", "listConversationNavigator",
+  "setSessionMessageBookmark", "setAuxiliaryMessageBookmark",
 ];
 for (const name of names) {
-  api[name] = (...args) => name.startsWith("subscribe")
+  api[name] = (...args) => conversationLoading && ["getSession", "getSessionSummary", "listAuxiliarySessions", "getAuxiliarySession", "getConversationPage", "searchConversation", "listConversationNavigator", "setSessionMessageBookmark", "setAuxiliaryMessageBookmark"].includes(name)
+    ? ipcRenderer.invoke("benchmark:conversation", name, args, resultFor(name, args))
+    : name.startsWith("subscribe")
     ? resultFor(name, args)
     : name === "acknowledgeSessionDraftFlush"
       ? resultFor(name, args)

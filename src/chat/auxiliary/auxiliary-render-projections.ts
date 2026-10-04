@@ -43,6 +43,7 @@ export function useMessageListAuxiliarySessions(
 function toAuxiliaryRuntimeProjectionInput(session: AuxiliarySession): AuxiliaryRuntimeProjectionInput {
   return {
     id: session.id,
+    createdAt: session.createdAt,
     runState: session.runState,
     title: session.title,
     provider: session.provider,
@@ -57,6 +58,7 @@ function toAuxiliaryRuntimeProjectionInput(session: AuxiliarySession): Auxiliary
     allowedAdditionalDirectories: session.allowedAdditionalDirectories,
     threadId: session.threadId,
     messages: session.messages,
+    messageCount: session.messageCount,
     updatedAt: session.updatedAt,
     characterId: session.characterId ?? "",
     characterRuntimeSnapshot: session.characterRuntimeSnapshot ?? null,
@@ -80,7 +82,9 @@ function useRuntimeProjectionSession(
       activeSession?.codexReviewer,
       activeSession?.customAgentName,
       activeSession?.id,
+      activeSession?.createdAt,
       activeSession?.messages,
+      activeSession?.messageCount,
       activeSession?.model,
       activeSession?.provider,
       activeSession?.reasoningEffort,

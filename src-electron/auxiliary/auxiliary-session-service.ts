@@ -355,6 +355,17 @@ export class AuxiliarySessionService {
     return session ? this.overlayExecutionOptions(session) : null;
   }
 
+  async getAuxiliarySessionView(auxiliarySessionId: string): Promise<AuxiliarySession | null> {
+    const session = await this.deps.getStorage().getAuxiliarySessionView(auxiliarySessionId);
+    return session ? this.overlayExecutionOptions(session) : null;
+  }
+
+  async getActiveAuxiliarySessionView(parentSessionId: string): Promise<AuxiliarySession | null> {
+    const storage = this.deps.getStorage();
+    const summary = (await storage.listActiveAuxiliarySessionSummaries([parentSessionId]))[0];
+    return summary ? this.getAuxiliarySessionView(summary.id) : null;
+  }
+
   async getAuxiliarySessionSummary(auxiliarySessionId: string): Promise<AuxiliarySessionSummary | null> {
     const session = await this.deps.getStorage().getAuxiliarySessionSummary(auxiliarySessionId);
     return session ? this.overlayExecutionOptions(session) : null;
@@ -1193,10 +1204,13 @@ export class AuxiliarySessionService {
     }
 
     const hasStaleRuntimeThread = session.threadId !== current.threadId && current.threadId !== "";
+    if (session.createdAt !== current.createdAt || session.parentSessionId !== current.parentSessionId) {
+      throw new Error("The Auxiliary Session incarnation does not match.");
+    }
     const isRuntimeStalePayload =
       session.runState !== current.runState ||
       hasStaleRuntimeThread ||
-      session.messages.length < current.messages.length;
+      (session.messageCount === undefined && session.messages.length < current.messages.length);
     if (isRuntimeStalePayload) {
       return this.overlayExecutionOptions(current);
     }

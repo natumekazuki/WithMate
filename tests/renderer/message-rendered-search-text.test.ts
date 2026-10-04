@@ -9,8 +9,8 @@ import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
 import { createRenderedTextSearchIndex } from "../../src/file-explorer/rendered-text-search.js";
 import {
   isMessageRenderedSearchTextNode,
-  projectMessageRenderedSearchText,
 } from "../../src/chat/conversation/message-rendered-search-text.js";
+import { projectMessageRenderedSearchText } from "../../src-shared/session/message-search.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

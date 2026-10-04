@@ -6,6 +6,7 @@ import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/rea
 import type { ChangedFile, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse } from "../../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
 import type { Message, MessageArtifact } from "../../../src-shared/session/session-state.js";
+import { getMessageHistoryIndex, type ConversationSearchMatch } from "../../../src-shared/session/conversation-page.js";
 
 import { MessageRichText, type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 import { useMarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
@@ -17,15 +18,15 @@ import { approvalModeLabel, CharacterAvatar, operationTypeLabel } from "../../ui
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { LiveRequestSurface } from "../runtime/live-request-surface.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
-import { clampFindMatchIndex, findTextMatches } from "../../ui/find-text-matches.js";
+import { clampFindMatchIndex, findTextMatches } from "../../../src-shared/text/find-text-matches.js";
 
 import { resolveSelectionActionOverlayPosition } from "../../chat/selection-action-overlay.js";
 
 import {
   createMessageRenderedSearchTextProjection,
   isMessageRenderedSearchTextNode,
-  projectMessageRenderedSearchText,
 } from "./message-rendered-search-text.js";
+import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
 import {
   appendRenderedTextMatches,
   applyRenderedTextHighlights,
@@ -74,6 +75,12 @@ export type SessionMessageColumnProps = {
   messageCollapseTargets?: readonly MessageCollapseTarget[];
   collapsedMessageKeys?: ReadonlySet<string>;
   messageJumpRequest?: MessageJumpRequest | null;
+  conversationPaging?: {
+    startIndex: number; endIndex: number; totalCount: number; loading: boolean; error: string;
+    onEarlier?: () => void; onLater?: () => void; onRetry: () => void;
+  };
+  searchConversation?: (query: string, mode: "source" | "preview") => Promise<ConversationSearchMatch[]>;
+  onLoadMessagePage?: (messageIndex: number) => Promise<void>;
   messageGroups?: Array<{
     id: string;
     label: string;
@@ -404,6 +411,9 @@ export function SessionMessageColumn({
   messageCollapseTargets = [],
   collapsedMessageKeys = new Set(),
   messageJumpRequest = null,
+  conversationPaging,
+  searchConversation,
+  onLoadMessagePage,
   messageGroups,
   expandedArtifacts,
   messageListRef,
@@ -445,6 +455,9 @@ export function SessionMessageColumn({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
+  const [conversationFindMatches, setConversationFindMatches] = useState<ConversationSearchMatch[]>([]);
+  const [conversationFindError, setConversationFindError] = useState("");
+  const [findRevision, setFindRevision] = useState(0);
   const [messageJumpHighlightKey, setMessageJumpHighlightKey] = useState<string | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
@@ -495,6 +508,14 @@ export function SessionMessageColumn({
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
   );
+  const artifactPageKeys = useRef<Set<string> | null>(null);
+  artifactPageKeys.current = conversationPaging ? new Set(messages.map((_, index) => getMessageKey(index))) : null;
+  useEffect(() => {
+    const keys = artifactPageKeys.current;
+    if (!keys) return;
+    setLoadedArtifactDetails((current) => Object.keys(current).some((key) => !keys.has(key))
+      ? Object.fromEntries(Object.entries(current).filter(([key]) => keys.has(key))) : current);
+  }, [messageKeys, messages, conversationPaging?.startIndex]);
   const pendingResponseMessageIndex = isRunning && pendingResponseMessageKey !== null
     ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1
     : -1;
@@ -548,7 +569,13 @@ export function SessionMessageColumn({
 
     handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
     messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
-    setMessageJumpHighlightKey(messageJumpRequest.key);
+    if (messageJumpRequest.offset !== undefined) {
+      requestAnimationFrame(() => {
+        const element = messageListRef.current;
+        const row = element?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
+        if (element && row) element.scrollTop += row.getBoundingClientRect().top - element.getBoundingClientRect().top - messageJumpRequest.offset!;
+      });
+    } else setMessageJumpHighlightKey(messageJumpRequest.key);
   }, [messageJumpRequest, messageKeys, messageVirtualizer, sessionId]);
 
   useEffect(() => {
@@ -576,6 +603,18 @@ export function SessionMessageColumn({
   const canUsePendingMessageTextActions = !!(onCopyMessageText || onQuoteMessageText);
   const hasFindQuery = findQuery.trim().length > 0;
   const projectMessageSearchTexts = useMemo(() => createMessageRenderedSearchTextProjection(), [sessionId]);
+  useEffect(() => {
+    setConversationFindMatches([]);
+    setConversationFindError("");
+    if (!searchConversation || !findOpen || !hasFindQuery) return;
+    let active = true;
+    void searchConversation(findQuery, messageViewMode).then((matches) => {
+      if (active) setConversationFindMatches(matches);
+    }).catch((error: unknown) => {
+      if (active) setConversationFindError(error instanceof Error ? error.message : String(error));
+    });
+    return () => { active = false; };
+  }, [findQuery, findOpen, hasFindQuery, messageViewMode, sessionId, searchConversation, findRevision]);
   const messageRenderedSearchTexts = useMemo(
     () => projectMessageSearchTexts(messages, messageKeys, messageViewMode, hasFindQuery),
     [hasFindQuery, messageKeys, messageViewMode, messages, projectMessageSearchTexts],
@@ -612,7 +651,15 @@ export function SessionMessageColumn({
         matches.push({ kind: "pending", occurrenceIndex });
       });
     };
-    messageRenderedSearchTexts.forEach((text, messageIndex) => {
+    if (searchConversation) {
+      conversationFindMatches.forEach((match) => matches.push({ kind: "message", messageIndex: messages.findIndex((message, index) => getMessageHistoryIndex(message, index) === match.messageIndex), occurrenceIndex: match.occurrenceIndex }));
+      messageRenderedSearchTexts.forEach((text, messageIndex) => {
+        findTextMatches(text, findQuery).forEach((_, occurrenceIndex) => {
+          const historyIndex = getMessageHistoryIndex(messages[messageIndex], messageIndex);
+          if (!conversationFindMatches.some((match) => match.messageIndex === historyIndex && match.occurrenceIndex === occurrenceIndex)) matches.push({ kind: "message", messageIndex, occurrenceIndex });
+        });
+      });
+    } else messageRenderedSearchTexts.forEach((text, messageIndex) => {
       findTextMatches(text, findQuery).forEach((_, occurrenceIndex) => {
         matches.push({ kind: "message", messageIndex, occurrenceIndex });
       });
@@ -624,7 +671,7 @@ export function SessionMessageColumn({
       appendPendingMatches();
     }
     return matches;
-  }, [findQuery, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
+  }, [findQuery, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText, searchConversation, conversationFindMatches, messages]);
   const findMatchMessageIndexes = useMemo(
     () => new Set(
       messageFindMatches
@@ -643,14 +690,18 @@ export function SessionMessageColumn({
       return null;
     }
     if (match.kind === "message") {
-      return match.messageIndex;
+      return match.messageIndex < 0 ? null : match.messageIndex;
     }
     if (pendingMessageGroupEndIndex >= 0) {
       return pendingMessageGroupEndIndex;
     }
     return messages.length > 0 ? messages.length - 1 : null;
   }, [messages.length, pendingMessageGroupEndIndex]);
-  const firstFindScrollIndex = getFindMatchScrollIndex(messageFindMatches[0]);
+  const firstFindScrollIndex = getFindMatchScrollIndex(messageFindMatches[activeCurrentFindMatch]);
+  useEffect(() => {
+    const match = conversationFindMatches[activeCurrentFindMatch];
+    if (searchConversation && match && onLoadMessagePage) void onLoadMessagePage(match.messageIndex).catch((error: unknown) => setConversationFindError(error instanceof Error ? error.message : String(error)));
+  }, [activeCurrentFindMatch, conversationFindMatches, searchConversation, onLoadMessagePage]);
 
   useEffect(() => {
     if (previousMessageViewModeRef.current === messageViewMode) {
@@ -851,7 +902,7 @@ export function SessionMessageColumn({
         appendPendingHighlights(messageListElement);
       }
       applyRenderedTextHighlights(ownerDocument, resolvedMatches, resolvedCurrentMatch);
-      scrollRenderedTextMatchIntoView(resolvedCurrentMatch);
+      scrollRenderedTextMatchIntoView(resolvedCurrentMatch, messageListElement);
     };
     applyHighlights();
     const MutationObserverConstructor = ownerDocument.defaultView?.MutationObserver;
@@ -885,7 +936,7 @@ export function SessionMessageColumn({
     setLoadingArtifactDetails((current) => ({ ...current, [artifactKey]: true }));
     void onLoadArtifactDetail(messageIndex)
       .then((detail) => {
-        if (!detail) {
+        if (!detail || (artifactPageKeys.current && !artifactPageKeys.current.has(artifactKey))) {
           return;
         }
         setLoadedArtifactDetails((current) => ({ ...current, [artifactKey]: detail }));
@@ -926,7 +977,7 @@ export function SessionMessageColumn({
 
   const renderPendingContent = () => (
     <div className="pending-response-content">
-      <LiveRequestSurface
+      {!conversationPaging ? <LiveRequestSurface
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
         liveElicitationRequest={liveElicitationRequest}
@@ -934,7 +985,7 @@ export function SessionMessageColumn({
         onResolveLiveApproval={onResolveLiveApproval}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
-      />
+      /> : null}
       {hasPendingMessageText ? (
         <div
           data-message-body="true"
@@ -973,7 +1024,7 @@ export function SessionMessageColumn({
   );
 
   return (
-    <div className="session-message-column">
+    <div className={`session-message-column${conversationPaging ? " is-paged" : ""}`}>
       <SessionContentFindBar
         open={findOpen}
         query={findQuery}
@@ -984,6 +1035,25 @@ export function SessionMessageColumn({
         onNext={() => navigateFindMatch(1)}
         onClose={() => setFindOpen(false)}
       />
+      {conversationFindError ? <div role="alert">{conversationFindError}<button className="drawer-toggle compact secondary" type="button" onClick={() => setFindRevision((revision) => revision + 1)}>Retry</button></div> : null}
+      {conversationPaging ? (
+        <div className="conversation-page-controls" aria-busy={conversationPaging.loading}>
+          {conversationPaging.onEarlier ? <button className="drawer-toggle compact secondary" type="button" disabled={conversationPaging.loading} onClick={conversationPaging.onEarlier}>Earlier Messages</button> : null}
+          {conversationPaging.onLater ? <button className="drawer-toggle compact secondary" type="button" disabled={conversationPaging.loading} onClick={conversationPaging.onLater}>Later Messages</button> : null}
+          <span>{conversationPaging.totalCount > 0 ? `${conversationPaging.startIndex + 1}–${conversationPaging.endIndex} / ${conversationPaging.totalCount}` : ""}</span>
+          {conversationPaging.loading ? <LoadingIndicator label="Loading Messages" /> : null}
+          {conversationPaging.error ? <><span role="alert">{conversationPaging.error}</span><button className="drawer-toggle compact secondary" type="button" onClick={conversationPaging.onRetry}>Retry</button></> : null}
+        </div>
+      ) : null}
+      {conversationPaging ? <div className="conversation-live-request"><LiveRequestSurface
+        liveApprovalRequest={liveApprovalRequest}
+        approvalActionRequestId={approvalActionRequestId}
+        liveElicitationRequest={liveElicitationRequest}
+        elicitationActionRequestId={elicitationActionRequestId}
+        onResolveLiveApproval={onResolveLiveApproval}
+        onResolveLiveElicitation={onResolveLiveElicitation}
+        onOpenPath={onOpenPath}
+      /></div> : null}
       {onJumpToBottom ? (
         <button
           className="message-list-jump-bottom-button"

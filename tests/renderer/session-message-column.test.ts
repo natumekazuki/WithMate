@@ -1068,7 +1068,7 @@ async function startSearchProjectionCounter() {
   return {
     async take() {
       const { result } = await inspector.post("Profiler.takePreciseCoverage");
-      return result.filter((script) => script.url.includes("/message-rendered-search-text."))
+      return result.filter((script) => script.url.includes("/message-search."))
         .flatMap((script) => script.functions)
         .filter((fn) => fn.functionName === "projectMessageRenderedSearchText")
         .reduce((count, fn) => count + fn.ranges[0].count, 0);
@@ -1106,7 +1106,7 @@ async function setMessageFindQuery(mounted: MountedSessionMessageColumn, query: 
 // claim = "検索queryを保ったPreviewのlive更新は確定履歴を再解析せず、変更されたlive本文だけを検索投影する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/737#issuecomment-5979140173 PERF-737-A" }
 // fault = "ConversationMessageColumnのlive投影でmessages配列が変わるたびに確定履歴もMarkdown検索解析される"
-// observable = "実検索投影関数のV8呼出回数、検索件数、結果移動とCSS Highlightの文字列"
+// observable = "共通検索投影関数のV8呼出回数、検索件数、結果移動とCSS Highlightの文字列"
 // observation_boundary = "component-behavior"
 // scope = "ConversationMessageColumnから共通検索へのlive更新"
 // lifecycle = "permanent"
@@ -1174,7 +1174,7 @@ test("ConversationMessageColumn の検索はlive末尾更新だけを再解析�
 // claim = "検索本文の再利用はkeyと本文に一致する現在の会話だけを対象とし、Source中の本文変更・owner切替・履歴離脱・query空を越えて古い投影を再利用しない"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/737#issuecomment-5979140173 PERF-737-A; issue-737-search-projection-initial.md: 本文変更・会話owner・寿命" }
 // fault = "配列再生成・並べ替えで全文再解析する、同じkeyの変更本文を見落とす、SourceのURLをPreviewへ混入する、離脱履歴や別ownerを保持し続ける"
-// observable = "SessionMessageColumnの検索件数と、各入力変更による実検索投影関数のV8呼出回数"
+// observable = "SessionMessageColumnの検索件数と、各入力変更による共通検索投影関数のV8呼出回数"
 // observation_boundary = "component-behavior"
 // scope = "検索投影の本文・key・owner・現在履歴の寿命"
 // lifecycle = "permanent"
@@ -2675,6 +2675,44 @@ test("ConversationMessageColumn は履歴スクロールを挟んでも elicitat
       await mounted.cleanup();
     }
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "会話pageの移動は同じelicitation requestの未送信回答を保持して送信する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Elicitationの入力待ち" }
+// fault = "最新pageから過去pageへ移動した際に未送信回答を初期値へ戻す"
+// observable = "過去pageのDOM内select値とSubmit応答payload"
+// observation_boundary = "component-behavior"
+// scope = "conversation-paging-elicitation"
+// lifecycle = "permanent"
+// impact = "履歴を参照しただけで操作対象の回答が初期化される誤送信を防ぐ"
+// distinction = "既存scroll testはmessagesのpage交換とpending rowの消滅を通らない"
+// @end-test-value
+test("SessionMessageColumn はpage交換でも入力待ち回答を保持する", async () => {
+  const request: LiveElicitationRequest = {
+    ...createLiveElicitationRequest(),
+    fields: [{ type: "select", name: "branch", title: "Branch", required: true, defaultValue: "main", options: [{ value: "main", label: "main" }, { value: "feature", label: "feature" }] }],
+  };
+  const responses: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
+  const paging = { startIndex: 60, endIndex: 120, totalCount: 120, loading: false, error: "", onRetry() {} };
+  function Column(props: SessionMessageColumnProps) {
+    return React.createElement(SessionMessageColumn, { ...props, conversationPaging: props.isRunning ? paging : { ...paging, startIndex: 0, endIndex: 60 } });
+  }
+  const mounted = await mountSessionMessageColumn({ component: Column, messages: createMessages(60), isRunning: true, liveElicitationRequest: request, onResolveLiveElicitation: (...args) => responses.push(args) });
+  try {
+    const select = mounted.container.querySelector<HTMLSelectElement>(".live-elicitation-card select");
+    assert.ok(select);
+    await act(async () => { select.value = "feature"; select.dispatchEvent(new mounted.dom.window.Event("change", { bubbles: true })); });
+    await mounted.rerender({ messages: createMessages(60).map((message) => ({ ...message, text: `Earlier ${message.text}` })), isRunning: false });
+    const after = mounted.container.querySelector<HTMLSelectElement>(".live-elicitation-card select");
+    assert.ok(after);
+    assert.equal(after.value, "feature");
+    const submit = [...mounted.container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button")].find((button) => button.textContent === "Submit");
+    assert.ok(submit);
+    await act(async () => submit.click());
+    assert.deepEqual(responses, [[request, { action: "accept", content: { branch: "feature" } }]]);
+  } finally { await mounted.cleanup(); }
 });
 
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {

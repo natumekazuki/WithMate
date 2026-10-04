@@ -34,6 +34,8 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const onCopyMessageText = useStableOptionalCallback(props.onCopyMessageText);
   const onQuoteMessageText = useStableOptionalCallback(props.onQuoteMessageText);
   const onActivateGlossaryEntry = useStableOptionalCallback(props.onActivateGlossaryEntry);
+  const searchConversation = useStableOptionalCallback(props.searchConversation);
+  const onLoadMessagePage = useStableOptionalCallback(props.onLoadMessagePage);
 
   return (
     <MemoizedSessionMessageColumn
@@ -52,6 +54,8 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
       onCopyMessageText={onCopyMessageText}
       onQuoteMessageText={onQuoteMessageText}
       onActivateGlossaryEntry={onActivateGlossaryEntry}
+      searchConversation={searchConversation}
+      onLoadMessagePage={onLoadMessagePage}
     />
   );
 }

@@ -5,11 +5,11 @@ import {
   buildMessageCollapseTargets,
   buildMessageNavigatorEntries,
   findMessageIndexByKey,
-  projectMessagePlainText,
   reconcileMessageCollapseState,
   toggleAllMessageCollapseState,
   toggleMessageCollapseState,
 } from "../../src/chat/conversation/session-message-collapse.js";
+import { projectMessagePlainText } from "../../src-shared/session/message-search.js";
 import { buildMessageListProjection, type MessageListSource } from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
 import type { Message } from "../../src-shared/session/session-state.js";
 

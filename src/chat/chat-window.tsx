@@ -83,7 +83,7 @@ export type ChatWindowProps = Omit<
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
   rightPaneProps?: SessionContextPaneProps;
-  renderRightPane?: (navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorSessionId" | "onJumpToMessage">) => ReactNode;
+  renderRightPane?: (navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorSessionId" | "onJumpToMessage" | "onMessageNavigatorActiveChange">) => ReactNode;
   mainContent?: ChatScreenProps["mainContent"];
   concurrentChats?: ConcurrentChatWindowProps;
 };
@@ -449,6 +449,7 @@ export function ChatWindow({
   const [messageViewMode, setMessageViewMode] = useState<MessageViewMode>("preview");
   const conversationStateCacheRef = useRef(new Map<string, ConversationColumnCache>());
   const mainColumnControlsRef = useRef<ConversationColumnControls | null>(null);
+  const [messageNavigatorActive, setMessageNavigatorActive] = useState(false);
   const auxiliaryColumnControlsRef = useRef<ConversationColumnControls | null>(null);
   const [, setColumnControlsRevision] = useState(0);
   const handleMainColumnControls = useCallback((controls: ConversationColumnControls) => {
@@ -577,6 +578,7 @@ export function ChatWindow({
         ? undefined
         : targetColumnControls?.sessionId ?? screenProps.rightPaneProps.messageNavigatorSessionId,
       onJumpToMessage: targetColumnControls?.onJumpToMessage ?? screenProps.rightPaneProps.onJumpToMessage,
+      onMessageNavigatorActiveChange: setMessageNavigatorActive,
     }
     : screenProps.rightPaneProps;
 
@@ -589,6 +591,7 @@ export function ChatWindow({
             messageNavigatorEntries: targetColumnControls?.messageNavigatorEntries,
             messageNavigatorSessionId: targetColumnControls?.sessionId ?? targetSessionId,
             onJumpToMessage: targetColumnControls?.onJumpToMessage,
+            onMessageNavigatorActiveChange: setMessageNavigatorActive,
           })}
         </SessionPaneErrorBoundary>
       ) : resolvedRightPaneProps ? (
@@ -658,6 +661,7 @@ export function ChatWindow({
               liveRun={concurrentChats.mainLiveRun}
               stateCache={conversationStateCacheRef.current}
               onColumnControls={handleMainColumnControls}
+              navigatorActive={messageNavigatorActive && screenProps.isRightPaneVisible !== false && concurrentChats.target === "main"}
             />
           ) : (
             <StableSessionMessageColumn
@@ -723,6 +727,7 @@ export function ChatWindow({
                   liveRun={concurrentChats.auxiliaryLiveRun}
                   stateCache={conversationStateCacheRef.current}
                   onColumnControls={handleAuxiliaryColumnControls}
+                  navigatorActive={messageNavigatorActive && screenProps.isRightPaneVisible !== false && concurrentChats.target === "auxiliary"}
                 />
               </>
             ) : null}

@@ -90,6 +90,29 @@ function createSession(): Session {
 
 // @test-value v2
 // kind = "invariant"
+// claim = "Auxiliary表示の履歴総数とincarnationは親Mainの値ではなく選択したAuxiliaryに従う"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md" }
+// fault = "親projectionのmessageCountやincarnationを引き継いで別会話のpage範囲やownerを使う"
+// observable = "生成projectionのid、incarnationId、messageCount、messagesとlatestUserMessage"
+// observation_boundary = "consumer"
+// scope = "auxiliary-conversation-owner"
+// lifecycle = "permanent"
+// impact = "Auxiliaryで過去page移動が拒否されるかMainの履歴件数を表示する"
+// distinction = "既存projection testは全文配列でmessageCountを持たず、ownerと総数の混線を検出しない"
+// @end-test-value
+test("Auxiliaryのpaged projectionは自身の履歴数とownerを使用する", () => {
+  const parent = { ...createSession(), incarnationId: "parent-incarnation", messageCount: 1000, latestUserMessage: { role: "user" as const, text: "main request" } };
+  const auxiliary = createAuxiliarySession({ messageCount: 200, messages: [{ role: "assistant", text: "auxiliary", historyIndex: 199 }] });
+  const projection = buildMainAuxiliaryRuntimeSession(parent, auxiliary);
+  assert.equal(projection.id, auxiliary.id);
+  assert.equal(projection.incarnationId, auxiliary.createdAt);
+  assert.equal(projection.messageCount, 200);
+  assert.equal(projection.messages, auxiliary.messages);
+  assert.equal(projection.latestUserMessage, undefined);
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "Auxiliaryのdraft-only更新は履歴とMain runtime projectionの参照を維持する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
 // fault = "draft変更だけで履歴またはruntime projectionを不要に再生成する"

@@ -130,6 +130,134 @@ function deferred<T>() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "多数のAuxiliaryを順に閲覧しても再取得可能な非表示本文は有限で、退避した会話を同じIDと最新の保存本文で再表示できる"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Persistence" }
+// fault = "bindingが退避本文を保持し続ける、または再選択時に古い本文を再利用する"
+// observable = "閲覧したbindingの保持件数、再取得回数、selectedSessionのID・thread・messages"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-bounded-details"
+// lifecycle = "permanent"
+// impact = "会話数に比例するrenderer本文の保持を抑えながら保存済み会話の継続利用を保つ"
+// distinction = "実hookで多数会話の切替と二重参照の解放・再取得を確認し、型検査では見えない保持と再表示を小さいfixtureで検証する"
+// @end-test-value
+test("非表示detailの保持は有限で、退避した会話は最新の保存本文を再取得する", async () => {
+  const sessions = Array.from({ length: 24 }, (_, index) => session(`cache-${index}`, "2026-01-01"));
+  const stored = new Map(sessions.map((item) => [item.id, item]));
+  let reads = 0;
+  const view = setup({
+    listAuxiliarySessions: async () => sessions,
+    getAuxiliarySession: async (id) => { reads += 1; return stored.get(id) ?? null; },
+  }, "parent-1", sessions[0].id);
+  try {
+    await view.render();
+    const bindings = [];
+    for (const item of sessions) {
+      await act(async () => { view.current.selectSession(item.id); });
+      bindings.push(view.current.getBinding(item.id));
+    }
+    assert.equal(bindings.filter((binding) => binding.sessionRef.current !== null).length, 9);
+    assert.equal(bindings[0].sessionRef.current, null);
+    assert.equal(view.current.selectedSession?.id, sessions.at(-1)?.id);
+    const latest = { ...sessions[0], messages: [{ role: "assistant" as const, text: "saved final response" }] };
+    stored.set(latest.id, latest);
+    const previousReads = reads;
+    await act(async () => { view.current.selectSession(latest.id); });
+    assert.equal(reads, previousReads + 1);
+    assert.strictEqual(view.current.getBinding(latest.id), bindings[0]);
+    assert.equal(view.current.selectedSession?.threadId, latest.threadId);
+    assert.equal(view.current.selectedSession?.messages[0]?.text, "saved final response");
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "非表示の実行中・未保存・処理中detailを保持し、hidden terminal完了が多数発生しても再取得可能な本文だけを有限に退避する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Runtime Model / Persistence" }
+// fault = "キャッシュ圧力で未保存変更や処理中のbindingを失う、またはhidden terminalの全本文を保持し続ける"
+// observable = "保護したbindingの本文とrunState、terminal後のsummaryと保持件数、再選択した最終本文"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-protected-details"
+// lifecycle = "permanent"
+// impact = "非表示会話の送信・保存・実行を中断せず、完了した応答の再表示を保つ"
+// distinction = "単独terminalと保存testでは確認できない多数会話によるキャッシュ圧力と処理保護を実hookで組み合わせる"
+// @end-test-value
+test("保護中detailは退避せず、hidden terminalの確定本文は有限に保持する", async () => {
+  const sessions = Array.from({ length: 24 }, (_, index) => session(`protect-${index}`, "2026-01-01"));
+  const stored = new Map(sessions.map((item) => [item.id, item]));
+  let listener: ((id: string, state: null) => void) | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => sessions,
+    getAuxiliarySession: async (id) => stored.get(id) ?? null,
+    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+  }, "parent-1", sessions[0].id);
+  try {
+    await view.render();
+    const dirty = view.current.getBinding(sessions[0].id);
+    await act(async () => { dirty.setSession((current) => current ? { ...current, composerDraft: "unsaved input" } : current); });
+    await act(async () => { view.current.selectSession(sessions[1].id); });
+    const processing = view.current.getBinding(sessions[1].id);
+    const release = processing.retainDetail();
+    await act(async () => { processing.setSession((current) => current ? { ...current, title: "pending save" } : current); });
+    await act(async () => { view.current.selectSession(sessions[2].id); });
+    const running = view.current.getBinding(sessions[2].id);
+    await act(async () => { running.setExecutionSelection({ ...sessions[2], runState: "running" }); });
+    await act(async () => { view.current.selectSession(sessions[3].id); });
+    for (const item of sessions.slice(4)) {
+      stored.set(item.id, { ...item, preview: `final ${item.id}`, messages: [{ role: "assistant", text: `final ${item.id}` }] });
+      await act(async () => { listener?.(item.id, null); });
+    }
+    assert.equal(dirty.sessionRef.current?.composerDraft, "unsaved input");
+    assert.equal(processing.sessionRef.current?.title, "pending save");
+    assert.equal(running.sessionRef.current?.runState, "running");
+    const retained = sessions.filter((item) => view.current.getBinding(item.id).sessionRef.current !== null);
+    assert.equal(retained.length, 12);
+    assert.equal(view.current.summaries.find((item) => item.id === sessions[4].id)?.preview, `final ${sessions[4].id}`);
+    await act(async () => { release(); });
+    assert.equal(processing.sessionRef.current, null);
+    await act(async () => { view.current.selectSession(sessions[4].id); });
+    assert.equal(view.current.selectedSession?.messages[0]?.text, `final ${sessions[4].id}`);
+    assert.equal(dirty.sessionRef.current?.composerDraft, "unsaved input");
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "部分履歴のBookmark操作は会話全体のmessage indexで対象を特定し、同じpageの別messageを変更しない"
+// oracle = { type = "contract", ref = "src-shared/session/session-state.ts: Message.historyIndex" }
+// fault = "会話全体indexをpage内配列indexとして扱い、Bookmarkを無視するか別messageへ付ける"
+// observable = "bindingとselectedSessionの各message.isBookmarked"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-paged-bookmarks"
+// lifecycle = "permanent"
+// impact = "長いAuxiliary会話でも利用者が選んだmessageのBookmarkを正しく保持する"
+// distinction = "workspace setterのpage部分配列への適用を検証し、型検査と全件配列のBookmark testでは検知できないindex混同を少数messageで検知する"
+// @end-test-value
+test("部分履歴のBookmarkは会話全体indexで正しいmessageへ適用する", async () => {
+  const paged = session("paged", "2026-01-01", {
+    messages: [
+      { role: "assistant", text: "first page message", historyIndex: 100 },
+      { role: "assistant", text: "target", historyIndex: 101 },
+    ],
+  });
+  const view = setup({ listAuxiliarySessions: async () => [paged], getAuxiliarySession: async () => paged });
+  try {
+    await view.render();
+    await act(async () => { view.current.getBinding(paged.id).setMessageBookmark(101, true); });
+    assert.notEqual(view.current.selectedSession?.messages[0]?.isBookmarked, true);
+    assert.equal(view.current.selectedSession?.messages[1]?.isBookmarked, true);
+    await act(async () => { view.current.getBinding(paged.id).setMessageBookmark(101, false); });
+    assert.notEqual(view.current.selectedSession?.messages[1]?.isBookmarked, true);
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "catalog変更は表示中と非表示のAuxiliaryへ反映され、旧snapshotで戻らずrollbackやrevisionが下がるresetにも追従する"
 // oracle = { type = "contract", ref = "docs/design/model-catalog.md#現行の反映" }
 // fault = "現在選択が新catalogを上書きするか、表示中の会話だけ更新して他の会話を旧revisionに残す"

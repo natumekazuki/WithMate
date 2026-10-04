@@ -1,4 +1,5 @@
 import type { IpcMainInvokeEvent } from "electron";
+import { toConversationView } from "../storage/conversation-query.js";
 import type { RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 
 import type {
@@ -133,7 +134,7 @@ export function registerAuxiliaryHandlers(
         return null;
       }
       assertAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
-      return auxiliaryDeps.getActiveAuxiliarySession(parentSessionId);
+      return Promise.resolve(auxiliaryDeps.getActiveAuxiliarySession(parentSessionId)).then((session) => session ? toConversationView(session) : null);
     },
   );
   ipcMain.handle(
@@ -143,12 +144,10 @@ export function registerAuxiliaryHandlers(
       if (!auxiliarySessionId) {
         return null;
       }
-      const session = await getAuxiliarySessionForMutation(
-        auxiliaryDeps,
-        auxiliarySessionId,
-      );
-      assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
-      return session;
+      const status = await auxiliaryDeps.getAuxiliarySessionStatus(auxiliarySessionId);
+      if (!status) return null;
+      assertAuxiliaryOwnerWindowSender(event, status.parentSessionId, deps);
+      return auxiliaryDeps.getAuxiliarySession(auxiliarySessionId);
     },
   );
   ipcMain.handle(
@@ -264,7 +263,7 @@ export function registerAuxiliaryHandlers(
         existingSession.parentSessionId,
         deps,
       );
-      return auxiliaryDeps.updateAuxiliarySession(session);
+      return toConversationView(await auxiliaryDeps.updateAuxiliarySession(session));
     },
   );
   const assertAuxiliaryMutationOwner = async (
@@ -323,7 +322,7 @@ export function registerAuxiliaryHandlers(
         auxiliarySessionId,
       );
       assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
-      return auxiliaryDeps.closeAuxiliarySession(auxiliarySessionId);
+      return toConversationView(await auxiliaryDeps.closeAuxiliarySession(auxiliarySessionId));
     },
   );
   ipcMain.handle(
@@ -339,7 +338,7 @@ export function registerAuxiliaryHandlers(
         auxiliarySessionId,
       );
       assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
-      return auxiliaryDeps.runAuxiliarySessionTurn(auxiliarySessionId, request);
+      return toConversationView(await auxiliaryDeps.runAuxiliarySessionTurn(auxiliarySessionId, request));
     },
   );
   ipcMain.handle(

@@ -48,6 +48,7 @@ type AuditLogSessionLike = Pick<
   | "threadId"
   | "runState"
   | "messages"
+  | "messageCount"
 >;
 
 type UseSessionAuditLogsInput = {
@@ -212,7 +213,7 @@ export function useSessionAuditLogs({
     () =>
       buildAuditLogRefreshSignature({
         selectedSession,
-        displayedMessagesLength: selectedSession?.messages.length ?? 0,
+        displayedMessagesLength: selectedSession?.messageCount ?? selectedSession?.messages.length ?? 0,
         selectedMemoryGenerationActivity: null,
         selectedMonologueActivity: null,
       }),

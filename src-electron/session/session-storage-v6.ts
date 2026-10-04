@@ -1,4 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
+import { assertFullConversation, readConversationPage, searchStoredConversation, listStoredConversationNavigator } from "../storage/conversation-query.js";
+import type { ConversationPageRequest, ConversationSearchRequest } from "../../src-shared/session/conversation-page.js";
 import type { SessionFilePinOwner, SessionFilePinReference, StoredSessionFilePin } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { randomUUID } from "node:crypto";
 
@@ -523,6 +525,31 @@ export class SessionStorageV6 {
     return row ? this.rowToSession(row) : null;
   }
 
+  getConversationPage(sessionId: string, request?: ConversationPageRequest) {
+    const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+    return row ? readConversationPage(this.db, "session_messages_v6", sessionId, row.incarnation_id?.trim() || `legacy:${sessionId}`, request) : null;
+  }
+
+  getSessionView(sessionId: string): Session | null {
+    const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+    if (!row) return null;
+    const page = readConversationPage(this.db, "session_messages_v6", sessionId, row.incarnation_id?.trim() || `legacy:${sessionId}`);
+    const decoded = decodeSessionV6RuntimeState(row);
+    const session = normalizeSession({ ...this.rowToSessionSummary(row, decoded), characterRuntimeSnapshot: decoded.snapshot, messages: page.messages, stream: [] });
+    if (!session) throw new Error(`The V6 Session row could not be converted: ${sessionId}`);
+    const latestUserRow = this.db.prepare("SELECT seq, role, body FROM session_messages_v6 WHERE session_id = ? AND role = 'user' ORDER BY seq DESC LIMIT 1").get(sessionId) as (MessageV6Row & { seq: number }) | undefined;
+    const latestUser = latestUserRow ? decodeMessage(latestUserRow) : null;
+    return { ...session, messages: page.messages, messageCount: page.totalCount, latestUserMessage: latestUser && latestUserRow ? { ...latestUser, historyIndex: latestUserRow.seq } : null };
+  }
+
+  searchConversation(sessionId: string, request: ConversationSearchRequest) {
+    return searchStoredConversation(this.db, "session_messages_v6", sessionId, request);
+  }
+
+  listConversationNavigator(sessionId: string) {
+    return listStoredConversationNavigator(this.db, "session_messages_v6", sessionId);
+  }
+
   getSessionSummary(sessionId: string): SessionSummary | null {
     const row = this.db.prepare(`
       SELECT id, incarnation_id, title, state, session_kind, provider_id,
@@ -887,6 +914,7 @@ export class SessionStorageV6 {
     operation: "create" | "upsert" | "update",
     terminalCommit?: SessionTurnTerminalCommit,
   ): Session {
+    assertFullConversation(session);
     const normalized = normalizeSessionForStorage(session);
     if (terminalCommit && terminalCommit.sessionId !== normalized.id) {
       throw new Error("The terminal Session owner does not match the audit marker.");
@@ -951,6 +979,7 @@ export class SessionStorageV6 {
   }
 
   replaceSessions(nextSessions: Session[]): Session[] {
+    nextSessions.forEach(assertFullConversation);
     const normalizedSessions = nextSessions.map((session) => normalizeSessionForStorage(session));
 
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");

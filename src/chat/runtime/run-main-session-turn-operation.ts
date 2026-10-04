@@ -26,6 +26,7 @@ import {
   type SessionSubmitCoordinator,
 } from "./session-submit-coordinator.js";
 import { resolveComposerSendPreflight } from "../composer/session-composer-feedback.js";
+import { getConversationMessageCount } from "../../../src-shared/session/conversation-page.js";
 
 type RevisionPort = { capture(): number; isCurrent(revision: number): boolean };
 type SessionRunApi = Pick<
@@ -125,7 +126,7 @@ export async function runMainSessionTurnOperation(input: {
     draftFingerprint: fingerprintSessionDraft(messageText),
     runState: selectedSession.runState,
     status: selectedSession.status,
-    messageCount: selectedSession.messages.length,
+    messageCount: getConversationMessageCount(selectedSession),
     hasLiveRun,
     draftChars: messageText.length,
   });
@@ -192,13 +193,13 @@ export async function runMainSessionTurnOperation(input: {
     if (isCentralPreviewActive)
       state.acknowledgePreviewChatMessageCount(
         updatedSession.id,
-        updatedSession.messages.length,
+        getConversationMessageCount(updatedSession),
       );
     log("renderer.optimistic-running-applied", {
       sessionId: updatedSession.id,
       clientRequestId,
       elapsedMs: Date.now() - investigationStartedAt,
-      messageCount: updatedSession.messages.length,
+      messageCount: getConversationMessageCount(updatedSession),
       runState: updatedSession.runState,
       status: updatedSession.status,
     });
@@ -219,7 +220,7 @@ export async function runMainSessionTurnOperation(input: {
         sessionId: savedSession.id,
         clientRequestId,
         elapsedMs: Date.now() - investigationStartedAt,
-        messageCount: savedSession.messages.length,
+        messageCount: getConversationMessageCount(savedSession),
         runState: savedSession.runState,
         status: savedSession.status,
       });
@@ -292,7 +293,7 @@ export async function runMainSessionTurnOperation(input: {
         sessionId: updatedSession.id,
         clientRequestId,
         elapsedMs: Date.now() - investigationStartedAt,
-        messageCount: updatedSession.messages.length,
+        messageCount: getConversationMessageCount(updatedSession),
         errorMessage: error instanceof Error ? error.message : String(error),
       });
       throw error;

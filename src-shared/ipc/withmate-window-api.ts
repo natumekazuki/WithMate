@@ -1,5 +1,6 @@
 import type { AuditLogEntry, AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogSummary, AuditLogOperationDetailFragment, AuditLogSummaryPageRequest, AuditLogSummaryPageResult, ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
 import type { AppSettings } from "../settings/provider-settings-state.js";
+import type { ConversationPage, ConversationPageRequest, ConversationSearchRequest, ConversationSearchMatch, ConversationNavigatorEntry } from "../session/conversation-page.js";
 import type { CreateTerminalRequest, CreateTerminalResult, TerminalEvent } from "../terminal/terminal-contract.js";
 import type { CharacterProfile } from "../character/character-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, SessionCharacterUsage, Session, SessionSummaryInvalidation, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary, SetSessionPinnedRequest } from "../session/session-state.js";
@@ -164,6 +165,9 @@ export type WithMateWindowSessionApi = {
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
+  getConversationPage(sessionId: string, request?: ConversationPageRequest): Promise<ConversationPage | null>;
+  searchConversation(sessionId: string, request: ConversationSearchRequest): Promise<ConversationSearchMatch[]>;
+  listConversationNavigator(sessionId: string): Promise<ConversationNavigatorEntry[]>;
   getSessionSummary(sessionId: string): Promise<SessionSummary | null>;
   getSessionGlossaryProjection(sessionId: string): Promise<SessionGlossaryProjection>;
   searchSessionGlossary(

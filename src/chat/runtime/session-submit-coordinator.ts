@@ -1,6 +1,7 @@
 import type { LiveSessionRunState } from "../../../src-shared/session/runtime-state.js";
 import { getSessionIncarnationId, setMessageBookmarked, type Message, type Session } from "../../../src-shared/session/session-state.js";
 import type { OwnedLiveSessionRunState } from "./session-live-run-state.js";
+import { getMessageHistoryIndex } from "../../../src-shared/session/conversation-page.js";
 
 export type SessionSubmitLease = {
   sessionId: string;
@@ -109,8 +110,9 @@ export function mergeRefetchedSessionProjection(
 }
 
 export function mergeMessageBookmarkProjection(current: Message[], incoming: Message[]): Message[] {
+  const currentByHistoryIndex = new Map(current.map((message, index) => [getMessageHistoryIndex(message, index), message]));
   return incoming.map((message, index) => {
-    const projected = current[index];
+    const projected = currentByHistoryIndex.get(getMessageHistoryIndex(message, index));
     return projected && projected.role === message.role && projected.text === message.text
       ? setMessageBookmarked(message, projected.isBookmarked === true)
       : message;

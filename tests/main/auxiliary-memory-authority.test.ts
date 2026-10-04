@@ -63,6 +63,10 @@ it("Auxiliary runtime sessionからMemory public actor authorityをowner別に�
     resolveSessionLaunchSelection: async () => { throw new Error("unused"); },
     getParentSession: () => parent,
     getStorage: () => ({
+      getAuxiliarySessionView: () => { throw new Error("unused"); },
+      getConversationPage: () => { throw new Error("unused"); },
+      searchConversation: () => { throw new Error("unused"); },
+      listConversationNavigator: () => { throw new Error("unused"); },
       getAuxiliarySession: (id: string) => sessions.get(id) ?? null,
       getAuxiliarySessionSummary: () => { throw new Error("unused"); },
       listAuxiliaryCredentialThreads: () => { throw new Error("unused"); },

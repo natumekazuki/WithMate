@@ -35,18 +35,19 @@ export function useAuxiliaryDraftPersistence(input: {
   const getOwner = useCallback((session: AuxiliarySession) => {
     const { api } = inputRef.current;
     if (!api) return null;
-    let owner = ownersRef.current.get(session.id);
+    const { id: sessionId, parentSessionId } = session;
+    let owner = ownersRef.current.get(sessionId);
     if (owner) return owner;
     let fixedIncarnation: string | null = null;
     owner = new AuxiliaryDraftPersistenceOwner({
       load: async () => {
-        const status = await api.getAuxiliarySessionStatus(session.id);
-        const record = await api.getAuxiliaryDraft(session.id);
+        const status = await api.getAuxiliarySessionStatus(sessionId);
+        const record = await api.getAuxiliaryDraft(sessionId);
         if (!status
           || !record
-          || record.auxiliarySessionId !== session.id
-          || status.id !== session.id
-          || status.parentSessionId !== session.parentSessionId
+          || record.auxiliarySessionId !== sessionId
+          || status.id !== sessionId
+          || status.parentSessionId !== parentSessionId
           || !status.incarnation
           || record.parentSessionId !== status.parentSessionId
           || record.incarnation !== status.incarnation) {
@@ -78,7 +79,7 @@ export function useAuxiliaryDraftPersistence(input: {
         };
       },
     });
-    ownersRef.current.set(session.id, owner);
+    ownersRef.current.set(sessionId, owner);
     return owner;
   }, []);
 

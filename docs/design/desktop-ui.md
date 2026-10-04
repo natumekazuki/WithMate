@@ -254,6 +254,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Work Chat`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
+- Main／Auxiliaryの会話は最新60件を初回表示する。会話上部の`Earlier Messages`／`Later Messages`で前後の範囲を取得し、最新への移動で追従を再開する。読込中・取得失敗と`Retry`は対象会話内に表示し、取得済み本文とComposerを保持する。FindとMessages navigatorのBookmarkは全履歴を対象とし、対象移動時に必要な本文を取得する。ページ変更・Auxiliary再選択では履歴上の位置を使い、別messageへの位置ずれを防ぐ
 - wide desktop (`1920x1080` baseline) では Session 本体を、中央の `message list または preview` と上下左右の dock に分ける
   - HeaderとActionDockは常に全幅を使い、外側をカードの枠・背景で囲まない。中央surfaceと左右paneの下に単一のActionDock splitterと共有下部パネルを配置し、パネル内をPrompt／Terminalで切り替える
   - Headerと共有下部パネルはclickで開閉する。左右paneは排他表示とし、clickで開閉する。閉じた領域からのdrag展開は行わない。共有下部パネルは開いた状態でdragと上下矢印キーによる高さ調整ができ、最大高はHeaderとsplitterを除いた残余高。中央領域が160px未満になる場合は高さ0で非表示にし、戻すと会話stateとスクロール位置を保って再表示する

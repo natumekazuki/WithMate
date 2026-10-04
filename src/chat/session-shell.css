@@ -602,6 +602,32 @@
   overflow: hidden;
 }
 
+.conversation-page-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.session-message-column.is-paged {
+  display: flex;
+  flex-direction: column;
+}
+
+.session-message-column.is-paged > .session-message-list {
+  flex: 1 1 auto;
+}
+
+.conversation-live-request {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 45%;
+  overflow: auto;
+}
+
 .conversation-message-column > .session-message-column {
   flex: 1 1 auto;
   min-width: 0;

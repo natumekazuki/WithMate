@@ -45,6 +45,7 @@ export type MessageArtifact = {
 };
 
 export type Message = {
+  historyIndex?: number;
   role: "user" | "assistant";
   text: string;
   accent?: boolean;
@@ -95,6 +96,8 @@ export type Session = {
   allowedAdditionalDirectories: string[];
   threadId: string;
   messages: Message[];
+  messageCount?: number;
+  latestUserMessage?: Message | null;
   stream: StreamEntry[];
 };
 
