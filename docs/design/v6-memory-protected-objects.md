@@ -214,7 +214,7 @@ usage は少なくとも次を区別できるようにする。
 ```ts
 type MemoryAppendFileInput = {
   path: string;
-  role: "evidence" | "source" | "snapshot" | "artifact" | "reference" | "other";
+  role?: "evidence" | "source" | "snapshot" | "artifact" | "reference" | "other";
   summary: string;
   displayName?: string;
   contentType?: string;
@@ -228,6 +228,7 @@ validation:
 - `files[].path` は local CLI process から読める file path とする。
 - directory path は初期実装では拒否する。
 - `files[].summary` は必須。
+- `files[].role` は任意。省略時はimporterが`other`として扱い、指定時は上記のenum値だけを受理する。
 - file 付き append では `body` を必須説明として扱い、空や短すぎる説明を拒否してよい。
 - file path は validation / import 処理の入力としてだけ扱い、DB、agent-facing response、audit payload に保存しない。
 - file append 実体保存に必要な protected object importer が runtime に設定されていない場合は、validation 後に `MEMORY_FILE_APPEND_UNIMPLEMENTED` を返し、entry / object metadata / idempotency record を作成しない。
