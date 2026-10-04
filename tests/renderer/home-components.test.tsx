@@ -288,10 +288,10 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "security"
-  // claim = "Storage maintenanceはDelete Old Sessionsと選択日より前を対象にするhelpを表示する"
+  // claim = "Storage maintenanceはDelete Old Sessionsと選択日より前を対象にし実行中Sessionを保持するhelpを表示する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
   // fault = "削除対象の日付境界を説明せず、任意のSessionまたは実行中Sessionを削除する操作と誤認させる"
-  // observable = "delete labelとcleanup date help"
+  // observable = "delete labelとcleanup date・Running sessions are keptのhelp"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-session-cleanup"
   // lifecycle = "permanent"
@@ -301,6 +301,7 @@ describe("HomeSettingsContent", () => {
 
     assert.match(html, /Delete Old Sessions/);
     assert.match(html, /Delete sessions last active before the selected date/);
+    assert.match(html, /Running sessions are kept\./);
   });
 
   // @test-value v2
@@ -308,16 +309,25 @@ describe("HomeSettingsContent", () => {
   // claim = "Memory diagnosticsはruntime、CLI shim、Last errorだけを表示し、managed Skill、provider instruction、secret、pathを表示しない"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
   // fault = "廃止済みのMemory Skill同期状態やprovider instruction copy導線、credential、個人pathをSettingsへ公開する"
-  // observable = "diagnosticsのsafe status/codeと禁止された表示内容の不在"
+  // observable = "diagnosticsのsafe status/codeとfixtureに含めたsecret・binding reference・個人pathのmarkup不在"
   // observation_boundary = "public-boundary"
   // scope = "memory-runtime-diagnostics-projection"
   // lifecycle = "permanent"
+  // impact = "diagnostics経由の資格情報・個人pathの公開を防ぐ"
+  // distinction = "型定義だけでは検出できない、extra fieldを含むruntime payloadの不用意なmarkup展開を少数sentinelで確認する"
   // @end-test-value
   it("Memory V6 diagnostics はinstance metadataだけのredacted summaryとして表示する", () => {
+    const privateFields = {
+      apiSecret: "diagnostics-secret-sentinel",
+      bindingReference: "diagnostics-binding-sentinel",
+      discoveryPath: "C:/Users/private-sentinel/runtime.json",
+    };
     const html = renderSettings({
       memoryV6Diagnostics: {
+        ...privateFields,
         generatedAt: "2026-06-27T00:00:00.000Z",
         runtime: {
+          ...privateFields,
           status: "running",
           applicationInstanceId: "11111111-1111-4111-8111-111111111111",
           runtimeGenerationId: "22222222-2222-4222-8222-222222222222",
@@ -325,6 +335,7 @@ describe("HomeSettingsContent", () => {
           discoveryPublished: true,
         },
         cliShim: {
+          ...privateFields,
           platform: "darwin",
           commandName: "withmate-memory",
           supported: true,
@@ -351,6 +362,9 @@ describe("HomeSettingsContent", () => {
     assert.ok(!html.includes("bindingReference"));
     assert.ok(!html.includes("C:/"));
     assert.ok(!html.includes("/Users/"));
+    for (const value of Object.values(privateFields)) {
+      assert.ok(!html.includes(value));
+    }
   });
 
   // @test-value v2

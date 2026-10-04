@@ -816,6 +816,14 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
   await assert.rejects(
     () =>
       handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+        target: "unknown",
+        value: "visible",
+      }) as Promise<unknown>,
+    /Invalid chat layout preference update/,
+  );
+  await assert.rejects(
+    () =>
+      handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
         target: "header",
         value: "shown",
       }) as Promise<unknown>,

@@ -33,7 +33,7 @@ describe("useSessionAuditLogs", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "Audit Logを開いたとき対象Sessionのsummaryを再取得する"
-  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // oracle = { type = "issue", ref = "https://github.com/natumekazuki/WithMate/issues/496: modal open時のfirst-page refresh" }
   // fault = "modalを開いても監査ログsummaryが更新されない"
   // observable = "audit log APIへのsession IDとcursor付き呼び出し"
   // observation_boundary = "component-behavior"

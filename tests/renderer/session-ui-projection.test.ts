@@ -275,8 +275,8 @@ describe("session-ui-projection", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "ContextPaneProjectionはLatestCommand tabのstatus tone、source、risk入力を表示用値へ投影する"
-  // oracle = { type = "contract", ref = "src/chat/runtime/session-ui-projection.ts" }
+  // claim = "ContextPaneProjectionはLatestCommand tabのstatus toneとsourceを、異なるbackground task状態に上書きされず投影する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Latest Commandのstatus/sourceとTasksのbackground task状態" }
   // fault = "latest commandのCompleted statusまたはLast run sourceを欠落させ、別tabのtask状態で上書きする"
   // observable = "badge、tone、latest command tone/status/sourceのprojection値"
   // observation_boundary = "public-boundary"
@@ -298,7 +298,7 @@ describe("session-ui-projection", () => {
         makeBackgroundTask({
           id: "agent:1",
           kind: "agent",
-          status: "completed",
+          status: "failed",
           title: "sub agent",
           updatedAt: "2026-03-28T00:00:00.000Z",
         }),
@@ -310,24 +310,30 @@ describe("session-ui-projection", () => {
     assert.equal(projection.latestCommandToneClassName, "completed");
     assert.equal(projection.latestCommandStatusLabel, "Completed");
     assert.equal(projection.latestCommandSourceCopy, "Last Run");
+    assert.equal(projection.tasksToneClassName, "failed");
   });
 
   // @test-value v2
   // kind = "contract"
   // claim = "ContextPaneProjectionはTasks tabのtoneとbadgeをbackground taskのfailed状態から作る"
-  // oracle = { type = "contract", ref = "src/chat/runtime/session-ui-projection.ts" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Tasksのbackground task状態" }
   // fault = "background taskのfailed stateをCompletedまたはneutralとして投影する"
   // observable = "tasks tone、overall tone、badge label"
   // observation_boundary = "public-boundary"
   // scope = "session-context-pane-tasks"
   // lifecycle = "permanent"
   // impact = "background taskの失敗を見逃し、復旧判断を誤る"
-  // distinction = "Tasks tabとLatestCommand nullを明示してtask由来のtoneを分離して確認する"
+  // distinction = "Tasks tabでcompleted commandとfailed taskを対照させ、task由来のtoneを分離して確認する"
   // @end-test-value
   it("ContextPaneProjection は Tasks tab の tone を background task 状態から作る", () => {
     const projection = buildContextPaneProjection({
       activeContextPaneTab: "tasks",
-      latestCommandView: null,
+      latestCommandView: {
+        status: "completed",
+        summary: "npm run build",
+        sourceLabel: "latest run",
+        riskLabels: [],
+      },
       backgroundTasks: [
         makeBackgroundTask({
           id: "agent:1",
@@ -342,6 +348,7 @@ describe("session-ui-projection", () => {
     assert.equal(projection.toneClassName, "failed");
     assert.equal(projection.tasksToneClassName, "failed");
     assert.equal(projection.badgeLabel, "Failed");
+    assert.equal(projection.latestCommandToneClassName, "completed");
   });
 
 

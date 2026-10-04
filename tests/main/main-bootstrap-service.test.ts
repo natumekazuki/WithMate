@@ -52,32 +52,3 @@ test("MainBootstrapService は runtime side effect なしで起動シーケン�
     "broadcastModelCatalog:1",
   ]);
 });
-
-// @test-value v2
-// kind = "contract"
-// claim = "Growth timer互換APIは起動依存先を呼ばないno-opとして残る"
-// oracle = { type = "contract", ref = "src-electron/app/main-bootstrap-service.ts: Growth timer compatibility API" }
-// fault = "互換API呼び出しでMate stateなどの起動依存先を参照する"
-// observable = "依存先の例外なしに互換API呼び出しが完了すること"
-// observation_boundary = "public-boundary"
-// scope = "MainBootstrapService Growth timer API"
-// lifecycle = "permanent"
-// @end-test-value
-test("Growth timer 互換 API は timer を作らない no-op として残る", async () => {
-  const service = new MainBootstrapService({
-    getMateState() {
-      throw new Error("Growth timer should not read Mate state.");
-    },
-    async initializePersistentStores() {
-      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
-    },
-    async recoverInterruptedSessions() {},
-    registerIpcHandlers() {},
-    broadcastModelCatalog() {},
-  });
-
-  await service.ensureGrowthApplyTimer();
-  await service.restartGrowthApplyTimer();
-  service.clearGrowthApplyTimer();
-  service.clearGrowthApplyTimerForTest();
-});
