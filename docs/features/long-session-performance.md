@@ -16,6 +16,12 @@ Session数やmessage数が増えた場合の操作遅延を抑えるため、Hom
 
 検索による一時展開は表示状態だけを変更し、preview cacheのownerを変更しません。
 
+## 会話内の検索本文
+
+Preview検索の本文投影は、会話columnごとにmessage keyと本文へ対応付けて再利用します。live末尾だけの更新やquery変更では、変化のない確定履歴をMarkdown再解析しません。Source検索では元のMarkdown本文を使います。
+
+再利用対象は現在の会話投影に含まれる本文だけです。履歴から外れたkeyと変更前の本文は保持せず、会話ownerの切り替え、queryの空欄化、columnのunmountで解放します。
+
 ## running turn開始時の保存
 
 turn開始時は対象Sessionのuser message、running状態、必要なsnapshotだけをtransactionへ渡します。全Sessionの保存済みmessageを再構築して書き直しません。

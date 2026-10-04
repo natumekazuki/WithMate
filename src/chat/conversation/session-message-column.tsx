@@ -22,6 +22,7 @@ import { clampFindMatchIndex, findTextMatches } from "../../ui/find-text-matches
 import { resolveSelectionActionOverlayPosition } from "../../chat/selection-action-overlay.js";
 
 import {
+  createMessageRenderedSearchTextProjection,
   isMessageRenderedSearchTextNode,
   projectMessageRenderedSearchText,
 } from "./message-rendered-search-text.js";
@@ -574,15 +575,10 @@ export function SessionMessageColumn({
     pendingMessageText.trim().length > 0;
   const canUsePendingMessageTextActions = !!(onCopyMessageText || onQuoteMessageText);
   const hasFindQuery = findQuery.trim().length > 0;
+  const projectMessageSearchTexts = useMemo(() => createMessageRenderedSearchTextProjection(), [sessionId]);
   const messageRenderedSearchTexts = useMemo(
-    () => (hasFindQuery
-      ? messages.map((message) => (
-          messageViewMode === "source"
-            ? message.text
-            : projectMessageRenderedSearchText(message.text)
-        ))
-      : []),
-    [hasFindQuery, messageViewMode, messages],
+    () => projectMessageSearchTexts(messages, messageKeys, messageViewMode, hasFindQuery),
+    [hasFindQuery, messageKeys, messageViewMode, messages, projectMessageSearchTexts],
   );
   const pendingRenderedSearchText = useMemo(
     () => (hasFindQuery && isRunning && hasPendingMessageText

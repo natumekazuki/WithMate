@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Session as InspectorSession } from "node:inspector/promises";
 import { JSDOM } from "jsdom";
 import React, { createRef, useState, type ComponentType, type ProfilerOnRenderCallback } from "react";
 import { act } from "react";
@@ -397,6 +398,7 @@ type MountedSessionMessageColumn = {
   messageListRef: React.RefObject<HTMLDivElement | null>;
   root: Root;
   rerender: (callbacks: {
+    sessionId?: string;
     isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
@@ -422,6 +424,7 @@ type MountedSessionMessageColumn = {
 };
 
 async function mountSessionMessageColumn(options: {
+  sessionId?: string;
   messages: Message[];
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
@@ -588,6 +591,7 @@ async function mountSessionMessageColumn(options: {
   const character = createCharacterProfile();
   const expandedArtifacts = options.expandedArtifacts ?? {};
   const renderMessageColumn = async (callbacks: {
+    sessionId?: string;
     isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
@@ -611,7 +615,7 @@ async function mountSessionMessageColumn(options: {
   }) => {
     await act(async () => {
       const messageColumn = React.createElement(MessageColumn, {
-          sessionId: "session-1",
+          sessionId: callbacks.sessionId ?? options.sessionId ?? "session-1",
           character,
           messages: callbacks.messages ?? options.messages,
           messageKeys: callbacks.messageKeys ?? options.messageKeys,
@@ -1052,6 +1056,188 @@ test("SessionMessageColumn は上方向へスクロールして先頭メッセ�
 
     assert.match(mounted.container.textContent ?? "", /message 1(?:\D|$)/);
   } finally {
+    await mounted.cleanup();
+  }
+});
+
+async function startSearchProjectionCounter() {
+  const inspector = new InspectorSession();
+  inspector.connect();
+  await inspector.post("Profiler.enable");
+  await inspector.post("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
+  return {
+    async take() {
+      const { result } = await inspector.post("Profiler.takePreciseCoverage");
+      return result.filter((script) => script.url.includes("/message-rendered-search-text."))
+        .flatMap((script) => script.functions)
+        .filter((fn) => fn.functionName === "projectMessageRenderedSearchText")
+        .reduce((count, fn) => count + fn.ranges[0].count, 0);
+    },
+    async stop() {
+      await inspector.post("Profiler.stopPreciseCoverage");
+      inspector.disconnect();
+    },
+  };
+}
+
+async function setMessageFindQuery(mounted: MountedSessionMessageColumn, query: string) {
+  await act(async () => {
+    mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
+      key: "f", ctrlKey: true, bubbles: true,
+    }));
+  });
+  const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+  assert.ok(input);
+  const setValue = Object.getOwnPropertyDescriptor(mounted.dom.window.HTMLInputElement.prototype, "value")?.set;
+  assert.ok(setValue);
+  await act(async () => {
+    setValue.call(input, query);
+    const event = new mounted.dom.window.Event("propertychange", { bubbles: true });
+    Object.defineProperty(event, "propertyName", { value: "value" });
+    input.dispatchEvent(event);
+  });
+  await act(async () => {
+    mounted.container.querySelector(".session-message-list")?.dispatchEvent(new mounted.dom.window.Event("scroll"));
+  });
+}
+
+// @test-value v2
+// kind = "invariant"
+// claim = "検索queryを保ったPreviewのlive更新は確定履歴を再解析せず、変更されたlive本文だけを検索投影する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/737#issuecomment-5979140173 PERF-737-A" }
+// fault = "ConversationMessageColumnのlive投影でmessages配列が変わるたびに確定履歴もMarkdown検索解析される"
+// observable = "実検索投影関数のV8呼出回数、検索件数、結果移動とCSS Highlightの文字列"
+// observation_boundary = "component-behavior"
+// scope = "ConversationMessageColumnから共通検索へのlive更新"
+// lifecycle = "permanent"
+// impact = "検索を続けながら応答を読む際の同期解析負荷が、変更のない履歴量に比例して増える"
+// distinction = "既存DOM・型・build確認では再解析を検出できない。既存mount fixtureとV8 coverageで5更新だけを観測し、製品側の計測APIやmockを追加しない"
+// @end-test-value
+test("ConversationMessageColumn の検索はlive末尾更新だけを再解析する", async (t) => {
+  const messages = Array.from({ length: 40 }, (_, index): Message => ({
+    role: "user", text: `history ${index} needle [label](https://needle.example)`,
+  }));
+  const mounted = await mountSessionMessageColumn({
+    messages, component: ConversationBackedMessageColumn, isRunning: true, liveRunAssistantText: "live needle 0",
+  });
+  const counter = await startSearchProjectionCounter();
+  try {
+    class TestHighlight {
+      readonly ranges: Range[] = [];
+      add(range: Range) { this.ranges.push(range); return this; }
+    }
+    const highlights = new Map<string, TestHighlight>();
+    Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
+    Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+    await setMessageFindQuery(mounted, "needle");
+    assert.equal(await counter.take(), 41);
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/41");
+    for (let tick = 1; tick <= 5; tick += 1) {
+      await mounted.rerender({ isRunning: true, liveRunAssistantText: `live needle ${tick}` });
+    }
+    const parseCount = await counter.take();
+    t.diagnostic(`40確定履歴・query=needle・Preview・5 live更新: 検索Markdown解析 ${parseCount}回`);
+    assert.equal(parseCount, 5);
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/41");
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "needle");
+    const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']");
+    assert.ok(next);
+    await act(async () => next.click());
+    await act(async () => {
+      mounted.container.querySelector(".session-message-list")?.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "2/41");
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "needle");
+    await setMessageFindQuery(mounted, "live needle");
+    assert.equal(await counter.take(), 0);
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/1");
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "live needle");
+    await mounted.rerender({
+      messages: [...messages, { role: "assistant", text: "settled needle" }],
+      isRunning: false, liveRunAssistantText: "",
+    });
+    // 確定時は新しい履歴の検索本文とcollapse previewが各1回、この投影関数を使う。
+    assert.equal(await counter.take(), 2);
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "0/0");
+    await setMessageFindQuery(mounted, "settled needle");
+    assert.equal(await counter.take(), 0);
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/1");
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "settled needle");
+  } finally {
+    await counter.stop();
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "検索本文の再利用はkeyと本文に一致する現在の会話だけを対象とし、Source中の本文変更・owner切替・履歴離脱・query空を越えて古い投影を再利用しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/737#issuecomment-5979140173 PERF-737-A; issue-737-search-projection-initial.md: 本文変更・会話owner・寿命" }
+// fault = "配列再生成・並べ替えで全文再解析する、同じkeyの変更本文を見落とす、SourceのURLをPreviewへ混入する、離脱履歴や別ownerを保持し続ける"
+// observable = "SessionMessageColumnの検索件数と、各入力変更による実検索投影関数のV8呼出回数"
+// observation_boundary = "component-behavior"
+// scope = "検索投影の本文・key・owner・現在履歴の寿命"
+// lifecycle = "permanent"
+// impact = "検索結果が古い本文と不一致になり、会話反復切替や履歴入替で不要な本文保持が増え続ける"
+// distinction = "既存検索testは一回の件数・移動・highlightを担う。このtestは3件以内の入力遷移だけで再利用と破棄を観測し、型やDOMの単発確認では判別できない寿命を確認する"
+// @end-test-value
+test("SessionMessageColumn の検索投影は本文・key・owner・現在履歴に追従する", async () => {
+  const first: Message = { role: "assistant", text: "**needle** first" };
+  const second: Message = { role: "user", text: "[other](https://needle.example)" };
+  const mounted = await mountSessionMessageColumn({ messages: [first, second], messageKeys: ["first", "second"] });
+  const counter = await startSearchProjectionCounter();
+  const count = () => mounted.container.querySelector(".session-content-find-count")?.textContent;
+  try {
+    await setMessageFindQuery(mounted, "needle");
+    assert.equal(await counter.take(), 2);
+    assert.equal(count(), "1/1");
+
+    // 新しいmessage objectと配列でも、keyと本文の組は変わらない。
+    await mounted.rerender({ messages: [{ ...second }, { ...first }], messageKeys: ["second", "first"] });
+    assert.equal(await counter.take(), 0);
+    assert.equal(count(), "1/1");
+    const changed: Message = { ...first, text: "**absent** first" };
+    assert.equal(first.text.length, changed.text.length);
+    await mounted.rerender({ messages: [second, changed], messageKeys: ["second", "first"] });
+    assert.equal(await counter.take(), 1);
+    assert.equal(count(), "0/0");
+    const third: Message = { role: "assistant", text: "needle third" };
+    const keys = ["second", "first", "third"];
+    let messages = [second, changed, third];
+    await mounted.rerender({ messages, messageKeys: keys });
+    assert.equal(await counter.take(), 1);
+    assert.equal(count(), "1/1");
+
+    await mounted.rerender({ messages, messageKeys: keys, messageViewMode: "source" });
+    assert.equal(await counter.take(), 0);
+    assert.equal(count(), "1/2");
+    messages = [{ ...second, text: "[new](https://needle.example)" }, changed, third];
+    await mounted.rerender({ messages, messageKeys: keys, messageViewMode: "source" });
+    assert.equal(await counter.take(), 0);
+    await mounted.rerender({ messages, messageKeys: keys, messageViewMode: "preview" });
+    assert.equal(await counter.take(), 1);
+    assert.equal(count(), "1/1");
+
+    await mounted.rerender({ messages: messages.slice(0, 2), messageKeys: keys.slice(0, 2) });
+    assert.equal(await counter.take(), 0);
+    assert.equal(count(), "0/0");
+    await mounted.rerender({ messages, messageKeys: keys });
+    assert.equal(await counter.take(), 1);
+    assert.equal(count(), "1/1");
+    await mounted.rerender({ sessionId: "another-owner", messages, messageKeys: keys });
+    assert.equal(await counter.take(), 3);
+    assert.equal(count(), "1/1");
+    await mounted.rerender({ sessionId: "session-1", messages, messageKeys: keys });
+    assert.equal(await counter.take(), 3);
+
+    await setMessageFindQuery(mounted, "");
+    assert.equal(await counter.take(), 0);
+    assert.equal(count(), "0/0");
+    await setMessageFindQuery(mounted, "needle");
+    assert.equal(await counter.take(), 3);
+    assert.equal(count(), "1/1");
+  } finally {
+    await counter.stop();
     await mounted.cleanup();
   }
 });
