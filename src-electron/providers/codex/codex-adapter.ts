@@ -1,26 +1,33 @@
 import path from "node:path";
-
+import { createRequire } from "node:module";
 import {
-  Codex,
-  type CodexOptions,
-  type Thread,
-  type ThreadEvent,
-  type ThreadItem,
-  type ThreadOptions as CodexSdkThreadOptions,
-  type Usage,
-} from "@openai/codex-sdk";
+  CODEX_APP_SERVER_ARGUMENTS,
+  CodexAppServerRpcError,
+  CodexAppServerTransport,
+} from "./app-server-transport.js";
+import { CodexTurnInteractions } from "./codex-app-server-interactions.js";
 
 import type { AppSettings } from "../../../src-shared/settings/provider-settings-state.js";
-import type { AuditLogOperation, AuditLogProviderMetadata, AuditTransportPayload, AuditLogUsage, ChangedFile, ProviderQuotaTelemetry, DiffRow, LiveRunStep, LiveSessionRunState, RunCheck } from "../../../src-shared/session/runtime-state.js";
-import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
-import type { MessageArtifact, Session } from "../../../src-shared/session/session-state.js";
+import type {
+  AuditTransportPayload,
+  AuditLogUsage,
+  ChangedFile,
+  DiffRow,
+  RunCheck,
+} from "../../../src-shared/session/runtime-state.js";
+import type {
+  MessageArtifact,
+  Session,
+} from "../../../src-shared/session/session-state.js";
 import type { SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
-import type { SessionMemoryDelta } from "../../../src-shared/memory/session-memory-state.js";
 import { getProviderAppSettings } from "../../../src-shared/settings/provider-settings-state.js";
-import { mapApprovalModeToCodexPolicy, type ApprovalMode } from "../../../src-shared/settings/approval-mode.js";
+import {
+  mapApprovalModeToCodexPolicy,
+  type ApprovalMode,
+} from "../../../src-shared/settings/approval-mode.js";
 import {
   resolveCodexSandboxThreadOptions,
-  type CodexSdkSandboxMode,
+  type CodexSandboxBaseMode,
 } from "../../../src-shared/settings/codex-sandbox-mode.js";
 import {
   DEFAULT_CODEX_SPEED,
@@ -51,8 +58,10 @@ import {
   createDisabledWorkspaceSnapshotCapture,
   WORKSPACE_DIFF_CAPTURE_ENABLED,
 } from "../../files/workspace-diff-policy.js";
-import { composeProviderPrompt, isCanceledProviderMessage } from "../provider-prompt.js";
-import { normalizeCodexTokenUsage } from "../provider-token-usage.js";
+import {
+  composeProviderPrompt,
+  isCanceledProviderMessage,
+} from "../provider-prompt.js";
 import {
   ProviderTurnError,
   resolveRunWorkspacePath,
@@ -69,35 +78,42 @@ import {
   type RunSessionTurnResult,
 } from "../provider-runtime.js";
 import { parseSessionMemoryDeltaText } from "../../session/session-memory-extraction.js";
-import { resolvePackagedProviderBinaryPath } from "../provider-binary-paths.js";
 import {
-  boundAuditRawItem,
+  resolveDevelopmentProviderBinaryPath,
+  resolvePackagedProviderBinaryPath,
+} from "../provider-binary-paths.js";
+import {
   stringifyBoundedAuditRawItems,
   toAuditTextPreview,
-  type BoundedAuditRawItem,
 } from "../../session/audit-payload-limits.js";
 import { toProviderMetadataLogData } from "../provider-metadata-log.js";
 import {
-  buildProviderAgentRuntimeBindingCacheKey,
   buildProviderAgentRuntimeBindingEnv,
   createProviderAgentRuntimeBindingRedactor,
   mergeDefinedProviderEnv,
   type ProviderAgentRuntimeBindingRedactor,
 } from "../provider-agent-runtime-binding.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
-import { buildChangedFilesFromSources as buildChangedFilesProjection, buildCodexProviderMetadata as buildProviderMetadataProjection, buildCodexStableRawItems as buildStableRawItemsProjection, toAuditOperations as toAuditOperationsProjection } from "./codex-event-projection.js";
+import {
+  buildChangedFilesFromSources as buildChangedFilesProjection,
+  buildCodexProviderMetadata as buildProviderMetadataProjection,
+  buildCodexStableRawItems as buildStableRawItemsProjection,
+  toAuditOperations as toAuditOperationsProjection,
+} from "./codex-event-projection.js";
 import {
   applyCodexTurnEvent,
   createCodexTurnStreamState,
   collectCodexAssistantResponseFromItems,
   getLiveCodexAssistantText,
-  isCodexCollabToolCallItem,
   type CodexTurnStreamState,
   type CodexTurnItem,
 } from "./codex-turn-events.js";
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
-function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
+function summarizeChangedFile(
+  kind: ChangedFile["kind"],
+  filePath: string,
+): string {
   switch (kind) {
     case "add":
       return `${filePath} created`;
@@ -108,11 +124,20 @@ function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): stri
   }
 }
 
-function normalizeWorkspaceRelativePath(workspacePath: string, filePath: string): string {
-  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(workspacePath, filePath);
+function normalizeWorkspaceRelativePath(
+  workspacePath: string,
+  filePath: string,
+): string {
+  const resolvedPath = path.isAbsolute(filePath)
+    ? filePath
+    : path.resolve(workspacePath, filePath);
   const relativePath = path.relative(workspacePath, resolvedPath);
 
-  if (relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
+  if (
+    relativePath &&
+    !relativePath.startsWith("..") &&
+    !path.isAbsolute(relativePath)
+  ) {
     return relativePath.replace(/\\/g, "/");
   }
 
@@ -128,11 +153,15 @@ function toLines(content: string | null): string[] {
 }
 
 type RawDiffOp =
-  | { kind: "context"; leftNumber: number; rightNumber: number; leftText: string; rightText: string }
+  | {
+      kind: "context";
+      leftNumber: number;
+      rightNumber: number;
+      leftText: string;
+      rightText: string;
+    }
   | { kind: "delete"; leftNumber: number; leftText: string }
   | { kind: "add"; rightNumber: number; rightText: string };
-
-type CodexEventRecord = Record<string, unknown>;
 
 type CodexAdapterLogInput = {
   level: "debug" | "info" | "warn" | "error";
@@ -141,35 +170,55 @@ type CodexAdapterLogInput = {
   data?: unknown;
   error?: { name?: string; message: string; stack?: string };
 };
-
 type CodexAdapterLogger = (input: CodexAdapterLogInput) => void;
-
-const CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN =
-  /^Failed to parse item:\s*SUCCESS:\s+The process with PID \d+ \(child process of PID \d+\) has been terminated\.\s*$/;
-const CODEX_USAGE_LIMIT_MESSAGE_PATTERN = /you['’]ve hit your usage limit\./i;
-const CODEX_USAGE_LIMIT_PURCHASE_PATTERN = /purchase more credits/i;
-const CODEX_USAGE_LIMIT_RETRY_PATTERN = /try again at/i;
-const CODEX_STREAM_DEBUG_ENV = "WITHMATE_CODEX_STREAM_DEBUG";
-const DEFAULT_CODEX_STREAM_CLOSE_GRACE_MS = 2_000;
-const DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS = 5_000;
-
+type CodexTransport = Pick<
+  CodexAppServerTransport,
+  "start" | "request" | "nextEvent" | "close"
+>;
 export type CodexAdapterOptions = {
-  streamCloseGraceMs?: number;
+  appVersion?: string;
   snapshotDeadlineMs?: number;
-  createClient?: (options: CodexOptions) => CodexThreadConnector;
+  createTransport?: (
+    options: ConstructorParameters<typeof CodexAppServerTransport>[0],
+  ) => CodexTransport;
 };
-
-type CodexClientScope = "foreground" | "background";
-
-const CODEX_STREAM_CLOSE_TIMEOUT = Symbol("codex-stream-close-timeout");
+const DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS = 5_000;
 const CODEX_SNAPSHOT_TIMEOUT = Symbol("codex-snapshot-timeout");
+const require = createRequire(import.meta.url);
+class CodexAuthenticationError extends Error {}
+
+function sanitizeCodexError(error: unknown, redactor: ProviderAgentRuntimeBindingRedactor, seen = new WeakSet<Error>()): unknown {
+  if (error instanceof Error) {
+    if (seen.has(error)) return error;
+    seen.add(error);
+  }
+  if (error instanceof CodexAppServerRpcError) {
+    const sanitized = new CodexAppServerRpcError(error.code, redactor.sanitizeText(error.message), redactor.sanitize(error.data));
+    if (error.stack) sanitized.stack = redactor.sanitizeText(error.stack);
+    return sanitized;
+  }
+  if (error instanceof Error) {
+    const message = redactor.sanitizeText(error.message);
+    if (message !== error.message) Object.defineProperty(error, "message", { value: message, writable: true, configurable: true });
+    if (error.stack) error.stack = redactor.sanitizeText(error.stack);
+    if ("cause" in error) {
+      Object.defineProperty(error, "cause", { value: sanitizeCodexError(error.cause, redactor, seen), writable: true, configurable: true });
+    }
+    return error;
+  }
+  return redactor.sanitize(error);
+}
+
+function resolveCodexApiKey(providerId: string, appSettings: AppSettings): string {
+  return getProviderAppSettings(appSettings, providerId).apiKey.trim() || process.env.CODEX_API_KEY?.trim() || "";
+}
 
 async function raceWithDeadline<T, TTimeout>(
   promise: Promise<T>,
   timeoutMs: number,
   timeoutValue: TTimeout,
 ): Promise<T | TTimeout> {
-  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
@@ -179,96 +228,151 @@ async function raceWithDeadline<T, TTimeout>(
       }),
     ]);
   } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
+    if (timeout) clearTimeout(timeout);
   }
 }
-
-export function isCodexWindowsTaskkillSuccessParseNoiseMessage(message: string): boolean {
-  return CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN.test(message.trim());
-}
-
 export function isCodexUsageLimitMessage(message: string): boolean {
-  return CODEX_USAGE_LIMIT_MESSAGE_PATTERN.test(message)
-    && CODEX_USAGE_LIMIT_PURCHASE_PATTERN.test(message)
-    && CODEX_USAGE_LIMIT_RETRY_PATTERN.test(message);
-}
-
-function resolveCodexProviderErrorReason(message: string, canceled: boolean): ProviderErrorReason {
-  if (canceled) {
-    return "canceled";
-  }
-
-  if (isCodexUsageLimitMessage(message)) {
-    return "usage_limit";
-  }
-
-  return "unknown";
-}
-
-function isCodexStreamDebugLogEnabled(): boolean {
-  const value = process.env[CODEX_STREAM_DEBUG_ENV]?.trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
-function shouldIgnoreCodexWindowsTaskkillParseNoise(
-  state: CodexTurnStreamState,
-  message: string,
-): boolean {
   return (
-    isCodexWindowsTaskkillSuccessParseNoiseMessage(message)
-    && state.turnCompleted
+    /you['’]ve hit your usage limit\./i.test(message) &&
+    /purchase more credits/i.test(message) &&
+    /try again at/i.test(message)
   );
 }
-
-function errorToCodexAdapterLogError(error: unknown): CodexAdapterLogInput["error"] {
-  if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-    };
+function resolveCodexProviderErrorReason(
+  message: string,
+  canceled: boolean,
+): ProviderErrorReason {
+  return canceled
+    ? "canceled"
+    : isCodexUsageLimitMessage(message)
+      ? "usage_limit"
+      : "unknown";
+}
+function collectCompletedFileChangeItems(
+  items: CodexTurnItem[],
+): Array<Extract<CodexTurnItem, { type: "fileChange" }>> {
+  return items.filter(
+    (item): item is Extract<CodexTurnItem, { type: "fileChange" }> =>
+      item.type === "fileChange" && item.status === "completed",
+  );
+}
+function collectCompletedFileChangePaths(
+  workspacePath: string,
+  items: CodexTurnItem[],
+): string[] {
+  return [
+    ...new Set(
+      collectCompletedFileChangeItems(items).flatMap((item) =>
+        item.changes.map((change) =>
+          normalizeWorkspaceRelativePath(workspacePath, change.path),
+        ),
+      ),
+    ),
+  ].sort();
+}
+function hasBroadFilesystemChangeSource(items: CodexTurnItem[]): boolean {
+  return items.some(
+    (item) =>
+      item.type === "commandExecution" ||
+      item.type === "mcpToolCall" ||
+      item.type === "collabAgentToolCall",
+  );
+}
+function toActivitySummary(items: CodexTurnItem[]): string[] {
+  return toAuditOperationsProjection(items)
+    .filter((item) => item.type !== "agent_message")
+    .map((item) => item.summary)
+    .slice(0, 6);
+}
+function parseStructuredPromptJson(rawText: string): unknown | null {
+  const trimmed = rawText.trim();
+  const match = trimmed.match(/^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i);
+  try {
+    return JSON.parse(match ? (match[1] ?? "") : trimmed);
+  } catch {
+    return null;
   }
-
-  return {
-    message: typeof error === "string" ? error : String(error),
-  };
+}
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 export type CodexThreadOptions = {
   workingDirectory: string;
-  skipGitRepoCheck: true;
-  sandboxMode: CodexSdkSandboxMode;
+  sandboxMode: CodexSandboxBaseMode;
   approvalPolicy: ApprovalMode;
   model: string;
   modelReasoningEffort: ModelReasoningEffort;
   networkAccessEnabled?: boolean;
   additionalDirectories?: string[];
 };
-
-export type CodexThreadSettings = {
-  options: CodexThreadOptions;
-  selection: ResolvedModelSelection;
-  settingsKey: string;
-};
-
-function toCodexSdkThreadOptions(options: CodexThreadOptions): CodexSdkThreadOptions {
-  return options;
+function buildCodexThreadSettings(
+  session: Session,
+  providerCatalog: ModelCatalogProvider,
+  executionOptions: SessionExecutionOptions,
+  executionWorkspacePath?: string,
+) {
+  const selection = resolveModelSelection(
+    providerCatalog,
+    executionOptions.model,
+    executionOptions.reasoningEffort,
+  );
+  const workingDirectory =
+    executionWorkspacePath?.trim() || session.workspacePath;
+  const sandbox = resolveCodexSandboxThreadOptions(
+    executionOptions.codexSandboxMode,
+  );
+  const options: CodexThreadOptions = {
+    workingDirectory,
+    sandboxMode: sandbox.sandboxMode,
+    approvalPolicy: mapApprovalModeToCodexPolicy(executionOptions.approvalMode),
+    model: selection.resolvedModel,
+    modelReasoningEffort: selection.resolvedReasoningEffort,
+    networkAccessEnabled: sandbox.networkAccessEnabled,
+    additionalDirectories: normalizeAllowedAdditionalDirectories(
+      workingDirectory,
+      session.allowedAdditionalDirectories,
+    ),
+  };
+  return { options, selection };
 }
-
-type CodexThread = Pick<Thread, "id" | "run" | "runStreamed">;
-
-type CodexThreadConnector = {
-  startThread: (...args: Parameters<Codex["startThread"]>) => CodexThread;
-  resumeThread: (...args: Parameters<Codex["resumeThread"]>) => CodexThread;
+function sandboxPolicy(options: CodexThreadOptions): unknown {
+  if (options.sandboxMode === "danger-full-access")
+    return { type: "dangerFullAccess" };
+  if (options.sandboxMode === "read-only")
+    return {
+      type: "readOnly",
+      networkAccess: options.networkAccessEnabled ?? false,
+    };
+  return {
+    type: "workspaceWrite",
+    writableRoots: [
+      options.workingDirectory,
+      ...(options.additionalDirectories ?? []),
+    ],
+    networkAccess: options.networkAccessEnabled ?? false,
+    excludeTmpdirEnvVar: false,
+    excludeSlashTmp: false,
+  };
+}
+function userInput(text: string, imagePaths: string[]): unknown[] {
+  return [
+    { type: "text", text, text_elements: [] },
+    ...imagePaths.map((imagePath) => ({ type: "localImage", path: imagePath })),
+  ];
+}
+type ActiveCodexTurn = {
+  transport: CodexTransport;
+  threadId: string;
+  turnId: string;
+  inputAvailable: boolean;
+  pendingInputs: Set<Promise<{ turnId: string }>>;
 };
-
-type CachedCodexThread = {
-  thread: CodexThread;
-  settingsKey: string;
-};
-
-function buildFallbackDiffRows(beforeLines: string[], afterLines: string[]): DiffRow[] {
+function buildFallbackDiffRows(
+  beforeLines: string[],
+  afterLines: string[],
+): DiffRow[] {
   const rows: DiffRow[] = [];
   const maxLength = Math.max(beforeLines.length, afterLines.length);
 
@@ -317,7 +421,10 @@ function buildFallbackDiffRows(beforeLines: string[], afterLines: string[]): Dif
   return rows;
 }
 
-function buildDiffRows(beforeContent: string | null, afterContent: string | null): DiffRow[] {
+function buildDiffRows(
+  beforeContent: string | null,
+  afterContent: string | null,
+): DiffRow[] {
   const beforeLines = toLines(beforeContent);
   const afterLines = toLines(afterContent);
 
@@ -414,13 +521,22 @@ function buildDiffRows(beforeContent: string | null, afterContent: string | null
 
     const block: RawDiffOp[] = [];
     let cursor = index;
-    while (cursor < operations.length && operations[cursor].kind !== "context") {
+    while (
+      cursor < operations.length &&
+      operations[cursor].kind !== "context"
+    ) {
       block.push(operations[cursor]);
       cursor += 1;
     }
 
-    const deletes = block.filter((entry): entry is Extract<RawDiffOp, { kind: "delete" }> => entry.kind === "delete");
-    const adds = block.filter((entry): entry is Extract<RawDiffOp, { kind: "add" }> => entry.kind === "add");
+    const deletes = block.filter(
+      (entry): entry is Extract<RawDiffOp, { kind: "delete" }> =>
+        entry.kind === "delete",
+    );
+    const adds = block.filter(
+      (entry): entry is Extract<RawDiffOp, { kind: "add" }> =>
+        entry.kind === "add",
+    );
     const pairedCount = Math.min(deletes.length, adds.length);
 
     for (let pairIndex = 0; pairIndex < pairedCount; pairIndex += 1) {
@@ -433,7 +549,11 @@ function buildDiffRows(beforeContent: string | null, afterContent: string | null
       });
     }
 
-    for (let deleteIndex = pairedCount; deleteIndex < deletes.length; deleteIndex += 1) {
+    for (
+      let deleteIndex = pairedCount;
+      deleteIndex < deletes.length;
+      deleteIndex += 1
+    ) {
       rows.push({
         kind: "delete",
         leftNumber: deletes[deleteIndex].leftNumber,
@@ -455,7 +575,10 @@ function buildDiffRows(beforeContent: string | null, afterContent: string | null
   return rows;
 }
 
-function inferChangedFileKind(beforeContent: string | null, afterContent: string | null): ChangedFile["kind"] | null {
+function inferChangedFileKind(
+  beforeContent: string | null,
+  afterContent: string | null,
+): ChangedFile["kind"] | null {
   if (beforeContent === null && afterContent !== null) {
     return "add";
   }
@@ -464,22 +587,35 @@ function inferChangedFileKind(beforeContent: string | null, afterContent: string
     return "delete";
   }
 
-  if (beforeContent !== null && afterContent !== null && beforeContent !== afterContent) {
+  if (
+    beforeContent !== null &&
+    afterContent !== null &&
+    beforeContent !== afterContent
+  ) {
     return "edit";
   }
 
   return null;
 }
 
-function compareSnapshotChanges(beforeSnapshot: WorkspaceSnapshot, afterSnapshot: WorkspaceSnapshot): Array<{
+function compareSnapshotChanges(
+  beforeSnapshot: WorkspaceSnapshot,
+  afterSnapshot: WorkspaceSnapshot,
+): Array<{
   path: string;
   kind: ChangedFile["kind"];
 }> {
-  const paths = new Set<string>([...beforeSnapshot.keys(), ...afterSnapshot.keys()]);
+  const paths = new Set<string>([
+    ...beforeSnapshot.keys(),
+    ...afterSnapshot.keys(),
+  ]);
   const changes: Array<{ path: string; kind: ChangedFile["kind"] }> = [];
 
   for (const filePath of paths) {
-    const kind = inferChangedFileKind(beforeSnapshot.get(filePath) ?? null, afterSnapshot.get(filePath) ?? null);
+    const kind = inferChangedFileKind(
+      beforeSnapshot.get(filePath) ?? null,
+      afterSnapshot.get(filePath) ?? null,
+    );
     if (!kind) {
       continue;
     }
@@ -490,276 +626,39 @@ function compareSnapshotChanges(beforeSnapshot: WorkspaceSnapshot, afterSnapshot
   return changes.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function collectCompletedFileChangeItems(items: CodexTurnItem[]): Array<Extract<ThreadItem, { type: "file_change" }>> {
-  return items.filter(
-    (item): item is Extract<ThreadItem, { type: "file_change" }> =>
-      item.type === "file_change" && item.status === "completed",
-  );
-}
-
-function collectCompletedFileChangePaths(workspacePath: string, items: CodexTurnItem[]): string[] {
-  const paths = new Set<string>();
-
-  for (const item of collectCompletedFileChangeItems(items)) {
-    for (const change of item.changes) {
-      paths.add(normalizeWorkspaceRelativePath(workspacePath, change.path));
-    }
-  }
-
-  return Array.from(paths).sort((left, right) => left.localeCompare(right));
-}
-
-function hasBroadFilesystemChangeSource(items: CodexTurnItem[]): boolean {
-  return items.some((item) => {
-    if ("status" in item && item.status !== "completed") {
-      return false;
-    }
-
-    return item.type === "command_execution" || item.type === "mcp_tool_call" || isCodexCollabToolCallItem(item);
-  });
-}
-
-function toActivitySummary(items: CodexTurnItem[]): string[] {
-  const summary: string[] = [];
-
-  for (const item of items) {
-    if (isCodexCollabToolCallItem(item)) {
-      if (item.status === "completed") {
-        summary.push(`collab: ${item.tool ?? "tool"}`);
-      }
-      continue;
-    }
-
-    switch (item.type) {
-      case "command_execution":
-        if (item.status === "completed") {
-          summary.push(`command: ${item.command}`);
-        }
-        break;
-      case "mcp_tool_call":
-        if (item.status === "completed") {
-          summary.push(`mcp: ${item.server}/${item.tool}`);
-        }
-        break;
-      case "web_search":
-        summary.push(`web: ${item.query}`);
-        break;
-      case "todo_list":
-        if (item.items.length > 0) {
-          summary.push(`todo: ${item.items.filter((entry) => entry.completed).length}/${item.items.length} completed`);
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  return summary.slice(0, 6);
-}
-
-function stringifyUnknown(value: unknown): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function parseStructuredPromptJson(rawText: string): unknown | null {
-  const trimmed = rawText.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  const jsonText = fencedMatch ? fencedMatch[1] ?? "" : trimmed;
-
-  try {
-    return JSON.parse(jsonText);
-  } catch {
-    return null;
-  }
-}
-
-async function emitLiveState(
-  handler: RunSessionTurnProgressHandler | undefined,
-  sessionId: string,
-  threadId: string | null,
-  steps: Map<string, LiveRunStep>,
-  assistantText: string,
-  reasoningText: string,
-  usage: AuditLogUsage | null,
-  errorMessage: string,
-  redactor = createProviderAgentRuntimeBindingRedactor(null),
-): Promise<void> {
-  if (!handler) {
-    return;
-  }
-
-  await handler({
-    sessionId,
-    threadId: threadId ?? "",
-    assistantText: redactor.sanitizeText(toAuditTextPreview(assistantText) ?? ""),
-    reasoningText: redactor.sanitizeText(toAuditTextPreview(reasoningText) ?? ""),
-    steps: redactor.sanitize(Array.from(steps.values())),
-    backgroundTasks: [],
-    usage,
-    errorMessage: redactor.sanitizeText(errorMessage),
-    approvalRequest: null,
-    elicitationRequest: null,
-  });
-}
-
-function summarizeCodexAgentsStates(value: unknown): {
-  total: number;
-  statuses: Record<string, number>;
-} | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  const statuses: Record<string, number> = {};
-  let total = 0;
-  for (const agentState of Object.values(value as Record<string, unknown>)) {
-    if (!agentState || typeof agentState !== "object") {
-      total += 1;
-      statuses.unknown = (statuses.unknown ?? 0) + 1;
-      continue;
-    }
-
-    const status = (agentState as { status?: unknown }).status;
-    const normalizedStatus = typeof status === "string" && status.trim().length > 0 ? status : "unknown";
-    total += 1;
-    statuses[normalizedStatus] = (statuses[normalizedStatus] ?? 0) + 1;
-  }
-
-  return { total, statuses };
-}
-
-function buildCodexTurnEventLogData(event: ThreadEvent): Record<string, unknown> | null {
-  const record = event as unknown as CodexEventRecord;
-  const eventType = typeof record.type === "string" ? record.type : "";
-
-  switch (event.type) {
-    case "thread.started":
-      return {
-        eventType,
-        threadId: event.thread_id,
-      };
-    case "turn.completed":
-      return {
-        eventType,
-        hasUsage: event.usage !== null,
-      };
-    case "turn.failed":
-      return {
-        eventType,
-        errorMessage: event.error.message,
-      };
-    case "error":
-      return {
-        eventType,
-        errorMessage: event.message,
-      };
-    case "item.started":
-    case "item.updated":
-    case "item.completed": {
-      const item = event.item as unknown;
-      if (isCodexCollabToolCallItem(item)) {
-        return {
-          eventType,
-          itemId: item.id,
-          itemType: item.type,
-          tool: item.tool ?? null,
-          status: item.status ?? null,
-          agents: summarizeCodexAgentsStates(item.agents_states),
-          errorMessage: item.error?.message ?? null,
-        };
-      }
-
-      const threadItem = event.item;
-      if (threadItem.type === "agent_message" || threadItem.type === "error") {
-        return {
-          eventType,
-          itemId: threadItem.id,
-          itemType: threadItem.type,
-          status: "status" in threadItem ? threadItem.status ?? null : null,
-        };
-      }
-
-      return null;
-    }
-    default:
-      return null;
-  }
-}
-
-function summarizeCodexTurnStreamState(
-  state: CodexTurnStreamState,
-  redactor: ProviderAgentRuntimeBindingRedactor,
-): Record<string, unknown> {
-  return {
-    threadId: state.threadId,
-    itemCount: state.items.size,
-    liveStepCount: state.liveSteps.size,
-    turnCompleted: state.turnCompleted,
-    streamedAssistantTextLength: state.streamedAssistantText.length,
-    finalAssistantTextLength: state.finalAssistantText.length,
-    reasoningTextLength: state.reasoningText.length,
-    hasUsage: state.usage !== null,
-    streamErrorMessage: state.streamErrorMessage
-      ? redactor.sanitizeText(state.streamErrorMessage)
-      : null,
-  };
-}
-
-function getLiveStreamErrorMessage(state: CodexTurnStreamState): string {
-  if (shouldIgnoreCodexWindowsTaskkillParseNoise(state, state.streamErrorMessage)) {
-    return "";
-  }
-
-  return state.streamErrorMessage;
-}
-
-function buildCodexTransportPayload(prompt: ProviderPromptComposition): AuditTransportPayload {
+function buildCodexTransportPayload(
+  prompt: ProviderPromptComposition,
+): AuditTransportPayload {
   const fields = [
     {
-      label: "thread.runStreamed.text",
+      label: "turn/start.text",
       value: prompt.logicalPrompt.composedText,
     },
   ];
 
   if (prompt.imagePaths.length > 0) {
     fields.push({
-      label: "thread.runStreamed.images",
+      label: "turn/start.images",
       value: prompt.imagePaths.join("\n"),
     });
   }
 
   if (prompt.additionalDirectories.length > 0) {
     fields.push({
-      label: "thread.additionalDirectories",
+      label: "sandboxPolicy.writableRoots",
       value: prompt.additionalDirectories.join("\n"),
     });
   }
 
   return {
-    summary: "Codex thread.runStreamed payload",
+    summary: "Codex turn/start payload",
     fields,
   };
 }
 
 function toRunChecks(
   executionOptions: SessionExecutionOptions,
-  usage: Usage | null,
+  usage: AuditLogUsage | null,
   threadId: string | null,
   providerCatalog: ModelCatalogProvider,
   selection: ResolvedModelSelection,
@@ -772,7 +671,10 @@ function toRunChecks(
     { label: "reviewer", value: executionOptions.codexReviewer },
     buildCodexSpeedRunCheck(executionOptions.codexSpeed),
     { label: "model", value: selection.resolvedModel },
-    { label: "reasoning", value: reasoningEffortLabel(selection.resolvedReasoningEffort) },
+    {
+      label: "reasoning",
+      value: reasoningEffortLabel(selection.resolvedReasoningEffort),
+    },
   ];
 
   if (threadId) {
@@ -780,7 +682,10 @@ function toRunChecks(
   }
 
   if (usage) {
-    checks.push({ label: "tokens", value: `${usage.input_tokens}/${usage.output_tokens}` });
+    checks.push({
+      label: "tokens",
+      value: `${usage.inputTokens}/${usage.outputTokens}`,
+    });
   }
 
   const beforeSnapshotWarning = summarizeSnapshotWarning(beforeSnapshotStats);
@@ -796,7 +701,9 @@ function toRunChecks(
   return checks;
 }
 
-export function buildCodexSpeedRunCheck(speed: Session["codexSpeed"]): RunCheck {
+export function buildCodexSpeedRunCheck(
+  speed: Session["codexSpeed"],
+): RunCheck {
   return { label: "speed", value: speed };
 }
 
@@ -823,7 +730,7 @@ async function buildArtifact(
   executionOptions: SessionExecutionOptions,
   workspacePath: string,
   items: CodexTurnItem[],
-  usage: Usage | null,
+  usage: AuditLogUsage | null,
   threadId: string | null,
   beforeSnapshot: WorkspaceSnapshot,
   afterSnapshot: WorkspaceSnapshot,
@@ -859,7 +766,11 @@ async function buildArtifact(
     afterSnapshotStats,
   );
 
-  if (changedFiles.length === 0 && operationTimeline.length === 0 && runChecks.length === 0) {
+  if (
+    changedFiles.length === 0 &&
+    operationTimeline.length === 0 &&
+    runChecks.length === 0
+  ) {
     return undefined;
   }
 
@@ -873,248 +784,430 @@ async function buildArtifact(
 }
 
 export class CodexAdapter implements ProviderTurnAdapter {
-  private readonly clients = new Map<string, CodexThreadConnector>();
-  private readonly clientKeysBySession = new Map<string, string>();
-  private readonly threads = new Map<string, CachedCodexThread>();
-  private readonly workspaceSnapshotIndexes = new Map<string, WorkspaceSnapshotIndex>();
-
+  private readonly activeTurns = new Map<string, ActiveCodexTurn>();
+  private readonly workspaceSnapshotIndexes = new Map<
+    string,
+    WorkspaceSnapshotIndex
+  >();
   constructor(
     private readonly logger?: CodexAdapterLogger,
     private readonly options: CodexAdapterOptions = {},
   ) {}
-
   private writeLog(input: CodexAdapterLogInput): void {
     try {
       this.logger?.(input);
     } catch {
-      // Logging must not affect provider execution.
+      /* Logging does not control execution. */
     }
   }
-
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
   }
-
   async getProviderQuotaTelemetry(): Promise<null> {
     return null;
   }
-
   getBackgroundStructuredPromptPolicy() {
     return BACKGROUND_STRUCTURED_PROMPT_POLICY;
   }
-
+  async invalidateSessionThread(sessionId: string): Promise<void> {
+    const active = this.activeTurns.get(sessionId);
+    if (active) {
+      active.inputAvailable = false;
+      this.activeTurns.delete(sessionId);
+      await active.transport.close();
+    }
+  }
+  async invalidateAllSessionThreads(): Promise<void> {
+    const active = [...this.activeTurns.values()];
+    this.activeTurns.clear();
+    this.workspaceSnapshotIndexes.clear();
+    await Promise.all(
+      active.map((turn) => {
+        turn.inputAvailable = false;
+        return turn.transport.close();
+      }),
+    );
+  }
+  private createTransport(
+    providerId: string,
+    appSettings: AppSettings,
+    workspacePath: string,
+    binding?: ProviderAgentRuntimeBindingProjection | null,
+    interactive = false,
+  ): { transport: CodexTransport; apiKey: string } {
+    const executable =
+      resolvePackagedProviderBinaryPath("codex") ??
+      resolveDevelopmentProviderBinaryPath("codex", (specifier) =>
+        require.resolve(specifier),
+      );
+    if (!executable) throw new Error("Codex App Server binary was not found");
+    const env = mergeDefinedProviderEnv(
+      process.env,
+      buildProviderAgentRuntimeBindingEnv(binding),
+    );
+    const apiKey = resolveCodexApiKey(providerId, appSettings);
+    if (apiKey) env.CODEX_API_KEY = apiKey;
+    const options = {
+      executable,
+      cwd: workspacePath,
+      env,
+      arguments: [
+        ...CODEX_APP_SERVER_ARGUMENTS,
+        "-c",
+        `features.default_mode_request_user_input=${interactive}`,
+        "-c",
+        `features.request_permissions_tool=${interactive}`,
+        ...(apiKey ? ["-c", 'cli_auth_credentials_store="ephemeral"'] : []),
+      ],
+      clientInfo: {
+        name: "withmate",
+        title: "WithMate",
+        version: this.options.appVersion ?? "development",
+      },
+    };
+    return { transport: this.options.createTransport?.(options) ?? new CodexAppServerTransport(options), apiKey };
+  }
+  async steerSessionTurn(input: {
+    sessionId: string;
+    expectedTurnId: string;
+    userMessage: string;
+    attachments: import("../../../src-shared/session/runtime-state.js").ComposerAttachment[];
+  }): Promise<{ turnId: string }> {
+    const active = this.activeTurns.get(input.sessionId);
+    if (!active?.inputAvailable || active.turnId !== input.expectedTurnId)
+      throw new Error("Codex turn is no longer accepting input");
+    const attachmentText = input.attachments
+      .filter((attachment) => attachment.kind !== "image")
+      .map((attachment) => attachment.absolutePath)
+      .join("\n");
+    const request = active.transport.request<{ turnId: string }>(
+      "turn/steer",
+      {
+        threadId: active.threadId,
+        expectedTurnId: input.expectedTurnId,
+        input: userInput(
+          [input.userMessage, attachmentText].filter(Boolean).join("\n\n"),
+          input.attachments
+            .filter((attachment) => attachment.kind === "image")
+            .map((attachment) => attachment.absolutePath),
+        ),
+      },
+      { timeoutMs: 10_000 },
+    );
+    active.pendingInputs.add(request);
+    try {
+      const response = await request;
+      if (response.turnId !== input.expectedTurnId)
+        throw new Error("Codex accepted input for an unexpected turn");
+      return { turnId: response.turnId };
+    } finally {
+      active.pendingInputs.delete(request);
+    }
+  }
+  private async executeTurn(args: {
+    transport: CodexTransport;
+    apiKey: string;
+    state: CodexTurnStreamState;
+    options: CodexThreadOptions;
+    serviceTier: CodexServiceTier;
+    reviewer: CodexApprovalsReviewer;
+    input: unknown[];
+    signal?: AbortSignal;
+    outputSchema?: unknown;
+    sessionInput?: RunSessionTurnInput;
+    onProgress?: RunSessionTurnProgressHandler;
+  }): Promise<void> {
+    const { transport, state, options, signal, sessionInput } = args;
+    const redactor = createProviderAgentRuntimeBindingRedactor(
+      sessionInput?.agentRuntimeBinding,
+      [args.apiKey],
+    );
+    let interactionError: unknown;
+    const interactions = sessionInput
+      ? new CodexTurnInteractions(
+          sessionInput,
+          redactor.sanitizeText,
+          (error) => {
+            interactionError = error;
+            void transport.close();
+          },
+        )
+      : null;
+    let active: ActiveCodexTurn | null = null;
+    const progress = async () => {
+      if (!sessionInput || !args.onProgress) return;
+      await args.onProgress({
+        sessionId: sessionInput.session.id,
+        threadId: state.threadId ?? "",
+        turnId: state.turnId ?? undefined,
+        inputAvailable: active?.inputAvailable ?? false,
+        assistantText: redactor.sanitizeText(
+          toAuditTextPreview(getLiveCodexAssistantText(state)) ?? "",
+        ),
+        reasoningText: redactor.sanitizeText(
+          toAuditTextPreview(state.reasoningText) ?? "",
+        ),
+        steps: redactor.sanitize([...state.liveSteps.values()]),
+        backgroundTasks: [],
+        usage: state.usage,
+        errorMessage: redactor.sanitizeText(state.streamErrorMessage),
+        approvalRequest: null,
+        elicitationRequest: null,
+      });
+    };
+    const abort = () => {
+      if (active) {
+        active.inputAvailable = false;
+        void transport
+          .request(
+            "turn/interrupt",
+            { threadId: active.threadId, turnId: active.turnId },
+            { timeoutMs: 2_000 },
+          )
+          .catch(() => undefined);
+      }
+      interactions?.close();
+      void progress().catch(() => undefined);
+      void transport.close();
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      signal?.throwIfAborted();
+      await transport.start(signal);
+      if (args.apiKey) {
+        try {
+          const login = await transport.request<{ type: string }>("account/login/start", { type: "apiKey", apiKey: args.apiKey }, { signal });
+          if (login.type !== "apiKey") throw new Error("Codex App Server API key login response is invalid");
+        } catch (error) {
+          throw new CodexAuthenticationError(redactor.sanitizeText(error instanceof Error ? error.message : String(error)));
+        }
+      }
+      const threadParams = {
+        model: options.model,
+        cwd: options.workingDirectory,
+        approvalPolicy: options.approvalPolicy,
+        approvalsReviewer: args.reviewer,
+        sandbox: options.sandboxMode,
+        serviceTier: args.serviceTier,
+        config: {
+          model_reasoning_effort: options.modelReasoningEffort,
+          service_tier: args.serviceTier,
+          approvals_reviewer: args.reviewer,
+          ...(options.additionalDirectories?.length
+            ? {
+                sandbox_workspace_write: {
+                  writable_roots: options.additionalDirectories,
+                  network_access: options.networkAccessEnabled ?? false,
+                },
+              }
+            : {}),
+        },
+      };
+      const threadResponse = await transport.request<{
+        thread: { id: string };
+      }>(
+        state.threadId ? "thread/resume" : "thread/start",
+        {
+          ...threadParams,
+          ...(state.threadId ? { threadId: state.threadId } : {}),
+        },
+        { signal },
+      );
+      if (
+        typeof threadResponse.thread?.id !== "string" ||
+        (state.threadId && state.threadId !== threadResponse.thread.id)
+      )
+        throw new Error("Invalid Codex App Server thread response");
+      state.threadId = threadResponse.thread.id;
+      const turnResponse = await transport.request<{ turn: { id: string } }>(
+        "turn/start",
+        {
+          threadId: state.threadId,
+          input: args.input,
+          cwd: options.workingDirectory,
+          approvalPolicy: options.approvalPolicy,
+          approvalsReviewer: args.reviewer,
+          sandboxPolicy: sandboxPolicy(options),
+          model: options.model,
+          effort: options.modelReasoningEffort,
+          serviceTier: args.serviceTier,
+          ...(args.outputSchema === undefined
+            ? {}
+            : { outputSchema: args.outputSchema }),
+        },
+        { signal },
+      );
+      if (typeof turnResponse.turn?.id !== "string")
+        throw new Error("Invalid Codex App Server turn response");
+      state.turnId = turnResponse.turn.id;
+      if (sessionInput) {
+        active = {
+          transport,
+          threadId: state.threadId,
+          turnId: state.turnId,
+          inputAvailable: true,
+          pendingInputs: new Set(),
+        };
+        this.activeTurns.set(sessionInput.session.id, active);
+      }
+      await progress();
+      while (!state.turnCompleted) {
+        signal?.throwIfAborted();
+        const event = await transport.nextEvent();
+        const params = asRecord(event.params);
+        if (event.kind === "serverRequest") {
+          if (
+            params.threadId !== state.threadId ||
+            (params.turnId !== undefined &&
+              params.turnId !== null &&
+              params.turnId !== state.turnId)
+          ) {
+            await event.reject({
+              code: -32602,
+              message: "Request is outside the current turn",
+            });
+            continue;
+          }
+          if (!interactions) {
+            await event.reject({
+              code: -32601,
+              message:
+                "Interactive requests are disabled for structured background execution",
+            });
+            continue;
+          }
+          interactions.accept(event);
+          continue;
+        }
+        if (event.method === "serverRequest/resolved") {
+          if (
+            params.threadId === state.threadId &&
+            (typeof params.requestId === "string" ||
+              typeof params.requestId === "number")
+          )
+            interactions?.resolve(params.requestId);
+          continue;
+        }
+        applyCodexTurnEvent(state, event);
+        if (state.turnCompleted) {
+          if (active) active.inputAvailable = false;
+          interactions?.close();
+          if (sessionInput) this.activeTurns.delete(sessionInput.session.id);
+        }
+        await progress();
+      }
+      if (interactionError) throw interactionError;
+      if (state.terminalStatus !== "completed")
+        throw new Error(
+          state.streamErrorMessage || "Codex turn did not complete",
+        );
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      interactions?.close();
+      if (active) active.inputAvailable = false;
+      if (
+        sessionInput &&
+        this.activeTurns.get(sessionInput.session.id) === active
+      )
+        this.activeTurns.delete(sessionInput.session.id);
+      await progress().catch((error) =>
+        this.writeLog({
+          level: "warn",
+          kind: "codex.run.final-progress-failed",
+          message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
+        }),
+      );
+      if (state.turnCompleted && active) {
+        await Promise.allSettled([...active.pendingInputs]);
+      }
+      await transport.close();
+    }
+  }
   async runBackgroundStructuredPrompt<TOutput = unknown>(
     input: RunBackgroundStructuredPromptInput,
   ): Promise<RunBackgroundStructuredPromptResult<TOutput>> {
-    const result = await this.runBackgroundStructuredPromptFromInput(
-      input,
-      (rawText) => parseStructuredPromptJson(rawText) as TOutput | null,
-    );
-
-    return {
-      threadId: result.threadId,
-      rawText: result.rawText,
-      output: result.output,
-      parsedJson: result.parsedJson,
-      structuredOutput: result.structuredOutput,
-      rawItemsJson: result.rawItemsJson,
-      usage: result.usage,
-      providerQuotaTelemetry: result.providerQuotaTelemetry,
-    };
-  }
-
-  async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
-    const result = await this.runBackgroundStructuredPromptFromInput(
-      {
-        providerId: input.session.provider,
-        workspacePath: input.session.workspacePath,
-        appSettings: input.appSettings,
-        model: input.model,
-        reasoningEffort: input.reasoningEffort,
-        timeoutMs: input.timeoutMs,
-        prompt: input.prompt,
-      },
-      parseSessionMemoryDeltaText,
-    );
-    return {
-      threadId: result.threadId,
-      rawText: result.rawText,
-      delta: result.output,
-      rawItemsJson: result.rawItemsJson,
-      usage: result.usage,
-      providerQuotaTelemetry: null,
-    };
-  }
-
-  async invalidateSessionThread(sessionId: string): Promise<void> {
-    this.threads.delete(sessionId);
-    const clientKey = this.clientKeysBySession.get(sessionId);
-    if (clientKey) {
-      this.clients.delete(clientKey);
-      this.clientKeysBySession.delete(sessionId);
-    }
-  }
-
-  async invalidateAllSessionThreads(): Promise<void> {
-    this.threads.clear();
-    this.clients.clear();
-    this.clientKeysBySession.clear();
-    this.workspaceSnapshotIndexes.clear();
-  }
-
-  private buildBackgroundThreadOptions(input: RunBackgroundStructuredPromptInput) {
-    const additionalDirectories = normalizeAllowedAdditionalDirectories(
-      input.workspacePath,
-      input.additionalDirectories ?? [],
-    );
-    const sandboxOptions = resolveCodexSandboxThreadOptions(input.codexSandboxMode ?? "read-only");
-    return {
-      workingDirectory: input.workspacePath,
-      skipGitRepoCheck: true as const,
-      sandboxMode: sandboxOptions.sandboxMode,
-      approvalPolicy: mapApprovalModeToCodexPolicy(input.approvalMode ?? "never"),
-      model: input.model,
-      modelReasoningEffort: input.reasoningEffort,
-      ...(sandboxOptions.networkAccessEnabled ? { networkAccessEnabled: true } : {}),
-      ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
-    };
-  }
-
-  private async runBackgroundStructuredPromptFromInput<TOutput>(
-    input: RunBackgroundStructuredPromptInput,
-    parse: (rawText: string) => TOutput | null,
-  ): Promise<{
-    threadId: string | null;
-    rawText: string;
-    output: TOutput | null;
-    parsedJson: unknown | null;
-    structuredOutput: undefined;
-    rawItemsJson: string;
-    usage: AuditLogUsage | null;
-    providerQuotaTelemetry: ProviderQuotaTelemetry | null;
-  }> {
-    const signal = input.signal ?? AbortSignal.timeout(input.timeoutMs);
-    const { client } = this.getClient(
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs)])
+      : AbortSignal.timeout(input.timeoutMs);
+    const sandbox = resolveCodexSandboxThreadOptions("read-only");
+    const state = createCodexTurnStreamState(null);
+    const { transport, apiKey } = this.createTransport(
       input.providerId,
       input.appSettings,
-      null,
-      "background",
-      mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
-      mapCodexReviewerToApprovalsReviewer(DEFAULT_CODEX_REVIEWER),
+      input.workspacePath,
     );
-    const thread = client.startThread(toCodexSdkThreadOptions(this.buildBackgroundThreadOptions(input)));
-
-    const backgroundInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
-    const result = await thread.run(backgroundInput, {
+    const redactor = createProviderAgentRuntimeBindingRedactor(null, [apiKey]);
+    await this.executeTurn({
+      transport,
+      apiKey,
+      state,
+      options: {
+        workingDirectory: input.workspacePath,
+        sandboxMode: sandbox.sandboxMode,
+        approvalPolicy: "never",
+        model: input.model,
+        modelReasoningEffort: input.reasoningEffort,
+        networkAccessEnabled: sandbox.networkAccessEnabled,
+        additionalDirectories: normalizeAllowedAdditionalDirectories(
+          input.workspacePath,
+          input.additionalDirectories ?? [],
+        ),
+      },
+      serviceTier: mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
+      reviewer: mapCodexReviewerToApprovalsReviewer(DEFAULT_CODEX_REVIEWER),
+      input: userInput(
+        `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim(),
+        [],
+      ),
       outputSchema: input.prompt.outputSchema,
       signal,
-    });
-    const parsedJson = parseStructuredPromptJson(result.finalResponse);
-
+    }).catch((error) => { throw sanitizeCodexError(error, redactor); });
+    const response = collectCodexAssistantResponseFromItems(
+      state.items.values(),
+    );
+    const rawText = redactor.sanitizeText(response.lastNonEmptyAssistantMessageText);
+    const parsedJson = parseStructuredPromptJson(rawText);
     return {
-      threadId: thread.id,
-      rawText: result.finalResponse,
-      output: parse(result.finalResponse),
+      threadId: state.threadId,
+      rawText,
+      output: parsedJson as TOutput | null,
       parsedJson,
-      structuredOutput: undefined,
-      rawItemsJson: JSON.stringify({
-        type: "codex-background-response",
-        threadId: thread.id,
-        finalResponse: result.finalResponse,
-      }, null, 2),
-      usage: normalizeCodexTokenUsage(result.usage),
+      rawItemsJson: stringifyBoundedAuditRawItems(
+        redactor.sanitize(buildStableRawItemsProjection([...state.items.values()])),
+      ),
+      usage: state.usage,
       providerQuotaTelemetry: null,
     };
   }
-
-  private getClient(
-    providerId: string,
-    appSettings: AppSettings,
-    agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
-    scope: CodexClientScope = "foreground",
-    serviceTier: CodexServiceTier = mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
-    approvalsReviewer: CodexApprovalsReviewer = mapCodexReviewerToApprovalsReviewer(DEFAULT_CODEX_REVIEWER),
-  ): { client: CodexThreadConnector; clientKey: string } {
-    const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
-    const codexPathOverride = resolvePackagedProviderBinaryPath("codex");
-    const bindingCacheKey = buildProviderAgentRuntimeBindingCacheKey(agentRuntimeBinding);
-    // Background prompts remain Standard and use a separate cache scope so a foreground Fast client cannot leak into them.
-    const clientKey = JSON.stringify([
-      providerId,
-      codingApiKey || null,
-      codexPathOverride,
-      bindingCacheKey,
-      scope,
-      serviceTier,
-      approvalsReviewer,
-    ]);
-    const cached = this.clients.get(clientKey);
-    if (cached) {
-      return { client: cached, clientKey };
-    }
-
-    const clientOptions: CodexOptions = {
-      ...(codingApiKey ? { apiKey: codingApiKey } : {}),
-      ...(codexPathOverride ? { codexPathOverride } : {}),
-      config: {
-        // Keep Standard explicit so a user's global config.toml cannot silently opt this Session into Fast.
-        service_tier: serviceTier,
-        approvals_reviewer: approvalsReviewer,
-      },
-      env: mergeDefinedProviderEnv(
-        process.env,
-        buildProviderAgentRuntimeBindingEnv(agentRuntimeBinding),
-      ),
-    };
-    const client = this.options.createClient?.(clientOptions) ?? new Codex(clientOptions);
-    this.clients.set(clientKey, client);
-    return { client, clientKey };
-  }
-
-  private getThread(input: RunSessionTurnInput): { thread: CodexThread; selection: ResolvedModelSelection } {
-    const { client, clientKey } = this.getClient(
-      input.providerCatalog.id,
-      input.appSettings,
-      input.agentRuntimeBinding,
-      "foreground",
-      mapCodexSpeedToServiceTier(input.executionOptions.codexSpeed),
-      mapCodexReviewerToApprovalsReviewer(input.executionOptions.codexReviewer),
-    );
-    const previousClientKey = this.clientKeysBySession.get(input.session.id);
-    if (previousClientKey && previousClientKey !== clientKey) {
-      this.clients.delete(previousClientKey);
-    }
-    this.clientKeysBySession.set(input.session.id, clientKey);
-    const nextSettings = buildCodexThreadSettings(
-      input.session,
-      input.providerCatalog,
-      clientKey,
-      input.executionOptions,
-      resolveRunWorkspacePath(input),
-    );
-    const resolved = resolveCodexThreadForSettings({
-      cached: this.threads.get(input.session.id),
-      nextSettingsKey: nextSettings.settingsKey,
-      threadId: input.session.threadId,
-      options: nextSettings.options,
-      client,
-    });
-
-    this.threads.set(input.session.id, {
-      thread: resolved.thread,
-      settingsKey: nextSettings.settingsKey,
+  async extractSessionMemoryDelta(
+    input: ExtractSessionMemoryInput,
+  ): Promise<ExtractSessionMemoryResult> {
+    const result = await this.runBackgroundStructuredPrompt({
+      providerId: input.session.provider,
+      workspacePath: input.session.workspacePath,
+      appSettings: input.appSettings,
+      model: input.model,
+      reasoningEffort: input.reasoningEffort,
+      timeoutMs: input.timeoutMs,
+      prompt: input.prompt,
     });
     return {
-      thread: resolved.thread,
-      selection: nextSettings.selection,
+      threadId: result.threadId,
+      rawText: result.rawText,
+      delta: parseSessionMemoryDeltaText(result.rawText),
+      rawItemsJson: result.rawItemsJson,
+      usage: result.usage,
+      providerQuotaTelemetry: null,
     };
   }
-
   private buildSnapshotRoots(input: RunSessionTurnInput): string[] {
     const workspacePath = resolveRunWorkspacePath(input);
     return [
       workspacePath,
-      ...normalizeAllowedAdditionalDirectories(workspacePath, input.session.allowedAdditionalDirectories),
+      ...normalizeAllowedAdditionalDirectories(
+        workspacePath,
+        input.session.allowedAdditionalDirectories,
+      ),
     ];
   }
 
@@ -1127,7 +1220,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
     );
   }
 
-  private async prepareBeforeWorkspaceSnapshot(input: RunSessionTurnInput): Promise<{
+  private async prepareBeforeWorkspaceSnapshot(
+    input: RunSessionTurnInput,
+  ): Promise<{
     beforeSnapshot: WorkspaceSnapshot;
     beforeSnapshotStats: SnapshotCaptureStats;
   }> {
@@ -1179,10 +1274,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
 
     const snapshotRoots = this.buildSnapshotRoots(input);
     const indexKey = this.buildSnapshotIndexKey(snapshotRoots);
-    const cachedIndex = this.workspaceSnapshotIndexes.get(indexKey)
-      ?? await createWorkspaceSnapshotIndex(snapshotRoots);
-    const candidatePaths = collectCompletedFileChangePaths(resolveRunWorkspacePath(input), finalItems);
-    const canUseTargetedSnapshot = candidatePaths.length > 0 && !hasBroadFilesystemChangeSource(finalItems);
+    const cachedIndex =
+      this.workspaceSnapshotIndexes.get(indexKey) ??
+      (await createWorkspaceSnapshotIndex(snapshotRoots));
+    const candidatePaths = collectCompletedFileChangePaths(
+      resolveRunWorkspacePath(input),
+      finalItems,
+    );
+    const canUseTargetedSnapshot =
+      candidatePaths.length > 0 && !hasBroadFilesystemChangeSource(finalItems);
     const refreshed = await refreshWorkspaceSnapshotIndex(cachedIndex, {
       candidatePaths: canUseTargetedSnapshot ? candidatePaths : undefined,
       trustCandidatePaths: canUseTargetedSnapshot,
@@ -1200,14 +1300,17 @@ export class CodexAdapter implements ProviderTurnAdapter {
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
     items: Map<string, CodexTurnItem>,
-    usage: Usage | null,
+    usage: AuditLogUsage | null,
     threadId: string | null,
     streamedAssistantText: string,
     selection: ResolvedModelSelection,
     beforeSnapshot: WorkspaceSnapshot,
     beforeSnapshotStats: SnapshotCaptureStats,
   ): Promise<RunSessionTurnResult> {
-    const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+    const redactor = createProviderAgentRuntimeBindingRedactor(
+      input.agentRuntimeBinding,
+      [resolveCodexApiKey(input.providerCatalog.id, input.appSettings)],
+    );
     const finalItems = Array.from(items.values());
     const providerMetadata = buildProviderMetadataProjection(finalItems);
     for (const metadata of providerMetadata) {
@@ -1222,10 +1325,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
       assistantText: itemAssistantText,
       lastNonEmptyAssistantMessageText: itemLastNonEmptyAssistantMessageText,
     } = collectCodexAssistantResponseFromItems(finalItems);
-    const finalAssistantText = itemAssistantText.trim().length > 0 ? itemAssistantText : streamedAssistantText;
-    const lastNonEmptyAssistantMessageText = itemLastNonEmptyAssistantMessageText.trim().length > 0
-      ? itemLastNonEmptyAssistantMessageText
-      : streamedAssistantText;
+    const finalAssistantText =
+      itemAssistantText.trim().length > 0
+        ? itemAssistantText
+        : streamedAssistantText;
+    const lastNonEmptyAssistantMessageText =
+      itemLastNonEmptyAssistantMessageText.trim().length > 0
+        ? itemLastNonEmptyAssistantMessageText
+        : streamedAssistantText;
     const snapshotResult = await raceWithDeadline(
       this.captureAfterWorkspaceSnapshot(input, finalItems),
       this.options.snapshotDeadlineMs ?? DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS,
@@ -1233,14 +1340,17 @@ export class CodexAdapter implements ProviderTurnAdapter {
     );
     const snapshotTimedOut = snapshotResult === CODEX_SNAPSHOT_TIMEOUT;
     if (snapshotTimedOut) {
-      const summary = "Workspace snapshot timed out after the provider turn; diff may be incomplete";
+      const summary =
+        "Workspace snapshot timed out after the provider turn; diff may be incomplete";
       providerMetadata.push({
         provider: "codex",
         kind: "postprocess_degraded",
         source: "codex-adapter.workspace-snapshot",
         summary,
         payload: {
-          timeoutMs: this.options.snapshotDeadlineMs ?? DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS,
+          timeoutMs:
+            this.options.snapshotDeadlineMs ??
+            DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS,
         },
       });
       this.writeLog({
@@ -1249,17 +1359,20 @@ export class CodexAdapter implements ProviderTurnAdapter {
         message: summary,
         data: {
           sessionId: input.session.id,
-          timeoutMs: this.options.snapshotDeadlineMs ?? DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS,
+          timeoutMs:
+            this.options.snapshotDeadlineMs ??
+            DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS,
         },
       });
     }
-    const { afterSnapshot, afterSnapshotStats, useSnapshotFallback } = snapshotTimedOut
-      ? {
-          afterSnapshot: beforeSnapshot,
-          afterSnapshotStats: beforeSnapshotStats,
-          useSnapshotFallback: false,
-        }
-      : snapshotResult;
+    const { afterSnapshot, afterSnapshotStats, useSnapshotFallback } =
+      snapshotTimedOut
+        ? {
+            afterSnapshot: beforeSnapshot,
+            afterSnapshotStats: beforeSnapshotStats,
+            useSnapshotFallback: false,
+          }
+        : snapshotResult;
     const artifact = await buildArtifact(
       input.session,
       input.executionOptions,
@@ -1279,385 +1392,97 @@ export class CodexAdapter implements ProviderTurnAdapter {
     return {
       threadId,
       assistantText: redactor.sanitizeText(finalAssistantText),
-      lastNonEmptyAssistantMessageText: redactor.sanitizeText(lastNonEmptyAssistantMessageText),
+      lastNonEmptyAssistantMessageText: redactor.sanitizeText(
+        lastNonEmptyAssistantMessageText,
+      ),
       artifact: redactor.sanitize(artifact),
       logicalPrompt: prompt.logicalPrompt,
       transportPayload: buildCodexTransportPayload(prompt),
       operations: redactor.sanitize(toAuditOperationsProjection(finalItems)),
-      rawItemsJson: stringifyBoundedAuditRawItems(redactor.sanitize(buildStableRawItemsProjection(finalItems))),
+      rawItemsJson: stringifyBoundedAuditRawItems(
+        redactor.sanitize(buildStableRawItemsProjection(finalItems)),
+      ),
       providerMetadata: redactor.sanitize(providerMetadata),
-      usage: normalizeCodexTokenUsage(usage),
+      usage,
       providerQuotaTelemetry: null,
     };
   }
 
-  async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
-    const { thread, selection } = this.getThread(input);
+  async runSessionTurn(
+    input: RunSessionTurnInput,
+    onProgress?: RunSessionTurnProgressHandler,
+  ): Promise<RunSessionTurnResult> {
     const prompt = this.composePrompt(input);
-    const { beforeSnapshot, beforeSnapshotStats } = await this.prepareBeforeWorkspaceSnapshot(input);
-    const turnInput =
-      prompt.imagePaths.length > 0
-        ? [
-            { type: "text" as const, text: prompt.logicalPrompt.composedText },
-            ...prompt.imagePaths.map((imagePath) => ({ type: "local_image" as const, path: imagePath })),
-          ]
-        : prompt.logicalPrompt.composedText;
-    const streamState = createCodexTurnStreamState(thread.id);
-    const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
-
-    this.writeLog({
-      level: "info",
-      kind: "codex.run.started",
-      message: "Codex session turn started",
-      data: {
-        sessionId: input.session.id,
-        threadId: streamState.threadId,
-        model: selection.resolvedModel,
-        reasoningEffort: selection.resolvedReasoningEffort,
-        existingThreadId: input.session.threadId || null,
-      },
-    });
-
-    await emitLiveState(
-      onProgress,
-      input.session.id,
-      streamState.threadId,
-      streamState.liveSteps,
-      getLiveCodexAssistantText(streamState),
-      streamState.reasoningText,
-      streamState.liveUsage,
-      getLiveStreamErrorMessage(streamState),
-      redactor,
+    const state = createCodexTurnStreamState(input.session.threadId || null);
+    const { options, selection } = buildCodexThreadSettings(
+      input.session,
+      input.providerCatalog,
+      input.executionOptions,
+      resolveRunWorkspacePath(input),
     );
-
+    const { beforeSnapshot, beforeSnapshotStats } =
+      await this.prepareBeforeWorkspaceSnapshot(input);
     try {
-      const streamAbortController = new AbortController();
-      const forwardCallerAbort = () => streamAbortController.abort(input.signal?.reason);
-      if (input.signal?.aborted) {
-        forwardCallerAbort();
-      } else {
-        input.signal?.addEventListener("abort", forwardCallerAbort, { once: true });
-      }
-      const { events } = await thread.runStreamed(turnInput, { signal: streamAbortController.signal });
-      const iterator = events[Symbol.asyncIterator]();
-      const streamDebugLogEnabled = isCodexStreamDebugLogEnabled();
-      if (streamDebugLogEnabled) {
-        this.writeLog({
-          level: "debug",
-          kind: "codex.run.stream.opened",
-          message: "Codex session turn stream opened",
-          data: {
-            sessionId: input.session.id,
-            threadId: streamState.threadId,
-          },
-        });
-      }
-
-      let terminalEventReceived = false;
-      try {
-        while (!terminalEventReceived) {
-          const next = await iterator.next();
-          if (next.done) {
-            break;
-          }
-          const event = next.value;
-          applyCodexTurnEvent(streamState, event);
-          const eventLogData = streamDebugLogEnabled ? buildCodexTurnEventLogData(event) : null;
-          if (streamDebugLogEnabled && eventLogData) {
-            this.writeLog({
-              level: event.type === "turn.failed" || event.type === "error" ? "warn" : "debug",
-              kind: "codex.run.stream.event",
-              message: "Codex session turn stream event",
-              data: redactor.sanitize({
-                sessionId: input.session.id,
-                threadId: streamState.threadId,
-                ...eventLogData,
-              }),
-            });
-          }
-          await emitLiveState(
-            onProgress,
-            input.session.id,
-            streamState.threadId,
-            streamState.liveSteps,
-            getLiveCodexAssistantText(streamState),
-            streamState.reasoningText,
-            streamState.liveUsage,
-            getLiveStreamErrorMessage(streamState),
-            redactor,
-          );
-          // SDK turn events are authoritative. `error` can also report retry progress,
-          // so keep it as the latest diagnostic until the turn settles or the stream ends.
-          terminalEventReceived = event.type === "turn.completed" || event.type === "turn.failed";
-        }
-      } finally {
-        input.signal?.removeEventListener("abort", forwardCallerAbort);
-        if (terminalEventReceived) {
-          streamAbortController.abort();
-        }
-        const closeResult = await raceWithDeadline(
-          Promise.resolve(iterator.return?.(undefined)).catch((error) => {
-            if (!terminalEventReceived) {
-              throw error;
-            }
-            this.writeLog({
-              level: "warn",
-              kind: "codex.run.stream-close-failed",
-              message: "Codex stream cleanup failed after a terminal event",
-              data: { sessionId: input.session.id },
-              error: redactor.sanitize(errorToCodexAdapterLogError(error)),
-            });
-          }),
-          this.options.streamCloseGraceMs ?? DEFAULT_CODEX_STREAM_CLOSE_GRACE_MS,
-          CODEX_STREAM_CLOSE_TIMEOUT,
-        );
-        if (closeResult === CODEX_STREAM_CLOSE_TIMEOUT) {
-          streamAbortController.abort();
-          this.writeLog({
-            level: "warn",
-            kind: "codex.run.stream-close-timeout",
-            message: "Codex stream cleanup exceeded its grace period",
-            data: {
-              sessionId: input.session.id,
-              terminalEventReceived,
-              timeoutMs: this.options.streamCloseGraceMs ?? DEFAULT_CODEX_STREAM_CLOSE_GRACE_MS,
-            },
-          });
-        }
-      }
-      if (streamDebugLogEnabled) {
-        this.writeLog({
-          level: "info",
-          kind: "codex.run.stream.finished",
-          message: "Codex session turn stream finished",
-          data: {
-            sessionId: input.session.id,
-            ...summarizeCodexTurnStreamState(streamState, redactor),
-          },
-        });
-      }
-
-      if (streamState.streamErrorMessage) {
-        const shouldIgnoreWindowsTaskkillParseNoise = shouldIgnoreCodexWindowsTaskkillParseNoise(
-          streamState,
-          streamState.streamErrorMessage,
-        );
-        const partialResult = await this.buildTurnResult(
-          input,
-          prompt,
-          streamState.items,
-          streamState.usage,
-          streamState.threadId,
-          streamState.streamedAssistantText,
-          selection,
-          beforeSnapshot,
-          beforeSnapshotStats,
-        );
-        if (shouldIgnoreWindowsTaskkillParseNoise) {
-          this.writeLog({
-            level: "warn",
-            kind: "codex.run.parse-noise.ignored",
-            message: "Codex session turn ignored Windows taskkill parse noise after activity",
-            data: {
-              sessionId: input.session.id,
-              ...summarizeCodexTurnStreamState(streamState, redactor),
-            },
-          });
-          return partialResult;
-        }
-        const canceled = Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamState.streamErrorMessage);
-        const reason = resolveCodexProviderErrorReason(streamState.streamErrorMessage, canceled);
-
-        this.writeLog({
-          level: "error",
-          kind: "codex.run.stream-error",
-          message: "Codex session turn stream ended with an error message",
-          data: {
-            sessionId: input.session.id,
-            providerErrorReason: reason,
-            ...summarizeCodexTurnStreamState(streamState, redactor),
-          },
-        });
-        throw new ProviderTurnError(
-          redactor.sanitizeText(streamState.streamErrorMessage),
-          partialResult,
-          canceled,
-          reason,
-        );
-      }
-
-      if (!streamState.turnCompleted) {
-        throw new Error("Codex stream ended before a terminal turn event was received");
-      }
-
-      const result = await this.buildTurnResult(
+      const { transport, apiKey } = this.createTransport(
+        input.providerCatalog.id,
+        input.appSettings,
+        options.workingDirectory,
+        input.agentRuntimeBinding,
+        true,
+      );
+      await this.executeTurn({
+        transport,
+        apiKey,
+        state,
+        options,
+        serviceTier: mapCodexSpeedToServiceTier(
+          input.executionOptions.codexSpeed,
+        ),
+        reviewer: mapCodexReviewerToApprovalsReviewer(
+          input.executionOptions.codexReviewer,
+        ),
+        input: userInput(prompt.logicalPrompt.composedText, prompt.imagePaths),
+        signal: input.signal,
+        sessionInput: input,
+        onProgress,
+      });
+      return await this.buildTurnResult(
         input,
         prompt,
-        streamState.items,
-        streamState.usage,
-        streamState.threadId,
-        streamState.streamedAssistantText,
+        state.items,
+        state.usage,
+        state.threadId,
+        getLiveCodexAssistantText(state),
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
       );
-      this.writeLog({
-        level: "info",
-        kind: "codex.run.completed",
-        message: "Codex session turn completed",
-        data: {
-          sessionId: input.session.id,
-          ...summarizeCodexTurnStreamState(streamState, redactor),
-          operationCount: result.operations.length,
-          assistantTextLength: result.assistantText.length,
-        },
-      });
-      return result;
     } catch (error) {
-      if (error instanceof ProviderTurnError) {
-        this.writeLog({
-          level: error.canceled ? "warn" : "error",
-          kind: "codex.run.provider-error",
-          message: "Codex session turn provider error",
-          data: {
-            sessionId: input.session.id,
-            canceled: error.canceled,
-            providerErrorReason: error.reason,
-            ...summarizeCodexTurnStreamState(streamState, redactor),
-          },
-          error: redactor.sanitize(errorToCodexAdapterLogError(error)),
-        });
-        throw error;
-      }
-
       const message = error instanceof Error ? error.message : String(error);
-      const candidateProviderMessage = streamState.streamErrorMessage || message;
-      const canceled = Boolean(input.signal?.aborted) || isCanceledProviderMessage(candidateProviderMessage);
-      const reason = resolveCodexProviderErrorReason(candidateProviderMessage, canceled);
-      const providerMessage = reason === "usage_limit" ? candidateProviderMessage : message;
-      const shouldIgnoreWindowsTaskkillParseNoise = shouldIgnoreCodexWindowsTaskkillParseNoise(
-        streamState,
-        message,
-      );
-      const partialResult = await this.buildTurnResult(
+      const canceled =
+        Boolean(input.signal?.aborted) ||
+        state.terminalStatus === "interrupted" ||
+        isCanceledProviderMessage(message);
+      const partial = await this.buildTurnResult(
         input,
         prompt,
-        streamState.items,
-        streamState.usage,
-        streamState.threadId,
-        streamState.streamedAssistantText,
+        state.items,
+        state.usage,
+        state.threadId,
+        getLiveCodexAssistantText(state),
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
       );
-      if (shouldIgnoreWindowsTaskkillParseNoise) {
-        this.writeLog({
-          level: "warn",
-          kind: "codex.run.parse-noise.ignored",
-          message: "Codex session turn ignored Windows taskkill parse noise after thrown error",
-          data: {
-            sessionId: input.session.id,
-            ...summarizeCodexTurnStreamState(streamState, redactor),
-          },
-          error: redactor.sanitize(errorToCodexAdapterLogError(error)),
-        });
-        return partialResult;
-      }
-
-      this.writeLog({
-        level: canceled ? "warn" : "error",
-        kind: "codex.run.failed",
-        message: "Codex session turn failed",
-        data: {
-          sessionId: input.session.id,
-          aborted: Boolean(input.signal?.aborted),
-          canceledMessage: isCanceledProviderMessage(candidateProviderMessage),
-          providerErrorReason: reason,
-          ...summarizeCodexTurnStreamState(streamState, redactor),
-        },
-        error: redactor.sanitize(errorToCodexAdapterLogError(error)),
-      });
       throw new ProviderTurnError(
-        redactor.sanitizeText(providerMessage),
-        partialResult,
+        createProviderAgentRuntimeBindingRedactor(
+          input.agentRuntimeBinding,
+          [resolveCodexApiKey(input.providerCatalog.id, input.appSettings)],
+        ).sanitizeText(message),
+        partial,
         canceled,
-        reason,
+        canceled ? "canceled" : error instanceof CodexAuthenticationError ? "auth" : resolveCodexProviderErrorReason(message, canceled),
       );
     }
   }
-}
-
-export function buildCodexThreadSettings(
-  session: Session,
-  providerCatalog: ModelCatalogProvider,
-  clientKey: string,
-  executionOptions: SessionExecutionOptions,
-  executionWorkspacePath?: string,
-): CodexThreadSettings {
-  const selection = resolveModelSelection(providerCatalog, executionOptions.model, executionOptions.reasoningEffort);
-  const workspacePath = executionWorkspacePath?.trim() || session.workspacePath;
-  const additionalDirectories = normalizeAllowedAdditionalDirectories(
-    workspacePath,
-    session.allowedAdditionalDirectories,
-  );
-  const sandboxOptions = resolveCodexSandboxThreadOptions(executionOptions.codexSandboxMode);
-  const serviceTier = mapCodexSpeedToServiceTier(executionOptions.codexSpeed);
-  const approvalsReviewer = mapCodexReviewerToApprovalsReviewer(executionOptions.codexReviewer);
-  const options: CodexThreadOptions = {
-    workingDirectory: workspacePath,
-    skipGitRepoCheck: true,
-    sandboxMode: sandboxOptions.sandboxMode,
-    approvalPolicy: mapApprovalModeToCodexPolicy(executionOptions.approvalMode),
-    model: selection.resolvedModel,
-    modelReasoningEffort: selection.resolvedReasoningEffort,
-    ...(sandboxOptions.networkAccessEnabled ? { networkAccessEnabled: true } : {}),
-    ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
-  };
-
-  return {
-    options,
-    selection,
-    settingsKey: JSON.stringify([
-      options.workingDirectory,
-      options.sandboxMode,
-      options.networkAccessEnabled ?? false,
-      options.approvalPolicy,
-      options.model,
-      options.modelReasoningEffort,
-      additionalDirectories,
-      serviceTier,
-      approvalsReviewer,
-      clientKey,
-    ]),
-  };
-}
-
-export function resolveCodexThreadForSettings(args: {
-  cached: CachedCodexThread | undefined;
-  nextSettingsKey: string;
-  threadId: string | null;
-  options: CodexThreadOptions;
-  client: CodexThreadConnector;
-}): { thread: CodexThread; reusedCached: boolean } {
-  const {
-    cached,
-    nextSettingsKey,
-    threadId,
-    options,
-    client,
-  } = args;
-
-  if (cached && cached.settingsKey === nextSettingsKey) {
-    return {
-      thread: cached.thread,
-      reusedCached: true,
-    };
-  }
-
-  return {
-    thread: threadId?.trim()
-      ? client.resumeThread(threadId, toCodexSdkThreadOptions(options))
-      : client.startThread(toCodexSdkThreadOptions(options)),
-    reusedCached: false,
-  };
 }

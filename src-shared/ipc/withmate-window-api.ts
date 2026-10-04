@@ -228,6 +228,7 @@ export type WithMateWindowSessionApi = {
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  steerSessionTurn(sessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
   cancelSessionRun(sessionId: string): Promise<void>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   listSessionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]>;
@@ -270,6 +271,7 @@ export type WithMateWindowAuxiliaryApi = {
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Promise<void>;
   closeAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Promise<AuxiliarySession>;
+  steerAuxiliarySessionTurn(auxiliarySessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
   cancelAuxiliarySessionRun(auxiliarySessionId: string): Promise<void>;
 };
 

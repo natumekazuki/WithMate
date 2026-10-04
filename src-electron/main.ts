@@ -348,7 +348,7 @@ const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
-}));
+}), { appVersion: app.getVersion() });
 const copilotAdapter = new CopilotAdapter({
   log: (input) => writeAppLog({
     ...input,
@@ -1438,6 +1438,24 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     auxiliaryRunParents.delete(auxiliarySessionId);
                   }
                 }),
+                steerAuxiliarySessionTurn: (auxiliarySessionId, request) => requireAuxiliarySessionService().trackPendingDraftSend(async () => {
+                  if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) throw new Error("The app is quitting, so input cannot be sent.");
+                  const service = requireAuxiliarySessionService();
+                  const session = await service.getAuxiliarySession(auxiliarySessionId);
+                  if (!session) throw new Error("The Auxiliary Session could not be found.");
+                  if (!request.auxiliaryDraftIncarnation || request.auxiliaryDraftDurableRevision === undefined) throw new Error("The Auxiliary draft revision could not be found.");
+                  let accepted: import("../src-shared/session/runtime-state.js").SteerSessionTurnResult | undefined;
+                  await service.runAuxiliaryInputWithDraft({
+                    auxiliarySessionId, parentSessionId: session.parentSessionId,
+                    incarnation: request.auxiliaryDraftIncarnation,
+                    expectedDurableRevision: request.auxiliaryDraftDurableRevision,
+                    userMessage: request.userMessage,
+                    run: async () => { accepted = await requireAuxiliarySessionRuntimeService().steerSessionTurn(auxiliarySessionId, request); },
+                  });
+                  if (!accepted) throw new Error("The provider did not confirm the input.");
+                  broadcastSessions([session.parentSessionId]);
+                  return accepted;
+                }),
                 cancelAuxiliarySessionRun: (auxiliarySessionId) =>
                   requireAuxiliarySessionRuntimeService().cancelRun(auxiliarySessionId),
               },
@@ -1464,6 +1482,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   return result;
                 },
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
+                steerSessionTurn: async (sessionId, request) => {
+                  if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) throw new Error("The app is quitting, so input cannot be sent.");
+                  const result = await requireMainSessionCommandFacade().steerSessionTurn(sessionId, request);
+                  broadcastSessions([sessionId]);
+                  return result;
+                },
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
               mate: {
@@ -1748,6 +1772,7 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
     const storage = owner.auxiliarySessionStorage;
     auxiliarySessionService = new AuxiliarySessionService({
       isAuxiliaryRunInFlight: (id) => auxiliaryRunParents.has(id) || auxiliarySessionRuntimeService?.isRunInFlight(id) === true,
+      canAcceptAuxiliaryInput: (id) => auxiliarySessionRuntimeService?.canAcceptSessionInput(id) === true,
       captureStorageIdentity: () => owner,
       isStorageIdentityCurrent: (captured) => mainStoreContext.activePersistentStoreOwner === captured,
       overlayCurrentExecutionOptions: (session) => mainStoreContext.executionSelections.apply(session),

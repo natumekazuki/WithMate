@@ -64,10 +64,12 @@ export function buildProviderAgentRuntimeAuthoritySnapshot(
  */
 export function createProviderAgentRuntimeBindingRedactor(
   projection: ProviderAgentRuntimeBindingProjection | null | undefined,
+  additionalSecrets: readonly string[] = [],
 ): ProviderAgentRuntimeBindingRedactor {
-  const secrets = projection?.transport === "env"
-    ? [projection.bindingReference, projection.turnCapability ?? ""].filter((value) => value.length > 0)
-    : [];
+  const secrets = [
+    ...(projection?.transport === "env" ? [projection.bindingReference, projection.turnCapability ?? ""] : []),
+    ...additionalSecrets,
+  ].filter((value) => value.length > 0);
   const sanitizeText = (value: string): string => secrets.reduce(
     (current, secret) => current.split(secret).join(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER),
     value,

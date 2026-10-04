@@ -59,6 +59,9 @@ export type SessionComposerExpandedProps = {
   onRetryComposerSave?: () => void;
   isRunning: boolean;
   isCanceling?: boolean;
+  canSendInput?: boolean;
+  onSendInput?: () => void;
+  submissionError?: string;
   targetDock?: ReactNode;
   dockModeSwitch?: ReactNode;
   chatNotice?: string;
@@ -142,6 +145,9 @@ export function SessionComposerExpanded({
   onRetryComposerSave,
   isRunning,
   isCanceling = false,
+  canSendInput = false,
+  onSendInput,
+  submissionError,
   targetDock = null,
   dockModeSwitch = null,
   chatNotice,
@@ -231,6 +237,7 @@ export function SessionComposerExpanded({
   const projectedComposerSendability = composerController
     ? resolveComposerSendabilityState({
         runState: isRunning ? "running" : "idle",
+        canSendInput: canSendInput && !isCanceling,
         busyReason: composerSendability.busyReason,
         blockedReason: composerBlocked ? (composerSendability.primaryFeedback ?? "") : "",
         inputErrors: composerControllerState.preview.errors,
@@ -238,7 +245,10 @@ export function SessionComposerExpanded({
         forceBlockedFeedback: forceComposerBlockedFeedback,
       })
     : null;
-  const displayedComposerSendability = projectedComposerSendability ?? composerSendability;
+  const resolvedComposerSendability = projectedComposerSendability ?? composerSendability;
+  const displayedComposerSendability = submissionError && !resolvedComposerSendability.primaryFeedback
+    ? { ...resolvedComposerSendability, primaryFeedback: submissionError, feedbackTone: "blocked" as const, shouldShowFeedback: true }
+    : resolvedComposerSendability;
   const displayedIsSendDisabled = composerController
     ? isComposerDisabled || projectedComposerSendability!.isSendDisabled || composerSaveFailed
     : isSendDisabled;
@@ -247,7 +257,7 @@ export function SessionComposerExpanded({
     : projectedComposerSendability
       ? getComposerSendButtonTitle(projectedComposerSendability)
       : sendButtonTitle;
-  const showBusySendState = !isRunning && displayedComposerSendability.isBusy === true;
+  const showBusySendState = (!isRunning || canSendInput) && displayedComposerSendability.isBusy === true;
   const composerDescriptionIds = [
     externalErrorDescriptionIds,
     composerSaveFailed ? "composer-save-feedback" : undefined,
@@ -260,10 +270,10 @@ export function SessionComposerExpanded({
   const keyboardShortcuts = useShortcutSettings();
 
   useEffect(() => {
-    if (!showAttachmentControls || isRunning || composerBlocked || composerFrozen) {
+    if (!showAttachmentControls || (isRunning && !canSendInput) || composerBlocked || composerFrozen) {
       setIsAttachmentMenuOpen(false);
     }
-  }, [composerBlocked, composerFrozen, isRunning, showAttachmentControls]);
+  }, [canSendInput, composerBlocked, composerFrozen, isRunning, showAttachmentControls]);
 
   useEffect(() => {
     if (!isAgentPickerOpen) {
@@ -297,7 +307,7 @@ export function SessionComposerExpanded({
           ) : null}
           {showAttachmentControls ? (
             <ComposerAttachmentMenu
-              disabled={isRunning || composerBlocked || composerFrozen}
+              disabled={(isRunning && !canSendInput) || composerBlocked || composerFrozen}
               isOpen={isAttachmentMenuOpen}
               onOpenChange={(isOpen) => {
                 if (isOpen) {
@@ -441,7 +451,7 @@ export function SessionComposerExpanded({
                     className="danger session-send-button"
                     type="button"
                     onClick={onSendOrCancel}
-                    title={sendButtonTitle}
+                    title={canSendInput ? "Cancel run" : sendButtonTitle}
                     disabled={isCanceling}
                     aria-busy={isCanceling || undefined}
                   >
@@ -701,13 +711,13 @@ export function SessionComposerExpanded({
         <button
           className={`session-send-button${showBusySendState ? " loading" : ""}`}
           type="button"
-          onClick={onSendOrCancel}
-          disabled={isRunning || displayedIsSendDisabled || composerFrozen}
+          onClick={canSendInput ? onSendInput : onSendOrCancel}
+          disabled={(isRunning && !canSendInput) || isCanceling || displayedIsSendDisabled || composerFrozen}
           aria-busy={showBusySendState || undefined}
           title={
             showBusySendState
               ? undefined
-              : isRunning
+              : isRunning && !canSendInput
               ? "Cannot send while a run is active"
               : appendShortcutLabel(
                   displayedSendButtonTitle,
@@ -718,7 +728,7 @@ export function SessionComposerExpanded({
           }
         >
           {showBusySendState ? <span className="loading-indicator-spinner" aria-hidden="true" /> : null}
-          <span>Send</span>
+          <span>{canSendInput ? "Send Input" : "Send"}</span>
         </button>
       </div>
     </div>

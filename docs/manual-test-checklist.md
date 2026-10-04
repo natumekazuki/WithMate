@@ -1,5 +1,9 @@
 # 実機テスト項目表
 
+## Codex の実行中入力
+
+Main／AuxiliaryそれぞれでCodexの実行中にcomposerの `Send Input` と送信shortcutから追加入力し、現在turnの会話へ一度だけ保存されることを確認する。`Cancel`は維持し、開始準備中・取消中・終了raceでは新しいturnを開始せずdraftを保持する。追加入力受付待ち中の連打、draft編集、対象切替、添付pathの解決失敗も確認する。Claude／Copilotの実行中は従来のdisabled `Send`を維持する。Codexの入力質問はpending内の既存formで選択肢・自由記述を回答でき、secret欄はpassword input、取消・失効後の回答は次のrequestへ持ち越さない。実Provider／Electron GUIを未実施の場合は未確認として記録する。
+
 ## Auxiliary Session の独立性と切り替え
 
 複数Auxiliaryを追加して最終使用順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、実行中のAuxiliaryはicon内のprocessing indicatorで判別できること、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態ではAuxiliaryのタイトル枠・切り替えUI・追加`＋`を表示せず、Mainが残り幅を使うこと、中央のsplitterだけが残りクリックで既定幅へ戻せることを確認する。Auxiliaryを再度開いた後はタイトル枠、左右切り替え、追加`＋`が利用でき、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。

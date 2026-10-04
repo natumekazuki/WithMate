@@ -165,6 +165,12 @@ export type ProviderCodingAdapter = {
   getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
   invalidateSessionThread(sessionId: string): Promise<void>;
   invalidateAllSessionThreads(): Promise<void>;
+  steerSessionTurn?(input: {
+    sessionId: string;
+    expectedTurnId: string;
+    userMessage: string;
+    attachments: ComposerAttachment[];
+  }): Promise<{ turnId: string }>;
   runSessionTurn(
     input: RunSessionTurnInput,
     onProgress?: RunSessionTurnProgressHandler,

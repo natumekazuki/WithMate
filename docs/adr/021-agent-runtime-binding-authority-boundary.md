@@ -10,6 +10,8 @@ binding registry、generation、operation grant、turn capability、runtime owne
 
 ## Subsequent decisions
 
+CodexのSDK client / thread cacheと同一turn内stale-thread retryに関する本文は現行Codexには適用しない。CodexはturnごとのApp Server processにbinding environmentを明示し、保存済みthreadを`thread/resume`する。resume拒否で自動的に新threadへ切り替えない。binding registry、lease、generation、turn capability、redactionとbackgroundへのbinding非継承の判断は維持し、実行境界の現行契約は[Provider Adapter](../design/provider-adapter.md)を参照する。
+
 ADR 024は、agent-facing Memory CRUDと`memory.file_usage`について、本ADRの`optional` policy、bindingなしのlocal-user/operator経路、explicit Character selectorを部分的に置換する。provider executionから使うMCPとagent-bound CLI fallbackはbindingを必須とし、actor-relative targetだけを受け付ける。operator CLIのexplicit target/identityは別authority modeとして維持する。本ADRのbinding registry、generation、operation grant、turn capability、runtime owner selectionの契約は維持する。
 
 ## Context

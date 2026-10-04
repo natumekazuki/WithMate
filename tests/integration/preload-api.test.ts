@@ -548,6 +548,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:cancel-auxiliary-session-run",
     args: ["aux-1"],
   });
+  const input = { expectedTurnId: "turn-one", userMessage: "additional" };
+  assert.deepEqual(await api.steerSessionTurn("session-1", input), {
+    channel: "withmate:steer-session-turn", args: ["session-1", input],
+  });
+  assert.deepEqual(await api.steerAuxiliarySessionTurn("aux-1", input), {
+    channel: "withmate:steer-auxiliary-session-turn", args: ["aux-1", input],
+  });
   assert.deepEqual(await api.updateChatLayoutPreference({ target: "sidePane", value: "files" }), {
     channel: "withmate:update-chat-layout-preference",
     args: [{ target: "sidePane", value: "files" }],
@@ -754,6 +761,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "resolveLaunchCharacter",
     "runAuxiliarySessionTurn",
     "runSessionTurn",
+    "steerSessionTurn",
+    "steerAuxiliarySessionTurn",
     "saveAuxiliaryDraft",
     "savePastedSessionFile",
     "searchMemoryV6Entries",

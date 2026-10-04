@@ -160,7 +160,7 @@ node-ptyはタブごとのElectron utility process内で起動要求時にload�
 - entry HTML には meta CSP を入れ、renderer script / style / connect を `self` と Vite dev server (`http://localhost:4173`, `ws://localhost:4173`) に限定する
 - preload 経由で必要最小限の API だけ渡す
 
-current 実装では preload が `contextBridge` と `ipcRenderer.invoke/on` の薄い橋渡しだけを担当し、Codex SDK / GitHub Copilot SDK は main process 側で動かしている。  
+current実装ではpreloadが`contextBridge`と`ipcRenderer.invoke/on`の薄い橋渡しだけを担当し、Codex App Serverのstdio transportとGitHub Copilot / Claude Agent SDKはMain Process側で動かしている。Codexの承認・質問・追加入力もtyped preload経由でMainの現在turnへ中継し、Rendererへprocess起動権限を渡さない。
 ただし `npm run electron:start` の Home Window では `sandbox: true` が入ると `window.withmate` 注入が回帰し、renderer が `Home は Electron から起動してね。` の fallback へ落ちる事象を確認した。  
 preload API / IPC の成立を優先し、現行実装は `sandbox: false` を維持する。
 

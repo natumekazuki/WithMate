@@ -24,6 +24,9 @@ import type {
 
 type LegacyAuxiliaryPreviewResolver = (auxiliarySessionId: string) => string | null;
 
+export type AuxiliaryDraftStorageSaveInput = AuxiliaryDraftSaveInput & { allowRunningInput?: boolean };
+export type AuxiliaryDraftStorageConsumeInput = AuxiliaryDraftConsumeInput & { allowRunningInput?: boolean };
+
 type LegacyAuditEntryForPreview = {
   phase: string;
   rawItemsJson: string;
@@ -377,7 +380,7 @@ export class AuxiliarySessionStorage {
     });
   }
 
-  saveAuxiliaryDraft(input: AuxiliaryDraftSaveInput): AuxiliaryDraftSaveResult {
+  saveAuxiliaryDraft(input: AuxiliaryDraftStorageSaveInput): AuxiliaryDraftSaveResult {
     return this.withDb((db) => {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
@@ -399,7 +402,7 @@ export class AuxiliarySessionStorage {
           return { outcome: "rejected" };
         }
         if (session.parent_session_id !== input.parentSessionId
-          || session.run_state === "running") {
+            || (session.run_state === "running" && input.allowRunningInput !== true)) {
           db.exec("ROLLBACK");
           return { outcome: "not-found" };
         }
@@ -442,7 +445,7 @@ export class AuxiliarySessionStorage {
     });
   }
 
-  consumeAuxiliaryDraft(input: AuxiliaryDraftConsumeInput): AuxiliaryDraftConsumeResult {
+  consumeAuxiliaryDraft(input: AuxiliaryDraftStorageConsumeInput): AuxiliaryDraftConsumeResult {
     return this.withDb((db) => {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
@@ -465,7 +468,7 @@ export class AuxiliarySessionStorage {
           WHERE auxiliary_session_id = ?
         `).get(input.auxiliarySessionId) as AuxiliaryDraftRow | undefined;
         if (session.parent_session_id !== input.parentSessionId
-          || session.run_state === "running" || !row || row.parent_session_id !== input.parentSessionId) {
+            || (session.run_state === "running" && input.allowRunningInput !== true) || !row || row.parent_session_id !== input.parentSessionId) {
           db.exec("ROLLBACK");
           return { outcome: "not-found" };
         }

@@ -491,8 +491,10 @@ export default function AgentSessionWindowApp() {
     hasAssistantText: hasLiveRunAssistantText,
     hasApprovalRequest: isApprovalRequestPending,
     hasElicitationRequest: isElicitationRequestPending,
+    hasBlockingElicitationRequest: isBlockingElicitationRequestPending,
     hasInProgressStep: hasInProgressLiveRunStep,
     errorMessage: liveRunErrorMessage,
+    inputTurnId,
     setLiveRunState,
   } = useSessionRunControls(withmateApi, selectedSession, activeRunSessionId);
   const {
@@ -797,7 +799,15 @@ export default function AgentSessionWindowApp() {
 
     return "";
   }, [activeAuxiliarySession, auxiliaryWorkspace.detailError, auxiliaryWorkspace.error, auxiliaryWorkspace.target, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate, loadedSession, mainSessionRuntime.readError, appSettingsLoadStatus, modelCatalogLoadStatus, appSettingsLoadError, modelCatalogLoadError]);
-  const composerBusyReason = pendingSubmitSessionId !== null && pendingSubmitSessionId === activeRunSessionId
+  const steeringInFlightRef = useRef(new Set<string>());
+  const [steeringPendingIds, setSteeringPendingIds] = useState<Set<string>>(new Set());
+  const [steeringErrors, setSteeringErrors] = useState<Record<string, { revision: number; message: string }>>({});
+  const canSendInput = displayedSession?.provider === "codex" && visibleSessionRunState === "running" && !!inputTurnId;
+  const steeringError = activeRunSessionId && steeringErrors[activeRunSessionId]?.revision === composerRegistry.get(composerOwner).revision
+    ? steeringErrors[activeRunSessionId].message : "";
+  const composerBusyReason = activeRunSessionId && steeringPendingIds.has(activeRunSessionId)
+    ? "Input submission is in progress."
+    : pendingSubmitSessionId !== null && pendingSubmitSessionId === activeRunSessionId
     ? "Message submission is in progress."
     : auxiliaryWorkspace.target === "main" && !loadedSession && !mainSessionRuntime.readError
       ? "The conversation is loading."
@@ -999,7 +1009,7 @@ export default function AgentSessionWindowApp() {
     retryBanner,
     draft: getComposerDraft(),
   });
-  const isComposerDisabled = selectedSessionRunState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
+  const isComposerDisabled = (selectedSessionRunState === "running" && !canSendInput) || !!composerBlockedReason || isSelectedSessionReadOnly;
   const composerSendability = useMemo(
     () =>
       resolveComposerSendabilityState({
@@ -1062,7 +1072,7 @@ export default function AgentSessionWindowApp() {
   }, [selectedSession?.id]);
 
   const triggerComposerBlockedFeedback = () => {
-    if (!selectedSession || selectedSessionRunState === "running") {
+    if (!selectedSession || (selectedSessionRunState === "running" && !canSendInput)) {
       return;
     }
 
@@ -1158,6 +1168,60 @@ export default function AgentSessionWindowApp() {
     }
   };
 
+  const handleSendInput = async () => {
+    const owner = composerOwner;
+    const selectionContext = dockContextRef.current;
+    const turnId = inputTurnId;
+    const target = activeAuxiliarySession ?? getCurrentMainSession();
+    if (!withmateApi || !target || !canSendInput || !turnId || composerRegistry.isFrozen
+      || composerBlockedReason || isSelectedSessionReadOnly || steeringInFlightRef.current.has(owner.id)) return;
+    const captured = composerRegistry.capture(owner);
+    const current = composerRegistry.get(owner);
+    if (!captured.draft.trim() || current.isImeComposing || current.saveState === "error" || current.preview.errors.length > 0) {
+      triggerComposerBlockedFeedback();
+      return;
+    }
+    steeringInFlightRef.current.add(owner.id);
+    setSteeringPendingIds(new Set(steeringInFlightRef.current));
+    setSteeringErrors((errors) => { const next = { ...errors }; delete next[owner.id]; return next; });
+    const operation = async () => {
+      const draftOwner = owner.kind === "auxiliary" ? auxiliaryDraftPersistence.getOwner(target as AuxiliarySession) : null;
+      try {
+        await draftOwner?.flush();
+        await draftOwner?.reload();
+        const durable = draftOwner?.durableRecord;
+        if (owner.kind === "auxiliary" && (!durable || durable.text !== captured.draft)) throw new Error("Draft could not be saved.");
+        const preview = await withmateApi.previewComposerInput(owner.id, captured.draft);
+        if (composerRegistry.isFrozen || dockContextRef.current !== selectionContext || composerOwnerRef.current !== owner.id
+          || composerRegistry.capture(owner).revision !== captured.revision) return;
+        composerRegistry.setPreview(owner, preview);
+        if (preview.errors.length > 0) { setForceComposerBlockedFeedback(true); return; }
+        const request = {
+          expectedTurnId: turnId,
+          userMessage: captured.draft,
+          clientRequestId: createSessionTurnClientRequestId(),
+          ...(durable ? { auxiliaryDraftIncarnation: durable.incarnation, auxiliaryDraftDurableRevision: durable.durableRevision } : {}),
+        };
+        const result = owner.kind === "auxiliary"
+          ? await withmateApi.steerAuxiliarySessionTurn(owner.id, request)
+          : await withmateApi.steerSessionTurn(owner.id, request);
+        if (result.turnId !== turnId) throw new Error("Input acceptance could not be confirmed.");
+        composerRegistry.clearIfRevision(owner, captured.revision);
+        await draftOwner?.reload().catch(() => undefined);
+      } catch (error) {
+        await draftOwner?.reload().catch(() => undefined);
+        setSteeringErrors((errors) => ({ ...errors, [owner.id]: {
+          revision: captured.revision,
+          message: `Input to ${owner.kind === "auxiliary" ? "Auxiliary" : "Main"} was not confirmed. Your draft is preserved. ${resolveSessionRunErrorMessage(error, "Could not send input.")}`,
+        } }));
+      } finally {
+        steeringInFlightRef.current.delete(owner.id);
+        setSteeringPendingIds(new Set(steeringInFlightRef.current));
+      }
+    };
+    await (owner.kind === "auxiliary" ? auxiliaryDraftPersistence.trackSend(operation()) : operation());
+  };
+
   const handleCancelRun = async () => {
     if (selectedSessionCancellationState) return;
     await cancelRun(buildRunningSessionCancelTarget({
@@ -1174,14 +1238,15 @@ export default function AgentSessionWindowApp() {
         || current.isImeComposing
         || current.saveState === "error"
         || (activeAuxiliarySession
-          ? activeAuxiliarySession.runState === "running"
-          : current.preview.errors.length > 0 || selectedSessionRunState === "running");
+          ? activeAuxiliarySession.runState === "running" && !canSendInput
+          : current.preview.errors.length > 0 || selectedSessionRunState === "running" && !canSendInput);
     },
     isSubmitBlocked: () => {
       const current = composerRegistry.get(composerOwner);
       const activeSendability = activeAuxiliarySession
         ? buildComposerSendabilityState({
             runState: activeAuxiliarySession.runState,
+            canSendInput,
             busyReason: composerBusyReason,
             blockedReason: sessionExecutionBlockedReason,
             inputErrors: current.preview.errors,
@@ -1189,6 +1254,7 @@ export default function AgentSessionWindowApp() {
           })
         : resolveComposerSendabilityState({
             runState: selectedSessionRunState,
+            canSendInput,
             busyReason: composerBusyReason,
             blockedReason: sessionExecutionBlockedReason,
             inputErrors: current.preview.errors,
@@ -1198,7 +1264,7 @@ export default function AgentSessionWindowApp() {
       return current.saveState === "error" || activeSendability.isSendDisabled;
     },
     notifySubmitBlocked: triggerComposerBlockedFeedback,
-    submit: () => void handleSend(),
+    submit: () => void (canSendInput ? handleSendInput() : handleSend()),
   });
 
   useShortcutDispatcherSettings(appSettings.keyboardShortcuts);
@@ -1840,8 +1906,8 @@ export default function AgentSessionWindowApp() {
         !isAuxiliaryTargetUnavailable &&
         !isSelectedSessionReadOnly &&
         !(targetAuxiliarySession
-          ? targetAuxiliarySession.runState === "running"
-          : selectedSessionRunState === "running");
+          ? targetAuxiliarySession.runState === "running" && !canSendInput
+          : selectedSessionRunState === "running" && !canSendInput);
     },
     currentTimestampLabel,
     fallbackErrorMessage: "Could not save the pasted file.",
@@ -1976,7 +2042,7 @@ export default function AgentSessionWindowApp() {
 
   const pendingRunIndicatorAnnouncement = !activeAuxiliarySession && selectedSessionCancellationState
     ? selectedSessionCancellationState === "terminating" ? "Waiting for the run to stop" : "Canceling run"
-    : isApprovalRequestPending || isElicitationRequestPending
+    : isApprovalRequestPending || isBlockingElicitationRequestPending
     ? "Waiting for approval"
     : hasInProgressLiveRunStep
       ? "Working"
@@ -2058,13 +2124,13 @@ export default function AgentSessionWindowApp() {
   }
 
   const canInsertFileTreePathReference = activeAuxiliarySession
-    ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason
+    ? (activeAuxiliarySession.runState !== "running" || canSendInput) && !composerBlockedReason
     : !isComposerDisabled;
   const fileExplorerPane = <div ref={setFilesPaneHost} className="session-feature-host" />;
   const previewChatNotice = isApprovalRequestPending
     ? "Approval required"
     : isElicitationRequestPending
-      ? "Input required"
+      ? isBlockingElicitationRequestPending ? "Input required" : "Input requested"
       : renderedIsRunning
         ? "Running"
         : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
@@ -2073,7 +2139,7 @@ export default function AgentSessionWindowApp() {
   const actionDockChatNotice = isApprovalRequestPending
     ? "Approval required"
     : isElicitationRequestPending
-      ? "Input required"
+      ? isBlockingElicitationRequestPending ? "Input required" : "Input requested"
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
         ? "New Messages"
         : "";
@@ -2114,6 +2180,8 @@ export default function AgentSessionWindowApp() {
     target: auxiliaryWorkspace.target,
     runtime: {
       isRunning: renderedIsRunning,
+      canSendInput,
+      inputError: steeringError,
       isCanceling: !activeAuxiliarySession && !!selectedSessionCancellationState,
       selectedRunState: selectedSessionRunState,
       auxiliaryRunState: activeAuxiliarySession?.runState ?? null,
@@ -2142,6 +2210,7 @@ export default function AgentSessionWindowApp() {
         auxiliary: handleSend,
         cancelMain: handleCancelRun,
         cancelAuxiliary: handleCancelAuxiliaryRun,
+        input: handleSendInput,
       },
       runtimeOptions: {
         runMain: async (option) => {
@@ -2258,7 +2327,9 @@ export default function AgentSessionWindowApp() {
     },
     composerFeedback: {
       ...chatComposerFeature.composer.composerSendability,
-      shouldShowFeedback: chatComposerFeature.composer.composerSendability.shouldShowFeedback
+      ...(steeringError && !chatComposerFeature.composer.composerSendability.primaryFeedback
+        ? { primaryFeedback: steeringError, feedbackTone: "blocked" as const } : {}),
+      shouldShowFeedback: (chatComposerFeature.composer.composerSendability.shouldShowFeedback || !!steeringError)
         && !(auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError)
         && !(sessionExecutionBlockedReason && (
           sessionExecutionBlockedReason === appSettingsLoadError || sessionExecutionBlockedReason === modelCatalogLoadError

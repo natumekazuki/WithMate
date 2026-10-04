@@ -113,6 +113,9 @@ export function createAuxiliaryApi(
         request,
       );
     },
+    steerAuxiliarySessionTurn(auxiliarySessionId, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL, auxiliarySessionId, request);
+    },
     cancelAuxiliarySessionRun(auxiliarySessionId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,

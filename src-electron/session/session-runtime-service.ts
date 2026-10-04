@@ -1,5 +1,5 @@
 import { currentTimestampLabel as defaultCurrentTimestampLabel } from "../../src-shared/time-state.js";
-import type { AuditLogEntry, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { AuditLogEntry, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry, SteerSessionTurnRequest, SteerSessionTurnResult } from "../../src-shared/session/runtime-state.js";
 import type { MessageArtifact } from "../../src-shared/session/session-state.js";
 import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { normalizeSessionTurnCorrelation } from "../../src-shared/session/runtime-state.js";
@@ -776,6 +776,10 @@ export class SessionRuntimeService {
   private readonly waitingSessionRunAdmissions = new Set<string>();
   private readonly pendingSessionRunCancels = new Set<string>();
   private readonly sessionRunControllers = new Map<string, AbortController>();
+  private readonly pendingSessionInputs = new Map<string, Promise<SteerSessionTurnResult>>();
+  private readonly dispatchedSessionInputs = new Set<string>();
+  private readonly finishingSessionTurns = new Set<string>();
+  private readonly appendSessionInput = new Map<string, (text: string) => Promise<void>>();
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
 
@@ -811,9 +815,10 @@ export class SessionRuntimeService {
 
   private setRuntimeLiveState(sessionId: string, state: LiveSessionRunState | null): void {
     const cancellationState = this.cancellationState(sessionId);
+    const nextState = state && this.finishingSessionTurns.has(sessionId) ? { ...state, inputAvailable: false } : state;
     this.deps.setLiveSessionRun(sessionId, cancellationState
-      ? { ...(state ?? buildEmptyLiveSessionRunState(sessionId, this.deps.getLiveSessionRun(sessionId)?.threadId ?? "")), cancellationState }
-      : state);
+      ? { ...(nextState ?? buildEmptyLiveSessionRunState(sessionId, this.deps.getLiveSessionRun(sessionId)?.threadId ?? "")), inputAvailable: false, cancellationState }
+      : nextState);
   }
 
   private releaseCancellationState(sessionId: string): void {
@@ -900,6 +905,59 @@ export class SessionRuntimeService {
     }
   }
 
+  steerSessionTurn(sessionId: string, request: SteerSessionTurnRequest): Promise<SteerSessionTurnResult> {
+    if (!request || typeof request.expectedTurnId !== "string" || !request.expectedTurnId.trim()
+      || typeof request.userMessage !== "string" || !request.userMessage.trim()) {
+      return Promise.reject(new Error("The active turn and a message are required."));
+    }
+    if (this.pendingSessionInputs.has(sessionId)) return Promise.reject(new Error("Session input is already being sent."));
+    const runController = this.sessionRunControllers.get(sessionId);
+    const appendInput = this.appendSessionInput.get(sessionId);
+    const assertActiveTurn = () => {
+      const live = this.deps.getLiveSessionRun(sessionId);
+      if (!this.inFlightSessionRuns.has(sessionId) || !appendInput || this.appendSessionInput.get(sessionId) !== appendInput
+        || !runController || this.sessionRunControllers.get(sessionId) !== runController
+        || this.sessionRunControllers.get(sessionId)?.signal.aborted || this.terminatingSessionRuns.has(sessionId) || this.finishingSessionTurns.has(sessionId)
+        || live?.cancellationState || live?.turnId !== request.expectedTurnId || live.inputAvailable !== true) {
+        throw new Error("The selected turn no longer accepts input. Your draft is preserved.");
+      }
+    };
+    const operation = (async () => {
+      assertActiveTurn();
+      const session = await this.deps.getSession(sessionId);
+      if (!session || session.provider !== "codex" || isReadOnlySession(session)) throw new Error("This session cannot accept input.");
+      const adapter = this.deps.getProviderCodingAdapter(session.provider);
+      if (!adapter.steerSessionTurn) throw new Error("This provider cannot accept input during a turn.");
+      const providerSession = await (this.deps.resolveProviderSession?.(session) ?? session);
+      const preview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
+      if (preview.errors.length) throw new Error(preview.errors[0]);
+      assertActiveTurn();
+      this.dispatchedSessionInputs.add(sessionId);
+      try {
+        const result = await adapter.steerSessionTurn({ sessionId, expectedTurnId: request.expectedTurnId, userMessage: request.userMessage.trim(), attachments: preview.attachments });
+        if (result.turnId !== request.expectedTurnId) throw new Error("The provider did not confirm input for the selected turn.");
+        if (!appendInput || this.appendSessionInput.get(sessionId) !== appendInput) throw new Error("The selected turn ended before input could be saved.");
+        await appendInput(request.userMessage.trim());
+        return result;
+      } finally {
+        this.dispatchedSessionInputs.delete(sessionId);
+      }
+    })();
+    this.pendingSessionInputs.set(sessionId, operation);
+    const release = () => { if (this.pendingSessionInputs.get(sessionId) === operation) this.pendingSessionInputs.delete(sessionId); };
+    void operation.then(release, release);
+    return operation;
+  }
+
+  canAcceptSessionInput(sessionId: string, expectedTurnId?: string): boolean {
+    const live = this.deps.getLiveSessionRun(sessionId);
+    return this.inFlightSessionRuns.has(sessionId) && this.appendSessionInput.has(sessionId)
+      && !this.sessionRunControllers.get(sessionId)?.signal.aborted && !this.terminatingSessionRuns.has(sessionId)
+      && !this.finishingSessionTurns.has(sessionId)
+      && !live?.cancellationState && live?.inputAvailable === true && Boolean(live.turnId)
+      && (expectedTurnId === undefined || live.turnId === expectedTurnId);
+  }
+
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
     const { clientRequestId, submitSource } = normalizeSessionTurnCorrelation(request);
     const runAbortController = new AbortController();
@@ -930,6 +988,7 @@ export class SessionRuntimeService {
         throw new Error("This session is already running.");
       }
       this.startingSessionRuns.add(sessionId);
+      this.finishingSessionTurns.delete(sessionId);
       this.sessionRunControllers.set(sessionId, runAbortController);
       admitted = true;
       if (this.pendingSessionRunCancels.delete(sessionId)) {
@@ -1196,6 +1255,11 @@ export class SessionRuntimeService {
     let auditWritesDetached = false;
 
     let activeRunningSession = runningSession;
+    if (runningSession.provider === "codex") this.appendSessionInput.set(sessionId, async (text) => {
+      activeRunningSession = { ...activeRunningSession, updatedAt: currentTimestampLabel(), messages: [...activeRunningSession.messages, { role: "user", text }] };
+      activeRunningSession = await this.deps.upsertSession(activeRunningSession);
+      this.deps.broadcastLiveSessionRun(sessionId);
+    });
     const enqueueAuditWrite = (
       nextRunningAuditEntry: CreateAuditLogInput,
       nextSignature: string,
@@ -1346,13 +1410,25 @@ export class SessionRuntimeService {
           console.warn("Audit progress update failed", error);
         });
       });
-      return waitForProviderTurnWithCancelDeadline(
+      try {
+        return await waitForProviderTurnWithCancelDeadline(
         providerPromise,
         runAbortController.signal,
         this.deps.providerCancelGraceMs ?? DEFAULT_PROVIDER_CANCEL_GRACE_MS,
         () => buildCanceledPartialResult(this.deps.getLiveSessionRun(sessionId), promptForAudit),
         (promise) => this.trackTerminatingSessionRun(sessionId, promise),
-      );
+        );
+      } finally {
+        this.finishingSessionTurns.add(sessionId);
+        const live = this.deps.getLiveSessionRun(sessionId);
+        if (live?.inputAvailable) {
+          this.setRuntimeLiveState(sessionId, { ...live, inputAvailable: false });
+          this.deps.broadcastLiveSessionRun(sessionId);
+        }
+        const pendingInput = this.pendingSessionInputs.get(sessionId);
+        if (pendingInput && this.dispatchedSessionInputs.has(sessionId)) await pendingInput.catch(() => undefined);
+        else if (pendingInput) this.pendingSessionInputs.delete(sessionId);
+      }
     };
 
     let providerAgentRuntimeTurnHandle: unknown;
@@ -1386,6 +1462,7 @@ export class SessionRuntimeService {
         } catch (error) {
           const providerTurnError = error instanceof ProviderTurnError ? error : null;
           const shouldRetry =
+            activeRunningSession.provider !== "codex" &&
             !didInternalRetry &&
             !isCanceledRunError(error) &&
             !(await this.deps.isAuxiliarySession?.(sessionId)) &&
@@ -1663,13 +1740,15 @@ export class SessionRuntimeService {
         this.deps.getLiveSessionRun(sessionId)?.threadId,
         activeRunningSession.threadId,
       );
-      const shouldResetFailedThread = shouldResetFailedSessionThread(
+      const shouldResetFailedThread = activeRunningSession.provider !== "codex" && shouldResetFailedSessionThread(
         error,
         activeRunningSession.threadId,
         partialResult,
         canceled,
       );
-      const nextSessionThreadId = shouldResetFailedThread ? "" : failedAuditThreadId;
+      const nextSessionThreadId = activeRunningSession.provider === "codex" && activeRunningSession.threadId
+        ? activeRunningSession.threadId
+        : shouldResetFailedThread ? "" : failedAuditThreadId;
       const completedAt = new Date().toISOString();
       const failedLogicalPrompt = partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt;
 
@@ -1811,6 +1890,7 @@ export class SessionRuntimeService {
       runInBackgroundMacrotask("Detached terminal audit processing failed", completeFailedAudit);
       return storedFailedSession;
     } finally {
+      this.appendSessionInput.delete(sessionId);
       if (providerAgentRuntimeTurnHandle !== undefined) {
         this.deps.endProviderAgentRuntimeTurn?.(providerAgentRuntimeTurnHandle);
       }
@@ -1821,6 +1901,7 @@ export class SessionRuntimeService {
       this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
       this.inFlightSessionRuns.delete(sessionId);
       const currentLiveState = this.deps.getLiveSessionRun(sessionId);
+      this.finishingSessionTurns.delete(sessionId);
       const preservedBackgroundTasks = currentLiveState?.backgroundTasks ?? [];
       const preservedReasoningText = currentLiveState?.reasoningText ?? "";
       if (preservedBackgroundTasks.length > 0 || preservedReasoningText.trim().length > 0) {

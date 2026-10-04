@@ -26,6 +26,7 @@ import {
   WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
+  WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL,
 } from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 import type {
@@ -354,4 +355,10 @@ export function registerAuxiliaryHandlers(
       return auxiliaryDeps.cancelAuxiliarySessionRun(auxiliarySessionId);
     },
   );
+  ipcMain.handle(WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL, async (event, auxiliarySessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest) => {
+    const session = await getAuxiliarySessionForMutation(getAuxiliaryDeps(deps), auxiliarySessionId);
+    assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+    if (!deps.steerAuxiliarySessionTurn) throw new Error("Auxiliary input is unavailable.");
+    return deps.steerAuxiliarySessionTurn(auxiliarySessionId, request);
+  });
 }

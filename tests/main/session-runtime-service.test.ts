@@ -199,6 +199,153 @@ describe("SessionRuntimeService stale retry helpers", () => {
 describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "Codexの追加入力は捕捉したactive turnだけへ一度送信され、確定user本文をterminal保存へ維持する"
+  // oracle = { type = "contract", ref = "Issue #780 explicit same-turn input" }
+  // fault = "追加入力を新turnへ送る、重複送信する、またはterminalが受理済み本文を上書きする"
+  // observable = "adapter steer要求と回数、公開API結果、保存済みmessage列、重複要求のreject"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService Codex steer admission and terminal persistence"
+  // lifecycle = "permanent"
+  // impact = "入力が別作業へ適用されるか受理済み会話を失う"
+  // distinction = "adapter単体testではruntime排他とterminal保存の競合を検出しない"
+  // @end-test-value
+  it("Codex steerは同turnへ一度送りterminalに受理済み入力を残す", async () => {
+    let stored = createSession({ threadId: "thread-existing" });
+    let live: LiveSessionRunState | null = null;
+    let finishTurn!: () => void;
+    const turnEnd = new Promise<void>((resolve) => { finishTurn = resolve; });
+    let finishInput!: () => void;
+    const inputEnd = new Promise<void>((resolve) => { finishInput = resolve; });
+    const sent: Array<Parameters<NonNullable<ProviderCodingAdapter["steerSessionTurn"]>>[0]> = [];
+    const adapter: ProviderCodingAdapter = {
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
+      getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
+      runSessionTurn: async (input, progress) => {
+        await progress?.({ ...createLiveRunState(), sessionId: input.session.id, threadId: "thread-existing", turnId: "turn-one", inputAvailable: true });
+        await turnEnd;
+        return createPartialResult({ threadId: "thread-existing", assistantText: "done" });
+      },
+      steerSessionTurn: async (input) => { sent.push(input); await inputEnd; return { turnId: input.expectedTurnId }; },
+    };
+    const service = new SessionRuntimeService({
+      getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
+      resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
+      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      createAuditLog: createAuditLogBase, updateAuditLog() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+      waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
+      setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    });
+    const turn = service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
+    await waitForCondition(() => live?.inputAvailable === true, "active turn accepts input");
+    await assert.rejects(service.steerSessionTurn(stored.id, { expectedTurnId: "different", userMessage: "wrong" }), /no longer accepts input/);
+    const steer = service.steerSessionTurn(stored.id, { expectedTurnId: "turn-one", userMessage: "additional" });
+    await waitForCondition(() => sent.length === 1, "input dispatched");
+    await assert.rejects(service.steerSessionTurn(stored.id, { expectedTurnId: "turn-one", userMessage: "duplicate" }), /already being sent/);
+    finishTurn();
+    finishInput();
+    assert.deepEqual(await steer, { turnId: "turn-one" });
+    const completed = await turn;
+    assert.deepEqual(completed.messages.map((message) => message.text), ["start", "additional", "done"]);
+    assert.equal(sent[0]?.expectedTurnId, "turn-one");
+    assert.equal(sent[0]?.userMessage, "additional");
+    assert.equal(sent.length, 1);
+    await assert.rejects(service.steerSessionTurn(stored.id, { expectedTurnId: "turn-one", userMessage: "late" }), /no longer accepts input/);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "添付解決中に取消されたCodex steerはproviderへ送信せず会話本文へ追加しない"
+  // oracle = { type = "contract", ref = "Issue #780 same-turn input cancellation fence" }
+  // fault = "添付解決前だけturnを照合し、取消後に遅延inputをdispatchする"
+  // observable = "steer公開APIのreject、adapter steer呼出回数、terminal message列"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService steer preparation cancellation"
+  // lifecycle = "permanent"
+  // impact = "取消後の入力が実行されるか送信未確定の本文を会話へ追加する"
+  // distinction = "adapter単体testはruntimeの非同期添付解決を通らない"
+  // @end-test-value
+  it("Codex steerは添付解決後も取消を照合し未送信本文を追加しない", async () => {
+    let stored = createSession({ threadId: "thread-existing" });
+    let live: LiveSessionRunState | null = null;
+    let finishTurn!: () => void;
+    const turnEnd = new Promise<void>((resolve) => { finishTurn = resolve; });
+    let releasePreview!: () => void;
+    const previewGate = new Promise<void>((resolve) => { releasePreview = resolve; });
+    let previewStarted = false;
+    let inputCalls = 0;
+    const adapter: ProviderCodingAdapter = {
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
+      getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
+      runSessionTurn: async (input, progress) => {
+        await progress?.({ ...createLiveRunState(), sessionId: input.session.id, threadId: "thread-existing", turnId: "turn-one", inputAvailable: true });
+        await turnEnd;
+        return createPartialResult({ threadId: "thread-existing", assistantText: "done" });
+      },
+      steerSessionTurn: async (input) => { inputCalls += 1; return { turnId: input.expectedTurnId }; },
+    };
+    const service = new SessionRuntimeService({
+      getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
+      resolveComposerPreview: async (_session, text) => { if (text === "race") { previewStarted = true; await previewGate; } return { attachments: [], errors: [] }; }, getAppSettings: () => normalizeAppSettings({}),
+      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      createAuditLog: createAuditLogBase, updateAuditLog() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+      waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
+      setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    });
+    const turn = service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
+    await waitForCondition(() => live?.inputAvailable === true, "active turn");
+    const steer = service.steerSessionTurn(stored.id, { expectedTurnId: "turn-one", userMessage: "race" });
+    await waitForCondition(() => previewStarted, "steer preview held");
+    service.cancelRun(stored.id);
+    const rejected = assert.rejects(steer, /no longer accepts input/);
+    finishTurn();
+    const result = await turn;
+    releasePreview();
+    await rejected;
+    assert.equal(inputCalls, 0);
+    assert.equal(result.messages.some((message) => message.text === "race"), false);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Codexのthread復帰失敗は同じ保存threadを保持して一度の失敗として返し、自動新規threadへ切り替えない"
+  // oracle = { type = "contract", ref = "Issue #780 no silent session replacement" }
+  // fault = "stale errorでthreadを消すか、新規threadを作るため再試行する"
+  // observable = "provider呼出回数、thread reset回数、失敗Sessionのthreadと本文"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService Codex resume failure"
+  // lifecycle = "permanent"
+  // impact = "既存のprovider会話を黙って別の会話へ置換する"
+  // distinction = "adapter単体testでは上位runtimeによるretryを検出しない"
+  // @end-test-value
+  it("Codex復帰失敗では保存threadを保持し自動retryしない", async () => {
+    let stored = createSession({ threadId: "thread-existing" });
+    let attempts = 0;
+    let resets = 0;
+    const adapter: ProviderCodingAdapter = {
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
+      getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
+      runSessionTurn: async () => { attempts += 1; throw new ProviderTurnError("thread not found", createPartialResult(), false); },
+    };
+    const service = new SessionRuntimeService({
+      getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
+      resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
+      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      createAuditLog: createAuditLogBase, updateAuditLog() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
+      waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }), resetProviderSessionThread: () => { resets += 1; },
+      setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    });
+    const result = await service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "resume" });
+    assert.equal(attempts, 1);
+    assert.equal(resets, 0);
+    assert.equal(result.threadId, "thread-existing");
+    assert.equal(result.runState, "error");
+    assert.match(result.messages.at(-1)?.text ?? "", /thread not found/);
+  });
+  // @test-value v2
+  // kind = "contract"
   // claim = "Claude個別要求取消は共通pending表示とresolverを解放してから後続を表示し、古い回答を拒否する"
   // oracle = { type = "contract", ref = "docs/design/provider-adapter.md; Issue #751 F751-1" }
   // fault = "SDKのみ取消してpendingを残す、queueを先に進めて上書きする、または旧requestIdへの回答を新要求へ適用する"
@@ -3044,7 +3191,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
   // lifecycle = "permanent"
   // @end-test-value
   it("stale thread / session error で meaningful partial が無い時だけ thread reset 後に 1 回 retry する", async () => {
-    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const session = createSession({ provider: "copilot", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const reset: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
@@ -3117,10 +3264,10 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
         return createCharacter();
       },
       getAppSettings() {
-        return normalizeAppSettings({});
+        return normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } });
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { revision: 1, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3210,7 +3357,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
     assert.equal(bindingGeneration, 1);
     assert.equal(runtimeTurnHandles.length, 1);
     assert.deepEqual(endedRuntimeTurnHandles, runtimeTurnHandles);
-    assert.deepEqual(reset, [{ providerId: "codex", sessionId: session.id }]);
+    assert.deepEqual(reset, [{ providerId: "copilot", sessionId: session.id }]);
     assert.deepEqual(invalidated, []);
     assert.equal(storedSessions.length, 3);
     assert.equal(storedSessions[1]?.threadId, "");
@@ -3236,7 +3383,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
   // lifecycle = "permanent"
   // @end-test-value
   it("stale retry 後の running audit log は前回 progress の断片を引き継がない", async () => {
-    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const session = createSession({ provider: "copilot", threadId: "thread-stale" });
     const auditUpdates: UpdateAuditLogInput[] = [];
     let attempt = 0;
 
@@ -3296,10 +3443,10 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
         return createCharacter();
       },
       getAppSettings() {
-        return normalizeAppSettings({});
+        return normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } });
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { revision: 1, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3365,7 +3512,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
   // lifecycle = "permanent"
   // @end-test-value
   it("stale retry 中は旧 attempt の late progress を live state と running audit log へ反映しない", async () => {
-    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const session = createSession({ provider: "copilot", threadId: "thread-stale" });
     const auditUpdates: UpdateAuditLogInput[] = [];
     const liveStates: Array<LiveSessionRunState | null> = [];
     let attempt = 0;
@@ -3445,10 +3592,10 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
         return createCharacter();
       },
       getAppSettings() {
-        return normalizeAppSettings({});
+        return normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } });
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { revision: 1, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3502,253 +3649,6 @@ releaseSecondAttempt!();
     assert.equal(runningUpdates.some((entry) => entry.assistantText === "旧 attempt の late progress"), false);
     assert.equal(liveStates.some((state) => state?.threadId === "thread-stale-late"), false);
     assert.equal(liveStates.some((state) => state?.assistantText === "旧 attempt の late progress"), false);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "Codex stdin bootstrap errorではthread reset後に一回だけretryする"
-  // oracle = { type = "contract", ref = "Session runtime stale thread retry contract" }
-  // fault = "recoverable bootstrap errorをretryせず失敗する、または無限retryする"
-  // observable = "provider call count、thread reset、最終turn result"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService Codex stdin bootstrap retry"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("Codex stdin bootstrap error でも thread reset 後に 1 回 retry する", async () => {
-    const session = createSession({ provider: "codex", threadId: "" });
-    const storedSessions: Session[] = [];
-    const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
-    const resetCalls: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    const seenThreadIds: string[] = [];
-    let attempt = 0;
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn(input) {
-        attempt += 1;
-        seenThreadIds.push(input.session.threadId);
-        if (attempt === 1) {
-          throw new ProviderTurnError(
-            "Codex Exec exited with code 1: Reading prompt from stdin...",
-            createPartialResult({ threadId: "thread-broken" }),
-            false,
-          );
-        }
-
-        return createPartialResult({
-          threadId: "thread-fresh",
-          assistantText: "立て直して続行できたよ。",
-        });
-      },
-    };
-
-    const service = new SessionRuntimeService({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        storedSessions.push(next);
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-      },
-      setLiveSessionRun() {},
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      resetProviderSessionThread(providerId, retrySessionId) {
-        resetCalls.push({ providerId, sessionId: retrySessionId });
-      },
-      invalidateProviderSessionThread(providerId, retrySessionId) {
-        invalidated.push({ providerId, sessionId: retrySessionId });
-      },
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(() => auditUpdates.length === 2, "bootstrap retry成功auditがbackgroundで完了すること");
-
-    assert.equal(attempt, 2);
-    assert.equal(result.runState, "idle");
-    assert.equal(result.threadId, "thread-fresh");
-    assert.deepEqual(seenThreadIds, ["", ""]);
-    assert.deepEqual(resetCalls, [{ providerId: "codex", sessionId: session.id }]);
-    assert.equal(storedSessions.length, 2);
-    assert.equal(storedSessions[1]?.threadId, "thread-fresh");
-    assert.equal(auditUpdates.length, 2);
-    assert.equal(auditUpdates[0]?.phase, "running");
-    assert.equal(auditUpdates.at(-1)?.phase, "completed");
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "Codex stdin bootstrap errorが継続したfailed sessionに壊れたthreadIdを残さない"
-  // oracle = { type = "contract", ref = "Session runtime failed thread ownership contract" }
-  // fault = "失敗したthreadIdをfailed sessionへ永続化し、次回turnが壊れたthreadを再利用する"
-  // observable = "failed SessionのthreadIdとprovider retry回数"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService failed bootstrap cleanup"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("Codex stdin bootstrap error が続く時は failed session に壊れた threadId を残さない", async () => {
-    const session = createSession({ provider: "codex", threadId: "" });
-    const storedSessions: Session[] = [];
-    const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
-    const resetCalls: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    let attempt = 0;
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn() {
-        attempt += 1;
-        throw new ProviderTurnError(
-          "Codex Exec exited with code 1: Reading prompt from stdin...",
-          createPartialResult({ threadId: "thread-broken" }),
-          false,
-        );
-      },
-    };
-
-    const service = new SessionRuntimeService({
-      getSession() {
-        return session;
-      },
-      upsertSession(next) {
-        storedSessions.push(next);
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-      },
-      setLiveSessionRun() {},
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      resetProviderSessionThread(providerId, retrySessionId) {
-        resetCalls.push({ providerId, sessionId: retrySessionId });
-      },
-      invalidateProviderSessionThread(providerId, retrySessionId) {
-        invalidated.push({ providerId, sessionId: retrySessionId });
-      },
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(() => auditUpdates.length === 2, "bootstrap failure auditがbackgroundで完了すること");
-
-    assert.equal(attempt, 2);
-    assert.equal(result.runState, "error");
-    assert.equal(result.threadId, "");
-    assert.match(result.messages.at(-1)?.text ?? "", /Reading prompt from stdin/i);
-    assert.deepEqual(resetCalls, [{ providerId: "codex", sessionId: session.id }]);
-    assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
-    assert.equal(storedSessions.length, 2);
-    assert.equal(storedSessions[1]?.threadId, "");
-    assert.equal(auditUpdates.length, 2);
-    assert.equal(auditUpdates[0]?.phase, "running");
-    assert.equal(auditUpdates.at(-1)?.phase, "failed");
-    assert.equal(auditUpdates.at(-1)?.threadId, "thread-broken");
   });
 
   // @test-value v2
@@ -4384,8 +4284,8 @@ releaseSecondAttempt!();
     await waitForCondition(() => auditUpdates.at(-1)?.phase === "failed", "failed auditがbackgroundで保存されること");
 
     assert.equal(result.runState, "error");
-    assert.equal(result.threadId, "thread-live");
-    assert.equal(storedSessions.at(-1)?.threadId, "thread-live");
+    assert.equal(result.threadId, "thread-stale");
+    assert.equal(storedSessions.at(-1)?.threadId, "thread-stale");
     assert.equal(auditUpdates.at(-1)?.phase, "failed");
     assert.equal(auditUpdates.at(-1)?.threadId, "thread-live");
     assert.equal(auditUpdates.at(-1)?.assistantText, "途中まで進んだよ。");

@@ -508,6 +508,50 @@ test("Auxiliary turn draft operation は失敗時復元と後続save保全を行
 
 // @test-value v2
 // kind = "contract"
+// claim = "実行中Auxiliaryのdraft許可はMainの受付状態で決まり、steer失敗はconsume済み本文をCAS復元する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// fault = "rendererフラグで実行中draftを書き換えるか、steer失敗時に本文を失う"
+// observable = "service save結果、steer callback回数、永続draft本文/revision"
+// observation_boundary = "public-boundary"
+// scope = "Auxiliary running input durable draft"
+// lifecycle = "permanent"
+// impact = "入力消失または権限を検証しない実行中送信"
+// distinction = "通常idle consume testはrunning storage拒否と内部許可を通らない"
+// @end-test-value
+test("Auxiliary実行中inputはMainの許可とdurable revisionを検証し失敗本文を保持する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-steer-draft-"));
+  const dbPath = path.join(directory, "app.db");
+  const parentStorage = new SessionStorage(dbPath);
+  const storage = new AuxiliarySessionStorage(dbPath);
+  const parent = parentStorage.upsertSession(buildNewSession({ id: "session-1", taskTitle: "parent", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: DEFAULT_APPROVAL_MODE }));
+  const session = storage.upsertAuxiliarySession(buildAuxiliarySession({ runState: "running", composerDraft: "additional" }));
+  let available = false;
+  const service = new AuxiliarySessionService({ getParentSession: () => parent, getStorage: () => storage, canAcceptAuxiliaryInput: () => available });
+  try {
+    const draft = storage.getAuxiliaryDraft(session.id)!;
+    const spoofed = { auxiliarySessionId: session.id, parentSessionId: parent.id, incarnation: draft.incarnation, expectedDurableRevision: draft.durableRevision, text: "spoofed", updatedAt: "2026-10-04T00:00:00Z", allowRunningInput: true };
+    assert.equal((await service.saveAuxiliaryDraft(spoofed)).outcome, "rejected");
+    assert.equal(storage.getAuxiliaryDraft(session.id)?.text, "additional");
+    available = true;
+    assert.equal((await service.saveAuxiliaryDraft({ ...spoofed, text: "input" })).outcome, "saved");
+    const saved = storage.getAuxiliaryDraft(session.id)!;
+    let calls = 0;
+    const input = { auxiliarySessionId: session.id, parentSessionId: parent.id, incarnation: saved.incarnation, expectedDurableRevision: saved.durableRevision, userMessage: "input", run: async () => { calls += 1; throw new Error("turn ended"); } };
+    await assert.rejects(service.runAuxiliaryInputWithDraft({ ...input, expectedDurableRevision: saved.durableRevision - 1 }), /draft changed/);
+    await assert.rejects(service.runAuxiliaryInputWithDraft(input), /turn ended/);
+    assert.equal(calls, 1);
+    const restored = storage.getAuxiliaryDraft(session.id)!;
+    assert.equal(restored.text, "input");
+    assert.equal(restored.durableRevision, saved.durableRevision + 2);
+    assert.equal(await service.waitForPendingDraftSends(), true);
+  } finally {
+    storage.close(); parentStorage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Auxiliary送信の終了待ちは先にsettleした復元失敗も再保存まで保持し、永続済の編集・削除・再作成を上書きせず解消する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
 // fault = "DB closeが送信runまたは失敗時復元より先に進み、再起動後にconsume済みdraftが空になる"

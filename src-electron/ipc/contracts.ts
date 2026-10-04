@@ -416,6 +416,7 @@ export type MainIpcAuxiliaryDeps = MainIpcEventWindowDeps &
       request: RunSessionTurnRequest,
     ): Awaitable<AuxiliarySession>;
     cancelAuxiliarySessionRun?(auxiliarySessionId: string): Awaitable<void>;
+    steerAuxiliarySessionTurn?(auxiliarySessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
   };
 
 export type MainIpcAuxiliaryDepsRequired = {
@@ -640,6 +641,7 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
       request: RunSessionTurnRequest,
     ): Promise<Session>;
     cancelSessionRun(sessionId: string): void;
+    steerSessionTurn?(sessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
   };
 
 export type MainIpcMateDeps = {

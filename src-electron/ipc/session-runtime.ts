@@ -25,6 +25,7 @@ import {
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
+  WITHMATE_STEER_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
   WITHMATE_SET_SESSION_TITLE_CHANNEL,
@@ -203,4 +204,9 @@ export function registerSessionRuntimeHandlers(
       deps.cancelSessionRun(sessionId);
     },
   );
+  ipcMain.handle(WITHMATE_STEER_SESSION_TURN_CHANNEL, (event, sessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest) => {
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    if (!deps.steerSessionTurn) throw new Error("Session input is unavailable.");
+    return deps.steerSessionTurn(sessionId, request);
+  });
 }

@@ -172,6 +172,14 @@ export class MainSessionCommandFacade {
     this.deps.getSessionRuntimeService().cancelRun(sessionId);
   }
 
+  async steerSessionTurn(sessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult> {
+    const session = this.deps.getSession(sessionId);
+    if (!session) throw new Error("The Session could not be found.");
+    const validation = await this.deps.validateWorkspaceDirectory(session.workspacePath);
+    if (!validation.valid) throw new Error(`Workspace is unavailable. ${resolveWorkspaceDirectoryValidationMessage(validation)}`);
+    return this.deps.getSessionRuntimeService().steerSessionTurn(sessionId, request);
+  }
+
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
     const session = this.deps.getSession(sessionId);
     if (session) {

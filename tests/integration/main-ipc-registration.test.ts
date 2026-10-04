@@ -83,6 +83,8 @@ import {
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
+  WITHMATE_STEER_SESSION_TURN_CHANNEL,
+  WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL,
   WITHMATE_SET_AUXILIARY_TITLE_CHANNEL,
@@ -209,6 +211,44 @@ function createDeps(overrides: Record<string, unknown> = {}) {
 
   return { deps: deps as never, calls };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryのsteer IPCは対象の親Session Windowだけから同turn入力を受け付ける"
+// oracle = { type = "contract", ref = "Issue #780 explicit steer ownership" }
+// fault = "別Windowから同turn入力を送信できるか、turn IDがIPCで失われる"
+// observable = "steer dependencyに渡るID/payloadと別Window要求のreject"
+// observation_boundary = "public-boundary"
+// scope = "steer IPC sender ownership"
+// lifecycle = "permanent"
+// impact = "他会話やpreviewから実行中の作業を変更できる"
+// distinction = "runtimeとadapter単体testはElectron senderを認可しない"
+// @end-test-value
+test("steer IPCはMainとAuxiliaryのowner Windowを検証する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const other = createWindowStub("file:///session.html?sessionId=other");
+  let sender = owner;
+  const sent: unknown[] = [];
+  const request = { expectedTurnId: "turn-one", userMessage: "additional" };
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    getAuxiliarySession: async () => ({ id: "aux-1", parentSessionId: "session-1", status: "active" }),
+    steerSessionTurn: async (id: string, payload: unknown) => { sent.push([id, payload]); return { turnId: "turn-one" }; },
+    steerAuxiliarySessionTurn: async (id: string, payload: unknown) => { sent.push([id, payload]); return { turnId: "turn-one" }; },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const main = handlers.get(WITHMATE_STEER_SESSION_TURN_CHANNEL)!;
+  const auxiliary = handlers.get(WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL)!;
+  assert.deepEqual(await main({}, "session-1", request), { turnId: "turn-one" });
+  assert.deepEqual(await auxiliary({}, "aux-1", request), { turnId: "turn-one" });
+  assert.deepEqual(sent, [["session-1", request], ["aux-1", request]]);
+  sender = other;
+  await assert.rejects(async () => main({}, "session-1", request), /Session window/);
+  await assert.rejects(async () => auxiliary({}, "aux-1", request), /Session window/);
+  assert.equal(sent.length, 2);
+});
 
 function createWindowStub(url: string) {
   return {

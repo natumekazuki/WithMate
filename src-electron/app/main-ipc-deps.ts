@@ -351,6 +351,7 @@ export type MainIpcAuxiliaryDepsArgs = {
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Awaitable<void>;
   closeAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
+  steerAuxiliarySessionTurn?(auxiliarySessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
   cancelAuxiliarySessionRun(auxiliarySessionId: string): Awaitable<void>;
 };
 
@@ -375,6 +376,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
     request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
   ): Awaitable<DeleteSessionsResult>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  steerSessionTurn?(sessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
   cancelSessionRun(sessionId: string): void;
 };
 
