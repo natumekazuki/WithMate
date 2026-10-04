@@ -1842,7 +1842,7 @@ test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC �
 // kind = "invariant"
 // claim = "narrow session mutation IPC は対象Session windowのsenderだけを許可し、Auxiliary identityをstatus queryで照合し、titleのcommit結果を保持する"
 // oracle = { type = "contract", ref = "Session mutation IPC sender ownership" }
-// fault = "別Session windowからnarrow mutationを実行できる、Auxiliary requestの親・createdAt不一致がserviceへ到達する、またはtitle結果を捨てる"
+// fault = "別Session windowからnarrow mutationを実行できる、Auxiliary requestのcreatedAt不一致がserviceへ到達する、またはtitle結果を捨てる"
 // observable = "mutation service呼出し、Auxiliary Session full hydrationなしの拒否、title commit結果"
 // observation_boundary = "public-boundary"
 // scope = "session-mutation-ipc"
