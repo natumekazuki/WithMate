@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import React, { act, useState } from "react";
-import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
@@ -61,6 +61,7 @@ async function setup() {
     return { main, auxiliary, live, setLive, mainColumn, auxiliaryColumn };
   }
   function View() { current = Probe(); return null; }
+  const { createRoot } = await import("react-dom/client");
   const root = createRoot(dom.window.document.getElementById("root")!);
   await act(async () => { root.render(<View />); });
   return {
@@ -198,4 +199,220 @@ test("Auxiliaryは遅い取得と切替で送信文を失わず失敗後に再�
     assert.equal(view.current.auxiliaryColumn?.messages.filter((message) => message.text === "retry prompt").length, 1);
     assert.equal(view.current.auxiliaryColumn?.messages.at(-1)?.text, "retried answer");
   } finally { await view.unmount(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main送信runtimeは要求待機中に同じComposer ownerへ設定された新入力を旧rejectで上書きせず、再取得した会話へ収束する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信直後の共通反映 / Composer の更新・保存境界" }
+// fault = "runtimeが送信時のclear revisionではなく現在のrevisionで復元し、新しいdraftを旧送信文で上書きする"
+// observable = "実ComposerControllerRegistryのdraft、要求開始時のIDと本文、reject後の実会話column"
+// observation_boundary = "consumer"
+// scope = "Main runtime rejected request and Composer owner revision"
+// lifecycle = "permanent"
+// impact = "遅い送信失敗が同一ownerの後続編集を失わせる"
+// distinction = "controller単体では検出できないruntimeのcapture・clear・restore接続を検証する。新入力はcontrollerの公開APIで設定し、送信中にdisabledなtextareaでユーザーが入力できるとは主張しない"
+// @end-test-value
+test("Main runtimeの旧rejectは同じComposer ownerの新入力を上書きしない", async () => {
+  const view = await setup();
+  try {
+    const initial = view.current.main.sessions[0];
+    const owner = { kind: "main" as const, id: initial.id };
+    const started = deferred<void>();
+    const run = deferred<Session>();
+    view.api.runSessionTurn = (id, request) => {
+      assert.equal(id, initial.id);
+      assert.equal(request.userMessage, "old prompt");
+      started.resolve();
+      return run.promise;
+    };
+    let operation!: ReturnType<typeof view.sendMain>;
+    await act(async () => { operation = view.sendMain("old prompt"); await started.promise; });
+    assert.equal(view.registry.capture(owner).draft, "");
+    view.registry.setDraft(owner, "new draft");
+    assert.equal(view.registry.capture(owner).draft, "new draft");
+    await act(async () => {
+      const rejected = assert.rejects(operation, /old request rejected/);
+      run.reject(new Error("old request rejected"));
+      await rejected;
+    });
+    assert.equal(view.registry.capture(owner).draft, "new draft");
+    assert.deepEqual(structuredClone(view.current.mainColumn?.messages), structuredClone(initial.messages));
+    assert.equal(view.current.mainColumn?.isRunning, false);
+  } finally { await view.unmount(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryは終了通知後に同じComposerへ編集した新入力を旧要求のrejectで上書きしない。Main/AuxiliaryのProvider失敗Sessionがresolveした場合は送信済みuser・partial・失敗本文を会話に残し、送信入力を復元しない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信直後の共通反映 / docs/manual-test-checklist.md MT-030, MT-030A" }
+// fault = "Appの失敗callbackが捕捉revisionを誤って新入力を旧本文で上書きするか、resolveされたerror Sessionをrejectと混同して会話・入力を巻き戻す"
+// observable = "実SessionWindowAppのtextarea値、送信APIの対象IDと本文、要求待機中とsettle後の対象会話のuser/assistant本文、rejectのalert"
+// observation_boundary = "component-behavior"
+// scope = "SessionWindowApp Main/Auxiliary rejected request and resolved Provider failure"
+// lifecycle = "permanent"
+// impact = "送信失敗時の後続入力消失、送信済み本文・途中応答の消失、旧入力の復活による再送を防ぐ"
+// distinction = "Composer単体と既存App testの別owner・終了凍結時復元とは異なり、API要求開始→terminal通知→同一Auxiliary編集→旧rejectを実Appの送信callbackからtextareaまで接続する。Main/Auxiliaryのresolve失敗も観測し、Provider実通信・永続化・OS操作は対象にしない"
+// @end-test-value
+test("Session Windowは旧rejectから新入力を保護し、resolveするProvider失敗の本文を保持する", { timeout: 30_000 }, async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", {
+    url: "http://withmate.test/session.html?sessionId=benchmark-main", pretendToBeVisual: true,
+  });
+  const globals = {
+    window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement, HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
+    localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true,
+    requestAnimationFrame: (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0),
+    cancelAnimationFrame: (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
+    ResizeObserver: class { observe() {} disconnect() {} unobserve() {} },
+    IntersectionObserver: class { observe() {} disconnect() {} unobserve() {} },
+  };
+  const originals = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  Object.defineProperty(dom.window, "matchMedia", { value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { value() {} });
+  // JSDOMで会話のvirtual rowを描画するためのviewport。OS/browserのlayout検証ではない。
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", { get() { return 720; } });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", { get() { return 720; } });
+  dom.window.HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number, y?: number) {
+    this.scrollTop = typeof options === "number" ? (y ?? this.scrollTop) : (options?.top ?? this.scrollTop);
+  };
+  let api!: WithMateWindowApi;
+  runInNewContext(readFileSync(new URL("../../scripts/benchmarks/benchmark-composer-input-preload.cjs", import.meta.url), "utf8"), {
+    require: () => ({ contextBridge: { exposeInMainWorld: (_key: string, value: WithMateWindowApi) => { api = value; } } }),
+    process: { argv: ["--benchmark-auxiliary-count=1"] }, Buffer,
+  });
+  const initialMain = await api.getSession("benchmark-main");
+  const initialAuxiliary = await api.getAuxiliarySession("benchmark-aux-1");
+  assert.ok(initialMain);
+  assert.ok(initialAuxiliary);
+  let main = initialMain;
+  let auxiliary = initialAuxiliary;
+  api.getSession = async (id) => id === main.id ? main : null;
+  api.getAuxiliarySession = async (id) => id === auxiliary.id ? auxiliary : null;
+  const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0]>();
+  api.subscribeLiveSessionRun = (listener) => {
+    liveListeners.add(listener);
+    return () => { liveListeners.delete(listener); };
+  };
+  const emitTerminal = (id: string) => liveListeners.forEach((listener) => listener(id, null));
+  let reportedError = deferred<string>();
+  const alerts: string[] = [];
+  dom.window.alert = (message) => { alerts.push(String(message)); reportedError.resolve(String(message)); };
+  Object.defineProperty(dom.window, "withmate", { value: api });
+  const { createRoot } = await import("react-dom/client");
+  const { default: App } = await import("../../src/app/SessionWindowApp.js");
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const textarea = () => {
+    const element = dom.window.document.querySelector<HTMLTextAreaElement>('textarea[data-shortcut-scope="composer"]');
+    assert.ok(element);
+    return element;
+  };
+  const input = async (text: string) => {
+    assert.equal(textarea().disabled, false);
+    await act(async () => {
+      const element = textarea();
+      Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(element, text);
+      element.setSelectionRange(text.length, text.length);
+      element.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    assert.equal(textarea().value, text);
+  };
+  const send = () => {
+    const button = dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button");
+    assert.ok(button);
+    assert.equal(button.disabled, false);
+    button.click();
+  };
+  const messageTexts = (pane: string, role: "user" | "assistant") =>
+    Array.from(dom.window.document.querySelectorAll(`${pane} .message-row.${role} .rich-text`))
+      .map((element) => element.textContent ?? "");
+  try {
+    await act(async () => { root.render(<App />); });
+    for (const target of ["Main", "Auxiliary"] as const) {
+      if (target === "Auxiliary") {
+        const opener = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Open Auxiliary"]');
+        assert.ok(opener);
+        await act(async () => { opener.click(); });
+        const switcher = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(".concurrent-chat-target-dock button"))
+          .find((button) => button.textContent === target);
+        assert.ok(switcher);
+        await act(async () => { switcher.click(); });
+      }
+      const id = target === "Main" ? main.id : auxiliary.id;
+      const pane = target === "Main" ? "#session-main-chat-pane" : "#session-auxiliary-chat-pane";
+      const outcomes = target === "Main" ? ["provider-error"] as const : ["reject", "provider-error"] as const;
+      for (const outcome of outcomes) {
+        const prompt = `${target} ${outcome} prompt`;
+        const newInput = `${target} next draft`;
+        const partial = `${target} partial answer`;
+        const failureNotice = `${target} provider execution failed`;
+        const started = deferred<void>();
+        const mainResult = deferred<Session>();
+        const auxiliaryResult = deferred<AuxiliarySession>();
+        const requests: Array<{ id: string; text: string }> = [];
+        api.runSessionTurn = (sessionId, request) => {
+          requests.push({ id: sessionId, text: request.userMessage });
+          started.resolve();
+          return mainResult.promise;
+        };
+        api.runAuxiliarySessionTurn = (sessionId, request) => {
+          requests.push({ id: sessionId, text: request.userMessage });
+          started.resolve();
+          return auxiliaryResult.promise;
+        };
+        await input(prompt);
+        await act(async () => { send(); await started.promise; });
+        assert.deepEqual(requests, [{ id, text: prompt }]);
+        assert.equal(textarea().value, "");
+        assert.equal(messageTexts(pane, "user").filter((text) => text === prompt).length, 1);
+        if (outcome === "reject") {
+          assert.equal(textarea().disabled, true, "running input is blocked until the terminal notification");
+          await act(async () => { emitTerminal(id); });
+          await input(newInput);
+          reportedError = deferred<string>();
+          const error = new Error(`${target} request rejected`);
+          await act(async () => {
+            if (target === "Main") mainResult.reject(error);
+            else auxiliaryResult.reject(error);
+            assert.equal(await reportedError.promise, error.message);
+          });
+          assert.equal(textarea().value, newInput, `${target}: old rejection must not restore over a later edit`);
+          assert.equal(messageTexts(pane, "user").includes(prompt), false, "rejected request converges to the pre-send session");
+        } else {
+          await act(async () => {
+            if (target === "Main") {
+              main = { ...main, status: "idle", runState: "error", messages: [
+                ...main.messages, { role: "user", text: prompt }, { role: "assistant", text: `${partial}\n\n${failureNotice}` },
+              ] };
+              mainResult.resolve(main);
+            } else {
+              auxiliary = { ...auxiliary, runState: "error", composerDraft: "", messages: [
+                ...auxiliary.messages, { role: "user", text: prompt }, { role: "assistant", text: `${partial}\n\n${failureNotice}` },
+              ] };
+              auxiliaryResult.resolve(auxiliary);
+            }
+          });
+          const assertFailedBody = () => {
+            assert.equal(messageTexts(pane, "user").filter((text) => text === prompt).length, 1);
+            const answers = messageTexts(pane, "assistant");
+            assert.equal(answers.filter((text) => text.includes(partial)).length, 1);
+            assert.equal(answers.filter((text) => text.includes(failureNotice)).length, 1);
+            assert.equal(textarea().value, "", `${target}: resolved Provider failure must not restore the sent draft`);
+          };
+          assertFailedBody();
+          await act(async () => { emitTerminal(id); });
+          assertFailedBody();
+        }
+      }
+    }
+    assert.deepEqual(alerts, ["Auxiliary request rejected"]);
+  } finally {
+    await act(async () => { root.unmount(); });
+    dom.window.close();
+    for (const [key, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
 });

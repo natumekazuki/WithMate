@@ -218,12 +218,13 @@ describe("home-launch-handlers", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "launch dialog再表示はCharacter一覧を再取得して保持しrandom選択へ戻し、workspace入力は検証へ渡す"
-  // oracle = { type = "contract", ref = "src/home/home-launch-handlers.ts" }
-  // fault = "古いCharacter選択を引き継ぐか、入力されたworkspaceを検証せず開始候補にする"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Session dialog / docs/manual-test-checklist.md MT-013B" }
+  // fault = "再表示時にcatalogを再取得しないか古いCharacter選択を引き継ぐ、または手入力path・Browse結果をvalidation schedulerへ渡さない"
   // observable = "refresh回数、開閉時のcatalog、draftの選択状態とSessionFolder、feedback、検証に渡したraw path"
   // observation_boundary = "component-behavior"
   // scope = "Home launch dialog handlers"
   // lifecycle = "permanent"
+  // distinction = "本testは未加工pathのschedulerへの引渡しを観測する。検証結果の採用はhome-launch-state/workspace-validation、開始可否はhome-launch-projectionのtestが担う"
   // @end-test-value
   it("launch dialog を開くたびに Character catalog を再取得してrandom選択へ戻す", async () => {
     let draft: HomeLaunchDraft = {
@@ -310,7 +311,7 @@ describe("home-launch-handlers", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Character一覧再取得の失敗はloaded状態を解除し古い一覧でのrandom開始を防ぐ"
-  // oracle = { type = "contract", ref = "src/home/home-launch-handlers.ts" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New SessionのCharacter取得失敗時は保持済み一覧を起動候補にせず作成を無効にする" }
   // fault = "取得に失敗したCharacter一覧を最新として扱い使用不能なCharacterで開始する"
   // observable = "catalogのerror状態と空一覧、dialogのrandom状態、失敗feedback、有効な開始入力でのprojection.canStartSessionのtrueからfalseへの変化"
   // observation_boundary = "public-boundary"
