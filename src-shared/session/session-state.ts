@@ -119,6 +119,7 @@ export type HomeSessionSummary = {
   characterIconPath: string;
   characterThemeColors: CharacterThemeColors;
   runState: string;
+  cancellationState?: "requested" | "terminating";
 };
 
 export const SESSION_SUMMARY_PAGE_SCOPES = ["recent", "pinned", "open"] as const;
@@ -529,6 +530,9 @@ function normalizeHomeSessionSummaryShape(value: unknown): HomeSessionSummary | 
         : "",
     characterThemeColors: normalizeCharacterThemeColors(candidate.characterThemeColors),
     runState: typeof candidate.runState === "string" && candidate.runState.trim() ? candidate.runState : "idle",
+    ...(candidate.cancellationState === "requested" || candidate.cancellationState === "terminating"
+      ? { cancellationState: candidate.cancellationState }
+      : {}),
   };
 }
 

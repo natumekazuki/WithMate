@@ -13,14 +13,25 @@ export function getHomeSessionKindSearchLabels(session: HomeSessionSummary): str
 }
 export function getHomeSessionState(session: HomeSessionSummary, auxiliarySessions: readonly AuxiliarySessionSummary[] | AuxiliarySessionSummary | null = []): HomeSessionState {
   const auxiliaries = !auxiliarySessions ? [] : Array.isArray(auxiliarySessions) ? auxiliarySessions : [auxiliarySessions];
+  const cancellationStates = [session.cancellationState, ...auxiliaries.map((item) => item.cancellationState)];
+  if (cancellationStates.includes("terminating")) return { kind: "running", label: "Waiting For Stop" };
+  if (cancellationStates.includes("requested")) return { kind: "running", label: "Canceling" };
   if (session.status === "running" || session.runState === "running" || auxiliaries.some((item) => item.runState === "running")) return { kind: "running", label: "Running" };
   if (session.runState === "interrupted") return { kind: "interrupted", label: "Interrupted" };
   if (session.runState === "error") return { kind: "error", label: "Error" };
   if (session.runState && session.runState !== "idle") return { kind: "neutral", label: "Unknown" };
   return { kind: "neutral", label: sessionStateLabel(session) };
 }
+export function getHomeAuxiliarySessionState(summary: AuxiliarySessionSummary): HomeSessionState | { kind: "closed"; label: string } {
+  if (summary.cancellationState === "terminating") return { kind: "running", label: "Waiting For Stop" };
+  if (summary.cancellationState === "requested") return { kind: "running", label: "Canceling" };
+  if (summary.runState === "running") return { kind: "running", label: "Running" };
+  if (summary.runState === "error") return { kind: "error", label: "Error" };
+  if (summary.status === "closed") return { kind: "closed", label: "Closed" };
+  return { kind: "neutral", label: "Idle" };
+}
 function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
-  return [...sessions].sort((left, right) => Number(right.runState === "running") - Number(left.runState === "running") || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
+  return [...sessions].sort((left, right) => Number(getHomeAuxiliarySessionState(right).kind === "running") - Number(getHomeAuxiliarySessionState(left).kind === "running") || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
 }
 export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary[], openSessionWindowIds: readonly string[], sessionSearchText: string, auxiliarySessionSummaries: readonly AuxiliarySessionSummary[] = []): HomeSessionProjection {
   const normalizedSessionSearch = sessionSearchText.trim().toLocaleLowerCase();

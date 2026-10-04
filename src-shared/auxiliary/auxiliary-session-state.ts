@@ -117,7 +117,7 @@ export type AuxiliarySessionSummary = Omit<
   AuxiliarySession,
   "messages" | "composerDraft" | "characterRuntimeSnapshot" | "characterRuntimeSnapshotInvalid"
   | "creationContext" | "creationRequest"
->;
+> & { cancellationState?: "requested" | "terminating" };
 
 export function applyAuxiliarySessionPatch(
   session: AuxiliarySession,

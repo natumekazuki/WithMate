@@ -901,7 +901,14 @@ function listSessions(): Session[] {
 }
 
 async function listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult> {
-  return requireMainQueryService().listSessionSummaryPage(request);
+  const page = await requireMainQueryService().listSessionSummaryPage(request);
+  return {
+    ...page,
+    entries: page.entries.map((summary) => ({
+      ...summary,
+      cancellationState: getLiveSessionRun(summary.id)?.cancellationState,
+    })),
+  };
 }
 
 async function listSessionCharacterUsage(): Promise<SessionCharacterUsage[]> {
@@ -1323,11 +1330,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireAuxiliarySessionService().listActiveAuxiliarySessionSummaries([
                     ...listOpenSessionWindowIds(),
                   ]),
-                listOpenAuxiliarySessionSummaries: () => {
+                listOpenAuxiliarySessionSummaries: async () => {
                   const parentSessionIds = Array.from(new Set([
                     ...listOpenSessionWindowIds(),
                   ]));
-                  return requireAuxiliarySessionService().listAuxiliarySessionSummaries(parentSessionIds);
+                  const summaries = await requireAuxiliarySessionService().listAuxiliarySessionSummaries(parentSessionIds);
+                  return summaries.map((summary) => ({
+                    ...summary,
+                    cancellationState: getLiveSessionRun(summary.id)?.cancellationState,
+                  }));
                 },
                 getActiveAuxiliarySession: (parentSessionId) =>
                   requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId),

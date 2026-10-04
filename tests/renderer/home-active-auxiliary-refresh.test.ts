@@ -48,16 +48,17 @@ function createAuxiliarySummary(id: string): AuxiliarySessionSummary {
 describe("createHomeAuxiliarySessionRefresher", () => {
   // @test-value v2
   // kind = "invariant"
-  // claim = "Auxiliary summary refresherはin-flight中に要求されたrefreshを現在の取得完了後へ繰り越して実行する"
-  // oracle = { type = "contract", ref = "Home Monitor refresh scheduling contract" }
-  // fault = "取得中のrefresh要求を捨て、後続のAuxiliary summaryを適用しない"
+  // claim = "Auxiliary summary refresherは取得中の無効化より古いsnapshotを適用せず、繰り越した取得から現行summaryを反映する"
+  // oracle = { type = "contract", ref = "GitHub Issue #783 / docs/design/desktop-ui.md Home Window" }
+  // fault = "無効化済みsnapshotを適用して現行の取消待ちを消すか、後続の取得を捨てる"
   // observable = "fetchCallCountとsetAuxiliarySessionSummariesへ渡されたsummary列"
   // observation_boundary = "implementation"
   // scope = "createHomeAuxiliarySessionRefresher in-flight scheduling"
   // lifecycle = "permanent"
-  // distinction = "load state通知やdispose後の副作用とは分離して、取得の直列化と繰り越しだけを検証する"
+  // impact = "遅い取得が取消待ちの表示を巻き戻し、実停止していない会話をStoppedへ移す"
+  // distinction = "型検査では判別できないdeferred取得と無効化の順序を、2応答の低コストなtestで直接確認する"
   // @end-test-value
-  it("in-flight 中の refresh 要求を完了後に再実行する", async () => {
+  it("無効化済みsnapshotを破棄し、in-flight中のrefreshを再実行する", async () => {
     const firstFetch = createDeferred<AuxiliarySessionSummary[]>();
     const secondFetch = createDeferred<AuxiliarySessionSummary[]>();
     let fetchCallCount = 0;
@@ -82,12 +83,12 @@ describe("createHomeAuxiliarySessionRefresher", () => {
     await flushPromises();
 
     assert.equal(fetchCallCount, 2);
-    assert.deepEqual(setCalls.map((sessions) => sessions.map((session) => session.id)), [["aux-stale"]]);
+    assert.deepEqual(setCalls, []);
 
     secondFetch.resolve([]);
     await flushPromises();
 
-    assert.deepEqual(setCalls.map((sessions) => sessions.map((session) => session.id)), [["aux-stale"], []]);
+    assert.deepEqual(setCalls, [[]]);
   });
 
   // @test-value v2

@@ -6,6 +6,8 @@ import type { Root } from "react-dom/client";
 
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import {
   buildNewSession,
   type CreateSessionRequest,
@@ -49,6 +51,17 @@ function page(entries: HomeSessionSummary[], nextCursor: string | null = null): 
   return { entries, hasMore: nextCursor !== null, nextCursor };
 }
 
+function auxiliary(id: string, cancellationState?: AuxiliarySessionSummary["cancellationState"]): AuxiliarySessionSummary {
+  return {
+    id, parentSessionId: "open", status: "active", runState: "idle", title: id,
+    provider: "codex", catalogRevision: 1, model: "gpt-5.4", reasoningEffort: "high",
+    approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard",
+    codexReviewer: "auto-review", customAgentName: "", allowedAdditionalDirectories: [],
+    threadId: "", displayAfterMessageIndex: null, createdAt: "", updatedAt: "", closedAt: "",
+    preview: id, cancellationState,
+  };
+}
+
 function button(container: Element, label: string): HTMLButtonElement {
   const found = Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.trim() === label);
   assert.ok(found, `${label} button should exist`);
@@ -62,15 +75,18 @@ type Harness = {
   setListPage: (handler: (request: SessionSummaryPageRequest) => Promise<HomeSessionSummaryPageResult>) => void;
   setUsage: (handler: () => Promise<Array<{ characterId: string; sessionKind: "default" }>>) => void;
   setCreate: (handler: (input: CreateSessionRequest) => Promise<ReturnType<typeof buildNewSession>>) => void;
+  setAuxiliaryQuery: (handler: () => Promise<AuxiliarySessionSummary[]>) => void;
+  emitLive: (sessionId: string, cancellationState?: LiveSessionRunState["cancellationState"]) => Promise<void>;
+  opened: Array<[string, string | undefined]>;
   focus: () => Promise<void>;
   settle: () => Promise<void>;
   launch: () => Promise<HTMLElement>;
   close: () => Promise<void>;
 };
 
-async function mountHome(): Promise<Harness> {
+async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["cancellationState"]; auxiliaries?: AuxiliarySessionSummary[]; monitor?: boolean }): Promise<Harness> {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
-    url: "https://withmate.local/",
+    url: initial?.monitor ? "https://withmate.local/?mode=monitor" : "https://withmate.local/",
   });
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -80,8 +96,11 @@ async function mountHome(): Promise<Harness> {
   Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
 
   let listPage = async (request: SessionSummaryPageRequest) => page(
-    request.scope === "open" ? [session("open")] : [],
+    request.scope === "open" ? [{ ...session("open"), cancellationState: initial?.mainCancellation }] : [],
   );
+  let auxiliaryQuery = async () => initial?.auxiliaries ?? [];
+  const liveListeners = new Set<(sessionId: string, state: LiveSessionRunState | null) => void>();
+  const opened: Array<[string, string | undefined]> = [];
   let usage = async () => [{ characterId: "used", sessionKind: "default" as const }];
   let create = async (input: CreateSessionRequest) => buildNewSession({
     ...input, id: "created-session", workspaceLabel: "Session Folder",
@@ -119,13 +138,16 @@ async function mountHome(): Promise<Harness> {
     subscribeOpenSessionWindowIds: () => () => {},
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
-    listOpenAuxiliarySessionSummaries: async () => [],
-    subscribeLiveSessionRun: () => () => {},
+    listOpenAuxiliarySessionSummaries: () => auxiliaryQuery(),
+    subscribeLiveSessionRun: (listener) => {
+      liveListeners.add(listener);
+      return () => { liveListeners.delete(listener); };
+    },
     createSession: async (input) => {
       requests.push(input);
       return create(input);
     },
-    openSession: async () => {},
+    openSession: async (id, auxiliaryId) => { opened.push([id, auxiliaryId]); },
   };
   dom.window.withmate = api as WithMateWindowApi;
   const element = dom.window.document.getElementById("root");
@@ -171,13 +193,112 @@ async function mountHome(): Promise<Harness> {
     throw error;
   }
   return {
-    dom, element, requests,
+    dom, element, requests, opened,
     setListPage: (handler) => { listPage = handler; },
     setUsage: (handler) => { usage = handler; },
     setCreate: (handler) => { create = handler; },
+    setAuxiliaryQuery: (handler) => { auxiliaryQuery = handler; },
+    emitLive: async (sessionId, cancellationState) => {
+      await act(async () => {
+        const state: LiveSessionRunState = {
+          sessionId, threadId: "", cancellationState, assistantText: "", steps: [],
+          backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
+        };
+        for (const listener of liveListeners) listener(sessionId, state);
+      });
+    },
     focus, settle, launch, close,
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "HomeとMonitorの再表示は軽量snapshotのMain/Auxiliary取消待ちをRunningへ投影し、最後の実終了だけでStoppedへ戻る"
+// oracle = { type = "contract", ref = "GitHub Issue #783 / docs/design/desktop-ui.md Home Window" }
+// fault = "再表示で取消stateを失う、MainとAuxiliaryを取り違える、一方の実終了で親をStoppedへ移す"
+// observable = "描画sectionの所属、Main/Auxiliaryのaccessible status、Auxiliaryを開くID"
+// observation_boundary = "component-behavior"
+// scope = "HomeApp home/monitor初期snapshot・live無効化購読・展開/open操作"
+// lifecycle = "permanent"
+// impact = "Session Windowでは送信不能の会話を停止済みと誤認し、対象を開く導線でも会話を取り違える"
+// distinction = "pure projectionや型checkでは検出できないHomeApp取得・購読・DOM・open引数の結線を両modeで確認する"
+// @end-test-value
+test("Home/Monitorの再表示で取消待ちを復元し、最後の実終了でStoppedへ戻る", async () => {
+  for (const monitor of [false, true]) {
+    const home = await mountHome({ mainCancellation: "terminating", auxiliaries: [auxiliary("aux", "requested")], monitor });
+    try {
+      await home.settle();
+      const running = home.element.querySelector('[aria-labelledby="home-monitor-running"]');
+      const stopped = home.element.querySelector('[aria-labelledby="home-monitor-inactive"]');
+      assert.ok(running);
+      assert.ok(stopped);
+      assert.ok(running?.querySelector('[aria-label="Main Waiting For Stop"]'));
+      assert.ok(running?.querySelector('[aria-label="Auxiliary Canceling: 1"]'));
+      assert.equal(stopped?.querySelectorAll(".home-monitor-card").length, 0);
+      const disclosure = running.querySelector<HTMLButtonElement>('[aria-label="Show Auxiliary sessions for open"]');
+      assert.ok(disclosure);
+      await act(async () => disclosure.click());
+      assert.ok(running.querySelector('.home-monitor-auxiliary-row [aria-label="Auxiliary Canceling"]'));
+      const openAuxiliary = running.querySelector<HTMLButtonElement>('[aria-label="Open Auxiliary: aux"]');
+      assert.ok(openAuxiliary);
+      await act(async () => openAuxiliary.click());
+      assert.deepEqual(home.opened, [["open", "aux"]]);
+
+      home.setListPage(async (request) => page(request.scope === "open" ? [session("open")] : []));
+      await home.emitLive("open");
+      assert.ok(running.querySelector('[aria-label="Main Idle"]'));
+      assert.equal(running.querySelectorAll(".home-monitor-card").length, 1);
+      home.setAuxiliaryQuery(async () => [auxiliary("aux")]);
+      await home.emitLive("aux");
+      assert.equal(running.querySelectorAll(".home-monitor-card").length, 0);
+      assert.equal(stopped?.querySelectorAll(".home-monitor-card").length, 1);
+      assert.ok(stopped?.querySelector('[aria-label="Auxiliary Idle: 1"]'));
+    } finally { await home.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Homeは古いturn通知を再取得契機としてのみ使い、遅い無効化済みMain/Auxiliary snapshotより現在の取消待ちと新turnを優先する"
+// oracle = { type = "contract", ref = "GitHub Issue #783 / docs/design/desktop-ui.md Home Window" }
+// fault = "旧通知payloadや遅延snapshotが取消待ちを消すか、新turnへ旧取消stateを戻す"
+// observable = "Main/Auxiliaryのaccessible statusとRunning/Stopped所属"
+// observation_boundary = "component-behavior"
+// scope = "HomeApp live通知とdeferred Main/Auxiliary取得の競合"
+// lifecycle = "permanent"
+// impact = "実行中の現在turnへ誤った取消表示を戻し、実停止していないAuxiliaryを停止済みと見せる"
+// distinction = "pure projectionや通常取得testにない非同期の逆順応答を、既存API mockとdeferredだけで検証する"
+// @end-test-value
+test("旧turn通知と遅いsnapshotで現在のMain/Auxiliaryを巻き戻さない", async () => {
+  const home = await mountHome({ mainCancellation: "requested", auxiliaries: [auxiliary("aux", "terminating")] });
+  try {
+    await home.settle();
+    const staleMain = deferred<HomeSessionSummaryPageResult>();
+    const staleAuxiliary = deferred<AuxiliarySessionSummary[]>();
+    home.setListPage(async (request) => request.scope === "open" ? staleMain.promise : page([]));
+    home.setAuxiliaryQuery(() => staleAuxiliary.promise);
+    await home.emitLive("open", "terminating");
+    home.setListPage(async (request) => page(request.scope === "open" ? [{ ...session("open"), runState: "running" }] : []));
+    home.setAuxiliaryQuery(async () => [auxiliary("aux", "terminating")]);
+    await home.emitLive("open");
+    await home.emitLive("aux", "terminating");
+    await act(async () => {
+      staleMain.resolve(page([{ ...session("open"), cancellationState: "terminating" }]));
+      staleAuxiliary.resolve([auxiliary("aux")]);
+    });
+    assert.ok(home.element.querySelector('[aria-label="Main Running"]'));
+    assert.ok(home.element.querySelector('[aria-label="Auxiliary Waiting For Stop: 1"]'));
+
+    await home.emitLive("open", "requested"); // Old-turn notification; query still returns the new turn.
+    assert.ok(home.element.querySelector('[aria-label="Main Running"]'));
+    home.setListPage(async (request) => page(request.scope === "open" ? [session("open")] : []));
+    home.setAuxiliaryQuery(async () => [auxiliary("aux")]);
+    await home.emitLive("open");
+    await home.emitLive("aux");
+    assert.equal(home.element.querySelector('[aria-labelledby="home-monitor-running"] .home-monitor-card'), null);
+    assert.ok(home.element.querySelector('[aria-labelledby="home-monitor-inactive"] .home-monitor-card'));
+  } finally { await home.close(); }
+});
 
 // @test-value v2
 // kind = "contract"

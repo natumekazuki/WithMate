@@ -760,6 +760,7 @@
 .home-page .home-session-status.running {
   border-color: rgba(111, 184, 199, 0.34);
   background: rgba(111, 184, 199, 0.22);
+  color: var(--card-ink, var(--ink));
 }
 
 .home-page .home-session-chip-status.interrupted,
