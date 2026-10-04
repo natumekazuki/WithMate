@@ -12,6 +12,7 @@ import type {
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
+import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
 
 export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];
@@ -35,22 +36,6 @@ type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading" | "closed";
 function getEntryKey(entry: HomeMonitorEntry): string {
   return `${entry.kind}:${entry.session.id}`;
 }
-function getAuxiliaryStatus(summary: HomeMonitorEntry["auxiliarySessions"][number]): {
-  kind: HomeMonitorStatusKind;
-  label: string;
-} {
-  if (summary.runState === "running") {
-    return { kind: "running", label: "Running" };
-  }
-  if (summary.runState === "error") {
-    return { kind: "error", label: "Error" };
-  }
-  if (summary.status === "closed") {
-    return { kind: "closed", label: "Closed" };
-  }
-  return { kind: "neutral", label: "Idle" };
-}
-
 function MonitorStatusIcon({
   kind,
   label,
@@ -65,6 +50,7 @@ function MonitorStatusIcon({
       className={`home-monitor-status-icon ${kind}`}
       role="img"
       aria-label={count === undefined ? label : `${label}: ${count}`}
+      title={count === undefined ? label : `${label}: ${count}`}
     >
       <span className="home-monitor-status-icon-mark" aria-hidden="true" />
       {count === undefined ? null : <span className="home-monitor-status-icon-count">: {count}</span>}
@@ -76,12 +62,14 @@ function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
   const summaries = entry.auxiliarySessions;
   const groups = [
     { kind: "running" as const, label: "Running" },
+    { kind: "running" as const, label: "Canceling" },
+    { kind: "running" as const, label: "Waiting For Stop" },
     { kind: "error" as const, label: "Error" },
     { kind: "neutral" as const, label: "Idle" },
     { kind: "closed" as const, label: "Closed" },
   ].map((group) => ({
     ...group,
-    count: summaries.filter((summary) => getAuxiliaryStatus(summary).kind === group.kind).length,
+    count: summaries.filter((summary) => getHomeAuxiliarySessionState(summary).label === group.label).length,
   })).filter((group) => group.count > 0);
 
   return (
@@ -89,7 +77,7 @@ function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
       <span className="home-monitor-status-label">Aux</span>
       {groups.map((group) => (
         <MonitorStatusIcon
-          key={group.kind}
+          key={group.label}
           kind={group.kind}
           label={`Auxiliary ${group.label}`}
           count={group.count}
@@ -213,7 +201,7 @@ export function HomeMonitorContent({
         {isExpanded ? (
           <div className="home-monitor-auxiliary-list" aria-label={`Auxiliary sessions for ${title}`}>
             {auxiliarySessions.map((summary, index) => {
-              const status = getAuxiliaryStatus(summary);
+              const status = getHomeAuxiliarySessionState(summary);
               const preview = summary.preview?.trim() ?? "";
               const openAuxiliary = () => {
                 onOpenSession(entry.session.id, summary.id);

@@ -45,7 +45,7 @@ export function createHomeAuxiliarySessionRefresher({
       onLoadState?.("loading");
     }
     void fetchAuxiliarySessionSummaries().then((sessions) => {
-      if (!active) {
+      if (!active || refreshRequestedWhileInFlight) {
         return;
       }
       onLoadState?.("ready");
@@ -58,7 +58,7 @@ export function createHomeAuxiliarySessionRefresher({
       setAuxiliarySessionSummaries(sessions);
       lastAppliedSessions = sessions;
     }).catch((error) => {
-      if (!active) {
+      if (!active || refreshRequestedWhileInFlight) {
         return;
       }
       onLoadState?.("error");

@@ -97,12 +97,14 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - 意味のある親Session cardを2行まとまりで表示する。1行目はdisclosure、avatar、親title、2行目は`Main`と、Auxiliaryが存在する場合だけ`Aux`の状態アイコンを表示し、装飾目的の入れ子cardは作らない
   - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`RecentSessions` と同じ filtered session list の交差集合を使う
   - section
-    - `Running`: `running`
+    - `Running`: `running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
     - `Stopped`: `interrupted` / `error` / `neutral` を含む non-running
   - `Running` と `Stopped` の一覧はそれぞれ独立してスクロールし、件数や空状態にかかわらず表示領域を等分する
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
+  - 取消要求中は`Canceling`、実終了待ちは`Waiting For Stop`をMain／Auxiliaryごとのtooltipとaccessible statusへ反映し、Auxiliaryの件数も状態別に集約する。保存済みidleより取消待ちを優先し、最後の実終了で解除する
+  - 取消状態はMainが既存の軽量summary応答へ現在のlive状態から付与し、永続化しない。Home／Monitorは初回・再表示時にsummaryを取得し、live取消状態の変化を再取得契機とする。通知payloadを直接投影せず、無効化前の遅い取得結果は適用しない
   - Auxiliary一覧の取得状態はMonitor領域のstatus feedbackで示す。未取得の親cardに架空のAuxiliary集約を作らず、既に取得したsummaryがある場合は既知のrun状態を保持して取得errorと区別する
   - open Session summaryの取得失敗もMonitor領域へ表示し、`Retry`で再取得できる。取得済みのcardは再取得中も保持する
   - open な SessionWindow がないときは、正常なempty本文を出さず、Monitorのshellと必要なstatus/accessibilityだけを保つ
@@ -122,6 +124,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
     - `avatar / taskTitle / runState badge / workspacePath / updatedAt`
     - `taskSummary` は 1 行補助情報として、空なら省略可
   - Home の state precedence
+    - live取消待ちを保存済みstateより優先し、`Canceling`／`Waiting For Stop`として実行中に分類する
     - `status === "running"` または `runState === "running"` を最優先
     - 次に `runState === "interrupted"`
     - 次に `runState === "error"`

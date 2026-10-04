@@ -6,7 +6,9 @@ import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxilia
 import {
   buildHomeSessionProjection,
   getHomeSessionState,
+  getHomeAuxiliarySessionState,
 } from "../../src/home/home-session-projection.js";
+import { projectHomeSessionSummary } from "../../src-shared/session/session-state.js";
 
 function createSession(partial: Partial<Session> & Pick<Session, "id" | "taskTitle">): Session {
   return {
@@ -70,6 +72,41 @@ function createAuxiliarySession(partial: Partial<AuxiliarySessionSummary> & Pick
 }
 
 describe("home-session-projection", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "取消待ちのMainとAuxiliaryは保存済みidleより優先されRunningに属し、対象別labelと実終了後のStopped復帰を保つ"
+  // oracle = { type = "contract", ref = "GitHub Issue #783 / docs/design/desktop-ui.md Home Window" }
+  // fault = "取消待ちをStoppedへ分類する、Auxiliaryの取消をMainへ混同する、実終了後も取消表示を残す"
+  // observable = "projectionのRunning/Stopped所属、Main state、Auxiliary stateと順序、summary正規化後の取消state"
+  // observation_boundary = "public-boundary"
+  // scope = "Home軽量summaryの正規化とMain/Auxiliary状態投影"
+  // lifecycle = "permanent"
+  // impact = "実処理が残りSendが拒否される会話を停止済みと誤認させる"
+  // distinction = "保存済みrunStateの既存testでは検出できないlive取消stateとの優先順位と対象分離を低コストなpure projectionで検証する"
+  // @end-test-value
+  it("取消待ちを対象別に投影し、最後の実終了でStoppedへ戻す", () => {
+    const main = projectHomeSessionSummary({
+      ...createSession({ id: "main", taskTitle: "Main", runState: "error" }),
+      cancellationState: "requested",
+    });
+    const auxiliaryParent = createSession({ id: "parent", taskTitle: "Parent" });
+    const waiting = createAuxiliarySession({ id: "waiting", parentSessionId: "parent", cancellationState: "terminating", updatedAt: "2026-03-28T00:00:00.000Z" });
+    const idle = createAuxiliarySession({ id: "idle", parentSessionId: "parent" });
+    const projection = buildHomeSessionProjection([main, auxiliaryParent], ["main", "parent"], "", [idle, waiting]);
+    assert.deepEqual(projection.runningMonitorEntries.map((entry) => entry.session.id), ["main", "parent"]);
+    assert.equal(projection.nonRunningMonitorEntries.length, 0);
+    assert.deepEqual(projection.runningMonitorEntries[0]?.mainState, { kind: "running", label: "Canceling" });
+    assert.deepEqual(projection.runningMonitorEntries[1]?.mainState, { kind: "neutral", label: "Idle" });
+    assert.deepEqual(projection.runningMonitorEntries[1]?.auxiliarySessions.map((item) => item.id), ["waiting", "idle"]);
+    assert.deepEqual(getHomeAuxiliarySessionState(waiting), { kind: "running", label: "Waiting For Stop" });
+    assert.deepEqual(getHomeSessionState({ ...main, cancellationState: "terminating" }), { kind: "running", label: "Waiting For Stop" });
+    assert.deepEqual(getHomeAuxiliarySessionState({ ...waiting, cancellationState: "requested" }), { kind: "running", label: "Canceling" });
+
+    const released = buildHomeSessionProjection([{ ...main, cancellationState: undefined }, auxiliaryParent], ["main", "parent"], "", [idle, { ...waiting, cancellationState: undefined }]);
+    assert.equal(released.runningMonitorEntries.length, 0);
+    assert.deepEqual(released.nonRunningMonitorEntries.map((entry) => entry.state.label), ["Error", "Idle"]);
+  });
+
   // @test-value v2
   // kind = "invariant"
   // claim = "getHomeSessionStateは既知runStateを対応する表示stateへ変換し、未知enumをUnknownとして中立表示する"

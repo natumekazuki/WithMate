@@ -823,13 +823,19 @@ export default function HomeApp() {
       },
     });
 
-    refresher.refresh();
-    const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRun(() => {
+    const cancellationStates = new Map<string, "requested" | "terminating" | undefined>();
+    const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRun((sessionId, state) => {
+      const cancellationState = state?.cancellationState;
+      if (cancellationStates.has(sessionId) && cancellationStates.get(sessionId) === cancellationState) return;
+      cancellationStates.set(sessionId, cancellationState);
+      // Notifications invalidate snapshots; only fresh Main queries supply the display state.
+      void refreshSessionSummariesRef.current("preserve");
       refresher.refresh();
     });
     const unsubscribeSessionInvalidation = withmateApi.subscribeSessionInvalidation(() => {
       refresher.refresh();
     });
+    refresher.refresh();
 
     return () => {
       refresher.dispose();
