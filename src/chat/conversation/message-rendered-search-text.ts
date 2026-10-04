@@ -8,6 +8,38 @@ import { frontmatterFromMarkdown } from "mdast-util-frontmatter";
 
 import { projectMarkdownFrontmatterText } from "../../ui/markdown/markdown-frontmatter.js";
 
+export function createMessageRenderedSearchTextProjection() {
+  let entries = new Map<string, { text: string; renderedText: string }>();
+  return (
+    messages: readonly { text: string }[],
+    messageKeys: readonly string[] | undefined,
+    mode: "preview" | "source",
+    enabled: boolean,
+  ): string[] => {
+    if (!enabled) {
+      entries.clear();
+      return [];
+    }
+    // 現在の会話投影に含まれる本文だけを保持し、履歴の置換・追加取得で蓄積しない。
+    const nextEntries = new Map<string, { text: string; renderedText: string }>();
+    const texts = messages.map((message, index) => {
+      const key = messageKeys?.[index] ?? String(index);
+      const text = message.text;
+      const previous = entries.get(key);
+      const entry = previous?.text === text ? previous : undefined;
+      if (mode === "source") {
+        if (entry) nextEntries.set(key, entry);
+        return text;
+      }
+      const next = entry ?? { text, renderedText: projectMessageRenderedSearchText(text) };
+      nextEntries.set(key, next);
+      return next.renderedText;
+    });
+    entries = nextEntries;
+    return texts;
+  };
+}
+
 type MarkdownSearchNode = {
   type: string;
   value?: string;
