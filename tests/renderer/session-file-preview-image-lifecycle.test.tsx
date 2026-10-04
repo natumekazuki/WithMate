@@ -2349,16 +2349,17 @@ test("画像previewは初回Fitの実効倍率を表示しZoom Inの基準にす
 
 // @test-value v2
 // kind = "invariant"
-// claim = "file切替後に旧fileの完了したOpen/Open Diff結果を新previewへ表示しない"
-// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
-// fault = "stale async resultが新fileのpreviewへ混入する"
-// observable = "切替後のpreview DOMとopen/open-diff feedback"
+// claim = "file切替後に旧fileのOpen結果を新previewへ表示しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/777#issuecomment-5971260656" }
+// fault = "旧fileのOpen完了が新fileのpreviewへfeedbackを表示する"
+// observable = "Open APIのrequest、切替後のpreview titleとOpen failure textの不在"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview.async-generation"
 // lifecycle = "permanent"
-// distinction = "旧promiseの完了順を制御し、generation guardの利用者向け結果を確認する"
+// impact = "別fileの操作失敗を現在fileの失敗と誤認させない"
+// distinction = "実DOMからOpenを開始して旧promiseを切替後に完了し、型検査では検出できない応答順の混入を確認する"
 // @end-test-value
-test("file切替後に完了したOpenとOpen Diffの結果を新しいpreviewへ表示しない", async () => {
+test("file切替後に完了したOpenの結果を新しいpreviewへ表示しない", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
     url: "http://localhost/",
@@ -2372,7 +2373,7 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
   const secondRequest: SessionFileResourceRequest = { ...firstRequest, relativePath: "second.txt" };
   const bytes = new TextEncoder().encode("content");
   const openResult = deferred<Awaited<ReturnType<PreviewApi["openSessionFile"]>>>();
-  const diffResult = deferred<string | null>();
+  const openRequests: SessionFileResourceRequest[] = [];
   const api: PreviewApi = {
     ...DEFAULT_IMAGE_COPY_API,
     async inspectSessionFile(inspectRequest) {
@@ -2397,7 +2398,8 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
         revision: chunkRequest.expectedRevision,
       };
     },
-    openSessionFile() {
+    openSessionFile(request) {
+      openRequests.push(request);
       return openResult.promise;
     },
     async openPath(target) {
@@ -2413,29 +2415,22 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
         request,
         onCopyText() {},
         onQuoteText() {},
-        diffScopes: ["working-tree"],
-        onOpenDiff: () => diffResult.promise,
       }));
     });
   };
 
   try {
     assert.ok(container);
-    root = await renderPreview(api, container, firstRequest, {
-      diffScopes: ["working-tree"],
-      onOpenDiff: () => diffResult.promise,
-    });
+    root = await renderPreview(api, container, firstRequest);
     await waitFor(() => Array.from(container.querySelectorAll("button"))
-      .some((button) => button.textContent === "Open Diff"));
+      .some((button) => button.textContent === "Open"));
     const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
     const openButton = buttons.find((button) => button.textContent === "Open");
-    const diffButton = buttons.find((button) => button.textContent === "Open Diff");
     assert.ok(openButton);
-    assert.ok(diffButton);
     await act(async () => {
       openButton.click();
-      diffButton.click();
     });
+    assert.deepEqual(openRequests, [firstRequest]);
 
     await render(secondRequest);
     await waitFor(() => container.textContent?.includes("second.txt") ?? false);
@@ -2443,18 +2438,136 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
       openResult.resolve({
         status: "failed",
         targetType: "local-path",
-        target: "docs/image.png",
+        target: "first.txt",
         message: "first open failed",
       });
-      diffResult.resolve("first diff failed");
-      await Promise.all([openResult.promise, diffResult.promise]);
+      await openResult.promise;
     });
 
-    assert.doesNotMatch(container.textContent ?? "", /first open failed|first diff failed/);
+    assert.equal(container.querySelector(".session-file-preview-title strong")?.textContent, "second.txt");
+    assert.doesNotMatch(container.textContent ?? "", /first open failed/);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
     }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "file切替後の旧Open Diff完了は現在fileの本文とfeedbackへ混入せず、現在のDiff操作中状態を解除しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/777#issuecomment-5971260656; docs/manual-test-checklist.md MT-001D" }
+// fault = "旧Diffのmessageが新previewへ表示される、または旧Diffの完了で新Diffのbusyが解除される"
+// observable = "各fileに紐づくonOpenDiffのscopeと呼出し数、titleと本文、feedback、aria-busyとbutton disabled"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview.open-diff-generation"
+// lifecycle = "permanent"
+// impact = "別fileの失敗表示と、Diff処理中の再操作を防ぐ"
+// distinction = "Openと独立してDiffを開始し、新旧で異なる本文と制御した完了順を使う。型検査や通常のtoolbar testでは応答順の混入を検出できない"
+// @end-test-value
+test("file切替後に完了したOpen Diffは新しいpreviewと実行中操作を変更しない", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const firstRequest: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "first.txt",
+  };
+  const secondRequest: SessionFileResourceRequest = { ...firstRequest, relativePath: "second.txt" };
+  const firstApi = createTextPreviewApi(firstRequest, "first.txt", "first file content", "first-r1");
+  const secondApi = createTextPreviewApi(secondRequest, "second.txt", "second file content", "second-r1");
+  const firstDiff = deferred<string | null>();
+  const secondDiff = deferred<string | null>();
+  const diffCalls: { request: SessionFileResourceRequest; scope: string }[] = [];
+  const api: PreviewApi = {
+    ...firstApi,
+    inspectSessionFile(request) {
+      return resourcePath(request) === "first.txt"
+        ? firstApi.inspectSessionFile(request)
+        : secondApi.inspectSessionFile(request);
+    },
+    readSessionFileChunk(request) {
+      return resourcePath(request) === "first.txt"
+        ? firstApi.readSessionFileChunk(request)
+        : secondApi.readSessionFileChunk(request);
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  const render = async (request: SessionFileResourceRequest, result: typeof firstDiff) => {
+    await act(async () => {
+      root?.render(React.createElement(SessionFilePreview, {
+        api,
+        request,
+        onCopyText() {},
+        onQuoteText() {},
+        diffScopes: ["working-tree"],
+        onOpenDiff(scope) {
+          diffCalls.push({ request, scope });
+          return result.promise;
+        },
+      }));
+    });
+  };
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await render(firstRequest, firstDiff);
+    await waitFor(() => container.textContent?.includes("first file content") === true);
+    const firstButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Open Diff");
+    assert.ok(firstButton);
+    await act(async () => firstButton.click());
+    assert.deepEqual(diffCalls, [{ request: firstRequest, scope: "working-tree" }]);
+
+    await render(secondRequest, secondDiff);
+    await waitFor(() => container.textContent?.includes("second file content") === true);
+    const preview = container.querySelector<HTMLElement>("[aria-label='File preview']");
+    const secondButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Open Diff");
+    assert.ok(preview);
+    assert.ok(secondButton);
+    assert.equal(secondButton.disabled, false);
+    await act(async () => secondButton.click());
+    assert.deepEqual(diffCalls, [
+      { request: firstRequest, scope: "working-tree" },
+      { request: secondRequest, scope: "working-tree" },
+    ]);
+    assert.equal(preview.getAttribute("aria-busy"), "true");
+    assert.equal(secondButton.disabled, true);
+
+    await act(async () => {
+      firstDiff.resolve("first diff failed");
+      await firstDiff.promise;
+    });
+    assert.equal(preview.querySelector(".session-file-preview-title strong")?.textContent, "second.txt");
+    assert.match(preview.textContent ?? "", /second file content/);
+    assert.doesNotMatch(preview.textContent ?? "", /first file content|first diff failed/);
+    assert.equal(preview.getAttribute("aria-busy"), "true");
+    assert.equal(secondButton.disabled, true);
+    await act(async () => secondButton.click());
+    assert.equal(diffCalls.length, 2);
+
+    await act(async () => {
+      secondDiff.resolve("second diff failed");
+      await secondDiff.promise;
+    });
+    assert.match(preview.textContent ?? "", /second diff failed/);
+    assert.doesNotMatch(preview.textContent ?? "", /first diff failed/);
+    assert.equal(preview.getAttribute("aria-busy"), null);
+    assert.equal(secondButton.disabled, false);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
     restoreGlobals();
     dom.window.close();
   }
