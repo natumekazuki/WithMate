@@ -451,7 +451,14 @@ export function useConversationMessageColumn({
     } : undefined,
     searchConversation: api?.searchConversation && session.messageCount !== undefined ? (query, mode) => api.searchConversation!(sessionId, { query, mode }) : undefined,
     onLoadMessagePage: async (messageIndex) => {
-      if (!messages.some((message, index) => getMessageHistoryIndex(message, index) === messageIndex)) await loadPage(Math.max(0, messageIndex - 30));
+      if (!messages.some((message, index) => getMessageHistoryIndex(message, index) === messageIndex)) {
+        await loadPage(Math.max(0, messageIndex - 30));
+      } else {
+        ++pageRevision.current;
+        requestedPageStart.current = conversation.pageStart;
+        setPageLoading(false);
+        setPageError("");
+      }
     },
     onToggleMessageBookmark: baseProps.onToggleMessageBookmark ? async (target) => {
       ++bookmarkRevision.current;

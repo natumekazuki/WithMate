@@ -185,6 +185,67 @@ test("conversation navigator は連続選択の最後の移動先を保持する
 
 // @test-value v2
 // kind = "invariant"
+// claim = "Findで最後に選んだ読込済み本文は、先行する未読込hitのpage応答後も表示を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Window / 全履歴Find" }
+// fault = "未読込hitの取得待ちに読込済みhitを選ぶと、先行page応答が最後に選んだ本文を画面から外す"
+// observable = "最後に選んだmessage keyの存在、pageのstartIndex、読込完了状態"
+// observation_boundary = "component-behavior"
+// scope = "conversation-find-latest-intent"
+// lifecycle = "permanent"
+// impact = "Findの連続移動で最後に選択した検索結果を読み続けられる"
+// distinction = "navigator testはonJumpToMessageを通るが、Find専用のonLoadMessagePageの連続選択を通らない"
+// @end-test-value
+test("conversation Find は連続選択の最後の読込済み本文を保持する", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
+  Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const messages = (start: number) => Array.from({ length: 60 }, (_, index) => ({ role: "user" as const, text: `message ${start + index}`, historyIndex: start + index }));
+  const tail = messages(140);
+  let resolvePage: ((page: ConversationPage) => void) | undefined;
+  const api: ConversationMessageColumnApi = {
+    getConversationPage: async (_id, request) => {
+      assert.equal(request?.startIndex, 70);
+      return new Promise((resolve) => { resolvePage = resolve; });
+    },
+  };
+  let latest: ReturnType<typeof useConversationMessageColumn> = null;
+  const getLatest = () => { assert.ok(latest); return latest; };
+  function Probe() {
+    latest = useConversationMessageColumn({
+      session: { id: "main", incarnationId: "main", messages: tail, messageCount: 200 },
+      baseProps: createBaseProps("main"), enabled: true, api, liveRun: null,
+    });
+    return React.createElement("div", { ref: latest?.messageListRef });
+  }
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root")!);
+      root.render(React.createElement(Probe));
+    });
+    await act(async () => { void getLatest().onLoadMessagePage?.(100); });
+    assert.equal(getLatest().conversationPaging?.loading, true);
+    await act(async () => getLatest().onLoadMessagePage?.(150));
+    assert.equal(getLatest().conversationPaging?.loading, false);
+    assert.ok(resolvePage);
+    await act(async () => resolvePage!({ sessionId: "main", incarnationId: "main", startIndex: 70, totalCount: 200, messages: messages(70) }));
+    assert.equal(getLatest().conversationPaging?.startIndex, 140);
+    assert.ok(getLatest().messageKeys?.includes("session-main-150"));
+    assert.equal(getLatest().conversationPaging?.loading, false);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    globals.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "同じWindowのMain/Auxiliary live eventは会話IDで分離され、非target会話へ混入しない"
 // oracle = { type = "contract", ref = "issue-710-conversation-live-ownership" }
 // fault = "Mainのlive eventやapprovalがAuxiliary columnへ表示・送信される"
