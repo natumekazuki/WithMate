@@ -1,5 +1,7 @@
 # 実機テスト項目表
 
+リリース後の利用確認や不具合再現で、必要な項目を選んで参照する。全項目の消化はIssueのClose条件にせず、完了判断は[READMEの完了運用](../README.md#課題の対応予定とmilestone)、項目の保守は[運用方針](design/manual-test-checklist.md)に従う。
+
 ## Auxiliary Session の独立性と切り替え
 
 複数Auxiliaryを追加して最終使用順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、実行中のAuxiliaryはicon内のprocessing indicatorで判別できること、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態ではAuxiliaryのタイトル枠・切り替えUI・追加`＋`を表示せず、Mainが残り幅を使うこと、中央のsplitterだけが残りクリックで既定幅へ戻せることを確認する。Auxiliaryを再度開いた後はタイトル枠、左右切り替え、追加`＋`が利用でき、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
