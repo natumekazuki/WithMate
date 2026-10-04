@@ -257,16 +257,17 @@ test("MemoryV6ReviewScreen はfilter変更時に古いpagination busyを解除�
 });
 
 // @test-value v2
-// kind = "security"
-// claim = "Memory Reviewのentry detailはprotected fileのsummaryとdisplay nameを示し、内部IDや保存pathを表示しない"
-// oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: selectedEntry.files" }
-// fault = "file detailが内部識別子、保存path、またはsecretをユーザー向け表示へ漏らす"
-// observable = "detailのtextContentに含まれるfile summaryと、内部ID・path・storage markerの不在"
-// observation_boundary = "public-boundary"
+// kind = "contract"
+// claim = "Memory Reviewのentry detailはprotected fileのdisplay name、role、media kind、容量、summaryを表示する"
+// oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#ui-policy" }
+// fault = "protected fileの表示情報を欠落させ、entryの添付内容を判断できなくする"
+// observable = "detailのtextContentに含まれるdisplay name、role、media kind、容量、summary"
+// observation_boundary = "component-behavior"
 // scope = "memory-v6-review-file-summary"
 // lifecycle = "permanent"
+// distinction = "Main review service testは内部field除去を担い、このtestはsanitized summaryの利用者向け表示を確認する"
 // @end-test-value
-test("MemoryV6ReviewScreen はentry detailのfile summaryを表示し、内部IDやpathは表示しない", async () => {
+test("MemoryV6ReviewScreen はentry detailのprotected file summaryを表示する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "https://withmate.local/?mode=memory-review",
   });
@@ -335,9 +336,6 @@ test("MemoryV6ReviewScreen はentry detailのfile summaryを表示し、内部ID
     assert.match(text, /dialog\.png/);
     assert.match(text, /evidence \/ image \/ 1\.5 KB/);
     assert.match(text, /エラー状態を確認できるスクリーンショット。/);
-    assert.doesNotMatch(text, /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/);
-    assert.doesNotMatch(text, /C:\\/);
-    assert.doesNotMatch(text, /memory-objects/);
   } finally {
     await act(async () => {
       root?.unmount();
@@ -445,14 +443,15 @@ test("MemoryV6ReviewScreen はfile usageとlargest entriesを表示し、候補c
 });
 
 // @test-value v2
-// kind = "security"
-// claim = "Memory ReviewのExportFilesは選択中entryのprotected filesをexportし、公開範囲外のpathや内部値を表示しない"
-// oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: exportSelectedEntryFiles" }
-// fault = "export対象のentry IDを取り違える、export操作が実行されない、または内部path・secretをfeedbackへ漏らす"
-// observable = "export APIへ渡したentry IDとfeedback textContent"
-// observation_boundary = "public-boundary"
+// kind = "contract"
+// claim = "Memory ReviewのExport Files操作は選択中entry IDをexport APIへ渡し、export件数をfeedbackに表示する"
+// oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#cli-policy" }
+// fault = "export対象のentry IDを取り違える、export操作が実行されない、または返却された件数を表示しない"
+// observable = "export APIへ渡したentry IDとfeedbackのexport件数"
+// observation_boundary = "component-behavior"
 // scope = "memory-v6-review-file-export"
 // lifecycle = "permanent"
+// distinction = "Main review service testがoutput pathとobject metadataのresponse除去を担い、このtestはsanitized export結果の表示と操作対象を確認する"
 // @end-test-value
 test("MemoryV6ReviewScreen はentry detailからprotected filesをexportできる", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
@@ -534,10 +533,6 @@ test("MemoryV6ReviewScreen はentry detailからprotected filesをexportでき�
     assert.deepEqual(exportedEntryIds, ["entry-export"]);
     const text = rootElement.textContent ?? "";
     assert.match(text, /1 files exported\./);
-    assert.doesNotMatch(text, /bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/);
-    assert.doesNotMatch(text, /C:\/export/);
-    assert.doesNotMatch(text, /key/);
-    assert.doesNotMatch(text, /sha256/);
   } finally {
     await act(async () => {
       root?.unmount();
@@ -668,13 +663,14 @@ test("MemoryV6ReviewScreen は遅延または失敗したdetail選択で旧entry
 
 // @test-value v2
 // kind = "security"
-// claim = "Memory Reviewのprotected object GC dry-runは削除せず、pending・orphan・missing activeの影響をvisible reportで示す"
+// claim = "Memory ReviewのGC Dry Run操作はdryRun要求を送り、pending・orphan・missing activeの件数をvisible reportで示す"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
-// fault = "dry-runを削除操作として実行するか、破壊的操作の対象件数とmissing状態を隠す"
-// observable = "GC requestのdryRun、visible report labels/counts、raw pathやsecretの不在"
-// observation_boundary = "public-boundary"
+// fault = "GC Dry RunからdryRun=falseを要求するか、操作の対象件数とmissing状態を隠す"
+// observable = "GC requestのdryRun、visible report labels/counts"
+// observation_boundary = "component-behavior"
 // scope = "memory-v6-review-protected-object-gc"
 // lifecycle = "permanent"
+// distinction = "Main review service testが実削除の不在を担い、このtestはdry-run選択とsummary report表示を確認する"
 // @end-test-value
 test("MemoryV6ReviewScreen はprotected object GC dry-run reportを表示する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
@@ -748,10 +744,6 @@ test("MemoryV6ReviewScreen はprotected object GC dry-run reportを表示する"
     assert.match(text, /Pending 2 \/ deleted 0 \/ missing 1 \/ failed 0/);
     assert.match(text, /Orphan 1 \/ deleted 0 \/ failed 0/);
     assert.match(text, /Missing active 1/);
-    assert.doesNotMatch(text, /11111111111111111111111111111111/);
-    assert.doesNotMatch(text, /memory-objects/);
-    assert.doesNotMatch(text, /key/);
-    assert.doesNotMatch(text, /sha256/);
   } finally {
     await act(async () => {
       root?.unmount();

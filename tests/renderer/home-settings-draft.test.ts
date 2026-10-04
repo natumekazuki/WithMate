@@ -369,6 +369,36 @@ describe("home-settings-draft", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Settingsのaction dock、通知、response preview、Memory quotaのhandlerを順次操作しても、先行変更と対象外のdraftを保持する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#runtime-policy" }
+  // fault = "handlerが別の設定を更新するか、後続操作が古いdraftを使って先行変更を巻き戻す"
+  // observable = "buildSettingsDraftHandlers経由の4操作後のAppSettings draft全体"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-current-draft-handler-composition"
+  // lifecycle = "permanent"
+  // distinction = "個別pure functionの値変換testとは異なり、画面向けhandlerから同一draftへの累積更新を確認する"
+  // @end-test-value
+  it("現行の表示設定とMemory quotaをhandler経由で続けて編集できる", () => {
+    const initialDraft = createDefaultAppSettings();
+    const state = createDraftTracker(initialDraft);
+    const handlers = buildSettingsDraftHandlers({ setSettingsDraft: state.setSettingsDraft });
+
+    handlers.onChangeAutoCollapseActionDockOnSend(false);
+    handlers.onChangeSessionTurnNotificationEnabled(false);
+    handlers.onChangeSessionTurnNotificationResponsePreviewEnabled(true);
+    handlers.onChangeMemoryFileQuotaMegabytes("2048");
+
+    assert.deepEqual(state.draft, {
+      ...initialDraft,
+      autoCollapseActionDockOnSend: false,
+      sessionTurnNotificationEnabled: false,
+      sessionTurnNotificationResponsePreviewEnabled: true,
+      memoryFileQuotaBytes: 2048 * 1024 * 1024,
+    });
+  });
+
   it("memory file quota は MB 入力から bytes の draft に変換する", () => {
     const draft = createDefaultAppSettings();
 

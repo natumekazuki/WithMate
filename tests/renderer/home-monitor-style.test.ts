@@ -1,12 +1,12 @@
 import { readStylesheet } from "../support/read-stylesheet.js";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
+import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 
 function readCssRule(stylesSource: string, selector: string): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -160,32 +160,66 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
 
 // @test-value v2
 // kind = "contract"
-// claim = "Home Charactersは検索欄と作成ボタンを固定し、Character一覧だけをpane内でスクロールする"
+// claim = "Home Charactersは検索欄と作成ボタンを一覧の外に描画し、一覧DOMへoverflow-y:auto、bodyへoverflow:hiddenを適用する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "monitor body全体をスクロールして検索欄が移動する、または一覧が縮まず下端で切れる"
-// observable = "Characters panelとtoolbar/listのDOM構造、およびbody・section・listのoverflowとflex CSS"
+// fault = "toolbarを一覧のscroll owner内へ移すか、描画DOMにbodyのoverflow:hidden・一覧のoverflow-y:auto・縮小可能なmin-heightを適用しない"
+// observable = "HomeRightPaneのCharacters panel内のtoolbar/list親子関係と、JSDOM computed styleのoverflow・min-height・flex"
 // observation_boundary = "implementation"
 // scope = "Home Characters panelのスクロール境界"
 // lifecycle = "permanent"
 // impact = "長いCharacter一覧でも検索と作成へ到達でき、下端の項目も操作できる"
-// distinction = "component testと型検査では検出できないscroll ownerのCSS設定を確認する"
+// distinction = "source文字列の存在ではなく描画DOMへのselector適用を確認する。実レイアウトのscroll寸法や操作はJSDOMでは測定しない"
 // @end-test-value
-test("Home Characters は一覧だけをスクロールする", async () => {
-  const [componentSource, paneSource, stylesSource] = await Promise.all([
-    readFile("src/home/HomeCharactersPanel.tsx", "utf8"),
-    readFile("src/home/HomeRightPane.tsx", "utf8"),
-    readStylesheet(),
-  ]);
-
-  assert.match(componentSource, /<div className="home-monitor-body"[^>]*>/);
-  assert.match(componentSource, /className="home-character-toolbar"/);
-  assert.match(componentSource, /className="home-character-list"/);
-  assert.match(paneSource, /className="home-monitor-panel home-characters-panel"/);
-  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-body"), /overflow:\s*hidden;/);
+test("Home Characters は一覧をscroll ownerにするDOMとCSSを適用する", async () => {
+  const stylesSource = await readStylesheet();
+  const noOp = () => {};
+  const html = renderToStaticMarkup(createElement(HomeRightPane, {
+    rightPaneView: "characters",
+    runningMonitorEntries: [],
+    nonRunningMonitorEntries: [],
+    auxiliaryDataState: "ready",
+    monitorWindowIcon: null,
+    characterEntries: [{
+      id: "character-1", name: "Mia", description: "", iconFilePath: "",
+      theme: { main: "#3b82f6", sub: "#1d4ed8" }, state: "active",
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", archivedAt: null,
+    }],
+    onChangeRightPaneView: noOp,
+    onOpenSessionMonitorWindow: noOp,
+    onOpenSettingsWindow: noOp,
+    onRestoreSessionWindows: noOp,
+    onCreateCharacter: noOp,
+    onEditCharacter: noOp,
+    onOpenSession: noOp,
+    onShowSessionMonitorContextMenu: noOp,
+  }));
+  const dom = new JSDOM(`<style>${stylesSource}</style><div class="home-page">${html}</div>`, {
+    url: "https://withmate.invalid/",
+  });
+  const document = dom.window.document;
+  const panel = document.querySelector(".home-characters-panel");
+  const body = panel?.querySelector(".home-monitor-body");
+  const section = body?.querySelector(".home-monitor-section");
+  const head = section?.querySelector(".home-monitor-section-head");
+  const toolbar = head?.querySelector(".home-character-toolbar");
+  const list = section?.querySelector(".home-character-list");
+  assert.ok(body && section && head && toolbar && list);
+  assert.equal(section.parentElement, body);
+  assert.equal(head.parentElement, section);
+  assert.equal(list.parentElement, section);
+  assert.equal(list.contains(toolbar), false);
+  assert.ok(toolbar.querySelector('input[type="search"]'));
+  assert.ok(toolbar.querySelector('button[aria-label="Create character"]'));
+  assert.equal(list.querySelectorAll(".home-character-card").length, 1);
+  assert.equal(dom.window.getComputedStyle(body).overflow, "hidden");
+  assert.equal(dom.window.getComputedStyle(list).overflowY, "auto");
+  assert.equal(dom.window.getComputedStyle(list).minHeight, "0px");
+  assert.equal(dom.window.getComputedStyle(head).flex, "0 0 auto");
   const sectionRule = readCssRule(stylesSource, ".home-page .home-characters-panel .home-monitor-section");
   assert.match(sectionRule, /flex:\s*1 1 auto;/);
   assert.match(sectionRule, /min-height:\s*0;/);
   const listRule = readCssRule(stylesSource, ".home-page .home-character-list");
   assert.match(listRule, /min-height:\s*0;/);
   assert.match(listRule, /overflow-y:\s*auto;/);
+  dom.window.close();
 });

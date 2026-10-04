@@ -184,13 +184,14 @@ test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区
 
 // @test-value v2
 // kind = "contract"
-// claim = "Character EditorのImprove with Agent操作はauthoring session開始要求をcharacter metadataへ結び付ける"
-// oracle = { type = "contract", ref = "CharacterEditorApp authoring session launch contract" }
-// fault = "Improve操作がsession開始を呼ばない、対象characterを失う、またはmetadata更新とicon選択を混同する"
-// observable = "startCharacterAuthoringSession input、metadata updates、icon picker calls"
+// claim = "Character Editorは不正iconのfeedbackで保存を止め、workspace外の定義path errorを表示し、未保存変更の保存後に選択providerとCharacterでauthoringを開始する"
+// oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#product-flow; docs/design/character-definition-format.md#executable-format-contract" }
+// fault = "validation errorを表示せず保存する、未保存変更のままauthoringを開始する、または選択provider・Characterを取り違える"
+// observable = "validation/feedback text、definition/metadata更新回数、startCharacterAuthoringSession input、icon picker calls"
 // observation_boundary = "component-behavior"
-// scope = "CharacterEditorApp Improve with Agent"
+// scope = "CharacterEditorApp validation/save and Improve with Agent"
 // lifecycle = "permanent"
+// distinction = "shared validatorとstorage拒否testでは観測できないEditorのerror表示、保存API非呼出し、保存後のauthoring開始を同じ操作経路で確認する"
 // @end-test-value
 test("CharacterEditorApp は Improve with Agent 押下で authoring session を開始する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
@@ -423,6 +424,26 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
       description: "agent が更新した説明",
       iconFilePath: "C:\\icons\\muse.png",
     });
+
+    await act(async () => {
+      findButtonByText(rootElement, "Improve With Agent")
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonByText(rootElement, "Start")
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    currentCharacter = {
+      ...currentCharacter,
+      definitionMarkdown: `${currentCharacter.definitionMarkdown}\n![outside](../outside.png)\n`,
+    };
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      await Promise.resolve();
+    });
+    const validationList = rootElement.querySelector(".character-editor-validation-list");
+    assert.match(validationList?.textContent ?? "", /unsafe_path_reference/);
+    assert.match(validationList?.textContent ?? "", /Unsafe character definition path reference: \.\.\/outside\.png/);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

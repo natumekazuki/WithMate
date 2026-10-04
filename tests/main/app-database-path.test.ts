@@ -450,9 +450,9 @@ describe("resolveAppDatabasePath", () => {
 describe("resolveOrMigrateAppDatabasePath", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "有効な withmate-v4.db は V6 へ移行される"
-  // oracle = { type = "contract", ref = "src-electron/app-database-path.ts#resolveOrMigrateAppDatabasePath" }
-  // fault = "valid V4が無関係なplaceholder DBのため拒否される"
+  // claim = "有効な withmate-v4.db は元DBを有効なまま保持してV6へ移行しV6 pathを返す"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
+  // fault = "有効なV4を移行せず旧pathを返す、無効なV6を返す、または移行元V4のschemaを無効にする"
   // observable = "V6 path selection and V4/V6 validity"
   // observation_boundary = "public-boundary"
   // scope = "resolveOrMigrateAppDatabasePath valid V4"
@@ -776,7 +776,7 @@ describe("resolveOrMigrateAppDatabasePath", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "release data migration marker済みのV6 DBとV4 DBが併存しても、2回目の解決は再移行せずV6を返す"
-  // oracle = { type = "contract", ref = "src-electron/app-database-path.ts#resolveOrMigrateAppDatabasePath" }
+  // oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md: v4_to_v6_release_data_migrated_atと再copy・migration progress非実行" }
   // fault = "既存markerを無視してV4を再移行し、保存済みデータを重複処理または上書きする"
   // observable = "2回の選択pathと各回のmigration progress title、およびrelease marker"
   // observation_boundary = "public-boundary"
@@ -814,15 +814,15 @@ describe("resolveOrMigrateAppDatabasePath", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "SQLiteとして読めないV4管理DBはV3をshadowせず、errorで停止して両DBを非破壊に残す"
-  // oracle = { type = "contract", ref = "src-electron/app-database-path.ts#resolveOrMigrateAppDatabasePath" }
-  // fault = "破損V4を成功扱いして削除・上書きするか、V3へ無断fallbackする"
+  // claim = "SQLiteとして読めないV4のcleanup失敗を明示して起動を拒否し、既存のV3/V4を残してV6を生成しない"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729: cleanup未完了を明示し成功扱いしない・非Companionデータの保全" }
+  // fault = "cleanup失敗を握り潰して起動を継続するか、既存DBを削除・上書きする"
   // observable = "rejection, V3/V4 existence and validity, no V6 creation"
   // observation_boundary = "public-boundary"
-  // scope = "managed database ownership validation"
+  // scope = "startup cleanup failure and source database preservation"
   // lifecycle = "permanent"
   // @end-test-value
-  it("不正な withmate-v4.db が有効な V3 を shadow しない", async () => {
+  it("SQLiteとして読めないV4のcleanup失敗は既存DBを残して起動を拒否する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
 
     try {
@@ -865,7 +865,7 @@ describe("resolveOrMigrateAppDatabasePath", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "対応外の新しいV4 DBはunsupported newer versionとして拒否され、内容を維持する"
-  // oracle = { type = "contract", ref = "src-electron/app-database-path.ts#resolveOrMigrateAppDatabasePath" }
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
   // fault = "新しいDBをlegacy migrationで上書きするか、日本語旧エラーを期待して契約を見失う"
   // observable = "English rejection, user_version, V4 validity"
   // observation_boundary = "public-boundary"

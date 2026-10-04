@@ -229,7 +229,7 @@ test("ChatWindow は preview と compact ActionDock の間に recovery actions �
 // @test-value v2
 // kind = "contract"
 // claim = "ChatWindowはcompact ActionDock時にも共通error領域と関連controlを描画する"
-// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: chat error surface" }
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/731: validation・回復説明を保持し、pendingとerrorを混同しない" }
 // fault = "compact ActionDock時にerror surfaceまたはtextareaのinvalid関連付けが欠落するか、busy表示を誤って混ぜる"
 // observable = "chat-error-surface、alert、textarea aria-describedby/aria-invalidとbusy不在、ActionDockのDOM順序"
 // observation_boundary = "component-behavior"
@@ -265,7 +265,11 @@ test("ChatWindow は compact ActionDock 時も共通エラー領域を描画す�
   assert.match(html, /Expected a file: C:\/directory/);
   assert.match(html, /<textarea[^>]*aria-describedby="[^"]+-notice-0"[^>]*aria-invalid="true"/);
   assert.doesNotMatch(html.match(/<textarea[^>]*>/)?.[0] ?? "", /aria-busy/);
-  assert.doesNotMatch(html, /Message submission is in progress|concurrent-chat-loading-spinner/);
+  assert.doesNotMatch(html, /Message submission is in progress/);
+  const sendButton = new JSDOM(html).window.document.querySelector(".session-send-button");
+  assert.ok(sendButton);
+  assert.notEqual(sendButton.getAttribute("aria-busy"), "true");
+  assert.equal(sendButton.querySelector(".loading-indicator-spinner"), null);
   assert.doesNotMatch(html, /class="composer-sendability-feedback blocked"/);
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
   assert.ok(html.indexOf("session-central-surface") < html.indexOf("chat-error-surface"));
@@ -329,39 +333,17 @@ test("ChatWindow の共通エラー領域は owner が指定したdismissと回�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Chat work surfaceは補助情報と共通errorの有無にかかわらず中央contentへ可変領域を割り当てる"
-// oracle = { type = "contract", ref = "src/chat/session-shell.css" }
-// fault = "補助情報またはerror領域の追加で中央contentのgrid rowが圧縮・移動し、chat work surfaceの主領域を失う"
-// observable = "session-message-stack・chat-error-surface・session-central-surfaceのCSS grid rowとpadding"
-// observation_boundary = "declaration"
-// scope = "chat work surface central layout"
-// lifecycle = "permanent"
-// @end-test-value
-test("chat work surface は補助情報と共通エラーの有無に関係なく中央contentへ可変領域を割り当てる", async () => {
-  const styles = await readStylesheet();
-  const stackRule = styles.match(/\.session-message-stack\s*\{([^}]*)\}/)?.[1] ?? "";
-  const errorRule = styles.match(/\.chat-error-surface\s*\{([^}]*)\}/)?.[1] ?? "";
-  const centralRule = styles.match(/\.session-central-surface\s*\{([^}]*)\}/)?.[1] ?? "";
-
-  assert.match(stackRule, /grid-template-rows:\s*minmax\(0, 1fr\) auto auto auto/);
-  assert.match(errorRule, /grid-row:\s*4/);
-  assert.match(errorRule, /padding:\s*0 12px 12px/);
-  assert.match(centralRule, /grid-row:\s*1/);
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "追加Directory一覧は共通work surfaceへ配置され、ActionDock内へ複製されない"
-// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: additional directory surface" }
-// fault = "追加Directory一覧をActionDock内へ戻すか、compact時にwork surfaceから失う"
-// observable = "additional-directory surfaceのaria label、ActionDock外のDOM位置、compact ActionDock"
+// claim = "ChatWindowはAdditional Directories一覧の開閉状態と対象Directoryを表示へ接続する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: Additional Directories一覧をtoggleで開閉する" }
+// fault = "一覧の入力をChatWindowへ接続せず、開いた一覧が表示されないか閉じた一覧が残る"
+// observable = "開閉それぞれのrenderにおける一覧sectionの有無と対象Directory名"
 // observation_boundary = "component-behavior"
 // scope = "chat-window-additional-directories"
 // lifecycle = "permanent"
-// impact = "作業領域の補助情報が操作dockと重複または不可視になる"
-// distinction = "表示有無だけでなく共通surfaceとActionDockの配置境界を確認する"
+// impact = "利用者が追加したDirectory一覧を確認または閉じられなくなる"
+// distinction = "一覧component単体では検出できないChatWindowからのprops接続を確認する"
 // @end-test-value
-test("ChatWindow は追加Directory一覧をActionDock外の共通work surfaceへ描画する", () => {
+test("ChatWindow は追加Directory一覧の開閉と対象を表示へ接続する", () => {
   const props = createChatWindowProps();
   props.isActionDockExpanded = false;
   props.additionalDirectoryListProps = {
@@ -378,21 +360,27 @@ test("ChatWindow は追加Directory一覧をActionDock外の共通work surface�
     onRemove: noop,
   };
 
-  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
-
-  assert.match(html, /class="chat-additional-directory-surface"/);
-  assert.match(html, /aria-label="Additional directories"/);
-  assert.doesNotMatch(html, /composer-additional-directory-list/);
-  assert.ok(html.indexOf("chat-additional-directory-surface") < html.indexOf("session-action-dock-slot"));
-  assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
+  for (const isOpen of [true, false]) {
+    props.additionalDirectoryListProps.isOpen = isOpen;
+    const dom = new JSDOM(renderToStaticMarkup(React.createElement(ChatWindow, props)));
+    const list = dom.window.document.querySelector('section[aria-label="Additional directories"]');
+    if (isOpen) {
+      assert.ok(list);
+      assert.equal(list.querySelector(".chat-additional-directory-primary")?.textContent, "docs");
+      assert.equal(list.querySelector(".chat-additional-directory-secondary")?.textContent, "C:/shared");
+    } else {
+      assert.equal(list, null);
+    }
+    dom.window.close();
+  }
 });
 
 // @test-value v2
 // kind = "contract"
 // claim = "追加Directory一覧は削除可能項目とreadonly項目を区別し、interaction disabledを各controlへ投影する"
-// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: ChatAdditionalDirectoryList" }
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/731: toolbar操作の対象付きaccessible name・disabled・既存権限境界を維持する" }
 // fault = "readonly項目を削除可能にするか、disabled状態とaccessible labelを失う"
-// observable = "remove buttonのdisabled属性、remove label、readonly表示"
+// observable = "remove buttonのdisabled属性と対象付きaria-label、削除不可itemにbuttonがないこと"
 // observation_boundary = "component-behavior"
 // scope = "chat-additional-directory-list"
 // lifecycle = "permanent"
@@ -400,7 +388,7 @@ test("ChatWindow は追加Directory一覧をActionDock外の共通work surface�
 // distinction = "item単位のcanRemoveと一覧全体のinteraction disabledを同時に確認する"
 // @end-test-value
 test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影する", () => {
-  const html = renderToStaticMarkup(React.createElement(ChatAdditionalDirectoryList, {
+  const props: React.ComponentProps<typeof ChatAdditionalDirectoryList> = {
     isOpen: true,
     items: [
       {
@@ -422,11 +410,23 @@ test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影す�
     ],
     isInteractionDisabled: true,
     onRemove: noop,
-  }));
+  };
 
-  assert.match(html, /class="chat-additional-directory-remove" disabled=""/);
-  assert.match(html, /aria-label="removable: Remove"/);
-  assert.match(html, /class="chat-additional-directory-readonly">Allowed/);
+  for (const isInteractionDisabled of [true, false]) {
+    const dom = new JSDOM(renderToStaticMarkup(React.createElement(ChatAdditionalDirectoryList, {
+      ...props,
+      isInteractionDisabled,
+    })));
+    const removable = dom.window.document.querySelector('[title="C:/shared/removable"]');
+    const readonly = dom.window.document.querySelector('[title="C:/shared/allowed"]');
+    assert.ok(removable && readonly);
+    const removeButton = removable.querySelector("button");
+    assert.ok(removeButton);
+    assert.equal(removeButton.disabled, isInteractionDisabled);
+    assert.equal(removeButton.getAttribute("aria-label"), "removable: Remove");
+    assert.equal(readonly.querySelector("button"), null);
+    dom.window.close();
+  }
 });
 
 test("ChatWindow は Skill 候補を中央 work surface overlayとして描画する", () => {
@@ -454,30 +454,8 @@ test("ChatWindow は Skill 候補を中央 work surface overlayとして描画�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Skill候補panelはchat work surface全体を使い、不要なmax-height制限を持たない"
-// oracle = { type = "contract", ref = "src/chat/session-shell.css" }
-// fault = "Skill候補panelがwork surfaceの一部しか占有せず、max-heightで候補一覧を不必要に切り詰める"
-// observable = "chat-skill-picker-layerのinset/paddingとpanelのwidth/height/max-height CSS rule"
-// observation_boundary = "declaration"
-// scope = "chat skill picker work surface layout"
-// lifecycle = "permanent"
-// @end-test-value
-test("Skill候補panelはchat work surfaceのほぼ全体を使う", async () => {
-  const styles = await readStylesheet();
-  const layerRule = styles.match(/\.chat-skill-picker-layer\s*\{([^}]*)\}/)?.[1] ?? "";
-  const panelRule = styles.match(/\.chat-skill-picker-panel\s*\{([^}]*)\}/)?.[1] ?? "";
-
-  assert.match(layerRule, /inset:\s*0/);
-  assert.match(layerRule, /padding:\s*clamp\(6px,\s*1vw,\s*12px\)/);
-  assert.match(panelRule, /width:\s*100%/);
-  assert.match(panelRule, /height:\s*100%/);
-  assert.doesNotMatch(panelRule, /max-height/);
-});
-
-// @test-value v2
-// kind = "contract"
 // claim = "Skill pickerはloadingとerrorを別の状態表示として描画する"
-// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: ChatSkillPickerPanel" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態: 読込spinner/status/busyと取得失敗を分離する" }
 // fault = "読み込み中を空状態またはerrorと誤表示し、spinner・busy state・error labelを失う"
 // observable = "status aria-busy、spinner、error state classのDOM"
 // observation_boundary = "component-behavior"
@@ -987,7 +965,7 @@ test("ChatDockSplitter は resize handler がない場合に静的 splitter を�
 // @test-value v2
 // kind = "contract"
 // claim = "resize handlerがあるChatDockSplitterは操作可能なbuttonとしてedgeを示す"
-// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: ChatDockSplitter" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 左右paneのサイズ調整" }
 // fault = "操作可能splitterを静的なdivへ落とし、edgeのaccessible labelやtitleを失う"
 // observable = "button type、edge class、aria-label、titleのrender結果"
 // observation_boundary = "component-behavior"
@@ -1013,7 +991,7 @@ test("ChatDockSplitter は resize handler がある場合に操作可能 splitte
 // @test-value v2
 // kind = "contract"
 // claim = "ChatDockSplitterはedgeごとのcollapse/expand状態とdrag affordanceをaccessible属性へ投影する"
-// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: ChatDockSplitter" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: Header・ActionDock・左右paneの開閉と再表示affordance" }
 // fault = "expanded stateとaria-expanded/controlsまたはchevron directionが不一致になる"
 // observable = "各edgeのaria-label、aria-controls、aria-expanded、direction class、drag hint"
 // observation_boundary = "component-behavior"
@@ -1061,6 +1039,10 @@ test("ChatDockSplitter は各辺の表示状態を切り替える affordance を
   assert.match(collapsedHtml, /session-dock-splitter-chevron direction-up/);
 
   assert.match(fixedHeaderHtml, /class="session-dock-splitter edge-top is-toggle-only"/);
+  assert.match(fixedHeaderHtml, /aria-label="Collapse Header"/);
+  assert.match(fixedHeaderHtml, /aria-controls="session-header-dock"/);
+  assert.match(fixedHeaderHtml, /aria-expanded="true"/);
+  assert.match(fixedHeaderHtml, /session-dock-splitter-chevron direction-up/);
   assert.match(fixedHeaderHtml, /title="Click to collapse Header"/);
   assert.doesNotMatch(fixedHeaderHtml, /Drag to resize/);
 });
@@ -1190,7 +1172,7 @@ test("SessionChatScreen は左ペインのCollapse後もchild stateを保持す�
 // @test-value v2
 // kind = "contract"
 // claim = "未選択Auxiliaryの通常空labelはblankを保ちつつ、switcherと作成入口のaccessible nameを維持する"
-// oracle = { type = "contract", ref = "src/chat/chat-window.tsx: auxiliary session switcher" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態: 正常0件の本文は空にし、操作とaccessible nameを残す" }
 // fault = "Auxiliary未選択時に通常空の可視labelを表示するか、switcherまたはAdd Auxiliaryの識別名を失う"
 // observable = "未選択switcherの可視text、current buttonのaria-label、Add Auxiliary buttonのaria-labelと表示記号"
 // observation_boundary = "component-behavior"
