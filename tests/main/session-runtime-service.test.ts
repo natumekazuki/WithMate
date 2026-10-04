@@ -4243,14 +4243,15 @@ releaseSecondAttempt!();
 
   // @test-value v2
   // kind = "contract"
-  // claim = "非cancel failureはfailed Sessionのterminal commit後に一度だけfailed通知を依頼し、通知失敗後もprovider cleanupへ進む"
-  // oracle = { type = "contract", ref = "accepted contract: failed terminal notification is post-persist and best-effort" }
-  // fault = "failed保存前または複数回の通知、あるいは通知例外によるterminal保存結果やprovider cleanupの失敗"
+  // claim = "Codex失敗時は保存threadを維持しauditへlive threadとpartialを残し、terminal保存後の通知が失敗してもcleanupする"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md; docs/design/session-run-lifecycle.md" }
+  // fault = "保存threadをlive threadで上書きする、partial threadId欠如でauditのlive情報を失う、または通知失敗でcleanupを止める"
   // scope = "session-runtime-failed-terminal-notification"
-  // observable = "failed terminal通知の回数、保存結果、cleanup呼び出し"
+  // observable = "SessionとauditのthreadId、partial本文・operations・usage、通知回数と保存・cleanup順序"
   // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
-  // distinction = "completed通知やcancel除外ではなく、failed commitと通知とcleanupの順序および一回性を検証する"
+  // impact = "失敗後の会話継続先や監査上の実行先を失い、終了処理が止まる"
+  // distinction = "復帰失敗の単体testはlive progressと保存threadが異なる場合のaudit・Session分離を確認しない"
   // @end-test-value
   it("failed audit log は partial threadId が無くても live progress の threadId を維持する", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });

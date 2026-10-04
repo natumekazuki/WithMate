@@ -267,7 +267,7 @@ describe("ComposerControllerRegistry", () => {
   // claim = "consume後のdurable再取得に失敗しても後続draft保存は失敗を報告し、pendingを保持して明示flushで同じincarnationの現在revisionへ保存できる"
   // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
   // fault = "consume後の再取得障害を保存成功扱いする、queued draftを捨てる、または再試行を古いdurable revisionへ送る"
-  // observable = "後続enqueue/flushのrejectと再試行結果、hasPending、CAS保存先record"
+  // observable = "後続enqueueのreject、障害解除後の明示flush成功、hasPending、CAS保存先record"
   // observation_boundary = "public-boundary"
   // scope = "auxiliary-draft-consumption-persistence-error"
   // lifecycle = "permanent"

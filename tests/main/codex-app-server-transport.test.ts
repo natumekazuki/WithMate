@@ -183,13 +183,19 @@ test("close terminates owned descendants and settles pending consumers", async (
 // @end-test-value
 test("unexpected root exit cleans descendants without relying on a live root PID", async () => {
   const sut = transport();
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
   try {
     await sut.start();
     const { pid } = await sut.request<{ pid: number }>("descendantExit");
     await assert.rejects(sut.nextEvent(), /stdout|process exited/);
-    await sut.close();
+    await Promise.race([
+      sut.whenClosed(),
+      new Promise<never>((_resolve, reject) => {
+        watchdog = setTimeout(() => reject(new Error("Automatic descendant cleanup did not finish")), 5_000);
+      }),
+    ]);
     assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
-  } finally { await sut.close(); }
+  } finally { clearTimeout(watchdog); await sut.close(); }
 });
 
 // @test-value v2

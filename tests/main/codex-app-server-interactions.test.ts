@@ -117,7 +117,7 @@ test("turn abort and close abort visible request and drop the queue", async () =
     release({ action: "accept", content: { q: "late" } });
     await setImmediate();
     assert.equal(uiSignal?.aborted, true); assert.equal(calls, 1);
-    assert.deepEqual(first.results, []); assert.deepEqual(first.errors, []); assert.deepEqual(second.results, []);
+    assert.deepEqual(first.results, []); assert.deepEqual(first.errors, []); assert.deepEqual(second.results, []); assert.deepEqual(second.errors, []);
   }
 });
 

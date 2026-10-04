@@ -17,6 +17,7 @@ import { applyCodexTurnEvent, createCodexTurnStreamState, getLiveCodexAssistantT
 import { CodexAppServerTransport, CodexAppServerRpcError, type CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
 import { SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA } from "../../src-electron/session/session-memory-extraction.js";
 import { AUDIT_RAW_ITEMS_JSON_LIMIT, AUDIT_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/audit-payload-limits.js";
+import { WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
   label: "OpenAI Codex",
@@ -414,9 +415,9 @@ it("同scopeのitem再開だけでretry diagnosticを解除しterminal failure�
 });
 // @test-value v2
 // kind = "invariant"
-// claim = "保存threadIdを明示resumeし失敗時も新規threadへ切替せず固定実行設定をnative requestへ送る"
+// claim = "保存threadIdを明示resumeし失敗時も新規threadへ切替せず送信時modelとmax/ultraを含むdepth・権限設定をnative requestへ送る"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "保存sessionを新規threadへ置換しsandbox rootsを落とす"
+// fault = "保存sessionを新規threadへ置換する、sandbox rootsを落とす、または送信時model/depthを保存値や上限値へ置換する"
 // observable = "thread/resumeとturn/startの送信params、resume失敗後のrequestとpartial threadId"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
@@ -444,6 +445,19 @@ it("foregroundは保存thread resumeとnative設定、監査結果を維持す�
   assert.equal(result.threadId, "thread-1");
   assert.match(result.rawItemsJson, /agentMessage/);
   assert.equal(transport.closed, true);
+  for (const reasoningEffort of ["max", "ultra"] as const) {
+    const updated = new FakeTransport();
+    updated.events = [completed([message("answer", "updated")])];
+    input.executionOptions = { ...input.executionOptions, model: "gpt-5.6-sol", reasoningEffort };
+    await new CodexAdapter(undefined, { createTransport: () => updated }).runSessionTurn(input);
+    const threadParams = updated.calls.find((call) => call.method === "thread/resume")!.params as Record<string, any>;
+    const turnParams = updated.calls.find((call) => call.method === "turn/start")!.params as Record<string, any>;
+    assert.equal(threadParams.model, "gpt-5.6-sol");
+    assert.equal(threadParams.config.model_reasoning_effort, reasoningEffort);
+    assert.equal(turnParams.model, "gpt-5.6-sol");
+    assert.equal(turnParams.effort, reasoningEffort);
+    assert.equal(updated.closed, true);
+  }
   class ResumeFailureTransport extends FakeTransport {
     override async request<T>(method: string, params?: unknown): Promise<T> {
       if (method === "thread/resume") {
@@ -582,10 +596,10 @@ describe("workspace snapshot targeted capture", () => {
 });
 // @test-value v2
 // kind = "invariant"
-// claim = "retry通知後もterminal statusで成否を決め切断と失敗時は取得済み本文とoperationsをpartial resultへ残す"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "retry中のerrorで成功terminalを失敗にするか終端時にpartialを捨て取消を誤分類する"
-// observable = "completed結果とProviderTurnErrorのpartialResult canceled message"
+// claim = "retry通知後もterminal statusで成否を決めpartialを保持し、You've hit your usage limit.・purchase more credits・try again atの3句が揃う失敗だけをusage_limit、1句でも欠ければunknownとする"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md; accepted contract: Codex usage_limit classification requires usage-limit, credits and retry-time markers" }
+// fault = "retry中のerrorで成功terminalを失敗にする、partialを捨てる、取消を誤分類する、またはusage limitのreasonを欠落・誤検出する"
+// observable = "completed結果とProviderTurnErrorのpartialResult canceled message reason"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
@@ -613,6 +627,20 @@ it("retry通知後はterminalで成否を決め切断と失敗時のpartialを�
         return true;
       });
     }
+    assert.equal(transport.closed, true);
+  }
+  const usageMarkers = ["You've hit your usage limit.", "Purchase more credits", "Try again at 10:00"];
+  for (const missingMarker of [-1, 0, 1, 2]) {
+    const terminalMessage = usageMarkers.filter((_marker, index) => index !== missingMarker).join(" ");
+    const transport = new FakeTransport();
+    transport.events = [notification("turn/completed", { turn: { id: "turn-1", status: "failed", items: [], error: { message: terminalMessage } } })];
+    await assert.rejects(new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory)), (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.canceled, false);
+      assert.equal(error.message, terminalMessage);
+      assert.equal(error.reason, missingMarker === -1 ? "usage_limit" : "unknown");
+      return true;
+    });
     assert.equal(transport.closed, true);
   }
 }));
@@ -645,6 +673,48 @@ it("background structured promptはread-only never Standardを固定する", asy
   assert.deepEqual(start.outputSchema, input.prompt.outputSchema);
   assert.deepEqual(result.output, { answer: "ok" });
   assert.equal(transport.closed, true);
+});
+// @test-value v2
+// kind = "contract"
+// claim = "背景実行のtimeoutと呼出元取消をtransport起動のsignalへ伝播し待機を失敗として終了してcleanupする"
+// oracle = { type = "contract", ref = "src-electron/providers/provider-runtime.ts: RunBackgroundStructuredPromptInput timeoutMs/signal" }
+// fault = "timeoutか呼出元signalをadapterが落としtransport起動を無期限に待つ"
+// observable = "signal待機中の起動から返るTimeoutError/AbortErrorとtransport.closed"
+// observation_boundary = "component-behavior"
+// scope = "codex-background-start-cancellation"
+// lifecycle = "permanent"
+// impact = "背景の構造化処理が期限超過や取消後も残留する"
+// distinction = "RPC単体のtimeout testではbackground adapterのsignal合成と起動への伝播を検出できない"
+// @end-test-value
+it("backgroundのtimeoutと取消をtransport起動へ伝播する", async () => {
+  for (const mode of ["timeout", "cancel"] as const) {
+    const caller = new AbortController();
+    class WaitingStartTransport extends FakeTransport {
+      override async start(signal?: AbortSignal) {
+        assert.ok(signal);
+        signal.throwIfAborted();
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        const onAbort = () => rejectStart(signal.reason);
+        let rejectStart!: (reason: unknown) => void;
+        try {
+          await new Promise<void>((_resolve, reject) => {
+            rejectStart = reject;
+            watchdog = setTimeout(() => reject(new Error("Background signal did not abort")), 1_000);
+            signal.addEventListener("abort", onAbort, { once: true });
+            if (mode === "cancel") queueMicrotask(() => caller.abort());
+          });
+        } finally {
+          clearTimeout(watchdog);
+          signal.removeEventListener("abort", onAbort);
+        }
+      }
+    }
+    const transport = new WaitingStartTransport();
+    const input = createCodexBackgroundPromptInput({ timeoutMs: mode === "timeout" ? 20 : 10_000, signal: caller.signal });
+    await assert.rejects(new CodexAdapter(undefined, { createTransport: () => transport }).runBackgroundStructuredPrompt(input), { name: mode === "timeout" ? "TimeoutError" : "AbortError" });
+    assert.equal(transport.closed, true);
+    assert.deepEqual(transport.calls, []);
+  }
 });
 // @test-value v2
 // kind = "invariant"
@@ -698,9 +768,9 @@ it("steerはexpectedTurnIdを送信しterminalで入口を閉じる", async () =
 
 // @test-value v2
 // kind = "invariant"
-// claim = "異なるforeground ownerとbackgroundのbinding envを分離し親env不変でlive audit error logからsecretを除去する"
+// claim = "異なるforeground ownerとbackgroundのbinding・Memory owner envを分離し親env不変でlive audit error logからsecretを除去する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "前turnのbindingを再利用し出力secretをUIへ公開する"
+// fault = "bindingかMemory owner selectorを欠落・再利用するか出力secretをUIへ公開する"
 // observable = "2 ownerのtransport env、process.env、live state、operations、raw、返却error、logger"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
@@ -734,7 +804,8 @@ it("fresh process bindingを2 foreground ownerとbackgroundで分離し全出力
   for (let owner = 0; owner < 2; owner += 1) {
     const input = createCodexRunSessionTurnInput(directory);
     input.session.id = "owner-" + owner;
-    input.agentRuntimeBinding = { bindingId: "binding-" + owner, bindingReference: secrets[owner * 2], turnCapability: secrets[owner * 2 + 1], providerId: "codex", executionGeneration: "generation-" + owner, transport: "env", expiresAt: null };
+    input.agentRuntimeBinding = { bindingId: "binding-" + owner, bindingReference: secrets[owner * 2], turnCapability: secrets[owner * 2 + 1], providerId: "codex", executionGeneration: "generation-" + owner, transport: "env", expiresAt: null,
+      memoryRuntimeOwner: { applicationInstanceId: "app-instance-" + owner, runtimeGenerationId: "memory-generation-" + owner } };
     const run = adapter.runSessionTurn(input, (state) => { progress.push(state); });
     if (owner === 0) {
       const result = await run;
@@ -750,6 +821,12 @@ it("fresh process bindingを2 foreground ownerとbackgroundで分離し全出力
     }
   }
   await adapter.runBackgroundStructuredPrompt(createCodexBackgroundPromptInput({ workspacePath: directory }));
+  for (const owner of [0, 1]) {
+    assert.equal(environments[owner][WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-" + owner);
+    assert.equal(environments[owner][WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-" + owner);
+  }
+  assert.equal(environments[2][WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], undefined);
+  assert.equal(environments[2][WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], undefined);
   for (const [index, secret] of secrets.entries()) {
     assert.ok(Object.values(environments[Math.floor(index / 2)]).includes(secret));
     assert.ok(!Object.values(environments[1 - Math.floor(index / 2)]).includes(secret));
@@ -771,8 +848,8 @@ it("fresh process bindingを2 foreground ownerとbackgroundで分離し全出力
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "会話監査とMCPのsession権限が誤ったSessionへ流れる"
-// distinction = "native通知と環境設定の実行時投影を確認し型検査では代替できない"
+// impact = "利用者が変更されたfileや委譲作業の履歴を監査で確認できなくなる"
+// distinction = "snapshot helper単体ではnative itemから変更一覧とtimelineへの実行時投影を確認できない"
 // @end-test-value
 it("native fileChangeとcollaborationをartifactへ投影する", async () => workspace(async (directory) => {
   const transport = new FakeTransport();
@@ -830,13 +907,13 @@ it("native commandとMCPの大きい出力をlive audit予算へ投影する", a
 // kind = "invariant"
 // claim = "session memory extractionもnative schema turnを実行しdeltaとusageを返す"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "memoryだけSDKまたは独自非schema実行へ残す"
+// fault = "Memory抽出でschemaを送らないかstructured responseとusageを返却結果へ反映しない"
 // observable = "turn/start outputSchemaと抽出delta、usage"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "会話監査とMCPのsession権限が誤ったSessionへ流れる"
-// distinction = "native通知と環境設定の実行時投影を確認し型検査では代替できない"
+// impact = "会話から抽出したMemoryや抽出処理のtoken使用量を失う"
+// distinction = "JSON parser単体ではMemory入口からnative schema送信とdelta・usage返却までの接続を確認できない"
 // @end-test-value
 it("memory extractionはnative structured runnerを共有する", async () => {
   const transport = new FakeTransport();
@@ -927,8 +1004,8 @@ setInterval(() => {}, 1000);
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "受理済み追加入力の重複再送または有効な対話の喪失を防ぐ"
-// distinction = "非同期ACKと終端通知の順序は型検査では確認できない"
+// impact = "有効なMCP対話が拒否され利用者が回答できなくなる"
+// distinction = "interaction helper単体ではadapterのthread/turn scope判定を通らずnullable turnIdの誤拒否を検出できない"
 // @end-test-value
 it("MCP elicitationのnullable turnIdをcurrent threadにscopeする", async () => workspace(async (directory) => {
   const transport = new FakeTransport();
