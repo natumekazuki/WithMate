@@ -12,11 +12,12 @@ Windowsでは同一TerminalのWSL起動前・WSL内・終了後で、無害な�
 
 | 操作 | 期待結果 |
 | --- | --- |
+| Windowsで7と5系の両方、PATH外の標準配置7、5系のみ、両方なし、検出済み7の起動失敗を用意して新しいTerminalを開く。PATH・ProgramFiles・SystemRootに`\tools`／`/tools`等の現在ドライブに依存する値を渡す場合も確認する。7／5系それぞれでcwd、通常の入力・出力、resize後の入力、自然終了と稼働状態判定を確認する | PATH順の`pwsh.exe`、`%ProgramFiles%/PowerShell/7/pwsh.exe`、`%SystemRoot%/System32/WindowsPowerShell/v1.0/powershell.exe`の順に選択する。完全修飾でない探索元を除外し、後続の有効な候補を使う。7／5系とも親Workspaceから起動して操作できる。未検出・探索異常・起動失敗は`Failed`と理由を表示し、検出済み7の起動失敗を5系へ切り替えない |
 | Workspaceの`Terminal`、Preview/Source右の`Prompt / Terminal`切替、Ctrl+Shift+T（macOSはCmd+Shift+T）をcomposerと端末本文から操作。Settingsでbindingも変更する | 共有下部パネルが選択modeへ切り替わり、展開してfocusする。初期Promptではshellを起動せず初回Terminal表示でだけ作成する。入力・selection・端末タブ・出力を保持し、切替shortcutをshellへ送らない。IME中とrepeatでは切り替えない。`Open External Terminal`とSession Folderの外部起動も利用できる |
 | 1520×940、1400px境界の前後、1100×720で共有splitterのdrag・上下キーresize、Prompt/Terminal切替、Window縮小。最大高から縮める途中でpointerを保持し、解除後と比較 | 切替で同じ高さと単一splitterを使う。drag保持中も中央の表示判定が追従し、解除でパネルやsplitterの位置・高さが変わらない。Window縮小では高さを補正し、中央を畳んでも共有splitterを操作できる。中央の復帰で会話・previewのstateとscroll位置を保持する |
 | 高解像度のWindowで500列または300行を超える端末を初回展開し、拡大・縮小して入力する | 正常なfit寸法で起動・resizeでき、`Failed`にならない。resize後も入力と出力を継続できる |
 | タブを複数追加し、選択・折りたたみ・Prompt/Terminal切替・Main/Auxiliary切り替え・最小化を行う | 各shellは親Workspaceから独立して開始し、出力・cwd・processは維持される。多数タブでも1段でscrollでき、`New Terminal`と選択タブへ到達できる |
-| Windows PowerShell起動後の入力待ち、空Enter後、通常コマンド完了後に終了ボタンをクリックして`Close Terminal`。起動途中、入力編集中、長時間の組込みコマンド、未完了Job、`Start-Process -NoNewWindow`直後、nested prompt、zshでも比較する | 入力待ちと確認できたPowerShellだけ確認なしで閉じる。focusを本文から終了ボタンへ移すだけでは確認不要の状態が失効しない。実行中・起動中・判別不能では確認し、取消で維持する。子processのconsole接続前や処理を中断した入力待ちでも確認する。Jobと子processの完了後にEnterで次の入力待ちへ進むと確認不要になる |
+| PowerShell 7／Windows PowerShell 5系それぞれの起動後の入力待ち、空Enter後、通常コマンド完了後に終了ボタンをクリックして`Close Terminal`。起動途中、入力編集中、長時間の組込みコマンド、未完了Job、`Start-Process -NoNewWindow`直後、nested prompt、zshでも比較する | 入力待ちと確認できたPowerShellだけ確認なしで閉じる。focusを本文から終了ボタンへ移すだけでは確認不要の状態が失効しない。実行中・起動中・判別不能では確認し、取消で維持する。子processのconsole接続前や処理を中断した入力待ちでも確認する。Jobと子processの完了後にEnterで次の入力待ちへ進むと確認不要になる |
 | PowerShellで空行に続く`Write-Output unfinished`を末尾改行なしで貼り付け、Terminalの×とSession Windowの×を試す。複数の先行空行、空Enter直後に別の貼付け、矢印・履歴編集でも比較する | 先行行が完了しても末尾の編集中入力が残れば終了確認する。取消後も入力が残り、Enterで確定して空の入力待ち通知を受けると確認不要へ戻る。通知前の即時closeは安全側の確認を残す |
 | 別端末の継続出力とAI実行を開始し、作業中の端末で終了確認を開いたままにして取消／終了する | 確認中もMainのイベント処理・IPC配送・会話更新・他端末の出力が進む。同期確認時の停滞と区別して記録する。取消後も対象端末へ入力でき、承認は対象端末だけを終了する |
 | 終了確認の重複要求、確認中の自然終了・owner破棄、起動途中の確認取消／終了、起動失敗も確認 | 確認は重複せず、遅れた承認で別の端末を閉じない。終了済みタブは確認不要。自然終了は`Exited`と結果、失敗は`Failed`と理由を表示して出力を保持する。最後のタブを閉じると折りたたみ、自動再起動しない |
