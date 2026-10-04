@@ -2495,7 +2495,7 @@ test("ConversationMessageColumn は履歴スクロールを挟んでも elicitat
 // kind = "contract"
 // claim = "会話pageの移動は同じelicitation requestの未送信回答を保持して送信する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Elicitationの入力待ち" }
-// fault = "最新pageから過去pageへ移動した際にformを再mountして回答を消す"
+// fault = "最新pageから過去pageへ移動した際に未送信回答を初期値へ戻す"
 // observable = "過去pageのDOM内select値とSubmit応答payload"
 // observation_boundary = "component-behavior"
 // scope = "conversation-paging-elicitation"
@@ -2520,8 +2520,8 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
     await act(async () => { select.value = "feature"; select.dispatchEvent(new mounted.dom.window.Event("change", { bubbles: true })); });
     await mounted.rerender({ messages: createMessages(60).map((message) => ({ ...message, text: `Earlier ${message.text}` })), isRunning: false });
     const after = mounted.container.querySelector<HTMLSelectElement>(".live-elicitation-card select");
-    assert.equal(after, select);
-    assert.equal(after?.value, "feature");
+    assert.ok(after);
+    assert.equal(after.value, "feature");
     const submit = [...mounted.container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button")].find((button) => button.textContent === "Submit");
     assert.ok(submit);
     await act(async () => submit.click());

@@ -4,7 +4,7 @@ import test from "node:test";
 // @test-value v2
 // kind = "contract"
 // claim = "会話page・全履歴検索・navigatorはMainまたはAuxiliaryの親Session Windowだけが要求できる"
-// oracle = { type = "contract", ref = "docs/design/database-schema.md#storage-overview" }
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts: registerSessionQueryHandlers / authorizeConversation" }
 // fault = "Auxiliaryを親へ解決せず認可するか、対象外Windowの要求を会話readへ渡す"
 // observable = "owner Windowのpage/search/navigator結果とread呼出回数、対象外Windowのrejection"
 // observation_boundary = "public-boundary"
@@ -2650,29 +2650,32 @@ test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run �
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliary full read IPCは対象外windowからfull readを返さずsummary listだけを許可する"
-// oracle = { type = "contract", ref = "src-electron/main-ipc-registration.ts" }
-// fault = "Homeへのsummary取得を拒否するか、owner外へAuxiliary本文を公開する"
-// observable = "summary件数1、active/detail取得のrejection、fullReadCallsが空であること"
+// claim = "Auxiliary detail IPCは対象外windowからの要求を本文取得前に拒否しsummary listだけを許可する"
+// oracle = { type = "contract", ref = "src-electron/ipc/auxiliary.ts: registerAuxiliaryHandlers" }
+// fault = "Homeへのsummary取得を拒否するか、owner外の要求でAuxiliary本文を取得する"
+// observable = "summary件数1、active/detail取得のrejection、両方の本文取得呼出がないこと"
 // observation_boundary = "public-boundary"
-// scope = "scripts/tests/main-ipc-registration.test.ts"
+// scope = "tests/integration/main-ipc-registration.test.ts"
 // lifecycle = "permanent"
 // @end-test-value
-test("Auxiliary full read IPC は対象外 window から full read を返さず、summary list は許可する", async () => {
+test("Auxiliary detail IPC は対象外 window の要求を本文取得前に拒否し、summary list は許可する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const homeWindow = createWindowStub("http://localhost:5173/");
   const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
   const auxiliarySession = createAuxiliarySessionStub();
-  const fullReadCalls: string[] = [];
+  const detailReadCalls: string[] = [];
   const { deps } = createDeps({
     resolveEventWindow: () => homeWindow,
     resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
     listAuxiliarySessions: async () => [createAuxiliarySessionStub({ messages: undefined, composerDraft: undefined })],
     getActiveAuxiliarySession: async () => {
-      fullReadCalls.push("getActiveAuxiliarySession");
+      detailReadCalls.push("getActiveAuxiliarySession");
       return auxiliarySession;
     },
-    getAuxiliarySession: async () => auxiliarySession,
+    getAuxiliarySession: async () => {
+      detailReadCalls.push("getAuxiliarySession");
+      return auxiliarySession;
+    },
     getAuxiliarySessionStatus: async () => ({ id: auxiliarySession.id, parentSessionId: auxiliarySession.parentSessionId, status: auxiliarySession.status, createdAt: auxiliarySession.createdAt, incarnation: "test", runState: auxiliarySession.runState }),
   });
 
@@ -2690,7 +2693,7 @@ test("Auxiliary full read IPC は対象外 window から full read を返さず�
     () => handlers.get(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
     /Auxiliary session IPC is only available/,
   );
-  assert.deepEqual(fullReadCalls, []);
+  assert.deepEqual(detailReadCalls, []);
 });
 
 test("Home 用 Auxiliary summary IPC は main が確定した open parent scope の active summary だけを返す", async () => {
