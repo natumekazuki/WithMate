@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import {
@@ -1334,8 +1335,7 @@ async function emitLiveState(
 
 function waitForCopilotSessionCompletion(
   session: CopilotSession,
-  signal: AbortSignal | undefined,
-): { wait: Promise<void>; dispose: () => void } {
+): { wait: Promise<void>; idle: Promise<void>; dispose: () => void } {
   let settled = false;
   let resolveWait!: () => void;
   let rejectWait!: (error: Error) => void;
@@ -1344,6 +1344,8 @@ function waitForCopilotSessionCompletion(
     resolveWait = resolve;
     rejectWait = reject;
   });
+  let resolveIdle!: () => void;
+  const idle = new Promise<void>((resolve) => { resolveIdle = resolve; });
 
   const settle = (handler: () => void) => {
     if (settled) {
@@ -1356,6 +1358,7 @@ function waitForCopilotSessionCompletion(
 
   const unsubscribe = session.on((event) => {
     if (event.type === "session.idle") {
+      resolveIdle();
       settle(() => resolveWait());
       return;
     }
@@ -1367,16 +1370,10 @@ function waitForCopilotSessionCompletion(
     }
   });
 
-  const handleAbort = () => {
-    settle(() => rejectWait(new Error("Abort requested")));
-  };
-
-  signal?.addEventListener("abort", handleAbort, { once: true });
-
   return {
     wait,
+    idle,
     dispose: () => {
-      signal?.removeEventListener("abort", handleAbort);
       unsubscribe();
     },
   };
@@ -1642,10 +1639,31 @@ type CopilotAdapterOptions = {
   log?: (input: CopilotAdapterLogInput) => void;
   clientStopTimeoutMs?: number;
   sessionDisconnectTimeoutMs?: number;
+  turnCancelGraceMs?: number;
 };
 
 const COPILOT_CLIENT_STOP_TIMEOUT_MS = 5_000;
 const COPILOT_SESSION_DISCONNECT_TIMEOUT_MS = 5_000;
+const COPILOT_TURN_CANCEL_GRACE_MS = 5_000;
+
+type CopilotProcessLifetime = { child: ChildProcess; exited: Promise<void> };
+
+function captureCopilotProcessLifetime(client: CopilotClient): CopilotProcessLifetime | null {
+  // The stdio SDK has no public exit hook. Read its owned child before stop()
+  // clears the handle; forceStop() alone does not confirm process termination.
+  const child: unknown = Reflect.get(client, "cliProcess");
+  if (!(child instanceof ChildProcess)) {
+    return null;
+  }
+  const exited = new Promise<void>((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+    } else {
+      child.once("exit", () => resolve());
+    }
+  });
+  return { child, exited };
+}
 
 async function disconnectCopilotSession(
   session: Pick<CopilotSession, "disconnect">,
@@ -1674,7 +1692,7 @@ async function stopCopilotClient(
 
 type CopilotCleanupSettlement<T> =
   | { status: "settled"; value: T }
-  | { status: "rejected" }
+  | { status: "rejected"; error: unknown }
   | { status: "timed_out" };
 
 async function settleCopilotCleanupWithin<T>(
@@ -1686,7 +1704,7 @@ async function settleCopilotCleanupWithin<T>(
     .then(operation)
     .then(
       (value) => ({ status: "settled", value }),
-      () => ({ status: "rejected" }),
+      (error: unknown) => ({ status: "rejected", error }),
     );
   const timeoutSettlement = new Promise<CopilotCleanupSettlement<T>>((resolve) => {
     timeoutId = setTimeout(() => resolve({ status: "timed_out" }), Math.max(0, timeoutMs));
@@ -2028,6 +2046,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   ): void {
     cached.unsubscribeBackgroundObserver?.();
     cached.unsubscribeBackgroundObserver = cached.session.on((event) => {
+      if (this.sessions.get(sessionId) !== cached) {
+        return;
+      }
       if (!applyCopilotBackgroundTaskEvent(cached.backgroundTasks, event)) {
         return;
       }
@@ -2058,7 +2079,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   private async getSession(
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
-  ): Promise<{ session: CopilotSession; selection: ResolvedModelSelection }> {
+  ): Promise<{ session: CopilotSession; selection: ResolvedModelSelection; client: CopilotClient; clientKey: string }> {
     const { client, clientKey } = this.getClient(input.providerCatalog.id, input);
     const previousClientKey = this.clientKeysBySession.get(input.session.id);
     this.clientKeysBySession.set(input.session.id, clientKey);
@@ -2075,6 +2096,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       return {
         session: resolved.session,
         selection: nextSettings.selection,
+        client,
+        clientKey,
       };
     }
 
@@ -2100,7 +2123,106 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return {
       session: resolved.session,
       selection: nextSettings.selection,
+      client,
+      clientKey,
     };
+  }
+
+  private detachCanceledTurn(sessionId: string, session: CopilotSession, client: CopilotClient, clientKey: string): void {
+    const cached = this.sessions.get(sessionId);
+    if (cached?.session === session) {
+      this.sessions.delete(sessionId);
+      try {
+        cached.unsubscribeBackgroundObserver?.();
+        this.options.onBackgroundTasksChanged?.(sessionId, []);
+      } catch {
+        // Projection cleanup must not prevent stopping the captured owner.
+      }
+      if (this.clientKeysBySession.get(sessionId) === clientKey) {
+        this.clientKeysBySession.delete(sessionId);
+      }
+    }
+    if (this.clients.get(clientKey) === client) {
+      this.clients.delete(clientKey);
+    }
+  }
+
+  private async stopCanceledTurn(
+    session: CopilotSession,
+    client: CopilotClient,
+    requestsSettled: Promise<PromiseSettledResult<unknown>[]>,
+    idle: Promise<void>,
+    redactor: ProviderAgentRuntimeBindingRedactor,
+    processLifetime: CopilotProcessLifetime | null,
+  ): Promise<string[]> {
+    const failures: string[] = [];
+    const describe = (name: string, result: CopilotCleanupSettlement<unknown>) => {
+      if (result.status === "rejected") {
+        failures.push(redactor.sanitizeText(`${name} failed: ${result.error instanceof Error ? result.error.message : String(result.error)}`));
+      } else if (result.status === "timed_out") {
+        failures.push(`${name} timed out`);
+      }
+    };
+    const graceful = await settleCopilotCleanupWithin(
+      () => Promise.all([requestsSettled, idle]),
+      this.options.turnCancelGraceMs ?? COPILOT_TURN_CANCEL_GRACE_MS,
+    );
+    describe("abort/idle confirmation", graceful);
+    const disconnected = await settleCopilotCleanupWithin(
+      () => session.disconnect(),
+      this.options.sessionDisconnectTimeoutMs ?? COPILOT_SESSION_DISCONNECT_TIMEOUT_MS,
+    );
+    describe("session disconnect", disconnected);
+    const stopped = await settleCopilotCleanupWithin(
+      () => client.stop(),
+      this.options.clientStopTimeoutMs ?? COPILOT_CLIENT_STOP_TIMEOUT_MS,
+    );
+    describe("client stop", stopped);
+    if (stopped.status !== "settled" || stopped.value.length > 0) {
+      if (stopped.status === "settled") {
+        failures.push(redactor.sanitizeText(`client stop failed: ${stopped.value.map((error) => error.message).join("; ")}`));
+      }
+      try {
+        // A deadline is not proof that the owned transport has stopped.
+        await client.forceStop();
+      } catch (error) {
+        const message = redactor.sanitizeText(error instanceof Error ? error.message : String(error));
+        failures.push(`client force stop failed: ${message}`);
+        this.writeLog({ level: "error", kind: "provider.cancel-stop-failed", message, data: null });
+      }
+      const child = processLifetime?.child;
+      if (child && child.exitCode === null && child.signalCode === null) {
+        try {
+          if (!child.kill("SIGKILL")) {
+            throw new Error("Copilot CLI kill request was not accepted");
+          }
+        } catch (error) {
+          const message = redactor.sanitizeText(error instanceof Error ? error.message : String(error));
+          failures.push(`CLI process stop failed: ${message}`);
+          this.writeLog({ level: "error", kind: "provider.cancel-stop-failed", message, data: null });
+        }
+      }
+    }
+    if (processLifetime) {
+      await processLifetime.exited;
+    } else {
+      // If SDK ownership cannot be observed, transport disposal is insufficient
+      // evidence. Only the original turn's idle can establish a safe boundary.
+      const message = "Copilot CLI process handle unavailable; waiting for original turn idle";
+      failures.push(message);
+      this.writeLog({ level: "error", kind: "provider.cancel-stop-failed", message, data: null });
+      await idle;
+    }
+    // Closing the SDK connection rejects pending send/abort RPCs. Observe both
+    // settlements before allowing another turn to use the conversation.
+    const results = await requestsSettled;
+    for (const [index, result] of results.entries()) {
+      if (result.status === "rejected") {
+        const error = result.reason as unknown;
+        failures.push(redactor.sanitizeText(`${index === 0 ? "send" : "abort"} failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    }
+    return failures;
   }
 
   private async buildTurnResult(
@@ -2186,8 +2308,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       : createDisabledWorkspaceSnapshotCapture();
     let session: CopilotSession;
     let selection: ResolvedModelSelection;
+    let client: CopilotClient;
+    let clientKey: string;
     try {
-      ({ session, selection } = await this.getSession(input, prompt));
+      ({ session, selection, client, clientKey } = await this.getSession(input, prompt));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logCopilotRuntime("session bootstrap failed", {
@@ -2214,6 +2338,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       );
     }
     const streamState = createCopilotTurnStreamState();
+    let observingTurn = true;
     let progressChain = Promise.resolve();
     const scheduleLiveState = () => {
       progressChain = progressChain.then(() =>
@@ -2247,6 +2372,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     );
 
     const unsubscribe = session.on((event) => {
+      if (!observingTurn) {
+        return;
+      }
       applyCopilotTurnEvent({
         event,
         state: streamState,
@@ -2263,7 +2391,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           requestId: request.requestId,
         };
         void Promise.resolve(input.onElicitationRequest(redactedRequest))
-          .then((response) => respondToCopilotElicitation(session, request.requestId, response))
+          .then((response) => observingTurn ? respondToCopilotElicitation(session, request.requestId, response) : undefined)
           .catch((error: unknown) => {
             logCopilotRuntime("elicitation handling failed", {
               provider: input.providerCatalog.id,
@@ -2273,29 +2401,62 @@ export class CopilotAdapter implements ProviderTurnAdapter {
               requestId: request.requestId,
               message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
             });
-            void session.abort().catch(() => undefined);
+            if (observingTurn) {
+              handleAbort();
+            }
           });
       }
       void scheduleLiveState();
     });
 
+    const completion = waitForCopilotSessionCompletion(session);
+    const send = Promise.resolve().then(() => session.send({
+      prompt: prompt.inputBodyText,
+      ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
+    }));
+    const execution = Promise.all([send, completion.wait]);
+    let cancellationCleanup: Promise<never> | undefined;
+    let cancellationFailures: string[] = [];
+    let rejectCancellation!: (error: unknown) => void;
+    const cancellation = new Promise<never>((_resolve, reject) => { rejectCancellation = reject; });
     const handleAbort = () => {
-      void session.abort().catch(() => undefined);
+      if (cancellationCleanup || !observingTurn) {
+        return;
+      }
+      // Detach synchronously, before runtime's canceled terminal invalidation.
+      const processLifetime = captureCopilotProcessLifetime(client);
+      this.detachCanceledTurn(input.session.id, session, client, clientKey);
+      const abort = Promise.resolve().then(() => session.abort());
+      const requestsSettled = Promise.allSettled([send, abort]);
+      cancellationCleanup = (async () => {
+        const failures = await this.stopCanceledTurn(
+          session,
+          client,
+          requestsSettled,
+          completion.idle,
+          redactor,
+          processLifetime,
+        );
+        cancellationFailures = failures;
+        if (failures.length > 0) {
+          this.writeLog({ level: "warn", kind: "provider.cancel-cleanup", message: failures.join("; "), data: null });
+        }
+        throw new Error(["Abort requested", ...failures].join("; "));
+      })();
+      void cancellationCleanup.catch(rejectCancellation);
     };
-
     input.signal?.addEventListener("abort", handleAbort, { once: true });
 
     try {
-      const completion = waitForCopilotSessionCompletion(session, input.signal);
       try {
-        await session.send({
-          prompt: prompt.inputBodyText,
-          ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
-        });
-        await completion.wait;
+        await Promise.race([execution, cancellation]);
       } finally {
-        completion.dispose();
+        if (cancellationCleanup) {
+          await cancellationCleanup;
+        }
       }
+      observingTurn = false;
+      completion.dispose();
       await progressChain;
 
       if (streamState.streamErrorMessage) {
@@ -2345,6 +2506,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         null,
       );
     } catch (error) {
+      observingTurn = false;
+      completion.dispose();
       if (error instanceof ProviderTurnError) {
         throw error;
       }
@@ -2369,6 +2532,18 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         beforeSnapshotStats,
         null,
       );
+      if (cancellationFailures.length > 0) {
+        partialResult.providerMetadata = [
+          ...(partialResult.providerMetadata ?? []),
+          {
+            provider: input.providerCatalog.id,
+            kind: "cancellation_cleanup",
+            source: "CopilotAdapter",
+            summary: "Copilot cancellation cleanup encountered incomplete or failed stop requests",
+            payload: { failures: cancellationFailures },
+          },
+        ];
+      }
       logCopilotRuntime("turn execution failed", {
         cliPath,
         provider: input.providerCatalog.id,
@@ -2383,6 +2558,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
       );
     } finally {
+      observingTurn = false;
+      completion.dispose();
       unsubscribe();
       input.signal?.removeEventListener("abort", handleAbort);
     }

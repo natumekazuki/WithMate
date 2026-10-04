@@ -48,6 +48,8 @@ providerごとの差は次。
   - packaged runtime では `src-electron/providers/provider-binary-paths.ts` を通して `resources/provider-binaries/` 配下の staged binary を `codexPathOverride` で明示する
 - `CopilotAdapter`
   - `session.send()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
+  - 開始済みturnの取消ではsend応答とcompletionを並行して観測し、abort応答・`session.idle`・send応答の収束を取消専用の猶予内で確認する。取消受付時に当turnのsession/client cacheを同期的に切り離し、捕捉した旧sessionのdisconnectと旧clientのstop、必要時のforceStopへ進む。SDKのstdio clientには公開exit hookがないため、cleanupが破棄する前の`cliProcess`をreadonlyで捕捉する。forceStopのresolveを停止証明にせず、必要時はその旧childだけへSIGKILLを送り、実exitとsend/abort RPC終了までadapter Promiseと共通runtimeの再送guardを保持する。kill失敗も期限だけで解放せずexitを待つ。SDK childを捕捉できない場合は切断を停止証明にせず、元turnのidleとRPC終了を待つ
+  - 取消後は旧SDK Sessionを再利用せず、保存済みthread IDからresumeする。disconnectはCopilot側の会話履歴を削除せず、新接続や無関係Sessionのclientを停止しない。正常turnには取消用の期限を適用しない。取消のpartial resultを保持し、停止確認・cleanupの失敗はprovider metadataとapp logへ残す。共通runtimeの取消猶予で先にterminal保存した場合は、その後の停止失敗をapp logで確認する
   - top-level `assistant.message` が複数回来た場合は、arrival 順に空行区切りで連結した本文を `assistantText` として返す
   - character prompt は `SessionConfig.systemMessage` `mode: "append"` に載せ、`session.send()` には user input 本文を送る
   - `file / folder` は Copilot SDK `attachments` (`file` / `directory`) へ変換して送る
