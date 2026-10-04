@@ -270,7 +270,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
 - `Terminal`
-  - Windowsの内蔵PTYは、アプリが継承したPATHの記載順で`pwsh.exe`、次に`%ProgramFiles%/PowerShell/7/pwsh.exe`を探索し、どちらも見つからない場合だけ`%SystemRoot%/System32/WindowsPowerShell/v1.0/powershell.exe`を使う。PATHの空要素・相対pathは探索せず、引用符で囲まれた絶対pathは扱う。標準候補は対応する環境変数が絶対pathの場合だけ探索する。ファイル／親directoryの不在だけを未検出として次候補へ進み、アクセス拒否などの探索異常、両方の未検出、選択後の起動失敗は失敗として通知する。検出済み7の起動失敗では5系へ切り替えない。自動installや選択Settingsは持たず、macOSは`/bin/zsh`を使う
+  - Windowsの内蔵PTYは、アプリが継承したPATHの記載順で`pwsh.exe`、次に`%ProgramFiles%/PowerShell/7/pwsh.exe`を探索し、どちらも見つからない場合だけ`%SystemRoot%/System32/WindowsPowerShell/v1.0/powershell.exe`を使う。PATHと標準候補の環境変数には、ドライブ付きまたはUNCの完全修飾pathを要求する。PATHの空要素・相対path、現在ドライブに依存する`\tools`や`/tools`は探索せず、引用符で囲まれた完全修飾PATHは扱う。ファイル／親directoryの不在だけを未検出として次候補へ進み、アクセス拒否などの探索異常、両方の未検出、選択後の起動失敗は失敗として通知する。検出済み7の起動失敗では5系へ切り替えない。自動installや選択Settingsは持たず、macOSは`/bin/zsh`を使う
   - 初期選択はPromptで、最初にTerminalを表示するまでシェルを起動しない。Workspaceの`Terminal`は共有下部パネルをTerminalへ切り替えて開き、`Open External Terminal`は既存の外部起動を行う。Session Folderの外部Terminal起動は変更しない
   - xterm.js本体・標準CSS・FitAddonの公開APIを使う。WindowsではMainが取得したOS build情報を`windowsPty`へ渡し、resize時のscrollbackを標準のWindows向け処理へ任せる。ANSI解釈、描画、選択、IME、scrollback、シェルの履歴・補完は標準機能へ任せる。専用の最大化モードや端末独自の入力欄は持たない
   - FitAddonの提案寸法をnative座標の上限32,767列・行までxtermへ適用し、同じ寸法をPTYへ渡す。Mainは正の整数と上限を検証する。IPC操作の拒否は端末内のエラー表示に留め、生存PTYの入力・resizeを維持する。PTY自体の障害は`Failed`として入力を停止する

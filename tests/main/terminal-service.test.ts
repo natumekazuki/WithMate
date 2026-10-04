@@ -40,7 +40,7 @@ describe("resolveTerminalShell", () => {
   // kind = "contract"
   // claim = "WindowsはPATH順の7、標準配置7、5系の順に選び、空・相対PATHは探索せず、全候補不在なら拒否する"
   // oracle = { type = "contract", ref = "Issue #779 受け入れ条件; docs/design/desktop-ui.md Terminal" }
-  // fault = "PATH順や7優先を逆転する、標準配置を見落とす、cwdから選ぶ、候補不在でも成功する"
+  // fault = "PATH順や7優先を逆転する、標準配置を見落とす、cwdや現在ドライブに依存する候補を選ぶ、候補不在でも成功する"
   // observable = "候補の存在条件を変えたresolveTerminalShellのfile、shellName、windowsPtyと不在時の拒否"
   // observation_boundary = "component-behavior"
   // scope = "Windows embedded terminal shell selection"
@@ -50,9 +50,10 @@ describe("resolveTerminalShell", () => {
   // @end-test-value
   it("selects PATH PowerShell 7, standard PowerShell 7, then Windows PowerShell", async () => {
     const candidates = [first, second, standard, legacy];
+    const searchEnv = { ...env, Path: `\\tools;/tools;C:tools;${env.Path}` };
     for (let index = 0; index <= candidates.length; index++) {
       const available = candidates.slice(index);
-      const resolving = resolveTerminalShell("win32", env, async (file, mode) => {
+      const resolving = resolveTerminalShell("win32", searchEnv, async (file, mode) => {
         assert.equal(mode, constants.X_OK);
         assert.ok(candidates.includes(String(file)), `Unexpected search target: ${String(file)}`);
         if (!available.includes(String(file))) throw Object.assign(new Error("missing"), { code: "ENOENT" });
@@ -70,19 +71,23 @@ describe("resolveTerminalShell", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "7の探索はSystemRootに依存せず、未設定・相対の標準rootを探索せず、存在しない親directoryは次候補へ進む"
+  // claim = "7の探索はSystemRootに依存せず、drive付き・UNCの完全修飾pathを使い、未設定・相対・root-relativeの標準rootを探索せず、存在しない親directoryは次候補へ進む"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
-  // fault = "5系のroot不足で7も起動不能にする、相対rootから実行ファイルを選ぶ、ENOTDIRで探索を停止する"
+  // fault = "5系のroot不足で7も起動不能にする、完全修飾UNCを拒否する、cwdや現在ドライブに依存するrootから選ぶ、ENOTDIRで探索を停止する"
   // observable = "最小環境・相対root・ENOTDIR条件で返るfileまたは候補不在の拒否"
   // observation_boundary = "component-behavior"
   // scope = "Windows shell search environment"
   // lifecycle = "permanent"
   // @end-test-value
-  it("searches only available absolute roots and continues past missing directories", async () => {
-    assert.equal((await resolveTerminalShell("win32", { PATH: "D:\\tools" }, async () => {})).file, second);
-    await assert.rejects(resolveTerminalShell("win32", { ProgramFiles: "relative", SystemRoot: "relative" }, async () => {
-      assert.fail("Relative roots must not be searched");
-    }), /Neither PowerShell/);
+  it("searches only fully qualified roots and continues past missing directories", async () => {
+    for (const directory of ["D:\\tools", "\\\\server\\share\\tools"]) {
+      assert.equal((await resolveTerminalShell("win32", { PATH: directory }, async () => {})).file, `${directory}\\pwsh.exe`);
+    }
+    for (const root of ["", "relative", "\\tools", "/tools", "C:tools"]) {
+      await assert.rejects(resolveTerminalShell("win32", { ProgramFiles: root, SystemRoot: root }, async () => {
+        assert.fail(`Non-fully-qualified root must not be searched: ${root}`);
+      }), /Neither PowerShell/);
+    }
     assert.equal((await resolveTerminalShell("win32", env, async (file) => {
       if (String(file) !== standard) throw Object.assign(new Error("not a directory"), { code: "ENOTDIR" });
     })).file, standard);

@@ -301,6 +301,11 @@ export class TerminalService<TWindow extends TerminalOwner> {
   }
 }
 
+function isFullyQualifiedWindowsPath(directory: string): boolean {
+  // isAbsolute also accepts current-drive paths whose root is only a separator.
+  return path.win32.isAbsolute(directory) && path.win32.parse(directory).root.length > 1;
+}
+
 export async function resolveTerminalShell(
   platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
@@ -309,12 +314,12 @@ export async function resolveTerminalShell(
   if (platform === "win32") {
     const candidates = (env.PATH ?? env.Path ?? "").split(";")
       .map((directory) => directory.trim().replace(/^"(.*)"$/, "$1"))
-      .filter((directory) => path.win32.isAbsolute(directory))
+      .filter(isFullyQualifiedWindowsPath)
       .map((directory) => path.win32.join(directory, "pwsh.exe"));
-    if (env.ProgramFiles && path.win32.isAbsolute(env.ProgramFiles)) {
+    if (env.ProgramFiles && isFullyQualifiedWindowsPath(env.ProgramFiles)) {
       candidates.push(path.win32.join(env.ProgramFiles, "PowerShell", "7", "pwsh.exe"));
     }
-    if (env.SystemRoot && path.win32.isAbsolute(env.SystemRoot)) {
+    if (env.SystemRoot && isFullyQualifiedWindowsPath(env.SystemRoot)) {
       candidates.push(path.win32.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
     }
     for (const file of candidates) {
