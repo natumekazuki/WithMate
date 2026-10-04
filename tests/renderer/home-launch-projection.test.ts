@@ -257,13 +257,14 @@ describe("home-launch-projection", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "通常Sessionは標準のtitle/workspace開始条件を使う"
-  // oracle = { type = "contract", ref = "src/home/home-launch-projection.ts" }
-  // fault = "通常Sessionの開始可否を誤判定し、入力不足でも開始可能または入力済みでも開始不可にする"
+  // claim = "有効providerがあってもtitleが空かつworkspace未選択の通常Sessionは開始不可とする"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Session dialog / docs/manual-test-checklist.md MT-014" }
+  // fault = "titleが空かつworkspace未選択の入力を開始可能とする"
   // observable = "projected canStartSession, sessionFolderSelected, and selectedCharacter"
   // observation_boundary = "public-boundary"
   // scope = "home launch projection normal session"
   // lifecycle = "permanent"
+  // distinction = "このcaseは入力欠落時のprojectionを確認し、有効入力は同fileのpositive case、個々の不足条件とvalidation messageはhome-launch-state.test.tsが担う"
   // @end-test-value
   it("通常 Session は標準の開始条件を使う", () => {
     const projection = buildHomeLaunchProjection({
