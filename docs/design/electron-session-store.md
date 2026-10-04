@@ -28,6 +28,10 @@ Main の `CurrentExecutionSelections` は会話 owner ごとの小さい選択�
 
 タイトルと Bookmark は対象 metadata / message だけを更新し、会話全体の置換を行わない。metadata の条件付き更新結果も必要な項目だけを返す。
 
+Mainのtitle更新は、storage commandの成功をcommit境界とする。保存前の失敗はrejectし、commit後のcache更新・Window通知失敗は`SetSessionTitleResult`の`status: "committed"`と`projectionUpdated: false`で返す。storage ownerの失効も、成功したstorage commandの後では投影失敗として扱い、新しいownerのcacheへ書き込まない。Rendererは保存済みtitleを保持し、通知・投影失敗時は`getSessionSummary()`の正本からtitleだけを復旧する。通知失敗と復旧失敗は保存失敗と区別して表示し、保存の再送やSession全体のrollbackは行わない。応答と復旧readはSession ID、incarnation、最新のtitle保存requestが一致する場合だけ反映し、別会話や後続のtitle更新へ古い結果を適用しない。
+
+最新のtitle保存がrejectした場合も、先行保存の遅延応答を捨てたことでcommit済みtitleが表示から失われないよう、正本summaryからtitleだけを再照合する。編集入力と保存失敗の表示は保持し、再照合を新しい保存成功とは扱わない。
+
 ### SettingsCatalogService
 
 Header・Action Dock・Side Paneの復元設定は、Rendererへ即時適用し、Mainでも変更された項目の現在値を保持する。DB保存は任意checkpointとして別ラインで行い、同じアプリ内の設定再取得では現在値を重ねる。保存失敗は診断ログへ残すが、表示を巻き戻さない。Settings Windowの明示的なSaveの必須保存とは区別する。

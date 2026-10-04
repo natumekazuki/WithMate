@@ -11,6 +11,7 @@ import type {
   SetSessionExecutionOptionsRequest,
   SetSessionMessageBookmarkRequest,
   SetSessionTitleRequest,
+  SetSessionTitleResult,
 } from "../session/session-mutation-contract.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../memory/session-memory-state.js";
 import type { ChatLayoutPreferenceUpdate } from "../settings/chat-layout-preference.js";
@@ -218,7 +219,7 @@ export type WithMateWindowSessionApi = {
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
   setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
-  setSessionTitle(request: SetSessionTitleRequest): Promise<void>;
+  setSessionTitle(request: SetSessionTitleRequest): Promise<SetSessionTitleResult>;
   setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Promise<void>;
   setSessionPinned(request: SetSessionPinnedRequest): Promise<SessionSummary>;
   deleteSession(sessionId: string): Promise<void>;

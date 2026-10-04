@@ -7,7 +7,7 @@ import type { SessionTurnTerminalCommit } from "../session/session-turn-terminal
 import type { SessionRuntimeMetadataPatchInput, SessionThreadPatchInput } from "../session/session-storage-v6.js";
 import type { SessionRuntimeMetadataPatchResult, SessionThreadPatchResult } from "../session/session-storage-v6.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import type { SetExecutionOptionsResult } from "../../src-shared/session/session-mutation-contract.js";
+import type { SetExecutionOptionsResult, SetSessionTitleResult } from "../../src-shared/session/session-mutation-contract.js";
 
 type ReplaceAllSessionsOptions = {
   broadcast?: boolean;
@@ -60,8 +60,8 @@ export class MainSessionPersistenceFacade {
     return this.deps.getSessionPersistenceService().upsertSession(session);
   }
 
-  async setSessionTitle(sessionId: string, incarnationId: string, title: string): Promise<void> {
-    await this.deps.getSessionPersistenceService().setSessionTitle(sessionId, incarnationId, title);
+  async setSessionTitle(sessionId: string, incarnationId: string, title: string): Promise<SetSessionTitleResult> {
+    return this.deps.getSessionPersistenceService().setSessionTitle(sessionId, incarnationId, title);
   }
 
   async setSessionMessageBookmark(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): Promise<void> {

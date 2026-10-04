@@ -66,7 +66,6 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
       assertOwner("title update");
       if (!deps.storage.setSessionTitle) throw new Error("Session title storage is unavailable.");
       await deps.storage.setSessionTitle(sessionId, incarnationId, title);
-      assertOwner("title update");
     },
     setStoredSessionMessageBookmark: async (sessionId, incarnationId, messageIndex, isBookmarked) => {
       assertOwner("bookmark update");

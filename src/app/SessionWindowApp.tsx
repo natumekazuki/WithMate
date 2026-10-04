@@ -91,6 +91,7 @@ import { useSessionSummaryRead } from "../chat/runtime/use-session-summary-read.
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 import { useSessionHeaderOperations } from "../chat/shell/use-session-header-operations.js";
+import { updateMainSessionTitle } from "../chat/runtime/main-session-mutation-operations.js";
 import {
   buildComposerSendabilityState,
   resolveComposerSendabilityState,
@@ -670,10 +671,19 @@ export default function AgentSessionWindowApp() {
     selectedSession,
     isReadOnly: isSelectedSessionReadOnly || !loadedSession,
     runState: selectedSessionRunState,
-    updateTitle: async (session, title) => {
+    updateTitle: async (session, title, isCurrent) => {
       if (!withmateApi) return;
-      await withmateApi.setSessionTitle({ sessionId: session.id, incarnationId: getSessionIncarnationId(session), title });
-      updateSessionProjection(session.id, (current) => ({ ...current, taskTitle: title }));
+      return updateMainSessionTitle({
+        api: withmateApi, session, title,
+        isCurrent: () => {
+          const current = getCurrentMainSession();
+          return isCurrent() && current?.id === session.id
+            && getSessionIncarnationId(current) === getSessionIncarnationId(session);
+        },
+        applyTitle: (taskTitle) => updateSessionProjection(session.id, (current) =>
+          isCurrent() && getSessionIncarnationId(current) === getSessionIncarnationId(session)
+            ? { ...current, taskTitle } : current),
+      });
     },
     closeWindow: () => window.close(),
   });

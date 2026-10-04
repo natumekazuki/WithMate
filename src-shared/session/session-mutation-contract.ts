@@ -16,6 +16,11 @@ export type SetSessionTitleRequest = {
   title: string;
 };
 
+export type SetSessionTitleResult = {
+  status: "committed";
+  projectionUpdated: boolean;
+};
+
 export type SetSessionMessageBookmarkRequest = {
   sessionId: string;
   incarnationId: string;

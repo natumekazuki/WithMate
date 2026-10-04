@@ -108,6 +108,7 @@ import type {
   SetSessionExecutionOptionsRequest,
   SetSessionMessageBookmarkRequest,
   SetSessionTitleRequest,
+  SetSessionTitleResult,
 } from "../../src-shared/session/session-mutation-contract.js";
 import type {
   ImageFilePickerPurpose,
@@ -367,7 +368,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
   createSession(input: CreateSessionRequest): Awaitable<Session>;
   updateSession(session: Session): Awaitable<Session>;
   setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
-  setSessionTitle(request: SetSessionTitleRequest): Awaitable<void>;
+  setSessionTitle(request: SetSessionTitleRequest): Awaitable<SetSessionTitleResult>;
   setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Awaitable<void>;
   setSessionPinned(request: SetSessionPinnedRequest): Awaitable<SessionSummary>;
   deleteSession(sessionId: string): Awaitable<void>;

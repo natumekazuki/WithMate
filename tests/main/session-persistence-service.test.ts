@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import path from "node:path";
+import os from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { buildNewSession, projectSessionSummary } from "../../src-shared/session/session-state.js";
@@ -12,6 +15,8 @@ import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/char
 import { SessionPersistenceService } from "../../src-electron/session/session-persistence-service.js";
 import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
+import { createSessionPersistenceAssembly } from "../../src-electron/session/session-persistence-assembly.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -79,6 +84,89 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("SessionPersistenceService", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "title更新は実DB保存失敗をrejectし、commit後cache/通知/owner失効を保存済み結果として返して履歴を保持する"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send; Issue #738 STORAGE-1" }
+  // fault = "commit後例外を保存失敗としてrejectする、保存失敗時にcacheを更新する、またはtitle復旧で履歴を上書きする"
+  // observable = "serviceのcommit結果/拒否、V6 DB再読込titleとmessages、cache title、通知対象"
+  // observation_boundary = "public-boundary"
+  // scope = "main-title-commit-boundary"
+  // lifecycle = "permanent"
+  // impact = "保存済みtitleが失敗として見え、再送や古いSessionへのrollbackで確定状態が失われる"
+  // distinction = "SQL個別更新testと異なり、実DB保存からserviceのcache/通知例外と呼出側結果までを結合して確認する"
+  // @end-test-value
+  it("title保存とcommit後投影失敗を実DBで区別する", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-title-commit-"));
+    try {
+      for (const fault of ["none", "storage", "cache", "broadcast", "owner"] as const) {
+        const dbPath = path.join(directory, `${fault}.db`);
+        const storage = new SessionStorageV6(dbPath);
+        try {
+          const session = storage.insertSession(createSession({
+            id: `title-${fault}`, taskTitle: "Before",
+            messages: [{ role: "user", text: "keep history" }],
+          }));
+          if (fault === "storage") {
+            const db = new DatabaseSync(dbPath);
+            try {
+              db.exec("CREATE TRIGGER reject_title BEFORE UPDATE OF title ON sessions_v6 BEGIN SELECT RAISE(ABORT, 'title write rejected'); END;");
+            } finally { db.close(); }
+          }
+          let cached = [session];
+          let ownerActive = true;
+          const broadcasts: string[][] = [];
+          const service = createSessionPersistenceAssembly({
+            owner: { assertActive: () => { if (!ownerActive) throw new Error("storage owner expired"); } },
+            storage: {
+              setSessionTitle: (id: string, owner: string, title: string) => {
+                storage.setSessionTitle(id, owner, title);
+                if (fault === "owner") ownerActive = false;
+              },
+            } as never,
+            pinStorage: {} as never,
+            cache: {
+              getSessions: () => cached,
+              setSessions: (next) => {
+                if (fault === "cache") throw new Error("cache unavailable");
+                cached = next;
+              },
+              getSession: (id) => cached.find((item) => item.id === id) ?? null,
+            },
+            runtime: { isSessionRunInFlight: () => false },
+            auxiliary: { listAuxiliarySessionRuntimeIdentities: () => [] },
+            settings: { getAppSettings: () => normalizeAppSettings({}), getModelCatalogSnapshot: createSnapshot },
+            character: { createCharacterRuntimeSnapshot: () => null },
+            effects: {
+              syncSessionDependencies: () => undefined,
+              clearSessionContextTelemetry: () => undefined,
+              clearSessionBackgroundActivities: () => undefined,
+              invalidateProviderSessionThread: () => undefined,
+              revokeSessionAgentRuntimeBindings: () => undefined,
+              closeSessionWindow: () => undefined,
+              discardSessionWindow: () => undefined,
+              runCharacterAffectTurnOwnershipExclusive: async (operation) => operation(),
+              broadcastSessions: (ids) => {
+                broadcasts.push(Array.from(ids ?? []));
+                if (fault === "broadcast") throw new Error("window send failed");
+              },
+            },
+          });
+          const pending = service.setSessionTitle(session.id, session.incarnationId!, "After");
+          if (fault === "storage") {
+            await assert.rejects(pending, /title write rejected/);
+          } else {
+            assert.deepEqual(await pending, { status: "committed", projectionUpdated: fault === "none" });
+          }
+          assert.equal(storage.getSessionSummary(session.id)?.taskTitle, fault === "storage" ? "Before" : "After");
+          assert.deepEqual(storage.getSession(session.id)?.messages.map((message) => message.text), ["keep history"]);
+          assert.equal(cached[0]?.taskTitle, fault === "storage" || fault === "cache" || fault === "owner" ? "Before" : "After");
+          assert.deepEqual(broadcasts, fault === "storage" || fault === "owner" ? [] : [[session.id]]);
+        } finally { storage.close(); }
+      }
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
   // @test-value v2
   // kind = "invariant"
   // claim = "titleとbookmarkのservice更新は履歴を全体保存せず、running/開始中のtitle変更を拒否してcacheへ反映する"
