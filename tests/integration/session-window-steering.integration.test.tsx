@@ -10,9 +10,9 @@ import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Codexの受付可能な現在turnだけにMain/Auxiliary composerから追加入力し、重複送信を防ぎ、受付確認したrevisionだけを消す。Auxiliary拒否後はconsume/restore後のdurable revisionで明示再送でき、対象切替ではdraftを保持する。nonblocking質問では生成を継続表示する"
+// claim = "Codexの受付可能な現在turnだけにMain/Auxiliary composerから追加入力し、重複送信を防ぎ、受付確認したrevisionだけを消す。AuxiliaryのACK待ち中に編集したdraftは成功/拒否後のdurable revisionへ保存され、拒否後に明示再送できる。対象切替ではdraftを保持し、nonblocking質問では生成を継続表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 実行中のSend Inputとdraft revision" }
-// fault = "追加入力を新turnへ振り替える、二重送信する、拒否や編集後のdraftを消す、対象切替後の古い送信を開始する、Auxiliaryの失敗後に古いdurable revisionで再送する、またはnonblocking質問を承認待ちと表示する"
+// fault = "追加入力を新turnへ振り替える、二重送信する、拒否や編集後のdraftを消す、対象切替後の古い送信を開始する、AuxiliaryのACK前の編集を古いdurable revisionで保存してCAS staleにする、失敗後に古いdurable revisionで再送する、またはnonblocking質問を承認待ちと表示する"
 // observable = "実SessionWindowのSend Input/Cancel、textarea、pending status、preload steer/run呼出とrequest、CAS付きdraft record"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp mid-turn composer input"
@@ -161,6 +161,26 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     assert.equal(calls.at(-1)!.request.auxiliaryDraftDurableRevision, rejectedDraftRevision + 2);
     await act(async () => { accept(); });
     assert.equal(textarea().value, "");
+    await draft("auxiliary next input");
+    await act(async () => { button("Send Input").click(); });
+    const acceptedInputRevision = calls.at(-1)!.request.auxiliaryDraftDurableRevision!;
+    await draft("draft edited during accepted input");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
+    assert.equal(records.get(auxiliaryId)!.text, "", "new edits must wait for the consumed draft revision");
+    await act(async () => { accept(); });
+    assert.equal(textarea().value, "draft edited during accepted input");
+    assert.equal(records.get(auxiliaryId)!.text, textarea().value);
+    assert.equal(records.get(auxiliaryId)!.durableRevision, acceptedInputRevision + 2);
+    assert.equal(button("Send Input").disabled, false);
+    await act(async () => { button("Send Input").click(); });
+    const failedInputRevision = calls.at(-1)!.request.auxiliaryDraftDurableRevision!;
+    await draft("draft edited during rejected input");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
+    await act(async () => { reject(new Error("input rejected after editing")); });
+    assert.equal(textarea().value, "draft edited during rejected input");
+    assert.equal(records.get(auxiliaryId)!.text, textarea().value);
+    assert.equal(records.get(auxiliaryId)!.durableRevision, failedInputRevision + 3);
+    assert.equal(button("Send Input").disabled, false);
     await draft("preserved after switch");
     const preview = api.previewComposerInput;
     let releasePreview!: () => void;

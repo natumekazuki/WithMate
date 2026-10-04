@@ -231,6 +231,46 @@ it("native通知のthreadとturn scopeを保持する", () => {
 });
 // @test-value v2
 // kind = "invariant"
+// claim = "retry error後の同scope有効item activityでlive diagnosticを解除し別scopeや未知deltaでは解除せずterminal failureを保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "復帰したassistant生成中も古い再接続errorをlive alertへ出す、または別scope activityでerrorを隠す"
+// observable = "terminal前のassistantText streamErrorMessage turnCompletedとfailed terminal後のerror"
+// observation_boundary = "component-behavior"
+// scope = "codex-native-projection"
+// lifecycle = "permanent"
+// impact = "回答生成が正常再開した現在状態を失敗と誤表示する"
+// distinction = "確定結果と型検査では途中のdiagnostic解除とscope guardを検出できない"
+// @end-test-value
+it("同scopeのitem再開だけでretry diagnosticを解除しterminal failureを保持する", () => {
+  for (const method of ["item/started", "item/completed", "item/agentMessage/delta"]) {
+    const state = createCodexTurnStreamState("thread-1");
+    state.turnId = "turn-1";
+    applyCodexTurnEvent(state, notification("item/started", { item: message("answer", "") }));
+    applyCodexTurnEvent(state, notification("error", { error: { message: "Reconnecting transient failure" }, willRetry: true }));
+    const recovery = method === "item/agentMessage/delta"
+      ? { itemId: "answer", delta: "Recovered response" }
+      : { item: message("answer", "Recovered response") };
+    for (const foreignScope of [{ threadId: "other" }, { turnId: "other" }]) {
+      applyCodexTurnEvent(state, notification(method, { ...recovery, ...foreignScope }));
+      assert.equal(state.streamErrorMessage, "Reconnecting transient failure");
+      assert.equal(getLiveCodexAssistantText(state), "");
+    }
+    applyCodexTurnEvent(state, notification("item/agentMessage/delta", { itemId: "missing", delta: "not accepted" }));
+    assert.equal(state.streamErrorMessage, "Reconnecting transient failure");
+    applyCodexTurnEvent(state, notification(method, recovery));
+    assert.deepEqual({ assistantText: getLiveCodexAssistantText(state), errorMessage: state.streamErrorMessage, terminal: state.turnCompleted }, {
+      assistantText: "Recovered response", errorMessage: "", terminal: false,
+    });
+    applyCodexTurnEvent(state, completed([], "failed"));
+    assert.equal(state.streamErrorMessage, "provider failed");
+    assert.equal(state.terminalStatus, "failed");
+    assert.equal(state.turnCompleted, true);
+    applyCodexTurnEvent(state, notification(method, recovery));
+    assert.equal(state.streamErrorMessage, "provider failed");
+  }
+});
+// @test-value v2
+// kind = "invariant"
 // claim = "保存threadIdを明示resumeし失敗時も新規threadへ切替せず固定実行設定をnative requestへ送る"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "保存sessionを新規threadへ置換しsandbox rootsを落とす"

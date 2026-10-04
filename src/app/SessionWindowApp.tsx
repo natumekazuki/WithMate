@@ -1203,7 +1203,7 @@ export default function AgentSessionWindowApp() {
           ...(durable ? { auxiliaryDraftIncarnation: durable.incarnation, auxiliaryDraftDurableRevision: durable.durableRevision } : {}),
         };
         const result = owner.kind === "auxiliary"
-          ? await withmateApi.steerAuxiliarySessionTurn(owner.id, request)
+          ? await draftOwner!.withDraftConsumption(() => withmateApi.steerAuxiliarySessionTurn(owner.id, request))
           : await withmateApi.steerSessionTurn(owner.id, request);
         if (result.turnId !== turnId) throw new Error("Input acceptance could not be confirmed.");
         composerRegistry.clearIfRevision(owner, captured.revision);

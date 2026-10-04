@@ -228,6 +228,7 @@ function acceptItem(state: CodexTurnStreamState, value: unknown): void {
     .map((candidate) => [...candidate.summary, ...candidate.content].join("\n"))
     .filter(Boolean)
     .join("\n\n");
+  if (!state.turnCompleted) state.streamErrorMessage = "";
 }
 export function applyCodexTurnEvent(
   state: CodexTurnStreamState,
@@ -260,8 +261,10 @@ export function applyCodexTurnEvent(
       if (typeof params.itemId !== "string" || typeof params.delta !== "string")
         break;
       const item = state.items.get(params.itemId);
-      if (item?.type === "agentMessage")
+      if (item?.type === "agentMessage") {
         state.items.set(item.id, { ...item, text: item.text + params.delta });
+        if (!state.turnCompleted) state.streamErrorMessage = "";
+      }
       break;
     }
     case "item/commandExecution/outputDelta": {

@@ -24,6 +24,7 @@ export class AuxiliaryDraftPersistenceOwner {
   private operation: Promise<void> | null = null;
   private releaseDebounce: (() => void) | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private consumption: Promise<void> | null = null;
 
   constructor(options: AuxiliaryDraftPersistenceOwnerOptions) {
     this.options = options;
@@ -70,6 +71,22 @@ export class AuxiliaryDraftPersistenceOwner {
     return this.durableRecord;
   }
 
+  async withDraftConsumption<T>(consume: () => Promise<T>): Promise<T> {
+    if (this.consumption || this.hasPending) throw new Error("Auxiliary draft is still being saved.");
+    let release!: () => void;
+    this.consumption = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      return await consume();
+    } finally {
+      // Consumption and failure restoration advance the durable revision.
+      // Keep edits queued until that revision is available to their normal CAS.
+      this.record = null;
+      try { this.record = await this.options.load(); } catch { /* The queued save or next load reports persistence failure. */ }
+      this.consumption = null;
+      release();
+    }
+  }
+
   private async run(): Promise<void> {
     try {
       await new Promise<void>((resolve) => {
@@ -83,6 +100,7 @@ export class AuxiliaryDraftPersistenceOwner {
         this.debounceTimer = setTimeout(release, this.debounceMs);
       });
       while (this.pendingDirty) {
+        if (this.consumption) await this.consumption;
         const text = this.pending;
         const recovery = this.pendingRecovery;
         if (text === null) throw new Error("Auxiliary draft pending value is unavailable.");

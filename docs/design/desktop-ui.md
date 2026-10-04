@@ -392,7 +392,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - right pane 自体の描画失敗は pane 専用 fallback に切り替え、`Retry Right Pane` と `Reload Window` を出す
 - right pane は run 中の command 安全確認面として扱い、full timeline や `Turn Inspector` は常設しない
 - 実行中は上段に `Cancel` を表示する。Codexの現在turnが入力受付可能な場合だけ下段の同じ位置を `Send Input` とし、既存composerと送信shortcutから現在turnへ追加入力する。それ以外はdisabledの `Send` を残す。開始準備中・取消中・終了後の追加入力を新しいturnへ振り替えない。追加入力は既存の添付解決を通し、実行設定を変更しない
-- 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は既存のElicitation formで回答し、secret textはpassword inputで扱う。nonblockingの質問は `Input Requested` とし、必須待ちと区別して応答生成中のstatusを維持する
+- 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は既存のElicitation formで回答し、secret textはpassword inputで扱う。nonblockingの質問は `Input Requested` とし、必須待ちと区別して応答生成中のstatusを維持する
 - Mainの取消受付後は同じ位置をdisabledの`Canceling`とbusy stateにする。取消猶予後に保存済みSessionがidleになっても、Mainのlive取消状態が残る間はSend・送信shortcut・再送導線を有効にしない。元処理と必要な終了処理の解放通知後に通常の送信可能判定へ戻す。
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする

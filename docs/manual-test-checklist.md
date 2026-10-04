@@ -2,7 +2,7 @@
 
 ## Codex の実行中入力
 
-Main／AuxiliaryそれぞれでCodexの実行中にcomposerの `Send Input` と送信shortcutから追加入力し、現在turnの会話へ一度だけ保存されることを確認する。`Cancel`は維持し、開始準備中・取消中・終了raceでは新しいturnを開始せずdraftを保持する。追加入力受付待ち中の連打、draft編集、対象切替、添付pathの解決失敗も確認する。Claude／Copilotの実行中は従来のdisabled `Send`を維持する。Codexの入力質問はpending内の既存formで選択肢・自由記述を回答でき、secret欄はpassword input、取消・失効後の回答は次のrequestへ持ち越さない。実Provider／Electron GUIを未実施の場合は未確認として記録する。
+Main／AuxiliaryそれぞれでCodexの実行中にcomposerの `Send Input` と送信shortcutから追加入力し、現在turnの会話へ一度だけ保存されることを確認する。`Cancel`は維持し、開始準備中・取消中・終了raceでは新しいturnを開始せずdraftを保持する。追加入力受付待ち中の連打、draft編集、対象切替、添付pathの解決失敗も確認する。AuxiliaryのACK待機中に編集してdebounce時間を越えて待ち、成功・拒否のどちらでも後続本文が保存され、保存エラーやRetryなしにSend Inputを再度使えることを確認する。同一turnで通信エラー後にitem activityが再開したら古い診断が消え、回答本文が生成を続けることも確認する。Claude／Copilotの実行中は従来のdisabled `Send`を維持する。Codexの入力質問はpending内の既存formで選択肢・自由記述を回答でき、secret欄はpassword input、取消・失効後の回答は次のrequestへ持ち越さない。実Provider／Electron GUIを未実施の場合は未確認として記録する。
 
 ## Auxiliary Session の独立性と切り替え
 

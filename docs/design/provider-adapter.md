@@ -267,6 +267,7 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
   - stream 中の error
   - 必要なら pending approval request
 - Codex native itemsに`agentMessage`が複数ある場合、Session UIに表示するassistant textはarrival順に空行区切りで連結する
+- Codexの一時的なstream errorは同一thread / turnの有効なitem activityで解除する。別scopeや未知itemへのdeltaでは解除せず、terminal後は確定した失敗理由を保持する
 - Raw Itemsとoperationsは各`agentMessage`を個別に保持し、監査では元の粒度を失わない
 - live state は Main Process の memory 上だけに持ち、session DB へは保存しない
 - Session Window を開き直した場合は、Main Process が保持している live state を再購読して復元する
