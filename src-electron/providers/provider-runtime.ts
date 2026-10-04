@@ -36,6 +36,8 @@ export type RunSessionTurnInput = {
   characterContext?: CharacterContextResponse;
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
   signal?: AbortSignal;
+  /** Resolves only after owned process cleanup is confirmed, independently of turn outcome. */
+  onCleanupPending?: (completion: Promise<void>) => void;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;
   onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;

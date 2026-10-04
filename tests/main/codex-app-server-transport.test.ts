@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ChildProcess, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { PassThrough, Writable } from "node:stream";
-import { CodexAppServerTransport, CodexAppServerRpcError } from "../../src-electron/providers/codex/app-server-transport.js";
+import { CodexAppServerTransport, CodexAppServerRpcError, type CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
 import { spawnOwnedCodexProcess } from "../../src-electron/providers/codex/owned-process.js";
 
 const fixture = `
@@ -242,72 +242,121 @@ function cleanupFaultTransport(fault: "terminate" | "exit" | "release") {
       },
     }),
   });
-  return { sut, calls, streams: [stdin, stdout, stderr] };
+  return { sut, calls, child, stdout, streams: [stdin, stdout, stderr] };
 }
 
 // @test-value v2
 // kind = "invariant"
-// claim = "terminate失敗後も所有resourceのreleaseと全stream解放を試し失敗を呼出元へ返す"
+// claim = "受信済み通知を到着順に取り出してから後続EOFまたはexitを失敗として通知し、待機RPCは即失敗する"
+// oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md#現在の適用範囲" }
+// fault = "切断時に受信済みitemやnative completedを破棄する、またはterminalなしEOFを成功として扱う"
+// observable = "待機RPCのreject、item/completed通知の順序、queue消費後のnextEventのreject"
+// observation_boundary = "public-boundary"
+// scope = "Codex stdio received-event and disconnect ordering"
+// lifecycle = "permanent"
+// impact = "providerが既に完了したturnを失敗へ変更し最終itemを失う"
+// distinction = "既存切断testは通知の消費待ちとの競合を作らない;in-memory streamでEOFとexitを決定論的に再現する"
+// @end-test-value
+test("received events drain in order before EOF or exit rejects event consumers", async () => {
+  for (const disconnect of ["eof", "exit"]) {
+    for (const completed of [false, true]) {
+      const { sut, child, stdout } = cleanupFaultTransport("exit");
+      await sut.start();
+      const pending = assert.rejects(sut.request("never"), /stdout disconnected|process exited/);
+      const events: CodexProtocolEvent[] = [{ kind: "notification", method: "item/completed", params: { item: { id: "final-item" } } }];
+      if (completed) events.push({ kind: "notification", method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } });
+      for (const event of events) stdout.write(`${JSON.stringify({ method: event.method, params: event.params })}\n`);
+      if (disconnect === "eof") stdout.end();
+      else child.emit("exit", 0, null);
+      await pending;
+      child.emit("close", 0, null);
+      for (const event of events) assert.deepEqual(await sut.nextEvent(), event);
+      await assert.rejects(sut.nextEvent(), /stdout disconnected|process exited/);
+      await sut.close();
+      await sut.whenClosed();
+    }
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "terminate失敗後もreleaseとstream解放を試しcloseは失敗を返しwhenClosedは終了確認を成功としない"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
-// fault = "terminate例外でcleanupを中断してJob handleまたはstdio streamを残す"
-// observable = "closeのAggregateError、release呼出回数、各streamのdestroyedとfailed状態"
+// fault = "terminate例外でcleanupを中断してresourceを残す、またはterminate失敗中にwhenClosedを成功解決する"
+// observable = "closeのAggregateError、release呼出回数、各streamのdestroyedとfailed状態、whenClosedの未解決"
 // observation_boundary = "public-boundary"
 // scope = "Codex transport OS cleanup failure"
 // lifecycle = "permanent"
-// impact = "OS終了API失敗時に子孫とJob handleがapp終了まで残り得る"
+// impact = "OS終了API失敗時にresourceが残留する、または未終了processと次turnが競合する"
 // distinction = "成功系の実OS testでは終了API例外後のresource解放を確認できない;小さい所有境界fixtureで検出"
 // @end-test-value
 test("terminate failure still releases ownership and streams while reporting failure", async () => {
   const { sut, calls, streams } = cleanupFaultTransport("terminate");
   await sut.start();
+  let confirmedClosed = false;
+  void sut.whenClosed().then(() => { confirmedClosed = true; });
   await assert.rejects(sut.close(), error => error instanceof AggregateError && error.errors.some((cause: Error) => cause.message === "Injected terminate failure"));
   assert.deepEqual(calls, { terminate: 1, release: 1 });
   assert.ok(streams.every(stream => stream.destroyed));
   assert.equal(sut.state, "failed");
   await assert.rejects(sut.close(), /cleanup failed/);
   assert.deepEqual(calls, { terminate: 1, release: 1 });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(confirmedClosed, false);
 });
 
 // @test-value v2
 // kind = "invariant"
-// claim = "exit待ちtimeoutでもreleaseと全stream解放を済ませ有界に失敗を返す"
+// claim = "exit待ちtimeoutは有界に失敗を返しwhenClosedは遅延closeによる所有process終了確認後にだけ解決する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
-// fault = "child closeが来ない場合にJob handleまたはstdio streamを残す"
-// observable = "closeのtimeoutを含むAggregateError、release回数、stream destroyedとfailed状態"
+// fault = "child closeが来ない場合にresourceを残す、またはclose確認前にwhenClosedを解決し遅延closeでも未解決にする"
+// observable = "closeのtimeoutを含むAggregateError、release回数、stream destroyedとfailed状態、遅延close前後のwhenClosed解決"
 // observation_boundary = "public-boundary"
 // scope = "Codex transport missing process-close notification"
 // lifecycle = "permanent"
-// impact = "終了待ち失敗で所有resourceが残りcleanupが収束しない"
+// impact = "終了待ち失敗でresourceが残る、次turnが未終了processと競合する、または終了後も再送を拒否する"
 // distinction = "実OS成功系はprocess-close通知欠落を発生させない;10ms deadlineの小さいfixtureを使用"
 // @end-test-value
 test("exit timeout releases ownership and streams and remains a cleanup failure", async () => {
-  const { sut, calls, streams } = cleanupFaultTransport("exit");
+  const { sut, calls, child, streams } = cleanupFaultTransport("exit");
   await sut.start();
+  let confirmedClosed = false;
+  void sut.whenClosed().then(() => { confirmedClosed = true; });
   await assert.rejects(sut.close(), error => error instanceof AggregateError && error.errors.some((cause: Error) => /timed out/.test(cause.message)));
   assert.deepEqual(calls, { terminate: 1, release: 1 });
   assert.ok(streams.every(stream => stream.destroyed));
   assert.equal(sut.state, "failed");
+  assert.equal(confirmedClosed, false);
+  child.emit("close", 0, null);
+  await sut.whenClosed();
+  assert.equal(confirmedClosed, true);
+  await assert.rejects(sut.close(), /cleanup failed/);
 });
 
 // @test-value v2
 // kind = "invariant"
-// claim = "release失敗は初回closeへ通知し保持した所有handleを明示再closeで解放できる"
+// claim = "release失敗を通知してwhenClosedを未解決にし保持したhandleの明示再close成功後に終了を確認できる"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
-// fault = "reject済みclosePromiseを固定して未解放のJob handleを再試行できない"
-// observable = "初回closeのrelease failure、全stream destroyed、再closeのrelease回数とclosed状態"
+// fault = "未解放handleの再closeを拒否する、またはrelease失敗中にwhenClosedを解決し再close成功を通知しない"
+// observable = "初回closeのrelease failure、全stream destroyed、再closeのrelease回数とclosed状態、whenClosedの解決"
 // observation_boundary = "public-boundary"
 // scope = "Codex transport retained ownership release"
 // lifecycle = "permanent"
-// impact = "一時的なCloseHandle失敗後に所有resourceが永久に残る"
+// impact = "一時的なCloseHandle失敗後にresourceが残る、または未解放processと次turnが競合し終了後も再送不能になる"
 // distinction = "terminate/timeout fixtureとは異なるnative handleの保持・明示再解放を確認する"
 // @end-test-value
 test("release failure is reported and an explicitly repeated close releases the retained owner", async () => {
   const { sut, calls, streams } = cleanupFaultTransport("release");
   await sut.start();
+  let confirmedClosed = false;
+  void sut.whenClosed().then(() => { confirmedClosed = true; });
   await assert.rejects(sut.close(), error => error instanceof AggregateError && error.errors.length === 1 && error.errors[0].message === "Injected release failure");
   assert.ok(streams.every(stream => stream.destroyed));
   assert.equal(sut.state, "failed");
+  assert.equal(confirmedClosed, false);
   await sut.close();
+  await sut.whenClosed();
   assert.deepEqual(calls, { terminate: 2, release: 2 });
   assert.equal(sut.state, "closed");
+  assert.equal(confirmedClosed, true);
 });

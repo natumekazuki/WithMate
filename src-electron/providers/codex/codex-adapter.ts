@@ -83,6 +83,8 @@ import {
   resolvePackagedProviderBinaryPath,
 } from "../provider-binary-paths.js";
 import {
+  boundAuditRawItem,
+  type BoundedAuditRawItem,
   stringifyBoundedAuditRawItems,
   toAuditTextPreview,
 } from "../../session/audit-payload-limits.js";
@@ -173,7 +175,7 @@ type CodexAdapterLogInput = {
 type CodexAdapterLogger = (input: CodexAdapterLogInput) => void;
 type CodexTransport = Pick<
   CodexAppServerTransport,
-  "start" | "request" | "nextEvent" | "close"
+  "start" | "request" | "nextEvent" | "close" | "whenClosed"
 >;
 export type CodexAdapterOptions = {
   appVersion?: string;
@@ -368,7 +370,20 @@ type ActiveCodexTurn = {
   turnId: string;
   inputAvailable: boolean;
   pendingInputs: Set<Promise<{ turnId: string }>>;
+  diagnostics: CodexTurnDiagnostics;
+  redactor: ProviderAgentRuntimeBindingRedactor;
 };
+type CodexTurnDiagnostics = {
+  rawItems: BoundedAuditRawItem[];
+  cleanupError?: string;
+};
+function appendDiagnostic(diagnostics: CodexTurnDiagnostics, item: BoundedAuditRawItem): void {
+  diagnostics.rawItems = JSON.parse(stringifyBoundedAuditRawItems([...diagnostics.rawItems, item])) as BoundedAuditRawItem[];
+}
+function workspaceKey(workspacePath: string): string {
+  const resolved = path.resolve(workspacePath);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
 function buildFallbackDiffRows(
   beforeLines: string[],
   afterLines: string[],
@@ -785,6 +800,7 @@ async function buildArtifact(
 
 export class CodexAdapter implements ProviderTurnAdapter {
   private readonly activeTurns = new Map<string, ActiveCodexTurn>();
+  private readonly pendingCleanups = new Map<CodexTransport, { sessionId?: string; workspace: string; threadId: string | null }>();
   private readonly workspaceSnapshotIndexes = new Map<
     string,
     WorkspaceSnapshotIndex
@@ -816,17 +832,27 @@ export class CodexAdapter implements ProviderTurnAdapter {
       this.activeTurns.delete(sessionId);
       await active.transport.close();
     }
+    await Promise.all([...this.pendingCleanups].filter(([, cleanup]) => cleanup.sessionId === sessionId).map(([transport]) => transport.close()));
   }
   async invalidateAllSessionThreads(): Promise<void> {
     const active = [...this.activeTurns.values()];
     this.activeTurns.clear();
     this.workspaceSnapshotIndexes.clear();
-    await Promise.all(
-      active.map((turn) => {
+    await Promise.all([
+      ...active.map((turn) => {
         turn.inputAvailable = false;
         return turn.transport.close();
       }),
-    );
+      ...[...this.pendingCleanups.keys()].map((transport) => transport.close()),
+    ]);
+  }
+  private assertCleanupComplete(workspacePath: string, sessionId?: string, threadId?: string | null): void {
+    const workspace = workspaceKey(workspacePath);
+    if ([...this.pendingCleanups.values()].some((cleanup) => cleanup.workspace === workspace
+      || (sessionId !== undefined && cleanup.sessionId === sessionId)
+      || (threadId && cleanup.threadId === threadId))) {
+      throw new Error("Codex process cleanup is still pending; execution cannot restart yet");
+    }
   }
   private createTransport(
     providerId: string,
@@ -880,17 +906,20 @@ export class CodexAdapter implements ProviderTurnAdapter {
       .filter((attachment) => attachment.kind !== "image")
       .map((attachment) => attachment.absolutePath)
       .join("\n");
+    const steerInput = userInput(
+      [input.userMessage, attachmentText].filter(Boolean).join("\n\n"),
+      input.attachments.filter((attachment) => attachment.kind === "image").map((attachment) => attachment.absolutePath),
+    );
+    const acceptedInput = boundAuditRawItem(active.redactor.sanitize({
+      type: "withmate.accepted_steer",
+      data: { threadId: active.threadId, turnId: active.turnId, input: steerInput },
+    }));
     const request = active.transport.request<{ turnId: string }>(
       "turn/steer",
       {
         threadId: active.threadId,
         expectedTurnId: input.expectedTurnId,
-        input: userInput(
-          [input.userMessage, attachmentText].filter(Boolean).join("\n\n"),
-          input.attachments
-            .filter((attachment) => attachment.kind === "image")
-            .map((attachment) => attachment.absolutePath),
-        ),
+        input: steerInput,
       },
       { timeoutMs: 10_000 },
     );
@@ -899,6 +928,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       const response = await request;
       if (response.turnId !== input.expectedTurnId)
         throw new Error("Codex accepted input for an unexpected turn");
+      appendDiagnostic(active.diagnostics, acceptedInput);
       return { turnId: response.turnId };
     } finally {
       active.pendingInputs.delete(request);
@@ -908,6 +938,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     transport: CodexTransport;
     apiKey: string;
     state: CodexTurnStreamState;
+    diagnostics: CodexTurnDiagnostics;
     options: CodexThreadOptions;
     serviceTier: CodexServiceTier;
     reviewer: CodexApprovalsReviewer;
@@ -929,7 +960,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           redactor.sanitizeText,
           (error) => {
             interactionError = error;
-            void transport.close();
+            void transport.close().catch(() => undefined);
           },
         )
       : null;
@@ -968,7 +999,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       }
       interactions?.close();
       void progress().catch(() => undefined);
-      void transport.close();
+      void transport.close().catch(() => undefined);
     };
     signal?.addEventListener("abort", abort, { once: true });
     try {
@@ -1047,6 +1078,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
           turnId: state.turnId,
           inputAvailable: true,
           pendingInputs: new Set(),
+          diagnostics: args.diagnostics,
+          redactor,
         };
         this.activeTurns.set(sessionInput.session.id, active);
       }
@@ -1120,17 +1153,33 @@ export class CodexAdapter implements ProviderTurnAdapter {
       if (state.turnCompleted && active) {
         await Promise.allSettled([...active.pendingInputs]);
       }
-      await transport.close();
+      try {
+        await transport.close();
+      } catch (error) {
+        const message = toAuditTextPreview(redactor.sanitizeText(error instanceof Error ? error.message : String(error))) ?? "Codex process cleanup failed";
+        args.diagnostics.cleanupError = message;
+        appendDiagnostic(args.diagnostics, { type: "withmate.process_cleanup_failed", data: { message } });
+        this.writeLog({ level: "error", kind: "codex.run.cleanup-failed", message });
+        this.pendingCleanups.set(transport, { sessionId: sessionInput?.session.id, workspace: workspaceKey(options.workingDirectory), threadId: state.threadId });
+        const completion = transport.whenClosed().then(() => { this.pendingCleanups.delete(transport); });
+        try {
+          sessionInput?.onCleanupPending?.(completion);
+        } catch (callbackError) {
+          this.writeLog({ level: "error", kind: "codex.run.cleanup-tracking-failed", message: redactor.sanitizeText(String(callbackError)) });
+        }
+      }
     }
   }
   async runBackgroundStructuredPrompt<TOutput = unknown>(
     input: RunBackgroundStructuredPromptInput,
   ): Promise<RunBackgroundStructuredPromptResult<TOutput>> {
+    this.assertCleanupComplete(input.workspacePath);
     const signal = input.signal
       ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs)])
       : AbortSignal.timeout(input.timeoutMs);
     const sandbox = resolveCodexSandboxThreadOptions("read-only");
     const state = createCodexTurnStreamState(null);
+    const diagnostics: CodexTurnDiagnostics = { rawItems: [] };
     const { transport, apiKey } = this.createTransport(
       input.providerId,
       input.appSettings,
@@ -1141,6 +1190,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       transport,
       apiKey,
       state,
+      diagnostics,
       options: {
         workingDirectory: input.workspacePath,
         sandboxMode: sandbox.sandboxMode,
@@ -1173,7 +1223,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       output: parsedJson as TOutput | null,
       parsedJson,
       rawItemsJson: stringifyBoundedAuditRawItems(
-        redactor.sanitize(buildStableRawItemsProjection([...state.items.values()])),
+        redactor.sanitize([...diagnostics.rawItems, ...buildStableRawItemsProjection([...state.items.values()])]),
       ),
       usage: state.usage,
       providerQuotaTelemetry: null,
@@ -1306,6 +1356,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     selection: ResolvedModelSelection,
     beforeSnapshot: WorkspaceSnapshot,
     beforeSnapshotStats: SnapshotCaptureStats,
+    diagnostics: CodexTurnDiagnostics,
   ): Promise<RunSessionTurnResult> {
     const redactor = createProviderAgentRuntimeBindingRedactor(
       input.agentRuntimeBinding,
@@ -1313,6 +1364,11 @@ export class CodexAdapter implements ProviderTurnAdapter {
     );
     const finalItems = Array.from(items.values());
     const providerMetadata = buildProviderMetadataProjection(finalItems);
+    if (diagnostics.cleanupError) providerMetadata.push({
+      provider: "codex", kind: "postprocess_degraded", source: "codex-adapter.process-cleanup",
+      summary: "Codex process cleanup failed; the native turn outcome is preserved",
+      payload: { message: diagnostics.cleanupError },
+    });
     for (const metadata of providerMetadata) {
       this.writeLog({
         level: "warn",
@@ -1400,7 +1456,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       transportPayload: buildCodexTransportPayload(prompt),
       operations: redactor.sanitize(toAuditOperationsProjection(finalItems)),
       rawItemsJson: stringifyBoundedAuditRawItems(
-        redactor.sanitize(buildStableRawItemsProjection(finalItems)),
+        redactor.sanitize([...diagnostics.rawItems, ...buildStableRawItemsProjection(finalItems)]),
       ),
       providerMetadata: redactor.sanitize(providerMetadata),
       usage,
@@ -1412,8 +1468,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
     input: RunSessionTurnInput,
     onProgress?: RunSessionTurnProgressHandler,
   ): Promise<RunSessionTurnResult> {
+    this.assertCleanupComplete(resolveRunWorkspacePath(input), input.session.id, input.session.threadId);
     const prompt = this.composePrompt(input);
     const state = createCodexTurnStreamState(input.session.threadId || null);
+    const diagnostics: CodexTurnDiagnostics = { rawItems: [] };
     const { options, selection } = buildCodexThreadSettings(
       input.session,
       input.providerCatalog,
@@ -1434,6 +1492,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         transport,
         apiKey,
         state,
+        diagnostics,
         options,
         serviceTier: mapCodexSpeedToServiceTier(
           input.executionOptions.codexSpeed,
@@ -1456,6 +1515,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
+        diagnostics,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1473,6 +1533,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
+        diagnostics,
       );
       throw new ProviderTurnError(
         createProviderAgentRuntimeBindingRedactor(

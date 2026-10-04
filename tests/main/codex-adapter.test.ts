@@ -168,7 +168,150 @@ class FakeTransport {
   }
   push(event: CodexProtocolEvent) { if (this.waiter) { const waiter = this.waiter; this.waiter = null; waiter(event); } else this.events.push(event); }
   async close() { this.closed = true; }
+  whenClosed(): Promise<void> { return Promise.resolve(); }
 }
+// @test-value v2
+// kind = "invariant"
+// claim = "cleanup失敗はnative completed/failed/interruptedの結果を変えず診断を残し実終了まで競合実行を拒否する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "close例外で確定outcomeを上書きするか終了未確認のprocessと再実行を重複させる"
+// observable = "run結果またはProviderTurnError、監査診断、cleanup完了前後のsession/workspace/thread再実行"
+// observation_boundary = "component-behavior"
+// scope = "codex-adapter terminal cleanup"
+// lifecycle = "permanent"
+// impact = "完了結果の喪失と同一workspaceでのprocess競合を防止する"
+// distinction = "transport単体ではnative結果とadapterの再実行入口の組合せを確認できない"
+// @end-test-value
+it("cleanup失敗をoutcomeから分離し実終了まで再実行を拒否する", async () => workspace(async (directory) => {
+  for (const status of ["completed", "failed", "interrupted"]) {
+    let release!: () => void;
+    const termination = new Promise<void>((resolve) => { release = resolve; });
+    class CleanupFailure extends FakeTransport {
+      override async close() { throw new Error("cleanup failure"); }
+      override whenClosed() { return termination; }
+    }
+    let first = true;
+    const transport = new CleanupFailure();
+    transport.events = [completed([message("answer", "retained")], status)];
+    const adapter = new CodexAdapter(undefined, { createTransport: () => {
+      if (first) { first = false; return transport; }
+      const next = new FakeTransport();
+      next.events = [completed([message("answer", "next")])];
+      return next;
+    } });
+    const input = createCodexRunSessionTurnInput(directory);
+    let cleanup: Promise<void> | undefined;
+    input.onCleanupPending = (completion) => { cleanup = completion; };
+    let rejected = false;
+    const result = await adapter.runSessionTurn(input).catch((error: unknown) => {
+      rejected = true;
+      assert.ok(error instanceof ProviderTurnError);
+      assert.notEqual(status, "completed");
+      assert.equal(error.canceled, status === "interrupted");
+      assert.equal(error.message, status === "failed" ? "provider failed" : "Codex turn interrupted");
+      return error.partialResult;
+    });
+    assert.equal(rejected, status !== "completed");
+    assert.equal(result.assistantText, "retained");
+    assert.ok(result.providerMetadata?.some((item) => item.source === "codex-adapter.process-cleanup"));
+    assert.match(result.rawItemsJson, /cleanup failure/);
+    assert.ok(cleanup);
+    await assert.rejects(adapter.runSessionTurn(input), /cleanup is still pending/);
+    const sameSession = createCodexRunSessionTurnInput(path.join(directory, "other"));
+    sameSession.session.id = input.session.id;
+    await assert.rejects(adapter.runSessionTurn(sameSession), /cleanup is still pending/);
+    const sameWorkspace = createCodexRunSessionTurnInput(directory);
+    sameWorkspace.session.id = "other-session";
+    await assert.rejects(adapter.runSessionTurn(sameWorkspace), /cleanup is still pending/);
+    const sameThread = createCodexRunSessionTurnInput(path.join(directory, "other"));
+    sameThread.session.id = "other-thread-session";
+    sameThread.session.threadId = "thread-1";
+    await assert.rejects(adapter.runSessionTurn(sameThread), /cleanup is still pending/);
+    await assert.rejects(adapter.runBackgroundStructuredPrompt(createCodexBackgroundPromptInput({ workspacePath: directory })), /cleanup is still pending/);
+    release();
+    await cleanup;
+    assert.equal((await adapter.runSessionTurn(input)).assistantText, "next");
+  }
+}));
+
+// @test-value v2
+// kind = "invariant"
+// claim = "backgroundのcompleted出力もcleanup失敗で失わず秘匿済み診断と実終了までのguardを残す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "背景構造化出力をclose例外で捨てるかAPI keyをcleanup監査へ漏らす"
+// observable = "background output、rawItemsJsonと再実行拒否"
+// observation_boundary = "component-behavior"
+// scope = "codex-adapter background cleanup"
+// lifecycle = "permanent"
+// impact = "成功した背景抽出の喪失と秘密情報の監査漏洩を防ぐ"
+// distinction = "Mainの結果構築を通らないbackground固有の返却経路を検査する"
+// @end-test-value
+it("background completedとcleanup診断を分離する", async () => {
+  class CleanupFailure extends FakeTransport {
+    override async close() { throw new Error("cleanup fake-cleanup-key"); }
+    override whenClosed() { return new Promise<void>(() => {}); }
+  }
+  const transport = new CleanupFailure();
+  transport.events = [completed([message("answer", '{"answer":"ok"}')])];
+  const input = createCodexBackgroundPromptInput();
+  input.appSettings.codingProviderSettings.codex.apiKey = "fake-cleanup-key";
+  const logs: unknown[] = [];
+  const adapter = new CodexAdapter((entry) => logs.push(entry), { createTransport: () => transport });
+  const result = await adapter.runBackgroundStructuredPrompt(input);
+  assert.deepEqual(result.output, { answer: "ok" });
+  assert.match(result.rawItemsJson, /process_cleanup_failed/);
+  assert.ok(!result.rawItemsJson.includes("fake-cleanup-key"));
+  assert.ok(!JSON.stringify(logs).includes("fake-cleanup-key"));
+  await assert.rejects(adapter.runBackgroundStructuredPrompt(input), /cleanup is still pending/);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "steer監査は一致ACKで受理した本文と添付のみを対応turnへ秘匿・上限付きで保存する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "追加入力を監査から落とす、拒否入力を受理扱いする、または秘密値と巨大本文を未制限で保存する"
+// observable = "実送信paramsと結果rawItemsJsonの本文・file/image・turn ID・秘匿・サイズ"
+// observation_boundary = "component-behavior"
+// scope = "codex-adapter steer audit"
+// lifecycle = "permanent"
+// impact = "turn中の指示変更を監査できず、秘密情報や過大なpayloadが保存されることを防ぐ"
+// distinction = "共有監査helperではACK確認とnative steer送信内容の関連付けを検査できない"
+// @end-test-value
+it("受理steerの本文と添付を秘匿してbounded監査へ残す", async () => workspace(async (directory) => {
+  const transport = new FakeTransport();
+  const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
+  const input = createCodexRunSessionTurnInput(directory);
+  input.appSettings.codingProviderSettings.codex.apiKey = "fake-steer-key";
+  let ready!: () => void;
+  const available = new Promise<void>((resolve) => { ready = resolve; });
+  const run = adapter.runSessionTurn(input, (state) => { if (state.inputAvailable) ready(); });
+  await available;
+  const attachments: RunSessionTurnInput["attachments"] = [
+    { id: "file", kind: "file", source: "text", displayPath: "note.txt", workspaceRelativePath: "note.txt", isOutsideWorkspace: false, absolutePath: path.join(directory, "note.txt") },
+    { id: "image", kind: "image", source: "markdown-image", displayPath: "image.png", workspaceRelativePath: "image.png", isOutsideWorkspace: false, absolutePath: path.join(directory, "image.png") },
+  ];
+  await adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "修正して fake-steer-key", attachments });
+  transport.steerResponse = Promise.resolve({ turnId: "wrong-turn" });
+  await assert.rejects(adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "unaccepted-marker", attachments: [] }), /unexpected turn/);
+  transport.steerResponse = null;
+  for (let index = 0; index < 10; index += 1) await adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "large " + "x".repeat(AUDIT_TEXT_PREVIEW_LIMIT * 2), attachments: [] });
+  transport.push(completed([message("answer", "done")]));
+  const result = await run;
+  const raw = JSON.parse(result.rawItemsJson) as Array<{ type: string; data: any }>;
+  const accepted = raw.find((item) => item.type === "withmate.accepted_steer")!;
+  assert.equal(accepted.data.turnId, "turn-1");
+  assert.equal(accepted.data.threadId, "thread-1");
+  assert.match(accepted.data.input[0].text, /修正して/);
+  assert.ok(accepted.data.input[0].text.includes(attachments[0].absolutePath));
+  assert.deepEqual(accepted.data.input[1], { type: "localImage", path: attachments[1].absolutePath });
+  assert.ok(!result.rawItemsJson.includes("fake-steer-key"));
+  assert.ok(!result.rawItemsJson.includes("unaccepted-marker"));
+  assert.match(result.rawItemsJson, /truncated/i);
+  assert.ok(result.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
+  const sent = transport.calls.find((call) => call.method === "turn/steer")!.params as any;
+  assert.ok(sent.input[0].text.includes("fake-steer-key"));
+  assert.equal(result.assistantText, "done");
+}));
 function notification(method: string, params: Record<string, unknown>): CodexProtocolEvent {
   if (method === "thread/tokenUsage/updated") {
     const usage = params.tokenUsage as Record<string, unknown>;
@@ -731,10 +874,10 @@ it("native token usageはthread baselineからturn差分を集計する", () => 
 
 // @test-value v2
 // kind = "invariant"
-// claim = "terminalより後に返るsteer成功ACKも受理済みとして成功にする"
+// claim = "terminalより後に返るsteer成功ACKも受理済みとして成功にし対応turnの監査へ残す"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "終端処理後の成功ACKを失敗へ置換し入力draftを復元させる"
-// observable = "terminal先行時のsteer promise結果"
+// observable = "terminal先行時のsteer promise結果とturn rawItemsJson"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
@@ -770,6 +913,9 @@ setInterval(() => {}, 1000);
   const steer = adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "追加", attachments: [] });
   const result = await Promise.all([run, steer]);
   assert.deepEqual(result[1], { turnId: "turn-1" });
+  assert.deepEqual(JSON.parse(result[0].rawItemsJson).find((item: any) => item.type === "withmate.accepted_steer")?.data, {
+    threadId: "thread-1", turnId: "turn-1", input: [{ type: "text", text: "追加", text_elements: [] }],
+  });
   assert.equal(transport.state, "closed");
 }));
 // @test-value v2

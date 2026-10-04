@@ -1362,6 +1362,7 @@ export class SessionRuntimeService {
         characterContext: characterContext ?? undefined,
         agentRuntimeBinding,
         signal: runAbortController.signal,
+        onCleanupPending: (completion) => this.trackTerminatingSessionRun(sessionId, completion),
         onApprovalRequest: (approvalRequest, requestSignal) => {
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
           const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, signal);

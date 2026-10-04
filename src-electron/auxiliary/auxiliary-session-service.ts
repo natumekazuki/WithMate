@@ -970,9 +970,7 @@ export class AuxiliarySessionService {
     if (!status || status.parentSessionId !== input.parentSessionId || status.incarnation !== input.incarnation) {
       return { outcome: "not-found" };
     }
-    const allowRunningInput = this.deps.canAcceptAuxiliaryInput?.(input.auxiliarySessionId) === true;
-    if (status.runState === "running" && !allowRunningInput) return { outcome: "rejected" };
-    return await storage.saveAuxiliaryDraft({ ...input, allowRunningInput });
+    return await storage.saveAuxiliaryDraft(input);
   }
 
   runAuxiliaryTurnWithDraft(input: {
@@ -1095,7 +1093,6 @@ export class AuxiliarySessionService {
         expectedDurableRevision: consumed.ack.durableRevision,
         text: captured.text,
         updatedAt: currentTimestampLabel(),
-        allowRunningInput,
       };
       try {
         const restored = await storage.saveAuxiliaryDraft(restore);

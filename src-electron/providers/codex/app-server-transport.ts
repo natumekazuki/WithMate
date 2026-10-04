@@ -39,6 +39,8 @@ export class CodexAppServerTransport {
   #startPromise?: Promise<unknown>;
   #closePromise?: Promise<void>;
   #exitPromise?: Promise<void>;
+  #resolveClosed!: () => void;
+  #closedPromise = new Promise<void>(resolve => { this.#resolveClosed = resolve; });
   #terminalError?: Error;
   #nextId = 1;
   #pending = new Map<number, Pending>();
@@ -107,6 +109,9 @@ export class CodexAppServerTransport {
         this.#owner = error.owner;
         this.#child = error.owner.child;
         this.#child?.on("error", () => {});
+        if (this.#child) {
+          this.#exitPromise = new Promise(resolve => { this.#child!.once("close", () => resolve()); });
+        }
       }
       const failure = asError(error);
       this.#fail(failure);
@@ -145,9 +150,9 @@ export class CodexAppServerTransport {
   }
 
   nextEvent(): Promise<CodexProtocolEvent> {
-    if (this.#terminalError) return Promise.reject(this.#terminalError);
     const queued = this.#events.shift();
     if (queued) { this.#eventBytes -= queued.bytes; return Promise.resolve(queued.event); }
+    if (this.#terminalError) return Promise.reject(this.#terminalError);
     if (this.#state !== "ready" && this.#state !== "starting") return Promise.reject(new Error("Codex transport is closed."));
     return new Promise((resolve, reject) => this.#waiters.push({ resolve: value => resolve(value as CodexProtocolEvent), reject, cleanup() {} }));
   }
@@ -264,8 +269,11 @@ export class CodexAppServerTransport {
     for (const pending of this.#pending.values()) { pending.cleanup(); pending.reject(error); }
     this.#pending.clear();
     for (const waiter of this.#waiters) waiter.reject(error);
-    this.#waiters = []; this.#events = []; this.#eventBytes = 0; this.#serverRequests.clear();
+    this.#waiters = []; this.#serverRequests.clear();
   }
+
+  // Unlike bounded close(), this settles only after owned-process cleanup is confirmed.
+  whenClosed(): Promise<void> { return this.#closedPromise; }
 
   close(): Promise<void> {
     if (this.#closePromise) return this.#closePromise;
@@ -291,6 +299,10 @@ export class CodexAppServerTransport {
     } catch (error) { failures.push(asError(error)); }
     for (const stream of [child?.stdin, child?.stdout, child?.stderr]) {
       try { stream?.destroy(); } catch (error) { failures.push(asError(error)); }
+    }
+    if (!failures.length) {
+      // A late child close may confirm cleanup after the bounded close attempt timed out.
+      void (this.#exitPromise ?? Promise.resolve()).then(() => this.#resolveClosed());
     }
     try {
       if (this.#exitPromise) await withTimeout(this.#exitPromise, this.#options.closeTimeoutMs ?? 5_000);

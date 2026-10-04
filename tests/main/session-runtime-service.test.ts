@@ -199,6 +199,84 @@ describe("SessionRuntimeService stale retry helpers", () => {
 describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "completed結果はcleanup待機で失敗へ変わらず、process実終了の通知までruntimeの再送と未確認quitを保護する"
+  // oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md#現在の適用範囲" }
+  // fault = "adapterのcleanup completionをMainへ接続せず、completed保存後にadmission guardとquit保護を解放する"
+  // observable = "返却SessionとAudit phase、isRunInFlight/hasInFlightRuns、live cancellationState、再送拒否、quit確認とDB close回数"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService adapter cleanup admission and quit boundary"
+  // lifecycle = "permanent"
+  // impact = "生存中のproviderと再送が競合し、未終了processを残したまま未確認終了する"
+  // distinction = "transportやadapter単体testはMain callback結線とcompleted保存後のruntime/AppLifecycle保護を通らない。単一の遅延completionで結線を維持する"
+  // @end-test-value
+  it("completed後もprovider cleanupの実終了まで再送とquitを保護する", async () => {
+    let stored = createSession();
+    let live: LiveSessionRunState | null = null;
+    let completeCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => { completeCleanup = resolve; });
+    let providerCalls = 0;
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    const adapter: ProviderCodingAdapter = {
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
+      getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
+      runSessionTurn: async (input) => {
+        providerCalls += 1;
+        if (providerCalls === 1) input.onCleanupPending?.(cleanup);
+        return createPartialResult({ assistantText: "completed response" });
+      },
+    };
+    const service = new SessionRuntimeService({
+      getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
+      resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
+      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      createAuditLog: createAuditLogBase, updateAuditLog: (_id, input) => { auditUpdates.push(input); },
+      setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+      waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
+      setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    });
+    let quitConfirmations = 0;
+    let storeCloses = 0;
+    let quits = 0;
+    const lifecycle = new AppLifecycleService({
+      hasInFlightSessionRuns: () => service.hasInFlightRuns(), getAllowQuitWithInFlightRuns: () => false,
+      setAllowQuitWithInFlightRuns() {}, async createHomeWindow() {}, shouldQuitWhenAllWindowsClosed: () => false,
+      confirmQuitWhileRunning: () => { quitConfirmations += 1; return false; },
+      closePersistentStores: () => { storeCloses += 1; }, quitApp: () => { quits += 1; },
+    });
+    try {
+      const result = await service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
+      assert.equal(result.runState, "idle");
+      assert.equal(result.messages.at(-1)?.text, "completed response");
+      await waitForCondition(() => auditUpdates.some((entry) => entry.phase === "completed"), "completed audit must persist while cleanup is pending");
+      assert.equal(auditUpdates.some((entry) => entry.phase === "failed"), false);
+      assert.equal(service.isRunInFlight(stored.id), true);
+      assert.equal(service.hasInFlightRuns(), true);
+      assert.equal((live as LiveSessionRunState | null)?.cancellationState, "terminating");
+      await assert.rejects(service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "too early" }), /already running/);
+      assert.equal(providerCalls, 1);
+      await lifecycle.handleBeforeQuit({ preventDefault() {} });
+      assert.equal(quitConfirmations, 1);
+      assert.equal(storeCloses, 0);
+      assert.equal(quits, 0);
+      completeCleanup();
+      await waitForCondition(() => !service.isRunInFlight(stored.id), "cleanup completion must release admission");
+      assert.equal(service.hasInFlightRuns(), false);
+      assert.equal((live as LiveSessionRunState | null)?.cancellationState, undefined);
+      const next = await service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "after cleanup" });
+      assert.equal(next.runState, "idle");
+      assert.equal(providerCalls, 2);
+      await lifecycle.handleBeforeQuit({ preventDefault() {} });
+      assert.equal(quitConfirmations, 1);
+      assert.equal(storeCloses, 1);
+      assert.equal(quits, 1);
+    } finally {
+      completeCleanup();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "Codexの追加入力は捕捉したactive turnだけへ一度送信され、確定user本文をterminal保存へ維持する"
   // oracle = { type = "contract", ref = "Issue #780 explicit same-turn input" }
   // fault = "追加入力を新turnへ送る、重複送信する、またはterminalが受理済み本文を上書きする"
