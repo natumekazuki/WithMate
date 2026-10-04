@@ -301,16 +301,35 @@ export class TerminalService<TWindow extends TerminalOwner> {
   }
 }
 
-export async function resolveTerminalShell(platform = process.platform): Promise<CreateTerminalResult & { file: string }> {
+export async function resolveTerminalShell(
+  platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  accessFile: typeof access = access,
+): Promise<CreateTerminalResult & { file: string }> {
   if (platform === "win32") {
-    const windowsRoot = process.env.SystemRoot;
-    if (!windowsRoot || !path.win32.isAbsolute(windowsRoot)) throw new Error("Windows system directory is unavailable.");
-    const file = path.win32.join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-    await access(file, constants.X_OK);
-    return { file, shellName: "PowerShell", windowsPty: { buildNumber: Number(release().split(".")[2]) } };
+    const candidates = (env.PATH ?? env.Path ?? "").split(";")
+      .map((directory) => directory.trim().replace(/^"(.*)"$/, "$1"))
+      .filter((directory) => path.win32.isAbsolute(directory))
+      .map((directory) => path.win32.join(directory, "pwsh.exe"));
+    if (env.ProgramFiles && path.win32.isAbsolute(env.ProgramFiles)) {
+      candidates.push(path.win32.join(env.ProgramFiles, "PowerShell", "7", "pwsh.exe"));
+    }
+    if (env.SystemRoot && path.win32.isAbsolute(env.SystemRoot)) {
+      candidates.push(path.win32.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
+    }
+    for (const file of candidates) {
+      try {
+        await accessFile(file, constants.X_OK);
+        return { file, shellName: "PowerShell", windowsPty: { buildNumber: Number(release().split(".")[2]) } };
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+      }
+    }
+    throw new Error("Neither PowerShell 7 (pwsh.exe) nor Windows PowerShell (powershell.exe) was found.");
   }
   if (platform === "darwin") {
-    await access("/bin/zsh", constants.X_OK);
+    await accessFile("/bin/zsh", constants.X_OK);
     return { file: "/bin/zsh", shellName: "zsh" };
   }
   throw new Error(`Embedded Terminal is not supported on ${platform}.`);

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { constants } from "node:fs";
+import { release } from "node:os";
 import { describe, it } from "node:test";
 import type { IpcMain, IpcMainEvent } from "electron";
 import { registerTerminalHandlers } from "../../src-electron/ipc/terminal.js";
 import { WITHMATE_RESIZE_TERMINAL_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
-import { TerminalService, type TerminalOwner } from "../../src-electron/terminal/terminal-service.js";
+import { resolveTerminalShell, TerminalService, type TerminalOwner } from "../../src-electron/terminal/terminal-service.js";
 import type { TerminalPty } from "../../src-electron/terminal/utility-terminal-pty.js";
 
 class StubWindow implements TerminalOwner {
@@ -26,6 +28,86 @@ class StubWindow implements TerminalOwner {
 }
 
 const TERMINAL_ID = "87263983-5b1d-4b5d-8f08-2b04899dbb8d";
+
+describe("resolveTerminalShell", () => {
+  const first = "C:\\custom shell\\pwsh.exe";
+  const second = "D:\\tools\\pwsh.exe";
+  const standard = "C:\\Program Files\\PowerShell\\7\\pwsh.exe";
+  const legacy = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+  const env = { Path: ';relative;"C:\\custom shell";D:\\tools', ProgramFiles: "C:\\Program Files", SystemRoot: "C:\\Windows" };
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "WindowsはPATH順の7、標準配置7、5系の順に選び、空・相対PATHは探索せず、全候補不在なら拒否する"
+  // oracle = { type = "contract", ref = "Issue #779 受け入れ条件; docs/design/desktop-ui.md Terminal" }
+  // fault = "PATH順や7優先を逆転する、標準配置を見落とす、cwdから選ぶ、候補不在でも成功する"
+  // observable = "候補の存在条件を変えたresolveTerminalShellのfile、shellName、windowsPtyと不在時の拒否"
+  // observation_boundary = "component-behavior"
+  // scope = "Windows embedded terminal shell selection"
+  // lifecycle = "permanent"
+  // impact = "導入済み7を使えない、意図しないcwdの実行ファイルを起動する、起動失敗を隠す"
+  // distinction = "実機一台では共存・標準配置のみ・5系のみ・不在を同時に維持できず、少数のI/O stubで決定論的に確認する"
+  // @end-test-value
+  it("selects PATH PowerShell 7, standard PowerShell 7, then Windows PowerShell", async () => {
+    const candidates = [first, second, standard, legacy];
+    for (let index = 0; index <= candidates.length; index++) {
+      const available = candidates.slice(index);
+      const resolving = resolveTerminalShell("win32", env, async (file, mode) => {
+        assert.equal(mode, constants.X_OK);
+        assert.ok(candidates.includes(String(file)), `Unexpected search target: ${String(file)}`);
+        if (!available.includes(String(file))) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      });
+      if (available.length === 0) {
+        await assert.rejects(resolving, /Neither PowerShell 7 .* nor Windows PowerShell .* was found/);
+      } else {
+        assert.deepEqual(await resolving, {
+          file: available[0], shellName: "PowerShell",
+          windowsPty: { buildNumber: Number(release().split(".")[2]) },
+        });
+      }
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "7の探索はSystemRootに依存せず、未設定・相対の標準rootを探索せず、存在しない親directoryは次候補へ進む"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
+  // fault = "5系のroot不足で7も起動不能にする、相対rootから実行ファイルを選ぶ、ENOTDIRで探索を停止する"
+  // observable = "最小環境・相対root・ENOTDIR条件で返るfileまたは候補不在の拒否"
+  // observation_boundary = "component-behavior"
+  // scope = "Windows shell search environment"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("searches only available absolute roots and continues past missing directories", async () => {
+    assert.equal((await resolveTerminalShell("win32", { PATH: "D:\\tools" }, async () => {})).file, second);
+    await assert.rejects(resolveTerminalShell("win32", { ProgramFiles: "relative", SystemRoot: "relative" }, async () => {
+      assert.fail("Relative roots must not be searched");
+    }), /Neither PowerShell/);
+    assert.equal((await resolveTerminalShell("win32", env, async (file) => {
+      if (String(file) !== standard) throw Object.assign(new Error("not a directory"), { code: "ENOTDIR" });
+    })).file, standard);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "探索中のアクセス拒否は未導入扱いにせず呼び出し元へ同じ失敗を返す"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Terminal" }
+  // fault = "存在確認の例外をすべて無視して別の7または5系を選択する"
+  // observable = "resolveTerminalShellの拒否理由と失敗後の候補探索がないこと"
+  // observation_boundary = "component-behavior"
+  // scope = "Windows shell discovery errors"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("propagates access errors instead of downgrading the shell", async () => {
+    const denied = Object.assign(new Error("access denied"), { code: "EACCES" });
+    const searched: string[] = [];
+    await assert.rejects(resolveTerminalShell("win32", env, async (file) => {
+      searched.push(String(file));
+      if (String(file) === first) throw denied;
+    }), (error) => error === denied);
+    assert.deepEqual(searched, [first]);
+  });
+});
 
 function setup(confirmClose?: () => Promise<boolean>) {
   const window = new StubWindow();
@@ -72,6 +154,37 @@ function setup(confirmClose?: () => Promise<boolean>) {
 }
 
 describe("TerminalService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "検出済みPowerShell 7のspawn失敗はcreateの拒否となり、5系へ再試行せず、Failed端末を確認なしで閉じられる"
+  // oracle = { type = "contract", ref = "Issue #779 変更内容・受け入れ条件" }
+  // fault = "起動失敗を未導入とみなして別shellへ再試行するか、生存端末として残す"
+  // observable = "create拒否の理由、選択されたspawn fileと回数、live数、close結果"
+  // observation_boundary = "component-behavior"
+  // scope = "terminal shell selection to spawn failure"
+  // lifecycle = "permanent"
+  // impact = "本来の起動エラーが隠れ、利用者が期待しないshellで作業する"
+  // distinction = "既存のシェル不在testは選択後のspawn拒否と再試行を観測しない。実process不要の低コストな境界test"
+  // @end-test-value
+  it("reports a selected PowerShell 7 startup failure without retrying", async () => {
+    const { window } = setup();
+    const files: string[] = [];
+    const failure = new Error("PowerShell 7 could not start");
+    const service = new TerminalService({
+      resolveOwner: () => ({ window, sessionId: "a", workspacePath: "C:/workspace" }),
+      confirmClose: async () => { assert.fail("Failed terminals do not require confirmation"); },
+      sendEvent: (owner, event) => owner.webContents.send("terminal", event),
+      resolveShell: () => resolveTerminalShell("win32", {
+        PATH: "C:\\tools", SystemRoot: "C:\\Windows",
+      }, async () => {}),
+      spawn: async (file) => { files.push(file); throw failure; },
+    });
+    await assert.rejects(service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 }), (error) => error === failure);
+    assert.deepEqual(files, ["C:\\tools\\pwsh.exe"]);
+    assert.equal(service.countLive(window), 0);
+    assert.equal(await service.close("owner", TERMINAL_ID), true);
+  });
+
   // @test-value v2
   // kind = "contract"
   // claim = "Window終了の確認対象はそのownerの起動中・実行中・判別不能の端末だけで、入力待ちと終了済みは含めない"

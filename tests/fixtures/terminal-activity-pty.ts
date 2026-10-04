@@ -1,22 +1,25 @@
 import assert from "node:assert/strict";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawn } from "node-pty";
 import { createPowerShellActivityIntegration, TerminalActivityParser, TerminalActivityTracker } from "../../src-electron/terminal/terminal-activity.js";
 import { TerminalService, type TerminalOwner } from "../../src-electron/terminal/terminal-service.js";
 
 const integration = createPowerShellActivityIntegration();
+const shell = process.argv[2];
+const expectedMajor = Number(process.argv[3]);
+assert.ok(shell && (expectedMajor === 7 || expectedMajor === 5), "Pass the shell path and expected major version");
+const workspace = process.cwd();
 // Keep the test independent of user profiles and do not persist test commands in history.
 const script = "Import-Module PSReadLine; Set-PSReadLineOption -HistorySaveStyle SaveNothing;\n"
   + Buffer.from(integration.args[2], "base64").toString("utf16le");
-const pty = spawn(path.join(process.env.SystemRoot!, "System32/WindowsPowerShell/v1.0/powershell.exe"),
+const pty = spawn(shell,
   ["-NoProfile", "-NoExit", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
-  { cwd: tmpdir(), cols: 120, rows: 24, env: process.env });
+  { cwd: workspace, cols: 120, rows: 24, env: process.env });
 const tracker = new TerminalActivityTracker();
 const activities: string[] = [];
 let output = "";
 let exited = false;
+let exitCode: number | undefined;
 let kills = 0;
 let confirmations = 0;
 const owner: TerminalOwner = {
@@ -29,10 +32,10 @@ const parser = new TerminalActivityParser(integration.marker, (activity) => {
   tracker.onActivity(activity);
 });
 const service = new TerminalService({
-  resolveOwner: () => ({ window: owner, sessionId: "test", workspacePath: tmpdir() }),
+  resolveOwner: () => ({ window: owner, sessionId: "test", workspacePath: workspace }),
   confirmClose: async () => { confirmations++; return false; },
   sendEvent() {},
-  resolveShell: async () => ({ file: "powershell.exe", shellName: "PowerShell" }),
+  resolveShell: async () => ({ file: shell, shellName: "PowerShell" }),
   spawn: async () => ({
     getActivity: () => tracker.getActivity(),
     onData: (listener) => pty.onData((data) => listener(parser.push(data))),
@@ -44,7 +47,7 @@ const service = new TerminalService({
     kill() { kills++; },
   }),
 });
-pty.onExit(() => { exited = true; });
+pty.onExit((event) => { exited = true; exitCode = event.exitCode; });
 pty.onData((data) => {
   output += data;
   if (data.includes("\x1b[6n")) pty.write("\x1b[1;1R");
@@ -64,6 +67,14 @@ try {
   await service.create(owner, { terminalId, cols: 120, rows: 24 });
   await until(() => tracker.getActivity() === "idle", "initial empty prompt");
   assert.equal(service.countRequiringCloseConfirmation(owner), 0);
+  output = "";
+  await complete("[Console]::WriteLine(('WITHMATE_' + 'VERSION=') + $PSVersionTable.PSVersion.Major); [Console]::WriteLine(('WITHMATE_' + 'CWD=') + $PWD.Path)");
+  assert.ok(output.includes(`WITHMATE_VERSION=${expectedMajor}`), output);
+  assert.ok(output.includes(`WITHMATE_CWD=${workspace}`), output);
+  service.resize(owner, terminalId, 100, 30);
+  output = "";
+  await complete("[Console]::WriteLine(('WITHMATE_' + 'SIZE=') + $Host.UI.RawUI.WindowSize.Width + 'x' + $Host.UI.RawUI.WindowSize.Height)");
+  assert.ok(output.includes("WITHMATE_SIZE=100x30"), output);
   for (const chunks of [["\rWrite-Output unfinished"], ["\r\rWrite-Output unfinished"], ["\r", "Write-Output unfinished"]]) {
     activities.length = 0;
     output = "";
@@ -80,12 +91,17 @@ try {
     await complete("");
     assert.equal(service.countRequiringCloseConfirmation(owner), 0);
   }
-  await complete("Start-Sleep -Milliseconds 300");
+  activities.length = 0;
+  write("Start-Sleep -Seconds 2\r");
+  await until(() => tracker.getActivity() === "busy", "running command");
+  assert.equal(service.countRequiringCloseConfirmation(owner), 1);
+  await until(() => tracker.getActivity() === "idle", "completed command");
   assert.equal(await service.close(owner, terminalId), true);
   assert.equal(confirmations, 3);
   assert.equal(kills, 1);
   pty.write("exit\r");
   await until(() => exited, "PTY shutdown");
+  assert.equal(exitCode, 0);
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
