@@ -105,7 +105,7 @@ export function useConversationMessageColumn({
   const refresh = useCallback(() => {
     if (mounted.current && displayedId.current === sessionId) rerender((revision) => revision + 1);
   }, [sessionId]);
-  const loadPage = useCallback(async (startIndex?: number) => {
+  const loadPage = useCallback(async (startIndex?: number): Promise<number | undefined> => {
     if (!api?.getConversationPage) return;
     requestedPageStart.current = startIndex;
     const revision = ++pageRevision.current;
@@ -117,11 +117,12 @@ export function useConversationMessageColumn({
       const page = await api.getConversationPage(sessionId, startIndex === undefined ? undefined : { startIndex });
       if (!mounted.current || activePageOwner.current !== owner || revision !== pageRevision.current) return;
       if (!page || page.sessionId !== sessionId || (session?.incarnationId && page.incarnationId !== session.incarnationId)) throw new Error("Conversation Is No Longer Available");
-      if (mutationRevision !== bookmarkRevision.current) { void loadPage(startIndex); return; }
+      if (mutationRevision !== bookmarkRevision.current) return loadPage(startIndex);
       conversation.pageStart = startIndex === undefined ? undefined : page.startIndex;
       setBrowsePage(startIndex === undefined ? null : page);
       const anchor = conversation.anchor;
       if (anchor && startIndex !== undefined) conversation.messageJumpRequest = { sessionId, ...anchor, requestId: ++conversation.messageJumpRequestId };
+      return revision;
     } catch (error) {
       if (activePageOwner.current === owner && revision === pageRevision.current) setPageError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -296,8 +297,8 @@ export function useConversationMessageColumn({
   }, [isBrowsing, followLatest, following.handleMessageListSend]);
   const changePage = useCallback(async (startIndex: number) => {
     const anchor = conversation.anchor;
-    await loadPage(startIndex);
-    if (anchor && activePageOwner.current === pageOwner) {
+    const revision = await loadPage(startIndex);
+    if (revision !== undefined && revision === pageRevision.current && anchor && mounted.current && activePageOwner.current === pageOwner) {
       conversation.messageJumpRequest = { sessionId, ...anchor, requestId: ++conversation.messageJumpRequestId };
       refresh();
     }
@@ -342,8 +343,13 @@ export function useConversationMessageColumn({
     if (!projection.keys.includes(key)) {
       const index = Number(key.slice(`session-${sessionId}-`.length));
       if (!Number.isInteger(index)) return;
-      await loadPage(Math.max(0, index - Math.floor(CONVERSATION_PAGE_SIZE / 2)));
-      if (activePageOwner.current !== pageOwner) return;
+      const revision = await loadPage(Math.max(0, index - Math.floor(CONVERSATION_PAGE_SIZE / 2)));
+      if (revision === undefined || revision !== pageRevision.current || !mounted.current || activePageOwner.current !== pageOwner) return;
+    } else {
+      ++pageRevision.current;
+      requestedPageStart.current = conversation.pageStart;
+      setPageLoading(false);
+      setPageError("");
     }
     conversation.messageJumpRequestId += 1;
     conversation.messageJumpRequest = { sessionId, key, requestId: conversation.messageJumpRequestId };
