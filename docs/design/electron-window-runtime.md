@@ -171,6 +171,7 @@ preload API / IPC の成立を優先し、現行実装は `sandbox: false` を�
 - `AddDirectory` は prompt / workspace 操作で許可対象ディレクトリを広げる既存機能であり、`openPath` 自体の強制ガードではない
 - `openSessionTerminal` はsessionの`workspacePath`を外部Terminalで開く用途に限定し、組み込みTerminalのAPIとは分離する
 - detached file preview は `openPath` へ local file link を直接渡さず、Main process が root-scoped resource または user-activated absolute-file resourceへ解決する。absolute-file preview は Additional Directory や provider 権限を変更しない。詳細は ADR 020 を参照する
+- `src-electron/files/session-file-explorer-runtime.ts` は Explorer と Git の認可境界を共有し、`SessionFilePreviewService` が resource / link / history-diff の操作、owner解決、title・payload・公開結果を所有する。IPCはsender認可を、Explorer / Git serviceはroot・resource検証を、既存Window serviceはidentity・再利用を所有する。`main.ts` はFiles操作への接続とfilesystem / Electron / Windowの公開操作を渡す
 - したがって local path operation の制約は一律 block ではなく、renderer 導線と main process 正規化の責務分離で扱う
 
 ## Relation To Existing Docs

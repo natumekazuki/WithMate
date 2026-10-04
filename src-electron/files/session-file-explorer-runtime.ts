@@ -1,9 +1,12 @@
 import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
+import { SessionFilePreviewService, type SessionFilePreviewServiceDeps } from "./session-file-preview-service.js";
 import type { OpenPathResult } from "../../src-shared/window/withmate-window-types.js";
 import type { SessionFilePinStorage } from "../storage/persistent-store-lifecycle-service.js";
 
-export type SessionFileExplorerRuntimeDeps = {
+export type SessionFileExplorerRuntimeDeps = Pick<
+  SessionFilePreviewServiceDeps, "openPreviewWindow" | "openExternalUrl" | "openDirectory"
+> & {
   userDataPath: string;
   getSessionContext(sessionId: string): Promise<SessionFileExplorerContext | null>;
   getPinStorage?(): SessionFilePinStorage;
@@ -14,6 +17,7 @@ export type SessionFileExplorerRuntimeDeps = {
 export class SessionFileExplorerRuntime {
   private readonly explorer: SessionFileExplorerService;
   private readonly gitChanges: FileRootGitChangesService;
+  private readonly preview: SessionFilePreviewService;
 
   public constructor(deps: SessionFileExplorerRuntimeDeps) {
     this.explorer = new SessionFileExplorerService({
@@ -38,6 +42,14 @@ export class SessionFileExplorerRuntime {
         return root ? { rootPath: root.absolutePath } : null;
       },
     });
+    this.preview = new SessionFilePreviewService({
+      explorer: this.explorer,
+      gitChanges: this.gitChanges,
+      getOwnerSessionId: async (sessionId) => (await deps.getSessionContext(sessionId))?.parentSessionId ?? null,
+      openPreviewWindow: deps.openPreviewWindow,
+      openExternalUrl: deps.openExternalUrl,
+      openDirectory: deps.openDirectory,
+    });
   }
 
   public getExplorer(): SessionFileExplorerService {
@@ -46,5 +58,9 @@ export class SessionFileExplorerRuntime {
 
   public getGitChanges(): FileRootGitChangesService {
     return this.gitChanges;
+  }
+
+  public getPreview(): SessionFilePreviewService {
+    return this.preview;
   }
 }

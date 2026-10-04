@@ -50,15 +50,8 @@ import type {
   OpenSessionWindowIdsPageResult,
   SavePastedSessionFileRequest,
 } from "../src-shared/window/withmate-window-types.js";
-import type {
-  SessionFileHistoryDiffWindowPayload,
-  SessionFilePreviewWindowOpenRequest,
-  SessionFilePreviewWindowOpenResult,
-} from "../src-shared/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileGitCommitResource,
-  resolveSessionFileGitCommitPreviewWindowTitle,
-  resolveSessionFilePreviewWindowTitle,
 } from "../src-shared/file-explorer/file-explorer-contract.js";
 import { AuditLogStorage } from "./session/audit-log-storage.js";
 import { AuditLogService } from "./session/audit-log-service.js";
@@ -475,6 +468,14 @@ const sessionFileExplorerRuntime = new SessionFileExplorerRuntime({
   getSessionContext: getSessionFileExplorerContext,
   getPinStorage: requireSessionFilePinStorage,
   openResolvedPath: (targetPath, reveal) => openPathTarget(targetPath, { reveal }),
+  openPreviewWindow: (payload) => requireMainWindowFacade().openFilePreviewWindow(payload),
+  openExternalUrl: (target) => openPathTarget(target),
+  openDirectory: (targetPath, assertSender) => openResolvedDirectoryInFileManager(targetPath, {
+    statTarget: stat,
+    realpathTarget: realpath,
+    assertSender,
+    openWithDefaultApp: (directoryPath) => shell.openPath(directoryPath),
+  }),
 });
 let appBootStatus: AppBootStatus = {
   kind: "running",
@@ -1291,7 +1292,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   ? createFileRootGitChangesService().readHistoryFileChunk(request)
                   : createSessionFileExplorerService().readFileChunk(request),
                 openSessionFile: (request) => createSessionFileExplorerService().openFile(request),
-                openSessionFilePreviewWindow,
+                openSessionFilePreviewWindow: (request, assertLinkSender) =>
+                  sessionFileExplorerRuntime.getPreview().open(request, assertLinkSender),
                 getSessionFilePreviewWindowPayload: (token) =>
                   requireMainWindowFacade().getFilePreviewPayload(token),
                 listFileRootChanges: (request) => createFileRootGitChangesService().listChanges(request),
@@ -3260,133 +3262,6 @@ async function openSessionWindow(sessionId: string, auxiliarySessionId?: string)
 
 async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {
   return requireMainWindowFacade().openDiffWindow(diffPreview);
-}
-
-async function openSessionFilePreviewWindow(
-  request: SessionFilePreviewWindowOpenRequest,
-  assertLinkSender: () => Promise<void>,
-): Promise<SessionFilePreviewWindowOpenResult> {
-  if (request.kind === "history-diff") {
-    const result = await createFileRootGitChangesService().getHistoryDiff(request.request);
-    if (result.status !== "ok") {
-      return {
-        status: "failed",
-        targetType: "local-file",
-        target: request.request.relativePath ?? "Git history diff",
-        message: result.message,
-      };
-    }
-    try {
-      const ownerSessionId = await getSessionFileExplorerOwnerSessionId(request.request.sessionId);
-      if (!ownerSessionId) {
-        throw new Error("The owning Session could not be resolved.");
-      }
-      const historyDiff: SessionFileHistoryDiffWindowPayload = {
-        request: request.request,
-        patch: result.patch,
-        previewResource: "previewResource" in result ? result.previewResource : null,
-        previewBeforeResource: "previewBeforeResource" in result ? result.previewBeforeResource : null,
-        previewAfterResource: "previewAfterResource" in result ? result.previewAfterResource : null,
-      };
-      const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({
-        historyDiff,
-        ownerSessionId,
-        windowTitle: resolveSessionFilePreviewWindowTitle(request.request.relativePath ?? "Git Diff"),
-      });
-      return {
-        status: "opened",
-        targetType: "preview-window",
-        disposition,
-        historyDiff: request.request,
-      };
-    } catch (error) {
-      return {
-        status: "failed",
-        targetType: "local-file",
-        target: request.request.relativePath ?? "Git history diff",
-        message: error instanceof Error ? error.message : "The Git history diff could not be opened.",
-      };
-    }
-  }
-  const explorer = createSessionFileExplorerService();
-  let resource = request.kind === "resource" ? request.resource : null;
-  if (request.kind === "link") {
-    const resolution = await explorer.resolvePreviewTarget(
-      request.sessionId,
-      request.target,
-      request.baseResource,
-    );
-    if (resolution.type === "external-url") {
-      const opened = await openPathTarget(resolution.target);
-      return opened.status === "opened"
-        ? { status: "opened", targetType: "external-url", target: opened.target }
-        : {
-            status: "failed",
-            targetType: "unknown",
-            target: opened.target,
-            message: opened.message ?? "The external URL could not be opened.",
-          };
-    }
-    if (resolution.type === "directory") {
-      const opened = await openResolvedDirectoryInFileManager(resolution.targetPath, {
-        statTarget: stat,
-        realpathTarget: realpath,
-        assertSender: assertLinkSender,
-        openWithDefaultApp: (targetPath) => shell.openPath(targetPath),
-      });
-      return opened.status === "opened"
-        ? { status: "opened", targetType: "local-directory", target: opened.target }
-        : {
-            status: opened.status === "not-found" ? "not-found" : "failed",
-            targetType: "local-path",
-            target: opened.target,
-            message: opened.message ?? "The directory could not be opened.",
-          };
-    }
-    if (resolution.type !== "file") {
-      return {
-        status: resolution.type,
-        targetType: resolution.type === "not-previewable" ? "local-file" : "local-path",
-        target: resolution.targetPath,
-        message: resolution.message,
-      };
-    }
-    resource = resolution.resource;
-  }
-
-  if (!resource) {
-    return {
-      status: "failed",
-      targetType: "unknown",
-      target: "",
-      message: "The preview resource could not be resolved.",
-    };
-  }
-  try {
-    const fileName = isSessionFileGitCommitResource(resource)
-      ? (await createFileRootGitChangesService().resolveHistoryFilePreview(resource)).name
-      : (await explorer.inspectFile(resource)).name;
-    const ownerSessionId = await getSessionFileExplorerOwnerSessionId(resource.sessionId);
-    if (!ownerSessionId) {
-      throw new Error("The owning Session could not be resolved.");
-    }
-    const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({
-      resource,
-      ownerSessionId,
-      windowTitle: isSessionFileGitCommitResource(resource)
-        ? resolveSessionFileGitCommitPreviewWindowTitle(fileName, resource.commitId)
-        : resolveSessionFilePreviewWindowTitle(fileName),
-      view: request.kind === "resource" ? request.view ?? { kind: "preview" } : { kind: "preview" },
-    });
-    return { status: "opened", targetType: "preview-window", disposition, resource };
-  } catch (error) {
-    return {
-      status: "failed",
-      targetType: "local-file",
-      target: "absolutePath" in resource ? resource.absolutePath : resource.relativePath,
-      message: error instanceof Error ? error.message : "The file preview could not be opened.",
-    };
-  }
 }
 
 async function inspectCurrentAppDatabase(): Promise<AppDatabaseDiagnostics> {
