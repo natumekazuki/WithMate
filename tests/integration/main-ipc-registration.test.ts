@@ -1840,10 +1840,10 @@ test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC �
 
 // @test-value v2
 // kind = "invariant"
-// claim = "narrow session mutation IPC は対象Session windowのsenderだけを許可し、Auxiliary identityをstatus queryで照合する"
+// claim = "narrow session mutation IPC は対象Session windowのsenderだけを許可し、Auxiliary identityをstatus queryで照合し、titleのcommit結果を保持する"
 // oracle = { type = "contract", ref = "Session mutation IPC sender ownership" }
-// fault = "別Session windowからnarrow mutationを実行できる、またはAuxiliary requestの親・createdAt不一致が mutation service に到達する"
-// observable = "mutation service呼出しと、Auxiliary Session full hydrationなしの拒否"
+// fault = "別Session windowからnarrow mutationを実行できる、Auxiliary requestのcreatedAt不一致がserviceへ到達する、またはtitle結果を捨てる"
+// observable = "mutation service呼出し、Auxiliary Session full hydrationなしの拒否、title commit結果"
 // observation_boundary = "public-boundary"
 // scope = "session-mutation-ipc"
 // lifecycle = "permanent"
@@ -1856,12 +1856,16 @@ test("narrow session mutation IPC はowner windowとmutation identityを確認�
   const otherWindow = createWindowStub("http://localhost:5173/?sessionId=session-2");
   let currentWindow: ReturnType<typeof createWindowStub> = ownerWindow;
   const mutationCalls: string[] = [];
+  const titleResult = { status: "committed", projectionUpdated: false } as const;
   let fullAuxiliaryReads = 0;
   const { deps } = createDeps({
     resolveEventWindow: () => currentWindow,
     resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : otherWindow,
     setSessionExecutionOptions: (request: { sessionId: string }) => mutationCalls.push(`session-options:${request.sessionId}`),
-    setSessionTitle: (request: { sessionId: string }) => mutationCalls.push(`session-title:${request.sessionId}`),
+    setSessionTitle: (request: { sessionId: string }) => {
+      mutationCalls.push(`session-title:${request.sessionId}`);
+      return titleResult;
+    },
     setSessionMessageBookmark: (request: { sessionId: string }) => mutationCalls.push(`session-bookmark:${request.sessionId}`),
     getAuxiliarySessionStatus: async () => ({
       id: "aux-1",
@@ -1886,7 +1890,7 @@ test("narrow session mutation IPC はowner windowとmutation identityを確認�
     ...sessionIdentity,
     executionOptions: {},
   });
-  await handlers.get(WITHMATE_SET_SESSION_TITLE_CHANNEL)?.({}, { ...sessionIdentity, title: "Updated" });
+  assert.strictEqual(await handlers.get(WITHMATE_SET_SESSION_TITLE_CHANNEL)?.({}, { ...sessionIdentity, title: "Updated" }), titleResult);
   await handlers.get(WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL)?.({}, {
     ...sessionIdentity,
     messageIndex: 2,

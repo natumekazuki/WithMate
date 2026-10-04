@@ -30,7 +30,7 @@ import { SessionIdCollisionError, SessionNotFoundError } from "./session-storage
 import type { RunCharacterAffectTurnOwnershipExclusive } from "../character/character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import type { SetExecutionOptionsResult } from "../../src-shared/session/session-mutation-contract.js";
+import type { SetExecutionOptionsResult, SetSessionTitleResult } from "../../src-shared/session/session-mutation-contract.js";
 import type {
   SessionCharacterAuthoringRuntimeClearInput,
   SessionCharacterAuthoringRuntimeClearResult,
@@ -232,7 +232,7 @@ export class SessionPersistenceService {
     return updatedSession;
   }
 
-  async setSessionTitle(sessionId: string, incarnationId: string, title: string): Promise<void> {
+  async setSessionTitle(sessionId: string, incarnationId: string, title: string): Promise<SetSessionTitleResult> {
     return this.enqueueSessionMutation(async () => {
       const current = this.deps.getSession(sessionId);
       if (!current || getSessionIncarnationId(current) !== incarnationId) throw new SessionNotFoundError(sessionId);
@@ -243,9 +243,21 @@ export class SessionPersistenceService {
       if (!title.trim()) throw new Error("The Session title cannot be empty.");
       if (!this.deps.setStoredSessionTitle) throw new Error("Session title storage is unavailable.");
       await this.deps.setStoredSessionTitle(sessionId, incarnationId, title);
-      this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
-        ? { ...session, taskTitle: title } : session));
-      this.deps.broadcastSessions([sessionId], false);
+      let projectionUpdated = true;
+      try {
+        this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
+          ? { ...session, taskTitle: title } : session));
+      } catch (error) {
+        projectionUpdated = false;
+        console.warn("Committed Session title cache projection failed", error);
+      }
+      try {
+        this.deps.broadcastSessions([sessionId], false);
+      } catch (error) {
+        projectionUpdated = false;
+        console.warn("Committed Session title broadcast failed", error);
+      }
+      return { status: "committed", projectionUpdated };
     });
   }
 

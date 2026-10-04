@@ -1,6 +1,7 @@
-import { useCallback, useState, type KeyboardEventHandler } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEventHandler } from "react";
 
 import type { Session } from "../../../src-shared/session/session-state.js";
+import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import {
   createCancelTitleEditHandler,
@@ -41,11 +42,22 @@ export function useSessionHeaderOperations(input: {
   selectedSession: Session | null;
   isReadOnly: boolean;
   runState: Session["runState"] | null;
-  updateTitle(session: Session, title: string): Promise<void>;
+  updateTitle(session: Session, title: string, isCurrent: () => boolean): Promise<string | void>;
   closeWindow(): void;
 }): SessionHeaderOperations {
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const latestSessionRef = useRef(input.selectedSession);
+  latestSessionRef.current = input.selectedSession;
+  const titleRequestRevisionRef = useRef(0);
+  const latestDraftRef = useRef(titleDraft);
+  latestDraftRef.current = titleDraft;
+  const ownerId = input.selectedSession?.id;
+  const incarnationId = input.selectedSession ? getSessionIncarnationId(input.selectedSession) : null;
+  useEffect(() => {
+    setIsEditingTitle(false);
+    return () => { titleRequestRevisionRef.current += 1; };
+  }, [ownerId, incarnationId]);
   const canEdit = !!input.selectedSession && !input.isReadOnly && input.runState !== "running";
 
   const startTitleEdit = useCallback(() => createStartTitleEditHandler({
@@ -75,8 +87,20 @@ export function useSessionHeaderOperations(input: {
       setIsEditingTitle(false);
       return;
     }
-    await input.updateTitle(session, nextTitle);
-    setIsEditingTitle(false);
+    const revision = ++titleRequestRevisionRef.current;
+    const isCurrent = () => titleRequestRevisionRef.current === revision
+      && latestSessionRef.current?.id === session.id
+      && getSessionIncarnationId(latestSessionRef.current) === getSessionIncarnationId(session);
+    try {
+      const warning = await input.updateTitle(session, nextTitle, isCurrent);
+      if (!isCurrent()) return;
+      if (latestDraftRef.current.trim() === nextTitle) setIsEditingTitle(false);
+      if (warning) window.alert(warning);
+    } catch (error) {
+      if (isCurrent()) {
+        window.alert(`Title was not saved: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }, [input, titleDraft]);
 
   const deleteSession = useCallback(async () => {

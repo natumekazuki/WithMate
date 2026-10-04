@@ -49,6 +49,8 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## UI Implementation Boundary
 
+Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示す。保存済みで通知・投影だけが失敗した場合はtitleの表示を正本summaryから復旧し、保存済みであることと他Windowの再openによる更新をalertで伝える。復旧readも失敗した場合はcommit済みtitleを表示に保持し、再openでの再取得を案内する。保存応答・復旧readが遅れても、別会話・別incarnation・後続のtitle保存へ古いtitleやalertを反映しない。
+
 - 画面の実装ファイルは、表示される入口ではなく役割ごとの domain に置く
 - `Home` 配下に置くのは Home dashboard と Home から直接見える管理ハブだけとする
 - `Settings Window` の画面実装は `settings` domain に置き、Home の実装ファイルへ混ぜない

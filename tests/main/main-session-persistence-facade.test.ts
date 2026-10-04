@@ -7,6 +7,39 @@ import { MainSessionPersistenceFacade } from "../../src-electron/app/main-sessio
 
 // @test-value v2
 // kind = "contract"
+// claim = "title専用facadeは保存済み通知失敗の結果と保存前rejectを呼出側へそのまま伝える"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send" }
+// fault = "facadeがcommit結果をvoidへ捨てるか保存前失敗を成功応答へ変換する"
+// observable = "title facade応答、serviceに渡るowner/title、保存前例外"
+// observation_boundary = "public-boundary"
+// scope = "main-title-facade-result"
+// lifecycle = "permanent"
+// impact = "呼出側がcommit済み通知失敗を識別できず表示復旧できない"
+// distinction = "service testでは通らないfacadeの結果転送を確認し、小さいstubだけで実行する"
+// @end-test-value
+test("title facadeはcommit結果と保存前失敗を保持する", async () => {
+  const calls: unknown[] = [];
+  let failure: Error | null = null;
+  const result = { status: "committed", projectionUpdated: false } as const;
+  const facade = new MainSessionPersistenceFacade({
+    getSessions: () => [], setSessions: () => undefined,
+    getSessionStorage: () => { throw new Error("unused"); },
+    getSessionPersistenceService: () => ({
+      setSessionTitle: async (...args: unknown[]) => {
+        calls.push(args);
+        if (failure) throw failure;
+        return result;
+      },
+    }) as never,
+  });
+  assert.strictEqual(await facade.setSessionTitle("session", "owner", "After"), result);
+  failure = new Error("storage failed");
+  await assert.rejects(facade.setSessionTitle("session", "owner", "Rejected"), failure);
+  assert.deepEqual(calls, [["session", "owner", "After"], ["session", "owner", "Rejected"]]);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "MainSessionPersistenceFacadeがsession persistence操作を対応するserviceへ委譲する"
 // oracle = { type = "contract", ref = "src-electron/app/main-session-persistence-facade.ts" }
 // fault = "upsert、terminal commit、replaceAllの入力または順序がfacade境界で失われる"
