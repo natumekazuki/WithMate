@@ -421,9 +421,10 @@ type MemoryAppendRequest = {
   preview: string;
   tags: MemoryTag[];
   supersedes?: string[];
+  mutationReason?: string;
+  files?: MemoryAppendFileInput[];
   sourceMessageId?: string;
   idempotencyKey?: string;
-  dryRun?: boolean;
 };
 ```
 
@@ -432,6 +433,7 @@ type MemoryAppendResponse = {
   schemaVersion: "withmate-memory-v1";
   entry: MemoryEntrySummary;
   created: boolean;
+  replayed?: true;
 };
 ```
 
@@ -458,8 +460,8 @@ contract / pure validationで扱う:
 - well-formed Unicode
 - provider-specific unknown field rejection
 
-Phase 1aではrequest contractとpure request validationに限定する。
-response / state contractはPhase 1bで固定する。
+requestの型とschemaVersionは[Memory Contract](../../src-shared/memory/memory-contract.ts)、pure request validationは[Memory Validation](../../src-shared/memory/memory-validation.ts)を正本とする。
+responseの型とbuilderは[Memory Response Contract](../../src-shared/memory/memory-response-contract.ts)、entryのstateと不変条件は[Memory State](../../src-shared/memory/memory-state.ts)を正本とする。searchはbody / stateを含まないpreview hit、get_entryはactive entryのdetail、appendはbodyを含まないsummaryを返す。
 
 service層で扱う:
 
@@ -470,8 +472,8 @@ service層で扱う:
 - idempotency persistence
 - transaction integrity
 
-文字列長のPhase 1a validationはJavaScript文字列のUTF-16 code unit数を基準にする。
-transport / HTTP / IPCのbyte size limitはAPI境界で別途検証する。
+文字列長のvalidationはtrim後のJavaScript文字列のUTF-16 code unit数（`string.length`）を基準にする。null byteと対になっていないsurrogateを拒否し、well-formedなsurrogate pairは許可する。
+transportのbyte size limitは文字列長とは別の制約であり、HTTP request bodyのbyte数は[Memory HTTP Server](../../src-electron/memory/memory-v6-http-server.ts)のAPI境界で別途検証する。
 
 app側で行わないこと:
 
@@ -490,6 +492,7 @@ type MemoryForgetRequest = {
   reason?: "user_request" | "incorrect" | "outdated" | "privacy" | "other";
   sourceMessageId?: string;
   idempotencyKey?: string;
+  dryRun?: boolean;
 };
 ```
 
@@ -518,16 +521,16 @@ wrong-scope entryは、単一entry IDと明示した異なる`from` / `to` targe
 request上のtagはdisplay valueとして`type` / `value`を保持する。
 同一性判定にはcanonical keyを使う。
 
-Phase 1aのcanonical algorithm:
+`type` / `value`をそれぞれtrimした後、次のalgorithmでcanonical type / valueを作る。
 
 ```ts
 value.normalize("NFC").toLowerCase()
 ```
 
-- 同一request内のduplicate tagはcanonical keyでdedupeする。
-- 最初に現れたdisplay valueを保持する。
-- Phase 2 storageではraw display valueだけをunique keyにしない。
-- tag catalogはcanonical type / valueへunique constraintを持つ。
+- 同一性はcanonical type / valueの組で判定し、同一request内のduplicate tagをdedupeする。
+- 同一requestで最初に現れたtrim後のdisplay type / valueを保持し、display value自体をNFC lowercaseへ置換しない。
+- storageはdisplay type / valueとcanonical type / valueを別々に保存し、raw display valueだけをunique keyにしない。
+- `memory_entry_tags_v6`はentry IDとcanonical type / valueの組、`memory_tag_catalog_v6`はcanonical type / valueの組をprimary keyとする。保存処理は[Memory Storage](../../src-electron/memory/memory-v6-storage.ts)、保存制約は[V6 Database Schema](../../src-electron/storage/database-schema-v6.ts)を正本とする。
 
 ## CLI Contract
 
