@@ -299,6 +299,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - Promptではskill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。Terminalへ切り替えるとpickerを閉じ、非表示Promptの候補やfeedbackは共有パネルの折りたたみを妨げない。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
 - Agent の `File Explorer`
+  - ヘッダーは既定の文字サイズで最小幅260pxから`Files / Changes / History`とPinフィルター・更新操作を1行に収める。文字サイズとラベルを維持し、横余白を抑え、操作領域は高さ28px以上とする。文字拡大等で収まらない場合は折り返しを許容し、操作を切り落とさない
   - `Workspace`、`Session Folder`、`Add Directory` で許可した directory を root として表示する
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する
   - 未作成の既存 `Session Folder` は root の初回展開時に空ディレクトリとして作成する
