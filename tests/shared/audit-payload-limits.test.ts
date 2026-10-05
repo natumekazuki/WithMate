@@ -3,11 +3,53 @@ import { describe, it } from "node:test";
 
 import {
   boundAuditRawItem,
+  BoundedAuditRawItems,
   stringifyBoundedAuditRawItems,
   stringifyBoundedAuditValue,
 } from "../../src-electron/session/audit-payload-limits.js";
 
 describe("audit payload limits", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "incremental raw collectorは多数itemを受けても順序・個別marker・最終omitted countを維持し、保持済みpayloadを再走査しない"
+  // oracle = { type = "contract", ref = "docs/design/audit-log.md#表示とデータ保護" }
+  // fault = "予算超過itemを保持し続ける、最終markerで押し出すitemを数えない、または最終生成で元payloadを再読む"
+  // observable = "collectorのJSON長・item順序・truncation marker・omittedItemsとpayload getter呼出回数"
+  // observation_boundary = "component-behavior"
+  // scope = "incremental diagnostic raw retention"
+  // lifecycle = "permanent"
+  // impact = "長いturnでrawの保持が増え続け、省略数が不正になり終了処理も重くなる"
+  // distinction = "既存の単一巨大item testと型検査はaggregate budgetと追加後の再走査を検出しない。固定入力のみで継続コストは小さい"
+  // @end-test-value
+  it("incremental rawはpayloadを再走査せず順序と省略数を維持する", () => {
+    const collector = new BoundedAuditRawItems(2048);
+    let reads = 0;
+    for (let index = 0; index < 10_000; index += 1) {
+      const data = { get content() { reads += 1; return "あ😀\"\n".repeat(64); } };
+      collector.append({ type: `event-${index}`, data });
+      Object.defineProperty(data, "content", { get() { throw new Error("retained source was revisited"); } });
+    }
+    const readsAfterAppend = reads;
+    assert.ok(readsAfterAppend > 0);
+    const json = collector.stringify();
+    assert.equal(collector.stringify(), json);
+    assert.equal(reads, readsAfterAppend);
+    assert.ok(json.length <= 2048);
+    const parsed = JSON.parse(json);
+    assert.deepEqual(parsed.slice(0, -1).map((item: { type: string }) => item.type),
+      Array.from({ length: 7 }, (_, index) => `event-${index}`));
+    assert.equal(parsed[0].data.content, "あ😀\"\n".repeat(64));
+    assert.equal(parsed[1].data.content.truncated, true);
+    assert.equal(parsed[1].data.content.originalLength, 320);
+    assert.equal(parsed[1].data.withmateTruncated.type, "withmate.value_truncated");
+    assert.deepEqual(parsed[2].data.withmateTruncated, {
+      type: "withmate.value_truncated", truncated: true, reason: "audit raw item budget exceeded", maxLength: 0,
+    });
+    assert.deepEqual(parsed.at(-1), {
+      type: "withmate.raw_items_truncated", data: { omittedItems: 9993, maxLength: 2048 },
+    });
+  });
+
   it("raw item 全体を stringify する前に item 内の巨大配列を予算で打ち切る", () => {
     const chunks = Array.from({ length: 20_000 }, (_, index) => ({
       type: "output_text",

@@ -265,59 +265,59 @@ export function stringifyBoundedAuditRawItems(
   items: BoundedAuditRawItem[],
   limit = AUDIT_RAW_ITEMS_JSON_LIMIT,
 ): string {
-  const serializedItems: string[] = [];
-  let omittedItems = 0;
-  let currentLength = 2;
-
+  const collector = new BoundedAuditRawItems(limit);
   for (const item of items) {
-    const commaLength = currentLength === 2 ? 0 : 1;
+    collector.append(item);
+  }
+  return collector.stringify();
+}
+
+export class BoundedAuditRawItems {
+  private readonly serializedItems: string[] = [];
+  private omittedItems = 0;
+  private currentLength = 2;
+
+  constructor(private readonly limit = AUDIT_RAW_ITEMS_JSON_LIMIT) {}
+
+  append(item: BoundedAuditRawItem): void {
+    const commaLength = this.currentLength === 2 ? 0 : 1;
     const remainingItemBudget = Math.max(
       0,
-      limit - currentLength - commaLength - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE,
+      this.limit - this.currentLength - commaLength - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE,
     );
     const serializedItem = JSON.stringify(cloneRawItemWithinBudget(item, remainingItemBudget));
-    const nextLength = currentLength === 2
-      ? currentLength + serializedItem.length
-      : currentLength + 1 + serializedItem.length;
-    if (nextLength <= limit) {
-      serializedItems.push(serializedItem);
-      currentLength = nextLength;
+    const nextLength = this.currentLength + commaLength + serializedItem.length;
+    if (nextLength <= this.limit) {
+      this.serializedItems.push(serializedItem);
+      this.currentLength = nextLength;
     } else {
-      omittedItems += 1;
+      this.omittedItems += 1;
     }
   }
 
-  if (omittedItems > 0) {
-    let marker = JSON.stringify({
+  stringify(): string {
+    let retainedCount = this.serializedItems.length;
+    let currentLength = this.currentLength;
+    let omittedItems = this.omittedItems;
+    const truncationMarker = () => JSON.stringify({
       type: "withmate.raw_items_truncated",
-      data: {
-        omittedItems,
-        maxLength: limit,
-      },
+      data: { omittedItems, maxLength: this.limit },
     });
 
-    while (serializedItems.length > 0) {
-      const nextLength = currentLength === 2
-        ? currentLength + marker.length
-        : currentLength + 1 + marker.length;
-      if (nextLength <= limit) {
-        break;
-      }
-
-      const removed = serializedItems.pop();
-      currentLength -= (serializedItems.length === 0 ? 0 : 1) + (removed?.length ?? 0);
-      omittedItems += 1;
-      marker = JSON.stringify({
-        type: "withmate.raw_items_truncated",
-        data: {
-          omittedItems,
-          maxLength: limit,
-        },
-      });
+    if (omittedItems === 0) {
+      return `[${this.serializedItems.join(",")}]`;
     }
 
-    serializedItems.push(marker);
-  }
+    let marker = truncationMarker();
+    while (retainedCount > 0 && currentLength + 1 + marker.length > this.limit) {
+      retainedCount -= 1;
+      currentLength -= (retainedCount === 0 ? 0 : 1) + this.serializedItems[retainedCount].length;
+      omittedItems += 1;
+      marker = truncationMarker();
+    }
 
-  return `[${serializedItems.join(",")}]`;
+    const retained = this.serializedItems.slice(0, retainedCount);
+    retained.push(marker);
+    return `[${retained.join(",")}]`;
+  }
 }
