@@ -1040,7 +1040,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         state.threadId ? "thread/resume" : "thread/start",
         {
           ...threadParams,
-          ...(state.threadId ? { threadId: state.threadId } : {}),
+          ...(state.threadId ? { threadId: state.threadId, excludeTurns: true } : {}),
         },
         { signal },
       );

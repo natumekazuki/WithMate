@@ -152,6 +152,7 @@ the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動�
 ## Thread Management
 
 - sessionごとにprovider固有の会話IDを保持する。Codexはturnごとの新しいApp Serverで保存済み`threadId`を`thread/resume`へ渡し、未作成時は`thread/start`する。Claudeは同じ保存fieldの明示IDをSDK `resume`へ渡し、未作成時は新規`query()`を使う
+- Codexの`thread/resume`には`excludeTurns: true`を指定し、WithMateが利用しない過去turnの一括返送を省く。Codex側の会話履歴と保存済みIDは維持し、再開後の通知を処理する。新規`thread/start`には指定せず、transportの有限なframe / queue上限は維持する
 - 実行後にproviderが返した会話IDをsession storeへ保存する
 - model または reasoning depth を変更した場合も、その session の `threadId` は維持し、次回 turn は送信された runtime parameter で既存 thread / session の resume を試す
 - Codexは毎turnの`thread/start` / `thread/resume`と`turn/start`へ送信時の実行optionを渡す
