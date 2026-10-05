@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { createAuditProgressWriter } from "./helpers/audit-progress-fixture.js";
 import { ChildProcess } from "node:child_process";
 import { it } from "node:test";
 import { CopilotClient, RuntimeConnection, type CopilotSession, type SessionEvent } from "@github/copilot-sdk";
 
 import { CopilotAdapter } from "../../src-electron/providers/copilot/copilot-adapter.js";
 import { SessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
+import { ProviderTurnError } from "../../src-electron/providers/provider-runtime.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
@@ -219,6 +221,7 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
     resolveProjectMemoryEntriesForPrompt: () => [],
     createAuditLog: (entry) => { const audit = { id: audits.length + 1, ...entry }; audits.push(audit); return audit; },
     updateAuditLog: (id, entry) => { const index = audits.findIndex((audit) => audit.id === id); audits[index] = { id, ...entry }; },
+    updateAuditLogProgress: createAuditProgressWriter(),
     setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
     waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
     setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, scheduleProviderQuotaTelemetryRefresh() {},
@@ -233,6 +236,45 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
     current: async () => { await until(() => Boolean(clients.at(-1)?.sessions.at(-1)?.sends.length)); return clients.at(-1)!.sessions.at(-1)!; },
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotの保存待ちcallbackは64件を超えず、超過時は所有接続を停止してpartial付きfailedを返す"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
+// fault = "event-emitter側でcallbackを無制限に積むか、超過を取消や成功として返す"
+// observable = "実adapter callback件数、ProviderTurnError分類とpartial本文、旧client stopとchild exit"
+// observation_boundary = "public-boundary"
+// scope = "CopilotAdapter progress pressure through owned SDK cleanup"
+// lifecycle = "permanent"
+// impact = "Runtime外に無制限queueが移ることと生存providerとの次Send競合を防ぐ"
+// distinction = "Runtimeやdelivery helper単体ではSDK event-emitterと既存接続cleanupの結線を通らない"
+// @end-test-value
+it("Copilotのprogress超過は有限callbackと所有接続停止のfailureになる", { timeout: 5000 }, async () => {
+  const f = fixture();
+  const session = f.stored();
+  const gate = deferred<void>();
+  let delivered = 0;
+  const run = f.adapter.runSessionTurn({
+    session, executionOptions: captureSessionExecutionOptions(session), sessionMemory: createDefaultSessionMemory(session),
+    projectMemoryEntries: [], providerCatalog: { id: "copilot", label: "Copilot", defaultModelId: "gpt-4.1", defaultReasoningEffort: "high", models: [{ id: "gpt-4.1", label: "GPT", reasoningEfforts: ["high"] }] },
+    userMessage: "pressure", appSettings: normalizeAppSettings({}), attachments: [],
+  }, (state) => { if (state.assistantText) { delivered += 1; return gate.promise; } });
+  const outcome = assert.rejects(run, (error: unknown) => {
+    assert.ok(error instanceof ProviderTurnError);
+    assert.equal(error.canceled, false);
+    assert.match(error.message, /capacity exceeded/);
+    assert.ok(error.partialResult?.assistantText.startsWith("x"));
+    return true;
+  });
+  const owned = await f.current();
+  try {
+    for (let index = 0; index < 100; index += 1) owned.emit("assistant.message_delta", { messageId: "one", deltaContent: "x" });
+    await outcome;
+    assert.equal(delivered, 64);
+    assert.equal(f.clients[0].stopCalls, 1);
+    assert.equal(f.clients[0].child.exitCode, 0);
+  } finally { gate.resolve(); }
+});
 
 // @test-value v2
 // kind = "contract"

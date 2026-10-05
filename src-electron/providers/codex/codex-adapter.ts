@@ -967,6 +967,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     let active: ActiveCodexTurn | null = null;
     const progress = async () => {
       if (!sessionInput || !args.onProgress) return;
+      const steps = state.liveSteps.takeProgress(redactor);
       await args.onProgress({
         sessionId: sessionInput.session.id,
         threadId: state.threadId ?? "",
@@ -978,13 +979,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
         reasoningText: redactor.sanitizeText(
           toAuditTextPreview(state.reasoningText) ?? "",
         ),
-        steps: redactor.sanitize([...state.liveSteps.values()]),
+        steps: steps.snapshot,
         backgroundTasks: [],
         usage: state.usage,
         errorMessage: redactor.sanitizeText(state.streamErrorMessage),
         approvalRequest: null,
         elicitationRequest: null,
-      });
+      }, { steps: steps.changes, backgroundTasks: { upserts: [], removes: [] } });
+      await new Promise<void>((resolve) => setImmediate(resolve));
     };
     const abort = () => {
       if (active) {

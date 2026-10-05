@@ -303,7 +303,7 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
  - Copilot の file / folder attachment も text prompt とは別送される
 - provider itemsは読みやすい`operations`とrawの`raw_items_json`の両方で残す
 - Session Window から監査ログを overlay で閲覧できるようにする
-- stream 中の一時 step は監査ログへ逐次保存せず、turn 完了後の確定値だけを残す
+- stream中のassistant snapshotと変更stepは、変更ownerからのprogress情報を使って監査ログへ増分保存する。受付容量超過は明示失敗とし、表示用のlatest-only集約でAuditを省略しない。受付・終端後の保存順序は[Audit Log](audit-log.md)を参照する
 - Settings の DB reset を実行した場合は audit logs も初期化対象に含める
 
 ## Slash Command Routing

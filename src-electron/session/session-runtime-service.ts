@@ -27,6 +27,8 @@ import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
+import type { AuditLogProgressPatch, AuditLogProgressAck } from "../../src-shared/session/runtime-state.js";
+import type { RunSessionTurnProgressChanges } from "../providers/provider-runtime.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -34,6 +36,8 @@ const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 const DEFAULT_AUDIT_ENRICHMENT_GRACE_MS = 5_000;
 const DEFAULT_APPRAISAL_READY_RETRY_MS = 1_000;
 const AUDIT_ENRICHMENT_TIMEOUT = Symbol("audit-enrichment-timeout");
+const MAX_PENDING_AUDIT_PATCHES = 64;
+const MAX_PENDING_AUDIT_PATCH_CHARS = 4 * 1024 * 1024;
 
 function logSessionRunStuckInvestigation(
   event: string,
@@ -107,6 +111,7 @@ export type SessionRuntimeServiceDeps = {
   }) => Awaitable<void>;
   createAuditLog(input: CreateAuditLogInput): Awaitable<AuditLogEntry>;
   updateAuditLog(id: number, entry: CreateAuditLogInput): Awaitable<void | AuditLogEntry>;
+  updateAuditLogProgress(id: number, patch: AuditLogProgressPatch): Awaitable<AuditLogProgressAck>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
   waitForApprovalDecision(
@@ -574,28 +579,6 @@ function buildEmptyLiveSessionRunState(sessionId: string, threadId: string): Liv
     approvalRequest: null,
     elicitationRequest: null,
   };
-}
-
-function hasMeaningfulLiveRunAuditState(state: LiveSessionRunState): boolean {
-  return state.threadId.trim().length > 0
-    || state.assistantText.trim().length > 0
-    || state.steps.length > 0
-    || state.backgroundTasks.length > 0
-    || state.usage !== null
-    || state.errorMessage.trim().length > 0
-    || state.approvalRequest !== null
-    || state.elicitationRequest !== null;
-}
-
-function buildRunningAuditProgressSignature(entry: CreateAuditLogInput): string {
-  return JSON.stringify({
-    threadId: entry.threadId,
-    assistantText: entry.assistantText,
-    operations: entry.operations,
-    usage: entry.usage,
-    errorMessage: entry.errorMessage,
-    providerMetadata: entry.providerMetadata,
-  });
 }
 
 function buildRunningAuditEntry(params: {
@@ -1247,12 +1230,34 @@ export class SessionRuntimeService {
       throw error;
     }
     let latestObservedRunningAuditEntry = runningAuditEntry;
-    let runningAuditProgressSignature = buildRunningAuditProgressSignature(latestObservedRunningAuditEntry);
     let terminalAuditSettled = false;
     let liveProgressGeneration = 0;
     let auditWriteQueue: Promise<void> = Promise.resolve();
     let auditWriteError: unknown = null;
     let auditWritesDetached = false;
+    let pendingAuditPatches = 0;
+    let pendingAuditPatchChars = 0;
+    let auditProgressFailure: unknown = null;
+    let auditAdmissionRejected = false;
+    const auditOperationIds = new Map<string, number>();
+    const observedOperations = new Map<string, AuditLogEntry["operations"][number]>();
+    const failAuditProgress = (error: unknown) => {
+      auditProgressFailure ??= error;
+      if (!terminalAuditSettled) runAbortController.abort();
+    };
+    const recordAuditProgressFailure = (entry: CreateAuditLogInput) => {
+      if (!auditProgressFailure && !auditWriteError) return;
+      entry.providerMetadata = [...(entry.providerMetadata ?? []).filter((metadata) => metadata.kind !== "audit_progress_failure" || metadata.source !== "SessionRuntimeService"), {
+        provider: activeRunningSession.provider,
+        kind: "audit_progress_failure",
+        source: "SessionRuntimeService",
+        summary: "Audit progress persistence did not complete successfully",
+        payload: {
+          admissionRejected: auditAdmissionRejected,
+          acceptedProgressPersistence: auditWriteError ? "failed" : pendingAuditPatches > 0 ? "pending" : "completed",
+        },
+      }];
+    };
 
     let activeRunningSession = runningSession;
     if (runningSession.provider === "codex") this.appendSessionInput.set(sessionId, async (text) => {
@@ -1261,20 +1266,40 @@ export class SessionRuntimeService {
       this.deps.broadcastLiveSessionRun(sessionId);
     });
     const enqueueAuditWrite = (
-      nextRunningAuditEntry: CreateAuditLogInput,
-      nextSignature: string,
+      patch: AuditLogProgressPatch,
+      removedKeys: string[],
     ): Promise<void> => {
-      latestObservedRunningAuditEntry = nextRunningAuditEntry;
-      runningAuditProgressSignature = nextSignature;
-      auditWriteQueue = auditWriteQueue
+      // Include retained removal keys and a conservative allowance for IDs added on dispatch.
+      const chars = JSON.stringify({ patch, removedKeys }).length
+        + ((patch.operationUpserts?.length ?? 0) + removedKeys.length) * 32;
+      if (pendingAuditPatches >= MAX_PENDING_AUDIT_PATCHES || pendingAuditPatchChars + chars > MAX_PENDING_AUDIT_PATCH_CHARS) {
+        const error = new Error("Audit progress persistence capacity exceeded");
+        auditAdmissionRejected = true;
+        failAuditProgress(error);
+        return Promise.reject(error);
+      }
+      pendingAuditPatches += 1;
+      pendingAuditPatchChars += chars;
+      const write = auditWriteQueue
         .then(async () => {
-          await this.deps.updateAuditLog(runningAuditLog.id, nextRunningAuditEntry);
-          runningAuditEntry = nextRunningAuditEntry;
-        })
-        .catch((error) => {
-          auditWriteError = auditWriteError ?? error;
+          if (auditWriteError) throw new Error("Audit progress dispatch stopped after an unsuccessful write", { cause: auditWriteError });
+          const operationUpserts = patch.operationUpserts?.map((upsert) => ({ ...upsert, outputId: auditOperationIds.get(upsert.key) }));
+          const operationRemoves = removedKeys.flatMap((key) => {
+            const id = auditOperationIds.get(key);
+            return id === undefined ? [] : [id];
+          });
+          const ack = await this.deps.updateAuditLogProgress(runningAuditLog.id, { ...patch, operationUpserts, operationRemoves });
+          for (const inserted of ack.insertedOperations) auditOperationIds.set(inserted.key, inserted.outputId);
+          for (const key of removedKeys) auditOperationIds.delete(key);
         });
-      return auditWriteQueue;
+      auditWriteQueue = write.catch((error) => {
+        auditWriteError ??= error;
+        failAuditProgress(error);
+      }).finally(() => {
+        pendingAuditPatches -= 1;
+        pendingAuditPatchChars -= chars;
+      });
+      return write;
     };
     const flushAuditWrites = async (allowDetached = false): Promise<boolean> => {
       if (auditWritesDetached) {
@@ -1304,47 +1329,77 @@ export class SessionRuntimeService {
       }
       return true;
     };
-    const syncRunningAuditFromLiveState = async (nextLiveState: LiveSessionRunState) => {
+    const syncRunningAuditFromLiveState = async (nextLiveState: LiveSessionRunState, changes: RunSessionTurnProgressChanges = {
+      steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
+    }) => {
       if (terminalAuditSettled) {
         return;
       }
+      if (auditProgressFailure) throw auditProgressFailure;
       this.setRuntimeLiveState(sessionId, nextLiveState);
-      if (!hasMeaningfulLiveRunAuditState(nextLiveState)) {
-        return;
+      const patch: AuditLogProgressPatch = { sessionId, observedAt: new Date().toISOString() };
+      const threadId = pickPreferredThreadId(
+        nextLiveState.threadId,
+        latestObservedRunningAuditEntry.threadId,
+        activeRunningSession.threadId,
+      );
+      const assistantText = nextLiveState.assistantText.trim()
+        ? toAuditTextPreview(nextLiveState.assistantText) ?? ""
+        : latestObservedRunningAuditEntry.assistantText;
+      const errorMessage = nextLiveState.errorMessage.trim()
+        ? toAuditTextPreview(nextLiveState.errorMessage) ?? ""
+        : latestObservedRunningAuditEntry.errorMessage;
+      if (threadId !== latestObservedRunningAuditEntry.threadId || errorMessage !== latestObservedRunningAuditEntry.errorMessage) {
+        patch.fields = {
+          ...(threadId !== latestObservedRunningAuditEntry.threadId ? { threadId } : {}),
+          ...(errorMessage !== latestObservedRunningAuditEntry.errorMessage ? { errorMessage } : {}),
+        };
       }
-
-      const nextRunningAuditEntry: CreateAuditLogInput = {
-        ...latestObservedRunningAuditEntry,
-        phase: "running",
-        provider: activeRunningSession.provider,
-        model: executionOptions.model,
-        reasoningEffort: executionOptions.reasoningEffort,
-        approvalMode: executionOptions.approvalMode,
-        threadId: pickPreferredThreadId(
-          nextLiveState.threadId,
-          latestObservedRunningAuditEntry.threadId,
-          activeRunningSession.threadId,
-        ),
-        assistantText: nextLiveState.assistantText.trim()
-          ? toAuditTextPreview(nextLiveState.assistantText) ?? ""
-          : latestObservedRunningAuditEntry.assistantText,
-        operations: (() => {
-          const operations = buildLiveRunAuditOperations(nextLiveState);
-          return operations.length > 0 ? operations : latestObservedRunningAuditEntry.operations;
-        })(),
-        usage: nextLiveState.usage ?? latestObservedRunningAuditEntry.usage,
-        errorMessage: nextLiveState.errorMessage.trim()
-          ? toAuditTextPreview(nextLiveState.errorMessage) ?? ""
-          : latestObservedRunningAuditEntry.errorMessage,
+      if (assistantText !== latestObservedRunningAuditEntry.assistantText) patch.assistantSnapshot = { body: assistantText };
+      const previousUsage = latestObservedRunningAuditEntry.usage;
+      const usage = nextLiveState.usage;
+      if (usage && (!previousUsage || usage.inputTokens !== previousUsage.inputTokens
+        || usage.cachedInputTokens !== previousUsage.cachedInputTokens || usage.outputTokens !== previousUsage.outputTokens
+        || usage.reasoningOutputTokens !== previousUsage.reasoningOutputTokens || usage.totalTokens !== previousUsage.totalTokens)) patch.usage = usage;
+      const upserts: NonNullable<AuditLogProgressPatch["operationUpserts"]> = [];
+      const addOperation = (key: string, operation: AuditLogEntry["operations"][number]) => {
+        const previous = observedOperations.get(key);
+        if (!previous || previous.type !== operation.type || previous.summary !== operation.summary || previous.details !== operation.details) {
+          upserts.push({ key, operation });
+        }
       };
-      const nextSignature = buildRunningAuditProgressSignature(nextRunningAuditEntry);
-      if (nextSignature === runningAuditProgressSignature) {
-        return;
+      const removedKeys = [...changes.steps.removes.map((id) => `step:${id}`), ...changes.backgroundTasks.removes.map((id) => `background:${id}`)];
+      for (const step of changes.steps.upserts) {
+        const operation = buildLiveRunAuditOperations({ steps: [step], backgroundTasks: [], approvalRequest: null, elicitationRequest: null })[0]!;
+        addOperation(`step:${step.id}`, operation);
       }
-
-      await enqueueAuditWrite(nextRunningAuditEntry, nextSignature);
+      for (const task of changes.backgroundTasks.upserts) {
+        const operation = buildLiveRunAuditOperations({ steps: [], backgroundTasks: [task], approvalRequest: null, elicitationRequest: null })[0]!;
+        addOperation(`background:${task.id}`, operation);
+      }
+      for (const [key, request] of [["approval", nextLiveState.approvalRequest], ["elicitation", nextLiveState.elicitationRequest]] as const) {
+        if (request) {
+          const operation = buildLiveRunAuditOperations({ steps: [], backgroundTasks: [], approvalRequest: key === "approval" ? nextLiveState.approvalRequest : null, elicitationRequest: key === "elicitation" ? nextLiveState.elicitationRequest : null })[0]!;
+          addOperation(key, operation);
+        } else if (observedOperations.has(key)) removedKeys.push(key);
+      }
+      if (upserts.length) patch.operationUpserts = upserts;
+      if (!patch.fields && !patch.assistantSnapshot && !patch.usage && !upserts.length && !removedKeys.length) return;
+      const write = enqueueAuditWrite(patch, removedKeys);
+      // Observation follows admission, not persistence. A rejected admission terminates this turn.
+      if (!auditProgressFailure) {
+        latestObservedRunningAuditEntry = { ...latestObservedRunningAuditEntry, threadId, assistantText, errorMessage, usage: nextLiveState.usage ?? latestObservedRunningAuditEntry.usage };
+        for (const upsert of upserts) observedOperations.set(upsert.key, upsert.operation);
+        for (const key of removedKeys) observedOperations.delete(key);
+      }
+      // Admission is bounded, but storage latency must not block provider control events.
+      void write.catch(() => undefined);
+      if (auditProgressFailure) throw auditProgressFailure;
     };
-    await syncRunningAuditFromLiveState(initialLiveState);
+    await syncRunningAuditFromLiveState(initialLiveState, {
+      steps: { upserts: initialLiveState.steps, removes: [] },
+      backgroundTasks: { upserts: initialLiveState.backgroundTasks, removes: [] },
+    }).catch(failAuditProgress);
     const runProviderTurn = async (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
       const effectiveTurnSession = await (this.deps.resolveProviderSession?.(turnSession) ?? turnSession);
@@ -1364,6 +1419,7 @@ export class SessionRuntimeService {
         signal: runAbortController.signal,
         onCleanupPending: (completion) => this.trackTerminatingSessionRun(sessionId, completion),
         onApprovalRequest: (approvalRequest, requestSignal) => {
+          if (terminalAuditSettled || progressGeneration !== liveProgressGeneration || auditProgressFailure) return "deny";
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
           const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, signal);
           const currentLiveState = this.deps.getLiveSessionRun(sessionId);
@@ -1377,6 +1433,7 @@ export class SessionRuntimeService {
           return decision;
         },
         onElicitationRequest: (elicitationRequest, requestSignal) => {
+          if (terminalAuditSettled || progressGeneration !== liveProgressGeneration || auditProgressFailure) return { action: "cancel" };
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
           const response = this.deps.waitForElicitationResponse(sessionId, elicitationRequest, signal);
           const currentLiveState = this.deps.getLiveSessionRun(sessionId);
@@ -1395,7 +1452,7 @@ export class SessionRuntimeService {
         onSessionContextTelemetry: (telemetry) => {
           this.deps.setSessionContextTelemetry(telemetry);
         },
-      }, (state) => {
+      }, (state, changes) => {
         if (terminalAuditSettled || progressGeneration !== liveProgressGeneration) {
           return;
         }
@@ -1407,9 +1464,7 @@ export class SessionRuntimeService {
           approvalRequest: currentLiveState?.approvalRequest ?? null,
           elicitationRequest: currentLiveState?.elicitationRequest ?? null,
         };
-        void syncRunningAuditFromLiveState(nextLiveState).catch((error) => {
-          console.warn("Audit progress update failed", error);
-        });
+        return syncRunningAuditFromLiveState(nextLiveState, changes);
       });
       try {
         return await waitForProviderTurnWithCancelDeadline(
@@ -1463,6 +1518,7 @@ export class SessionRuntimeService {
         } catch (error) {
           const providerTurnError = error instanceof ProviderTurnError ? error : null;
           const shouldRetry =
+            !auditProgressFailure &&
             activeRunningSession.provider !== "codex" &&
             !didInternalRetry &&
             !isCanceledRunError(error) &&
@@ -1501,17 +1557,19 @@ export class SessionRuntimeService {
             clientRequestId,
             submitSource: submitSource ?? undefined,
           });
-          const resetAuditSignature = buildRunningAuditProgressSignature(resetAuditEntry);
           await flushAuditWrites();
           runningAuditEntry = resetAuditEntry;
           latestObservedRunningAuditEntry = resetAuditEntry;
-          runningAuditProgressSignature = resetAuditSignature;
+          observedOperations.clear();
+          auditOperationIds.clear();
           await this.deps.updateAuditLog(runningAuditLog.id, runningAuditEntry);
         }
       }
       if (!result) {
         throw new Error("The provider did not return a completed turn.");
       }
+      if (auditProgressFailure) throw new ProviderTurnError(String(auditProgressFailure), result, false);
+      latestObservedRunningAuditEntry = { ...latestObservedRunningAuditEntry, operations: [...observedOperations.values()] };
 
       const completedAt = new Date().toISOString();
 
@@ -1645,11 +1703,15 @@ export class SessionRuntimeService {
           elapsedMs: Date.now() - investigationStartedAt,
           terminalPhase: "completed",
         });
+        recordAuditProgressFailure(completedAuditEntry);
         const completedAuditUpdateStartedAt = Date.now();
         try {
           if (!auditWritesDrained) {
             void auditWriteQueue
-              .then(() => this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry))
+              .then(() => {
+                recordAuditProgressFailure(completedAuditEntry);
+                return this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry);
+              })
               .catch((error) => console.warn("Detached completed audit update failed", error));
             return;
           }
@@ -1725,9 +1787,11 @@ export class SessionRuntimeService {
       return storedCompletedSession;
     } catch (error: unknown) {
       const providerTurnError = error instanceof ProviderTurnError ? error : null;
-      const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
-      const message = error instanceof Error ? error.message : String(error);
-      const providerErrorReason = providerTurnError?.reason ?? null;
+      const canceled = !auditProgressFailure && (providerTurnError ? providerTurnError.canceled : isCanceledRunError(error));
+      const effectiveError = auditProgressFailure ?? error;
+      const message = effectiveError instanceof Error ? effectiveError.message : String(effectiveError);
+      latestObservedRunningAuditEntry = { ...latestObservedRunningAuditEntry, operations: [...observedOperations.values()] };
+      const providerErrorReason = auditProgressFailure ? "unknown" : providerTurnError?.reason ?? null;
       const failureMessage = formatProviderFailureMessage({
         providerId: activeRunningSession.provider,
         reason: providerErrorReason,
@@ -1741,7 +1805,7 @@ export class SessionRuntimeService {
         this.deps.getLiveSessionRun(sessionId)?.threadId,
         activeRunningSession.threadId,
       );
-      const shouldResetFailedThread = activeRunningSession.provider !== "codex" && shouldResetFailedSessionThread(
+      const shouldResetFailedThread = !auditProgressFailure && activeRunningSession.provider !== "codex" && shouldResetFailedSessionThread(
         error,
         activeRunningSession.threadId,
         partialResult,
@@ -1803,6 +1867,7 @@ export class SessionRuntimeService {
           elapsedMs: Date.now() - investigationStartedAt,
           terminalPhase: canceled ? "canceled" : "failed",
         });
+        recordAuditProgressFailure(failedAuditEntry);
         const failedAuditUpdateStartedAt = Date.now();
         if (auditWritesDrained) {
           const failedAuditUpdateResult = await waitForAuditEnrichment(
@@ -1828,7 +1893,10 @@ export class SessionRuntimeService {
           }
         } else {
           void auditWriteQueue
-            .then(() => this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry))
+            .then(() => {
+              recordAuditProgressFailure(failedAuditEntry);
+              return this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry);
+            })
             .catch((auditError) => console.warn("Detached terminal audit update failed", auditError));
         }
       };

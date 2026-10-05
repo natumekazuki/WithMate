@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createAuditProgressWriter } from "./helpers/audit-progress-fixture.js";
 import { it } from "node:test";
 
 import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
@@ -96,6 +97,7 @@ function makeService(observe: {
       return { id: 1, ...input };
     },
     updateAuditLog(_id, input) { observe.audit.push(input); },
+    updateAuditLogProgress: createAuditProgressWriter(),
     setLiveSessionRun() {},
     getLiveSessionRun: () => null,
     waitForApprovalDecision: () => "deny",

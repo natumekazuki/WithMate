@@ -182,7 +182,7 @@ export type AuditLogStorageRead = AwaitableStorageMethods<
 export type AuditLogStorageWrite = AwaitableStorageMethods<
   AuditLogStorage,
   "createAuditLog" | "updateAuditLog" | "clearAuditLogs"
-> & AuditLogStorageRead;
+> & AuditLogStorageRead & Partial<AwaitableStorageMethods<AuditLogStorageV6, "updateAuditLogProgress">>;
 export type SessionMemoryStorageAccess = SessionMemoryStorage | SessionMemoryStorageV2Read;
 export type ProjectMemoryStorageAccess = ProjectMemoryStorage | ProjectMemoryStorageV2Read;
 export type AuxiliarySessionStorageAccess = AuxiliarySessionStorageAsyncAccess;

@@ -155,6 +155,7 @@ function makeRuntimeService(
     resolveProjectMemoryEntriesForPrompt: () => [],
     createAuditLog: (input) => ({ id: ++auditId, ...input }),
     updateAuditLog: () => undefined,
+    updateAuditLogProgress: () => ({ insertedOperations: [] }),
     setLiveSessionRun: (id, state) => state ? liveRuns.set(id, state) : liveRuns.delete(id),
     getLiveSessionRun: (id) => liveRuns.get(id) ?? null,
     waitForApprovalDecision: () => "approve",

@@ -29,6 +29,35 @@ function input(threadId = "", signal?: AbortSignal): RunSessionTurnInput {
 
 function sdkMessage(value: Record<string, unknown>): SDKMessage { return value as SDKMessage; }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Claude progress保存の拒否はpartialを保持したfailedで返り、後続SDK eventを消費しない"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
+// fault = "callback rejectをwarnだけで握り潰してSDK実行を続けるかユーザー取消へ誤分類する"
+// observable = "ProviderTurnErrorのcanceledとpartial assistant、拒否後のgenerator進行回数"
+// observation_boundary = "public-boundary"
+// scope = "ClaudeAdapter progress failure and cleanup"
+// lifecycle = "permanent"
+// impact = "保存できない状態で無制限に実行を進め、失敗を正常完了と誤表示することを防ぐ"
+// distinction = "delivery helper単体ではSDK loop停止とpartial分類を検査できない"
+// @end-test-value
+it("Claudeはprogress拒否をpartial付きfailureとして返しSDK消費を止める", async () => {
+  let advancedAfterPartial = false;
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+    yield sdkMessage({ type: "assistant", session_id: "pressure", uuid: "partial", parent_tool_use_id: null, message: { content: [{ type: "text", text: "retained" }] } });
+    advancedAfterPartial = true;
+    yield result("pressure");
+  }) });
+  await assert.rejects(adapter.runSessionTurn(input(), () => Promise.reject(new Error("audit capacity"))), (error: unknown) => {
+    assert.ok(error instanceof ProviderTurnError);
+    assert.equal(error.canceled, false);
+    assert.equal(error.partialResult?.assistantText, "retained");
+    assert.match(error.message, /audit capacity/);
+    return true;
+  });
+  assert.equal(advancedAfterPartial, false);
+});
+
 function result(sessionId: string, overrides: Record<string, unknown> = {}): SDKMessage {
   return sdkMessage({
     type: "result", subtype: "success", is_error: false, result: "Final", session_id: sessionId,

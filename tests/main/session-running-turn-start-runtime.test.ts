@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createAuditProgressWriter } from "./helpers/audit-progress-fixture.js";
 import { it } from "node:test";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
@@ -103,6 +104,7 @@ function createRuntimeDeps(
     resolveProjectMemoryEntriesForPrompt: () => [],
     createAuditLog,
     updateAuditLog: () => undefined,
+    updateAuditLogProgress: createAuditProgressWriter(),
     setLiveSessionRun: () => undefined,
     getLiveSessionRun: () => null,
     waitForApprovalDecision: async (): Promise<LiveApprovalDecision> => "approve",

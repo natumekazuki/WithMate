@@ -105,6 +105,21 @@ export type AuditLogEntry = {
   errorMessage: string;
 };
 
+export type AuditLogProgressPatch = {
+  sessionId: string;
+  observedAt: string;
+  fields?: { threadId?: string; errorMessage?: string };
+  assistantSnapshot?: { body: string };
+  operationUpserts?: Array<{ key: string; outputId?: number; operation: AuditLogOperation }>;
+  operationRemoves?: number[];
+  transportPayload?: AuditTransportPayload | null;
+  usage?: AuditLogUsage | null;
+};
+
+export type AuditLogProgressAck = {
+  insertedOperations: Array<{ key: string; outputId: number }>;
+};
+
 export type AuditLogSummary = Omit<
   AuditLogEntry,
   "logicalPrompt" | "transportPayload" | "assistantText" | "rawItemsJson" | "providerMetadata"

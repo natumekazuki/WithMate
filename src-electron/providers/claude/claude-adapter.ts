@@ -28,6 +28,7 @@ import { buildArtifactFromOperations } from "../provider-artifact.js";
 import { captureWorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
 import { createDisabledWorkspaceSnapshotCapture, WORKSPACE_DIFF_CAPTURE_ENABLED } from "../../files/workspace-diff-policy.js";
 import { buildLiveElicitationFieldFromMcpSchema } from "../mcp-elicitation.js";
+import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
 
 const require = createRequire(import.meta.url);
 const CANCEL_GRACE_MS = 2_000;
@@ -47,7 +48,7 @@ type ClaudeTrace = {
   messages: Array<{ id: string; text: string }>;
   streamingText: string;
   streamingId: string | null;
-  steps: Map<string, LiveRunStep>;
+  steps: ProviderProgressMap<LiveRunStep>;
   operations: AuditLogOperation[];
   rawItems: BoundedAuditRawItem[];
   usage: AuditLogUsage | null;
@@ -221,7 +222,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   getBackgroundStructuredPromptPolicy() { return PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY; }
 
   private makeTrace(threadId: string | null): ClaudeTrace {
-    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new Map(), operations: [], rawItems: [], usage: null, result: null, errorMessage: "" };
+    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), operations: [], rawItems: [], usage: null, result: null, errorMessage: "" };
   }
 
   private receive(message: SDKMessage, trace: ClaudeTrace, resumed = false): void {
@@ -271,7 +272,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         const step = trace.steps.get(block.tool_use_id);
         const failed = block.is_error === true;
         if (step) {
-          step.status = failed ? "failed" : "completed";
+          trace.steps.set(step.id, { ...step, status: failed ? "failed" : "completed" });
           trace.operations.push({ type: step.type, summary: step.summary, details: failed ? "Tool failed" : "Tool completed" });
         }
         appendRaw(trace, "tool.result", { id: block.tool_use_id, status: failed ? "failed" : "completed" });
@@ -351,20 +352,26 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       interactionTail = pending.then(() => undefined, () => undefined);
       return signalRace(pending, signal);
     };
-    const progress = () => {
-      if (controller.signal.aborted || !onProgress) return;
+    let progressFailure: unknown;
+    const progressDelivery = new ProviderProgressDelivery(onProgress, (error) => {
+      progressFailure ??= error;
+      controller.abort();
+    });
+    const progress = (): Promise<void> => {
+      if (controller.signal.aborted || !onProgress) return Promise.resolve();
+      const steps = trace.steps.takeProgress(redactor);
       const state = {
         sessionId: input.session.id,
         threadId: trace.threadId ?? "",
         assistantText: redactor.sanitizeText(liveText(trace)),
-        steps: redactor.sanitize([...trace.steps.values()]),
+        steps: steps.snapshot,
         backgroundTasks: [],
         usage: trace.usage,
         errorMessage: redactor.sanitizeText(trace.errorMessage),
         approvalRequest: redactor.sanitize(approvalRequest),
         elicitationRequest: redactor.sanitize(elicitationRequest),
       };
-      void Promise.resolve(onProgress(state)).catch((error) => this.log?.({ level: "warn", message: "Claude progress callback failed", data: { error: redactor.sanitizeText(String(error)) } }));
+      return progressDelivery.deliver(state, { steps: steps.changes, backgroundTasks: { upserts: [], removes: [] } });
     };
     const options: Options = {
       cwd: workspacePath,
@@ -420,9 +427,9 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
           try {
             const answer = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async (signal) => {
               elicitationRequest = redactor.sanitize(claudeQuestionRequest(requestId, toolInput));
-              progress();
+              void progress().catch(() => undefined);
               try { return await input.onElicitationRequest!(elicitationRequest, signal); }
-              finally { elicitationRequest = null; progress(); }
+              finally { elicitationRequest = null; void progress().catch(() => undefined); }
             });
             if (answer.action !== "accept") return { behavior: "deny", message: "Question declined" };
             const questions = Array.isArray(toolInput.questions) ? toolInput.questions.map(objectOf) : [];
@@ -443,9 +450,9 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         try {
           const decision = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async (signal) => {
             approvalRequest = redactor.sanitize({ requestId, provider: "claude", kind: toolName, title: `Allow ${toolName}?`, summary: summarizeTool(toolName, toolInput), decisionMode: "direct-decision" });
-            progress();
+            void progress().catch(() => undefined);
             try { return await input.onApprovalRequest!(approvalRequest, signal); }
-            finally { approvalRequest = null; progress(); }
+            finally { approvalRequest = null; void progress().catch(() => undefined); }
           });
           return decision === "approve" ? { behavior: "allow" } : { behavior: "deny", message: "Denied by user" };
         } catch { return { behavior: "deny", message: "Canceled" }; }
@@ -457,9 +464,9 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         try {
           const answer = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async (signal) => {
             elicitationRequest = projected;
-            progress();
+            void progress().catch(() => undefined);
             try { return await input.onElicitationRequest!(projected, signal); }
-            finally { elicitationRequest = null; progress(); }
+            finally { elicitationRequest = null; void progress().catch(() => undefined); }
           });
           return answer.action === "accept"
             ? projected.mode === "url" ? { action: "accept" } : { action: "accept", content: answer.content ?? {} }
@@ -480,9 +487,10 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         const next = await signalRace(iterator.next(), controller.signal);
         if (next.done) break;
         this.receive(next.value, trace, Boolean(input.session.threadId));
-        progress();
+        await signalRace(progress(), controller.signal);
         if (trace.result) break;
       }
+      if (progressFailure) throw progressFailure;
       if (controller.signal.aborted) throw new Error("Canceled");
       if (!trace.result) throw new Error("Claude stream ended before a result");
       if (trace.result.subtype !== "success" || trace.result.is_error) throw new Error(trace.errorMessage || "Claude turn failed");
@@ -505,8 +513,9 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       }));
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const canceled = controller.signal.aborted || isCanceledProviderMessage(message);
+      const failure = progressFailure ?? error;
+      const message = failure instanceof Error ? failure.message : String(failure);
+      const canceled = !progressFailure && (controller.signal.aborted || isCanceledProviderMessage(message));
       trace.errorMessage = message;
       throw new ProviderTurnError(redactor.sanitizeText(message), this.result(input, prompt, trace), canceled, providerErrorReason(message, canceled));
     } finally {

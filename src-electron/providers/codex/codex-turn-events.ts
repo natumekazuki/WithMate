@@ -6,6 +6,7 @@ import {
   toAuditTextPreview,
   stringifyBoundedAuditValue,
 } from "../../session/audit-payload-limits.js";
+import { ProviderProgressMap } from "../provider-progress.js";
 
 // The fields consumed here follow Codex App Server 0.159.0's ThreadItem schema.
 export type CodexFileChange = {
@@ -53,7 +54,7 @@ export type CodexTurnItem =
 export type CodexNativeNotification = { method: string; params?: unknown };
 export type CodexTurnStreamState = {
   items: Map<string, CodexTurnItem>;
-  liveSteps: Map<string, LiveRunStep>;
+  liveSteps: ProviderProgressMap<LiveRunStep>;
   threadId: string | null;
   turnId: string | null;
   reasoningText: string;
@@ -83,7 +84,7 @@ export function createCodexTurnStreamState(
 ): CodexTurnStreamState {
   return {
     items: new Map(),
-    liveSteps: new Map(),
+    liveSteps: new ProviderProgressMap(),
     threadId,
     turnId: null,
     reasoningText: "",

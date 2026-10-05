@@ -12,7 +12,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.j
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogProvider, ModelReasoningEffort } from "../../src-shared/settings/model-catalog.js";
 import { CodexAdapter } from "../../src-electron/providers/codex/codex-adapter.js";
-import { ProviderTurnError, type RunBackgroundStructuredPromptInput, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import { ProviderTurnError, type RunBackgroundStructuredPromptInput, type RunSessionTurnInput, type RunSessionTurnProgressChanges } from "../../src-electron/providers/provider-runtime.js";
 import { applyCodexTurnEvent, createCodexTurnStreamState, getLiveCodexAssistantText } from "../../src-electron/providers/codex/codex-turn-events.js";
 import { CodexAppServerTransport, CodexAppServerRpcError, type CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
 import { SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA } from "../../src-electron/session/session-memory-extraction.js";
@@ -171,6 +171,36 @@ class FakeTransport {
   async close() { this.closed = true; }
   whenClosed(): Promise<void> { return Promise.resolve(); }
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Codex progressは変更stepだけを渡し、resolved event burst中でもmacrotaskを実行する"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
+// fault = "1step変更で既存全stepを変更扱いするか、同期event連鎖でMainのtimerを飢餓させる"
+// observable = "実adapter callbackのchanged step ID列と、全event処理前のsetImmediate実行位置"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter progress owner and scheduling"
+// lifecycle = "permanent"
+// impact = "多数operationのAudit増幅と制御応答の遅延を防ぐ"
+// distinction = "共有map単体や型検査ではnative eventからcallbackへの変更情報とevent-loop接続を確認できない"
+// @end-test-value
+it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする", async () => workspace(async (directory) => {
+  const transport = new FakeTransport();
+  transport.events = [
+    notification("item/started", { item: { type: "commandExecution", id: "one", command: "one", aggregatedOutput: "", exitCode: null, status: "inProgress" } }),
+    notification("item/started", { item: { type: "commandExecution", id: "two", command: "two", aggregatedOutput: "", exitCode: null, status: "inProgress" } }),
+    notification("item/commandExecution/outputDelta", { itemId: "one", delta: "changed" }),
+    completed(),
+  ];
+  const changes: RunSessionTurnProgressChanges[] = [];
+  let callbacksAtYield = -1;
+  setImmediate(() => { callbacksAtYield = changes.length; });
+  const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
+  await adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (_state, change) => { changes.push(change); });
+  assert.deepEqual(changes.filter((change) => change.steps.upserts.length > 0).map((change) => change.steps.upserts.map((step) => step.id)), [["one"], ["two"], ["one"]]);
+  assert.ok(callbacksAtYield >= 0 && callbacksAtYield < changes.length);
+  assert.equal(changes[3].steps.upserts[0].details, "changed");
+}));
 // @test-value v2
 // kind = "invariant"
 // claim = "cleanup失敗はnative completed/failed/interruptedの結果を変えず診断を残し実終了まで競合実行を拒否する"

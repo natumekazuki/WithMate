@@ -113,6 +113,167 @@ function seedAuxiliarySession(dbPath: string): void {
 describe("AuditLogStorageV6", () => {
   // @test-value v2
   // kind = "invariant"
+  // claim = "progress patchは指定operationだけを更新し、同内容の別operationと他writer出力のID・順序・本文を維持する"
+  // oracle = { type = "contract", ref = "docs/design/audit-log.md#保存と所有" }
+  // fault = "operationをsummaryで同一視するか、指定外outputを再挿入・上書きする"
+  // observable = "小ackのoperation ID、保存rowのID・seq・payload、operation detailの取得順"
+  // observation_boundary = "public-boundary"
+  // scope = "AuditLogStorageV6のprogress点更新と明示削除"
+  // lifecycle = "permanent"
+  // impact = "監査操作の取り違えと他writerの保存内容喪失を防ぐ"
+  // distinction = "full snapshot更新の既存testではprogress専用commandのoperation identityと削除guardを検証できない"
+  // @end-test-value
+  it("progress patchは小ackとoperation IDで重複操作を点更新する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-progress-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      seedSession(dbPath);
+      const storage = new AuditLogStorageV6(dbPath);
+      const db = new DatabaseSync(dbPath);
+      try {
+        const initial = baseAuditLog({ phase: "running", assistantText: "" });
+        const created = storage.createAuditLog(initial);
+        const service = new AuditLogService(storage);
+        const operation = { type: "shell", summary: "same", details: "running" };
+        const ack = await service.updateAuditLogProgress(created.id, {
+          sessionId: initial.sessionId, observedAt: initial.createdAt,
+          operationUpserts: [{ key: "first", operation }, { key: "second", operation }],
+          usage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 },
+        });
+        assert.deepEqual(Object.keys(ack), ["insertedOperations"]);
+        assert.deepEqual(ack.insertedOperations.map((item) => item.key), ["first", "second"]);
+        const firstId = ack.insertedOperations[0].outputId;
+        const secondId = ack.insertedOperations[1].outputId;
+        assert.notEqual(firstId, secondId);
+        db.prepare(`INSERT INTO session_turn_provider_outputs_v6
+          (turn_id, seq, provider_id, kind, summary, payload_json, created_at)
+          VALUES (?, (SELECT MAX(seq) + 1 FROM session_turn_provider_outputs_v6 WHERE turn_id = ?), 'codex', 'context_telemetry', 'context', ?, ?)`)
+          .run(created.id, created.id, JSON.stringify({ value: "retained" }), initial.createdAt);
+        const rows = () => db.prepare(`SELECT id, seq, kind, payload_json FROM session_turn_provider_outputs_v6
+          WHERE turn_id = ? ORDER BY seq`).all(created.id) as Array<{ id: number; seq: number; kind: string; payload_json: string }>;
+        const before = rows();
+        const update = await service.updateAuditLogProgress(created.id, {
+          sessionId: initial.sessionId, observedAt: initial.createdAt,
+          operationUpserts: [{ key: "second", outputId: secondId, operation: { ...operation, details: "finished" } }],
+          usage: { inputTokens: 3, cachedInputTokens: 0, outputTokens: 4 },
+        });
+        assert.deepEqual(update, { insertedOperations: [] });
+        assert.deepEqual(rows().filter((row) => row.id !== secondId && row.kind !== "usage"), before.filter((row) => row.id !== secondId && row.kind !== "usage"));
+        assert.deepEqual(rows().map((row) => [row.id, row.seq]), before.map((row) => [row.id, row.seq]));
+        assert.deepEqual([0, 1].map((index) => storage.getSessionAuditLogOperationDetail(initial.sessionId, created.id, index)?.details), ["running", "finished"]);
+        service.updateAuditLogProgress(created.id, { sessionId: initial.sessionId, observedAt: initial.createdAt, operationRemoves: [firstId], usage: null });
+        assert.equal(storage.getSessionAuditLogOperationDetail(initial.sessionId, created.id, 0)?.details, "finished");
+        assert.equal(storage.getSessionAuditLogDetail(initial.sessionId, created.id)?.usage, null);
+        assert.deepEqual(rows().filter((row) => row.kind === "context_telemetry"), before.filter((row) => row.kind === "context_telemetry"));
+      } finally {
+        db.close();
+        storage.close();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "受付済みprogressはterminal marker後もinterimとoperationを保存し、terminal phase・確定本文・thread・errorを巻き戻さない"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-run-cancel" }
+  // fault = "terminal後のprogress全体を拒否するか、古いprogressのmetadataで確定結果を上書きする"
+  // observable = "terminal後のphase・thread・error・本文とinterim、保存operation detail"
+  // observation_boundary = "public-boundary"
+  // scope = "最小terminal commitとphase-free progress保存"
+  // lifecycle = "permanent"
+  // impact = "最終本文の保存だけでは検出できない途中監査の欠落を防ぐ"
+  // distinction = "既存phase guard testは旧full running更新の拒否を確認するだけで受付済みdeltaの保存を検証しない"
+  // @end-test-value
+  it("terminal marker後のprogressは確定結果を変えずinterimを保存する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-progress-terminal-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      seedSession(dbPath);
+      const storage = new AuditLogStorageV6(dbPath);
+      const sessions = new SessionStorageV6(dbPath);
+      try {
+        const created = storage.createAuditLog(baseAuditLog({ phase: "running", assistantText: "" }));
+        storage.updateAuditLogProgress(created.id, { sessionId: "session-v6", observedAt: created.createdAt,
+          fields: { threadId: "progress-thread", errorMessage: "progress-error" }, assistantSnapshot: { body: "first" } });
+        assert.equal(storage.listSessionAuditLogs("session-v6")[0].threadId, "progress-thread");
+        const session = sessions.getSession("session-v6");
+        assert.ok(session);
+        sessions.upsertTerminalSession({ ...session, messages: [{ role: "user", text: "hello" }, { role: "assistant", text: "done" }] }, {
+          auditLogId: created.id, sessionId: session.id, phase: "completed", assistantMessageSeq: 1,
+          threadId: "terminal-thread", errorMessage: "terminal-error", completedAt: "2026-06-28T00:00:01.000Z",
+        });
+        const terminalAssistantText = storage.listSessionAuditLogs(session.id)[0].assistantText;
+        assert.equal(JSON.parse(terminalAssistantText).text, "done");
+        const ack = storage.updateAuditLogProgress(created.id, { sessionId: session.id, observedAt: created.createdAt,
+          fields: { threadId: "old-thread", errorMessage: "old-error" }, assistantSnapshot: { body: "accepted partial" },
+          operationUpserts: [{ key: "shell", operation: { type: "shell", summary: "accepted", details: "saved" } }] });
+        assert.equal(ack.insertedOperations.length, 1);
+        const entry = storage.listSessionAuditLogs(session.id)[0];
+        assert.equal(entry.phase, "completed");
+        assert.equal(entry.threadId, "terminal-thread");
+        assert.equal(entry.errorMessage, "terminal-error");
+        assert.equal(entry.assistantText, terminalAssistantText);
+        assert.equal(entry.operations[0].details, "saved");
+        assert.deepEqual(storage.getSessionAuditLogDetail(session.id, created.id)?.interimMessages?.map((message) => message.body), ["first", "accepted partial"]);
+        assert.throws(() => storage.updateAuditLog(created.id, baseAuditLog({ phase: "running" })), /target mismatch/);
+      } finally {
+        sessions.close();
+        storage.close();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "progress patchは別turn・別kind・別ownerを変更せず、不一致patch全体をrollbackし削除済みturnを再作成しない"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-delete" }
+  // fault = "output IDだけで更新するか、途中失敗でinterimをcommitし削除済みownerを復活させる"
+  // observable = "拒否結果、他turn detail、元turn interim、削除後のturn件数"
+  // observation_boundary = "public-boundary"
+  // scope = "AuditLogStorageV6のtransaction内ownerとoutput target guard"
+  // lifecycle = "permanent"
+  // impact = "監査情報の混線と削除情報の再生成を防ぐ"
+  // distinction = "full updateのowner testとschema FKはID指定progressの他turn更新やtransaction rollbackを検出しない"
+  // @end-test-value
+  it("progress patchはownerとoutput targetを照合してatomicに拒否する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-progress-owner-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      seedSession(dbPath);
+      seedAuxiliarySession(dbPath);
+      const storage = new AuditLogStorageV6(dbPath);
+      const db = new DatabaseSync(dbPath);
+      try {
+        const created = storage.createAuditLog(baseAuditLog({ phase: "running", assistantText: "" }));
+        const auxiliary = storage.createAuditLog(baseAuditLog({ sessionId: "aux-session-v6", phase: "running", assistantText: "" }));
+        const patch = { sessionId: "aux-session-v6", observedAt: created.createdAt,
+          operationUpserts: [{ key: "aux", operation: { type: "shell", summary: "aux", details: "original" } }] };
+        const outputId = storage.updateAuditLogProgress(auxiliary.id, patch).insertedOperations[0].outputId;
+        assert.throws(() => storage.updateAuditLogProgress(created.id, patch), /target mismatch/);
+        assert.throws(() => storage.updateAuditLogProgress(created.id, { ...patch, sessionId: "session-v6", assistantSnapshot: { body: "must rollback" },
+          operationUpserts: [{ ...patch.operationUpserts[0], outputId }] }), /operation target mismatch/);
+        assert.equal(storage.getSessionAuditLogOperationDetail("aux-session-v6", auxiliary.id, 0)?.details, "original");
+        assert.deepEqual(storage.getSessionAuditLogDetail("session-v6", created.id)?.interimMessages, []);
+        const logicalId = (db.prepare("SELECT id FROM session_turn_provider_outputs_v6 WHERE turn_id = ? AND kind = 'logical_prompt'").get(created.id) as { id: number }).id;
+        assert.throws(() => storage.updateAuditLogProgress(created.id, { sessionId: "session-v6", observedAt: created.createdAt, operationRemoves: [logicalId] }), /operation target mismatch/);
+        db.prepare("DELETE FROM session_turns_v6 WHERE id = ?").run(created.id);
+        assert.throws(() => storage.updateAuditLogProgress(created.id, { sessionId: "session-v6", observedAt: created.createdAt }), /target mismatch/);
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_turns_v6 WHERE id = ?").get(created.id) as { count: number }).count, 0);
+      } finally {
+        db.close();
+        storage.close();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "turnの途中更新は不変のprovider output行を保持し、変更した出力と終端情報を順序どおり取得できる"
   // oracle = { type = "contract", ref = "docs/design/audit-log.md#保存と所有" }
   // fault = "更新時に全output行を削除して再挿入するか、重複operationや追加された終端情報を誤対応させる"

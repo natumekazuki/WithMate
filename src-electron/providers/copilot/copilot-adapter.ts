@@ -85,6 +85,7 @@ import {
 import { buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection } from "./copilot-elicitation.js";
 import { buildLiveElicitationFieldFromMcpSchema as buildElicitationFieldProjection } from "../mcp-elicitation.js";
 import { applyCopilotAssistantEvent } from "./copilot-turn-events.js";
+import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
 
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 
@@ -124,8 +125,8 @@ type CopilotAdapterLogInput = {
 };
 
 type CopilotTurnStreamState = {
-  liveSteps: Map<string, LiveRunStep>;
-  backgroundTasks: Map<string, LiveBackgroundTask>;
+  liveSteps: ProviderProgressMap<LiveRunStep>;
+  backgroundTasks: ProviderProgressMap<LiveBackgroundTask>;
   permissionToStepId: Map<string, string>;
   toolNamesByCallId: Map<string, string>;
   reasoningDraftsById: Map<string, string>;
@@ -301,8 +302,8 @@ function stringifyUnknown(value: unknown): string | undefined {
 
 function createCopilotTurnStreamState(): CopilotTurnStreamState {
   return {
-    liveSteps: new Map<string, LiveRunStep>(),
-    backgroundTasks: new Map<string, LiveBackgroundTask>(),
+    liveSteps: new ProviderProgressMap<LiveRunStep>(),
+    backgroundTasks: new ProviderProgressMap<LiveBackgroundTask>(),
     permissionToStepId: new Map<string, string>(),
     toolNamesByCallId: new Map<string, string>(),
     reasoningDraftsById: new Map<string, string>(),
@@ -1307,8 +1308,8 @@ async function emitLiveState(
   handler: RunSessionTurnProgressHandler | undefined,
   sessionId: string,
   threadId: string | null,
-  steps: Map<string, LiveRunStep>,
-  backgroundTasks: Map<string, LiveBackgroundTask>,
+  steps: ProviderProgressMap<LiveRunStep>,
+  backgroundTasks: ProviderProgressMap<LiveBackgroundTask>,
   assistantText: string,
   reasoningText: string,
   usage: AuditLogUsage | null,
@@ -1318,19 +1319,20 @@ async function emitLiveState(
   if (!handler) {
     return;
   }
-
+  const stepProgress = steps.takeProgress(redactor);
+  const taskProgress = backgroundTasks.takeProgress(redactor);
   await handler({
     sessionId,
     threadId: threadId ?? "",
     assistantText: redactor.sanitizeText(toAuditTextPreview(assistantText) ?? ""),
     reasoningText: redactor.sanitizeText(toAuditTextPreview(reasoningText) ?? ""),
-    steps: redactor.sanitize(Array.from(steps.values())),
-    backgroundTasks: redactor.sanitize(sortLiveBackgroundTasks(backgroundTasks.values())),
+    steps: stepProgress.snapshot,
+    backgroundTasks: sortLiveBackgroundTasks(taskProgress.snapshot),
     usage,
     errorMessage: redactor.sanitizeText(errorMessage),
     approvalRequest: null,
     elicitationRequest: null,
-  });
+  }, { steps: stepProgress.changes, backgroundTasks: taskProgress.changes });
 }
 
 function waitForCopilotSessionCompletion(
@@ -2339,11 +2341,16 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
     const streamState = createCopilotTurnStreamState();
     let observingTurn = true;
-    let progressChain = Promise.resolve();
+    let progressFailure: unknown;
+    let stopForProgressFailure = () => {};
+    const progressDelivery = new ProviderProgressDelivery(onProgress, (error) => {
+      progressFailure ??= error;
+      stopForProgressFailure();
+    });
     const scheduleLiveState = () => {
-      progressChain = progressChain.then(() =>
-        emitLiveState(
-          onProgress,
+      if (progressFailure) return Promise.resolve();
+      return emitLiveState(
+          (state, changes) => progressDelivery.deliver(state, changes),
           input.session.id,
           session.sessionId,
           streamState.liveSteps,
@@ -2353,9 +2360,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           streamState.usage,
           streamState.streamErrorMessage,
           redactor,
-        ),
-      );
-      return progressChain;
+        );
     };
 
     await emitLiveState(
@@ -2372,7 +2377,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     );
 
     const unsubscribe = session.on((event) => {
-      if (!observingTurn) {
+      if (!observingTurn || progressFailure) {
         return;
       }
       applyCopilotTurnEvent({
@@ -2406,7 +2411,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
             }
           });
       }
-      void scheduleLiveState();
+      void scheduleLiveState().catch(() => undefined);
     });
 
     const completion = waitForCopilotSessionCompletion(session);
@@ -2445,6 +2450,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       })();
       void cancellationCleanup.catch(rejectCancellation);
     };
+    stopForProgressFailure = handleAbort;
+    if (progressFailure) handleAbort();
     input.signal?.addEventListener("abort", handleAbort, { once: true });
 
     try {
@@ -2457,7 +2464,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       }
       observingTurn = false;
       completion.dispose();
-      await progressChain;
+      if (progressFailure) throw progressFailure;
 
       if (streamState.streamErrorMessage) {
         const partialResult = await this.buildTurnResult(
@@ -2512,7 +2519,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         throw error;
       }
 
-      const message = error instanceof Error ? error.message : String(error);
+      const failure = progressFailure ?? error;
+      const message = failure instanceof Error ? failure.message : String(failure);
       const partialResult = await this.buildTurnResult(
         input.agentRuntimeBinding,
         prompt,
@@ -2555,7 +2563,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       throw new ProviderTurnError(
         redactor.sanitizeText(message),
         partialResult,
-        Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
+        !progressFailure && (Boolean(input.signal?.aborted) || isCanceledProviderMessage(message)),
       );
     } finally {
       observingTurn = false;
