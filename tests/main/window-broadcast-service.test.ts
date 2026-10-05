@@ -18,6 +18,38 @@ function createWindow(destroyed = false) {
   };
 }
 
+// @test-value v2
+// kind = "invariant"
+// claim = "到達不能Rendererをskipし、送信例外と診断例外を隔離して他Windowへ同じlive run通知を配信する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#decision" }
+// fault = "到達不能Rendererへ送信するか、一つの送信失敗がMainのpublicationをthrowで中断する"
+// observable = "live run通知の配信payload、到達不能Windowの送信数、送信失敗通知数、publicationの例外"
+// observation_boundary = "public-boundary"
+// scope = "window-broadcast-renderer-failure-isolation"
+// lifecycle = "permanent"
+// impact = "表示障害が他Windowの状態更新とMain所有のprovider進行を妨げる"
+// distinction = "用途別routing testと型検査では観測できない実send例外の伝播を三つの小さいWindowで検証する"
+// @end-test-value
+test("WindowBroadcastServiceはRenderer送信失敗を隔離して他Windowへ配信する", () => {
+  const unreachable = createWindow();
+  const broken = createWindow();
+  const healthy = createWindow();
+  let failures = 0;
+  broken.window.webContents.send = () => { throw new TypeError("Object has been destroyed"); };
+  const service = new WindowBroadcastService({
+    getAllWindows: () => [unreachable.window, broken.window, healthy.window],
+    getHomeWindows: () => [],
+    getPrimaryHomeWindow: () => null,
+    getSessionWindows: () => [],
+    canSendToWindow: (window) => window !== unreachable.window,
+    onSendFailed: () => { failures += 1; throw new Error("diagnostics failed"); },
+  });
+  assert.doesNotThrow(() => service.broadcastLiveSessionRun("session-1", null));
+  assert.equal(unreachable.sent.length, 0);
+  assert.equal(failures, 1);
+  assert.deepEqual(healthy.sent, [{ channel: "withmate:live-session-run", payload: { sessionId: "session-1", state: null } }]);
+});
+
 test("WindowBroadcastService は用途別 window に event を振り分ける", () => {
   const home = createWindow(false);
   const session = createWindow(false);

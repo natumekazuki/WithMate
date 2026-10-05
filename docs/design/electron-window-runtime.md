@@ -52,7 +52,7 @@ flowchart LR
 - `Session Window` は `sessionId` ごとに 1 つまで生成する
 - `Session Monitor Window` と `Settings Window` は単一 window として再利用する
 - `Diff Window` は一時 token で preview payload を引く popout とする
-- 同じ対象を再度開く要求が来たら新規生成せず、既存 window を再表示・フォーカスする
+- 同じ対象を再度開く要求が来たら、応答可能な既存 window を再表示・フォーカスする。Session WindowのRenderer終了・応答不能時の再生成は[Session Window Close](session-run-lifecycle.md#session-window-close)の契約に従う
 - renderer は `window.withmate` を前提に動作し、browser 単体起動はサポートしない
 
 ## Main Process Responsibilities
@@ -77,9 +77,12 @@ Main Process は `app.requestSingleInstanceLock()` を取得し、2 つ目以降
 
 - `Session Window` の生成後 wiring
 - running close policy
+- Rendererの応答可能・応答不能・終了状態と、操作に応じたclose・再open
 - `session-start`
 
 Window復元候補のsnapshotは任意保存とし、open完了・quit準備は保存完了を待たない。quit準備時は候補の保存を要求したうえでcloseによる候補更新を止める。Auxiliary draft等の必須flushは独立した終了条件として維持する。
+
+表示へのbroadcastはWindowごとに配送可否と送信例外を扱い、終了済みRendererには送信しない。配送失敗は固定分類で診断し、他Windowへの配送とMainのprovider応答保存を止めない。新しいRendererはMainのSession / live runを再取得する。draft flushの診断はclose / quit、結果分類、経過時間だけを記録し、本文・URL・タイトル・ID・生errorを含めない。
 
 `SessionWindowRestoreService`は起動時に読み込んだ復元候補と現在開いているWindowの保存集合を分離する。復元操作は起動時候補の読込みだけを待ち、その後の現在集合の保存には待機しない。
 

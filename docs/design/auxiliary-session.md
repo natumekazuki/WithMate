@@ -100,7 +100,7 @@ Send／終了時の明示flushは保留中のdebounceを解除し、保存を開
 
 renderer の `src/chat/auxiliary/use-auxiliary-draft-persistence.ts` が Auxiliary draft owner のMap、送信待ち、quit flushを一つのlifecycle ownerとして管理し、Session windowはComposer表示とturn処理を委譲する。
 
-送信は controller の最新値と編集 revision を捕捉し、当該 owner の保存を確定してから durable revision を指定する。送信時の明示 consume と通常 runtime 保存を区別し、古い save / terminal が入力を復活・消去させない。送信拒否・失敗時の復元は捕捉した編集 revision と照合し、後続の新しい入力を上書きしない。正常な Window close / app quit は未保存 owner の flush を待ち、失敗時は閉じずに入力と再試行導線を保持する。強制終了では最後の ack 後の未保存範囲を失い得る。
+送信は controller の最新値と編集 revision を捕捉し、当該 owner の保存を確定してから durable revision を指定する。送信時の明示 consume と通常 runtime 保存を区別し、古い save / terminal が入力を復活・消去させない。送信拒否・失敗時の復元は捕捉した編集 revision と照合し、後続の新しい入力を上書きしない。通常Window closeは未保存ownerのflushを試みるが、失敗・timeout・Renderer終了では入力中promptの未保存範囲を破棄して閉じる。provider応答とMainの保存処理は破棄対象にしない。app quitは保存失敗時に終了を中止し、生存Windowの入力と再試行導線を保持する。強制終了では最後のack後の未保存範囲を失い得る。
 
 Codexの実行中turnが入力受付可能な間は、Main / Auxiliaryの既存Composerから`Send Input`で同じturnへ追加入力できる。捕捉したturn IDをMainとadapterの両方で照合し、終了・取消・不一致・送信結果不明では失敗を表示してdraftを保持する。新規turnの開始や自動再送へ切り替えず、実行設定と既存bindingを維持する。受理済みuser本文は実行中の会話へ追加し、元turnのterminal保存に含める。
 

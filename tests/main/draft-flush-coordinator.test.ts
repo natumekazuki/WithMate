@@ -5,8 +5,42 @@ import {
   DEFAULT_DRAFT_FLUSH_TIMEOUT_MS,
   DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS,
   DraftFlushCoordinator,
+  type DraftFlushResult,
 } from "../../src-electron/platform/draft-flush-coordinator.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "../../src-electron/session/session-run-timeouts.js";
+
+// @test-value v2
+// kind = "invariant"
+// claim = "draft flushは成功ACKだけをtrueで確定し、負ACK・timeout・送信例外・Window消滅・Renderer死亡は各分類のfalseとして一度だけ通知する"
+// oracle = { type = "contract", ref = "src-electron/platform/draft-flush-coordinator.ts#DraftFlushOutcome" }
+// fault = "未保存終了をtrueにする、失敗分類を失う、または遅延ACKで完了通知を二重発行する"
+// observable = "request結果、settled通知のreason/outcome/elapsedMs、遅延ACK受理"
+// observation_boundary = "public-boundary"
+// scope = "draft-flush-result-classification"
+// lifecycle = "permanent"
+// impact = "未保存入力を保存済みと誤認し、Renderer障害を区別できない"
+// distinction = "sender整合とtimeout期限の既存testでは扱わない終了経路全体の保存成否分類を検証する"
+// @end-test-value
+test("DraftFlushCoordinatorは保存成否と終了理由を一度だけ分類する", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  for (const outcome of ["saved", "rejected", "timeout", "send-failed", "window-closed", "renderer-gone"] as const) {
+    const settled: DraftFlushResult[] = [];
+    let requestId = "";
+    const window = {};
+    const coordinator = new DraftFlushCoordinator((_, request) => {
+      requestId = request.requestId;
+      if (outcome === "send-failed") throw new Error("send failed");
+    }, 100, (result) => { settled.push(result); });
+    const result = coordinator.request(window, "session", "sender", "close");
+    if (outcome === "timeout") t.mock.timers.tick(100);
+    else if (outcome === "window-closed" || outcome === "renderer-gone") coordinator.forgetWindow(window, outcome);
+    else if (outcome !== "send-failed") coordinator.acknowledge(requestId, "sender", outcome === "saved");
+    assert.equal(await result, outcome === "saved");
+    assert.deepEqual(settled, [{ reason: "close", outcome, elapsedMs: outcome === "timeout" ? 100 : 0 }]);
+    assert.equal(coordinator.acknowledge(requestId, "sender", true), false);
+    assert.equal(settled.length, 1);
+  }
+});
 
 // @test-value v2
 // kind = "invariant"

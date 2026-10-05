@@ -83,15 +83,11 @@ export class MainLogComposition {
   }
   public attachWindowLogHandlers = (window: BrowserWindow): void => {
     const write = (input: LogInput) => this.writeLog(input);
-    const title = () => this.readWindowTitle(window);
-    const url = () => this.readWindowUrl(window);
     write({
       level: "info",
       kind: "app.window.created",
       process: "main",
       message: "Window created",
-      windowId: window.id,
-      data: { title: title() },
     });
     window.on("closed", () =>
       write({
@@ -99,8 +95,6 @@ export class MainLogComposition {
         kind: "app.window.closed",
         process: "main",
         message: "Window closed",
-        windowId: window.id,
-        data: { title: title() },
       }),
     );
     window.webContents.on("render-process-gone", (_event, details) =>
@@ -109,12 +103,9 @@ export class MainLogComposition {
         kind: "renderer.process-gone",
         process: "main",
         message: `Renderer process gone: ${details.reason}`,
-        windowId: window.id,
         data: {
           reason: details.reason,
           exitCode: details.exitCode,
-          url: url(),
-          windowTitle: title(),
           isDestroyed: window.isDestroyed(),
         },
       }),
@@ -125,8 +116,6 @@ export class MainLogComposition {
         kind: "webcontents.unresponsive",
         process: "main",
         message: "Window webContents became unresponsive",
-        windowId: window.id,
-        data: { url: url(), windowTitle: title() },
       }),
     );
     window.webContents.on("responsive", () =>
@@ -135,59 +124,36 @@ export class MainLogComposition {
         kind: "webcontents.responsive",
         process: "main",
         message: "Window webContents became responsive",
-        windowId: window.id,
-        data: { url: url(), windowTitle: title() },
       }),
     );
     window.webContents.on(
       "did-fail-load",
-      (_event, errorCode, errorDescription, validatedURL, isMainFrame) =>
+      (_event, errorCode, _errorDescription, _validatedURL, isMainFrame) =>
         write({
           level: "error",
           kind: "renderer.did-fail-load",
           process: "main",
-          message: errorDescription,
-          windowId: window.id,
+          message: "Renderer load failed",
           data: {
             errorCode,
-            errorDescription,
-            validatedURL,
             isMainFrame,
-            url: url(),
           },
         }),
     );
     window.webContents.on(
       "did-start-navigation",
-      (_event, navigationUrl, isInPlace, isMainFrame) => {
+      (_event, _navigationUrl, isInPlace, isMainFrame) => {
         if (isMainFrame)
           write({
             level: "info",
             kind: "renderer.navigation-started",
             process: "main",
             message: "Renderer main-frame navigation started",
-            windowId: window.id,
-            data: { url: navigationUrl, isInPlace, windowTitle: title() },
+            data: { isInPlace },
           });
       },
     );
   };
-  private readWindowTitle(window: BrowserWindow): string {
-    try {
-      return window.isDestroyed() ? "" : window.getTitle();
-    } catch {
-      return "";
-    }
-  }
-  private readWindowUrl(window: BrowserWindow): string {
-    try {
-      return window.webContents.isDestroyed()
-        ? ""
-        : window.webContents.getURL();
-    } catch {
-      return "";
-    }
-  }
   public writeIpcErrorLog = (input: {
     channel: string;
     durationMs: number;

@@ -32,6 +32,7 @@ import type { CharacterContextResponse } from "../../src-shared/character-contex
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character/character-affect-turn-settlement-storage.js";
 import type { SessionTurnTerminalCommit } from "../../src-electron/session/session-turn-terminal-commit.js";
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
+import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
 import { AppLifecycleService } from "../../src-electron/app/app-lifecycle-service.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "../../src-electron/session/session-run-timeouts.js";
 import { MainProviderFacade } from "../../src-electron/app/main-provider-facade.js";
@@ -197,6 +198,120 @@ describe("SessionRuntimeService stale retry helpers", () => {
   });
 });
 describe("SessionRuntimeService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Renderer死亡後の再openと保存待ち中closeでもMainの既存turnは一度だけ実行され、provider最終応答とcompleted auditを保存する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#decision" }
+  // fault = "表示の復旧で既存turnをcancelまたは再実行するか、壊れたRendererへの通知例外でterminal応答保存を失う"
+  // observable = "provider呼出し数、abort状態、保存待ち前後のSession本文、completed auditとrun結果"
+  // observation_boundary = "public-boundary"
+  // scope = "session-runtime-renderer-recovery-persistence"
+  // lifecycle = "permanent"
+  // impact = "provider応答を失うか、同じ作業を再実行して結果が二重化する"
+  // distinction = "bridge単体のcloseとruntime単体の保存testを実際のrun Promiseで接続し、表示障害とterminal保存待ちの独立性を一つのturnで検証する"
+  // @end-test-value
+  it("Rendererの再openと保存待ちcloseを越えてprovider応答を一度だけ保存する", async () => {
+    let stored = createSession();
+    let live: LiveSessionRunState | null = null;
+    let finishProvider!: () => void;
+    let finishSave!: () => void;
+    const providerGate = new Promise<void>((resolve) => { finishProvider = resolve; });
+    const saveGate = new Promise<void>((resolve) => { finishSave = resolve; });
+    let providerCalls = 0;
+    let providerSignal: AbortSignal | undefined;
+    let saveStarted = false;
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    class RuntimeWindow {
+      destroyed = false;
+      readonly closedListeners: Array<() => void> = [];
+      readonly closeListeners: Array<(event: { preventDefault(): void }) => void> = [];
+      webContents = { send() { throw new Error("renderer unavailable"); } };
+      isDestroyed() { return this.destroyed; }
+      isMinimized() { return false; }
+      restore() {} focus() {} show() {}
+      once(_event: "ready-to-show", _listener: () => void) {}
+      on(event: "close", listener: (event: { preventDefault(): void }) => void): void;
+      on(event: "closed", listener: () => void): void;
+      on(event: "close" | "closed", listener: ((event: { preventDefault(): void }) => void) | (() => void)) {
+        if (event === "closed") this.closedListeners.push(listener as () => void);
+        else this.closeListeners.push(listener as (event: { preventDefault(): void }) => void);
+      }
+      close() {
+        let prevented = false;
+        for (const listener of this.closeListeners) listener({ preventDefault() { prevented = true; } });
+        if (!prevented) this.destroy();
+      }
+      destroy() {
+        if (this.destroyed) return;
+        this.destroyed = true;
+        for (const listener of this.closedListeners.splice(0)) listener();
+      }
+    }
+    const windows: RuntimeWindow[] = [];
+    const rendererObservers = new Map<RuntimeWindow, (state: "responsive" | "unresponsive" | "gone") => void>();
+    const broadcast = new WindowBroadcastService({
+      getAllWindows: () => windows, getHomeWindows: () => [], getPrimaryHomeWindow: () => null, getSessionWindows: () => windows,
+    });
+    const adapter: ProviderCodingAdapter = {
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
+      getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
+      runSessionTurn: async (input) => {
+        providerCalls += 1;
+        providerSignal = input.signal;
+        await providerGate;
+        return createPartialResult({ assistantText: "durable provider response" });
+      },
+    };
+    const service = new SessionRuntimeService({
+      getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
+      upsertTerminalSession: async (next) => { saveStarted = true; await saveGate; stored = next; return next; },
+      resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
+      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      createAuditLog: createAuditLogBase, updateAuditLog: (_id, input) => { auditUpdates.push(input); },
+      setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+      waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
+      setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {},
+      broadcastLiveSessionRun: (id) => broadcast.broadcastLiveSessionRun(id, live), resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    });
+    const bridge = new SessionWindowBridge({
+      createWindow: () => { const window = new RuntimeWindow(); windows.push(window); return window; },
+      observeRendererState: (window, changed) => { rendererObservers.set(window, changed); },
+      async loadChatEntry() {}, getSession: () => stored, isRunInFlight: (id) => service.isRunInFlight(id),
+      confirmCloseWhileRunning: () => true, broadcastOpenSessionWindowIds() {},
+      getWindowSender: (window) => window, sendDraftFlushRequest() { throw new Error("renderer unavailable"); },
+      cancelInFlightSessionRuns: () => service.cancelAllRuns(),
+    });
+    const first = await bridge.openSessionWindow(stored.id);
+    const turn = service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
+    try {
+      await waitForCondition(() => providerCalls === 1, "provider must start");
+      rendererObservers.get(first)!("gone");
+      const second = await bridge.openSessionWindow(stored.id);
+      assert.notEqual(first, second);
+      assert.equal(providerSignal?.aborted, false);
+      finishProvider();
+      await waitForCondition(() => saveStarted, "terminal persistence must start despite failing Renderer broadcasts");
+      assert.notEqual(stored.messages.at(-1)?.text, "durable provider response");
+      assert.equal(await bridge.requestCloseSessionWindow(stored.id), true);
+      const third = await bridge.openSessionWindow(stored.id);
+      assert.notEqual(second, third);
+      assert.equal(providerSignal?.aborted, false);
+      assert.equal(service.isRunInFlight(stored.id), true);
+      finishSave();
+      const result = await turn;
+      assert.equal(providerCalls, 1);
+      assert.equal(result.messages.at(-1)?.text, "durable provider response");
+      assert.equal(stored.messages.at(-1)?.text, "durable provider response");
+      assert.equal(stored.runState, "idle");
+      await waitForCondition(() => auditUpdates.some((entry) => entry.phase === "completed"), "completed audit must persist");
+    } finally {
+      finishProvider(); finishSave();
+      await turn;
+      for (const window of windows) window.destroy();
+    }
+  });
+
   // @test-value v2
   // kind = "contract"
   // claim = "completed結果はcleanup待機で失敗へ変わらず、process実終了の通知までruntimeの再送と未確認quitを保護する"
