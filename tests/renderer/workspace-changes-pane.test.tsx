@@ -806,6 +806,12 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     pretendToBeVisual: true,
   });
+  for (const property of ["offsetHeight", "clientHeight"]) {
+    Object.defineProperty(dom.window.HTMLElement.prototype, property, {
+      configurable: true,
+      get() { return this.classList.contains("workspace-changes-list") ? 360 : 30; },
+    });
+  }
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });

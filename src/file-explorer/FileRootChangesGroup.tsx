@@ -1,5 +1,5 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useId, useMemo, useRef, type CSSProperties } from "react";
+import { measureElement, useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import {
   buildChangedFileTree,
@@ -16,6 +16,10 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 const ROOT_HEADER_ESTIMATED_HEIGHT = 48;
 const ROOT_GROUP_MIN_HEIGHT = 168;
 const ROOT_GROUP_MAX_HEIGHT = 408;
+const DEFAULT_SCOPES = [
+  ["working-tree", "Working Tree"],
+  ["staged", "Staged"],
+] as const satisfies readonly (readonly [FileRootGitChangeScope, string])[];
 
 export type GitRootChanges = {
   root: SessionFileRoot;
@@ -75,6 +79,7 @@ type FileRootChangesGroupProps = {
   rootChange: GitRootChanges;
   groupCount: number;
   sizing?: "bounded" | "content";
+  scrollContainer?: HTMLDivElement | null;
   collapsedDirectories: Record<string, boolean>;
   loadingKey: string;
   scopes?: readonly (readonly [FileRootGitChangeScope, string])[];
@@ -92,14 +97,16 @@ export function FileRootChangesGroup({
   rootChange,
   groupCount,
   sizing = "bounded",
+  scrollContainer,
   collapsedDirectories,
   loadingKey,
   onToggleDirectory,
   onOpenEntry,
-  scopes = [["working-tree", "Working Tree"], ["staged", "Staged"]],
+  scopes = DEFAULT_SCOPES,
   selectedEntryKey = null,
 }: FileRootChangesGroupProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
   const headingId = useId();
   const rows = useMemo(() => {
     const nextRows: FileRootChangeRow[] = [];
@@ -167,8 +174,8 @@ export function FileRootChangesGroup({
     }
     return nextRows;
   }, [collapsedDirectories, rootChange, scopes]);
-  const naturalHeight = ROOT_HEADER_ESTIMATED_HEIGHT
-    + rows.reduce((total, row) => total + estimatedRowHeight(row), 0);
+  const naturalHeight = useMemo(() => ROOT_HEADER_ESTIMATED_HEIGHT
+    + rows.reduce((total, row) => total + estimatedRowHeight(row), 0), [rows]);
   const minimumHeight = Math.min(naturalHeight, ROOT_GROUP_MIN_HEIGHT);
   const maximumHeight = naturalHeight <= ROOT_GROUP_MAX_HEIGHT
     ? naturalHeight
@@ -182,29 +189,39 @@ export function FileRootChangesGroup({
         minHeight: `${minimumHeight}px`,
         ...(maximumHeight === undefined ? {} : { maxHeight: `${maximumHeight}px` }),
       };
+  const getScrollElement = () => scrollContainer === undefined ? scrollRef.current : scrollContainer;
+  useLayoutEffect(() => {
+    const container = scrollContainer;
+    const list = scrollRef.current;
+    if (!container?.clientHeight || !list) {
+      return;
+    }
+    setScrollMargin(list.getBoundingClientRect().top - container.getBoundingClientRect().top
+      + container.scrollTop - container.clientTop);
+  });
   const virtualizer = useVirtualizer({
     count: rows.length,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement,
+    scrollMargin,
     getItemKey: (index) => rows[index]?.key ?? index,
     estimateSize: (index) => estimatedRowHeight(rows[index]!),
+    measureElement: (element, entry, instance) => {
+      if (!getScrollElement()?.clientHeight) {
+        const index = instance.indexFromElement(element);
+        return instance.measurementsCache[index]?.size ?? estimatedRowHeight(rows[index]!);
+      }
+      return measureElement(element, entry, instance);
+    },
     overscan: 16,
     initialRect: { width: 280, height: Math.min(360, Math.max(90, naturalHeight - ROOT_HEADER_ESTIMATED_HEIGHT)) },
     useFlushSync: false,
   });
   const totalSize = virtualizer.getTotalSize();
   const virtualItems = virtualizer.getVirtualItems();
-  const renderedVirtualItems = virtualItems.length > 0
-    ? virtualItems
-    : rows.map((row, index) => ({
-        index,
-        key: row.key,
-        start: rows.slice(0, index).reduce((total, previousRow) => total + estimatedRowHeight(previousRow), 0),
-        size: estimatedRowHeight(row),
-      }));
 
   useEffect(() => {
-    const scrollElement = scrollRef.current;
-    if (!scrollElement) {
+    const scrollElement = getScrollElement();
+    if (!scrollElement || scrollElement.clientHeight === 0) {
       return;
     }
     const maximumScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
@@ -251,7 +268,7 @@ export function FileRootChangesGroup({
         tabIndex={0}
       >
         <div className="workspace-changes-list-inner" style={{ height: totalSize || naturalHeight }}>
-          {renderedVirtualItems.map((virtualRow) => {
+          {virtualItems.map((virtualRow) => {
             const row = rows[virtualRow.index];
             if (!row) {
               return null;
@@ -262,7 +279,7 @@ export function FileRootChangesGroup({
                 className={`workspace-change-virtual-row ${row.type}`}
                 data-index={virtualRow.index}
                 ref={virtualizer.measureElement}
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
+                style={{ transform: `translateY(${virtualRow.start - scrollMargin}px)` }}
               >
                 {row.type === "header" ? (
                   <div className="workspace-changes-group-header"><strong>{row.label}</strong><span>{row.count}</span></div>
