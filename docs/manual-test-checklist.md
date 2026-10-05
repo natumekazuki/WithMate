@@ -10,6 +10,10 @@ Main／AuxiliaryそれぞれでCodexの実行中にcomposerの `Send Input` と�
 
 複数Auxiliaryを追加して最終使用順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、実行中のAuxiliaryはicon内のprocessing indicatorで判別できること、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態ではAuxiliaryのタイトル枠・切り替えUI・追加`＋`を表示せず、Mainが残り幅を使うこと、中央のsplitterだけが残りクリックで既定幅へ戻せることを確認する。Auxiliaryを再度開いた後はタイトル枠、左右切り替え、追加`＋`が利用でき、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
 
+## Session Window のlive表示とdetail寿命
+
+Session Window内のlive表示では、同じ本文streamをMain／Auxiliary、Context、Auditで確認し、Context／Auditを閉じて再openして最新状態へ追いつくことを確認する。本文deltaだけでAuxiliary status IPCが増え続けないこと、background／reasoningを保持する終端とcancelで保存済みrunStateを維持すること、artifact Detailsの反復開閉と非表示復帰で最新detailを再取得して遅い結果を破棄することを確認する。保持量の比較は同じ操作とpayloadでheap retaining path／private bytesを用い、working setの総和だけで判断しない。
+
 ## 組み込みTerminal
 
 分離した検証用WithMateではREADMEのvisual-checkスクリプトを使う。配布物は専用の検証用user dataを用い、開発版の成功と区別する。

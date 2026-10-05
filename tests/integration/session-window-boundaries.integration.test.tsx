@@ -176,6 +176,9 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
     assert.equal(textarea.value, "auxiliary draft to keep");
     assert.equal(summaryReads, beforeFileTab, "local Files tab changes must not reproject Auxiliary summaries");
 
+    const openContext = dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Open right pane']");
+    assert.ok(openContext);
+    await act(async () => { openContext.click(); });
     const rightPaneSwitcher = dom.window.document.querySelector<HTMLButtonElement>("[aria-label='Right pane view'] .session-switcher-current");
     assert.ok(rightPaneSwitcher);
     await act(async () => { rightPaneSwitcher.click(); });

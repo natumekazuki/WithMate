@@ -59,6 +59,8 @@ type UseSessionAuditLogsInput = {
   sourceLabel?: SessionAuditLogModalProps["sourceLabel"];
   liveRun: LiveSessionRunState | null;
   enabled?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   auditLogApi?: Pick<
     WithMateWindowApi,
     "listSessionAuditLogSummaryPage" | "getSessionAuditLogDetailSection" | "getSessionAuditLogOperationDetail"
@@ -160,10 +162,14 @@ export function useSessionAuditLogs({
   sourceLabel,
   liveRun,
   enabled = true,
+  open,
+  onOpenChange,
   auditLogApi = withmateApi,
 }: UseSessionAuditLogsInput) {
-  const [auditLogsOpen, setAuditLogsOpen] = useState(false);
-  const handleCloseAuditLogs = useCallback(() => setAuditLogsOpen(false), []);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const auditLogsOpen = open ?? internalOpen;
+  const setAuditLogsOpen = onOpenChange ?? setInternalOpen;
+  const handleCloseAuditLogs = useCallback(() => setAuditLogsOpen(false), [setAuditLogsOpen]);
   const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>(() => createEmptyAuditLogsState(null));
   const [auditLogDetails, setAuditLogDetails] = useState<Record<number, AuditLogDetailLoadState>>({});
   const [auditLogOperationDetails, setAuditLogOperationDetails] = useState<Record<string, AuditLogOperationDetailLoadState>>({});
@@ -190,12 +196,12 @@ export function useSessionAuditLogs({
 
   const displayedEntries = useMemo(
     () =>
-      buildDisplayedAuditLogs({
+      auditLogsOpen ? buildDisplayedAuditLogs({
         selectedSession,
         persistedEntries,
         liveRun,
-      }),
-    [liveRun, persistedEntries, selectedSession],
+      }) : persistedEntries,
+    [auditLogsOpen, liveRun, persistedEntries, selectedSession],
   );
   const isAuditLogsStateCurrent = enabled
     && auditLogOwnerSessionId !== null
@@ -331,6 +337,8 @@ export function useSessionAuditLogs({
 
   useEffect(() => {
     if (!auditLogsOpen) {
+      setAuditLogDetails({});
+      setAuditLogOperationDetails({});
       return;
     }
 

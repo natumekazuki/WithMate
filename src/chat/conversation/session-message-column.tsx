@@ -107,6 +107,7 @@ export type SessionMessageColumnProps = {
   onToggleMessageBookmark?: (target: MessageCollapseTarget) => void;
   onToggleArtifact: (artifactKey: string) => void;
   onLoadArtifactDetail?: (messageIndex: number) => Promise<MessageArtifact | null>;
+  artifactDetailsEnabled?: boolean;
   onOpenDiff: (title: string, file: ChangedFile) => void;
   onResolveLiveApproval: (request: LiveApprovalRequest, decision: "approve" | "deny") => void;
   onResolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => void;
@@ -436,6 +437,7 @@ export function SessionMessageColumn({
   onToggleMessageBookmark,
   onToggleArtifact,
   onLoadArtifactDetail,
+  artifactDetailsEnabled = true,
   onResolveLiveApproval,
   onResolveLiveElicitation,
   onOpenPath,
@@ -448,8 +450,11 @@ export function SessionMessageColumn({
 }: SessionMessageColumnProps) {
   const selectionActionOverlay = useContext(SelectionActionOverlayContext);
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
-  const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
+  const loadedArtifactDetails = useRef(new Map<string, MessageArtifact>());
+  const [, refreshArtifactDetails] = useState(0);
   const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
+  const artifactRequests = useRef(new Map<string, object>());
+  const activeArtifactKeys = useRef(new Set<string>());
   const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
   const [selectionActive, setSelectionActive] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
@@ -509,13 +514,23 @@ export function SessionMessageColumn({
     [messageKeys, sessionId],
   );
   const artifactPageKeys = useRef<Set<string> | null>(null);
-  artifactPageKeys.current = conversationPaging ? new Set(messages.map((_, index) => getMessageKey(index))) : null;
+  artifactPageKeys.current = new Set(messages.map((_, index) => getMessageKey(index)));
+  activeArtifactKeys.current = new Set(artifactDetailsEnabled
+    ? Object.keys(expandedArtifacts).filter((key) => expandedArtifacts[key] && artifactPageKeys.current!.has(key)) : []);
   useEffect(() => {
-    const keys = artifactPageKeys.current;
-    if (!keys) return;
-    setLoadedArtifactDetails((current) => Object.keys(current).some((key) => !keys.has(key))
+    const keys = activeArtifactKeys.current;
+    for (const key of artifactRequests.current.keys()) {
+      if (!keys.has(key)) artifactRequests.current.delete(key);
+    }
+    let released = false;
+    for (const key of loadedArtifactDetails.current.keys()) {
+      if (!keys.has(key)) { loadedArtifactDetails.current.delete(key); released = true; }
+    }
+    if (released) refreshArtifactDetails((revision) => revision + 1);
+    setLoadingArtifactDetails((current) => Object.keys(current).some((key) => !keys.has(key))
       ? Object.fromEntries(Object.entries(current).filter(([key]) => keys.has(key))) : current);
-  }, [messageKeys, messages, conversationPaging?.startIndex]);
+  }, [artifactDetailsEnabled, expandedArtifacts, messageKeys, messages]);
+  useEffect(() => () => { artifactRequests.current.clear(); loadedArtifactDetails.current.clear(); }, []);
   const pendingResponseMessageIndex = isRunning && pendingResponseMessageKey !== null
     ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1
     : -1;
@@ -929,19 +944,24 @@ export function SessionMessageColumn({
     Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
 
   const loadArtifactDetail = useCallback((artifactKey: string, messageIndex: number, artifact: MessageArtifact | undefined) => {
-    if (!artifact?.detailAvailable || !onLoadArtifactDetail || loadedArtifactDetails[artifactKey] || loadingArtifactDetails[artifactKey]) {
+    if (!artifactDetailsEnabled || !artifact?.detailAvailable || !onLoadArtifactDetail || loadedArtifactDetails.current.has(artifactKey) || artifactRequests.current.has(artifactKey)) {
       return;
     }
 
+    const request = {};
+    artifactRequests.current.set(artifactKey, request);
     setLoadingArtifactDetails((current) => ({ ...current, [artifactKey]: true }));
     void onLoadArtifactDetail(messageIndex)
       .then((detail) => {
-        if (!detail || (artifactPageKeys.current && !artifactPageKeys.current.has(artifactKey))) {
+        if (!detail || artifactRequests.current.get(artifactKey) !== request || !activeArtifactKeys.current.has(artifactKey)) {
           return;
         }
-        setLoadedArtifactDetails((current) => ({ ...current, [artifactKey]: detail }));
+        loadedArtifactDetails.current.set(artifactKey, detail);
+        refreshArtifactDetails((revision) => revision + 1);
       })
       .finally(() => {
+        if (artifactRequests.current.get(artifactKey) !== request) return;
+        artifactRequests.current.delete(artifactKey);
         setLoadingArtifactDetails((current) => {
           if (!current[artifactKey]) {
             return current;
@@ -951,7 +971,14 @@ export function SessionMessageColumn({
           return next;
         });
       });
-  }, [loadedArtifactDetails, loadingArtifactDetails, onLoadArtifactDetail]);
+  }, [artifactDetailsEnabled, onLoadArtifactDetail]);
+
+  useEffect(() => {
+    for (const row of virtualMessages) {
+      const key = getMessageKey(row.index);
+      if (activeArtifactKeys.current.has(key)) loadArtifactDetail(key, row.index, messages[row.index]?.artifact);
+    }
+  }, [artifactDetailsEnabled, expandedArtifacts, getMessageKey, loadArtifactDetail, messages, virtualMessages]);
 
   const handleArtifactFoldToggle = (
     artifactKey: string,
@@ -1097,7 +1124,7 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
-            const artifact = loadedArtifactDetails[artifactKey] ?? message.artifact;
+            const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
             const artifactOperations =
               artifact?.operationTimeline ??
@@ -1154,7 +1181,7 @@ export function SessionMessageColumn({
                         type="button"
                         onClick={() => {
                           if (!artifactExpanded) {
-                            loadArtifactDetail(artifactKey, absoluteIndex, artifact);
+                            loadArtifactDetail(artifactKey, absoluteIndex, message.artifact);
                           }
                           onToggleArtifact(artifactKey);
                         }}
@@ -1176,7 +1203,7 @@ export function SessionMessageColumn({
                         type="button"
                         onClick={() => {
                           if (!artifactExpanded) {
-                            loadArtifactDetail(artifactKey, absoluteIndex, artifact);
+                            loadArtifactDetail(artifactKey, absoluteIndex, message.artifact);
                           }
                           onToggleArtifact(artifactKey);
                         }}

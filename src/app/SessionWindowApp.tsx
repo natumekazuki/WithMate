@@ -2471,7 +2471,7 @@ export default function AgentSessionWindowApp() {
           externalErrorDescriptionIds: auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError
             ? "session-main-read-error" : undefined,
         }}
-        renderRightPane={(navigator) => <SessionContextFeature
+        renderRightPane={(navigator, visible) => <SessionContextFeature
           ref={contextFeatureRef}
           api={withmateApi}
           selectedSession={selectedSession}
@@ -2483,6 +2483,7 @@ export default function AgentSessionWindowApp() {
           renderedIsRunning={contextRenderedIsRunning}
           onShowContextRail={handleShowContextRail}
           navigator={navigator}
+          visible={visible}
           onAnnotationMatcherChange={setGlossaryAnnotationMatcher}
         />}
         rightPane={isAuxiliaryTargetUnavailable

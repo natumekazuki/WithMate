@@ -1,4 +1,4 @@
-import { useImperativeHandle, useLayoutEffect, type Ref } from "react";
+import { useImperativeHandle, useLayoutEffect, useState, type Ref } from "react";
 
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { AuditLogSummary } from "../../../src-shared/session/runtime-state.js";
@@ -17,7 +17,8 @@ export function SessionAuditFeature(props: {
   ref?: Ref<SessionAuditFeatureHandle>;
   onEntriesChange: (entries: AuditLogSummary[]) => void;
 }) {
-  const { selectedSessionLiveRun } = useActiveSessionLiveRun(props.api, props.session, props.ownerSessionId);
+  const [open, setOpen] = useState(false);
+  const { selectedSessionLiveRun } = useActiveSessionLiveRun(props.api, props.session, props.ownerSessionId, open);
   const audit = useSessionAuditLogs({
     withmateApi: props.api,
     selectedSession: props.session,
@@ -25,6 +26,8 @@ export function SessionAuditFeature(props: {
     cacheScopeKey: "session",
     sourceLabel: props.sourceLabel,
     liveRun: selectedSessionLiveRun,
+    open,
+    onOpenChange: setOpen,
   });
   useImperativeHandle(props.ref, () => ({ open: () => audit.setAuditLogsOpen(true) }), [audit.setAuditLogsOpen]);
   useLayoutEffect(() => {

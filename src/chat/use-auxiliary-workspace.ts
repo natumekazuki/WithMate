@@ -14,6 +14,7 @@ import { captureSessionExecutionOptions, type SessionExecutionOptions } from "..
 import { applyExecutionOptionsCatalog } from "../../src-shared/session/execution-options-catalog.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
+import { subscribeSessionLiveEvents } from "./runtime/session-window-live-ingress.js";
 
 export type AuxiliaryWorkspaceApi = {
   listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
@@ -399,6 +400,7 @@ export function useAuxiliaryWorkspace(input: {
     if (!api?.subscribeLiveSessionRun) return;
     const subscriptionGeneration = workspaceGenerationRef.current;
     const statusRequests = new Map<string, { pending: boolean }>();
+    const liveStatusKeys = new Map<string, string>();
     const terminalLoads = new Map<string, number>();
     const applySession = (id: string, session: AuxiliarySession, terminalRevision: number, terminalEpoch: number, bookmarkRevision: number) => {
       if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
@@ -468,14 +470,19 @@ export function useAuxiliaryWorkspace(input: {
         if (request.pending && mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current) refreshStatus(id);
       });
     };
-    return api.subscribeLiveSessionRun((id, state) => {
+    return subscribeSessionLiveEvents(api as AuxiliaryWorkspaceApi & Required<Pick<AuxiliaryWorkspaceApi, "subscribeLiveSessionRun">>, (id, state) => {
       if (subscriptionGeneration !== workspaceGenerationRef.current) return;
       if (!summariesRef.current.some((summary) => summary.id === id)) return;
       if (!api) return;
       if (state !== null) {
+        const summary = summariesRef.current.find((item) => item.id === id)!;
+        const key = JSON.stringify([summary.createdAt, state.runState, state.turnId, state.cancellationState, state.inputAvailable]);
+        if (liveStatusKeys.get(id) === key) return;
+        liveStatusKeys.set(id, key);
         refreshStatus(id);
         return;
       }
+      liveStatusKeys.delete(id);
       const terminalRevision = (terminalRevisionRef.current.get(id) ?? 0) + 1;
       terminalRevisionRef.current.set(id, terminalRevision);
       terminalLoads.set(id, terminalRevision);

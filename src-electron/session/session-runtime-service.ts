@@ -815,7 +815,11 @@ export class SessionRuntimeService {
 
   private setRuntimeLiveState(sessionId: string, state: LiveSessionRunState | null): void {
     const cancellationState = this.cancellationState(sessionId);
-    const nextState = state && this.finishingSessionTurns.has(sessionId) ? { ...state, inputAvailable: false } : state;
+    const nextState = state ? {
+      ...state,
+      runState: state.runState ?? (this.inFlightSessionRuns.has(sessionId) ? "running" : "idle"),
+      ...(this.finishingSessionTurns.has(sessionId) ? { inputAvailable: false } : {}),
+    } : null;
     this.deps.setLiveSessionRun(sessionId, cancellationState
       ? { ...(nextState ?? buildEmptyLiveSessionRunState(sessionId, this.deps.getLiveSessionRun(sessionId)?.threadId ?? "")), inputAvailable: false, cancellationState }
       : nextState);
@@ -1908,6 +1912,7 @@ export class SessionRuntimeService {
       if (preservedBackgroundTasks.length > 0 || preservedReasoningText.trim().length > 0) {
         this.setRuntimeLiveState(sessionId, {
           ...buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId),
+          runState: activeRunningSession.runState,
           backgroundTasks: preservedBackgroundTasks,
           reasoningText: preservedReasoningText,
         });

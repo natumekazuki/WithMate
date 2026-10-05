@@ -21,9 +21,10 @@ export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput
   ref?: Ref<SessionContextFeatureHandle>;
   navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorSessionId" | "onJumpToMessage" | "onMessageNavigatorActiveChange">;
   onAnnotationMatcherChange: (matcher: GlossaryAnnotationMatcher | undefined) => void;
+  visible: boolean;
 }) {
-  const { selectedSessionLiveRun } = useActiveSessionLiveRun(props.api, props.selectedSession, props.activeRunSessionId);
-  const telemetry = useSessionTelemetry(props.api, props.displayedSession.provider, props.activeRunSessionId);
+  const { selectedSessionLiveRun } = useActiveSessionLiveRun(props.api, props.selectedSession, props.activeRunSessionId, props.visible);
+  const telemetry = useSessionTelemetry(props.visible ? props.api : null, props.displayedSession.provider, props.activeRunSessionId);
   const glossary = useSessionGlossary({
     api: props.api,
     selectedSession: {
@@ -44,5 +45,5 @@ export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput
   useLayoutEffect(() => {
     props.onAnnotationMatcherChange(glossary.annotationMatcher);
   }, [glossary.annotationMatcher, props.onAnnotationMatcherChange]);
-  return <SessionContextPane {...context.rightPaneProps} {...props.navigator} />;
+  return props.visible ? <SessionContextPane {...context.rightPaneProps} {...props.navigator} /> : null;
 }

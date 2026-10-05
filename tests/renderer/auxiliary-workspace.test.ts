@@ -1256,7 +1256,7 @@ test("保持されたlive stateは永続化runStateを正本として扱う", as
   });
   assert.equal(view.current.summaries.find((summary) => summary.id === idle.id)?.runState, "idle");
   await act(async () => {
-    listener?.(running.id, retainedLiveState);
+    listener?.(running.id, { ...retainedLiveState, runState: "running" });
     await Promise.resolve();
   });
   assert.equal(view.current.summaries.find((summary) => summary.id === running.id)?.runState, "running");
@@ -1268,7 +1268,7 @@ test("保持されたlive stateは永続化runStateを正本として扱う", as
   });
   latest.set(running.id, { ...running, runState: "idle" });
   await act(async () => {
-    listener?.(running.id, retainedLiveState);
+    listener?.(running.id, { ...retainedLiveState, runState: "idle" });
     await Promise.resolve();
   });
   assert.equal(view.current.summaries.find((summary) => summary.id === running.id)?.runState, "idle");
@@ -1313,7 +1313,7 @@ test("非選択live statusは有限に集約し、terminal本文は再選択時�
     assert.equal(statusReads, 1);
     assert.equal(detailReads, loadedDetails);
     await act(async () => { firstStatus.resolve(running); });
-    assert.equal(statusReads, 2);
+    assert.equal(statusReads, 1);
     assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "running");
     const summaries = view.current.summaries;
     await act(async () => { listener?.(hidden.id, { assistantText: "same run" }); });
