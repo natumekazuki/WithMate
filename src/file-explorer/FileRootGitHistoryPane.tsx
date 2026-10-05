@@ -400,6 +400,7 @@ export function FileRootGitHistoryPane({
   const diffRequestRef = useRef(0);
   const comparisonRequestRef = useRef(0);
   const listScrollRef = useRef<HTMLDivElement | null>(null);
+  const [changedFilesScrollElement, setChangedFilesScrollElement] = useState<HTMLDivElement | null>(null);
   const listScrollTopRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [repositories, setRepositories] = useState<FileRootGitHistoryRepository[]>([]);
@@ -1120,7 +1121,7 @@ export function FileRootGitHistoryPane({
       ) : null}
 
       {comparisonOpen ? (
-        <div className="file-history-comparison" aria-busy={comparisonLoading || undefined}>
+        <div className="file-history-comparison" ref={setChangedFilesScrollElement} aria-busy={comparisonLoading || undefined}>
           <button className="file-history-back" type="button" onClick={backFromComparison}>
             ← {comparisonReturnToDetail ? "Commit Details" : "History"}
           </button>
@@ -1232,6 +1233,7 @@ export function FileRootGitHistoryPane({
                   rootChange={comparisonRootChange}
                   groupCount={1}
                   sizing="content"
+                  scrollContainer={changedFilesScrollElement}
                   collapsedDirectories={collapsedDirectories}
                   loadingKey={loadingDiffKey}
                   scopes={HISTORY_SCOPES}
@@ -1246,7 +1248,7 @@ export function FileRootGitHistoryPane({
           ) : null}
         </div>
       ) : selectedCommitId ? (
-        <div className="file-history-detail">
+        <div className="file-history-detail" ref={setChangedFilesScrollElement}>
           <button className="file-history-back" type="button" onClick={backToHistory}>
             ← History
           </button>
@@ -1300,6 +1302,7 @@ export function FileRootGitHistoryPane({
                     rootChange={rootChange}
                     groupCount={1}
                     sizing="content"
+                    scrollContainer={changedFilesScrollElement}
                     collapsedDirectories={collapsedDirectories}
                     loadingKey={loadingDiffKey}
                     scopes={HISTORY_SCOPES}
