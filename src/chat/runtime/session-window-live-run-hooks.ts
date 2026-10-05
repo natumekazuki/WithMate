@@ -30,7 +30,7 @@ function useOwnerControls(api: WithMateWindowApi | null, id: string | null): Run
 export function useSessionRunControls(api: WithMateWindowApi | null, selectedSession: Session | null, activeRunSessionId: string | null) {
   const active = useOwnerControls(api, selectedSession ? activeRunSessionId : null);
   const main = useOwnerControls(api, selectedSession?.id ?? null);
-  const getLiveRunRevision = useCallback(() => api ? getSessionLiveRevision(api) : 0, [api]);
+  const getLiveRunRevision = useCallback(() => api && activeRunSessionId ? getSessionLiveRevision(api, activeRunSessionId) : 0, [api, activeRunSessionId]);
   const setLiveRunState = useCallback((update: SetStateAction<OwnedLiveSessionRunState>) => {
     if (api && activeRunSessionId) updateSessionLiveState(api, activeRunSessionId, update);
   }, [api, activeRunSessionId]);

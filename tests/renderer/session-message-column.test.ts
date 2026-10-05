@@ -414,6 +414,59 @@ test("artifactは再openで最新取得し閉じた間の遅いdetailを適用�
   } finally { await mounted.cleanup(); }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "artifactのnullと取得失敗は同じ展開・表示期間で一度だけ取得し、再open・再表示・page復帰で再取得できる。本文と失敗の説明を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: assistant message ごとのTurn Summary; docs/design/auxiliary-session.md: Persistence" }
+// fault = "本文更新で欠落・失敗済みdetailを再取得するか、取得試行を解放せず再openでも最新detailを取得できない"
+// observable = "実SessionMessageColumnの取得回数、Loading detailsの終了、欠落・失敗alert、復帰後のRun Checksと本文"
+// observation_boundary = "component-behavior"
+// scope = "artifact detail unsuccessful attempt lifetime"
+// lifecycle = "permanent"
+// impact = "streaming頻度の反復IPCとloading点滅を防ぎ、詳細だけの失敗から会話本文を失わず復帰できる"
+// distinction = "成功detailの解放・遅延取得testではnullとrejectの取得寿命を確認できない。2結果の短いDOM操作だけで継続負担を限定する"
+// @end-test-value
+test("artifactの欠落と失敗は本文更新で再取得せず再openで復帰できる", async () => {
+  for (const outcome of ["null", "reject"] as const) {
+    const summary: MessageArtifact = { title: "summary", activitySummary: [], changedFiles: [], runChecks: [], detailAvailable: true };
+    const message: Message = { role: "assistant", text: "saved body", artifact: summary };
+    let attempts = 0;
+    const mounted = await mountSessionMessageColumn({
+      messages: [message], messageKeys: ["artifact"], expandedArtifacts: { artifact: true },
+      onLoadArtifactDetail: async () => {
+        ++attempts;
+        if (attempts >= 3) return { ...summary, runChecks: [{ label: "Result", value: "latest detail" }] };
+        if (outcome === "reject") throw new Error("detail load failed");
+        return null;
+      },
+    });
+    try {
+      assert.equal(attempts, 1);
+      const errorText = outcome === "null" ? /Details are unavailable/ : /Failed to load details/;
+      assert.match(mounted.container.querySelector('[role="alert"]')?.textContent ?? "", errorText);
+      assert.doesNotMatch(mounted.container.textContent ?? "", /Loading details/);
+      for (let delta = 1; delta <= 5; ++delta) {
+        await mounted.rerender({ messages: [{ ...message, text: `saved body ${delta}` }] });
+      }
+      assert.equal(attempts, 1);
+      await mounted.rerender({ expandedArtifacts: {} });
+      await mounted.rerender({ expandedArtifacts: { artifact: true } });
+      assert.equal(attempts, 2);
+      assert.match(mounted.container.querySelector('[role="alert"]')?.textContent ?? "", errorText);
+      await mounted.rerender({ artifactDetailsEnabled: false });
+      await mounted.rerender({ artifactDetailsEnabled: true });
+      assert.equal(attempts, 3);
+      assert.match(mounted.container.textContent ?? "", /latest detail/);
+      assert.equal(mounted.container.querySelector('[role="alert"]'), null);
+      await mounted.rerender({ messages: [], messageKeys: [] });
+      await mounted.rerender({ messages: [message], messageKeys: ["artifact"] });
+      assert.equal(attempts, 4);
+      assert.match(mounted.container.textContent ?? "", /latest detail/);
+      assert.match(mounted.container.textContent ?? "", /saved body/);
+    } finally { await mounted.cleanup(); }
+  }
+});
+
 function createRect(input: {
   left: number;
   top: number;

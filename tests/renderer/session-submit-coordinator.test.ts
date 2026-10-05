@@ -25,6 +25,7 @@ import { runMainSessionTurnOperation } from "../../src/chat/runtime/run-main-ses
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { resolveComposerSendabilityState } from "../../src/chat/composer/session-composer-feedback.js";
 import type { OwnedLiveSessionRunState } from "../../src/chat/runtime/session-live-run-state.js";
+import { getSessionLiveRevision, subscribeSessionLiveSelection, updateSessionLiveState, type SessionLiveIngressApi } from "../../src/chat/runtime/session-window-live-ingress.js";
 
 function createSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -302,6 +303,51 @@ test("Main送信失敗後の正常なnull再取得を復旧fallbackと区別す�
   api.getSession = async () => null;
   await assert.rejects(runMainSessionTurnOperation(input), /send failed/);
   assert.deepEqual(state.sessions, []);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Main送信reject後の復旧はAuxiliaryだけのlive更新では失効せず、Main自身の新しいlive更新は保持する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: MainとAuxiliaryの送信と失敗収束の独立; docs/design/session-run-lifecycle.md: Main Sessionの送信操作と失敗時収束" }
+// fault = "Window共通revisionでMainの復旧を抑止するか、owner revisionを無視してMainの新しいliveをnullへ巻き戻す"
+// observable = "実送信operation reject後のMain live、Session状態、復元draftとsubmit lease"
+// observation_boundary = "consumer"
+// scope = "Main rejection with concurrent ingress owners"
+// lifecycle = "permanent"
+// impact = "実行していないMainのPending表示が残ることと、後続の正しいMain応答が消えることを防ぐ"
+// distinction = "既存の送信失敗testは模擬revisionだけを使う。この短い操作列は公開live ingressと送信operationを接続して会話間の独立を確認する"
+// @end-test-value
+test("Main送信失敗のlive復旧はAuxiliaryと独立しMainの後続eventを保護する", async () => {
+  for (const updatedOwner of ["auxiliary", "main"] as const) {
+    const { input, api, state, registry, owner, coordinator } = createTurnOperationHarness();
+    let emit!: Parameters<SessionLiveIngressApi["subscribeLiveSessionRun"]>[0];
+    const ingressApi = Object.assign(api, {
+      subscribeLiveSessionRun: (listener: typeof emit) => { emit = listener; return () => {}; },
+    });
+    const releases = [
+      subscribeSessionLiveSelection({ api: ingressApi, sessionId: owner.id, select: (value) => value,
+        onChange: (value) => { state.liveRun = { ownerSessionId: owner.id, state: value }; } }),
+      subscribeSessionLiveSelection({ api: ingressApi, sessionId: "auxiliary", select: (value) => value, onChange: () => {} }),
+    ];
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      input.state.setLiveRunState = (update) => updateSessionLiveState(ingressApi, owner.id, update);
+      const getRevision = () => getSessionLiveRevision(ingressApi, owner.id);
+      input.revisions.liveRun = { capture: getRevision, isCurrent: (revision) => getRevision() === revision };
+      const newer = createLiveRun({ sessionId: updatedOwner === "main" ? owner.id : "auxiliary", assistantText: "newer live" });
+      api.getLiveSessionRun = async () => {
+        assert.notEqual(state.liveRun.state, null);
+        emit(newer.sessionId, newer);
+        return null;
+      };
+      await assert.rejects(runMainSessionTurnOperation(input), /send failed/);
+      assert.equal(state.liveRun.state, updatedOwner === "main" ? newer : null);
+      assert.equal(state.sessions[0].status, "idle");
+      assert.equal(registry.get(owner).draft, "retry message");
+      assert.equal(state.pending, null);
+      assert.equal(coordinator.isClaimed(owner.id), false);
+    } finally { releases.forEach((release) => release()); }
+  }
 });
 
 // @test-value v2

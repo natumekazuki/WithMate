@@ -453,7 +453,8 @@ export function SessionMessageColumn({
   const loadedArtifactDetails = useRef(new Map<string, MessageArtifact>());
   const [, refreshArtifactDetails] = useState(0);
   const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
-  const artifactRequests = useRef(new Map<string, object>());
+  const [artifactDetailErrors, setArtifactDetailErrors] = useState<Record<string, string>>({});
+  const artifactAttempts = useRef(new Map<string, object>());
   const activeArtifactKeys = useRef(new Set<string>());
   const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
   const [selectionActive, setSelectionActive] = useState(false);
@@ -519,8 +520,8 @@ export function SessionMessageColumn({
     ? Object.keys(expandedArtifacts).filter((key) => expandedArtifacts[key] && artifactPageKeys.current!.has(key)) : []);
   useEffect(() => {
     const keys = activeArtifactKeys.current;
-    for (const key of artifactRequests.current.keys()) {
-      if (!keys.has(key)) artifactRequests.current.delete(key);
+    for (const key of artifactAttempts.current.keys()) {
+      if (!keys.has(key)) artifactAttempts.current.delete(key);
     }
     let released = false;
     for (const key of loadedArtifactDetails.current.keys()) {
@@ -529,8 +530,10 @@ export function SessionMessageColumn({
     if (released) refreshArtifactDetails((revision) => revision + 1);
     setLoadingArtifactDetails((current) => Object.keys(current).some((key) => !keys.has(key))
       ? Object.fromEntries(Object.entries(current).filter(([key]) => keys.has(key))) : current);
+    setArtifactDetailErrors((current) => Object.keys(current).some((key) => !keys.has(key))
+      ? Object.fromEntries(Object.entries(current).filter(([key]) => keys.has(key))) : current);
   }, [artifactDetailsEnabled, expandedArtifacts, messageKeys, messages]);
-  useEffect(() => () => { artifactRequests.current.clear(); loadedArtifactDetails.current.clear(); }, []);
+  useEffect(() => () => { artifactAttempts.current.clear(); loadedArtifactDetails.current.clear(); }, []);
   const pendingResponseMessageIndex = isRunning && pendingResponseMessageKey !== null
     ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1
     : -1;
@@ -944,24 +947,32 @@ export function SessionMessageColumn({
     Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
 
   const loadArtifactDetail = useCallback((artifactKey: string, messageIndex: number, artifact: MessageArtifact | undefined) => {
-    if (!artifactDetailsEnabled || !artifact?.detailAvailable || !onLoadArtifactDetail || loadedArtifactDetails.current.has(artifactKey) || artifactRequests.current.has(artifactKey)) {
+    if (!artifactDetailsEnabled || !artifact?.detailAvailable || !onLoadArtifactDetail || loadedArtifactDetails.current.has(artifactKey) || artifactAttempts.current.has(artifactKey)) {
       return;
     }
 
     const request = {};
-    artifactRequests.current.set(artifactKey, request);
+    artifactAttempts.current.set(artifactKey, request);
+    const isCurrentAttempt = () => artifactAttempts.current.get(artifactKey) === request && activeArtifactKeys.current.has(artifactKey);
+    const reportError = (message: string) => {
+      if (isCurrentAttempt()) setArtifactDetailErrors((current) => ({ ...current, [artifactKey]: message }));
+    };
     setLoadingArtifactDetails((current) => ({ ...current, [artifactKey]: true }));
     void onLoadArtifactDetail(messageIndex)
       .then((detail) => {
-        if (!detail || artifactRequests.current.get(artifactKey) !== request || !activeArtifactKeys.current.has(artifactKey)) {
+        if (!isCurrentAttempt()) {
+          return;
+        }
+        if (!detail) {
+          reportError("Details are unavailable. Close and reopen to retry.");
           return;
         }
         loadedArtifactDetails.current.set(artifactKey, detail);
         refreshArtifactDetails((revision) => revision + 1);
       })
+      .catch(() => reportError("Failed to load details. Close and reopen to retry."))
       .finally(() => {
-        if (artifactRequests.current.get(artifactKey) !== request) return;
-        artifactRequests.current.delete(artifactKey);
+        if (!isCurrentAttempt()) return;
         setLoadingArtifactDetails((current) => {
           if (!current[artifactKey]) {
             return current;
@@ -1126,6 +1137,7 @@ export function SessionMessageColumn({
             const isAssistant = message.role === "assistant";
             const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
+            const artifactDetailError = artifactDetailErrors[artifactKey];
             const artifactOperations =
               artifact?.operationTimeline ??
               artifact?.activitySummary.map((item) => ({
@@ -1281,6 +1293,7 @@ export function SessionMessageColumn({
                               <LoadingIndicator inline label="Loading details" />
                             </div>
                           ) : null}
+                          {artifactDetailError ? <p className="pending-run-error-note" role="alert">{artifactDetailError}</p> : null}
                           <div className="artifact-grid artifact-grid-single">
                             <section className="artifact-section compact">
                               <div className="artifact-section-header">

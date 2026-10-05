@@ -19,7 +19,6 @@ type Ingress = {
   owners: Map<string, Owner>;
   events: Set<(id: string, state: LiveState) => void>;
   dispose: (() => void) | null;
-  revision: number;
 };
 const ingresses = new WeakMap<SessionLiveIngressApi, Ingress>();
 
@@ -41,14 +40,13 @@ export type SessionRunControls = ReturnType<typeof projectSessionRunControls>;
 function getIngress(api: SessionLiveIngressApi): Ingress {
   let ingress = ingresses.get(api);
   if (!ingress) {
-    ingress = { owners: new Map(), events: new Set(), dispose: null, revision: 0 };
+    ingress = { owners: new Map(), events: new Set(), dispose: null };
     ingresses.set(api, ingress);
   }
   return ingress;
 }
 
-function publish(ingress: Ingress, owner: Owner, state: LiveState): void {
-  ++ingress.revision;
+function publish(owner: Owner, state: LiveState): void {
   ++owner.revision;
   // Action updaters need identity and pending requests, not conversation detail.
   owner.actionState = state ? { ...state, assistantText: "", reasoningText: "", steps: [], backgroundTasks: [], usage: null } : null;
@@ -61,7 +59,7 @@ function connect(api: SessionLiveIngressApi, ingress: Ingress): void {
   if (ingress.dispose) return;
   ingress.dispose = api.subscribeLiveSessionRun((id, state) => {
     const owner = ingress.owners.get(id);
-    if (owner) publish(ingress, owner, state);
+    if (owner) publish(owner, state);
     for (const listener of ingress.events) listener(id, state);
   });
 }
@@ -77,7 +75,7 @@ function loadOwner(api: SessionLiveIngressApi, ingress: Ingress, id: string, own
   owner.pending = true;
   const revision = owner.revision;
   void api.getLiveSessionRun(id).then((state) => {
-    if (ingress.owners.get(id) === owner && owner.revision === revision) publish(ingress, owner, state);
+    if (ingress.owners.get(id) === owner && owner.revision === revision) publish(owner, state);
   }).catch((error: unknown) => {
     if (ingress.owners.get(id) === owner && owner.revision === revision) {
       for (const selection of owner.selections) selection.onError?.(error);
@@ -158,8 +156,8 @@ export function subscribeSessionLiveEvents(api: SessionLiveIngressApi, listener:
   return () => { ingress.events.delete(listener); disconnectUnused(ingress); };
 }
 
-export function getSessionLiveRevision(api: SessionLiveIngressApi): number {
-  return getIngress(api).revision;
+export function getSessionLiveRevision(api: SessionLiveIngressApi, sessionId: string): number {
+  return getIngress(api).owners.get(sessionId)?.revision ?? 0;
 }
 
 export function updateSessionLiveState(api: SessionLiveIngressApi, id: string, update: OwnedLiveSessionRunState | ((current: OwnedLiveSessionRunState) => OwnedLiveSessionRunState)): void {
@@ -169,5 +167,5 @@ export function updateSessionLiveState(api: SessionLiveIngressApi, id: string, u
   const previous = { ownerSessionId: id, state: owner.fullState ?? owner.actionState };
   const next = typeof update === "function" ? update(previous) : update;
   if (next === previous || next.ownerSessionId !== id) return;
-  publish(ingress, owner, next.state);
+  publish(owner, next.state);
 }
