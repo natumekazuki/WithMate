@@ -62,7 +62,7 @@ import {
   resolveProviderBinarySpec,
 } from "../provider-binary-paths.js";
 import {
-  boundAuditRawItem,
+  BoundedAuditRawItems,
   stringifyBoundedAuditRawItems,
   toAuditTextPreview,
   type BoundedAuditRawItem,
@@ -131,7 +131,8 @@ type CopilotTurnStreamState = {
   toolNamesByCallId: Map<string, string>;
   reasoningDraftsById: Map<string, string>;
   reasoningText: string;
-  rawItems: CopilotStableRawItem[];
+  rawItems: BoundedAuditRawItems;
+  unsupportedRawItems: CopilotStableRawItem[];
   assistantText: string;
   lastNonEmptyAssistantMessageText: string;
   assistantMessages: string[];
@@ -308,7 +309,8 @@ function createCopilotTurnStreamState(): CopilotTurnStreamState {
     toolNamesByCallId: new Map<string, string>(),
     reasoningDraftsById: new Map<string, string>(),
     reasoningText: "",
-    rawItems: [],
+    rawItems: new BoundedAuditRawItems(),
+    unsupportedRawItems: [],
     assistantText: "",
     lastNonEmptyAssistantMessageText: "",
     assistantMessages: [],
@@ -498,7 +500,7 @@ function applyCopilotTurnEvent(args: {
       break;
   }
 
-  appendCopilotStableRawItem(state.rawItems, event, workspacePath, state.toolNamesByCallId);
+  appendCopilotStableRawItem(state.rawItems, event, workspacePath, state.toolNamesByCallId, state.unsupportedRawItems);
 }
 
 export function collectCopilotLiveStepsFromEventsForTesting(
@@ -956,28 +958,29 @@ export function buildCopilotStableRawItems(
   events: SessionEvent[],
   workspacePath: string,
 ): CopilotStableRawItem[] {
-  const stableItems: CopilotStableRawItem[] = [];
+  const stableItems = new BoundedAuditRawItems();
   const toolNamesByCallId = new Map<string, string>();
 
   for (const event of events) {
     appendCopilotStableRawItem(stableItems, event, workspacePath, toolNamesByCallId);
   }
 
-  return stableItems;
+  return [...stableItems.items];
 }
 
 function pushCopilotRawItem(
-  items: CopilotStableRawItem[],
+  items: BoundedAuditRawItems,
   item: CopilotStableRawItem,
 ): void {
-  items.push(boundAuditRawItem(item) as CopilotStableRawItem);
+  items.append(item);
 }
 
 function appendCopilotStableRawItem(
-  stableItems: CopilotStableRawItem[],
+  stableItems: BoundedAuditRawItems,
   event: SessionEvent,
   workspacePath: string,
   toolNamesByCallId: Map<string, string>,
+  unsupportedRawItems?: CopilotStableRawItem[],
 ): void {
   if (shouldDropCopilotRawEvent(event)) {
     return;
@@ -1026,7 +1029,7 @@ function appendCopilotStableRawItem(
       });
       break;
     case "session.idle":
-      stableItems.push({
+      stableItems.append({
         type: event.type,
         timestamp: event.timestamp,
       });
@@ -1081,12 +1084,15 @@ function appendCopilotStableRawItem(
       });
       break;
     }
-    default:
-      stableItems.push({
+    default: {
+      const item = {
         type: event.type,
         timestamp: event.timestamp,
-      });
+      };
+      unsupportedRawItems?.push(item);
+      stableItems.append(item);
       break;
+    }
   }
 }
 
@@ -1102,9 +1108,9 @@ const SUPPORTED_COPILOT_EVENT_TYPES = new Set<string>([
   "tool.execution_complete",
 ]);
 
-export function buildCopilotProviderMetadata(rawItems: CopilotStableRawItem[]): AuditLogProviderMetadata[] {
+export function buildCopilotProviderMetadata(rawItems: readonly CopilotStableRawItem[]): AuditLogProviderMetadata[] {
   return rawItems
-    .filter((item) => !SUPPORTED_COPILOT_EVENT_TYPES.has(item.type))
+    .filter((item) => item.type !== "withmate.raw_items_truncated" && !SUPPORTED_COPILOT_EVENT_TYPES.has(item.type))
     .map((item) => ({
       provider: "copilot",
       kind: "unsupported_event",
@@ -2236,7 +2242,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     lastNonEmptyAssistantMessageText: string,
     steps: Map<string, LiveRunStep>,
     usage: AuditLogUsage | null,
-    rawItems: CopilotStableRawItem[],
+    rawItems: BoundedAuditRawItems,
+    unsupportedRawItems: readonly CopilotStableRawItem[],
     workspacePath: string,
     session: Session,
     executionOptions: SessionExecutionOptions,
@@ -2254,7 +2261,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         ])
       : createDisabledWorkspaceSnapshotCapture();
     const operations = redactor.sanitize(toAuditOperations(steps));
-    const providerMetadata = redactor.sanitize(buildCopilotProviderMetadata(rawItems));
+    const providerMetadata = redactor.sanitize(buildCopilotProviderMetadata(unsupportedRawItems));
     for (const metadata of providerMetadata) {
       this.writeLog({
         level: "warn",
@@ -2285,7 +2292,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       logicalPrompt: prompt.logicalPrompt,
       transportPayload: buildCopilotTransportPayload(prompt, messageAttachments),
       operations,
-      rawItemsJson: stringifyBoundedAuditRawItems(redactor.sanitize(rawItems)),
+      rawItemsJson: stringifyBoundedAuditRawItems(redactor.sanitize(rawItems.items)),
       providerMetadata,
       usage,
       providerQuotaTelemetry,
@@ -2477,6 +2484,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           streamState.liveSteps,
           streamState.usage,
           streamState.rawItems,
+          streamState.unsupportedRawItems,
           workspacePath,
           input.session,
           input.executionOptions,
@@ -2503,6 +2511,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         streamState.liveSteps,
         streamState.usage,
         streamState.rawItems,
+        streamState.unsupportedRawItems,
         workspacePath,
         input.session,
         input.executionOptions,
@@ -2531,6 +2540,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         streamState.liveSteps,
         streamState.usage,
         streamState.rawItems,
+        streamState.unsupportedRawItems,
         workspacePath,
         input.session,
         input.executionOptions,

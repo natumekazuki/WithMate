@@ -522,3 +522,37 @@ it("bounds background timeout even when SDK next never settles", async () => {
   await assert.rejects(adapter.runBackgroundStructuredPrompt(background), /Canceled/);
   assert.equal(closed, true);
 });
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Claude Bash summaryとraw保持は既存preview予算を守りassistant本文とoperation順序を保持する"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md: provider保持元64Ki previewと512Ki raw trace、assistant全本文保護" }
+// fault = "Bash commandをstepsへ全量保持するかraw打切りで本文とoperationを失う"
+// observable = "SDK消費中のprogress summary、最終operationsとraw省略marker、assistant全文"
+// observation_boundary = "public-boundary"
+// scope = "Claude coding turn owner"
+// lifecycle = "permanent"
+// impact = "大きいBash入力の反復でMain heapが増幅し監査と会話を失う"
+// distinction = "shared helper testはClaude receiveからprogressとfinalへの接続を観測しない"
+// @end-test-value
+it("ClaudeはBash summaryとraw保持をboundedにし本文と操作順序を保つ", async () => {
+  const command = "x".repeat(1024 * 1024);
+  const body = "answer".repeat(20000);
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+    for (let index = 0; index < 16; index++) {
+      yield sdkMessage({ type: "assistant", uuid: "tool-" + index, parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: String(index), name: "Bash", input: { command } }] } });
+      yield sdkMessage({ type: "user", parent_tool_use_id: null, message: { content: [{ type: "tool_result", tool_use_id: String(index), is_error: false, content: "done" }] } });
+    }
+    yield sdkMessage({ type: "assistant", uuid: "answer", parent_tool_use_id: null, message: { content: [{ type: "text", text: body }] } });
+    yield result("bounded");
+  }) });
+  const summaries: string[] = [];
+  const completed = await adapter.runSessionTurn(input(), (progress) => { for (const step of progress.steps) summaries.push(step.summary); });
+  const expected = command.slice(0, 65536) + "\n...[truncated 983040 chars; originalLength=1048576]";
+  assert.ok(summaries.length > 0);
+  assert.ok(summaries.filter((summary) => summary.startsWith("x")).every((summary) => summary === expected));
+  assert.deepEqual(completed.operations.filter((operation) => operation.type === "command_execution").map((operation) => operation.summary), Array(16).fill(expected));
+  assert.equal(completed.assistantText, body);
+  assert.ok(completed.rawItemsJson.length <= 512 * 1024);
+  assert.ok(JSON.parse(completed.rawItemsJson).some((item: { type: string; data?: { omittedItems?: number } }) => item.type === "withmate.raw_items_truncated" && (item.data?.omittedItems ?? 0) > 0));
+});

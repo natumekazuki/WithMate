@@ -1069,7 +1069,7 @@ describe("SessionRuntimeService", () => {
   // claim = "各turnで最新Character contextをprovider promptへ渡し、completed Sessionのterminal commit後に通知を依頼してbackground settlementを待たず次turnを受け付ける"
   // oracle = { type = "contract", ref = "accepted contract: terminal notification after persisted terminal state" }
   // fault = "永続化前の通知またはbackground settlement待機により、通知先が未保存状態を読むか次turn受付が停止する"
-  // observable = "promptへ渡されたturnごとのCharacter context・request correlation、terminal commit後の通知順序、次turnの完了結果"
+  // observable = "promptへ渡されたturnごとのCharacter context・request correlation、terminal commit後の通知とready correlation順序、appraisal依頼回数、次turnの完了結果"
   // observation_boundary = "declaration"
   // scope = "session-runtime-terminal-completion-order"
   // lifecycle = "permanent"
@@ -1079,7 +1079,7 @@ describe("SessionRuntimeService", () => {
     let contextVersion = 0;
     let auditId = 0;
     let completionNotificationCount = 0;
-    const appraisalCorrelations: string[] = [];
+    let appraisalRequestCount = 0;
     const requestCorrelations: string[] = [];
     const callOrder: string[] = [];
     const timingCompletionSnapshots: Array<string | null> = [];
@@ -1194,8 +1194,8 @@ describe("SessionRuntimeService", () => {
         callOrder.push(`pending-ready:${correlationId}`);
       },
       requireDurableCompletedTurnAppraisal: true,
-      async appraiseCompletedTurn(input) {
-        appraisalCorrelations.push(input.correlationId);
+      async appraiseCompletedTurn() {
+        appraisalRequestCount++;
         callOrder.push("appraisal-started");
         await new Promise<void>(() => undefined);
       },
@@ -1267,7 +1267,7 @@ describe("SessionRuntimeService", () => {
     callOrder.push("second-returned");
 
     await waitForCondition(
-      () => appraisalCorrelations.length === 2
+      () => appraisalRequestCount === 2
         && callOrder.filter((entry) => entry.startsWith("terminal-audit:")).length === 2,
       "ready・appraisal・terminal auditがbackgroundで完了すること",
     );
@@ -1278,9 +1278,10 @@ describe("SessionRuntimeService", () => {
       "7c26d875-9117-4ad5-97b5-e9af775b94b1",
       "7c26d875-9117-4ad5-97b5-e9af775b94b2",
     ]);
-    assert.deepEqual(appraisalCorrelations, [
-      `turn:${storedSession.id}:audit:1`,
-      `turn:${storedSession.id}:audit:2`,
+    assert.equal(appraisalRequestCount, 2);
+    assert.deepEqual(callOrder.filter((entry) => entry.startsWith("pending-ready:")), [
+      `pending-ready:turn:${storedSession.id}:audit:1`,
+      `pending-ready:turn:${storedSession.id}:audit:2`,
     ]);
     assert.equal(timingCompletionSnapshots[0], null);
     assert.equal(timingCompletionSnapshots[1], firstCompletedAt);

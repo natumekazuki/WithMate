@@ -23,7 +23,7 @@ import {
 import { parseSessionMemoryDeltaText } from "../../session/session-memory-extraction.js";
 import { resolveDevelopmentProviderBinaryPath, resolvePackagedProviderBinaryPath } from "../provider-binary-paths.js";
 import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv } from "../provider-agent-runtime-binding.js";
-import { boundAuditRawItem, stringifyBoundedAuditRawItems, toAuditTextPreview, type BoundedAuditRawItem } from "../../session/audit-payload-limits.js";
+import { AUDIT_TEXT_PREVIEW_LIMIT, BoundedAuditRawItems, stringifyBoundedAuditRawItems, toAuditTextPreview } from "../../session/audit-payload-limits.js";
 import { buildArtifactFromOperations } from "../provider-artifact.js";
 import { captureWorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
 import { createDisabledWorkspaceSnapshotCapture, WORKSPACE_DIFF_CAPTURE_ENABLED } from "../../files/workspace-diff-policy.js";
@@ -50,7 +50,7 @@ type ClaudeTrace = {
   streamingId: string | null;
   steps: ProviderProgressMap<LiveRunStep>;
   operations: AuditLogOperation[];
-  rawItems: BoundedAuditRawItem[];
+  rawItems: BoundedAuditRawItems;
   usage: AuditLogUsage | null;
   result: SDKResultMessage | null;
   errorMessage: string;
@@ -80,11 +80,17 @@ function summarizeTool(name: string, input: unknown): string {
 }
 
 function commandOf(name: string, input: unknown): string | null {
-  return name === "Bash" ? textOf(objectOf(input).command) || null : null;
+  if (name !== "Bash") return null;
+  const command = textOf(objectOf(input).command);
+  const preview = toAuditTextPreview(command) || null;
+  // Detach the bounded preview from the native command's backing string.
+  return command.length > AUDIT_TEXT_PREVIEW_LIMIT
+    ? JSON.parse(JSON.stringify(preview)) as string
+    : preview;
 }
 
 function appendRaw(trace: ClaudeTrace, type: string, data: Record<string, unknown>): void {
-  trace.rawItems.push(boundAuditRawItem({ type, data }));
+  trace.rawItems.append({ type, data });
 }
 
 function usageFromResult(result: SDKResultMessage, resumed: boolean): AuditLogUsage {
@@ -222,7 +228,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   getBackgroundStructuredPromptPolicy() { return PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY; }
 
   private makeTrace(threadId: string | null): ClaudeTrace {
-    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), operations: [], rawItems: [], usage: null, result: null, errorMessage: "" };
+    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), operations: [], rawItems: new BoundedAuditRawItems(), usage: null, result: null, errorMessage: "" };
   }
 
   private receive(message: SDKMessage, trace: ClaudeTrace, resumed = false): void {
@@ -324,7 +330,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       logicalPrompt: redactor.sanitize(prompt.logicalPrompt),
       transportPayload: redactor.sanitize(transportPayload),
       operations,
-      rawItemsJson: stringifyBoundedAuditRawItems(redactor.sanitize(trace.rawItems)),
+      rawItemsJson: stringifyBoundedAuditRawItems(redactor.sanitize(trace.rawItems.items)),
       usage: trace.usage,
     };
   }
@@ -581,7 +587,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       const rawText = assistantText(trace) || trace.result.result;
       const structuredOutput = trace.result.structured_output;
       if (structuredOutput === undefined || structuredOutput === null) throw new Error("Claude background structured output is missing");
-      return { threadId: trace.threadId, rawText, output: structuredOutput as TOutput, structuredOutput, parsedJson: structuredOutput, rawItemsJson: stringifyBoundedAuditRawItems(trace.rawItems), usage: trace.usage };
+      return { threadId: trace.threadId, rawText, output: structuredOutput as TOutput, structuredOutput, parsedJson: structuredOutput, rawItemsJson: stringifyBoundedAuditRawItems(trace.rawItems.items), usage: trace.usage };
     } finally {
       clearTimeout(timer);
       input.signal?.removeEventListener("abort", abort);

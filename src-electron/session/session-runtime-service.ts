@@ -101,14 +101,7 @@ export type SessionRuntimeServiceDeps = {
     correlationId: string,
   ) => Awaitable<"ready" | "absent" | void>;
   requireDurableCompletedTurnAppraisal?: boolean;
-  appraiseCompletedTurn?: (input: {
-    session: Session;
-    correlationId: string;
-    userMessage: string;
-    assistantMessage: string;
-    assistantMessageIndex: number;
-    occurredAt: string;
-  }) => Awaitable<void>;
+  appraiseCompletedTurn?: () => Awaitable<void>;
   createAuditLog(input: CreateAuditLogInput): Awaitable<AuditLogEntry>;
   updateAuditLog(id: number, entry: CreateAuditLogInput): Awaitable<void | AuditLogEntry>;
   updateAuditLogProgress(id: number, patch: AuditLogProgressPatch): Awaitable<AuditLogProgressAck>;
@@ -187,14 +180,13 @@ function invalidateProviderSessionThreadBestEffort(
 
 function appraiseCompletedTurnBestEffort(
   appraise: SessionRuntimeServiceDeps["appraiseCompletedTurn"],
-  input: Parameters<NonNullable<SessionRuntimeServiceDeps["appraiseCompletedTurn"]>>[0],
 ): void {
   if (!appraise) {
     return;
   }
 
   try {
-    void Promise.resolve(appraise(input))
+    void Promise.resolve(appraise())
       .catch((error) => console.warn(
         "Character affect turn appraisal failed",
         error instanceof Error ? error.name : "UnknownError",
@@ -229,7 +221,7 @@ async function markCompletedTurnAppraisalReadyWithRetry(
 function completeCompletedTurnAppraisalBestEffort(
   markReady: SessionRuntimeServiceDeps["markCompletedTurnAppraisalReady"],
   appraise: SessionRuntimeServiceDeps["appraiseCompletedTurn"],
-  input: Parameters<NonNullable<SessionRuntimeServiceDeps["appraiseCompletedTurn"]>>[0],
+  correlationId: string,
   retryMs: number,
 ): void {
   setTimeout(() => {
@@ -237,14 +229,14 @@ function completeCompletedTurnAppraisalBestEffort(
       if (markReady) {
         const ready = await markCompletedTurnAppraisalReadyWithRetry(
           markReady,
-          input.correlationId,
+          correlationId,
           retryMs,
         );
         if (!ready) {
           return;
         }
       }
-      appraiseCompletedTurnBestEffort(appraise, input);
+      appraiseCompletedTurnBestEffort(appraise);
     })
     .catch((error) => console.warn(
       "Character affect turn background completion failed",
@@ -1643,14 +1635,7 @@ export class SessionRuntimeService {
       completeCompletedTurnAppraisalBestEffort(
         requiresDurableAppraisal ? this.deps.markCompletedTurnAppraisalReady : undefined,
         this.deps.appraiseCompletedTurn,
-        {
-          session: storedCompletedSession,
-          correlationId: affectTurnCorrelationId,
-          userMessage: nextMessage,
-          assistantMessage: result.assistantText,
-          assistantMessageIndex,
-          occurredAt: completedAt,
-        },
+        affectTurnCorrelationId,
         this.deps.appraisalReadyRetryMs ?? DEFAULT_APPRAISAL_READY_RETRY_MS,
       );
 

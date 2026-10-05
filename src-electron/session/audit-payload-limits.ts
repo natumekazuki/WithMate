@@ -26,6 +26,7 @@ const RAW_ITEM_TRUNCATION_MARKER = {
   reason: "audit raw item budget exceeded",
 };
 const RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE = 1024;
+const RAW_ITEM_TEXT_PREVIEW_OVERHEAD_RESERVE = 256;
 
 function buildTruncationSuffix(originalLength: number, limit: number): string {
   return `\n...[truncated ${originalLength - limit} chars; originalLength=${originalLength}]`;
@@ -80,7 +81,7 @@ function cloneStringWithinRawItemBudget(value: string, state: RawItemBudgetState
     return RAW_ITEM_TRUNCATION_MARKER;
   }
 
-  const previewLimit = Math.max(0, Math.min(AUDIT_TEXT_PREVIEW_LIMIT, state.remaining - 256));
+  const previewLimit = Math.max(0, Math.min(AUDIT_TEXT_PREVIEW_LIMIT, state.remaining - RAW_ITEM_TEXT_PREVIEW_OVERHEAD_RESERVE));
   const boundedValue = previewLimit > 0 ? toTruncatedText(value, previewLimit) : RAW_ITEM_TRUNCATION_MARKER;
   if (boundedValue !== value) {
     state.truncated = true;
@@ -239,6 +240,60 @@ export function boundAuditRawItem(
   );
 }
 
+export class BoundedAuditRawItems {
+  private readonly retainedItems: BoundedAuditRawItem[] = [];
+  private serializedLength = 2;
+  private omittedItems = 0;
+  private readonly markerReserve: number;
+
+  constructor(private readonly limit = AUDIT_RAW_ITEMS_JSON_LIMIT) {
+    this.markerReserve = JSON.stringify(this.createMarker(Number.MAX_SAFE_INTEGER)).length
+      + RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE + RAW_ITEM_TEXT_PREVIEW_OVERHEAD_RESERVE + 1;
+  }
+
+  get items(): readonly BoundedAuditRawItem[] {
+    return this.retainedItems;
+  }
+
+  append(item: BoundedAuditRawItem): void {
+    if (this.omittedItems > 0) {
+      this.recordOmission();
+      return;
+    }
+
+    const commaLength = this.retainedItems.length > 0 ? 1 : 0;
+    const remaining = this.limit - this.serializedLength - commaLength - this.markerReserve;
+    if (remaining > 0) {
+      const boundedItem = boundAuditRawItem(item);
+      const itemLength = JSON.stringify(boundedItem).length;
+      if (itemLength <= remaining) {
+        this.retainedItems.push(boundedItem);
+        this.serializedLength += commaLength + itemLength;
+        return;
+      }
+    }
+
+    this.recordOmission();
+  }
+
+  private createMarker(omittedItems: number): BoundedAuditRawItem {
+    return {
+      type: "withmate.raw_items_truncated",
+      data: { omittedItems, maxLength: this.limit },
+    };
+  }
+
+  private recordOmission(): void {
+    this.omittedItems += 1;
+    const marker = this.createMarker(this.omittedItems);
+    if (this.omittedItems === 1) {
+      this.retainedItems.push(marker);
+    } else {
+      this.retainedItems[this.retainedItems.length - 1] = marker;
+    }
+  }
+}
+
 export function stringifyBoundedAuditValue(
   value: unknown,
   limit = AUDIT_TEXT_PREVIEW_LIMIT,
@@ -262,7 +317,7 @@ export function stringifyBoundedAuditValue(
 }
 
 export function stringifyBoundedAuditRawItems(
-  items: BoundedAuditRawItem[],
+  items: readonly BoundedAuditRawItem[],
   limit = AUDIT_RAW_ITEMS_JSON_LIMIT,
 ): string {
   const serializedItems: string[] = [];
