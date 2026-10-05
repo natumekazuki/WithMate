@@ -415,17 +415,26 @@ it("同scopeのitem再開だけでretry diagnosticを解除しterminal failure�
 });
 // @test-value v2
 // kind = "invariant"
-// claim = "保存threadIdを明示resumeし失敗時も新規threadへ切替せず送信時modelとmax/ultraを含むdepth・権限設定をnative requestへ送る"
+// claim = "保存threadIdをexcludeTurns付きで明示resumeし、新規作成にはresume専用指定を送らず、失敗時も新規threadへ切替せず送信時modelとmax/ultraを含むdepth・権限設定をnative requestへ送る"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "保存sessionを新規threadへ置換する、sandbox rootsを落とす、または送信時model/depthを保存値や上限値へ置換する"
-// observable = "thread/resumeとturn/startの送信params、resume失敗後のrequestとpartial threadId"
+// fault = "不要な過去turn返送を要求してresume応答を肥大化させる、新規作成へresume専用指定を送る、保存sessionを新規threadへ置換する、sandbox rootsを落とす、または送信時model/depthを保存値や上限値へ置換する"
+// observable = "thread/start・thread/resumeとturn/startの送信params、resume失敗後のrequestとpartial threadId"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "Codex実行の会話継続、監査または権限が失われる"
-// distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
+// impact = "長い履歴の不要な一括返送による有限受信上限超過で再開が失敗する、または会話継続・監査・権限が失われる"
+// distinction = "型検査やtransport単体では検出できないadapterの新規/再開request選択とparamsを、既存の軽量mockで検証する"
 // @end-test-value
 it("foregroundは保存thread resumeとnative設定、監査結果を維持する", async () => workspace(async (directory) => {
+  const fresh = new FakeTransport();
+  fresh.events = [completed([message("answer", "fresh")])];
+  const freshResult = await new CodexAdapter(undefined, { createTransport: () => fresh }).runSessionTurn(createCodexRunSessionTurnInput(directory));
+  assert.equal(fresh.calls[0].method, "thread/start");
+  assert.equal(Object.hasOwn(fresh.calls[0].params as object, "excludeTurns"), false);
+  assert.equal(Object.hasOwn(fresh.calls[0].params as object, "threadId"), false);
+  assert.equal(freshResult.threadId, "thread-1");
+  assert.equal(freshResult.assistantText, "fresh");
+  assert.equal(fresh.closed, true);
   const transport = new FakeTransport();
   transport.events = [notification("item/completed", { item: message("answer", "done") }), completed([message("answer", "done")])];
   const input = createCodexRunSessionTurnInput(directory);
@@ -435,6 +444,9 @@ it("foregroundは保存thread resumeとnative設定、監査結果を維持す�
   const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
   const result = await adapter.runSessionTurn(input);
   assert.equal(transport.calls[0].method, "thread/resume");
+  const resume = transport.calls[0].params as Record<string, unknown>;
+  assert.equal(resume.threadId, "thread-1");
+  assert.equal(resume.excludeTurns, true);
   const start = transport.calls.find((call) => call.method === "turn/start")!.params as Record<string, any>;
   assert.equal(start.serviceTier, "fast");
   assert.equal(start.approvalsReviewer, "auto_review");
