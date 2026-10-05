@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import type { PermissionRequest } from "@github/copilot-sdk";
+import type { CopilotClient, CopilotSession, PermissionRequest, SessionEvent } from "@github/copilot-sdk";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
-import type { LiveRunStep } from "../../src-shared/session/runtime-state.js";
+import type { AuditLogProviderMetadata, LiveRunStep } from "../../src-shared/session/runtime-state.js";
 import type { LiveBackgroundTask, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
@@ -45,11 +45,13 @@ import {
 import { toProviderMetadataLogData } from "../../src-electron/providers/provider-metadata-log.js";
 import {
   PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER,
+  createProviderAgentRuntimeBindingRedactor,
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
 } from "../../src-electron/providers/provider-agent-runtime-binding.js";
 import { createDisabledWorkspaceSnapshotCapture } from "../../src-electron/files/workspace-diff-policy.js";
+import { AUDIT_RAW_ITEMS_JSON_LIMIT, BoundedAuditRawItems } from "../../src-electron/session/audit-payload-limits.js";
 import {
   ProviderTurnError,
   type RunBackgroundStructuredPromptInput,
@@ -1904,14 +1906,18 @@ it("Copilot final projectionはbinding referenceを除去しlogical promptは変
     details: `secret=${bindingReference}`,
     status: "completed",
   }]]);
-  const rawItems = buildCopilotStableRawItems([{
+  const rawItems = new BoundedAuditRawItems();
+  const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+  for (const item of buildCopilotStableRawItems([{
     type: "assistant.message",
     timestamp: new Date().toISOString(),
     data: {
       messageId: "message-1",
       content: `answer ${bindingReference}`,
     },
-  } as never], input.session.workspacePath);
+  } as never], input.session.workspacePath)) {
+    rawItems.append(redactor.sanitize(item));
+  }
   const disabledSnapshot = createDisabledWorkspaceSnapshotCapture();
   const selection: ResolvedModelSelection = {
     requestedModel: input.session.model,
@@ -1929,7 +1935,8 @@ it("Copilot final projectionはbinding referenceを除去しlogical promptは変
       lastAssistantText: string,
       liveSteps: Map<string, LiveRunStep>,
       usage: null,
-      rawItemsValue: ReturnType<typeof buildCopilotStableRawItems>,
+      rawItemsValue: BoundedAuditRawItems,
+      providerMetadataValue: AuditLogProviderMetadata[],
       workspacePath: string,
       session: RunSessionTurnInput["session"],
       executionOptions: RunSessionTurnInput["executionOptions"],
@@ -1951,6 +1958,7 @@ it("Copilot final projectionはbinding referenceを除去しlogical promptは変
     steps,
     null,
     rawItems,
+    [],
     input.session.workspacePath,
     input.session,
     input.executionOptions,
@@ -2019,6 +2027,84 @@ it("Copilot bootstrap失敗projectionはbinding referenceを除去しlogical pro
       return true;
     },
   );
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Copilotのraw budget超過後もunsupported metadataと本文・operation・artifactを正常終了とcancel partialで保持しsecretを秘匿化する"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md#表示とデータ保護; docs/design/provider-adapter.md" }
+// fault = "省略済みrawからmetadataを組み立てる、raw budgetを本文へ適用する、または追加時のsecret置換後に上限を超える"
+// observable = "runSessionTurnのrawItemsJson・providerMetadata・assistantText・operations・artifactとProviderTurnErrorのpartialResult"
+// observation_boundary = "public-boundary"
+// scope = "copilot-coding-turn raw retention"
+// lifecycle = "permanent"
+// impact = "未対応eventの診断情報や取得済み応答が失われ、binding secretが監査へ漏れる"
+// distinction = "既存helper testと通常cancel testはraw予算を使い切った後の受信projectionを検査しない。SDK通信なしの固定入力で維持する"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("Copilot raw上限後もmetadataと正常・cancel partialを保持する", async () => {
+  for (const canceled of [false, true]) {
+    const input = createRunSessionInput({ customAgentName: "" });
+    const secret = input.agentRuntimeBinding!.bindingReference;
+    const listeners = new Set<(event: SessionEvent) => void>();
+    let rawEventCount = 0;
+    const emit = (type: string, data: Record<string, unknown>, ephemeral = false) => {
+      const event = { type, timestamp: "2026-10-05T00:00:00Z", data, ephemeral } as SessionEvent;
+      if (!ephemeral && !type.endsWith("_delta")) rawEventCount += 1;
+      for (const listener of listeners) listener(event);
+    };
+    const body = `本文${"あ😀".repeat(180_000)}`;
+    const session = {
+      sessionId: "raw-retention-thread",
+      on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
+      async send() {
+        for (let index = 0; index < 100; index += 1) {
+          emit("user.message", { content: `${index}:あ😀\"\n${secret.repeat(2000)}` });
+        }
+        emit("dropped.ephemeral", {}, true);
+        emit("assistant.message_delta", { deltaContent: "delta" });
+        emit(`custom.event.${secret}`, {});
+        emit("tool.execution_start", { toolCallId: "check", toolName: "shell", arguments: { command: "npm test" } });
+        emit("tool.execution_complete", { toolCallId: "check", success: true, result: { content: "passed" } });
+        emit("assistant.message", { messageId: "last", content: body });
+        if (canceled) throw new Error("Abort requested");
+        emit("session.idle", {});
+        return "sent";
+      },
+    };
+    const adapter = new CopilotAdapter() as unknown as {
+      getSession(): Promise<{ session: CopilotSession; selection: ResolvedModelSelection; client: CopilotClient; clientKey: string }>;
+      runSessionTurn(value: RunSessionTurnInput): Promise<RunSessionTurnResult>;
+    };
+    adapter.getSession = async () => ({ session: session as unknown as CopilotSession, client: {} as CopilotClient,
+      clientKey: "fixture", selection: { requestedModel: "gpt-4.1", resolvedModel: "gpt-4.1", requestedReasoningEffort: "high", resolvedReasoningEffort: "high" } });
+    let completed: RunSessionTurnResult;
+    try {
+      completed = await adapter.runSessionTurn(input);
+      assert.equal(canceled, false);
+    } catch (error) {
+      assert.ok(canceled && error instanceof ProviderTurnError && error.canceled);
+      completed = error.partialResult;
+    }
+    assert.equal(completed.assistantText, body);
+    assert.equal(completed.lastNonEmptyAssistantMessageText, body);
+    assert.equal(completed.operations.length, 1);
+    assert.equal(completed.operations[0].details, "passed");
+    assert.equal(completed.artifact?.operationTimeline?.length, 1);
+    assert.ok(completed.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
+    assert.ok(Buffer.byteLength(completed.rawItemsJson, "utf8") > completed.rawItemsJson.length);
+    assert.ok(!completed.rawItemsJson.includes(secret));
+    assert.ok(completed.rawItemsJson.includes(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+    const raw = JSON.parse(completed.rawItemsJson);
+    assert.equal(raw[0].type, "user.message");
+    assert.equal(raw.at(-1).type, "withmate.raw_items_truncated");
+    assert.equal(raw.at(-1).data.omittedItems, rawEventCount - raw.length + 1);
+    assert.deepEqual(completed.providerMetadata, [{ provider: "copilot", kind: "unsupported_event", source: "copilot.session_event",
+      eventType: `custom.event.${PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER}`,
+      summary: `Unsupported Copilot event: custom.event.${PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER}`,
+      payload: { type: `custom.event.${PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER}`, timestamp: "2026-10-05T00:00:00Z" },
+    }]);
+  }
 });
 
 it("Session完了後のquota telemetry停止はturn resultを待たせない", async () => {

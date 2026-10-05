@@ -9,6 +9,8 @@ import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { AUDIT_RAW_ITEMS_JSON_LIMIT } from "../../src-electron/session/audit-payload-limits.js";
+import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER } from "../../src-electron/providers/provider-agent-runtime-binding.js";
 
 function input(threadId = "", signal?: AbortSignal): RunSessionTurnInput {
   const session = { ...buildNewSession({
@@ -47,6 +49,60 @@ function fakeQuery(
     return produce(options);
   }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query;
 }
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Claudeの多数stable messageでraw上限を超えても全文・operation・artifactを正常終了とcancel partialで保持しsecretを除去する"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md#表示とデータ保護; docs/design/provider-adapter.md" }
+// fault = "raw budgetを会話本文へ適用する、cancelで取得済み投影を落とす、または秘匿化後のJSON長をbudgetへ反映しない"
+// observable = "runSessionTurnまたはProviderTurnError.partialResultのassistantText・operations・artifact・rawItemsJson"
+// observation_boundary = "public-boundary"
+// scope = "claude-coding-turn raw retention"
+// lifecycle = "permanent"
+// impact = "長いturnの応答と取得済み作業結果が欠落し、runtime secretが監査へ漏れる"
+// distinction = "既存の単独message/cancel testはraw予算を超過せず、型検査では投影値の欠落を検知できない。通信なしの固定入力で確認する"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("Claude raw上限後も全文と正常・cancel partialを保持する", async () => {
+  for (const canceled of [false, true]) {
+    const controller = new AbortController();
+    const request = input("", controller.signal);
+    const secret = "short-binding-reference";
+    const longSecret = "long-capability-".repeat(8);
+    request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: secret, turnCapability: longSecret,
+      providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null };
+    const text = `あ😀\"\n${secret.repeat(1000)} ${longSecret}`;
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+      for (let index = 0; index < 40; index += 1) {
+        yield sdkMessage({ type: "assistant", session_id: "raw-thread", uuid: `message-${index}`, parent_tool_use_id: null,
+          message: { content: [{ type: "text", text: `${index}:${text}` }] } });
+      }
+      if (canceled) controller.abort();
+      yield result("raw-thread");
+    }) });
+    let completed;
+    try {
+      completed = await adapter.runSessionTurn(request);
+      assert.equal(canceled, false);
+    } catch (error) {
+      assert.ok(canceled && error instanceof ProviderTurnError && error.canceled);
+      completed = error.partialResult;
+    }
+    const cleanText = text.split(secret).join(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER)
+      .split(longSecret).join(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
+    assert.equal(completed.assistantText, Array.from({ length: 40 }, (_, index) => `${index}:${cleanText}`).join("\n\n"));
+    assert.equal(completed.operations.length, 40);
+    assert.equal(completed.artifact?.operationTimeline?.length, 40);
+    assert.ok(completed.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
+    assert.ok(Buffer.byteLength(completed.rawItemsJson, "utf8") > completed.rawItemsJson.length);
+    assert.ok(!completed.rawItemsJson.includes(secret) && !completed.rawItemsJson.includes(longSecret));
+    assert.ok(completed.rawItemsJson.includes(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+    const raw = JSON.parse(completed.rawItemsJson);
+    assert.equal(raw[0].data.id, "message-0");
+    assert.equal(raw.at(-1).type, "withmate.raw_items_truncated");
+    assert.equal(raw.at(-1).data.omittedItems, 40 + (canceled ? 0 : 1) - raw.length + 1);
+  }
+});
 
 // @test-value v2
 // kind = "invariant"

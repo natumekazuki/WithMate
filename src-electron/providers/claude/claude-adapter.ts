@@ -22,8 +22,8 @@ import {
 } from "../provider-runtime.js";
 import { parseSessionMemoryDeltaText } from "../../session/session-memory-extraction.js";
 import { resolveDevelopmentProviderBinaryPath, resolvePackagedProviderBinaryPath } from "../provider-binary-paths.js";
-import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv } from "../provider-agent-runtime-binding.js";
-import { boundAuditRawItem, stringifyBoundedAuditRawItems, toAuditTextPreview, type BoundedAuditRawItem } from "../../session/audit-payload-limits.js";
+import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv, type ProviderAgentRuntimeBindingRedactor } from "../provider-agent-runtime-binding.js";
+import { boundAuditRawItem, BoundedAuditRawItems, toAuditTextPreview } from "../../session/audit-payload-limits.js";
 import { buildArtifactFromOperations } from "../provider-artifact.js";
 import { captureWorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
 import { createDisabledWorkspaceSnapshotCapture, WORKSPACE_DIFF_CAPTURE_ENABLED } from "../../files/workspace-diff-policy.js";
@@ -49,7 +49,8 @@ type ClaudeTrace = {
   streamingId: string | null;
   steps: Map<string, LiveRunStep>;
   operations: AuditLogOperation[];
-  rawItems: BoundedAuditRawItem[];
+  rawItems: BoundedAuditRawItems;
+  redactor: ProviderAgentRuntimeBindingRedactor;
   usage: AuditLogUsage | null;
   result: SDKResultMessage | null;
   errorMessage: string;
@@ -83,7 +84,7 @@ function commandOf(name: string, input: unknown): string | null {
 }
 
 function appendRaw(trace: ClaudeTrace, type: string, data: Record<string, unknown>): void {
-  trace.rawItems.push(boundAuditRawItem({ type, data }));
+  trace.rawItems.append(boundAuditRawItem(trace.redactor.sanitize({ type, data })));
 }
 
 function usageFromResult(result: SDKResultMessage, resumed: boolean): AuditLogUsage {
@@ -220,8 +221,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   async invalidateAllSessionThreads(): Promise<void> { /* One process per turn; no cached thread. */ }
   getBackgroundStructuredPromptPolicy() { return PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY; }
 
-  private makeTrace(threadId: string | null): ClaudeTrace {
-    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new Map(), operations: [], rawItems: [], usage: null, result: null, errorMessage: "" };
+  private makeTrace(threadId: string | null, redactor = createProviderAgentRuntimeBindingRedactor(null)): ClaudeTrace {
+    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new Map(), operations: [], rawItems: new BoundedAuditRawItems(), redactor, usage: null, result: null, errorMessage: "" };
   }
 
   private receive(message: SDKMessage, trace: ClaudeTrace, resumed = false): void {
@@ -323,15 +324,15 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       logicalPrompt: redactor.sanitize(prompt.logicalPrompt),
       transportPayload: redactor.sanitize(transportPayload),
       operations,
-      rawItemsJson: stringifyBoundedAuditRawItems(redactor.sanitize(trace.rawItems)),
+      rawItemsJson: trace.rawItems.stringify(),
       usage: trace.usage,
     };
   }
 
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
     const prompt = this.composePrompt(input);
-    const trace = this.makeTrace(input.session.threadId || null);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+    const trace = this.makeTrace(input.session.threadId || null, redactor);
     const workspacePath = resolveRunWorkspacePath(input);
     const selection = resolveModelSelection(input.providerCatalog, input.executionOptions.model, input.executionOptions.reasoningEffort);
     const controller = new AbortController();
@@ -572,7 +573,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       const rawText = assistantText(trace) || trace.result.result;
       const structuredOutput = trace.result.structured_output;
       if (structuredOutput === undefined || structuredOutput === null) throw new Error("Claude background structured output is missing");
-      return { threadId: trace.threadId, rawText, output: structuredOutput as TOutput, structuredOutput, parsedJson: structuredOutput, rawItemsJson: stringifyBoundedAuditRawItems(trace.rawItems), usage: trace.usage };
+      return { threadId: trace.threadId, rawText, output: structuredOutput as TOutput, structuredOutput, parsedJson: structuredOutput, rawItemsJson: trace.rawItems.stringify(), usage: trace.usage };
     } finally {
       clearTimeout(timer);
       input.signal?.removeEventListener("abort", abort);
