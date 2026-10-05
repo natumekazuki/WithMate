@@ -43,6 +43,7 @@ export type MemoryV6WorkerCommand =
   | { operation: "affect.recordRejection"; input: Parameters<CharacterAffectStorage["recordRejection"]>[0] }
   | { operation: "affect.getEvent"; input: Parameters<CharacterAffectStorage["getEvent"]>[0] }
   | { operation: "affect.getEffectiveState"; input: Parameters<CharacterAffectStorage["getEffectiveState"]>[0] }
+  | { operation: "affect.getContextState"; input: Parameters<CharacterAffectStorage["getContextState"]>[0] }
   | { operation: "affect.getStateVersion"; input: Parameters<CharacterAffectStorage["getStateVersion"]>[0] }
   | { operation: "affect.inspect"; input: Parameters<CharacterAffectStorage["inspect"]>[0] }
   | { operation: "affect.getMetrics"; input: undefined }

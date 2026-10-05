@@ -239,17 +239,10 @@ export class CharacterContextApplicationService {
           transport,
           queryLength,
           searchTermCount,
-          async () => ({
-            state: await this.deps.affectService.getEffectiveState({
-              characterId: input.characterId,
-              userId: LOCAL_USER_ID,
-              sessionId: input.sessionId,
-            }),
-            version: await this.deps.affectService.getStateVersion({
-              characterId: input.characterId,
-              userId: LOCAL_USER_ID,
-              sessionId: input.sessionId,
-            }),
+          () => this.deps.affectService.getContextState({
+            characterId: input.characterId,
+            userId: LOCAL_USER_ID,
+            sessionId: input.sessionId,
           }),
         );
         const memory = input.query && (input.memoryLimit ?? 0) > 0

@@ -82,6 +82,7 @@ export class MemoryV6WorkerClient {
       recordRejection: (input) => call("affect.recordRejection", input, true),
       getEvent: (input) => call("affect.getEvent", input),
       getEffectiveState: (input) => call("affect.getEffectiveState", input),
+      getContextState: (input) => call("affect.getContextState", input),
       getStateVersion: (input) => call("affect.getStateVersion", input),
       inspect: (input) => call("affect.inspect", input),
       getMetrics: () => call("affect.getMetrics", undefined),

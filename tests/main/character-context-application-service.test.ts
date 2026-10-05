@@ -86,7 +86,7 @@ function createFixture(options: {
         evaluator: { async evaluate() { return []; } },
       });
   if (options.failAffectState) {
-    affectService.getEffectiveState = () => {
+    affectService.getContextState = () => {
       throw new Error("C:/private/workspace secret-token must not be logged");
     };
   }
