@@ -111,6 +111,7 @@ export function createStorageWorkerCommandHandlers(): StorageWorkerCommandHandle
     "affect.recordRejection": (payload) => affect.recordRejection(input(setObservedAt(affect, payload))),
     "affect.getEvent": (payload) => affect.getEvent(input(setObservedAt(affect, payload))),
     "affect.getEffectiveState": (payload) => affect.getEffectiveState(input(setObservedAt(affect, payload))),
+    "affect.getContextState": (payload) => affect.getContextState(input(setObservedAt(affect, payload))),
     "affect.getStateVersion": (payload) => affect.getStateVersion(input(setObservedAt(affect, payload))),
     "affect.inspect": (payload) => affect.inspect(input(setObservedAt(affect, payload))),
     "affect.getMetrics": (payload) => {

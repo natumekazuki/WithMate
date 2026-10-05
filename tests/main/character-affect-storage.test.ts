@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,7 @@ import {
   CharacterAffectVersionConflictError,
 } from "../../src-electron/character/character-affect-storage.js";
 import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
+import { MemoryV6WorkerClient } from "../../src-electron/memory/memory-v6-worker-client.js";
 
 function createFixture(): { directory: string; dbPath: string } {
   const directory = mkdtempSync(join(tmpdir(), "withmate-affect-"));
@@ -107,6 +109,177 @@ function affectStorage(dbPath: string): CharacterAffectStorage {
     now: () => new Date("2026-08-09T01:00:00.000Z"),
   });
 }
+
+function expectedStateVersion(dbPath: string, sessionId: string): string {
+  const db = new DatabaseSync(dbPath);
+  try {
+    // Column order is the published v1 canonical key order, independent of cache/streaming.
+    const events = db.prepare(`SELECT created_at AS createdAt, id, occurred_at AS occurredAt, state
+      FROM character_affect_events_v6 WHERE character_id = 'character-a' AND user_id = 'local-user'
+      AND (layer = 'relationship' OR session_id = ?) ORDER BY occurred_at, id`).all(sessionId);
+    const resets = db.prepare(`SELECT created_at AS createdAt, id, layer, reset_at AS resetAt
+      FROM character_affect_resets_v6 WHERE character_id = 'character-a' AND user_id = 'local-user'
+      AND (layer = 'relationship' OR session_id = ?) ORDER BY reset_at, id`).all(sessionId);
+    return `affect-v1-${createHash("sha256").update(JSON.stringify({ events, resets })).digest("hex")}`;
+  } finally {
+    db.close();
+  }
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常Contextはcanonical clamp・legacy・baseline・afterglowを詳細projectionと同じ順序と値で返し、clock-only readも再評価する"
+// oracle = { type = "contract", ref = "docs/adr/018-character-affect-event-persistence.md#decision" }
+// fault = "軽量集約で逆符号clamp順序やidentityを変えるか、version一致だけで時間依存effectiveを固定する"
+// observable = "getContextStateのcomponent順序・数値・label・versionとTTL/decay境界での変化"
+// observation_boundary = "public-boundary"
+// scope = "CharacterAffectStorage compact context projection"
+// lifecycle = "permanent"
+// impact = "通常会話の感情値と対象の区別を維持する"
+// distinction = "既存の詳細projection testでは新しい通常Context境界の数値とclock-only再評価を観測できない"
+// @end-test-value
+it("通常Contextの値・順序と時刻境界を詳細projectionと揃える", () => {
+  const fixture = createFixture();
+  let now = new Date("2026-08-09T01:00:00.000Z");
+  const storage = new CharacterAffectStorage(fixture.dbPath, { now: () => now, sessionHalfLifeMs: 1_000 });
+  const scope = { characterId: "character-a", userId: "local-user", sessionId: "session-a" };
+  try {
+    for (const [index, valence] of [1, 1, -1].entries()) {
+      storage.recordEvent(event({ layer: "relationship", targetType: "user", targetId: "user",
+        family: "joy", value: { label: `relation-${index}`, valence, dimensions: { focus: valence } },
+        intensity: 1, occurredAt: `2026-08-09T00:00:0${index}.000Z`, idempotencyKey: `relation-${index}` }));
+    }
+    const legacy = storage.recordEvent(event({ targetId: "legacy", idempotencyKey: "legacy" })).event;
+    const raw = new DatabaseSync(fixture.dbPath);
+    raw.prepare("UPDATE character_affect_events_v6 SET family = NULL WHERE id = ?").run(legacy.id);
+    raw.close();
+    storage.recordEvent(event({ sessionId: "session-b", targetType: "user", targetId: "source",
+      family: "relief", idempotencyKey: "source" }));
+    storage.recordEvent(event({ targetType: "user", targetId: "same", family: "joy", idempotencyKey: "current" }));
+    storage.recordEvent(event({ sessionId: "session-b", targetType: "user", targetId: "same",
+      family: "joy", idempotencyKey: "same-source" }));
+    const input = { ...scope, baseline: [{ targetType: "relationship" as const, targetId: "baseline", family: "joy" as const,
+      value: { label: "baseline", valence: 0.2 }, intensity: 0.3, reason: "baseline" }] };
+    const version = storage.getStateVersion(scope).version;
+    for (const elapsed of [0, 999, 1_000, Math.ceil(1_000 * Math.log2(20))]) {
+      now = new Date(Date.parse("2026-08-09T01:00:00.000Z") + elapsed);
+      const compact = storage.getContextState(input);
+      const detailed = storage.getEffectiveState(input);
+      assert.deepEqual(compact.state.components, detailed.components.map(({ reasons: _reasons, eventIds: _ids, ...value }) => value));
+      assert.equal(compact.version.version, version);
+      assert.equal(compact.state.evaluatedAt, now.toISOString());
+      assert.equal(compact.state.components.find((c) => c.targetId === "user")?.valence, 0);
+      assert.equal(compact.state.components.find((c) => c.targetId === "user")?.dimensions.focus, 0);
+      assert.equal(compact.state.components.find((c) => c.targetId === "user")?.label, "relation-2");
+      assert.equal(compact.state.components.find((c) => c.targetId === "source") !== undefined, elapsed < 1_000);
+      assert.equal(compact.state.components.find((c) => c.targetId === "same") !== undefined, elapsed < 4_322);
+    }
+    assert.equal(storage.inspect(scope).events.length, 5);
+  } finally {
+    storage.close();
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "versionは元のv1 canonical値を維持し、cache後も別接続・scope・訂正・reset・Session削除を検知してstale writeを拒否する"
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
+// fault = "cache済みversionを更新後または異なるownerへ再利用して競合検出を抜ける"
+// observable = "getContextState/getStateVersionのv1 fingerprintとexpectedVersion拒否・削除後のowner拒否"
+// observation_boundary = "public-boundary"
+// scope = "CharacterAffectStorage version cache and optimistic writes"
+// lifecycle = "permanent"
+// impact = "同時Sessionの更新欠落と削除済みownerへの読取りを防ぐ"
+// distinction = "既存の競合testと型検査ではwarm cacheの別接続無効化とcanonical byte互換を確認できない"
+// @end-test-value
+it("warm versionをlocal・別接続mutationとSession削除で無効化する", () => {
+  const fixture = createFixture();
+  const storage = affectStorage(fixture.dbPath);
+  const other = affectStorage(fixture.dbPath);
+  const scope = { characterId: "character-a", userId: "local-user", sessionId: "session-a" };
+  const verify = () => {
+    for (const sessionId of ["session-a", "session-b"]) {
+      const expected = expectedStateVersion(fixture.dbPath, sessionId);
+      assert.equal(storage.getContextState({ ...scope, sessionId }).version.version, expected);
+      assert.equal(storage.getStateVersion({ ...scope, sessionId }).version, expected);
+    }
+  };
+  try {
+    verify();
+    const stale = storage.getStateVersion(scope).version;
+    const first = other.recordEvent(event()).event;
+    verify();
+    assert.throws(() => storage.recordEvent(event({ idempotencyKey: "stale" }), { expectedVersion: stale }), CharacterAffectVersionConflictError);
+    storage.correctEvent({ eventId: first.id, replacement: event({ idempotencyKey: "corrected" }), reason: "correct" });
+    verify();
+    const beforeAfterglow = storage.getContextState(scope);
+    other.recordEvent(event({ sessionId: "session-b", targetType: "user", targetId: "other-session", idempotencyKey: "afterglow" }));
+    const afterAfterglow = storage.getContextState(scope);
+    assert.equal(afterAfterglow.version.version, beforeAfterglow.version.version);
+    assert.equal(afterAfterglow.state.components.some((c) => c.targetId === "other-session"), true);
+    other.reset({ ...scope, layer: "session", resetAt: "2026-08-09T01:00:00.000Z", reason: "reset", idempotencyKey: "reset" });
+    verify();
+    storage.recordEvent(event({ layer: "relationship", targetType: "user", idempotencyKey: "retained" }));
+    verify();
+    const copy = storage.getStateVersion(scope);
+    copy.version = "caller-mutated";
+    verify();
+    const raw = new DatabaseSync(fixture.dbPath);
+    raw.exec("PRAGMA foreign_keys = ON; DELETE FROM sessions_v6 WHERE id = 'session-a'");
+    raw.close();
+    assert.throws(() => storage.getContextState(scope), /Session does not belong/);
+    assert.equal(storage.getContextState({ ...scope, sessionId: "session-b" }).version.version, expectedStateVersion(fixture.dbPath, "session-b"));
+    assert.equal(storage.inspect({ characterId: "character-a", userId: "local-user" }).events.some((e) => e.idempotencyKey === "retained"), true);
+    assert.throws(() => storage.getContextState({ ...scope, sessionId: "session-other" }), /Session does not belong/);
+    assert.throws(() => storage.getContextState({ ...scope, userId: "foreign", sessionId: "session-b" }), /owner must be local-user/);
+  } finally {
+    other.close();
+    storage.close();
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常ContextのWorker commandは軽量projectionとversionを返し、同時expectedVersion更新を一件だけ受理する"
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
+// fault = "新しいtyped commandのdispatch/cloneで値を失うか、warm versionで二件のstale更新を受理する"
+// observable = "実Worker経由のContextと詳細projection・inspection、同時更新結果と時刻によるintensity変化"
+// observation_boundary = "public-boundary"
+// scope = "MemoryV6WorkerClient compact affect command"
+// lifecycle = "permanent"
+// impact = "Mainの非同期Context取得と楽観的競合検出をWorker境界で維持する"
+// distinction = "直接storage testや型検査では新commandのdispatch・structured clone・実Worker内cacheを通らない"
+// @end-test-value
+it("実Workerの通常Contextと同時expectedVersion更新を確認する", async () => {
+  const fixture = createFixture();
+  let now = new Date("2026-08-09T01:00:00.000Z");
+  const client = new MemoryV6WorkerClient({ dbPath: fixture.dbPath,
+    workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url), now: () => now });
+  const scope = { characterId: "character-a", userId: "local-user", sessionId: "session-a" };
+  try {
+    const initial = await client.affectStorage.getContextState(scope);
+    const results = await Promise.allSettled(["first", "second"].map((idempotencyKey) =>
+      client.affectStorage.recordEvent(event({ idempotencyKey }), { expectedVersion: initial.version.version })));
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    const rejected = results.find((r) => r.status === "rejected");
+    assert.ok(rejected?.status === "rejected" && rejected.reason instanceof CharacterAffectVersionConflictError);
+    const compact = await client.affectStorage.getContextState(scope);
+    const detailed = await client.affectStorage.getEffectiveState(scope);
+    assert.deepEqual(compact.state.components, detailed.components.map(({ reasons: _reasons, eventIds: _ids, ...value }) => value));
+    assert.equal(compact.state.components[0]?.intensity, 0.5);
+    assert.equal((await client.affectStorage.inspect(scope)).events.length, 1);
+    now = new Date("2026-08-09T07:00:00.000Z");
+    const decayed = await client.affectStorage.getContextState(scope);
+    assert.equal(decayed.version.version, compact.version.version);
+    assert.equal(decayed.state.components[0]?.intensity, 0.25);
+    assert.equal(decayed.state.evaluatedAt, now.toISOString());
+  } finally {
+    await client.close();
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
 
 type WorkerMessage = {
   type: "locked" | "released" | "ready" | "attempting" | "result" | "error";

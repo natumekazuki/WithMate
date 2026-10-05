@@ -16,6 +16,7 @@ import {
 } from "../../src-electron/character/character-affect-memory-adapter.js";
 import {
   CharacterAffectService,
+  CharacterAffectEpisodePersistenceError,
   type CharacterAffectEpisodeWriter,
 } from "../../src-electron/character/character-affect-service.js";
 import { CharacterAffectStorage } from "../../src-electron/character/character-affect-storage.js";
@@ -83,6 +84,46 @@ function evaluatorFor(getEvent: () => AffectEventInput): AffectEvaluator {
     },
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Memory commit後のevent消失またはlink不成立をsaved event付きpartial failureとして返し、成功にしない"
+// oracle = { type = "contract", ref = "docs/adr/018-character-affect-event-persistence.md#decision" }
+// fault = "単一event read-backのnullまたは未linkを成功結果として返す"
+// observable = "recordAppraisalのCharacterAffectEpisodePersistenceErrorと永続化済みevent・Memory件数"
+// observation_boundary = "public-boundary"
+// scope = "CharacterAffectService episode read-back failure"
+// lifecycle = "permanent"
+// impact = "AffectとMemoryの部分成功をcallerが認識してretry判断できる"
+// distinction = "既存link例外testではlinkが戻った後のread-back不成立を検出できない"
+// @end-test-value
+it("episode link後の消失・未linkを成功として返さない", async () => {
+  for (const failure of ["missing", "unlinked"] as const) {
+    const fixture = createFixture();
+    const affectStorage = new CharacterAffectStorage(fixture.dbPath);
+    const memoryStorage = new MemoryV6Storage(fixture.dbPath);
+    try {
+      if (failure === "missing") {
+        affectStorage.getEvent = () => null;
+      } else {
+        affectStorage.linkMemoryEpisode = () => {};
+      }
+      const service = createCharacterAffectServiceWithMemory({ affectStorage, memoryStorage, evaluator: evaluatorFor(() => episodeEvent()) });
+      await assert.rejects(service.recordAppraisal(episodeEvent()), (error: unknown) => {
+        assert.ok(error instanceof CharacterAffectEpisodePersistenceError);
+        assert.equal(error.eventCreated, true);
+        assert.match(error.message, /link is unavailable/);
+        assert.equal(affectStorage.inspect({ characterId: "character-a", userId: "local-user" }).events[0]?.id, error.eventId);
+        return true;
+      });
+      assert.equal(memoryStorage.listEntries({ target: TARGET }).items.length, 1);
+    } finally {
+      affectStorage.close();
+      memoryStorage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  }
+});
 
 function serviceInput(summary = "The release passed.") {
   return {

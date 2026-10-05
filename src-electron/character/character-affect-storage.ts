@@ -47,6 +47,17 @@ export type CharacterAffectStateVersion = {
   updatedAt: string | null;
 };
 
+export type ContextAffectComponent = Omit<EffectiveAffectComponent, "reasons" | "eventIds">;
+export type ContextAffectState = Omit<EffectiveAffectState, "layers" | "components"> & {
+  components: ContextAffectComponent[];
+};
+type EffectiveStateInput = {
+  characterId: string;
+  userId: string;
+  sessionId: string;
+  baseline?: readonly AffectBaselineComponent[];
+};
+
 export type StoredAffectEvent = Omit<AffectEventInput, "sessionId" | "family"> & {
   id: string;
   sessionId: string | null;
@@ -133,11 +144,18 @@ type ProjectionInput = {
   isAfterglow?: boolean;
 };
 
+type ProjectionEventRow = Pick<AffectEventRow,
+  "id" | "layer" | "target_type" | "target_id_bytes" | "family" | "value_json" | "intensity" | "occurred_at"
+> & { reason?: string };
+
 export class CharacterAffectStorage {
   private readonly db: DatabaseSync;
   private now: () => Date;
   private readonly sessionHalfLifeMs: number;
   private readonly minimumDecayWeight: number;
+  // Retain only small version results, never event payloads or time-dependent projections.
+  private readonly versionCache = new Map<string, CharacterAffectStateVersion>();
+  private versionCacheChanges = "";
   private readonly projectionMetrics = {
     reads: 0,
     legacyComponents: 0,
@@ -481,12 +499,23 @@ export class CharacterAffectStorage {
     return row ? toStoredEvent(row) : null;
   }
 
-  getEffectiveState(input: {
-    characterId: string;
-    userId: string;
-    sessionId: string;
-    baseline?: readonly AffectBaselineComponent[];
-  }): EffectiveAffectState {
+  getContextState(input: EffectiveStateInput): {
+    state: ContextAffectState;
+    version: CharacterAffectStateVersion;
+  } {
+    return this.readTransaction(() => ({
+      version: this.getStateVersion(input),
+      state: this.projectState(input, false),
+    }));
+  }
+
+  getEffectiveState(input: EffectiveStateInput): EffectiveAffectState {
+    return this.readTransaction(() => this.projectState(input, true));
+  }
+
+  private projectState(input: EffectiveStateInput, includeAudit: true): EffectiveAffectState;
+  private projectState(input: EffectiveStateInput, includeAudit: false): ContextAffectState;
+  private projectState(input: EffectiveStateInput, includeAudit: boolean): EffectiveAffectState | ContextAffectState {
     assertLocalUser(input.userId);
     this.assertSessionOwner(input.sessionId, input.characterId);
     for (const component of input.baseline ?? []) {
@@ -497,8 +526,10 @@ export class CharacterAffectStorage {
     const afterglowCutoff = new Date(evaluatedAtMs - this.sessionHalfLifeMs).toISOString();
     const relationshipResetAt = this.latestResetAt(input.characterId, input.userId, "relationship", null);
     const sessionResetAt = this.latestResetAt(input.characterId, input.userId, "session", input.sessionId);
+    const projectionColumns = `id, layer, target_type, CAST(target_id AS BLOB) AS target_id_bytes,
+      family, value_json, intensity, occurred_at${includeAudit ? ", reason" : ""}`;
     const rows = this.db.prepare(`
-      SELECT *, CAST(target_id AS BLOB) AS target_id_bytes
+      SELECT ${projectionColumns}
       FROM character_affect_events_v6
       WHERE character_id = ?
         AND user_id = ?
@@ -508,13 +539,13 @@ export class CharacterAffectStorage {
           OR (layer = 'session' AND session_id = ? AND occurred_at > ?)
         )
       ORDER BY occurred_at ASC, id ASC
-    `).all(
+    `).iterate(
       input.characterId,
       input.userId,
       relationshipResetAt,
       input.sessionId,
       sessionResetAt,
-    ) as AffectEventRow[];
+    ) as Iterable<ProjectionEventRow>;
 
     const sourceSessionRow = this.db.prepare(`
       SELECT session_id
@@ -545,7 +576,7 @@ export class CharacterAffectStorage {
     ) as { session_id: string } | undefined;
     const afterglowRows = sourceSessionRow
       ? this.db.prepare(`
-        SELECT *, CAST(target_id AS BLOB) AS target_id_bytes
+        SELECT ${projectionColumns}
         FROM character_affect_events_v6 AS events
         WHERE character_id = ?
           AND user_id = ?
@@ -569,119 +600,108 @@ export class CharacterAffectStorage {
         input.userId,
         sourceSessionRow.session_id,
         afterglowCutoff,
-      ) as AffectEventRow[]
+      ) as ProjectionEventRow[]
       : [];
     this.projectionMetrics.reads += 1;
     this.projectionMetrics.cacheMisses += 1;
 
-    const currentSessionRows = rows.filter((row) => row.layer === "session");
-    const currentComponentIdentities = new Set(
-      currentSessionRows.map((row) => componentIdentity(
-        row.target_type,
-        decodeSqliteText(row.target_id_bytes),
-        row.family,
-        parseValue(row.value_json).label,
-      )),
-    );
-    const currentTargetTuples = new Set(
-      currentSessionRows.map((row) => targetTuple(row.target_type, decodeSqliteText(row.target_id_bytes))),
-    );
+    const currentComponentIdentities = new Set<string>();
+    const currentTargetTuples = new Set<string>();
     this.projectionMetrics.afterglowCandidateRows += afterglowRows.length;
 
-    const afterglowInputs = afterglowRows.flatMap((row): ProjectionInput[] => {
-      const targetId = decodeSqliteText(row.target_id_bytes);
-      const value = parseValue(row.value_json);
-      if (currentComponentIdentities.has(componentIdentity(row.target_type, targetId, row.family, value.label))) {
-        this.projectionMetrics.afterglowSameTargetExcluded += 1;
-        return [];
+    const storage = this;
+    function* projectionInputs(): Generator<ProjectionInput> {
+      for (const component of input.baseline ?? []) {
+        yield {
+          layer: "baseline", targetType: component.targetType, targetId: component.targetId,
+          family: component.family ?? null, value: component.value, intensity: component.intensity,
+          reason: includeAudit ? component.reason : "", eventId: null, occurredAt: null, weight: 1,
+        };
       }
-      if (isTaskContinuityTarget(row.target_type) && !currentTargetTuples.has(targetTuple(row.target_type, targetId))) {
-        this.projectionMetrics.afterglowContinuityExcluded += 1;
-        return [];
-      }
-      const weight = CROSS_SESSION_AFTERGLOW_WEIGHT * Math.pow(
-        0.5,
-        Math.max(0, evaluatedAtMs - Date.parse(row.occurred_at)) / this.sessionHalfLifeMs,
-      );
-      if (weight < this.minimumDecayWeight) {
-        this.projectionMetrics.decayExcluded += 1;
-        return [];
-      }
-      if (row.family === null) {
-        this.projectionMetrics.legacyComponents += 1;
-      }
-      return [{
-        layer: "session",
-        targetType: row.target_type,
-        targetId,
-        family: row.family,
-        value,
-        intensity: row.intensity,
-        reason: "",
-        eventId: row.id,
-        occurredAt: row.occurred_at,
-        weight,
-        isAfterglow: true,
-      }];
-    });
-    const afterglowComponentSelection = selectTopAfterglowComponents(afterglowInputs);
-    this.projectionMetrics.afterglowSelectedComponents += afterglowComponentSelection.selectedIdentities.size;
-    this.projectionMetrics.afterglowComponentCapExcluded +=
-      afterglowComponentSelection.componentCount - afterglowComponentSelection.selectedIdentities.size;
-    const selectedAfterglowInputs = afterglowInputs.filter((candidate) =>
-      afterglowComponentSelection.selectedIdentities.has(
-        componentIdentity(candidate.targetType, candidate.targetId, candidate.family, candidate.value.label),
-      ));
-
-    const layers: ProjectionInput[] = [
-      ...(input.baseline ?? []).map((component) => ({
-        layer: "baseline" as const,
-        targetType: component.targetType,
-        targetId: component.targetId,
-        family: component.family ?? null,
-        value: component.value,
-        intensity: component.intensity,
-        reason: component.reason,
-        eventId: null,
-        occurredAt: null,
-        weight: 1,
-      })),
-      ...rows.flatMap((row) => {
+      for (const row of rows) {
+        const targetId = decodeSqliteText(row.target_id_bytes);
+        const value = parseValue(row.value_json);
+        // Even decay-excluded current events participate in afterglow identity/continuity.
+        if (row.layer === "session") {
+          currentComponentIdentities.add(componentIdentity(row.target_type, targetId, row.family, value.label));
+          currentTargetTuples.add(targetTuple(row.target_type, targetId));
+        }
         const weight = row.layer === "session"
-          ? Math.pow(0.5, Math.max(0, evaluatedAtMs - Date.parse(row.occurred_at)) / this.sessionHalfLifeMs)
+          ? Math.pow(0.5, Math.max(0, evaluatedAtMs - Date.parse(row.occurred_at)) / storage.sessionHalfLifeMs)
           : 1;
-        if (weight < this.minimumDecayWeight) {
-          this.projectionMetrics.decayExcluded += 1;
+        if (weight < storage.minimumDecayWeight) {
+          storage.projectionMetrics.decayExcluded += 1;
+          continue;
+        }
+        if (row.family === null) {
+          storage.projectionMetrics.legacyComponents += 1;
+        }
+        yield {
+          layer: row.layer, targetType: row.target_type, targetId, family: row.family,
+          value, intensity: row.intensity, reason: includeAudit ? row.reason! : "",
+          eventId: row.id, occurredAt: row.occurred_at, weight,
+        };
+      }
+      const afterglowInputs = afterglowRows.flatMap((row): ProjectionInput[] => {
+        const targetId = decodeSqliteText(row.target_id_bytes);
+        const value = parseValue(row.value_json);
+        if (currentComponentIdentities.has(componentIdentity(row.target_type, targetId, row.family, value.label))) {
+          storage.projectionMetrics.afterglowSameTargetExcluded += 1;
+          return [];
+        }
+        if (isTaskContinuityTarget(row.target_type) && !currentTargetTuples.has(targetTuple(row.target_type, targetId))) {
+          storage.projectionMetrics.afterglowContinuityExcluded += 1;
+          return [];
+        }
+        const weight = CROSS_SESSION_AFTERGLOW_WEIGHT * Math.pow(
+          0.5,
+          Math.max(0, evaluatedAtMs - Date.parse(row.occurred_at)) / storage.sessionHalfLifeMs,
+        );
+        if (weight < storage.minimumDecayWeight) {
+          storage.projectionMetrics.decayExcluded += 1;
           return [];
         }
         if (row.family === null) {
-          this.projectionMetrics.legacyComponents += 1;
+          storage.projectionMetrics.legacyComponents += 1;
         }
         return [{
-          layer: row.layer,
+          layer: "session",
           targetType: row.target_type,
-          targetId: decodeSqliteText(row.target_id_bytes),
+          targetId,
           family: row.family,
-          value: parseValue(row.value_json),
+          value,
           intensity: row.intensity,
-          reason: row.reason,
+          reason: "",
           eventId: row.id,
           occurredAt: row.occurred_at,
           weight,
+          isAfterglow: true,
         }];
-      }),
-      ...selectedAfterglowInputs,
-    ];
+      });
+      const afterglowComponentSelection = selectTopAfterglowComponents(afterglowInputs);
+      storage.projectionMetrics.afterglowSelectedComponents += afterglowComponentSelection.selectedIdentities.size;
+      storage.projectionMetrics.afterglowComponentCapExcluded +=
+        afterglowComponentSelection.componentCount - afterglowComponentSelection.selectedIdentities.size;
+      const selectedAfterglowInputs = afterglowInputs.filter((candidate) =>
+        afterglowComponentSelection.selectedIdentities.has(
+          componentIdentity(candidate.targetType, candidate.targetId, candidate.family, candidate.value.label),
+        ));
 
-    return {
+      yield* selectedAfterglowInputs;
+    }
+
+    const state = {
       schemaVersion: AFFECT_SCHEMA_VERSION,
       characterId: input.characterId,
       userId: input.userId,
       sessionId: input.sessionId,
       evaluatedAt,
-      layers: aggregateComponents(layers, true),
-      components: aggregateComponents(layers, false),
     };
+    if (!includeAudit) {
+      return { ...state, components: aggregateComponents(projectionInputs(), false, false) };
+    }
+    const layers = [...projectionInputs()];
+    return { ...state, layers: aggregateComponents(layers, true), components: aggregateComponents(layers, false) };
   }
 
   getStateVersion(input: {
@@ -689,8 +709,27 @@ export class CharacterAffectStorage {
     userId: string;
     sessionId: string;
   }): CharacterAffectStateVersion {
+    return this.readTransaction(() => this.readStateVersion(input));
+  }
+
+  private readStateVersion(input: Parameters<CharacterAffectStorage["getStateVersion"]>[0]): CharacterAffectStateVersion {
+    // data_version establishes the read snapshot and detects commits on other connections.
+    const { data_version: dataVersion } = this.db.prepare("PRAGMA data_version").get() as { data_version: number };
+    const { changes } = this.db.prepare("SELECT total_changes() AS changes").get() as { changes: number };
     assertLocalUser(input.userId);
     this.assertSessionOwner(input.sessionId, input.characterId);
+    const cacheChanges = `${dataVersion}:${changes}`;
+    if (cacheChanges !== this.versionCacheChanges) {
+      this.versionCache.clear();
+      this.versionCacheChanges = cacheChanges;
+    }
+    const key = JSON.stringify([input.characterId, input.userId, input.sessionId]);
+    const cached = this.versionCache.get(key);
+    if (cached) {
+      this.versionCache.delete(key);
+      this.versionCache.set(key, cached);
+      return { ...cached };
+    }
     const events = this.db.prepare(`
       SELECT id, state, occurred_at AS occurredAt, created_at AS createdAt
       FROM character_affect_events_v6
@@ -698,7 +737,7 @@ export class CharacterAffectStorage {
         AND user_id = ?
         AND (layer = 'relationship' OR session_id = ?)
       ORDER BY occurred_at ASC, id ASC
-    `).all(input.characterId, input.userId, input.sessionId) as Array<{
+    `).iterate(input.characterId, input.userId, input.sessionId) as Iterable<{
       id: string;
       state: "active" | "corrected";
       occurredAt: string;
@@ -711,19 +750,33 @@ export class CharacterAffectStorage {
         AND user_id = ?
         AND (layer = 'relationship' OR session_id = ?)
       ORDER BY reset_at ASC, id ASC
-    `).all(input.characterId, input.userId, input.sessionId) as Array<{
+    `).iterate(input.characterId, input.userId, input.sessionId) as Iterable<{
       id: string;
       layer: AffectLayer;
       resetAt: string;
       createdAt: string;
     }>;
-    const updatedAt = [...events.map((event) => event.createdAt), ...resets.map((reset) => reset.createdAt)]
-      .sort()
-      .at(-1) ?? null;
-    return {
-      version: `affect-v1-${fingerprint({ events, resets })}`,
-      updatedAt,
-    };
+    // Stream the identical canonical { events, resets } bytes through the existing SHA-256 format.
+    const hash = createHash("sha256");
+    let updatedAt: string | null = null;
+    hash.update('{"events":[');
+    for (const [rows, suffix] of [[events, '],"resets":['], [resets, "]}"]] as const) {
+      let separator = "";
+      for (const row of rows) {
+        hash.update(separator).update(stableJson(row));
+        separator = ",";
+        if (updatedAt === null || row.createdAt > updatedAt) {
+          updatedAt = row.createdAt;
+        }
+      }
+      hash.update(suffix);
+    }
+    const version = { version: `affect-v1-${hash.digest("hex")}`, updatedAt };
+    this.versionCache.set(key, version);
+    if (this.versionCache.size > 32) {
+      this.versionCache.delete(this.versionCache.keys().next().value!);
+    }
+    return { ...version };
   }
 
   inspect(input: { characterId: string; userId: string; sessionId?: string }): {
@@ -1071,13 +1124,18 @@ export class CharacterAffectStorage {
   }
 
 
-  private transaction<T>(run: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE TRANSACTION;");
+  private readTransaction<T>(run: () => T): T {
+    return this.db.isTransaction ? run() : this.transaction(run, true);
+  }
+
+  private transaction<T>(run: () => T, readOnly = false): T {
+    this.db.exec(readOnly ? "BEGIN TRANSACTION;" : "BEGIN IMMEDIATE TRANSACTION;");
     try {
       const result = run();
       this.db.exec("COMMIT;");
       return result;
     } catch (error) {
+      this.versionCache.clear();
       try {
         this.db.exec("ROLLBACK;");
       } catch {
@@ -1195,11 +1253,14 @@ function selectTopAfterglowComponents(inputs: readonly ProjectionInput[]): {
   return { componentCount: groups.size, selectedIdentities };
 }
 
+function aggregateComponents(inputs: Iterable<ProjectionInput>, separateLayers: boolean, includeAudit?: true): EffectiveAffectComponent[];
+function aggregateComponents(inputs: Iterable<ProjectionInput>, separateLayers: boolean, includeAudit: false): ContextAffectComponent[];
 function aggregateComponents(
-  inputs: ProjectionInput[],
+  inputs: Iterable<ProjectionInput>,
   separateLayers: boolean,
-): EffectiveAffectComponent[] {
-  const groups = new Map<string, EffectiveAffectComponent & {
+  includeAudit = true,
+): Array<ContextAffectComponent & Partial<Pick<EffectiveAffectComponent, "reasons" | "eventIds">>> {
+  const groups = new Map<string, ContextAffectComponent & Partial<Pick<EffectiveAffectComponent, "reasons" | "eventIds">> & {
     representativeContribution: number;
     representativeOccurredAt: string;
     representativeEventId: string;
@@ -1222,8 +1283,7 @@ function aggregateComponents(
       valence: 0,
       dimensions: {},
       intensity: 0,
-      reasons: [],
-      eventIds: [],
+      ...(includeAudit ? { reasons: [], eventIds: [] } : {}),
       contributingLayers: [],
       representativeContribution: -1,
       representativeOccurredAt: "",
@@ -1263,11 +1323,11 @@ function aggregateComponents(
       current.dimensions[dimension] = clamp((current.dimensions[dimension] ?? 0) + value * contribution);
     }
     current.intensity = clamp(current.intensity + contribution, 0, 1);
-    if (input.reason) {
-      current.reasons.push(input.reason);
+    if (includeAudit && input.reason) {
+      current.reasons!.push(input.reason);
     }
-    if (input.eventId) {
-      current.eventIds.push(input.eventId);
+    if (includeAudit && input.eventId) {
+      current.eventIds!.push(input.eventId);
     }
     if (!current.contributingLayers.includes(input.layer)) {
       current.contributingLayers.push(input.layer);

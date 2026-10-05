@@ -16,6 +16,8 @@ Workerの応答はrequest IDとgenerationで照合し、不正な応答ではそ
 
 V6 schemaは設定・catalog、Project scope、Main／Auxiliary Session、message、turn、Memory、Character Affectを分ける。Memoryの保存と権限は[V6 Memory Foundation](v6-memory-foundation.md)、Auxiliaryの会話・draft・summaryは[Auxiliary Session](auxiliary-session.md)に記す。
 
+通常のCharacter ContextはWorkerの`affect.getContextState`で軽量effective projectionと既存state versionを同じread transactionから取得する。layer別projection、寄与event ID、reasonは詳細取得だけで組み立て、通常Contextへ転送しない。version結果だけを最大32 owner scopeまでWorker内で保持し、SQLiteの`data_version`と同接続の`total_changes()`の変化で無効化する。履歴payloadと時間依存effectiveは保持せず、decayと別Sessionのafterglowは読取りごとに評価する。正本event、詳細inspection、version形式と楽観的競合検出は変更しない。
+
 `sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存V6行の列補完と、旧pending Affect settlementのowner解釈はschema更新で扱い、既存の本文やcorrelation fingerprintを変更しない。通常の保存と取消は[Session Run Lifecycle](session-run-lifecycle.md)に従う。
 
 turn contextはMain SessionかAuxiliaryの一方をownerとし、`session_turns_v6`にphaseとterminal markerを置く。`session_turn_interims_v6`と`session_turn_provider_outputs_v6`はinterimとprovider outputを分離する。保存済みfinal message、detail audit、provider outputを同じものとみなさず、通常画面で不要なraw/detailは対象を開いたときに取得する。既存V6 auditからの更新は`src-electron/storage/migrations/migrate-session-turn-storage-v6.ts`が担当する。

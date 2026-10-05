@@ -15,7 +15,7 @@ type Awaitable<T> = T | Promise<T>;
 export type CharacterAffectStorageAccess = {
   [K in keyof Pick<CharacterAffectStorage,
     "recordEvent" | "correctEvent" | "reset" | "linkMemoryEpisode" | "recordEpisodeCandidate"
-    | "recordRejection" | "getEvent" | "getEffectiveState" | "getStateVersion" | "inspect" | "getMetrics"
+    | "recordRejection" | "getEvent" | "getEffectiveState" | "getContextState" | "getStateVersion" | "inspect" | "getMetrics"
   >]: (...args: Parameters<CharacterAffectStorage[K]>) => Awaitable<ReturnType<CharacterAffectStorage[K]>>;
 };
 
@@ -174,6 +174,11 @@ export class CharacterAffectService {
     return this.storage.getStateVersion(input);
   }
 
+  async getContextState(input: Parameters<CharacterAffectStorage["getContextState"]>[0]) {
+    const result = await this.storage.getContextState(input);
+    return { ...result, state: { ...result.state, mode: this.mode } };
+  }
+
   async correctEvent(
     input: Parameters<CharacterAffectStorage["correctEvent"]>[0],
     options: Parameters<CharacterAffectStorage["correctEvent"]>[1] = {},
@@ -262,11 +267,15 @@ export class CharacterAffectService {
       ...(supersedesMemoryEntryId ? { supersedesMemoryEntryId } : {}),
     });
     await this.storage.linkMemoryEpisode(event.id, episode.memoryEntryId);
-    return (await this.storage.inspect({
+    const linked = await this.storage.getEvent({
+      eventId: event.id,
       characterId: event.characterId,
       userId: event.userId,
-      sessionId: event.sourceSessionId,
-    })).events.find((item) => item.id === event.id)!;
+    });
+    if (!linked || linked.memoryEntryId !== episode.memoryEntryId) {
+      throw new Error("Affect event Memory episode link is unavailable.");
+    }
+    return linked;
   }
 }
 
