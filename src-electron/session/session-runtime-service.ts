@@ -850,7 +850,11 @@ export class SessionRuntimeService {
 
   cancelRun(sessionId: string): void {
     const controller = this.sessionRunControllers.get(sessionId);
-    if (controller?.signal.aborted || this.pendingSessionRunCancels.has(sessionId)) {
+    if (this.pendingSessionRunCancels.has(sessionId)) {
+      return;
+    }
+    if (controller?.signal.aborted) {
+      this.pendingSessionRunCancels.add(sessionId);
       return;
     }
     this.deps.resolvePendingApprovalRequest(sessionId, "deny");
@@ -864,6 +868,7 @@ export class SessionRuntimeService {
       return;
     }
 
+    this.pendingSessionRunCancels.add(sessionId);
     controller.abort();
     this.setRuntimeLiveState(sessionId, this.deps.getLiveSessionRun(sessionId));
     this.deps.broadcastLiveSessionRun(sessionId);
@@ -1235,7 +1240,7 @@ export class SessionRuntimeService {
     const observedOperations = new Map<string, AuditLogEntry["operations"][number]>();
     const failAuditProgress = (error: unknown) => {
       auditProgressFailure ??= error;
-      if (!terminalAuditSettled) runAbortController.abort();
+      if (!terminalAuditSettled) runAbortController.abort(auditProgressFailure);
     };
     const recordAuditProgressFailure = (entry: CreateAuditLogInput) => {
       if (!auditProgressFailure && !auditWriteError) return;
@@ -1930,7 +1935,8 @@ export class SessionRuntimeService {
         storedStatus: storedFailedSession.status,
       });
       activeRunningSession = storedFailedSession;
-      if (!canceled && !runAbortController.signal.aborted) {
+      if (!canceled && !this.pendingSessionRunCancels.has(sessionId)
+        && (!runAbortController.signal.aborted || runAbortController.signal.reason === auditProgressFailure)) {
         notifySessionTurnTerminalBestEffort(this.deps.notifySessionTurnTerminal, {
           outcome: "failed",
           session: storedFailedSession,

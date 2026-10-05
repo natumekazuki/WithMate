@@ -119,7 +119,10 @@ function liveText(trace: ClaudeTrace): string {
 }
 
 function signalRace<T>(promise: Promise<T> | T, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(new Error("Canceled"));
+  if (signal.aborted) {
+    void Promise.resolve(promise).catch(() => undefined);
+    return Promise.reject(new Error("Canceled"));
+  }
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(new Error("Canceled"));
     signal.addEventListener("abort", abort, { once: true });
@@ -526,9 +529,17 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       throw new ProviderTurnError(redactor.sanitizeText(message), this.result(input, prompt, trace), canceled, providerErrorReason(message, canceled));
     } finally {
       input.signal?.removeEventListener("abort", abort);
-      if (iterator) await closeQuery(iterator, controller.signal.aborted || !trace.result);
-      controller.abort();
-      if (input.signal?.aborted && childExited) await childExited;
+      if (progressFailure !== undefined && childExited && input.onCleanupPending) {
+        input.onCleanupPending(childExited);
+      }
+      try {
+        if (iterator) await closeQuery(iterator, controller.signal.aborted || !trace.result);
+      } finally {
+        controller.abort();
+        if (childExited && (input.signal?.aborted || (progressFailure !== undefined && !input.onCleanupPending))) {
+          await childExited;
+        }
+      }
     }
   }
 

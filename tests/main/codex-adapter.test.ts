@@ -178,7 +178,7 @@ class FakeTransport {
 // claim = "Codex progressは変更stepだけを渡し、resolved event burst中でもmacrotaskを実行する"
 // oracle = { type = "contract", ref = "docs/design/audit-log.md" }
 // fault = "1step変更で既存全stepを変更扱いするか、同期event連鎖でMainのtimerを飢餓させる"
-// observable = "実adapter callbackのchanged step ID列と、全event処理前のsetImmediate実行位置"
+// observable = "実adapter callbackのchanged step ID列と、最初のburst event処理後に予約したsetImmediateの後続event処理前の実行位置"
 // observation_boundary = "public-boundary"
 // scope = "CodexAdapter progress owner and scheduling"
 // lifecycle = "permanent"
@@ -195,11 +195,20 @@ it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする
   ];
   const changes: RunSessionTurnProgressChanges[] = [];
   let callbacksAtYield = -1;
-  setImmediate(() => { callbacksAtYield = changes.length; });
+  let burstProbe: Promise<void> | undefined;
   const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-  await adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (_state, change) => { changes.push(change); });
+  await adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (_state, change) => {
+    changes.push(change);
+    if (!burstProbe && change.steps.upserts.some((step) => step.id === "one")) {
+      burstProbe = new Promise<void>((resolve) => {
+        setImmediate(() => { callbacksAtYield = changes.length; resolve(); });
+      });
+    }
+  });
+  assert.ok(burstProbe);
+  await burstProbe;
   assert.deepEqual(changes.filter((change) => change.steps.upserts.length > 0).map((change) => change.steps.upserts.map((step) => step.id)), [["one"], ["two"], ["one"]]);
-  assert.ok(callbacksAtYield >= 0 && callbacksAtYield < changes.length);
+  assert.equal(callbacksAtYield, 2);
   assert.equal(changes[3].steps.upserts[0].details, "changed");
 }));
 // @test-value v2

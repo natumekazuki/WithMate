@@ -337,10 +337,10 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Audit受付は件数とpayload量を有限にし過負荷をfailedとして報告し受付済みpatchをdrainする"
-  // oracle = { type = "contract", ref = "01-audit-progress-partial-update.mdの有限queue・明示過負荷・非破棄要求" }
-  // fault = "停止writerへ無制限patchを積む、過負荷をcanceledへ分類する、または受付済みpatchを捨てる"
-  // observable = "provider停止時の受付数、terminal runState、drain後patch件数と拒否・保存状態metadata"
+  // claim = "Audit受付は件数とpayload量を有限にし過負荷をfailedとして保存・通知し、明示cancelの通知だけを抑止して受付済みpatchをdrainする"
+  // oracle = { type = "contract", ref = "docs/design/audit-log.md; docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "停止writerへ無制限patchを積む、過負荷をcanceledへ分類する、内部abortでfailed通知を抑止する、明示cancelを通知する、または受付済みpatchを捨てる"
+  // observable = "provider停止時の受付数、terminal runState、terminal保存と通知の順序、drain後patch件数と拒否・保存状態metadata"
   // observation_boundary = "component-behavior"
   // scope = "SessionRuntimeService audit pressure admission"
   // lifecycle = "permanent"
@@ -348,14 +348,18 @@ describe("SessionRuntimeService", () => {
   // distinction = "型検査とstorage点更新testではproducer burst時の容量境界と分類を確認できない"
   // @end-test-value
   it("Audit queueの件数とpayload上限で明示failedにしaccepted tailを捨てない", async () => {
-    for (const mode of ["count", "payload", "removals"] as const) {
+    for (const mode of ["count", "payload", "removals", "canceled-count"] as const) {
       const session = createSession({ provider: "codex" });
       let release!: () => void;
       const barrier = new Promise<void>((resolve) => { release = resolve; });
       let storedPatches = 0;
       let attemptedEvents = 0;
       let terminalAudit: UpdateAuditLogInput | undefined;
-      const runtime = createProgressRuntime(session, async (_input, progress) => {
+      const terminalEvents: string[] = [];
+      const runtime = createProgressRuntime(session, async (input, progress) => {
+        if (mode === "canceled-count") {
+          input.signal?.addEventListener("abort", () => runtime.cancelRun(session.id), { once: true });
+        }
         for (let index = 0; index < 100; index += 1) {
           attemptedEvents += 1;
           const step = { id: `step-${index}`, type: "command_execution", summary: "command", status: "in_progress" as const, details: mode === "payload" ? "x".repeat(5 * 1024 * 1024) : "small" };
@@ -366,6 +370,8 @@ describe("SessionRuntimeService", () => {
         return createPartialResult({ assistantText: "unexpected success" });
       }, {
         auditEnrichmentGraceMs: 1,
+        upsertTerminalSession(next, commit) { terminalEvents.push(`save:${commit.phase}`); return next; },
+        notifySessionTurnTerminal(notification) { terminalEvents.push(`notify:${notification.outcome}`); },
         async updateAuditLogProgress(_id, patch) {
           await barrier;
           storedPatches += 1;
@@ -375,11 +381,12 @@ describe("SessionRuntimeService", () => {
       });
       const result = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
       assert.equal(result.runState, "error");
-      assert.equal(attemptedEvents, mode === "count" ? 65 : 1);
+      assert.equal(attemptedEvents, mode === "count" || mode === "canceled-count" ? 65 : 1);
       assert.equal(storedPatches, 0);
+      assert.deepEqual(terminalEvents, mode === "canceled-count" ? ["save:failed"] : ["save:failed", "notify:failed"]);
       release();
       await waitForCondition(() => terminalAudit?.phase === "failed", "pressure failureのterminal enrichment");
-      assert.equal(storedPatches, mode === "count" ? 64 : 0);
+      assert.equal(storedPatches, mode === "count" || mode === "canceled-count" ? 64 : 0);
       assert.ok(terminalAudit?.providerMetadata?.some((metadata) => metadata.kind === "audit_progress_failure"));
       assert.deepEqual(terminalAudit?.providerMetadata?.find((metadata) => metadata.kind === "audit_progress_failure")?.payload, {
         admissionRejected: true, acceptedProgressPersistence: "completed",
@@ -431,10 +438,10 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "実storageのprogress保存拒否は自動再実行せずAudit failureとして残しユーザーcancelと区別する"
-  // oracle = { type = "contract", ref = "01-audit-progress-partial-update.mdの保存失敗・unknown retry禁止要求" }
-  // fault = "保存拒否を成功またはcanceledとして返す、providerか未知保存結果をretryする"
-  // observable = "実SQLiteのfailed phaseとaudit metadata、provider呼出回数・保存attempt数"
+  // claim = "実storageのprogress保存拒否は自動再実行せずAudit failureとして保存し、非cancel失敗のterminal通知を依頼する"
+  // oracle = { type = "contract", ref = "docs/design/audit-log.md; docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "保存拒否を成功またはcanceledとして返す、providerか未知保存結果をretryする、または内部abortを理由にfailed通知を抑止する"
+  // observable = "実SQLiteのfailed phaseとaudit metadata、provider呼出回数・保存attempt数、通知時に読める永続terminal phaseと返却Session"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService production AuditLogStorageV6 failure"
   // lifecycle = "permanent"
@@ -452,6 +459,8 @@ describe("SessionRuntimeService", () => {
       let patchCalls = 0;
       let auditId = 0;
       let finalSaved = false;
+      const notifications: TerminalNotificationInput[] = [];
+      const phasesAtNotification: Array<string | undefined> = [];
       const runtime = createProgressRuntime(session, async (_input, progress) => {
         providerCalls += 1;
         await progress?.(createLiveRunState({ sessionId: session.id, assistantText: "partial evidence" }), { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
@@ -467,9 +476,15 @@ describe("SessionRuntimeService", () => {
           return audits.updateAuditLogProgress(id, { ...patch, sessionId: "different-owner" });
         },
         updateAuditLog(id, entry) { const saved = audits.updateAuditLog(id, entry); finalSaved = true; return saved; },
+        notifySessionTurnTerminal(notification) {
+          notifications.push(notification);
+          phasesAtNotification.push(audits.listSessionAuditLogSummaries(session.id).find((entry) => entry.id === auditId)?.phase);
+        },
       });
       const result = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
       assert.equal(result.runState, "error");
+      assert.deepEqual(notifications, [{ outcome: "failed", session: result }]);
+      assert.deepEqual(phasesAtNotification, ["failed"]);
       await waitForCondition(() => finalSaved, "storage拒否後のfailed audit保存");
       const detail = audits.getSessionAuditLogDetail(session.id, auditId);
       assert.equal(audits.listSessionAuditLogSummaries(session.id).find((entry) => entry.id === auditId)?.phase, "failed");
