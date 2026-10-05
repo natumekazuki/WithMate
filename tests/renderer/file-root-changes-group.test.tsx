@@ -174,10 +174,11 @@ test("Changes group はviewportの復帰と状態保持をboundedな描画で行
       const target = firstEntry()!;
       const targetPath = target.title;
       assert.notEqual(targetPath, "src/file-0000.ts");
+      const readsBeforeRerender = scopeReads;
       await act(async () => target.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true })));
+      assert.equal(scopeReads, readsBeforeRerender, "selection updates must reuse the scope projection");
       assert.deepEqual(opened, [{ relativePath: targetPath, scope, openInWindow: true }]);
       assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".workspace-change-row.is-selected")?.title, targetPath);
-      const readsBeforeRerender = scopeReads;
       await act(async () => { loadingKey = `workspace:${scope}:${targetPath}`; render(); });
       assert.equal(scopeReads, readsBeforeRerender, "loading updates must reuse the scope projection");
       await resize(0);
