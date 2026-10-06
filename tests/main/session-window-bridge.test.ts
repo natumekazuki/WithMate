@@ -8,8 +8,9 @@ import {
   SessionWindowBridge,
   type SessionWindowCloseEvent,
   type SessionWindowLike,
+  type SessionWindowRendererState,
 } from "../../src-electron/windows/session-window-bridge.js";
-import { DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS } from "../../src-electron/platform/draft-flush-coordinator.js";
+import { DEFAULT_DRAFT_FLUSH_TIMEOUT_MS, DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS, type DraftFlushResult } from "../../src-electron/platform/draft-flush-coordinator.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -155,16 +156,23 @@ class StubWindow implements SessionWindowLike {
 function createDraftFlushBridge(options: {
   waitForPendingDraftSends?: () => Promise<boolean>;
   getWindowSender?: (window: StubWindow) => unknown;
+  isRunInFlight?: () => boolean;
+  confirmCloseWhileRunning?: () => boolean;
 } = {}) {
   const requests: Array<{ window: StubWindow; requestId: string; sessionId: string; reason: "close" | "quit" }> = [];
   const releases: StubWindow[] = [];
   const closedIds: string[] = [];
+  const windows: StubWindow[] = [];
+  const settled: DraftFlushResult[] = [];
+  const rendererObservers = new Map<StubWindow, (state: SessionWindowRendererState) => void>();
   const bridge = new SessionWindowBridge({
-    createWindow: () => new StubWindow(),
+    createWindow: () => { const window = new StubWindow(); windows.push(window); return window; },
+    observeRendererState: (window, changed) => { rendererObservers.set(window, changed); },
+    onDraftFlushSettled: (result) => { settled.push(result); },
     async loadChatEntry() {},
     getSession: (id) => createSession({ id }),
-    isRunInFlight: () => false,
-    confirmCloseWhileRunning: () => false,
+    isRunInFlight: options.isRunInFlight ?? (() => false),
+    confirmCloseWhileRunning: options.confirmCloseWhileRunning ?? (() => false),
     broadcastOpenSessionWindowIds() {},
     onSessionWindowClosed: (id) => { closedIds.push(id); },
     getWindowSender: options.getWindowSender ?? ((window) => window),
@@ -172,10 +180,121 @@ function createDraftFlushBridge(options: {
     sendDraftFlushRelease: (window) => { releases.push(window); },
     waitForPendingDraftSends: options.waitForPendingDraftSends,
   });
-  return { bridge, requests, releases, closedIds };
+  const notifyRenderer = (window: StubWindow, state: SessionWindowRendererState) => rendererObservers.get(window)!(state);
+  return { bridge, requests, releases, closedIds, windows, settled, notifyRenderer };
 }
 
 describe("SessionWindowBridge", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "死亡RendererはACKなしでcloseを完了でき、再openは旧Windowの実closed後に一つだけ新規Windowをloadする"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#close-behavior" }
+  // fault = "死亡RendererのACK待ちでcloseが止まるか、実closed前や並行openでWindowを重複生成する"
+  // observable = "close結果、flush分類、新規Window数、並行openの結果とclosed通知"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-renderer-gone-recovery"
+  // lifecycle = "permanent"
+  // impact = "黒画面から戻れないか、同一Sessionの表示Windowが重複する"
+  // distinction = "健康なWindowのopenやload failureでは表現できないRenderer死亡と遅延closedをメモリWindowで検証する"
+  // @end-test-value
+  it("死亡Rendererのcloseと実closed後の単一再openを完了する", async () => {
+    const { bridge, windows, requests, settled, closedIds, notifyRenderer } = createDraftFlushBridge();
+    const closedWindow = await bridge.openSessionWindow("gone-close");
+    notifyRenderer(closedWindow, "gone");
+    assert.equal(await bridge.requestCloseSessionWindow("gone-close"), true);
+    assert.deepEqual(settled.map((result) => result.outcome), ["renderer-gone"]);
+    assert.equal(closedWindow.isDestroyed(), true);
+
+    const oldWindow = await bridge.openSessionWindow("gone-reopen");
+    oldWindow.delayClosedEvent = true;
+    notifyRenderer(oldWindow, "gone");
+    const firstOpen = bridge.openSessionWindow("gone-reopen");
+    const secondOpen = bridge.openSessionWindow("gone-reopen");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(oldWindow.destroyCount, 1);
+    assert.equal(windows.length, 2, "replacement must wait for the real closed event");
+    oldWindow.emitClosed();
+    const [first, second] = await Promise.all([firstOpen, secondOpen]);
+    assert.equal(first, second);
+    assert.notEqual(first, oldWindow);
+    assert.equal(windows.length, 3);
+    assert.equal(bridge.getWindow("gone-reopen"), first);
+    assert.deepEqual(closedIds, ["gone-close", "gone-reopen"]);
+    assert.deepEqual(requests, []);
+    first.destroy();
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "応答不能Rendererの再openは実行中close確認の取消を尊重し、承認後は負ACKまたはtimeoutで旧入力を破棄して再生成する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#close-behavior" }
+  // fault = "取消時にWindowを破棄するか、承認後の負ACKまたはtimeoutで復旧できず、旧ACKが新Windowを閉じる"
+  // observable = "確認回数、open結果、Window生成数、flush分類、旧ACK受理と新Window生存状態"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-unresponsive-reopen"
+  // lifecycle = "permanent"
+  // impact = "ユーザーの取消を無視するか、応答不能の入力画面から復旧できない"
+  // distinction = "close確認とflushの失敗期限を組み合わせ、既存の正常close・quit競合とは別の再open動作を検証する"
+  // @end-test-value
+  it("応答不能の再openは取消を維持し負ACKとtimeoutから復旧する", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const outcome of ["rejected", "timeout"] as const) {
+      let approved = false;
+      let confirmations = 0;
+      const { bridge, requests, windows, settled, notifyRenderer } = createDraftFlushBridge({
+        isRunInFlight: () => true,
+        confirmCloseWhileRunning: () => { confirmations += 1; return approved; },
+      });
+      const oldWindow = await bridge.openSessionWindow("unresponsive");
+      notifyRenderer(oldWindow, "unresponsive");
+      assert.equal(await bridge.openSessionWindow("unresponsive"), oldWindow);
+      assert.equal(oldWindow.isDestroyed(), false);
+      assert.equal(requests.length, 0);
+      approved = true;
+      const reopening = bridge.openSessionWindow("unresponsive");
+      await new Promise((resolve) => setImmediate(resolve));
+      const request = requests[0];
+      assert.equal(request.reason, "close");
+      if (outcome === "rejected") bridge.acknowledgeDraftFlush(request.requestId, oldWindow, false);
+      else t.mock.timers.tick(DEFAULT_DRAFT_FLUSH_TIMEOUT_MS);
+      const replacement = await reopening;
+      assert.equal(confirmations, 2);
+      assert.equal(oldWindow.isDestroyed(), true);
+      assert.notEqual(replacement, oldWindow);
+      assert.equal(windows.length, 2);
+      assert.deepEqual(settled.map((result) => result.outcome), [outcome]);
+      assert.equal(bridge.acknowledgeDraftFlush(request.requestId, oldWindow, true), false);
+      assert.equal(bridge.getWindow("unresponsive"), replacement);
+      assert.equal(replacement.isDestroyed(), false);
+      replacement.destroy();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "応答不能通知後にresponsiveへ復帰したRendererは再openで再利用されfocusされる"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#close-behavior" }
+  // fault = "一時的な応答不能を永久障害として扱い、復帰後もWindowを破棄して入力を失う"
+  // observable = "open結果の同一性、作成Window数、focus状態とflush要求"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-renderer-responsive-recovery"
+  // lifecycle = "permanent"
+  // impact = "復帰済みの表示・未保存入力を不要に失う"
+  // distinction = "通常の健康Window再利用では検証できない障害通知後の復帰遷移を観測する"
+  // @end-test-value
+  it("responsive復帰後の再openは同じWindowを再利用する", async () => {
+    const { bridge, requests, windows, notifyRenderer } = createDraftFlushBridge();
+    const window = await bridge.openSessionWindow("responsive");
+    notifyRenderer(window, "unresponsive");
+    notifyRenderer(window, "responsive");
+    window.resetActivation({ minimized: false, visible: true });
+    assert.equal(await bridge.openSessionWindow("responsive"), window);
+    assert.equal(windows.length, 1);
+    assert.deepEqual(window.activationOperations, ["show", "focus"]);
+    assert.deepEqual(requests, []);
+    window.destroy();
+  });
+
   // @test-value v2
   // kind = "contract"
   // claim = "新規Session WindowをopenするとWindowを作成し、registryへ登録してopen通知を行う"
@@ -1193,20 +1312,20 @@ rejectSessionA!(new Error("load failed"));
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "通常closeのdraft flush失敗ではWindowを閉じず、再試行成功時は破棄済みWindowのsenderへ再アクセスせずcloseを完了する"
+  // claim = "通常closeはdraft flushの負ACKでも入力だけを破棄して完了し、保存成功とは分類しない"
   // oracle = { type = "contract", ref = "SessionWindowBridge#requestCloseSessionWindow" }
-  // fault = "flush失敗を成功扱いして入力を失う、または破棄済みWindowのsender取得で例外になりcloseが未完了になる"
-  // observable = "close結果とWindowの破棄状態"
+  // fault = "負ACKでcloseが完了しない、保存成功と分類する、または破棄済みWindowのsender取得で例外になる"
+  // observable = "close結果、Windowの破棄状態、draft flush結果分類"
   // observation_boundary = "public-boundary"
   // scope = "session-window-draft-flush"
   // lifecycle = "permanent"
-  // impact = "未保存入力を失うか、通常のWindow終了でmain process例外が発生する"
-  // distinction = "破棄後のsender取得を拒否するfixtureで保存失敗から成功へのcloseを検証する。型検査や常時senderを返すstubでは検出できず、追加の実プロセス起動は不要"
+  // impact = "保存できない入力surfaceから離脱できない、または未保存入力を保存済みと誤認する"
+  // distinction = "負ACKによるclose完了と保存成否の区別を観測する。型検査や成功ACKだけではこの境界を検証できない"
   // @end-test-value
-  it("draft flush失敗後のclose retryを成功時だけ完了する", async () => {
+  it("draft flush負ACKを保存成功にせず通常closeを完了する", async () => {
     const session = createSession({ id: "draft-close" });
     let bridge!: SessionWindowBridge<StubWindow>;
-    let attempt = 0;
+    const settled: DraftFlushResult[] = [];
     const window = new StubWindow();
     bridge = new SessionWindowBridge({
       createWindow: () => window,
@@ -1216,19 +1335,19 @@ rejectSessionA!(new Error("load failed"));
 
       confirmCloseWhileRunning: () => false,
       broadcastOpenSessionWindowIds() {},
+      onDraftFlushSettled: (result) => { settled.push(result); },
       getWindowSender: (candidate) => {
         if (candidate.isDestroyed()) throw new TypeError("Object has been destroyed");
         return "sender";
       },
       sendDraftFlushRequest: (_window, request) => {
-        queueMicrotask(() => bridge.acknowledgeDraftFlush(request.requestId, "sender", attempt++ > 0));
+        queueMicrotask(() => bridge.acknowledgeDraftFlush(request.requestId, "sender", false));
       },
     });
     await bridge.openSessionWindow(session.id);
-    assert.equal(await bridge.requestCloseSessionWindow(session.id), false);
-    assert.equal(window.destroyed, false);
     assert.equal(await bridge.requestCloseSessionWindow(session.id), true);
     assert.equal(window.destroyed, true);
+    assert.deepEqual(settled.map(({ reason, outcome }) => ({ reason, outcome })), [{ reason: "close", outcome: "rejected" }]);
   });
 
   // @test-value v2

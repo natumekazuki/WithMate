@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
+import type { DraftFlushResult } from "../platform/draft-flush-coordinator.js";
 import type { SessionFilePreviewWindowPayload } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { WITHMATE_OPEN_AUXILIARY_SESSION_EVENT, WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT, WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT, WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import type { MainWindowComposition } from "./main-window-composition.js";
@@ -35,6 +36,8 @@ export type MainWindowRuntimeDeps = {
   onSessionWindowClosed?(sessionId: string): void;
   confirmCloseWhileRunning(window: BrowserWindow, sessionId: string, signal: AbortSignal): boolean | Promise<boolean>;
   persistSnapshotError(error: unknown): void;
+  onDraftFlushSettled?(result: DraftFlushResult): void;
+  onWindowBroadcastFailed?(): void;
 };
 
 /** Owns the BrowserWindow-backed runtime and keeps window state out of the app registry. */
@@ -56,6 +59,8 @@ export class MainWindowRuntime {
       getHomeWindows: () => this.auxWindowService.listHomeWindows(),
       getPrimaryHomeWindow: () => this.auxWindowService.getHomeWindow(),
       getSessionWindows: () => this.sessionWindowBridge.listWindows(),
+      canSendToWindow: (window) => !window.webContents.isDestroyed() && !window.webContents.isCrashed(),
+      onSendFailed: deps.onWindowBroadcastFailed,
     });
     this.windowDialogService = new WindowDialogService({
       showOpenDialog: (targetWindow, options) => targetWindow
@@ -104,6 +109,13 @@ export class MainWindowRuntime {
         ...SESSION_WINDOW_DEFAULT_BOUNDS,
         title: deps.getSession(sessionId)?.taskTitle?.trim() || "Session",
       }),
+      observeRendererState: (window, changed) => {
+        window.webContents.on("render-process-gone", () => changed("gone"));
+        window.webContents.on("unresponsive", () => changed("unresponsive"));
+        window.webContents.on("responsive", () => changed("responsive"));
+        window.webContents.on("did-finish-load", () => changed("responsive"));
+      },
+      onDraftFlushSettled: deps.onDraftFlushSettled,
       loadChatEntry: (window, mode) => this.windowEntryLoader.loadChatEntry(window, mode),
       sendAuxiliarySessionNavigation: (window, payload) => {
         window.webContents.send(WITHMATE_OPEN_AUXILIARY_SESSION_EVENT, payload);

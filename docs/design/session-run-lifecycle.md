@@ -106,8 +106,10 @@ window は上の状態機械とは分離する。
 - 対象 session が `running` の場合:
   - 確認ダイアログを出す
   - `閉じない`: close をキャンセル
-  - `閉じて続行`: draft flush成功後にwindowを閉じる。session実行は継続する
-- 通常closeは入力を凍結し、未保存Auxiliary draftのflush完了ACKを待つ。保存失敗・例外・ACKのtimeoutでは閉じず、凍結を解除して編集・再試行を可能にする。成功時は実際に閉じるまで凍結を維持する。詳細は[Auxiliary Sessionの保存・終了契約](auxiliary-session.md#composer-の更新保存境界)を参照する
+  - `閉じて続行`: 下記のdraft flushを試みてwindowを閉じる。session実行は継続する
+- 通常closeは入力を凍結し、未保存Auxiliary draftのflush完了ACKを待つ。保存失敗・送信例外・ACKのtimeoutでも、入力中promptの未保存範囲を破棄してWindowを閉じる。終了済みRendererにはACKを要求せず、保存できなかった結果を保持してWindowを破棄する。close成立とdraft保存成功は別の結果として扱う。詳細は[Auxiliary Sessionの保存・終了契約](auxiliary-session.md#composer-の更新保存境界)を参照する
+- Windowの破棄はMain Processが所有するprovider実行・取得済み応答・terminal保存を中止しない。表示への通知失敗で保存処理を中断しない。Windowを開き直すと同じSessionと既存runへ接続し、runを再実行しない
+- 同じSessionを開く操作では、応答可能な既存Windowを再利用する。Renderer終了後は実際のclosedで旧Windowの登録・ownerを解放してから再生成する。応答不能の場合は通常closeの確認・flushを経て再生成し、確認取消では旧Windowを維持する。黒画面だけを根拠に自動破棄しない
 - 通常closeとapp quitが重なる場合、保存だけを待つclose ACKをquitに流用しない。quitは送信結果と復元保存まで待つ専用requestを送り、全体の終了判定まで通常closeによるWindow破棄と解凍を保留する。失敗時は生存Windowを解凍し、保留中の通常closeも中止して再試行を可能にする。ACK前のWindow消滅は保存成功として扱わない
 - Sessionを対象に含む明示的DBリセットでは、通常closeの保存待ちを使わずWindowを破棄する。管理登録とownerの解放は実際のclosed通知に合わせ、Windowが残ったまま登録だけを消さない
 

@@ -34,6 +34,8 @@ type WindowBroadcastServiceOptions<TWindow extends WindowLike> = {
   getHomeWindows(): TWindow[];
   getPrimaryHomeWindow(): TWindow | null;
   getSessionWindows(): TWindow[];
+  canSendToWindow?(window: TWindow): boolean;
+  onSendFailed?(): void;
 };
 
 export class WindowBroadcastService<TWindow extends WindowLike> {
@@ -112,8 +114,13 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
 
   private broadcastTo(windows: TWindow[], channel: string, payload: unknown): void {
     for (const window of windows) {
-      if (!window.isDestroyed()) {
+      if (window.isDestroyed()) continue;
+      try {
+        if (this.options.canSendToWindow && !this.options.canSendToWindow(window)) continue;
         window.webContents.send(channel, payload);
+      } catch {
+        // Renderer delivery is not the owner of provider output or durable persistence.
+        try { this.options.onSendFailed?.(); } catch { /* Diagnostics cannot interrupt publication. */ }
       }
     }
   }

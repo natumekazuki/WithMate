@@ -405,6 +405,23 @@ const mainWindowRuntime = new MainWindowRuntime({
     terminalService?.releaseSession(sessionId);
     auxiliarySessionService?.releaseAuxiliaryCreationOwner(sessionId);
   },
+  onDraftFlushSettled: (result) => {
+    writeAppLog({
+      level: result.outcome === "saved" ? "info" : "warn",
+      kind: "session.window.draft_flush.settled",
+      process: "main",
+      message: "Session Window draft flush settled",
+      data: { reason: result.reason, outcome: result.outcome, elapsedMs: result.elapsedMs },
+    });
+  },
+  onWindowBroadcastFailed: () => {
+    writeAppLog({
+      level: "warn",
+      kind: "window.broadcast.send_failed",
+      process: "main",
+      message: "Window event delivery failed",
+    });
+  },
   confirmCloseWhileRunning: async (window, sessionId, signal) => {
     const hasRun = isSessionRunInFlight(sessionId);
     const liveTerminals = terminalService?.countLive(window) ?? 0;
