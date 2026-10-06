@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogOperationDetailFragment, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult } from "../../src-shared/session/runtime-state.js";
+import type { AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogOperationDetailFragment, AuditLogProgressAck, AuditLogProgressPatch, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult } from "../../src-shared/session/runtime-state.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import type {
@@ -274,10 +274,32 @@ export function deleteAuditEventsForSessionTargets(db: DatabaseSync, input: Audi
 
 export class AuditLogStorageV6 {
   private readonly db;
+  private readonly progressStatements;
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
     ensureV6Schema(this.db);
+    this.progressStatements = {
+      target: this.db.prepare(`SELECT provider_id FROM session_turns_v6
+        WHERE id = ? AND (session_id = ? OR auxiliary_session_id = ?)`),
+      fields: this.db.prepare(`UPDATE session_turns_v6
+        SET thread_id = COALESCE(?, thread_id), error_summary = COALESCE(?, error_summary), updated_at = ?
+        WHERE id = ? AND phase = 'running'`),
+      singleton: this.db.prepare(`SELECT id FROM session_turn_provider_outputs_v6
+        WHERE turn_id = ? AND kind = ? ORDER BY seq LIMIT 1`),
+      insert: this.db.prepare(`INSERT INTO session_turn_provider_outputs_v6
+        (turn_id, seq, provider_id, kind, summary, payload_json, created_at)
+        VALUES (?, (SELECT COALESCE(MAX(seq), -1) + 1 FROM session_turn_provider_outputs_v6 WHERE turn_id = ?), ?, ?, ?, ?, ?)`),
+      update: this.db.prepare(`UPDATE session_turn_provider_outputs_v6
+        SET summary = ?, payload_json = ?, created_at = ?
+        WHERE id = ? AND turn_id = ? AND kind = ? AND provider_id = ?`),
+      remove: this.db.prepare(`DELETE FROM session_turn_provider_outputs_v6
+        WHERE id = ? AND turn_id = ? AND kind = ? AND provider_id = ?`),
+      latestInterim: this.db.prepare(`SELECT seq, body FROM session_turn_interims_v6
+        WHERE turn_id = ? ORDER BY seq DESC LIMIT 1`),
+      insertInterim: this.db.prepare(`INSERT INTO session_turn_interims_v6
+        (turn_id, seq, body, source, created_at) VALUES (?, ?, ?, 'running_snapshot', ?)`),
+    };
   }
 
   createAuditLog(input: Omit<AuditLogEntry, "id">): AuditLogEntry {
@@ -376,6 +398,52 @@ export class AuditLogStorageV6 {
       this.appendRunningInterimSnapshot(id, entry);
       this.replaceProviderOutputs(id, entry);
       return entry;
+    });
+  }
+
+  updateAuditLogProgress(id: number, patch: AuditLogProgressPatch): AuditLogProgressAck {
+    return this.transaction(() => {
+      const target = this.progressStatements.target.get(id, patch.sessionId, patch.sessionId) as
+        { provider_id: string } | undefined;
+      if (!target) throw new Error(`audit log not found or target mismatch: ${id}`);
+      const provider = target.provider_id;
+      const ack: AuditLogProgressAck = { insertedOperations: [] };
+      if (patch.fields) {
+        this.progressStatements.fields.run(patch.fields.threadId ?? null, patch.fields.errorMessage ?? null, patch.observedAt, id);
+      }
+      if (patch.assistantSnapshot) this.appendInterimSnapshot(id, patch.assistantSnapshot.body, patch.observedAt);
+      for (const outputId of patch.operationRemoves ?? []) {
+        const result = this.progressStatements.remove.run(outputId, id, "operation", provider);
+        if (result.changes !== 1) throw new Error(`audit operation target mismatch: ${outputId}`);
+      }
+      for (const upsert of patch.operationUpserts ?? []) {
+        const summary = operationSummaryPayload(upsert.operation);
+        const payload = outputPayload(upsert.operation);
+        if (upsert.outputId !== undefined) {
+          const result = this.progressStatements.update.run(summary, payload, patch.observedAt, upsert.outputId, id, "operation", provider);
+          if (result.changes !== 1) throw new Error(`audit operation target mismatch: ${upsert.outputId}`);
+        } else {
+          const result = this.progressStatements.insert.run(id, id, provider, "operation", summary, payload, patch.observedAt);
+          ack.insertedOperations.push({ key: upsert.key, outputId: Number(result.lastInsertRowid) });
+        }
+      }
+      const singleton = (kind: string, summary: string, value: unknown | null): void => {
+        const previous = this.progressStatements.singleton.get(id, kind) as { id: number } | undefined;
+        if (value === null) {
+          if (previous && this.progressStatements.remove.run(previous.id, id, kind, provider).changes !== 1) {
+            throw new Error(`audit output target mismatch: ${previous.id}`);
+          }
+        } else if (previous) {
+          if (this.progressStatements.update.run(summary, outputPayload(value), patch.observedAt, previous.id, id, kind, provider).changes !== 1) {
+            throw new Error(`audit output target mismatch: ${previous.id}`);
+          }
+        } else {
+          this.progressStatements.insert.run(id, id, provider, kind, summary, outputPayload(value), patch.observedAt);
+        }
+      };
+      if (patch.transportPayload !== undefined) singleton("transport_payload", patch.transportPayload?.summary ?? "", patch.transportPayload);
+      if (patch.usage !== undefined) singleton("usage", "Usage", patch.usage);
+      return ack;
     });
   }
 
@@ -738,31 +806,21 @@ export class AuditLogStorageV6 {
       return;
     }
 
-    const body = entry.assistantText.trim();
+    this.appendInterimSnapshot(turnId, entry.assistantText, entry.createdAt);
+  }
+
+  private appendInterimSnapshot(turnId: number, assistantText: string, createdAt: string): void {
+    const body = assistantText.trim();
     if (body === "") {
       return;
     }
 
-    const latest = this.db.prepare(`
-      SELECT seq, body
-      FROM session_turn_interims_v6
-      WHERE turn_id = ?
-      ORDER BY seq DESC
-      LIMIT 1
-    `).get(turnId) as LatestInterimV6Row | undefined;
+    const latest = this.progressStatements.latestInterim.get(turnId) as LatestInterimV6Row | undefined;
     if (latest?.body === body) {
       return;
     }
 
-    this.db.prepare(`
-      INSERT INTO session_turn_interims_v6 (
-        turn_id,
-        seq,
-        body,
-        source,
-        created_at
-      ) VALUES (?, ?, ?, 'running_snapshot', ?)
-    `).run(turnId, (latest?.seq ?? -1) + 1, body, entry.createdAt);
+    this.progressStatements.insertInterim.run(turnId, (latest?.seq ?? -1) + 1, body, createdAt);
   }
 
   private readSummaryPageRows(sessionId: string, cursor: number | null, limit: number): AuditLogPageRow[] {

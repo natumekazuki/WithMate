@@ -15,6 +15,7 @@ import type { AuxiliarySessionStorageAccess } from "../../src-electron/storage/p
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { AuditLogProgressPatch } from "../../src-shared/session/runtime-state.js";
 
 function createFixtureWorkerUrl(): URL {
   const source = `
@@ -66,6 +67,68 @@ function createFixtureWorkerUrl(): URL {
   `;
   return new URL(`data:text/javascript,${encodeURIComponent(source)}`);
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "V6 progress commandは実Workerでoperation IDだけを返し、閉じたgenerationの保存要求は再openしたDBへ反映しない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#decision" }
+// fault = "progress commandをallowlistへ組み込まないか、全entryを返すか、旧clientから新DBへ保存する"
+// observable = "小ack、operation detail、旧generationの拒否とreopen後の保存値"
+// observation_boundary = "public-boundary"
+// scope = "実V6 storage Worker bundleのAudit progress commandとgeneration境界"
+// lifecycle = "permanent"
+// impact = "MainとWorkerの契約不整合や旧ownerの遅延書込みによる監査内容変更を防ぐ"
+// distinction = "storage直接testはWorker allowlist・structured clone・client generation境界を通らない"
+// @end-test-value
+test("V6 storage workerはprogressの小ackとgeneration境界を維持する", async () => {
+  const userDataPath = await mkdtemp(join(process.env.TEMP ?? process.cwd(), "withmate-storage-worker-progress-"));
+  let bundle: ReturnType<typeof createV6StorageWorkerBundle> | null = null;
+  try {
+    await mkdir(join(userDataPath, "characters"), { recursive: true });
+    const bootstrap = await createOrVerifyV6FreshDatabase(userDataPath);
+    const options = {
+      dbPath: bootstrap.dbPath,
+      bundledModelCatalogPath: join(process.cwd(), "public", "model-catalog.json"),
+      userDataPath,
+      workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
+      handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
+      workerOptions: { execArgv: ["--import", "tsx"] },
+    };
+    bundle = createV6StorageWorkerBundle(options);
+    await bundle.initialize();
+    const session = buildNewSession({
+      id: "worker-progress", taskTitle: "worker progress", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
+      characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    });
+    await bundle.stores.session.upsertSession(session);
+    const created = await bundle.stores.audit.createAuditLog({
+      sessionId: session.id, createdAt: "2026-10-05T00:00:00.000Z", phase: "running",
+      provider: session.provider, model: session.model, reasoningEffort: session.reasoningEffort, approvalMode: session.approvalMode,
+      threadId: "", logicalPrompt: { systemText: "", inputText: "", composedText: "" }, transportPayload: null,
+      assistantText: "", operations: [], rawItemsJson: "", usage: null, errorMessage: "",
+    });
+    const patch: AuditLogProgressPatch = {
+      sessionId: session.id, observedAt: created.createdAt,
+      operationUpserts: [{ key: "shell", operation: { type: "shell", summary: "worker", details: "saved" } }],
+    };
+    const ack = await bundle.stores.audit.updateAuditLogProgress(created.id, patch);
+    assert.deepEqual(Object.keys(ack), ["insertedOperations"]);
+    assert.equal(ack.insertedOperations[0].key, "shell");
+    assert.ok(ack.insertedOperations[0].outputId > 0);
+    const oldAudit = bundle.stores.audit;
+    await bundle.client.close();
+    bundle = createV6StorageWorkerBundle(options);
+    await bundle.initialize();
+    await assert.rejects(oldAudit.updateAuditLogProgress(created.id, {
+      ...patch, operationUpserts: [{ key: "shell", outputId: ack.insertedOperations[0].outputId, operation: { type: "shell", summary: "stale", details: "overwrite" } }],
+    }), StorageWorkerGenerationError);
+    assert.equal((await bundle.stores.audit.getSessionAuditLogOperationDetail(session.id, created.id, 0))?.details, "saved");
+  } finally {
+    if (bundle) await bundle.client.close();
+    await rm(userDataPath, { recursive: true, force: true });
+  }
+});
 
 // @test-value v2
 // kind = "contract"

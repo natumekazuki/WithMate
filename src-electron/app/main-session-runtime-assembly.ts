@@ -38,7 +38,7 @@ export type MainSessionRuntimeAssemblyDeps = {
     getSettlementStorage: () => CharacterAffectTurnSettlementStorage;
     requestAppraisal?: () => void;
   };
-  audit: Pick<SessionRuntimeServiceDeps, "createAuditLog" | "updateAuditLog">;
+  audit: Pick<SessionRuntimeServiceDeps, "createAuditLog" | "updateAuditLog" | "updateAuditLogProgress">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
   interaction: Pick<SessionRuntimeServiceDeps, "waitForApprovalDecision" | "waitForElicitationResponse" | "resolvePendingApprovalRequest" | "resolvePendingElicitationRequest" | "invalidateProviderSessionThread">;
   notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal">;
@@ -153,6 +153,7 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     appraiseCompletedTurn: deps.character.requestAppraisal ? () => { deps.character.requestAppraisal!(); } : undefined,
     createAuditLog: (entry: CreateAuditLogInput) => guarded("audit create", () => deps.audit.createAuditLog(entry)),
     updateAuditLog: (id, entry) => guarded("audit update", () => deps.audit.updateAuditLog(id, entry)),
+    updateAuditLogProgress: (id, patch) => guarded("audit progress update", () => deps.audit.updateAuditLogProgress(id, patch)),
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },
     getLiveSessionRun: (id) => { assertOwner("live session read"); return deps.live.getLiveSessionRun(id); },
     waitForApprovalDecision: deps.interaction.waitForApprovalDecision,

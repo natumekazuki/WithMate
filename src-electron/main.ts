@@ -2202,7 +2202,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         },
       },
       character: { getSettlementStorage: () => requireCharacterAffectTurnSettlementStorage() as CharacterAffectTurnSettlementStorage, requestAppraisal: () => requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true }) },
-      audit: { createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry), updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry) },
+      audit: { createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry), updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry), updateAuditLogProgress: (id, patch) => requireAuditLogService().updateAuditLogProgress(id, patch) },
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },
       interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId, decision) => { const requestId = getLiveSessionRun(sessionId)?.approvalRequest?.requestId; if (requestId) requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision); }, resolvePendingElicitationRequest: (sessionId, response) => { const requestId = getLiveSessionRun(sessionId)?.elicitationRequest?.requestId; if (requestId) requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response); }, invalidateProviderSessionThread },
       notification: { notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); } },
@@ -2319,7 +2319,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         beginRuntimeTurn: ({ session, binding }) => binding ? glossaryRuntimeService.beginProviderTurn(session.id, binding) : undefined,
       },
       memory: { getAppSettings: () => requireAppSettingsStorage().getSettings() },
-      audit: { createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry), updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry) },
+      audit: { createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry), updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry), updateAuditLogProgress: (id, patch) => requireAuditLogService().updateAuditLogProgress(id, patch) },
       live: {
         setLiveSessionRun: (sessionId, state) => setLiveSessionRun(sessionId, state),
         getLiveSessionRun,

@@ -3,9 +3,11 @@ import type {
   LiveRunStep,
 } from "../../../src-shared/session/runtime-state.js";
 import {
+  AUDIT_TEXT_PREVIEW_LIMIT,
   toAuditTextPreview,
   stringifyBoundedAuditValue,
 } from "../../session/audit-payload-limits.js";
+import { ProviderProgressMap } from "../provider-progress.js";
 
 // The fields consumed here follow Codex App Server 0.159.0's ThreadItem schema.
 export type CodexFileChange = {
@@ -22,6 +24,7 @@ export type CodexTurnItem =
       id: string;
       command: string;
       aggregatedOutput: string | null;
+      aggregatedOutputOriginalLength?: number;
       exitCode: number | null;
       status: string;
     }
@@ -53,7 +56,7 @@ export type CodexTurnItem =
 export type CodexNativeNotification = { method: string; params?: unknown };
 export type CodexTurnStreamState = {
   items: Map<string, CodexTurnItem>;
-  liveSteps: Map<string, LiveRunStep>;
+  liveSteps: ProviderProgressMap<LiveRunStep>;
   threadId: string | null;
   turnId: string | null;
   reasoningText: string;
@@ -83,7 +86,7 @@ export function createCodexTurnStreamState(
 ): CodexTurnStreamState {
   return {
     items: new Map(),
-    liveSteps: new Map(),
+    liveSteps: new ProviderProgressMap(),
     threadId,
     turnId: null,
     reasoningText: "",
@@ -147,6 +150,16 @@ function record(value: unknown): Record<string, unknown> {
     ? (value as Record<string, unknown>)
     : {};
 }
+export function getCodexCommandOutputPreview(
+  item: Extract<CodexTurnItem, { type: "commandExecution" }>,
+): string | undefined {
+  if (item.aggregatedOutput === null) return undefined;
+  if (item.aggregatedOutputOriginalLength === undefined) return toAuditTextPreview(item.aggregatedOutput);
+  const originalLength = item.aggregatedOutputOriginalLength ?? item.aggregatedOutput.length;
+  if (originalLength <= AUDIT_TEXT_PREVIEW_LIMIT) return item.aggregatedOutput;
+  return `${item.aggregatedOutput}\n...[truncated ${originalLength - AUDIT_TEXT_PREVIEW_LIMIT} chars; originalLength=${originalLength}]`;
+}
+
 function liveStep(item: CodexTurnItem): LiveRunStep | null {
   const status = "status" in item ? item.status : "completed";
   const liveStatus =
@@ -161,7 +174,7 @@ function liveStep(item: CodexTurnItem): LiveRunStep | null {
         id: item.id,
         type: "command_execution",
         summary: toAuditTextPreview(item.command) ?? "",
-        details: toAuditTextPreview(item.aggregatedOutput),
+        details: getCodexCommandOutputPreview(item),
         status: liveStatus,
       };
     case "fileChange":
@@ -216,7 +229,17 @@ function acceptItem(state: CodexTurnStreamState, value: unknown): void {
   const raw = record(value);
   if (typeof raw.id !== "string" || typeof raw.type !== "string")
     throw new Error("Invalid Codex App Server item");
-  const item = value as CodexTurnItem;
+  let item = value as CodexTurnItem;
+  if (item.type === "commandExecution" && typeof item.aggregatedOutput === "string") {
+    // A sliced prefix can still retain the native output's full backing string.
+    item = {
+      ...item,
+      aggregatedOutputOriginalLength: item.aggregatedOutput.length,
+      aggregatedOutput: item.aggregatedOutput.length > AUDIT_TEXT_PREVIEW_LIMIT
+        ? JSON.parse(JSON.stringify(item.aggregatedOutput.slice(0, AUDIT_TEXT_PREVIEW_LIMIT))) as string
+        : item.aggregatedOutput,
+    };
+  }
   state.items.set(item.id, item);
   const step = liveStep(item);
   if (step) state.liveSteps.set(step.id, step);
@@ -271,11 +294,21 @@ export function applyCodexTurnEvent(
       if (typeof params.itemId !== "string" || typeof params.delta !== "string")
         break;
       const item = state.items.get(params.itemId);
-      if (item?.type === "commandExecution")
-        acceptItem(state, {
+      if (item?.type === "commandExecution") {
+        const remaining = Math.max(0, AUDIT_TEXT_PREVIEW_LIMIT - (item.aggregatedOutput?.length ?? 0));
+        const prefix = params.delta.length > remaining
+          ? JSON.parse(JSON.stringify(params.delta.slice(0, remaining))) as string
+          : params.delta;
+        const next = {
           ...item,
-          aggregatedOutput: (item.aggregatedOutput ?? "") + params.delta,
-        });
+          aggregatedOutput: (item.aggregatedOutput ?? "") + prefix,
+          aggregatedOutputOriginalLength: (item.aggregatedOutputOriginalLength ?? item.aggregatedOutput?.length ?? 0) + params.delta.length,
+        };
+        state.items.set(next.id, next);
+        const step = liveStep(next);
+        if (step) state.liveSteps.set(step.id, step);
+        if (!state.turnCompleted) state.streamErrorMessage = "";
+      }
       break;
     }
     case "item/reasoning/summaryTextDelta":

@@ -150,7 +150,7 @@ pending は Session incarnation を保存し、回収時と評価適用時に cu
 
 unready pending の Session 読取待ちでも storage identity を再確認し、交換された旧 storage への ready / discard を行わない。close / recreate 時には drain cursor も破棄する。
 
-completed 保存後の detached readiness 更新も捕捉した persistent store owner を確認し、失効後は `absent` として retry を終える。owner が現行のまま発生した一時障害は既存の retry を維持する。
+completed 保存後の detached readiness 更新も捕捉した persistent store owner を確認し、失効後は `absent` として retry を終える。owner が現行のまま発生した一時障害は既存の retry を維持する。この待機は correlation ID と評価起動callbackだけを保持し、保存済みSessionの全履歴を捕捉しない。評価起動はdurable pendingを読み取るschedulerへの通知であり、全Session snapshotを渡さない。
 
 外部 Provider による Affect 評価は ownership coordinator を保持せずに実行する。無関係な Session の作成・削除を、評価完了待ちへ結合しない。
 

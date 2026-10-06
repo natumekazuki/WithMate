@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it, mock } from "node:test";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
-import type { AuditLogEntry, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { AuditLogEntry, AuditLogProgressPatch, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
@@ -19,6 +20,7 @@ import {
   type ProviderCodingAdapter,
   type ProviderTurnAdapter,
   type RunSessionTurnResult,
+  type RunSessionTurnProgressHandler,
 } from "../../src-electron/providers/provider-runtime.js";
 import {
   SessionRuntimeService,
@@ -40,6 +42,9 @@ import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapte
 import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
 import { SessionElicitationService } from "../../src-electron/session/session-elicitation-service.js";
 import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
+import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
+import { AuditLogStorageV6 } from "../../src-electron/session/audit-log-storage-v6.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -112,6 +117,54 @@ type CreateAuditLogInput = Parameters<SessionRuntimeServiceDeps["createAuditLog"
 type UpdateAuditLogInput = Parameters<SessionRuntimeServiceDeps["updateAuditLog"]>[1];
 type TerminalNotificationInput = Parameters<NonNullable<SessionRuntimeServiceDeps["notifySessionTurnTerminal"]>>[0];
 
+const previousTestProgress = new WeakMap<RunSessionTurnProgressHandler, LiveSessionRunState>();
+function emitTestProgress(handler: RunSessionTurnProgressHandler | undefined, state: LiveSessionRunState): void | Promise<void> {
+  const previous = handler ? previousTestProgress.get(handler) : undefined;
+  if (handler) previousTestProgress.set(handler, state);
+  return handler?.(state, {
+    steps: { upserts: state.steps, removes: previous?.steps.filter((step) => !state.steps.some((next) => next.id === step.id)).map((step) => step.id) ?? [] },
+    backgroundTasks: { upserts: state.backgroundTasks, removes: previous?.backgroundTasks.filter((task) => !state.backgroundTasks.some((next) => next.id === task.id)).map((task) => task.id) ?? [] },
+  });
+}
+
+function createTestRuntime(deps: Omit<SessionRuntimeServiceDeps, "updateAuditLogProgress"> & Partial<Pick<SessionRuntimeServiceDeps, "updateAuditLogProgress">>): SessionRuntimeService {
+  let entry: CreateAuditLogInput;
+  let nextOutputId = 1;
+  const operations = new Map<string, { id: number; operation: AuditLogEntry["operations"][number] }>();
+  return new SessionRuntimeService({
+    ...deps,
+    async createAuditLog(input) {
+      entry = input;
+      return deps.createAuditLog(input);
+    },
+    updateAuditLog(id, input) {
+      entry = input;
+      if (input.phase === "running") operations.clear();
+      return deps.updateAuditLog(id, input);
+    },
+    updateAuditLogProgress: deps.updateAuditLogProgress ?? (async (id, patch) => {
+      const insertedOperations: Array<{ key: string; outputId: number }> = [];
+      for (const upsert of patch.operationUpserts ?? []) {
+        const outputId = upsert.outputId ?? nextOutputId++;
+        operations.set(upsert.key, { id: outputId, operation: upsert.operation });
+        if (upsert.outputId === undefined) insertedOperations.push({ key: upsert.key, outputId });
+      }
+      for (const [key, operation] of operations) {
+        if (patch.operationRemoves?.includes(operation.id)) operations.delete(key);
+      }
+      entry = {
+        ...entry,
+        ...patch.fields,
+        assistantText: patch.assistantSnapshot?.body ?? entry.assistantText,
+        usage: patch.usage === undefined ? entry.usage : patch.usage,
+        operations: [...operations.values()].map((value) => value.operation),
+      };
+      await deps.updateAuditLog(id, entry);
+      return { insertedOperations };
+    }),
+  });
+}
+
 function createAuditLogBase(input: CreateAuditLogInput): AuditLogEntry {
   return {
     id: 1,
@@ -145,6 +198,39 @@ function createLiveRunState(overrides?: Partial<LiveSessionRunState>): LiveSessi
     approvalRequest: overrides?.approvalRequest ?? null,
     elicitationRequest: overrides?.elicitationRequest ?? null,
   };
+}
+
+function createProgressRuntime(session: Session, run: ProviderCodingAdapter["runSessionTurn"], overrides: Partial<SessionRuntimeServiceDeps>): SessionRuntimeService {
+  let stored = session;
+  let live: LiveSessionRunState | null = null;
+  const adapter: ProviderCodingAdapter = {
+    composePrompt() { return { systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }; },
+    async getProviderQuotaTelemetry() { return null; },
+    async invalidateSessionThread() {},
+    async invalidateAllSessionThreads() {},
+    runSessionTurn: run,
+  };
+  return createTestRuntime({
+    getSession: () => stored,
+    upsertSession(next) { stored = next; return next; },
+    async resolveComposerPreview() { return { attachments: [], errors: [] }; },
+    getAppSettings: () => normalizeAppSettings({}),
+    resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+    getProviderCodingAdapter: () => adapter,
+    getSessionMemory: () => createSessionMemory(session.id),
+    resolveProjectMemoryEntriesForPrompt: () => [],
+    createAuditLog: createAuditLogBase,
+    updateAuditLog() {},
+    setLiveSessionRun(_id, state) { live = state; },
+    getLiveSessionRun: () => live,
+    waitForApprovalDecision: () => "approve",
+    waitForElicitationResponse: () => ({ action: "cancel" }),
+    setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {},
+    invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {},
+    broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    currentTimestampLabel,
+    ...overrides,
+  });
 }
 
 describe("SessionRuntimeService stale retry helpers", () => {
@@ -198,6 +284,220 @@ describe("SessionRuntimeService stale retry helpers", () => {
   });
 });
 describe("SessionRuntimeService", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "operation総数によらず1件変更は1件patchを送り同値通知を抑止し同じoutput IDで更新削除する"
+  // oracle = { type = "contract", ref = "01-audit-progress-partial-update.mdの変更operation増分保存と安定ID要求" }
+  // fault = "全operationを再転送する、同値usageとoperationを再保存する、または更新削除に別IDを使う"
+  // observable = "5件/500件stateでの変更patchサイズ・upsert件数・output ID・削除ID"
+  // observation_boundary = "component-behavior"
+  // scope = "SessionRuntimeService incremental Audit patch projection"
+  // lifecycle = "permanent"
+  // impact = "operation数が増えた長時間turnで転送量と保存待ち保持を増幅させない"
+  // distinction = "storage点更新testはRuntimeが全snapshotを作る退行を検出しない"
+  // @end-test-value
+  it("1operationの変更patchは全operation数に比例せず同値通知を保存しない", async () => {
+    const patchSizes: number[] = [];
+    for (const count of [5, 500]) {
+      const session = createSession({ id: "delta-session", provider: "codex" });
+      const patches: AuditLogProgressPatch[] = [];
+      let finalSaved = false;
+      const target = { id: "target", type: "command_execution", summary: "same command", status: "in_progress" as const, details: "before" };
+      const others = Array.from({ length: count - 1 }, (_, index) => ({ ...target, id: `other-${index}` }));
+      const usage = { inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 };
+      const runtime = createProgressRuntime(session, async (_input, progress) => {
+        const state = createLiveRunState({ sessionId: session.id, steps: [target, ...others], usage });
+        await progress?.(state, { steps: { upserts: state.steps, removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const changed = { ...target, status: "completed" as const, details: "after" };
+        const next = { ...state, steps: [changed, ...others], usage: { ...usage } };
+        await progress?.(next, { steps: { upserts: [changed], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
+        await progress?.(next, { steps: { upserts: [changed], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
+        await progress?.({ ...next, steps: others }, { steps: { upserts: [], removes: [target.id] }, backgroundTasks: { upserts: [], removes: [] } });
+        return createPartialResult({ assistantText: "done" });
+      }, {
+        updateAuditLogProgress(_id, patch) {
+          patches.push(patch);
+          return { insertedOperations: (patch.operationUpserts ?? []).filter((item) => item.outputId === undefined).map((item, index) => ({ key: item.key, outputId: index + 1 })) };
+        },
+        updateAuditLog() { finalSaved = true; },
+      });
+      await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
+      await waitForCondition(() => finalSaved, "delta tail後のterminal enrichment");
+      assert.equal(patches.length, 3);
+      assert.equal(patches[1].operationUpserts?.length, 1);
+      assert.equal(patches[1].operationUpserts?.[0].key, "step:target");
+      assert.equal(patches[1].operationUpserts?.[0].outputId, 1);
+      assert.equal(patches[1].usage, undefined);
+      assert.equal(patches[1].assistantSnapshot, undefined);
+      assert.deepEqual(patches[2].operationRemoves, [1]);
+      patchSizes.push(JSON.stringify(patches[1]).length);
+    }
+    assert.equal(patchSizes[0], patchSizes[1]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Audit受付は件数とpayload量を有限にし過負荷をfailedとして保存・通知し、明示cancelの通知だけを抑止して受付済みpatchをdrainする"
+  // oracle = { type = "contract", ref = "docs/design/audit-log.md; docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "停止writerへ無制限patchを積む、過負荷をcanceledへ分類する、内部abortでfailed通知を抑止する、明示cancelを通知する、または受付済みpatchを捨てる"
+  // observable = "provider停止時の受付数、terminal runState、terminal保存と通知の順序、drain後patch件数と拒否・保存状態metadata"
+  // observation_boundary = "component-behavior"
+  // scope = "SessionRuntimeService audit pressure admission"
+  // lifecycle = "permanent"
+  // impact = "長時間実行のMain保持量とAudit保存範囲を守る"
+  // distinction = "型検査とstorage点更新testではproducer burst時の容量境界と分類を確認できない"
+  // @end-test-value
+  it("Audit queueの件数とpayload上限で明示failedにしaccepted tailを捨てない", async () => {
+    for (const mode of ["count", "payload", "removals", "canceled-count"] as const) {
+      const session = createSession({ provider: "codex" });
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => { release = resolve; });
+      let storedPatches = 0;
+      let attemptedEvents = 0;
+      let terminalAudit: UpdateAuditLogInput | undefined;
+      const terminalEvents: string[] = [];
+      const runtime = createProgressRuntime(session, async (input, progress) => {
+        if (mode === "canceled-count") {
+          input.signal?.addEventListener("abort", () => runtime.cancelRun(session.id), { once: true });
+        }
+        for (let index = 0; index < 100; index += 1) {
+          attemptedEvents += 1;
+          const step = { id: `step-${index}`, type: "command_execution", summary: "command", status: "in_progress" as const, details: mode === "payload" ? "x".repeat(5 * 1024 * 1024) : "small" };
+          await progress?.(createLiveRunState({ sessionId: session.id, assistantText: `body-${index}`, steps: [step] }), {
+            steps: { upserts: mode === "removals" ? [] : [step], removes: mode === "removals" ? ["x".repeat(5 * 1024 * 1024)] : [] }, backgroundTasks: { upserts: [], removes: [] },
+          });
+        }
+        return createPartialResult({ assistantText: "unexpected success" });
+      }, {
+        auditEnrichmentGraceMs: 1,
+        upsertTerminalSession(next, commit) { terminalEvents.push(`save:${commit.phase}`); return next; },
+        notifySessionTurnTerminal(notification) { terminalEvents.push(`notify:${notification.outcome}`); },
+        async updateAuditLogProgress(_id, patch) {
+          await barrier;
+          storedPatches += 1;
+          return { insertedOperations: (patch.operationUpserts ?? []).filter((item) => item.outputId === undefined).map((item) => ({ key: item.key, outputId: storedPatches })) };
+        },
+        updateAuditLog(_id, entry) { terminalAudit = entry; },
+      });
+      const result = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
+      assert.equal(result.runState, "error");
+      assert.equal(attemptedEvents, mode === "count" || mode === "canceled-count" ? 65 : 1);
+      assert.equal(storedPatches, 0);
+      assert.deepEqual(terminalEvents, mode === "canceled-count" ? ["save:failed"] : ["save:failed", "notify:failed"]);
+      release();
+      await waitForCondition(() => terminalAudit?.phase === "failed", "pressure failureのterminal enrichment");
+      assert.equal(storedPatches, mode === "count" || mode === "canceled-count" ? 64 : 0);
+      assert.ok(terminalAudit?.providerMetadata?.some((metadata) => metadata.kind === "audit_progress_failure"));
+      assert.deepEqual(terminalAudit?.providerMetadata?.find((metadata) => metadata.kind === "audit_progress_failure")?.payload, {
+        admissionRejected: true, acceptedProgressPersistence: "completed",
+      });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "最初のoperation INSERT結果がunknownなら受付済み同key後続を再INSERTせずfailed保存状態を残す"
+  // oracle = { type = "contract", ref = "01-audit-progress-partial-update.mdの安定ID・unknown outcome自動再実行禁止要求" }
+  // fault = "INSERT ack喪失後に同key後続をoutput ID未取得の新INSERTとして再dispatchする"
+  // observable = "unknown reject前に2patchを受付した時のprogress dispatch回数とterminal phase・保存状態metadata"
+  // observation_boundary = "component-behavior"
+  // scope = "SessionRuntimeService accepted Audit tail after unknown insert"
+  // lifecycle = "permanent"
+  // impact = "未知の保存結果からoperation重複と誤ったAudit成功表示を作らない"
+  // distinction = "単発保存失敗とstorage単体guardはack未取得の同key後続INSERTを検出しない"
+  // @end-test-value
+  it("INSERT結果unknown後のaccepted同keypatchを再dispatchしない", async () => {
+    const session = createSession({ provider: "codex" });
+    let rejectFirst!: (error: Error) => void;
+    const firstWrite = new Promise<never>((_resolve, reject) => { rejectFirst = reject; });
+    let writeStarted!: () => void;
+    const started = new Promise<void>((resolve) => { writeStarted = resolve; });
+    let dispatches = 0;
+    let terminalAudit: UpdateAuditLogInput | undefined;
+    const runtime = createProgressRuntime(session, async (_input, progress) => {
+      const step = { id: "same-output", type: "command_execution", summary: "command", status: "in_progress" as const };
+      await progress?.(createLiveRunState({ sessionId: session.id, steps: [step] }), { steps: { upserts: [step], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
+      await started;
+      const changed = { ...step, status: "completed" as const };
+      await progress?.(createLiveRunState({ sessionId: session.id, steps: [changed] }), { steps: { upserts: [changed], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
+      rejectFirst(new Error("Storage write outcome unknown"));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      return createPartialResult({ assistantText: "provider final" });
+    }, {
+      updateAuditLogProgress() { dispatches += 1; writeStarted(); return firstWrite; },
+      updateAuditLog(_id, entry) { terminalAudit = entry; },
+    });
+    const result = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
+    assert.equal(result.runState, "error");
+    await waitForCondition(() => terminalAudit?.phase === "failed", "unknown progress保存後のfailed enrichment");
+    assert.equal(dispatches, 1);
+    assert.deepEqual(terminalAudit?.providerMetadata?.find((metadata) => metadata.kind === "audit_progress_failure")?.payload, {
+      admissionRejected: false, acceptedProgressPersistence: "failed",
+    });
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "実storageのprogress保存拒否は自動再実行せずAudit failureとして保存し、非cancel失敗のterminal通知を依頼する"
+  // oracle = { type = "contract", ref = "docs/design/audit-log.md; docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "保存拒否を成功またはcanceledとして返す、providerか未知保存結果をretryする、または内部abortを理由にfailed通知を抑止する"
+  // observable = "実SQLiteのfailed phaseとaudit metadata、provider呼出回数・保存attempt数、通知時に読める永続terminal phaseと返却Session"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService production AuditLogStorageV6 failure"
+  // lifecycle = "permanent"
+  // impact = "interim保存失敗を最終本文成功へ隠さず重複実行を防ぐ"
+  // distinction = "storage単体の拒否testではRuntime停止分類とterminal確定への接続を確認できない"
+  // @end-test-value
+  it("実Audit progress保存の拒否はfailedへ接続し自動retryしない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-runtime-save-failure-"));
+    const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+    const sessions = new SessionStorageV6(dbPath);
+    const audits = new AuditLogStorageV6(dbPath);
+    try {
+      const session = sessions.upsertSession(createSession({ provider: "codex" }));
+      let providerCalls = 0;
+      let patchCalls = 0;
+      let auditId = 0;
+      let finalSaved = false;
+      const notifications: TerminalNotificationInput[] = [];
+      const phasesAtNotification: Array<string | undefined> = [];
+      const runtime = createProgressRuntime(session, async (_input, progress) => {
+        providerCalls += 1;
+        await progress?.(createLiveRunState({ sessionId: session.id, assistantText: "partial evidence" }), { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        return createPartialResult({ assistantText: "provider final" });
+      }, {
+        getSession: () => sessions.getSession(session.id),
+        upsertSession: (next) => sessions.upsertSession(next),
+        upsertTerminalSession: (next, commit) => sessions.upsertTerminalSession(next, commit),
+        createAuditLog(input) { const created = audits.createAuditLog(input); auditId = created.id; return created; },
+        updateAuditLogProgress(id, patch) {
+          patchCalls += 1;
+          return audits.updateAuditLogProgress(id, { ...patch, sessionId: "different-owner" });
+        },
+        updateAuditLog(id, entry) { const saved = audits.updateAuditLog(id, entry); finalSaved = true; return saved; },
+        notifySessionTurnTerminal(notification) {
+          notifications.push(notification);
+          phasesAtNotification.push(audits.listSessionAuditLogSummaries(session.id).find((entry) => entry.id === auditId)?.phase);
+        },
+      });
+      const result = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
+      assert.equal(result.runState, "error");
+      assert.deepEqual(notifications, [{ outcome: "failed", session: result }]);
+      assert.deepEqual(phasesAtNotification, ["failed"]);
+      await waitForCondition(() => finalSaved, "storage拒否後のfailed audit保存");
+      const detail = audits.getSessionAuditLogDetail(session.id, auditId);
+      assert.equal(audits.listSessionAuditLogSummaries(session.id).find((entry) => entry.id === auditId)?.phase, "failed");
+      assert.ok(detail?.providerMetadata?.some((metadata) => metadata.kind === "audit_progress_failure"));
+      assert.equal(providerCalls, 1);
+      assert.equal(patchCalls, 1);
+    } finally {
+      audits.close(); sessions.close();
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   // @test-value v2
   // kind = "contract"
   // claim = "Renderer死亡後の再openと保存待ち中closeでもMainの既存turnは一度だけ実行され、provider最終応答とcompleted auditを保存する"
@@ -262,7 +562,7 @@ describe("SessionRuntimeService", () => {
         return createPartialResult({ assistantText: "durable provider response" });
       },
     };
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       upsertTerminalSession: async (next) => { saveStarted = true; await saveGate; stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
@@ -340,7 +640,7 @@ describe("SessionRuntimeService", () => {
         return createPartialResult({ assistantText: "completed response" });
       },
     };
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
@@ -414,13 +714,13 @@ describe("SessionRuntimeService", () => {
       composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
       getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
       runSessionTurn: async (input, progress) => {
-        await progress?.({ ...createLiveRunState(), sessionId: input.session.id, threadId: "thread-existing", turnId: "turn-one", inputAvailable: true });
+        await emitTestProgress(progress, { ...createLiveRunState(), sessionId: input.session.id, threadId: "thread-existing", turnId: "turn-one", inputAvailable: true });
         await turnEnd;
         return createPartialResult({ threadId: "thread-existing", assistantText: "done" });
       },
       steerSessionTurn: async (input) => { sent.push(input); await inputEnd; return { turnId: input.expectedTurnId }; },
     };
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
@@ -471,13 +771,13 @@ describe("SessionRuntimeService", () => {
       composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
       getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
       runSessionTurn: async (input, progress) => {
-        await progress?.({ ...createLiveRunState(), sessionId: input.session.id, threadId: "thread-existing", turnId: "turn-one", inputAvailable: true });
+        await emitTestProgress(progress, { ...createLiveRunState(), sessionId: input.session.id, threadId: "thread-existing", turnId: "turn-one", inputAvailable: true });
         await turnEnd;
         return createPartialResult({ threadId: "thread-existing", assistantText: "done" });
       },
       steerSessionTurn: async (input) => { inputCalls += 1; return { turnId: input.expectedTurnId }; },
     };
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async (_session, text) => { if (text === "race") { previewStarted = true; await previewGate; } return { attachments: [], errors: [] }; }, getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
@@ -521,7 +821,7 @@ describe("SessionRuntimeService", () => {
       getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
       runSessionTurn: async () => { attempts += 1; throw new ProviderTurnError("thread not found", createPartialResult(), false); },
     };
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
@@ -599,7 +899,7 @@ describe("SessionRuntimeService", () => {
       await turnCancelObservation;
       yield { type: "result", subtype: "success", is_error: false, result: "done", session_id: "thread" } as SDKMessage;
     })()) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
-    service = new SessionRuntimeService({
+    service = createTestRuntime({
       getSession: () => stored,
       upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
@@ -649,7 +949,7 @@ describe("SessionRuntimeService", () => {
         usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {} } as SDKMessage; })();
     }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
     let adapter = makeAdapter();
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession: () => stored,
       upsertSession: (next) => { stored = next; return next; },
       resolveRuntimeSessionForTurn: (session) => ({ ...session, characterRuntimeSnapshot: {
@@ -732,7 +1032,7 @@ describe("SessionRuntimeService", () => {
               return new Promise<RunSessionTurnResult>((resolve) => { finishNext = resolve; });
             }
             if (phase === "provider" && providerCalls === 1) {
-              emitLateProgress = () => { void onProgress?.(createLiveRunState({ sessionId: stored.id, assistantText: "old late progress" })); };
+              emitLateProgress = () => { void emitTestProgress(onProgress, createLiveRunState({ sessionId: stored.id, assistantText: "old late progress" })); };
               announceGate();
               return new Promise<RunSessionTurnResult>((resolve, reject) => { resolveProvider = resolve; rejectProvider = reject; });
             }
@@ -742,7 +1042,7 @@ describe("SessionRuntimeService", () => {
         let firstAdmission = true;
         let firstSetup = true;
         let firstTerminal = true;
-        const service = new SessionRuntimeService({
+        const service = createTestRuntime({
           providerCancelGraceMs: 5,
           async runSessionAdmissionExclusive(_id, operation) {
             if (phase === "admission" && firstAdmission) { firstAdmission = false; announceGate(); await gate; }
@@ -861,7 +1161,7 @@ describe("SessionRuntimeService", () => {
       ensureModelCatalogSeeded: () => catalog,
     });
     const unexpectedWrite = (): never => { writes += 1; throw new Error("Unexpected write"); };
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession: () => session,
       upsertSession: unexpectedWrite,
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
@@ -899,7 +1199,7 @@ describe("SessionRuntimeService", () => {
   // claim = "各turnで最新Character contextをprovider promptへ渡し、completed Sessionのterminal commit後に通知を依頼してbackground settlementを待たず次turnを受け付ける"
   // oracle = { type = "contract", ref = "accepted contract: terminal notification after persisted terminal state" }
   // fault = "永続化前の通知またはbackground settlement待機により、通知先が未保存状態を読むか次turn受付が停止する"
-  // observable = "promptへ渡されたturnごとのCharacter context・request correlation、terminal commit後の通知順序、次turnの完了結果"
+  // observable = "promptへ渡されたturnごとのCharacter context・request correlation、terminal commit後の通知とready correlation順序、appraisal依頼回数、次turnの完了結果"
   // observation_boundary = "declaration"
   // scope = "session-runtime-terminal-completion-order"
   // lifecycle = "permanent"
@@ -909,7 +1209,7 @@ describe("SessionRuntimeService", () => {
     let contextVersion = 0;
     let auditId = 0;
     let completionNotificationCount = 0;
-    const appraisalCorrelations: string[] = [];
+    let appraisalRequestCount = 0;
     const requestCorrelations: string[] = [];
     const callOrder: string[] = [];
     const timingCompletionSnapshots: Array<string | null> = [];
@@ -962,7 +1262,7 @@ describe("SessionRuntimeService", () => {
       memory: { items: [], updatedAt: null },
     });
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === storedSession.id ? storedSession : null;
       },
@@ -1024,8 +1324,8 @@ describe("SessionRuntimeService", () => {
         callOrder.push(`pending-ready:${correlationId}`);
       },
       requireDurableCompletedTurnAppraisal: true,
-      async appraiseCompletedTurn(input) {
-        appraisalCorrelations.push(input.correlationId);
+      async appraiseCompletedTurn() {
+        appraisalRequestCount++;
         callOrder.push("appraisal-started");
         await new Promise<void>(() => undefined);
       },
@@ -1097,7 +1397,7 @@ describe("SessionRuntimeService", () => {
     callOrder.push("second-returned");
 
     await waitForCondition(
-      () => appraisalCorrelations.length === 2
+      () => appraisalRequestCount === 2
         && callOrder.filter((entry) => entry.startsWith("terminal-audit:")).length === 2,
       "ready・appraisal・terminal auditがbackgroundで完了すること",
     );
@@ -1108,9 +1408,10 @@ describe("SessionRuntimeService", () => {
       "7c26d875-9117-4ad5-97b5-e9af775b94b1",
       "7c26d875-9117-4ad5-97b5-e9af775b94b2",
     ]);
-    assert.deepEqual(appraisalCorrelations, [
-      `turn:${storedSession.id}:audit:1`,
-      `turn:${storedSession.id}:audit:2`,
+    assert.equal(appraisalRequestCount, 2);
+    assert.deepEqual(callOrder.filter((entry) => entry.startsWith("pending-ready:")), [
+      `pending-ready:turn:${storedSession.id}:audit:1`,
+      `pending-ready:turn:${storedSession.id}:audit:2`,
     ]);
     assert.equal(timingCompletionSnapshots[0], null);
     assert.equal(timingCompletionSnapshots[1], firstCompletedAt);
@@ -1219,7 +1520,7 @@ describe("SessionRuntimeService", () => {
           return createPartialResult({ assistantText: "完了" });
         },
       };
-      const service = new SessionRuntimeService({
+      const service = createTestRuntime({
         getSession(sessionId) {
           return sessionId === storedSession.id ? storedSession : null;
         },
@@ -1510,7 +1811,7 @@ describe("SessionRuntimeService", () => {
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === staleSession.id ? staleSession : null;
       },
@@ -1630,7 +1931,7 @@ describe("SessionRuntimeService", () => {
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -1722,7 +2023,7 @@ describe("SessionRuntimeService", () => {
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -1833,7 +2134,7 @@ describe("SessionRuntimeService", () => {
       async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
         emitQueuedProgressDuringWrite = () => {
-          void onProgress?.(createLiveRunState({
+          void emitTestProgress(onProgress, createLiveRunState({
             sessionId: input.session.id,
             threadId: "thread-late",
             assistantText: "late progress",
@@ -1847,10 +2148,10 @@ describe("SessionRuntimeService", () => {
             ],
           }));
         };
-        await onProgress?.(createLiveRunState({
+        await emitTestProgress(onProgress, createLiveRunState({
           sessionId: input.session.id,
         }));
-        await onProgress?.(createLiveRunState({
+        await emitTestProgress(onProgress, createLiveRunState({
           sessionId: input.session.id,
           threadId: "thread-progress",
           assistantText: "途中経過だよ。",
@@ -1893,7 +2194,7 @@ describe("SessionRuntimeService", () => {
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -2061,7 +2362,7 @@ describe("SessionRuntimeService", () => {
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -2155,16 +2456,22 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "pending中のrunning audit観測をterminal auditへ保持する"
+  // claim = "terminal commitを先に保存しても受付済みprogressのinterimとoperationを全終端結果で保存する"
   // oracle = { type = "contract", ref = "Session runtime audit lifecycle contract" }
-  // fault = "running auditのprogressやapproval観測をterminal auditで失う"
-  // observable = "completed/failed/canceled auditのobserved fields"
+  // fault = "terminal後のaccepted progressをphase guardで拒否しinterimやoperationを失う、またはterminal通知をdrain待ちにする"
+  // observable = "実SQLiteのterminal phase・interim本文・operationと、保存待ち中のruntime返却結果"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService audit terminalization"
   // lifecycle = "permanent"
   // @end-test-value
   it("pending中のrunning audit観測をcompleted・failed・canceledのterminal auditへ保持する", async () => {
     for (const outcome of ["completed", "failed", "canceled"] as const) {
+      const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-runtime-progress-"));
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      const sessionStorage = new SessionStorageV6(dbPath);
+      const auditStorage = new AuditLogStorageV6(dbPath);
+      const db = new DatabaseSync(dbPath);
+      try {
       const session = createSession({ id: `pending-audit-${outcome}`, provider: "codex" });
       const auditUpdates: UpdateAuditLogInput[] = [];
       let releaseRunningAudit: () => void = () => undefined;
@@ -2192,7 +2499,7 @@ describe("SessionRuntimeService", () => {
       async invalidateSessionThread() {},
       async invalidateAllSessionThreads() {},
         async runSessionTurn(_input, onProgress) {
-          void onProgress?.(createLiveRunState({
+          await emitTestProgress(onProgress, createLiveRunState({
             sessionId: session.id,
             threadId: "thread-observed",
             assistantText: "observed partial",
@@ -2205,6 +2512,12 @@ describe("SessionRuntimeService", () => {
             usage: observedUsage,
           }));
           await runningAuditStarted;
+          if (outcome === "completed") {
+            assert.equal(await _input.onApprovalRequest?.({
+              requestId: "blocked-write-approval", provider: "codex", kind: "command",
+              title: "Approval while saving", summary: "continue", decisionMode: "direct-decision",
+            }), "approve");
+          }
           const partialResult = createPartialResult({
             threadId: "thread-observed",
             assistantText: "",
@@ -2218,17 +2531,18 @@ describe("SessionRuntimeService", () => {
         },
       };
       let storedSession = session;
-      const service = new SessionRuntimeService({
+      let auditId = 0;
+      const service = createTestRuntime({
         getSession(sessionId) {
           return sessionId === session.id ? storedSession : null;
         },
         upsertSession(next) {
-          storedSession = next;
-          return next;
+          storedSession = sessionStorage.upsertSession(next);
+          return storedSession;
         },
-        upsertTerminalSession(next) {
-          storedSession = next;
-          return next;
+        upsertTerminalSession(next, commit) {
+          storedSession = sessionStorage.upsertTerminalSession(next, commit);
+          return storedSession;
         },
         async resolveComposerPreview() {
           return { attachments: [], errors: [] } satisfies ComposerPreview;
@@ -2252,14 +2566,20 @@ describe("SessionRuntimeService", () => {
           return [];
         },
         createAuditLog(input) {
-          return createAuditLogBase(input);
+          const created = auditStorage.createAuditLog(input);
+          auditId = created.id;
+          return created;
         },
         updateAuditLog(_id, entry) {
           auditUpdates.push(entry);
-          if (entry.phase === "running" && entry.operations.some((operation) => operation.summary === "npm test")) {
+          return auditStorage.updateAuditLog(_id, entry);
+        },
+        async updateAuditLogProgress(id, patch) {
+          if (patch.operationUpserts?.some((upsert) => upsert.operation.summary === "npm test")) {
             signalRunningAuditStarted();
-            return runningAuditBarrier;
+            await runningAuditBarrier;
           }
+          return auditStorage.updateAuditLogProgress(id, patch);
         },
         auditEnrichmentGraceMs: 1,
         setLiveSessionRun() {},
@@ -2284,6 +2604,8 @@ describe("SessionRuntimeService", () => {
 
       const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
       assert.equal(service.isRunInFlight(session.id), false);
+      assert.equal(db.prepare("SELECT phase FROM session_turns_v6 WHERE id = ?").get(auditId)?.phase, outcome);
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM session_turn_interims_v6 WHERE turn_id = ?").get(auditId)?.count, 0);
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
       releaseRunningAudit();
       await waitForCondition(
@@ -2299,8 +2621,17 @@ describe("SessionRuntimeService", () => {
         type: "command_execution",
         summary: "npm test",
         details: "completed",
-      }]);
+      }, ...(outcome === "completed" ? [{ type: "approval_request", summary: "Approval while saving", details: "status:pending\nkind:command\ncontinue" }] : [])]);
       assert.equal(result.runState, outcome === "failed" ? "error" : "idle");
+      assert.equal(db.prepare("SELECT phase FROM session_turns_v6 WHERE id = ?").get(auditId)?.phase, outcome);
+      assert.deepEqual(db.prepare("SELECT body FROM session_turn_interims_v6 WHERE turn_id = ? ORDER BY seq").all(auditId).map((row) => row.body), ["observed partial"]);
+      assert.deepEqual(auditStorage.getSessionAuditLogDetail(session.id, auditId)?.operations, terminalAudit.operations);
+      } finally {
+        db.close();
+        auditStorage.close();
+        sessionStorage.close();
+        await rm(userDataPath, { recursive: true, force: true });
+      }
     }
   });
 
@@ -2357,7 +2688,7 @@ describe("SessionRuntimeService", () => {
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -2454,7 +2785,7 @@ describe("SessionRuntimeService", () => {
       async invalidateAllSessionThreads() {},
       async runSessionTurn(_input, onProgress) {
         runCount += 1;
-        await onProgress?.(createLiveRunState({
+        await emitTestProgress(onProgress, createLiveRunState({
           sessionId: session.id,
           threadId: "thread-new",
           reasoningText: runCount === 1
@@ -2468,7 +2799,7 @@ describe("SessionRuntimeService", () => {
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -2592,7 +2923,7 @@ describe("SessionRuntimeService", () => {
       },
       async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
-        await onProgress?.(createLiveRunState({
+        await emitTestProgress(onProgress, createLiveRunState({
           sessionId: input.session.id,
           threadId: "thread-before-cancel",
           assistantText: "途中まで進んだよ。",
@@ -2607,7 +2938,7 @@ describe("SessionRuntimeService", () => {
           usage: { inputTokens: 5, cachedInputTokens: 0, outputTokens: 2 },
         }));
         setTimeout(() => {
-          void onProgress?.(createLiveRunState({
+          void emitTestProgress(onProgress, createLiveRunState({
             sessionId: input.session.id,
             threadId: "thread-late",
             assistantText: "late cancel progress",
@@ -2625,7 +2956,7 @@ describe("SessionRuntimeService", () => {
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession() {
         return baseSession;
       },
@@ -2772,7 +3103,7 @@ describe("SessionRuntimeService", () => {
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession() {
         return session;
       },
@@ -2879,7 +3210,7 @@ describe("SessionRuntimeService", () => {
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession() {
         return session;
       },
@@ -3018,7 +3349,7 @@ resolveComposer!({ attachments: [], errors: [] });
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession() {
         return session;
       },
@@ -3190,7 +3521,7 @@ resolveProvider!(createPartialResult());
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession() {
         return session;
       },
@@ -3303,7 +3634,7 @@ resolveProvider!(createPartialResult());
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession() {
         return session;
       },
@@ -3442,7 +3773,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -3598,7 +3929,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       async runSessionTurn(input, onProgress) {
         attempt += 1;
         if (attempt === 1) {
-          await onProgress?.(createLiveRunState({
+          await emitTestProgress(onProgress, createLiveRunState({
             sessionId: input.session.id,
             threadId: "thread-before-retry",
             assistantText: "1 回目の progress",
@@ -3608,7 +3939,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
           throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
         }
 
-        await onProgress?.(createLiveRunState({
+        await emitTestProgress(onProgress, createLiveRunState({
           sessionId: input.session.id,
           threadId: "",
           assistantText: "",
@@ -3622,7 +3953,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -3736,7 +4067,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       async runSessionTurn(input, onProgress) {
         attempt += 1;
         if (attempt === 1) {
-          await onProgress?.(createLiveRunState({
+          await emitTestProgress(onProgress, createLiveRunState({
             sessionId: input.session.id,
             threadId: "thread-before-retry",
             assistantText: "1 回目の progress",
@@ -3744,7 +4075,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
             usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 1 },
           }));
           setTimeout(() => {
-            void onProgress?.(createLiveRunState({
+            void emitTestProgress(onProgress, createLiveRunState({
               sessionId: input.session.id,
               threadId: "thread-stale-late",
               assistantText: "旧 attempt の late progress",
@@ -3756,7 +4087,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
         }
 
         notifySecondAttemptStarted?.();
-        await onProgress?.(createLiveRunState({
+        await emitTestProgress(onProgress, createLiveRunState({
           sessionId: input.session.id,
           threadId: "thread-fresh-progress",
           assistantText: "2 回目の progress",
@@ -3771,7 +4102,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -3894,7 +4225,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -4036,7 +4367,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -4150,7 +4481,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -4278,7 +4609,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -4391,7 +4722,7 @@ releaseSecondAttempt!();
       async invalidateSessionThread() {},
       async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
-        await onProgress?.(createLiveRunState({
+        await emitTestProgress(onProgress, createLiveRunState({
           sessionId: input.session.id,
           threadId: "thread-live",
           assistantText: "途中まで進んだよ。",
@@ -4409,7 +4740,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -4533,7 +4864,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -4636,7 +4967,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession() {
         return session;
       },
@@ -4739,7 +5070,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession() {
         return session;
       },
@@ -4836,7 +5167,7 @@ releaseSecondAttempt!();
       async invalidateAllSessionThreads() {},
       async runSessionTurn(_input, onProgress) {
         // 複数回の progress update をシミュレート
-        await onProgress?.({
+        await emitTestProgress(onProgress, {
           sessionId: session.id,
           threadId: "",
           assistantText: "",
@@ -4848,7 +5179,7 @@ releaseSecondAttempt!();
           elicitationRequest: null,
         });
 
-        await onProgress?.({
+        await emitTestProgress(onProgress, {
           sessionId: session.id,
           threadId: "thread-1",
           assistantText: "処理中...",
@@ -4862,7 +5193,7 @@ releaseSecondAttempt!();
           elicitationRequest: null,
         });
 
-        await onProgress?.({
+        await emitTestProgress(onProgress, {
           sessionId: session.id,
           threadId: "thread-1",
           assistantText: "処理中... テスト完了",
@@ -4888,7 +5219,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -5033,7 +5364,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -5148,7 +5479,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -5254,7 +5585,7 @@ releaseSecondAttempt!();
       },
     };
 
-    const service = new SessionRuntimeService({
+    const service = createTestRuntime({
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },

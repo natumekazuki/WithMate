@@ -1868,6 +1868,50 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
 
 // @test-value v2
 // kind = "invariant"
+// claim = "Copilot raw打切り後もunsupported event metadataとassistant全本文を独立して保持する"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md: 512Ki raw traceとCopilot unsupported metadata、assistant全本文保護" }
+// fault = "raw owner打切りでunsupported metadataを失うか合成markerをnative未対応eventへ誤分類する"
+// observable = "実turn resultのraw長とmarker、providerMetadata eventTypeとpayload、assistant全文"
+// observation_boundary = "public-boundary"
+// scope = "Copilot stream owner and final result"
+// lifecycle = "permanent"
+// impact = "長いturnで監査の未対応event説明やユーザー応答を失う"
+// distinction = "stable raw helperのみではstream metadataの独立保持とfinal接続を確認できない"
+// @end-test-value
+it("Copilot raw打切り後もnative metadataと全本文を保持する", async () => {
+  const listeners = new Set<(event: SessionEvent) => void>();
+  const body = "answer".repeat(20000);
+  const session = {
+    sessionId: "bounded",
+    on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
+    async send() {
+      const emit = (event: unknown) => { for (const listener of listeners) listener(event as SessionEvent); };
+      for (let index = 0; index < 16; index++) emit({ type: "tool.execution_complete", timestamp: "2026-10-05T00:00:00.000Z", data: { toolCallId: String(index), success: true, result: { content: "x".repeat(100000) } } });
+      emit({ type: "native.unsupported", timestamp: "2026-10-05T00:00:00.000Z", data: { irrelevant: "not retained" } });
+      emit({ type: "assistant.message", data: { messageId: "answer", content: body } });
+      emit({ type: "session.idle", data: {} });
+    },
+    async abort() {},
+  };
+  const adapter = new CopilotAdapter() as unknown as {
+    getSession(): Promise<unknown>;
+    fetchProviderQuotaTelemetry(): Promise<null>;
+    runSessionTurnOnce(input: RunSessionTurnInput, prompt: ProviderPromptComposition): Promise<RunSessionTurnResult>;
+  };
+  adapter.getSession = async () => ({ session, selection: { requestedModel: "gpt-4.1", requestedReasoningEffort: "high", resolvedModel: "gpt-4.1", resolvedReasoningEffort: "high" } });
+  adapter.fetchProviderQuotaTelemetry = async () => null;
+  const completed = await adapter.runSessionTurnOnce(createRunSessionInput(), EMPTY_PROMPT);
+  assert.equal(completed.assistantText, body);
+  assert.ok(completed.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
+  assert.ok(JSON.parse(completed.rawItemsJson).some((item: { type: string }) => item.type === "withmate.raw_items_truncated"));
+  const unsupported = completed.providerMetadata?.filter((metadata) => metadata.kind === "unsupported_event");
+  assert.deepEqual(unsupported?.map((metadata) => metadata.eventType), ["native.unsupported"]);
+  assert.deepEqual(unsupported?.[0]?.payload, { type: "native.unsupported", timestamp: "2026-10-05T00:00:00.000Z" });
+});
+
+
+// @test-value v2
+// kind = "invariant"
 // claim = "Copilot final projectionはbinding referenceを除去しlogical promptを保持する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Audit-Logging" }
 // fault = "binding referenceがassistant/operations/raw itemsへ漏れる"

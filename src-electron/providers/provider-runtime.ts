@@ -49,7 +49,15 @@ export function resolveRunWorkspacePath(input: Pick<RunSessionTurnInput, "sessio
   return normalized || input.session.workspacePath;
 }
 
-export type RunSessionTurnProgressHandler = (state: LiveSessionRunState) => void | Promise<void>;
+export type RunSessionTurnProgressChanges = {
+  steps: { upserts: LiveSessionRunState["steps"]; removes: string[] };
+  backgroundTasks: { upserts: LiveSessionRunState["backgroundTasks"]; removes: string[] };
+};
+
+export type RunSessionTurnProgressHandler = (
+  state: LiveSessionRunState,
+  changes: RunSessionTurnProgressChanges,
+) => void | Promise<void>;
 
 export type RunSessionTurnApprovalRequestHandler = (
   request: LiveApprovalRequest,

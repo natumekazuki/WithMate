@@ -12,11 +12,12 @@ import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.j
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogProvider, ModelReasoningEffort } from "../../src-shared/settings/model-catalog.js";
 import { CodexAdapter } from "../../src-electron/providers/codex/codex-adapter.js";
-import { ProviderTurnError, type RunBackgroundStructuredPromptInput, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import { ProviderTurnError, type RunBackgroundStructuredPromptInput, type RunSessionTurnInput, type RunSessionTurnProgressChanges } from "../../src-electron/providers/provider-runtime.js";
 import { applyCodexTurnEvent, createCodexTurnStreamState, getLiveCodexAssistantText } from "../../src-electron/providers/codex/codex-turn-events.js";
 import { CodexAppServerTransport, CodexAppServerRpcError, type CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
 import { SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA } from "../../src-electron/session/session-memory-extraction.js";
 import { AUDIT_RAW_ITEMS_JSON_LIMIT, AUDIT_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/audit-payload-limits.js";
+import { buildCodexStableRawItems, toAuditOperations } from "../../src-electron/providers/codex/codex-event-projection.js";
 import { WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
@@ -171,6 +172,45 @@ class FakeTransport {
   async close() { this.closed = true; }
   whenClosed(): Promise<void> { return Promise.resolve(); }
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Codex progressは変更stepだけを渡し、resolved event burst中でもmacrotaskを実行する"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
+// fault = "1step変更で既存全stepを変更扱いするか、同期event連鎖でMainのtimerを飢餓させる"
+// observable = "実adapter callbackのchanged step ID列と、最初のburst event処理後に予約したsetImmediateの後続event処理前の実行位置"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter progress owner and scheduling"
+// lifecycle = "permanent"
+// impact = "多数operationのAudit増幅と制御応答の遅延を防ぐ"
+// distinction = "共有map単体や型検査ではnative eventからcallbackへの変更情報とevent-loop接続を確認できない"
+// @end-test-value
+it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする", async () => workspace(async (directory) => {
+  const transport = new FakeTransport();
+  transport.events = [
+    notification("item/started", { item: { type: "commandExecution", id: "one", command: "one", aggregatedOutput: "", exitCode: null, status: "inProgress" } }),
+    notification("item/started", { item: { type: "commandExecution", id: "two", command: "two", aggregatedOutput: "", exitCode: null, status: "inProgress" } }),
+    notification("item/commandExecution/outputDelta", { itemId: "one", delta: "changed" }),
+    completed(),
+  ];
+  const changes: RunSessionTurnProgressChanges[] = [];
+  let callbacksAtYield = -1;
+  let burstProbe: Promise<void> | undefined;
+  const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
+  await adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (_state, change) => {
+    changes.push(change);
+    if (!burstProbe && change.steps.upserts.some((step) => step.id === "one")) {
+      burstProbe = new Promise<void>((resolve) => {
+        setImmediate(() => { callbacksAtYield = changes.length; resolve(); });
+      });
+    }
+  });
+  assert.ok(burstProbe);
+  await burstProbe;
+  assert.deepEqual(changes.filter((change) => change.steps.upserts.length > 0).map((change) => change.steps.upserts.map((step) => step.id)), [["one"], ["two"], ["one"]]);
+  assert.equal(callbacksAtYield, 2);
+  assert.equal(changes[3].steps.upserts[0].details, "changed");
+}));
 // @test-value v2
 // kind = "invariant"
 // claim = "cleanup失敗はnative completed/failed/interruptedの結果を変えず診断を残し実終了まで競合実行を拒否する"
@@ -1205,3 +1245,46 @@ it("final progress失敗のkey echoをapp logから除去する", async () => wo
   assert.ok(logMessages.some((message) => message.includes("[WITHMATE_BINDING_REFERENCE_REDACTED]")));
   assert.ok(logMessages.every((message) => !message.includes(apiKey)));
 }));
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Codex command出力は保持元で64Ki prefixに制限しdeltaとterminal snapshotの元lengthを表示へ反映する"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md: provider保持元64Ki previewとassistant全本文保護" }
+// fault = "deltaを全量保持する、terminal再設定で制限を外す、または省略lengthと本文を破損する"
+// observable = "state.itemsのoutput prefix長、live/audit/rawのtruncation length、assistant全文とnative input"
+// observation_boundary = "component-behavior"
+// scope = "Codex native stream owner and final projections"
+// lifecycle = "permanent"
+// impact = "長時間のcommand出力でMain heapを増幅し、失敗時の説明や会話本文を失う"
+// distinction = "projectionのみの既存testはdelta累積とterminal再設定時のowner保持量を観測しない"
+// @end-test-value
+it("command output ownerはdeltaとterminal更新でもprefixと正確な元lengthを維持する", () => {
+  const state = createCodexTurnStreamState(null);
+  const initial = { type: "commandExecution", id: "bounded", command: "echo", aggregatedOutput: "a".repeat(AUDIT_TEXT_PREVIEW_LIMIT - 2), exitCode: null, status: "inProgress" };
+  applyCodexTurnEvent(state, { method: "item/started", params: { item: initial } });
+  applyCodexTurnEvent(state, { method: "item/commandExecution/outputDelta", params: { itemId: initial.id, delta: "bc" + "d".repeat(100000) } });
+  applyCodexTurnEvent(state, { method: "item/commandExecution/outputDelta", params: { itemId: initial.id, delta: "tail" } });
+  const expected = initial.aggregatedOutput + "bc\n...[truncated 100004 chars; originalLength=165540]";
+  const retained = state.items.get(initial.id);
+  assert.equal(retained?.type, "commandExecution");
+  if (retained?.type !== "commandExecution") return;
+  assert.equal(retained.aggregatedOutput?.length, AUDIT_TEXT_PREVIEW_LIMIT);
+  assert.equal(retained.aggregatedOutputOriginalLength, 165540);
+  assert.equal(state.liveSteps.get(initial.id)?.details, expected);
+  assert.equal(toAuditOperations([retained])[0]?.details, expected);
+  const raw = buildCodexStableRawItems([retained])[0]?.data?.aggregatedOutput as { text: string; originalLength: number };
+  assert.equal(raw.text, expected);
+  assert.equal(raw.originalLength, 165540);
+  assert.equal(initial.aggregatedOutput.length, AUDIT_TEXT_PREVIEW_LIMIT - 2);
+  const finalOutput = "z".repeat(AUDIT_TEXT_PREVIEW_LIMIT + 9);
+  const assistantText = "answer".repeat(20000);
+  applyCodexTurnEvent(state, { method: "turn/completed", params: { turn: { id: "turn", status: "completed", items: [{ ...initial, aggregatedOutput: finalOutput, exitCode: 0, status: "completed" }, { type: "agentMessage", id: "assistant", text: assistantText }] } } });
+  const finalItem = state.items.get(initial.id);
+  assert.equal(finalItem?.type, "commandExecution");
+  if (finalItem?.type !== "commandExecution") return;
+  assert.equal(finalItem.aggregatedOutput?.length, AUDIT_TEXT_PREVIEW_LIMIT);
+  assert.equal(finalItem.aggregatedOutputOriginalLength, finalOutput.length);
+  assert.equal(toAuditOperations([finalItem])[0]?.details, finalOutput.slice(0, AUDIT_TEXT_PREVIEW_LIMIT) + "\n...[truncated 9 chars; originalLength=65545]");
+  assert.equal(getLiveCodexAssistantText(state), assistantText);
+  assert.deepEqual([...state.items.keys()], ["bounded", "assistant"]);
+});

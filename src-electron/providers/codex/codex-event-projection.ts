@@ -5,13 +5,14 @@ import type {
   DiffRow,
 } from "../../../src-shared/session/runtime-state.js";
 import {
+  AUDIT_RAW_ITEM_CLONE_LIMIT,
   boundAuditRawItem,
   stringifyBoundedAuditValue,
   toAuditTextPreview,
   type BoundedAuditRawItem,
 } from "../../session/audit-payload-limits.js";
 import type { WorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
-import type { CodexTurnItem } from "./codex-turn-events.js";
+import { getCodexCommandOutputPreview, type CodexTurnItem } from "./codex-turn-events.js";
 export type { CodexTurnItem } from "./codex-turn-events.js";
 export type CodexChangedFileProjectionDeps = {
   normalizeWorkspaceRelativePath: (
@@ -73,7 +74,20 @@ export function buildCodexStableRawItems(
 ): BoundedAuditRawItem[] {
   return items
     .filter((item) => item.type !== "reasoning" && item.type !== "userMessage")
-    .map((item) => boundAuditRawItem({ type: item.type, data: { ...item } }));
+    .map((item) => {
+      if (item.type !== "commandExecution") return boundAuditRawItem({ type: item.type, data: { ...item } });
+      const { aggregatedOutputOriginalLength, ...data } = item;
+      const bounded = boundAuditRawItem({ type: item.type, data });
+      if (aggregatedOutputOriginalLength !== undefined && aggregatedOutputOriginalLength > (item.aggregatedOutput?.length ?? 0) && bounded.data) {
+        bounded.data.aggregatedOutput = {
+          text: getCodexCommandOutputPreview(item),
+          truncated: true,
+          originalLength: aggregatedOutputOriginalLength,
+        };
+        if (JSON.stringify(bounded).length > AUDIT_RAW_ITEM_CLONE_LIMIT) return boundAuditRawItem(bounded);
+      }
+      return bounded;
+    });
 }
 export function buildCodexProviderMetadata(
   items: CodexTurnItem[],
@@ -118,10 +132,7 @@ export function toAuditOperations(items: CodexTurnItem[]): AuditLogOperation[] {
           {
             type: "command_execution",
             summary: toAuditTextPreview(item.command) ?? "",
-            details: toAuditTextPreview(
-              item.aggregatedOutput ??
-                (item.exitCode === null ? "" : `exit code: ${item.exitCode}`),
-            ),
+            details: getCodexCommandOutputPreview(item) ?? (item.exitCode === null ? "" : `exit code: ${item.exitCode}`),
           },
         ];
       case "fileChange":

@@ -35,7 +35,7 @@ const STORE_METHODS = {
     "deleteSession", "deleteSessions", "clearSessions",
   ],
   audit: [
-    "createAuditLog", "updateAuditLog", "listSessionAuditLogs", "getConversationTimingSnapshot",
+    "createAuditLog", "updateAuditLog", "updateAuditLogProgress", "listSessionAuditLogs", "getConversationTimingSnapshot",
     "listSessionAuditLogSummaries", "listSessionAuditLogSummaryPage", "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection", "getSessionAuditLogOperationDetail", "clearAuditLogs",
   ],
@@ -77,7 +77,7 @@ const MUTATIONS = new Set([
   "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
   "setSessionPinned", "upsertSession", "updateSessionThreadIfMatches", "updateSessionRuntimeMetadataIfMatches", "updateSession",
   "upsertTerminalSession", "updateTerminalSession", "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "insertSession",
-  "replaceSessions", "deleteSession", "deleteSessions", "clearSessions", "createAuditLog", "updateAuditLog", "clearAuditLogs",
+  "replaceSessions", "deleteSession", "deleteSessions", "clearSessions", "createAuditLog", "updateAuditLog", "updateAuditLogProgress", "clearAuditLogs",
   "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches", "updateAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent",
   "deleteAuxiliarySessionsExceptParents", "saveAuxiliaryDraft", "consumeAuxiliaryDraft",
   "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches", "updateAuxiliaryDisplayAnchorIfMatches",

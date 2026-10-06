@@ -41,7 +41,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
   memory: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
   };
-  audit: Pick<SessionRuntimeServiceDeps, "createAuditLog" | "updateAuditLog">;
+  audit: Pick<SessionRuntimeServiceDeps, "createAuditLog" | "updateAuditLog" | "updateAuditLogProgress">;
   live: {
     setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
     getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
@@ -100,6 +100,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     resolveProjectMemoryEntriesForPrompt: () => [],
     createAuditLog: (entry) => guarded("audit create", () => deps.audit.createAuditLog(entry)),
     updateAuditLog: (id, entry) => guarded("audit update", () => deps.audit.updateAuditLog(id, entry)),
+    updateAuditLogProgress: (id, patch) => guarded("audit progress update", () => deps.audit.updateAuditLogProgress(id, patch)),
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },
     getLiveSessionRun: (id) => { assertOwner("live session read"); return deps.live.getLiveSessionRun(id); },
     waitForApprovalDecision: deps.interaction.waitForApprovalDecision,

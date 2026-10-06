@@ -31,6 +31,35 @@ function input(threadId = "", signal?: AbortSignal): RunSessionTurnInput {
 
 function sdkMessage(value: Record<string, unknown>): SDKMessage { return value as SDKMessage; }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Claude progress保存の拒否はpartialを保持したfailedで返り、後続SDK eventを消費しない"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
+// fault = "callback rejectをwarnだけで握り潰してSDK実行を続けるかユーザー取消へ誤分類する"
+// observable = "ProviderTurnErrorのcanceledとpartial assistant、拒否後のgenerator進行回数"
+// observation_boundary = "public-boundary"
+// scope = "ClaudeAdapter progress failure and cleanup"
+// lifecycle = "permanent"
+// impact = "保存できない状態で無制限に実行を進め、失敗を正常完了と誤表示することを防ぐ"
+// distinction = "delivery helper単体ではSDK loop停止とpartial分類を検査できない"
+// @end-test-value
+it("Claudeはprogress拒否をpartial付きfailureとして返しSDK消費を止める", async () => {
+  let advancedAfterPartial = false;
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+    yield sdkMessage({ type: "assistant", session_id: "pressure", uuid: "partial", parent_tool_use_id: null, message: { content: [{ type: "text", text: "retained" }] } });
+    advancedAfterPartial = true;
+    yield result("pressure");
+  }) });
+  await assert.rejects(adapter.runSessionTurn(input(), () => Promise.reject(new Error("audit capacity"))), (error: unknown) => {
+    assert.ok(error instanceof ProviderTurnError);
+    assert.equal(error.canceled, false);
+    assert.equal(error.partialResult?.assistantText, "retained");
+    assert.match(error.message, /audit capacity/);
+    return true;
+  });
+  assert.equal(advancedAfterPartial, false);
+});
+
 function result(sessionId: string, overrides: Record<string, unknown> = {}): SDKMessage {
   return sdkMessage({
     type: "result", subtype: "success", is_error: false, result: "Final", session_id: sessionId,
@@ -39,6 +68,40 @@ function result(sessionId: string, overrides: Record<string, unknown> = {}): SDK
     ...overrides,
   });
 }
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Claudeの同期容量拒否は非cancel失敗とpartial本文を返し、元rejectionを未処理診断へ漏らさない"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md; docs/design/app-log-base.md" }
+// fault = "signalRaceがalready-aborted分岐で引数Promiseの拒否を観測しない"
+// observable = "ProviderTurnErrorのcanceled・partial本文、callback件数、process unhandledRejection event件数"
+// observation_boundary = "public-boundary"
+// scope = "Claude pre-handler capacity rejection"
+// lifecycle = "permanent"
+// impact = "捕捉済みの容量失敗をMainのfatal未処理診断として二重報告してしまう"
+// distinction = "既存callback拒否testではcallback実行前の同期abortとalready-aborted raceへ到達しない"
+// @end-test-value
+it("Claudeの同期容量拒否は元rejectionを観測し非cancel partial failureを保つ", async (context) => {
+  const body = "x".repeat(4 * 1024 * 1024);
+  const unhandled: unknown[] = [];
+  const observeUnhandled = (error: unknown) => { unhandled.push(error); };
+  process.on("unhandledRejection", observeUnhandled);
+  context.after(() => process.removeListener("unhandledRejection", observeUnhandled));
+  let callbacks = 0;
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+    yield sdkMessage({ type: "assistant", uuid: "capacity", parent_tool_use_id: null, message: { content: [{ type: "text", text: body }] } });
+  }) });
+  await assert.rejects(adapter.runSessionTurn(input(), () => { callbacks += 1; }), (error: unknown) => {
+    assert.ok(error instanceof ProviderTurnError);
+    assert.equal(error.canceled, false);
+    assert.equal(error.partialResult.assistantText, body);
+    assert.match(error.message, /Provider progress persistence capacity exceeded/);
+    return true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(callbacks, 0);
+  assert.deepEqual(unhandled, []);
+});
 
 function fakeQuery(
   produce: (options: Options) => AsyncGenerator<SDKMessage, void>,
@@ -424,6 +487,73 @@ it("keeps the canceled provider promise pending until child exit", async () => {
 
 // @test-value v2
 // kind = "invariant"
+// claim = "Claude内部容量停止は非cancel partial failureを保持し、child実exitまでcleanup completionまたはprovider Promiseを未終了に保つ"
+// oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md; src-electron/providers/provider-runtime.ts: RunSessionTurnInput.onCleanupPending" }
+// fault = "入力signal非abortの内部停止でSDK close/AbortErrorを実exitと誤認し、cleanup通知も実終了待ちも省く"
+// observable = "close/AbortError後とexit後のprovider Promiseおよび通知cleanup completionのsettled状態、canceled、partial本文、consumer callback件数"
+// observation_boundary = "public-boundary"
+// scope = "Claude pre-handler overload child lifecycle"
+// lifecycle = "permanent"
+// impact = "生存中の旧childと同じSession/workspaceへの再送を許し副作用競合を起こす"
+// distinction = "既存user cancel exit testでは入力signal非abortの容量拒否とcleanup通知経路を通らない"
+// @end-test-value
+it("Claude内部容量停止はfailed返却とchild実終了guardを両立する", async (context) => {
+  const body = "x".repeat(4 * 1024 * 1024);
+  for (const notifyCleanup of [false, true]) {
+    const inputController = new AbortController();
+    const child = Object.assign(new EventEmitter(), { pid: 123, exitCode: null, stdin: {}, stdout: {}, killed: false, kill: () => true });
+    context.after(() => child.emit("exit", null, "SIGTERM"));
+    let closeCalled = false;
+    let callbacks = 0;
+    let nextCount = 0;
+    let settled = false;
+    let cleanupSettled = false;
+    let cleanupCompletion: Promise<void> | undefined;
+    const query = (({ options }: { options: Options }) => {
+      options.spawnClaudeCodeProcess!({ command: "unused", args: [], env: {}, signal: new AbortController().signal });
+      return {
+        next: () => ++nextCount === 1
+          ? Promise.resolve({ done: false, value: sdkMessage({ type: "assistant", uuid: "capacity-child", parent_tool_use_id: null, message: { content: [{ type: "text", text: body }] } }) })
+          : new Promise(() => undefined),
+        close: () => { closeCalled = true; },
+      };
+    }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query;
+    const request = input("", inputController.signal);
+    if (notifyCleanup) request.onCleanupPending = (completion) => {
+      cleanupCompletion = completion;
+      void completion.then(() => { cleanupSettled = true; });
+    };
+    const adapter = new ClaudeAdapter({ query, spawnProcess: (() => child) as unknown as typeof spawn });
+    const running = adapter.runSessionTurn(request, () => { callbacks += 1; }).catch((error: unknown) => { settled = true; return error; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    child.emit("error", Object.assign(new Error("aborted"), { name: "AbortError" }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(closeCalled, true);
+    assert.equal(inputController.signal.aborted, false);
+    assert.equal(callbacks, 0);
+    assert.equal(nextCount, 1);
+    assert.equal(settled, notifyCleanup);
+    if (notifyCleanup) {
+      assert.ok(cleanupCompletion);
+      assert.equal(cleanupSettled, false);
+      const failure: unknown = await running;
+      assert.ok(failure instanceof ProviderTurnError);
+      assert.equal(failure.canceled, false);
+      assert.equal(failure.partialResult.assistantText, body);
+    }
+    child.emit("exit", null, "SIGTERM");
+    await cleanupCompletion;
+    const failure: unknown = await running;
+    assert.ok(failure instanceof ProviderTurnError);
+    assert.equal(failure.canceled, false);
+    assert.match(failure.message, /Provider progress persistence capacity exceeded/);
+    assert.equal(failure.partialResult.assistantText, body);
+    if (notifyCleanup) assert.equal(cleanupSettled, true);
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "AskUserQuestionは二択承認で代用せず、自由入力をSDK answersへ戻す"
 // oracle = { type = "contract", ref = "Issue #751; src-shared/session/runtime-state.ts LiveElicitationRequest" }
 // fault = "Questionをapprovalへ誤配送する、またはOther入力を破棄する"
@@ -548,4 +678,38 @@ it("bounds background timeout even when SDK next never settles", async () => {
   });
   await assert.rejects(adapter.runBackgroundStructuredPrompt(background), /Canceled/);
   assert.equal(closed, true);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Claude Bash summaryとraw保持は既存preview予算を守りassistant本文とoperation順序を保持する"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md: provider保持元64Ki previewと512Ki raw trace、assistant全本文保護" }
+// fault = "Bash commandをstepsへ全量保持するかraw打切りで本文とoperationを失う"
+// observable = "SDK消費中のprogress summary、最終operationsとraw省略marker、assistant全文"
+// observation_boundary = "public-boundary"
+// scope = "Claude coding turn owner"
+// lifecycle = "permanent"
+// impact = "大きいBash入力の反復でMain heapが増幅し監査と会話を失う"
+// distinction = "shared helper testはClaude receiveからprogressとfinalへの接続を観測しない"
+// @end-test-value
+it("ClaudeはBash summaryとraw保持をboundedにし本文と操作順序を保つ", async () => {
+  const command = "x".repeat(1024 * 1024);
+  const body = "answer".repeat(20000);
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+    for (let index = 0; index < 16; index++) {
+      yield sdkMessage({ type: "assistant", uuid: "tool-" + index, parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: String(index), name: "Bash", input: { command } }] } });
+      yield sdkMessage({ type: "user", parent_tool_use_id: null, message: { content: [{ type: "tool_result", tool_use_id: String(index), is_error: false, content: "done" }] } });
+    }
+    yield sdkMessage({ type: "assistant", uuid: "answer", parent_tool_use_id: null, message: { content: [{ type: "text", text: body }] } });
+    yield result("bounded");
+  }) });
+  const summaries: string[] = [];
+  const completed = await adapter.runSessionTurn(input(), (progress) => { for (const step of progress.steps) summaries.push(step.summary); });
+  const expected = command.slice(0, 65536) + "\n...[truncated 983040 chars; originalLength=1048576]";
+  assert.ok(summaries.length > 0);
+  assert.ok(summaries.filter((summary) => summary.startsWith("x")).every((summary) => summary === expected));
+  assert.deepEqual(completed.operations.filter((operation) => operation.type === "command_execution").map((operation) => operation.summary), Array(16).fill(expected));
+  assert.equal(completed.assistantText, body);
+  assert.ok(completed.rawItemsJson.length <= 512 * 1024);
+  assert.ok(JSON.parse(completed.rawItemsJson).some((item: { type: string; data?: { omittedItems?: number } }) => item.type === "withmate.raw_items_truncated" && (item.data?.omittedItems ?? 0) > 0));
 });

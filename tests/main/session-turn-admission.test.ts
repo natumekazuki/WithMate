@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createAuditProgressWriter } from "./helpers/audit-progress-fixture.js";
 import crypto from "node:crypto";
 import { describe, it } from "node:test";
 
@@ -146,6 +147,7 @@ function createRuntime(options: {
     resolveProjectMemoryEntriesForPrompt: async () => [],
     createAuditLog: async (input) => ({ id: saveCount + 1, ...input }),
     updateAuditLog: async () => undefined,
+    updateAuditLogProgress: createAuditProgressWriter(),
     setLiveSessionRun: () => undefined,
     getLiveSessionRun: () => null,
     waitForApprovalDecision: () => "approve",

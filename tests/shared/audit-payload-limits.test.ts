@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  boundAuditRawItem,
+  AUDIT_RAW_ITEMS_JSON_LIMIT,
   BoundedAuditRawItems,
+  boundAuditRawItem,
   stringifyBoundedAuditRawItems,
   stringifyBoundedAuditValue,
 } from "../../src-electron/session/audit-payload-limits.js";
@@ -49,6 +50,38 @@ describe("audit payload limits", () => {
       type: "withmate.raw_items_truncated", data: { omittedItems: 9993, maxLength: 2048 },
     });
   });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "raw traceはappend中も既存512Ki JSON予算内に収まり、超過件数を最終JSONに明示する"
+  // oracle = { type = "contract", ref = "docs/design/audit-log.md: commandの監査用本文とstable raw traceの保持予算" }
+  // fault = "item単体だけを制限し、turn全体のraw traceを上限なく保持する"
+  // observable = "append後の保持traceのJSON長と最終JSONのtruncation marker・omittedItems・先頭payload"
+  // observation_boundary = "component-behavior"
+  // scope = "audit-raw-trace-owner"
+  // lifecycle = "permanent"
+  // impact = "長いturnのMain heap増加とterminal時の全文trace cloneを抑え、監査の打切りを利用者へ残す"
+  // distinction = "既存の単一item・最終serializer試験ではappend ownerの総保持量を検出しない"
+  // @end-test-value
+  it("raw traceのappend ownerを総予算で制限し打切り件数を保存する", () => {
+    const trace = new BoundedAuditRawItems();
+    const eventCount = 128;
+    const payload = "x".repeat(64 * 1024);
+    for (let index = 0; index < eventCount; index += 1) {
+      trace.append({ type: "tool.execution_complete", data: { index, payload } });
+    }
+
+    const json = trace.stringify();
+    assert.ok(json.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
+    const parsed = JSON.parse(json);
+    const marker = parsed.at(-1);
+    assert.equal(parsed[0].data.index, 0);
+    assert.equal(parsed[0].data.payload, payload);
+    assert.equal(marker.type, "withmate.raw_items_truncated");
+    assert.equal(marker.data.omittedItems, eventCount - (parsed.length - 1));
+    assert.equal(marker.data.maxLength, AUDIT_RAW_ITEMS_JSON_LIMIT);
+  });
+
 
   it("raw item 全体を stringify する前に item 内の巨大配列を予算で打ち切る", () => {
     const chunks = Array.from({ length: 20_000 }, (_, index) => ({
