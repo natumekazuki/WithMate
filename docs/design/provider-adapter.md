@@ -120,7 +120,7 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
    - `CodexAdapter`: file / folderのworkspace外accessはsession metadata `allowedAdditionalDirectories`からsandbox policyの`writableRoots`へ変換し、画像は`localImage` inputとして`turn/start`へ渡す。model、effort、approval、sandbox、service tier、reviewerは送信時の検証済み値を使う
    - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時はaudit logにdebug metadataを残す
    - `ClaudeAdapter`: 共通prompt、検証済み添付、実行optionをSDK `query()`へ渡す。`resume`は保存済みの明示session IDだけを使い、承認・質問を共通pending UIへ返す
-8. Main Process が stream event から live state と provider telemetry を組み立て、IPC で Session Window へ中継する
+8. provider ownerがstream eventからsanitized live stateとprovider telemetryを組み立て、Main ProcessがIPCでSession Windowへ中継する。Codexのprojectionは共有Workerが所有し、transportと制御requestはMain Processに残す
    - live state には `approvalRequest` と `elicitationRequest` を含められる
    - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する
    - Codexはnative `turn/completed`の`completed / failed / interrupted`をterminal outcomeの正本とする。`error`通知はdiagnosticとして扱い、terminal前の切断は失敗とする。transport終了はbounded cleanupとして扱う
@@ -279,6 +279,18 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 - Copilot の approval request は Main Process が pending resolver を保持し、Session UI の `今回だけ許可 / 拒否` を受けて permission handler を再開する
 - turn 完了時だけ session 本体と audit log を確定値で更新する
 - canceled / failedでも、取得済みassistant textとnative itemsはpartial resultとして回収し、Audit Logと`Details`に残す
+
+### Codex projection owner
+
+CodexAdapterは同時turnで1つのprojection Workerを共有し、最後のturnを解放した時に停止する。Workerはopaque run IDごとにnative items、増分text cache、step projection、turn固有のredactorを保持する。次turnや別runへ本文・binding・API keyのcacheを流用しない。binding registry、logical turn、lease、transport、承認・取消、個別process cleanupのownerはMain Processに残す。
+
+assistant／reasoningはitem単位で更新し、arrival順の全量連結とbounded previewを必要時だけ生成する。command deltaは全reasoningを走査せず、terminalの一括item適用後に集約する。変更していないstepは再projection・再redactionしない。表示・Auditに影響しない通知ではsnapshotを生成しないが、取得済みnative itemsと未知itemのraw情報は保持する。
+
+Audit配送は変更stepと変更したassistant preview／usage／errorだけを返し、reasoningは保存対象にしない。Audit-onlyの空textとnull usageはRuntimeの観測済み値を維持する。Auditの全変更受付とlive表示を分離し、live-onlyは追加保存せず、Audit-onlyは表示を更新しない。live snapshotは33msを目安に生成し、未完了のlive要求は1件とdirty flagだけを持つ。最後のdeltaの後にもtimerで最新表示へ追いつき、終了・取消時は最終snapshotをflushする。承認・取消・terminalの入力入口閉鎖とerror通知はlive timerを待たない。Audit容量超過・保存失敗は明示失敗とし、黙って間引かない。
+
+Worker clientの未応答command受付は64件・入力合計32MiB、各turnのevent処理待ちは8件までとする。実transportで測定済みのUTF-8 frame bytesを受付計上に再利用する。有限batchと32 event読取ごとのmacrotask yieldにより、queued burstでもMainの制御処理へ戻る。5秒以内に応答しないWorkerやWorker異常では要求をrejectし、Mainでの全量projection fallbackや自動再実行をしない。
+
+最終assistant本文、operations、bounded raw JSONとmetadataはWorkerで集約・秘匿化し、artifactのfilesystem snapshot／diffはMainで補完する。live previewの長さでfinal本文を切らず、取消・失敗時も取得済みpartialを回収する。rawの個別128×1024・最終512×1024 code units予算と省略markerは維持し、Worker入力のUTF-8 bytes上限と混同しない。
 
 ## Error Handling
 

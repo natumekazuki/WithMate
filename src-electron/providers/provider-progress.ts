@@ -10,6 +10,7 @@ export class ProviderProgressMap<T extends { id: string }> extends Map<string, T
   private readonly changed = new Set<string>();
   private readonly removed = new Set<string>();
   private readonly projected = new Map<string, T>();
+  private redactor: ProviderAgentRuntimeBindingRedactor | undefined;
 
   constructor() { super(); }
 
@@ -33,10 +34,14 @@ export class ProviderProgressMap<T extends { id: string }> extends Map<string, T
     super.clear();
   }
 
-  takeProgress(redactor: ProviderAgentRuntimeBindingRedactor): {
+  takeProgress(redactor: ProviderAgentRuntimeBindingRedactor, includeSnapshot = true): {
     snapshot: T[];
     changes: { upserts: T[]; removes: string[] };
   } {
+    if (this.redactor !== redactor) {
+      for (const key of this.keys()) this.changed.add(key);
+      this.redactor = redactor;
+    }
     const upserts: T[] = [];
     for (const key of this.changed) {
       const value = redactor.sanitize(this.get(key)!);
@@ -47,7 +52,7 @@ export class ProviderProgressMap<T extends { id: string }> extends Map<string, T
     for (const key of this.removed) this.projected.delete(key);
     this.changed.clear();
     this.removed.clear();
-    return { snapshot: [...this.projected.values()], changes: { upserts, removes } };
+    return { snapshot: includeSnapshot ? [...this.projected.values()] : [], changes: { upserts, removes } };
   }
 }
 

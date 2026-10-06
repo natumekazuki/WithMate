@@ -178,7 +178,7 @@ class FakeTransport {
 // claim = "Codex progressは変更stepだけを渡し、resolved event burst中でもmacrotaskを実行する"
 // oracle = { type = "contract", ref = "docs/design/audit-log.md" }
 // fault = "1step変更で既存全stepを変更扱いするか、同期event連鎖でMainのtimerを飢餓させる"
-// observable = "実adapter callbackのchanged step ID列と、最初のburst event処理後に予約したsetImmediateの後続event処理前の実行位置"
+// observable = "実adapter callbackのchanged step ID列と、受信済みburstの全event読取前に予約したsetImmediateの実行位置"
 // observation_boundary = "public-boundary"
 // scope = "CodexAdapter progress owner and scheduling"
 // lifecycle = "permanent"
@@ -186,30 +186,36 @@ class FakeTransport {
 // distinction = "共有map単体や型検査ではnative eventからcallbackへの変更情報とevent-loop接続を確認できない"
 // @end-test-value
 it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする", async () => workspace(async (directory) => {
-  const transport = new FakeTransport();
+  let readEvents = 0;
+  let readEventsAtYield = -1;
+  let burstProbe: Promise<void> | undefined;
+  class BurstTransport extends FakeTransport {
+    override async nextEvent() {
+      readEvents += 1;
+      if (!burstProbe) burstProbe = new Promise<void>((resolve) => {
+        setImmediate(() => { readEventsAtYield = readEvents; resolve(); });
+      });
+      return super.nextEvent();
+    }
+  }
+  const transport = new BurstTransport();
   transport.events = [
     notification("item/started", { item: { type: "commandExecution", id: "one", command: "one", aggregatedOutput: "", exitCode: null, status: "inProgress" } }),
     notification("item/started", { item: { type: "commandExecution", id: "two", command: "two", aggregatedOutput: "", exitCode: null, status: "inProgress" } }),
     notification("item/commandExecution/outputDelta", { itemId: "one", delta: "changed" }),
+    ...Array.from({ length: 100 }, () => notification("thread/status/changed", { status: "active" })),
     completed(),
   ];
   const changes: RunSessionTurnProgressChanges[] = [];
-  let callbacksAtYield = -1;
-  let burstProbe: Promise<void> | undefined;
   const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
   await adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (_state, change) => {
     changes.push(change);
-    if (!burstProbe && change.steps.upserts.some((step) => step.id === "one")) {
-      burstProbe = new Promise<void>((resolve) => {
-        setImmediate(() => { callbacksAtYield = changes.length; resolve(); });
-      });
-    }
   });
   assert.ok(burstProbe);
   await burstProbe;
   assert.deepEqual(changes.filter((change) => change.steps.upserts.length > 0).map((change) => change.steps.upserts.map((step) => step.id)), [["one"], ["two"], ["one"]]);
-  assert.equal(callbacksAtYield, 2);
-  assert.equal(changes[3].steps.upserts[0].details, "changed");
+  assert.ok(readEventsAtYield > 0 && readEventsAtYield < readEvents);
+  assert.equal(changes.filter((change) => change.steps.upserts.length > 0).at(-1)?.steps.upserts[0].details, "changed");
 }));
 // @test-value v2
 // kind = "invariant"
@@ -362,6 +368,71 @@ function notification(method: string, params: Record<string, unknown>): CodexPro
 }
 function message(id: string, text: string) { return { type: "agentMessage", id, text, phase: null }; }
 function completed(items: unknown[] = [], status = "completed") { return notification("turn/completed", { turn: { id: "turn-1", status, items, error: status === "failed" ? { message: "provider failed" } : null } }); }
+
+// @test-value v2
+// kind = "contract"
+// claim = "遅いlive consumer中も全本文deltaのAuditと承認が進みterminal／取消は入力を直ちに閉じfinal／partial本文をflushする"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner / Streaming Policy" }
+// fault = "live待ちをAuditや承認の前提にする、deltaをAuditから間引く、terminal／取消後も入力を許す、最後の本文を落とす"
+// observable = "live handler停止中の全Audit本文delta数と承認応答、停止解除前のinputAvailable、最終結果または取消partial本文"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter independent live, Audit and control delivery"
+// lifecycle = "permanent"
+// impact = "描画の遅いWindowが保存・承認・取消を止めず取得済み応答を維持する"
+// distinction = "Worker client単体とRuntimeのslow writer testでは実adapterのlive timerと承認・取消の並行経路を通らない"
+// @end-test-value
+it("live consumerが遅くてもAudit・承認・terminalと取消を独立させる", { timeout: 10_000 }, async () => workspace(async (directory) => {
+  for (const outcome of ["complete", "cancel"] as const) {
+    const transport = new FakeTransport();
+    transport.events = [notification("item/started", { item: message("answer", "") }), notification("item/agentMessage/delta", { itemId: "answer", delta: "i" })];
+    let releaseLive!: () => void;
+    const liveGate = new Promise<void>(resolve => { releaseLive = resolve; });
+    let sawLive!: () => void;
+    const firstLive = new Promise<void>(resolve => { sawLive = resolve; });
+    let sawAudit!: () => void;
+    const allAudit = new Promise<void>(resolve => { sawAudit = resolve; });
+    let sawApproval!: () => void;
+    const approved = new Promise<void>(resolve => { sawApproval = resolve; });
+    let sawClosedInput!: () => void;
+    const closedInput = new Promise<void>(resolve => { sawClosedInput = resolve; });
+    let auditCount = 0;
+    let liveCount = 0;
+    let heldLive = false;
+    const controller = new AbortController();
+    const input = { ...createCodexRunSessionTurnInput(directory), signal: controller.signal, onApprovalRequest: () => "approve" as const };
+    const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
+    const operation = adapter.runSessionTurn(input, async (state, changes) => {
+      if (changes.delivery === "audit") { if (++auditCount === 201) sawAudit(); return; }
+      if (!state.inputAvailable) sawClosedInput();
+      if (changes.delivery === "live") {
+        liveCount += 1;
+        if (state.assistantText === "i" && !heldLive) { heldLive = true; sawLive(); await liveGate; }
+      }
+    });
+    void operation.catch(() => undefined);
+    try {
+      await firstLive;
+      for (let index = 0; index < 200; index += 1) transport.push(notification("item/agentMessage/delta", { itemId: "answer", delta: "x" }));
+      transport.push({ kind: "serverRequest", id: 1, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", turnId: "turn-1", command: "run" },
+        respond: async result => { assert.deepEqual(result, { decision: "accept" }); sawApproval(); }, reject: async () => { throw new Error("Approval was rejected"); } });
+      await Promise.all([allAudit, approved]);
+      assert.equal(liveCount, 1);
+      if (outcome === "complete") transport.push(completed());
+      else controller.abort();
+      await closedInput;
+      releaseLive();
+      const expected = `i${"x".repeat(200)}`;
+      if (outcome === "complete") assert.equal((await operation).assistantText, expected);
+      else await assert.rejects(operation, error => {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.canceled, true);
+        assert.equal(error.partialResult.assistantText, expected);
+        return true;
+      });
+      assert.ok(liveCount <= 3);
+    } finally { releaseLive(); controller.abort(); await operation.catch(() => undefined); }
+  }
+}));
 async function workspace<T>(run: (directory: string) => Promise<T>): Promise<T> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-native-"));
   try { return await run(directory); } finally { await rm(directory, { recursive: true, force: true }); }

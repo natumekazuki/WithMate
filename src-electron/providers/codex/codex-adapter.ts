@@ -6,6 +6,8 @@ import {
   CodexAppServerTransport,
 } from "./app-server-transport.js";
 import { CodexTurnInteractions } from "./codex-app-server-interactions.js";
+import { CodexProjectionClient } from "./codex-projection-client.js";
+import { CODEX_LIVE_PROGRESS_INTERVAL_MS, CODEX_PROJECTION_MAX_PENDING_BYTES, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionEvent } from "./codex-projection-protocol.js";
 
 import type { AppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import type {
@@ -103,10 +105,8 @@ import {
   toAuditOperations as toAuditOperationsProjection,
 } from "./codex-event-projection.js";
 import {
-  applyCodexTurnEvent,
   createCodexTurnStreamState,
   collectCodexAssistantResponseFromItems,
-  getLiveCodexAssistantText,
   type CodexTurnStreamState,
   type CodexTurnItem,
 } from "./codex-turn-events.js";
@@ -376,6 +376,7 @@ type ActiveCodexTurn = {
 type CodexTurnDiagnostics = {
   rawItems: BoundedAuditRawItem[];
   cleanupError?: string;
+  projection?: CodexProjectionFinal;
 };
 function appendDiagnostic(diagnostics: CodexTurnDiagnostics, item: BoundedAuditRawItem): void {
   diagnostics.rawItems = JSON.parse(stringifyBoundedAuditRawItems([...diagnostics.rawItems, item])) as BoundedAuditRawItem[];
@@ -799,6 +800,7 @@ async function buildArtifact(
 }
 
 export class CodexAdapter implements ProviderTurnAdapter {
+  private readonly projection = new CodexProjectionClient();
   private readonly activeTurns = new Map<string, ActiveCodexTurn>();
   private readonly pendingCleanups = new Map<CodexTransport, { sessionId?: string; workspace: string; threadId: string | null }>();
   private readonly workspaceSnapshotIndexes = new Map<
@@ -965,28 +967,60 @@ export class CodexAdapter implements ProviderTurnAdapter {
         )
       : null;
     let active: ActiveCodexTurn | null = null;
-    const progress = async () => {
-      if (!sessionInput || !args.onProgress) return;
-      const steps = state.liveSteps.takeProgress(redactor);
-      await args.onProgress({
-        sessionId: sessionInput.session.id,
-        threadId: state.threadId ?? "",
-        turnId: state.turnId ?? undefined,
-        inputAvailable: active?.inputAvailable ?? false,
-        assistantText: redactor.sanitizeText(
-          toAuditTextPreview(getLiveCodexAssistantText(state)) ?? "",
-        ),
-        reasoningText: redactor.sanitizeText(
-          toAuditTextPreview(state.reasoningText) ?? "",
-        ),
-        steps: steps.snapshot,
-        backgroundTasks: [],
-        usage: state.usage,
-        errorMessage: redactor.sanitizeText(state.streamErrorMessage),
-        approvalRequest: null,
-        elicitationRequest: null,
-      }, { steps: steps.changes, backgroundTasks: { upserts: [], removes: [] } });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+    let projectionId: string | null = null;
+    let projectionError: unknown;
+    let rejectProjectionFailure!: (error: unknown) => void;
+    const projectionFailure = new Promise<never>((_resolve, reject) => { rejectProjectionFailure = reject; });
+    void projectionFailure.catch(() => undefined);
+    const pendingEvents = new Set<Promise<void>>();
+    let pendingEventBytes = 0;
+    let liveTimer: NodeJS.Timeout | undefined;
+    let liveRequest: Promise<void> | null = null;
+    let liveDirty = false;
+    let lastLiveAt = 0;
+    let lastLive: CodexProjectionProgress["state"] | null = null;
+    const failProjection = (error: unknown) => {
+      projectionError ??= error;
+      rejectProjectionFailure(error);
+      void transport.close().catch(() => undefined);
+    };
+    const scheduleLive = () => {
+      liveDirty = true;
+      if (liveTimer || liveRequest || !sessionInput || !args.onProgress) return;
+      liveTimer = setTimeout(() => {
+        liveTimer = undefined;
+        void progress().catch(failProjection);
+      }, Math.max(0, CODEX_LIVE_PROGRESS_INTERVAL_MS - (Date.now() - lastLiveAt)));
+    };
+    const progress = async (force = false, initial = false): Promise<void> => {
+      if (!projectionId || !sessionInput || !args.onProgress) return;
+      if (liveTimer) { clearTimeout(liveTimer); liveTimer = undefined; }
+      if (liveRequest) {
+        await liveRequest;
+        if (!force) return;
+      }
+      liveDirty = false;
+      const runId = projectionId;
+      const request = this.projection.call<CodexProjectionProgress | null>(runId, { type: "live", inputAvailable: active?.inputAvailable ?? false, force })
+        .then(async (result) => {
+          if (!result || signal?.aborted && !force) return;
+          lastLive = { ...result.state, inputAvailable: active?.inputAvailable ?? false };
+          lastLiveAt = Date.now();
+          await args.onProgress!(lastLive, initial ? { ...result.changes, delivery: undefined } : result.changes);
+        });
+      liveRequest = request;
+      try { await request; }
+      finally {
+        if (liveRequest === request) liveRequest = null;
+        if (liveDirty && !state.turnCompleted && !signal?.aborted) scheduleLive();
+      }
+    };
+    const publishControl = (patch: Partial<CodexProjectionProgress["state"]> = { inputAvailable: false }) => {
+      if (!lastLive || !args.onProgress) return;
+      lastLive = { ...lastLive, ...patch };
+      void Promise.resolve(args.onProgress(lastLive, {
+        delivery: "live", steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
+      })).catch(failProjection);
     };
     const abort = () => {
       if (active) {
@@ -1000,7 +1034,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
           .catch(() => undefined);
       }
       interactions?.close();
-      void progress().catch(() => undefined);
+      rejectProjectionFailure(signal?.reason ?? new Error("Codex turn canceled"));
+      if (liveTimer) { clearTimeout(liveTimer); liveTimer = undefined; }
+      publishControl();
       void transport.close().catch(() => undefined);
     };
     signal?.addEventListener("abort", abort, { once: true });
@@ -1085,10 +1121,19 @@ export class CodexAdapter implements ProviderTurnAdapter {
         };
         this.activeTurns.set(sessionInput.session.id, active);
       }
-      await progress();
+      projectionId = await this.projection.begin({
+        sessionId: sessionInput?.session.id ?? "", threadId: state.threadId, turnId: state.turnId,
+        binding: sessionInput?.agentRuntimeBinding, apiKey: args.apiKey,
+        progress: Boolean(sessionInput && args.onProgress),
+      });
+      await progress(true, true);
+      let burst = 0;
       while (!state.turnCompleted) {
         signal?.throwIfAborted();
-        const event = await transport.nextEvent();
+        if (projectionError) throw projectionError;
+        // Bound work even when nextEvent returns an already-resolved queue entry.
+        if (++burst >= 32) { burst = 0; await new Promise<void>((resolve) => setImmediate(resolve)); }
+        const event = await Promise.race([transport.nextEvent(), projectionFailure]);
         const params = asRecord(event.params);
         if (event.kind === "serverRequest") {
           if (
@@ -1123,14 +1168,47 @@ export class CodexAdapter implements ProviderTurnAdapter {
             interactions?.resolve(params.requestId);
           continue;
         }
-        applyCodexTurnEvent(state, event);
+        const turn = asRecord(params.turn);
+        const incomingTurnId = typeof params.turnId === "string" ? params.turnId : turn.id;
+        const inScope = (typeof params.threadId !== "string" || params.threadId === state.threadId)
+          && (typeof incomingTurnId !== "string" || incomingTurnId === state.turnId);
+        if (event.method === "turn/completed" && inScope && typeof turn.id === "string" && typeof turn.status === "string") {
+          state.turnCompleted = true;
+          state.terminalStatus = turn.status;
+          state.streamErrorMessage = turn.status === "completed" ? ""
+            : redactor.sanitizeText(typeof asRecord(turn.error).message === "string"
+              ? asRecord(turn.error).message as string : `Codex turn ${turn.status}`);
+        }
         if (state.turnCompleted) {
           if (active) active.inputAvailable = false;
           interactions?.close();
           if (sessionInput) this.activeTurns.delete(sessionInput.session.id);
+          publishControl();
         }
-        await progress();
+        const bytes = event.byteLength ?? Buffer.byteLength(JSON.stringify(event), "utf8");
+        if (bytes > CODEX_PROJECTION_MAX_PENDING_BYTES) throw new Error("Codex projection event is too large.");
+        while (pendingEvents.size >= 8 || pendingEventBytes + bytes > CODEX_PROJECTION_MAX_PENDING_BYTES) {
+          await Promise.race(pendingEvents);
+          if (projectionError) throw projectionError;
+          signal?.throwIfAborted();
+        }
+        pendingEventBytes += bytes;
+        const completion = this.projection.call<CodexProjectionEvent | null>(projectionId, {
+          type: "event", event: { method: event.method, params: event.params },
+        }, bytes).then(async (result) => {
+          if (!result) return;
+          if (sessionInput && args.onProgress) {
+            if (result.audit) {
+              await args.onProgress({ ...result.audit.state, inputAvailable: active?.inputAvailable ?? false }, result.audit.changes);
+              if (event.method === "error" && !state.turnCompleted && !signal?.aborted) publishControl({ errorMessage: result.audit.state.errorMessage });
+            }
+            scheduleLive();
+          }
+        }).catch(failProjection).finally(() => { pendingEvents.delete(completion); pendingEventBytes -= bytes; });
+        pendingEvents.add(completion);
       }
+      await Promise.all(pendingEvents);
+      if (projectionError) throw projectionError;
       if (interactionError) throw interactionError;
       if (state.terminalStatus !== "completed")
         throw new Error(
@@ -1139,13 +1217,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
     } finally {
       signal?.removeEventListener("abort", abort);
       interactions?.close();
+      if (liveTimer) { clearTimeout(liveTimer); liveTimer = undefined; }
       if (active) active.inputAvailable = false;
       if (
         sessionInput &&
         this.activeTurns.get(sessionInput.session.id) === active
       )
         this.activeTurns.delete(sessionInput.session.id);
-      await progress().catch((error) =>
+      await Promise.all(pendingEvents);
+      await progress(true).catch((error) =>
         this.writeLog({
           level: "warn",
           kind: "codex.run.final-progress-failed",
@@ -1169,6 +1249,16 @@ export class CodexAdapter implements ProviderTurnAdapter {
         } catch (callbackError) {
           this.writeLog({ level: "error", kind: "codex.run.cleanup-tracking-failed", message: redactor.sanitizeText(String(callbackError)) });
         }
+      }
+      if (projectionId) {
+        try {
+          const final = await this.projection.call<CodexProjectionFinal>(projectionId, { type: "finish", diagnostics: args.diagnostics.rawItems });
+          args.diagnostics.projection = final;
+          state.items = new Map(final.items.map((item) => [item.id, item]));
+          state.usage = final.usage;
+          state.streamErrorMessage = final.errorMessage;
+          state.terminalStatus = final.terminalStatus;
+        } finally { await this.projection.release(projectionId); }
       }
     }
   }
@@ -1224,7 +1314,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       rawText,
       output: parsedJson as TOutput | null,
       parsedJson,
-      rawItemsJson: stringifyBoundedAuditRawItems(
+      rawItemsJson: diagnostics.projection?.rawItemsJson ?? stringifyBoundedAuditRawItems(
         redactor.sanitize([...diagnostics.rawItems, ...buildStableRawItemsProjection([...state.items.values()])]),
       ),
       usage: state.usage,
@@ -1365,7 +1455,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       [resolveCodexApiKey(input.providerCatalog.id, input.appSettings)],
     );
     const finalItems = Array.from(items.values());
-    const providerMetadata = buildProviderMetadataProjection(finalItems);
+    const providerMetadata = diagnostics.projection?.providerMetadata ?? buildProviderMetadataProjection(finalItems);
     if (diagnostics.cleanupError) providerMetadata.push({
       provider: "codex", kind: "postprocess_degraded", source: "codex-adapter.process-cleanup",
       summary: "Codex process cleanup failed; the native turn outcome is preserved",
@@ -1382,7 +1472,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const {
       assistantText: itemAssistantText,
       lastNonEmptyAssistantMessageText: itemLastNonEmptyAssistantMessageText,
-    } = collectCodexAssistantResponseFromItems(finalItems);
+    } = diagnostics.projection ?? collectCodexAssistantResponseFromItems(finalItems);
     const finalAssistantText =
       itemAssistantText.trim().length > 0
         ? itemAssistantText
@@ -1456,8 +1546,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
       artifact: redactor.sanitize(artifact),
       logicalPrompt: prompt.logicalPrompt,
       transportPayload: buildCodexTransportPayload(prompt),
-      operations: redactor.sanitize(toAuditOperationsProjection(finalItems)),
-      rawItemsJson: stringifyBoundedAuditRawItems(
+      operations: diagnostics.projection?.operations ?? redactor.sanitize(toAuditOperationsProjection(finalItems)),
+      rawItemsJson: diagnostics.projection?.rawItemsJson ?? stringifyBoundedAuditRawItems(
         redactor.sanitize([...diagnostics.rawItems, ...buildStableRawItemsProjection(finalItems)]),
       ),
       providerMetadata: redactor.sanitize(providerMetadata),
@@ -1513,7 +1603,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         state.items,
         state.usage,
         state.threadId,
-        getLiveCodexAssistantText(state),
+        diagnostics.projection?.assistantText ?? "",
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
@@ -1531,7 +1621,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         state.items,
         state.usage,
         state.threadId,
-        getLiveCodexAssistantText(state),
+        diagnostics.projection?.assistantText ?? "",
         selection,
         beforeSnapshot,
         beforeSnapshotStats,

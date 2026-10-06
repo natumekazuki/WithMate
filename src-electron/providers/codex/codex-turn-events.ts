@@ -55,6 +55,7 @@ export type CodexTurnItem =
   | { type: "userMessage"; id: string; content: unknown[] };
 export type CodexNativeNotification = { method: string; params?: unknown };
 export type CodexTurnStreamState = {
+  revision: number;
   items: Map<string, CodexTurnItem>;
   liveSteps: ProviderProgressMap<LiveRunStep>;
   threadId: string | null;
@@ -66,6 +67,70 @@ export type CodexTurnStreamState = {
   turnCompleted: boolean;
   terminalStatus: string | null;
 };
+
+class OrderedItemText {
+  private readonly entries = new Map<string, { order: number; text: string }>();
+  private readonly ordered: { order: number; text: string }[] = [];
+  private orderChanged = false;
+  private textLength = 0;
+  private nonEmptyCount = 0;
+  private fullText: string | undefined = "";
+  private previewText: string | undefined = "";
+
+  set(id: string, order: number, text: string): boolean {
+    let entry = this.entries.get(id);
+    if (entry?.text === text || (!entry && !text)) return false;
+    if (!entry) {
+      entry = { order, text: "" };
+      this.entries.set(id, entry);
+      const last = this.ordered.at(-1);
+      if (last && last.order > order) this.orderChanged = true;
+      this.ordered.push(entry);
+    }
+    this.textLength += text.length - entry.text.length;
+    this.nonEmptyCount += Number(Boolean(text)) - Number(Boolean(entry.text));
+    entry.text = text;
+    this.fullText = undefined;
+    this.previewText = undefined;
+    return true;
+  }
+
+  full(): string {
+    this.ensureOrder();
+    return this.fullText ??= this.ordered.map((entry) => entry.text).filter(Boolean).join("\n\n");
+  }
+
+  private ensureOrder(): void {
+    if (!this.orderChanged) return;
+    this.ordered.sort((left, right) => left.order - right.order);
+    this.orderChanged = false;
+  }
+
+  preview(): string {
+    if (this.previewText !== undefined) return this.previewText;
+    this.ensureOrder();
+    const originalLength = this.textLength + Math.max(0, this.nonEmptyCount - 1) * 2;
+    let prefix = "";
+    let hasText = false;
+    for (const entry of this.ordered) {
+      if (!entry.text) continue;
+      if (hasText) prefix += "\n\n".slice(0, AUDIT_TEXT_PREVIEW_LIMIT - prefix.length);
+      prefix += entry.text.slice(0, AUDIT_TEXT_PREVIEW_LIMIT - prefix.length);
+      hasText = true;
+      if (prefix.length === AUDIT_TEXT_PREVIEW_LIMIT) break;
+    }
+    this.previewText = originalLength > AUDIT_TEXT_PREVIEW_LIMIT
+      ? `${prefix}\n...[truncated ${originalLength - AUDIT_TEXT_PREVIEW_LIMIT} chars; originalLength=${originalLength}]`
+      : prefix;
+    return this.previewText;
+  }
+}
+
+const textCaches = new WeakMap<CodexTurnStreamState, {
+  assistant: OrderedItemText;
+  reasoning: OrderedItemText;
+  order: Map<string, number>;
+}>();
 
 export function collectCodexAssistantResponseFromItems(
   items: Iterable<CodexTurnItem>,
@@ -84,18 +149,23 @@ export function collectCodexAssistantResponseFromItems(
 export function createCodexTurnStreamState(
   threadId: string | null,
 ): CodexTurnStreamState {
-  return {
+  const assistant = new OrderedItemText();
+  const reasoning = new OrderedItemText();
+  const state: CodexTurnStreamState = {
+    revision: 0,
     items: new Map(),
     liveSteps: new ProviderProgressMap(),
     threadId,
     turnId: null,
-    reasoningText: "",
+    get reasoningText() { return reasoning.full(); },
     usage: null,
     usageBaseline: null,
     streamErrorMessage: "",
     turnCompleted: false,
     terminalStatus: null,
   };
+  textCaches.set(state, { assistant, reasoning, order: new Map() });
+  return state;
 }
 function usageBreakdown(value: unknown): AuditLogUsage | null {
   const usage = record(value);
@@ -142,8 +212,13 @@ function subtractUsage(
   };
 }
 export function getLiveCodexAssistantText(state: CodexTurnStreamState): string {
-  return collectCodexAssistantResponseFromItems(state.items.values())
-    .assistantText;
+  return textCaches.get(state)!.assistant.full();
+}
+export function getLiveCodexAssistantPreview(state: CodexTurnStreamState): string {
+  return textCaches.get(state)!.assistant.preview();
+}
+export function getLiveCodexReasoningPreview(state: CodexTurnStreamState): string {
+  return textCaches.get(state)!.reasoning.preview();
 }
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -225,12 +300,19 @@ function liveStep(item: CodexTurnItem): LiveRunStep | null {
       return null;
   }
 }
-function acceptItem(state: CodexTurnStreamState, value: unknown): void {
+function setLiveStep(state: CodexTurnStreamState, step: LiveRunStep): boolean {
+  const previous = state.liveSteps.get(step.id);
+  if (previous && previous.type === step.type && previous.summary === step.summary
+    && previous.details === step.details && previous.status === step.status) return false;
+  state.liveSteps.set(step.id, step);
+  return true;
+}
+function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput = false): void {
   const raw = record(value);
   if (typeof raw.id !== "string" || typeof raw.type !== "string")
     throw new Error("Invalid Codex App Server item");
   let item = value as CodexTurnItem;
-  if (item.type === "commandExecution" && typeof item.aggregatedOutput === "string") {
+  if (!boundedOutput && item.type === "commandExecution" && typeof item.aggregatedOutput === "string") {
     // A sliced prefix can still retain the native output's full backing string.
     item = {
       ...item,
@@ -241,17 +323,23 @@ function acceptItem(state: CodexTurnStreamState, value: unknown): void {
     };
   }
   state.items.set(item.id, item);
+  const cache = textCaches.get(state)!;
+  let order = cache.order.get(item.id);
+  if (order === undefined) {
+    order = cache.order.size;
+    cache.order.set(item.id, order);
+  }
+  let changed = cache.assistant.set(item.id, order,
+    item.type === "agentMessage" && item.text.trim().length > 0 ? item.text : "");
+  changed = cache.reasoning.set(item.id, order,
+    item.type === "reasoning" ? [...item.summary, ...item.content].join("\n") : "") || changed;
   const step = liveStep(item);
-  if (step) state.liveSteps.set(step.id, step);
-  state.reasoningText = Array.from(state.items.values())
-    .filter(
-      (candidate): candidate is Extract<CodexTurnItem, { type: "reasoning" }> =>
-        candidate.type === "reasoning",
-    )
-    .map((candidate) => [...candidate.summary, ...candidate.content].join("\n"))
-    .filter(Boolean)
-    .join("\n\n");
-  if (!state.turnCompleted) state.streamErrorMessage = "";
+  if (step) changed = setLiveStep(state, step) || changed;
+  if (!state.turnCompleted && state.streamErrorMessage) {
+    state.streamErrorMessage = "";
+    changed = true;
+  }
+  if (changed) state.revision += 1;
 }
 export function applyCodexTurnEvent(
   state: CodexTurnStreamState,
@@ -272,6 +360,12 @@ export function applyCodexTurnEvent(
       state.usageBaseline = usageBreakdown(record(params.tokenUsage).total);
     return;
   }
+  const previousRevision = state.revision;
+  const previousTurnId = state.turnId;
+  const previousError = state.streamErrorMessage;
+  const previousCompleted = state.turnCompleted;
+  const previousStatus = state.terminalStatus;
+  const previousUsage = state.usage;
   switch (event.method) {
     case "turn/started":
       if (typeof turn.id === "string") state.turnId = turn.id;
@@ -285,8 +379,7 @@ export function applyCodexTurnEvent(
         break;
       const item = state.items.get(params.itemId);
       if (item?.type === "agentMessage") {
-        state.items.set(item.id, { ...item, text: item.text + params.delta });
-        if (!state.turnCompleted) state.streamErrorMessage = "";
+        acceptItem(state, { ...item, text: item.text + params.delta });
       }
       break;
     }
@@ -304,10 +397,7 @@ export function applyCodexTurnEvent(
           aggregatedOutput: (item.aggregatedOutput ?? "") + prefix,
           aggregatedOutputOriginalLength: (item.aggregatedOutputOriginalLength ?? item.aggregatedOutput?.length ?? 0) + params.delta.length,
         };
-        state.items.set(next.id, next);
-        const step = liveStep(next);
-        if (step) state.liveSteps.set(step.id, step);
-        if (!state.turnCompleted) state.streamErrorMessage = "";
+        acceptItem(state, next, true);
       }
       break;
     }
@@ -346,7 +436,7 @@ export function applyCodexTurnEvent(
     case "turn/plan/updated": {
       if (!Array.isArray(params.plan)) break;
       const steps = params.plan.map(record);
-      state.liveSteps.set("turn-plan", {
+      if (setLiveStep(state, {
         id: "turn-plan",
         type: "plan",
         summary: `${steps.filter((step) => step.status === "completed").length}/${steps.length} completed`,
@@ -361,7 +451,7 @@ export function applyCodexTurnEvent(
         status: steps.every((step) => step.status === "completed")
           ? "completed"
           : "in_progress",
-      });
+      })) state.revision += 1;
       break;
     }
     case "error": {
@@ -388,4 +478,10 @@ export function applyCodexTurnEvent(
             : `Codex turn ${turn.status}`;
       break;
   }
+  const usageChanged = previousUsage !== state.usage
+    && JSON.stringify(previousUsage) !== JSON.stringify(state.usage);
+  state.revision = previousRevision + Number(state.revision !== previousRevision
+    || previousTurnId !== state.turnId || previousError !== state.streamErrorMessage
+    || previousCompleted !== state.turnCompleted || previousStatus !== state.terminalStatus
+    || usageChanged);
 }

@@ -1337,7 +1337,8 @@ export class SessionRuntimeService {
         return;
       }
       if (auditProgressFailure) throw auditProgressFailure;
-      this.setRuntimeLiveState(sessionId, nextLiveState);
+      if (changes.delivery !== "audit") this.setRuntimeLiveState(sessionId, nextLiveState);
+      if (changes.delivery === "live") return;
       const patch: AuditLogProgressPatch = { sessionId, observedAt: new Date().toISOString() };
       const threadId = pickPreferredThreadId(
         nextLiveState.threadId,

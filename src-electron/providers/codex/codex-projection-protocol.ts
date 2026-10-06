@@ -1,0 +1,43 @@
+import type { LiveSessionRunState, AuditLogOperation, AuditLogProviderMetadata } from "../../../src-shared/session/runtime-state.js";
+import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
+import type { RunSessionTurnProgressChanges } from "../provider-runtime.js";
+import type { BoundedAuditRawItem } from "../../session/audit-payload-limits.js";
+import type { CodexNativeNotification, CodexTurnItem } from "./codex-turn-events.js";
+
+export const CODEX_LIVE_PROGRESS_INTERVAL_MS = 33;
+export const CODEX_PROJECTION_MAX_PENDING = 64;
+export const CODEX_PROJECTION_MAX_PENDING_BYTES = 32 * 1024 * 1024;
+
+export type CodexProjectionStart = {
+  sessionId: string;
+  threadId: string;
+  turnId: string;
+  binding?: ProviderAgentRuntimeBindingProjection | null;
+  apiKey: string;
+  progress: boolean;
+};
+export type CodexProjectionProgress = {
+  state: LiveSessionRunState;
+  changes: RunSessionTurnProgressChanges;
+};
+/** A changed live revision may have no persisted Audit fields (for example reasoning). */
+export type CodexProjectionEvent = { audit: CodexProjectionProgress | null };
+export type CodexProjectionFinal = {
+  items: CodexTurnItem[];
+  assistantText: string;
+  lastNonEmptyAssistantMessageText: string;
+  operations: AuditLogOperation[];
+  rawItemsJson: string;
+  providerMetadata: AuditLogProviderMetadata[];
+  usage: LiveSessionRunState["usage"];
+  terminalStatus: string | null;
+  errorMessage: string;
+};
+export type CodexProjectionCommand =
+  | { type: "start"; input: CodexProjectionStart }
+  | { type: "event"; event: CodexNativeNotification }
+  | { type: "live"; inputAvailable: boolean; force?: boolean }
+  | { type: "finish"; diagnostics: BoundedAuditRawItem[] }
+  | { type: "release" };
+export type CodexProjectionRequest = { id: number; runId: string; command: CodexProjectionCommand };
+export type CodexProjectionResponse = { id: number; value?: unknown; error?: string };

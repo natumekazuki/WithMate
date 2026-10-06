@@ -6,10 +6,10 @@ import { spawnOwnedCodexProcess, OwnedCodexProcessAcquisitionError, type OwnedCo
 export const CODEX_APP_SERVER_ARGUMENTS = ["app-server", "--listen", "stdio://"] as const;
 export type CodexRequestOptions = { signal?: AbortSignal; timeoutMs?: number };
 export type CodexWireError = { code: number; message: string; data?: unknown };
-export type CodexProtocolEvent =
+export type CodexProtocolEvent = { readonly byteLength?: number } & (
   | { kind: "notification"; method: string; params: unknown }
   | { kind: "serverRequest"; id: string | number; method: string; params: unknown;
-      respond(result: unknown): Promise<void>; reject(error: CodexWireError): Promise<void> };
+      respond(result: unknown): Promise<void>; reject(error: CodexWireError): Promise<void> });
 export type CodexAppServerTransportOptions = {
   executable: string;
   arguments?: readonly string[];
@@ -220,6 +220,8 @@ export class CodexAppServerTransport {
         event = { kind: "serverRequest", id, method: value.method, params: value.params,
           respond: result => respond({ result }), reject: error => respond({ error }) };
       } else event = { kind: "notification", method: value.method, params: value.params };
+      // Reuse the measured wire size for bounded projection admission without reserializing the body.
+      Object.defineProperty(event, "byteLength", { value: bytes });
       const waiter = this.#waiters.shift();
       if (waiter) waiter.resolve(event);
       else {

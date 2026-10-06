@@ -285,6 +285,46 @@ describe("SessionRuntimeService stale retry helpers", () => {
 });
 describe("SessionRuntimeService", () => {
   // @test-value v2
+  // kind = "contract"
+  // claim = "Auditだけの配送を全件保存しliveだけの配送を保存待ちなしで表示する"
+  // oracle = { type = "contract", ref = "docs/design/audit-log.md: progressの変更情報と表示用latest-only集約" }
+  // fault = "Audit-only配送で表示を更新する、live-only配送で保存を増幅する、または保存完了をliveの前提にする"
+  // observable = "停止writer中のlive本文と、解放後の全assistant snapshot patch列"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService separate Audit and live delivery"
+  // lifecycle = "permanent"
+  // impact = "slow storageでも表示が進み、表示間引きで必要なAudit保存が欠落しない"
+  // distinction = "adapter単体とstorage点更新testではRuntimeの表示owner・保存ownerの分離を確認できない"
+  // @end-test-value
+  it("Audit-onlyとlive-onlyは独立し停止writerが表示を止めない", async () => {
+    const session = createSession({ id: "separate-delivery", provider: "codex" });
+    const patches: AuditLogProgressPatch[] = [];
+    let live: LiveSessionRunState | null = null;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let finalSaved = false;
+    const noChanges = { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } };
+    const runtime = createProgressRuntime(session, async (_input, progress) => {
+      for (const text of ["first", "second", "third"]) {
+        await progress?.(createLiveRunState({ sessionId: session.id, assistantText: text }), { ...noChanges, delivery: "audit" });
+      }
+      await progress?.(createLiveRunState({ sessionId: session.id, assistantText: "", usage: null }), { ...noChanges, delivery: "audit" });
+      assert.equal(live?.assistantText, "");
+      await progress?.(createLiveRunState({ sessionId: session.id, assistantText: "third" }), { ...noChanges, delivery: "live" });
+      assert.equal(live?.assistantText, "third");
+      release();
+      return createPartialResult({ assistantText: "third" });
+    }, {
+      setLiveSessionRun(_id, state) { live = state; }, getLiveSessionRun() { return live; },
+      async updateAuditLogProgress(_id, patch) { await gate; patches.push(patch); return { insertedOperations: [] }; },
+      updateAuditLog() { finalSaved = true; },
+    });
+    try { await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" }); }
+    finally { release(); }
+    await waitForCondition(() => finalSaved, "separate delivery enrichment");
+    assert.deepEqual(patches.map(patch => patch.assistantSnapshot?.body), ["first", "second", "third"]);
+  });
+  // @test-value v2
   // kind = "invariant"
   // claim = "operation総数によらず1件変更は1件patchを送り同値通知を抑止し同じoutput IDで更新削除する"
   // oracle = { type = "contract", ref = "01-audit-progress-partial-update.mdの変更operation増分保存と安定ID要求" }
