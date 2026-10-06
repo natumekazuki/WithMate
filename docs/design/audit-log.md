@@ -20,6 +20,8 @@ ClaudeのBash summaryとCodexのcommand outputは、保持元でも64 Ki code un
 
 Session WindowのAudit Logは保存済みの結果を表示し、実行中のlive stateと区別する。失敗を成功として表示したり、未保存のstreamを確定監査情報とみなしたりしない。Character Affectの評価ログと通常turnの監査情報も同一視しない。
 
+閉じたAuditは保存済みsummaryの更新だけを保持し、live詳細の購読・表示projectionはdialogを開いている間だけ行う。dialogを閉じると取得済みdetail fragmentを解放し、再openでは最新summaryと必要なdetailを取得する。取消・承認・background処理のlifecycleは停止しない。
+
 prompt、provider応答、raw outputにはユーザーデータが含まれ得る。表示・export・診断で必要な範囲だけを扱い、app logへ本文やsecretを複製しない。一般のapp logとの責務境界は[App Log Base](app-log-base.md)、prompt sectionの意味は[Prompt Composition](prompt-composition.md)に記す。
 
 Claude／Copilotのdiagnostic rawは、受信時にprojectionを秘匿化して個別itemの上限を適用し、最終出力と同じretention規則で保持する。aggregate budgetはJSON文字列の512×1024文字（JavaScriptのUTF-16 code unit数）であり、UTF-8 bytes上限ではない。順序、個別truncationと最終省略markerの`omittedItems`を維持し、保持済みitem全体を追加のたびにserialize／parseし直さない。Copilotのunsupported event metadataは受信時に別途投影し、rawの省略で失わない。このbudgetは会話本文、operations、artifact、取消時のpartial resultへ適用しない。Codexのdiagnostic rawとnative item保持は別の経路である。

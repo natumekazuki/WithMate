@@ -247,7 +247,7 @@ test("conversation Find は連続選択の最後の読込済み本文を保持�
 // @test-value v2
 // kind = "invariant"
 // claim = "同じWindowのMain/Auxiliary live eventは会話IDで分離され、非target会話へ混入しない"
-// oracle = { type = "contract", ref = "issue-710-conversation-live-ownership" }
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Context boundary" }
 // fault = "Mainのlive eventやapprovalがAuxiliary columnへ表示・送信される"
 // observable = "各columnのlive表示文字列とapproval APIへ渡るsessionId"
 // observation_boundary = "component-behavior"
@@ -292,8 +292,12 @@ test("conversation columns はlive eventとapprovalをsession IDごとに分離�
       }));
     });
     await act(async () => {
-      listeners.forEach((listener) => listener("main", { assistantText: "main live", approvalRequest: { requestId: "request-main" } }));
-      listeners.forEach((listener) => listener("aux", { assistantText: "aux live", approvalRequest: { requestId: "request-aux" } }));
+      const emit = (sessionId: string, assistantText: string, requestId: string) => listeners.forEach((listener) => listener(sessionId, {
+        sessionId, threadId: "thread", assistantText, steps: [], backgroundTasks: [], usage: null, errorMessage: "",
+        elicitationRequest: null, approvalRequest: { requestId },
+      }));
+      emit("main", "main live", "request-main");
+      emit("aux", "aux live", "request-aux");
     });
     assert.equal(dom.window.document.querySelector("[data-main-live]")?.getAttribute("data-main-live"), "main live");
     assert.equal(dom.window.document.querySelector("[data-aux-live]")?.getAttribute("data-aux-live"), "aux live");

@@ -62,7 +62,11 @@ MainとAuxiliaryの最小幅は各UI領域のCSSで360pxと定義する。レイ
 
 Windowsの通常Session Windowがfocus中でない間にAuxiliaryのturnが完了または失敗した場合は、既存のSession turn通知経路で通知する。通知のclickは親Session Windowを前面化し、対象Auxiliaryを選択する。新規WindowではURLのAuxiliary ID、既存Windowではrenderer navigation eventを使う。いずれの場合もMain／Auxiliaryの送信対象、幅、draft、選択中Window以外の実行状態は変更しない。
 
-メッセージの投影、折りたたみ状態、一覧からの移動要求、スクロール位置は各会話Columnが所有する。送信時の末尾追従は既存の設定に従って対象Columnへ一度だけ通知する。個別の折りたたみ状態はメッセージ一覧にも反映し、一覧選択は同じ会話の対象メッセージへ移動する。実行制御のため親が購読している会話はそのlive snapshotをColumnへ渡し、Columnでは二重購読しない。親が購読しない会話はColumnが購読し、非対象側のlive表示も更新する。ContextPaneの一覧選択callbackも共通画面へ渡し、選択した内容を表示へ反映する。
+### メッセージの投影とWindow内live受信
+
+メッセージの投影、折りたたみ状態、一覧からの移動要求、スクロール位置は各会話Columnが所有する。送信時の末尾追従は既存の設定に従って対象Columnへ一度だけ通知する。個別の折りたたみ状態はメッセージ一覧にも反映し、一覧選択は同じ会話の対象メッセージへ移動する。ContextPaneの一覧選択callbackも共通画面へ渡し、選択した内容を表示へ反映する。
+
+Window内live受信はrendererの`session-window-live-ingress.ts`が公開APIのcallbackを1本に集約し、ownerごとの初回取得を共有する。表示Column、表示中Context、開いたAuditは同じfull snapshotを参照する。shellはMainと操作対象のcompact controlsだけを保持し、selector結果が変わらない本文deltaでは更新しない。非表示Contextと閉じたAuditの詳細購読を止め、最後の表示consumerが消えたownerのfull snapshotと、全consumerが消えたownerを解放する。再openは必要なdetailを再取得し、先行event・終端nullを遅い初回取得で巻き戻さない。取消・承認・入力制御は表示lifecycleから独立する。公開APIの認可とcontextIsolationは維持する。
 
 ### 送信直後の共通反映
 
@@ -88,6 +92,8 @@ Rendererは再取得可能な非表示Auxiliaryの詳細を直近使用の8件�
 
 表示用の初回・terminal読込みは最新60件と全履歴件数を返し、過去は必要時だけ取得する。検索・Bookmark・artifactの対象はページ内indexではなく保存履歴上のindexを使う。取得・保存境界は[Electron Session Store](electron-session-store.md#読取と通知)を参照する。
 
+再取得可能なartifact detailはDetailsのcollapse、会話列の非表示、表示pageからの離脱で解放する。遅い取得結果は閉じたdetailや後続の取得へ適用しない。再表示時は最新detailを取得し、会話のscroll・Bookmark・fold状態とComposerのdraft／caretは別ownerに保持する。
+
 ### Composer の更新・保存境界
 
 Main / Auxiliary の入力は会話種別と stable ID をキーとする共通 Composer controller が所有する。draft、編集 revision、selection、IME、preview、保存状態は対象 Composer だけが購読し、Session shell / transcript / Auxiliary 一覧へ文字入力を通知しない。Paste、Quote、Skill、Template、添付、retry、送信後 clear も同じ操作へ接続する。Main draft は従来どおり Window 内のローカル状態であり、新しい永続化対象にしない。
@@ -112,7 +118,7 @@ Auxiliaryの追加入力も同じdraft owner / incarnation / durable revisionの
 
 Main側の復元失敗は送信Promiseの完了と別に、元の本文・consume後のincarnation・durable revisionを保持する。別WindowのACK待ち中に失敗しても忘却せず、quitの保存判定で永続値を確認して再保存する。再保存に失敗した場合は終了を中止し、次のquitで再試行する。renderer側の復元や後続編集が永続化された場合は古い復元を解消する。明示的な削除・別incarnationへの再作成も優先し、古い本文での上書き・再作成は行わない。
 
-draft の使用時刻は本文と別に扱う。最初の編集で必要な順位変更を反映し、後続の同順位入力では一覧全体を再生成しない。永続的な最終使用時刻は集約保存と同時に確定し、再起動時は最後に保存された順序を復元する。preview は確定応答等からの派生情報のまま、未送信 draft を用いない。非 terminal の live event は軽量な run status を反映し、表示状態のためだけに詳細を再取得しない。terminal と実際の詳細表示では最新の本文を取得する。
+draft の使用時刻は本文と別に扱う。最初の編集で必要な順位変更を反映し、後続の同順位入力では一覧全体を再生成しない。永続的な最終使用時刻は集約保存と同時に確定し、再起動時は最後に保存された順序を復元する。preview は確定応答等からの派生情報のまま、未送信 draft を用いない。非terminalのlive eventは、runState・turn ID・取消・入力受付状態が変わった場合に軽量な保存済みrun statusを確認し、本文deltaだけでは再取得しない。Main runtimeは開始・終端のrunStateをliveへ投影するため、background／reasoning保持中も非nullだけでrunningと判断しない。terminal nullと実際の詳細表示では最新の本文を取得する。
 
 既存タグの payload 内 draft は active / closed とも同じ ID の独立保存単位へ移す。空文字も有効であり、移行と旧正本の除去を atomic に確定する。中断時は再実行可能とし、会話・thread・Character・設定を保持する。親削除では独立 draft も除去し、旧 incarnation / storage generation の保存で会話を再作成しない。新規の二重正本、任意 SQL port、全体 mutex、分散編集基盤は追加しない。
 

@@ -12,6 +12,7 @@ import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { replaceLiveRunAfterResolvedRequest } from "./runtime/session-live-run-state.js";
 import { CONVERSATION_PAGE_SIZE, getMessageHistoryIndex, type ConversationPage } from "../../src-shared/session/conversation-page.js";
 import { setMessageBookmarked } from "../../src-shared/session/session-state.js";
+import { subscribeSessionLiveSelection } from "./runtime/session-window-live-ingress.js";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
   "messages" | "messageCount" | "incarnationId" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors"
@@ -163,25 +164,19 @@ export function useConversationMessageColumn({
       return;
     }
     if (!session || !enabled || !api?.getLiveSessionRun || !api.subscribeLiveSessionRun) return;
-    let active = true;
-    let receivedEvent = false;
-    const unsubscribe = api.subscribeLiveSessionRun((id, state) => {
-      if (!active || id !== sessionId) return;
-      receivedEvent = true;
-      liveRunEventRevision.current += 1;
-      conversation.liveRun = state;
-      refresh();
+    return subscribeSessionLiveSelection({
+      api: api as Required<Pick<ConversationMessageColumnApi, "getLiveSessionRun" | "subscribeLiveSessionRun">>,
+      sessionId, select: (state) => state,
+      onChange: (state) => {
+        liveRunEventRevision.current += 1;
+        conversation.liveRun = state;
+        refresh();
+      },
+      onError: (error) => {
+        conversation.error = error instanceof Error ? error.message : String(error);
+        refresh();
+      },
     });
-    void api.getLiveSessionRun(sessionId).then((state) => {
-      if (!active || receivedEvent) return;
-      conversation.liveRun = state;
-      refresh();
-    }).catch((error: unknown) => {
-      if (!active) return;
-      conversation.error = error instanceof Error ? error.message : String(error);
-      refresh();
-    });
-    return () => { active = false; unsubscribe(); };
   }, [api, enabled, liveRunOverride, pageOwner, sessionId, refresh]);
 
   const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
@@ -419,6 +414,7 @@ export function useConversationMessageColumn({
   return {
     ...baseProps,
     sessionId,
+    artifactDetailsEnabled: enabled,
     character: columnCharacter,
     messages: projection.messages,
     messageKeys: projection.keys,

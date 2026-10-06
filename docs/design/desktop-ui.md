@@ -402,6 +402,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Mainの取消受付後は同じ位置をdisabledの`Canceling`とbusy stateにする。取消猶予後に保存済みSessionがidleになっても、Mainのlive取消状態が残る間はSend・送信shortcut・再送導線を有効にしない。元処理と必要な終了処理の解放通知後に通常の送信可能判定へ戻す。
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
+  - 詳細が欠落・取得失敗した場合はDetails内に状態と再openによる再試行を示し、会話本文と保存済みsummaryを維持する。同じ展開・表示期間では本文更新による自動再取得を行わず、閉じて再open・非表示からの復帰・履歴page復帰で取得し直す
   - `Changed files` は Details UIには表示しない。artifactの永続化、audit、Diff model、Changes paneのデータはこの表示変更だけでは削除しない
   - `Run checks`
     - approval は `Auto Run / Provider Controlled / Safety Focused` の provider-neutral wording で表示する

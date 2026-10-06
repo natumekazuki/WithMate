@@ -83,7 +83,7 @@ export type ChatWindowProps = Omit<
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
   rightPaneProps?: SessionContextPaneProps;
-  renderRightPane?: (navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorSessionId" | "onJumpToMessage" | "onMessageNavigatorActiveChange">) => ReactNode;
+  renderRightPane?: (navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorSessionId" | "onJumpToMessage" | "onMessageNavigatorActiveChange">, visible: boolean) => ReactNode;
   mainContent?: ChatScreenProps["mainContent"];
   concurrentChats?: ConcurrentChatWindowProps;
 };
@@ -592,7 +592,7 @@ export function ChatWindow({
             messageNavigatorSessionId: targetColumnControls?.sessionId ?? targetSessionId,
             onJumpToMessage: targetColumnControls?.onJumpToMessage,
             onMessageNavigatorActiveChange: setMessageNavigatorActive,
-          })}
+          }, screenProps.isRightPaneVisible !== false && !screenProps.isSidePaneBudgetCollapsed)}
         </SessionPaneErrorBoundary>
       ) : resolvedRightPaneProps ? (
         <SessionPaneErrorBoundary>

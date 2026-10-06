@@ -23,7 +23,7 @@ import { buildMessageCollapseTargets, type MessageCollapseTarget } from "../../s
 import { buildLiveAssistantProjectionKey, buildMessageListProjection, type MessageListSource } from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
-import type { Message } from "../../src-shared/session/session-state.js";
+import type { Message, MessageArtifact } from "../../src-shared/session/session-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
@@ -371,6 +371,102 @@ function renderSessionMessageColumn(options: {
   );
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "artifact詳細は再open・非表示からの復帰時に再取得し、閉じた間の古い取得結果は後の表示を上書きしない。会話本文は維持する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Persistence; docs/design/desktop-ui.md: assistant message ごとのTurn Summary" }
+// fault = "閉じたdetailを再利用して古い操作内容を表示する、遅い取得で新しいdetailを上書きする、または本文を破棄する"
+// observable = "実SessionMessageColumnのartifact取得回数・Run Checksの内容・本文"
+// observation_boundary = "component-behavior"
+// scope = "conversation artifact detail lifecycle"
+// lifecycle = "permanent"
+// impact = "大きな再取得可能detailの積み上がりと古い実行詳細の誤表示を防ぎ、会話の閲覧状態を保つ"
+// distinction = "型検査やページ離脱testでは同じmessageの開閉・非表示・遅延取得順を確認できない。短いdeferred操作でCIの保持負担を限定する"
+// @end-test-value
+test("artifactは再openで最新取得し閉じた間の遅いdetailを適用しない", async () => {
+  const summary: MessageArtifact = { title: "summary", activitySummary: [], changedFiles: [], runChecks: [], detailAvailable: true };
+  const message: Message = { role: "assistant", text: "saved body", artifact: summary };
+  const pending: Array<(detail: MessageArtifact) => void> = [];
+  const mounted = await mountSessionMessageColumn({
+    messages: [message], messageKeys: ["artifact"], expandedArtifacts: { artifact: true },
+    onLoadArtifactDetail: () => new Promise((resolve) => { pending.push(resolve); }),
+  });
+  try {
+    assert.equal(pending.length, 1);
+    await mounted.rerender({ expandedArtifacts: {} });
+    await mounted.rerender({ expandedArtifacts: { artifact: true } });
+    assert.equal(pending.length, 2);
+    await act(async () => { pending[1]!({ ...summary, runChecks: [{ label: "Result", value: "latest detail" }] }); });
+    assert.match(mounted.container.textContent ?? "", /latest detail/);
+    await act(async () => { pending[0]!({ ...summary, runChecks: [{ label: "Result", value: "stale detail" }] }); });
+    assert.doesNotMatch(mounted.container.textContent ?? "", /stale detail/);
+    await mounted.rerender({ expandedArtifacts: {} });
+    await mounted.rerender({ expandedArtifacts: { artifact: true } });
+    assert.equal(pending.length, 3);
+    await act(async () => { pending[2]!({ ...summary, runChecks: [{ label: "Result", value: "collapsed then reopened detail" }] }); });
+    assert.match(mounted.container.textContent ?? "", /collapsed then reopened detail/);
+    await mounted.rerender({ artifactDetailsEnabled: false, expandedArtifacts: { artifact: true } });
+    await mounted.rerender({ artifactDetailsEnabled: true, expandedArtifacts: { artifact: true } });
+    assert.equal(pending.length, 4);
+    await act(async () => { pending[3]!({ ...summary, runChecks: [{ label: "Result", value: "reopened detail" }] }); });
+    assert.match(mounted.container.textContent ?? "", /reopened detail/);
+    assert.match(mounted.container.textContent ?? "", /saved body/);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "artifactのnullと取得失敗は同じ展開・表示期間で一度だけ取得し、再open・再表示・page復帰で再取得できる。本文と失敗の説明を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: assistant message ごとのTurn Summary; docs/design/auxiliary-session.md: Persistence" }
+// fault = "本文更新で欠落・失敗済みdetailを再取得するか、取得試行を解放せず再openでも最新detailを取得できない"
+// observable = "実SessionMessageColumnの取得回数、Loading detailsの終了、欠落・失敗alert、復帰後のRun Checksと本文"
+// observation_boundary = "component-behavior"
+// scope = "artifact detail unsuccessful attempt lifetime"
+// lifecycle = "permanent"
+// impact = "streaming頻度の反復IPCとloading点滅を防ぎ、詳細だけの失敗から会話本文を失わず復帰できる"
+// distinction = "成功detailの解放・遅延取得testではnullとrejectの取得寿命を確認できない。2結果の短いDOM操作だけで継続負担を限定する"
+// @end-test-value
+test("artifactの欠落と失敗は本文更新で再取得せず再openで復帰できる", async () => {
+  for (const outcome of ["null", "reject"] as const) {
+    const summary: MessageArtifact = { title: "summary", activitySummary: [], changedFiles: [], runChecks: [], detailAvailable: true };
+    const message: Message = { role: "assistant", text: "saved body", artifact: summary };
+    let attempts = 0;
+    const mounted = await mountSessionMessageColumn({
+      messages: [message], messageKeys: ["artifact"], expandedArtifacts: { artifact: true },
+      onLoadArtifactDetail: async () => {
+        ++attempts;
+        if (attempts >= 3) return { ...summary, runChecks: [{ label: "Result", value: "latest detail" }] };
+        if (outcome === "reject") throw new Error("detail load failed");
+        return null;
+      },
+    });
+    try {
+      assert.equal(attempts, 1);
+      const errorText = outcome === "null" ? /Details are unavailable/ : /Failed to load details/;
+      assert.match(mounted.container.querySelector('[role="alert"]')?.textContent ?? "", errorText);
+      assert.doesNotMatch(mounted.container.textContent ?? "", /Loading details/);
+      for (let delta = 1; delta <= 5; ++delta) {
+        await mounted.rerender({ messages: [{ ...message, text: `saved body ${delta}` }] });
+      }
+      assert.equal(attempts, 1);
+      await mounted.rerender({ expandedArtifacts: {} });
+      await mounted.rerender({ expandedArtifacts: { artifact: true } });
+      assert.equal(attempts, 2);
+      assert.match(mounted.container.querySelector('[role="alert"]')?.textContent ?? "", errorText);
+      await mounted.rerender({ artifactDetailsEnabled: false });
+      await mounted.rerender({ artifactDetailsEnabled: true });
+      assert.equal(attempts, 3);
+      assert.match(mounted.container.textContent ?? "", /latest detail/);
+      assert.equal(mounted.container.querySelector('[role="alert"]'), null);
+      await mounted.rerender({ messages: [], messageKeys: [] });
+      await mounted.rerender({ messages: [message], messageKeys: ["artifact"] });
+      assert.equal(attempts, 4);
+      assert.match(mounted.container.textContent ?? "", /latest detail/);
+      assert.match(mounted.container.textContent ?? "", /saved body/);
+    } finally { await mounted.cleanup(); }
+  }
+});
+
 function createRect(input: {
   left: number;
   top: number;
@@ -400,6 +496,8 @@ type MountedSessionMessageColumn = {
   rerender: (callbacks: {
     sessionId?: string;
     isContentActive?: boolean;
+    expandedArtifacts?: Record<string, boolean>;
+    artifactDetailsEnabled?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
     messageKeys?: SessionMessageColumnProps["messageKeys"];
@@ -429,6 +527,8 @@ async function mountSessionMessageColumn(options: {
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
   expandedArtifacts?: Record<string, boolean>;
+  artifactDetailsEnabled?: boolean;
+  onLoadArtifactDetail?: SessionMessageColumnProps["onLoadArtifactDetail"];
   isContentActive?: boolean;
   component?: ComponentType<SessionMessageColumnProps>;
   isRunning?: boolean;
@@ -593,6 +693,8 @@ async function mountSessionMessageColumn(options: {
   const renderMessageColumn = async (callbacks: {
     sessionId?: string;
     isContentActive?: boolean;
+    expandedArtifacts?: Record<string, boolean>;
+    artifactDetailsEnabled?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
     messageKeys?: SessionMessageColumnProps["messageKeys"];
@@ -623,7 +725,9 @@ async function mountSessionMessageColumn(options: {
           messageCollapseTargets: callbacks.messageCollapseTargets ?? options.messageCollapseTargets,
           collapsedMessageKeys: callbacks.collapsedMessageKeys ?? options.collapsedMessageKeys,
           messageJumpRequest: callbacks.messageJumpRequest ?? options.messageJumpRequest,
-          expandedArtifacts,
+          expandedArtifacts: callbacks.expandedArtifacts ?? expandedArtifacts,
+          artifactDetailsEnabled: callbacks.artifactDetailsEnabled ?? options.artifactDetailsEnabled,
+          onLoadArtifactDetail: options.onLoadArtifactDetail,
           messageListRef,
           isRunning: callbacks.isRunning ?? options.isRunning ?? false,
           liveApprovalRequest: null,
