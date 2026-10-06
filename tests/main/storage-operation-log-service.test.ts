@@ -156,8 +156,8 @@ test("失敗とfatalは集計の容量とtimerに依存しない", () => {
 // kind = "invariant"
 // claim = "正常終了のdisposeは未完了診断も一度だけflushしてtimerを停止し、終了後の失敗は即時記録する"
 // oracle = { type = "contract", ref = "docs/design/app-log-base.md#storage-diagnostic-log-policy" }
-// fault = "終了時に残存集計を失うか、timerとdisposeの重複出力、終了後の失敗破棄が起こる"
-// observable = "disposeと仮想時間経過後のwrite callback回数、queued件数と即時失敗行"
+// fault = "終了時に残存集計を失うか、timer解除を欠落して終了後もcallbackが継続するか、終了後の失敗を破棄する"
+// observable = "実flushを維持したspyの呼出回数、仮想時間経過後のwrite callback回数、queued件数と即時失敗行"
 // observation_boundary = "component-behavior"
 // scope = "storage-log-shutdown"
 // lifecycle = "permanent"
@@ -168,10 +168,13 @@ test("disposeは最終集計を一度flushしてtimerを停止する", (t) => {
   t.mock.timers.enable({ apis: ["setInterval"] });
   const logs: AppLogInput[] = [];
   const service = new StorageOperationLogService((input) => logs.push(input));
+  const flush = t.mock.method(service, "flush");
   service.record(completed({ stage: "queued", outcome: "pending", waitMs: undefined, holdMs: undefined }));
   service.dispose();
   service.dispose();
+  assert.equal(flush.mock.callCount(), 1);
   t.mock.timers.tick(180_000);
+  assert.equal(flush.mock.callCount(), 1);
   assert.equal(logs.length, 1);
   assert.equal((logs[0].data as { operations: Array<{ queued: number }> }).operations[0].queued, 1);
   service.record(completed({ outcome: "failure" }));
