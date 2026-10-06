@@ -18,6 +18,8 @@ ClaudeのBash summaryとCodexのcommand outputは、保持元でも64 Ki code un
 
 ## 表示とデータ保護
 
+承認・質問の要求は操作差分だけをAuditへ受付し、周期化されたlive本文・usage・errorをprovider出力として再保存しない。要求表示と回答・取消は共通pending serviceが所有し、Audit保存の完了を表示の前提にしない。
+
 Session WindowのAudit Logは保存済みの結果を表示し、実行中のlive stateと区別する。失敗を成功として表示したり、未保存のstreamを確定監査情報とみなしたりしない。Character Affectの評価ログと通常turnの監査情報も同一視しない。
 
 閉じたAuditは保存済みsummaryの更新だけを保持し、live詳細の購読・表示projectionはdialogを開いている間だけ行う。dialogを閉じると取得済みdetail fragmentを解放し、再openでは最新summaryと必要なdetailを取得する。取消・承認・background処理のlifecycleは停止しない。

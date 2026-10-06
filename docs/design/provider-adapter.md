@@ -290,6 +290,8 @@ Audit配送は変更stepと変更したassistant preview／usage／errorだけ�
 
 Worker clientの未応答command受付は64件・入力合計32MiB、各turnのevent処理待ちは8件までとする。実transportで測定済みのUTF-8 frame bytesを受付計上に再利用する。有限batchと32 event読取ごとのmacrotask yieldにより、queued burstでもMainの制御処理へ戻る。5秒以内に応答しないWorkerやWorker異常では要求をrejectし、Mainでの全量projection fallbackや自動再実行をしない。
 
+runの解放も同じ受付上限を守る。容量満杯なら最大5秒の容量待機を行い、Workerのowner削除応答かWorker異常終了なしにclient登録だけを失わない。待機が期限を超えた場合は共有Workerを停止して失敗を返し、native itemsとredactorを孤立したownerとして保持し続けない。
+
 最終assistant本文、operations、bounded raw JSONとmetadataはWorkerで集約・秘匿化し、artifactのfilesystem snapshot／diffはMainで補完する。live previewの長さでfinal本文を切らず、取消・失敗時も取得済みpartialを回収する。rawの個別128×1024・最終512×1024 code units予算と省略markerは維持し、Worker入力のUTF-8 bytes上限と混同しない。
 
 ## Error Handling

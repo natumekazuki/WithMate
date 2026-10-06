@@ -286,6 +286,77 @@ describe("SessionRuntimeService stale retry helpers", () => {
 describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "承認・質問の要求保存はliveより新しいAudit本文とusageを巻き戻さずpending serviceの表示・回答を維持する"
+  // oracle = { type = "contract", ref = "docs/design/audit-log.md: 表示とデータ保護" }
+  // fault = "周期化された古いlive本文やusageを要求操作と一緒にAuditへ再保存するか要求表示を保存経路で上書きする"
+  // observable = "実Runtimeの本文・usage patch列、承認と質問の操作patch、実pending serviceのlive要求と回答・解除"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService approval and elicitation Audit delivery"
+  // lifecycle = "permanent"
+  // impact = "承認待ち中の監査本文・usageがProviderの観測順から巻き戻ることを防ぐ"
+  // distinction = "provider配送分離とpending service単体では古いliveから新しいAuditへ要求を保存するconsumer経路を通らない"
+  // @end-test-value
+  it("承認・質問は操作だけを保存し古いlive本文とusageをAuditへ戻さない", async () => {
+    const session = createSession({ id: "pending-audit", provider: "codex" });
+    let live: LiveSessionRunState | null = null;
+    let finalSaved = false;
+    const patches: AuditLogProgressPatch[] = [];
+    const oldUsage = { inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 };
+    const newUsage = { inputTokens: 10, cachedInputTokens: 5, outputTokens: 20 };
+    const update = (_id: string, recipe: (current: LiveSessionRunState) => LiveSessionRunState) => {
+      assert.ok(live);
+      return live = recipe(live);
+    };
+    const approvals = new SessionApprovalService({ updateLiveSessionRun: update });
+    const questions = new SessionElicitationService({ updateLiveSessionRun: update });
+    const noChanges = { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } };
+    const runtime = createProgressRuntime(session, async (input, progress) => {
+      await progress?.(createLiveRunState({ sessionId: session.id, threadId: "thread", assistantText: "older", usage: oldUsage }), noChanges);
+      const newer = createLiveRunState({ sessionId: session.id, threadId: "thread", assistantText: "newer", usage: newUsage });
+      await progress?.(newer, { ...noChanges, delivery: "audit" });
+      const approval: LiveApprovalRequest = { requestId: "approval", provider: "codex", kind: "command", title: "Run", summary: "Run command", decisionMode: "direct-decision" };
+      const decision = input.onApprovalRequest!(approval);
+      await waitForCondition(() => patches.some(patch => patch.operationUpserts?.some(upsert => upsert.key === "approval")), "approval Audit saved");
+      assert.equal(live?.assistantText, "older");
+      assert.deepEqual(live?.usage, oldUsage);
+      assert.equal(live?.approvalRequest?.requestId, "approval");
+      approvals.resolveLiveApproval(session.id, "approval", "approve");
+      assert.equal(await decision, "approve");
+      assert.equal(live?.approvalRequest, null);
+      const question: LiveElicitationRequest = { requestId: "question", provider: "codex", mode: "form", message: "Choose", fields: [] };
+      const response = input.onElicitationRequest!(question);
+      await waitForCondition(() => patches.some(patch => patch.operationUpserts?.some(upsert => upsert.key === "elicitation")), "question Audit saved");
+      assert.equal(live?.assistantText, "older");
+      assert.deepEqual(live?.usage, oldUsage);
+      assert.equal(live?.elicitationRequest?.requestId, "question");
+      questions.resolveLiveElicitation(session.id, "question", { action: "accept", content: { answer: "yes" } });
+      assert.deepEqual(await response, { action: "accept", content: { answer: "yes" } });
+      assert.equal(live?.elicitationRequest, null);
+      await progress?.(newer, { ...noChanges, delivery: "live" });
+      return createPartialResult({ threadId: "thread", assistantText: "newer", usage: newUsage });
+    }, {
+      setLiveSessionRun(_id, state) { live = state; }, getLiveSessionRun() { return live; },
+      waitForApprovalDecision: (id, request, signal) => approvals.waitForLiveApprovalDecision(id, request, signal),
+      waitForElicitationResponse: (id, request, signal) => questions.waitForLiveElicitationResponse(id, request, signal),
+      updateAuditLogProgress(_id, patch) { patches.push(patch); return { insertedOperations: (patch.operationUpserts ?? []).map((upsert, index) => ({ key: upsert.key, outputId: index + 1 })) }; },
+      updateAuditLog() { finalSaved = true; },
+    });
+    const completed = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
+    assert.equal(completed.runState, "idle");
+    await waitForCondition(() => finalSaved, "pending Audit enrichment");
+    assert.deepEqual(patches.flatMap(patch => patch.assistantSnapshot ? [patch.assistantSnapshot.body] : []), ["older", "newer"]);
+    assert.deepEqual(patches.flatMap(patch => patch.usage ? [patch.usage] : []), [oldUsage, newUsage]);
+    const requestPatches = patches.filter(patch => patch.operationUpserts?.length);
+    assert.deepEqual(requestPatches.flatMap(patch => patch.operationUpserts!.map(upsert => upsert.key)), ["approval", "elicitation"]);
+    for (const patch of requestPatches) {
+      assert.equal(patch.assistantSnapshot, undefined);
+      assert.equal(patch.usage, undefined);
+      assert.equal(patch.fields, undefined);
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "Auditだけの配送を全件保存しliveだけの配送を保存待ちなしで表示する"
   // oracle = { type = "contract", ref = "docs/design/audit-log.md: progressの変更情報と表示用latest-only集約" }
   // fault = "Audit-only配送で表示を更新する、live-only配送で保存を増幅する、または保存完了をliveの前提にする"

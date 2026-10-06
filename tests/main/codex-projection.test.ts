@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
 import { CodexProjectionClient } from "../../src-electron/providers/codex/codex-projection-client.js";
-import { CODEX_PROJECTION_MAX_PENDING, CODEX_PROJECTION_MAX_PENDING_BYTES, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionStart, type CodexProjectionEvent } from "../../src-electron/providers/codex/codex-projection-protocol.js";
+import { CODEX_PROJECTION_MAX_PENDING, CODEX_PROJECTION_MAX_PENDING_BYTES, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionStart, type CodexProjectionEvent, type CodexProjectionRequest, type CodexProjectionResponse } from "../../src-electron/providers/codex/codex-projection-protocol.js";
 import { AUDIT_RAW_ITEMS_JSON_LIMIT, AUDIT_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/audit-payload-limits.js";
 
 function input(name: string): CodexProjectionStart {
@@ -10,6 +12,57 @@ function input(name: string): CodexProjectionStart {
     binding: { bindingId: name, bindingReference: `binding-${name}`, turnCapability: `cap-${name}`, providerId: "codex", executionGeneration: name, transport: "env", expiresAt: null },
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "共有受付の件数・bytesが満杯でもreleaseは上限内でowner削除を待ち他runと容量を維持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner" }
+// fault = "容量拒否でclient登録だけ失いWorker ownerを保持するか解放のため通常受付上限を超える"
+// observable = "実Workerのrelease完了と解放runへのprotocol照会拒否、通常受付拒否、存続runのlive本文"
+// observation_boundary = "public-boundary"
+// scope = "CodexProjectionClient shared capacity release"
+// lifecycle = "permanent"
+// impact = "終了turnの本文とsecretが存続Workerに不要に残り保持が累積することを防ぐ"
+// distinction = "通常releaseとadmission単体は共有満杯時のWorker owner削除を観測しないため実protocol boundaryで確認する"
+// @end-test-value
+test("release drains bounded shared capacity and deletes the Worker owner", { timeout: 10_000 }, async () => {
+  for (const mode of ["count", "bytes"] as const) {
+    let worker: Worker | undefined;
+    const postMessage = Worker.prototype.postMessage;
+    const spy = mock.method(Worker.prototype, "postMessage", function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
+      if ((args[0] as CodexProjectionRequest).command.type === "start") worker = this;
+      return postMessage.apply(this, args);
+    });
+    const client = new CodexProjectionClient();
+    const retired = await client.begin(input(`retired-${mode}`));
+    const survivor = await client.begin(input(`survivor-${mode}`));
+    try {
+      for (const [run, text] of [[retired, "retained body"], [survivor, "surviving body"]]) {
+        await client.call(run, { type: "event", event: { method: "item/completed", params: { item: { id: "same", type: "agentMessage", text } } } });
+      }
+      const count = mode === "count" ? CODEX_PROJECTION_MAX_PENDING : 2;
+      const bytes = mode === "count" ? 1 : CODEX_PROJECTION_MAX_PENDING_BYTES / 2;
+      const pending = Array.from({ length: count }, () => client.call(survivor, { type: "event", event: { method: "unknown" } }, bytes));
+      const release = client.release(retired);
+      void release.catch(() => undefined);
+      await assert.rejects(client.call(survivor, { type: "live", inputAvailable: true }), /capacity exceeded/);
+      await Promise.all([release, ...pending]);
+      assert.ok(worker);
+      // Observe deletion at the Worker protocol, rather than only the client run registry.
+      const response = once(worker, "message", { signal: AbortSignal.timeout(2_000) });
+      worker.postMessage({ id: -1, runId: retired, command: { type: "live", inputAvailable: true } } satisfies CodexProjectionRequest);
+      const [reply] = await response as [CodexProjectionResponse];
+      assert.equal(reply.id, -1);
+      assert.ok(reply.error);
+      assert.equal(reply.value, undefined);
+      const live = await client.call<CodexProjectionProgress>(survivor, { type: "live", inputAvailable: true });
+      assert.equal(live.state.assistantText, "surviving body");
+    } finally {
+      spy.mock.restore();
+      await Promise.all([client.release(retired), client.release(survivor)]);
+    }
+  }
+});
 
 // @test-value v2
 // kind = "security"
