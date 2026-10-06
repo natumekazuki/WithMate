@@ -37,7 +37,7 @@ function setup(api: GlossaryApi) {
   const previousWindow = globalThis.window;
   Object.assign(globalThis, { window: dom.window, IS_REACT_ACT_ENVIRONMENT: true });
   let current: ReturnType<typeof useSessionGlossary> | null = null;
-  const selection: SessionGlossarySelection = {
+  let selection: SessionGlossarySelection = {
     id: "session-1",
     revision: "session-revision-1",
     workspaceLabel: "workspace",
@@ -50,7 +50,10 @@ function setup(api: GlossaryApi) {
   const root: Root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
   return {
     get current() { return current as ReturnType<typeof useSessionGlossary>; },
-    async render() { await act(async () => { root.render(React.createElement(Probe)); }); },
+    async render(sessionId?: string) {
+      if (sessionId) selection = { ...selection, id: sessionId };
+      await act(async () => { root.render(React.createElement(Probe)); });
+    },
     async unmount() { await act(async () => { root.unmount(); }); Object.assign(globalThis, { window: previousWindow }); },
   };
 }
@@ -111,6 +114,63 @@ test("Glossary検索は新しいrevisionのresponseを待つ間に旧結果を�
     });
     assert.deepEqual(view.current.view.searchEntries, [{ term: "New", aliases: [], definition: "new" }]);
     assert.equal(view.current.view.searchTotal, 1);
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "内容不変通知はmatcherとactivation identityを維持し、revision変更・invalid化・scope/Session切替は現在値で再投影とactivationを判定する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#repository-glossary-annotation" }
+// fault = "sequenceや表示通知でmatcherを再compileする、または旧scopeのcallbackで現在の用語を開く"
+// observable = "hookのmatcher/callback identity、range definitionと選択用語"
+// observation_boundary = "component-behavior"
+// scope = "session glossary content ownership and stale activation"
+// lifecycle = "permanent"
+// distinction = "検索revision testとは異なる、会話注釈用の公開matcherとactivationを購読通知とSession切替から検証する"
+// @end-test-value
+test("注釈matcherは内容とownerへ結び付きactivationは現在のscopeを確認する", async () => {
+  let notify!: (next: SessionGlossaryProjection) => void;
+  const api: GlossaryApi = {
+    getSessionGlossaryProjection: async (sessionId) => ({ ...projection("1"), sessionId }),
+    subscribeSessionGlossary: (listener) => { notify = listener; return () => undefined; },
+    searchSessionGlossary: async () => ({ ok: true, revision: "1", entries: [], total: 0, offset: 0, pageSize: 100 }),
+  };
+  const view = setup(api);
+  try {
+    await view.render();
+    const first = view.current.annotationMatcher!;
+    const activate = view.current.actions.onActivateGlossaryEntry;
+    await act(async () => {
+      notify({ ...projection("1"), sequence: 2, checkout: { repositoryName: "Renamed", branch: "feature", pathLabel: "label" } });
+    });
+    assert.equal(view.current.annotationMatcher, first);
+    assert.equal(view.current.actions.onActivateGlossaryEntry, activate);
+    const changed = projection("1");
+    changed.sequence = 3;
+    changed.state = { status: "valid", relativePath: ".withmate/glossary.yaml", revision: "new", entries: [{ term: "New", aliases: ["Old"], definition: "new definition" }] };
+    await act(async () => notify(changed));
+    assert.notEqual(view.current.annotationMatcher, first);
+    assert.equal(view.current.annotationMatcher!.matchText("Old", view.current.annotationMatcher!.createMessageBudget())[0]?.definition, "new definition");
+    await act(async () => activate("Old"));
+    assert.equal(view.current.view.selectedTerm, null);
+    await act(async () => activate("New"));
+    assert.equal(view.current.view.selectedTerm, "New");
+    await act(async () => notify({ ...changed, sequence: 4, state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null } }));
+    assert.equal(view.current.annotationMatcher, undefined);
+    await act(async () => view.current.actions.onBackToList());
+    await act(async () => activate("New"));
+    assert.equal(view.current.view.selectedTerm, null);
+    await act(async () => notify({ ...changed, sequence: 5, scopeRevision: "other-scope" }));
+    await act(async () => activate("New"));
+    assert.equal(view.current.view.selectedTerm, null);
+    await act(async () => view.current.actions.onActivateGlossaryEntry("New"));
+    assert.equal(view.current.view.selectedTerm, "New");
+    const oldScopeActivate = view.current.actions.onActivateGlossaryEntry;
+    await view.render("session-2");
+    await act(async () => oldScopeActivate("Old"));
+    assert.equal(view.current.view.selectedTerm, null);
   } finally {
     await view.unmount();
   }

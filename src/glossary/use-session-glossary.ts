@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import {
@@ -156,20 +156,37 @@ export function useSessionGlossary({
     }
   }, [projection, selectedTerm]);
 
+  const annotationState = projection?.sessionId === selectedSession?.id && projection?.state.status === "valid"
+    ? projection.state : undefined;
+  const annotationScope = projection?.sessionId === selectedSession?.id ? projection?.scopeRevision : undefined;
   const annotationMatcher = useMemo(
-    () => projection?.state.status === "valid"
-      ? createGlossaryAnnotationMatcher(projection.state.entries, projection.state.revision)
+    () => annotationState
+      ? createGlossaryAnnotationMatcher(annotationState.entries, annotationState.revision)
       : undefined,
-    [projection],
+    [annotationState?.revision, annotationScope, selectedSession?.id],
   );
 
+  const activationRef = useRef({ projection, selectedSession, onActivatePane });
+  useLayoutEffect(() => {
+    activationRef.current = { projection, selectedSession, onActivatePane };
+  }, [projection, selectedSession, onActivatePane]);
+  useLayoutEffect(() => () => {
+    activationRef.current = { projection: null, selectedSession: null, onActivatePane: () => undefined };
+  }, []);
   const onActivateGlossaryEntry = useCallback((canonicalTerm: string) => {
-    if (projection?.state.status !== "valid" || !projection.state.entries.some((entry) => entry.term === canonicalTerm)) {
+    const current = activationRef.current;
+    if (
+      current.selectedSession?.id !== selectedSession?.id
+      || current.projection?.sessionId !== selectedSession?.id
+      || current.projection?.scopeRevision !== annotationScope
+      || current.projection?.state.status !== "valid"
+      || !current.projection.state.entries.some((entry) => entry.term === canonicalTerm)
+    ) {
       return;
     }
     setSelectedTerm(canonicalTerm);
-    onActivatePane();
-  }, [onActivatePane, projection]);
+    current.onActivatePane();
+  }, [annotationScope, selectedSession?.id]);
 
   const onLoadMoreSearchResults = useCallback(() => {
     const query = searchQuery.trim();
