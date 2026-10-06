@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
 import type { AppLogEntry, AppLogError, AppLogInput } from "../../src-shared/window/app-log-types.js";
@@ -34,6 +34,7 @@ export class AppLogService {
   private currentLogBytes = 0;
   private directoryReady = false;
   private currentLogBytesLoaded = false;
+  private lastRotationTimestamp = 0;
 
   constructor(private readonly options: AppLogServiceOptions) {
     this.fileName = options.fileName ?? DEFAULT_LOG_FILE_NAME;
@@ -118,9 +119,15 @@ export class AppLogService {
       return;
     }
 
-    const rotatedFilePath = path.join(this.logsPath, `${this.fileName}.${Date.now()}`);
+    let timestamp = Math.max(Date.now(), this.lastRotationTimestamp + 1);
+    let rotatedFilePath = path.join(this.logsPath, `${this.fileName}.${timestamp}`);
+    while (existsSync(rotatedFilePath)) {
+      timestamp += 1;
+      rotatedFilePath = path.join(this.logsPath, `${this.fileName}.${timestamp}`);
+    }
     try {
       renameSync(this.logFilePath, rotatedFilePath);
+      this.lastRotationTimestamp = timestamp;
       this.currentLogBytes = 0;
       this.pruneOldLogs();
     } catch {
@@ -136,11 +143,12 @@ export class AppLogService {
         return {
           filePath,
           mtimeMs: statSync(filePath).mtimeMs,
+          rotationTimestamp: Number(fileName.slice(this.fileName.length + 1)) || 0,
         };
       })
-      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+      .sort((a, b) => b.mtimeMs - a.mtimeMs || b.rotationTimestamp - a.rotationTimestamp);
 
-    for (const file of files.slice(this.maxFiles)) {
+    for (const file of files.slice(this.maxFiles - 1)) {
       rmSync(file.filePath, { force: true });
     }
   }

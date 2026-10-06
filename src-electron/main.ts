@@ -196,6 +196,7 @@ import { discoverSessionSkills } from "./skills/skill-discovery.js";
 import { discoverSessionCustomAgents } from "./skills/custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./windows/window-defaults.js";
 import { AppLogService } from "./app/app-log-service.js";
+import { StorageOperationLogService } from "./app/storage-operation-log-service.js";
 import type { AppBootStatus } from "../src-shared/window/app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "../src-shared/window/app-database-diagnostics-state.js";
 import type {
@@ -290,6 +291,7 @@ const appLogService = new AppLogService({
     isPackaged: app.isPackaged,
   },
 });
+const storageOperationLogService = new StorageOperationLogService(writeAppLog);
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const bundledModelCatalogPath = devServerUrl
   ? path.resolve(currentDir, "../../public/model-catalog.json")
@@ -589,12 +591,9 @@ function writeAppLog(input: Parameters<AppLogService["write"]>[0]): void {
 }
 
 function logStorageOperationDiagnostic(event: StorageOperationDiagnostic): void {
-  writeAppLog({
-    level: "info",
-    kind: "storage.operation",
-    process: "main",
-    message: `${event.operation}: ${event.stage}`,
-    data: { ...event, generationId: event.generationId ?? mainStoreContext.storageWorker?.client.generationId },
+  storageOperationLogService.record({
+    ...event,
+    generationId: event.generationId ?? mainStoreContext.storageWorker?.client.generationId,
   });
 }
 
@@ -606,6 +605,7 @@ const stopEventLoopDelayMonitoring = startEventLoopDelayMonitoring((report) => w
   data: report,
 }));
 app.once("will-quit", stopEventLoopDelayMonitoring);
+app.once("will-quit", () => storageOperationLogService.dispose());
 
 async function getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics> {
   if (!mainStoreContext.appDatabaseDiagnostics) {
