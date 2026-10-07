@@ -1031,14 +1031,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
       const methods = events.map(event => event.method);
       const completion = this.projection.call<(CodexProjectionEvent | null)[]>(projectionId, { type: "events", events })
         .then(async (results) => {
-          for (const [index, result] of results.entries()) {
-            if (!result || !sessionInput || !args.onProgress) continue;
+          // Invoke in Worker response order without waiting for earlier consumer completion.
+          await Promise.all(results.map(async (result, index) => {
+            if (!result || !sessionInput || !args.onProgress) return;
             if (result.audit) {
               await args.onProgress({ ...result.audit.state, inputAvailable: active?.inputAvailable ?? false }, result.audit.changes);
               if (methods[index] === "error" && !state.turnCompleted && !signal?.aborted) publishControl({ errorMessage: result.audit.state.errorMessage });
             }
             scheduleLive();
-          }
+          }));
         }).catch(failProjection).finally(() => { pendingEvents.delete(completion); });
       pendingEvents.add(completion);
     };

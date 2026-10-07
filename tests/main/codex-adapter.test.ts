@@ -435,6 +435,72 @@ it("live consumerが遅くてもAudit・承認・terminalと取消を独立さ�
     } finally { releaseLive(); controller.abort(); await operation.catch(() => undefined); }
   }
 }));
+// @test-value v2
+// kind = "contract"
+// claim = "非同期Audit consumerへ全通知をFIFOで渡し、実完了と失敗を追跡しながら承認とterminal入力閉鎖を独立させる"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner / Streaming Policy; src-electron/providers/provider-runtime.ts: RunSessionTurnProgressHandler" }
+// fault = "先行Audit callbackの待機中に後batchが先行通知を追い越す、実完了前に成功する、または承認とterminalをconsumer待ちにする"
+// observable = "consumerが受け取る本文列、gate解除前の承認応答とinputAvailable、gate解除後の成功または非cancel partial failure"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter async Audit delivery across batches"
+// lifecycle = "permanent"
+// impact = "新しい本文の後に古い状態を渡して保存・観測を巻き戻すことと実consumer失敗の成功扱いを防ぐ"
+// distinction = "既存slow live testはAudit consumerを停止しない;通信なしtransportと実Workerで70deltaを配送して非同期順序を確認する"
+// @end-test-value
+it("非同期Audit consumerへの通知順序と実完了をbatch間でも保持する", { timeout: 10_000 }, async () => workspace(async (directory) => {
+  for (const failConsumer of [false, true]) {
+    const count = 70;
+    const transport = new FakeTransport();
+    let releaseAudit!: () => void;
+    let rejectAudit!: (error: Error) => void;
+    const auditGate = new Promise<void>((resolve, reject) => { releaseAudit = resolve; rejectAudit = reject; });
+    let sawLastAudit!: () => void;
+    const lastAudit = new Promise<void>(resolve => { sawLastAudit = resolve; });
+    let sawApproval!: () => void;
+    const approved = new Promise<void>(resolve => { sawApproval = resolve; });
+    let sawClosedInput!: () => void;
+    const closedInput = new Promise<void>(resolve => { sawClosedInput = resolve; });
+    transport.events = [
+      notification("item/started", { item: message("answer", "") }),
+      ...Array.from({ length: count }, () => notification("item/agentMessage/delta", { itemId: "answer", delta: "x" })),
+      { kind: "serverRequest", id: 1, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", turnId: "turn-1", command: "run" },
+        respond: async result => { assert.deepEqual(result, { decision: "accept" }); sawApproval(); }, reject: async () => { throw new Error("Approval was rejected"); } },
+    ];
+    const received: string[] = [];
+    let settled = false;
+    const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
+    const input = { ...createCodexRunSessionTurnInput(directory), onApprovalRequest: () => "approve" as const };
+    const operation = adapter.runSessionTurn(input, async (state, changes) => {
+      if (changes.delivery !== "audit") { if (!state.inputAvailable) sawClosedInput(); return; }
+      if (!state.assistantText) return;
+      received.push(state.assistantText);
+      if (state.assistantText.length === count) sawLastAudit();
+      if (received.length === 1) await auditGate;
+    });
+    void operation.then(() => { settled = true; }, () => { settled = true; });
+    try {
+      await Promise.all([lastAudit, approved]);
+      transport.push(completed());
+      await closedInput;
+      assert.deepEqual(received, Array.from({ length: count }, (_, index) => "x".repeat(index + 1)));
+      assert.equal(settled, false);
+      if (failConsumer) {
+        rejectAudit(new Error("audit consumer failed"));
+        await assert.rejects(operation, error => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.equal(error.canceled, false);
+          assert.match(error.message, /audit consumer failed/);
+          assert.equal(error.partialResult.assistantText, "x".repeat(count));
+          return true;
+        });
+      } else {
+        releaseAudit();
+        assert.equal((await operation).assistantText, "x".repeat(count));
+      }
+      assert.equal(transport.closed, true);
+    } finally { releaseAudit(); transport.push(completed()); await operation.catch(() => undefined); }
+  }
+}));
 async function workspace<T>(run: (directory: string) => Promise<T>): Promise<T> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-native-"));
   try { return await run(directory); } finally { await rm(directory, { recursive: true, force: true }); }
