@@ -398,6 +398,8 @@ const mainWindowRuntime = new MainWindowRuntime({
   userDataPath: fixedUserDataPath,
   getSession,
   readSession: (sessionId) => requireSessionStorage().getSession(sessionId),
+  getLiveSessionRunOwnerSessionId: (sessionId) => auxiliaryLiveRunParents.get(sessionId)
+    ?? (mainWindowRuntime.getSessionWindowBridge().getWindow(sessionId) ? sessionId : null),
   getSettingsCatalog: () => requireSettingsCatalogService(),
   isSessionRunInFlight,
   getTerminalCloseConfirmationCount: (window) => terminalService?.countRequiringCloseConfirmation(window) ?? 0,
@@ -992,6 +994,8 @@ async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean,
 }
 
 const auxiliaryRunParents = new Map<string, string>();
+// Unlike admission reservations, live delivery ownership survives cancellation grace.
+const auxiliaryLiveRunParents = new Map<string, string>();
 let databaseMaintenanceRequested = false;
 function requireActivePersistentStoreOwnerForFactory(ownerName: string): PersistentStoreBundle {
   return capturePersistentStoreOwner(
@@ -1453,6 +1457,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     throw new Error("The Auxiliary Session is already running.");
                   }
                   auxiliaryRunParents.set(auxiliarySessionId, initial.parentSessionId);
+                  auxiliaryLiveRunParents.set(auxiliarySessionId, initial.parentSessionId);
                   try {
                     if (request.submitSource === "composer") {
                       if (!request.auxiliaryDraftIncarnation || request.auxiliaryDraftDurableRevision === undefined) {
@@ -2292,7 +2297,12 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       admission: { runSessionAdmissionExclusive: (sessionId, operation, signal) => runSessionTurnAdmission(sessionId, true, operation, signal) },
       auxiliary: {
         getRuntimeSession: (sessionId) => requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId),
-        getSession: (sessionId) => requireAuxiliarySessionService().getAuxiliarySession(sessionId),
+        getSession: async (sessionId) => {
+          const auxiliary = await requireAuxiliarySessionService().getAuxiliarySession(sessionId);
+          assertPersistentStoreOwnerIsActive(owner, "Auxiliary live delivery owner");
+          if (auxiliary) auxiliaryLiveRunParents.set(sessionId, auxiliary.parentSessionId);
+          return auxiliary;
+        },
         persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
         upsertRuntimeSession: async (session, options) => {
           const auxiliaryService = requireAuxiliarySessionService();
@@ -2643,6 +2653,7 @@ async function closePersistentStores(): Promise<void> {
   auditLogService = null;
   auxiliarySessionService = null;
   auxiliarySessionRuntimeService = null;
+  auxiliaryLiveRunParents.clear();
   sessionRuntimeService = null;
   settingsCatalogService = null;
   sessionObservabilityService = null;
@@ -2668,6 +2679,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   }
 
   mainStoreContext.setActivePersistentStoreOwner(null);
+  auxiliaryLiveRunParents.clear();
   const memoryRuntimeToStop = memoryV6RuntimeApi;
   memoryV6RuntimeApi = null;
   mainStoreContext.setMemoryRuntimeStatus("stopped");

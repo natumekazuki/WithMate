@@ -13,6 +13,7 @@ import { normalizeSessionWindowRestoreIds } from "../../src-shared/window/sessio
 import { normalizeSessionSummaryInvalidation } from "../../src-shared/session/session-summary-invalidation.js";
 import * as channels from "../../src-shared/ipc/withmate-ipc-channels.js";
 import type { IpcRendererLike } from "./ipc.js";
+import type { LiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
 import { subscribe } from "./ipc.js";
 
 type ModelCatalogChangedPayload = Awaited<
@@ -21,6 +22,11 @@ type ModelCatalogChangedPayload = Awaited<
 type LiveSessionRunPayload = {
   sessionId: string;
   state: Awaited<ReturnType<WithMateWindowApi["getLiveSessionRun"]>>;
+};
+
+type LiveSessionRunStatusPayload = {
+  sessionId: string;
+  status: LiveSessionRunStatus | null;
 };
 type ProviderQuotaTelemetryPayload = {
   providerId: string;
@@ -124,6 +130,14 @@ export function createSubscriptionApi(
         channels.WITHMATE_LIVE_SESSION_RUN_EVENT,
         (payload: LiveSessionRunPayload) =>
           listener(payload.sessionId, payload.state ?? null),
+      );
+    },
+    subscribeLiveSessionRunStatus(listener) {
+      return subscribe(
+        ipcRenderer,
+        channels.WITHMATE_LIVE_SESSION_RUN_STATUS_EVENT,
+        (payload: LiveSessionRunStatusPayload) =>
+          listener(payload.sessionId, payload.status ?? null),
       );
     },
     subscribeAuxiliarySessionSelection(listener) {

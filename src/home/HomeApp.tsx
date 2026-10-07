@@ -824,8 +824,8 @@ export default function HomeApp() {
     });
 
     const cancellationStates = new Map<string, "requested" | "terminating" | undefined>();
-    const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRun((sessionId, state) => {
-      const cancellationState = state?.cancellationState;
+    const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRunStatus((sessionId, status) => {
+      const cancellationState = status?.cancellationState;
       if (cancellationStates.has(sessionId) && cancellationStates.get(sessionId) === cancellationState) return;
       cancellationStates.set(sessionId, cancellationState);
       // Notifications invalidate snapshots; only fresh Main queries supply the display state.

@@ -111,7 +111,7 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
     listOpenAuxiliarySessionSummaries: async () => [],
-    subscribeLiveSessionRun: () => () => {},
+    subscribeLiveSessionRunStatus: () => () => {},
     createSession: async (input) => {
       requests.push(input);
       return buildNewSession({
@@ -413,7 +413,7 @@ test("Homeのmate status read中も既存Sessionを開ける", async () => {
     listOpenSessionWindowIds: async () => [],
     subscribeOpenSessionWindowIds: () => () => {},
     listOpenAuxiliarySessionSummaries: async () => [],
-    subscribeLiveSessionRun: () => () => {},
+    subscribeLiveSessionRunStatus: () => () => {},
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
     openSession: async (id) => { opened.push(id); },

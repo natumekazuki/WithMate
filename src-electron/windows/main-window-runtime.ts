@@ -28,6 +28,7 @@ export type MainWindowRuntimeDeps = {
   userDataPath: string;
   getSession(sessionId: string): Session | null;
   readSession(sessionId: string): Awaitable<Session | null>;
+  getLiveSessionRunOwnerSessionId(sessionId: string): string | null;
   getSettingsCatalog(): SettingsCatalogPort;
   isSessionRunInFlight(sessionId: string): boolean;
   getTerminalCloseConfirmationCount?(window: BrowserWindow): number;
@@ -59,6 +60,11 @@ export class MainWindowRuntime {
       getHomeWindows: () => this.auxWindowService.listHomeWindows(),
       getPrimaryHomeWindow: () => this.auxWindowService.getHomeWindow(),
       getSessionWindows: () => this.sessionWindowBridge.listWindows(),
+      getLiveSessionRunStatusWindows: () => this.auxWindowService.listLiveSessionRunStatusWindows(),
+      getLiveSessionRunWindow: (sessionId) => {
+        const ownerSessionId = deps.getLiveSessionRunOwnerSessionId(sessionId);
+        return ownerSessionId ? this.sessionWindowBridge.getWindow(ownerSessionId) : null;
+      },
       canSendToWindow: (window) => !window.webContents.isDestroyed() && !window.webContents.isCrashed(),
       onSendFailed: deps.onWindowBroadcastFailed,
     });

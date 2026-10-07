@@ -178,6 +178,7 @@ export const WITHMATE_MODEL_CATALOG_CHANGED_EVENT = "withmate:model-catalog-chan
 export const WITHMATE_APP_SETTINGS_CHANGED_EVENT = "withmate:app-settings-changed";
 export const WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT = "withmate:prompt-templates-changed";
 export const WITHMATE_LIVE_SESSION_RUN_EVENT = "withmate:live-session-run";
+export const WITHMATE_LIVE_SESSION_RUN_STATUS_EVENT = "withmate:live-session-run-status";
 export const WITHMATE_AUXILIARY_SESSION_SELECTION_EVENT = "withmate:auxiliary-session-selection";
 export const WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT = "withmate:provider-quota-telemetry";
 export const WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT = "withmate:session-context-telemetry";
