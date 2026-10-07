@@ -2569,7 +2569,7 @@ describe("SessionRuntimeService", () => {
   // kind = "invariant"
   // claim = "terminal commitを先に保存しても受付済みprogressのinterimとoperationを全終端結果で保存する"
   // oracle = { type = "contract", ref = "Session runtime audit lifecycle contract" }
-  // fault = "terminal後のaccepted progressをphase guardで拒否しinterimやoperationを失う、またはterminal通知をdrain待ちにする"
+  // fault = "terminal後のaccepted progressをphase guardで拒否しinterimやoperationを失う"
   // observable = "実SQLiteのterminal phase・interim本文・operationと、保存待ち中のruntime返却結果"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService audit terminalization"

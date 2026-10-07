@@ -12,15 +12,15 @@ import {
 describe("audit payload limits", () => {
   // @test-value v2
   // kind = "invariant"
-  // claim = "incremental raw collectorは多数itemを受けても順序・個別marker・最終omitted countを維持し、保持済みpayloadを再走査しない"
+  // claim = "incremental raw collectorの最終JSONは総予算内でitem順序・個別marker・omitted countを維持し、元payloadを再読取りしない"
   // oracle = { type = "contract", ref = "docs/design/audit-log.md#表示とデータ保護" }
-  // fault = "予算超過itemを保持し続ける、最終markerで押し出すitemを数えない、または最終生成で元payloadを再読む"
+  // fault = "最終JSONが総予算を超える、最終markerで押し出すitemを数えない、または最終生成で元payloadを再読む"
   // observable = "collectorのJSON長・item順序・truncation marker・omittedItemsとpayload getter呼出回数"
   // observation_boundary = "component-behavior"
   // scope = "incremental diagnostic raw retention"
   // lifecycle = "permanent"
-  // impact = "長いturnでrawの保持が増え続け、省略数が不正になり終了処理も重くなる"
-  // distinction = "既存の単一巨大item testと型検査はaggregate budgetと追加後の再走査を検出しない。固定入力のみで継続コストは小さい"
+  // impact = "診断rawの出力肥大化、省略数の誤表示、最終生成時の元payload再読取りを防ぐ。内部保持量は直接観測しない"
+  // distinction = "単一巨大item testと型検査では確認できない複数itemの出力総予算・順序・省略数と元payloadの再読取りを固定入力で検証する"
   // @end-test-value
   it("incremental rawはpayloadを再走査せず順序と省略数を維持する", () => {
     const collector = new BoundedAuditRawItems(2048);
@@ -53,17 +53,17 @@ describe("audit payload limits", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "raw traceはappend中も既存512Ki JSON予算内に収まり、超過件数を最終JSONに明示する"
+  // claim = "多数itemをappendしたraw traceの最終JSONは既存512Ki予算内に収まり、先頭payloadと超過件数を維持する"
   // oracle = { type = "contract", ref = "docs/design/audit-log.md: commandの監査用本文とstable raw traceの保持予算" }
-  // fault = "item単体だけを制限し、turn全体のraw traceを上限なく保持する"
-  // observable = "append後の保持traceのJSON長と最終JSONのtruncation marker・omittedItems・先頭payload"
+  // fault = "item単体だけを制限して最終JSONの総予算を超える、または打切り件数や先頭payloadを誤って出力する"
+  // observable = "最終JSONの長さ、truncation marker・omittedItems・先頭payload"
   // observation_boundary = "component-behavior"
   // scope = "audit-raw-trace-owner"
   // lifecycle = "permanent"
-  // impact = "長いturnのMain heap増加とterminal時の全文trace cloneを抑え、監査の打切りを利用者へ残す"
-  // distinction = "既存の単一item・最終serializer試験ではappend ownerの総保持量を検出しない"
+  // impact = "既定予算での診断raw出力を有限にし、監査の打切り件数を利用者へ残す。Main heapやappend中の保持量は直接観測しない"
+  // distinction = "小さい任意予算や単一itemのserializer試験とは別に、incremental collectorの既定512Ki出力予算と多数itemの省略件数を固定入力で検証する"
   // @end-test-value
-  it("raw traceのappend ownerを総予算で制限し打切り件数を保存する", () => {
+  it("多数raw itemの最終JSONを既定総予算に収め打切り件数を保存する", () => {
     const trace = new BoundedAuditRawItems();
     const eventCount = 128;
     const payload = "x".repeat(64 * 1024);
