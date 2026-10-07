@@ -39,53 +39,64 @@ it("変更配送とsecret集合変更の再projectionを分離する", () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "event-emitter progressは64件まで受付し、超過を明示失敗にしてdrain後に容量を解放する"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
-// fault = "未完了callbackを64件超えて受け付けるか、完了後も容量を返却しない"
-// observable = "callback実行件数、超過のrejectとfailure通知、drain後の次callback"
+// claim = "集中するprogressを件数だけで拒否せず全callbackの実完了を返す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "未完了callback件数を理由に必要な更新を拒否するかhandlerより先に完了する"
+// observable = "callback実行件数、gate前後の完了件数とfailure通知"
 // observation_boundary = "component-behavior"
-// scope = "ProviderProgressDelivery capacity accounting"
+// scope = "ProviderProgressDelivery burst completion"
 // lifecycle = "permanent"
-// impact = "SDKが同期burstを送った際の無制限保持と誤った過負荷判定を防ぐ"
-// distinction = "adapter cleanup testは上限到達時の停止を確認するが容量解放の会計までは確認しない"
+// impact = "SDKの正常burstで進捗を失いturnが中断することを防ぐ"
+// distinction = "単一callbackと型検査では未完了burstと実完了の対応を観測できない;通信なしの小さい固定burstで確認する"
 // @end-test-value
-it("event-emitter callback容量は有界でdrain後に解放される", async () => {
+it("event-emitter burstは全callbackの実完了を返す", async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   let calls = 0;
   const failures: unknown[] = [];
   const delivery = new ProviderProgressDelivery(() => { calls += 1; return gate; }, (error) => failures.push(error));
-  const admitted = Array.from({ length: 64 }, () => delivery.deliver(state, noChanges));
+  let completed = 0;
+  const admitted = Array.from({ length: 100 }, () => delivery.deliver(state, noChanges).then(() => { completed++; }));
+  for (const operation of admitted) void operation.catch(() => undefined);
   try {
-    await assert.rejects(delivery.deliver(state, noChanges), /capacity exceeded/);
-    assert.equal(calls, 64);
-    assert.equal(failures.length, 1);
+    await Promise.resolve();
+    assert.equal(calls, 100);
+    assert.equal(completed, 0);
+    assert.equal(failures.length, 0);
   } finally { release(); }
   await Promise.all(admitted);
   await delivery.deliver(state, noChanges);
-  assert.equal(calls, 65);
+  assert.equal(calls, 101);
+  assert.equal(completed, 100);
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "単一progress payloadも8 MiBの保守的proxy上限を超えればcallbackを開始せず明示拒否する"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
-// fault = "件数だけを制限して巨大な単一payloadを受け付ける"
-// observable = "巨大payloadのreject、failure通知、consumer callback未開始"
+// claim = "大きいprogressもhandlerへ全量配送し、同期throwと非同期rejectは元の失敗として通知する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "payload量だけでhandler前に拒否するか、handlerの失敗を握りつぶす"
+// observable = "consumerが受け取るdetail、deliverのreject、failure通知"
 // observation_boundary = "component-behavior"
-// scope = "ProviderProgressDelivery payload capacity"
+// scope = "ProviderProgressDelivery payload and handler failure"
 // lifecycle = "permanent"
-// impact = "operation detailが一度に増えた際にも未完了callback保持を有限にする"
-// distinction = "64件の小さいpayloadや型検査では単一巨大payloadの容量検査を代替できない"
+// impact = "必要なツール結果を欠落させず保存などの実失敗を成功にしない"
+// distinction = "小さいburstでは大きいdetailと同期/非同期handler失敗を検査できない;固定文字列と直接注入で確認する"
 // @end-test-value
-it("単一巨大progressもcallback開始前に拒否する", async () => {
-  let calls = 0;
+it("大きいprogressを配送しhandlerの実失敗を通知する", async () => {
+  const detail = "x".repeat(4 * 1024 * 1024);
+  let received: string | undefined;
   const failures: unknown[] = [];
-  const delivery = new ProviderProgressDelivery(() => { calls += 1; }, (error) => failures.push(error));
-  await assert.rejects(delivery.deliver(state, {
+  const delivery = new ProviderProgressDelivery((_state, changes) => { received = changes.steps.upserts[0].details; }, (error) => failures.push(error));
+  await delivery.deliver(state, {
     ...noChanges,
-    steps: { upserts: [{ id: "giant", type: "command", summary: "command", status: "in_progress", details: "x".repeat(4 * 1024 * 1024) }], removes: [] },
-  }), /capacity exceeded/);
-  assert.equal(calls, 0);
-  assert.equal(failures.length, 1);
+    steps: { upserts: [{ id: "giant", type: "command", summary: "command", status: "in_progress", details: detail }], removes: [] },
+  });
+  assert.equal(received, detail);
+  assert.equal(failures.length, 0);
+  for (const synchronous of [false, true]) {
+    const error = new Error("handler failed");
+    const failing = new ProviderProgressDelivery(() => { if (synchronous) throw error; return Promise.reject(error); }, failure => failures.push(failure));
+    await assert.rejects(failing.deliver(state, noChanges), failure => failure === error);
+    assert.equal(failures.at(-1), error);
+  }
 });

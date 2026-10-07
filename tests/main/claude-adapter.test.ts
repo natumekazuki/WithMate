@@ -71,36 +71,27 @@ function result(sessionId: string, overrides: Record<string, unknown> = {}): SDK
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Claudeの同期容量拒否は非cancel失敗とpartial本文を返し、元rejectionを未処理診断へ漏らさない"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md; docs/design/app-log-base.md" }
-// fault = "signalRaceがalready-aborted分岐で引数Promiseの拒否を観測しない"
-// observable = "ProviderTurnErrorのcanceled・partial本文、callback件数、process unhandledRejection event件数"
+// claim = "Claudeの長い本文はprogressへ全量配送して成功結果にも保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "必要な本文をprogress容量だけで拒否するか最終結果を切り捨てる"
+// observable = "callbackの本文とrunSessionTurnの成功結果本文"
 // observation_boundary = "public-boundary"
-// scope = "Claude pre-handler capacity rejection"
+// scope = "Claude large valid progress"
 // lifecycle = "permanent"
-// impact = "捕捉済みの容量失敗をMainのfatal未処理診断として二重報告してしまう"
-// distinction = "既存callback拒否testではcallback実行前の同期abortとalready-aborted raceへ到達しない"
+// impact = "正常な長文turnがアプリの人工的な容量判定で中断しない"
+// distinction = "共有delivery単体ではSDK messageから最終本文までの配線を確認できない;固定4 Mi文字入力を通信なしで確認する"
 // @end-test-value
-it("Claudeの同期容量拒否は元rejectionを観測し非cancel partial failureを保つ", async (context) => {
+it("Claudeの長い本文をprogressと成功結果に保持する", async () => {
   const body = "x".repeat(4 * 1024 * 1024);
-  const unhandled: unknown[] = [];
-  const observeUnhandled = (error: unknown) => { unhandled.push(error); };
-  process.on("unhandledRejection", observeUnhandled);
-  context.after(() => process.removeListener("unhandledRejection", observeUnhandled));
-  let callbacks = 0;
+  const received: string[] = [];
   const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
     yield sdkMessage({ type: "assistant", uuid: "capacity", parent_tool_use_id: null, message: { content: [{ type: "text", text: body }] } });
+    yield result("large", { result: body });
   }) });
-  await assert.rejects(adapter.runSessionTurn(input(), () => { callbacks += 1; }), (error: unknown) => {
-    assert.ok(error instanceof ProviderTurnError);
-    assert.equal(error.canceled, false);
-    assert.equal(error.partialResult.assistantText, body);
-    assert.match(error.message, /Provider progress persistence capacity exceeded/);
-    return true;
-  });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(callbacks, 0);
-  assert.deepEqual(unhandled, []);
+  const completed = await adapter.runSessionTurn(input(), state => { received.push(state.assistantText); });
+  assert.equal(completed.assistantText, body);
+  assert.ok(received.length > 0);
+  assert.ok(received.every(text => text === body));
 });
 
 function fakeQuery(
@@ -487,18 +478,18 @@ it("keeps the canceled provider promise pending until child exit", async () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Claude内部容量停止は非cancel partial failureを保持し、child実exitまでcleanup completionまたはprovider Promiseを未終了に保つ"
+// claim = "Claude内部progress停止は非cancel partial failureを保持し、child実exitまでcleanup completionまたはprovider Promiseを未終了に保つ"
 // oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md; src-electron/providers/provider-runtime.ts: RunSessionTurnInput.onCleanupPending" }
 // fault = "入力signal非abortの内部停止でSDK close/AbortErrorを実exitと誤認し、cleanup通知も実終了待ちも省く"
 // observable = "close/AbortError後とexit後のprovider Promiseおよび通知cleanup completionのsettled状態、canceled、partial本文、consumer callback件数"
 // observation_boundary = "public-boundary"
-// scope = "Claude pre-handler overload child lifecycle"
+// scope = "Claude progress failure child lifecycle"
 // lifecycle = "permanent"
 // impact = "生存中の旧childと同じSession/workspaceへの再送を許し副作用競合を起こす"
-// distinction = "既存user cancel exit testでは入力signal非abortの容量拒否とcleanup通知経路を通らない"
+// distinction = "既存user cancel exit testでは入力signal非abortのprogress失敗とcleanup通知経路を通らない"
 // @end-test-value
-it("Claude内部容量停止はfailed返却とchild実終了guardを両立する", async (context) => {
-  const body = "x".repeat(4 * 1024 * 1024);
+it("Claude内部progress停止はfailed返却とchild実終了guardを両立する", async (context) => {
+  const body = "retained";
   for (const notifyCleanup of [false, true]) {
     const inputController = new AbortController();
     const child = Object.assign(new EventEmitter(), { pid: 123, exitCode: null, stdin: {}, stdout: {}, killed: false, kill: () => true });
@@ -524,13 +515,13 @@ it("Claude内部容量停止はfailed返却とchild実終了guardを両立する
       void completion.then(() => { cleanupSettled = true; });
     };
     const adapter = new ClaudeAdapter({ query, spawnProcess: (() => child) as unknown as typeof spawn });
-    const running = adapter.runSessionTurn(request, () => { callbacks += 1; }).catch((error: unknown) => { settled = true; return error; });
+    const running = adapter.runSessionTurn(request, () => { callbacks += 1; throw new Error("progress handler failed"); }).catch((error: unknown) => { settled = true; return error; });
     await new Promise<void>((resolve) => setImmediate(resolve));
     child.emit("error", Object.assign(new Error("aborted"), { name: "AbortError" }));
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(closeCalled, true);
     assert.equal(inputController.signal.aborted, false);
-    assert.equal(callbacks, 0);
+    assert.equal(callbacks, 1);
     assert.equal(nextCount, 1);
     assert.equal(settled, notifyCleanup);
     if (notifyCleanup) {
@@ -546,7 +537,7 @@ it("Claude内部容量停止はfailed返却とchild実終了guardを両立する
     const failure: unknown = await running;
     assert.ok(failure instanceof ProviderTurnError);
     assert.equal(failure.canceled, false);
-    assert.match(failure.message, /Provider progress persistence capacity exceeded/);
+    assert.match(failure.message, /progress handler failed/);
     assert.equal(failure.partialResult.assistantText, body);
     if (notifyCleanup) assert.equal(cleanupSettled, true);
   }

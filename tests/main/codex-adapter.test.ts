@@ -5,6 +5,8 @@ import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { Worker } from "node:worker_threads";
+import type { CodexProjectionRequest } from "../../src-electron/providers/codex/codex-projection-protocol.js";
 import { _setWalkDirectoryStatOverrideForTesting, captureWorkspaceSnapshotPaths, createWorkspaceSnapshotIndex, refreshWorkspaceSnapshotIndex } from "../../src-electron/platform/snapshot-ignore.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -1121,18 +1123,32 @@ setInterval(() => {}, 1000);
 
 // @test-value v2
 // kind = "contract"
-// claim = "実stdioでturn開始ACKより先に小deltaがburstしても全本文・ツール結果・承認とnative completedを処理する"
+// claim = "実stdioのACK前burstは全本文・ツール結果・承認を保持し、別thread通知を破棄してWorker配送をbatch化する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
-// fault = "開始ACK待ちの通知を件数だけで失敗させる、deltaを欠落・並べ替える、または承認応答をサーバへ返さない"
-// observable = "runSessionTurnの全assistantText、command raw出力、承認callback回数とtransportの正常close"
+// fault = "正常burstを拒否する、本文/承認を失う、別thread通知をWorkerへ転送する、またはevent毎にWorkerへ往復する"
+// observable = "全assistantTextとtool出力、承認回数、transport close、実Worker境界の配送回数とevent数/scope"
 // observation_boundary = "public-boundary"
 // scope = "CodexAdapter with real stdio transport and projection Worker"
 // lifecycle = "permanent"
 // impact = "開始直後や再開時のburstが有効なturnを中断し本文とツール結果を失うことを防ぐ"
 // distinction = "FakeTransportの既存burst testは受信キューを通らない;短いローカルNode processでACK前滞留と全量projectionを確認する"
 // @end-test-value
-it("実stdioの小delta burstを全量処理して承認後にturnを完了する", { timeout: 10_000 }, async () => workspace(async (directory) => {
+it("実stdioの小delta burstを全量処理して承認後にturnを完了する", { timeout: 10_000 }, async (context) => workspace(async (directory) => {
   const count = 5000;
+  let dispatches = 0;
+  let forwarded = 0;
+  let foreign = false;
+  const postMessage = Worker.prototype.postMessage;
+  context.mock.method(Worker.prototype, "postMessage", function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
+    const command = (args[0] as CodexProjectionRequest).command;
+    const events = command.type === "events" ? command.events : command.type === "event" ? [command.event] : [];
+    if (events.length) {
+      dispatches++;
+      forwarded += events.length;
+      foreign ||= events.some(event => (event.params as { threadId?: string }).threadId === "other-thread");
+    }
+    return postMessage.apply(this, args);
+  });
   const fixture = String.raw`
 import { createInterface } from 'node:readline';
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
@@ -1142,7 +1158,10 @@ createInterface({ input: process.stdin }).on('line', line => {
   else if (request.method === 'thread/start') send({ id: request.id, result: { thread: { id: 'thread-1' } } });
   else if (request.method === 'turn/start') {
     const frames = [{ method: 'item/started', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', id: 'answer', text: '', phase: null } } }];
-    for (let index = 0; index < ${count}; index++) frames.push({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'answer', delta: index + ':日本語\n' } });
+    for (let index = 0; index < ${count}; index++) {
+      frames.push({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'answer', delta: index + ':日本語\n' } });
+      frames.push({ method: 'item/agentMessage/delta', params: { threadId: 'other-thread', turnId: 'turn-1', itemId: 'answer', delta: 'unused' } });
+    }
     frames.push({ id: 77, method: 'item/commandExecution/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-1', command: 'echo tool-result' } });
     frames.push({ id: request.id, result: { turn: { id: 'turn-1' } } });
     process.stdout.write(frames.map(frame => JSON.stringify(frame) + '\n').join(''));
@@ -1166,6 +1185,9 @@ setInterval(() => {}, 1000);
   const raw = JSON.parse(result.rawItemsJson) as Array<{ type: string; data?: { aggregatedOutput?: unknown } }>;
   assert.equal(raw.find(item => item.type === "commandExecution")?.data?.aggregatedOutput, "tool-result");
   assert.equal(transport.state, "closed");
+  assert.equal(forwarded, count + 3);
+  assert.equal(foreign, false);
+  assert.ok(dispatches < count / 8, `Expected batched Worker delivery, got ${dispatches} dispatches`);
 }));
 
 // @test-value v2

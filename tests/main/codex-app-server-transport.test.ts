@@ -234,7 +234,7 @@ function cleanupFaultTransport(fault: "terminate" | "exit" | "release" | "none")
   child.stdout = stdout;
   child.stderr = stderr;
   const calls = { terminate: 0, release: 0 };
-  const sut = new CodexAppServerTransport({ executable: "owned-fixture", clientInfo: { name: "test", version: "1" }, closeTimeoutMs: 10 }, {
+  const sut = new CodexAppServerTransport({ executable: "owned-fixture", clientInfo: { name: "test", version: "1" }, closeTimeoutMs: fault === "none" ? 1000 : 10 }, {
     spawnOwnedProcess: () => ({ child: child as ChildProcessWithoutNullStreams, ready: Promise.resolve(),
       terminate() {
         calls.terminate++;
@@ -253,17 +253,17 @@ function cleanupFaultTransport(fault: "terminate" | "exit" | "release" | "none")
 
 // @test-value v2
 // kind = "contract"
-// claim = "容量内の小さい通知burstを順序どおり保持し、後続の承認・質問・terminalとRPC応答を失わない"
+// claim = "小さい通知burstを順序どおり保持し、後続の承認・質問・terminalとRPC応答を失わない"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
-// fault = "容量内のburstを件数だけで拒否する、通知を間引く、またはRPC応答をevent consumer待ちにする"
+// fault = "正常burstを件数だけで拒否する、通知を間引く、またはRPC応答をevent consumer待ちにする"
 // observable = "未消費burst後のRPC結果、全deltaの順序、server requestのIDと一回応答、terminal通知"
 // observation_boundary = "public-boundary"
 // scope = "Codex stdio transport receive queue"
 // lifecycle = "permanent"
 // impact = "通常turnの本文・承認・質問・完了が欠落して中断することを防ぐ"
-// distinction = "既存相関testは小さいburstの容量内滞留を確認しない;短いin-memory streamで全件と制御イベントを確認する"
+// distinction = "既存相関testは小さいburstの滞留を確認しない;短いin-memory streamで全件と制御イベントを確認する"
 // @end-test-value
-test("capacity-bounded notification bursts preserve order, control events and RPC responses", async () => {
+test("notification bursts preserve order, control events and RPC responses", async () => {
   const { sut, stdout } = cleanupFaultTransport("none");
   const count = 8192;
   const params = (index: number) => ({ itemId: "answer", delta: `${index}:${"日本語".repeat(12)}` });
@@ -296,42 +296,33 @@ test("capacity-bounded notification bursts preserve order, control events and RP
 
 // @test-value v2
 // kind = "invariant"
-// claim = "受信キューは32 MiBのUTF-8容量境界まで受理し、消費分を再利用し、超過は明示失敗とする"
+// claim = "大きい正常frameと合計32 MiBを超える通知をFIFOで処理し、後続RPCとterminalも受け取れる"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
-// fault = "容量上限を無効化する、UTF-16文字数で過少計上する、消費した容量を返さない、または境界を超えて保持する"
-// observable = "容量境界でのRPC応答、消費後の追加受理、超過時RPCのprotocol failureと全受理済みevent"
+// fault = "正常な大きいframeや滞留を容量だけで拒否する、または消費時に通知を欠落させる"
+// observable = "RPC結果、全通知の本文と到着順、dequeue後の新通知、terminal"
 // observation_boundary = "public-boundary"
-// scope = "Codex stdio transport UTF-8 queue capacity"
+// scope = "Codex stdio transport large valid data"
 // lifecycle = "permanent"
-// impact = "大量stdoutで保持量が無制限に増えることと有効な消費後のturn中断を防ぐ"
-// distinction = "型検査や小さいburstではbyte計上とdequeue後の容量返却を観測できない;32個の1 MiB frameだけを使用する"
+// impact = "長いツール結果や集中した出力を人工的な容量超過で失わない"
+// distinction = "小delta burstでは単一frameと合計容量の境界を通らない;実プロトコルで36 MiBの受信本文を使用する"
 // @end-test-value
-test("UTF-8 queue capacity is reclaimed on dequeue and overflow fails explicitly", async () => {
+test("large valid frames drain in order without blocking RPC or terminal", async () => {
   const { sut, stdout } = cleanupFaultTransport("none");
-  const frameBytes = 1024 * 1024;
-  const emptyFrame = JSON.stringify({ method: "item/agentMessage/delta", params: { delta: "" } });
-  const payloadBytes = frameBytes - Buffer.byteLength(emptyFrame);
-  const delta = "日".repeat(Math.floor(payloadBytes / 3)) + "x".repeat(payloadBytes % 3);
+  const delta = "日".repeat(6 * 1024 * 1024);
   const frame = JSON.stringify({ method: "item/agentMessage/delta", params: { delta } });
-  assert.equal(Buffer.byteLength(frame), frameBytes);
   try {
     await sut.start();
-    const response = sut.request("never");
-    for (let index = 0; index < 32; index++) stdout.write(frame + "\n");
-    stdout.write(JSON.stringify({ id: 2, result: "at capacity" }) + "\n");
-    assert.equal(await response, "at capacity");
-    assert.equal((await sut.nextEvent()).byteLength, frameBytes);
-    stdout.write(frame + "\n");
+    const response = sut.request("never", { delta });
+    for (let index = 0; index < 2; index++) stdout.write(frame + "\n");
+    stdout.write(JSON.stringify({ id: 2, result: "ack" }) + "\n");
+    assert.equal(await response, "ack");
+    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "item/agentMessage/delta", params: { delta } });
+    stdout.write(JSON.stringify({ method: "extra", params: { index: 2 } }) + "\n");
+    stdout.write(JSON.stringify({ method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } }) + "\n");
     assert.equal(sut.state, "ready");
-    const failure = assert.rejects(sut.request("never"), (error: unknown) => error instanceof Error
-      && error.message === "Codex stdout protocol failure."
-      && error.cause instanceof Error && error.cause.message === "Codex event queue overflow.");
-    stdout.write(JSON.stringify({ method: "extra" }) + "\n");
-    await failure;
-    for (let index = 0; index < 32; index++) {
-      assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "item/agentMessage/delta", params: { delta } });
-    }
-    await assert.rejects(sut.nextEvent(), /stdout protocol failure/);
+    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "item/agentMessage/delta", params: { delta } });
+    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "extra", params: { index: 2 } });
+    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } });
   } finally { await sut.close(); }
 });
 
