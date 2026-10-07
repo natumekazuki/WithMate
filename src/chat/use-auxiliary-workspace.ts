@@ -400,7 +400,7 @@ export function useAuxiliaryWorkspace(input: {
     if (!api?.subscribeLiveSessionRun) return;
     const subscriptionGeneration = workspaceGenerationRef.current;
     const statusRequests = new Map<string, { pending: boolean }>();
-    const liveStatusKeys = new Map<string, string>();
+    const liveStatusKeys = new Map<string, { key: string }>();
     const terminalLoads = new Map<string, number>();
     const applySession = (id: string, session: AuxiliarySession, terminalRevision: number, terminalEpoch: number, bookmarkRevision: number) => {
       if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
@@ -433,6 +433,7 @@ export function useAuxiliaryWorkspace(input: {
       }
       const request = { pending: false };
       statusRequests.set(id, request);
+      const liveStatusKey = liveStatusKeys.get(id);
       const revision = terminalRevisionRef.current.get(id);
       const epoch = detailMutationEpochRef.current.get(id) ?? 0;
       void api.getAuxiliarySessionStatus(id).then((status) => {
@@ -461,6 +462,9 @@ export function useAuxiliaryWorkspace(input: {
         }
         pruneDetails();
       }).catch((cause) => {
+        // Clear only this observation: a newer A/B/A transition can have the
+        // same semantic key while still owning a queued status refresh.
+        if (liveStatusKeys.get(id) === liveStatusKey) liveStatusKeys.delete(id);
         if (mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
           && revision === terminalRevisionRef.current.get(id)) {
           console.error("Failed to refresh Auxiliary session run state", cause);
@@ -477,8 +481,8 @@ export function useAuxiliaryWorkspace(input: {
       if (state !== null) {
         const summary = summariesRef.current.find((item) => item.id === id)!;
         const key = JSON.stringify([summary.createdAt, state.runState, state.turnId, state.cancellationState, state.inputAvailable]);
-        if (liveStatusKeys.get(id) === key) return;
-        liveStatusKeys.set(id, key);
+        if (liveStatusKeys.get(id)?.key === key) return;
+        liveStatusKeys.set(id, { key });
         refreshStatus(id);
         return;
       }

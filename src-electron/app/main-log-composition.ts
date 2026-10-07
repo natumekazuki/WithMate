@@ -88,6 +88,7 @@ export class MainLogComposition {
       kind: "app.window.created",
       process: "main",
       message: "Window created",
+      windowId: window.id,
     });
     window.on("closed", () =>
       write({
@@ -95,6 +96,7 @@ export class MainLogComposition {
         kind: "app.window.closed",
         process: "main",
         message: "Window closed",
+        windowId: window.id,
       }),
     );
     window.webContents.on("render-process-gone", (_event, details) =>
@@ -103,6 +105,7 @@ export class MainLogComposition {
         kind: "renderer.process-gone",
         process: "main",
         message: `Renderer process gone: ${details.reason}`,
+        windowId: window.id,
         data: {
           reason: details.reason,
           exitCode: details.exitCode,
@@ -116,6 +119,7 @@ export class MainLogComposition {
         kind: "webcontents.unresponsive",
         process: "main",
         message: "Window webContents became unresponsive",
+        windowId: window.id,
       }),
     );
     window.webContents.on("responsive", () =>
@@ -124,6 +128,7 @@ export class MainLogComposition {
         kind: "webcontents.responsive",
         process: "main",
         message: "Window webContents became responsive",
+        windowId: window.id,
       }),
     );
     window.webContents.on(
@@ -134,6 +139,7 @@ export class MainLogComposition {
           kind: "renderer.did-fail-load",
           process: "main",
           message: "Renderer load failed",
+          windowId: window.id,
           data: {
             errorCode,
             isMainFrame,
@@ -149,6 +155,7 @@ export class MainLogComposition {
             kind: "renderer.navigation-started",
             process: "main",
             message: "Renderer main-frame navigation started",
+            windowId: window.id,
             data: { isInPlace },
           });
       },

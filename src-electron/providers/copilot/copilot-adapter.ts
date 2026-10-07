@@ -503,7 +503,7 @@ function applyCopilotTurnEvent(args: {
   }
 
   appendCopilotStableRawItem((item) => {
-    const sanitized = boundAuditRawItem(state.redactor.sanitize(item));
+    const sanitized = boundAuditRawItem(item, undefined, state.redactor.sanitizeText);
     state.providerMetadata.push(...buildCopilotProviderMetadata([sanitized]));
     state.rawItems.append(sanitized);
   }, event, workspacePath, state.toolNamesByCallId);
