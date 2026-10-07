@@ -74,6 +74,10 @@ flowchart LR
 - raw Markdownを再解釈せず、Markdown parse後の通常text nodeをrehype段階で置換する。link、URL、inline code、code block、数式projectionは対象外とする。
 - annotation wrapperは元の表示文字列だけを保持する。tooltipはmessage DOM外へportalし、selection、copy、rendered message findのtextを変えない。
 - matcher、Unicode offset、hard limit、keyboard、tooltip、activationの契約はADR 022と`src/glossary/`以下を正本とする。
+- 候補compileはvalid内容revision・Session・checkout scopeを単位とする。sequenceやcheckout表示だけの通知ではmatcher identityを維持し、activationは現在のscopeとentryを確認する。invalid化・scope切替では旧注釈を使用しない。
+- 注釈projectionはmessageの表示ownerが現在の通常text nodeだけを保持する。同じtextと流入budgetならrangeと消費budgetを再利用し、先行nodeが変わった時は現在の残budgetを適用する。候補0件ではUnicode投影を行わない。matcher・message scopeの切替、表示ownerのunmountで保持を解放し、全履歴cacheや永続cacheを持たない。
+- append-only textでは、実際に分割したASCII空白開始graphemeより前のUnicode offsetを再利用し、そのgrapheme以降を再構築する。空白でNFKCとlowercaseの文脈を切り、最後の結合文字・Greek Final Sigmaを未変更とみなさない。安全な境界がないtextや置換は全量投影する。一致探索、URL除外とnode順の共有hard limitは変更しない。
+- Markdown要素は本文とparse設定が同じ間は再利用する。注釈focus・tooltip・copy feedbackやactivation callbackの変更だけではMarkdown parseとUnicode全文処理を起動しない。light/fullでtext nodeの形が変われば現在のparse結果を使う。
 
 ## Safety
 

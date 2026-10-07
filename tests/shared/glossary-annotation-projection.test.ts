@@ -12,6 +12,106 @@ function entry(term: string, definition = `${term} definition`, aliases: string[
 }
 
 describe("GLOSSARY-ANNOTATION-PROJECTION", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "message投影の再利用でも先行node変更後の共有budgetとrangeは新規投影と一致する"
+  // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#repository-glossary-annotation" }
+  // fault = "cached nodeが以前の残budgetを使い、注釈上限または本文文字数上限を超える"
+  // observable = "nodeごとの注釈rangeと最終message budget"
+  // observation_boundary = "consumer"
+  // scope = "glossary message projection budget replay"
+  // lifecycle = "permanent"
+  // distinction = "単発matcher testでは観測しない、node再利用と先行node変更を通したbudgetの整合を小さな固定入力で検証する"
+  // @end-test-value
+  it("再利用したnodeにも現在の共有budgetを適用する", () => {
+    const matcher = createGlossaryAnnotationMatcher([entry("Runtime")], "r1");
+    const owner = matcher.createMessageProjection();
+    for (const first of ["Runtime ".repeat(199), "Runtime ".repeat(198), `${"x ".repeat(49_997)}x`, "x"]) {
+      const budget = owner.begin();
+      const freshBudget = matcher.createMessageBudget();
+      for (const text of [first, "Runtime Runtime"]) {
+        assert.deepEqual(owner.matchText(text, budget), matcher.matchText(text, freshBudget));
+      }
+      owner.finish();
+      assert.deepEqual(budget, freshBudget);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "append末尾投影は結合文字、Greek lowercase、空白、NFKC展開と本文置換でも全文投影のUTF-16 rangeを維持する"
+  // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#repository-glossary-annotation" }
+  // fault = "末尾graphemeまたはcasing contextを確定済みとして再利用し、古いrangeや不正offsetを返す"
+  // observable = "各snapshotの注釈rangeとbudget、結合文字の明示UTF-16 range"
+  // observation_boundary = "consumer"
+  // scope = "glossary append Unicode projection"
+  // lifecycle = "permanent"
+  // distinction = "既存の単発Unicode testに対して、同一ownerの追記・短縮・置換を通すことで再利用特有の誤りを検出する"
+  // @end-test-value
+  it("streaming末尾のUnicode contextを全文投影と同値に保つ", () => {
+    const matcher = createGlossaryAnnotationMatcher([
+      entry("Runtime"), entry("é"), entry("ΟΣ"), entry("ΟΣΑ"), entry("ff"), entry("İ"),
+    ], "r1");
+    const owner = matcher.createMessageProjection();
+    const snapshots = [
+      "  Runtime e", "  Runtime e\u0301", "  Runtime e\u0301 ΟΣ", "  Runtime e\u0301 ΟΣΑ",
+      "Runtime ΟΣ'", "Runtime ΟΣ'Α", "Runtime \u0301\u0302e", "Runtime \u0301\u0302e\u0301",
+      "Runtime \r", "Runtime \r\nﬀ", "Runtime \r\nﬀ  İ", "Runtime \r\nﬀ  İ\u0301",
+      "Runtime \u0600 e", "Runtime \u0600 e\u0301", "Runtime 👩", "Runtime 👩‍💻",
+      "Runtime e\u0301", "Runtime", "é Runtime", "Runtime https://host.test/", "Runtime https://host.test/Runtime",
+    ];
+    for (const text of snapshots) {
+      const budget = owner.begin();
+      const freshBudget = matcher.createMessageBudget();
+      const actual = owner.matchText(text, budget);
+      assert.deepEqual(actual, matcher.matchText(text, freshBudget), text);
+      owner.finish();
+      assert.deepEqual(budget, freshBudget, text);
+      if (text === "Runtime e\u0301") {
+        assert.deepEqual(actual.map(({ start, end }) => [start, end]), [[0, 7], [8, 10]]);
+      }
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "空候補と同一nodeは分割せず、空白境界付き追記は変更末尾だけを分割して注釈を更新する"
+  // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#repository-glossary-annotation" }
+  // fault = "内容不変または追記済みprefixを毎回Segmenterへ渡し、長文streamingの同期負荷を増幅する"
+  // observable = "Segmenterへ渡した入力長と公開された注釈range"
+  // observation_boundary = "consumer"
+  // scope = "glossary finite owner work reuse"
+  // lifecycle = "permanent"
+  // impact = "長文会話のrenderer入力・scrollを妨げるCPU処理の増幅を防ぐ"
+  // distinction = "型と通常の一致testでは処理量を観測できないため、固定replayの分割入力量だけを低コストで監視する"
+  // @end-test-value
+  it("空候補と同一内容では分割せず追記の分割量を末尾へ限定する", () => {
+    const segment = Intl.Segmenter.prototype.segment;
+    const inputs: number[] = [];
+    Intl.Segmenter.prototype.segment = function(value: string) {
+      inputs.push(value.length);
+      return segment.call(this, value);
+    };
+    try {
+      const empty = createGlossaryAnnotationMatcher([], "empty");
+      assert.deepEqual(empty.matchText("Runtime ".repeat(100), empty.createMessageBudget()), []);
+      assert.deepEqual(inputs, []);
+      const matcher = createGlossaryAnnotationMatcher([entry("Runtime")], "r1");
+      const owner = matcher.createMessageProjection();
+      const first = "Runtime と ".repeat(100);
+      for (const text of [first, first, `${first}Runtime`]) {
+        const budget = owner.begin();
+        assert.ok(owner.matchText(text, budget).length > 0);
+        owner.finish();
+      }
+      assert.ok(inputs.length <= 2);
+      assert.equal(inputs[0], first.length);
+      assert.ok(inputs.reduce((total, length) => total + length, 0) <= first.length + 10, JSON.stringify(inputs));
+    } finally {
+      Intl.Segmenter.prototype.segment = segment;
+    }
+  });
+
   it("重なる候補はYAML順より最長一致を優先し、aliasをcanonical termへ解決する", () => {
     const matcher = createGlossaryAnnotationMatcher([
       entry("Runtime"),

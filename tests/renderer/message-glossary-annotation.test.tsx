@@ -54,6 +54,58 @@ const matcher = createGlossaryAnnotationMatcher([{
   definition: "<strong>plain definition</strong>",
 }], "revision-1");
 
+// @test-value v2
+// kind = "contract"
+// claim = "focusとactivation callbackの更新だけでは本文投影を再実行せず、内容revisionとscope変更では注釈を更新する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#repository-glossary-annotation" }
+// fault = "操作stateがUnicode全文処理を起動する、または再利用がrevisionやscopeの変更を隠す"
+// observable = "Segmenterの呼出数、DOM本文とtooltipのdefinition、現在callbackのactivation"
+// observation_boundary = "component-behavior"
+// scope = "message annotation rendering and interaction ownership"
+// lifecycle = "permanent"
+// impact = "長文を読みながら注釈を操作するたびにrendererを再処理で占有することを防ぐ"
+// distinction = "matcher単体では観測できないReactのparse/注釈接続を実DOMのfocusとprop更新から確認する"
+// @end-test-value
+test("注釈操作では全文投影せずrevisionとscope変更を現在の表示へ反映する", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true, url: "https://example.test/" });
+  const restore = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const segment = Intl.Segmenter.prototype.segment;
+  let segmentCount = 0;
+  Intl.Segmenter.prototype.segment = function(value: string) { segmentCount++; return segment.call(this, value); };
+  const text = "Runtime と ".repeat(100).trimEnd();
+  const activated: string[] = [];
+  const render = async (activeMatcher = matcher, scopeKey = "m1", suffix = "old") => {
+    await act(async () => root.render(React.createElement(MessageRichText, {
+      text, forceFullRender: true, glossaryAnnotationMatcher: activeMatcher, glossaryAnnotationScopeKey: scopeKey,
+      onActivateGlossaryEntry: (term) => activated.push(`${term}:${suffix}`),
+    })));
+  };
+  try {
+    await render();
+    const count = segmentCount;
+    const annotation = dom.window.document.querySelector<HTMLElement>(".glossary-annotation")!;
+    await act(async () => annotation.focus());
+    await render(matcher, "m1", "current");
+    await act(async () => annotation.click());
+    assert.equal(segmentCount, count);
+    assert.deepEqual(activated, ["Session Runtime:current"]);
+    assert.equal(dom.window.document.querySelector(".rich-text")?.textContent, text);
+    const revised = createGlossaryAnnotationMatcher([{ term: "Session Runtime", aliases: ["Runtime"], definition: "updated" }], "r2");
+    await render(revised);
+    assert.ok(segmentCount > count);
+    assert.equal(dom.window.document.querySelector("[role='tooltip']")?.textContent, "Session Runtimeupdated");
+    const beforeScope = segmentCount;
+    await render(revised, "m2");
+    assert.ok(segmentCount > beforeScope);
+  } finally {
+    await act(async () => root.unmount());
+    Intl.Segmenter.prototype.segment = segment;
+    restore();
+    dom.window.close();
+  }
+});
+
 test("MessageRichTextはMarkdown parse後の通常textだけを注釈し本文とfind文字列を維持する", () => {
   const markdown = [
     "# Session Runtime",

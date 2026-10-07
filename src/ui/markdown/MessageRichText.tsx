@@ -228,6 +228,20 @@ function MessageMarkdownPreview({
           ],
     [isFullRender],
   );
+  const markdownContent = useMemo(() => (
+    <ReactMarkdown
+      components={markdownComponents}
+      rehypePlugins={rehypePlugins}
+      urlTransform={markdownUrlTransform}
+      remarkPlugins={remarkPlugins}
+      remarkRehypeOptions={{
+        clobberPrefix: footnotePrefix,
+        handlers: { yaml: renderMarkdownFrontmatter },
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  ), [footnotePrefix, rehypePlugins, remarkPlugins, text]);
 
   useEffect(() => {
     if (!shouldDefer) {
@@ -260,18 +274,7 @@ function MessageMarkdownPreview({
         controller={glossaryAnnotations.controller}
       >
         <MarkdownRenderContext.Provider value={markdownRenderContext}>
-          <ReactMarkdown
-            components={markdownComponents}
-            rehypePlugins={rehypePlugins}
-            urlTransform={markdownUrlTransform}
-            remarkPlugins={remarkPlugins}
-            remarkRehypeOptions={{
-              clobberPrefix: footnotePrefix,
-              handlers: { yaml: renderMarkdownFrontmatter },
-            }}
-          >
-            {text}
-          </ReactMarkdown>
+          {markdownContent}
         </MarkdownRenderContext.Provider>
       </MessageGlossaryAnnotationProvider>
       {copyFeedback ? (
