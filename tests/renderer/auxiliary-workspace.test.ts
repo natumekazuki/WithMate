@@ -1335,6 +1335,114 @@ test("非選択live statusは有限に集約し、terminal本文は再選択時�
 
 // @test-value v2
 // kind = "contract"
+// claim = "非選択Auxiliaryのstatus取得が一時失敗しても、同じrunの次のlive通知で一覧と保持detailの実行状態を再取得する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#メッセージの投影とwindow内live受信" }
+// fault = "失敗したstatus取得の重複排除keyを残し、同じrunのlive通知による再取得を拒む"
+// observable = "statusとdetailの取得回数、一覧itemのisProcessing、summaryと保持bindingのrunState、selectedId"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-live-status-recovery"
+// lifecycle = "permanent"
+// impact = "一時的な読取失敗後も非選択会話の実行中表示を復旧し、本文deltaごとの履歴取得は増やさない"
+// distinction = "既存の成功時の重複排除testでは検出できないreject後の同一run再取得を、小さいfixtureの実hookで検証する"
+// @end-test-value
+test("非選択Auxiliaryのstatus一時失敗は同じrunの次のlive通知で復旧する", async (t) => {
+  t.mock.method(console, "error", () => undefined);
+  const hidden = session("hidden", "2026-01-01");
+  const selected = session("selected", "2026-01-02");
+  const running = { id: hidden.id, parentSessionId: hidden.parentSessionId, createdAt: hidden.createdAt, runState: "running" as const };
+  let statusReads = 0;
+  let detailReads = 0;
+  let listener: ((id: string, state: object | null) => void) | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => [hidden, selected],
+    getAuxiliarySession: async (id) => { detailReads += 1; return id === hidden.id ? hidden : selected; },
+    getAuxiliarySessionStatus: async () => {
+      statusReads += 1;
+      if (statusReads === 1) throw new Error("transient status read failure");
+      return running;
+    },
+    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+  }, "parent-1", hidden.id);
+  const processing = () => view.current.buildConcurrentChats({
+    mainSession: null,
+    auxiliarySession: view.current.selectedSession,
+    messageColumn: createStaticTextConversationMessageColumnProps({
+      sessionId: "parent-1", characterId: "character", characterName: "Mate", characterIconPath: "",
+      messages: [], messageListRef: React.createRef<HTMLDivElement>(), isRunning: false,
+    }),
+  }).auxiliaryItems.find((item) => item.id === hidden.id)?.isProcessing;
+  try {
+    await view.render();
+    await act(async () => { view.current.selectSession(selected.id); });
+    const binding = view.current.getBinding(hidden.id);
+    const loadedDetails = detailReads;
+    await act(async () => { listener?.(hidden.id, { turnId: "same-turn", assistantText: "first" }); });
+    assert.equal(statusReads, 1);
+    assert.equal(processing(), false);
+    await act(async () => {
+      for (let index = 0; index < 100; index += 1) {
+        listener?.(hidden.id, { turnId: "same-turn", assistantText: `delta ${index}` });
+      }
+    });
+    assert.equal(statusReads, 2);
+    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "running");
+    assert.equal(processing(), true);
+    assert.equal(binding.sessionRef.current?.runState, "running");
+    assert.equal(view.current.selectedId, selected.id);
+    assert.equal(detailReads, loadedDetails);
+    await act(async () => { listener?.(hidden.id, { turnId: "same-turn", assistantText: "after recovery" }); });
+    assert.equal(statusReads, 2);
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "古いrunのstatus取得失敗は、待機中の新runの取得と成功後のlive重複排除を無効化しない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#メッセージの投影とwindow内live受信" }
+// fault = "古い取得のcatchで新runの重複排除keyも消し、新runの成功後に同じ状態を再取得する"
+// observable = "deferred取得の開始回数、新run反映後のsummary.runState、同じ新runの後続liveでの取得回数"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-live-status-recovery-race"
+// lifecycle = "permanent"
+// impact = "応答順逆転時も新しい実行状態を反映し、本文deltaごとの不要な再取得を防ぐ"
+// distinction = "同じrunの逐次再試行testでは生じない、進行中の旧取得rejectと次runのpending取得の競合をdeferredで検証する"
+// @end-test-value
+test("古いstatus取得の失敗は新runの取得keyを消さない", async (t) => {
+  t.mock.method(console, "error", () => undefined);
+  const hidden = session("hidden", "2026-01-01");
+  const selected = session("selected", "2026-01-02");
+  const running = { id: hidden.id, parentSessionId: hidden.parentSessionId, createdAt: hidden.createdAt, runState: "running" as const };
+  let rejectOldStatus!: (cause: Error) => void;
+  const oldStatus = new Promise<typeof running>((_resolve, reject) => { rejectOldStatus = reject; });
+  const newStatus = deferred<typeof running>();
+  let statusReads = 0;
+  let listener: ((id: string, state: object | null) => void) | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => [hidden, selected],
+    getAuxiliarySession: async (id) => id === hidden.id ? hidden : selected,
+    getAuxiliarySessionStatus: async () => { statusReads += 1; return statusReads === 1 ? oldStatus : newStatus.promise; },
+    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+  });
+  try {
+    await view.render();
+    await act(async () => { listener?.(hidden.id, { turnId: "old-turn" }); });
+    await act(async () => { listener?.(hidden.id, { turnId: "new-turn" }); });
+    assert.equal(statusReads, 1);
+    await act(async () => { rejectOldStatus(new Error("old status read failure")); });
+    assert.equal(statusReads, 2);
+    await act(async () => { newStatus.resolve(running); });
+    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "running");
+    await act(async () => { listener?.(hidden.id, { turnId: "new-turn", assistantText: "new delta" }); });
+    assert.equal(statusReads, 2);
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "workspace hookに渡された使用時刻は実際の順位変更だけを一覧へ通知し、同順位の更新・no-opは参照を保ち、本文preview変更は反映する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
 // fault = "同順位の入力や省略保存で一覧を作り直す、または必要な順位・preview更新まで止める"
