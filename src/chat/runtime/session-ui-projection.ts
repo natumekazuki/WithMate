@@ -1,4 +1,5 @@
-import type { AuditLogOperation, AuditLogPhase, LiveBackgroundTask, LiveRunStep, ProviderQuotaSnapshot, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../../src-shared/session/runtime-state.js";
+import type { MessageOperation } from "../../../src-shared/session/runtime-state.js";
+import type { LiveBackgroundTask, LiveRunStep, ProviderQuotaSnapshot, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../../src-shared/session/runtime-state.js";
 import type { SessionGlossaryProjection } from "../../../src-shared/glossary/glossary-contract.js";
 import { liveRunStepStatusLabel } from "../../ui/ui-utils.js";
 
@@ -16,6 +17,9 @@ export type LatestCommandView = {
   status: string;
   summary: string;
   details?: string;
+  exitCode?: number;
+  errorMessage?: string;
+  truncated?: boolean;
   sourceLabel: string;
   riskLabels: string[];
 };
@@ -128,9 +132,9 @@ export function findLatestLiveCommandStep(steps: readonly LiveRunStep[]): LiveRu
   return null;
 }
 
-export function findLatestAuditCommandOperation(
-  operations: readonly AuditLogOperation[],
-): AuditLogOperation | null {
+export function findLatestCommandOperation(
+  operations: readonly MessageOperation[],
+): MessageOperation | null {
   for (let index = operations.length - 1; index >= 0; index -= 1) {
     const operation = operations[index];
     if (operation?.type === "command_execution") {
@@ -143,62 +147,38 @@ export function findLatestAuditCommandOperation(
 
 export function buildLatestCommandView({
   latestLiveCommandStep,
-  latestAuditCommandOperation,
-  latestTerminalAuditPhase,
+  latestCommandOperation,
 }: {
   latestLiveCommandStep: LiveRunStep | null;
-  latestAuditCommandOperation: AuditLogOperation | null;
-  latestTerminalAuditPhase: AuditLogPhase | null | undefined;
+  latestCommandOperation: MessageOperation | null;
 }): LatestCommandView | null {
-  if (latestLiveCommandStep) {
-    return {
-      status: latestLiveCommandStep.status,
-      summary: latestLiveCommandStep.summary,
-      details: previewCommandDetails(latestLiveCommandStep.details),
-      sourceLabel: "live",
-      riskLabels: buildCommandRiskLabels(latestLiveCommandStep.summary),
-    };
-  }
-
-  if (latestAuditCommandOperation) {
-    return {
-      status: latestTerminalAuditPhase === "failed"
-        ? "failed"
-        : latestTerminalAuditPhase === "canceled"
-          ? "canceled"
-          : "completed",
-      summary: latestAuditCommandOperation.summary,
-      details: previewCommandDetails(latestAuditCommandOperation.details),
-      sourceLabel: "latest run",
-      riskLabels: buildCommandRiskLabels(latestAuditCommandOperation.summary),
-    };
-  }
-
-  return null;
+  const operation = latestLiveCommandStep ?? latestCommandOperation;
+  if (!operation) return null;
+  return {
+    status: operation.status ?? "unknown",
+    summary: operation.summary,
+    details: previewCommandDetails(operation.details),
+    ...(operation.exitCode !== undefined ? { exitCode: operation.exitCode } : {}),
+    ...(operation.error ? { errorMessage: operation.error.message } : {}),
+    ...(operation.truncated !== undefined ? { truncated: operation.truncated } : {}),
+    sourceLabel: latestLiveCommandStep ? "live" : "latest run",
+    riskLabels: buildCommandRiskLabels(operation.summary),
+  };
 }
 
 export function buildLatestCommandProjection({
   liveSteps,
-  auditOperations,
-  latestTerminalAuditPhase,
-  auditFallbackEnabled = true,
+  operations,
 }: {
   liveSteps: readonly LiveRunStep[];
-  auditOperations: readonly AuditLogOperation[];
-  latestTerminalAuditPhase: AuditLogPhase | null | undefined;
-  auditFallbackEnabled?: boolean;
+  operations: readonly MessageOperation[];
 }): LatestCommandProjection {
   const latestLiveCommandStep = findLatestLiveCommandStep(liveSteps);
-  const latestAuditCommandOperation = auditFallbackEnabled
-    ? findLatestAuditCommandOperation(auditOperations)
-    : null;
-
   return {
     latestLiveCommandStep,
     latestCommandView: buildLatestCommandView({
       latestLiveCommandStep,
-      latestAuditCommandOperation,
-      latestTerminalAuditPhase: auditFallbackEnabled ? latestTerminalAuditPhase : null,
+      latestCommandOperation: findLatestCommandOperation(operations),
     }),
   };
 }

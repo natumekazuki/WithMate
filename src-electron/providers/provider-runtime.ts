@@ -1,5 +1,5 @@
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import type { AuditLogicalPrompt, AuditLogOperation, AuditLogProviderMetadata, AuditLogUsage, AuditTransportPayload, ComposerAttachment, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { ProviderLogicalPrompt, ProviderDiagnosticMetadata, ProviderUsage, ComposerAttachment, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { MessageArtifact, Session } from "../../src-shared/session/session-state.js";
 import type { ProjectMemoryEntry, SessionMemory, SessionMemoryDelta } from "../../src-shared/memory/session-memory-state.js";
@@ -15,7 +15,7 @@ import type { SessionExecutionOptions } from "../../src-shared/session/session-e
 export type ProviderPromptComposition = {
   systemBodyText: string;
   inputBodyText: string;
-  logicalPrompt: AuditLogicalPrompt;
+  logicalPrompt: ProviderLogicalPrompt;
   imagePaths: string[];
   additionalDirectories: string[];
 };
@@ -50,8 +50,6 @@ export function resolveRunWorkspacePath(input: Pick<RunSessionTurnInput, "sessio
 }
 
 export type RunSessionTurnProgressChanges = {
-  /** Omitted means both. Audit-only empty text/null usage preserve observed values; reasoning is not persisted. */
-  delivery?: "audit" | "live";
   steps: { upserts: LiveSessionRunState["steps"]; removes: string[] };
   backgroundTasks: { upserts: LiveSessionRunState["backgroundTasks"]; removes: string[] };
 };
@@ -98,7 +96,7 @@ export type ExtractSessionMemoryResult = {
   rawText: string;
   delta: SessionMemoryDelta | null;
   rawItemsJson: string;
-  usage: AuditLogUsage | null;
+  usage: ProviderUsage | null;
   providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
 
@@ -127,7 +125,7 @@ export type RunBackgroundStructuredPromptResult<TOutput = unknown> = {
   parsedJson?: unknown;
   structuredOutput?: unknown;
   rawItemsJson: string;
-  usage: AuditLogUsage | null;
+  usage: ProviderUsage | null;
   providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
 
@@ -136,12 +134,8 @@ export type RunSessionTurnResult = {
   assistantText: string;
   lastNonEmptyAssistantMessageText?: string;
   artifact?: MessageArtifact;
-  logicalPrompt: AuditLogicalPrompt;
-  transportPayload: AuditTransportPayload | null;
-  operations: AuditLogOperation[];
-  rawItemsJson: string;
-  providerMetadata?: AuditLogProviderMetadata[];
-  usage: AuditLogUsage | null;
+  providerMetadata?: ProviderDiagnosticMetadata[];
+  usage: ProviderUsage | null;
   providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
 

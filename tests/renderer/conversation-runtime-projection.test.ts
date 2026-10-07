@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Message } from "../../src-shared/session/session-state.js";
-import type { AuditLogSummary } from "../../src-shared/session/runtime-state.js";
+import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import { createOptimisticRunningSessionState } from "../../src-shared/session/session-run-transition.js";
 import { mergeMessageBookmarkProjection } from "../../src/chat/runtime/session-submit-coordinator.js";
 import { resolveRetryBannerSource } from "../../src/chat/retry-state.js";
@@ -67,10 +67,10 @@ test("bookmark convergence follows global positions across shifted pages", () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "再送元のterminal監査を全履歴indexで特定し、最新userが表示page外でも再送本文を保持する"
+// claim = "再送元の最小terminal turnを全履歴indexで特定し、最新userが表示page外でも再送本文を保持する"
 // oracle = { type = "contract", ref = "docs/features/long-session-performance.md" }
 // fault = "page内indexをuserMessageSeqと比較する、またはpage外userを失う"
-// observable = "再送bannerのkind、lastRequestText、対応terminalAuditLog"
+// observable = "再送bannerのkind、lastRequestText、対応terminalTurn"
 // observation_boundary = "consumer"
 // scope = "paged-conversation-retry"
 // lifecycle = "permanent"
@@ -80,13 +80,13 @@ test("bookmark convergence follows global positions across shifted pages", () =>
 test("retry resolves a global user sequence inside and outside the loaded page", () => {
   const user: Message = { role: "user", text: "retry this", historyIndex: 420 };
   const assistant: Message = { role: "assistant", text: "canceled", historyIndex: 421 };
-  const canceled: AuditLogSummary = {
+  const canceled: SessionTurnRecord = {
     id: 1, sessionId: "main", createdAt: "now", phase: "canceled", provider: "codex", model: "model",
     reasoningEffort: "medium", approvalMode: "never", userMessageSeq: 420, assistantMessageSeq: 421,
-    threadId: "thread", assistantTextPreview: "canceled", operations: [], usage: null, errorMessage: "", detailAvailable: true,
+    threadId: "thread", errorMessage: "",
   };
-  const expected = { kind: "canceled", lastRequestText: "retry this", terminalAuditLog: canceled };
-  assert.deepEqual(resolveRetryBannerSource({ sessionId: "main", messages: [user, assistant], auditLogs: [canceled], runState: "idle" }), expected);
-  assert.deepEqual(resolveRetryBannerSource({ sessionId: "main", messages: [assistant], latestUserMessage: user, auditLogs: [canceled], runState: "idle" }), expected);
-  assert.equal(resolveRetryBannerSource({ sessionId: "main", messages: [user, assistant], auditLogs: [{ ...canceled, userMessageSeq: 0 }], runState: "idle" }), null);
+  const expected = { kind: "canceled", lastRequestText: "retry this", terminalTurn: canceled };
+  assert.deepEqual(resolveRetryBannerSource({ sessionId: "main", messages: [user, assistant], latestTurn: canceled, runState: "idle" }), expected);
+  assert.deepEqual(resolveRetryBannerSource({ sessionId: "main", messages: [assistant], latestUserMessage: user, latestTurn: canceled, runState: "idle" }), expected);
+  assert.equal(resolveRetryBannerSource({ sessionId: "main", messages: [user, assistant], latestTurn: { ...canceled, userMessageSeq: 0 }, runState: "idle" }), null);
 });

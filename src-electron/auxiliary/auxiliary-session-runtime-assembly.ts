@@ -41,7 +41,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
   memory: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
   };
-  audit: Pick<SessionRuntimeServiceDeps, "createAuditLog" | "updateAuditLog" | "updateAuditLogProgress">;
+  turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: {
     setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
     getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
@@ -98,9 +98,8 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     isAuxiliarySession: (sessionId) => guarded("Auxiliary session check", () => deps.auxiliary.isAuxiliarySession(sessionId)),
     getSessionMemory: (session) => createDefaultSessionMemory({ id: session.id, workspacePath: session.workspacePath, threadId: session.threadId, taskTitle: session.taskTitle }),
     resolveProjectMemoryEntriesForPrompt: () => [],
-    createAuditLog: (entry) => guarded("audit create", () => deps.audit.createAuditLog(entry)),
-    updateAuditLog: (id, entry) => guarded("audit update", () => deps.audit.updateAuditLog(id, entry)),
-    updateAuditLogProgress: (id, patch) => guarded("audit progress update", () => deps.audit.updateAuditLogProgress(id, patch)),
+    createSessionTurn: (entry) => guarded("turn create", () => deps.turn.createSessionTurn(entry)),
+    updateSessionTurn: (id, entry) => guarded("turn update", () => deps.turn.updateSessionTurn(id, entry)),
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },
     getLiveSessionRun: (id) => { assertOwner("live session read"); return deps.live.getLiveSessionRun(id); },
     waitForApprovalDecision: deps.interaction.waitForApprovalDecision,

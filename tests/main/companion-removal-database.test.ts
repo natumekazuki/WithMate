@@ -16,6 +16,15 @@ function database(): DatabaseSync {
   ensureV6Schema(db);
   installReleasedLegacyAuxiliarySessionsTable(db);
   db.exec(`
+    CREATE TABLE session_turn_provider_outputs_v6 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      turn_id INTEGER NOT NULL REFERENCES session_turns_v6(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      payload_blob_id TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE (turn_id, seq)
+    );
     CREATE TABLE companion_groups (id TEXT PRIMARY KEY, repo_root TEXT NOT NULL);
     CREATE TABLE companion_sessions (
       id TEXT PRIMARY KEY, group_id TEXT, repo_root TEXT, target_branch TEXT,

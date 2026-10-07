@@ -1,4 +1,5 @@
-import type { ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogOperationDetailFragment, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult } from "../../src-shared/session/runtime-state.js";
+import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
+import type { ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill } from "../../src-shared/session/runtime-state.js";
 import type { MessageArtifact, Session, SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary } from "../../src-shared/session/session-state.js";
 import { cloneHomeSessionSummaries, cloneSessionSummaries, cloneSessions } from "../../src-shared/session/session-state.js";
 import { getProviderAppSettings, resolveProviderSkillRootPath, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -11,20 +12,7 @@ type MainQueryServiceDeps = {
   getSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   getSession(sessionId: string): Awaitable<Session | null>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
-  getAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
-  getAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
-  getAuditLogSummaryPage(sessionId: string, request?: AuditLogSummaryPageRequest | null): Awaitable<AuditLogSummaryPageResult>;
-  getAuditLogDetail(sessionId: string, auditLogId: number): Awaitable<AuditLogDetail | null>;
-  getAuditLogDetailSection(
-    sessionId: string,
-    auditLogId: number,
-    section: AuditLogDetailSection,
-  ): Awaitable<AuditLogDetailFragment | null>;
-  getAuditLogOperationDetail(
-    sessionId: string,
-    auditLogId: number,
-    operationIndex: number,
-  ): Awaitable<AuditLogOperationDetailFragment | null>;
+  getLatestSessionTurn(sessionId: string): Awaitable<SessionTurnRecord | null>;
   getAppSettings(): Awaitable<AppSettings>;
   discoverSessionSkills(workspacePath: string, skillRootPath: string | null): Promise<DiscoveredSkill[]>;
   discoverSessionCustomAgents(workspacePath: string): Promise<DiscoveredCustomAgent[]>;
@@ -65,39 +53,8 @@ export class MainQueryService {
     return (await this.deps.getSessionCharacterUsage()).map((usage) => ({ ...usage }));
   }
 
-  async listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
-    return this.deps.getAuditLogs(sessionId);
-  }
-
-  async listSessionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]> {
-    return this.deps.getAuditLogSummaries(sessionId);
-  }
-
-  async listSessionAuditLogSummaryPage(
-    sessionId: string,
-    request?: AuditLogSummaryPageRequest | null,
-  ): Promise<AuditLogSummaryPageResult> {
-    return this.deps.getAuditLogSummaryPage(sessionId, request);
-  }
-
-  async getSessionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null> {
-    return this.deps.getAuditLogDetail(sessionId, auditLogId);
-  }
-
-  async getSessionAuditLogDetailSection(
-    sessionId: string,
-    auditLogId: number,
-    section: AuditLogDetailSection,
-  ): Promise<AuditLogDetailFragment | null> {
-    return this.deps.getAuditLogDetailSection(sessionId, auditLogId, section);
-  }
-
-  async getSessionAuditLogOperationDetail(
-    sessionId: string,
-    auditLogId: number,
-    operationIndex: number,
-  ): Promise<AuditLogOperationDetailFragment | null> {
-    return this.deps.getAuditLogOperationDetail(sessionId, auditLogId, operationIndex);
+  async getLatestSessionTurn(sessionId: string): Promise<SessionTurnRecord | null> {
+    return this.deps.getLatestSessionTurn(sessionId);
   }
 
   async listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {

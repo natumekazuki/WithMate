@@ -28,7 +28,7 @@ import {
   type ResolvedModelSelection,
 } from "../settings/model-catalog.js";
 import {
-  type AuditLogOperation,
+  type MessageOperation,
   type ChangedFile,
   type DiffRow,
   type RunCheck,
@@ -38,7 +38,7 @@ import { currentTimestampLabel } from "../time-state.js";
 export type MessageArtifact = {
   title: string;
   activitySummary: string[];
-  operationTimeline?: AuditLogOperation[];
+  operationTimeline?: MessageOperation[];
   changedFiles: ChangedFile[];
   runChecks: RunCheck[];
   detailAvailable?: boolean;
@@ -283,12 +283,12 @@ function normalizeChangedFile(value: unknown): ChangedFile | null {
   };
 }
 
-function normalizeAuditLogOperation(value: unknown): AuditLogOperation | null {
+function normalizeMessageOperation(value: unknown): MessageOperation | null {
   if (!value || typeof value !== "object") {
     return null;
   }
 
-  const candidate = value as Partial<AuditLogOperation>;
+  const candidate = value as Partial<MessageOperation>;
   if (typeof candidate.type !== "string" || !candidate.type.trim()) {
     return null;
   }
@@ -297,6 +297,14 @@ function normalizeAuditLogOperation(value: unknown): AuditLogOperation | null {
     type: candidate.type,
     summary: typeof candidate.summary === "string" ? candidate.summary : "",
     details: typeof candidate.details === "string" ? candidate.details : undefined,
+    id: typeof candidate.id === "string" ? candidate.id : undefined,
+    status: typeof candidate.status === "string" ? candidate.status : undefined,
+    exitCode: typeof candidate.exitCode === "number" && Number.isFinite(candidate.exitCode) ? candidate.exitCode : undefined,
+    error: candidate.error && typeof candidate.error.message === "string"
+      ? { message: candidate.error.message, ...(typeof candidate.error.code === "string" ? { code: candidate.error.code } : {}) }
+      : undefined,
+    truncated: typeof candidate.truncated === "boolean" ? candidate.truncated : undefined,
+    detailAvailable: typeof candidate.detailAvailable === "boolean" ? candidate.detailAvailable : undefined,
   };
 }
 
@@ -331,8 +339,8 @@ function normalizeMessageArtifact(value: unknown): MessageArtifact | undefined {
   const candidate = value as Partial<MessageArtifact>;
   const operationTimeline = Array.isArray(candidate.operationTimeline)
     ? candidate.operationTimeline
-        .map((operation) => normalizeAuditLogOperation(operation))
-        .filter((operation): operation is AuditLogOperation => operation !== null)
+        .map((operation) => normalizeMessageOperation(operation))
+        .filter((operation): operation is MessageOperation => operation !== null)
     : undefined;
 
   return {

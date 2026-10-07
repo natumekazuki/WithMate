@@ -224,7 +224,7 @@ describe("Session update-only persistence", () => {
         await assert.rejects(service.updateSession({ ...first, taskTitle: "stale update" }),
           (error: unknown) => error instanceof Error && error.name === "SessionNotFoundError");
         await assert.rejects(service.upsertTerminalSession({ ...first, threadId: "stale-thread" }, {
-          auditLogId: marker.id,
+          turnId: marker.id,
           sessionId: first.id,
           phase: "completed",
           assistantMessageSeq: 0,
@@ -271,7 +271,7 @@ describe("Session update-only persistence", () => {
         `).run(session.id, session.updatedAt, session.updatedAt);
         const turnId = Number((db.prepare("SELECT id FROM session_turns_v6 WHERE session_id = ?").get(session.id) as { id: number }).id);
         const commit = {
-          auditLogId: turnId,
+          turnId,
           sessionId: session.id,
           phase: "completed" as const,
           assistantMessageSeq: 0,

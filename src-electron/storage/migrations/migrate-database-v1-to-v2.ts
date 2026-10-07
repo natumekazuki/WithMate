@@ -20,7 +20,6 @@ export type MigrationDryRunReport = {
   };
   v1Counts: {
     sessions: number;
-    auditLogs: number;
     appSettings: number;
     modelCatalogRevisions: number;
     modelCatalogProviders: number;
@@ -30,9 +29,6 @@ export type MigrationDryRunReport = {
     sessions: number;
     sessionMessages: number;
     sessionMessageArtifacts: number;
-    auditLogs: number;
-    auditLogDetails: number;
-    auditLogOperations: number;
     appSettings: number;
     modelCatalogRevisions: number;
     modelCatalogProviders: number;
@@ -40,7 +36,6 @@ export type MigrationDryRunReport = {
   };
   skipped: {
     streamEntries: number;
-    backgroundAuditLogs: number;
     legacyAppSettings: number;
     sessionMemories: number;
     projectScopes: number;
@@ -48,14 +43,10 @@ export type MigrationDryRunReport = {
     characterScopes: number;
     characterMemoryEntries: number;
     invalidMessages: number;
-    invalidAuditOperations: number;
   };
   estimatedSourceBytes: {
     sessionMessagesJson: number;
     sessionStreamJson: number;
-    auditOperationsJson: number;
-    auditRawItemsJson: number;
-    auditUsageJson: number;
   };
   issues: MigrationIssue[];
 };
@@ -69,7 +60,6 @@ export type MigrationWriteReport = {
   };
   v1Counts: {
     sessions: number;
-    auditLogs: number;
     appSettings: number;
     modelCatalogRevisions: number;
     modelCatalogProviders: number;
@@ -79,9 +69,6 @@ export type MigrationWriteReport = {
     sessions: number;
     sessionMessages: number;
     sessionMessageArtifacts: number;
-    auditLogs: number;
-    auditLogDetails: number;
-    auditLogOperations: number;
     appSettings: number;
     modelCatalogRevisions: number;
     modelCatalogProviders: number;
@@ -89,7 +76,6 @@ export type MigrationWriteReport = {
   };
   skipped: {
     streamEntries: number;
-    backgroundAuditLogs: number;
     legacyAppSettings: number;
     sessionMemories: number;
     projectScopes: number;
@@ -97,7 +83,6 @@ export type MigrationWriteReport = {
     characterScopes: number;
     characterMemoryEntries: number;
     invalidMessages: number;
-    invalidAuditOperations: number;
   };
   issues: MigrationIssue[];
 };
@@ -137,35 +122,6 @@ type SessionPayloadSourceRow = {
   messages_json: string;
   stream_json: string;
 };
-
-type AuditLogSourceRow = {
-  id: number;
-  session_id: string;
-  created_at: string;
-  phase: string;
-  provider: string;
-  model: string;
-  reasoning_effort: string;
-  approval_mode: string;
-  thread_id: string;
-  logical_prompt_json: string;
-  transport_payload_json: string;
-  assistant_text: string;
-  operations_json: string;
-  raw_items_json: string;
-  usage_json: string;
-  error_message: string;
-};
-
-type AuditLogSummarySourceRow = Omit<
-  AuditLogSourceRow,
-  "logical_prompt_json" | "transport_payload_json" | "assistant_text" | "operations_json" | "raw_items_json" | "usage_json"
->;
-
-type AuditLogPayloadSourceRow = Pick<
-  AuditLogSourceRow,
-  "logical_prompt_json" | "transport_payload_json" | "assistant_text" | "operations_json" | "raw_items_json" | "usage_json"
->;
 
 type AppSettingSourceRow = {
   setting_key: string;
@@ -208,8 +164,6 @@ const LEGACY_APP_SETTING_KEYS = new Set([
   "character_reflection_provider_settings_json",
   "character_reflection_trigger_settings_json",
 ]);
-
-const ASSISTANT_TEXT_PREVIEW_MAX_LENGTH = 500;
 
 type SqliteBackupFile = {
   originalPath: string;
@@ -261,41 +215,8 @@ function parseJsonArray(value: string): unknown[] | null {
   }
 }
 
-function parseJsonObject(value: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(value);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 function recordJsonArrayIssue(issues: MigrationIssue[], issue: MigrationIssue): void {
   issues.push(issue);
-}
-
-function parseJsonObjectForDetail(issues: MigrationIssue[], input: {
-  sourceId: string;
-  sourceColumn: string;
-  value: string;
-}): string {
-  if (!input.value) {
-    return "";
-  }
-
-  const parsed = parseJsonObject(input.value);
-  if (parsed === null) {
-    issues.push({
-      sourceTable: "audit_logs",
-      sourceId: input.sourceId,
-      sourceColumn: input.sourceColumn,
-      errorKind: "invalid_json_object",
-      action: "skipped",
-    });
-    return "";
-  }
-
-  return JSON.stringify(parsed);
 }
 
 function isMessageCandidate(value: unknown): value is { role?: unknown; artifact?: unknown; text?: unknown; accent?: unknown } {
@@ -309,10 +230,6 @@ function isValidMessage(value: unknown): value is { role: "user" | "assistant"; 
   return value.role === "user" || value.role === "assistant";
 }
 
-function isAuditOperationCandidate(value: unknown): value is { type?: unknown; summary?: unknown; details?: unknown } {
-  return typeof value === "object" && value !== null;
-}
-
 function hasArtifact(value: unknown): boolean {
   return isMessageCandidate(value) && typeof value.artifact === "object" && value.artifact !== null;
 }
@@ -323,18 +240,6 @@ function asText(value: unknown): string {
 
 function toSqliteBoolean(value: unknown): number {
   return value === true ? 1 : 0;
-}
-
-function buildAssistantTextPreview(value: string): string {
-  return value.length > ASSISTANT_TEXT_PREVIEW_MAX_LENGTH ? value.slice(0, ASSISTANT_TEXT_PREVIEW_MAX_LENGTH) : value;
-}
-
-function isBackgroundAuditLog(phase: string): boolean {
-  return phase.startsWith("background-");
-}
-
-function toNullableInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function sqliteDatabaseFilePaths(dbPath: string): string[] {
@@ -477,7 +382,6 @@ function copyModelCatalogTables(v1Db: DatabaseSync, v2Db: DatabaseSync): {
   };
 }
 
-
 export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunReport {
   if (!existsSync(v1DbPath)) {
     throw new Error(`V1 database not found: ${v1DbPath}`);
@@ -488,9 +392,6 @@ export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunRe
     const issues: MigrationIssue[] = [];
     const sessions = tableExists(v1Db, "sessions")
       ? (v1Db.prepare("SELECT id, messages_json, stream_json FROM sessions ORDER BY id").all() as SessionSourceRow[])
-      : [];
-    const auditLogs = tableExists(v1Db, "audit_logs")
-      ? (v1Db.prepare("SELECT id, phase, operations_json, raw_items_json, usage_json FROM audit_logs ORDER BY id").all() as AuditLogSourceRow[])
       : [];
     const appSettings = tableExists(v1Db, "app_settings")
       ? (v1Db.prepare("SELECT setting_key FROM app_settings ORDER BY setting_key").all() as AppSettingSourceRow[])
@@ -546,57 +447,6 @@ export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunRe
       }
     }
 
-    let plannedAuditLogs = 0;
-    let auditLogOperations = 0;
-    let backgroundAuditLogs = 0;
-    let invalidAuditOperations = 0;
-
-    for (const auditLog of auditLogs) {
-      if (isBackgroundAuditLog(auditLog.phase)) {
-        backgroundAuditLogs += 1;
-        continue;
-      }
-
-      plannedAuditLogs += 1;
-      const operations = parseJsonArray(auditLog.operations_json);
-      if (operations === null) {
-        invalidAuditOperations += 1;
-        recordJsonArrayIssue(issues, {
-          sourceTable: "audit_logs",
-          sourceId: String(auditLog.id),
-          sourceColumn: "operations_json",
-          errorKind: "invalid_json_array",
-          action: "skipped",
-        });
-      } else {
-        auditLogOperations += operations.length;
-      }
-
-      if (parseJsonArray(auditLog.raw_items_json) === null) {
-        recordJsonArrayIssue(issues, {
-          sourceTable: "audit_logs",
-          sourceId: String(auditLog.id),
-          sourceColumn: "raw_items_json",
-          errorKind: "invalid_json_array",
-          action: "skipped",
-        });
-      }
-
-      if (auditLog.usage_json) {
-        try {
-          JSON.parse(auditLog.usage_json);
-        } catch {
-          issues.push({
-            sourceTable: "audit_logs",
-            sourceId: String(auditLog.id),
-            sourceColumn: "usage_json",
-            errorKind: "invalid_json",
-            action: "skipped",
-          });
-        }
-      }
-    }
-
     const legacyAppSettings = appSettings.filter((row) => LEGACY_APP_SETTING_KEYS.has(row.setting_key)).length;
 
     return {
@@ -606,7 +456,6 @@ export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunRe
       },
       v1Counts: {
         sessions: sessions.length,
-        auditLogs: auditLogs.length,
         appSettings: appSettings.length,
         modelCatalogRevisions: countRows(v1Db, "model_catalog_revisions"),
         modelCatalogProviders: countRows(v1Db, "model_catalog_providers"),
@@ -616,9 +465,6 @@ export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunRe
         sessions: sessions.length,
         sessionMessages,
         sessionMessageArtifacts,
-        auditLogs: plannedAuditLogs,
-        auditLogDetails: plannedAuditLogs,
-        auditLogOperations,
         appSettings: appSettings.length - legacyAppSettings,
         modelCatalogRevisions: countRows(v1Db, "model_catalog_revisions"),
         modelCatalogProviders: countRows(v1Db, "model_catalog_providers"),
@@ -626,7 +472,6 @@ export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunRe
       },
       skipped: {
         streamEntries,
-        backgroundAuditLogs,
         legacyAppSettings,
         sessionMemories: countRows(v1Db, "session_memories"),
         projectScopes: countRows(v1Db, "project_scopes"),
@@ -634,14 +479,10 @@ export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunRe
         characterScopes: countRows(v1Db, "character_scopes"),
         characterMemoryEntries: countRows(v1Db, "character_memory_entries"),
         invalidMessages,
-        invalidAuditOperations,
       },
       estimatedSourceBytes: {
         sessionMessagesJson: sessions.reduce((total, row) => total + row.messages_json.length, 0),
         sessionStreamJson: sessions.reduce((total, row) => total + row.stream_json.length, 0),
-        auditOperationsJson: auditLogs.reduce((total, row) => total + row.operations_json.length, 0),
-        auditRawItemsJson: auditLogs.reduce((total, row) => total + row.raw_items_json.length, 0),
-        auditUsageJson: auditLogs.reduce((total, row) => total + row.usage_json.length, 0),
       },
       issues,
     };
@@ -685,12 +526,6 @@ export function createMigrationWriteReport(input: {
         ).all() as SessionHeaderSourceRow[])
       : [];
 
-    const auditLogRows = tableExists(v1Db, "audit_logs")
-      ? (v1Db.prepare(
-          "SELECT id, session_id, created_at, phase, provider, model, reasoning_effort, approval_mode, thread_id, error_message FROM audit_logs ORDER BY id",
-        ).all() as AuditLogSummarySourceRow[])
-      : [];
-
     const appSettings = tableExists(v1Db, "app_settings")
       ? (v1Db.prepare("SELECT setting_key, setting_value, updated_at FROM app_settings ORDER BY setting_key").all() as AppSettingSourceRow[])
       : [];
@@ -698,7 +533,6 @@ export function createMigrationWriteReport(input: {
     const appSettingLegacyCount = appSettings.filter((row) => LEGACY_APP_SETTING_KEYS.has(row.setting_key)).length;
     const v1Counts = {
       sessions: sessionRows.length,
-      auditLogs: auditLogRows.length,
       appSettings: appSettings.length,
       modelCatalogRevisions: countRows(v1Db, "model_catalog_revisions"),
       modelCatalogProviders: countRows(v1Db, "model_catalog_providers"),
@@ -708,30 +542,8 @@ export function createMigrationWriteReport(input: {
     const sessionPayloadStmt = tableExists(v1Db, "sessions")
       ? v1Db.prepare("SELECT messages_json, stream_json FROM sessions WHERE id = ?")
       : null;
-    const auditLogPayloadStmt = tableExists(v1Db, "audit_logs")
-      ? v1Db.prepare(
-          "SELECT logical_prompt_json, transport_payload_json, assistant_text, operations_json, raw_items_json, usage_json FROM audit_logs WHERE id = ?",
-        )
-      : null;
-
-    const auditLogsBySession = new Map<string, AuditLogSummarySourceRow[]>();
-    const nonBackgroundAuditLogs: AuditLogSummarySourceRow[] = [];
     let skippedStreamEntries = 0;
-    let backgroundAuditLogs = 0;
     let invalidMessages = 0;
-    let invalidAuditOperations = 0;
-
-    for (const auditLog of auditLogRows) {
-      if (isBackgroundAuditLog(auditLog.phase)) {
-        backgroundAuditLogs += 1;
-        continue;
-      }
-
-      nonBackgroundAuditLogs.push(auditLog);
-      const list = auditLogsBySession.get(auditLog.session_id) ?? [];
-      list.push(auditLog);
-      auditLogsBySession.set(auditLog.session_id, list);
-    }
 
     for (const session of sessionRows) {
       const sessionPayload = sessionPayloadStmt?.get(session.id) as SessionPayloadSourceRow | undefined;
@@ -758,9 +570,6 @@ export function createMigrationWriteReport(input: {
 
     let sessionMessages = 0;
     let sessionMessageArtifacts = 0;
-    let auditLogsInserted = 0;
-    let auditLogDetailsInserted = 0;
-    let auditLogOperationsInserted = 0;
 
     try {
       v2Db.exec("BEGIN IMMEDIATE");
@@ -771,21 +580,12 @@ export function createMigrationWriteReport(input: {
       }
 
       const sessionStmt = v2Db.prepare(
-        "INSERT INTO sessions (id, task_title, status, updated_at, provider, catalog_revision, workspace_label, workspace_path, branch, session_kind, character_id, character_name, character_icon_path, character_theme_main, character_theme_sub, run_state, approval_mode, codex_sandbox_mode, model, reasoning_effort, custom_agent_name, allowed_additional_directories_json, thread_id, message_count, audit_log_count, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sessions (id, task_title, status, updated_at, provider, catalog_revision, workspace_label, workspace_path, branch, session_kind, character_id, character_name, character_icon_path, character_theme_main, character_theme_sub, run_state, approval_mode, codex_sandbox_mode, model, reasoning_effort, custom_agent_name, allowed_additional_directories_json, thread_id, message_count, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
       const messageStmt = v2Db.prepare(
         "INSERT INTO session_messages (session_id, seq, role, text, accent, artifact_available) VALUES (?, ?, ?, ?, ?, ?)",
       );
       const messageArtifactStmt = v2Db.prepare("INSERT INTO session_message_artifacts (message_id, artifact_json) VALUES (?, ?)");
-      const auditLogStmt = v2Db.prepare(
-        "INSERT INTO audit_logs (session_id, created_at, phase, provider, model, reasoning_effort, approval_mode, thread_id, assistant_text_preview, operation_count, raw_item_count, input_tokens, cached_input_tokens, output_tokens, has_error, error_message, detail_available) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      );
-      const auditLogDetailStmt = v2Db.prepare(
-        "INSERT INTO audit_log_details (audit_log_id, logical_prompt_json, transport_payload_json, assistant_text, raw_items_json, usage_json) VALUES (?, ?, ?, ?, ?, ?)",
-      );
-      const auditLogOperationStmt = v2Db.prepare(
-        "INSERT INTO audit_log_operations (audit_log_id, seq, operation_type, summary, details) VALUES (?, ?, ?, ?, ?)",
-      );
       const appSettingStmt = v2Db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)");
 
       for (const session of sessionRows) {
@@ -837,9 +637,6 @@ export function createMigrationWriteReport(input: {
           }
         }
 
-        const sessionAuditLogs = auditLogsBySession.get(session.id) ?? [];
-        const sessionAuditLogCount = sessionAuditLogs.length;
-
         sessionStmt.run(
           session.id,
           session.task_title,
@@ -865,7 +662,6 @@ export function createMigrationWriteReport(input: {
           session.allowed_additional_directories_json,
           session.thread_id,
           messageCount,
-          sessionAuditLogCount,
           session.last_active_at,
         );
 
@@ -889,123 +685,6 @@ export function createMigrationWriteReport(input: {
         sessionMessages += messagesForInsert.length;
       }
 
-      for (const row of nonBackgroundAuditLogs) {
-        const auditLogPayload = auditLogPayloadStmt?.get(row.id) as AuditLogPayloadSourceRow | undefined;
-        if (auditLogPayload === undefined) {
-          continue;
-        }
-
-        const operations = parseJsonArray(auditLogPayload.operations_json);
-        const rawItems = parseJsonArray(auditLogPayload.raw_items_json);
-        let inputTokens = null as number | null;
-        let cachedInputTokens = null as number | null;
-        let outputTokens = null as number | null;
-
-        const logicalPromptJsonForDetail = parseJsonObjectForDetail(issues, {
-          sourceId: String(row.id),
-          sourceColumn: "logical_prompt_json",
-          value: auditLogPayload.logical_prompt_json,
-        });
-        const transportPayloadJsonForDetail = parseJsonObjectForDetail(issues, {
-          sourceId: String(row.id),
-          sourceColumn: "transport_payload_json",
-          value: auditLogPayload.transport_payload_json,
-        });
-        const usageJsonForDetail = parseJsonObjectForDetail(issues, {
-          sourceId: String(row.id),
-          sourceColumn: "usage_json",
-          value: auditLogPayload.usage_json,
-        });
-
-        if (usageJsonForDetail) {
-          const usage = parseJsonObject(usageJsonForDetail);
-          if (usage === null) {
-            issues.push({
-              sourceTable: "audit_logs",
-              sourceId: String(row.id),
-              sourceColumn: "usage_json",
-              errorKind: "invalid_json_object",
-              action: "skipped",
-            });
-          } else {
-            inputTokens = toNullableInteger(usage.inputTokens);
-            cachedInputTokens = toNullableInteger(usage.cachedInputTokens);
-            outputTokens = toNullableInteger(usage.outputTokens);
-          }
-        }
-
-        if (operations === null) {
-          invalidAuditOperations += 1;
-          recordJsonArrayIssue(issues, {
-            sourceTable: "audit_logs",
-            sourceId: String(row.id),
-            sourceColumn: "operations_json",
-            errorKind: "invalid_json_array",
-            action: "skipped",
-          });
-        }
-
-        if (rawItems === null) {
-          issues.push({
-            sourceTable: "audit_logs",
-            sourceId: String(row.id),
-            sourceColumn: "raw_items_json",
-            errorKind: "invalid_json_array",
-            action: "skipped",
-          });
-        }
-
-        const operationCount = operations === null ? 0 : operations.length;
-        const rawItemCount = rawItems === null ? 0 : rawItems.length;
-
-        const auditLogIdResult = auditLogStmt.run(
-          row.session_id,
-          row.created_at,
-          row.phase,
-          row.provider,
-          row.model,
-          row.reasoning_effort,
-          row.approval_mode,
-          row.thread_id,
-          buildAssistantTextPreview(auditLogPayload.assistant_text),
-          operationCount,
-          rawItemCount,
-          inputTokens,
-          cachedInputTokens,
-          outputTokens,
-          row.error_message ? 1 : 0,
-          row.error_message,
-          1,
-        );
-
-        const auditLogId = auditLogIdResult.lastInsertRowid;
-        const rawItemsForInsert = rawItems === null ? "[]" : JSON.stringify(rawItems);
-
-        auditLogDetailStmt.run(
-          auditLogId,
-          logicalPromptJsonForDetail,
-          transportPayloadJsonForDetail,
-          auditLogPayload.assistant_text,
-          rawItemsForInsert,
-          usageJsonForDetail,
-        );
-
-        if (operations !== null) {
-          operations.forEach((operation: unknown, operationIndex) => {
-            const operationType =
-              isAuditOperationCandidate(operation) && typeof operation.type === "string" ? operation.type : "";
-            const summary = isAuditOperationCandidate(operation) && typeof operation.summary === "string" ? operation.summary : "";
-            const details = isAuditOperationCandidate(operation) && typeof operation.details === "string" ? operation.details : "";
-
-            auditLogOperationStmt.run(auditLogId, operationIndex, operationType, summary, details);
-          });
-          auditLogOperationsInserted += operationCount;
-        }
-
-        auditLogDetailsInserted += 1;
-        auditLogsInserted += 1;
-      }
-
       for (const row of appSettings) {
         if (LEGACY_APP_SETTING_KEYS.has(row.setting_key)) {
           continue;
@@ -1026,9 +705,6 @@ export function createMigrationWriteReport(input: {
         sessions: sessionRows.length,
         sessionMessages,
         sessionMessageArtifacts,
-        auditLogs: auditLogsInserted,
-        auditLogDetails: auditLogDetailsInserted,
-        auditLogOperations: auditLogOperationsInserted,
         appSettings: v2InsertedCounts.appSettings,
         modelCatalogRevisions: v2InsertedCounts.modelCatalogRevisions,
         modelCatalogProviders: v2InsertedCounts.modelCatalogProviders,
@@ -1050,7 +726,6 @@ export function createMigrationWriteReport(input: {
         migratedV2Counts,
         skipped: {
           streamEntries: skippedStreamEntries,
-          backgroundAuditLogs,
           legacyAppSettings: appSettingLegacyCount,
           sessionMemories: countRows(v1Db, "session_memories"),
           projectScopes: countRows(v1Db, "project_scopes"),
@@ -1058,7 +733,6 @@ export function createMigrationWriteReport(input: {
           characterScopes: countRows(v1Db, "character_scopes"),
           characterMemoryEntries: countRows(v1Db, "character_memory_entries"),
           invalidMessages,
-          invalidAuditOperations,
         },
         issues: issuesForReport,
       };

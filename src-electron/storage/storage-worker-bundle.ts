@@ -1,6 +1,6 @@
 import { AuxiliarySessionStorage, type AuxiliarySessionStorage as AuxiliarySessionStorageType } from "../auxiliary/auxiliary-session-storage.js";
 import type { WorkerOptions } from "node:worker_threads";
-import { AuditLogStorageV6 } from "../session/audit-log-storage-v6.js";
+import { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
 import { CharacterAffectTurnSettlementStorage } from "../character/character-affect-turn-settlement-storage.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
@@ -34,11 +34,7 @@ const STORE_METHODS = {
     "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "insertSession", "replaceSessions",
     "deleteSession", "deleteSessions", "clearSessions",
   ],
-  audit: [
-    "createAuditLog", "updateAuditLog", "updateAuditLogProgress", "listSessionAuditLogs", "getConversationTimingSnapshot",
-    "listSessionAuditLogSummaries", "listSessionAuditLogSummaryPage", "getSessionAuditLogDetail",
-    "getSessionAuditLogDetailSection", "getSessionAuditLogOperationDetail", "clearAuditLogs",
-  ],
+  turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn", "getConversationTimingSnapshot"],
   auxiliary: [
     "getAuxiliarySessionView", "getConversationPage", "searchConversation", "listConversationNavigator",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
@@ -77,7 +73,7 @@ const MUTATIONS = new Set([
   "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
   "setSessionPinned", "upsertSession", "updateSessionThreadIfMatches", "updateSessionRuntimeMetadataIfMatches", "updateSession",
   "upsertTerminalSession", "updateTerminalSession", "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "insertSession",
-  "replaceSessions", "deleteSession", "deleteSessions", "clearSessions", "createAuditLog", "updateAuditLog", "updateAuditLogProgress", "clearAuditLogs",
+  "replaceSessions", "deleteSession", "deleteSessions", "clearSessions", "createSessionTurn", "updateSessionTurn",
   "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches", "updateAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent",
   "deleteAuxiliarySessionsExceptParents", "saveAuxiliaryDraft", "consumeAuxiliaryDraft",
   "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches", "updateAuxiliaryDisplayAnchorIfMatches",
@@ -109,7 +105,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
     throw new Error("V6 storage worker database schema validation failed.");
   }
   const session = new SessionStorageV6(data.dbPath);
-  const audit = new AuditLogStorageV6(data.dbPath);
+  const turn = new SessionTurnStorageV6(data.dbPath);
   const auxiliary = new AuxiliarySessionStorage(data.dbPath);
   const character = new CharacterStorage(data.dbPath, data.userDataPath);
   const settings = new AppSettingsStorage(data.dbPath);
@@ -117,7 +113,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const mate = new MateStorage(data.dbPath, data.userDataPath);
   const prompt = new PromptTemplateStorage(data.dbPath);
   const settlement = new CharacterAffectTurnSettlementStorage(data.dbPath);
-  instances = { session, audit, auxiliary, character, settings, catalog, mate, prompt, settlement };
+  instances = { session, turn, auxiliary, character, settings, catalog, mate, prompt, settlement };
   const currentInstances = instances;
   catalog.ensureSeeded();
 
@@ -210,7 +206,7 @@ export type V6StorageWorkerBundle = {
   truncateWal(): Promise<boolean>;
   stores: {
     session: AsyncStore<SessionStorageV6>;
-    audit: AsyncStore<AuditLogStorageV6>;
+    turn: AsyncStore<SessionTurnStorageV6>;
     auxiliary: AsyncStore<AuxiliarySessionStorageType>;
     character: AsyncStore<CharacterStorage>;
     settings: AsyncStore<AppSettingsStorage>;

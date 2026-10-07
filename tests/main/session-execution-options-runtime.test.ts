@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createAuditProgressWriter } from "./helpers/audit-progress-fixture.js";
 import { it } from "node:test";
 
 import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
@@ -23,7 +22,7 @@ const providerCatalog: ModelCatalogProvider = {
 function makeService(observe: {
   composed: RunSessionTurnInput[];
   executed: RunSessionTurnInput[];
-  audit: Array<Parameters<SessionRuntimeServiceDeps["createAuditLog"]>[0]>;
+  turn: Array<Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0]>;
   persisted: Session[];
 }) {
   const stored = buildNewSession({
@@ -60,10 +59,8 @@ function makeService(observe: {
       return {
         threadId: "thread-1",
         assistantText: "done",
-        logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-        transportPayload: null,
-        operations: [],
-        rawItemsJson: "[]",
+
+
         usage: null,
       };
     },
@@ -92,12 +89,11 @@ function makeService(observe: {
       notes: [],
     }),
     resolveProjectMemoryEntriesForPrompt: () => [],
-    createAuditLog(input) {
-      observe.audit.push(input);
+    createSessionTurn(input) {
+      observe.turn.push(input);
       return { id: 1, ...input };
     },
-    updateAuditLog(_id, input) { observe.audit.push(input); },
-    updateAuditLogProgress: createAuditProgressWriter(),
+    updateSessionTurn(_id, input) { observe.turn.push(input); },
     setLiveSessionRun() {},
     getLiveSessionRun: () => null,
     waitForApprovalDecision: () => "deny",
@@ -115,38 +111,35 @@ function makeService(observe: {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "送信時に選んだ model/depth/approval は、開始・終了保存が古いSession設定を返しても同一turnのprompt、Provider、running/terminal auditへ伝わる"
+// claim = "送信時に選んだ model/depth/approval は、開始・終了保存が古いSession設定を返しても同一turnのProviderと最小turnへ伝わる"
 // oracle = { type = "contract", ref = "Issue #738 turn execution options boundary" }
 // fault = "保存済みSession設定または保存戻り値からturn実行設定を再取得する"
-// observable = "composer/provider inputのexecutionOptionsとrunning/terminal audit fields"
+// observable = "provider inputのexecutionOptionsとrunning/terminal turn fields"
 // observation_boundary = "component-behavior"
 // scope = "SessionRuntimeService turn execution"
 // lifecycle = "permanent"
-// impact = "表示選択と異なるmodelやapprovalでProviderを実行し監査に誤設定が残る"
+// impact = "表示選択と異なるmodelやapprovalでProviderを実行し、turnに誤設定が残る"
 // distinction = "既存のSession永続化・Provider単体testでは保存戻り値と送信値の不一致を観測しない"
 // @end-test-value
-it("turn送信値を保存済み設定と独立にprompt・Provider・auditへ固定する", async () => {
-  const observe = { composed: [] as RunSessionTurnInput[], executed: [] as RunSessionTurnInput[], audit: [] as Array<Parameters<SessionRuntimeServiceDeps["createAuditLog"]>[0]>, persisted: [] as Session[] };
+it("turn送信値を保存済み設定と独立にProviderと最小turnへ固定する", async () => {
+  const observe = { composed: [] as RunSessionTurnInput[], executed: [] as RunSessionTurnInput[], turn: [] as Array<Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0]>, persisted: [] as Session[] };
   const { service, stored } = makeService(observe);
   const selected = Object.freeze({ ...captureSessionExecutionOptions(stored), model: "model-b", reasoningEffort: "medium" as const, approvalMode: "never" as const });
 
   await service.runSessionTurn(stored.id, { userMessage: "run", executionOptions: selected });
-  for (let attempt = 0; attempt < 20 && !observe.audit.some((entry) => entry.phase === "completed"); attempt += 1) {
+  for (let attempt = 0; attempt < 20 && !observe.turn.some((entry) => entry.phase === "completed"); attempt += 1) {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 
   assert.equal(observe.persisted[0]?.model, "model-a");
-  assert.equal(observe.composed[0]?.session.model, "model-a");
-  assert.deepEqual(observe.composed[0]?.executionOptions, selected);
   assert.deepEqual(observe.executed[0]?.executionOptions, selected);
   assert.equal(observe.executed[0]?.session.model, "model-a");
-  assert.equal(observe.executed[0]?.executionOptions, observe.composed[0]?.executionOptions);
   assert.equal(Object.isFrozen(observe.executed[0]?.executionOptions), true);
   for (const phase of ["running", "completed"] as const) {
-    const audit = observe.audit.find((entry) => entry.phase === phase);
-    assert.equal(audit?.model, "model-b");
-    assert.equal(audit?.reasoningEffort, "medium");
-    assert.equal(audit?.approvalMode, "never");
+    const turn = observe.turn.find((entry) => entry.phase === phase);
+    assert.equal(turn?.model, "model-b");
+    assert.equal(turn?.reasoningEffort, "medium");
+    assert.equal(turn?.approvalMode, "never");
   }
 });
 
@@ -163,7 +156,7 @@ it("turn送信値を保存済み設定と独立にprompt・Provider・auditへ�
 // distinction = "型検査ではIPC実行時値とcatalog対応関係を検証できない"
 // @end-test-value
 it("無効なmodel・depthを保存とProvider起動前に拒否する", async () => {
-  const observe = { composed: [] as RunSessionTurnInput[], executed: [] as RunSessionTurnInput[], audit: [] as Array<Parameters<SessionRuntimeServiceDeps["createAuditLog"]>[0]>, persisted: [] as Session[] };
+  const observe = { composed: [] as RunSessionTurnInput[], executed: [] as RunSessionTurnInput[], turn: [] as Array<Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0]>, persisted: [] as Session[] };
   const { service, stored } = makeService(observe);
   const selected = captureSessionExecutionOptions(stored);
   await assert.rejects(service.runSessionTurn(stored.id, { userMessage: "run", executionOptions: { ...selected, model: "unknown" } }), /model catalog/);
@@ -171,5 +164,5 @@ it("無効なmodel・depthを保存とProvider起動前に拒否する", async (
   assert.equal(observe.persisted.length, 0);
   assert.equal(observe.composed.length, 0);
   assert.equal(observe.executed.length, 0);
-  assert.equal(observe.audit.length, 0);
+  assert.equal(observe.turn.length, 0);
 });

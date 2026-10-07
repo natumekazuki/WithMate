@@ -8,7 +8,7 @@ Home Windowの`RecentSessions`は、Session本文を含む全件読込ではな�
 
 最初に先頭pageを取得し、一覧末尾へ到達した時点で次のpageを追加します。追加読込中は既存のrowを残し、同じpageを重複して要求しません。
 
-summaryには、一覧表示、検索、pin、open状態の判定に必要な項目だけを含めます。message本文、audit log、Character snapshot本文などは一覧queryで展開しません。
+summaryには、一覧表示、検索、pin、open状態の判定に必要な項目だけを含めます。message本文、artifact detail、Character snapshot本文などは一覧queryで展開しません。
 
 ## 再取得時の状態維持
 

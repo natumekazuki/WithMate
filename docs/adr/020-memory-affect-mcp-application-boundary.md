@@ -8,6 +8,8 @@ Accepted
 
 ADR 024は、agent-facing Memoryについて本ADRの明示target、adapter credential、fallback開始条件を部分的に置換する。operator CLIのexplicit targetとoperator credentialは維持するが、provider executionから使うMCPとagent-bound CLI fallbackはactor-relative target、runtime binding、MCP credential相当のroute allowlistを使う。agent-bound CLI fallbackは、MCP initializeと`tools/list`取得後に発生したtransport障害だけを開始条件とする。本ADRの共通application boundary、SQLite非直結、effect certainty、idempotency、episode mutation owner、lifecycle/event-time appraisalの契約は維持する。
 
+独立Auditの詳細保存・閲覧とprogress永続化に関する本文の判断は現行運用の適用対象外とする。操作結果は通常履歴のartifact、実行phase・Timing・Affect correlationは最小turnを正本とする後継判断へ置換した。現行契約は[Session Run Lifecycle](../design/session-run-lifecycle.md)、[Provider Adapter](../design/provider-adapter.md)、[Database Schema](../design/database-schema.md)を参照する。本文は当時の判断として保持する。
+
 ## Context
 
 MemoryとCharacter Affectをagentへ公開する際、MCP serverからCLIをsubprocess起動すると、CLIの表示形式とexit codeが実質的なAPIになる。CLIとMCPが個別にSQLiteへ接続すると、authority、validation、idempotency、transaction、監査、error semanticsが分岐する。

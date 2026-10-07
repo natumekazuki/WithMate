@@ -92,7 +92,6 @@ export type SettingsCatalogServiceDeps = {
   clearProviderQuotaTelemetry(providerId: string): void;
   clearSessionContextTelemetry(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
-  clearAuditLogs(): Awaitable<void>;
   resetAppSettings(): Awaitable<AppSettings>;
   resetModelCatalogToBundled(): Awaitable<ModelCatalogSnapshot>;
   clearProjectMemories(): void;
@@ -706,9 +705,6 @@ export class SettingsCatalogService {
     } else {
       const appliedTargets = new Set<ResetAppDatabaseTarget>(resetTargets);
 
-      if (appliedTargets.has("auditLogs")) {
-        await this.deps.clearAuditLogs();
-      }
       if (appliedTargets.has("sessions")) {
         await this.deps.replaceAllSessions([], { broadcast: false });
         this.dismissSessionTurnNotifications(previousSessionNotificationIds);

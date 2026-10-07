@@ -1,7 +1,6 @@
-import type { AuditLogSummary } from "../../src-shared/session/runtime-state.js";
+import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import type { Message } from "../../src-shared/session/session-state.js";
 import { getMessageHistoryIndex } from "../../src-shared/session/conversation-page.js";
-import { isTerminalAuditLogPhase } from "./runtime/audit-log-phase.js";
 import { applyComposerDraftChangeCommand } from "./composer-draft-handlers.js";
 
 export type RetryBannerKind = "interrupted" | "failed" | "canceled";
@@ -16,7 +15,7 @@ export type RetryBannerState = {
 export type RetryBannerSource = {
   kind: RetryBannerKind;
   lastRequestText: string;
-  terminalAuditLog: AuditLogSummary | null;
+  terminalTurn: SessionTurnRecord | null;
 };
 
 export type RetryDraftRestoreState = {
@@ -133,7 +132,7 @@ export function createCancelRetryDraftReplaceHandler(input: {
 
 export function resolveRetryBannerKind(input: {
   runState: string | null | undefined;
-  latestTerminalAuditLogPhase?: AuditLogSummary["phase"] | null;
+  latestTurnPhase?: SessionTurnRecord["phase"] | null;
 }): RetryBannerKind | null {
   if (input.runState === "interrupted") {
     return "interrupted";
@@ -143,7 +142,7 @@ export function resolveRetryBannerKind(input: {
     return "failed";
   }
 
-  if (input.runState === "idle" && input.latestTerminalAuditLogPhase === "canceled") {
+  if (input.runState === "idle" && input.latestTurnPhase === "canceled") {
     return "canceled";
   }
 
@@ -154,7 +153,7 @@ export function resolveRetryBannerSource(input: {
   sessionId: string | null | undefined;
   messages: readonly Message[];
   latestUserMessage?: Message | null;
-  auditLogs: readonly AuditLogSummary[];
+  latestTurn: SessionTurnRecord | null;
   runState: string | null | undefined;
 }): RetryBannerSource | null {
   if (!input.sessionId || input.runState === "running") {
@@ -178,21 +177,19 @@ export function resolveRetryBannerSource(input: {
     return null;
   }
 
-  const terminalAuditLog = input.auditLogs.find((entry) =>
-    entry.sessionId === input.sessionId
-    && entry.userMessageSeq === lastUserMessageSeq
-    && isTerminalAuditLogPhase(entry.phase)
-  ) ?? null;
+  const terminalTurn = input.latestTurn?.sessionId === input.sessionId
+    && input.latestTurn.userMessageSeq === lastUserMessageSeq
+    && input.latestTurn.phase !== "running" ? input.latestTurn : null;
   const kind = resolveRetryBannerKind({
     runState: input.runState,
-    latestTerminalAuditLogPhase: terminalAuditLog?.phase,
+    latestTurnPhase: terminalTurn?.phase,
   });
 
   return kind
     ? {
         kind,
         lastRequestText: lastUserMessage?.text ?? "",
-        terminalAuditLog,
+        terminalTurn,
       }
     : null;
 }

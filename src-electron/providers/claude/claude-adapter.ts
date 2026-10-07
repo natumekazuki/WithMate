@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { extname } from "node:path";
 import { query, resolveSettings, type ElicitationRequest, type Options, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { AuditLogOperation, AuditLogUsage, AuditTransportPayload, LiveElicitationField, LiveElicitationRequest, LiveRunStep } from "../../../src-shared/session/runtime-state.js";
+import type { MessageOperation, ProviderUsage, LiveElicitationField, LiveElicitationRequest, LiveRunStep } from "../../../src-shared/session/runtime-state.js";
 import { resolveModelSelection } from "../../../src-shared/settings/model-catalog.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "../provider-prompt.js";
 import {
@@ -23,7 +23,7 @@ import {
 import { parseSessionMemoryDeltaText } from "../../session/session-memory-extraction.js";
 import { resolveDevelopmentProviderBinaryPath, resolvePackagedProviderBinaryPath } from "../provider-binary-paths.js";
 import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv, type ProviderAgentRuntimeBindingRedactor } from "../provider-agent-runtime-binding.js";
-import { AUDIT_TEXT_PREVIEW_LIMIT, boundAuditRawItem, BoundedAuditRawItems, toAuditTextPreview } from "../../session/audit-payload-limits.js";
+import { PROVIDER_TEXT_PREVIEW_LIMIT, boundProviderRawItem, BoundedProviderRawItems, toProviderTextPreview } from "../../session/provider-payload-limits.js";
 import { buildArtifactFromOperations } from "../provider-artifact.js";
 import { captureWorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
 import { createDisabledWorkspaceSnapshotCapture, WORKSPACE_DIFF_CAPTURE_ENABLED } from "../../files/workspace-diff-policy.js";
@@ -49,10 +49,10 @@ type ClaudeTrace = {
   streamingText: string;
   streamingId: string | null;
   steps: ProviderProgressMap<LiveRunStep>;
-  operations: AuditLogOperation[];
-  rawItems: BoundedAuditRawItems;
+  operations: MessageOperation[];
+  rawItems: BoundedProviderRawItems | null;
   redactor: ProviderAgentRuntimeBindingRedactor;
-  usage: AuditLogUsage | null;
+  usage: ProviderUsage | null;
   result: SDKResultMessage | null;
   errorMessage: string;
 };
@@ -77,24 +77,24 @@ function providerErrorReason(message: string, canceled: boolean): "canceled" | "
 function summarizeTool(name: string, input: unknown): string {
   const argumentsValue = objectOf(input);
   const target = textOf(argumentsValue.file_path) || textOf(argumentsValue.path) || textOf(argumentsValue.command);
-  return target ? `${name}: ${toAuditTextPreview(target, 300)}` : name;
+  return target ? `${name}: ${toProviderTextPreview(target, 300)}` : name;
 }
 
 function commandOf(name: string, input: unknown): string | null {
   if (name !== "Bash") return null;
   const command = textOf(objectOf(input).command);
-  const preview = toAuditTextPreview(command) || null;
+  const preview = toProviderTextPreview(command) || null;
   // Detach the bounded preview from the native command's backing string.
-  return command.length > AUDIT_TEXT_PREVIEW_LIMIT
+  return command.length > PROVIDER_TEXT_PREVIEW_LIMIT
     ? JSON.parse(JSON.stringify(preview)) as string
     : preview;
 }
 
 function appendRaw(trace: ClaudeTrace, type: string, data: Record<string, unknown>): void {
-  trace.rawItems.append(boundAuditRawItem(trace.redactor.sanitize({ type, data })));
+  trace.rawItems?.append(boundProviderRawItem(trace.redactor.sanitize({ type, data })));
 }
 
-function usageFromResult(result: SDKResultMessage, resumed: boolean): AuditLogUsage {
+function usageFromResult(result: SDKResultMessage, resumed: boolean): ProviderUsage {
   // modelUsage includes subagents, but its totals can include older turns after resume.
   const models = resumed ? [] : Object.values(result.modelUsage ?? {});
   const inputTokens = models.length > 0
@@ -231,8 +231,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   async invalidateAllSessionThreads(): Promise<void> { /* One process per turn; no cached thread. */ }
   getBackgroundStructuredPromptPolicy() { return PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY; }
 
-  private makeTrace(threadId: string | null, redactor = createProviderAgentRuntimeBindingRedactor(null)): ClaudeTrace {
-    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), operations: [], rawItems: new BoundedAuditRawItems(), redactor, usage: null, result: null, errorMessage: "" };
+  private makeTrace(threadId: string | null, redactor = createProviderAgentRuntimeBindingRedactor(null), diagnosticTrace = false): ClaudeTrace {
+    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), operations: [], rawItems: diagnosticTrace ? new BoundedProviderRawItems() : null, redactor, usage: null, result: null, errorMessage: "" };
   }
 
   private receive(message: SDKMessage, trace: ClaudeTrace, resumed = false): void {
@@ -260,14 +260,16 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       const text = content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
       if (text && !trace.messages.some((entry) => entry.id === message.uuid)) {
         trace.messages.push({ id: message.uuid, text });
-        trace.operations.push({ type: "agent_message", summary: toAuditTextPreview(text, 300) ?? "", details: toAuditTextPreview(text) });
-        appendRaw(trace, "assistant.text", { id: message.uuid, text: toAuditTextPreview(text) ?? "" });
+        trace.operations.push({ id: message.uuid, type: "agent_message", summary: toProviderTextPreview(text, 300) ?? "", details: toProviderTextPreview(text), truncated: text.length > PROVIDER_TEXT_PREVIEW_LIMIT });
+        appendRaw(trace, "assistant.text", { id: message.uuid, text: toProviderTextPreview(text) ?? "" });
       }
       for (const block of content) {
         if (block.type !== "tool_use") continue;
         const command = commandOf(block.name, block.input);
         const summary = command ?? summarizeTool(block.name, block.input);
-        trace.steps.set(block.id, { id: block.id, type: command === null ? "tool_call" : "command_execution", summary, status: "in_progress" });
+        const step: LiveRunStep = { id: block.id, type: command === null ? "tool_call" : "command_execution", summary, status: "in_progress" };
+        trace.steps.set(block.id, step);
+        trace.operations.push(step);
         appendRaw(trace, "tool.use", { id: block.id, name: block.name, summary });
       }
       if (text && trace.streamingId === message.message.id) {
@@ -282,8 +284,14 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         const step = trace.steps.get(block.tool_use_id);
         const failed = block.is_error === true;
         if (step) {
-          trace.steps.set(step.id, { ...step, status: failed ? "failed" : "completed" });
-          trace.operations.push({ type: step.type, summary: step.summary, details: failed ? "Tool failed" : "Tool completed" });
+          const output = typeof block.content === "string" ? block.content : JSON.stringify(block.content);
+          const details = toProviderTextPreview(output);
+          const completed: LiveRunStep = { ...step, status: failed ? "failed" : "completed", details,
+            ...(output !== undefined ? { truncated: output.length > PROVIDER_TEXT_PREVIEW_LIMIT } : {}),
+            ...(failed && details !== undefined ? { error: { message: details } } : {}) };
+          trace.steps.set(step.id, completed);
+          const index = trace.operations.findIndex((operation) => operation.id === step.id);
+          if (index >= 0) trace.operations[index] = completed;
         }
         appendRaw(trace, "tool.result", { id: block.tool_use_id, status: failed ? "failed" : "completed" });
       }
@@ -299,19 +307,10 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     }
   }
 
-  private result(input: RunSessionTurnInput, prompt: ProviderPromptComposition, trace: ClaudeTrace): RunSessionTurnResult {
+  private result(input: RunSessionTurnInput, trace: ClaudeTrace): RunSessionTurnResult {
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
     const text = liveText(trace);
     const operations = redactor.sanitize(trace.operations);
-    const transportPayload: AuditTransportPayload = {
-      summary: "Claude Agent SDK query",
-      fields: [
-        { label: "systemPrompt.preset", value: "claude_code" },
-        { label: "systemPrompt.append", value: prompt.systemBodyText },
-        { label: "prompt", value: prompt.inputBodyText },
-        ...(prompt.imagePaths.length > 0 ? [{ label: "images", value: prompt.imagePaths.join("\n") }] : []),
-      ],
-    };
     const emptySnapshot = createDisabledWorkspaceSnapshotCapture();
     const artifact = buildArtifactFromOperations({
       session: input.session,
@@ -331,10 +330,6 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       assistantText: redactor.sanitizeText(text),
       lastNonEmptyAssistantMessageText: redactor.sanitizeText(trace.streamingText || trace.messages.at(-1)?.text || text),
       artifact: redactor.sanitize(artifact),
-      logicalPrompt: redactor.sanitize(prompt.logicalPrompt),
-      transportPayload: redactor.sanitize(transportPayload),
-      operations,
-      rawItemsJson: trace.rawItems.stringify(),
       usage: trace.usage,
     };
   }
@@ -504,14 +499,14 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       if (controller.signal.aborted) throw new Error("Canceled");
       if (!trace.result) throw new Error("Claude stream ended before a result");
       if (trace.result.subtype !== "success" || trace.result.is_error) throw new Error(trace.errorMessage || "Claude turn failed");
-      const result = this.result(input, prompt, trace);
+      const result = this.result(input, trace);
       const after = WORKSPACE_DIFF_CAPTURE_ENABLED
         ? await captureWorkspaceSnapshot(snapshotRoots).catch(() => createDisabledWorkspaceSnapshotCapture())
         : createDisabledWorkspaceSnapshotCapture();
       result.artifact = redactor.sanitize(buildArtifactFromOperations({
         session: input.session,
         executionOptions: input.executionOptions,
-        operations: result.operations,
+        operations: result.artifact?.operationTimeline ?? [],
         usage: result.usage,
         threadId: result.threadId,
         beforeSnapshot: before.snapshot,
@@ -527,7 +522,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       const message = failure instanceof Error ? failure.message : String(failure);
       const canceled = !progressFailure && (controller.signal.aborted || isCanceledProviderMessage(message));
       trace.errorMessage = message;
-      throw new ProviderTurnError(redactor.sanitizeText(message), this.result(input, prompt, trace), canceled, providerErrorReason(message, canceled));
+      throw new ProviderTurnError(redactor.sanitizeText(message), this.result(input, trace), canceled, providerErrorReason(message, canceled));
     } finally {
       input.signal?.removeEventListener("abort", abort);
       if (progressFailure !== undefined && childExited && input.onCleanupPending) {
@@ -566,7 +561,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       input.signal?.removeEventListener("abort", abort);
       throw new Error(managedSettingsPresent ? "Claude background execution is unavailable with managed settings" : "Claude background request was canceled");
     }
-    const trace = this.makeTrace(null);
+    const trace = this.makeTrace(null, createProviderAgentRuntimeBindingRedactor(null), true);
     const options: Options = {
       cwd: input.workspacePath,
       pathToClaudeCodeExecutable: resolveClaudeBinaryPath(),
@@ -599,7 +594,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       const rawText = assistantText(trace) || trace.result.result;
       const structuredOutput = trace.result.structured_output;
       if (structuredOutput === undefined || structuredOutput === null) throw new Error("Claude background structured output is missing");
-      return { threadId: trace.threadId, rawText, output: structuredOutput as TOutput, structuredOutput, parsedJson: structuredOutput, rawItemsJson: trace.rawItems.stringify(), usage: trace.usage };
+      return { threadId: trace.threadId, rawText, output: structuredOutput as TOutput, structuredOutput, parsedJson: structuredOutput, rawItemsJson: trace.rawItems?.stringify() ?? "[]", usage: trace.usage };
     } finally {
       clearTimeout(timer);
       input.signal?.removeEventListener("abort", abort);

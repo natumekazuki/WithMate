@@ -1,9 +1,9 @@
 import { createProviderAgentRuntimeBindingRedactor, type ProviderAgentRuntimeBindingRedactor } from "../provider-agent-runtime-binding.js";
-import { stringifyBoundedAuditRawItems } from "../../session/audit-payload-limits.js";
-import { buildCodexStableRawItems, buildCodexProviderMetadata, toAuditOperations } from "./codex-event-projection.js";
+import { stringifyBoundedProviderRawItems } from "../../session/provider-payload-limits.js";
+import { buildCodexStableRawItems, buildCodexProviderMetadata } from "./codex-event-projection.js";
 import { applyCodexTurnEvent, collectCodexAssistantResponseFromItems, createCodexTurnStreamState, getLiveCodexAssistantPreview, getLiveCodexReasoningPreview, type CodexNativeNotification } from "./codex-turn-events.js";
 import type { CodexProjectionStart, CodexProjectionProgress, CodexProjectionFinal, CodexProjectionEvent } from "./codex-projection-protocol.js";
-import type { BoundedAuditRawItem } from "../../session/audit-payload-limits.js";
+import type { BoundedProviderRawItem } from "../../session/provider-payload-limits.js";
 
 /** Owns native items and sanitized projections inside the shared projection Worker. */
 export class CodexProjectionOwner {
@@ -14,9 +14,6 @@ export class CodexProjectionOwner {
   private assistantText = "";
   private reasoningSource = "";
   private reasoningText = "";
-  private auditAssistantText = "";
-  private auditErrorMessage = "";
-  private auditUsage: CodexProjectionProgress["state"]["usage"] = null;
 
   constructor(private readonly input: CodexProjectionStart) {
     this.state = createCodexTurnStreamState(input.threadId);
@@ -49,32 +46,10 @@ export class CodexProjectionOwner {
     };
   }
 
-  apply(event: CodexNativeNotification): CodexProjectionEvent | null {
+  apply(event: CodexNativeNotification): CodexProjectionEvent {
     const revision = this.state.revision;
     applyCodexTurnEvent(this.state, event);
-    if (!this.input.progress || revision === this.state.revision) return null;
-    const steps = this.state.liveSteps.takeProgress(this.redactor, false);
-    const assistantText = this.assistantPreview();
-    const errorMessage = this.redactor.sanitizeText(this.state.streamErrorMessage);
-    const assistantChanged = assistantText !== this.auditAssistantText;
-    const errorChanged = errorMessage !== this.auditErrorMessage;
-    const usageChanged = this.state.usage !== this.auditUsage;
-    this.auditAssistantText = assistantText;
-    this.auditErrorMessage = errorMessage;
-    this.auditUsage = this.state.usage;
-    if (!assistantChanged && !errorChanged && !usageChanged && !steps.changes.upserts.length && !steps.changes.removes.length)
-      return { audit: null };
-    return {
-      audit: {
-        state: {
-          sessionId: this.input.sessionId, threadId: this.input.threadId, turnId: this.input.turnId,
-          assistantText: assistantChanged ? assistantText : "", reasoningText: "", steps: steps.changes.upserts,
-          backgroundTasks: [], usage: usageChanged ? this.state.usage : null,
-          errorMessage: errorChanged ? errorMessage : "", approvalRequest: null, elicitationRequest: null,
-        },
-        changes: { delivery: "audit", steps: steps.changes, backgroundTasks: { upserts: [], removes: [] } },
-      },
-    };
+    return { changed: this.input.progress && revision !== this.state.revision };
   }
 
   live(inputAvailable: boolean, force = false): CodexProjectionProgress | null {
@@ -83,16 +58,16 @@ export class CodexProjectionOwner {
     const steps = this.state.liveSteps.takeProgress(this.redactor);
     return {
       state: { ...this.frame(steps.snapshot), inputAvailable },
-      changes: { delivery: "live", steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } },
+      changes: { steps: steps.changes, backgroundTasks: { upserts: [], removes: [] } },
     };
   }
 
-  finish(diagnostics: BoundedAuditRawItem[]): CodexProjectionFinal {
+  finish(diagnostics: BoundedProviderRawItem[]): CodexProjectionFinal {
     const items = this.redactor.sanitize([...this.state.items.values()]);
     const response = collectCodexAssistantResponseFromItems(items);
     return {
-      items, ...response, operations: toAuditOperations(items),
-      rawItemsJson: stringifyBoundedAuditRawItems([...this.redactor.sanitize(diagnostics), ...buildCodexStableRawItems(items)]),
+      items, ...response,
+      ...(this.input.diagnosticTrace ? { rawItemsJson: stringifyBoundedProviderRawItems([...this.redactor.sanitize(diagnostics), ...buildCodexStableRawItems(items)]) } : {}),
       providerMetadata: buildCodexProviderMetadata(items), usage: this.state.usage,
       terminalStatus: this.state.terminalStatus, errorMessage: this.redactor.sanitizeText(this.state.streamErrorMessage),
     };

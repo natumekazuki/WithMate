@@ -1,5 +1,9 @@
 # 016 Conversation Timing Context
 
+## 現在の適用範囲
+
+Conversation Timingと最小terminal markerの判断は維持する。本文の独立Auditのbackground保存・running更新とAudit storage pathは現行運用の適用対象外とする。最小turnの正本は`src-shared/session/session-turn-state.ts`と`src-electron/session/session-turn-storage-v6.ts`へ置換した。Timingは引き続き`session_turns_v6`の開始・完了時刻を読み、操作詳細の保存・取得を待たない。現行契約は[Session Run Lifecycle](../design/session-run-lifecycle.md)と[Database Schema](../design/database-schema.md)を参照する。本文は当時の判断として保持する。
+
 - 状態: Accepted
 - 日付: 2026-08-09
 

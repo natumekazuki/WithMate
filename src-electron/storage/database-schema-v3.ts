@@ -13,17 +13,12 @@ export const APP_DATABASE_V3_SCHEMA_VERSION = 3;
 
 export const V3_SCHEMA_STATUS = "ready-for-implementation";
 export const V3_TEXT_PREVIEW_MAX_LENGTH = 500;
-export const V3_OPERATION_SUMMARY_MAX_LENGTH = 500;
-export const V3_DETAILS_PREVIEW_MAX_LENGTH = 500;
 export const V3_SUMMARY_JSON_MAX_LENGTH = 8192;
 
 export const REQUIRED_V3_TABLES = [
   "sessions",
   "session_messages",
   "session_message_artifacts",
-  "audit_logs",
-  "audit_log_details",
-  "audit_log_operations",
   "blob_objects",
 ] as const;
 
@@ -119,7 +114,6 @@ export const CREATE_V3_SESSIONS_TABLE_SQL = `
     allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]',
     thread_id TEXT NOT NULL DEFAULT '',
     message_count INTEGER NOT NULL DEFAULT 0,
-    audit_log_count INTEGER NOT NULL DEFAULT 0,
     last_active_at INTEGER NOT NULL
   );
 
@@ -174,75 +168,6 @@ export const CREATE_V3_SESSION_MESSAGE_ARTIFACTS_TABLE_SQL = `
     ON session_message_artifacts(artifact_blob_id);
 `;
 
-export const CREATE_V3_AUDIT_LOGS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS audit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    phase TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    reasoning_effort TEXT NOT NULL,
-    approval_mode TEXT NOT NULL,
-    thread_id TEXT NOT NULL DEFAULT '',
-    assistant_text_preview TEXT NOT NULL DEFAULT '' CHECK (length(assistant_text_preview) <= ${V3_TEXT_PREVIEW_MAX_LENGTH}),
-    operation_count INTEGER NOT NULL DEFAULT 0,
-    raw_item_count INTEGER NOT NULL DEFAULT 0,
-    input_tokens INTEGER,
-    cached_input_tokens INTEGER,
-    output_tokens INTEGER,
-    has_error INTEGER NOT NULL DEFAULT 0,
-    error_message_preview TEXT NOT NULL DEFAULT '' CHECK (length(error_message_preview) <= ${V3_TEXT_PREVIEW_MAX_LENGTH}),
-    detail_available INTEGER NOT NULL DEFAULT 1,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v3_audit_logs_session_id_desc
-    ON audit_logs(session_id, id DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_v3_audit_logs_session_created
-    ON audit_logs(session_id, created_at DESC, id DESC);
-`;
-
-export const CREATE_V3_AUDIT_LOG_DETAILS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS audit_log_details (
-    audit_log_id INTEGER PRIMARY KEY,
-    logical_prompt_blob_id TEXT,
-    transport_payload_blob_id TEXT,
-    assistant_text_blob_id TEXT,
-    raw_items_blob_id TEXT,
-    usage_metadata_json TEXT NOT NULL DEFAULT '',
-    usage_blob_id TEXT,
-    FOREIGN KEY (audit_log_id) REFERENCES audit_logs(id) ON DELETE CASCADE,
-    FOREIGN KEY (logical_prompt_blob_id) REFERENCES blob_objects(blob_id),
-    FOREIGN KEY (transport_payload_blob_id) REFERENCES blob_objects(blob_id),
-    FOREIGN KEY (assistant_text_blob_id) REFERENCES blob_objects(blob_id),
-    FOREIGN KEY (raw_items_blob_id) REFERENCES blob_objects(blob_id),
-    FOREIGN KEY (usage_blob_id) REFERENCES blob_objects(blob_id)
-  );
-`;
-
-export const CREATE_V3_AUDIT_LOG_OPERATIONS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS audit_log_operations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    audit_log_id INTEGER NOT NULL,
-    seq INTEGER NOT NULL,
-    operation_type TEXT NOT NULL DEFAULT '',
-    summary TEXT NOT NULL DEFAULT '' CHECK (length(summary) <= ${V3_OPERATION_SUMMARY_MAX_LENGTH}),
-    details_preview TEXT NOT NULL DEFAULT '' CHECK (length(details_preview) <= ${V3_DETAILS_PREVIEW_MAX_LENGTH}),
-    details_blob_id TEXT,
-    FOREIGN KEY (audit_log_id) REFERENCES audit_logs(id) ON DELETE CASCADE,
-    FOREIGN KEY (details_blob_id) REFERENCES blob_objects(blob_id),
-    UNIQUE (audit_log_id, seq)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v3_audit_log_operations_log_seq
-    ON audit_log_operations(audit_log_id, seq);
-
-  CREATE INDEX IF NOT EXISTS idx_v3_audit_log_operations_details_blob
-    ON audit_log_operations(details_blob_id);
-`;
-
 export const CREATE_V3_MODEL_CATALOG_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS model_catalog_revisions (
     revision INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -281,8 +206,5 @@ export const CREATE_V3_SCHEMA_SQL = [
   CREATE_V3_SESSIONS_TABLE_SQL,
   CREATE_V3_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V3_SESSION_MESSAGE_ARTIFACTS_TABLE_SQL,
-  CREATE_V3_AUDIT_LOGS_TABLE_SQL,
-  CREATE_V3_AUDIT_LOG_DETAILS_TABLE_SQL,
-  CREATE_V3_AUDIT_LOG_OPERATIONS_TABLE_SQL,
   CREATE_V3_MODEL_CATALOG_TABLES_SQL,
 ] as const;

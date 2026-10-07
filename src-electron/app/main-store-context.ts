@@ -7,7 +7,7 @@ import type { CharacterAffectTurnSettlementStorage } from "../character/characte
 import type { MateProfileItemStorage } from "../mate/mate-profile-item-storage.js";
 import type { PromptTemplateStorage } from "../prompt-templates/prompt-template-storage.js";
 import type { V6StorageWorkerBundle } from "../storage/storage-worker-bundle.js";
-import type { AuditLogStorageRead, AuxiliarySessionStorageAccess, CharacterStorageAccess, PersistentStoreBundle, PersistentStoreBundleLike, ProjectMemoryStorageAccess, SessionMemoryStorageAccess, SessionStorageRead } from "../storage/persistent-store-lifecycle-service.js";
+import type { SessionTurnStorageAccess, AuxiliarySessionStorageAccess, CharacterStorageAccess, PersistentStoreBundle, PersistentStoreBundleLike, ProjectMemoryStorageAccess, SessionMemoryStorageAccess, SessionStorageRead } from "../storage/persistent-store-lifecycle-service.js";
 
 /** Owns the live persistent-store generation and its lifecycle state. */
 export class MainStoreContext {
@@ -20,7 +20,7 @@ export class MainStoreContext {
     projectMemoryStorage: ProjectMemoryStorageAccess | null;
     modelCatalogStorage: PersistentStoreBundle["modelCatalogStorage"] | null;
     characterStorage: CharacterStorageAccess | null;
-    auditLogStorage: AuditLogStorageRead | null;
+    sessionTurnStorage: SessionTurnStorageAccess | null;
     auxiliarySessionStorage: AuxiliarySessionStorageAccess | null;
     appSettingsStorage: PersistentStoreBundle["appSettingsStorage"] | null;
     storageWorker: V6StorageWorkerBundle | null;
@@ -36,7 +36,7 @@ export class MainStoreContext {
   } = {
     sessions: [], owner: null, sessionStorage: null, sessionMemoryStorage: null,
     projectMemoryStorage: null, modelCatalogStorage: null, characterStorage: null,
-    auditLogStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null,
+    sessionTurnStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null,
     storageWorker: null, promptTemplateStorage: null, mateStorage: null,
     mateProfileItemStorage: null, dbPath: "", diagnostics: null, memoryStatus: "stopped",
     settlement: null, drainCursor: undefined, walTimer: null,
@@ -49,7 +49,7 @@ export class MainStoreContext {
   public get projectMemoryStorage() { return this.state.projectMemoryStorage; }
   public get modelCatalogStorage() { return this.state.modelCatalogStorage; }
   public get characterStorage() { return this.state.characterStorage; }
-  public get auditLogStorage() { return this.state.auditLogStorage; }
+  public get sessionTurnStorage() { return this.state.sessionTurnStorage; }
   public get auxiliarySessionStorage() { return this.state.auxiliarySessionStorage; }
   public get appSettingsStorage() { return this.state.appSettingsStorage; }
   public get storageWorker() { return this.state.storageWorker; }
@@ -115,7 +115,7 @@ export class MainStoreContext {
       sessionStorage: this.state.sessionStorage,
       sessionMemoryStorage: this.state.sessionMemoryStorage,
       projectMemoryStorage: this.state.projectMemoryStorage,
-      auditLogStorage: this.state.auditLogStorage,
+      sessionTurnStorage: this.state.sessionTurnStorage,
       auxiliarySessionStorage: this.state.auxiliarySessionStorage,
       appSettingsStorage: this.state.appSettingsStorage,
       mateStorage: this.state.mateStorage,
@@ -139,7 +139,7 @@ export class MainStoreContext {
     this.state.sessionStorage = bundle.sessionStorage;
     this.state.sessionMemoryStorage = bundle.sessionMemoryStorage;
     this.state.projectMemoryStorage = bundle.projectMemoryStorage;
-    this.state.auditLogStorage = bundle.auditLogStorage;
+    this.state.sessionTurnStorage = bundle.sessionTurnStorage;
     this.state.auxiliarySessionStorage = bundle.auxiliarySessionStorage;
     this.state.appSettingsStorage = bundle.appSettingsStorage;
     this.state.mateStorage = bundle.mateStorage;
@@ -148,6 +148,6 @@ export class MainStoreContext {
 
   public clearReferences(): void {
     this.executionSelections.clear();
-    this.state = { ...this.state, sessions: [], owner: null, sessionStorage: null, sessionMemoryStorage: null, projectMemoryStorage: null, modelCatalogStorage: null, characterStorage: null, auditLogStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null, storageWorker: null, promptTemplateStorage: null, mateStorage: null, mateProfileItemStorage: null, settlement: null, drainCursor: undefined, walTimer: null };
+    this.state = { ...this.state, sessions: [], owner: null, sessionStorage: null, sessionMemoryStorage: null, projectMemoryStorage: null, modelCatalogStorage: null, characterStorage: null, sessionTurnStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null, storageWorker: null, promptTemplateStorage: null, mateStorage: null, mateProfileItemStorage: null, settlement: null, drainCursor: undefined, walTimer: null };
   }
 }

@@ -1,7 +1,4 @@
-import { type ApprovalMode } from "../settings/approval-mode.js";
-import { type CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
 import { type SessionExecutionOptions } from "./session-execution-options.js";
-import { type ModelReasoningEffort } from "../settings/model-catalog.js";
 
 export type DiffRow = {
   kind: "context" | "add" | "delete" | "modify";
@@ -23,32 +20,19 @@ export type RunCheck = {
   value: string;
 };
 
-export type AuditLogPhase =
-  | "running"
-  | "completed"
-  | "failed"
-  | "canceled"
-  | "started"
-  | "background-running"
-  | "background-completed"
-  | "background-failed"
-  | "background-canceled";
-
-export type AuditLogOperation = {
+export type MessageOperation = {
+  id?: string;
+  status?: LiveRunStepStatus;
+  exitCode?: number;
+  error?: { message: string; code?: string };
+  truncated?: boolean;
   type: string;
   summary: string;
   details?: string;
   detailAvailable?: boolean;
 };
 
-export type AuditLogOperationDetailFragment = {
-  id: number;
-  sessionId: string;
-  operationIndex: number;
-  details: string;
-};
-
-export type AuditLogUsage = {
+export type ProviderUsage = {
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
@@ -56,7 +40,7 @@ export type AuditLogUsage = {
   totalTokens?: number;
 };
 
-export type AuditLogProviderMetadata = {
+export type ProviderDiagnosticMetadata = {
   provider: string;
   kind: "unsupported_response" | "unsupported_event" | (string & {});
   summary: string;
@@ -66,108 +50,16 @@ export type AuditLogProviderMetadata = {
   payload?: unknown;
 };
 
-export type AuditLogicalPrompt = {
+export type ProviderLogicalPrompt = {
   systemText: string;
   inputText: string;
   composedText: string;
 };
 
-export type AuditTransportField = {
-  label: string;
-  value: string;
-};
-
-export type AuditTransportPayload = {
-  summary: string;
-  fields: AuditTransportField[];
-};
-
-export type AuditLogEntry = {
-  id: number;
-  sessionId: string;
-  createdAt: string;
-  phase: AuditLogPhase;
-  provider: string;
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  approvalMode: ApprovalMode;
-  sandboxMode?: CodexSandboxMode | "";
-  userMessageSeq?: number | null;
-  assistantMessageSeq?: number | null;
-  threadId: string;
-  logicalPrompt: AuditLogicalPrompt;
-  transportPayload: AuditTransportPayload | null;
-  assistantText: string;
-  operations: AuditLogOperation[];
-  rawItemsJson: string;
-  providerMetadata?: AuditLogProviderMetadata[];
-  usage: AuditLogUsage | null;
-  errorMessage: string;
-};
-
-export type AuditLogProgressPatch = {
-  sessionId: string;
-  observedAt: string;
-  fields?: { threadId?: string; errorMessage?: string };
-  assistantSnapshot?: { body: string };
-  operationUpserts?: Array<{ key: string; outputId?: number; operation: AuditLogOperation }>;
-  operationRemoves?: number[];
-  transportPayload?: AuditTransportPayload | null;
-  usage?: AuditLogUsage | null;
-};
-
-export type AuditLogProgressAck = {
-  insertedOperations: Array<{ key: string; outputId: number }>;
-};
-
-export type AuditLogSummary = Omit<
-  AuditLogEntry,
-  "logicalPrompt" | "transportPayload" | "assistantText" | "rawItemsJson" | "providerMetadata"
-> & {
-  assistantTextPreview: string;
-  detailAvailable: boolean;
-};
-
-export type AuditLogSummaryPageRequest = {
-  cursor?: number | null;
-  limit?: number | null;
-};
-
-export type AuditLogSummaryPageResult = {
-  entries: AuditLogSummary[];
-  nextCursor: number | null;
-  hasMore: boolean;
-  total: number;
-};
-
-export type AuditLogInterimMessage = {
-  seq: number;
-  body: string;
-  source: "stream_delta" | "running_snapshot" | "migration";
-  createdAt: string;
-};
-
-export type AuditLogDetail = Pick<
-  AuditLogEntry,
-  "id" | "sessionId" | "logicalPrompt" | "transportPayload" | "assistantText" | "operations" | "rawItemsJson" | "usage" | "errorMessage"
-> & {
-  interimMessages: AuditLogInterimMessage[];
-  providerMetadata?: AuditLogProviderMetadata[];
-};
-
-export type AuditLogDetailSection = "logical" | "transport" | "response" | "operations" | "raw";
-
-export type AuditLogDetailFragment = Pick<AuditLogDetail, "id" | "sessionId"> & Partial<
-  Pick<AuditLogDetail, "logicalPrompt" | "transportPayload" | "assistantText" | "interimMessages" | "operations" | "rawItemsJson" | "providerMetadata">
->;
-
 export type LiveRunStepStatus = "in_progress" | "completed" | "failed" | "canceled" | "pending" | (string & {});
 
-export type LiveRunStep = {
+export type LiveRunStep = MessageOperation & {
   id: string;
-  type: string;
-  summary: string;
-  details?: string;
   status: LiveRunStepStatus;
 };
 
@@ -287,7 +179,7 @@ export type LiveSessionRunState = {
   reasoningText?: string;
   steps: LiveRunStep[];
   backgroundTasks: LiveBackgroundTask[];
-  usage: AuditLogUsage | null;
+  usage: ProviderUsage | null;
   errorMessage: string;
   approvalRequest: LiveApprovalRequest | null;
   elicitationRequest: LiveElicitationRequest | null;

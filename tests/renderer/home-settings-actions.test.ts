@@ -20,7 +20,7 @@ function createApi(overrides?: Partial<HomeSettingsApi>): HomeSettingsApi {
     exportModelCatalogFile: async () => null,
     updateAppSettings: async (settings) => settings,
     resetAppDatabase: async () => ({
-      resetTargets: ["sessions", "auditLogs"],
+      resetTargets: ["sessions"],
       sessions: [],
       appSettings: createDefaultAppSettings(),
       modelCatalog: { revision: 1, providers: [] },
@@ -175,7 +175,7 @@ describe("home-settings-actions", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "database reset actionは選択対象を確認し、成功時にsessionsとaudit logsの影響とcharacter file bodiesの保持をfeedbackへ示す"
+  // claim = "database reset actionは選択対象を確認し、成功時にsessionsの影響とcharacter file bodiesの保持をfeedbackへ示す"
   // oracle = { type = "contract", ref = "src/settings/settings-actions.ts: resetHomeDatabase" }
   // fault = "confirm後のreset結果を誤った対象へ投影するか、保持対象を隠して破壊的操作の影響を誤認させる"
   // observable = "reset result kind、feedback、resetTargets"
@@ -193,8 +193,8 @@ describe("home-settings-actions", () => {
 
     assert.equal(result.kind, "success");
     if (result.kind === "success") {
-      assert.equal(result.feedback, "Reset Sessions / Audit logs. Character file bodies were preserved.");
-      assert.deepEqual(result.result.resetTargets, ["sessions", "auditLogs"]);
+      assert.equal(result.feedback, "Reset Sessions. Character file bodies were preserved.");
+      assert.deepEqual(result.result.resetTargets, ["sessions"]);
     }
   });
 

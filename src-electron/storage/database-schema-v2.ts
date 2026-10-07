@@ -14,9 +14,6 @@ export const REQUIRED_V2_TABLES = [
   "sessions",
   "session_messages",
   "session_message_artifacts",
-  "audit_logs",
-  "audit_log_details",
-  "audit_log_operations",
 ] as const;
 
 export function isValidV2Database(dbPath: string): boolean {
@@ -56,7 +53,6 @@ export const V2_SCHEMA_DESIGN_NOTES = [
   "V2 は withmate-v2.db を正本にし、V1 withmate.db からの移行は別スクリプトで行う。",
   "V2 では MemoryGeneration / Monologue legacy table を正本 schema に含めない。",
   "V2 では session 一覧用 header と message/detail payload を分離する。",
-  "V2 では audit log 一覧用 metadata と detail payload を分離する。",
   "V2 では UI 一覧・ページングに効く単位を row 化し、raw debug payload は必要最小限だけ detail blob に残す。",
   "V1 sessions.stream_json は独り言 legacy 表現のため V2 正本 schema と migration 対象から除外する。",
 ] as const;
@@ -95,7 +91,6 @@ export const CREATE_V2_SESSIONS_TABLE_SQL = `
     allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]',
     thread_id TEXT NOT NULL DEFAULT '',
     message_count INTEGER NOT NULL DEFAULT 0,
-    audit_log_count INTEGER NOT NULL DEFAULT 0,
     last_active_at INTEGER NOT NULL
   );
 
@@ -139,67 +134,6 @@ export const CREATE_V2_SESSION_MESSAGE_ARTIFACTS_TABLE_SQL = `
   );
 `;
 
-export const CREATE_V2_AUDIT_LOGS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS audit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    phase TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    reasoning_effort TEXT NOT NULL,
-    approval_mode TEXT NOT NULL,
-    thread_id TEXT NOT NULL DEFAULT '',
-    assistant_text_preview TEXT NOT NULL DEFAULT '',
-    operation_count INTEGER NOT NULL DEFAULT 0,
-    raw_item_count INTEGER NOT NULL DEFAULT 0,
-    input_tokens INTEGER,
-    cached_input_tokens INTEGER,
-    output_tokens INTEGER,
-    has_error INTEGER NOT NULL DEFAULT 0,
-    error_message TEXT NOT NULL DEFAULT '',
-    detail_available INTEGER NOT NULL DEFAULT 1,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v2_audit_logs_session_id_desc
-    ON audit_logs(session_id, id DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_v2_audit_logs_session_created
-    ON audit_logs(session_id, created_at DESC, id DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_v2_audit_logs_phase
-    ON audit_logs(session_id, phase, id DESC);
-`;
-
-export const CREATE_V2_AUDIT_LOG_DETAILS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS audit_log_details (
-    audit_log_id INTEGER PRIMARY KEY,
-    logical_prompt_json TEXT NOT NULL DEFAULT '{}',
-    transport_payload_json TEXT NOT NULL DEFAULT '',
-    assistant_text TEXT NOT NULL DEFAULT '',
-    raw_items_json TEXT NOT NULL DEFAULT '[]',
-    usage_json TEXT NOT NULL DEFAULT '',
-    FOREIGN KEY (audit_log_id) REFERENCES audit_logs(id) ON DELETE CASCADE
-  );
-`;
-
-export const CREATE_V2_AUDIT_LOG_OPERATIONS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS audit_log_operations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    audit_log_id INTEGER NOT NULL,
-    seq INTEGER NOT NULL,
-    operation_type TEXT NOT NULL DEFAULT '',
-    summary TEXT NOT NULL DEFAULT '',
-    details TEXT NOT NULL DEFAULT '',
-    FOREIGN KEY (audit_log_id) REFERENCES audit_logs(id) ON DELETE CASCADE,
-    UNIQUE (audit_log_id, seq)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v2_audit_log_operations_log_seq
-    ON audit_log_operations(audit_log_id, seq);
-`;
-
 export const CREATE_V2_MODEL_CATALOG_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS model_catalog_revisions (
     revision INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -237,9 +171,6 @@ export const CREATE_V2_SCHEMA_SQL = [
   CREATE_V2_SESSIONS_TABLE_SQL,
   CREATE_V2_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V2_SESSION_MESSAGE_ARTIFACTS_TABLE_SQL,
-  CREATE_V2_AUDIT_LOGS_TABLE_SQL,
-  CREATE_V2_AUDIT_LOG_DETAILS_TABLE_SQL,
-  CREATE_V2_AUDIT_LOG_OPERATIONS_TABLE_SQL,
   CREATE_V2_MODEL_CATALOG_TABLES_SQL,
 ] as const;
 
@@ -268,26 +199,4 @@ export const V2_SESSION_SUMMARY_COLUMNS = [
   "allowed_additional_directories_json",
   "thread_id",
   "message_count",
-  "audit_log_count",
-] as const;
-
-export const V2_AUDIT_LOG_SUMMARY_COLUMNS = [
-  "id",
-  "session_id",
-  "created_at",
-  "phase",
-  "provider",
-  "model",
-  "reasoning_effort",
-  "approval_mode",
-  "thread_id",
-  "assistant_text_preview",
-  "operation_count",
-  "raw_item_count",
-  "input_tokens",
-  "cached_input_tokens",
-  "output_tokens",
-  "has_error",
-  "error_message",
-  "detail_available",
 ] as const;

@@ -19,8 +19,7 @@ import {
   type NativeImage,
 } from "electron";
 
-import { summarizeAuditLogDetailFragment } from "../src-shared/session/audit-log-detail-metrics.js";
-import type { AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogOperationDetailFragment, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import type { DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
 import { currentTimestampLabel } from "../src-shared/time-state.js";
 import { createDefaultSessionMemory } from "../src-shared/memory/session-memory-state.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
@@ -53,8 +52,8 @@ import type {
 import {
   isSessionFileGitCommitResource,
 } from "../src-shared/file-explorer/file-explorer-contract.js";
-import { AuditLogStorage } from "./session/audit-log-storage.js";
-import { AuditLogService } from "./session/audit-log-service.js";
+import { SessionTurnService } from "./session/session-turn-service.js";
+import type { SessionTurnRecord } from "../src-shared/session/session-turn-state.js";
 import { AppSettingsStorage } from "./app/app-settings-storage.js";
 import { PromptTemplateStorage } from "./prompt-templates/prompt-template-storage.js";
 import { createV6StorageWorkerBundle, type V6StorageWorkerBundle } from "./storage/storage-worker-bundle.js";
@@ -69,7 +68,6 @@ import { AuxiliarySessionService } from "./auxiliary/auxiliary-session-service.j
 import { admitSessionTurn } from "./session/session-turn-admission.js";
 import {
   AuxiliarySessionStorage,
-  resolveLegacyAuxiliaryPreviewFromAuditEntries,
 } from "./auxiliary/auxiliary-session-storage.js";
 import { CharacterService } from "./character/character-service.js";
 import { refreshSessionCharacterRuntimeSnapshot } from "./character/character-runtime-service.js";
@@ -148,7 +146,7 @@ import { registerTerminalHandlers } from "./ipc/terminal.js";
 import { TerminalService, resolveTerminalShell, spawnTerminalPty } from "./terminal/terminal-service.js";
 import {
   PersistentStoreLifecycleService,
-  type AuditLogStorageRead,
+  type SessionTurnStorageAccess,
   type AuxiliarySessionStorageAccess,
   type CharacterStorageAccess,
   type PersistentStoreBundle,
@@ -515,7 +513,7 @@ let settingsCatalogService: SettingsCatalogService | null = null;
 let sessionObservabilityService: SessionObservabilityService | null = null;
 let sessionApprovalService: SessionApprovalService | null = null;
 let sessionElicitationService: SessionElicitationService | null = null;
-let auditLogService: AuditLogService | null = null;
+let sessionTurnService: SessionTurnService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
@@ -1051,16 +1049,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createSessionStorage: (nextDbPath) => new SessionStorage(nextDbPath),
           createSessionMemoryStorage: (nextDbPath) => new SessionMemoryStorage(nextDbPath),
           createProjectMemoryStorage: (nextDbPath) => new ProjectMemoryStorage(nextDbPath),
-          createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
-          createAuxiliarySessionStorage: (nextDbPath) => new AuxiliarySessionStorage(
-            nextDbPath,
-            (auxiliarySessionId) => {
-              const entries = mainStoreContext.auditLogStorage?.listSessionAuditLogs(auxiliarySessionId);
-              return entries && !(entries instanceof Promise)
-                ? resolveLegacyAuxiliaryPreviewFromAuditEntries(entries)
-                : null;
-            },
-          ),
+          createAuxiliarySessionStorage: (nextDbPath) => new AuxiliarySessionStorage(nextDbPath),
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
           createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
           ensureV2Schema: (nextDbPath) => {
@@ -1279,15 +1268,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               sessionQuery: {
                 listSessionSummaryPage: (request) => listSessionSummaryPage(request),
                 listSessionCharacterUsage: () => listSessionCharacterUsage(),
-                listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
-                listSessionAuditLogSummaries: (sessionId) => listSessionAuditLogSummaries(sessionId),
-                listSessionAuditLogSummaryPage: (sessionId, request) =>
-                  listSessionAuditLogSummaryPage(sessionId, request),
-                getSessionAuditLogDetail: (sessionId, auditLogId) => getSessionAuditLogDetail(sessionId, auditLogId),
-                getSessionAuditLogDetailSection: (sessionId, auditLogId, section) =>
-                  getSessionAuditLogDetailSection(sessionId, auditLogId, section),
-                getSessionAuditLogOperationDetail: (sessionId, auditLogId, operationIndex) =>
-                  getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
+                getLatestSessionTurn: (sessionId) => getLatestSessionTurn(sessionId),
                 listSessionSkills: async (sessionId) => listSessionSkills(sessionId),
                 listSessionCustomAgents: async (sessionId) => listSessionCustomAgents(sessionId),
                 listWorkspaceSkills: async (providerId, workspacePath) =>
@@ -1628,15 +1609,7 @@ function requireMainQueryService(): MainQueryService {
       getSession: (sessionId) => requireSessionStorage().getSessionView!(sessionId),
       getSessionMessageArtifact: (sessionId, messageIndex) =>
         requireSessionStorage().getSessionMessageArtifact(sessionId, messageIndex),
-      getAuditLogs: (sessionId) => requireAuditLogStorage().listSessionAuditLogs(sessionId),
-      getAuditLogSummaries: (sessionId) => requireAuditLogStorage().listSessionAuditLogSummaries(sessionId),
-      getAuditLogSummaryPage: (sessionId, request) =>
-        requireAuditLogStorage().listSessionAuditLogSummaryPage(sessionId, request),
-      getAuditLogDetail: (sessionId, auditLogId) => requireAuditLogStorage().getSessionAuditLogDetail(sessionId, auditLogId),
-      getAuditLogDetailSection: (sessionId, auditLogId, section) =>
-        requireAuditLogStorage().getSessionAuditLogDetailSection(sessionId, auditLogId, section),
-      getAuditLogOperationDetail: (sessionId, auditLogId, operationIndex) =>
-        requireAuditLogStorage().getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
+      getLatestSessionTurn: (sessionId) => requireSessionTurnStorage().getLatestSessionTurn(sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       discoverSessionSkills,
       discoverSessionCustomAgents,
@@ -1794,12 +1767,11 @@ function requireModelCatalogStorage(): PersistentStoreBundle["modelCatalogStorag
   return mainStoreContext.modelCatalogStorage;
 }
 
-function requireAuditLogStorage(): AuditLogStorageRead {
-  if (!mainStoreContext.auditLogStorage) {
-    throw new Error("Audit log storage is not initialized.");
+function requireSessionTurnStorage(): SessionTurnStorageAccess {
+  if (!mainStoreContext.sessionTurnStorage) {
+    throw new Error("Session turn storage is not initialized.");
   }
-
-  return mainStoreContext.auditLogStorage;
+  return mainStoreContext.sessionTurnStorage;
 }
 
 function requireAuxiliarySessionStorage(): AuxiliarySessionStorageAccess {
@@ -1902,30 +1874,13 @@ async function ensureDefaultAuxiliarySession(session: Session): Promise<void> {
   });
 }
 
-function requireAuditLogStorageForWrite(): AuditLogStorage {
-  const storage = requireAuditLogStorage();
-  if (isAuditLogStorageWritable(storage)) {
-    return storage;
+function requireSessionTurnService(): SessionTurnService {
+  if (!sessionTurnService) {
+    sessionTurnService = new SessionTurnService(requireSessionTurnStorage(), (turn) => {
+      requireWindowBroadcastService().broadcastSessionTurnUpdated(turn.sessionId);
+    });
   }
-
-  throw new Error("Audit log storage is read-only for this database and cannot be written.");
-}
-
-function isAuditLogStorageWritable(storage: AuditLogStorageRead): storage is AuditLogStorage {
-  const candidate = storage as Partial<AuditLogStorage>;
-  return (
-    typeof candidate.createAuditLog === "function" &&
-    typeof candidate.updateAuditLog === "function" &&
-    typeof candidate.clearAuditLogs === "function"
-  );
-}
-
-function requireAuditLogService(): AuditLogService {
-  if (!auditLogService) {
-    auditLogService = new AuditLogService(requireAuditLogStorageForWrite());
-  }
-
-  return auditLogService;
+  return sessionTurnService;
 }
 
 function requireWindowBroadcastService(): WindowBroadcastService<BrowserWindow> {
@@ -2178,7 +2133,11 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
         persistRunningTurnStart: (session, expectedMessageCount) => requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount),
         clearCharacterAuthoringRuntimeState: (session) => requireMainSessionPersistenceFacade().clearCharacterAuthoringRuntimeState(session),
-        upsertTerminalSession: (session, terminalCommit) => requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
+        upsertTerminalSession: async (session, terminalCommit) => {
+          const persisted = await requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit);
+          requireWindowBroadcastService().broadcastSessionTurnUpdated(session.id);
+          return persisted;
+        },
       },
       resolution: {
         resolveRuntimeSessionForTurn: (session) => session.sessionKind === "character-authoring"
@@ -2196,13 +2155,12 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         getCharacterContextService: () => memoryV6RuntimeApi?.characterContextService ?? null,
         onCharacterContextFailure: (session, result) => writeAppLog({ level: "warn", kind: "character-context.lifecycle.read-failed", process: "main", message: "Character context was unavailable for a session turn", data: { sessionId: session.id, code: result.error.code, retryable: result.error.retryable, conversationMayContinue: result.error.conversationMayContinue } }),
         getConversationTimingSnapshot: async (sessionId, observedAt) => {
-          const storage = requireAuditLogStorage();
-          if (!storage.getConversationTimingSnapshot) return null;
+          const storage = requireSessionTurnStorage();
           return storage.getConversationTimingSnapshot(sessionId, observedAt);
         },
       },
       character: { getSettlementStorage: () => requireCharacterAffectTurnSettlementStorage() as CharacterAffectTurnSettlementStorage, requestAppraisal: () => requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true }) },
-      audit: { createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry), updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry), updateAuditLogProgress: (id, patch) => requireAuditLogService().updateAuditLogProgress(id, patch) },
+      turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },
       interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId, decision) => { const requestId = getLiveSessionRun(sessionId)?.approvalRequest?.requestId; if (requestId) requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision); }, resolvePendingElicitationRequest: (sessionId, response) => { const requestId = getLiveSessionRun(sessionId)?.elicitationRequest?.requestId; if (requestId) requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response); }, invalidateProviderSessionThread },
       notification: { notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); } },
@@ -2319,7 +2277,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         beginRuntimeTurn: ({ session, binding }) => binding ? glossaryRuntimeService.beginProviderTurn(session.id, binding) : undefined,
       },
       memory: { getAppSettings: () => requireAppSettingsStorage().getSettings() },
-      audit: { createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry), updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry), updateAuditLogProgress: (id, patch) => requireAuditLogService().updateAuditLogProgress(id, patch) },
+      turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: {
         setLiveSessionRun: (sessionId, state) => setLiveSessionRun(sessionId, state),
         getLiveSessionRun,
@@ -2459,9 +2417,6 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       clearProviderQuotaTelemetry,
       clearSessionContextTelemetry,
       invalidateProviderSessionThread,
-      clearAuditLogs: async () => {
-        await requireAuditLogService().clearAuditLogs();
-      },
       resetAppSettings,
       resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
       clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
@@ -2640,7 +2595,7 @@ async function closePersistentStores(): Promise<void> {
   characterAuthoringService = null;
   managedSkillDistributionService = null;
   memoryCliShimService = null;
-  auditLogService = null;
+  sessionTurnService = null;
   auxiliarySessionService = null;
   auxiliarySessionRuntimeService = null;
   sessionRuntimeService = null;
@@ -2694,7 +2649,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
     sessionStorage: mainStoreContext.sessionStorage,
     sessionMemoryStorage: mainStoreContext.sessionMemoryStorage,
     projectMemoryStorage: mainStoreContext.projectMemoryStorage,
-    auditLogStorage: mainStoreContext.auditLogStorage,
+    sessionTurnStorage: mainStoreContext.sessionTurnStorage,
     auxiliarySessionStorage: mainStoreContext.auxiliarySessionStorage,
     appSettingsStorage: mainStoreContext.appSettingsStorage,
     mateStorage: mainStoreContext.mateStorage,
@@ -2703,7 +2658,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainStoreContext.setCharacterStorage(null);
   characterService = null;
   characterAuthoringService = null;
-  auditLogService = null;
+  sessionTurnService = null;
   auxiliarySessionService = null;
   auxiliarySessionRuntimeService = null;
   sessionRuntimeService = null;
@@ -2768,133 +2723,8 @@ async function invalidateAllProviderSessionThreads(): Promise<void> {
   await requireMainProviderFacade().invalidateAllProviderSessionThreads();
 }
 
-async function listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
-  return requireMainQueryService().listSessionAuditLogs(sessionId);
-}
-
-async function listSessionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]> {
-  return requireMainQueryService().listSessionAuditLogSummaries(sessionId);
-}
-
-async function listSessionAuditLogSummaryPage(
-  sessionId: string,
-  request?: AuditLogSummaryPageRequest | null,
-): Promise<AuditLogSummaryPageResult> {
-  return requireMainQueryService().listSessionAuditLogSummaryPage(sessionId, request);
-}
-
-async function getSessionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null> {
-  return requireMainQueryService().getSessionAuditLogDetail(sessionId, auditLogId);
-}
-
-async function getSessionAuditLogDetailSection(
-  sessionId: string,
-  auditLogId: number,
-  section: AuditLogDetailSection,
-): Promise<AuditLogDetailFragment | null> {
-  const startedAt = Date.now();
-  writeAppLog({
-    level: "debug",
-    kind: "audit-log.detail.main-load-started",
-    process: "main",
-    message: "Audit log detail section main load started",
-    data: {
-      sessionId,
-      auditLogId,
-      section,
-      source: "session",
-    },
-  });
-
-  try {
-    const fragment = await requireMainQueryService().getSessionAuditLogDetailSection(sessionId, auditLogId, section);
-    writeAppLog({
-      level: "debug",
-      kind: "audit-log.detail.main-load-completed",
-      process: "main",
-      message: "Audit log detail section main load completed",
-      data: {
-        sessionId,
-        auditLogId,
-        section,
-        source: "session",
-        durationMs: Date.now() - startedAt,
-        metrics: summarizeAuditLogDetailFragment(fragment),
-      },
-    });
-    return fragment;
-  } catch (error) {
-    writeAppLog({
-      level: "error",
-      kind: "audit-log.detail.main-load-failed",
-      process: "main",
-      message: "Audit log detail section main load failed",
-      data: {
-        sessionId,
-        auditLogId,
-        section,
-        source: "session",
-        durationMs: Date.now() - startedAt,
-      },
-      error: appLogService.errorToLogError(error),
-    });
-    throw error;
-  }
-}
-
-async function getSessionAuditLogOperationDetail(
-  sessionId: string,
-  auditLogId: number,
-  operationIndex: number,
-): Promise<AuditLogOperationDetailFragment | null> {
-  const startedAt = Date.now();
-  writeAppLog({
-    level: "debug",
-    kind: "audit-log.operation-detail.main-load-started",
-    process: "main",
-    message: "Audit log operation detail main load started",
-    data: {
-      sessionId,
-      auditLogId,
-      operationIndex,
-      source: "session",
-    },
-  });
-
-  try {
-    const fragment = await requireMainQueryService().getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex);
-    writeAppLog({
-      level: "debug",
-      kind: "audit-log.operation-detail.main-load-completed",
-      process: "main",
-      message: "Audit log operation detail main load completed",
-      data: {
-        sessionId,
-        auditLogId,
-        operationIndex,
-        source: "session",
-        durationMs: Date.now() - startedAt,
-        detailsChars: fragment?.details.length ?? 0,
-      },
-    });
-    return fragment;
-  } catch (error) {
-    writeAppLog({
-      level: "error",
-      kind: "audit-log.operation-detail.main-load-failed",
-      process: "main",
-      message: "Audit log operation detail main load failed",
-      data: {
-        sessionId,
-        auditLogId,
-        operationIndex,
-        source: "session",
-        durationMs: Date.now() - startedAt,
-      },
-      error: appLogService.errorToLogError(error),
-    });
-    throw error;
-  }
+async function getLatestSessionTurn(sessionId: string): Promise<SessionTurnRecord | null> {
+  return requireMainQueryService().getLatestSessionTurn(sessionId);
 }
 
 async function listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {

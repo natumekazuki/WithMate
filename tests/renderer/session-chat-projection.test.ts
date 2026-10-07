@@ -116,10 +116,10 @@ test("session runtime feature は blocked feedback と workspace/path notice を
 
 // @test-value v2
 // kind = "contract"
-// claim = "session header ownerはauxiliary modeでparent sessionのrename/deleteを隠し、audit logとsession action callbackを維持する"
+// claim = "session header ownerはauxiliary modeでparent sessionのrename/deleteを隠し、session action callbackを維持する"
 // oracle = { type = "characterization", ref = "99a1a9b09b23b54553790edeb63f390125d21ecb:src/chat/chat-header-visibility.ts resolveChatHeaderVisibility; docs/manual-test-checklist.md: MT-023D1, MT-023D2" }
 // fault = "auxiliary conversationで親sessionの操作が誤表示される、またはworkspace/session action callbackが別操作へ接続される"
-// observable = "useSessionHeaderOperationsが返すheader propsのvisibility flags、audit/terminal/pin callback identity、描画したworkspace/session-file操作の呼出先"
+// observable = "useSessionHeaderOperationsが返すheader propsのvisibility flags、terminal/pin callback identity、描画したworkspace/session-file操作の呼出先"
 // observation_boundary = "public-boundary"
 // scope = "session-chat-header-auxiliary-actions"
 // lifecycle = "permanent"
@@ -132,7 +132,6 @@ test("session header owner は auxiliary の parent 操作を隠し action callb
   const onOpenSessionExplorer = () => { actionCalls.push("workspace-explorer"); };
   const onOpenSessionFilesExplorer = () => { actionCalls.push("session-files-explorer"); };
   const onOpenSessionFilesTerminal = () => { actionCalls.push("session-files-terminal"); };
-  const onOpenAuditLog = () => {};
   const onOpenSessionTerminal = () => {};
   const onToggleSessionPin = () => {};
   const previousGlobals = {
@@ -188,7 +187,6 @@ test("session header owner は auxiliary の parent 操作を隠し action callb
       isPinPending: false,
       isAuxiliaryMode: true,
       isWorkspaceAvailable: true,
-      onOpenAuditLog,
       onOpenSessionTerminal,
       onOpenSessionFilesExplorer,
       onOpenSessionFilesTerminal,
@@ -199,11 +197,9 @@ test("session header owner は auxiliary の parent 操作を隠し action callb
     });
 
     assert.equal(feature.showRenameButton, false);
-    assert.equal(feature.showAuditLogButton, true);
     assert.equal(feature.showDeleteButton, false);
     assert.equal(feature.isPinned, true);
     assert.equal(feature.onTogglePin, onToggleSessionPin);
-    assert.equal(feature.onOpenAuditLog, onOpenAuditLog);
     assert.equal(feature.onOpenTerminal, onOpenSessionTerminal);
     await act(async () => root?.render(React.createElement(React.Fragment, null,
       React.createElement("section", { "aria-label": "Workspace actions" }, feature.workspaceActions),
@@ -540,7 +536,6 @@ test("context pane owner は runtime/composition 経由で ChatWindow の Latest
         approvalRequest: null,
         elicitationRequest: null,
       },
-      auditLogEntries: [],
       selectedSessionContextTelemetry: null,
       selectedProviderQuotaTelemetry: null,
       availableReasoningEfforts: ["medium"],

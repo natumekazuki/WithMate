@@ -133,7 +133,7 @@ function insertSessionTurnRows(
   rows: Array<{
     sessionId?: string | null;
     auxiliarySessionId?: string | null;
-    summary: string;
+    threadId: string;
   }>,
 ): void {
   const db = new DatabaseSync(dbPath);
@@ -144,7 +144,7 @@ function insertSessionTurnRows(
         auxiliary_session_id,
         provider_id,
         phase,
-        summary,
+        thread_id,
         started_at,
         updated_at
       ) VALUES (?, ?, 'codex', 'completed', ?, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z')
@@ -153,7 +153,7 @@ function insertSessionTurnRows(
       statement.run(
         row.sessionId ?? null,
         row.auxiliarySessionId ?? null,
-        row.summary,
+        row.threadId,
       );
     }
   } finally {
@@ -161,15 +161,15 @@ function insertSessionTurnRows(
   }
 }
 
-function listSessionTurnSummaries(dbPath: string): string[] {
+function listSessionTurnThreadIds(dbPath: string): string[] {
   const db = new DatabaseSync(dbPath);
   try {
     const rows = db.prepare(`
-      SELECT summary
+      SELECT thread_id AS threadId
       FROM session_turns_v6
-      ORDER BY summary ASC
-    `).all() as Array<{ summary: string }>;
-    return rows.map((row) => row.summary);
+      ORDER BY thread_id ASC
+    `).all() as Array<{ threadId: string }>;
+    return rows.map((row) => row.threadId);
   } finally {
     db.close();
   }
@@ -1274,53 +1274,65 @@ describe("SessionStorageV6", () => {
         approvalMode: DEFAULT_APPROVAL_MODE,
       };
       const deletedParent = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "deleted parent audit" }),
-        id: "deleted-audit-parent",
+        ...buildNewSession({ ...baseInput, taskTitle: "deleted parent turn" }),
+        id: "deleted-turn-parent",
       });
       const retainedParent = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "retained parent audit" }),
-        id: "retained-audit-parent",
+        ...buildNewSession({ ...baseInput, taskTitle: "retained parent turn" }),
+        id: "retained-turn-parent",
       });
       const replacedParent = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "replaced parent audit" }),
-        id: "replaced-audit-parent",
+        ...buildNewSession({ ...baseInput, taskTitle: "replaced parent turn" }),
+        id: "replaced-turn-parent",
       });
       insertAuxiliarySessionRows(dbPath, [
-        { id: "aux-audit-deleted", parentSessionId: deletedParent.id },
-        { id: "aux-audit-retained", parentSessionId: retainedParent.id },
-        { id: "aux-audit-replaced", parentSessionId: replacedParent.id },
+        { id: "aux-turn-deleted", parentSessionId: deletedParent.id },
+        { id: "aux-turn-retained", parentSessionId: retainedParent.id },
+        { id: "aux-turn-replaced", parentSessionId: replacedParent.id },
       ]);
       insertSessionTurnRows(dbPath, [
-        { sessionId: deletedParent.id, summary: "audit-deleted-session" },
-        { sessionId: retainedParent.id, summary: "audit-retained-session" },
-        { sessionId: replacedParent.id, summary: "audit-replaced-session" },
-        { auxiliarySessionId: "aux-audit-deleted", summary: "audit-deleted-auxiliary" },
-        { auxiliarySessionId: "aux-audit-retained", summary: "audit-retained-auxiliary" },
-        { auxiliarySessionId: "aux-audit-replaced", summary: "audit-replaced-auxiliary" },
+        { sessionId: deletedParent.id, threadId: "turn-deleted-session" },
+        { sessionId: retainedParent.id, threadId: "turn-retained-session" },
+        { sessionId: replacedParent.id, threadId: "turn-replaced-session" },
+        { auxiliarySessionId: "aux-turn-deleted", threadId: "turn-deleted-auxiliary" },
+        { auxiliarySessionId: "aux-turn-retained", threadId: "turn-retained-auxiliary" },
+        { auxiliarySessionId: "aux-turn-replaced", threadId: "turn-replaced-auxiliary" },
       ]);
 
       storage.deleteSession(deletedParent.id);
-      assert.deepEqual(listSessionTurnSummaries(dbPath), [
-        "audit-replaced-auxiliary",
-        "audit-replaced-session",
-        "audit-retained-auxiliary",
-        "audit-retained-session",
+      assert.deepEqual(listSessionTurnThreadIds(dbPath), [
+        "turn-replaced-auxiliary",
+        "turn-replaced-session",
+        "turn-retained-auxiliary",
+        "turn-retained-session",
       ]);
 
-      storage.replaceSessions([{ ...retainedParent, taskTitle: "retained audit after replace" }]);
-      assert.deepEqual(listSessionTurnSummaries(dbPath), [
-        "audit-retained-auxiliary",
-        "audit-retained-session",
+      storage.replaceSessions([{ ...retainedParent, taskTitle: "retained turn after replace" }]);
+      assert.deepEqual(listSessionTurnThreadIds(dbPath), [
+        "turn-retained-auxiliary",
+        "turn-retained-session",
       ]);
 
       storage.clearSessions();
-      assert.deepEqual(listSessionTurnSummaries(dbPath), []);
+      assert.deepEqual(listSessionTurnThreadIds(dbPath), []);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "遅延artifact読取は正常な旧本文埋込artifactを維持し、専用artifactの破損と正常未記録を区別する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md" }
+  // fault = "不正JSONやnonobject専用artifactを空artifactへ変換する、本文へfallbackする、または正常な旧artifactを失う"
+  // observable = "getSessionMessageArtifactの詳細・null・破損例外"
+  // observation_boundary = "public-boundary"
+  // scope = "Main delayed artifact read"
+  // lifecycle = "permanent"
+  // impact = "DetailsとLatest Commandで取得失敗を正常未記録として表示しない"
+  // distinction = "type/schema checkでは保存済みJSONの破損と本文fallback境界を検証できない"
+  // @end-test-value
   it("artifact_body がない既存 row でも getSessionMessageArtifact は body から復元する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -1356,6 +1368,22 @@ describe("SessionStorageV6", () => {
       const loadedArtifact = reopened.getSessionMessageArtifact(session.id, 0);
       assert.equal(loadedArtifact?.operationTimeline?.[0]?.details, "large operation details");
       assert.equal(loadedArtifact?.changedFiles[0]?.diffRows[0]?.rightText, "const value = true;");
+      const corruptDb = new DatabaseSync(dbPath);
+      try {
+        const update = corruptDb.prepare("UPDATE session_messages_v6 SET artifact_body = ? WHERE session_id = ? AND seq = 0");
+        for (const value of ["broken-json", "null", "[]", "42", '"text"', ""]) {
+          update.run(value, session.id);
+          assert.throws(() => reopened!.getSessionMessageArtifact(session.id, 0));
+        }
+        update.run(JSON.stringify(artifact), session.id);
+        assert.equal(reopened.getSessionMessageArtifact(session.id, 0)?.operationTimeline?.[0]?.details, "large operation details");
+        corruptDb.prepare("UPDATE session_messages_v6 SET body = ?, artifact_body = NULL WHERE session_id = ? AND seq = 0")
+          .run(JSON.stringify({ role: "assistant", text: "without artifact" }), session.id);
+        assert.equal(reopened.getSessionMessageArtifact(session.id, 0), null);
+        assert.equal(reopened.getSessionMessageArtifact(session.id, 9), null);
+      } finally {
+        corruptDb.close();
+      }
     } finally {
       storage?.close();
       reopened?.close();
@@ -1507,7 +1535,7 @@ describe("SessionStorageV6", () => {
           SELECT id, seq, role, body, artifact_body, created_at
           FROM session_messages_v6 WHERE session_id = ? ORDER BY seq
         `).all(initial.id);
-        const auditLogId = Number(db.prepare(`
+        const turnId = Number(db.prepare(`
           INSERT INTO session_turns_v6 (session_id, phase, started_at, updated_at)
           VALUES (?, 'running', ?, ?)
         `).run(initial.id, "2026-09-27T00:01:00.000Z", "2026-09-27T00:01:00.000Z").lastInsertRowid);
@@ -1518,7 +1546,7 @@ describe("SessionStorageV6", () => {
           updatedAt: "2026-09-27T00:02:00.000Z",
           messages: [...initial.messages, { role: "assistant", text: "new answer" }],
         }, {
-          auditLogId, sessionId: initial.id, phase: "completed", assistantMessageSeq: 2,
+          turnId, sessionId: initial.id, phase: "completed", assistantMessageSeq: 2,
           threadId: initial.threadId, errorMessage: "", completedAt: "2026-09-27T00:02:00.000Z",
         });
         const after = db.prepare(`
@@ -1577,7 +1605,7 @@ describe("SessionStorageV6", () => {
       storage.setSessionMessageBookmark(initial.id, owner, 0, false);
       const db = new DatabaseSync(dbPath);
       try {
-        const auditLogId = Number(db.prepare(`
+        const turnId = Number(db.prepare(`
           INSERT INTO session_turns_v6 (session_id, phase, started_at, updated_at)
           VALUES (?, 'running', ?, ?)
         `).run(initial.id, "2026-09-27T00:01:00.000Z", "2026-09-27T00:01:00.000Z").lastInsertRowid);
@@ -1585,7 +1613,7 @@ describe("SessionStorageV6", () => {
           ...running, status: "idle", runState: "idle", updatedAt: "2026-09-27T00:02:00.000Z",
           messages: [...running.messages, { role: "assistant", text: "final response" }],
         }, {
-          auditLogId, sessionId: initial.id, phase: "completed", assistantMessageSeq: 2,
+          turnId, sessionId: initial.id, phase: "completed", assistantMessageSeq: 2,
           threadId: initial.threadId, errorMessage: "", completedAt: "2026-09-27T00:02:00.000Z",
         });
         assert.equal(terminal.messages[0]?.isBookmarked, undefined);

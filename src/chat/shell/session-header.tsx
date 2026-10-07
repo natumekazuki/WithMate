@@ -14,7 +14,6 @@ export type SessionHeaderProps = {
   isPinned?: boolean;
   isPinPending?: boolean;
   showRenameButton?: boolean;
-  showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
   isTerminalDisabled?: boolean;
   showDeleteButton?: boolean;
@@ -22,7 +21,6 @@ export type SessionHeaderProps = {
   sessionFilesActions?: ReactNode;
   actions?: ReactNode;
   onTogglePin?: () => void;
-  onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
   onOpenExternalTerminal?: () => void;
   onTitleDraftChange: (value: string) => void;
@@ -42,7 +40,6 @@ export function SessionHeader({
   isPinned = false,
   isPinPending = false,
   showRenameButton = true,
-  showAuditLogButton = true,
   showTerminalButton = true,
   isTerminalDisabled = false,
   showDeleteButton = true,
@@ -50,7 +47,6 @@ export function SessionHeader({
   sessionFilesActions,
   actions,
   onTogglePin,
-  onOpenAuditLog,
   onOpenTerminal,
   onOpenExternalTerminal,
   onTitleDraftChange,
@@ -146,7 +142,7 @@ export function SessionHeader({
               </div>
             ) : null}
             {actions}
-            {onTogglePin || showRenameButton || showAuditLogButton || showDeleteButton ? (
+            {onTogglePin || showRenameButton || showDeleteButton ? (
               <details
                 ref={sessionActionsRef}
                 className="session-header-more"
@@ -197,11 +193,6 @@ export function SessionHeader({
                   {showRenameButton ? (
                     <button type="button" role="menuitem" onClick={() => runSessionAction(onStartTitleEdit)} disabled={isRunning || isReadOnly}>
                       Rename
-                    </button>
-                  ) : null}
-                  {showAuditLogButton ? (
-                    <button type="button" role="menuitem" onClick={() => runSessionAction(onOpenAuditLog)}>
-                      Audit Log
                     </button>
                   ) : null}
                   {showDeleteButton ? (

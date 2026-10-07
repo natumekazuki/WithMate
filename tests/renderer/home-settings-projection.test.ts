@@ -23,12 +23,12 @@ describe("home-settings-projection", () => {
     });
 
     assert.equal(projection.settingsWindowReady, false);
-    assert.equal(projection.selectedResetTargetsDescription, "Sessions / Audit logs");
+    assert.equal(projection.selectedResetTargetsDescription, "Sessions");
     assert.equal(projection.canResetDatabase, true);
-    assert.deepEqual(projection.resetTargetItems.find((item) => item.target === "auditLogs"), {
-      target: "auditLogs",
-      checked: false,
-      disabled: true,
+    assert.deepEqual(projection.resetTargetItems.find((item) => item.target === "sessions"), {
+      target: "sessions",
+      checked: true,
+      disabled: false,
     });
   });
 

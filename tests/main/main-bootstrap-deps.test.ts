@@ -150,12 +150,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         listSessionCharacterUsage: async () => {
           throw new Error("unused session query fixture method");
         },
-        listSessionAuditLogs: () => [],
-        listSessionAuditLogSummaries: () => [],
-        listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
-        getSessionAuditLogDetail: () => null,
-        getSessionAuditLogDetailSection: () => null,
-        getSessionAuditLogOperationDetail: () => null,
+        getLatestSessionTurn: () => null,
         async listSessionSkills() { return []; },
         async listSessionCustomAgents() { return []; },
         async listWorkspaceSkills() { return []; },

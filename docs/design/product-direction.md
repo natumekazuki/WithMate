@@ -14,7 +14,7 @@ Characterの表現は、情報を読む・判断する・操作するための�
 
 - 実行workspaceと再開対象のsessionを明示する。
 - providerが対応するmodel、depth、approval、sandboxなどの実行設定を選択・確認できるようにする。
-- 実行中の状態と必要な承認を見せ、完了後は変更ファイル、監査情報、差分を辿れるようにする。
+- 実行中の状態と必要な承認を見せ、完了後は変更ファイル、操作結果、差分を辿れるようにする。
 - provider固有の機能は共通のSession UIへ適切に投影し、利用できない機能を存在するかのように見せない。
 
 provider間の対応状況は[Coding Agent Capability Matrix](coding-agent-capability-matrix.md)、現在の画面構成は[Desktop UI](desktop-ui.md)を参照する。

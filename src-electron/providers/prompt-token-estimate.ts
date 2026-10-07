@@ -1,4 +1,4 @@
-import type { AuditLogicalPrompt } from "../../src-shared/session/runtime-state.js";
+import type { ProviderLogicalPrompt } from "../../src-shared/session/runtime-state.js";
 
 export type PromptTokenEstimate = {
   charCount: number;
@@ -19,7 +19,7 @@ export function estimatePromptTokens(text: string): PromptTokenEstimate {
   };
 }
 
-export function estimateLogicalPromptTokens(logicalPrompt: AuditLogicalPrompt): LogicalPromptTokenEstimate {
+export function estimateLogicalPromptTokens(logicalPrompt: ProviderLogicalPrompt): LogicalPromptTokenEstimate {
   return {
     system: estimatePromptTokens(logicalPrompt.systemText),
     input: estimatePromptTokens(logicalPrompt.inputText),

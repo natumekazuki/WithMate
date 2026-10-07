@@ -380,6 +380,72 @@ test("cleans an actual V3 schema but refuses a worktree shared with a live works
   const sharedBlob = "b".repeat(64);
   legacy.exec("PRAGMA foreign_keys = ON;");
   legacy.exec(CREATE_V3_SCHEMA_SQL.join("\n"));
+  legacy.exec(`
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    reasoning_effort TEXT NOT NULL,
+    approval_mode TEXT NOT NULL,
+    thread_id TEXT NOT NULL DEFAULT '',
+    assistant_text_preview TEXT NOT NULL DEFAULT '' CHECK (length(assistant_text_preview) <= 500),
+    operation_count INTEGER NOT NULL DEFAULT 0,
+    raw_item_count INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER,
+    cached_input_tokens INTEGER,
+    output_tokens INTEGER,
+    has_error INTEGER NOT NULL DEFAULT 0,
+    error_message_preview TEXT NOT NULL DEFAULT '' CHECK (length(error_message_preview) <= 500),
+    detail_available INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v3_audit_logs_session_id_desc
+    ON audit_logs(session_id, id DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_v3_audit_logs_session_created
+    ON audit_logs(session_id, created_at DESC, id DESC);
+
+
+  CREATE TABLE IF NOT EXISTS audit_log_details (
+    audit_log_id INTEGER PRIMARY KEY,
+    logical_prompt_blob_id TEXT,
+    transport_payload_blob_id TEXT,
+    assistant_text_blob_id TEXT,
+    raw_items_blob_id TEXT,
+    usage_metadata_json TEXT NOT NULL DEFAULT '',
+    usage_blob_id TEXT,
+    FOREIGN KEY (audit_log_id) REFERENCES audit_logs(id) ON DELETE CASCADE,
+    FOREIGN KEY (logical_prompt_blob_id) REFERENCES blob_objects(blob_id),
+    FOREIGN KEY (transport_payload_blob_id) REFERENCES blob_objects(blob_id),
+    FOREIGN KEY (assistant_text_blob_id) REFERENCES blob_objects(blob_id),
+    FOREIGN KEY (raw_items_blob_id) REFERENCES blob_objects(blob_id),
+    FOREIGN KEY (usage_blob_id) REFERENCES blob_objects(blob_id)
+  );
+
+
+  CREATE TABLE IF NOT EXISTS audit_log_operations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_log_id INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    operation_type TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '' CHECK (length(summary) <= 500),
+    details_preview TEXT NOT NULL DEFAULT '' CHECK (length(details_preview) <= 500),
+    details_blob_id TEXT,
+    FOREIGN KEY (audit_log_id) REFERENCES audit_logs(id) ON DELETE CASCADE,
+    FOREIGN KEY (details_blob_id) REFERENCES blob_objects(blob_id),
+    UNIQUE (audit_log_id, seq)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v3_audit_log_operations_log_seq
+    ON audit_log_operations(audit_log_id, seq);
+
+  CREATE INDEX IF NOT EXISTS idx_v3_audit_log_operations_details_blob
+    ON audit_log_operations(details_blob_id);
+`);
   // Legacy V3 definitions from d987cf565f8e0f905ccf1e2d7ec78f5b5467ddcc.
   legacy.exec(`
     CREATE TABLE companion_groups (

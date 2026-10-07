@@ -39,7 +39,7 @@ import {
   registerSessionProviderIdNormalizer,
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
 } from "./session-provider-id-sql.js";
-import { deleteAuditEventsForSessionTargets } from "./audit-log-storage-v6.js";
+import { deleteSessionTurnsForTargets } from "./session-turn-storage-v6.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import {
@@ -334,15 +334,22 @@ function encodeMessageArtifactForWrite(message: Message, existingArtifactBody: s
 }
 
 function decodeMessageArtifact(value: string | null | undefined): MessageArtifact | null {
-  if (!value) {
+  if (value === null || value === undefined) {
     return null;
   }
-
-  return normalizeMessage({
+  const artifact: unknown = JSON.parse(value);
+  if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
+    throw new Error("Stored message artifact must be a JSON object.");
+  }
+  const normalized = normalizeMessage({
     role: "assistant",
     text: "",
-    artifact: parseJsonObject(value),
-  })?.artifact ?? null;
+    artifact,
+  })?.artifact;
+  if (!normalized) {
+    throw new Error("Stored message artifact could not be normalized.");
+  }
+  return normalized;
 }
 
 function decodeMessage(row: MessageV6Row): Message | null {
@@ -917,7 +924,7 @@ export class SessionStorageV6 {
     assertFullConversation(session);
     const normalized = normalizeSessionForStorage(session);
     if (terminalCommit && terminalCommit.sessionId !== normalized.id) {
-      throw new Error("The terminal Session owner does not match the audit marker.");
+      throw new Error("The terminal Session owner does not match the turn marker.");
     }
 
     const startedAt = Date.now();
@@ -987,7 +994,7 @@ export class SessionStorageV6 {
       const retainedSessionIds = normalizedSessions.map((session) => session.id);
       const removedSessionIds = this.listStoredSessionIdsExcept(retainedSessionIds);
       const removedAuxiliarySessionIds = this.listAuxiliarySessionIdsWithoutValidParents(retainedSessionIds);
-      deleteAuditEventsForSessionTargets(this.db, {
+      deleteSessionTurnsForTargets(this.db, {
         sessionIds: removedSessionIds,
         auxiliarySessionIds: removedAuxiliarySessionIds,
       });
@@ -1026,7 +1033,7 @@ export class SessionStorageV6 {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       const auxiliarySessionIds = this.listAuxiliarySessionIdsForParentsIfTableExists(uniqueSessionIds);
-      deleteAuditEventsForSessionTargets(this.db, {
+      deleteSessionTurnsForTargets(this.db, {
         sessionIds: uniqueSessionIds,
         auxiliarySessionIds,
       });
@@ -1042,7 +1049,7 @@ export class SessionStorageV6 {
   clearSessions(): void {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      deleteAuditEventsForSessionTargets(this.db, { allSessionTargets: true });
+      deleteSessionTurnsForTargets(this.db, { allSessionTargets: true });
       this.db.exec("DELETE FROM session_messages_v6;");
       this.db.exec("DELETE FROM sessions_v6;");
       this.deleteAllAuxiliarySessionsIfTableExists();

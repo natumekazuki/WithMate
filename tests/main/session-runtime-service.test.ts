@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { describe, it, mock } from "node:test";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
-import type { AuditLogEntry, AuditLogProgressPatch, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
@@ -26,13 +25,11 @@ import {
   SessionRuntimeService,
   hasMeaningfulPartialRunResult,
   isRetryableStaleThreadSessionError,
-  preserveSessionTurnRequestMetadata,
   type SessionRuntimeServiceDeps,
 } from "../../src-electron/session/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/session/conversation-timing.js";
 import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character/character-affect-turn-settlement-storage.js";
-import type { SessionTurnTerminalCommit } from "../../src-electron/session/session-turn-terminal-commit.js";
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
 import { AppLifecycleService } from "../../src-electron/app/app-lifecycle-service.js";
@@ -42,9 +39,7 @@ import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapte
 import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
 import { SessionElicitationService } from "../../src-electron/session/session-elicitation-service.js";
 import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
-import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
-import { AuditLogStorageV6 } from "../../src-electron/session/audit-log-storage-v6.js";
+import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -113,8 +108,8 @@ function createProviderCatalog(id = "codex"): ModelCatalogProvider {
   };
 }
 
-type CreateAuditLogInput = Parameters<SessionRuntimeServiceDeps["createAuditLog"]>[0];
-type UpdateAuditLogInput = Parameters<SessionRuntimeServiceDeps["updateAuditLog"]>[1];
+type CreateSessionTurnInput = Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0];
+type UpdateSessionTurnInput = Parameters<SessionRuntimeServiceDeps["updateSessionTurn"]>[1];
 type TerminalNotificationInput = Parameters<NonNullable<SessionRuntimeServiceDeps["notifySessionTurnTerminal"]>>[0];
 
 const previousTestProgress = new WeakMap<RunSessionTurnProgressHandler, LiveSessionRunState>();
@@ -127,45 +122,11 @@ function emitTestProgress(handler: RunSessionTurnProgressHandler | undefined, st
   });
 }
 
-function createTestRuntime(deps: Omit<SessionRuntimeServiceDeps, "updateAuditLogProgress"> & Partial<Pick<SessionRuntimeServiceDeps, "updateAuditLogProgress">>): SessionRuntimeService {
-  let entry: CreateAuditLogInput;
-  let nextOutputId = 1;
-  const operations = new Map<string, { id: number; operation: AuditLogEntry["operations"][number] }>();
-  return new SessionRuntimeService({
-    ...deps,
-    async createAuditLog(input) {
-      entry = input;
-      return deps.createAuditLog(input);
-    },
-    updateAuditLog(id, input) {
-      entry = input;
-      if (input.phase === "running") operations.clear();
-      return deps.updateAuditLog(id, input);
-    },
-    updateAuditLogProgress: deps.updateAuditLogProgress ?? (async (id, patch) => {
-      const insertedOperations: Array<{ key: string; outputId: number }> = [];
-      for (const upsert of patch.operationUpserts ?? []) {
-        const outputId = upsert.outputId ?? nextOutputId++;
-        operations.set(upsert.key, { id: outputId, operation: upsert.operation });
-        if (upsert.outputId === undefined) insertedOperations.push({ key: upsert.key, outputId });
-      }
-      for (const [key, operation] of operations) {
-        if (patch.operationRemoves?.includes(operation.id)) operations.delete(key);
-      }
-      entry = {
-        ...entry,
-        ...patch.fields,
-        assistantText: patch.assistantSnapshot?.body ?? entry.assistantText,
-        usage: patch.usage === undefined ? entry.usage : patch.usage,
-        operations: [...operations.values()].map((value) => value.operation),
-      };
-      await deps.updateAuditLog(id, entry);
-      return { insertedOperations };
-    }),
-  });
+function createTestRuntime(deps: SessionRuntimeServiceDeps): SessionRuntimeService {
+  return new SessionRuntimeService(deps);
 }
 
-function createAuditLogBase(input: CreateAuditLogInput): AuditLogEntry {
+function createSessionTurnBase(input: CreateSessionTurnInput): SessionTurnRecord {
   return {
     id: 1,
     ...input,
@@ -176,10 +137,8 @@ function createPartialResult(overrides?: Partial<RunSessionTurnResult>): RunSess
   return {
     threadId: null,
     assistantText: "",
-    logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-    transportPayload: null,
-    operations: [],
-    rawItemsJson: "[]",
+
+
     usage: null,
     ...overrides,
   };
@@ -219,8 +178,8 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     getProviderCodingAdapter: () => adapter,
     getSessionMemory: () => createSessionMemory(session.id),
     resolveProjectMemoryEntriesForPrompt: () => [],
-    createAuditLog: createAuditLogBase,
-    updateAuditLog() {},
+    createSessionTurn: createSessionTurnBase,
+    updateSessionTurn() {},
     setLiveSessionRun(_id, state) { live = state; },
     getLiveSessionRun: () => live,
     waitForApprovalDecision: () => "approve",
@@ -260,7 +219,7 @@ describe("SessionRuntimeService stale retry helpers", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "meaningful partial判定はassistantText、operations、artifactのいずれかを観測する"
+  // claim = "meaningful partial判定はassistantTextまたは通常artifactの情報を観測する"
   // oracle = { type = "contract", ref = "Session runtime meaningful partial classifier contract" }
   // fault = "利用者に返せるpartial情報を空扱いし、不要なretryまたは破棄を行う"
   // observable = "meaningful partial classifier result"
@@ -268,11 +227,13 @@ describe("SessionRuntimeService stale retry helpers", () => {
   // scope = "SessionRuntimeService partial response classification"
   // lifecycle = "permanent"
   // @end-test-value
-  it("meaningful partial 判定は assistantText / operations / artifact を見る", () => {
+  it("meaningful partial 判定は assistantText と通常artifactを見る", () => {
     assert.equal(hasMeaningfulPartialRunResult(createPartialResult()), false);
-    assert.equal(hasMeaningfulPartialRunResult(createPartialResult({ rawItemsJson: "[{\"kind\":\"trace\"}]" })), false);
     assert.equal(hasMeaningfulPartialRunResult(createPartialResult({ assistantText: "partial" })), true);
-    assert.equal(hasMeaningfulPartialRunResult(createPartialResult({ operations: [{ type: "command_execution", summary: "npm test" }] })), true);
+    assert.equal(hasMeaningfulPartialRunResult(createPartialResult({ artifact: {
+      title: "", activitySummary: [], changedFiles: [], runChecks: [],
+      operationTimeline: [{ type: "command_execution", summary: "npm test" }],
+    } })), true);
     assert.equal(hasMeaningfulPartialRunResult(createPartialResult({
       artifact: {
         title: "Artifact",
@@ -286,335 +247,168 @@ describe("SessionRuntimeService stale retry helpers", () => {
 describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "承認・質問の要求保存はliveより新しいAudit本文とusageを巻き戻さずpending serviceの表示・回答を維持する"
-  // oracle = { type = "contract", ref = "docs/design/audit-log.md: 表示とデータ保護" }
-  // fault = "周期化された古いlive本文やusageを要求操作と一緒にAuditへ再保存するか要求表示を保存経路で上書きする"
-  // observable = "実Runtimeの本文・usage patch列、承認と質問の操作patch、実pending serviceのlive要求と回答・解除"
+  // claim = "streamのdelta数にかかわらず最小turnは開始と終端だけ保存し、取得済み本文と個別操作結果は通常履歴へ保持する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
+  // fault = "deltaごとに累積状態を保存するか、失敗・取消のpartial artifactを捨ててturn phaseから操作結果を生成する"
+  // observable = "turn保存入力数とphase、返却Sessionの本文とoperationTimeline"
   // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService approval and elicitation Audit delivery"
+  // scope = "SessionRuntimeService minimal turn and history persistence"
   // lifecycle = "permanent"
-  // impact = "承認待ち中の監査本文・usageがProviderの観測順から巻き戻ることを防ぐ"
-  // distinction = "provider配送分離とpending service単体では古いliveから新しいAuditへ要求を保存するconsumer経路を通らない"
+  // impact = "長い応答で保存量が増幅するか、取得済み操作結果を失う"
+  // distinction = "storage型検査だけではruntimeのstream配送とterminal history保存を接続できない"
   // @end-test-value
-  it("承認・質問は操作だけを保存し古いlive本文とusageをAuditへ戻さない", async () => {
-    const session = createSession({ id: "pending-audit", provider: "codex" });
-    let live: LiveSessionRunState | null = null;
-    let finalSaved = false;
-    const patches: AuditLogProgressPatch[] = [];
-    const oldUsage = { inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 };
-    const newUsage = { inputTokens: 10, cachedInputTokens: 5, outputTokens: 20 };
-    const update = (_id: string, recipe: (current: LiveSessionRunState) => LiveSessionRunState) => {
-      assert.ok(live);
-      return live = recipe(live);
-    };
-    const approvals = new SessionApprovalService({ updateLiveSessionRun: update });
-    const questions = new SessionElicitationService({ updateLiveSessionRun: update });
-    const noChanges = { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } };
-    const runtime = createProgressRuntime(session, async (input, progress) => {
-      await progress?.(createLiveRunState({ sessionId: session.id, threadId: "thread", assistantText: "older", usage: oldUsage }), noChanges);
-      const newer = createLiveRunState({ sessionId: session.id, threadId: "thread", assistantText: "newer", usage: newUsage });
-      await progress?.(newer, { ...noChanges, delivery: "audit" });
-      const approval: LiveApprovalRequest = { requestId: "approval", provider: "codex", kind: "command", title: "Run", summary: "Run command", decisionMode: "direct-decision" };
-      const decision = input.onApprovalRequest!(approval);
-      await waitForCondition(() => patches.some(patch => patch.operationUpserts?.some(upsert => upsert.key === "approval")), "approval Audit saved");
-      assert.equal(live?.assistantText, "older");
-      assert.deepEqual(live?.usage, oldUsage);
-      assert.equal(live?.approvalRequest?.requestId, "approval");
-      approvals.resolveLiveApproval(session.id, "approval", "approve");
-      assert.equal(await decision, "approve");
-      assert.equal(live?.approvalRequest, null);
-      const question: LiveElicitationRequest = { requestId: "question", provider: "codex", mode: "form", message: "Choose", fields: [] };
-      const response = input.onElicitationRequest!(question);
-      await waitForCondition(() => patches.some(patch => patch.operationUpserts?.some(upsert => upsert.key === "elicitation")), "question Audit saved");
-      assert.equal(live?.assistantText, "older");
-      assert.deepEqual(live?.usage, oldUsage);
-      assert.equal(live?.elicitationRequest?.requestId, "question");
-      questions.resolveLiveElicitation(session.id, "question", { action: "accept", content: { answer: "yes" } });
-      assert.deepEqual(await response, { action: "accept", content: { answer: "yes" } });
-      assert.equal(live?.elicitationRequest, null);
-      await progress?.(newer, { ...noChanges, delivery: "live" });
-      return createPartialResult({ threadId: "thread", assistantText: "newer", usage: newUsage });
-    }, {
-      setLiveSessionRun(_id, state) { live = state; }, getLiveSessionRun() { return live; },
-      waitForApprovalDecision: (id, request, signal) => approvals.waitForLiveApprovalDecision(id, request, signal),
-      waitForElicitationResponse: (id, request, signal) => questions.waitForLiveElicitationResponse(id, request, signal),
-      updateAuditLogProgress(_id, patch) { patches.push(patch); return { insertedOperations: (patch.operationUpserts ?? []).map((upsert, index) => ({ key: upsert.key, outputId: index + 1 })) }; },
-      updateAuditLog() { finalSaved = true; },
-    });
-    const completed = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
-    assert.equal(completed.runState, "idle");
-    await waitForCondition(() => finalSaved, "pending Audit enrichment");
-    assert.deepEqual(patches.flatMap(patch => patch.assistantSnapshot ? [patch.assistantSnapshot.body] : []), ["older", "newer"]);
-    assert.deepEqual(patches.flatMap(patch => patch.usage ? [patch.usage] : []), [oldUsage, newUsage]);
-    const requestPatches = patches.filter(patch => patch.operationUpserts?.length);
-    assert.deepEqual(requestPatches.flatMap(patch => patch.operationUpserts!.map(upsert => upsert.key)), ["approval", "elicitation"]);
-    for (const patch of requestPatches) {
-      assert.equal(patch.assistantSnapshot, undefined);
-      assert.equal(patch.usage, undefined);
-      assert.equal(patch.fields, undefined);
+  it("delta数が異なっても開始と終端だけ保存し、全phaseの通常artifactを保持する", async () => {
+    for (const outcome of ["completed", "failed", "canceled"] as const) for (const deltaCount of [1, 250]) {
+      const session = createSession();
+      const writes: CreateSessionTurnInput[] = [];
+      const operation = { id: "command-1", type: "command_execution", summary: "npm test", status: "failed", exitCode: 3, error: { message: "check failed", code: "CHECK" }, truncated: true };
+      const partial = createPartialResult({ assistantText: "取得済み本文", artifact: { title: "", activitySummary: [], changedFiles: [], runChecks: [], operationTimeline: [operation] } });
+      const service = createProgressRuntime(session, async (input, progress) => {
+        for (let delta = 0; delta < deltaCount; delta += 1) await emitTestProgress(progress, createLiveRunState({ sessionId: input.session.id, assistantText: `partial-${delta}` }));
+        if (outcome !== "completed") throw new ProviderTurnError("provider stopped", partial, outcome === "canceled");
+        return partial;
+      }, {
+        createSessionTurn(input) { writes.push(input); return createSessionTurnBase(input); },
+        updateSessionTurn(_id, input) { writes.push(input); },
+      });
+      const result = await service.runSessionTurn(session.id, { userMessage: "run", executionOptions: TEST_EXECUTION_OPTIONS });
+      assert.deepEqual(writes.map((entry) => entry.phase), ["running", outcome]);
+      assert.equal(writes[1]?.createdAt, writes[0]?.createdAt);
+      assert.equal(typeof writes[1]?.completedAt, "string");
+      assert.match(result.messages.at(-1)?.text ?? "", /取得済み本文/);
+      assert.deepEqual(result.messages.at(-1)?.artifact?.operationTimeline, [operation]);
     }
   });
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Auditだけの配送を全件保存しliveだけの配送を保存待ちなしで表示する"
-  // oracle = { type = "contract", ref = "docs/design/audit-log.md: progressの変更情報と表示用latest-only集約" }
-  // fault = "Audit-only配送で表示を更新する、live-only配送で保存を増幅する、または保存完了をliveの前提にする"
-  // observable = "停止writer中のlive本文と、解放後の全assistant snapshot patch列"
+  // claim = "Codex失敗時はSessionの保存threadと最小turnの実行threadを維持し、terminal保存後の通知が失敗してもcleanupする"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md; docs/design/session-run-lifecycle.md" }
+  // fault = "保存threadをlive threadで上書きする、partial threadId欠如でturnのlive情報を失う、または通知失敗でcleanupを止める"
+  // scope = "session-runtime-failed-terminal-notification"
+  // observable = "SessionとturnのthreadId、通知回数と保存・cleanup順序"
   // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService separate Audit and live delivery"
   // lifecycle = "permanent"
-  // impact = "slow storageでも表示が進み、表示間引きで必要なAudit保存が欠落しない"
-  // distinction = "adapter単体とstorage点更新testではRuntimeの表示owner・保存ownerの分離を確認できない"
+  // impact = "失敗後の会話継続先や実行先を失い、終了処理が止まる"
+  // distinction = "復帰失敗の単体testはlive progressと保存threadが異なる場合のturn・Session分離を確認しない"
   // @end-test-value
-  it("Audit-onlyとlive-onlyは独立し停止writerが表示を止めない", async () => {
-    const session = createSession({ id: "separate-delivery", provider: "codex" });
-    const patches: AuditLogProgressPatch[] = [];
+  it("failed 最小turn は partial threadId が無くても live progress の threadId を維持する", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-stale" });
     let live: LiveSessionRunState | null = null;
-    let release!: () => void;
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    let finalSaved = false;
-    const noChanges = { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } };
-    const runtime = createProgressRuntime(session, async (_input, progress) => {
-      for (const text of ["first", "second", "third"]) {
-        await progress?.(createLiveRunState({ sessionId: session.id, assistantText: text }), { ...noChanges, delivery: "audit" });
-      }
-      await progress?.(createLiveRunState({ sessionId: session.id, assistantText: "", usage: null }), { ...noChanges, delivery: "audit" });
-      assert.equal(live?.assistantText, "");
-      await progress?.(createLiveRunState({ sessionId: session.id, assistantText: "third" }), { ...noChanges, delivery: "live" });
-      assert.equal(live?.assistantText, "third");
-      release();
-      return createPartialResult({ assistantText: "third" });
-    }, {
-      setLiveSessionRun(_id, state) { live = state; }, getLiveSessionRun() { return live; },
-      async updateAuditLogProgress(_id, patch) { await gate; patches.push(patch); return { insertedOperations: [] }; },
-      updateAuditLog() { finalSaved = true; },
-    });
-    try { await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" }); }
-    finally { release(); }
-    await waitForCondition(() => finalSaved, "separate delivery enrichment");
-    assert.deepEqual(patches.map(patch => patch.assistantSnapshot?.body), ["first", "second", "third"]);
-  });
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "operation総数によらず1件変更は1件patchを送り同値通知を抑止し同じoutput IDで更新削除する"
-  // oracle = { type = "contract", ref = "01-audit-progress-partial-update.mdの変更operation増分保存と安定ID要求" }
-  // fault = "全operationを再転送する、同値usageとoperationを再保存する、または更新削除に別IDを使う"
-  // observable = "5件/500件stateでの変更patchサイズ・upsert件数・output ID・削除ID"
-  // observation_boundary = "component-behavior"
-  // scope = "SessionRuntimeService incremental Audit patch projection"
-  // lifecycle = "permanent"
-  // impact = "operation数が増えた長時間turnで転送量と保存待ち保持を増幅させない"
-  // distinction = "storage点更新testはRuntimeが全snapshotを作る退行を検出しない"
-  // @end-test-value
-  it("1operationの変更patchは全operation数に比例せず同値通知を保存しない", async () => {
-    const patchSizes: number[] = [];
-    for (const count of [5, 500]) {
-      const session = createSession({ id: "delta-session", provider: "codex" });
-      const patches: AuditLogProgressPatch[] = [];
-      let finalSaved = false;
-      const target = { id: "target", type: "command_execution", summary: "same command", status: "in_progress" as const, details: "before" };
-      const others = Array.from({ length: count - 1 }, (_, index) => ({ ...target, id: `other-${index}` }));
-      const usage = { inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 };
-      const runtime = createProgressRuntime(session, async (_input, progress) => {
-        const state = createLiveRunState({ sessionId: session.id, steps: [target, ...others], usage });
-        await progress?.(state, { steps: { upserts: state.steps, removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        const changed = { ...target, status: "completed" as const, details: "after" };
-        const next = { ...state, steps: [changed, ...others], usage: { ...usage } };
-        await progress?.(next, { steps: { upserts: [changed], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
-        await progress?.(next, { steps: { upserts: [changed], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
-        await progress?.({ ...next, steps: others }, { steps: { upserts: [], removes: [target.id] }, backgroundTasks: { upserts: [], removes: [] } });
-        return createPartialResult({ assistantText: "done" });
-      }, {
-        updateAuditLogProgress(_id, patch) {
-          patches.push(patch);
-          return { insertedOperations: (patch.operationUpserts ?? []).filter((item) => item.outputId === undefined).map((item, index) => ({ key: item.key, outputId: index + 1 })) };
-        },
-        updateAuditLog() { finalSaved = true; },
-      });
-      await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
-      await waitForCondition(() => finalSaved, "delta tail後のterminal enrichment");
-      assert.equal(patches.length, 3);
-      assert.equal(patches[1].operationUpserts?.length, 1);
-      assert.equal(patches[1].operationUpserts?.[0].key, "step:target");
-      assert.equal(patches[1].operationUpserts?.[0].outputId, 1);
-      assert.equal(patches[1].usage, undefined);
-      assert.equal(patches[1].assistantSnapshot, undefined);
-      assert.deepEqual(patches[2].operationRemoves, [1]);
-      patchSizes.push(JSON.stringify(patches[1]).length);
-    }
-    assert.equal(patchSizes[0], patchSizes[1]);
-  });
+    const storedSessions: Session[] = [];
+    const turnUpdates: UpdateSessionTurnInput[] = [];
+    const terminalNotifications: TerminalNotificationInput[] = [];
+    const terminalOrder: string[] = [];
 
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "Audit受付は件数とpayload量を有限にし過負荷をfailedとして保存・通知し、明示cancelの通知だけを抑止して受付済みpatchをdrainする"
-  // oracle = { type = "contract", ref = "docs/design/audit-log.md; docs/adr/006-windows-session-turn-notifications.md" }
-  // fault = "停止writerへ無制限patchを積む、過負荷をcanceledへ分類する、内部abortでfailed通知を抑止する、明示cancelを通知する、または受付済みpatchを捨てる"
-  // observable = "provider停止時の受付数、terminal runState、terminal保存と通知の順序、drain後patch件数と拒否・保存状態metadata"
-  // observation_boundary = "component-behavior"
-  // scope = "SessionRuntimeService audit pressure admission"
-  // lifecycle = "permanent"
-  // impact = "長時間実行のMain保持量とAudit保存範囲を守る"
-  // distinction = "型検査とstorage点更新testではproducer burst時の容量境界と分類を確認できない"
-  // @end-test-value
-  it("Audit queueの件数とpayload上限で明示failedにしaccepted tailを捨てない", async () => {
-    for (const mode of ["count", "payload", "removals", "canceled-count"] as const) {
-      const session = createSession({ provider: "codex" });
-      let release!: () => void;
-      const barrier = new Promise<void>((resolve) => { release = resolve; });
-      let storedPatches = 0;
-      let attemptedEvents = 0;
-      let terminalAudit: UpdateAuditLogInput | undefined;
-      const terminalEvents: string[] = [];
-      const runtime = createProgressRuntime(session, async (input, progress) => {
-        if (mode === "canceled-count") {
-          input.signal?.addEventListener("abort", () => runtime.cancelRun(session.id), { once: true });
-        }
-        for (let index = 0; index < 100; index += 1) {
-          attemptedEvents += 1;
-          const step = { id: `step-${index}`, type: "command_execution", summary: "command", status: "in_progress" as const, details: mode === "payload" ? "x".repeat(5 * 1024 * 1024) : "small" };
-          await progress?.(createLiveRunState({ sessionId: session.id, assistantText: `body-${index}`, steps: [step] }), {
-            steps: { upserts: mode === "removals" ? [] : [step], removes: mode === "removals" ? ["x".repeat(5 * 1024 * 1024)] : [] }, backgroundTasks: { upserts: [], removes: [] },
-          });
-        }
-        return createPartialResult({ assistantText: "unexpected success" });
-      }, {
-        auditEnrichmentGraceMs: 1,
-        upsertTerminalSession(next, commit) { terminalEvents.push(`save:${commit.phase}`); return next; },
-        notifySessionTurnTerminal(notification) { terminalEvents.push(`notify:${notification.outcome}`); },
-        async updateAuditLogProgress(_id, patch) {
-          await barrier;
-          storedPatches += 1;
-          return { insertedOperations: (patch.operationUpserts ?? []).filter((item) => item.outputId === undefined).map((item) => ({ key: item.key, outputId: storedPatches })) };
-        },
-        updateAuditLog(_id, entry) { terminalAudit = entry; },
-      });
-      const result = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
-      assert.equal(result.runState, "error");
-      assert.equal(attemptedEvents, mode === "count" || mode === "canceled-count" ? 65 : 1);
-      assert.equal(storedPatches, 0);
-      assert.deepEqual(terminalEvents, mode === "canceled-count" ? ["save:failed"] : ["save:failed", "notify:failed"]);
-      release();
-      await waitForCondition(() => terminalAudit?.phase === "failed", "pressure failureのterminal enrichment");
-      assert.equal(storedPatches, mode === "count" || mode === "canceled-count" ? 64 : 0);
-      assert.ok(terminalAudit?.providerMetadata?.some((metadata) => metadata.kind === "audit_progress_failure"));
-      assert.deepEqual(terminalAudit?.providerMetadata?.find((metadata) => metadata.kind === "audit_progress_failure")?.payload, {
-        admissionRejected: true, acceptedProgressPersistence: "completed",
-      });
-    }
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "最初のoperation INSERT結果がunknownなら受付済み同key後続を再INSERTせずfailed保存状態を残す"
-  // oracle = { type = "contract", ref = "01-audit-progress-partial-update.mdの安定ID・unknown outcome自動再実行禁止要求" }
-  // fault = "INSERT ack喪失後に同key後続をoutput ID未取得の新INSERTとして再dispatchする"
-  // observable = "unknown reject前に2patchを受付した時のprogress dispatch回数とterminal phase・保存状態metadata"
-  // observation_boundary = "component-behavior"
-  // scope = "SessionRuntimeService accepted Audit tail after unknown insert"
-  // lifecycle = "permanent"
-  // impact = "未知の保存結果からoperation重複と誤ったAudit成功表示を作らない"
-  // distinction = "単発保存失敗とstorage単体guardはack未取得の同key後続INSERTを検出しない"
-  // @end-test-value
-  it("INSERT結果unknown後のaccepted同keypatchを再dispatchしない", async () => {
-    const session = createSession({ provider: "codex" });
-    let rejectFirst!: (error: Error) => void;
-    const firstWrite = new Promise<never>((_resolve, reject) => { rejectFirst = reject; });
-    let writeStarted!: () => void;
-    const started = new Promise<void>((resolve) => { writeStarted = resolve; });
-    let dispatches = 0;
-    let terminalAudit: UpdateAuditLogInput | undefined;
-    const runtime = createProgressRuntime(session, async (_input, progress) => {
-      const step = { id: "same-output", type: "command_execution", summary: "command", status: "in_progress" as const };
-      await progress?.(createLiveRunState({ sessionId: session.id, steps: [step] }), { steps: { upserts: [step], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
-      await started;
-      const changed = { ...step, status: "completed" as const };
-      await progress?.(createLiveRunState({ sessionId: session.id, steps: [changed] }), { steps: { upserts: [changed], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
-      rejectFirst(new Error("Storage write outcome unknown"));
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      return createPartialResult({ assistantText: "provider final" });
+    const service = createProgressRuntime(session, async (input, onProgress) => {
+      await emitTestProgress(onProgress, createLiveRunState({
+        sessionId: input.session.id,
+        threadId: "thread-live",
+      }));
+      throw new ProviderTurnError("network timeout", createPartialResult(), false);
     }, {
-      updateAuditLogProgress() { dispatches += 1; writeStarted(); return firstWrite; },
-      updateAuditLog(_id, entry) { terminalAudit = entry; },
+      upsertSession(next) {
+        storedSessions.push(next);
+        if (next.runState === "error") terminalOrder.push("failed-upsert");
+        return next;
+      },
+      updateSessionTurn(_id, entry) { turnUpdates.push(entry); },
+      setLiveSessionRun(_id, state) { live = state; },
+      getLiveSessionRun() { return live; },
+      invalidateProviderSessionThread() { terminalOrder.push("provider-cleanup"); },
+      notifySessionTurnTerminal(notification) {
+        terminalNotifications.push(notification);
+        terminalOrder.push("terminal-notification");
+        throw new Error("notification failed");
+      },
     });
-    const result = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
+
+    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
+    await waitForCondition(() => turnUpdates.at(-1)?.phase === "failed", "failed最小turnが保存されること");
+
     assert.equal(result.runState, "error");
-    await waitForCondition(() => terminalAudit?.phase === "failed", "unknown progress保存後のfailed enrichment");
-    assert.equal(dispatches, 1);
-    assert.deepEqual(terminalAudit?.providerMetadata?.find((metadata) => metadata.kind === "audit_progress_failure")?.payload, {
-      admissionRejected: false, acceptedProgressPersistence: "failed",
-    });
+    assert.equal(result.threadId, "thread-stale");
+    assert.equal(storedSessions.at(-1)?.threadId, "thread-stale");
+    assert.equal(turnUpdates.at(-1)?.phase, "failed");
+    assert.equal(turnUpdates.at(-1)?.threadId, "thread-live");
+    assert.equal(terminalNotifications.length, 1);
+    assert.equal(terminalNotifications[0]?.outcome, "failed");
+    assert.equal(terminalNotifications[0]?.session, storedSessions.at(-1));
+    assert.deepEqual(terminalOrder, ["failed-upsert", "terminal-notification", "provider-cleanup"]);
   });
 
   // @test-value v2
-  // kind = "invariant"
-  // claim = "実storageのprogress保存拒否は自動再実行せずAudit failureとして保存し、非cancel失敗のterminal通知を依頼する"
-  // oracle = { type = "contract", ref = "docs/design/audit-log.md; docs/adr/006-windows-session-turn-notifications.md" }
-  // fault = "保存拒否を成功またはcanceledとして返す、providerか未知保存結果をretryする、または内部abortを理由にfailed通知を抑止する"
-  // observable = "実SQLiteのfailed phaseとaudit metadata、provider呼出回数・保存attempt数、通知時に読める永続terminal phaseと返却Session"
+  // kind = "contract"
+  // claim = "終端保存の失敗・unknown outcomeは自動再保存やfailedへの置換をせず呼出元へ返す"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
+  // fault = "終端保存例外をprovider失敗と扱い別のterminalを書き、未確定結果を成功またはfailedに隠す"
+  // observable = "公開run APIのreject、terminal保存とProvider・通知の呼出数"
   // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService production AuditLogStorageV6 failure"
+  // scope = "SessionRuntimeService terminal persistence failure boundary"
   // lifecycle = "permanent"
-  // impact = "interim保存失敗を最終本文成功へ隠さず重複実行を防ぐ"
-  // distinction = "storage単体の拒否testではRuntime停止分類とterminal確定への接続を確認できない"
+  // impact = "保存結果が不明な会話の重複や、完了済み応答の結果改変を防ぐ"
+  // distinction = "Storage Workerのunknown outcome testはruntimeのcatchから二つ目の終端を保存する経路を通らない"
   // @end-test-value
-  it("実Audit progress保存の拒否はfailedへ接続し自動retryしない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-runtime-save-failure-"));
-    const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
-    const sessions = new SessionStorageV6(dbPath);
-    const audits = new AuditLogStorageV6(dbPath);
-    try {
-      const session = sessions.upsertSession(createSession({ provider: "codex" }));
+  it("終端保存の例外を再保存せず返し、terminal通知をしない", async () => {
+    for (const atomic of [true, false]) {
+      const session = createSession();
       let providerCalls = 0;
-      let patchCalls = 0;
-      let auditId = 0;
-      let finalSaved = false;
-      const notifications: TerminalNotificationInput[] = [];
-      const phasesAtNotification: Array<string | undefined> = [];
-      const runtime = createProgressRuntime(session, async (_input, progress) => {
-        providerCalls += 1;
-        await progress?.(createLiveRunState({ sessionId: session.id, assistantText: "partial evidence" }), { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        return createPartialResult({ assistantText: "provider final" });
-      }, {
-        getSession: () => sessions.getSession(session.id),
-        upsertSession: (next) => sessions.upsertSession(next),
-        upsertTerminalSession: (next, commit) => sessions.upsertTerminalSession(next, commit),
-        createAuditLog(input) { const created = audits.createAuditLog(input); auditId = created.id; return created; },
-        updateAuditLogProgress(id, patch) {
-          patchCalls += 1;
-          return audits.updateAuditLogProgress(id, { ...patch, sessionId: "different-owner" });
-        },
-        updateAuditLog(id, entry) { const saved = audits.updateAuditLog(id, entry); finalSaved = true; return saved; },
-        notifySessionTurnTerminal(notification) {
-          notifications.push(notification);
-          phasesAtNotification.push(audits.listSessionAuditLogSummaries(session.id).find((entry) => entry.id === auditId)?.phase);
-        },
+      let terminalCalls = 0;
+      let notifications = 0;
+      const persistenceError = new Error("Persistence outcome unknown");
+      const service = createProgressRuntime(session, async () => { providerCalls += 1; return createPartialResult({ assistantText: "completed" }); }, {
+        ...(atomic ? { upsertTerminalSession() { terminalCalls += 1; throw persistenceError; } } : {}),
+        updateSessionTurn() { terminalCalls += 1; throw persistenceError; },
+        notifySessionTurnTerminal() { notifications += 1; },
       });
-      const result = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
-      assert.equal(result.runState, "error");
-      assert.deepEqual(notifications, [{ outcome: "failed", session: result }]);
-      assert.deepEqual(phasesAtNotification, ["failed"]);
-      await waitForCondition(() => finalSaved, "storage拒否後のfailed audit保存");
-      const detail = audits.getSessionAuditLogDetail(session.id, auditId);
-      assert.equal(audits.listSessionAuditLogSummaries(session.id).find((entry) => entry.id === auditId)?.phase, "failed");
-      assert.ok(detail?.providerMetadata?.some((metadata) => metadata.kind === "audit_progress_failure"));
+      await assert.rejects(service.runSessionTurn(session.id, { userMessage: "run", executionOptions: TEST_EXECUTION_OPTIONS }), (error) => error === persistenceError);
       assert.equal(providerCalls, 1);
-      assert.equal(patchCalls, 1);
-    } finally {
-      audits.close(); sessions.close();
-      await rm(userDataPath, { recursive: true, force: true });
+      assert.equal(terminalCalls, 1);
+      assert.equal(notifications, 0);
+      assert.equal(service.isRunInFlight(session.id), false);
     }
   });
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Renderer死亡後の再openと保存待ち中closeでもMainの既存turnは一度だけ実行され、provider最終応答とcompleted auditを保存する"
+  // claim = "取消deadlineで取得済みlive本文と操作を通常artifactへ保存し、未完了の操作statusをcanceledへ改変しない"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
+  // fault = "deadline partialを本文だけ保存するか、turnの取消を個別操作の確定結果として補完する"
+  // observable = "返却Sessionの本文とoperationTimeline、最小turnのphase"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService cancellation deadline artifact"
+  // lifecycle = "permanent"
+  // impact = "途中出力と操作の実際の確定状態を保持する"
+  // distinction = "Provider正常応答のpartial testではdeadlineのlive projection経路を通らない"
+  // @end-test-value
+  it("取消deadlineは取得済みlive操作を通常artifactに保存する", async () => {
+    const session = createSession();
+    let progressSeen = false;
+    let finishProvider!: (result: RunSessionTurnResult) => void;
+    const providerEnd = new Promise<RunSessionTurnResult>((resolve) => { finishProvider = resolve; });
+    const writes: CreateSessionTurnInput[] = [];
+    const step = { id: "command-1", type: "command_execution", summary: "npm test", status: "in_progress", details: "取得済み出力", truncated: true };
+    const service = createProgressRuntime(session, async (input, progress) => {
+      await emitTestProgress(progress, createLiveRunState({ sessionId: input.session.id, assistantText: "途中本文", steps: [step] }));
+      progressSeen = true;
+      return providerEnd;
+    }, { providerCancelGraceMs: 1, updateSessionTurn(_id, input) { writes.push(input); } });
+    const run = service.runSessionTurn(session.id, { userMessage: "run", executionOptions: TEST_EXECUTION_OPTIONS });
+    await waitForCondition(() => progressSeen, "provider live state");
+    service.cancelRun(session.id);
+    const result = await run;
+    finishProvider(createPartialResult());
+    assert.equal(writes[0]?.phase, "canceled");
+    assert.match(result.messages.at(-1)?.text ?? "", /途中本文/);
+    assert.deepEqual(result.messages.at(-1)?.artifact?.operationTimeline, [step]);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Renderer死亡後の再openと保存待ち中closeでもMainの既存turnは一度だけ実行され、provider最終応答とcompleted turnを保存する"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#decision" }
   // fault = "表示の復旧で既存turnをcancelまたは再実行するか、壊れたRendererへの通知例外でterminal応答保存を失う"
-  // observable = "provider呼出し数、abort状態、保存待ち前後のSession本文、completed auditとrun結果"
+  // observable = "provider呼出し数、abort状態、保存待ち前後のSession本文、completed turnとrun結果"
   // observation_boundary = "public-boundary"
   // scope = "session-runtime-renderer-recovery-persistence"
   // lifecycle = "permanent"
@@ -631,7 +425,7 @@ describe("SessionRuntimeService", () => {
     let providerCalls = 0;
     let providerSignal: AbortSignal | undefined;
     let saveStarted = false;
-    const auditUpdates: UpdateAuditLogInput[] = [];
+    const turnUpdates: UpdateSessionTurnInput[] = [];
     class RuntimeWindow {
       destroyed = false;
       readonly closedListeners: Array<() => void> = [];
@@ -664,7 +458,7 @@ describe("SessionRuntimeService", () => {
       getAllWindows: () => windows, getHomeWindows: () => [], getPrimaryHomeWindow: () => null, getSessionWindows: () => windows,
     });
     const adapter: ProviderCodingAdapter = {
-      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
       getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
       runSessionTurn: async (input) => {
         providerCalls += 1;
@@ -679,7 +473,7 @@ describe("SessionRuntimeService", () => {
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
-      createAuditLog: createAuditLogBase, updateAuditLog: (_id, input) => { auditUpdates.push(input); },
+      createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, input) => { turnUpdates.push(input); },
       setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {},
@@ -715,7 +509,6 @@ describe("SessionRuntimeService", () => {
       assert.equal(result.messages.at(-1)?.text, "durable provider response");
       assert.equal(stored.messages.at(-1)?.text, "durable provider response");
       assert.equal(stored.runState, "idle");
-      await waitForCondition(() => auditUpdates.some((entry) => entry.phase === "completed"), "completed audit must persist");
     } finally {
       finishProvider(); finishSave();
       await turn;
@@ -728,7 +521,7 @@ describe("SessionRuntimeService", () => {
   // claim = "completed結果はcleanup待機で失敗へ変わらず、process実終了の通知までruntimeの再送と未確認quitを保護する"
   // oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md#現在の適用範囲" }
   // fault = "adapterのcleanup completionをMainへ接続せず、completed保存後にadmission guardとquit保護を解放する"
-  // observable = "返却SessionとAudit phase、isRunInFlight/hasInFlightRuns、live cancellationState、再送拒否、quit確認とDB close回数"
+  // observable = "返却SessionとTurn phase、isRunInFlight/hasInFlightRuns、live cancellationState、再送拒否、quit確認とDB close回数"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService adapter cleanup admission and quit boundary"
   // lifecycle = "permanent"
@@ -741,9 +534,9 @@ describe("SessionRuntimeService", () => {
     let completeCleanup!: () => void;
     const cleanup = new Promise<void>((resolve) => { completeCleanup = resolve; });
     let providerCalls = 0;
-    const auditUpdates: UpdateAuditLogInput[] = [];
+    const turnUpdates: UpdateSessionTurnInput[] = [];
     const adapter: ProviderCodingAdapter = {
-      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
       getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
       runSessionTurn: async (input) => {
         providerCalls += 1;
@@ -756,7 +549,7 @@ describe("SessionRuntimeService", () => {
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
-      createAuditLog: createAuditLogBase, updateAuditLog: (_id, input) => { auditUpdates.push(input); },
+      createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, input) => { turnUpdates.push(input); },
       setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -774,8 +567,8 @@ describe("SessionRuntimeService", () => {
       const result = await service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
       assert.equal(result.runState, "idle");
       assert.equal(result.messages.at(-1)?.text, "completed response");
-      await waitForCondition(() => auditUpdates.some((entry) => entry.phase === "completed"), "completed audit must persist while cleanup is pending");
-      assert.equal(auditUpdates.some((entry) => entry.phase === "failed"), false);
+      await waitForCondition(() => turnUpdates.some((entry) => entry.phase === "completed"), "completed turn must persist while cleanup is pending");
+      assert.equal(turnUpdates.some((entry) => entry.phase === "failed"), false);
       assert.equal(service.isRunInFlight(stored.id), true);
       assert.equal(service.hasInFlightRuns(), true);
       assert.equal((live as LiveSessionRunState | null)?.cancellationState, "terminating");
@@ -822,7 +615,7 @@ describe("SessionRuntimeService", () => {
     const inputEnd = new Promise<void>((resolve) => { finishInput = resolve; });
     const sent: Array<Parameters<NonNullable<ProviderCodingAdapter["steerSessionTurn"]>>[0]> = [];
     const adapter: ProviderCodingAdapter = {
-      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
       getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
       runSessionTurn: async (input, progress) => {
         await emitTestProgress(progress, { ...createLiveRunState(), sessionId: input.session.id, threadId: "thread-existing", turnId: "turn-one", inputAvailable: true });
@@ -836,7 +629,7 @@ describe("SessionRuntimeService", () => {
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
-      createAuditLog: createAuditLogBase, updateAuditLog() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+      createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
     });
@@ -879,7 +672,7 @@ describe("SessionRuntimeService", () => {
     let previewStarted = false;
     let inputCalls = 0;
     const adapter: ProviderCodingAdapter = {
-      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
       getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
       runSessionTurn: async (input, progress) => {
         await emitTestProgress(progress, { ...createLiveRunState(), sessionId: input.session.id, threadId: "thread-existing", turnId: "turn-one", inputAvailable: true });
@@ -893,7 +686,7 @@ describe("SessionRuntimeService", () => {
       resolveComposerPreview: async (_session, text) => { if (text === "race") { previewStarted = true; await previewGate; } return { attachments: [], errors: [] }; }, getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
-      createAuditLog: createAuditLogBase, updateAuditLog() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+      createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
     });
@@ -928,7 +721,7 @@ describe("SessionRuntimeService", () => {
     let attempts = 0;
     let resets = 0;
     const adapter: ProviderCodingAdapter = {
-      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
       getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
       runSessionTurn: async () => { attempts += 1; throw new ProviderTurnError("thread not found", createPartialResult(), false); },
     };
@@ -937,7 +730,7 @@ describe("SessionRuntimeService", () => {
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
-      createAuditLog: createAuditLogBase, updateAuditLog() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
+      createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }), resetProviderSessionThread: () => { resets += 1; },
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
     });
@@ -1019,8 +812,8 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter: () => adapter,
       getSessionMemory: (session) => createSessionMemory(session.id),
       resolveProjectMemoryEntriesForPrompt: () => [],
-      createAuditLog: createAuditLogBase,
-      updateAuditLog() {},
+      createSessionTurn: createSessionTurnBase,
+      updateSessionTurn() {},
       setLiveSessionRun: (_id, next) => { live = next; },
       getLiveSessionRun: () => live,
       waitForApprovalDecision: (id, request, signal) => approvals.waitForLiveApprovalDecision(id, request, signal),
@@ -1078,7 +871,7 @@ describe("SessionRuntimeService", () => {
       resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
       getProviderCodingAdapter: () => adapter,
       getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
-      createAuditLog: createAuditLogBase, updateAuditLog() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
+      createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -1175,8 +968,8 @@ describe("SessionRuntimeService", () => {
           getProviderCodingAdapter: () => adapter,
           getSessionMemory: (session) => createSessionMemory(session.id),
           resolveProjectMemoryEntriesForPrompt: () => [],
-          createAuditLog: createAuditLogBase,
-          updateAuditLog() {},
+          createSessionTurn: createSessionTurnBase,
+          updateSessionTurn() {},
           setLiveSessionRun: (_id, next) => { live = next; },
           getLiveSessionRun: () => live,
           async waitForApprovalDecision() { return "approve" as const; },
@@ -1234,7 +1027,6 @@ describe("SessionRuntimeService", () => {
     }
   });
 
-
   // @test-value v2
   // kind = "contract"
   // claim = "保存済みSessionのProviderが未対応なら、Codexでも有効なmodelでも実行開始・保存・binding発行前に拒否する"
@@ -1282,8 +1074,8 @@ describe("SessionRuntimeService", () => {
       getProviderAgentRuntimeBinding: () => { bindingIssues += 1; return null; },
       getSessionMemory: () => createSessionMemory(session.id),
       resolveProjectMemoryEntriesForPrompt: () => [],
-      createAuditLog: unexpectedWrite,
-      updateAuditLog: unexpectedWrite,
+      createSessionTurn: unexpectedWrite,
+      updateSessionTurn: unexpectedWrite,
       getLiveSessionRun: () => null,
       setLiveSessionRun: () => {},
       waitForApprovalDecision: () => "deny",
@@ -1310,23 +1102,20 @@ describe("SessionRuntimeService", () => {
   // claim = "各turnで最新Character contextをprovider promptへ渡し、completed Sessionのterminal commit後に通知を依頼してbackground settlementを待たず次turnを受け付ける"
   // oracle = { type = "contract", ref = "accepted contract: terminal notification after persisted terminal state" }
   // fault = "永続化前の通知またはbackground settlement待機により、通知先が未保存状態を読むか次turn受付が停止する"
-  // observable = "promptへ渡されたturnごとのCharacter context・request correlation、terminal commit後の通知とready correlation順序、appraisal依頼回数、次turnの完了結果"
+  // observable = "providerへ渡されたturnごとのCharacter context、terminal commit後の通知とready correlation順序、appraisal依頼回数、次turnの完了結果"
   // observation_boundary = "declaration"
   // scope = "session-runtime-terminal-completion-order"
   // lifecycle = "permanent"
   // @end-test-value
-  it("各turnで最新Character contextを取得し、terminal commit後はready・audit・appraisalを待たずに返す", async () => {
+  it("各turnで最新Character contextを取得し、terminal commit後はready・appraisalを待たずに返す", async () => {
     let storedSession = createSession();
     let contextVersion = 0;
-    let auditId = 0;
+    let turnId = 0;
     let completionNotificationCount = 0;
     let appraisalRequestCount = 0;
-    const requestCorrelations: string[] = [];
     const callOrder: string[] = [];
     const timingCompletionSnapshots: Array<string | null> = [];
     let lastCommittedAt: string | null = null;
-    let blockCompletedAudit = false;
-    let releaseCompletedAudit: (() => void) | null = null;
     const composedCharacterContextVersions: string[] = [];
     const confirmedPreviewTexts: Array<string | null | undefined> = [];
     let terminalUpsertCount = 0;
@@ -1337,9 +1126,6 @@ describe("SessionRuntimeService", () => {
     });
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
-        if (input.characterContext) {
-          composedCharacterContextVersions.push(input.characterContext.affect.version);
-        }
         return {
           systemBodyText: "system",
           inputBodyText: "input",
@@ -1353,7 +1139,8 @@ describe("SessionRuntimeService", () => {
       },
       async invalidateSessionThread() {},
       async invalidateAllSessionThreads() {},
-      async runSessionTurn() {
+      async runSessionTurn(input) {
+        if (input.characterContext) composedCharacterContextVersions.push(input.characterContext.affect.version);
         return {
           ...createPartialResult({ assistantText: "完了" }),
           lastNonEmptyAssistantMessageText: "完了",
@@ -1385,7 +1172,7 @@ describe("SessionRuntimeService", () => {
         if (next.status === "idle" && next.messages.at(-1)?.role === "assistant") {
           terminalUpsertCount += 1;
           terminalUpsertStarted = true;
-          callOrder.push(`completed-upsert:${terminalCommit.auditLogId}`);
+          callOrder.push(`completed-upsert:${terminalCommit.turnId}`);
           assert.equal(terminalCommit.assistantMessageSeq, next.messages.length - 1);
           confirmedPreviewTexts.push(options?.confirmedFinalAssistantText);
         }
@@ -1440,27 +1227,11 @@ describe("SessionRuntimeService", () => {
         callOrder.push("appraisal-started");
         await new Promise<void>(() => undefined);
       },
-      createAuditLog(input) {
-        const requestMetadata = (input.providerMetadata ?? []).find((entry) => entry.kind === "session_turn_request");
-        const clientRequestId = requestMetadata?.payload && typeof requestMetadata.payload === "object" && requestMetadata.payload !== null && "clientRequestId" in requestMetadata.payload
-          ? requestMetadata.payload.clientRequestId
-          : null;
-        if (typeof clientRequestId === "string") {
-          requestCorrelations.push(clientRequestId);
-        }
-        auditId += 1;
-        return { ...createAuditLogBase(input), id: auditId };
+      createSessionTurn(input) {
+        turnId += 1;
+        return { ...createSessionTurnBase(input), id: turnId };
       },
-      updateAuditLog(id, input) {
-        if (input.phase === "completed" && callOrder.at(-1) !== `terminal-audit:${id}`) {
-          callOrder.push(`terminal-audit:${id}`);
-        }
-        if (blockCompletedAudit && id === 3 && input.phase === "completed") {
-          return new Promise<void>((resolve) => {
-            releaseCompletedAudit = resolve;
-          });
-        }
-      },
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -1498,8 +1269,7 @@ describe("SessionRuntimeService", () => {
     const firstCompletedAt = lastCommittedAt;
     assert.equal(service.isRunInFlight(storedSession.id), false);
     assert.equal(confirmedPreviewTexts[0], "完了");
-    assert.equal(callOrder.some((entry) => entry === `pending-ready:turn:${storedSession.id}:audit:1`), false);
-    assert.equal(callOrder.some((entry) => entry === "terminal-audit:1"), false);
+    assert.equal(callOrder.some((entry) => entry === `pending-ready:turn:${storedSession.id}:turn:1`), false);
     await service.runSessionTurn(storedSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
       userMessage: "second",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b2",
@@ -1508,85 +1278,30 @@ describe("SessionRuntimeService", () => {
     callOrder.push("second-returned");
 
     await waitForCondition(
-      () => appraisalRequestCount === 2
-        && callOrder.filter((entry) => entry.startsWith("terminal-audit:")).length === 2,
-      "ready・appraisal・terminal auditがbackgroundで完了すること",
+      () => appraisalRequestCount === 2,
+      "ready・appraisal・terminal turnがbackgroundで完了すること",
     );
 
     assert.equal(contextVersion, 2);
     assert.deepEqual(composedCharacterContextVersions, ["affect-v1-1", "affect-v1-2"]);
-    assert.deepEqual(requestCorrelations, [
-      "7c26d875-9117-4ad5-97b5-e9af775b94b1",
-      "7c26d875-9117-4ad5-97b5-e9af775b94b2",
-    ]);
     assert.equal(appraisalRequestCount, 2);
     assert.deepEqual(callOrder.filter((entry) => entry.startsWith("pending-ready:")), [
-      `pending-ready:turn:${storedSession.id}:audit:1`,
-      `pending-ready:turn:${storedSession.id}:audit:2`,
+      `pending-ready:turn:${storedSession.id}:turn:1`,
+      `pending-ready:turn:${storedSession.id}:turn:2`,
     ]);
     assert.equal(timingCompletionSnapshots[0], null);
     assert.equal(timingCompletionSnapshots[1], firstCompletedAt);
-    for (const [auditId, returned] of [
+    for (const [turnId, returned] of [
       [1, "first-returned"],
       [2, "second-returned"],
     ] as const) {
-      const correlationId = `turn:${storedSession.id}:audit:${auditId}`;
-      assert.ok(callOrder.indexOf(`completed-upsert:${auditId}`) < callOrder.indexOf(`completion-notification:${auditId}`));
-      assert.ok(callOrder.indexOf(`completion-notification:${auditId}`) < callOrder.indexOf(returned));
+      const correlationId = `turn:${storedSession.id}:turn:${turnId}`;
+      assert.ok(callOrder.indexOf(`completed-upsert:${turnId}`) < callOrder.indexOf(`completion-notification:${turnId}`));
+      assert.ok(callOrder.indexOf(`completion-notification:${turnId}`) < callOrder.indexOf(returned));
       assert.ok(callOrder.indexOf(returned) < callOrder.indexOf(`pending-ready:${correlationId}`));
-      assert.ok(callOrder.indexOf(returned) < callOrder.indexOf(`terminal-audit:${auditId}`));
     }
     assert.equal(callOrder.filter((entry) => entry === "appraisal-started").length, 2);
 
-    blockCompletedAudit = true;
-    const completingRun = service.runSessionTurn(storedSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-      userMessage: "third",
-      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b3",
-    });
-    const thirdResult = await completingRun;
-    callOrder.push("third-returned");
-    await waitForCondition(() => Boolean(releaseCompletedAudit), "provider完了後のbackground auditへ到達すること");
-    const releaseCompletedAuditNow: (() => void) | null = releaseCompletedAudit as (() => void) | null;
-    assert.ok(releaseCompletedAuditNow, "provider完了後のaudit終了処理へ到達すること");
-    assert.equal(thirdResult.runState, "idle");
-    assert.equal(service.isRunInFlight(storedSession.id), false);
-    const followingResult = await service.runSessionTurn(storedSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-      userMessage: "background audit中の再送",
-      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b4",
-    });
-    assert.equal(followingResult.runState, "idle");
-    blockCompletedAudit = false;
-    releaseCompletedAuditNow();
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "terminal audit fallbackへ渡すprovider metadataからsession turn correlationだけを保持する"
-  // oracle = { type = "contract", ref = "Session runtime terminal audit correlation contract" }
-  // fault = "fallback auditへ無関係なcorrelationを混入し、turn追跡を誤る"
-  // observable = "fallback audit correlation fields"
-  // observation_boundary = "implementation"
-  // scope = "preserveSessionTurnRequestMetadata terminal audit fallback input"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("terminal audit fallback はsession turn correlationだけを保持する", () => {
-    const correlation = {
-      provider: "codex",
-      kind: "session_turn_request",
-      source: "session-runtime-service.run-session-turn",
-      summary: "Session turn request correlation",
-      payload: { clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc", submitSource: "composer" },
-    };
-    assert.deepEqual(preserveSessionTurnRequestMetadata([
-      correlation,
-      {
-        provider: "codex",
-        kind: "provider_detail",
-        source: "provider",
-        summary: "detail",
-        payload: { secret: "drop" },
-      },
-    ]), [correlation]);
   });
 
   // @test-value v2
@@ -1676,10 +1391,10 @@ describe("SessionRuntimeService", () => {
         },
         appraiseCompletedTurn,
         requireDurableCompletedTurnAppraisal: true,
-        createAuditLog(input) {
-          return createAuditLogBase(input);
+        createSessionTurn(input) {
+          return createSessionTurnBase(input);
         },
-        updateAuditLog() {},
+        updateSessionTurn() {},
         setLiveSessionRun() {},
         getLiveSessionRun() {
           return null;
@@ -1795,7 +1510,7 @@ describe("SessionRuntimeService", () => {
 
       assert.equal(readinessRunResolved, true);
       assert.equal(appraisalCalls, 0);
-      assert.equal(storage.getPending(`turn:${readinessFailureSession.id}:audit:1`)?.readyAt, null);
+      assert.equal(storage.getPending(`turn:${readinessFailureSession.id}:turn:1`)?.readyAt, null);
 
       releaseReadiness();
       const readinessFailureResult = await readinessFailureRun;
@@ -1887,17 +1602,13 @@ describe("SessionRuntimeService", () => {
         snapshotAt: "fresh",
       },
     };
-    let composeSessionName = "";
     let runSessionName = "";
-    let composedSessionFolderPath = "";
     let runSessionFolderPath = "";
     const notifiedSessions: Session[] = [];
     let notifiedLastNonEmptyAssistantMessageText = "";
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
-        composeSessionName = input.session.characterRuntimeSnapshot?.name ?? "";
-        composedSessionFolderPath = input.sessionFolderPath ?? "";
         return {
           systemBodyText: "system",
           inputBodyText: "input",
@@ -1954,10 +1665,10 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -1987,10 +1698,8 @@ describe("SessionRuntimeService", () => {
 
     const result = await service.runSessionTurn(staleSession.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
 
-    assert.equal(composeSessionName, "Fresh");
     assert.equal(runSessionName, "Fresh");
-    assert.equal(composedSessionFolderPath, `F:/user-data/session-files/${freshSession.id}`);
-    assert.equal(runSessionFolderPath, composedSessionFolderPath);
+    assert.equal(runSessionFolderPath, `F:/user-data/session-files/${freshSession.id}`);
     assert.equal(result.characterRuntimeSnapshot?.name, "Fresh");
     const notifiedSession = notifiedSessions.at(-1);
     assert.ok(notifiedSession);
@@ -2012,13 +1721,11 @@ describe("SessionRuntimeService", () => {
   // @end-test-value
   it("resolveSessionCharacter 未提供でも provider turn まで進む", async () => {
     const session = createSession();
-    let composeCalled = false;
     let runCalled = false;
     let hasCharacterKey = false;
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
-        composeCalled = true;
         return {
           systemBodyText: "system",
           inputBodyText: "input",
@@ -2067,10 +1774,10 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -2093,7 +1800,6 @@ describe("SessionRuntimeService", () => {
 
     const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" });
 
-    assert.equal(composeCalled, true);
     assert.equal(runCalled, true);
     assert.equal(hasCharacterKey, false);
     assert.equal(result.runState, "idle");
@@ -2160,11 +1866,11 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog() {
-        calls.push("createAuditLog");
-        throw new Error("audit failed");
+      createSessionTurn() {
+        calls.push("createSessionTurn");
+        throw new Error("turn failed");
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun(_sessionId, state) {
         liveStates.push(state);
       },
@@ -2195,13 +1901,12 @@ describe("SessionRuntimeService", () => {
 
     await assert.rejects(
       service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" }),
-      /audit failed/,
+      /turn failed/,
     );
 
     assert.deepEqual(calls, [
-      "compose",
       "upsert:running",
-      "createAuditLog",
+      "createSessionTurn",
       "approval:deny",
       "elicitation:cancel",
       "upsert:error",
@@ -2213,10 +1918,10 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "成功turnはrunningからidleを保存し、progressとterminal projectionをauditへ反映した後にlive stateを解放する"
+  // claim = "成功turnはrunningからidleを保存し、最小turnのcompletedと本文位置を記録してlive stateを解放する"
   // oracle = { type = "contract", ref = "Session runtime success transition contract" }
   // fault = "成功後もrunningを残す、またはlive stateを解放しない"
-  // observable = "保存runState、running/terminal auditのprogress・usage・provider projection、live stateの解放"
+  // observable = "保存runState、completed turnのphaseとassistantMessageSeq、live stateの解放"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService successful turn completion"
   // lifecycle = "permanent"
@@ -2224,10 +1929,8 @@ describe("SessionRuntimeService", () => {
   it("成功時に running -> idle を保存し、完了後に live state を解放する", async () => {
     const session = createSession();
     const storedSessions: Session[] = [];
-    const auditUpdates: UpdateAuditLogInput[] = [];
+    const turnUpdates: UpdateSessionTurnInput[] = [];
     const liveStates: Array<LiveSessionRunState | null> = [];
-    let emitQueuedProgressDuringWrite: (() => void) | null = null;
-    let queuedProgressEmitted = false;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -2244,21 +1947,6 @@ describe("SessionRuntimeService", () => {
       async invalidateSessionThread() {},
       async invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
-        emitQueuedProgressDuringWrite = () => {
-          void emitTestProgress(onProgress, createLiveRunState({
-            sessionId: input.session.id,
-            threadId: "thread-late",
-            assistantText: "late progress",
-            steps: [
-              {
-                id: "step-late",
-                type: "command_execution",
-                summary: "late step",
-                status: "in_progress",
-              },
-            ],
-          }));
-        };
         await emitTestProgress(onProgress, createLiveRunState({
           sessionId: input.session.id,
         }));
@@ -2281,10 +1969,8 @@ describe("SessionRuntimeService", () => {
         return {
           threadId: "thread-1",
           assistantText: "完了したよ。",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          transportPayload: null,
-          operations: [],
-          rawItemsJson: "[]",
+
+
           usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 220 },
           providerQuotaTelemetry: {
             provider: "copilot",
@@ -2334,18 +2020,11 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog(_id, entry) {
-        if (entry.phase === "running" && !queuedProgressEmitted && emitQueuedProgressDuringWrite) {
-          queuedProgressEmitted = true;
-          emitQueuedProgressDuringWrite();
-        }
-        if (entry.phase === "completed" && entry.assistantText) {
-          assert.equal(storedSessions.at(-1)?.messages.at(entry.assistantMessageSeq ?? -1)?.text, entry.assistantText);
-        }
-        auditUpdates.push(entry);
+      updateSessionTurn(_id, entry) {
+        turnUpdates.push(entry);
       },
       setLiveSessionRun(_sessionId, state) {
         liveStates.push(state);
@@ -2370,380 +2049,18 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(() => auditUpdates.length === 3, "completed auditがbackgroundで保存されること");
+    await waitForCondition(() => turnUpdates.length === 1, "completed最小turnが保存されること");
 
     assert.equal(result.runState, "idle");
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[0]?.runState, "running");
     assert.equal(storedSessions[1]?.runState, "idle");
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
-    assert.equal(auditUpdates.length, 3);
-    assert.equal(auditUpdates[0]?.phase, "running");
-    assert.equal(auditUpdates[0]?.assistantText, "途中経過だよ。");
-    assert.equal(auditUpdates[0]?.threadId, "thread-progress");
-    assert.equal(auditUpdates[0]?.operations[0]?.summary, "npm test");
-    assert.equal(auditUpdates[1]?.phase, "running");
-    assert.equal(auditUpdates[1]?.assistantText, "late progress");
-    assert.equal(auditUpdates[1]?.threadId, "thread-late");
-    assert.equal(auditUpdates[1]?.operations[0]?.summary, "late step");
-    assert.equal(auditUpdates.at(-1)?.phase, "completed");
-    assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");
-    assert.equal(auditUpdates.at(-1)?.assistantMessageSeq, 1);
-    assert.notEqual(auditUpdates.at(-1)?.createdAt, auditUpdates[0]?.createdAt);
-    assert.equal(
-      Date.parse(auditUpdates.at(-1)?.createdAt ?? "") > Date.parse(auditUpdates[0]?.createdAt ?? ""),
-      true,
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "remainingPercentage")?.value,
-      "76%",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "projectMemoryHits")?.value,
-      "0",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "attachmentCount")?.value,
-      "0",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptEstimatedChars")?.value,
-      "12",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptEstimatedTokens")?.value,
-      "3",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptSystemEstimatedChars")?.value,
-      "6",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptSystemEstimatedTokens")?.value,
-      "2",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptInputEstimatedChars")?.value,
-      "5",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptInputEstimatedTokens")?.value,
-      "2",
-    );
+    assert.equal(turnUpdates.length, 1);
+    assert.equal(turnUpdates.at(-1)?.phase, "completed");
+    assert.equal(turnUpdates.at(-1)?.assistantMessageSeq, 1);
     assert.equal(liveStates.at(-1), null);
     assert.equal(service.isRunInFlight(session.id), false);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "completed audit detail更新停止時も最小terminal状態を保存してrunを解放する"
-  // oracle = { type = "contract", ref = "Session runtime terminal audit durability contract" }
-  // fault = "detail更新待ちでrunを保持し、terminal sessionを解放しない"
-  // observable = "terminal audit update、run解放状態、保存Session"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService completed audit fallback"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("completed audit の詳細更新が停止しても最小 terminal 状態を先に保存して run を解放する", async () => {
-    const session = createSession({ provider: "codex" });
-    const storedSessions: Session[] = [];
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    let terminalCommit: SessionTurnTerminalCommit | null = null;
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn() {
-        return createPartialResult({
-          threadId: "thread-1",
-          assistantText: "完了したよ。",
-        });
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        storedSessions.push(next);
-        return next;
-      },
-      upsertTerminalSession(next, commit) {
-        storedSessions.push(next);
-        terminalCommit = commit;
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] } satisfies ComposerPreview;
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-        if (entry.phase === "completed" && entry.assistantText === "完了したよ。") {
-          return new Promise<void>(() => {});
-        }
-      },
-      auditEnrichmentGraceMs: 5,
-      setLiveSessionRun() {},
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
-      setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-      userMessage: "お願いします",
-      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
-      submitSource: "composer",
-    });
-    await waitForCondition(
-      () => terminalCommit?.phase === "completed"
-        && auditUpdates.some((entry) => entry.phase === "completed" && Boolean(entry.assistantText)),
-      "atomic terminal marker保存後に詳細audit更新がbackgroundで開始すること",
-    );
-
-    assert.equal(result.runState, "idle");
-    assert.equal(result.status, "idle");
-    assert.equal(result.messages.at(-1)?.text, "完了したよ。");
-    assert.equal(storedSessions.length, 2);
-    assert.equal(storedSessions[0]?.runState, "running");
-    assert.equal(storedSessions[1]?.runState, "idle");
-    assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
-    assert.equal(terminalCommit!.phase, "completed");
-    assert.equal(terminalCommit!.assistantMessageSeq, 1);
-    assert.equal(terminalCommit!.threadId, "thread-1");
-    assert.equal(auditUpdates.at(-1)?.phase, "completed");
-    assert.equal(auditUpdates.at(-1)?.operations.length, 0);
-    assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");
-    assert.equal(auditUpdates.some((entry) => entry.phase === "failed"), false);
-    assert.equal(service.isRunInFlight(session.id), false);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "terminal commitを先に保存しても受付済みprogressのinterimとoperationを全終端結果で保存する"
-  // oracle = { type = "contract", ref = "Session runtime audit lifecycle contract" }
-  // fault = "terminal後のaccepted progressをphase guardで拒否しinterimやoperationを失う、またはterminal通知をdrain待ちにする"
-  // observable = "実SQLiteのterminal phase・interim本文・operationと、保存待ち中のruntime返却結果"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService audit terminalization"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("pending中のrunning audit観測をcompleted・failed・canceledのterminal auditへ保持する", async () => {
-    for (const outcome of ["completed", "failed", "canceled"] as const) {
-      const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-runtime-progress-"));
-      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
-      const sessionStorage = new SessionStorageV6(dbPath);
-      const auditStorage = new AuditLogStorageV6(dbPath);
-      const db = new DatabaseSync(dbPath);
-      try {
-      const session = createSession({ id: `pending-audit-${outcome}`, provider: "codex" });
-      const auditUpdates: UpdateAuditLogInput[] = [];
-      let releaseRunningAudit: () => void = () => undefined;
-      const runningAuditBarrier = new Promise<void>((resolve) => {
-        releaseRunningAudit = resolve;
-      });
-      let signalRunningAuditStarted: () => void = () => undefined;
-      const runningAuditStarted = new Promise<void>((resolve) => {
-        signalRunningAuditStarted = resolve;
-      });
-      const observedUsage = { inputTokens: 13, cachedInputTokens: 2, outputTokens: 5 };
-      const adapter: ProviderCodingAdapter = {
-        composePrompt() {
-          return {
-            systemBodyText: "system",
-            inputBodyText: "input",
-            logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-            imagePaths: [],
-            additionalDirectories: [],
-          };
-        },
-        async getProviderQuotaTelemetry() {
-          return null;
-        },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-        async runSessionTurn(_input, onProgress) {
-          await emitTestProgress(onProgress, createLiveRunState({
-            sessionId: session.id,
-            threadId: "thread-observed",
-            assistantText: "observed partial",
-            steps: [{
-              id: "observed-step",
-              type: "command_execution",
-              summary: "npm test",
-              status: "completed",
-            }],
-            usage: observedUsage,
-          }));
-          await runningAuditStarted;
-          if (outcome === "completed") {
-            assert.equal(await _input.onApprovalRequest?.({
-              requestId: "blocked-write-approval", provider: "codex", kind: "command",
-              title: "Approval while saving", summary: "continue", decisionMode: "direct-decision",
-            }), "approve");
-          }
-          const partialResult = createPartialResult({
-            threadId: "thread-observed",
-            assistantText: "",
-            operations: [],
-            usage: null,
-          });
-          if (outcome === "completed") {
-            return partialResult;
-          }
-          throw new ProviderTurnError(`${outcome} turn`, partialResult, outcome === "canceled");
-        },
-      };
-      let storedSession = session;
-      let auditId = 0;
-      const service = createTestRuntime({
-        getSession(sessionId) {
-          return sessionId === session.id ? storedSession : null;
-        },
-        upsertSession(next) {
-          storedSession = sessionStorage.upsertSession(next);
-          return storedSession;
-        },
-        upsertTerminalSession(next, commit) {
-          storedSession = sessionStorage.upsertTerminalSession(next, commit);
-          return storedSession;
-        },
-        async resolveComposerPreview() {
-          return { attachments: [], errors: [] } satisfies ComposerPreview;
-        },
-        async resolveSessionCharacter() {
-          return createCharacter();
-        },
-        getAppSettings() {
-          return normalizeAppSettings({});
-        },
-        resolveProviderCatalog() {
-          return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-        },
-        getProviderCodingAdapter() {
-          return adapter;
-        },
-        getSessionMemory(current) {
-          return createSessionMemory(current.id);
-        },
-        resolveProjectMemoryEntriesForPrompt() {
-          return [];
-        },
-        createAuditLog(input) {
-          const created = auditStorage.createAuditLog(input);
-          auditId = created.id;
-          return created;
-        },
-        updateAuditLog(_id, entry) {
-          auditUpdates.push(entry);
-          return auditStorage.updateAuditLog(_id, entry);
-        },
-        async updateAuditLogProgress(id, patch) {
-          if (patch.operationUpserts?.some((upsert) => upsert.operation.summary === "npm test")) {
-            signalRunningAuditStarted();
-            await runningAuditBarrier;
-          }
-          return auditStorage.updateAuditLogProgress(id, patch);
-        },
-        auditEnrichmentGraceMs: 1,
-        setLiveSessionRun() {},
-        getLiveSessionRun() {
-          return null;
-        },
-        async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-        },
-        async waitForElicitationResponse() {
-          return { action: "cancel" } as const;
-        },
-        setProviderQuotaTelemetry() {},
-        setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-        scheduleProviderQuotaTelemetryRefresh() {},
-        broadcastLiveSessionRun() {},
-        resolvePendingApprovalRequest() {},
-        resolvePendingElicitationRequest() {},
-        currentTimestampLabel,
-      });
-
-      const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-      assert.equal(service.isRunInFlight(session.id), false);
-      assert.equal(db.prepare("SELECT phase FROM session_turns_v6 WHERE id = ?").get(auditId)?.phase, outcome);
-      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM session_turn_interims_v6 WHERE turn_id = ?").get(auditId)?.count, 0);
-      await new Promise<void>((resolve) => setTimeout(resolve, 10));
-      releaseRunningAudit();
-      await waitForCondition(
-        () => auditUpdates.some((entry) => entry.phase === outcome),
-        `${outcome} terminal auditが保存されること`,
-      );
-
-      const terminalAudit = auditUpdates.find((entry) => entry.phase === outcome);
-      assert.ok(terminalAudit);
-      assert.equal(terminalAudit.assistantText, "observed partial");
-      assert.deepEqual(terminalAudit.usage, observedUsage);
-      assert.deepEqual(terminalAudit.operations, [{
-        type: "command_execution",
-        summary: "npm test",
-        details: "completed",
-      }, ...(outcome === "completed" ? [{ type: "approval_request", summary: "Approval while saving", details: "status:pending\nkind:command\ncontinue" }] : [])]);
-      assert.equal(result.runState, outcome === "failed" ? "error" : "idle");
-      assert.equal(db.prepare("SELECT phase FROM session_turns_v6 WHERE id = ?").get(auditId)?.phase, outcome);
-      assert.deepEqual(db.prepare("SELECT body FROM session_turn_interims_v6 WHERE turn_id = ? ORDER BY seq").all(auditId).map((row) => row.body), ["observed partial"]);
-      assert.deepEqual(auditStorage.getSessionAuditLogDetail(session.id, auditId)?.operations, terminalAudit.operations);
-      } finally {
-        db.close();
-        auditStorage.close();
-        sessionStorage.close();
-        await rm(userDataPath, { recursive: true, force: true });
-      }
-    }
   });
 
   // @test-value v2
@@ -2828,10 +2145,10 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun(_sessionId, next) {
         liveState = next;
         liveStates.push(next);
@@ -2879,22 +2196,7 @@ describe("SessionRuntimeService", () => {
     const liveStates: Array<LiveSessionRunState | null> = [];
     let runCount = 0;
 
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn(_input, onProgress) {
+    const service = createProgressRuntime(session, async (input, onProgress) => {
         runCount += 1;
         await emitTestProgress(onProgress, createLiveRunState({
           sessionId: session.id,
@@ -2907,41 +2209,7 @@ describe("SessionRuntimeService", () => {
           threadId: "thread-new",
           assistantText: "完了したよ。",
         });
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] } satisfies ComposerPreview;
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog() {},
+    }, {
       setLiveSessionRun(_sessionId, next) {
         liveState = next;
         liveStates.push(next);
@@ -2949,20 +2217,6 @@ describe("SessionRuntimeService", () => {
       getLiveSessionRun() {
         return liveState;
       },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
     });
 
     await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
@@ -2991,7 +2245,7 @@ describe("SessionRuntimeService", () => {
   it("利用者cancel時は idle session を保存し、failed通知を依頼しない", async () => {
     const baseSession = createSession();
     const storedSessions: Session[] = [];
-    const auditUpdates: UpdateAuditLogInput[] = [];
+    const turnUpdates: UpdateSessionTurnInput[] = [];
     let detachedSessionId: string | null = null;
     let cleanupStartedSessionId: string | null = null;
     let notificationCount = 0;
@@ -3004,12 +2258,11 @@ describe("SessionRuntimeService", () => {
       signalInvalidationStarted = resolve;
     });
     const partialResult: RunSessionTurnResult = {
-      threadId: null,
-      assistantText: "",
-      logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-      transportPayload: { summary: "transport", fields: [] },
-      operations: [],
-      rawItemsJson: "[]",
+      threadId: "thread-before-cancel",
+      assistantText: "途中まで進んだよ。",
+      artifact: { title: "", activitySummary: [], changedFiles: [], runChecks: [], operationTimeline: [{ id: "step-1", type: "command_execution", summary: "npm run build", status: "in_progress" }] },
+
+
       usage: null,
     };
     const adapter: ProviderCodingAdapter = {
@@ -3096,11 +2349,11 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
+      updateSessionTurn(_id, entry) {
+        turnUpdates.push(entry);
       },
       setLiveSessionRun() {},
       getLiveSessionRun() {
@@ -3142,38 +2395,9 @@ describe("SessionRuntimeService", () => {
     assert.equal(storedSessions.at(-1)?.status, "idle");
     assert.equal(storedSessions.at(-1)?.runState, "idle");
     assert.match(result.messages.at(-1)?.text ?? "", /Run canceled/);
-    assert.equal(auditUpdates.length, 2);
-    assert.equal(auditUpdates[0]?.phase, "running");
-    assert.equal(auditUpdates[0]?.assistantText, "途中まで進んだよ。");
-    assert.equal(auditUpdates.at(-1)?.phase, "canceled");
-    assert.equal(auditUpdates.at(-1)?.threadId, "thread-before-cancel");
-    assert.equal(auditUpdates.at(-1)?.assistantText, "途中まで進んだよ。");
-    assert.deepEqual(auditUpdates.at(-1)?.operations, [{ type: "command_execution", summary: "npm run build", details: "in_progress" }]);
-    assert.deepEqual(auditUpdates.at(-1)?.usage, { inputTokens: 5, cachedInputTokens: 0, outputTokens: 2 });
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptEstimatedChars")?.value,
-      "12",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptEstimatedTokens")?.value,
-      "3",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptSystemEstimatedChars")?.value,
-      "6",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptSystemEstimatedTokens")?.value,
-      "2",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptInputEstimatedChars")?.value,
-      "5",
-    );
-    assert.equal(
-      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptInputEstimatedTokens")?.value,
-      "2",
-    );
+    assert.equal(turnUpdates.length, 1);
+    assert.equal(turnUpdates.at(-1)?.phase, "canceled");
+    assert.equal(turnUpdates.at(-1)?.threadId, "thread-before-cancel");
     assert.equal(detachedSessionId, baseSession.id);
     assert.equal(notificationCount, 0);
   });
@@ -3242,10 +2466,10 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -3276,10 +2500,8 @@ describe("SessionRuntimeService", () => {
     completeRun({
       threadId: "thread-3",
       assistantText: "完了したよ。",
-      logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-      transportPayload: null,
-      operations: [],
-      rawItemsJson: "[]",
+
+
       usage: null,
     });
     await promise;
@@ -3351,10 +2573,10 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -3488,10 +2710,10 @@ resolveComposer!({ attachments: [], errors: [] });
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -3664,10 +2886,10 @@ resolveProvider!(createPartialResult());
         queuedAppraisalCount += 1;
         assert.equal(input.assistantMessageIndex, input.session.messages.length - 1);
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -3773,10 +2995,10 @@ resolveProvider!(createPartialResult());
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -3830,7 +3052,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
     const storedSessions: Session[] = [];
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const reset: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
-    const auditUpdates: UpdateAuditLogInput[] = [];
+    const turnUpdates: UpdateSessionTurnInput[] = [];
     const seenThreadIds: string[] = [];
     const seenBindingGenerations: Array<string | undefined> = [];
     let bindingGeneration = 0;
@@ -3941,11 +3163,11 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
         assert.equal(observedAt, fixedObservedAt);
         return timingContext;
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
+      updateSessionTurn(_id, entry) {
+        turnUpdates.push(entry);
       },
       setLiveSessionRun() {},
       getLiveSessionRun() {
@@ -3980,7 +3202,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
     });
 
     const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(() => auditUpdates.length === 2, "retry成功auditがbackgroundで完了すること");
+    await waitForCondition(() => turnUpdates.length === 1, "retry成功turnが保存されること");
 
     assert.equal(result.runState, "idle");
     assert.equal(result.threadId, "thread-fresh");
@@ -3996,159 +3218,28 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
     assert.deepEqual(invalidated, []);
     assert.equal(storedSessions.length, 3);
     assert.equal(storedSessions[1]?.threadId, "");
-    assert.equal(auditUpdates.length, 2);
-    assert.equal(auditUpdates[0]?.phase, "running");
-    assert.equal(auditUpdates.at(-1)?.phase, "completed");
+    assert.equal(turnUpdates.length, 1);
+    assert.equal(turnUpdates.at(-1)?.phase, "completed");
     assert.equal(notificationCount, 1);
     assert.equal(currentDateCount, 1);
     assert.equal(timingResolutionCount, 1);
-    assert.deepEqual(timingContexts, [timingContext, timingContext, timingContext]);
+    assert.deepEqual(timingContexts, [timingContext, timingContext]);
     assert.equal(timingContexts[0], timingContexts[1]);
-    assert.equal(timingContexts[1], timingContexts[2]);
   });
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "stale retry後のrunning audit logは前回attemptのprogress断片を引き継がず、新attemptのthread・text・operations・usageを反映する"
-  // oracle = { type = "contract", ref = "Session runtime stale retry audit contract" }
-  // fault = "旧attemptのprogressを新attemptへ混入し、誤った実行履歴を表示する"
-  // observable = "retry後running auditのthreadId、assistantText、operations、usage"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService stale retry audit reset"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("stale retry 後の running audit log は前回 progress の断片を引き継がない", async () => {
-    const session = createSession({ provider: "copilot", threadId: "thread-stale" });
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    let attempt = 0;
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn(input, onProgress) {
-        attempt += 1;
-        if (attempt === 1) {
-          await emitTestProgress(onProgress, createLiveRunState({
-            sessionId: input.session.id,
-            threadId: "thread-before-retry",
-            assistantText: "1 回目の progress",
-            steps: [{ id: "step-1", type: "command_execution", summary: "npm test", status: "in_progress" }],
-            usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 1 },
-          }));
-          throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
-        }
-
-        await emitTestProgress(onProgress, createLiveRunState({
-          sessionId: input.session.id,
-          threadId: "",
-          assistantText: "",
-          steps: [],
-          usage: { inputTokens: 20, cachedInputTokens: 0, outputTokens: 2 },
-        }));
-        return createPartialResult({
-          threadId: "thread-fresh",
-          assistantText: "再試行で成功したよ。",
-        });
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } });
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-      },
-      setLiveSessionRun() {},
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-
-    const runningUpdates = auditUpdates.filter((entry) => entry.phase === "running");
-    assert.equal(runningUpdates.length, 3);
-    assert.equal(runningUpdates[0]?.threadId, "thread-before-retry");
-    assert.equal(runningUpdates[0]?.assistantText, "1 回目の progress");
-    assert.equal(runningUpdates[0]?.operations[0]?.summary, "npm test");
-    assert.deepEqual(runningUpdates[0]?.usage, { inputTokens: 10, cachedInputTokens: 0, outputTokens: 1 });
-    assert.equal(runningUpdates[1]?.threadId, "");
-    assert.equal(runningUpdates[1]?.assistantText, "");
-    assert.deepEqual(runningUpdates[1]?.operations, []);
-    assert.equal(runningUpdates[1]?.usage, null);
-    assert.equal(runningUpdates[2]?.threadId, "");
-    assert.equal(runningUpdates[2]?.assistantText, "");
-    assert.deepEqual(runningUpdates[2]?.operations, []);
-    assert.deepEqual(runningUpdates[2]?.usage, { inputTokens: 20, cachedInputTokens: 0, outputTokens: 2 });
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "stale retry中は旧attemptのlate progressをlive stateとrunning auditへ反映しない"
+  // claim = "stale retry中は旧attemptのlate progressをlive stateへ反映しない"
   // oracle = { type = "contract", ref = "Session runtime stale attempt isolation contract" }
-  // fault = "旧providerのlate progressが新attemptのUIやauditへ混入する"
-  // observable = "live progressとrunning audit entries"
+  // fault = "旧providerのlate progressが新attemptのUIへ混入する"
+  // observable = "live progressのthreadIdとassistantText"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService stale attempt isolation"
   // lifecycle = "permanent"
   // @end-test-value
-  it("stale retry 中は旧 attempt の late progress を live state と running audit log へ反映しない", async () => {
+  it("stale retry 中は旧 attempt の late progress を live state へ反映しない", async () => {
     const session = createSession({ provider: "copilot", threadId: "thread-stale" });
-    const auditUpdates: UpdateAuditLogInput[] = [];
+    const turnUpdates: UpdateSessionTurnInput[] = [];
     const liveStates: Array<LiveSessionRunState | null> = [];
     let attempt = 0;
     let notifySecondAttemptStarted: (() => void) | null = null;
@@ -4241,11 +3332,11 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
+      updateSessionTurn(_id, entry) {
+        turnUpdates.push(entry);
       },
       setLiveSessionRun(_sessionId, state) {
         liveStates.push(state);
@@ -4275,678 +3366,25 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
 releaseSecondAttempt!();
     await runPromise;
 
-    const runningUpdates = auditUpdates.filter((entry) => entry.phase === "running");
-    assert.equal(runningUpdates.length, 3);
-    assert.equal(runningUpdates[0]?.threadId, "thread-before-retry");
-    assert.equal(runningUpdates[1]?.threadId, "");
-    assert.equal(runningUpdates[2]?.threadId, "thread-fresh-progress");
-    assert.equal(runningUpdates.some((entry) => entry.threadId === "thread-stale-late"), false);
-    assert.equal(runningUpdates.some((entry) => entry.assistantText === "旧 attempt の late progress"), false);
     assert.equal(liveStates.some((state) => state?.threadId === "thread-stale-late"), false);
     assert.equal(liveStates.some((state) => state?.assistantText === "旧 attempt の late progress"), false);
   });
 
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "approval request直後にprogressが無くてもrunning audit logを更新する"
-  // oracle = { type = "contract", ref = "Session runtime approval audit contract" }
-  // fault = "approval requestのみのturnをauditへ記録せず、利用者の承認待ち状態を失う"
-  // observable = "running audit entryのapproval request fields"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService approval audit update"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("approval request の直後に progress が無くても running audit log を更新する", async () => {
-    const session = createSession();
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    let liveState: LiveSessionRunState | null = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
-    const approvalRequest: LiveApprovalRequest = {
-      requestId: "approval-1",
-      provider: session.provider,
-      kind: "command",
-      title: "コマンド実行の承認",
-      summary: "npm test を実行する前に承認が必要だよ。",
-      details: "workspace へ書き込みはしないよ。",
-      warning: "外部コマンドを実行するよ。",
-      decisionMode: "direct-decision",
-    };
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn(input, onProgress) {
-        await input.onApprovalRequest?.(approvalRequest);
-        return createPartialResult({
-          threadId: "thread-approval",
-          assistantText: "承認後に完了したよ。",
-          operations: [{ type: "command_execution", summary: "npm test", details: "OK" }],
-        });
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(currentSession) {
-        return createSessionMemory(currentSession.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-      },
-      setLiveSessionRun(_sessionId, next) {
-        liveState = next;
-      },
-      getLiveSessionRun() {
-        return liveState;
-      },
-      async waitForApprovalDecision(_sessionId, request) {
-        liveState = {
-          ...liveState!,
-          approvalRequest: request,
-          elicitationRequest: null,
-        };
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "accept" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(
-      () => auditUpdates.some((entry) => entry.phase === "completed"),
-      "approval履歴を含むcompleted auditがbackgroundで保存されること",
-    );
-
-    const runningUpdate = auditUpdates.find((entry) =>
-      entry.phase === "running" && entry.operations.some((operation) => operation.type === "approval_request"),
-    );
-    assert.ok(runningUpdate);
-    const approvalOperation = runningUpdate?.operations[0];
-    assert.ok(approvalOperation);
-    assert.equal(approvalOperation.type, "approval_request");
-    assert.equal(approvalOperation.summary, "コマンド実行の承認");
-    assert.match(approvalOperation.details ?? "", /status:pending/);
-    const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
-    assert.ok(completedUpdate);
-    assert.deepEqual(completedUpdate?.operations, [
-      { type: "command_execution", summary: "npm test", details: "OK" },
-      approvalOperation,
-    ]);
-  });
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "elicitation request直後にprogressが無くてもrunning audit logを更新する"
-  // oracle = { type = "contract", ref = "Session runtime elicitation audit contract" }
-  // fault = "elicitation requestのみのturnをauditへ記録せず、入力待ち状態を失う"
-  // observable = "running audit entryのelicitation request fields"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService elicitation audit update"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("elicitation request の直後に progress が無くても running audit log を更新する", async () => {
-    const session = createSession();
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    let liveState: LiveSessionRunState | null = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
-    const elicitationRequest: LiveElicitationRequest = {
-      requestId: "elicitation-1",
-      provider: session.provider,
-      mode: "form",
-      message: "実行対象のブランチを選んでね。",
-      source: "copilot",
-      fields: [
-        {
-          name: "branch",
-          title: "対象ブランチ",
-          required: true,
-          type: "select",
-          options: [
-            { value: "main", label: "main" },
-            { value: "feature", label: "feature" },
-          ],
-        },
-      ],
-    };
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn(input, onProgress) {
-        await input.onElicitationRequest?.(elicitationRequest);
-        return createPartialResult({
-          threadId: "thread-elicitation",
-          assistantText: "入力を受け取って完了したよ。",
-        });
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(currentSession) {
-        return createSessionMemory(currentSession.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-      },
-      setLiveSessionRun(_sessionId, next) {
-        liveState = next;
-      },
-      getLiveSessionRun() {
-        return liveState;
-      },
-      async waitForApprovalDecision() {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse(_sessionId, request) {
-        liveState = {
-          ...liveState!,
-          approvalRequest: null,
-          elicitationRequest: request,
-        };
-        return { action: "accept", content: { branch: "main" } };
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-
-    const runningUpdate = auditUpdates.find((entry) =>
-      entry.phase === "running" && entry.operations.some((operation) => operation.type === "elicitation_request"),
-    );
-    assert.ok(runningUpdate);
-    assert.equal(runningUpdate?.operations[0]?.type, "elicitation_request");
-    assert.equal(runningUpdate?.operations[0]?.summary, "実行対象のブランチを選んでね。");
-    assert.match(runningUpdate?.operations[0]?.details ?? "", /required:対象ブランチ/);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "completed audit logでは同じsummaryのcommand_executionを各発生分保持する"
-  // oracle = { type = "contract", ref = "Session runtime audit operation retention contract" }
-  // fault = "同一summaryのoperationをdeduplicateして実行履歴を失う"
-  // observable = "completed audit operations sequence"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService completed audit operation persistence"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("completed audit log では同じ summary の command_execution を重複保持する", async () => {
-    const session = createSession();
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    let liveState: LiveSessionRunState | null = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn() {
-        return createPartialResult({
-          threadId: "thread-duplicate-commands",
-          assistantText: "完了したよ。",
-          operations: [
-            { type: "command_execution", summary: "npm test", details: "exit:0 (1回目)" },
-            { type: "command_execution", summary: "npm test", details: "exit:0 (2回目)" },
-          ],
-        });
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(currentSession) {
-        return createSessionMemory(currentSession.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-      },
-      setLiveSessionRun(_sessionId, next) {
-        liveState = next;
-      },
-      getLiveSessionRun() {
-        return liveState;
-      },
-      async waitForApprovalDecision() {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "accept" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(
-      () => auditUpdates.some((entry) => entry.phase === "completed"),
-      "重複command履歴を含むcompleted auditがbackgroundで保存されること",
-    );
-
-    const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
-    assert.ok(completedUpdate);
-    assert.deepEqual(completedUpdate?.operations, [
-      { type: "command_execution", summary: "npm test", details: "exit:0 (1回目)" },
-      { type: "command_execution", summary: "npm test", details: "exit:0 (2回目)" },
-    ]);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "elicitation request直後にprogressが無くてもcompleted audit logへ履歴を残す"
-  // oracle = { type = "contract", ref = "Session runtime terminal elicitation audit contract" }
-  // fault = "elicitation requestの履歴をcompleted auditから欠落させる"
-  // observable = "completed audit request history"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService completed elicitation audit"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("elicitation request の直後に progress が無くても completed audit log に履歴を残す", async () => {
-    const session = createSession();
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    let liveState: LiveSessionRunState | null = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
-    const elicitationRequest: LiveElicitationRequest = {
-      requestId: "elicitation-1",
-      provider: session.provider,
-      mode: "form",
-      message: "実行対象のブランチを選んでね。",
-      source: "copilot",
-      fields: [
-        {
-          name: "branch",
-          title: "対象ブランチ",
-          required: true,
-          type: "select",
-          options: [
-            { value: "main", label: "main" },
-            { value: "feature", label: "feature" },
-          ],
-        },
-      ],
-    };
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn(input) {
-        await input.onElicitationRequest?.(elicitationRequest);
-        return createPartialResult({
-          threadId: "thread-elicitation",
-          assistantText: "入力を受け取って完了したよ。",
-        });
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(currentSession) {
-        return createSessionMemory(currentSession.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-      },
-      setLiveSessionRun(_sessionId, next) {
-        liveState = next;
-      },
-      getLiveSessionRun() {
-        return liveState;
-      },
-      async waitForApprovalDecision() {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse(_sessionId, request) {
-        liveState = {
-          ...liveState!,
-          approvalRequest: null,
-          elicitationRequest: request,
-        };
-        return { action: "accept", content: { branch: "main" } };
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(
-      () => auditUpdates.some((entry) => entry.phase === "completed"),
-      "elicitation履歴を含むcompleted auditがbackgroundで保存されること",
-    );
-
-    const runningUpdate = auditUpdates.find((entry) =>
-      entry.phase === "running" && entry.operations.some((operation) => operation.type === "elicitation_request"),
-    );
-    assert.ok(runningUpdate);
-    const elicitationOperation = runningUpdate?.operations[0];
-    assert.ok(elicitationOperation);
-    const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
-    assert.ok(completedUpdate);
-    assert.deepEqual(completedUpdate?.operations, [elicitationOperation]);
-  });
-
-  // @test-value v2
-  // kind = "contract"
-  // claim = "Codex失敗時は保存threadを維持しauditへlive threadとpartialを残し、terminal保存後の通知が失敗してもcleanupする"
-  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md; docs/design/session-run-lifecycle.md" }
-  // fault = "保存threadをlive threadで上書きする、partial threadId欠如でauditのlive情報を失う、または通知失敗でcleanupを止める"
-  // scope = "session-runtime-failed-terminal-notification"
-  // observable = "SessionとauditのthreadId、partial本文・operations・usage、通知回数と保存・cleanup順序"
-  // observation_boundary = "public-boundary"
-  // lifecycle = "permanent"
-  // impact = "失敗後の会話継続先や監査上の実行先を失い、終了処理が止まる"
-  // distinction = "復帰失敗の単体testはlive progressと保存threadが異なる場合のaudit・Session分離を確認しない"
-  // @end-test-value
-  it("failed audit log は partial threadId が無くても live progress の threadId を維持する", async () => {
-    const session = createSession({ provider: "codex", threadId: "thread-stale" });
-    const storedSessions: Session[] = [];
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    const terminalNotifications: TerminalNotificationInput[] = [];
-    const terminalOrder: string[] = [];
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn(input, onProgress) {
-        await emitTestProgress(onProgress, createLiveRunState({
-          sessionId: input.session.id,
-          threadId: "thread-live",
-          assistantText: "途中まで進んだよ。",
-          steps: [
-            {
-              id: "step-live",
-              type: "command_execution",
-              summary: "npm test",
-              status: "in_progress",
-            },
-          ],
-          usage: { inputTokens: 9, cachedInputTokens: 1, outputTokens: 3 },
-        }));
-        throw new ProviderTurnError("network timeout", createPartialResult({ threadId: null }), false);
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        storedSessions.push(next);
-        if (next.runState === "error") {
-          terminalOrder.push("failed-upsert");
-        }
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(currentSession) {
-        return createSessionMemory(currentSession.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-      },
-      setLiveSessionRun() {},
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision() {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {
-        terminalOrder.push("provider-cleanup");
-      },
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      notifySessionTurnTerminal(notification) {
-        terminalNotifications.push(notification);
-        terminalOrder.push("terminal-notification");
-        throw new Error("notification failed");
-      },
-      currentTimestampLabel,
-    });
-
-    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(() => auditUpdates.at(-1)?.phase === "failed", "failed auditがbackgroundで保存されること");
-
-    assert.equal(result.runState, "error");
-    assert.equal(result.threadId, "thread-stale");
-    assert.equal(storedSessions.at(-1)?.threadId, "thread-stale");
-    assert.equal(auditUpdates.at(-1)?.phase, "failed");
-    assert.equal(auditUpdates.at(-1)?.threadId, "thread-live");
-    assert.equal(auditUpdates.at(-1)?.assistantText, "途中まで進んだよ。");
-    assert.deepEqual(auditUpdates.at(-1)?.operations, [{ type: "command_execution", summary: "npm test", details: "in_progress" }]);
-    assert.deepEqual(auditUpdates.at(-1)?.usage, { inputTokens: 9, cachedInputTokens: 1, outputTokens: 3 });
-    assert.equal(terminalNotifications.length, 1);
-    assert.equal(terminalNotifications[0]?.outcome, "failed");
-    assert.equal(terminalNotifications[0]?.session, storedSessions.at(-1));
-    assert.deepEqual(terminalOrder, ["failed-upsert", "terminal-notification", "provider-cleanup"]);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "usage_limit reasonはaudit logとassistant fallbackで通常失敗文言に変換しない"
+  // claim = "usage_limit reasonは最小turnとassistant fallbackで通常失敗文言に変換しない"
   // oracle = { type = "contract", ref = "Session runtime usage limit error contract" }
   // fault = "usage limitを通常provider failureとして表示し、利用者の制限理由を隠す"
-  // observable = "audit error fieldsとassistant fallback text"
+  // observable = "turn error fieldsとassistant fallback text"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService usage limit failure mapping"
   // lifecycle = "permanent"
   // @end-test-value
-  it("usage_limit reason は audit log と assistant fallback で通常失敗文言にしない", async () => {
+  it("usage_limit reason は 最小turn と assistant fallback で通常失敗文言にしない", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-before-limit" });
     const storedSessions: Session[] = [];
-    const auditUpdates: UpdateAuditLogInput[] = [];
+    const turnUpdates: UpdateSessionTurnInput[] = [];
     const usageLimitMessage =
       "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Jun 12th, 2026 2:07 AM.";
 
@@ -5004,11 +3442,11 @@ releaseSecondAttempt!();
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
+      updateSessionTurn(_id, entry) {
+        turnUpdates.push(entry);
       },
       setLiveSessionRun() {},
       getLiveSessionRun() {
@@ -5031,12 +3469,12 @@ releaseSecondAttempt!();
     });
 
     const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(() => auditUpdates.at(-1)?.phase === "failed", "usage limit auditがbackgroundで保存されること");
+    await waitForCondition(() => turnUpdates.at(-1)?.phase === "failed", "usage limit最小turnが保存されること");
     const expectedMessage = "Codex usage limit reached.\nTry again at: Jun 12th, 2026 2:07 AM";
 
     assert.equal(result.runState, "error");
-    assert.equal(auditUpdates.at(-1)?.phase, "failed");
-    assert.equal(auditUpdates.at(-1)?.errorMessage, expectedMessage);
+    assert.equal(turnUpdates.at(-1)?.phase, "failed");
+    assert.equal(turnUpdates.at(-1)?.errorMessage, expectedMessage);
     assert.equal(storedSessions.at(-1)?.messages.at(-1)?.text, expectedMessage);
     assert.doesNotMatch(storedSessions.at(-1)?.messages.at(-1)?.text ?? "", /実行に失敗したよ。/);
   });
@@ -5107,10 +3545,10 @@ releaseSecondAttempt!();
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -5147,7 +3585,7 @@ releaseSecondAttempt!();
   // claim = "not_found単独codeのprovider errorではinternal retryしない"
   // oracle = { type = "contract", ref = "Session runtime provider error retry contract" }
   // fault = "retry対象外のnot_foundを内部retryし、重複実行や誤ったthread更新を起こす"
-  // observable = "provider call countと最終Session/audit state"
+  // observable = "provider call countと最終Session/turn state"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService provider error classification"
   // lifecycle = "permanent"
@@ -5210,10 +3648,10 @@ releaseSecondAttempt!();
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -5243,185 +3681,6 @@ releaseSecondAttempt!();
     assert.match(result.messages.at(-1)?.text ?? "", /resource not found/);
     assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 2);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "live runのprogressをrunning audit logへ段階的にupdateする"
-  // oracle = { type = "contract", ref = "Session runtime progress audit contract" }
-  // fault = "progress更新を欠落または最終状態へまとめ、実行中観測を失う"
-  // observable = "running audit update sequence"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService live progress audit updates"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("live run の progress を running audit log へ段階的に update する", async () => {
-    const session = createSession();
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    const liveStates: Array<LiveSessionRunState | null> = [];
-    let progressUpdateCount = 0;
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn(_input, onProgress) {
-        // 複数回の progress update をシミュレート
-        await emitTestProgress(onProgress, {
-          sessionId: session.id,
-          threadId: "",
-          assistantText: "",
-          steps: [],
-          backgroundTasks: [],
-          usage: null,
-          errorMessage: "",
-          approvalRequest: null,
-          elicitationRequest: null,
-        });
-
-        await emitTestProgress(onProgress, {
-          sessionId: session.id,
-          threadId: "thread-1",
-          assistantText: "処理中...",
-          steps: [
-            { id: "step-1", type: "command_execution", summary: "npm test", status: "in_progress" },
-          ],
-          backgroundTasks: [],
-          usage: { inputTokens: 50, cachedInputTokens: 0, outputTokens: 0 },
-          errorMessage: "",
-          approvalRequest: null,
-          elicitationRequest: null,
-        });
-
-        await emitTestProgress(onProgress, {
-          sessionId: session.id,
-          threadId: "thread-1",
-          assistantText: "処理中... テスト完了",
-          steps: [
-            { id: "step-1", type: "command_execution", summary: "npm test", details: "OK", status: "completed" },
-          ],
-          backgroundTasks: [],
-          usage: { inputTokens: 50, cachedInputTokens: 0, outputTokens: 80 },
-          errorMessage: "",
-          approvalRequest: null,
-          elicitationRequest: null,
-        });
-
-        return {
-          threadId: "thread-1",
-          assistantText: "完了したよ。",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          transportPayload: null,
-          operations: [{ type: "command_execution", summary: "npm test", details: "OK" }],
-          rawItemsJson: "[]",
-          usage: { inputTokens: 50, cachedInputTokens: 0, outputTokens: 100 },
-        };
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-        if (entry.phase === "running") {
-          progressUpdateCount += 1;
-        }
-      },
-      setLiveSessionRun(_sessionId, state) {
-        liveStates.push(state);
-      },
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(
-      () => auditUpdates.some((entry) => entry.phase === "completed"),
-      "live progressを含むcompleted auditがbackgroundで保存されること",
-    );
-
-    // progress update が複数回発生したことを確認
-    assert.ok(progressUpdateCount >= 2, `progress update は 2 回以上発生すべきだが ${progressUpdateCount} 回だったよ`);
-
-    // running phase の update で assistantText / operations / usage が段階的に更新されていることを確認
-    const runningUpdates = auditUpdates.filter((entry) => entry.phase === "running");
-    assert.ok(runningUpdates.length >= 2, "running phase の update が複数回あるべきだよ");
-
-    const firstRunningUpdate = runningUpdates[0];
-    assert.ok(firstRunningUpdate, "最初の running update があるべきだよ");
-    assert.equal(firstRunningUpdate.assistantText, "処理中...");
-    assert.equal(firstRunningUpdate.operations.length, 1);
-    assert.equal(firstRunningUpdate.operations[0]?.summary, "npm test");
-    assert.deepEqual(firstRunningUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 0 });
-
-    const secondRunningUpdate = runningUpdates[1];
-    assert.ok(secondRunningUpdate, "2 回目の running update があるべきだよ");
-    assert.equal(secondRunningUpdate.assistantText, "処理中... テスト完了");
-    assert.equal(secondRunningUpdate.operations.length, 1);
-    assert.equal(secondRunningUpdate.operations[0]?.summary, "npm test");
-    assert.deepEqual(secondRunningUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 80 });
-
-    // 最終的に completed phase で update されていることを確認
-    const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
-    assert.ok(completedUpdate, "completed phase の update があるべきだよ");
-    assert.equal(completedUpdate.assistantText, "完了したよ。");
-    assert.equal(completedUpdate.operations.length, 1);
-    assert.deepEqual(completedUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 100 });
   });
 
   // @test-value v2
@@ -5503,10 +3762,10 @@ releaseSecondAttempt!();
       resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun(_sessionId, state) {
         liveState = state;
         liveStates.push(state);
@@ -5537,126 +3796,6 @@ releaseSecondAttempt!();
     assert.equal(liveStates.at(-1)?.threadId, "thread-completed");
     assert.equal(liveStates.at(-1)?.backgroundTasks.length, 1);
     assert.equal(liveStates.at(-1)?.backgroundTasks[0]?.id, "task-1");
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "既存backgroundTasksがprogress無しで完了してもcompleted audit logへ履歴を残す"
-  // oracle = { type = "contract", ref = "Session runtime background audit retention contract" }
-  // fault = "progressが無いbackground taskの完了履歴をauditから欠落させる"
-  // observable = "completed audit entriesとbackground task completion markers"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService background task audit completion"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("既存 backgroundTasks が progress 無しで完了しても completed audit log に履歴を残す", async () => {
-    const session = createSession({ provider: "codex", threadId: "thread-stale" });
-    const auditUpdates: UpdateAuditLogInput[] = [];
-    let liveState: LiveSessionRunState | null = createLiveRunState({
-      sessionId: session.id,
-      threadId: session.threadId,
-      backgroundTasks: [
-        {
-          id: "task-1",
-          kind: "shell",
-          status: "running",
-          title: "バックグラウンド処理",
-          details: "継続中",
-          updatedAt: "2026-04-21T10:00:00.000Z",
-        },
-      ],
-    });
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn() {
-        return createPartialResult({
-          threadId: "thread-completed",
-          assistantText: "完了したよ。",
-        });
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] } satisfies ComposerPreview;
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-      },
-      setLiveSessionRun(_sessionId, state) {
-        liveState = state;
-      },
-      getLiveSessionRun() {
-        return liveState;
-      },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(
-      () => auditUpdates.some((entry) => entry.phase === "completed"),
-      "background task履歴を含むcompleted auditがbackgroundで保存されること",
-    );
-
-    const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
-    assert.ok(completedUpdate);
-    assert.deepEqual(completedUpdate?.operations, [
-      { type: "background-shell", summary: "バックグラウンド処理", details: "running\n継続中" },
-    ]);
   });
 
   // @test-value v2
@@ -5727,10 +3866,10 @@ releaseSecondAttempt!();
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
+      createSessionTurn(input) {
+        return createSessionTurnBase(input);
       },
-      updateAuditLog() {},
+      updateSessionTurn() {},
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;

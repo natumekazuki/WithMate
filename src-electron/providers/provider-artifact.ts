@@ -1,4 +1,4 @@
-import type { AuditLogOperation, AuditLogUsage, ChangedFile, DiffRow, RunCheck } from "../../src-shared/session/runtime-state.js";
+import type { MessageOperation, ProviderUsage, ChangedFile, DiffRow, RunCheck } from "../../src-shared/session/runtime-state.js";
 import type { MessageArtifact, Session } from "../../src-shared/session/session-state.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { reasoningEffortLabel, type ModelCatalogProvider, type ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
@@ -285,7 +285,7 @@ function buildChangedFilesFromSnapshots(beforeSnapshot: WorkspaceSnapshot, after
     });
 }
 
-function buildActivitySummary(operations: AuditLogOperation[], changedFiles: ChangedFile[]): string[] {
+function buildActivitySummary(operations: MessageOperation[], changedFiles: ChangedFile[]): string[] {
   const summary = operations
     .filter((operation) => operation.type !== "agent_message" && operation.type !== "unknown")
     .map((operation) => (operation.type === "command_execution" ? `command: ${operation.summary}` : operation.summary));
@@ -299,7 +299,7 @@ function buildActivitySummary(operations: AuditLogOperation[], changedFiles: Cha
 
 function buildRunChecks(
   executionOptions: SessionExecutionOptions,
-  usage: AuditLogUsage | null,
+  usage: ProviderUsage | null,
   threadId: string | null,
   providerCatalog: ModelCatalogProvider,
   selection: ResolvedModelSelection,
@@ -337,8 +337,8 @@ function buildRunChecks(
 export function buildArtifactFromOperations(input: {
   session: Session;
   executionOptions: SessionExecutionOptions;
-  operations: AuditLogOperation[];
-  usage: AuditLogUsage | null;
+  operations: MessageOperation[];
+  usage: ProviderUsage | null;
   threadId: string | null;
   beforeSnapshot: WorkspaceSnapshot;
   afterSnapshot: WorkspaceSnapshot;

@@ -1,16 +1,16 @@
 import type {
-  AuditLogOperation,
-  AuditLogProviderMetadata,
+  MessageOperation,
+  ProviderDiagnosticMetadata,
   ChangedFile,
   DiffRow,
 } from "../../../src-shared/session/runtime-state.js";
 import {
-  AUDIT_RAW_ITEM_CLONE_LIMIT,
-  boundAuditRawItem,
-  stringifyBoundedAuditValue,
-  toAuditTextPreview,
-  type BoundedAuditRawItem,
-} from "../../session/audit-payload-limits.js";
+  PROVIDER_RAW_ITEM_CLONE_LIMIT,
+  boundProviderRawItem,
+  stringifyBoundedProviderValue,
+  toProviderTextPreview,
+  type BoundedProviderRawItem,
+} from "../../session/provider-payload-limits.js";
 import type { WorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
 import { getCodexCommandOutputPreview, type CodexTurnItem } from "./codex-turn-events.js";
 export type { CodexTurnItem } from "./codex-turn-events.js";
@@ -71,27 +71,27 @@ export function buildChangedFilesFromSources(
 
 export function buildCodexStableRawItems(
   items: CodexTurnItem[],
-): BoundedAuditRawItem[] {
+): BoundedProviderRawItem[] {
   return items
     .filter((item) => item.type !== "reasoning" && item.type !== "userMessage")
     .map((item) => {
-      if (item.type !== "commandExecution") return boundAuditRawItem({ type: item.type, data: { ...item } });
+      if (item.type !== "commandExecution") return boundProviderRawItem({ type: item.type, data: { ...item } });
       const { aggregatedOutputOriginalLength, ...data } = item;
-      const bounded = boundAuditRawItem({ type: item.type, data });
+      const bounded = boundProviderRawItem({ type: item.type, data });
       if (aggregatedOutputOriginalLength !== undefined && aggregatedOutputOriginalLength > (item.aggregatedOutput?.length ?? 0) && bounded.data) {
         bounded.data.aggregatedOutput = {
           text: getCodexCommandOutputPreview(item),
           truncated: true,
           originalLength: aggregatedOutputOriginalLength,
         };
-        if (JSON.stringify(bounded).length > AUDIT_RAW_ITEM_CLONE_LIMIT) return boundAuditRawItem(bounded);
+        if (JSON.stringify(bounded).length > PROVIDER_RAW_ITEM_CLONE_LIMIT) return boundProviderRawItem(bounded);
       }
       return bounded;
     });
 }
 export function buildCodexProviderMetadata(
   items: CodexTurnItem[],
-): AuditLogProviderMetadata[] {
+): ProviderDiagnosticMetadata[] {
   const supported = new Set([
     "userMessage",
     "agentMessage",
@@ -111,11 +111,12 @@ export function buildCodexProviderMetadata(
       source: "codex.app-server.ThreadItem",
       responseType: item.type,
       summary: `Unsupported Codex item: ${item.type}`,
-      payload: boundAuditRawItem({ type: item.type, data: { item } }),
+      payload: boundProviderRawItem({ type: item.type, data: { item } }),
     }));
 }
-export function toAuditOperations(items: CodexTurnItem[]): AuditLogOperation[] {
-  return items.flatMap((item): AuditLogOperation[] => {
+export function toMessageOperations(items: CodexTurnItem[]): MessageOperation[] {
+  const operationStatus = (status: string): string => status === "inProgress" ? "in_progress" : status === "declined" ? "failed" : status;
+  return items.flatMap((item): MessageOperation[] => {
     switch (item.type) {
       case "userMessage":
       case "reasoning":
@@ -123,32 +124,42 @@ export function toAuditOperations(items: CodexTurnItem[]): AuditLogOperation[] {
       case "agentMessage":
         return [
           {
+            id: item.id,
             type: "agent_message",
-            summary: toAuditTextPreview(item.text) ?? "",
+            summary: toProviderTextPreview(item.text) ?? "",
           },
         ];
       case "commandExecution":
         return [
           {
+            id: item.id,
+            status: operationStatus(item.status),
+            ...(item.exitCode !== null ? { exitCode: item.exitCode } : {}),
+            ...(item.aggregatedOutputOriginalLength !== undefined ? { truncated: item.aggregatedOutputOriginalLength > (item.aggregatedOutput?.length ?? 0) } : {}),
             type: "command_execution",
-            summary: toAuditTextPreview(item.command) ?? "",
+            summary: toProviderTextPreview(item.command) ?? "",
             details: getCodexCommandOutputPreview(item) ?? (item.exitCode === null ? "" : `exit code: ${item.exitCode}`),
           },
         ];
       case "fileChange":
         return item.changes.map((change) => ({
+          id: item.id,
+          status: operationStatus(item.status),
           type: "file_change",
           summary: `${change.kind.type}: ${change.path}`,
-          details: toAuditTextPreview(change.diff),
+          details: toProviderTextPreview(change.diff),
         }));
       case "mcpToolCall":
         return [
           {
+            id: item.id,
+            status: operationStatus(item.status),
+            ...(item.error ? { error: { message: toProviderTextPreview(item.error.message) ?? "" } } : {}),
             type: "mcp_tool_call",
             summary: `${item.server}/${item.tool}`,
             details:
-              item.error?.message ??
-              stringifyBoundedAuditValue(
+              toProviderTextPreview(item.error?.message) ??
+              stringifyBoundedProviderValue(
                 item.result?.structuredContent ?? item.arguments,
               ),
           },
@@ -156,26 +167,29 @@ export function toAuditOperations(items: CodexTurnItem[]): AuditLogOperation[] {
       case "collabAgentToolCall":
         return [
           {
+            id: item.id,
+            status: operationStatus(item.status),
             type: "collab_tool_call",
             summary: item.tool,
-            details: stringifyBoundedAuditValue(item.agentsStates),
+            details: stringifyBoundedProviderValue(item.agentsStates),
           },
         ];
       case "webSearch":
         return [
           {
+            id: item.id,
             type: "web_search",
             summary: item.query ?? "Web search",
-            details: stringifyBoundedAuditValue(item.action),
+            details: stringifyBoundedProviderValue(item.action),
           },
         ];
       case "plan":
-        return [{ type: "plan", summary: toAuditTextPreview(item.text) ?? "" }];
+        return [{ id: item.id, type: "plan", summary: toProviderTextPreview(item.text) ?? "" }];
       default:
         return [
           {
             type: "unknown",
-            summary: stringifyBoundedAuditValue(item) ?? "Unknown item",
+            summary: stringifyBoundedProviderValue(item) ?? "Unknown item",
           },
         ];
     }

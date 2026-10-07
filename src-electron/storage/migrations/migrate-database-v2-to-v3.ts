@@ -2,14 +2,11 @@ import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { openAppDatabaseReadOnly, openMigrationDatabase } from "../sqlite-connection.js";
-
-import type { AuditLogEntry, AuditLogicalPrompt, AuditLogOperation, AuditLogPhase, AuditLogUsage, AuditTransportPayload } from "../../../src-shared/session/runtime-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../../../src-shared/settings/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode } from "../../../src-shared/settings/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../../../src-shared/settings/model-catalog.js";
 import { normalizeSession } from "../../../src-shared/session/session-state.js";
-import { AuditLogStorageV3 } from "../../session/audit-log-storage-v3.js";
 import { CREATE_V3_SCHEMA_SQL } from "../database-schema-v3.js";
 import { SessionStorageV3 } from "../../session/session-storage-v3.js";
 
@@ -22,9 +19,6 @@ export type V2ToV3MigrationDryRunReport = {
     sessions: number;
     sessionMessages: number;
     sessionMessageArtifacts: number;
-    auditLogs: number;
-    auditLogDetails: number;
-    auditLogOperations: number;
     appSettings: number;
     modelCatalogRevisions: number;
     modelCatalogProviders: number;
@@ -34,9 +28,6 @@ export type V2ToV3MigrationDryRunReport = {
     sessions: number;
     sessionMessages: number;
     sessionMessageArtifacts: number;
-    auditLogs: number;
-    auditLogDetails: number;
-    auditLogOperations: number;
     appSettings: number;
     modelCatalogRevisions: number;
     modelCatalogProviders: number;
@@ -45,12 +36,6 @@ export type V2ToV3MigrationDryRunReport = {
   estimatedSourceBytes: {
     sessionMessageText: number;
     sessionMessageArtifactsJson: number;
-    auditLogicalPromptJson: number;
-    auditTransportPayloadJson: number;
-    auditAssistantText: number;
-    auditRawItemsJson: number;
-    auditUsageJson: number;
-    auditOperationDetails: number;
   };
 };
 
@@ -115,30 +100,6 @@ type SessionMessageRow = {
   accent: number;
   is_bookmarked: number;
   artifact_json: string | null;
-};
-
-type AuditLogRow = {
-  id: number;
-  session_id: string;
-  created_at: string;
-  phase: string;
-  provider: string;
-  model: string;
-  reasoning_effort: string;
-  approval_mode: string;
-  thread_id: string;
-  error_message: string;
-  logical_prompt_json: string | null;
-  transport_payload_json: string | null;
-  assistant_text: string | null;
-  raw_items_json: string | null;
-  usage_json: string | null;
-};
-
-type AuditLogOperationRow = {
-  operation_type: string;
-  summary: string;
-  details: string;
 };
 
 type AppSettingRow = {
@@ -355,24 +316,6 @@ function parseStringArray(value: string | null | undefined): string[] {
   return parseJsonArray(value).filter((entry): entry is string => typeof entry === "string");
 }
 
-function normalizeAuditLogPhase(value: string): AuditLogPhase {
-  if (
-    value === "running"
-    || value === "started"
-    || value === "completed"
-    || value === "failed"
-    || value === "canceled"
-    || value === "background-running"
-    || value === "background-completed"
-    || value === "background-failed"
-    || value === "background-canceled"
-  ) {
-    return value;
-  }
-
-  return "failed";
-}
-
 function normalizeReasoningEffort(value: string): typeof DEFAULT_REASONING_EFFORT {
   if (value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh") {
     return value;
@@ -424,56 +367,11 @@ function rowToSession(row: SessionHeaderRow, messages: SessionMessageRow[]): Ses
   return session;
 }
 
-function rowToAuditLogEntry(row: AuditLogRow, operations: AuditLogOperationRow[]): Omit<AuditLogEntry, "id"> {
-  const usage = parseJsonObject<Partial<AuditLogUsage>>(row.usage_json, {});
-  const normalizedUsage =
-    typeof usage.inputTokens === "number"
-    && typeof usage.cachedInputTokens === "number"
-    && typeof usage.outputTokens === "number"
-      ? {
-          inputTokens: usage.inputTokens,
-          cachedInputTokens: usage.cachedInputTokens,
-          outputTokens: usage.outputTokens,
-        }
-      : null;
-
-  return {
-    sessionId: row.session_id,
-    createdAt: row.created_at,
-    phase: normalizeAuditLogPhase(row.phase),
-    provider: row.provider || DEFAULT_PROVIDER_ID,
-    model: row.model || DEFAULT_MODEL_ID,
-    reasoningEffort: normalizeReasoningEffort(row.reasoning_effort),
-    approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
-    threadId: row.thread_id,
-    logicalPrompt: parseJsonObject<AuditLogicalPrompt>(row.logical_prompt_json, {
-      systemText: "",
-      inputText: "",
-      composedText: "",
-    }),
-    transportPayload: row.transport_payload_json
-      ? parseJsonObject<AuditTransportPayload>(row.transport_payload_json, { summary: "", fields: [] })
-      : null,
-    assistantText: row.assistant_text ?? "",
-    operations: operations.map((operation): AuditLogOperation => ({
-      type: operation.operation_type,
-      summary: operation.summary,
-      details: operation.details || undefined,
-    })),
-    rawItemsJson: JSON.stringify(parseJsonArray(row.raw_items_json)),
-    usage: normalizedUsage,
-    errorMessage: row.error_message,
-  };
-}
-
 function readV2Counts(db: DatabaseSync): V2ToV3MigrationDryRunReport["v2Counts"] {
   return {
     sessions: countRows(db, "sessions"),
     sessionMessages: countRows(db, "session_messages"),
     sessionMessageArtifacts: countRows(db, "session_message_artifacts"),
-    auditLogs: countRows(db, "audit_logs"),
-    auditLogDetails: countRows(db, "audit_log_details"),
-    auditLogOperations: countRows(db, "audit_log_operations"),
     appSettings: countRows(db, "app_settings"),
     modelCatalogRevisions: countRows(db, "model_catalog_revisions"),
     modelCatalogProviders: countRows(db, "model_catalog_providers"),
@@ -493,24 +391,6 @@ function createEstimatedSourceBytes(db: DatabaseSync): V2ToV3MigrationDryRunRepo
       : 0,
     sessionMessageArtifactsJson: tableExists(db, "session_message_artifacts")
       ? sumTextBytes(db, "SELECT artifact_json AS value FROM session_message_artifacts")
-      : 0,
-    auditLogicalPromptJson: tableExists(db, "audit_log_details")
-      ? sumTextBytes(db, "SELECT logical_prompt_json AS value FROM audit_log_details")
-      : 0,
-    auditTransportPayloadJson: tableExists(db, "audit_log_details")
-      ? sumTextBytes(db, "SELECT transport_payload_json AS value FROM audit_log_details")
-      : 0,
-    auditAssistantText: tableExists(db, "audit_log_details")
-      ? sumTextBytes(db, "SELECT assistant_text AS value FROM audit_log_details")
-      : 0,
-    auditRawItemsJson: tableExists(db, "audit_log_details")
-      ? sumTextBytes(db, "SELECT raw_items_json AS value FROM audit_log_details")
-      : 0,
-    auditUsageJson: tableExists(db, "audit_log_details")
-      ? sumTextBytes(db, "SELECT usage_json AS value FROM audit_log_details")
-      : 0,
-    auditOperationDetails: tableExists(db, "audit_log_operations")
-      ? sumTextBytes(db, "SELECT details AS value FROM audit_log_operations")
       : 0,
   };
 }
@@ -609,15 +489,6 @@ function readSessionMessages(db: DatabaseSync, sessionId: string): SessionMessag
   `).all(sessionId) as SessionMessageRow[];
 }
 
-function readAuditOperations(db: DatabaseSync, auditLogId: number): AuditLogOperationRow[] {
-  return db.prepare(`
-    SELECT operation_type, summary, details
-    FROM audit_log_operations
-    WHERE audit_log_id = ?
-    ORDER BY seq ASC
-  `).all(auditLogId) as AuditLogOperationRow[];
-}
-
 export function createMigrationDryRunReport(v2DbPath: string): V2ToV3MigrationDryRunReport {
   const v2Db = openReadOnlySource(v2DbPath);
   try {
@@ -662,7 +533,6 @@ export async function createMigrationWriteReport(input: {
   let migrationSucceeded = false;
   const sourceDb = openReadOnlySource(input.sourceDatabaseFile);
   let sessionStorage: SessionStorageV3 | null = null;
-  let auditLogStorage: AuditLogStorageV3 | null = null;
 
   try {
     dbBackups = overwrite ? backupExistingSqliteDatabaseFiles(input.targetDatabaseFile) : [];
@@ -696,41 +566,12 @@ export async function createMigrationWriteReport(input: {
     }
 
     sessionStorage = new SessionStorageV3(input.targetDatabaseFile, input.blobRootPath);
-    auditLogStorage = new AuditLogStorageV3(input.targetDatabaseFile, input.blobRootPath);
 
     const sessionRows = tableExists(sourceDb, "sessions")
       ? sourceDb.prepare(`SELECT ${SESSION_HEADER_COLUMNS} FROM sessions ORDER BY last_active_at DESC, id DESC`).all() as SessionHeaderRow[]
       : [];
     for (const row of sessionRows) {
       await sessionStorage.upsertSessionWithLastActiveAt(rowToSession(row, readSessionMessages(sourceDb, row.id)), row.last_active_at);
-    }
-
-    const auditRows = tableExists(sourceDb, "audit_logs")
-      ? sourceDb.prepare(`
-          SELECT
-            a.id,
-            a.session_id,
-            a.created_at,
-            a.phase,
-            a.provider,
-            a.model,
-            a.reasoning_effort,
-            a.approval_mode,
-            a.thread_id,
-            a.error_message,
-            d.logical_prompt_json,
-            d.transport_payload_json,
-            d.assistant_text,
-            d.raw_items_json,
-            d.usage_json
-          FROM audit_logs AS a
-          LEFT JOIN audit_log_details AS d
-            ON d.audit_log_id = a.id
-          ORDER BY a.id ASC
-        `).all() as AuditLogRow[]
-      : [];
-    for (const row of auditRows) {
-      await auditLogStorage.createAuditLog(rowToAuditLogEntry(row, readAuditOperations(sourceDb, row.id)));
     }
 
     const reportDb = openAppDatabaseReadOnly(input.targetDatabaseFile);
@@ -755,9 +596,6 @@ export async function createMigrationWriteReport(input: {
         sessions: sessionRows.length,
         sessionMessages: v2Counts.sessionMessages,
         sessionMessageArtifacts: v2Counts.sessionMessageArtifacts,
-        auditLogs: auditRows.length,
-        auditLogDetails: v2Counts.auditLogDetails,
-        auditLogOperations: v2Counts.auditLogOperations,
         appSettings: copiedAppSettings,
         ...copiedModelCatalogCounts,
         blobObjects,
@@ -765,7 +603,6 @@ export async function createMigrationWriteReport(input: {
     };
   } finally {
     sessionStorage?.close();
-    auditLogStorage?.close();
     sourceDb.close();
     if (migrationSucceeded) {
       discardSqliteDatabaseBackups(dbBackups);

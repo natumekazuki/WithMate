@@ -205,13 +205,33 @@ test("createCancelRetryDraftReplaceHandler は retry draft replace cancel handle
   assert.deepEqual(values, [false]);
 });
 
-test("resolveRetryBannerKind は session state と terminal audit log から retry 種別を解決する", () => {
+// @test-value v2
+// kind = "invariant"
+// claim = "retry種別は実行状態と最新の最小turn phaseからinterrupted/failed/canceledを区別する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state後の再送導線" }
+// fault = "正常完了をcanceledとして扱うか取消後の再送導線を落とす"
+// observable = "resolveRetryBannerKindのkind"
+// observation_boundary = "consumer"
+// scope = "retry-terminal-kind"
+// lifecycle = "permanent"
+// @end-test-value
+test("resolveRetryBannerKind は session state と 最小turn から retry 種別を解決する", () => {
   assert.equal(resolveRetryBannerKind({ runState: "interrupted" }), "interrupted");
   assert.equal(resolveRetryBannerKind({ runState: "error" }), "failed");
-  assert.equal(resolveRetryBannerKind({ runState: "idle", latestTerminalAuditLogPhase: "canceled" }), "canceled");
-  assert.equal(resolveRetryBannerKind({ runState: "idle", latestTerminalAuditLogPhase: "completed" }), null);
+  assert.equal(resolveRetryBannerKind({ runState: "idle", latestTurnPhase: "canceled" }), "canceled");
+  assert.equal(resolveRetryBannerKind({ runState: "idle", latestTurnPhase: "completed" }), null);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "再送元は最新userと同じSession/message位置の最小turnだけに関連付ける"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state後の再送導線" }
+// fault = "別会話や古いuser位置の取消turnを再送元へ誤関連付けする"
+// observable = "retry sourceのkind/lastRequestText/terminalTurnとnull結果"
+// observation_boundary = "consumer"
+// scope = "retry-owner-sequence"
+// lifecycle = "permanent"
+// @end-test-value
 test("resolveRetryBannerSource は最後の未完了依頼と同じ session / message seq の terminal event だけを使う", () => {
   const canceled = {
     id: 10,
@@ -225,11 +245,7 @@ test("resolveRetryBannerSource は最後の未完了依頼と同じ session / me
     userMessageSeq: 0,
     assistantMessageSeq: 1,
     threadId: "thread-1",
-    assistantTextPreview: "キャンセル",
-    operations: [],
-    usage: null,
     errorMessage: "canceled",
-    detailAvailable: true,
   };
   const completed = {
     ...canceled,
@@ -237,7 +253,6 @@ test("resolveRetryBannerSource は最後の未完了依頼と同じ session / me
     phase: "completed" as const,
     userMessageSeq: 2,
     assistantMessageSeq: 3,
-    assistantTextPreview: "完了",
     errorMessage: "",
   };
   const nextMessages = [
@@ -249,58 +264,58 @@ test("resolveRetryBannerSource は最後の未完了依頼と同じ session / me
   assert.deepEqual(resolveRetryBannerSource({
     sessionId: "session-1",
     messages: nextMessages.slice(0, 2),
-    auditLogs: [canceled],
+    latestTurn: canceled,
     runState: "idle",
   }), {
     kind: "canceled",
     lastRequestText: "古い依頼",
-    terminalAuditLog: canceled,
+    terminalTurn: canceled,
   });
 
   assert.equal(resolveRetryBannerSource({
     sessionId: "session-1",
     messages: nextMessages,
-    auditLogs: [canceled],
+    latestTurn: canceled,
     runState: "running",
   }), null);
 
   assert.equal(resolveRetryBannerSource({
     sessionId: "session-1",
     messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
-    auditLogs: [completed, canceled],
+    latestTurn: completed,
     runState: "idle",
   }), null);
 
   assert.equal(resolveRetryBannerSource({
     sessionId: "session-1",
     messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
-    auditLogs: [completed, { ...canceled, phase: "failed" }],
+    latestTurn: completed,
     runState: "idle",
   }), null);
 
   assert.equal(resolveRetryBannerSource({
     sessionId: "session-1",
     messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
-    auditLogs: [canceled],
+    latestTurn: canceled,
     runState: "idle",
   }), null);
 
   assert.equal(resolveRetryBannerSource({
     sessionId: "session-1",
     messages: nextMessages,
-    auditLogs: [{ ...canceled, sessionId: "auxiliary-1", userMessageSeq: 2 }],
+    latestTurn: { ...canceled, sessionId: "auxiliary-1", userMessageSeq: 2 },
     runState: "idle",
   }), null);
 
   assert.deepEqual(resolveRetryBannerSource({
     sessionId: "session-1",
     messages: nextMessages,
-    auditLogs: [],
+    latestTurn: null,
     runState: "error",
   }), {
     kind: "failed",
     lastRequestText: "新しい依頼",
-    terminalAuditLog: null,
+    terminalTurn: null,
   });
 });
 

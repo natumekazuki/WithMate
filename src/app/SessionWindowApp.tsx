@@ -8,7 +8,7 @@ import {
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import type { AuditLogSummary, DiscoveredCustomAgent, DiscoveredSkill, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
+import type { DiscoveredCustomAgent, DiscoveredSkill, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { getAuxiliarySessionIdFromLocation, getSessionIdFromLocation } from "./session-location.js";
 import {
   buildSessionWithAddedAdditionalDirectory,
@@ -61,7 +61,6 @@ import { ChatWindow, ChatWindowStatusScreen, type ChatErrorNotice } from "../cha
 import { ChatSessionModals } from "../chat/chat-session-modals.js";
 import { useResourceDiscovery } from "../chat/use-resource-discovery.js";
 import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "../chat/window-title.js";
-import { resolveAuditLogOwner } from "../chat/audit-log-owner.js";
 import {
   buildAuxiliaryLaunchProviderItems,
   createAuxiliaryLaunchDialogCloseHandler,
@@ -151,7 +150,7 @@ import {
 import { useSessionWorkspaceAvailability } from "../chat/runtime/session-window-workspace-hooks.js";
 import { useSessionRunControls } from "../chat/runtime/session-window-live-run-hooks.js";
 import { useSessionRunActions } from "../chat/runtime/session-run-actions.js";
-import { SessionAuditFeature, type SessionAuditFeatureHandle } from "../chat/runtime/session-audit-feature.js";
+import { useLatestSessionTurn } from "../chat/runtime/use-latest-session-turn.js";
 import {
   type AuxiliarySession,
 } from "../../src-shared/auxiliary/auxiliary-session-state.js";
@@ -626,17 +625,7 @@ export default function AgentSessionWindowApp() {
       activeRunMessageCount,
     ));
   }, [activeRunMessageCount, activeRunSessionId, isCentralPreviewActive]);
-  const {
-    session: auditLogSession,
-    ownerSessionId: auditLogOwnerSessionId,
-    sourceLabel: auditLogSourceLabel,
-  } = resolveAuditLogOwner({
-    parentSession: selectedSession,
-    displayedSession,
-    parentSourceLabel: "Main session",
-  });
-  const auditFeatureRef = useRef<SessionAuditFeatureHandle>(null);
-  const [selectedSessionAuditLogs, setSelectedSessionAuditLogs] = useState<AuditLogSummary[]>([]);
+  const latestMainTurn = useLatestSessionTurn(withmateApi, selectedSession?.id ?? null, selectedSession ? getSessionIncarnationId(selectedSession) : null, selectedSession?.updatedAt);
   const selectedSessionRunState: Session["runState"] | null = resolveSelectedSessionRunState({
     runState: selectedSession?.runState,
     hasLiveRun: hasSelectedSessionLiveRun,
@@ -976,7 +965,7 @@ export default function AgentSessionWindowApp() {
       sessionId: selectedSession.id,
       messages: selectedSession.messages,
       latestUserMessage: selectedSession.latestUserMessage,
-      auditLogs: selectedSessionAuditLogs,
+      latestTurn: latestMainTurn.turn,
       runState: selectedSessionRunState,
     });
     if (!source) {
@@ -1013,7 +1002,7 @@ export default function AgentSessionWindowApp() {
   }, [
     lastUserMessage,
     selectedSession,
-    selectedSessionAuditLogs,
+    latestMainTurn.turn,
     selectedSessionRunState,
     isSelectedSessionReadOnly,
     activeAuxiliarySession,
@@ -2181,7 +2170,6 @@ export default function AgentSessionWindowApp() {
     isPinPending: isSessionPinPending,
     isAuxiliaryMode,
     isWorkspaceAvailable: isSelectedWorkspaceAvailable,
-    onOpenAuditLog: () => auditFeatureRef.current?.open(),
     onOpenSessionTerminal: () => {
       chatShellFeature.handleChangeActionDockMode("terminal");
     },
@@ -2377,14 +2365,6 @@ export default function AgentSessionWindowApp() {
       onCloseDiff={() => setSelectedDiff(null)}
       onOpenDiffWindow={(payload) => void handleOpenDiffWindow(payload)}
     >
-      {auditLogSession ? <SessionAuditFeature
-        ref={auditFeatureRef}
-        api={withmateApi}
-        session={auditLogSession}
-        ownerSessionId={auditLogOwnerSessionId}
-        sourceLabel={auditLogSourceLabel}
-        onEntriesChange={setSelectedSessionAuditLogs}
-      /> : null}
     </ChatSessionModals>
   );
   const chatShellSurface = chatShellFeature.buildSurface({
@@ -2478,7 +2458,6 @@ export default function AgentSessionWindowApp() {
           displayedSession={renderedSession}
           activeRunSessionId={activeRunSessionId}
           character={selectedSessionCharacter}
-          auditLogEntries={selectedSessionAuditLogs}
           availableReasoningEfforts={availableReasoningEfforts}
           renderedIsRunning={contextRenderedIsRunning}
           onShowContextRail={handleShowContextRail}

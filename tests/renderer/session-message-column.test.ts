@@ -1970,6 +1970,35 @@ test("SessionMessageColumn は未追従時に message list 内の jump UI を描
   assert.doesNotMatch(html, /Jump to latest/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "応答Detailsは操作ごとの失敗・exit code・error・truncationとpartial出力を一緒に表示し、古い操作の欠損を成功として表示しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Turn Summary Operations" }
+// fault = "出力があるfailed操作の結果を落とすか、古い操作へ成功/exit code 0を補完する"
+// observable = "artifact-operation-body内のFailed、Exit code、error alert、Output Truncated、出力previewと旧操作本文"
+// observation_boundary = "component-behavior"
+// scope = "message-details-individual-operation-result"
+// lifecycle = "permanent"
+// impact = "通常履歴の操作結果と出力完全性を誤認する"
+// distinction = "projectionの値や型検査では実際のDetailsに結果が表示されることを検証できない"
+// @end-test-value
+test("Details keeps individual operation results and legacy missing fields", () => {
+  const message = createArtifactMessage();
+  message.artifact!.operationTimeline = [
+    { type: "command_execution", summary: "npm test", status: "failed", exitCode: 2, error: { message: "Command failed" }, truncated: true, details: "partial stdout" },
+    { type: "command_execution", summary: "legacy command", details: "saved output" },
+  ];
+  const dom = new JSDOM(renderSessionMessageColumn({ messages: [message], expandedArtifacts: { "session-1-0": true } }));
+  const operations = dom.window.document.querySelectorAll(".artifact-operation-body");
+  assert.match(operations[0].textContent ?? "", /Failed/);
+  assert.match(operations[0].textContent ?? "", /Exit Code: 2/);
+  assert.equal(operations[0].querySelector('[role="alert"]')?.textContent, "Command failed");
+  assert.match(operations[0].textContent ?? "", /Output Truncated/);
+  assert.equal(operations[0].querySelector("pre")?.textContent, "partial stdout");
+  assert.equal(operations[1].textContent, "legacy commandsaved output");
+  dom.window.close();
+});
+
 test("SessionMessageColumn はChanged Filesを描画せずRun Checksを維持し、Operationsを1groupで初期closedにする", () => {
   const html = renderSessionMessageColumn({
     messages: [createOperationsArtifactMessage()],

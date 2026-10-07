@@ -22,7 +22,6 @@ import {
 import { AuxiliarySessionService as AuxiliarySessionServiceImpl } from "../../src-electron/auxiliary/auxiliary-session-service.js";
 import {
   AuxiliarySessionStorage,
-  resolveLegacyAuxiliaryPreviewFromAuditEntries,
 } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
 import { appendSessionFilesDirectoryForSessionId, resolveSessionFilesDirectory } from "../../src-electron/files/session-files.js";
@@ -1055,108 +1054,6 @@ test("AuxiliarySessionStorage は最終使用順で一覧を返す", async () =>
     storage.close();
     await removeDirectoryWithRetry(tempDirectory);
   }
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "旧Auxiliaryのpreview backfillは最新の有効なcompleted raw itemから最終assistant blockだけを採用する"
-// oracle = { type = "contract", ref = "issue-710-preview-legacy-audit-backfill" }
-// fault = "中間assistant結合値、失敗turn、空または切り詰め済みの最新completed raw itemを最終応答として保存する"
-// observable = "resolveLegacyAuxiliaryPreviewFromAuditEntriesの返却値"
-// observation_boundary = "public-boundary"
-// scope = "auxiliary-session-storage"
-// lifecycle = "permanent"
-// @end-test-value
-test("legacy preview backfillはcompleted raw itemの最終blockだけを復元する", () => {
-  assert.equal(
-    resolveLegacyAuxiliaryPreviewFromAuditEntries([
-      {
-        phase: "completed",
-        rawItemsJson: JSON.stringify([{ type: "agent_message", data: { text: "新しい確定" } }]),
-      },
-      {
-        phase: "completed",
-        rawItemsJson: JSON.stringify([{ type: "agent_message", data: { text: "古い確定" } }]),
-      },
-    ]),
-    "新しい確定",
-  );
-  assert.equal(
-    resolveLegacyAuxiliaryPreviewFromAuditEntries([
-      {
-        phase: "completed",
-        rawItemsJson: JSON.stringify([{ type: "withmate.raw_items_truncated", truncated: true }]),
-      },
-      {
-        phase: "completed",
-        rawItemsJson: JSON.stringify([{ type: "agent_message", data: { text: "以前の確定" } }]),
-      },
-    ]),
-    "以前の確定",
-  );
-  assert.equal(
-    resolveLegacyAuxiliaryPreviewFromAuditEntries([
-      {
-        phase: "background-completed",
-        rawItemsJson: JSON.stringify([{ type: "agent_message", data: { text: "background確定" } }]),
-      },
-    ]),
-    "background確定",
-  );
-  assert.equal(
-    resolveLegacyAuxiliaryPreviewFromAuditEntries([
-      { phase: "failed", rawItemsJson: JSON.stringify([{ type: "agent_message", data: { text: "失敗" } }]) },
-      {
-        phase: "completed",
-        rawItemsJson: JSON.stringify([
-          { type: "agent_message", data: { text: "中間" } },
-          { type: "agent_message", data: { text: "確定" } },
-        ]),
-      },
-    ]),
-    "確定",
-  );
-  assert.equal(
-    resolveLegacyAuxiliaryPreviewFromAuditEntries([
-      {
-        phase: "completed",
-        rawItemsJson: JSON.stringify([
-          { type: "agent_message", data: { text: "確定" } },
-          { type: "withmate.value_truncated", truncated: true },
-        ]),
-      },
-    ]),
-    null,
-  );
-  assert.equal(
-    resolveLegacyAuxiliaryPreviewFromAuditEntries([
-      { phase: "failed", rawItemsJson: JSON.stringify([{ type: "agent_message", data: { text: "本文" } }]) },
-    ]),
-    null,
-  );
-  assert.equal(
-    resolveLegacyAuxiliaryPreviewFromAuditEntries([
-      {
-        phase: "completed",
-        rawItemsJson: JSON.stringify([
-          { type: "assistant.message", data: { content: "subagent", parentToolCallId: "tool-1" } },
-          { type: "assistant.message", data: { content: "確定" , parentToolCallId: null } },
-        ]),
-      },
-    ]),
-    "確定",
-  );
-  assert.equal(
-    resolveLegacyAuxiliaryPreviewFromAuditEntries([
-      {
-        phase: "completed",
-        rawItemsJson: JSON.stringify([
-          { type: "assistant.message", data: { content: "subagent", agentId: "agent-1", parentToolCallId: null } },
-        ]),
-      },
-    ]),
-    null,
-  );
 });
 
 // @test-value v2
@@ -3011,10 +2908,10 @@ test("Auxiliary serviceはcaptured ownerへ更新し親削除後の更新を拒�
 });
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryのmessage一覧はartifact詳細を展開せず、対象messageの詳細を別取得できる"
+// claim = "Auxiliaryのmessage一覧はartifact詳細を展開せず、対象messageの詳細・正常未記録・破損を別取得で区別する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
-// fault = "artifact詳細を軽量messageへ混入させるか、分離保存時に詳細を失う"
-// observable = "再読込したmessage投影と対象indexのartifact detail"
+// fault = "artifact詳細を軽量messageへ混入させる、詳細を失う、または不正JSON/nonobjectを正常な空artifactやnullへ変換する"
+// observable = "再読込したmessage投影と対象indexのartifact detail・null・破損例外"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-storage-artifact"
 // lifecycle = "permanent"
@@ -3046,6 +2943,21 @@ test("Auxiliary artifact詳細はmessage投影と分離して再読込できる"
     assert.equal(detail?.operationTimeline?.[0]?.details, "full command output");
     assert.equal(detail?.changedFiles[0]?.path, "src/app.ts");
     assert.equal(storage.getAuxiliaryMessageArtifactDetail(session.id, 0), null);
+    const db = new DatabaseSync(dbPath);
+    try {
+      const update = db.prepare("UPDATE auxiliary_session_messages SET artifact_body = ? WHERE auxiliary_session_id = ? AND seq = 1");
+      for (const value of ["broken-json", "null", "[]", "42", '"text"', ""]) {
+        update.run(value, session.id);
+        assert.throws(() => storage.getAuxiliaryMessageArtifactDetail(session.id, 1));
+      }
+      update.run(JSON.stringify(artifact), session.id);
+      assert.equal(storage.getAuxiliaryMessageArtifactDetail(session.id, 1)?.operationTimeline?.[0]?.details, "full command output");
+      update.run(null, session.id);
+      assert.equal(storage.getAuxiliaryMessageArtifactDetail(session.id, 1), null);
+      assert.equal(storage.getAuxiliaryMessageArtifactDetail(session.id, 9), null);
+    } finally {
+      db.close();
+    }
   } finally {
     storage.close();
     await removeDirectoryWithRetry(directory);

@@ -7,7 +7,6 @@ import { describe, it } from "node:test";
 
 import {
   CREATE_APP_SETTINGS_TABLE_SQL,
-  CREATE_AUDIT_LOGS_TABLE_SQL,
   CREATE_CHARACTER_MEMORY_TABLES_SQL,
   CREATE_MODEL_CATALOG_TABLES_SQL,
   CREATE_PROJECT_MEMORY_TABLES_SQL,
@@ -15,7 +14,6 @@ import {
   CREATE_SESSIONS_TABLE_SQL,
 } from "../../src-electron/storage/database-schema-v1.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/storage/database-schema-v2.js";
-import { AuditLogStorageV2 } from "../../src-electron/session/audit-log-storage-v2.js";
 import { PersistentStoreLifecycleService, type PersistentStoreBundle } from "../../src-electron/storage/persistent-store-lifecycle-service.js";
 import { SessionStorageV2 } from "../../src-electron/session/session-storage-v2.js";
 import { hydrateSessionsFromSummaries } from "../../src-electron/session/session-summary-adapter.js";
@@ -29,7 +27,6 @@ function createV1FixtureDatabase(): { dbPath: string; dirPath: string; cleanup: 
     db.exec("PRAGMA foreign_keys = ON;");
     db.exec(CREATE_APP_SETTINGS_TABLE_SQL);
     db.exec(CREATE_SESSIONS_TABLE_SQL);
-    db.exec(CREATE_AUDIT_LOGS_TABLE_SQL);
     db.exec(CREATE_MODEL_CATALOG_TABLES_SQL);
     db.exec(CREATE_SESSION_MEMORIES_TABLE_SQL);
     db.exec(CREATE_PROJECT_MEMORY_TABLES_SQL);
@@ -126,54 +123,19 @@ function insertSession(db: DatabaseSync, input: {
   );
 }
 
-function insertAuditLog(db: DatabaseSync, input: {
-  sessionId: string;
-  phase: string;
-  operationsJson: string;
-  assistantText?: string;
-  logicalPromptJson?: string;
-  transportPayloadJson?: string;
-  rawItemsJson?: string;
-  usageJson?: string;
-}): void {
-  db.prepare(`
-    INSERT INTO audit_logs (
-      session_id,
-      created_at,
-      phase,
-      provider,
-      model,
-      reasoning_effort,
-      approval_mode,
-      thread_id,
-      logical_prompt_json,
-      transport_payload_json,
-      assistant_text,
-      operations_json,
-      raw_items_json,
-      usage_json,
-      error_message
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    input.sessionId,
-    "2026-04-27T00:00:00.000Z",
-    input.phase,
-    "codex",
-    "gpt-5.4-mini",
-    "medium",
-    "never",
-    "thread",
-    input.logicalPromptJson ?? "{\"prompt\":true}",
-    input.transportPayloadJson ?? "{\"transport\":true}",
-    input.assistantText ?? "assistant text",
-    input.operationsJson,
-    input.rawItemsJson ?? "[]",
-    input.usageJson ?? "",
-    "",
-  );
-}
-
 describe("V1 to V2 database migration dry-run", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V1 DB を変更せず V2 変換予定件数と skip 件数を report する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
+  // fault = "通常messages/artifactsの予定件数が誤るかdry-runがsource行を書き換える"
+  // observable = "dry-run counts、skip件数、source保存行数"
+  // observation_boundary = "public-boundary"
+  // scope = "main/database-v1-to-v2-migration"
+  // lifecycle = "permanent"
+  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
+  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // @end-test-value
   it("V1 DB を変更せず V2 変換予定件数と skip 件数を report する", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -186,21 +148,6 @@ describe("V1 to V2 database migration dry-run", () => {
             { role: "assistant", text: "done", artifact: { title: "result", changedFiles: [] } },
           ]),
           streamJson: JSON.stringify([{ mood: "calm", time: "10:00", text: "legacy monologue" }]),
-        });
-        insertAuditLog(db, {
-          sessionId: "session-1",
-          phase: "completed",
-          operationsJson: JSON.stringify([
-            { type: "tool", summary: "run test", details: "ok" },
-            { type: "edit", summary: "update file" },
-          ]),
-          rawItemsJson: JSON.stringify([{ type: "message" }]),
-          usageJson: JSON.stringify({ inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 }),
-        });
-        insertAuditLog(db, {
-          sessionId: "session-1",
-          phase: "background-completed",
-          operationsJson: "[]",
         });
         db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
           "system_prompt_prefix",
@@ -227,7 +174,6 @@ describe("V1 to V2 database migration dry-run", () => {
       assert.equal(report.mode, "dry-run");
       assert.deepEqual(report.v1Counts, {
         sessions: 1,
-        auditLogs: 2,
         appSettings: 2,
         modelCatalogRevisions: 0,
         modelCatalogProviders: 0,
@@ -236,12 +182,8 @@ describe("V1 to V2 database migration dry-run", () => {
       assert.equal(report.plannedV2Counts.sessions, 1);
       assert.equal(report.plannedV2Counts.sessionMessages, 2);
       assert.equal(report.plannedV2Counts.sessionMessageArtifacts, 1);
-      assert.equal(report.plannedV2Counts.auditLogs, 1);
-      assert.equal(report.plannedV2Counts.auditLogDetails, 1);
-      assert.equal(report.plannedV2Counts.auditLogOperations, 2);
       assert.equal(report.plannedV2Counts.appSettings, 1);
       assert.equal(report.skipped.streamEntries, 1);
-      assert.equal(report.skipped.backgroundAuditLogs, 1);
       assert.equal(report.skipped.legacyAppSettings, 1);
       assert.equal(report.skipped.sessionMemories, 1);
       assert.deepEqual(report.issues, []);
@@ -250,6 +192,18 @@ describe("V1 to V2 database migration dry-run", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "壊れた JSON と invalid message を V2 へ入れず report に記録する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
+  // fault = "不正なmessage roleまたはJSON配列を正常messageとして移行する"
+  // observable = "invalidMessages件数とissuesのcolumn/errorKind"
+  // observation_boundary = "public-boundary"
+  // scope = "main/database-v1-to-v2-migration"
+  // lifecycle = "permanent"
+  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
+  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // @end-test-value
   it("壊れた JSON と invalid message を V2 へ入れず report に記録する", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -260,13 +214,6 @@ describe("V1 to V2 database migration dry-run", () => {
           messagesJson: JSON.stringify([{ role: "system", text: "skip" }]),
           streamJson: "not-json",
         });
-        insertAuditLog(db, {
-          sessionId: "session-1",
-          phase: "completed",
-          operationsJson: "not-json",
-          rawItemsJson: "not-json",
-          usageJson: "not-json",
-        });
       } finally {
         db.close();
       }
@@ -275,15 +222,11 @@ describe("V1 to V2 database migration dry-run", () => {
 
       assert.equal(report.plannedV2Counts.sessionMessages, 0);
       assert.equal(report.skipped.invalidMessages, 1);
-      assert.equal(report.skipped.invalidAuditOperations, 1);
       assert.deepEqual(
         report.issues.map((issue) => `${issue.sourceTable}.${issue.sourceColumn}:${issue.errorKind}`),
         [
           "sessions.messages_json:invalid_message_role",
           "sessions.stream_json:invalid_json_array",
-          "audit_logs.operations_json:invalid_json_array",
-          "audit_logs.raw_items_json:invalid_json_array",
-          "audit_logs.usage_json:invalid_json",
         ],
       );
     } finally {
@@ -293,10 +236,21 @@ describe("V1 to V2 database migration dry-run", () => {
 });
 
 describe("V1 to V2 database migration write mode", () => {
-  it("V1 DB から V2 DB を作成し、sessions/messages/artifacts/audit を write する", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V1 DB から V2 DB を作成し、sessions/messages/artifacts を write する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
+  // fault = "通常Sessionのmessage順序・accent・artifact本文または設定/catalogを失う"
+  // observable = "V2 session headers、順序付きmessage行、artifact JSON、app settings行とsource行数"
+  // observation_boundary = "public-boundary"
+  // scope = "main/database-v1-to-v2-migration"
+  // lifecycle = "permanent"
+  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
+  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // @end-test-value
+  it("V1 DB から V2 DB を作成し、sessions/messages/artifacts を write する", () => {
     const fixture = createV1FixtureDatabase();
     try {
-      const longAssistantText = "x".repeat(620);
       const sourceDb = new DatabaseSync(fixture.dbPath);
       try {
         insertSession(sourceDb, {
@@ -320,24 +274,6 @@ describe("V1 to V2 database migration write mode", () => {
           id: "session-2",
           messagesJson: JSON.stringify([{ role: "assistant", text: "second session only" }]),
           streamJson: JSON.stringify([]),
-        });
-        insertAuditLog(sourceDb, {
-          sessionId: "session-1",
-          phase: "completed",
-          operationsJson: JSON.stringify([
-            { type: "tool", summary: "run test", details: "ok" },
-            { type: "edit", summary: "update file", details: "modified" },
-          ]),
-          rawItemsJson: JSON.stringify([{ type: "message", text: "x" }]),
-          usageJson: JSON.stringify({ inputTokens: 10, cachedInputTokens: 1, outputTokens: 7 }),
-          assistantText: longAssistantText,
-        });
-        insertAuditLog(sourceDb, {
-          sessionId: "session-1",
-          phase: "background-completed",
-          operationsJson: JSON.stringify([]),
-          rawItemsJson: JSON.stringify([]),
-          usageJson: JSON.stringify({ inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 }),
         });
         sourceDb.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
           "system_prompt_prefix",
@@ -375,9 +311,6 @@ describe("V1 to V2 database migration write mode", () => {
           "sessions",
           "session_messages",
           "session_message_artifacts",
-          "audit_logs",
-          "audit_log_details",
-          "audit_log_operations",
           "model_catalog_revisions",
           "model_catalog_providers",
           "model_catalog_models",
@@ -387,10 +320,9 @@ describe("V1 to V2 database migration write mode", () => {
         }
         assert.equal(tableExists(v2Db, "session_memories"), false, "session_memories は V2 スキーマに含まれない");
 
-        const sessionSummaries = v2Db.prepare("SELECT id, message_count, audit_log_count FROM sessions ORDER BY id").all() as Array<{
+        const sessionSummaries = v2Db.prepare("SELECT id, message_count FROM sessions ORDER BY id").all() as Array<{
           id: string;
           message_count: number;
-          audit_log_count: number;
         }>;
         const session1 = sessionSummaries.find((session) => session.id === "session-1");
         const session2 = sessionSummaries.find((session) => session.id === "session-2");
@@ -398,7 +330,6 @@ describe("V1 to V2 database migration write mode", () => {
         assert.ok(session1);
         assert.ok(session2);
         assert.equal(session1.message_count, 2);
-        assert.equal(session1.audit_log_count, 1);
 
         const sessionMessages = v2Db.prepare("SELECT id, seq, role, accent, artifact_available FROM session_messages WHERE session_id = ? ORDER BY seq").all(
           "session-1",
@@ -436,58 +367,8 @@ describe("V1 to V2 database migration write mode", () => {
           summary: "implemented migration",
         });
 
-        const auditLogSummaries = v2Db
-          .prepare(
-            "SELECT id, session_id, phase, assistant_text_preview, operation_count, raw_item_count, input_tokens, cached_input_tokens, output_tokens FROM audit_logs ORDER BY id",
-          )
-          .all() as Array<{
-          id: number;
-          session_id: string;
-          phase: string;
-          assistant_text_preview: string;
-          operation_count: number;
-          raw_item_count: number;
-          input_tokens: number;
-          cached_input_tokens: number;
-          output_tokens: number;
-        }>;
-        assert.equal(auditLogSummaries.length, 1);
-        assert.equal(auditLogSummaries[0].session_id, "session-1");
-        assert.equal(auditLogSummaries[0].phase, "completed");
-        assert.equal(auditLogSummaries[0].operation_count, 2);
-        assert.equal(auditLogSummaries[0].raw_item_count, 1);
-        assert.equal(auditLogSummaries[0].input_tokens, 10);
-        assert.equal(auditLogSummaries[0].assistant_text_preview.length, 500);
-
-        const detailRows = v2Db
-          .prepare("SELECT audit_log_id, logical_prompt_json, transport_payload_json, assistant_text, raw_items_json, usage_json FROM audit_log_details ORDER BY audit_log_id")
-          .all() as Array<{
-          audit_log_id: number;
-          logical_prompt_json: string;
-          transport_payload_json: string;
-          assistant_text: string;
-          raw_items_json: string;
-          usage_json: string;
-        }>;
-        assert.equal(detailRows.length, 1);
-        assert.equal(detailRows[0].audit_log_id, auditLogSummaries[0].id);
-        assert.deepEqual(JSON.parse(detailRows[0].logical_prompt_json), { prompt: true });
-        assert.deepEqual(JSON.parse(detailRows[0].transport_payload_json), { transport: true });
-        assert.equal(detailRows[0].assistant_text, longAssistantText);
-
-        const operationRows = v2Db
-          .prepare("SELECT seq, operation_type, summary, details FROM audit_log_operations WHERE audit_log_id = ? ORDER BY seq")
-          .all(auditLogSummaries[0].id) as Array<{
-          seq: number;
-          operation_type: string;
-          summary: string;
-          details: string;
-        }>;
-        assert.deepEqual(operationRows.map((row) => row.seq), [0, 1]);
-        assert.deepEqual(operationRows.map((row) => row.operation_type), ["tool", "edit"]);
 
         assert.equal(countRowsBySessionId(v2Db, "session_messages", "session-2"), 1);
-        assert.equal(countRowsBySessionId(v2Db, "audit_logs", "session-2"), 0);
 
         const migratedSystemPromptPrefixRow = v2Db
           .prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?")
@@ -513,6 +394,18 @@ describe("V1 to V2 database migration write mode", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "既存 V2 DB は overwrite 指定がない限り置き換えない"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
+  // fault = "overwriteなしでも既存targetを上書きする"
+  // observable = "migration拒否例外と既存targetの保存session行数"
+  // observation_boundary = "public-boundary"
+  // scope = "main/database-v1-to-v2-migration"
+  // lifecycle = "permanent"
+  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
+  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // @end-test-value
   it("既存 V2 DB は overwrite 指定がない限り置き換えない", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -555,6 +448,18 @@ describe("V1 to V2 database migration write mode", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V1 と V2 が同一パスの場合は overwrite 指定でも拒否する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
+  // fault = "同一source/targetを許可しsource DBを破棄する"
+  // observable = "migration拒否例外とsource sessions行数"
+  // observation_boundary = "public-boundary"
+  // scope = "main/database-v1-to-v2-migration"
+  // lifecycle = "permanent"
+  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
+  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // @end-test-value
   it("V1 と V2 が同一パスの場合は overwrite 指定でも拒否する", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -579,6 +484,18 @@ describe("V1 to V2 database migration write mode", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "overwrite 中に失敗した場合は既存 V2 DB を復旧する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
+  // fault = "必須source列の欠損でwrite失敗した後に既存targetを復旧しない"
+  // observable = "writeの拒否例外と復旧されたV2 sessions行数"
+  // observation_boundary = "public-boundary"
+  // scope = "main/database-v1-to-v2-migration"
+  // lifecycle = "permanent"
+  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
+  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // @end-test-value
   it("overwrite 中に失敗した場合は既存 V2 DB を復旧する", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -601,12 +518,7 @@ describe("V1 to V2 database migration write mode", () => {
 
       const sourceDbWithBadRow = new DatabaseSync(fixture.dbPath);
       try {
-        sourceDbWithBadRow.exec("PRAGMA foreign_keys = OFF;");
-        insertAuditLog(sourceDbWithBadRow, {
-          sessionId: "missing-session",
-          phase: "completed",
-          operationsJson: "[]",
-        });
+        sourceDbWithBadRow.exec("ALTER TABLE sessions DROP COLUMN task_title;");
       } finally {
         sourceDbWithBadRow.close();
       }
@@ -623,52 +535,8 @@ describe("V1 to V2 database migration write mode", () => {
       const restoredV2Db = new DatabaseSync(v2DbPath);
       try {
         assert.equal(countRows(restoredV2Db, "sessions"), 1);
-        assert.equal(countRows(restoredV2Db, "audit_logs"), 0);
       } finally {
         restoredV2Db.close();
-      }
-    } finally {
-      fixture.cleanup();
-    }
-  });
-
-  it("write mode でも broken usage_json は V2 detail に持ち込まない", () => {
-    const fixture = createV1FixtureDatabase();
-    try {
-      const sourceDb = new DatabaseSync(fixture.dbPath);
-      try {
-        insertSession(sourceDb, {
-          id: "session-1",
-          messagesJson: JSON.stringify([{ role: "user", text: "hello" }]),
-          streamJson: JSON.stringify([]),
-        });
-        insertAuditLog(sourceDb, {
-          sessionId: "session-1",
-          phase: "completed",
-          operationsJson: "[]",
-          usageJson: "not-json",
-        });
-      } finally {
-        sourceDb.close();
-      }
-
-      const v2DbPath = join(fixture.dirPath, "withmate-v2.db");
-      const report = createMigrationWriteReport({
-        v1DbPath: fixture.dbPath,
-        v2DbPath,
-      });
-
-      assert.deepEqual(
-        report.issues.map((issue) => `${issue.sourceTable}.${issue.sourceColumn}:${issue.errorKind}`),
-        ["audit_logs.usage_json:invalid_json_object"],
-      );
-
-      const v2Db = new DatabaseSync(v2DbPath);
-      try {
-        const row = v2Db.prepare("SELECT usage_json FROM audit_log_details").get() as { usage_json: string };
-        assert.equal(row.usage_json, "");
-      } finally {
-        v2Db.close();
       }
     } finally {
       fixture.cleanup();
@@ -679,7 +547,7 @@ describe("V1 to V2 database migration write mode", () => {
   // kind = "invariant"
   // claim = "V1から移行したV2 DBをruntime lifecycleで開き主要read/write pathを継続できる"
   // oracle = { type = "contract", ref = "V1 to V2 migration contract" }
-  // fault = "migration後のlifecycle初期化に失敗する、またはsession/audit read-write pathが欠落する"
+  // fault = "migration後のlifecycle初期化に失敗する、またはsession read-write pathが欠落する"
   // observable = "migration reportとlifecycle経由の保存・取得結果"
   // observation_boundary = "public-boundary"
   // scope = "V1 to V2 migration runtime lifecycle"
@@ -709,16 +577,6 @@ describe("V1 to V2 database migration write mode", () => {
           ]),
           streamJson: JSON.stringify([{ mood: "calm", text: "legacy monologue" }]),
         });
-        insertAuditLog(sourceDb, {
-          sessionId: "session-1",
-          phase: "completed",
-          operationsJson: JSON.stringify([
-            { type: "tool", summary: "run test", details: "ok" },
-          ]),
-          assistantText: "assistant detail",
-          rawItemsJson: JSON.stringify([{ type: "message" }]),
-          usageJson: JSON.stringify({ inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 }),
-        });
       } finally {
         sourceDb.close();
       }
@@ -731,7 +589,6 @@ describe("V1 to V2 database migration write mode", () => {
       assert.equal(migrationReport.migratedV2Counts.sessions, 1);
       assert.equal(migrationReport.migratedV2Counts.sessionMessages, 2);
       assert.equal(migrationReport.migratedV2Counts.sessionMessageArtifacts, 1);
-      assert.equal(migrationReport.migratedV2Counts.auditLogs, 1);
 
       const removedPaths: string[] = [];
       const truncatedWalPaths: string[] = [];
@@ -746,9 +603,6 @@ describe("V1 to V2 database migration write mode", () => {
         },
         createSessionMemoryStorage: () => ({ close() {} }) as never,
         createProjectMemoryStorage: () => ({ close() {} }) as never,
-        createAuditLogStorage: () => {
-          throw new Error("V2 lifecycle では V1 audit log storage を生成しない");
-        },
         createAppSettingsStorage: () => ({ close() {} }) as never,
         createMateStorage: () => ({ close() {} }) as never,
         ensureV2Schema(dbPath) {
@@ -773,11 +627,9 @@ describe("V1 to V2 database migration write mode", () => {
 
       let bundle: PersistentStoreBundle | null = await lifecycle.initialize(v2DbPath, "model-catalog.json");
       const sessionStorage = bundle.sessionStorage as SessionStorageV2;
-      const auditLogStorage = bundle.auditLogStorage as AuditLogStorageV2;
 
       try {
         assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
-        assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2, true);
         assert.deepEqual(bundle.sessions.map((session) => ({
           id: session.id,
           messages: session.messages.length,
@@ -791,15 +643,6 @@ describe("V1 to V2 database migration write mode", () => {
         ]);
         assert.equal(migratedSession.messages[1]?.artifact?.title, "runtime artifact");
 
-        const auditPage = auditLogStorage.listSessionAuditLogSummaryPage("session-1", { cursor: 0, limit: 10 });
-        assert.equal(auditPage.entries.length, 1);
-        assert.equal(auditPage.entries[0]?.operations.length, 1);
-        assert.equal(auditPage.entries[0]?.operations[0]?.details, undefined);
-        const auditDetail = auditLogStorage.getSessionAuditLogDetail("session-1", auditPage.entries[0]?.id ?? -1);
-        assert.equal(auditDetail?.assistantText, "assistant detail");
-        assert.deepEqual(auditDetail?.operations.map((operation) => operation.summary), ["run test"]);
-        assert.equal(auditDetail?.operations[0]?.details, "ok");
-
         sessionStorage.upsertSession({
           ...migratedSession,
           taskTitle: "updated in runtime",
@@ -811,29 +654,6 @@ describe("V1 to V2 database migration write mode", () => {
           "done from v1",
         ]);
         assert.equal(updatedSession?.messages[1]?.artifact?.title, "runtime artifact");
-
-        const createdAuditLog = auditLogStorage.createAuditLog({
-          sessionId: "session-1",
-          createdAt: "2026-04-27T01:00:00.000Z",
-          phase: "completed",
-          provider: "codex",
-          model: "gpt-5.4-mini",
-          reasoningEffort: "medium",
-          approvalMode: "never",
-          threadId: "thread-runtime",
-          logicalPrompt: {
-            systemText: "system",
-            inputText: "input",
-            composedText: "system\n\ninput",
-          },
-          transportPayload: { summary: "payload", fields: [] },
-          assistantText: "new assistant detail",
-          operations: [{ type: "analysis", summary: "runtime write", details: "ok" }],
-          rawItemsJson: "[]",
-          usage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 },
-          errorMessage: "",
-        });
-        assert.equal(auditLogStorage.getSessionAuditLogDetail("session-1", createdAuditLog.id)?.assistantText, "new assistant detail");
 
         const listFullSessions = () => hydrateSessionsFromSummaries(sessionStorage);
         const runtimeSessions = listFullSessions();
@@ -851,10 +671,8 @@ describe("V1 to V2 database migration write mode", () => {
           ]);
           assert.deepEqual(recreated.sessions, []);
           assert.equal(recreated.sessionStorage instanceof SessionStorageV2, true);
-          assert.equal(recreated.auditLogStorage instanceof AuditLogStorageV2, true);
 
           const recreatedSessionStorage = recreated.sessionStorage as SessionStorageV2;
-          const recreatedAuditLogStorage = recreated.auditLogStorage as AuditLogStorageV2;
           recreatedSessionStorage.upsertSession({
             ...updatedSession,
             id: "session-after-recreate",
@@ -864,30 +682,6 @@ describe("V1 to V2 database migration write mode", () => {
             recreatedSessionStorage.getSession("session-after-recreate")?.messages.map((message) => message.text),
             ["after recreate"],
           );
-          const recreatedAuditLog = recreatedAuditLogStorage.createAuditLog({
-            sessionId: "session-after-recreate",
-            createdAt: "2026-04-27T02:00:00.000Z",
-            phase: "completed",
-            provider: "codex",
-            model: "gpt-5.4-mini",
-            reasoningEffort: "medium",
-            approvalMode: "never",
-            threadId: "thread-recreate",
-            logicalPrompt: {
-              systemText: "system",
-              inputText: "input",
-              composedText: "system\n\ninput",
-            },
-            transportPayload: { summary: "payload", fields: [] },
-            assistantText: "recreated assistant detail",
-            operations: [{ type: "analysis", summary: "recreate write", details: "ok" }],
-            rawItemsJson: "[]",
-            usage: { inputTokens: 3, cachedInputTokens: 0, outputTokens: 4 },
-            errorMessage: "",
-          });
-          const recreatedAuditDetail = recreatedAuditLogStorage.getSessionAuditLogDetail("session-after-recreate", recreatedAuditLog.id);
-          assert.equal(recreatedAuditDetail?.assistantText, "recreated assistant detail");
-          assert.equal(recreatedAuditDetail?.operations[0]?.details, "ok");
         } finally {
           lifecycle.close(recreated, v2DbPath);
         }
@@ -895,61 +689,6 @@ describe("V1 to V2 database migration write mode", () => {
         if (bundle) {
           lifecycle.close(bundle, v2DbPath);
         }
-      }
-    } finally {
-      fixture.cleanup();
-    }
-  });
-
-  it("write mode では object ではない detail JSON を V2 detail に持ち込まない", () => {
-    const fixture = createV1FixtureDatabase();
-    try {
-      const sourceDb = new DatabaseSync(fixture.dbPath);
-      try {
-        insertSession(sourceDb, {
-          id: "session-1",
-          messagesJson: JSON.stringify([{ role: "user", text: "hello" }]),
-          streamJson: JSON.stringify([]),
-        });
-        insertAuditLog(sourceDb, {
-          sessionId: "session-1",
-          phase: "completed",
-          operationsJson: "[]",
-          logicalPromptJson: "not-json",
-          transportPayloadJson: "[]",
-          usageJson: "[]",
-        });
-      } finally {
-        sourceDb.close();
-      }
-
-      const v2DbPath = join(fixture.dirPath, "withmate-v2.db");
-      const report = createMigrationWriteReport({
-        v1DbPath: fixture.dbPath,
-        v2DbPath,
-      });
-
-      assert.deepEqual(
-        report.issues.map((issue) => `${issue.sourceTable}.${issue.sourceColumn}:${issue.errorKind}`),
-        [
-          "audit_logs.logical_prompt_json:invalid_json_object",
-          "audit_logs.transport_payload_json:invalid_json_object",
-          "audit_logs.usage_json:invalid_json_object",
-        ],
-      );
-
-      const v2Db = new DatabaseSync(v2DbPath);
-      try {
-        const row = v2Db.prepare("SELECT logical_prompt_json, transport_payload_json, usage_json FROM audit_log_details").get() as {
-          logical_prompt_json: string;
-          transport_payload_json: string;
-          usage_json: string;
-        };
-        assert.equal(row.logical_prompt_json, "");
-        assert.equal(row.transport_payload_json, "");
-        assert.equal(row.usage_json, "");
-      } finally {
-        v2Db.close();
       }
     } finally {
       fixture.cleanup();

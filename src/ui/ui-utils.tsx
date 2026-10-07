@@ -79,6 +79,8 @@ export function liveRunStepStatusLabel(status: string): string {
       return "Canceled";
     case "pending":
       return "Pending";
+    case "unknown":
+      return "Not Recorded";
     default:
       return "Unknown";
   }

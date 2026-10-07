@@ -8,12 +8,9 @@ import { describe, it } from "node:test";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import type { MessageArtifact } from "../../src-shared/session/session-state.js";
-import { AuditLogStorageV2 } from "../../src-electron/session/audit-log-storage-v2.js";
-import { AuditLogStorageV3 } from "../../src-electron/session/audit-log-storage-v3.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/storage/database-schema-v2.js";
 import {
   CREATE_V3_SCHEMA_SQL,
-  V3_DETAILS_PREVIEW_MAX_LENGTH,
   V3_TEXT_PREVIEW_MAX_LENGTH,
 } from "../../src-electron/storage/database-schema-v3.js";
 import { SessionStorageV2 } from "../../src-electron/session/session-storage-v2.js";
@@ -164,7 +161,6 @@ function checkpointAndRemoveSqliteSidecars(dbPath: string): void {
 
 function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY"): void {
   const sessionStorage = new SessionStorageV2(dbPath);
-  const auditStorage = new AuditLogStorageV2(dbPath);
   const longMessage = `${"m".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:message-tail`;
   const session = buildNewSession({
     taskTitle: "V2 migration fixture",
@@ -193,40 +189,8 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
       ],
     });
 
-    auditStorage.createAuditLog({
-      sessionId: "session-1",
-      createdAt: "2026-04-28T01:00:00.000Z",
-      phase: "completed",
-      provider: "codex",
-      model: "gpt-5.4-mini",
-      reasoningEffort: "medium",
-      approvalMode: DEFAULT_APPROVAL_MODE,
-      threadId: "thread-1",
-      logicalPrompt: {
-        systemText: `${sentinel}:logical-system`,
-        inputText: "input",
-        composedText: `${sentinel}:logical-system\n\ninput`,
-      },
-      transportPayload: {
-        summary: `${sentinel}:transport-summary`,
-        fields: [{ label: "payload", value: `${sentinel}:transport-field` }],
-      },
-      assistantText: `${"a".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:assistant-tail`,
-      operations: [
-        {
-          type: "analysis",
-          summary: "operation summary",
-          details: `${"d".repeat(V3_DETAILS_PREVIEW_MAX_LENGTH + 20)}${sentinel}:operation-details-tail`,
-        },
-      ],
-      rawItemsJson: JSON.stringify([{ type: "message", text: `${sentinel}:raw-item-tail` }]),
-      usage: { inputTokens: 11, cachedInputTokens: 2, outputTokens: 7 },
-      errorMessage: "",
-    });
-
   } finally {
     sessionStorage.close();
-    auditStorage.close();
   }
 
   insertAppSettingsAndModelCatalog(dbPath);
@@ -235,10 +199,10 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
 describe("V2 to V3 database migration dry-run", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "V2 migration dry-runはsourceを変更せず通常データの件数とblob化対象8項目のUTF-8 byte数を返す"
+  // claim = "V2 migration dry-runはsourceを変更せず通常データの件数とmessage本文・artifact JSONのUTF-8 byte数を返す"
   // oracle = { type = "contract", ref = "src-electron/storage/migrations/migrate-database-v2-to-v3.ts" }
   // fault = "dry-runがsourceを変更するか、通常データの件数またはblob見積りを誤る"
-  // observable = "dry-run report counts、全8項目のestimatedSourceBytes、source全tableの内容とfile size"
+  // observable = "dry-run report counts、message本文・artifact JSONのestimatedSourceBytes、source全tableの内容とfile size"
   // observation_boundary = "public-boundary"
   // scope = "database-v2-to-v3 dry-run"
   // lifecycle = "permanent"
@@ -263,47 +227,11 @@ describe("V2 to V3 database migration dry-run", () => {
       const report = createMigrationDryRunReport(fixture.dbPath);
 
       assert.equal(report.mode, "dry-run");
-      assert.deepEqual(report.v2Counts, {
-        sessions: 1,
-        sessionMessages: 2,
-        sessionMessageArtifacts: 1,
-        auditLogs: 1,
-        auditLogDetails: 1,
-        auditLogOperations: 1,
-        appSettings: 1,
-        modelCatalogRevisions: 1,
-        modelCatalogProviders: 1,
-        modelCatalogModels: 1,
-      });
       assert.deepEqual(report.plannedV3Counts, report.v2Counts);
-      // seedV2Storageへ渡した本文をoracleとし、reportやmigrationの集計helperから期待値を作らない。
-      // 複数messageの合計とmulti-byte文字を含め、正数だけ返す・先頭行だけ数える・文字数を返す誤りを検出する。
       assert.deepEqual(report.estimatedSourceBytes, {
-        sessionMessageText: Buffer.byteLength(
-          `${"m".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:message-tail`, "utf8",
-        ) + Buffer.byteLength("assistant reply", "utf8"),
+        sessionMessageText: Buffer.byteLength(`${"m".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:message-tail`, "utf8")
+          + Buffer.byteLength("assistant reply", "utf8"),
         sessionMessageArtifactsJson: Buffer.byteLength(JSON.stringify(createArtifact(sentinel)), "utf8"),
-        auditLogicalPromptJson: Buffer.byteLength(JSON.stringify({
-          systemText: `${sentinel}:logical-system`,
-          inputText: "input",
-          composedText: `${sentinel}:logical-system\n\ninput`,
-        }), "utf8"),
-        auditTransportPayloadJson: Buffer.byteLength(JSON.stringify({
-          summary: `${sentinel}:transport-summary`,
-          fields: [{ label: "payload", value: `${sentinel}:transport-field` }],
-        }), "utf8"),
-        auditAssistantText: Buffer.byteLength(
-          `${"a".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:assistant-tail`, "utf8",
-        ),
-        auditRawItemsJson: Buffer.byteLength(JSON.stringify([
-          { type: "message", text: `${sentinel}:raw-item-tail` },
-        ]), "utf8"),
-        auditUsageJson: Buffer.byteLength(JSON.stringify({
-          inputTokens: 11, cachedInputTokens: 2, outputTokens: 7,
-        }), "utf8"),
-        auditOperationDetails: Buffer.byteLength(
-          `${"d".repeat(V3_DETAILS_PREVIEW_MAX_LENGTH + 20)}${sentinel}:operation-details-tail`, "utf8",
-        ),
       });
 
       const sourceDbAfter = new DatabaseSync(fixture.dbPath, { readOnly: true });
@@ -326,14 +254,14 @@ describe("V2 to V3 database migration write mode", () => {
   // claim = "V2からV3への移行はsession messageのbookmark stateとblob-backed artifactを維持する"
   // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: V2/V3 migration" }
   // fault = "V2 session sourceのbookmark stateを読み落とすか、V3 targetへの書込時に解除し、またはartifactを失う"
-  // observable = "write reportとV3 SQLiteのsession/message/artifact/audit/settings/catalog/blob件数、およびSessionStorageV3/AuditLogStorageV3から復元したbookmark・artifact・logical prompt・transport payload・assistant text・raw items・operations・usage"
+  // observable = "write reportとV3 SQLiteのsession/message/artifact/settings/catalog/blob件数、およびSessionStorageV3から復元したbookmark・本文・artifact detail"
   // observation_boundary = "public-boundary"
   // scope = "database-v2-to-v3 message bookmark migration"
   // lifecycle = "permanent"
   // impact = "既存利用者の保存済みbookmarkがmigration後に失われる"
   // distinction = "単体storageのroundtripとは別に、V2 sourceからV3 targetまでの変換経路を確認する"
   // @end-test-value
-  it("V3 DB と blob store に session/audit/app_settings/model_catalog を移す", async () => {
+  it("V3 DB と blob store に session/app_settings/model_catalog を移す", async () => {
     const fixture = createV2FixtureDatabase();
     try {
       seedV2Storage(fixture.dbPath);
@@ -350,8 +278,6 @@ describe("V2 to V3 database migration write mode", () => {
       assert.equal(report.migratedV3Counts.sessions, 1);
       assert.equal(report.migratedV3Counts.sessionMessages, 2);
       assert.equal(report.migratedV3Counts.sessionMessageArtifacts, 1);
-      assert.equal(report.migratedV3Counts.auditLogs, 1);
-      assert.equal(report.migratedV3Counts.auditLogOperations, 1);
       assert.equal(report.migratedV3Counts.appSettings, 1);
       assert.equal(report.migratedV3Counts.modelCatalogModels, 1);
       assert.equal(report.migratedV3Counts.blobObjects > 0, true);
@@ -363,7 +289,6 @@ describe("V2 to V3 database migration write mode", () => {
         }
         assert.equal(readCount(db, "sessions"), 1);
         assert.equal(readCount(db, "session_messages"), 2);
-        assert.equal(readCount(db, "audit_logs"), 1);
         assert.equal(readCount(db, "app_settings"), 1);
         assert.equal(readCount(db, "model_catalog_models"), 1);
         assert.equal(readCount(db, "blob_objects") > 0, true);
@@ -372,7 +297,6 @@ describe("V2 to V3 database migration write mode", () => {
       }
 
       const sessionStorage = new SessionStorageV3(v3DbPath, blobRootPath);
-      const auditStorage = new AuditLogStorageV3(v3DbPath, blobRootPath);
       try {
         const migratedSession = await sessionStorage.getSession("session-1");
         assert.ok(migratedSession);
@@ -384,27 +308,8 @@ describe("V2 to V3 database migration write mode", () => {
           "SENTINEL_V2_TO_V3_BLOB_ONLY:artifact-diff-tail",
         );
 
-        const page = await auditStorage.listSessionAuditLogSummaryPage("session-1", { cursor: 0, limit: 10 });
-        assert.equal(page.entries.length, 1);
-        const detail = await auditStorage.getSessionAuditLogDetail("session-1", page.entries[0]?.id ?? -1);
-        assert.ok(detail);
-        assert.equal(detail.logicalPrompt.systemText, "SENTINEL_V2_TO_V3_BLOB_ONLY:logical-system");
-        assert.deepEqual(detail.transportPayload, {
-          summary: "SENTINEL_V2_TO_V3_BLOB_ONLY:transport-summary",
-          fields: [{ label: "payload", value: "SENTINEL_V2_TO_V3_BLOB_ONLY:transport-field" }],
-        });
-        assert.equal(detail.assistantText.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:assistant-tail"), true);
-        assert.equal(detail.rawItemsJson.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:raw-item-tail"), true);
-        assert.deepEqual(detail.operations, [{
-          type: "analysis",
-          summary: "operation summary",
-          details: `${"d".repeat(V3_DETAILS_PREVIEW_MAX_LENGTH + 20)}SENTINEL_V2_TO_V3_BLOB_ONLY:operation-details-tail`,
-        }]);
-        assert.deepEqual(detail.usage, { inputTokens: 11, cachedInputTokens: 2, outputTokens: 7 });
-
       } finally {
         sessionStorage.close();
-        auditStorage.close();
       }
     } finally {
       fixture.cleanup();
@@ -413,7 +318,7 @@ describe("V2 to V3 database migration write mode", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "V2からV3への移行は長いSession message/artifact/Audit payloadをSQLite text columnへ戻さずblobへ保持する"
+  // claim = "V2からV3への移行は長いSession message/artifactをSQLite text columnへ戻さずblobへ保持する"
   // oracle = { type = "contract", ref = "src-electron/storage/migrations/migrate-database-v2-to-v3.ts" }
   // fault = "重いpayloadのtailをV3 SQLite text columnへ保存し、blob-backed storage境界を破る"
   // observable = "V3 SQLite text values and migrated blob-backed detail values"
@@ -421,7 +326,7 @@ describe("V2 to V3 database migration write mode", () => {
   // scope = "database-v2-to-v3 blob payload boundary"
   // lifecycle = "permanent"
   // @end-test-value
-  it("長い message / artifact / audit details / raw items / operation details の sentinel tail を sqlite text columns に残さない", async () => {
+  it("長い message / artifact の sentinel tail を sqlite text columns に残さない", async () => {
     const fixture = createV2FixtureDatabase();
     try {
       const sentinel = "SENTINEL_SQLITE_TEXT_COLUMNS_MUST_NOT_CONTAIN_THIS_TAIL";
@@ -448,7 +353,6 @@ describe("V2 to V3 database migration write mode", () => {
       }
 
       const sessionStorage = new SessionStorageV3(v3DbPath, blobRootPath);
-      const auditStorage = new AuditLogStorageV3(v3DbPath, blobRootPath);
       try {
         const session = await sessionStorage.getSession("session-1");
         assert.ok(session);
@@ -458,17 +362,8 @@ describe("V2 to V3 database migration write mode", () => {
           `${sentinel}:artifact-diff-tail`,
         );
 
-        const page = await auditStorage.listSessionAuditLogSummaryPage("session-1", { cursor: 0, limit: 1 });
-        const detail = await auditStorage.getSessionAuditLogDetail("session-1", page.entries[0]?.id ?? -1);
-        assert.ok(detail);
-        assert.equal(detail.logicalPrompt.systemText, `${sentinel}:logical-system`);
-        assert.equal(detail.assistantText.includes(`${sentinel}:assistant-tail`), true);
-        assert.equal(detail.rawItemsJson.includes(`${sentinel}:raw-item-tail`), true);
-        assert.equal(detail.operations[0]?.details?.includes(`${sentinel}:operation-details-tail`), true);
-
       } finally {
         sessionStorage.close();
-        auditStorage.close();
       }
     } finally {
       fixture.cleanup();

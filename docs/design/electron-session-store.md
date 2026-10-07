@@ -1,6 +1,6 @@
 # Electron Session Store
 
-Session、Auxiliary、監査、設定、catalogの永続化はMainが公開するserviceとstorage Workerのtyped commandで扱う。SQLiteの実行owner、schema、tableは[Database Schema](database-schema.md)を参照する。Rendererは`window.withmate`のpreload APIを通し、DBへ直接接続しない。
+Session、Auxiliary、turn、設定、catalogの永続化はMainが公開するserviceとstorage Workerのtyped commandで扱う。SQLiteの実行owner、schema、tableは[Database Schema](database-schema.md)を参照する。Rendererは`window.withmate`のpreload APIを通し、DBへ直接接続しない。
 
 ## 読取と通知
 
@@ -18,7 +18,7 @@ summaryのinvalidationは`WindowBroadcastService`が`ids`または`all`として
 
 ドロップが許されない確定データと、次回復元のための任意checkpointを区別する。任意checkpointは現在値の適用・使用とは別ラインで保存し、保存の遅延・失敗を現在値の巻戻し、操作や実行の待機条件にしない。再起動時に未保存の現在値を復元できないことは許容する。
 
-Session identity、確定message、turnの実行記録・Audit、provider thread、Auxiliary draft、Character定義、Bookmark等の明示的な整理操作、Settingsの明示的なSave、catalog更新は必須保存の契約を維持する。任意保存との切分けは、入力検証、owner照合、実行中の操作制約を緩和しない。
+Session identity、確定message、最小turnの実行記録、provider thread、Auxiliary draft、Character定義、Bookmark等の明示的な整理操作、Settingsの明示的なSave、catalog更新は必須保存の契約を維持する。任意保存との切分けは、入力検証、owner照合、実行中の操作制約を緩和しない。
 
 ### SessionPersistenceService
 
@@ -28,11 +28,11 @@ Session identity、確定message、turnの実行記録・Audit、provider thread
 
 ### 実行設定と Send
 
-Main / Auxiliary の表示中の実行設定は現在選択であり、Model・Depth・Approval・SandboxのいずれもDBへの保存完了を表示・送信の前提にしない。Send は非同期処理を始める前に `executionOptions` を捕捉する。Main は provider / catalog / model / reasoning / 権限設定を検証し、その turn の prompt、Provider adapter、Audit に同じ設定を渡す。DB の Session、開始保存の応答、terminal 保存の応答から実行設定を再決定しない。
+Main / Auxiliary の表示中の実行設定は現在選択であり、Model・Depth・Approval・SandboxのいずれもDBへの保存完了を表示・送信の前提にしない。Send は非同期処理を始める前に `executionOptions` を捕捉する。Main は provider / catalog / model / reasoning / 権限設定を検証し、その turn の prompt、Provider adapter、最小turn記録 に同じ設定を渡す。DB の Session、開始保存の応答、terminal 保存の応答から実行設定を再決定しない。
 
 Main の `CurrentExecutionSelections` は会話 owner ごとの小さい選択値だけを保持する。同じアプリ内で Window を開き直した場合はこの値を復元し、storage generation の変更、owner の削除・incarnation の変更では破棄する。新規会話の初期値は provider ごとの現在選択を優先し、存在しなければ保存済みの直近値を使う。アプリ再起動では保存済み checkpoint から復元する。
 
-選択 checkpoint は対象 metadata だけを更新する任意保存である。受理済みの選択では checkpoint 失敗を報告するが、現在選択の巻戻しや Send の阻止には使わない。選択自体が拒否された場合は、現在選択を再取得して表示を戻し、理由を示す。開始時の user message と実行記録の必須保存とは区別する。新しい選択が C、実行中 turn の捕捉値が B の場合、Provider と Audit は B、UI と次の Send は C を維持する。
+選択 checkpoint は対象 metadata だけを更新する任意保存である。受理済みの選択では checkpoint 失敗を報告するが、現在選択の巻戻しや Send の阻止には使わない。選択自体が拒否された場合は、現在選択を再取得して表示を戻し、理由を示す。開始時の user message と実行記録の必須保存とは区別する。新しい選択が C、実行中 turn の捕捉値が B の場合、Provider と最小turn記録は B、UI と次の Send は C を維持する。
 
 タイトルと Bookmark は対象 metadata / message だけを更新し、会話全体の置換を行わない。metadata の条件付き更新結果も必要な項目だけを返す。
 
@@ -52,4 +52,4 @@ provider cleanupは短いownership境界の外で完了を待つ。同じprovide
 
 ## Lifecycle
 
-`PersistentStoreLifecycleService`はstoreの初期化、close、再生成をまとめる。WAL maintenanceとshutdownはcurrent storage Worker generationに従い、旧generationの遅延応答を新しいDBへ適用しない。turnのterminal保存、取消、Window close後の継続、結果不明の扱いは[Session Run Lifecycle](session-run-lifecycle.md)、監査の読取とdetailは[Audit Log](audit-log.md)を参照する。
+`PersistentStoreLifecycleService`はstoreの初期化、close、再生成をまとめる。WAL maintenanceとshutdownはcurrent storage Worker generationに従い、旧generationの遅延応答を新しいDBへ適用しない。turnのterminal保存、取消、Window close後の継続、結果不明の扱いは[Session Run Lifecycle](session-run-lifecycle.md)、artifact detailは通常履歴の遅延取得APIを使う。

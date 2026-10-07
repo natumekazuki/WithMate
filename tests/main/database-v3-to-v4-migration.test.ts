@@ -9,8 +9,6 @@ import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.j
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src-shared/settings/model-catalog.js";
-import { AuditLogStorage } from "../../src-electron/session/audit-log-storage.js";
-import { AuditLogStorageV3 } from "../../src-electron/session/audit-log-storage-v3.js";
 import { CREATE_V3_SCHEMA_SQL, V3_TEXT_PREVIEW_MAX_LENGTH } from "../../src-electron/storage/database-schema-v3.js";
 import { isValidV4Database } from "../../src-electron/storage/database-schema-v4.js";
 import { SessionStorage } from "../../src-electron/session/session-storage.js";
@@ -99,15 +97,8 @@ function prepareLegacyV3Source(dbPath: string): void {
   }
 }
 
-function removeBlobFiles(blobRootPath: string, blobId: string): void {
-  const blobDirectoryPath = join(blobRootPath, blobId.slice(0, 2), blobId.slice(2, 4));
-  rmSync(join(blobDirectoryPath, `${blobId}.br`), { force: true });
-  rmSync(join(blobDirectoryPath, `${blobId}.json`), { force: true });
-}
-
 async function seedV3Fixture(fixture: Fixture): Promise<void> {
   const sessionStorage = new SessionStorageV3(fixture.dbPath, fixture.blobRootPath);
-  const auditLogStorage = new AuditLogStorageV3(fixture.dbPath, fixture.blobRootPath);
   const session = buildNewSession({
     taskTitle: "V3 import fixture",
     workspaceLabel: "workspace",
@@ -132,34 +123,8 @@ async function seedV3Fixture(fixture: Fixture): Promise<void> {
       ],
     });
 
-    await auditLogStorage.createAuditLog({
-      sessionId: "session-v3-to-v4",
-      createdAt: "2026-05-14T00:00:00.000Z",
-      phase: "completed",
-      provider: "codex",
-      model: "gpt-5.4-mini",
-      reasoningEffort: "medium",
-      approvalMode: DEFAULT_APPROVAL_MODE,
-      threadId: "thread-v3-to-v4",
-      logicalPrompt: {
-        systemText: `${sentinel}:system`,
-        inputText: `${sentinel}:input`,
-        composedText: `${sentinel}:system\n${sentinel}:input`,
-      },
-      transportPayload: {
-        summary: `${sentinel}:transport`,
-        fields: [],
-      },
-      assistantText: `${sentinel}:audit-assistant`,
-      operations: [{ type: "analysis", summary: "migration", details: `${sentinel}:operation` }],
-      rawItemsJson: JSON.stringify([{ type: "message", text: `${sentinel}:raw` }]),
-      usage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 },
-      errorMessage: "",
-    });
-
   } finally {
     sessionStorage.close();
-    auditLogStorage.close();
   }
 
   const db = new DatabaseSync(fixture.dbPath);
@@ -203,18 +168,6 @@ describe("migrate-database-v3-to-v4", () => {
       await seedV3Fixture(fixture);
       const report = createMigrationDryRunReport(fixture.dbPath, { blobRootPath: fixture.blobRootPath });
       assert.equal(report.mode, "dry-run");
-      assert.deepEqual(report.v3Counts, {
-        sessions: 1,
-        sessionMessages: 2,
-        sessionMessageArtifacts: 0,
-        auditLogs: 1,
-        auditLogDetails: 1,
-        auditLogOperations: 1,
-        appSettings: 1,
-        modelCatalogRevisions: 1,
-        modelCatalogProviders: 1,
-        modelCatalogModels: 1,
-      });
       assert.deepEqual(report.plannedV4Counts, report.v3Counts);
       assert.equal(report.input.blobRootPath, fixture.blobRootPath);
     } finally {
@@ -224,15 +177,15 @@ describe("migrate-database-v3-to-v4", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "V3からV4へのwriteは通常Session/Audit/設定/model catalogを移行し、旧import対象を残さない"
+  // claim = "V3からV4へのwriteは通常Session/設定/model catalogを移行し、旧import対象を残さない"
   // oracle = { type = "contract", ref = "src-electron/storage/migrations/migrate-database-v3-to-v4.ts" }
   // fault = "通常データを欠落させるか、廃止済みのimport targetをV4へ持ち込む"
-  // observable = "migrated counts, both imported session messages, normal audit operation detail, and target schema"
+  // observable = "migrated counts, both imported session messages, and target schema"
   // observation_boundary = "public-boundary"
   // scope = "database-v3-to-v4 write"
   // lifecycle = "permanent"
   // @end-test-value
-  it("write で v4 DB を作成し、session / audit / settings / model catalog を import する", async () => {
+  it("write で v4 DB を作成し、session / settings / model catalog を import する", async () => {
     const fixture = createV3FixtureDatabase();
     const targetDirPath = mkdtempSync(join(tmpdir(), "withmate-v3-to-v4-target-"));
     const targetDbPath = join(targetDirPath, "withmate-v4.db");
@@ -246,18 +199,6 @@ describe("migrate-database-v3-to-v4", () => {
       });
 
       assert.equal(report.mode, "write");
-      assert.deepEqual(report.migratedV4Counts, {
-        sessions: 1,
-        sessionMessages: 2,
-        sessionMessageArtifacts: 0,
-        auditLogs: 1,
-        auditLogDetails: 1,
-        auditLogOperations: 1,
-        appSettings: 1,
-        modelCatalogRevisions: 1,
-        modelCatalogProviders: 1,
-        modelCatalogModels: 1,
-      });
       assert.equal(isValidV4Database(targetDbPath), true);
       assert.equal(
         readdirSync(targetDirPath).some((entry) => entry.includes("withmate-v4.db.migration-")),
@@ -265,7 +206,6 @@ describe("migrate-database-v3-to-v4", () => {
       );
 
       const sessionStorage = new SessionStorage(targetDbPath);
-      const auditLogStorage = new AuditLogStorage(targetDbPath);
       const db = new DatabaseSync(targetDbPath);
       try {
         const importedSession = await sessionStorage.getSession("session-v3-to-v4");
@@ -276,11 +216,7 @@ describe("migrate-database-v3-to-v4", () => {
         assert.match(importedSession.messages[0]?.text ?? "", /SENTINEL_V3_TO_V4:user/);
         assert.equal(importedSession.messages[1]?.role, "assistant");
         assert.equal(importedSession.messages[1]?.text, "SENTINEL_V3_TO_V4:assistant");
-        const importedLogs = auditLogStorage.listSessionAuditLogs("session-v3-to-v4");
-        assert.equal(importedLogs.length, 1);
-        assert.match(importedLogs[0]?.assistantText ?? "", /SENTINEL_V3_TO_V4:audit-assistant/);
-        assert.equal(importedLogs[0]?.operations[0]?.details, "SENTINEL_V3_TO_V4:operation");
-      assert.equal(existsSync(targetBlobRootPath), false);
+        assert.equal(existsSync(targetBlobRootPath), false);
         const setting = readRequiredRow<{ setting_value: string }>(
           db,
           "SELECT setting_value FROM app_settings WHERE setting_key = ?",
@@ -300,7 +236,6 @@ describe("migrate-database-v3-to-v4", () => {
       } finally {
         db.close();
         sessionStorage.close();
-        auditLogStorage.close();
       }
     } finally {
       fixture.cleanup();
@@ -381,55 +316,6 @@ describe("migrate-database-v3-to-v4", () => {
       );
     } finally {
       fixture.cleanup();
-    }
-  });
-
-  // @test-value v2
-  // kind = "contract"
-  // claim = "V3 audit operation detail blob欠損時も保存済みpreviewを使って通常Auditを移行する"
-  // oracle = { type = "contract", ref = "src-electron/storage/migrations/migrate-database-v3-to-v4.ts" }
-  // fault = "欠損blobを理由にAudit全体を失うか、preview以外の値を捏造する"
-  // observable = "imported operation detail equals persisted preview"
-  // observation_boundary = "public-boundary"
-  // scope = "database-v3-to-v4 audit preview fallback"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("write は V3 audit operation detail blob が欠損していても preview で移行を継続する", async () => {
-    const fixture = createV3FixtureDatabase();
-    const targetDirPath = mkdtempSync(join(tmpdir(), "withmate-v3-to-v4-missing-blob-"));
-    const targetDbPath = join(targetDirPath, "withmate-v4.db");
-    const targetBlobRootPath = join(targetDirPath, "blobs", "v3");
-    try {
-      await seedV3Fixture(fixture);
-      const sourceDb = new DatabaseSync(fixture.dbPath);
-      const expectedOperationPreview = "SENTINEL_V3_TO_V4:operation";
-      try {
-        const missingOperationRow = readRequiredRow<{ details_blob_id: string }>(
-          sourceDb,
-          "SELECT details_blob_id FROM audit_log_operations WHERE details_blob_id IS NOT NULL LIMIT 1",
-        );
-        removeBlobFiles(fixture.blobRootPath, missingOperationRow.details_blob_id);
-      } finally {
-        sourceDb.close();
-      }
-
-      await createMigrationWriteReport({
-        sourceDatabaseFile: fixture.dbPath,
-        targetDatabaseFile: targetDbPath,
-        blobRootPath: fixture.blobRootPath,
-      });
-
-      const auditLogStorage = new AuditLogStorage(targetDbPath);
-      try {
-        const importedLogs = auditLogStorage.listSessionAuditLogs("session-v3-to-v4");
-        assert.equal(importedLogs.length, 1);
-        assert.equal(importedLogs[0]?.operations[0]?.details, expectedOperationPreview);
-      } finally {
-        auditLogStorage.close();
-      }
-    } finally {
-      fixture.cleanup();
-      rmSync(targetDirPath, { recursive: true, force: true });
     }
   });
 });

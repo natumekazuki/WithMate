@@ -1,6 +1,6 @@
-export const AUDIT_TEXT_PREVIEW_LIMIT = 64 * 1024;
-export const AUDIT_RAW_ITEMS_JSON_LIMIT = 512 * 1024;
-export const AUDIT_RAW_ITEM_CLONE_LIMIT = 128 * 1024;
+export const PROVIDER_TEXT_PREVIEW_LIMIT = 64 * 1024;
+export const PROVIDER_RAW_ITEMS_JSON_LIMIT = 512 * 1024;
+export const PROVIDER_RAW_ITEM_CLONE_LIMIT = 128 * 1024;
 
 type TruncatedText = {
   text: string;
@@ -8,7 +8,7 @@ type TruncatedText = {
   originalLength: number;
 };
 
-export type BoundedAuditRawItem = {
+export type BoundedProviderRawItem = {
   type: string;
   timestamp?: string;
   data?: Record<string, unknown>;
@@ -23,7 +23,7 @@ type RawItemBudgetState = {
 const RAW_ITEM_TRUNCATION_MARKER = {
   type: "withmate.value_truncated",
   truncated: true,
-  reason: "audit raw item budget exceeded",
+  reason: "provider raw item budget exceeded",
 };
 const RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE = 1024;
 
@@ -31,9 +31,9 @@ function buildTruncationSuffix(originalLength: number, limit: number): string {
   return `\n...[truncated ${originalLength - limit} chars; originalLength=${originalLength}]`;
 }
 
-export function toAuditTextPreview(
+export function toProviderTextPreview(
   value: string | null | undefined,
-  limit = AUDIT_TEXT_PREVIEW_LIMIT,
+  limit = PROVIDER_TEXT_PREVIEW_LIMIT,
 ): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -47,7 +47,7 @@ export function toAuditTextPreview(
 }
 
 function toTruncatedText(value: string, limit: number): string | TruncatedText {
-  const preview = toAuditTextPreview(value, limit);
+  const preview = toProviderTextPreview(value, limit);
   if (preview === undefined || preview === value) {
     return value;
   }
@@ -80,7 +80,7 @@ function cloneStringWithinRawItemBudget(value: string, state: RawItemBudgetState
     return RAW_ITEM_TRUNCATION_MARKER;
   }
 
-  const previewLimit = Math.max(0, Math.min(AUDIT_TEXT_PREVIEW_LIMIT, state.remaining - 256));
+  const previewLimit = Math.max(0, Math.min(PROVIDER_TEXT_PREVIEW_LIMIT, state.remaining - 256));
   const boundedValue = previewLimit > 0 ? toTruncatedText(value, previewLimit) : RAW_ITEM_TRUNCATION_MARKER;
   if (boundedValue !== value) {
     state.truncated = true;
@@ -204,13 +204,13 @@ function cloneValueWithinRawItemBudget(value: unknown, state: RawItemBudgetState
   return undefined;
 }
 
-function cloneRawItemWithinBudget(item: BoundedAuditRawItem, budget: number): BoundedAuditRawItem {
+function cloneRawItemWithinBudget(item: BoundedProviderRawItem, budget: number): BoundedProviderRawItem {
   const state: RawItemBudgetState = {
     remaining: Math.max(0, budget),
     truncated: false,
     seen: new WeakSet<object>(),
   };
-  const boundedItem = cloneValueWithinRawItemBudget(item, state) as BoundedAuditRawItem;
+  const boundedItem = cloneValueWithinRawItemBudget(item, state) as BoundedProviderRawItem;
 
   if (state.truncated) {
     return {
@@ -229,26 +229,26 @@ function cloneRawItemWithinBudget(item: BoundedAuditRawItem, budget: number): Bo
   return boundedItem;
 }
 
-export function boundAuditRawItem(
-  item: BoundedAuditRawItem,
-  limit = AUDIT_RAW_ITEM_CLONE_LIMIT,
-): BoundedAuditRawItem {
+export function boundProviderRawItem(
+  item: BoundedProviderRawItem,
+  limit = PROVIDER_RAW_ITEM_CLONE_LIMIT,
+): BoundedProviderRawItem {
   return cloneRawItemWithinBudget(
     item,
     Math.max(0, limit - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE),
   );
 }
 
-export function stringifyBoundedAuditValue(
+export function stringifyBoundedProviderValue(
   value: unknown,
-  limit = AUDIT_TEXT_PREVIEW_LIMIT,
+  limit = PROVIDER_TEXT_PREVIEW_LIMIT,
 ): string | undefined {
   if (value === undefined) {
     return undefined;
   }
 
   if (typeof value === "string") {
-    return toAuditTextPreview(value, limit);
+    return toProviderTextPreview(value, limit);
   }
 
   const state: RawItemBudgetState = {
@@ -258,28 +258,28 @@ export function stringifyBoundedAuditValue(
   };
   const boundedValue = cloneValueWithinRawItemBudget(value, state);
   const serialized = JSON.stringify(boundedValue);
-  return toAuditTextPreview(serialized, limit);
+  return toProviderTextPreview(serialized, limit);
 }
 
-export function stringifyBoundedAuditRawItems(
-  items: BoundedAuditRawItem[],
-  limit = AUDIT_RAW_ITEMS_JSON_LIMIT,
+export function stringifyBoundedProviderRawItems(
+  items: BoundedProviderRawItem[],
+  limit = PROVIDER_RAW_ITEMS_JSON_LIMIT,
 ): string {
-  const collector = new BoundedAuditRawItems(limit);
+  const collector = new BoundedProviderRawItems(limit);
   for (const item of items) {
     collector.append(item);
   }
   return collector.stringify();
 }
 
-export class BoundedAuditRawItems {
+export class BoundedProviderRawItems {
   private readonly serializedItems: string[] = [];
   private omittedItems = 0;
   private currentLength = 2;
 
-  constructor(private readonly limit = AUDIT_RAW_ITEMS_JSON_LIMIT) {}
+  constructor(private readonly limit = PROVIDER_RAW_ITEMS_JSON_LIMIT) {}
 
-  append(item: BoundedAuditRawItem): void {
+  append(item: BoundedProviderRawItem): void {
     const commaLength = this.currentLength === 2 ? 0 : 1;
     const remainingItemBudget = Math.max(
       0,

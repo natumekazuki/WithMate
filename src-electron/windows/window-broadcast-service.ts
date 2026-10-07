@@ -16,6 +16,7 @@ import {
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
+  WITHMATE_SESSION_TURN_UPDATED_EVENT,
 } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import {
   OPEN_SESSION_WINDOW_IDS_BROADCAST_MAX,
@@ -83,6 +84,10 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
 
   public broadcastLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void {
     this.broadcast(WITHMATE_LIVE_SESSION_RUN_EVENT, { sessionId, state });
+  }
+
+  public broadcastSessionTurnUpdated(sessionId: string): void {
+    this.broadcast(WITHMATE_SESSION_TURN_UPDATED_EVENT, sessionId);
   }
 
   public broadcastAuxiliarySessionSelection(parentSessionId: string, auxiliarySessionId: string): void {

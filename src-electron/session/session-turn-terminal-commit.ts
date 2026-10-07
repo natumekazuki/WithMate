@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 export type SessionTurnTerminalCommit = {
-  auditLogId: number;
+  turnId: number;
   sessionId: string;
   phase: "completed" | "failed" | "canceled";
   assistantMessageSeq: number;
@@ -19,7 +19,6 @@ export function writeSessionTurnTerminalCommit(
     SET phase = ?,
         assistant_message_seq = ?,
         thread_id = ?,
-        summary = ?,
         error_summary = ?,
         completed_at = ?,
         updated_at = ?
@@ -31,14 +30,13 @@ export function writeSessionTurnTerminalCommit(
     commit.phase,
     commit.assistantMessageSeq,
     commit.threadId,
-    commit.phase,
     commit.errorMessage,
     commit.completedAt,
     commit.completedAt,
-    commit.auditLogId,
+    commit.turnId,
     commit.sessionId,
   );
   if (result.changes !== 1) {
-    throw new Error(`session turn terminal commit target mismatch: ${commit.auditLogId}`);
+    throw new Error(`session turn terminal commit target mismatch: ${commit.turnId}`);
   }
 }

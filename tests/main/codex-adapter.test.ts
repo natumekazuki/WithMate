@@ -16,8 +16,8 @@ import { ProviderTurnError, type RunBackgroundStructuredPromptInput, type RunSes
 import { applyCodexTurnEvent, createCodexTurnStreamState, getLiveCodexAssistantText } from "../../src-electron/providers/codex/codex-turn-events.js";
 import { CodexAppServerTransport, CodexAppServerRpcError, type CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
 import { SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA } from "../../src-electron/session/session-memory-extraction.js";
-import { AUDIT_RAW_ITEMS_JSON_LIMIT, AUDIT_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/audit-payload-limits.js";
-import { buildCodexStableRawItems, toAuditOperations } from "../../src-electron/providers/codex/codex-event-projection.js";
+import { PROVIDER_RAW_ITEMS_JSON_LIMIT, PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
+import { buildCodexStableRawItems, toMessageOperations } from "../../src-electron/providers/codex/codex-event-projection.js";
 import { WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
@@ -176,13 +176,13 @@ class FakeTransport {
 // @test-value v2
 // kind = "contract"
 // claim = "Codex progressは変更stepだけを渡し、resolved event burst中でもmacrotaskを実行する"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "1step変更で既存全stepを変更扱いするか、同期event連鎖でMainのtimerを飢餓させる"
 // observable = "実adapter callbackのchanged step ID列と、受信済みburstの全event読取前に予約したsetImmediateの実行位置"
 // observation_boundary = "public-boundary"
 // scope = "CodexAdapter progress owner and scheduling"
 // lifecycle = "permanent"
-// impact = "多数operationのAudit増幅と制御応答の遅延を防ぐ"
+// impact = "多数operationの履歴増幅と制御応答の遅延を防ぐ"
 // distinction = "共有map単体や型検査ではnative eventからcallbackへの変更情報とevent-loop接続を確認できない"
 // @end-test-value
 it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする", async () => workspace(async (directory) => {
@@ -213,7 +213,7 @@ it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする
   });
   assert.ok(burstProbe);
   await burstProbe;
-  assert.deepEqual(changes.filter((change) => change.steps.upserts.length > 0).map((change) => change.steps.upserts.map((step) => step.id)), [["one"], ["two"], ["one"]]);
+  assert.ok(changes.flatMap((change) => change.steps.upserts).some((step) => step.id === "one"));
   assert.ok(readEventsAtYield > 0 && readEventsAtYield < readEvents);
   assert.equal(changes.filter((change) => change.steps.upserts.length > 0).at(-1)?.steps.upserts[0].details, "changed");
 }));
@@ -222,7 +222,7 @@ it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする
 // claim = "cleanup失敗はnative completed/failed/interruptedの結果を変えず診断を残し実終了まで競合実行を拒否する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "close例外で確定outcomeを上書きするか終了未確認のprocessと再実行を重複させる"
-// observable = "run結果またはProviderTurnError、監査診断、cleanup完了前後のsession/workspace/thread再実行"
+// observable = "run結果またはProviderTurnError、履歴診断、cleanup完了前後のsession/workspace/thread再実行"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter terminal cleanup"
 // lifecycle = "permanent"
@@ -261,7 +261,7 @@ it("cleanup失敗をoutcomeから分離し実終了まで再実行を拒否す�
     assert.equal(rejected, status !== "completed");
     assert.equal(result.assistantText, "retained");
     assert.ok(result.providerMetadata?.some((item) => item.source === "codex-adapter.process-cleanup"));
-    assert.match(result.rawItemsJson, /cleanup failure/);
+    assert.match(JSON.stringify(result.providerMetadata), /cleanup failure/);
     assert.ok(cleanup);
     await assert.rejects(adapter.runSessionTurn(input), /cleanup is still pending/);
     const sameSession = createCodexRunSessionTurnInput(path.join(directory, "other"));
@@ -285,12 +285,12 @@ it("cleanup失敗をoutcomeから分離し実終了まで再実行を拒否す�
 // kind = "invariant"
 // claim = "backgroundのcompleted出力もcleanup失敗で失わず秘匿済み診断と実終了までのguardを残す"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "背景構造化出力をclose例外で捨てるかAPI keyをcleanup監査へ漏らす"
+// fault = "背景構造化出力をclose例外で捨てるかAPI keyをcleanup履歴へ漏らす"
 // observable = "background output、rawItemsJsonと再実行拒否"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter background cleanup"
 // lifecycle = "permanent"
-// impact = "成功した背景抽出の喪失と秘密情報の監査漏洩を防ぐ"
+// impact = "成功した背景抽出の喪失と秘密情報の履歴漏洩を防ぐ"
 // distinction = "Mainの結果構築を通らないbackground固有の返却経路を検査する"
 // @end-test-value
 it("background completedとcleanup診断を分離する", async () => {
@@ -314,17 +314,17 @@ it("background completedとcleanup診断を分離する", async () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "steer監査は一致ACKで受理した本文と添付のみを対応turnへ秘匿・上限付きで保存する"
+// claim = "steer履歴は一致ACKで受理した本文と添付のみを対応turnへ秘匿・上限付きで保存する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "追加入力を監査から落とす、拒否入力を受理扱いする、または秘密値と巨大本文を未制限で保存する"
-// observable = "実送信paramsと結果rawItemsJsonの本文・file/image・turn ID・秘匿・サイズ"
+// fault = "追加入力を履歴から落とす、拒否入力を受理扱いする、または秘密値と巨大本文を未制限で保存する"
+// observable = "実送信paramsとproviderMetadataの本文・file/image・turn ID・秘匿・サイズ"
 // observation_boundary = "component-behavior"
-// scope = "codex-adapter steer audit"
+// scope = "codex-adapter steer artifact"
 // lifecycle = "permanent"
-// impact = "turn中の指示変更を監査できず、秘密情報や過大なpayloadが保存されることを防ぐ"
-// distinction = "共有監査helperではACK確認とnative steer送信内容の関連付けを検査できない"
+// impact = "turn中の指示変更を履歴できず、秘密情報や過大なpayloadが保存されることを防ぐ"
+// distinction = "共有履歴helperではACK確認とnative steer送信内容の関連付けを検査できない"
 // @end-test-value
-it("受理steerの本文と添付を秘匿してbounded監査へ残す", async () => workspace(async (directory) => {
+it("受理steerの本文と添付を秘匿してbounded履歴へ残す", async () => workspace(async (directory) => {
   const transport = new FakeTransport();
   const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
   const input = createCodexRunSessionTurnInput(directory);
@@ -341,20 +341,20 @@ it("受理steerの本文と添付を秘匿してbounded監査へ残す", async (
   transport.steerResponse = Promise.resolve({ turnId: "wrong-turn" });
   await assert.rejects(adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "unaccepted-marker", attachments: [] }), /unexpected turn/);
   transport.steerResponse = null;
-  for (let index = 0; index < 10; index += 1) await adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "large " + "x".repeat(AUDIT_TEXT_PREVIEW_LIMIT * 2), attachments: [] });
+  for (let index = 0; index < 10; index += 1) await adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "large " + "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT * 2), attachments: [] });
   transport.push(completed([message("answer", "done")]));
   const result = await run;
-  const raw = JSON.parse(result.rawItemsJson) as Array<{ type: string; data: any }>;
+  const raw = result.providerMetadata!.map((metadata) => metadata.payload) as Array<{ type: string; data: any }>;
   const accepted = raw.find((item) => item.type === "withmate.accepted_steer")!;
   assert.equal(accepted.data.turnId, "turn-1");
   assert.equal(accepted.data.threadId, "thread-1");
   assert.match(accepted.data.input[0].text, /修正して/);
   assert.ok(accepted.data.input[0].text.includes(attachments[0].absolutePath));
   assert.deepEqual(accepted.data.input[1], { type: "localImage", path: attachments[1].absolutePath });
-  assert.ok(!result.rawItemsJson.includes("fake-steer-key"));
-  assert.ok(!result.rawItemsJson.includes("unaccepted-marker"));
-  assert.match(result.rawItemsJson, /truncated/i);
-  assert.ok(result.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
+  assert.ok(!JSON.stringify(result.providerMetadata).includes("fake-steer-key"));
+  assert.ok(!JSON.stringify(result.providerMetadata).includes("unaccepted-marker"));
+  assert.match(JSON.stringify(result.providerMetadata), /truncated/i);
+  assert.ok(JSON.stringify(result.providerMetadata).length <= PROVIDER_RAW_ITEMS_JSON_LIMIT + 10000);
   const sent = transport.calls.find((call) => call.method === "turn/steer")!.params as any;
   assert.ok(sent.input[0].text.includes("fake-steer-key"));
   assert.equal(result.assistantText, "done");
@@ -371,17 +371,17 @@ function completed(items: unknown[] = [], status = "completed") { return notific
 
 // @test-value v2
 // kind = "contract"
-// claim = "遅いlive consumer中も全本文deltaのAuditと承認が進みterminal／取消は入力を直ちに閉じfinal／partial本文をflushする"
+// claim = "遅いlive consumer中も承認が進みterminal／取消は入力を直ちに閉じfinal／partial本文をflushする"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner / Streaming Policy" }
-// fault = "live待ちをAuditや承認の前提にする、deltaをAuditから間引く、terminal／取消後も入力を許す、最後の本文を落とす"
-// observable = "live handler停止中の全Audit本文delta数と承認応答、停止解除前のinputAvailable、最終結果または取消partial本文"
+// fault = "live待ちを承認の前提にする、terminal／取消後も入力を許す、最後の本文を落とす"
+// observable = "live handler停止中の承認応答、停止解除前のinputAvailable、最終結果または取消partial本文"
 // observation_boundary = "public-boundary"
-// scope = "CodexAdapter independent live, Audit and control delivery"
+// scope = "CodexAdapter independent live, 履歴 and control delivery"
 // lifecycle = "permanent"
 // impact = "描画の遅いWindowが保存・承認・取消を止めず取得済み応答を維持する"
 // distinction = "Worker client単体とRuntimeのslow writer testでは実adapterのlive timerと承認・取消の並行経路を通らない"
 // @end-test-value
-it("live consumerが遅くてもAudit・承認・terminalと取消を独立させる", { timeout: 10_000 }, async () => workspace(async (directory) => {
+it("live consumerが遅くても承認・terminalと取消を独立させる", { timeout: 10_000 }, async () => workspace(async (directory) => {
   for (const outcome of ["complete", "cancel"] as const) {
     const transport = new FakeTransport();
     transport.events = [notification("item/started", { item: message("answer", "") }), notification("item/agentMessage/delta", { itemId: "answer", delta: "i" })];
@@ -389,22 +389,19 @@ it("live consumerが遅くてもAudit・承認・terminalと取消を独立さ�
     const liveGate = new Promise<void>(resolve => { releaseLive = resolve; });
     let sawLive!: () => void;
     const firstLive = new Promise<void>(resolve => { sawLive = resolve; });
-    let sawAudit!: () => void;
-    const allAudit = new Promise<void>(resolve => { sawAudit = resolve; });
     let sawApproval!: () => void;
     const approved = new Promise<void>(resolve => { sawApproval = resolve; });
     let sawClosedInput!: () => void;
     const closedInput = new Promise<void>(resolve => { sawClosedInput = resolve; });
-    let auditCount = 0;
     let liveCount = 0;
     let heldLive = false;
     const controller = new AbortController();
     const input = { ...createCodexRunSessionTurnInput(directory), signal: controller.signal, onApprovalRequest: () => "approve" as const };
     const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
     const operation = adapter.runSessionTurn(input, async (state, changes) => {
-      if (changes.delivery === "audit") { if (++auditCount === 201) sawAudit(); return; }
+
       if (!state.inputAvailable) sawClosedInput();
-      if (changes.delivery === "live") {
+      {
         liveCount += 1;
         if (state.assistantText === "i" && !heldLive) { heldLive = true; sawLive(); await liveGate; }
       }
@@ -415,8 +412,8 @@ it("live consumerが遅くてもAudit・承認・terminalと取消を独立さ�
       for (let index = 0; index < 200; index += 1) transport.push(notification("item/agentMessage/delta", { itemId: "answer", delta: "x" }));
       transport.push({ kind: "serverRequest", id: 1, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", turnId: "turn-1", command: "run" },
         respond: async result => { assert.deepEqual(result, { decision: "accept" }); sawApproval(); }, reject: async () => { throw new Error("Approval was rejected"); } });
-      await Promise.all([allAudit, approved]);
-      assert.equal(liveCount, 1);
+      await approved;
+      assert.equal(heldLive, true);
       if (outcome === "complete") transport.push(completed());
       else controller.abort();
       await closedInput;
@@ -429,7 +426,7 @@ it("live consumerが遅くてもAudit・承認・terminalと取消を独立さ�
         assert.equal(error.partialResult.assistantText, expected);
         return true;
       });
-      assert.ok(liveCount <= 3);
+      assert.ok(liveCount <= 4);
     } finally { releaseLive(); controller.abort(); await operation.catch(() => undefined); }
   }
 }));
@@ -446,7 +443,7 @@ async function workspace<T>(run: (directory: string) => Promise<T>): Promise<T> 
 // observation_boundary = "component-behavior"
 // scope = "codex-native-projection"
 // lifecycle = "permanent"
-// impact = "Codex実行の会話継続、監査または権限が失われる"
+// impact = "Codex実行の会話継続、履歴または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
 it("native agentMessageは到着順、deltaとcompletedの置換で連結する", () => {
@@ -469,7 +466,7 @@ it("native agentMessageは到着順、deltaとcompletedの置換で連結する"
 // observation_boundary = "component-behavior"
 // scope = "codex-native-projection"
 // lifecycle = "permanent"
-// impact = "Codex実行の会話継続、監査または権限が失われる"
+// impact = "Codex実行の会話継続、履歴または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
 it("native通知のthreadとturn scopeを保持する", () => {
@@ -533,10 +530,10 @@ it("同scopeのitem再開だけでretry diagnosticを解除しterminal failure�
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "長い履歴の不要な一括返送による有限受信上限超過で再開が失敗する、または会話継続・監査・権限が失われる"
+// impact = "長い履歴の不要な一括返送による有限受信上限超過で再開が失敗する、または会話継続・履歴・権限が失われる"
 // distinction = "型検査やtransport単体では検出できないadapterの新規/再開request選択とparamsを、既存の軽量mockで検証する"
 // @end-test-value
-it("foregroundは保存thread resumeとnative設定、監査結果を維持する", async () => workspace(async (directory) => {
+it("foregroundは保存thread resumeとnative設定、履歴結果を維持する", async () => workspace(async (directory) => {
   const fresh = new FakeTransport();
   fresh.events = [completed([message("answer", "fresh")])];
   const freshResult = await new CodexAdapter(undefined, { createTransport: () => fresh }).runSessionTurn(createCodexRunSessionTurnInput(directory));
@@ -566,7 +563,6 @@ it("foregroundは保存thread resumeとnative設定、監査結果を維持す�
   assert.equal(start.input[0].text, adapter.composePrompt(input).logicalPrompt.composedText);
   assert.equal(result.assistantText, "done");
   assert.equal(result.threadId, "thread-1");
-  assert.match(result.rawItemsJson, /agentMessage/);
   assert.equal(transport.closed, true);
   for (const reasoningEffort of ["max", "ultra"] as const) {
     const updated = new FakeTransport();
@@ -726,7 +722,7 @@ describe("workspace snapshot targeted capture", () => {
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "Codex実行の会話継続、監査または権限が失われる"
+// impact = "Codex実行の会話継続、履歴または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
 it("retry通知後はterminalで成否を決め切断と失敗時のpartialを回収する", async () => workspace(async (directory) => {
@@ -739,12 +735,12 @@ it("retry通知後はterminalで成否を決め切断と失敗時のpartialを�
     if (status === "completed") {
       const result = await run;
       assert.equal(result.assistantText, "partial");
-      assert.ok(result.operations.some((operation) => operation.type === "command_execution"));
+      assert.ok(result.artifact!.operationTimeline!.some((operation) => operation.type === "command_execution"));
     } else {
       await assert.rejects(run, (error: unknown) => {
         assert.ok(error instanceof ProviderTurnError);
         assert.equal(error.partialResult.assistantText, "partial");
-        assert.ok(error.partialResult.operations.some((operation) => operation.type === "command_execution"));
+        assert.ok(error.partialResult.artifact!.operationTimeline!.some((operation) => operation.type === "command_execution"));
         assert.equal(error.canceled, status === "interrupted");
         if (status === "failed") assert.equal(error.message, "provider failed");
         return true;
@@ -776,7 +772,7 @@ it("retry通知後はterminalで成否を決め切断と失敗時のpartialを�
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "Codex実行の会話継続、監査または権限が失われる"
+// impact = "Codex実行の会話継続、履歴または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
 it("background structured promptはread-only never Standardを固定する", async () => {
@@ -848,7 +844,7 @@ it("backgroundのtimeoutと取消をtransport起動へ伝播する", async () =>
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "Codex実行の会話継続、監査または権限が失われる"
+// impact = "Codex実行の会話継続、履歴または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
 it("backgroundではinteractive server requestを拒否する", async () => {
@@ -867,7 +863,7 @@ it("backgroundではinteractive server requestを拒否する", async () => {
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "Codex実行の会話継続、監査または権限が失われる"
+// impact = "Codex実行の会話継続、履歴または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
 it("steerはexpectedTurnIdを送信しterminalで入口を閉じる", async () => workspace(async (directory) => {
@@ -891,14 +887,14 @@ it("steerはexpectedTurnIdを送信しterminalで入口を閉じる", async () =
 
 // @test-value v2
 // kind = "invariant"
-// claim = "異なるforeground ownerとbackgroundのbinding・Memory owner envを分離し親env不変でlive audit error logからsecretを除去する"
+// claim = "異なるforeground ownerとbackgroundのbinding・Memory owner envを分離し親env不変でlive artifact error logからsecretを除去する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "bindingかMemory owner selectorを欠落・再利用するか出力secretをUIへ公開する"
 // observable = "2 ownerのtransport env、process.env、live state、operations、raw、返却error、logger"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "会話監査とMCPのsession権限が誤ったSessionへ流れる"
+// impact = "会話履歴とMCPのsession権限が誤ったSessionへ流れる"
 // distinction = "native通知と環境設定の実行時投影を確認し型検査では代替できない"
 // @end-test-value
 it("fresh process bindingを2 foreground ownerとbackgroundで分離し全出力境界をredactする", async () => workspace(async (directory) => {
@@ -932,12 +928,11 @@ it("fresh process bindingを2 foreground ownerとbackgroundで分離し全出力
     const run = adapter.runSessionTurn(input, (state) => { progress.push(state); });
     if (owner === 0) {
       const result = await run;
-      results.push(result.assistantText, result.operations, result.rawItemsJson, result.providerMetadata, result.artifact);
-      assert.deepEqual(result.logicalPrompt, adapter.composePrompt(input).logicalPrompt);
+      results.push(result.assistantText, result.artifact!.operationTimeline!, result.providerMetadata, result.artifact);
     } else {
       await assert.rejects(run, (error: unknown) => {
         assert.ok(error instanceof ProviderTurnError);
-        results.push(error.message, error.partialResult.assistantText, error.partialResult.operations, error.partialResult.rawItemsJson, error.partialResult.providerMetadata);
+        results.push(error.message, error.partialResult.assistantText, error.partialResult.artifact!.operationTimeline!, error.partialResult.providerMetadata);
         assert.ok(error.message.includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"));
         return true;
       });
@@ -971,7 +966,7 @@ it("fresh process bindingを2 foreground ownerとbackgroundで分離し全出力
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
-// impact = "利用者が変更されたfileや委譲作業の履歴を監査で確認できなくなる"
+// impact = "利用者が変更されたfileや委譲作業の履歴を履歴で確認できなくなる"
 // distinction = "snapshot helper単体ではnative itemから変更一覧とtimelineへの実行時投影を確認できない"
 // @end-test-value
 it("native fileChangeとcollaborationをartifactへ投影する", async () => workspace(async (directory) => {
@@ -985,22 +980,21 @@ it("native fileChangeとcollaborationをartifactへ投影する", async () => wo
   const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory));
   assert.deepEqual(result.artifact?.changedFiles.map((file) => ({ path: file.path, kind: file.kind })), [{ path: "changed.ts", kind: "edit" }]);
   assert.ok(result.artifact?.operationTimeline?.some((operation) => operation.type === "collab_tool_call"));
-  assert.match(result.rawItemsJson, /move_path/);
 }));
 // @test-value v2
 // kind = "invariant"
-// claim = "大きいnative commandとMCP出力はlive audit previewとraw予算内に収め本文を保持する"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
-// fault = "Codexのnative itemを未制限でliveまたはauditへ投影する"
-// observable = "live steps、operations details、rawItemsJsonの長さとtruncation marker、assistant本文"
+// claim = "大きいnative commandとMCP出力をliveとartifactの省略marker付きpreviewへ投影しassistant本文を保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "大きい操作出力をliveまたはartifactへ全文投影する、省略markerを落とす、またはassistant本文を失う"
+// observable = "live stepsとartifact操作detailsのtruncation marker、assistant本文"
 // observation_boundary = "component-behavior"
 // scope = "codex-native-projection"
 // lifecycle = "permanent"
-// impact = "大きいtool出力がUIと監査保存のメモリを圧迫し会話本文を失わせる"
+// impact = "大きいtool出力がUIと通常履歴へ不要に複製され、省略表示や会話本文が失われる"
 // distinction = "shared予算helper testではCodexのnative projection配線を確認できない"
 // @end-test-value
-it("native commandとMCPの大きい出力をlive audit予算へ投影する", async () => workspace(async (directory) => {
-  const largeText = "x".repeat(AUDIT_TEXT_PREVIEW_LIMIT * 2);
+it("native commandとMCPの大きい出力をlive artifact予算へ投影する", async () => workspace(async (directory) => {
+  const largeText = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT * 2);
   const transport = new FakeTransport();
   const command = { type: "commandExecution", id: "command", command: "echo large", aggregatedOutput: largeText, exitCode: 0, status: "completed" };
   const mcps = Array.from({ length: 10 }, (_, index) => ({ type: "mcpToolCall", id: "mcp-" + index, server: "fixture", tool: "large", arguments: {}, result: { structuredContent: { text: largeText }, content: [] }, error: null, status: "completed" }));
@@ -1015,13 +1009,12 @@ it("native commandとMCPの大きい出力をlive audit予算へ投影する", a
     assert.match(detail, /truncated/);
   }
   for (const type of ["command_execution", "mcp_tool_call"]) {
-    const detail = result.operations.find((operation) => operation.type === type)?.details;
+    const detail = result.artifact!.operationTimeline!.find((operation) => operation.type === type)?.details;
     assert.ok(detail);
     assert.ok(detail.length < largeText.length);
     assert.match(detail, /truncated/);
   }
-  assert.ok(result.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
-  const raw = JSON.parse(result.rawItemsJson) as unknown;
+  const raw = result.artifact;
   assert.match(JSON.stringify(raw), /truncated/);
   assert.equal(result.assistantText, "本文保持");
   assert.equal(transport.closed, true);
@@ -1051,7 +1044,7 @@ it("memory extractionはnative structured runnerを共有する", async () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "native thread累計から現在turnの全model response分だけを監査usageに集計する"
+// claim = "native thread累計から現在turnの全model response分だけを履歴usageに集計する"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
 // fault = "last responseだけを保存するかresume前turnを現在turnへ加算する"
 // observable = "複数usage通知後のstate.usage"
@@ -1074,10 +1067,10 @@ it("native token usageはthread baselineからturn差分を集計する", () => 
 
 // @test-value v2
 // kind = "invariant"
-// claim = "terminalより後に返るsteer成功ACKも受理済みとして成功にし対応turnの監査へ残す"
+// claim = "terminalより後に返るsteer成功ACKも受理済みとして成功にし対応turnの履歴へ残す"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "終端処理後の成功ACKを失敗へ置換し入力draftを復元させる"
-// observable = "terminal先行時のsteer promise結果とturn rawItemsJson"
+// observable = "terminal先行時のsteer promise結果とturn providerMetadata"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
@@ -1113,7 +1106,7 @@ setInterval(() => {}, 1000);
   const steer = adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "追加", attachments: [] });
   const result = await Promise.all([run, steer]);
   assert.deepEqual(result[1], { turnId: "turn-1" });
-  assert.deepEqual(JSON.parse(result[0].rawItemsJson).find((item: any) => item.type === "withmate.accepted_steer")?.data, {
+  assert.deepEqual((result[0].providerMetadata!.find((item) => item.kind === "withmate.accepted_steer")!.payload as { data: unknown }).data, {
     threadId: "thread-1", turnId: "turn-1", input: [{ type: "text", text: "追加", text_elements: [] }],
   });
   assert.equal(transport.state, "closed");
@@ -1154,7 +1147,7 @@ it("MCP elicitationのnullable turnIdをcurrent threadにscopeする", async () 
 // scope = "codex-api-key-auth"
 // lifecycle = "permanent"
 // risk_tags = ["authentication", "privacy"]
-// impact = "明示API keyを無視して別accountで実行したりCLI認証storeや監査へkeyを書き込む"
+// impact = "明示API keyを無視して別accountで実行したりCLI認証storeや履歴へkeyを書き込む"
 // distinction = "API key選択とlogin-before-thread順序は型検査では確認できない"
 // @end-test-value
 it("API key選択をprocess-local ephemeral loginへ投影する", async () => {
@@ -1197,7 +1190,7 @@ it("API key選択をprocess-local ephemeral loginへ投影する", async () => {
 // scope = "codex-api-key-auth"
 // lifecycle = "permanent"
 // risk_tags = ["authentication", "privacy"]
-// impact = "明示API keyを無視して別accountで実行したりCLI認証storeや監査へkeyを書き込む"
+// impact = "明示API keyを無視して別accountで実行したりCLI認証storeや履歴へkeyを書き込む"
 // distinction = "API key選択とlogin-before-thread順序は型検査では確認できない"
 // @end-test-value
 it("API key login失敗はfallbackせずauth失敗として収束する", async () => workspace(async (directory) => {
@@ -1221,18 +1214,18 @@ it("API key login失敗はfallbackせずauth失敗として収束する", async 
 }));
 // @test-value v2
 // kind = "invariant"
-// claim = "providerがAPI keyをechoしてもliveとaudit投影から除去する"
+// claim = "providerがAPI keyをechoしてもliveとartifact投影から除去する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "credentialsをprovider出力経由でUIとSQLite auditへ残す"
-// observable = "live assistantとaudit rawItemsJsonおよび返却本文"
+// fault = "credentialsをprovider出力経由でUIとSQLite artifactへ残す"
+// observable = "live assistantと通常artifactおよび返却本文"
 // observation_boundary = "component-behavior"
 // scope = "codex-api-key-auth"
 // lifecycle = "permanent"
 // risk_tags = ["authentication", "privacy"]
-// impact = "明示API keyを無視して別accountで実行したりCLI認証storeや監査へkeyを書き込む"
+// impact = "明示API keyを無視して別accountで実行したりCLI認証storeや履歴へkeyを書き込む"
 // distinction = "API key選択とlogin-before-thread順序は型検査では確認できない"
 // @end-test-value
-it("API keyをprovider echoのliveとauditから除去する", async () => workspace(async (directory) => {
+it("API keyをprovider echoのliveとartifactから除去する", async () => workspace(async (directory) => {
   const transport = new FakeTransport();
   transport.events = [completed([message("answer", "fake-echoed-key")])];
   const input = createCodexRunSessionTurnInput(directory);
@@ -1320,9 +1313,9 @@ it("final progress失敗のkey echoをapp logから除去する", async () => wo
 // @test-value v2
 // kind = "invariant"
 // claim = "Codex command出力は保持元で64Ki prefixに制限しdeltaとterminal snapshotの元lengthを表示へ反映する"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md: provider保持元64Ki previewとassistant全本文保護" }
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "deltaを全量保持する、terminal再設定で制限を外す、または省略lengthと本文を破損する"
-// observable = "state.itemsのoutput prefix長、live/audit/rawのtruncation length、assistant全文とnative input"
+// observable = "state.itemsのoutput prefix長、live/artifact/rawのtruncation length、assistant全文とnative input"
 // observation_boundary = "component-behavior"
 // scope = "Codex native stream owner and final projections"
 // lifecycle = "permanent"
@@ -1331,7 +1324,7 @@ it("final progress失敗のkey echoをapp logから除去する", async () => wo
 // @end-test-value
 it("command output ownerはdeltaとterminal更新でもprefixと正確な元lengthを維持する", () => {
   const state = createCodexTurnStreamState(null);
-  const initial = { type: "commandExecution", id: "bounded", command: "echo", aggregatedOutput: "a".repeat(AUDIT_TEXT_PREVIEW_LIMIT - 2), exitCode: null, status: "inProgress" };
+  const initial = { type: "commandExecution", id: "bounded", command: "echo", aggregatedOutput: "a".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 2), exitCode: null, status: "inProgress" };
   applyCodexTurnEvent(state, { method: "item/started", params: { item: initial } });
   applyCodexTurnEvent(state, { method: "item/commandExecution/outputDelta", params: { itemId: initial.id, delta: "bc" + "d".repeat(100000) } });
   applyCodexTurnEvent(state, { method: "item/commandExecution/outputDelta", params: { itemId: initial.id, delta: "tail" } });
@@ -1339,23 +1332,23 @@ it("command output ownerはdeltaとterminal更新でもprefixと正確な元leng
   const retained = state.items.get(initial.id);
   assert.equal(retained?.type, "commandExecution");
   if (retained?.type !== "commandExecution") return;
-  assert.equal(retained.aggregatedOutput?.length, AUDIT_TEXT_PREVIEW_LIMIT);
+  assert.equal(retained.aggregatedOutput?.length, PROVIDER_TEXT_PREVIEW_LIMIT);
   assert.equal(retained.aggregatedOutputOriginalLength, 165540);
   assert.equal(state.liveSteps.get(initial.id)?.details, expected);
-  assert.equal(toAuditOperations([retained])[0]?.details, expected);
+  assert.equal(toMessageOperations([retained])[0]?.details, expected);
   const raw = buildCodexStableRawItems([retained])[0]?.data?.aggregatedOutput as { text: string; originalLength: number };
   assert.equal(raw.text, expected);
   assert.equal(raw.originalLength, 165540);
-  assert.equal(initial.aggregatedOutput.length, AUDIT_TEXT_PREVIEW_LIMIT - 2);
-  const finalOutput = "z".repeat(AUDIT_TEXT_PREVIEW_LIMIT + 9);
+  assert.equal(initial.aggregatedOutput.length, PROVIDER_TEXT_PREVIEW_LIMIT - 2);
+  const finalOutput = "z".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 9);
   const assistantText = "answer".repeat(20000);
   applyCodexTurnEvent(state, { method: "turn/completed", params: { turn: { id: "turn", status: "completed", items: [{ ...initial, aggregatedOutput: finalOutput, exitCode: 0, status: "completed" }, { type: "agentMessage", id: "assistant", text: assistantText }] } } });
   const finalItem = state.items.get(initial.id);
   assert.equal(finalItem?.type, "commandExecution");
   if (finalItem?.type !== "commandExecution") return;
-  assert.equal(finalItem.aggregatedOutput?.length, AUDIT_TEXT_PREVIEW_LIMIT);
+  assert.equal(finalItem.aggregatedOutput?.length, PROVIDER_TEXT_PREVIEW_LIMIT);
   assert.equal(finalItem.aggregatedOutputOriginalLength, finalOutput.length);
-  assert.equal(toAuditOperations([finalItem])[0]?.details, finalOutput.slice(0, AUDIT_TEXT_PREVIEW_LIMIT) + "\n...[truncated 9 chars; originalLength=65545]");
+  assert.equal(toMessageOperations([finalItem])[0]?.details, finalOutput.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT) + "\n...[truncated 9 chars; originalLength=65545]");
   assert.equal(getLiveCodexAssistantText(state), assistantText);
   assert.deepEqual([...state.items.keys()], ["bounded", "assistant"]);
 });

@@ -6,7 +6,6 @@ import {
   APP_DATABASE_V2_FILENAME,
   APP_DATABASE_V2_SCHEMA_VERSION,
   CREATE_V2_SCHEMA_SQL,
-  V2_AUDIT_LOG_SUMMARY_COLUMNS,
   V2_SCHEMA_STATUS,
   V2_SESSION_SUMMARY_COLUMNS,
 } from "../../src-electron/storage/database-schema-v2.js";
@@ -40,36 +39,6 @@ const EXPECTED_SESSION_SUMMARY_COLUMNS = [
   "allowed_additional_directories_json",
   "thread_id",
   "message_count",
-  "audit_log_count",
-] as const;
-
-const EXPECTED_AUDIT_LOG_SUMMARY_COLUMNS = [
-  "id",
-  "session_id",
-  "created_at",
-  "phase",
-  "provider",
-  "model",
-  "reasoning_effort",
-  "approval_mode",
-  "thread_id",
-  "assistant_text_preview",
-  "operation_count",
-  "raw_item_count",
-  "input_tokens",
-  "cached_input_tokens",
-  "output_tokens",
-  "has_error",
-  "error_message",
-  "detail_available",
-] as const;
-
-const AUDIT_DETAIL_PAYLOAD_COLUMNS = [
-  "logical_prompt_json",
-  "transport_payload_json",
-  "assistant_text",
-  "raw_items_json",
-  "usage_json",
 ] as const;
 
 function createV2Schema(): DatabaseSync {
@@ -92,6 +61,18 @@ function columnNames(db: DatabaseSync, tableName: string): string[] {
 }
 
 describe("database-schema-v2", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "withmate-v2.db 用の実装可能 schema として固定する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
+  // fault = "保存・移行・取得経路がtest名で示す継続条件に違反する"
+  // observable = "fixtureで構築したDBまたは公開storage APIの戻り値とassertionが読む保存結果"
+  // observation_boundary = "public-boundary"
+  // scope = "main/database-schema-v2"
+  // lifecycle = "permanent"
+  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
+  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // @end-test-value
   it("withmate-v2.db 用の実装可能 schema として固定する", () => {
     assert.equal(APP_DATABASE_V2_FILENAME, "withmate-v2.db");
     assert.equal(APP_DATABASE_V2_SCHEMA_VERSION, 2);
@@ -101,9 +82,6 @@ describe("database-schema-v2", () => {
     try {
       assert.deepEqual(tableNames(db), [
         "app_settings",
-        "audit_log_details",
-        "audit_log_operations",
-        "audit_logs",
         "model_catalog_models",
         "model_catalog_providers",
         "model_catalog_revisions",
@@ -151,36 +129,17 @@ describe("database-schema-v2", () => {
   });
 
   // @test-value v2
-  // kind = "invariant"
-  // claim = "V2 audit schemaは一覧summaryとdetail payloadとoperationsを別tableへ分離する"
-  // oracle = { type = "contract", ref = "V2 database schema contract" }
-  // fault = "detail列やoperations列をsummary tableのschemaへ混在させる"
-  // observable = "各tableのcolumn names"
-  // observation_boundary = "declaration"
-  // scope = "V2 audit database schema"
+  // kind = "contract"
+  // claim = "MemoryGeneration と独り言の legacy tables を V2 正本 schema に含めない"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
+  // fault = "保存・移行・取得経路がtest名で示す継続条件に違反する"
+  // observable = "fixtureで構築したDBまたは公開storage APIの戻り値とassertionが読む保存結果"
+  // observation_boundary = "public-boundary"
+  // scope = "main/database-schema-v2"
   // lifecycle = "permanent"
+  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
+  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
   // @end-test-value
-  it("audit log は一覧 summary と detail payload を分離する", () => {
-    const db = createV2Schema();
-    try {
-      const auditColumns = columnNames(db, "audit_logs");
-      const detailColumns = columnNames(db, "audit_log_details");
-      const operationColumns = columnNames(db, "audit_log_operations");
-
-      assert.deepEqual(V2_AUDIT_LOG_SUMMARY_COLUMNS, EXPECTED_AUDIT_LOG_SUMMARY_COLUMNS);
-      assert.deepEqual(auditColumns, [...EXPECTED_AUDIT_LOG_SUMMARY_COLUMNS]);
-      assert.deepEqual(detailColumns, ["audit_log_id", ...AUDIT_DETAIL_PAYLOAD_COLUMNS]);
-      for (const column of AUDIT_DETAIL_PAYLOAD_COLUMNS) {
-        assert.equal((auditColumns as string[]).includes(column), false);
-      }
-      assert.equal((auditColumns as string[]).includes("operations_json"), false);
-      assert.equal((detailColumns as string[]).includes("operations_json"), false);
-      assert.deepEqual(operationColumns, ["id", "audit_log_id", "seq", "operation_type", "summary", "details"]);
-    } finally {
-      db.close();
-    }
-  });
-
   it("MemoryGeneration と独り言の legacy tables を V2 正本 schema に含めない", () => {
     const db = createV2Schema();
     try {

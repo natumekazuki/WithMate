@@ -8,7 +8,7 @@ WithMate は、Codex、GitHub Copilot、Claude Agent の coding agent を、キ�
 - Character catalog からセッションごとのキャラクターを選択
 - approval、sandbox、model、depth など、provider が対応する実行オプションの変更
 - Markdown、添付ファイル、`@path` 参照を使った作業チャット
-- 実行中のコマンド、turn summary、監査ログの確認
+- 実行中・直近turnのコマンドと応答Detailsの確認
 - Workspace、Session Folder、Additional Directory のファイル参照
 - Git の作業差分とcommit履歴の確認
 - checkout単位のRepository Glossaryの表示と検索
@@ -37,7 +37,7 @@ coding agentと作業する中心画面です。
 - チャットの送信、応答のstreaming表示、実行中turnのcancel
 - approval、model、depthなどの実行オプションを変更
 - `LatestCommand`、Copilotのbackground tasks、usage情報を確認
-- Audit Log、Terminal、session title変更、session削除へ移動
+- Terminal、session title変更、session削除へ移動
 - 下部パネルの`Prompt / Terminal`切り替えでローカルシェルを操作。外部Terminalの起動も利用可能
 - File Explorer、Repository Glossary、File Preview、Git Diffを同じ作業面から利用
 

@@ -7,7 +7,6 @@ import { performance } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
 
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/storage/database-schema-v2.js";
-import { AuditLogStorageV2 } from "../../src-electron/session/audit-log-storage-v2.js";
 import { SessionStorageV2 } from "../../src-electron/session/session-storage-v2.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 
@@ -19,10 +18,8 @@ export type DataLoadingBenchmarkOptions = {
   keepDatabase?: boolean;
   sessions?: number;
   messagesPerSession?: number;
-  auditLogsPerSession?: number;
   artifactEvery?: number;
   operationCount?: number;
-  rawItemCount?: number;
 };
 
 export type DataLoadingBenchmarkResult = {
@@ -31,9 +28,6 @@ export type DataLoadingBenchmarkResult = {
     sessions: number;
     messages: number;
     messageArtifacts: number;
-    auditLogs: number;
-    auditOperations: number;
-    rawItems: number;
     dbBytes: number;
   };
   timingsMs: {
@@ -44,8 +38,6 @@ export type DataLoadingBenchmarkResult = {
     listSessionCharacterUsage: number;
     hydrateFirstSession: number;
     hydrateMiddleSession: number;
-    auditSummaryFirstPage: number;
-    auditDetailFirstEntry: number;
   };
   sample: {
     sessionSummaryCount: number;
@@ -54,8 +46,6 @@ export type DataLoadingBenchmarkResult = {
     sessionCharacterUsageCount: number;
     firstSessionMessageCount: number;
     middleSessionMessageCount: number;
-    firstAuditPageCount: number;
-    firstAuditDetailOperationCount: number;
   };
 };
 
@@ -67,26 +57,20 @@ const PROFILE_DEFAULTS: Record<BenchmarkProfileName, Omit<ResolvedBenchmarkOptio
   small: {
     sessions: 10,
     messagesPerSession: 20,
-    auditLogsPerSession: 5,
     artifactEvery: 5,
     operationCount: 2,
-    rawItemCount: 4,
   },
   medium: {
     sessions: 80,
     messagesPerSession: 120,
-    auditLogsPerSession: 25,
     artifactEvery: 8,
     operationCount: 3,
-    rawItemCount: 8,
   },
   large: {
     sessions: 200,
     messagesPerSession: 500,
-    auditLogsPerSession: 100,
     artifactEvery: 10,
     operationCount: 5,
-    rawItemCount: 16,
   },
 };
 
@@ -111,10 +95,8 @@ async function resolveOptions(options: DataLoadingBenchmarkOptions): Promise<Res
     keepDatabase: options.keepDatabase ?? false,
     sessions: positiveInteger(options.sessions, defaults.sessions),
     messagesPerSession: positiveInteger(options.messagesPerSession, defaults.messagesPerSession),
-    auditLogsPerSession: positiveInteger(options.auditLogsPerSession, defaults.auditLogsPerSession),
     artifactEvery: positiveInteger(options.artifactEvery, defaults.artifactEvery),
     operationCount: positiveInteger(options.operationCount, defaults.operationCount),
-    rawItemCount: positiveInteger(options.rawItemCount, defaults.rawItemCount),
   };
 }
 
@@ -227,45 +209,6 @@ function countArtifactsPerSession(options: ResolvedBenchmarkOptions): number {
   return count;
 }
 
-function createAuditLog(auditStorage: AuditLogStorageV2, sessionId: string, sessionIndex: number, auditIndex: number, options: ResolvedBenchmarkOptions): void {
-  auditStorage.createAuditLog({
-    sessionId,
-    createdAt: nowIso(sessionIndex * options.auditLogsPerSession + auditIndex),
-    phase: auditIndex % 5 === 0 ? "running" : "completed",
-    provider: "codex",
-    model: "gpt-5.4-mini",
-    reasoningEffort: "medium",
-    approvalMode: "never",
-    threadId: `thread-${sessionIndex}-${auditIndex}`,
-    logicalPrompt: {
-      systemText: `system ${"x".repeat(240)}`,
-      inputText: `input ${"x".repeat(480)}`,
-      composedText: `composed ${"x".repeat(960)}`,
-    },
-    transportPayload: {
-      summary: "benchmark payload",
-      fields: [{ label: "prompt", value: "x".repeat(512) }],
-    },
-    assistantText: `assistant response ${"x".repeat(1200)}`,
-    operations: Array.from({ length: options.operationCount }, (_, operationIndex) => ({
-      type: operationIndex % 2 === 0 ? "tool" : "analysis",
-      summary: `operation ${operationIndex}`,
-      details: `operation detail ${operationIndex} ${"x".repeat(320)}`,
-    })),
-    rawItemsJson: JSON.stringify(Array.from({ length: options.rawItemCount }, (_, rawIndex) => ({
-      type: "message",
-      id: `raw-${sessionIndex}-${auditIndex}-${rawIndex}`,
-      text: "x".repeat(240),
-    }))),
-    usage: {
-      inputTokens: 1000 + auditIndex,
-      cachedInputTokens: 100,
-      outputTokens: 300 + auditIndex,
-    },
-    errorMessage: "",
-  });
-}
-
 function timed<T>(runner: () => T): { value: T; durationMs: number } {
   const startedAt = performance.now();
   const value = runner();
@@ -283,24 +226,18 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
   const generation = timed(() => {
     createSchema(resolved.outputPath);
     const sessionStorage = new SessionStorageV2(resolved.outputPath);
-    const auditStorage = new AuditLogStorageV2(resolved.outputPath);
 
     try {
       for (let sessionIndex = 0; sessionIndex < resolved.sessions; sessionIndex += 1) {
         const session = createSession(sessionIndex, resolved);
         sessionStorage.upsertSession(session);
-        for (let auditIndex = 0; auditIndex < resolved.auditLogsPerSession; auditIndex += 1) {
-          createAuditLog(auditStorage, session.id, sessionIndex, auditIndex, resolved);
-        }
       }
     } finally {
-      auditStorage.close();
       sessionStorage.close();
     }
   });
 
   const sessionStorage = new SessionStorageV2(resolved.outputPath);
-  const auditStorage = new AuditLogStorageV2(resolved.outputPath);
 
   try {
     const summaries = timed(() => sessionStorage.listSessionSummaries());
@@ -315,9 +252,6 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
     const middleSessionId = summaries.value[Math.floor(summaries.value.length / 2)]?.id ?? firstSessionId;
     const firstSession = timed(() => sessionStorage.getSession(firstSessionId));
     const middleSession = timed(() => sessionStorage.getSession(middleSessionId));
-    const auditPage = timed(() => auditStorage.listSessionAuditLogSummaryPage(firstSessionId, { cursor: 0, limit: 50 }));
-    const firstAuditId = auditPage.value.entries[0]?.id ?? -1;
-    const auditDetail = timed(() => auditStorage.getSessionAuditLogDetail(firstSessionId, firstAuditId));
 
     const messageArtifacts = resolved.sessions * countArtifactsPerSession(resolved);
     return {
@@ -326,9 +260,6 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
         sessions: resolved.sessions,
         messages: resolved.sessions * resolved.messagesPerSession,
         messageArtifacts,
-        auditLogs: resolved.sessions * resolved.auditLogsPerSession,
-        auditOperations: resolved.sessions * resolved.auditLogsPerSession * resolved.operationCount,
-        rawItems: resolved.sessions * resolved.auditLogsPerSession * resolved.rawItemCount,
         dbBytes: statSync(resolved.outputPath).size,
       },
       timingsMs: {
@@ -339,8 +270,6 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
         listSessionCharacterUsage: roundDuration(characterUsage.durationMs),
         hydrateFirstSession: roundDuration(firstSession.durationMs),
         hydrateMiddleSession: roundDuration(middleSession.durationMs),
-        auditSummaryFirstPage: roundDuration(auditPage.durationMs),
-        auditDetailFirstEntry: roundDuration(auditDetail.durationMs),
       },
       sample: {
         sessionSummaryCount: summaries.value.length,
@@ -349,12 +278,9 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
         sessionCharacterUsageCount: characterUsage.value.length,
         firstSessionMessageCount: firstSession.value?.messages.length ?? 0,
         middleSessionMessageCount: middleSession.value?.messages.length ?? 0,
-        firstAuditPageCount: auditPage.value.entries.length,
-        firstAuditDetailOperationCount: auditDetail.value?.operations.length ?? 0,
       },
     };
   } finally {
-    auditStorage.close();
     sessionStorage.close();
   }
 }
@@ -384,17 +310,11 @@ export function parseBenchmarkArgs(args: string[]): DataLoadingBenchmarkOptions 
     } else if (arg === "--messages" && next) {
       options.messagesPerSession = Number(next);
       index += 1;
-    } else if (arg === "--audit-logs" && next) {
-      options.auditLogsPerSession = Number(next);
-      index += 1;
     } else if (arg === "--artifact-every" && next) {
       options.artifactEvery = Number(next);
       index += 1;
     } else if (arg === "--operations" && next) {
       options.operationCount = Number(next);
-      index += 1;
-    } else if (arg === "--raw-items" && next) {
-      options.rawItemCount = Number(next);
       index += 1;
     } else {
       throw new Error(`未知の引数だよ: ${arg}`);

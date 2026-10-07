@@ -9,7 +9,7 @@ import { createDefaultSessionMemory } from "../../src-shared/memory/session-memo
 import { resolveConversationTimingContext, type ConversationTimingContext, type ConversationTimingStorageSnapshot } from "../session/conversation-timing.js";
 import type { CharacterContextApplicationService } from "../character/character-context-application-service.js";
 
-type CreateAuditLogInput = Parameters<NonNullable<SessionRuntimeServiceDeps["createAuditLog"]>>[0];
+type CreateSessionTurnInput = Parameters<NonNullable<SessionRuntimeServiceDeps["createSessionTurn"]>>[0];
 type AppraisalInput = Parameters<NonNullable<SessionRuntimeServiceDeps["queueCompletedTurnAppraisal"]>>[0];
 
 export type MainSessionRuntimeAssemblyDeps = {
@@ -38,7 +38,7 @@ export type MainSessionRuntimeAssemblyDeps = {
     getSettlementStorage: () => CharacterAffectTurnSettlementStorage;
     requestAppraisal?: () => void;
   };
-  audit: Pick<SessionRuntimeServiceDeps, "createAuditLog" | "updateAuditLog" | "updateAuditLogProgress">;
+  turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
   interaction: Pick<SessionRuntimeServiceDeps, "waitForApprovalDecision" | "waitForElicitationResponse" | "resolvePendingApprovalRequest" | "resolvePendingElicitationRequest" | "invalidateProviderSessionThread">;
   notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal">;
@@ -151,9 +151,8 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     markCompletedTurnAppraisalReady,
     requireDurableCompletedTurnAppraisal: true,
     appraiseCompletedTurn: deps.character.requestAppraisal ? () => { deps.character.requestAppraisal!(); } : undefined,
-    createAuditLog: (entry: CreateAuditLogInput) => guarded("audit create", () => deps.audit.createAuditLog(entry)),
-    updateAuditLog: (id, entry) => guarded("audit update", () => deps.audit.updateAuditLog(id, entry)),
-    updateAuditLogProgress: (id, patch) => guarded("audit progress update", () => deps.audit.updateAuditLogProgress(id, patch)),
+    createSessionTurn: (entry: CreateSessionTurnInput) => guarded("turn create", () => deps.turn.createSessionTurn(entry)),
+    updateSessionTurn: (id, entry) => guarded("turn update", () => deps.turn.updateSessionTurn(id, entry)),
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },
     getLiveSessionRun: (id) => { assertOwner("live session read"); return deps.live.getLiveSessionRun(id); },
     waitForApprovalDecision: deps.interaction.waitForApprovalDecision,

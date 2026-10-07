@@ -1,12 +1,43 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { AuditLogOperation, AuditLogUsage } from "../../src-shared/session/runtime-state.js";
+import type { MessageOperation, ProviderUsage } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
 import { buildArtifactFromOperations } from "../../src-electron/providers/provider-artifact.js";
 import type { SnapshotCaptureStats, WorkspaceSnapshot } from "../../src-electron/platform/snapshot-ignore.js";
+import { normalizeMessage } from "../../src-shared/session/session-state.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常履歴の新操作は取得済み結果を順序どおり保持し既存操作の欠損情報を補完しない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "optional結果情報を読取で落とすか旧履歴を成功・exitCode 0へ補完する"
+// observable = "normalizeMessage後のartifact操作配列とoptional結果情報"
+// observation_boundary = "public-boundary"
+// scope = "normal history artifact normalization"
+// lifecycle = "permanent"
+// impact = "履歴のコマンド結果を誤表示し再保存時に取得済み詳細を失う"
+// distinction = "型検査では既存JSONの欠損と新JSONの正規化結果を検証できない"
+// @end-test-value
+it("履歴の操作結果を保持し旧操作の未記録を補完しない", () => {
+  const operations: MessageOperation[] = [
+    { type: "command_execution", summary: "old", details: "old detail" },
+    { id: "failed", type: "command_execution", summary: "new", status: "failed", exitCode: 9,
+      error: { message: "failure", code: "E_TOOL" }, truncated: true, details: "partial" },
+    { id: "pending", type: "command_execution", summary: "pending", status: "in_progress" },
+  ];
+  const message = normalizeMessage({ role: "assistant", text: "body", artifact: {
+    title: "Result", activitySummary: [], changedFiles: [], runChecks: [], operationTimeline: operations,
+  } })!;
+  const recorded = message.artifact!.operationTimeline!;
+  assert.deepEqual(JSON.parse(JSON.stringify(recorded)), operations);
+  assert.equal(recorded[0].status, undefined);
+  assert.equal(recorded[0].exitCode, undefined);
+  assert.equal(recorded[0].truncated, undefined);
+  assert.equal(message.text, "body");
+});
 
 const EMPTY_SNAPSHOT_STATS: SnapshotCaptureStats = {
   capturedFiles: 1,
@@ -68,13 +99,13 @@ describe("provider artifact", () => {
   it("operations と snapshot diff から最小 artifact を組み立てる", () => {
     const beforeSnapshot: WorkspaceSnapshot = new Map();
     const afterSnapshot: WorkspaceSnapshot = new Map([["tmp/output.txt", "hello"]]);
-    const operations: AuditLogOperation[] = [
+    const operations: MessageOperation[] = [
       {
         type: "command_execution",
         summary: "create tmp/output.txt",
       },
     ];
-    const usage: AuditLogUsage = {
+    const usage: ProviderUsage = {
       inputTokens: 10,
       cachedInputTokens: 0,
       outputTokens: 20,

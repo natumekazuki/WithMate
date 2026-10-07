@@ -24,10 +24,6 @@ import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL, isValidV3Database } fro
 import { APP_DATABASE_V4_FILENAME } from "./database-schema-v4.js";
 import { APP_DATABASE_V6_FILENAME, ensureV6Schema } from "./database-schema-v6.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
-import { AuditLogStorage } from "../session/audit-log-storage.js";
-import { AuditLogStorageV2 } from "../session/audit-log-storage-v2.js";
-import { AuditLogStorageV3 } from "../session/audit-log-storage-v3.js";
-import { AuditLogStorageV6 } from "../session/audit-log-storage-v6.js";
 import { AuxiliarySessionStorage } from "../auxiliary/auxiliary-session-storage.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { MateStorage, type MateProfileFileMismatch } from "../mate/mate-storage.js";
@@ -45,7 +41,7 @@ import { SessionStorageV6 } from "../session/session-storage-v6.js";
 import { sessionSummariesToSessions } from "../session/session-summary-adapter.js";
 import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
 import { createV6StorageWorkerBundle, type V6StorageWorkerBundle } from "./storage-worker-bundle.js";
-import type { ConversationTimingStorageSnapshot } from "../session/conversation-timing.js";
+import type { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
 import type { SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
 import type {
   SessionCharacterAuthoringRuntimeClearInput,
@@ -168,21 +164,10 @@ export type MateStorageAsyncAccess = AwaitableStorageMethods<
   Exclude<keyof MateStorage, "close">
 > & Pick<MateStorage, "close">;
 
-export type AuditLogStorageRead = AwaitableStorageMethods<
-  AuditLogStorage,
-  | "listSessionAuditLogs"
-  | "listSessionAuditLogSummaries"
-  | "listSessionAuditLogSummaryPage"
-  | "getSessionAuditLogDetail"
-  | "getSessionAuditLogDetailSection"
-  | "getSessionAuditLogOperationDetail"
-> & Pick<AuditLogStorage, "close"> & {
-  getConversationTimingSnapshot?(sessionId: string, observedAt: string): Awaitable<ConversationTimingStorageSnapshot>;
-};
-export type AuditLogStorageWrite = AwaitableStorageMethods<
-  AuditLogStorage,
-  "createAuditLog" | "updateAuditLog" | "clearAuditLogs"
-> & AuditLogStorageRead & Partial<AwaitableStorageMethods<AuditLogStorageV6, "updateAuditLogProgress">>;
+export type SessionTurnStorageAccess = AwaitableStorageMethods<
+  SessionTurnStorageV6,
+  "createSessionTurn" | "updateSessionTurn" | "getLatestSessionTurn" | "getConversationTimingSnapshot"
+> & Pick<SessionTurnStorageV6, "close">;
 export type SessionMemoryStorageAccess = SessionMemoryStorage | SessionMemoryStorageV2Read;
 export type ProjectMemoryStorageAccess = ProjectMemoryStorage | ProjectMemoryStorageV2Read;
 export type AuxiliarySessionStorageAccess = AuxiliarySessionStorageAsyncAccess;
@@ -194,7 +179,7 @@ export type PersistentStoreBundle = {
   sessionStorage: SessionStorageRead;
   sessionMemoryStorage: SessionMemoryStorageAccess;
   projectMemoryStorage: ProjectMemoryStorageAccess;
-  auditLogStorage: AuditLogStorageRead;
+  sessionTurnStorage: SessionTurnStorageAccess | null;
   auxiliarySessionStorage: AuxiliarySessionStorageAccess;
   appSettingsStorage: AppSettingsStorageAsyncAccess;
   mateStorage: MateStorageAsyncAccess;
@@ -216,7 +201,6 @@ type PersistentStoreLifecycleDeps = {
   createSessionStorage(dbPath: string): SessionStorage;
   createSessionMemoryStorage(dbPath: string): SessionMemoryStorage;
   createProjectMemoryStorage(dbPath: string): ProjectMemoryStorage;
-  createAuditLogStorage(dbPath: string): AuditLogStorage;
   createAuxiliarySessionStorage?(dbPath: string): AuxiliarySessionStorageAccess;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
   createMateStorage(dbPath: string, userDataPath: string): MateStorage;
@@ -284,13 +268,7 @@ export class PersistentStoreLifecycleService {
     const projectMemoryStorage = isV6Database || isV3Database || isV2Database
       ? new ProjectMemoryStorageV2Read()
       : this.deps.createProjectMemoryStorage(dbPath);
-    const auditLogStorage = storageWorker
-      ? storageWorker.stores.audit
-      : isV3Database
-      ? new AuditLogStorageV3(dbPath, this.v3BlobRootPath(dbPath))
-      : isV2Database
-      ? new AuditLogStorageV2(dbPath)
-      : this.deps.createAuditLogStorage(dbPath);
+    const sessionTurnStorage = storageWorker ? storageWorker.stores.turn : null;
     const auxiliarySessionStorage = storageWorker
       ? storageWorker.stores.auxiliary
       : new LegacyAuxiliarySessionStorage();
@@ -315,7 +293,7 @@ export class PersistentStoreLifecycleService {
       sessionStorage,
       sessionMemoryStorage,
       projectMemoryStorage,
-      auditLogStorage,
+      sessionTurnStorage,
       auxiliarySessionStorage,
       appSettingsStorage,
       mateStorage,
@@ -334,7 +312,7 @@ export class PersistentStoreLifecycleService {
       bundle.sessionStorage,
       bundle.sessionMemoryStorage,
       bundle.projectMemoryStorage,
-      bundle.auditLogStorage,
+      bundle.sessionTurnStorage,
       bundle.auxiliarySessionStorage,
       bundle.appSettingsStorage,
       bundle.mateStorage,
@@ -592,7 +570,6 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createSessionStorage: (dbPath) => new SessionStorage(dbPath),
     createSessionMemoryStorage: (dbPath) => new SessionMemoryStorage(dbPath),
     createProjectMemoryStorage: (dbPath) => new ProjectMemoryStorage(dbPath),
-    createAuditLogStorage: (dbPath) => new AuditLogStorage(dbPath),
     createAuxiliarySessionStorage: (dbPath) => new AuxiliarySessionStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
     createMateStorage: (dbPath, userDataPath) => new MateStorage(dbPath, userDataPath),

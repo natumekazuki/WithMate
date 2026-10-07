@@ -27,7 +27,6 @@ export type V4ToV6MigrationCounts = {
   characters: number;
   skippedAppSettings: number;
   skippedSessions: number;
-  skippedAuditLogs: number;
   skippedLegacyMemoryEntries: number;
   skippedMateRows: number;
   skippedProviderInstructionRows: number;
@@ -246,7 +245,6 @@ function readCounts(db: DatabaseSync): V4ToV6MigrationCounts {
     characters: readCount(db, "characters"),
     skippedAppSettings: readSkippedAppSettingsCount(db),
     skippedSessions: readCount(db, "sessions"),
-    skippedAuditLogs: readCount(db, "audit_logs"),
     skippedLegacyMemoryEntries: sumCounts(db, LEGACY_MEMORY_TABLES),
     skippedMateRows: sumCounts(db, MATE_TABLES),
     skippedProviderInstructionRows: sumCounts(db, PROVIDER_INSTRUCTION_TABLES),
@@ -258,7 +256,6 @@ function zeroSkippedCounts(counts: V4ToV6MigrationCounts): V4ToV6MigrationCounts
     ...counts,
     skippedAppSettings: 0,
     skippedSessions: 0,
-    skippedAuditLogs: 0,
     skippedLegacyMemoryEntries: 0,
     skippedMateRows: 0,
     skippedProviderInstructionRows: 0,
@@ -389,7 +386,6 @@ function copyReleaseDataInTransaction(sourceDb: DatabaseSync, targetDb: Database
       ...copied,
       skippedAppSettings: 0,
       skippedSessions: 0,
-      skippedAuditLogs: 0,
       skippedLegacyMemoryEntries: 0,
       skippedMateRows: 0,
       skippedProviderInstructionRows: 0,

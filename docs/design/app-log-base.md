@@ -9,7 +9,7 @@ WithMate のクラッシュやフリーズを調査するため、アプリ起�
 
 - この文書はアプリ診断ログの current design とする。
 - Window / IPC の構成は `docs/design/electron-window-runtime.md` を参照する。
-- セッション内のユーザー操作履歴や provider 実行履歴は `docs/design/audit-log.md` の責務であり、このログ基盤とは分離する。
+- セッションの会話本文と操作結果は通常履歴・artifactの責務であり、このログ基盤とは分離する。
 
 ## Scope
 
@@ -93,7 +93,7 @@ flowchart LR
 
 ## Storage Diagnostic Log Policy
 
-storage Workerと排他coordinatorの診断は、Mainの`StorageOperationLogService`で集計する。永続Auditの保存・受付・失敗通知とは独立しており、Auditの保存保証は変更しない。
+storage Workerと排他coordinatorの診断は、Mainの`StorageOperationLogService`で集計する。通常履歴・最小turnの保存と失敗通知とは独立している。
 
 - 通常のqueued／started／completed成功は個別appendせず、イベントがある60秒区間ごとに`storage.operation.summary`を1行だけ同期appendする。空区間では出力しない。
 - 操作名ごとのqueued／started／成功／失敗／遅延完了件数と最大wait／hold時間を記録する。waitまたはholdが100ms以上の区間はwarnとし、最長waitとholdの相関ID・request ID・storage generationを各1件のsampleで保持する。
