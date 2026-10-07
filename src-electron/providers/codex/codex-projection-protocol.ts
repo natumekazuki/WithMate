@@ -21,7 +21,7 @@ export type CodexProjectionProgress = {
   state: LiveSessionRunState;
   changes: RunSessionTurnProgressChanges;
 };
-export type CodexProjectionEvent = { changed: boolean };
+export type CodexProjectionEvent = { changed: boolean; errorMessage?: string };
 export type CodexProjectionFinal = {
   items: CodexTurnItem[];
   assistantText: string;

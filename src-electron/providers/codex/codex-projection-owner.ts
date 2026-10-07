@@ -48,8 +48,13 @@ export class CodexProjectionOwner {
 
   apply(event: CodexNativeNotification): CodexProjectionEvent {
     const revision = this.state.revision;
+    const errorMessage = this.state.streamErrorMessage;
     applyCodexTurnEvent(this.state, event);
-    return { changed: this.input.progress && revision !== this.state.revision };
+    return {
+      changed: this.input.progress && revision !== this.state.revision,
+      ...(this.input.progress && errorMessage !== this.state.streamErrorMessage
+        ? { errorMessage: this.redactor.sanitizeText(this.state.streamErrorMessage) } : {}),
+    };
   }
 
   live(inputAvailable: boolean, force = false): CodexProjectionProgress | null {

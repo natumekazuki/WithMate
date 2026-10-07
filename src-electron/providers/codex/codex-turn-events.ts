@@ -301,7 +301,11 @@ function liveStep(item: CodexTurnItem): LiveRunStep | null {
 function setLiveStep(state: CodexTurnStreamState, step: LiveRunStep): boolean {
   const previous = state.liveSteps.get(step.id);
   if (previous && previous.type === step.type && previous.summary === step.summary
-    && previous.details === step.details && previous.status === step.status) return false;
+    && previous.details === step.details && previous.status === step.status
+    && previous.exitCode === step.exitCode
+    && previous.error?.message === step.error?.message
+    && previous.error?.code === step.error?.code
+    && previous.truncated === step.truncated) return false;
   state.liveSteps.set(step.id, step);
   return true;
 }

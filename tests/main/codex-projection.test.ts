@@ -15,6 +15,51 @@ function input(name: string): CodexProjectionStart {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Codexの本文・statusが同じでもexitCodeとerrorだけの補正をWorkerのlive step snapshotとupsertへ反映し重複通知を抑止する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner / 通常履歴と最小turn" }
+// fault = "step同値判定が結果fieldを比較せず補正を落とす、または同じ結果で不要な変更通知を生成する"
+// observable = "実projection Workerのlive step exitCode・errorと変更upsert・再通知時のnull"
+// observation_boundary = "public-boundary"
+// scope = "CodexProjectionClient result-only live step corrections"
+// lifecycle = "permanent"
+// impact = "確定済みの終了コードとtool errorが実行中表示へ反映されず結果を誤認させる"
+// distinction = "既存初回結果投影testは本文・status不変の補正と変更step配信を検査せず型検査では通知消失を確認できない"
+// @end-test-value
+test("Worker liveは結果だけの補正を反映して同値通知を抑止する", async () => {
+  const client = new CodexProjectionClient();
+  const run = await client.begin(input("correction"));
+  const command = { id: "command", type: "commandExecution", command: "check", aggregatedOutput: "same", status: "completed", exitCode: null };
+  const mcp = { id: "mcp", type: "mcpToolCall", server: "server", tool: "tool", arguments: {}, result: null, status: "failed", error: null };
+  const apply = async (items: unknown[]) => {
+    for (const item of items) await client.call(run, { type: "event", event: { method: "item/completed", params: { item } } });
+  };
+  try {
+    await apply([command, mcp]);
+    const initial = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
+    assert.equal(initial.state.steps[0].exitCode, undefined);
+    assert.equal(initial.state.steps[1].error, undefined);
+    const corrected = [{ ...command, exitCode: 7 }, { ...mcp, error: { message: "{}" } }];
+    await apply(corrected);
+    const live = await client.call<CodexProjectionProgress | null>(run, { type: "live", inputAvailable: false });
+    assert.ok(live);
+    assert.equal(live.state.steps[0].exitCode, 7);
+    assert.deepEqual(live.state.steps[1].error, { message: "{}" });
+    assert.deepEqual(live.changes.steps.upserts.map((step) => step.id), ["command", "mcp"]);
+    assert.deepEqual(live.state.steps.map(({ summary, details, status }) => ({ summary, details, status })),
+      initial.state.steps.map(({ summary, details, status }) => ({ summary, details, status })));
+    await apply(corrected);
+    assert.equal(await client.call(run, { type: "live", inputAvailable: false }), null);
+    await client.call(run, { type: "event", event: { method: "turn/completed",
+      params: { turn: { id: "turn", status: "completed", items: [command, mcp] } } } });
+    const cleared = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
+    assert.equal(cleared.state.steps[0].exitCode, undefined);
+    assert.equal(cleared.state.steps[1].error, undefined);
+    assert.deepEqual(cleared.changes.steps.upserts.map((step) => step.id), ["command", "mcp"]);
+  } finally { await client.release(run); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "共有受付の件数・bytesが満杯でもreleaseは上限内でowner削除を待ち他runと容量を維持する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner" }
 // fault = "容量拒否でclient登録だけ失いWorker ownerを保持するか解放のため通常受付上限を超える"

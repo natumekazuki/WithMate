@@ -1169,6 +1169,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         }, bytes).then(async (result) => {
           if (!result) return;
           if (sessionInput && args.onProgress) {
+            if (result.errorMessage !== undefined) publishControl({ errorMessage: result.errorMessage });
             if (result.changed) scheduleLive();
           }
         }).catch(failProjection).finally(() => { pendingEvents.delete(completion); pendingEventBytes -= bytes; });

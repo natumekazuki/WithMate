@@ -371,6 +371,47 @@ function completed(items: unknown[] = [], status = "completed") { return notific
 
 // @test-value v2
 // kind = "contract"
+// claim = "Codexの一時errorはlive timerを待たず秘匿済みprogressで通知され、有効itemの回復で解除される"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Streaming Policy / Codex projection owner" }
+// fault = "errorをcoalesced snapshotだけへ渡して次itemの回復で通知前に失う、またはcontrolへsecretを残す"
+// observable = "live timer停止中の実adapter progressのerror列、変更step列、回復本文と正常結果"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter transient error control through shared projection Worker"
+// lifecycle = "permanent"
+// impact = "再接続中の一時失敗を利用者が確認できず原因把握できないこととsecret漏洩を防ぐ"
+// distinction = "state単体のerror解除testはWorker応答とadapterの33ms coalescing間の通知消失を観測しない"
+// @end-test-value
+it("Codexはlive timer前に一時errorを通知して回復時に解除する", async (context) => workspace(async (directory) => {
+  const transport = new FakeTransport();
+  const secret = "synthetic-transient-error-key";
+  transport.events = [
+    notification("error", { threadId: "other", error: { message: "outside scope" } }),
+    notification("error", { error: { message: `retry ${secret}` }, willRetry: true }),
+    notification("item/completed", { item: message("answer", "recovered") }),
+    completed(),
+  ];
+  const input = createCodexRunSessionTurnInput(directory);
+  input.appSettings.codingProviderSettings.codex.apiKey = secret;
+  const progress: Array<{ error: string; assistant: string; upserts: number }> = [];
+  try {
+    const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input, (state, changes) => {
+      if (progress.length === 0) context.mock.timers.enable({ apis: ["setTimeout"] });
+      progress.push({ error: state.errorMessage, assistant: state.assistantText, upserts: changes?.steps.upserts.length ?? 0 });
+    });
+    const errorIndex = progress.findIndex((frame) => frame.error === "retry [WITHMATE_BINDING_REFERENCE_REDACTED]");
+    assert.ok(errorIndex >= 0);
+    assert.equal(progress[errorIndex].assistant, "");
+    assert.equal(progress[errorIndex].upserts, 0);
+    assert.ok(progress.slice(errorIndex + 1).some((frame) => frame.error === ""));
+    assert.ok(progress.every((frame) => !frame.error.includes(secret) && frame.error !== "outside scope"));
+    assert.equal(progress.at(-1)?.assistant, "recovered");
+    assert.equal(progress.at(-1)?.error, "");
+    assert.equal(result.assistantText, "recovered");
+  } finally { context.mock.timers.reset(); }
+}));
+
+// @test-value v2
+// kind = "contract"
 // claim = "遅いlive consumer中も承認が進みterminal／取消は入力を直ちに閉じfinal／partial本文をflushする"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner / Streaming Policy" }
 // fault = "live待ちを承認の前提にする、terminal／取消後も入力を許す、最後の本文を落とす"

@@ -284,7 +284,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         const step = trace.steps.get(block.tool_use_id);
         const failed = block.is_error === true;
         if (step) {
-          const output = typeof block.content === "string" ? block.content : JSON.stringify(block.content);
+          const rawOutput = typeof block.content === "string" ? block.content : JSON.stringify(block.content);
+          const output = rawOutput === undefined ? undefined : trace.redactor.sanitizeText(rawOutput);
           const details = toProviderTextPreview(output);
           const completed: LiveRunStep = { ...step, status: failed ? "failed" : "completed", details,
             ...(output !== undefined ? { truncated: output.length > PROVIDER_TEXT_PREVIEW_LIMIT } : {}),

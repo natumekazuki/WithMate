@@ -10,6 +10,7 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER } from "../../src-electron/providers/provider-agent-runtime-binding.js";
+import { PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
 
 function fakeQuery(
   produce: (options: Options) => AsyncGenerator<SDKMessage, void>,
@@ -79,6 +80,67 @@ function input(threadId = "", signal?: AbortSignal): RunSessionTurnInput {
 }
 
 function sdkMessage(value: Record<string, unknown>): SDKMessage { return value as SDKMessage; }
+
+// @test-value v2
+// kind = "security"
+// claim = "Claude tool出力のpreview境界を跨ぐcapabilityは文字列と構造化結果のlive・正常・失敗・取消artifactに断片を残さない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Agent Runtime Binding / Streaming Policy" }
+// fault = "secret全体の秘匿より先にtool結果を切り詰めて一致しないsecret prefixを公開する"
+// observable = "runSessionTurn進捗stepと結果またはpartialResultのdetails・error・truncated"
+// observation_boundary = "public-boundary"
+// scope = "Claude tool_result preview redaction"
+// lifecycle = "permanent"
+// risk_tags = ["privacy", "authentication"]
+// impact = "runtime capabilityの一部が画面と保存履歴へ漏洩することを防ぐ"
+// distinction = "既存secret testは本文の完全一致を観測するだけでtool出力のpreview境界とerrorの断片を検査しない"
+// @end-test-value
+it("Claude tool出力はsecretを秘匿してからpreviewを生成する", async () => {
+  const secret = "synthetic-tool-capability-0123456789XY";
+  for (const structured of [false, true]) {
+    for (const outcome of ["completed", "failed", "canceled"] as const) {
+      const controller = new AbortController();
+      const request = input("", controller.signal);
+      request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: "fixture-reference", turnCapability: secret,
+        providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null };
+      const wrapperLength = structured ? JSON.stringify([{ type: "text", text: "" }]).indexOf('""') + 1 : 0;
+      const text = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1 - wrapperLength) + secret + " tail";
+      const content = structured ? [{ type: "text", text }] : text;
+      const output = typeof content === "string" ? content : JSON.stringify(content);
+      const sanitized = output.replace(secret, PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
+      const expected = sanitized.length <= PROVIDER_TEXT_PREVIEW_LIMIT ? sanitized
+        : `${sanitized.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${sanitized.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${sanitized.length}]`;
+      const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+        yield sdkMessage({ type: "assistant", uuid: "tool", parent_tool_use_id: null,
+          message: { content: [{ type: "tool_use", id: "tool", name: "Bash", input: { command: "check" } }] } });
+        yield sdkMessage({ type: "user", parent_tool_use_id: null,
+          message: { content: [{ type: "tool_result", tool_use_id: "tool", is_error: true, content }] } });
+        if (outcome === "failed") throw new Error("connection failure");
+        if (outcome === "canceled") controller.abort();
+        yield result("thread");
+      }) });
+      const steps: import("../../src-shared/session/runtime-state.js").LiveRunStep[] = [];
+      let completed;
+      try {
+        completed = await adapter.runSessionTurn(request, (state) => { steps.push(...state.steps); });
+        assert.equal(outcome, "completed");
+      } catch (error) {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.canceled, outcome === "canceled");
+        assert.notEqual(outcome, "completed");
+        completed = error.partialResult;
+      }
+      const operation = completed.artifact!.operationTimeline![0];
+      const live = steps.findLast((step) => step.id === "tool" && step.status === "failed");
+      assert.ok(live);
+      for (const projected of [live, operation]) {
+        assert.equal(projected.details, expected);
+        assert.deepEqual(projected.error, { message: expected });
+        assert.equal(projected.truncated, sanitized.length > PROVIDER_TEXT_PREVIEW_LIMIT);
+        assert.ok(!JSON.stringify(projected).includes(secret.slice(0, -1)));
+      }
+    }
+  }
+});
 
 // @test-value v2
 // kind = "contract"
