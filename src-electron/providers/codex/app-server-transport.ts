@@ -225,7 +225,7 @@ export class CodexAppServerTransport {
       const waiter = this.#waiters.shift();
       if (waiter) waiter.resolve(event);
       else {
-        if (this.#events.length >= 4096 || this.#eventBytes + bytes > MAX_QUEUE_BYTES) throw new Error("Codex event queue overflow.");
+        if (this.#eventBytes + bytes > MAX_QUEUE_BYTES) throw new Error("Codex event queue overflow.");
         this.#events.push({ event, bytes }); this.#eventBytes += bytes;
       }
       return;

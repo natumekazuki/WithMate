@@ -1118,6 +1118,56 @@ setInterval(() => {}, 1000);
   });
   assert.equal(transport.state, "closed");
 }));
+
+// @test-value v2
+// kind = "contract"
+// claim = "実stdioでturn開始ACKより先に小deltaがburstしても全本文・ツール結果・承認とnative completedを処理する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "開始ACK待ちの通知を件数だけで失敗させる、deltaを欠落・並べ替える、または承認応答をサーバへ返さない"
+// observable = "runSessionTurnの全assistantText、command raw出力、承認callback回数とtransportの正常close"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter with real stdio transport and projection Worker"
+// lifecycle = "permanent"
+// impact = "開始直後や再開時のburstが有効なturnを中断し本文とツール結果を失うことを防ぐ"
+// distinction = "FakeTransportの既存burst testは受信キューを通らない;短いローカルNode processでACK前滞留と全量projectionを確認する"
+// @end-test-value
+it("実stdioの小delta burstを全量処理して承認後にturnを完了する", { timeout: 10_000 }, async () => workspace(async (directory) => {
+  const count = 5000;
+  const fixture = String.raw`
+import { createInterface } from 'node:readline';
+const send = value => process.stdout.write(JSON.stringify(value) + '\n');
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.method === 'initialize') send({ id: request.id, result: { userAgent: 'fixture', codexHome: process.cwd(), platformFamily: 'fixture', platformOs: 'fixture' } });
+  else if (request.method === 'thread/start') send({ id: request.id, result: { thread: { id: 'thread-1' } } });
+  else if (request.method === 'turn/start') {
+    const frames = [{ method: 'item/started', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', id: 'answer', text: '', phase: null } } }];
+    for (let index = 0; index < ${count}; index++) frames.push({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'answer', delta: index + ':日本語\n' } });
+    frames.push({ id: 77, method: 'item/commandExecution/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-1', command: 'echo tool-result' } });
+    frames.push({ id: request.id, result: { turn: { id: 'turn-1' } } });
+    process.stdout.write(frames.map(frame => JSON.stringify(frame) + '\n').join(''));
+  } else if (request.id === 77 && request.result?.decision === 'accept') {
+    send({ method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'command', command: 'echo tool-result', aggregatedOutput: 'tool-result', exitCode: 0, status: 'completed' } } });
+    send({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } } });
+  }
+});
+setInterval(() => {}, 1000);
+`;
+  let transport!: CodexAppServerTransport;
+  let approvals = 0;
+  const adapter = new CodexAdapter(undefined, { createTransport: (options) => {
+    transport = new CodexAppServerTransport({ ...options, executable: process.execPath, arguments: ["--input-type=module", "-e", fixture] });
+    return transport;
+  } });
+  const input = { ...createCodexRunSessionTurnInput(directory), onApprovalRequest: () => { approvals++; return "approve" as const; } };
+  const result = await adapter.runSessionTurn(input);
+  assert.equal(result.assistantText, Array.from({ length: count }, (_, index) => `${index}:日本語\n`).join(""));
+  assert.equal(approvals, 1);
+  const raw = JSON.parse(result.rawItemsJson) as Array<{ type: string; data?: { aggregatedOutput?: unknown } }>;
+  assert.equal(raw.find(item => item.type === "commandExecution")?.data?.aggregatedOutput, "tool-result");
+  assert.equal(transport.state, "closed");
+}));
+
 // @test-value v2
 // kind = "invariant"
 // claim = "current threadのMCP requestでturnIdがnullでも共通UIへ渡す"
