@@ -4,6 +4,10 @@
 
 Accepted
 
+## 適用状態
+
+[ADR 027](027-shared-localhost-http-mcp-turn-identity.md)は、新しいprovider → 共有localhost HTTP MCPの接続認証とfallback reporterの所有者を部分的に置換する採用済み・未適用の判断である。現行stdio MCPは引き続き適用する。actor-relative schema、CLI authority分離、tools/list正常送出後のfallback admission、内側のruntime exchange、effect certaintyは維持する。
+
 ## Context
 
 Memoryの通常操作は、providerごとに配布する`withmate-memory` Skillと、同じbundle内のCLI/MCP artifactに依存している。upgrade時にはWithMateがproviderのSkill directoryを検査・更新し、SettingsとdiagnosticsもSkill同期状態を表示する。一方、通常Sessionにはopaqueなruntime bindingがあり、actor Session、Character、local user、許可Projectをserver側で解決できる。agent-facing requestへ`userId`、`characterId`、`sessionId`を持たせ続けると、値をauthorityとして扱わない場合でも、caller-asserted identityとcanonical actorの二つの表現が残る。

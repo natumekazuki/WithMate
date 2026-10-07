@@ -4,6 +4,10 @@
 
 Accepted
 
+## 適用状態
+
+[ADR 027](027-shared-localhost-http-mcp-turn-identity.md)は、新しいprovider → 共有localhost HTTP MCPの入口に限り、challenge前にcredentialと本文を送らない判断を部分的に置換する採用済み・未適用の判断である。現行runtime discovery、exact owner selection、別instanceへfallbackしない契約、および既存runtime exchangeとCLIのchallengeは維持する。
+
 ## Context
 
 Memory CLI/MCPが単一のcurrent pointerだけを解決すると、後から起動したinstanceや終了済みruntimeがpointerを書き換え、稼働中instanceへ接続できなくなる。終了時にpointerを以前の値へ戻すだけでは、crash、同時publish、stale owner、別instanceへの誤接続を閉じられない。
