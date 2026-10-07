@@ -68,6 +68,15 @@ flowchart LR
 - Markdown file preview は Preview を既定とし、Source は file preview 側が切り替える
 - YAML frontmatter at the start of a document is rendered in Preview as a two-column metadata table when it is a non-empty top-level scalar mapping. The left column is the YAML key and the right column is its scalar value; complex values, multiline scalars, parse failures, and empty frontmatter fall back to a YAML code-like block that preserves its `---` delimiters and line breaks. Long values wrap within the preview surface. Unclosed frontmatter and thematic breaks outside the document-start frontmatter remain ordinary Markdown; Source always keeps the original Markdown.
 
+## Streaming projection
+
+- light/fullの構文設定ごとに、現在表示中のmessage ownerが各modeの直近の本文とparse結果だけを保持する。本文不変の操作更新では再parseせず、unmount時に解放する。全履歴cache、worker、永続cacheは持たない。
+- append-only更新では、末尾2つのtop-level blockとその後の本文を通常parserで再parseし、それより前のblockを再利用する。fragment開始をdocument先頭と扱わず、元本文の絶対offset・行・列を保持する。未閉じfence、list、表、setext等の未確定tailを切り捨てない。
+- reference定義、reference node、footnote、未解決reference候補を含む本文と、追記以外の置換は全文parseする。後続定義が前方の表示を変える場合も、通常の完全Markdown描画と一致させる。
+- KaTeXは現在のmessageの同一HAST blockを再利用する。blockの内容・position・propertyが変われば再変換し、次のfull変換に含まれないblockの結果を解放する。Glossary annotationとURL変換には独立したmutable projectionを渡し、message全体の注釈budgetと順序を維持する。
+- Mermaidはsource単位でfull描画へ昇格する。同じsourceの図は別blockの追記によるlight表示へ戻さず、viewport・図のstateを保持する。source変更は現行のlight/full遅延とresource lifecycleへ従う。検索中は従来どおり即時full描画を使用する。
+- 表示内容の削減や要約を行わず、Source、検索、copy、選択、link、imageの既存契約を維持する。parseは同期であり、未確定tail自体が長い場合やreference系本文では全文処理の負荷が残る。
+
 ## Repository Glossary Annotation
 
 - Session messageのPreviewだけが、current valid glossaryからannotationをrender時に導出する。file previewとSource表示へは適用しない。
@@ -77,7 +86,7 @@ flowchart LR
 - 候補compileはvalid内容revision・Session・checkout scopeを単位とする。sequenceやcheckout表示だけの通知ではmatcher identityを維持し、activationは現在のscopeとentryを確認する。invalid化・scope切替では旧注釈を使用しない。
 - 注釈projectionはmessageの表示ownerが現在の通常text nodeだけを保持する。同じtextと流入budgetならrangeと消費budgetを再利用し、先行nodeが変わった時は現在の残budgetを適用する。候補0件ではUnicode投影を行わない。matcher・message scopeの切替、表示ownerのunmountで保持を解放し、全履歴cacheや永続cacheを持たない。
 - append-only textでは、実際に分割したASCII空白開始graphemeより前のUnicode offsetを再利用し、そのgrapheme以降を再構築する。空白でNFKCとlowercaseの文脈を切り、最後の結合文字・Greek Final Sigmaを未変更とみなさない。安全な境界がないtextや置換は全量投影する。一致探索、URL除外とnode順の共有hard limitは変更しない。
-- Markdown要素は本文とparse設定が同じ間は再利用する。注釈focus・tooltip・copy feedbackやactivation callbackの変更だけではMarkdown parseとUnicode全文処理を起動しない。light/fullでtext nodeの形が変われば現在のparse結果を使う。
+- Markdown要素は本文とparse設定が同じ間は再利用する。注釈focus・tooltip・copy feedbackやactivation callbackの変更だけではMarkdown parseとUnicode全文処理を起動しない。light/fullでtext nodeの形が変われば現在のparse結果を使う。本文追記時の構文・高度描画の再利用は上記Streaming projectionに従う。
 
 ## Safety
 
