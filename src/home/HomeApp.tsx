@@ -17,6 +17,7 @@ import {
 import {
   type AuxiliarySessionSummary,
 } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { type ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { startModelCatalogSubscription } from "../settings/model-catalog-subscription.js";
 import type { OpenSessionWindowIdsState } from "../app/open-session-window-subscription.js";
@@ -823,11 +824,14 @@ export default function HomeApp() {
       },
     });
 
-    const cancellationStates = new Map<string, "requested" | "terminating" | undefined>();
+    const monitorRunStates = new Map<string, Pick<LiveSessionRunState, "runState" | "cancellationState">>();
     const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRun((sessionId, state) => {
-      const cancellationState = state?.cancellationState;
-      if (cancellationStates.has(sessionId) && cancellationStates.get(sessionId) === cancellationState) return;
-      cancellationStates.set(sessionId, cancellationState);
+      const nextState = { runState: state?.runState, cancellationState: state?.cancellationState };
+      const previousState = monitorRunStates.get(sessionId);
+      if (previousState
+        && previousState.runState === nextState.runState
+        && previousState.cancellationState === nextState.cancellationState) return;
+      monitorRunStates.set(sessionId, nextState);
       // Notifications invalidate snapshots; only fresh Main queries supply the display state.
       void refreshSessionSummariesRef.current("preserve");
       refresher.refresh();
