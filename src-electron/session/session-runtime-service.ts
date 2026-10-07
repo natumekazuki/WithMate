@@ -1337,7 +1337,8 @@ export class SessionRuntimeService {
         return;
       }
       if (auditProgressFailure) throw auditProgressFailure;
-      this.setRuntimeLiveState(sessionId, nextLiveState);
+      if (changes.delivery !== "audit") this.setRuntimeLiveState(sessionId, nextLiveState);
+      if (changes.delivery === "live") return;
       const patch: AuditLogProgressPatch = { sessionId, observedAt: new Date().toISOString() };
       const threadId = pickPreferredThreadId(
         nextLiveState.threadId,
@@ -1425,10 +1426,10 @@ export class SessionRuntimeService {
           const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, signal);
           const currentLiveState = this.deps.getLiveSessionRun(sessionId);
           void syncRunningAuditFromLiveState({
-            ...(currentLiveState ?? buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId)),
+            ...buildEmptyLiveSessionRunState(sessionId, latestObservedRunningAuditEntry.threadId),
             approvalRequest,
             elicitationRequest: currentLiveState?.elicitationRequest ?? null,
-          }).catch((error) => {
+          }, { delivery: "audit", steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } }).catch((error) => {
             console.warn("Audit progress update failed", error);
           });
           return decision;
@@ -1439,10 +1440,10 @@ export class SessionRuntimeService {
           const response = this.deps.waitForElicitationResponse(sessionId, elicitationRequest, signal);
           const currentLiveState = this.deps.getLiveSessionRun(sessionId);
           void syncRunningAuditFromLiveState({
-            ...(currentLiveState ?? buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId)),
+            ...buildEmptyLiveSessionRunState(sessionId, latestObservedRunningAuditEntry.threadId),
             approvalRequest: currentLiveState?.approvalRequest ?? null,
             elicitationRequest,
-          }).catch((error) => {
+          }, { delivery: "audit", steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } }).catch((error) => {
             console.warn("Audit progress update failed", error);
           });
           return response;

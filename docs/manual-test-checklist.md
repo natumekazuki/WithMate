@@ -14,6 +14,8 @@ Main／AuxiliaryそれぞれでCodexの実行中にcomposerの `Send Input` と�
 
 Session Window内のlive表示では、同じ本文streamをMain／Auxiliary、Context、Auditで確認し、Context／Auditを閉じて再openして最新状態へ追いつくことを確認する。本文deltaだけでAuxiliary status IPCが増え続けないこと、background／reasoningを保持する終端とcancelで保存済みrunStateを維持すること、artifact Detailsの反復開閉と非表示復帰で最新detailを再取得して遅い結果を破棄することを確認する。保持量の比較は同じ操作とpayloadでheap retaining path／private bytesを用い、working setの総和だけで判断しない。
 
+CodexではMainと複数Auxiliaryでreasoning／command／本文deltaを高頻度に受信し、別の操作、承認、取消が継続して応答することを確認する。burst後の無通信でも最後のdeltaが表示され、終端・取消の取得済み本文とoperationsがAuditに欠落せず、終了後に実行中入力が再び有効にならないことを確認する。同じitem IDの別会話や次turnで本文・secret・stepが混線しないことも確認する。実Provider／Electron GUIを未実施の場合は未確認として記録する。
+
 ## 組み込みTerminal
 
 分離した検証用WithMateではREADMEのvisual-checkスクリプトを使う。配布物は専用の検証用user dataを用い、開発版の成功と区別する。

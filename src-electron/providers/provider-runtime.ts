@@ -50,6 +50,8 @@ export function resolveRunWorkspacePath(input: Pick<RunSessionTurnInput, "sessio
 }
 
 export type RunSessionTurnProgressChanges = {
+  /** Omitted means both. Audit-only empty text/null usage preserve observed values; reasoning is not persisted. */
+  delivery?: "audit" | "live";
   steps: { upserts: LiveSessionRunState["steps"]; removes: string[] };
   backgroundTasks: { upserts: LiveSessionRunState["backgroundTasks"]; removes: string[] };
 };
