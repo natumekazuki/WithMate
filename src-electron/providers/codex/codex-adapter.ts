@@ -97,6 +97,7 @@ import {
   type ProviderAgentRuntimeBindingRedactor,
 } from "../provider-agent-runtime-binding.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
+import { buildCodexManagedHttpMcpArguments, buildCodexManagedHttpMcpConfig, buildCodexManagedMcpDisableConfig } from "../managed-http-mcp.js";
 import {
   buildChangedFilesFromSources as buildChangedFilesProjection,
   buildCodexProviderMetadata as buildProviderMetadataProjection,
@@ -851,6 +852,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       env,
       arguments: [
         ...CODEX_APP_SERVER_ARGUMENTS,
+        ...buildCodexManagedHttpMcpArguments(binding),
         "-c",
         `features.default_mode_request_user_input=${interactive}`,
         "-c",
@@ -1037,6 +1039,19 @@ export class CodexAdapter implements ProviderTurnAdapter {
           throw new CodexAuthenticationError(redactor.sanitizeText(error instanceof Error ? error.message : String(error)));
         }
       }
+      let managedMcpConfig: Record<string, unknown> | undefined;
+      if (sessionInput?.agentRuntimeBinding?.managedMcp) {
+        const response = await transport.request<{ config: Record<string, unknown> }>(
+          "config/read", { cwd: options.workingDirectory, includeLayers: false }, { signal },
+        );
+        if (!response.config || typeof response.config !== "object" || Array.isArray(response.config)) {
+          throw new Error("Codex effective MCP configuration could not be resolved");
+        }
+        managedMcpConfig = {
+          ...buildCodexManagedMcpDisableConfig(response.config),
+          ...buildCodexManagedHttpMcpConfig(sessionInput.agentRuntimeBinding),
+        };
+      }
       const threadParams = {
         model: options.model,
         cwd: options.workingDirectory,
@@ -1045,6 +1060,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         sandbox: options.sandboxMode,
         serviceTier: args.serviceTier,
         config: {
+          ...(managedMcpConfig ? { mcp_servers: managedMcpConfig } : {}),
           model_reasoning_effort: options.modelReasoningEffort,
           service_tier: args.serviceTier,
           approvals_reviewer: args.reviewer,

@@ -12,6 +12,7 @@ import {
   MemoryV6IdempotencyConflictError,
 } from "../memory/memory-v6-storage.js";
 import { CharacterAffectIdempotencyConflictError, CharacterAffectVersionConflictError } from "../character/character-affect-storage.js";
+import { RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 import {
   createStorageOperationDiagnosticContext,
   emitStorageOperationDiagnostic,
@@ -357,6 +358,7 @@ function rehydrateStorageWorkerError(message: Extract<StorageWorkerMessage, { ty
   const details = message.details ?? {};
   let error: Error;
   switch (message.code) {
+    case "RUNTIME_TURN_INACTIVE": error = new RuntimeTurnInactiveError(); break;
     case "MEMORY_V6_IDEMPOTENCY_CONFLICT": error = new MemoryV6IdempotencyConflictError(); break;
     case "MEMORY_V6_ENTRY_NOT_FOUND": error = new MemoryV6EntryNotFoundError(String(details.entryId ?? "unknown")); break;
     case "MEMORY_V6_FILE_QUOTA_EXCEEDED": error = new MemoryV6FileQuotaExceededError(Number(details.quotaBytes ?? 0), Number(details.usedBytes ?? 0), Number(details.incomingBytes ?? 0)); break;

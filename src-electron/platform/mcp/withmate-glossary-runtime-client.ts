@@ -4,10 +4,10 @@ import {
   GLOSSARY_RUNTIME_SCHEMA_VERSION,
   type GlossaryOperationError,
   type GlossaryRuntimeEnvelope,
-} from "../../src-shared/glossary/glossary-contract.js";
-import type { GlossaryRuntimeOperation } from "../../src-shared/glossary/glossary-operation-schema.js";
-import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
-import type { RuntimeDiscoveryClock } from "../../src-electron/platform/runtime-discovery/runtime-discovery-contract.js";
+} from "../../../src-shared/glossary/glossary-contract.js";
+import type { GlossaryRuntimeOperation } from "../../../src-shared/glossary/glossary-operation-schema.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../memory/memory-runtime-exchange.js";
+import type { RuntimeDiscoveryClock } from "../runtime-discovery/runtime-discovery-contract.js";
 import {
   callWithMateMemoryRuntime,
   mapWithMateMemoryDiscoveryCode,
@@ -20,11 +20,12 @@ import {
   type WithMateMemoryPublicDiscoveryCode,
   type WithMateMemoryRuntimeResponse,
   type WithMateMemoryRuntimeResolution,
-} from "../memory/withmate-memory-runtime-client.js";
+} from "./withmate-memory-runtime-client.js";
 
 export type GlossaryRuntimeClientDeps = {
   adapter: "cli" | "mcp";
   env?: NodeJS.ProcessEnv;
+  connection?: WithMateMemoryRuntimeConnection;
   apiUrl?: string;
   discoveryFilePath?: string;
   applicationInstanceId?: string;
@@ -162,9 +163,9 @@ export async function callGlossaryRuntime(input: {
   } catch {
     return createGlossaryBindingRequiredError();
   }
-  let resolution: WithMateMemoryRuntimeResolution;
+  let resolution: WithMateMemoryRuntimeResolution | { kind: "selected"; connection: WithMateMemoryRuntimeConnection };
   try {
-    resolution = await resolveWithMateMemoryApi({
+    resolution = deps.connection ? { kind: "selected", connection: deps.connection } : await resolveWithMateMemoryApi({
       adapter: deps.adapter,
       env: deps.env,
       apiUrl: deps.apiUrl,

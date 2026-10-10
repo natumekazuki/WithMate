@@ -1,3 +1,4 @@
+import { RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 import {
   CHARACTER_AFFECT_FAMILIES,
   assertValidAffectEvent,
@@ -765,6 +766,11 @@ export class CharacterContextApplicationService {
     operation: string,
     effect: "none" | "unknown",
   ): CharacterContextErrorResponse {
+    if (error instanceof RuntimeTurnInactiveError) {
+      return createCharacterContextError("authority_denied", error.message, {
+        retryable: false, conversationMayContinue: true, effect: "none",
+      });
+    }
     if (error instanceof CharacterAffectVersionConflictError) {
       return createCharacterContextError("version_conflict", error.message, {
         field: "expectedVersion",

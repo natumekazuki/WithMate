@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 
 import type { MemoryProtectedObjectKey } from "./memory-protected-object-crypto.js";
 
@@ -108,8 +109,10 @@ export class MemoryProtectedObjectKeyStore {
       }],
     };
 
+    assertRuntimeTurnAdmission();
     await mkdir(dirname(this.keyringPath), { recursive: true });
     try {
+      assertRuntimeTurnAdmission();
       await writeFile(this.keyringPath, `${JSON.stringify(document, null, 2)}\n`, { flag: "wx" });
       return {
         keyId,

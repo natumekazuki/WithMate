@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { assertRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 import {
   createMemoryAppendResponse,
@@ -619,6 +620,7 @@ export class MemoryV6Service {
     }
 
     try {
+      assertRuntimeTurnAdmission();
       const result = await this.deps.protectedObjectExporter.exportFile({
         metadata,
         outputPath: validated.value.outputPath,
@@ -631,7 +633,8 @@ export class MemoryV6Service {
         contentType: metadata.contentType,
         displayName: metadata.displayName,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof RuntimeTurnInactiveError) throw error;
       return toMemoryErrorResponse({
         code: "MEMORY_FILE_EXPORT_FAILED",
         message: "Memory file export failed.",
@@ -678,6 +681,7 @@ export class MemoryV6Service {
     }
 
     try {
+      assertRuntimeTurnAdmission();
       const result = await this.deps.protectedObjectExporter.exportFiles({
         metadata,
         outputDirectoryPath: validated.value.outputDirectoryPath,
@@ -687,7 +691,8 @@ export class MemoryV6Service {
         outputDirectoryPath: validated.value.outputDirectoryPath,
         files: result.files,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof RuntimeTurnInactiveError) throw error;
       return toMemoryErrorResponse({
         code: "MEMORY_FILE_EXPORT_FAILED",
         message: "Memory file export failed.",
@@ -797,6 +802,7 @@ export class MemoryV6Service {
 
       const entryId = hasFiles ? `mem-${randomUUID()}` : undefined;
       const fileQuotaBytes = normalizeMemoryFileQuotaBytes(await this.deps.getMemoryFileQuotaBytes?.() ?? MEMORY_FILE_QUOTA_DEFAULT_BYTES);
+      assertRuntimeTurnAdmission();
       const protectedObjects = hasFiles && this.deps.protectedObjectImporter
         ? await this.prepareProtectedObjects({
           entryId: entryId ?? `mem-${randomUUID()}`,
@@ -806,6 +812,7 @@ export class MemoryV6Service {
         : [];
       let result;
       try {
+        assertRuntimeTurnAdmission();
         result = await this.deps.storage.appendEntry({
           ...(entryId ? { id: entryId } : {}),
           target: resolved.target,
@@ -853,11 +860,18 @@ export class MemoryV6Service {
           });
         }
         if (validated.value.idempotencyKey && redundantObjects.length > 0) {
-          await this.deps.storage.settleAppendCleanupObligation({
-            target: resolved.target,
-            idempotencyKey: validated.value.idempotencyKey,
-            bindingIdHash: bindingIdHashForPrincipal(principal),
-          });
+          try {
+            await this.deps.storage.settleAppendCleanupObligation({
+              target: resolved.target,
+              idempotencyKey: validated.value.idempotencyKey,
+              bindingIdHash: bindingIdHashForPrincipal(principal),
+            });
+          } catch (error) {
+            if (error instanceof RuntimeTurnInactiveError) {
+              throw new MemoryV6FileCleanupError(cleanupOriginalError(error));
+            }
+            throw error;
+          }
         }
       }
       return createMemoryAppendResponse(result.entry, result.created, result.replayed);
@@ -894,14 +908,19 @@ export class MemoryV6Service {
     try {
       for (let index = 0; index < input.files.length; index += 1) {
         const file = input.files[index];
+        assertRuntimeTurnAdmission();
         protectedObjects.push(await importer.prepare({
           entryId: input.entryId,
           file,
         }));
       }
     } catch (error) {
-      const importError = toFileImportError(error, protectedObjects.length);
       const cleanupComplete = await this.discardPreparedObjects(protectedObjects);
+      if (error instanceof RuntimeTurnInactiveError) {
+        if (!cleanupComplete) throw new MemoryV6FileCleanupError(cleanupOriginalError(error));
+        throw error;
+      }
+      const importError = toFileImportError(error, protectedObjects.length);
       if (!cleanupComplete) {
         throw new MemoryV6FileCleanupError(importError.error);
       }
@@ -973,6 +992,7 @@ export class MemoryV6Service {
         }));
         return createMemoryForgetResponse(results, { dryRun: true });
       }
+      assertRuntimeTurnAdmission();
       const results = await this.deps.storage.forgetEntries({
         target: resolved.target,
         entryIds: validated.value.entryIds,
@@ -1017,6 +1037,7 @@ export class MemoryV6Service {
       });
     }
     try {
+      assertRuntimeTurnAdmission();
       const result = await this.deps.storage.moveEntry({
         entryId: validated.value.entryId,
         from: from.target,

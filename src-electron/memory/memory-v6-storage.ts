@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 
 import type {
   MemoryEntryKind,
@@ -664,28 +665,30 @@ export class MemoryV6Storage {
     idempotencyKey: string;
     bindingIdHash?: string;
   }): void {
-    const result = this.db.prepare(`
-      UPDATE memory_idempotency_keys_v6
-      SET cleanup_pending_count = cleanup_pending_count - 1
-      WHERE binding_id_hash = ?
-        AND key = ?
-        AND operation = 'append'
-        AND owner_type = ?
-        AND owner_id = ?
-        AND scope_type = ?
-        AND scope_id = ?
-        AND cleanup_pending_count > 0
-    `).run(
-      input.bindingIdHash ?? "",
-      input.idempotencyKey,
-      input.target.owner.type,
-      input.target.owner.id,
-      input.target.scope.type,
-      input.target.scope.id,
-    );
-    if (result.changes !== 1) {
-      throw new MemoryV6EntryNotFoundError(input.idempotencyKey);
-    }
+    this.transaction(() => {
+      const result = this.db.prepare(`
+        UPDATE memory_idempotency_keys_v6
+        SET cleanup_pending_count = cleanup_pending_count - 1
+        WHERE binding_id_hash = ?
+          AND key = ?
+          AND operation = 'append'
+          AND owner_type = ?
+          AND owner_id = ?
+          AND scope_type = ?
+          AND scope_id = ?
+          AND cleanup_pending_count > 0
+      `).run(
+        input.bindingIdHash ?? "",
+        input.idempotencyKey,
+        input.target.owner.type,
+        input.target.owner.id,
+        input.target.scope.type,
+        input.target.scope.id,
+      );
+      if (result.changes !== 1) {
+        throw new MemoryV6EntryNotFoundError(input.idempotencyKey);
+      }
+    });
   }
 
   private addAppendCleanupObligation(input: {
@@ -1399,16 +1402,18 @@ export class MemoryV6Storage {
   }
 
   markProtectedObjectDeletedForGc(input: { objectId: string; deletedAt?: string }): boolean {
-    const deletedAt = input.deletedAt ?? nowIso();
-    const result = this.db.prepare(`
-      UPDATE memory_protected_objects_v6
-      SET state = 'deleted',
-          updated_at = ?,
-          deleted_at = ?
-      WHERE object_id = ?
-        AND state = 'delete_pending'
-    `).run(deletedAt, deletedAt, input.objectId);
-    return result.changes > 0;
+    return this.transaction(() => {
+      const deletedAt = input.deletedAt ?? nowIso();
+      const result = this.db.prepare(`
+        UPDATE memory_protected_objects_v6
+        SET state = 'deleted',
+            updated_at = ?,
+            deleted_at = ?
+        WHERE object_id = ?
+          AND state = 'delete_pending'
+      `).run(deletedAt, deletedAt, input.objectId);
+      return result.changes > 0;
+    });
   }
 
   private scoreSearchEntry(
@@ -2097,9 +2102,12 @@ export class MemoryV6Storage {
   }
 
   private transaction<T>(runner: () => T): T {
+    assertRuntimeTurnAdmission();
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      assertRuntimeTurnAdmission();
       const result = runner();
+      assertRuntimeTurnAdmission();
       this.db.exec("COMMIT");
       return result;
     } catch (error) {

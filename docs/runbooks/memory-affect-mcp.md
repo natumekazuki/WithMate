@@ -6,16 +6,18 @@ Memory CLIとMCP serverは、起動中のWithMateが公開するloopback runtime
 
 設計判断は`docs/adr/020-memory-affect-mcp-application-boundary.md`を参照する。一般Memoryのcontractとvalidationは`src-shared/memory/`、Character系contractは`src-shared/character-context/`と`src-shared/character-affect/`を正本とする。
 
-## MCP serverの起動
+## Managed MCPと手動stdio起動
 
-開発環境では次を実行する。
+WithMateのprovider Sessionは、Mainの共有localhost HTTP MCPへ自動接続する。Memory／Characterは`/mcp/memory`、Glossaryは同じlistenerの`/mcp/glossary`を使い、当turnの短命tokenを一時設定へ渡す。URLやtokenを手動でproviderの永続設定へ保存しない。既存の標準managed名だけをturn設定で置換し、第三者MCPは維持する。CodexのHTTP登録名は`withmate-memory-http`／`withmate-glossary-http`である。
+
+手動stdio clientの開発・診断では次を実行する。
 
 ```powershell
 npm run build:memory-cli
 node resources/cli/withmate-memory.mjs mcp-server
 ```
 
-配布版では同梱された`withmate-memory`へ`mcp-server`を渡す。MCP clientには、このstdio commandをserver commandとして登録する。
+手動stdio clientの配布版では同梱された`withmate-memory`へ`mcp-server`を渡す。MCP clientには、このstdio commandをserver commandとして登録する。これはWithMateが自動注入するprovider SessionのHTTP経路とは別である。
 
 同梱artifactはSDKを内包し、配布先の`node_modules`を参照しない。sourceまたは依存を変更した場合は`npm run build:memory-cli`で再生成し、分離した一時directoryからMCP initialize、`tools/list`、代表的なread/writeを実行してから配布する。
 
@@ -112,7 +114,7 @@ MCPのinitializeと`tools/list`取得後にtransport availability failureが発�
 $request | withmate-memory context-get --stdin --fallback-from mcp
 ```
 
-fallbackも同じruntime APIを使う。MCP processは`tools/list` responseの正常送出後にserverへ短命な`listed` stateを登録し、後続toolの実transport exceptionでmethod、path、bodyのfingerprintを持つ`eligible` stateへ遷移させる。CLIは同じruntime generation、binding、current turn、operation fingerprintに一致するadmissionだけをconsumeする。MCP initialize前の未設定・起動不能、`tools/list`失敗、process terminationなどserverへ障害を報告できない場合は開始しない。MemoryまたはCharacterのstructured domain error、authority拒否、invalid input、version conflict、idempotency conflict/replay、migration requiredをCLIで迂回してはならない。変更request、期限切れ、stale turnも拒否される。idempotency keyを持つwriteの`effect: unknown`はresponse lossの可能性を表すため、同じrequestとidempotency keyでreconcileする。`memory.get_file`と`memory.export_files`はagent fallbackで自動再試行せず、出力先をread-onlyで確認するかoperatorによるmanual recoveryへ進む。
+fallbackも同じruntime APIを使う。MCP server（共有HTTP hostまたは手動stdio）は`tools/list` responseの正常送出を確認して短命な`listed`登録を確定し、後続toolの内側runtime exchangeの実transport exceptionでmethod、path、bodyのfingerprintを持つ`eligible` stateへ遷移させる。CLIは同じruntime generation、binding、current turn、operation fingerprintに一致するadmissionだけをconsumeする。MCP initialize前の未設定・起動不能、`tools/list`失敗、process terminationなどserverへ障害を報告できない場合は開始しない。provider → HTTP MCPの切断やresponse lossだけではeligibleにならない。MemoryまたはCharacterのstructured domain error、authority拒否、invalid input、version conflict、idempotency conflict/replay、migration requiredをCLIで迂回してはならない。変更request、期限切れ、stale turnも拒否される。idempotency keyを持つwriteの`effect: unknown`はresponse lossの可能性を表すため、同じrequestとidempotency keyでreconcileする。`memory.get_file`と`memory.export_files`はagent fallbackで自動再試行せず、出力先をread-onlyで確認するかoperatorによるmanual recoveryへ進む。
 
 ## Errorと再試行
 

@@ -869,6 +869,7 @@ search監査は件数・latency・strategy程度に抑え、private query全文�
 ## Agent InterfaceとCLI Distribution
 
 - Agent向けMemory contractはprovider共通MCPのinitialize instructionsと`tools/list`が所有する。WithMateは`withmate-memory` Skillを新規配布せず、起動、upgrade、Settings操作でprovider側の既存Skill directoryを削除、更新、検査しない。
+- provider SessionはMainの共有localhost HTTP MCPを使い、Memory／CharacterとGlossaryでlistenerを共有する。tool定義とruntime clientは`src-electron/platform/mcp/`を手動stdio CLIと共有する。HTTP tokenはruntime owner・binding generation・captured turnへ固定し、取消・終了・失効・runtime停止で無効化する。非同期actor解決、Worker queue、SQLite commit、file書出しでも共有失効stateを再確認する。
 - CLI/MCP artifactはbuild時に`src-cli/memory/withmate-memory.ts`から生成し、repositoryでは`resources/cli/withmate-memory.mjs`をcanonical pathとする。生成artifactをcanonical CLIと別実装として保守しない。
 - Windowsではinstall rootの`withmate-memory.cmd`と`Microsoft\WindowsApps\withmate-memory.cmd` aliasをinstallerが作成する。installerはuser `Path` registry値を直接編集しない。
 - macOS / LinuxではSettings > Diagnosticsから`~/.local/bin/withmate-memory` shimをinstall / uninstallできる。shimが未導入または`PATH`外でもprovider Skill directoryへCLIを同期しない。

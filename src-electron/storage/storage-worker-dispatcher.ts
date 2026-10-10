@@ -9,6 +9,7 @@ import {
   MemoryV6IdempotencyConflictError,
 } from "../memory/memory-v6-storage.js";
 import { CharacterAffectIdempotencyConflictError, CharacterAffectVersionConflictError } from "../character/character-affect-storage.js";
+import { RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 export type StorageWorkerHandlerContext = StorageWorkerRequestContext & {
   reportProgress(progress: unknown): void;
@@ -54,7 +55,9 @@ export function serializeStorageWorkerError(
   const normalized = error instanceof Error ? error : new Error(String(error));
   let code = "STORAGE_WORKER_COMMAND_FAILED";
   let details: Record<string, string | number> | undefined;
-  if (normalized instanceof StorageWorkerCommandNotAllowedError) {
+  if (normalized instanceof RuntimeTurnInactiveError) {
+    code = "RUNTIME_TURN_INACTIVE";
+  } else if (normalized instanceof StorageWorkerCommandNotAllowedError) {
     code = normalized.code;
   } else if (normalized instanceof MemoryV6IdempotencyConflictError) {
     code = "MEMORY_V6_IDEMPOTENCY_CONFLICT";
@@ -73,7 +76,7 @@ export function serializeStorageWorkerError(
   }
   // Domain rejections are known outcomes (and may persist rejection telemetry).
   // An arbitrary exception after a mutation remains an unknown write outcome.
-  if (normalized instanceof StorageWorkerCommandNotAllowedError) outcome = "not-executed";
+  if (normalized instanceof StorageWorkerCommandNotAllowedError || normalized instanceof RuntimeTurnInactiveError) outcome = "not-executed";
   else if (code !== "STORAGE_WORKER_COMMAND_FAILED") outcome = "rejected";
   return {
     type: "error",

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ProviderAgentRuntimeAuthoritySnapshot } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
+import { WITHMATE_MANAGED_MCP_TOKEN_ENV } from "./managed-http-mcp.js";
 import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
@@ -68,6 +69,7 @@ export function createProviderAgentRuntimeBindingRedactor(
 ): ProviderAgentRuntimeBindingRedactor {
   const secrets = [
     ...(projection?.transport === "env" ? [projection.bindingReference, projection.turnCapability ?? ""] : []),
+    projection?.managedMcp?.token ?? "",
     ...additionalSecrets,
   ].filter((value) => value.length > 0);
   const maxSecretLength = Math.max(0, ...secrets.map((secret) => secret.length));
@@ -141,6 +143,9 @@ export function buildProviderAgentRuntimeBindingEnv(
       ? {
         [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: projection.bindingReference,
         [WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]: "1",
+        ...(projection.providerId === "codex" && projection.managedMcp
+          ? { [WITHMATE_MANAGED_MCP_TOKEN_ENV]: projection.managedMcp.token }
+          : {}),
         ...(projection.turnCapability
           ? { [WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV]: projection.turnCapability }
           : {}),
@@ -192,6 +197,7 @@ export function mergeDefinedProviderEnv(
       && normalizedKey !== turnCapabilityKey
       && normalizedKey !== memoryApplicationInstanceIdKey
       && normalizedKey !== memoryGenerationIdKey
+      && normalizedKey !== WITHMATE_MANAGED_MCP_TOKEN_ENV.toLowerCase()
       && value !== undefined
     ) {
       merged[key] = value;

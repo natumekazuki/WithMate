@@ -75,6 +75,7 @@ import {
   type ProviderAgentRuntimeBindingRedactor,
 } from "../provider-agent-runtime-binding.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
+import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
 import {
   buildCopilotProviderQuotaTelemetry as buildProviderQuotaTelemetryProjection,
   buildCopilotSessionContextTelemetry as buildSessionContextTelemetryProjection,
@@ -1235,6 +1236,9 @@ export function buildCopilotSessionSettings(
     workingDirectory: workspacePath,
     streaming: true,
     onPermissionRequest: buildPermissionHandler(input),
+    ...(input.agentRuntimeBinding?.managedMcp
+      ? { mcpServers: buildManagedHttpMcpServers(input.agentRuntimeBinding) }
+      : {}),
     ...(systemMessage ? { systemMessage } : {}),
     ...(resolvedCustomAgents.customAgents.length > 0 ? { customAgents: resolvedCustomAgents.customAgents } : {}),
     ...(resolvedCustomAgents.selectedAgentName ? { agent: resolvedCustomAgents.selectedAgentName } : {}),

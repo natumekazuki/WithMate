@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { assertRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 import {
   decryptMemoryProtectedObjectPayload,
@@ -81,6 +82,7 @@ export async function exportMemoryProtectedObjectFile(
     throw new Error("Memory protected object plaintext size does not match metadata.");
   }
 
+  assertRuntimeTurnAdmission();
   await writeFile(input.outputPath, plaintext, { flag: "wx" });
   return { bytesWritten: plaintext.byteLength };
 }
@@ -106,14 +108,21 @@ export async function exportMemoryProtectedObjectFiles(
   dependencies: ExportMemoryProtectedObjectFileDependencies,
   input: ExportMemoryProtectedObjectFilesInput,
 ): Promise<ExportMemoryProtectedObjectFilesResult> {
+  assertRuntimeTurnAdmission();
   await mkdir(input.outputDirectoryPath, { recursive: true });
   const files = [];
   for (const metadata of input.metadata) {
     const outputPath = path.join(input.outputDirectoryPath, buildExportFileName(metadata));
-    const result = await exportMemoryProtectedObjectFile(dependencies, {
-      metadata,
-      outputPath,
-    });
+    let result: ExportMemoryProtectedObjectFileResult;
+    try {
+      result = await exportMemoryProtectedObjectFile(dependencies, { metadata, outputPath });
+    } catch (error) {
+      if (error instanceof RuntimeTurnInactiveError) {
+        // The output directory and possibly earlier files have already been created.
+        throw new Error("Memory file export stopped after a partial effect.", { cause: error });
+      }
+      throw error;
+    }
     files.push({
       objectId: metadata.objectId,
       outputPath,

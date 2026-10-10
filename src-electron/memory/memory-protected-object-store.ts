@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, link, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 
 const MEMORY_OBJECTS_ROOT = "memory-objects";
 const MEMORY_OBJECTS_VERSION_DIRECTORY = "v6";
@@ -58,10 +59,14 @@ export class MemoryProtectedObjectStore {
     const objectPath = this.resolveObjectPath(objectId);
     const stagingPath = join(this.rootPath, STAGING_DIRECTORY, `${objectId}.${createMemoryProtectedObjectId()}.tmp`);
 
+    assertRuntimeTurnAdmission();
     await mkdir(join(this.rootPath, STAGING_DIRECTORY), { recursive: true });
+    assertRuntimeTurnAdmission();
     await mkdir(shardDirectory, { recursive: true });
     try {
+      assertRuntimeTurnAdmission();
       await writeFile(stagingPath, input.payload, { flag: "wx" });
+      assertRuntimeTurnAdmission();
       await linkObject(stagingPath, objectPath);
       await removeBestEffort(stagingPath);
       return {

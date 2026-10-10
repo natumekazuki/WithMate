@@ -19,8 +19,8 @@ describe("provider payload limits", () => {
   // observation_boundary = "component-behavior"
   // scope = "incremental diagnostic raw retention"
   // lifecycle = "permanent"
-  // impact = "長いturnでrawの保持が増え続け、省略数が不正になり終了処理も重くなる"
-  // distinction = "既存の単一巨大item testと型検査はaggregate budgetと追加後の再走査を検出しない。固定入力のみで継続コストは小さい"
+  // impact = "診断rawの出力肥大化、省略数の誤表示、最終生成時の元payload再読取りを防ぐ。内部保持量は直接観測しない"
+  // distinction = "単一巨大item testと型検査では確認できない複数itemの出力総予算・順序・省略数と元payloadの再読取りを固定入力で検証する"
   // @end-test-value
   it("incremental rawはpayloadを再走査せず順序と省略数を維持する", () => {
     const collector = new BoundedProviderRawItems(2048);

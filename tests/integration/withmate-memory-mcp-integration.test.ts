@@ -25,14 +25,14 @@ import { MemoryV6Storage } from "../../src-electron/memory/memory-v6-storage.js"
 import { mergeDefinedProviderEnv } from "../../src-electron/providers/provider-agent-runtime-binding.js";
 import { runWithMateMemoryCli } from "../../src-cli/memory/withmate-memory.js";
 import { buildWithMateMemoryCli } from "../../scripts/build/build-withmate-memory-cli.js";
-import { createWithMateMemoryMcpServer } from "../../src-cli/memory/withmate-memory-mcp.js";
+import { createWithMateMemoryMcpServer } from "../../src-electron/platform/mcp/withmate-memory-mcp.js";
 import {
   callWithMateMemoryRuntime,
   WithMateMemoryRuntimeExchangeError,
   type WithMateMemoryRuntimeConnection,
   type WithMateMemoryRuntimeOperation,
   type WithMateMemoryRuntimeResponse,
-} from "../../src-cli/memory/withmate-memory-runtime-client.js";
+} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 
 const API_SECRET = "general-memory-api-secret";
 const OPERATOR_SECRET = "general-memory-operator-secret";

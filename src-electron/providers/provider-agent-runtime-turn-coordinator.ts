@@ -4,6 +4,7 @@ export type ProviderAgentRuntimeTurnHandle = Readonly<{
   actorSessionId: string;
   providerId: string;
   capability: string;
+  revocationState: SharedArrayBuffer;
 }>;
 
 function turnKey(actorSessionId: string, providerId: string): string {
@@ -34,6 +35,7 @@ export class ProviderAgentRuntimeTurnCoordinator {
       actorSessionId: input.actorSessionId,
       providerId: input.providerId,
       capability: randomBytes(32).toString("base64url"),
+      revocationState: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
     });
     this.#activeByActor.set(key, handle);
     return handle;
@@ -56,6 +58,7 @@ export class ProviderAgentRuntimeTurnCoordinator {
   end(handle: ProviderAgentRuntimeTurnHandle): void {
     const key = turnKey(handle.actorSessionId, handle.providerId);
     if (this.#activeByActor.get(key) === handle) {
+      Atomics.store(new Int32Array(handle.revocationState), 0, 1);
       this.#activeByActor.delete(key);
     }
   }

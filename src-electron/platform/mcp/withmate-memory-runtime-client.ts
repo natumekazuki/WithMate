@@ -7,7 +7,7 @@ import {
   createCharacterContextError,
   isCharacterContextError,
   type CharacterContextErrorCode,
-} from "../../src-shared/character-context/character-context-contract.js";
+} from "../../../src-shared/character-context/character-context-contract.js";
 import {
   buildWithMateMemoryDiscoveryGenerationFileName,
   normalizeWithMateMemoryApiBaseUrl,
@@ -17,11 +17,11 @@ import {
   type WithMateMemoryAdapterKind,
   type WithMateMemoryDiscoveryDocument,
   type WithMateMemoryDiscoveryPointer,
-} from "../../src-electron/platform/memory/memory-discovery.js";
+} from "../memory/memory-discovery.js";
 import {
   createMemoryErrorResponse,
   type MemoryErrorResponse,
-} from "../../src-shared/memory/memory-response-contract.js";
+} from "../../../src-shared/memory/memory-response-contract.js";
 import {
   createWithMateMemoryRuntimeChallenge,
   createWithMateMemoryRuntimeOwnerChallenge,
@@ -32,14 +32,14 @@ import {
   WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER,
   WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER,
   WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
-} from "../../src-electron/platform/memory/memory-runtime-exchange.js";
+} from "../memory/memory-runtime-exchange.js";
 import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
-} from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
+} from "../../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import {
   getRuntimeDiscoveryLeaseState,
   isUuid,
@@ -49,12 +49,12 @@ import {
   type RuntimeDiscoveryClock,
   type RuntimeDiscoveryCredentialEnvelope,
   type RuntimeDiscoverySelectionOutcomeCode,
-} from "../../src-electron/platform/runtime-discovery/runtime-discovery-contract.js";
+} from "../runtime-discovery/runtime-discovery-contract.js";
 import {
   listRuntimeDiscoveryRegistryEntries,
   readRuntimeDiscoveryCredential,
   type RuntimeDiscoveryRegistryRecord,
-} from "../../src-electron/platform/runtime-discovery/runtime-discovery-registry.js";
+} from "../runtime-discovery/runtime-discovery-registry.js";
 
 export type WithMateMemoryApiConnection = {
   baseUrl: string;

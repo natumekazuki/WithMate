@@ -68,6 +68,8 @@ Windowsの通常Session Windowがfocus中でない間にAuxiliaryのturnが完�
 
 Window内live受信はrendererの`session-window-live-ingress.ts`が公開APIのcallbackを1本に集約し、ownerごとの初回取得を共有する。表示Column、表示中Contextは同じfull snapshotを参照する。shellはMainと操作対象のcompact controlsだけを保持し、selector結果が変わらない本文deltaでは更新しない。非表示Contextの詳細購読を止め、最後の表示consumerが消えたownerのfull snapshotと、全consumerが消えたownerを解放する。再openは必要なdetailを再取得し、先行event・終端nullを遅い初回取得で巻き戻さない。取消・承認・入力制御は表示lifecycleから独立する。公開APIの認可とcontextIsolationは維持する。
 
+非選択Auxiliaryのlive更新は軽量status取得へ集約し、同じrun状態の本文deltaごとには再取得しない。取得が一時失敗した場合は同じrunの次のlive通知から再取得できる。古い取得の失敗で新しいrunの取得keyを失効させず、一覧のprocessing表示と保持detailの実行状態を復旧する。
+
 ### 送信直後の共通反映
 
 Main / Auxiliary は送信文の追加と `running` 状態の生成を共通化する。生成した Session を各会話の状態 owner へ適用してから、同じ会話 ID の Pending を反映する。Provider の応答を待たず、Pending と送信した user message を対象 Column に表示する。

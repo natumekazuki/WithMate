@@ -34,7 +34,7 @@ import {
   type WithMateMemoryRuntimeConnection,
   type WithMateMemoryRuntimeOperation,
   type WithMateMemoryRuntimeResponse,
-} from "../../src-cli/memory/withmate-memory-runtime-client.js";
+} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 import { publishRuntimeDiscoveryEntry } from "../../src-electron/platform/runtime-discovery/runtime-discovery-registry.js";
 
 it("provider execution markerがある場合はbinding省略をlocal-userへdowngradeしない", () => {

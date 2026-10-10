@@ -5,6 +5,7 @@ import { createMemoryV6ProjectResolver, listMemoryV6ProjectScopes } from "./memo
 import { MemoryV6Storage } from "./memory-v6-storage.js";
 import type { StorageWorkerCommandHandlers } from "../storage/storage-worker-dispatcher.js";
 import type { StorageWorkerRequestContext } from "../storage/storage-worker-protocol.js";
+import { runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 
 type MemoryWorkerData = {
   dbPath?: unknown;
@@ -127,7 +128,20 @@ export function createStorageWorkerCommandHandlers(): StorageWorkerCommandHandle
     },
   };
 
-  return handlers;
+  return Object.fromEntries(Object.entries(handlers).map(([command, handler]) => [command,
+    (payload: unknown, context: StorageWorkerRequestContext) => {
+      if (payload && typeof payload === "object" && "__runtimeTurnAdmissionState" in payload) {
+        const wrapped = payload as { __runtimeTurnAdmissionState: SharedArrayBuffer; __runtimeTurnPayload: unknown };
+        if (!(wrapped.__runtimeTurnAdmissionState instanceof SharedArrayBuffer)
+          || wrapped.__runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) {
+          throw new Error("Memory worker turn admission state is invalid.");
+        }
+        return runWithRuntimeTurnAdmission({ state: wrapped.__runtimeTurnAdmissionState },
+          () => handler(wrapped.__runtimeTurnPayload, context));
+      }
+      return handler(payload, context);
+    },
+  ]));
 }
 
 export function closeStorageWorker(): void {

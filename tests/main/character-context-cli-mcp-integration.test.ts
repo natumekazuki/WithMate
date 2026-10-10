@@ -16,7 +16,7 @@ import { getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory/mem
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { startMemoryV6RuntimeApi } from "../../src-electron/memory/memory-v6-runtime.js";
 import { runWithMateMemoryCli } from "../../src-cli/memory/withmate-memory.js";
-import { createWithMateMemoryMcpServer } from "../../src-cli/memory/withmate-memory-mcp.js";
+import { createWithMateMemoryMcpServer } from "../../src-electron/platform/mcp/withmate-memory-mcp.js";
 
 function outputBuffer() {
   let value = "";
