@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useId, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import rehypeKatex from "rehype-katex";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -30,6 +29,8 @@ import {
   createFootnoteLabelIdPlugin,
   remarkHtmlLineBreaks as sharedRemarkHtmlLineBreaks,
 } from "./markdown-plugins.js";
+import { createMarkdownParseProjectionPlugin } from "./markdown-parse-projection.js";
+import { createKatexProjectionPlugin } from "./markdown-katex-projection.js";
 
 export type MessageViewMode = "preview" | "source";
 
@@ -156,6 +157,11 @@ function MessageMarkdownPreview({
     shouldDefer,
   );
   const isFullRender = renderMode === "full";
+  const parseProjections = useMemo(() => ({
+    light: createMarkdownParseProjectionPlugin(),
+    full: createMarkdownParseProjectionPlugin(),
+  }), []);
+  const katexProjection = useMemo(() => createKatexProjectionPlugin(), []);
   const handleLinkContextMenuResult = useCallback(
     (result: MarkdownLinkContextMenuResult) => {
       setCopyFeedback(
@@ -204,13 +210,13 @@ function MessageMarkdownPreview({
   const rehypePlugins = useMemo<PluggableList>(
     () => [
       ...(isFullRender
-        ? [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)]
+        ? [katexProjection, createFootnoteLabelIdPlugin(footnoteLabelId)]
         : []),
       ...(glossaryAnnotations.rehypePlugin
         ? [glossaryAnnotations.rehypePlugin]
         : []),
     ],
-    [footnoteLabelId, glossaryAnnotations.rehypePlugin, isFullRender],
+    [footnoteLabelId, glossaryAnnotations.rehypePlugin, isFullRender, katexProjection],
   );
   const remarkPlugins = useMemo<PluggableList>(
     () =>
@@ -219,14 +225,16 @@ function MessageMarkdownPreview({
             remarkFrontmatter,
             remarkGfm,
             [remarkMath, { singleDollarTextMath: false }],
+            parseProjections.full,
             sharedRemarkHtmlLineBreaks,
           ]
         : [
             remarkFrontmatter,
             [remarkMath, { singleDollarTextMath: false }],
+            parseProjections.light,
             sharedRemarkHtmlLineBreaks,
           ],
-    [isFullRender],
+    [isFullRender, parseProjections],
   );
   const markdownContent = useMemo(() => (
     <ReactMarkdown

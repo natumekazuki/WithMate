@@ -209,6 +209,14 @@ export const MermaidDiagram = memo(function MermaidDiagram({
 export type MarkdownPreComponentProps = ComponentPropsWithoutRef<"pre"> & {
   node?: unknown;
 };
+function MermaidCodeBlock({ source, enabled, fallback }: { source: string; enabled: boolean; fallback: ReactNode }) {
+  const [promotedSource, setPromotedSource] = useState<string | null>(null);
+  const showDiagram = enabled || promotedSource === source;
+  useEffect(() => {
+    setPromotedSource(enabled ? source : (current) => current === source ? current : null);
+  }, [enabled, source]);
+  return showDiagram ? <MermaidDiagram source={source} /> : fallback;
+}
 export function MarkdownPre({
   children,
   node,
@@ -219,12 +227,6 @@ export function MarkdownPre({
   );
   const isFenced = isFencedCodeBlock(node as HastNode | undefined, markdown);
   const child = Children.toArray(children)[0];
-  if (
-    enableMermaid &&
-    isValidElement<{ className?: string; children?: ReactNode }>(child) &&
-    resolveCodeLanguage(child.props.className) === "mermaid"
-  )
-    return <MermaidDiagram source={extractTextContent(child.props.children)} />;
   const content = (
     <pre
       {...props}
@@ -233,7 +235,7 @@ export function MarkdownPre({
       {children}
     </pre>
   );
-  return isFenced && onCodeBlockCopyResult ? (
+  const codeBlock = isFenced && onCodeBlockCopyResult ? (
     <CodeBlockShell
       code={resolveCodeBlockText(children)}
       onCopyResult={onCodeBlockCopyResult}
@@ -243,4 +245,11 @@ export function MarkdownPre({
   ) : (
     content
   );
+  if (
+    isValidElement<{ className?: string; children?: ReactNode }>(child) &&
+    resolveCodeLanguage(child.props.className) === "mermaid"
+  ) {
+    return <MermaidCodeBlock source={extractTextContent(child.props.children)} enabled={enableMermaid} fallback={codeBlock} />;
+  }
+  return codeBlock;
 }
