@@ -19,9 +19,9 @@ export function useLatestCommandHistory(input: {
     : `${input.scope}:${turn.sessionId}:${turn.id}:${turn.assistantMessageSeq}:${turn.updatedAt ?? turn.phase}:${latest.revision}`;
   const [state, setState] = useState<{ key: string; artifact: MessageArtifact | null; error: string | null } | null>(null);
   useEffect(() => {
+    setState(null);
     if (!input.enabled || !input.api || !key || !turn || turn.assistantMessageSeq === undefined) return;
     let active = true;
-    setState(null);
     void input.api.getSessionMessageArtifact(turn.sessionId, turn.assistantMessageSeq).then((artifact) => {
       if (active) setState({ key, artifact, error: null });
     }).catch((error: unknown) => {
