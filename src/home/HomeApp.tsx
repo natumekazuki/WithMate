@@ -9,6 +9,7 @@ import {
   projectHomeSessionSummary,
   type HomeSessionSummary,
   type SessionCharacterUsage,
+  type SessionSummaryInvalidation,
 } from "../../src-shared/session/session-state.js";
 import {
   startSessionSummaryInvalidationSubscription,
@@ -70,6 +71,11 @@ import {
   buildHomeSessionQueryKey,
   HomeSessionQueryGeneration,
 } from "./home-session-query-generation.js";
+import {
+  createHomeSessionSummaryRefresher,
+  type HomeSessionSummaryRefresher,
+  type HomeSessionSummaryRefreshRequest,
+} from "./home-session-summary-refresh.js";
 import { buildHomeRightPaneProps } from "./home-right-pane-props.js";
 import { buildHomeWindowContentSlots } from "./HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home-window-mode.js";
@@ -136,7 +142,7 @@ type HomeSessionSummariesState = {
   characterUsage: SessionCharacterUsage[];
 };
 
-type HomeSessionSummaryRefreshMode = "replace" | "preserve";
+type HomeSessionSummaryRefreshMode = HomeSessionSummaryRefreshRequest["mode"];
 
 function createEmptyHomeSessionSummariesState(): HomeSessionSummariesState {
   return {
@@ -270,8 +276,7 @@ export default function HomeApp() {
   const workspaceValidationControllerRef = useRef<HomeLaunchWorkspaceValidationController | null>(null);
   const sessionQueryKey = buildHomeSessionQueryKey(sessionSearchText, openSessionWindowIds);
   const sessionQueryGenerationRef = useRef<HomeSessionQueryGeneration | null>(null);
-  const openSummaryQueryGenerationRef = useRef<HomeSessionQueryGeneration | null>(null);
-  const characterUsageGenerationRef = useRef(0);
+  const sessionSummaryRefresherRef = useRef<HomeSessionSummaryRefresher | null>(null);
   const pageRequestsRef = useRef(new Map<"recent" | "pinned", object>());
   const openSummaryQueryKey = JSON.stringify(openSessionWindowIds);
   const previousOpenSummaryQueryKeyRef = useRef(openSummaryQueryKey);
@@ -279,10 +284,9 @@ export default function HomeApp() {
   const sessionRefreshModeRef = useRef<HomeSessionSummaryRefreshMode>("replace");
   if (sessionQueryGenerationRef.current === null) {
     sessionQueryGenerationRef.current = new HomeSessionQueryGeneration(sessionQueryKey);
-    openSummaryQueryGenerationRef.current = new HomeSessionQueryGeneration(openSummaryQueryKey);
   }
   const refreshSessionSummariesRef = useRef<
-    (mode?: HomeSessionSummaryRefreshMode) => Promise<void>
+    (mode?: HomeSessionSummaryRefreshMode, invalidation?: SessionSummaryInvalidation) => Promise<void>
   >(() => Promise.resolve());
   if (workspaceValidationControllerRef.current === null) {
     workspaceValidationControllerRef.current = createHomeLaunchWorkspaceValidationController({
@@ -303,17 +307,11 @@ export default function HomeApp() {
   }
 
   useEffect(() => () => workspaceValidationControllerRef.current?.cancel(), []);
-  useEffect(() => () => {
-    sessionQueryGenerationRef.current!.beginRequest();
-    openSummaryQueryGenerationRef.current!.beginRequest();
-    characterUsageGenerationRef.current += 1;
-  }, []);
-
   useLayoutEffect(() => {
     const searchChanged = previousSessionSearchTextRef.current !== sessionSearchText;
     const openIdsChanged = previousOpenSummaryQueryKeyRef.current !== openSummaryQueryKey;
     sessionQueryGenerationRef.current!.syncQueryKey(sessionQueryKey);
-    openSummaryQueryGenerationRef.current!.syncQueryKey(openSummaryQueryKey);
+    if (searchChanged || openIdsChanged) sessionSummaryRefresherRef.current?.invalidate();
     sessionRefreshModeRef.current = searchChanged ? "replace" : "preserve";
     previousSessionSearchTextRef.current = sessionSearchText;
     previousOpenSummaryQueryKeyRef.current = openSummaryQueryKey;
@@ -360,26 +358,27 @@ export default function HomeApp() {
   });
 
   const refreshBoundedSessionSummaries = async (
-    mode: HomeSessionSummaryRefreshMode = "preserve",
+    { mode, invalidation }: HomeSessionSummaryRefreshRequest,
+    isCurrent: () => boolean,
   ): Promise<void> => {
     const api = getWithMateApi();
     if (!api) {
       return;
     }
 
-    const requestToken = sessionQueryGenerationRef.current!.beginRequest();
-    const openRequestToken = openSummaryQueryGenerationRef.current!.beginRequest();
-    const usageGeneration = ++characterUsageGenerationRef.current;
-    pageRequestsRef.current.clear();
     const searchText = sessionSearchText;
-    const currentOpenSessionIds = openSessionWindowIds;
+    const refreshAllOpen = invalidation.scope === "all" || sessionSummariesState.openStatus !== "loaded";
+    const currentOpenSessionIds = refreshAllOpen
+      ? openSessionWindowIds
+      : openSessionWindowIds.filter((id) => invalidation.sessionIds.includes(id));
+    const refreshOpen = refreshAllOpen || currentOpenSessionIds.length > 0;
     setSessionSummariesState((current) => ({
       ...(mode === "replace"
         ? applyHomeSessionSummaryPages(current, { recent: [], pinned: [], open: current.openSummaries })
         : current),
       recentStatus: "loading",
       pinnedStatus: "loading",
-      openStatus: "loading",
+      ...(refreshOpen ? { openStatus: "loading" as const } : {}),
       characterUsageStatus: "loading",
       loadingRecentPage: false,
       loadingPinnedPage: false,
@@ -391,8 +390,8 @@ export default function HomeApp() {
       const pageErrorKey = scope === "recent" ? "recentPageError" : "pinnedPageError";
       const loadedPages = scope === "recent" ? sessionSummariesState.recentPages : sessionSummariesState.pinnedPages;
       try {
-        const pages = await fetchHomeSessionSummaryPages(api, scope, searchText, mode === "replace" ? 1 : loadedPages.length);
-        if (!sessionQueryGenerationRef.current!.isCurrent(requestToken)) return;
+        const pages = await fetchHomeSessionSummaryPages(api, scope, searchText, mode === "replace" ? 1 : loadedPages.length, isCurrent);
+        if (!isCurrent()) return;
         setSessionSummariesState((current) => ({
           ...applyHomeSessionSummaryPages(current, {
             recent: scope === "recent" ? pages : current.recentPages,
@@ -404,7 +403,7 @@ export default function HomeApp() {
           [pageErrorKey]: "",
         }));
       } catch (error) {
-        if (!sessionQueryGenerationRef.current!.isCurrent(requestToken)) return;
+        if (!isCurrent()) return;
         setSessionSummariesState((current) => ({
           ...current,
           [statusKey]: "error",
@@ -413,21 +412,26 @@ export default function HomeApp() {
       }
     };
     const refreshOpenSummaries = async () => {
+      if (!refreshOpen) return;
       try {
-        const open = await listOpenSessionSummaryEntries(api, currentOpenSessionIds);
-        if (!openSummaryQueryGenerationRef.current!.isCurrent(openRequestToken)) return;
+        const open = await listOpenSessionSummaryEntries(api, currentOpenSessionIds, isCurrent);
+        if (!isCurrent()) return;
         if (currentOpenSessionIds.some((id) => !open.some((summary) => summary.id === id))) {
           throw new Error("Could not identify all open session characters. Retry loading sessions.");
         }
         setSessionSummariesState((current) => ({
           ...applyHomeSessionSummaryPages(current, {
-            recent: current.recentPages, pinned: current.pinnedPages, open,
+            recent: current.recentPages, pinned: current.pinnedPages,
+            open: refreshAllOpen ? open : [
+              ...current.openSummaries.filter((summary) => !currentOpenSessionIds.includes(summary.id)),
+              ...open,
+            ],
           }),
           openStatus: "loaded",
           openError: "",
         }));
       } catch (error) {
-        if (!openSummaryQueryGenerationRef.current!.isCurrent(openRequestToken)) return;
+        if (!isCurrent()) return;
         setSessionSummariesState((current) => ({
           ...current,
           openStatus: "error",
@@ -438,16 +442,32 @@ export default function HomeApp() {
     const refreshCharacterUsage = async () => {
       try {
         const characterUsage = await api.listSessionCharacterUsage();
-        if (characterUsageGenerationRef.current !== usageGeneration) return;
+        if (!isCurrent()) return;
         setSessionSummariesState((current) => ({ ...current, characterUsageStatus: "loaded", characterUsage }));
       } catch {
-        if (characterUsageGenerationRef.current !== usageGeneration) return;
+        if (!isCurrent()) return;
         setSessionSummariesState((current) => ({ ...current, characterUsageStatus: "error" }));
       }
     };
     await Promise.all([refreshPages("recent"), refreshPages("pinned"), refreshOpenSummaries(), refreshCharacterUsage()]);
   };
-  refreshSessionSummariesRef.current = refreshBoundedSessionSummaries;
+  const runSessionSummaryRefreshRef = useRef(refreshBoundedSessionSummaries);
+  runSessionSummaryRefreshRef.current = refreshBoundedSessionSummaries;
+  useEffect(() => {
+    const refresher = createHomeSessionSummaryRefresher((request, isCurrent) => (
+      runSessionSummaryRefreshRef.current(request, isCurrent)
+    ));
+    sessionSummaryRefresherRef.current = refresher;
+    return () => {
+      refresher.dispose();
+      sessionQueryGenerationRef.current!.beginRequest();
+      sessionSummaryRefresherRef.current = null;
+    };
+  }, []);
+  refreshSessionSummariesRef.current = (mode = "preserve", invalidation = { scope: "all" }) => {
+    sessionQueryGenerationRef.current!.beginRequest();
+    return sessionSummaryRefresherRef.current?.refresh({ mode, invalidation }) ?? Promise.resolve();
+  };
 
   const loadMoreSessionSummaryPage = async (scope: "recent" | "pinned", retry = false): Promise<void> => {
     const api = getWithMateApi();
@@ -687,8 +707,8 @@ export default function HomeApp() {
 
     return startSessionSummaryInvalidationSubscription({
       api: getWithMateApi(),
-      onInvalidation: () => {
-        void refreshSessionSummariesRef.current("preserve");
+      onInvalidation: (payload) => {
+        void refreshSessionSummariesRef.current("preserve", payload);
       },
     });
   }, [isMemoryReviewWindowMode, isSettingsWindowMode]);
@@ -698,15 +718,8 @@ export default function HomeApp() {
       return;
     }
 
-    let refreshInFlight = false;
     const refreshOnFocus = () => {
-      if (refreshInFlight) {
-        return;
-      }
-      refreshInFlight = true;
-      void refreshSessionSummariesRef.current("preserve").finally(() => {
-        refreshInFlight = false;
-      });
+      void refreshSessionSummariesRef.current("preserve");
     };
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);

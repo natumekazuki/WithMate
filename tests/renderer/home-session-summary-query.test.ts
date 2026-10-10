@@ -144,3 +144,42 @@ test("Homeはpage順序を保持したまま成功open summaryの内容をMonito
   assert.deepEqual(projection.nonRunningMonitorEntries, []);
   assert.deepEqual({ pinned: pages.pinned, recent: pages.recent }, retainedPages);
 });
+
+// @test-value v2
+// kind = "invariant"
+// claim = "generation失効後はRecent/Pinnedの次pageとopenの次100件chunkを発行せず、open chunkの同時取得は1件に制限する"
+// oracle = { type = "contract", ref = "docs/features/home-session-pagination.md queryの分離" }
+// fault = "失効pageを最後まで読み続けるか、open chunkを一括並列発行する"
+// observable = "listSessionSummaryPageのscope・cursor・ID列と同時発行数"
+// observation_boundary = "public-boundary"
+// scope = "Home summary queryの失効page停止とopen chunk admission"
+// lifecycle = "permanent"
+// impact = "古い検索・open集合のreadがbackendへ滞留し、最新一覧取得を遅らせる"
+// distinction = "generation helperの結果適用判定では検出できない次queryの発行境界を直接観測する"
+// @end-test-value
+test("失効generationは次pageとopen chunkを発行しない", async () => {
+  for (const scope of ["recent", "pinned", "open"] as const) {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let current = true;
+    const requests: SessionSummaryPageRequest[] = [];
+    const api = {
+      listSessionSummaryPage: async (request?: SessionSummaryPageRequest | null) => {
+        requests.push(request ?? {});
+        await gate;
+        return { entries: [], nextCursor: "next", hasMore: true };
+      },
+    };
+    const result = scope === "open"
+      ? listOpenSessionSummaryEntries(api, Array.from({ length: 201 }, (_, index) => String(index)), () => current)
+      : fetchHomeSessionSummaryPages(api, scope, "old-search", 3, () => current);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.scope, scope);
+    if (scope === "open") assert.equal(requests[0]?.sessionIds?.length, 100);
+    else assert.equal(requests[0]?.searchText, "old-search");
+    current = false;
+    release();
+    await result;
+    assert.equal(requests.length, 1);
+  }
+});
