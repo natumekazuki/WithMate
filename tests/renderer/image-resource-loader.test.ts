@@ -28,9 +28,9 @@ function chunk(request: SessionImageChunkRequest) {
 
 // @test-value v2
 // kind = "contract"
-// claim = "共通画像loaderはchatとroot/absolute previewのcontextとroot外targetをMainへ送り、1MiB以下のchunkを連結して画像を返す"
+// claim = "共通画像loaderはchatとroot/absolute previewのcontextとroot外targetをMainへ送り、1MiB以下のchunkのbytesをsnapshotした画像を返す"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "rendererがroot外targetを拒否する、contextを落とす、1MiBを超すrequestを送る、またはchunk連結で画像bytesを失う"
+// fault = "rendererがroot外targetを拒否する、contextを落とす、1MiBを超すrequestを送る、chunkの順序/bytesを失う、または返却後のbuffer変更を画像へ漏らす"
 // observable = "画像APIへ渡るrequestと返されたblobのMIME/bytes"
 // observation_boundary = "public-boundary"
 // scope = "createMarkdownImageLoader local image resource"
@@ -48,9 +48,15 @@ test("共通画像loaderはcontextを保持してroot外画像を1MiB chunkで�
     for (const target of ["../../outside/image.png", "C:/outside/image.png", "file:///C:/outside/image.png"]) {
       const inspected: SessionImageResourceRequest[] = [];
       const reads: SessionImageChunkRequest[] = [];
+      const buffers: ArrayBuffer[] = [];
       const api: MarkdownImageApi = {
         async inspectSessionImage(request) { inspected.push(request); return descriptor; },
-        async readSessionImageChunk(request) { reads.push(request); return chunk(request); },
+        async readSessionImageChunk(request) {
+          reads.push(request);
+          const result = chunk(request);
+          buffers.push(result.data);
+          return result;
+        },
       };
       const loader = createMarkdownImageLoader(api, context);
       const url = await loader.resolve(target);
@@ -61,6 +67,7 @@ test("共通画像loaderはcontextを保持してroot外画像を1MiB chunkで�
           { ...context, target, offset: 0, length: MIB, expectedRevision: descriptor.revision },
           { ...context, target, offset: MIB, length: 3, expectedRevision: descriptor.revision },
         ]);
+        for (const buffer of buffers) new Uint8Array(buffer).fill(9);
         const response = await fetch(url);
         assert.equal(response.headers.get("content-type"), "image/png");
         const bytes = new Uint8Array(await response.arrayBuffer());
@@ -69,6 +76,56 @@ test("共通画像loaderはcontextを保持してroot外画像を1MiB chunkで�
         assert.deepEqual([...bytes.subarray(MIB)], [2, 2, 2]);
       } finally { URL.revokeObjectURL(url); loader.invalidate(); }
     }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "共通画像loaderは認可失敗と不整合chunkをrejectし、修正後の再取得では完全な現行画像を返す"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
+// fault = "拒否されたpathや不完全/過剰なbytesを画像として返す、または失敗した取得が再試行を妨げる"
+// observable = "resolverのreject、返却Blobのbytes、再試行時のinspect/read request"
+// observation_boundary = "public-boundary"
+// scope = "createMarkdownImageLoader failure and retry"
+// lifecycle = "permanent"
+// impact = "認可境界と画像revision整合性を維持し、失敗後のreloadで画像を回復できる"
+// distinction = "Mainの実path認可testと異なりrendererがAPI失敗を伝播し、offset/総bytes/終了通知の実行時整合性と再試行を確認する"
+// @end-test-value
+test("共通画像loaderは認可とchunk整合性の失敗後も再取得できる", async () => {
+  for (const fault of ["denied", "offset", "total", "short", "overflow", "empty"] as const) {
+    let failed = true;
+    let inspections = 0;
+    const api: MarkdownImageApi = {
+      async inspectSessionImage() {
+        inspections += 1;
+        if (failed && fault === "denied") throw new Error("Image path denied.");
+        return descriptor;
+      },
+      async readSessionImageChunk(request) {
+        const result = chunk(request);
+        if (!failed) return result;
+        if (fault === "offset") return { ...result, offset: 1 };
+        if (fault === "total") return { ...result, totalBytes: 1 };
+        if (fault === "short") return { ...result, done: true };
+        if (fault === "overflow") {
+          const data = new ArrayBuffer(descriptor.byteLength + 1);
+          return { ...result, data, nextOffset: data.byteLength };
+        }
+        return { ...result, data: new ArrayBuffer(0), nextOffset: request.offset };
+      },
+    };
+    const loader = createMarkdownImageLoader(api, { sessionId: "session-1" });
+    await assert.rejects(loader.resolve("image.png"), fault === "denied" ? /denied/ : /changed while/);
+    failed = false;
+    const url = await loader.resolve("image.png");
+    assert.ok(url);
+    try {
+      const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+      assert.equal(bytes.byteLength, descriptor.byteLength);
+      assert.equal(bytes[0], 1);
+      assert.equal(bytes.at(-1), 2);
+      assert.equal(inspections, 2);
+    } finally { URL.revokeObjectURL(url); loader.invalidate(); }
   }
 });
 

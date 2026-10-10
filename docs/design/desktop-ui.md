@@ -375,6 +375,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - MemoryGeneration / 独り言の right pane 自動切り替えは行わない
 - right pane の正常empty / idle bodyはblankにし、pane shell・tab・必要な操作・accessible statusだけを残す。実エラー、validation、安全・復旧説明は維持する
 - `Latest Command` には raw command、status、source、rough risk badge、必要時だけ開く `details` を出す
+- 同owner・同turnの保存済みcommandと詳細は、通知・Session更新・Retryによる再取得中と失敗時にも保持する。loading／errorと`Retry`はcommandの有無に依存せず同じpaneへ表示する。新turn、会話やincarnationの切替では旧commandを表示しない
 - 実行中に確定した live step があれば、`Latest Command` の下に `Confirmed Details` として直近数件だけ補助表示してよい
   - 直近の in-progress command とは分ける
   - full timeline には戻さず、summary + optional `details` に留める
