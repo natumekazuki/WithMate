@@ -26,7 +26,7 @@ export type ProviderAgentRuntimeBindingCapability = {
 export const PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER = "[WITHMATE_BINDING_REFERENCE_REDACTED]";
 
 export type ProviderAgentRuntimeBindingRedactor = {
-  sanitizeText: (value: string) => string;
+  sanitizeText: (value: string, previewLimit?: number) => string;
   sanitize: <T>(value: T) => T;
 };
 
@@ -70,10 +70,33 @@ export function createProviderAgentRuntimeBindingRedactor(
     ...(projection?.transport === "env" ? [projection.bindingReference, projection.turnCapability ?? ""] : []),
     ...additionalSecrets,
   ].filter((value) => value.length > 0);
-  const sanitizeText = (value: string): string => secrets.reduce(
-    (current, secret) => current.split(secret).join(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER),
-    value,
-  );
+  const maxSecretLength = Math.max(0, ...secrets.map((secret) => secret.length));
+  const secretPattern = secrets.length > 0
+    ? new RegExp([...secrets].sort((left, right) => right.length - left.length)
+      .map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g")
+    : null;
+  const sanitizeText = (value: string, previewLimit?: number): string => {
+    if (previewLimit === undefined) {
+      return secrets.reduce(
+        (current, secret) => current.split(secret).join(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER),
+        value,
+      );
+    }
+    const limit = Math.max(0, previewLimit);
+    if (!secretPattern || limit === 0) return value.slice(0, limit);
+    // Look beyond the raw preview boundary only far enough to recognize a
+    // complete secret whose prefix would otherwise survive truncation.
+    const bounded = value.slice(0, limit + maxSecretLength - 1);
+    const parts: string[] = [];
+    let cursor = 0;
+    for (const match of bounded.matchAll(secretPattern)) {
+      if (match.index >= limit) break;
+      parts.push(bounded.slice(cursor, match.index), PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
+      cursor = match.index + match[0].length;
+    }
+    parts.push(bounded.slice(cursor, Math.max(cursor, limit)));
+    return parts.join("");
+  };
   const sanitize = <T>(value: T): T => {
     if (secrets.length === 0) {
       return value;

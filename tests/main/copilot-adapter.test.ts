@@ -2151,6 +2151,74 @@ it("Copilot raw上限後もmetadataと正常・cancel partialを保持する", a
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "binding有効なCopilotの巨大tool rawは予算内の要素だけを読んで秘匿化し、aggregate上限後も全文走査しない"
+// oracle = { type = "contract", ref = "docs/design/audit-log.md#表示とデータ保護" }
+// fault = "Copilot受信時にbudget cloneより先にrawを再帰redactionし巨大配列全体を読む"
+// observable = "SDK event受信からrunSessionTurn結果までのcontent要素read数、raw JSON長・秘匿marker・omitted count・assistant本文"
+// observation_boundary = "public-boundary"
+// scope = "copilot bounded raw receive path"
+// lifecycle = "permanent"
+// impact = "巨大tool結果の診断コピーがMainをpayload全量に比例して占有する"
+// distinction = "既存aggregate上限testでは最終保持量しか分からず、全量前処理を検出しない。getter read数をoracleとし実時間やSDK接続へ依存しない"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("Copilotは巨大tool rawの保持範囲だけを読みbindingを秘匿化する", async () => {
+  const input = createRunSessionInput({ customAgentName: "" });
+  const secret = input.agentRuntimeBinding!.bindingReference;
+  const listeners = new Set<(event: SessionEvent) => void>();
+  const counts: number[] = [];
+  const session = {
+    sessionId: "bounded-raw-receive",
+    on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
+    async send() {
+      for (let eventIndex = 0; eventIndex < 8; eventIndex += 1) {
+        counts.push(0);
+        const content = new Proxy(new Array<null>(100_000).fill(null), {
+          get(target, key, receiver) {
+            if (typeof key === "string" && /^\d+$/.test(key)) {
+              counts[eventIndex] += 1;
+              assert.ok(counts[eventIndex] < 512, "raw receive must not read the whole tool result");
+              return `${secret}:${"x".repeat(1024)}`;
+            }
+            return Reflect.get(target, key, receiver);
+          },
+        });
+        const event = { type: "tool.execution_complete", timestamp: "2026-10-07T00:00:00Z",
+          data: { toolCallId: `unknown-${eventIndex}`, success: true, result: { content } } } as unknown as SessionEvent;
+        for (const listener of listeners) listener(event);
+      }
+      for (const event of [
+        { type: "assistant.message", data: { messageId: "last", content: "final answer" } },
+        { type: "session.idle", data: {} },
+      ]) {
+        for (const listener of listeners) listener(event as SessionEvent);
+      }
+      return "sent";
+    },
+  };
+  const adapter = new CopilotAdapter() as unknown as {
+    getSession(): Promise<{ session: CopilotSession; selection: ResolvedModelSelection; client: CopilotClient; clientKey: string }>;
+    runSessionTurn(value: RunSessionTurnInput): Promise<RunSessionTurnResult>;
+  };
+  adapter.getSession = async () => ({ session: session as unknown as CopilotSession, client: {} as CopilotClient,
+    clientKey: "fixture", selection: { requestedModel: "gpt-4.1", resolvedModel: "gpt-4.1",
+      requestedReasoningEffort: "high", resolvedReasoningEffort: "high" } });
+  const result = await adapter.runSessionTurn(input);
+  assert.equal(counts.length, 8);
+  assert.ok(counts.every((count) => count > 0 && count < 512));
+  assert.equal(result.assistantText, "final answer");
+  assert.ok(result.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
+  assert.ok(!result.rawItemsJson.includes(secret));
+  assert.ok(result.rawItemsJson.includes(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+  const raw = JSON.parse(result.rawItemsJson);
+  assert.equal(raw[0].type, "tool.execution_complete");
+  assert.ok(raw[0].data.content.length < 512);
+  assert.equal(raw.at(-1).type, "withmate.raw_items_truncated");
+  assert.equal(raw.at(-1).data.omittedItems, 10 - raw.length + 1);
+});
+
 it("Session完了後のquota telemetry停止はturn resultを待たせない", async () => {
   const input = createRunSessionInput();
   const prompt = EMPTY_PROMPT;

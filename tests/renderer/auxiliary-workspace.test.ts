@@ -124,8 +124,9 @@ test("通知由来のAuxiliary選択は送信対象を変更しない", async ()
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => { resolve = next; });
-  return { promise, resolve };
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 // @test-value v2
@@ -1328,6 +1329,97 @@ test("非選択live statusは有限に集約し、terminal本文は再選択時�
     await act(async () => { view.current.selectSession(hidden.id); });
     assert.equal(detailReads, loadedDetails + 1);
     assert.equal(view.current.selectedSession?.messages[0]?.text, "completed response");
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "軽量status取得の一時失敗後は同じrunの次live通知で再取得し、成功後の本文deltaは追加取得しない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+// fault = "失敗したstatus取得のsemantic keyを保持し、継続中runの後続通知で一覧状態が回復しない"
+// observable = "status API呼出数とhookのsummaries.runState"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-status-retry"
+// lifecycle = "permanent"
+// impact = "一時IPC障害後も非選択会話のprocessing表示を実行状態へ回復させる"
+// distinction = "通常の成功時集約testや型検査では確認できないreject後の回復を実hookで検証する"
+// @end-test-value
+test("status取得失敗後は次liveで回復し、成功後の本文deltaは取得を増やさない", async (t) => {
+  t.mock.method(console, "error", () => {});
+  const hidden = session("hidden", "2026-01-01");
+  const selected = session("selected", "2026-01-02");
+  const running = { id: hidden.id, parentSessionId: hidden.parentSessionId, createdAt: hidden.createdAt, runState: "running" as const };
+  const firstStatus = deferred<typeof running>();
+  let statusReads = 0;
+  let listener: ((id: string, state: object | null) => void) | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => [hidden, selected],
+    getAuxiliarySession: async () => selected,
+    getAuxiliarySessionStatus: async () => { statusReads += 1; return statusReads === 1 ? firstStatus.promise : running; },
+    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+  });
+  try {
+    await view.render();
+    assert.notEqual(view.current.selectedId, hidden.id);
+    await act(async () => { listener?.(hidden.id, { runState: "running", turnId: "turn-1", assistantText: "first" }); });
+    await act(async () => { firstStatus.reject(new Error("transient status failure")); });
+    assert.equal(statusReads, 1);
+    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "idle");
+    await act(async () => { listener?.(hidden.id, { runState: "running", turnId: "turn-1", assistantText: "next" }); });
+    assert.equal(statusReads, 2);
+    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "running");
+    await act(async () => { listener?.(hidden.id, { runState: "running", turnId: "turn-1", assistantText: "more" }); });
+    assert.equal(statusReads, 2);
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "古いstatus取得が失敗しても、その間に更新された同じsemantic stateの取得と本文delta抑制を壊さない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+// fault = "AからBを経てAへ戻った後、最初のAの失敗が最新Aを解除して本文deltaの余分なstatus取得を誘発する"
+// observable = "status API呼出数とhookのsummaries.runState"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-status-failure-race"
+// lifecycle = "permanent"
+// impact = "取消・入力受付状態の変化とIPC応答順逆転が重なっても軽量status取得を有限に集約する"
+// distinction = "単純な失敗再試行testでは検出できない同じkeyへ戻るABA競合をdeferred応答で検証する"
+// @end-test-value
+test("古いstatus失敗はA/B/A後の最新状態のdelta抑制を解除しない", async (t) => {
+  t.mock.method(console, "error", () => {});
+  const initial = session("a", "2026-01-01");
+  const running = { id: initial.id, parentSessionId: initial.parentSessionId, createdAt: initial.createdAt, runState: "running" as const };
+  const firstStatus = deferred<typeof running>();
+  const latestStatus = deferred<typeof running>();
+  let statusReads = 0;
+  let listener: ((id: string, state: object | null) => void) | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => [initial],
+    getAuxiliarySession: async () => initial,
+    getAuxiliarySessionStatus: async () => { statusReads += 1; return statusReads === 1 ? firstStatus.promise : latestStatus.promise; },
+    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+  });
+  const live = { runState: "running", turnId: "turn-1", inputAvailable: true };
+  try {
+    await view.render();
+    await act(async () => {
+      listener?.(initial.id, live);
+      listener?.(initial.id, { ...live, inputAvailable: false });
+      listener?.(initial.id, live);
+    });
+    assert.equal(statusReads, 1);
+    await act(async () => { firstStatus.reject(new Error("older status failure")); });
+    assert.equal(statusReads, 2);
+    await act(async () => { listener?.(initial.id, { ...live, assistantText: "latest delta" }); });
+    await act(async () => { latestStatus.resolve(running); });
+    assert.equal(statusReads, 2);
+    assert.equal(view.current.summaries[0]?.runState, "running");
+    await act(async () => { listener?.(initial.id, { ...live, assistantText: "another delta" }); });
+    assert.equal(statusReads, 2);
   } finally {
     await view.unmount();
   }

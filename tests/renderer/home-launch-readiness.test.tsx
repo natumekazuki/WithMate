@@ -103,7 +103,7 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
     listOpenAuxiliarySessionSummaries: async () => [],
-    subscribeLiveSessionRun: () => () => {},
+    subscribeLiveSessionRunStatus: () => () => {},
     createSession: () => { createCount += 1; return creation.promise; },
   };
   dom.window.withmate = api as WithMateWindowApi;

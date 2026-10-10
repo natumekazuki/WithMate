@@ -17,7 +17,7 @@ import {
 import {
   type AuxiliarySessionSummary,
 } from "../../src-shared/auxiliary/auxiliary-session-state.js";
-import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { LiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
 import { type ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { startModelCatalogSubscription } from "../settings/model-catalog-subscription.js";
 import type { OpenSessionWindowIdsState } from "../app/open-session-window-subscription.js";
@@ -824,9 +824,9 @@ export default function HomeApp() {
       },
     });
 
-    const monitorRunStates = new Map<string, Pick<LiveSessionRunState, "runState" | "cancellationState">>();
-    const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRun((sessionId, state) => {
-      const nextState = { runState: state?.runState, cancellationState: state?.cancellationState };
+    const monitorRunStates = new Map<string, LiveSessionRunStatus>();
+    const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRunStatus((sessionId, status) => {
+      const nextState = { runState: status?.runState, cancellationState: status?.cancellationState };
       const previousState = monitorRunStates.get(sessionId);
       if (previousState
         && previousState.runState === nextState.runState

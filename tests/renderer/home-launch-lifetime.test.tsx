@@ -71,7 +71,7 @@ test("閉じた開始試行の完了を次のNew Sessionから分離する", asy
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
     listOpenAuxiliarySessionSummaries: async () => [],
-    subscribeLiveSessionRun: () => () => {},
+    subscribeLiveSessionRunStatus: () => () => {},
     createSession: (input) => {
       const response = deferred<Session>();
       requests.push({ input, response });

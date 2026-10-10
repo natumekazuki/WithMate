@@ -109,6 +109,11 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     ].filter((window): window is TWindow => !!window && !window.isDestroyed());
   }
 
+  listLiveSessionRunStatusWindows(): TWindow[] {
+    return [this.homeWindow, this.sessionMonitorWindow]
+      .filter((window): window is TWindow => !!window && !window.isDestroyed());
+  }
+
   getDiffPreview(token: string): DiffPreviewPayload | null {
     return this.diffPreviewStore.get(token) ?? null;
   }

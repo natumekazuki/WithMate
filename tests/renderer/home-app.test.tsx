@@ -113,7 +113,7 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
     listOpenAuxiliarySessionSummaries: async () => [],
-    subscribeLiveSessionRun: () => () => {},
+    subscribeLiveSessionRunStatus: () => () => {},
     createSession: async (input) => {
       requests.push(input);
       return buildNewSession({
@@ -415,7 +415,7 @@ test("Homeのmate status read中も既存Sessionを開ける", async () => {
     listOpenSessionWindowIds: async () => [],
     subscribeOpenSessionWindowIds: () => () => {},
     listOpenAuxiliarySessionSummaries: async () => [],
-    subscribeLiveSessionRun: () => () => {},
+    subscribeLiveSessionRunStatus: () => () => {},
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
     openSession: async (id) => { opened.push(id); },
@@ -490,7 +490,7 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       allowedAdditionalDirectories: [], threadId: "", displayAfterMessageIndex: null,
       createdAt: "2026-10-07T00:00:00.000Z", updatedAt: "2026-10-07T00:00:00.000Z", closedAt: "",
     };
-    const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0]>();
+    const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
     let summaryReads = 0;
     let auxiliaryReads = 0;
     const api: Partial<WithMateWindowApi> = {
@@ -514,7 +514,7 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
         auxiliaryReads += 1;
         return [auxiliary];
       },
-      subscribeLiveSessionRun: (listener) => {
+      subscribeLiveSessionRunStatus: (listener) => {
         liveListeners.add(listener);
         return () => { liveListeners.delete(listener); };
       },
@@ -532,7 +532,8 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
     });
     const emitLive = async (sessionId: string, state: LiveSessionRunState | null) => {
       await act(async () => {
-        for (const listener of liveListeners) listener(sessionId, state);
+        const status = state === null ? null : { runState: state.runState, cancellationState: state.cancellationState };
+        for (const listener of liveListeners) listener(sessionId, status);
       });
     };
     const assertMonitor = (section: "running" | "inactive", mainLabel: string, auxiliaryLabel: string) => {

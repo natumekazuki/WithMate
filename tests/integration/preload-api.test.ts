@@ -782,6 +782,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeAuxiliarySessionSelection",
     "subscribeAuxiliarySessionNavigation",
     "subscribeLiveSessionRun",
+    "subscribeLiveSessionRunStatus",
     "subscribeModelCatalog",
     "subscribeOpenSessionWindowIds",
     "subscribeSessionWindowRestoreSet",
@@ -901,6 +902,41 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   assert.equal(listeners.has("withmate:app-boot-status"), false);
   assert.equal(listeners.has("withmate:sessions-changed"), false);
   assert.equal(listeners.has("withmate:prompt-templates-changed"), false);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "公開status購読はMain/Auxiliaryのsession IDと取消終了待ち・終端nullをcallbackへ渡し、解除時に同じIPC listenerを外す"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts subscribeLiveSessionRunStatus / docs/design/desktop-ui.md Home Window" }
+// fault = "statusの取消終了待ちやnullを落とす、session IDを取り違える、解除時に登録listenerを外さない"
+// observable = "公開callbackのsession IDとstatus、解除後のIPC listener登録と解除されたlistener"
+// observation_boundary = "public-boundary"
+// scope = "createWithMateWindowApiのcompact live status購読と解除"
+// lifecycle = "permanent"
+// impact = "Home/Monitorの実停止待ち表示が更新されず、再openで不要な通知受信が残る"
+// distinction = "型検査やfull live unwrapでは確認できないdistinct status channelの実登録、null伝播、同一listener解除を小さい同期testで確認する"
+// @end-test-value
+test("createWithMateWindowApi は軽量live statusと終端nullを渡し購読を解除する", () => {
+  const { ipcRenderer, listeners, removedListeners } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  const received: unknown[] = [];
+  const dispose = api.subscribeLiveSessionRunStatus((sessionId, status) => {
+    received.push({ sessionId, status });
+  });
+  const channel = "withmate:live-session-run-status";
+  const registeredListener = listeners.get(channel);
+  assert.ok(registeredListener);
+  registeredListener({}, { sessionId: "main", status: { runState: "running", cancellationState: "terminating" } });
+  registeredListener({}, { sessionId: "aux", status: { runState: "running", cancellationState: "requested" } });
+  registeredListener({}, { sessionId: "main", status: null });
+  assert.deepEqual(received, [
+    { sessionId: "main", status: { runState: "running", cancellationState: "terminating" } },
+    { sessionId: "aux", status: { runState: "running", cancellationState: "requested" } },
+    { sessionId: "main", status: null },
+  ]);
+  dispose();
+  assert.equal(listeners.has(channel), false);
+  assert.ok(removedListeners.some((entry) => entry.channel === channel && entry.listener === registeredListener));
 });
 
 // @test-value v2

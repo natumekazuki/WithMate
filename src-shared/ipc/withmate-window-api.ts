@@ -1,5 +1,6 @@
 import type { AuditLogEntry, AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogSummary, AuditLogOperationDetailFragment, AuditLogSummaryPageRequest, AuditLogSummaryPageResult, ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
 import type { AppSettings } from "../settings/provider-settings-state.js";
+import type { LiveSessionRunStatus } from "../session/live-session-run-status.js";
 import type { ConversationPage, ConversationPageRequest, ConversationSearchRequest, ConversationSearchMatch, ConversationNavigatorEntry } from "../session/conversation-page.js";
 import type { CreateTerminalRequest, CreateTerminalResult, TerminalEvent } from "../terminal/terminal-contract.js";
 import type { CharacterProfile } from "../character/character-state.js";
@@ -342,6 +343,7 @@ export type WithMateWindowSubscriptionApi = {
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;
+  subscribeLiveSessionRunStatus(listener: (sessionId: string, status: LiveSessionRunStatus | null) => void): () => void;
   subscribeAuxiliarySessionSelection(listener: (payload: AuxiliarySessionSelectionPayload) => void): () => void;
   subscribeProviderQuotaTelemetry(listener: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void): () => void;
   subscribeSessionContextTelemetry(listener: (sessionId: string, telemetry: SessionContextTelemetry | null) => void): () => void;

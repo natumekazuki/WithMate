@@ -73,10 +73,10 @@ function createDiffPreview(): DiffPreviewPayload {
 
 // @test-value v2
 // kind = "contract"
-// claim = "AuxWindowService は singleton window を再利用する"
+// claim = "singleton Windowを再利用し、live状態通知の宛先は生存するHome／Monitorに限定する"
 // oracle = { type = "contract", ref = "src-electron/auxiliary/aux-window-service.ts" }
-// fault = "singleton各windowの再利用・分類判定・close後のregistry解除を誤る"
-// observable = "home/settings/memory-reviewのwindow identity、load mode列、生成数、close後の判定"
+// fault = "singleton各windowの再利用・分類判定・close後のregistry解除またはlive状態宛先を誤る"
+// observable = "home/settings/memory-reviewのwindow identity、load mode列、生成数、close後の判定、live状態宛先集合"
 // observation_boundary = "public-boundary"
 // scope = "tests/main/aux-window-service.test.ts"
 // lifecycle = "permanent"
@@ -116,6 +116,10 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   assert.equal(service.isMemoryV6ReviewWindow(settings), false);
   assert.deepEqual(homeLoads, ["home", "settings", "memory-review"]);
   assert.equal(created.length, 3);
+  const monitor = await service.openSessionMonitorWindow();
+  assert.deepEqual(service.listLiveSessionRunStatusWindows(), [first, monitor]);
+  monitor.close();
+  assert.deepEqual(service.listLiveSessionRunStatusWindows(), [first]);
   memoryReview.close();
   assert.equal(service.isMemoryV6ReviewWindow(memoryReview), false);
   settings.close();

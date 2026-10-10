@@ -662,6 +662,7 @@ describe("SessionRuntimeService", () => {
     const rendererObservers = new Map<RuntimeWindow, (state: "responsive" | "unresponsive" | "gone") => void>();
     const broadcast = new WindowBroadcastService({
       getAllWindows: () => windows, getHomeWindows: () => [], getPrimaryHomeWindow: () => null, getSessionWindows: () => windows,
+      getLiveSessionRunStatusWindows: () => [], getLiveSessionRunWindow: () => bridge.getWindow(stored.id),
     });
     const adapter: ProviderCodingAdapter = {
       composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: createPartialResult().logicalPrompt, imagePaths: [], additionalDirectories: [] }),

@@ -1,5 +1,6 @@
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import { projectLiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
 import type { SessionSummaryInvalidation } from "../../src-shared/session/session-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
@@ -7,6 +8,7 @@ import type { PromptTemplate } from "../../src-shared/prompt-template.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
+  WITHMATE_LIVE_SESSION_RUN_STATUS_EVENT,
   WITHMATE_AUXILIARY_SESSION_SELECTION_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
@@ -34,6 +36,8 @@ type WindowBroadcastServiceOptions<TWindow extends WindowLike> = {
   getHomeWindows(): TWindow[];
   getPrimaryHomeWindow(): TWindow | null;
   getSessionWindows(): TWindow[];
+  getLiveSessionRunStatusWindows(): TWindow[];
+  getLiveSessionRunWindow(sessionId: string): TWindow | null;
   canSendToWindow?(window: TWindow): boolean;
   onSendFailed?(): void;
 };
@@ -82,7 +86,18 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
   }
 
   public broadcastLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void {
-    this.broadcast(WITHMATE_LIVE_SESSION_RUN_EVENT, { sessionId, state });
+    this.broadcastTo(
+      this.options.getLiveSessionRunStatusWindows(),
+      WITHMATE_LIVE_SESSION_RUN_STATUS_EVENT,
+      { sessionId, status: projectLiveSessionRunStatus(state) },
+    );
+    // Resolve from Main-owned execution identity, never from renderer selection.
+    try {
+      const window = this.options.getLiveSessionRunWindow(sessionId);
+      if (window) this.broadcastTo([window], WITHMATE_LIVE_SESSION_RUN_EVENT, { sessionId, state });
+    } catch {
+      try { this.options.onSendFailed?.(); } catch { /* Diagnostics cannot interrupt publication. */ }
+    }
   }
 
   public broadcastAuxiliarySessionSelection(parentSessionId: string, auxiliarySessionId: string): void {

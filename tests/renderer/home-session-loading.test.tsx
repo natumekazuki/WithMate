@@ -7,7 +7,7 @@ import type { Root } from "react-dom/client";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
-import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { LiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
 import {
   buildNewSession,
   type CreateSessionRequest,
@@ -76,7 +76,8 @@ type Harness = {
   setUsage: (handler: () => Promise<Array<{ characterId: string; sessionKind: "default" }>>) => void;
   setCreate: (handler: (input: CreateSessionRequest) => Promise<ReturnType<typeof buildNewSession>>) => void;
   setAuxiliaryQuery: (handler: () => Promise<AuxiliarySessionSummary[]>) => void;
-  emitLive: (sessionId: string, cancellationState?: LiveSessionRunState["cancellationState"]) => Promise<void>;
+  emitLive: (sessionId: string, cancellationState?: LiveSessionRunStatus["cancellationState"] | null) => Promise<void>;
+  liveSubscriptionCount: () => number;
   opened: Array<[string, string | undefined]>;
   focus: () => Promise<void>;
   settle: () => Promise<void>;
@@ -99,7 +100,7 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     request.scope === "open" ? [{ ...session("open"), cancellationState: initial?.mainCancellation }] : [],
   );
   let auxiliaryQuery = async () => initial?.auxiliaries ?? [];
-  const liveListeners = new Set<(sessionId: string, state: LiveSessionRunState | null) => void>();
+  const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
   const opened: Array<[string, string | undefined]> = [];
   let usage = async () => [{ characterId: "used", sessionKind: "default" as const }];
   let create = async (input: CreateSessionRequest) => buildNewSession({
@@ -139,7 +140,7 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
     listOpenAuxiliarySessionSummaries: () => auxiliaryQuery(),
-    subscribeLiveSessionRun: (listener) => {
+    subscribeLiveSessionRunStatus: (listener) => {
       liveListeners.add(listener);
       return () => { liveListeners.delete(listener); };
     },
@@ -200,23 +201,22 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     setAuxiliaryQuery: (handler) => { auxiliaryQuery = handler; },
     emitLive: async (sessionId, cancellationState) => {
       await act(async () => {
-        const state: LiveSessionRunState = {
-          sessionId, threadId: "", cancellationState, assistantText: "", steps: [],
-          backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
-        };
-        for (const listener of liveListeners) listener(sessionId, state);
+        const status: LiveSessionRunStatus | null = cancellationState === null
+          ? null : { runState: "running", cancellationState };
+        for (const listener of liveListeners) listener(sessionId, status);
       });
     },
+    liveSubscriptionCount: () => liveListeners.size,
     focus, settle, launch, close,
   };
 }
 
 // @test-value v2
 // kind = "contract"
-// claim = "HomeとMonitorの再表示は軽量snapshotのMain/Auxiliary取消待ちをRunningへ投影し、最後の実終了だけでStoppedへ戻る"
+// claim = "HomeとMonitorは軽量status通知でsummaryを再取得し、Main/Auxiliary取消待ちをRunningへ投影し、終端null後の最後の実終了だけでStoppedへ戻り、終了時は購読を解除する"
 // oracle = { type = "contract", ref = "GitHub Issue #783 / docs/design/desktop-ui.md Home Window" }
-// fault = "再表示で取消stateを失う、MainとAuxiliaryを取り違える、一方の実終了で親をStoppedへ移す"
-// observable = "描画sectionの所属、Main/Auxiliaryのaccessible status、Auxiliaryを開くID"
+// fault = "軽量status通知を購読しない、null通知で再取得しない、MainとAuxiliaryを取り違える、一方の実終了で親をStoppedへ移す、終了後も購読が残る"
+// observable = "描画sectionの所属、Main/Auxiliaryのaccessible status、Auxiliaryを開くID、終了後のstatus購読数"
 // observation_boundary = "component-behavior"
 // scope = "HomeApp home/monitor初期snapshot・live無効化購読・展開/open操作"
 // lifecycle = "permanent"
@@ -245,15 +245,18 @@ test("Home/Monitorの再表示で取消待ちを復元し、最後の実終了�
       assert.deepEqual(home.opened, [["open", "aux"]]);
 
       home.setListPage(async (request) => page(request.scope === "open" ? [session("open")] : []));
-      await home.emitLive("open");
+      await home.emitLive("open", null);
       assert.ok(running.querySelector('[aria-label="Main Idle"]'));
       assert.equal(running.querySelectorAll(".home-monitor-card").length, 1);
       home.setAuxiliaryQuery(async () => [auxiliary("aux")]);
-      await home.emitLive("aux");
+      await home.emitLive("aux", null);
       assert.equal(running.querySelectorAll(".home-monitor-card").length, 0);
       assert.equal(stopped?.querySelectorAll(".home-monitor-card").length, 1);
       assert.ok(stopped?.querySelector('[aria-label="Auxiliary Idle: 1"]'));
-    } finally { await home.close(); }
+    } finally {
+      await home.close();
+      assert.equal(home.liveSubscriptionCount(), 0);
+    }
   }
 });
 
