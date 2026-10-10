@@ -1,4 +1,5 @@
 import { readStylesheet } from "../support/read-stylesheet.js";
+import { installIntersectionObserver } from "../support/intersection-observer.js";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -99,6 +100,7 @@ const IMAGE_DESCRIPTOR: SessionFileDescriptor = {
 };
 
 function installDomGlobals(dom: JSDOM): () => void {
+  const intersection = installIntersectionObserver();
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousNavigator = globalThis.navigator;
@@ -127,6 +129,7 @@ function installDomGlobals(dom: JSDOM): () => void {
   Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
 
   return () => {
+    intersection.restore();
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
     Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });

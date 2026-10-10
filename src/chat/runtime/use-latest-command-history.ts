@@ -15,27 +15,28 @@ export function useLatestCommandHistory(input: {
 }) {
   const latest = useLatestSessionTurn(input.enabled ? input.api : null, input.sessionId, input.scope, input.revision);
   const turn = latest.turn;
-  const key = turn?.assistantMessageSeq === undefined ? null
-    : `${input.scope}:${turn.sessionId}:${turn.id}:${turn.assistantMessageSeq}:${turn.updatedAt ?? turn.phase}:${latest.revision}`;
-  const [state, setState] = useState<{ key: string; artifact: MessageArtifact | null; error: string | null } | null>(null);
+  const key = !turn || turn.phase === "running" || turn.assistantMessageSeq === undefined ? null
+    : `${latest.key}:${turn.id}:${turn.assistantMessageSeq}`;
+  const [state, setState] = useState<{ key: string; artifact: MessageArtifact | null; loading: boolean; error: string | null } | null>(null);
   useEffect(() => {
-    if (!input.enabled || !input.api || !key || !turn || turn.assistantMessageSeq === undefined) return;
+    if (!key) { setState(null); return; }
+    if (!input.enabled || !input.api || !turn || turn.assistantMessageSeq === undefined || latest.loading || latest.error) return;
     let active = true;
-    setState(null);
+    setState((previous) => ({ key, artifact: previous?.key === key ? previous.artifact : null, loading: true, error: null }));
     void input.api.getSessionMessageArtifact(turn.sessionId, turn.assistantMessageSeq).then((artifact) => {
-      if (active) setState({ key, artifact, error: null });
+      if (active) setState({ key, artifact, loading: false, error: null });
     }).catch((error: unknown) => {
-      if (active) setState({ key, artifact: null, error: error instanceof Error ? error.message : "Could not load command history." });
+      if (active) setState((previous) => ({ key, artifact: previous?.key === key ? previous.artifact : null, loading: false, error: error instanceof Error ? error.message : "Could not load command history." }));
     });
     return () => { active = false; };
-  }, [input.api, input.enabled, key]);
+  }, [input.api, input.enabled, key, latest.loading, latest.error, latest.revision]);
   const artifact = state?.key === key ? state : null;
   return {
     onRetryCommandHistory: latest.retry,
     operations: input.hasLiveRun ? [] : artifact?.artifact?.operationTimeline ?? [],
-    commandHistoryLoading: !input.hasLiveRun && (latest.loading || !!key && !artifact),
+    commandHistoryLoading: !input.hasLiveRun && !latest.error && (latest.loading || !!key && (!artifact || artifact.loading)),
     commandHistoryError: latest.error ?? artifact?.error,
-    commandHistoryUnrecorded: !input.hasLiveRun && !!turn && !latest.loading && !latest.error && !artifact?.error
+    commandHistoryUnrecorded: !input.hasLiveRun && !!turn && !latest.loading && !latest.error && !artifact?.loading && !artifact?.error
       && ((!key && turn.phase !== "running") || !!artifact && artifact.artifact?.operationTimeline === undefined),
   };
 }

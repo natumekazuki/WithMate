@@ -6,7 +6,7 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
-import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../../src-electron/session/session-runtime-service.js";
+import { SessionRuntimeFixture as SessionRuntimeService, type SessionRuntimeFixtureDeps as SessionRuntimeServiceDeps } from "./session-runtime-fixture.js";
 import type { RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
 import { createSessionPersistenceAssembly } from "../../src-electron/session/session-persistence-assembly.js";
 import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";

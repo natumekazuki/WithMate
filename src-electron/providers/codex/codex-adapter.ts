@@ -952,6 +952,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     let liveDirty = false;
     let lastLiveAt = 0;
     let lastLive: CodexProjectionProgress["state"] | null = null;
+    let turnFailed = false;
     const failProjection = (error: unknown) => {
       projectionError ??= error;
       rejectProjectionFailure(error);
@@ -991,9 +992,13 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const publishControl = (patch: Partial<CodexProjectionProgress["state"]> = { inputAvailable: false }) => {
       if (!lastLive || !args.onProgress) return;
       lastLive = { ...lastLive, ...patch };
-      void Promise.resolve(args.onProgress(lastLive, {
-        steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
-      })).catch(failProjection);
+      try {
+        void Promise.resolve(args.onProgress(lastLive, {
+          steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
+        })).catch(failProjection);
+      } catch (error) {
+        failProjection(error);
+      }
     };
     const flushEvents = () => {
       if (batchImmediate) { clearImmediate(batchImmediate); batchImmediate = undefined; }
@@ -1178,6 +1183,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         // Prior-turn token usage establishes the baseline; other foreign-turn data has no projection use.
         if (typeof params.threadId === "string" && params.threadId !== state.threadId
           || !inScope && event.method !== "thread/tokenUsage/updated") continue;
+        eventBatch.push({ method: event.method, params: event.params });
         if (event.method === "turn/completed" && inScope && typeof turn.id === "string" && typeof turn.status === "string") {
           state.turnCompleted = true;
           state.terminalStatus = turn.status;
@@ -1196,7 +1202,6 @@ export class CodexAdapter implements ProviderTurnAdapter {
           if (projectionError) throw projectionError;
           signal?.throwIfAborted();
         }
-        eventBatch.push({ method: event.method, params: event.params });
         if (eventBatch.length >= 32 || state.turnCompleted) flushEvents();
         else batchImmediate ??= setImmediate(flushEvents);
       }
@@ -1207,6 +1212,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
         throw new Error(
           state.streamErrorMessage || "Codex turn did not complete",
         );
+    } catch (error) {
+      turnFailed = true;
+      throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
       interactions?.close();
@@ -1219,13 +1227,17 @@ export class CodexAdapter implements ProviderTurnAdapter {
       )
         this.activeTurns.delete(sessionInput.session.id);
       await Promise.all(pendingEvents);
-      await progress(true).catch((error) =>
+      let finalProgressFailed = false;
+      let finalProgressError: unknown;
+      await progress(true).catch((error) => {
+        finalProgressFailed = true;
+        finalProgressError = error;
         this.writeLog({
           level: "warn",
           kind: "codex.run.final-progress-failed",
           message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
-        }),
-      );
+        });
+      });
       if (state.turnCompleted && active) {
         await Promise.allSettled([...active.pendingInputs]);
       }
@@ -1252,8 +1264,17 @@ export class CodexAdapter implements ProviderTurnAdapter {
           state.usage = final.usage;
           state.streamErrorMessage = final.errorMessage;
           state.terminalStatus = final.terminalStatus;
-        } finally { await this.projection.release(projectionId); }
+        } catch (error) {
+          if (!turnFailed && !finalProgressFailed) throw error;
+          this.writeLog({ level: "warn", kind: "codex.run.projection-cleanup-failed", message: redactor.sanitizeText(String(error)) });
+        } finally {
+          await this.projection.release(projectionId).catch((error) => {
+            if (!turnFailed && !finalProgressFailed) throw error;
+            this.writeLog({ level: "warn", kind: "codex.run.projection-cleanup-failed", message: redactor.sanitizeText(String(error)) });
+          });
+        }
       }
+      if (!turnFailed && finalProgressFailed) throw finalProgressError;
     }
   }
   async runBackgroundStructuredPrompt<TOutput = unknown>(

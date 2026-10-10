@@ -94,6 +94,14 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
     if (!await deps.isCurrentGeneration()) {
       return { status: "invalidated" };
     }
+    const ownerIsValid = !deps.validateOwner || await deps.validateOwner();
+    if (!await deps.isCurrentGeneration()) {
+      return { status: "invalidated" };
+    }
+    if (!ownerIsValid) {
+      await (deps.markDiscarded ?? deps.markSettled)();
+      return { status: "settled", appraisal: null };
+    }
     await deps.persistEvaluation({
       evaluationAttempt: pending.evaluationAttempt,
       expectedVersion: context.affect.version,

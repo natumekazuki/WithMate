@@ -16,10 +16,7 @@ import type { ProviderCodingAdapter, RunSessionTurnInput } from "../../src-elect
 import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
 import { refreshSessionCharacterRuntimeSnapshot } from "../../src-electron/character/character-runtime-service.js";
 import { NEUTRAL_CHARACTER_ID } from "../../src-shared/character/character-owner.js";
-import {
-  SessionRuntimeService,
-  type SessionRuntimeServiceDeps,
-} from "../../src-electron/session/session-runtime-service.js";
+import { SessionRuntimeFixture as SessionRuntimeService, type SessionRuntimeFixtureDeps as SessionRuntimeServiceDeps } from "./session-runtime-fixture.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -176,8 +173,8 @@ it("送信時snapshotを先に保存し、Turn中の定義更新は次の送信�
     }),
     persistRunningTurnStart: (session, expectedMessageCount) => {
       assert.equal(persisted.messages.length, expectedMessageCount);
-      persisted = structuredClone(session);
-      return persisted;
+      persisted = structuredClone({ ...session, messages: [...persisted.messages, ...session.messages] });
+      return session;
     },
     upsertSession: (session) => { persisted = structuredClone(session); return persisted; },
   }));
@@ -192,7 +189,9 @@ it("送信時snapshotを先に保存し、Turn中の定義更新は次の送信�
   assert.doesNotMatch(prompts[0]!, /Following definition/);
   assert.match(prompts[1]!, /Following definition/);
   assert.match(prompts[1]!, /過去のTurnに含まれるCharacter定義を置き換え/);
-  assert.deepEqual(second.messages.map((message) => message.text), ["first", "done", "second", "done"]);
+  assert.deepEqual(persisted.messages.map((message) => message.text), ["first", "done", "second", "done"]);
+  assert.deepEqual(second.messages.map((message) => message.text), ["second", "done"]);
+  assert.equal(second.messageCount, 4);
 });
 
 // @test-value v2

@@ -68,6 +68,14 @@ it("Auxiliary runtime sessionからMemory public actor authorityをowner別に�
       searchConversation: () => { throw new Error("unused"); },
       listConversationNavigator: () => { throw new Error("unused"); },
       getAuxiliarySession: (id: string) => sessions.get(id) ?? null,
+      getAuxiliarySessionMetadata: (id: string) => {
+        const session = sessions.get(id);
+        return session ? { ...session, messages: [], messageCount: session.messages.length } : null;
+      },
+      appendAuxiliaryRunningTurnStart: () => { throw new Error("unused"); },
+      appendAuxiliarySteer: () => { throw new Error("unused"); },
+      appendAuxiliaryTerminal: () => { throw new Error("unused"); },
+      checkpointAuxiliaryRuntimeMetadata: () => { throw new Error("unused"); },
       getAuxiliarySessionSummary: () => { throw new Error("unused"); },
       listAuxiliaryCredentialThreads: () => { throw new Error("unused"); },
       getAuxiliaryMessageArtifactDetail: () => { throw new Error("unused"); },

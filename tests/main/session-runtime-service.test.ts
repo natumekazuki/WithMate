@@ -21,11 +21,10 @@ import {
   type RunSessionTurnResult,
   type RunSessionTurnProgressHandler,
 } from "../../src-electron/providers/provider-runtime.js";
+import { SessionRuntimeFixture as SessionRuntimeService, type SessionRuntimeFixtureDeps as SessionRuntimeServiceDeps } from "./session-runtime-fixture.js";
 import {
-  SessionRuntimeService,
   hasMeaningfulPartialRunResult,
   isRetryableStaleThreadSessionError,
-  type SessionRuntimeServiceDeps,
 } from "../../src-electron/session/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/session/conversation-timing.js";
 import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
@@ -333,14 +332,14 @@ describe("SessionRuntimeService", () => {
     assert.equal(turnUpdates.at(-1)?.threadId, "thread-live");
     assert.equal(terminalNotifications.length, 1);
     assert.equal(terminalNotifications[0]?.outcome, "failed");
-    assert.equal(terminalNotifications[0]?.session, storedSessions.at(-1));
+    assert.deepEqual(terminalNotifications[0]?.session, { ...storedSessions.at(-1), messageCount: storedSessions.at(-1)!.messages.length });
     assert.deepEqual(terminalOrder, ["failed-upsert", "terminal-notification", "provider-cleanup"]);
   });
 
   // @test-value v2
   // kind = "contract"
   // claim = "終端保存の例外は自動再保存やfailedへの置換をせず呼出元へ返す"
-  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: upsertTerminalSession / runSessionTurnInternal; docs/design/provider-adapter.md: 通常履歴と最小turn" }
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: appendTerminalSession / runSessionTurnInternal; docs/design/provider-adapter.md: 通常履歴と最小turn" }
   // fault = "終端保存例外をprovider失敗と扱い別のterminalを書き、未確定結果を成功またはfailedに隠す"
   // observable = "公開run APIのreject、terminal保存とProvider・通知の呼出数"
   // observation_boundary = "public-boundary"
@@ -350,15 +349,13 @@ describe("SessionRuntimeService", () => {
   // distinction = "Storage Workerのunknown outcome testはruntimeのcatchから二つ目の終端を保存する経路を通らない"
   // @end-test-value
   it("終端保存の例外を再保存せず返し、terminal通知をしない", async () => {
-    for (const atomic of [true, false]) {
       const session = createSession();
       let providerCalls = 0;
       let terminalCalls = 0;
       let notifications = 0;
       const persistenceError = new Error("Persistence outcome unknown");
       const service = createProgressRuntime(session, async () => { providerCalls += 1; return createPartialResult({ assistantText: "completed" }); }, {
-        ...(atomic ? { upsertTerminalSession() { terminalCalls += 1; throw persistenceError; } } : {}),
-        updateSessionTurn() { terminalCalls += 1; throw persistenceError; },
+        appendTerminalSession() { terminalCalls += 1; throw persistenceError; },
         notifySessionTurnTerminal() { notifications += 1; },
       });
       await assert.rejects(service.runSessionTurn(session.id, { userMessage: "run", executionOptions: TEST_EXECUTION_OPTIONS }), (error) => error === persistenceError);
@@ -366,7 +363,6 @@ describe("SessionRuntimeService", () => {
       assert.equal(terminalCalls, 1);
       assert.equal(notifications, 0);
       assert.equal(service.isRunInFlight(session.id), false);
-    }
   });
 
   // @test-value v2
@@ -406,7 +402,7 @@ describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Renderer死亡後の再openと保存待ち中closeでもMainの既存Provider実行は一度だけ継続し、Sessionの最終応答保存を待ってrun結果を返す"
-  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: Session Window Close; src-electron/session/session-runtime-service.ts: upsertTerminalSession / runSessionTurnInternal" }
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: Session Window Close; src-electron/session/session-runtime-service.ts: appendTerminalSession / runSessionTurnInternal" }
   // fault = "表示の復旧で既存turnをcancelまたは再実行するか、壊れたRendererへの通知例外でterminal応答保存を失う"
   // observable = "provider呼出し数、abort状態、保存gate前後のstoredSession/run結果の本文・runStateと保存待ち中のisRunInFlight"
   // observation_boundary = "public-boundary"
@@ -1018,7 +1014,8 @@ describe("SessionRuntimeService", () => {
         assert.equal(readLive()?.cancellationState, undefined);
         finishNext(createPartialResult({ assistantText: "completed answer" }));
         const second = await secondRun;
-        assert.deepEqual(second.messages.slice(0, historyBeforeNext.length), historyBeforeNext);
+        assert.deepEqual(stored.messages.slice(0, historyBeforeNext.length), historyBeforeNext);
+        assert.equal(second.messageCount, stored.messages.length);
         assert.equal(second.messages.at(-2)?.text, "next request");
         assert.equal(second.messages.at(-1)?.text, "completed answer");
         assert.equal(second.messages.some((message) => /old late/.test(message.text)), false);
@@ -1216,7 +1213,7 @@ describe("SessionRuntimeService", () => {
         return context(contextVersion);
       },
       async queueCompletedTurnAppraisal(input) {
-        assert.equal(input.assistantMessageIndex, input.session.messages.length - 1);
+        assert.equal(input.assistantMessageIndex, input.session.messageCount! - 1);
         callOrder.push(`queued:${input.correlationId}`);
       },
       markCompletedTurnAppraisalReady(correlationId) {
@@ -3822,7 +3819,10 @@ releaseSecondAttempt!();
 
     assert.equal(result.runState, "idle");
     assert.equal(result.messages.at(-1)?.text, "完了したよ。");
-    assert.equal(notifiedSession, persistedCompletedSession);
-    assert.equal(notifiedSession!.messages.at(-1)?.text, "完了したよ。");
+    assert.deepEqual(notifiedSession, result);
+    const { messageCount, ...persistedProjection } = result;
+    assert.equal(messageCount, result.messages.length);
+    assert.deepEqual(persistedCompletedSession, persistedProjection);
+    assert.equal((notifiedSession as Session | null)!.messages.at(-1)?.text, "完了したよ。");
   });
 });

@@ -396,6 +396,14 @@ export function SessionContextPane({
               </div>
             ) : null}
 
+            {activeContextPaneTab === "latest-command" && (commandHistoryLoading || commandHistoryError) ? (
+              <div className="command-monitor-empty-shell" aria-busy={commandHistoryLoading || undefined}>
+                {commandHistoryLoading ? <LoadingIndicator inline label="Loading command history" /> : null}
+                {commandHistoryError ? <p className="live-run-error" role="alert">{commandHistoryError}</p> : null}
+                {commandHistoryError && onRetryCommandHistory ? <button type="button" className="drawer-toggle secondary" onClick={onRetryCommandHistory}>Retry</button> : null}
+              </div>
+            ) : null}
+
             {activeContextPaneTab === "latest-command" ? (
               latestCommandView ? (
                 <div className="command-monitor-card">
@@ -441,10 +449,7 @@ export function SessionContextPane({
                   ) : null}
                 </div>
               ) : (
-                <div className="command-monitor-empty-shell" aria-busy={commandHistoryLoading || undefined}>
-                  {commandHistoryLoading ? <LoadingIndicator inline label="Loading command history" /> : null}
-                  {commandHistoryError ? <p className="live-run-error" role="alert">{commandHistoryError}</p> : null}
-                  {commandHistoryError && onRetryCommandHistory ? <button type="button" className="drawer-toggle secondary" onClick={onRetryCommandHistory}>Retry</button> : null}
+                <div className="command-monitor-empty-shell">
                   {commandHistoryUnrecorded ? <p role="status">Command history not recorded.</p> : null}
                   {selectedSessionLiveRunErrorMessage ? (
                     <div className="live-run-error-block" role="alert">

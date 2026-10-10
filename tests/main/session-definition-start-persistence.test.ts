@@ -11,10 +11,10 @@ import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Auxiliary開始保存は定義とuser messageを同時保存し、legacy親snapshotも自身へ固定してdraft/thread/bookmarkを保持する"
-// oracle = { type = "issue", ref = "GitHub Issue #775: Main/Auxiliaryの送信時定義更新と保存snapshot" }
+// claim = "Auxiliary開始保存は定義とuser messageを同時保存し、legacy親snapshotも自身へ固定してdraft/thread/bookmarkを保持し、当該turnのmessagesと保存済み全体件数を返す"
+// oracle = { type = "contract", ref = "docs/design/character-storage.md: Runtime Snapshot; docs/design/database-schema.md: 現行DBと正本" }
 // fault = "Auxiliary開始で定義が保存されない、親へ書き戻す、固定metadataを変える、draftやbookmarkを失う"
-// observable = "実DB再読込のAuxiliary snapshot/messages/draft/threadと親snapshot、拒否後のmessage件数"
+// observable = "実DB再読込のAuxiliary snapshot/messages/draft/threadと親snapshot、turn-local返却messagesと全体messageCount、拒否後のmessage件数"
 // observation_boundary = "component-behavior"
 // scope = "AuxiliarySessionService.persistRunningTurnStart"
 // lifecycle = "permanent"
@@ -61,6 +61,8 @@ test("Auxiliary定義開始保存はlegacy snapshotを固定しdraftと会話ide
     });
     const runtime = await service.getAuxiliaryRuntimeSession(initial.id);
     assert.ok(runtime);
+    assert.deepEqual(runtime.messages, []);
+    assert.equal(runtime.messageCount, 1);
     const updatedSnapshot = { ...snapshot, definitionMarkdown: "# Updated", definitionSha256: "updated", definitionByteSize: 9, snapshotAt: "later" };
     const running = { ...runtime, status: "running" as const, runState: "running" as const,
       updatedAt: "later", characterRuntimeSnapshot: updatedSnapshot,
@@ -72,7 +74,9 @@ test("Auxiliary定義開始保存はlegacy snapshotを固定しdraftと会話ide
     assert.deepEqual(stored.characterRuntimeSnapshot, updatedSnapshot);
     assert.equal(stored.threadId, "keep-thread");
     assert.equal(auxiliary.getAuxiliaryDraft(initial.id)?.text, "keep draft");
-    assert.equal(stored.messages[0]?.isBookmarked, true);
+    assert.deepEqual(stored.messages, [{ role: "user", text: "new prompt" }]);
+    assert.equal(stored.messageCount, 2);
+    assert.equal(auxiliary.getAuxiliarySession(initial.id)?.messages[0]?.isBookmarked, true);
     assert.equal(auxiliary.getAuxiliarySession(initial.id)?.characterId, snapshot.characterId);
     assert.deepEqual(parents.getSession(parent.id)?.characterRuntimeSnapshot, snapshot);
     await assert.rejects(service.persistRunningTurnStart(running, 1), /changed before starting/);

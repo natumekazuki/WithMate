@@ -17,7 +17,9 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
   auxiliary: {
     getRuntimeSession(sessionId: string): Promise<Session | null>;
     getSession(sessionId: string): Promise<AuxiliarySession | null>;
-    upsertRuntimeSession(session: Session, options?: { confirmedFinalAssistantText?: string | null }): Promise<Session>;
+    appendRunningInput: SessionRuntimeServiceDeps["appendRunningInput"];
+    appendTerminalSession: SessionRuntimeServiceDeps["appendTerminalSession"];
+    checkpointRuntimeMetadata: SessionRuntimeServiceDeps["checkpointRuntimeMetadata"];
     persistRunningTurnStart(session: Session, expectedMessageCount: number): Promise<Session>;
     isAuxiliarySession(sessionId: string): Promise<boolean>;
   };
@@ -74,7 +76,9 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => guarded("session read", () => deps.auxiliary.getRuntimeSession(sessionId)),
-    upsertSession: (session, options) => guarded("session upsert", () => deps.auxiliary.upsertRuntimeSession(session, options)),
+    appendRunningInput: (session, text, turnId) => guarded("Session input append", () => deps.auxiliary.appendRunningInput(session, text, turnId)),
+    appendTerminalSession: (session, commit, options) => guarded("terminal Session append", () => deps.auxiliary.appendTerminalSession(session, commit, options)),
+    checkpointRuntimeMetadata: (session, expected) => guarded("runtime metadata checkpoint", () => deps.auxiliary.checkpointRuntimeMetadata(session, expected)),
     persistRunningTurnStart: (session, expectedMessageCount) => guarded("running turn start", () => deps.auxiliary.persistRunningTurnStart(session, expectedMessageCount)),
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, userMessage) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, userMessage)),

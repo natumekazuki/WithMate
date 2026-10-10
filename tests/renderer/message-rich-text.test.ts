@@ -1,4 +1,5 @@
 import { readStylesheet } from "../support/read-stylesheet.js";
+import { installIntersectionObserver } from "../support/intersection-observer.js";
 import assert from "node:assert/strict";
 import { markdownUrlTransform } from "../../src/ui/markdown/markdown-links.js";
 import { readFile } from "node:fs/promises";
@@ -75,6 +76,7 @@ async function openMarkdownLinkContextMenu(target: string) {
 }
 
 function installDomGlobals(dom: JSDOM): () => void {
+  const intersection = installIntersectionObserver();
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousNavigator = globalThis.navigator;
@@ -108,6 +110,7 @@ function installDomGlobals(dom: JSDOM): () => void {
   });
 
   return () => {
+    intersection.restore();
     Object.defineProperty(globalThis, "window", {
       configurable: true,
       value: previousWindow,

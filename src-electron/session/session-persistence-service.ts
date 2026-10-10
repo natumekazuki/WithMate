@@ -38,6 +38,7 @@ import type {
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
 import type { SessionRuntimeMetadataPatchInput, SessionRuntimeMetadataPatchResult, SessionThreadPatchInput, SessionThreadPatchResult } from "./session-storage-v6.js";
+import type { SessionMetadataResult, SessionSteerAppendInput, SessionTerminalAppendInput, SessionRunMetadataCheckpointInput } from "./session-runtime-storage-contract.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -68,6 +69,9 @@ export type SessionPersistenceServiceDeps = {
   updateStoredSessionRuntimeMetadataIfMatches?(input: SessionRuntimeMetadataPatchInput): Awaitable<SessionRuntimeMetadataPatchResult | null>;
   upsertStoredTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendStoredRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
+  appendStoredSessionSteer?(input: SessionSteerAppendInput): Awaitable<SessionMetadataResult>;
+  appendStoredSessionTerminal?(input: SessionTerminalAppendInput): Awaitable<SessionMetadataResult>;
+  checkpointStoredSessionRunMetadata?(input: SessionRunMetadataCheckpointInput): Awaitable<SessionMetadataResult | null>;
   clearStoredCharacterAuthoringRuntimeState?(
     input: SessionCharacterAuthoringRuntimeClearInput,
   ): Awaitable<SessionCharacterAuthoringRuntimeClearResult>;
@@ -575,11 +579,11 @@ export class SessionPersistenceService {
       if (currentSession) {
         assertSessionWritable(currentSession);
       }
-      const userMessage = nextSession.messages[expectedMessageCount];
+      const userMessage = nextSession.messages.at(-1);
       if (
         nextSession.status !== "running"
         || nextSession.runState !== "running"
-        || nextSession.messages.length !== expectedMessageCount + 1
+        || (nextSession.messageCount ?? nextSession.messages.length) !== expectedMessageCount + 1
         || !userMessage
         || userMessage.role !== "user"
       ) {
@@ -601,6 +605,7 @@ export class SessionPersistenceService {
         ...nextSession,
         ...storedResult.summary,
         characterRuntimeSnapshot: storedResult.characterRuntimeSnapshot,
+        ...(nextSession.messageCount !== undefined ? { messageCount: expectedMessageCount + 1 } : {}),
       }])[0];
       this.runCommittedProjectionBestEffort("running turn", "cache update", () => {
         this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
@@ -610,6 +615,70 @@ export class SessionPersistenceService {
       });
       return stored;
     });
+  }
+
+  async appendRunningInput(nextSession: Session, text: string, turnId: number): Promise<Session> {
+    return this.enqueueSessionMutation(async () => {
+      if (!this.deps.appendStoredSessionSteer) throw new Error("Incremental Session input storage is unavailable.");
+      const message = { role: "user" as const, text };
+      const result = await this.deps.appendStoredSessionSteer({
+        sessionId: nextSession.id,
+        incarnationId: getSessionIncarnationId(nextSession),
+        expectedMessageCount: nextSession.messageCount ?? nextSession.messages.length,
+        turnId,
+        userMessage: message,
+        updatedAt: nextSession.updatedAt,
+      });
+      return this.projectRuntimeAppend(nextSession, result, [...nextSession.messages, message]);
+    });
+  }
+
+  async checkpointRuntimeMetadata(nextSession: Session, expected: Session): Promise<Session> {
+    return this.enqueueSessionMutation(async () => {
+      if (!this.deps.checkpointStoredSessionRunMetadata) throw new Error("Session runtime checkpoint storage is unavailable.");
+      const result = await this.deps.checkpointStoredSessionRunMetadata({
+        sessionId: nextSession.id,
+        incarnationId: getSessionIncarnationId(nextSession),
+        expected: { status: expected.status, runState: expected.runState, threadId: expected.threadId },
+        next: { status: nextSession.status, runState: nextSession.runState, threadId: nextSession.threadId, updatedAt: nextSession.updatedAt },
+      });
+      if (!result) throw new Error("The Session runtime checkpoint no longer matches its owner.");
+      return this.projectRuntimeAppend(nextSession, result, nextSession.messages);
+    });
+  }
+
+  async appendTerminalSession(nextSession: Session, terminalCommit: SessionTurnTerminalCommit): Promise<Session> {
+    return this.enqueueSessionMutation(async () => {
+      const message = nextSession.messages.at(-1);
+      if (!message || message.role !== "assistant") throw new Error("Terminal Session requires an assistant message.");
+      if (!this.deps.appendStoredSessionTerminal) throw new Error("Incremental terminal Session storage is unavailable.");
+      const result = await this.deps.appendStoredSessionTerminal({
+        sessionId: nextSession.id,
+        incarnationId: getSessionIncarnationId(nextSession),
+        expectedMessageCount: (nextSession.messageCount ?? nextSession.messages.length) - 1,
+        assistantMessage: message,
+        metadata: { status: nextSession.status, runState: nextSession.runState, threadId: nextSession.threadId, updatedAt: nextSession.updatedAt },
+        terminalCommit,
+      });
+      return this.projectRuntimeAppend(nextSession, result, nextSession.messages);
+    });
+  }
+
+  private projectRuntimeAppend(nextSession: Session, result: SessionMetadataResult, messages: Session["messages"]): Session {
+    const projected: Session = {
+      ...nextSession,
+      ...result.summary,
+      characterRuntimeSnapshot: result.characterRuntimeSnapshot,
+      messageCount: result.messageCount,
+      messages,
+    };
+    const stored = this.deps.overlayCurrentExecutionOptions?.(projected) ?? projected;
+    this.runCommittedProjectionBestEffort("runtime Session", "dependency sync", () => this.syncStoredSession(stored));
+    this.runCommittedProjectionBestEffort("runtime Session", "cache update", () => {
+      this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+    });
+    this.runCommittedProjectionBestEffort("runtime Session", "broadcast", () => this.deps.broadcastSessions([stored.id]));
+    return stored;
   }
 
   async clearCharacterAuthoringRuntimeState(nextSession: Session): Promise<Session> {

@@ -1,7 +1,8 @@
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ProviderBackgroundAdapter } from "../providers/provider-runtime.js";
 import type { AppLogService } from "../app/app-log-service.js";
-import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, type SessionSummary } from "../../src-shared/session/session-state.js";
+import type { SessionMetadataResult, SessionMessageIdentityInput, SessionMessageIdentity } from "../session/session-runtime-storage-contract.js";
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import { CHARACTER_CONTEXT_SCHEMA_VERSION, isCharacterContextError } from "../../src-shared/character-context/character-context-contract.js";
 import {
@@ -18,21 +19,13 @@ import {
 } from "./character-affect-turn-recovery.js";
 import { drainCharacterAffectTurnSettlementBatch, type CharacterAffectTurnDrainCursor } from "./character-affect-turn-drain.js";
 import {
-  hasCommittedAssistantMessage,
+  hasSettlementSessionOwner,
+  type PendingCharacterAffectTurnSettlement,
   type CharacterAffectTurnFailureStage,
   type CharacterAffectTurnSettlementStorageAccess,
 } from "./character-affect-turn-settlement-storage.js";
 import type { MemoryV6RuntimeApiHandle } from "../memory/memory-v6-runtime.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
-
-type CharacterAffectTurnSettlementRequest = {
-  session: Session;
-  correlationId: string;
-  userMessage: string;
-  assistantMessage: string;
-  assistantMessageIndex: number;
-  occurredAt: string;
-};
 
 export type CharacterAffectTurnLifecycleRuntime = {
   characterContextService: Pick<MemoryV6RuntimeApiHandle["characterContextService"], "getContext" | "appraise">;
@@ -44,7 +37,8 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
   getCharacterSnapshot(characterId: string): Awaitable<CharacterRuntimeSnapshot | null>;
   getAppSettings(): Awaitable<AppSettings>;
   getProviderBackgroundAdapter(providerId: string | null | undefined): Pick<ProviderBackgroundAdapter, "runBackgroundStructuredPrompt">;
-  getSession(sessionId: string): Promise<Session | null>;
+  getSessionMetadata(sessionId: string): Promise<SessionMetadataResult | null>;
+  getSessionMessageIdentity(input: SessionMessageIdentityInput): Promise<SessionMessageIdentity | null>;
   startupRecoveryCutoff: string;
   runAppraisalExclusive<T>(operation: () => T | Promise<T>): Promise<T>;
   writeAppLog(log: Parameters<AppLogService["write"]>[0]): void;
@@ -59,15 +53,10 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
     return storage;
   };
 
-  async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementRequest): Promise<boolean> {
-    if (request.session.sessionKind !== "default" || !request.session.characterId) {
-      return true;
-    }
+  async function settleCharacterAffectTurn(item: PendingCharacterAffectTurnSettlement): Promise<boolean> {
+    const request = item;
+    let sessionForLog: SessionSummary | null = null;
     const settlementStorage = await requireStorage();
-    if (!hasCommittedAssistantMessage(request.session.messages, request)) {
-      await settlementStorage.markDiscarded(request.correlationId);
-      return true;
-    }
     const attemptCount = await settlementStorage.recordAttempt(request.correlationId);
     if (attemptCount === null) {
       return true;
@@ -84,7 +73,7 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
         kind: "character-affect.lifecycle.settlement-invalidated",
         process: "main",
         message: "Character affect settlement stopped after its storage or runtime was replaced",
-        data: { sessionId: request.session.id, correlationId: request.correlationId },
+        data: { sessionId: item.sessionId, correlationId: request.correlationId },
       });
       return true;
     };
@@ -128,10 +117,10 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
           ? "Character affect appraisal was quarantined after a bounded failure"
           : "Character affect appraisal was deferred after a retryable failure",
         data: {
-          sessionId: request.session.id,
+          sessionId: item.sessionId,
           correlationId: request.correlationId,
-          provider: request.session.provider,
-          model: request.session.model,
+          provider: sessionForLog?.provider,
+          model: sessionForLog?.model,
           userMessageLength: request.userMessage.length,
           assistantMessageLength: request.assistantMessage.length,
           attemptCount: disposition.attemptCount,
@@ -147,16 +136,28 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
       });
       return disposition.state === "quarantined";
     };
-    if (!runtimeApi) {
-      return recordFailure({ code: "runtime_unavailable", retryable: true });
-    }
-    const character = request.session.characterRuntimeSnapshot
-      ?? await deps.getCharacterSnapshot(request.session.characterId);
-    if (!character) {
-      return recordFailure({ code: "unknown_character", retryable: false });
-    }
-
     try {
+      const getCommittedOwner = async () => {
+        const current = await deps.getSessionMetadata(item.sessionId);
+        if (!await isCurrentGeneration() || !current || !hasSettlementSessionOwner(current.summary, item)) return null;
+        const message = await deps.getSessionMessageIdentity({
+          sessionId: item.sessionId,
+          incarnationId: getSessionIncarnationId(current.summary),
+          messageIndex: item.assistantMessageIndex,
+        });
+        return message?.role === "assistant" && message.text === item.assistantMessage ? current : null;
+      };
+      const metadata = await getCommittedOwner();
+      if (!await isCurrentGeneration()) return reportInvalidatedSettlement();
+      if (!metadata || metadata.summary.sessionKind !== "default" || !metadata.summary.characterId) {
+        await settlementStorage.markDiscarded(item.correlationId);
+        return true;
+      }
+      const session = { ...metadata.summary, characterRuntimeSnapshot: metadata.characterRuntimeSnapshot };
+      sessionForLog = session;
+      if (!runtimeApi) return recordFailure({ code: "runtime_unavailable", retryable: true });
+      const character = session.characterRuntimeSnapshot ?? await deps.getCharacterSnapshot(session.characterId);
+      if (!character) return recordFailure({ code: "unknown_character", retryable: false });
       const settlement = await settleCharacterAffectTurnWithRetry({
         correlationId: request.correlationId,
         isCurrentGeneration,
@@ -166,8 +167,8 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
           stageStartedAt = Date.now();
           const result = await runtimeApi.characterContextService.getContext({
             schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-            characterId: request.session.characterId!,
-            sessionId: request.session.id,
+            characterId: session.characterId!,
+            sessionId: session.id,
             query: request.userMessage,
             memoryLimit: 3,
           }, "lifecycle");
@@ -179,7 +180,7 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
         evaluate: async (context, idempotencyPrefix) => {
           activeStage = "evaluation";
           stageStartedAt = Date.now();
-          const backgroundAdapter = deps.getProviderBackgroundAdapter(request.session.provider);
+          const backgroundAdapter = deps.getProviderBackgroundAdapter(session.provider);
           const prompt = buildCharacterAffectTurnPrompt({
             character,
             context,
@@ -187,14 +188,14 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
             assistantMessage: request.assistantMessage,
           });
           const evaluationResult = await backgroundAdapter.runBackgroundStructuredPrompt({
-            providerId: request.session.provider,
-            workspacePath: request.session.workspacePath,
+            providerId: session.provider,
+            workspacePath: session.workspacePath,
             appSettings: await deps.getAppSettings(),
-            model: request.session.model,
-            reasoningEffort: request.session.reasoningEffort,
+            model: session.model,
+            reasoningEffort: session.reasoningEffort,
             timeoutMs: 15_000,
-            approvalMode: request.session.approvalMode,
-            codexSandboxMode: request.session.codexSandboxMode,
+            approvalMode: session.approvalMode,
+            codexSandboxMode: session.codexSandboxMode,
             prompt,
           });
           const evaluation = normalizeCharacterAffectTurnEvaluation(
@@ -205,8 +206,8 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
           }
           return toAffectEventInputs({
             evaluation,
-            characterId: request.session.characterId!,
-            sessionId: request.session.id,
+            characterId: session.characterId!,
+            sessionId: session.id,
             userId: "local-user",
             occurredAt: request.occurredAt,
             idempotencyPrefix,
@@ -220,8 +221,8 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
           stageStartedAt = Date.now();
           return runtimeApi.characterContextService.appraise({
             schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-            characterId: request.session.characterId!,
-            sessionId: request.session.id,
+            characterId: session.characterId!,
+            sessionId: session.id,
             expectedVersion,
             authority: { kind: "conversation" },
             candidates,
@@ -231,15 +232,7 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
           return await settlementStorage.recordAppraisalFailure({ correlationId: request.correlationId, ...input });
         },
         runAppraisalExclusive: deps.runAppraisalExclusive,
-        validateOwner: async () => {
-          const currentSession = await deps.getSession(request.session.id);
-          return Boolean(
-            currentSession
-            && getSessionIncarnationId(currentSession) === getSessionIncarnationId(request.session)
-            && currentSession.characterId === request.session.characterId
-            && hasCommittedAssistantMessage(currentSession.messages, request),
-          );
-        },
+        validateOwner: async () => await getCommittedOwner() !== null,
         markDiscarded: async () => {
           await settlementStorage.markDiscarded(request.correlationId);
         },
@@ -267,7 +260,7 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
           process: "main",
           message: "One or more Character affect candidates were rejected",
           data: {
-            sessionId: request.session.id,
+            sessionId: session.id,
             rejected: settlement.appraisal.rejected.map((candidate) => ({
               candidateIndex: candidate.candidateIndex,
               code: candidate.code,
@@ -295,17 +288,11 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
       isCurrentGeneration: async () => settlementStorage === await deps.getSettlementStorage(),
       startupRecoveryCutoff: deps.startupRecoveryCutoff,
       readyCursor: deps.getDrainCursor(),
-      getSession: deps.getSession,
-      settle: async (item, session) => settlementStorage !== await deps.getSettlementStorage()
+      getSessionMetadata: deps.getSessionMetadata,
+      getSessionMessageIdentity: deps.getSessionMessageIdentity,
+      settle: async (item) => settlementStorage !== await deps.getSettlementStorage()
         ? true
-        : settleCharacterAffectTurn({
-          session,
-          correlationId: item.correlationId,
-          userMessage: item.userMessage,
-          assistantMessage: item.assistantMessage,
-          assistantMessageIndex: item.assistantMessageIndex,
-          occurredAt: item.occurredAt,
-        }),
+        : settleCharacterAffectTurn(item),
       onDiscard: (item) => {
         deps.writeAppLog({
           level: "warn",

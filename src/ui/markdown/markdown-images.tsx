@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -16,6 +17,7 @@ import {
 import { useDialogA11y } from "../a11y.js";
 import { MarkdownRenderContext } from "./markdown-context.js";
 import type { MarkdownImageResolver } from "./image-resource-loader.js";
+import { resolveMarkdownImageTarget } from "./image-resource-source.js";
 import {
   isDirectMarkdownImageSource,
   shouldLoadMarkdownImageEagerly,
@@ -86,12 +88,17 @@ export const MarkdownImage = memo(function MarkdownImage({
   const canLoadDirectly =
     !resolveImageSource && isDirectMarkdownImageSource(source);
   const shouldLoadEagerly = shouldLoadMarkdownImageEagerly(source);
+  const isLocalResource = !!resolveImageSource && resolveMarkdownImageTarget(source).kind === "local";
+  const shellRef = useRef<HTMLSpanElement | null>(null);
+  const resource = useMemo(() => ({ source, resolver: resolveImageSource }), [resolveImageSource, source]);
+  const [requestedResource, setRequestedResource] = useState<typeof resource | null>(null);
+  const shouldResolve = !isLocalResource || requestedResource === resource;
   const [resolvedSource, setResolvedSource] = useState(
     canLoadDirectly ? source : "",
   );
   const [loadStatus, setLoadStatus] = useState<
-    "resolving" | "loading" | "ready" | "error"
-  >(resolveImageSource ? "resolving" : canLoadDirectly ? "loading" : "error");
+    "deferred" | "resolving" | "loading" | "ready" | "error"
+  >(isLocalResource ? "deferred" : resolveImageSource ? "resolving" : canLoadDirectly ? "loading" : "error");
   const [isLoadingIndicatorVisible, setIsLoadingIndicatorVisible] =
     useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -103,21 +110,39 @@ export const MarkdownImage = memo(function MarkdownImage({
     }
   }, []);
   useEffect(() => {
-    if (!resolveImageSource && !canLoadDirectly) return;
+    if (!isLocalResource || !resource.resolver || !shellRef.current) return;
+    let active = true;
+    const observer = new IntersectionObserver((entries) => {
+      if (!active || !entries.some((entry) => entry.isIntersecting)) return;
+      setRequestedResource(resource);
+      observer.disconnect();
+    });
+    observer.observe(shellRef.current);
+    return () => {
+      active = false;
+      observer.disconnect();
+    };
+  }, [isLocalResource, resource]);
+  useEffect(() => {
     setIsLoadingIndicatorVisible(false);
+    if (!shouldResolve || (!resolveImageSource && !canLoadDirectly)) return;
     const timeout = window.setTimeout(() => {
       loadingIndicatorTimeoutRef.current = null;
       setIsLoadingIndicatorVisible(true);
     }, MARKDOWN_IMAGE_LOADING_DELAY_MS);
     loadingIndicatorTimeoutRef.current = timeout;
     return () => window.clearTimeout(timeout);
-  }, [canLoadDirectly, resolveImageSource, source]);
+  }, [canLoadDirectly, resolveImageSource, shouldResolve, source]);
   useEffect(() => {
     if (!resolveImageSource) return;
+    setResolvedSource("");
+    if (!shouldResolve) {
+      setLoadStatus("deferred");
+      return;
+    }
     const controller = new AbortController();
     let active = true;
     let ownedObjectUrl: string | null = null;
-    setResolvedSource("");
     setLoadStatus("resolving");
     void resolveImageSource(source, controller.signal)
       .then((resolved) => {
@@ -148,13 +173,14 @@ export const MarkdownImage = memo(function MarkdownImage({
       controller.abort();
       if (ownedObjectUrl) URL.revokeObjectURL(ownedObjectUrl);
     };
-  }, [clearLoadingIndicatorTimer, resolveImageSource, source]);
+  }, [clearLoadingIndicatorTimer, resolveImageSource, shouldResolve, source]);
   const isLoading = loadStatus === "resolving" || loadStatus === "loading";
   const showLoadingIndicator = isLoading && isLoadingIndicatorVisible;
   const isResolvingWithoutSource =
-    loadStatus === "resolving" && !resolvedSource;
+    (loadStatus === "deferred" || loadStatus === "resolving") && !resolvedSource;
   return (
     <span
+      ref={shellRef}
       className={`message-image-shell${isResolvingWithoutSource ? " is-resolving" : ""}`}
     >
       {showLoadingIndicator ? (

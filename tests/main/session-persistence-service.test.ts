@@ -86,6 +86,67 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 describe("SessionPersistenceService", () => {
   // @test-value v2
   // kind = "invariant"
+  // claim = "metadataとturn内messageだけを持つruntimeのsteer/terminal保存は全履歴件数とturn identityをstorageへ渡し、確定ACKのtitle/pin/設定を投影する"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#sessionpersistenceservice; docs/design/session-run-lifecycle.md" }
+  // fault = "turn内配列indexを履歴indexとして保存する、full保存へ渡す、または古いruntime metadataでACKの現行title/pin/設定を上書きする"
+  // observable = "storage command入力のcount/turn/message、返却Session countとmessage、cacheと通知"
+  // observation_boundary = "component-behavior"
+  // scope = "runtime-incremental-persistence-projection"
+  // lifecycle = "permanent"
+  // impact = "長い会話でsteerやterminalが別履歴位置へ保存され、並行した整理操作や次turn設定が失われる"
+  // distinction = "SQL単体checkでは検出できないservice入力組立てとACKからcacheへの投影を少量fixtureで検証する"
+  // @end-test-value
+  it("runtimeの小さい保存入力と確定metadata投影を保持する", async () => {
+    const runtime = createSession({ id: "incremental", incarnationId: "owner-a", status: "running", runState: "running", messages: [{ role: "user", text: "start" }], messageCount: 501 });
+    let cached = [runtime];
+    const commands: unknown[] = [];
+    const broadcasts: string[][] = [];
+    const ack = (count: number, next: Partial<Session> = {}) => ({
+      summary: projectSessionSummary({ ...runtime, ...next, taskTitle: "latest title", isPinned: true, model: "next model" }),
+      characterRuntimeSnapshot: null,
+      messageCount: count,
+    });
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: () => cached[0] ?? null,
+      getStoredSession: () => { throw new Error("Unexpected full read"); },
+      isSessionRunInFlight: () => true,
+      upsertStoredSession: () => { throw new Error("Unexpected full write"); },
+      appendStoredSessionSteer: (input) => { commands.push(input); return ack(502); },
+      appendStoredSessionTerminal: (input) => { commands.push(input); return ack(503, input.metadata); },
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => [],
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: (ids) => { broadcasts.push(Array.from(ids ?? [])); },
+    });
+    const steered = await service.appendRunningInput(runtime, "input", 42);
+    const completed: Session = { ...steered, status: "idle", runState: "idle", messageCount: 503, messages: [...steered.messages, { role: "assistant", text: "done" }] };
+    const terminalCommit = { turnId: 42, sessionId: runtime.id, phase: "completed" as const, assistantMessageSeq: 502, threadId: "thread", errorMessage: "", completedAt: "2026-10-10T00:00:00.000Z" };
+    const stored = await service.appendTerminalSession(completed, terminalCommit);
+    assert.deepEqual(commands, [
+      { sessionId: runtime.id, incarnationId: "owner-a", expectedMessageCount: 501, turnId: 42, userMessage: { role: "user", text: "input" }, updatedAt: runtime.updatedAt },
+      { sessionId: runtime.id, incarnationId: "owner-a", expectedMessageCount: 502, assistantMessage: { role: "assistant", text: "done" }, metadata: { status: "idle", runState: "idle", threadId: completed.threadId, updatedAt: completed.updatedAt }, terminalCommit },
+    ]);
+    assert.equal(stored.messageCount, 503);
+    assert.deepEqual(stored.messages.map((message) => message.text), ["start", "input", "done"]);
+    assert.equal(stored.taskTitle, "latest title");
+    assert.equal(stored.isPinned, true);
+    assert.equal(stored.model, "next model");
+    assert.equal(cached[0]?.runState, "idle");
+    assert.equal(cached[0]?.taskTitle, "latest title");
+    assert.deepEqual(cached[0]?.messages, []);
+    assert.deepEqual(broadcasts, [[runtime.id], [runtime.id]]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "title更新は実DB保存失敗をrejectし、commit後cache/通知/owner失効を保存済み結果として返して履歴を保持する"
   // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send; Issue #738 STORAGE-1" }
   // fault = "commit後例外を保存失敗としてrejectする、保存失敗時にcacheを更新する、またはtitle復旧で履歴を上書きする"
