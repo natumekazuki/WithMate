@@ -483,33 +483,29 @@ export class SessionStorageV6 {
       NULLIF(TRIM(s.character_id), ''),
       NULLIF(TRIM(CASE WHEN json_valid(s.runtime_policy_json) THEN json_extract(s.runtime_policy_json, '$.characterId') ELSE '' END), '')
     )`;
-    const newerCharacterIdExpression = `COALESCE(
-      NULLIF(TRIM(newer.character_id), ''),
-      NULLIF(TRIM(CASE WHEN json_valid(newer.runtime_policy_json) THEN json_extract(newer.runtime_policy_json, '$.characterId') ELSE '' END), '')
-    )`;
     const rows = this.db.prepare(`
       SELECT
         ${characterIdExpression} AS character_id
       FROM sessions_v6 AS s
       WHERE s.session_kind = 'default'
         AND ${characterIdExpression} IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1
-          FROM sessions_v6 AS newer
-            WHERE newer.session_kind = 'default'
-            AND ${newerCharacterIdExpression} = ${characterIdExpression}
-            AND (
-              newer.last_active_at > s.last_active_at
-              OR (newer.last_active_at = s.last_active_at AND newer.id > s.id)
-            )
-        )
       ORDER BY s.last_active_at DESC, s.id DESC
-    `).all() as SessionCharacterUsageRow[];
+    `).iterate() as Iterable<SessionCharacterUsageRow>;
 
-    return rows
-      .map((row) => recoverStoredCharacterOwnerId(normalizeCharacterOwnerId(row.character_id)))
-      .filter((characterId): characterId is string => Boolean(characterId))
-      .map((characterId) => ({ characterId, sessionKind: "default" as const }));
+    const seenCharacterIds = new Set<string | null>();
+    const usage: SessionCharacterUsage[] = [];
+    for (const row of rows) {
+      // Deduplicate SQL IDs before owner recovery, which has different whitespace rules.
+      if (seenCharacterIds.has(row.character_id)) {
+        continue;
+      }
+      seenCharacterIds.add(row.character_id);
+      const characterId = recoverStoredCharacterOwnerId(normalizeCharacterOwnerId(row.character_id));
+      if (characterId) {
+        usage.push({ characterId, sessionKind: "default" });
+      }
+    }
+    return usage;
   }
 
   getLatestSessionSummaryForProvider(providerId: string): SessionSummary | null {
