@@ -43,17 +43,15 @@ export type SessionRuntimeServiceDeps = {
     signal: AbortSignal,
   ): Promise<T>;
   getSession(sessionId: string): Awaitable<Session | null>;
-  upsertSession(
-    session: Session,
-    options?: { confirmedFinalAssistantText?: string | null },
-  ): Awaitable<Session>;
-  persistRunningTurnStart?(session: Session, expectedMessageCount: number): Awaitable<Session>;
-  clearCharacterAuthoringRuntimeState?(session: Session): Awaitable<Session>;
-  upsertTerminalSession?(
+  persistRunningTurnStart(session: Session, expectedMessageCount: number): Awaitable<Session>;
+  appendRunningInput(session: Session, text: string, turnId: number): Awaitable<Session>;
+  checkpointRuntimeMetadata(session: Session, expected: Session): Awaitable<Session>;
+  appendTerminalSession(
     session: Session,
     terminalCommit: SessionTurnTerminalCommit,
     options?: { confirmedFinalAssistantText?: string | null },
   ): Awaitable<Session>;
+  clearCharacterAuthoringRuntimeState?(session: Session): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Awaitable<Session>;
@@ -538,7 +536,7 @@ function buildEmptyLiveSessionRunState(sessionId: string, threadId: string): Liv
 function buildRunningTurn(params: {
   sessionId: string;
   createdAt: string;
-  session: Pick<Session, "provider" | "threadId" | "messages">;
+  session: Pick<Session, "provider" | "threadId" | "messages" | "messageCount">;
   executionOptions: SessionExecutionOptions;
 }): SessionTurnInput {
   return {
@@ -547,7 +545,7 @@ function buildRunningTurn(params: {
     reasoningEffort: params.executionOptions.reasoningEffort,
     approvalMode: params.executionOptions.approvalMode,
     sandboxMode: params.executionOptions.codexSandboxMode,
-    userMessageSeq: Math.max(0, params.session.messages.length - 1),
+    userMessageSeq: Math.max(0, (params.session.messageCount ?? params.session.messages.length) - 1),
     threadId: params.session.threadId, errorMessage: "",
   };
 }
@@ -565,22 +563,6 @@ export class SessionRuntimeService {
   private readonly appendSessionInput = new Map<string, (text: string) => Promise<void>>();
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
-
-  private async upsertTerminalSession(
-    session: Session,
-    terminalCommit: SessionTurnTerminalCommit,
-    runningTurn: SessionTurnRecord,
-    options?: { confirmedFinalAssistantText?: string | null },
-  ): Promise<Session> {
-    if (this.deps.upsertTerminalSession) {
-      return this.deps.upsertTerminalSession(session, terminalCommit, options);
-    }
-    const stored = await this.deps.upsertSession(session, options);
-    const { id: _id, ...input } = runningTurn;
-    const { turnId, ...terminalInput } = terminalCommit;
-    await this.deps.updateSessionTurn(turnId, { ...input, ...terminalInput });
-    return stored;
-  }
 
   hasInFlightRuns(): boolean {
     return this.inFlightSessionRuns.size > 0
@@ -894,7 +876,7 @@ export class SessionRuntimeService {
       provider: session.provider,
       runState: session.runState,
       status: session.status,
-      messageCount: session.messages.length,
+      messageCount: session.messageCount ?? session.messages.length,
       hasThreadId: session.threadId.trim().length > 0,
     });
 
@@ -965,19 +947,19 @@ export class SessionRuntimeService {
         status: "running",
         runState: "running",
         messages: [...session.messages, { role: "user", text: nextMessage }],
+        ...(session.messageCount !== undefined ? { messageCount: session.messageCount + 1 } : {}),
       };
 
       const runningUpsertStartedAt = Date.now();
       runningSession = await (
-        this.deps.persistRunningTurnStart?.(runningSession, session.messages.length)
-        ?? this.deps.upsertSession(runningSession)
+        this.deps.persistRunningTurnStart(runningSession, session.messageCount ?? session.messages.length)
       );
       setupRunningSessionSaved = true;
       logSessionRunStuckInvestigation("runtime.running-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - runningUpsertStartedAt,
         elapsedMs: Date.now() - investigationStartedAt,
-        messageCount: runningSession.messages.length,
+        messageCount: runningSession.messageCount ?? runningSession.messages.length,
       });
       throwIfRunCanceled(runAbortController.signal);
       this.inFlightSessionRuns.add(sessionId);
@@ -1007,12 +989,13 @@ export class SessionRuntimeService {
         this.setRuntimeLiveState(sessionId, null);
       }
       if (setupRunningSessionSaved) {
-        await Promise.resolve(this.deps.upsertSession({
+        const failedSetup: Session = {
           ...runningSession!,
           updatedAt: currentTimestampLabel(),
           status: "idle",
           runState: "error",
-        })).catch((cleanupError) => {
+        };
+        await Promise.resolve(this.deps.checkpointRuntimeMetadata(failedSetup, runningSession!)).catch((cleanupError) => {
           console.warn("Session setup failure cleanup failed", cleanupError);
         });
         this.deps.broadcastLiveSessionRun(sessionId);
@@ -1024,8 +1007,7 @@ export class SessionRuntimeService {
     let liveProgressGeneration = 0;
     let activeRunningSession = runningSession;
     if (runningSession.provider === "codex") this.appendSessionInput.set(sessionId, async (text) => {
-      activeRunningSession = { ...activeRunningSession, updatedAt: currentTimestampLabel(), messages: [...activeRunningSession.messages, { role: "user", text }] };
-      activeRunningSession = await this.deps.upsertSession(activeRunningSession);
+      activeRunningSession = await this.deps.appendRunningInput({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id);
       this.deps.broadcastLiveSessionRun(sessionId);
     });
     const runProviderTurn = async (turnSession: Session) => {
@@ -1148,11 +1130,12 @@ export class SessionRuntimeService {
             await Promise.resolve(this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId));
           }
           if (activeRunningSession.threadId) {
-            activeRunningSession = await this.deps.upsertSession({
+            const resetSession: Session = {
               ...activeRunningSession,
               threadId: "",
               updatedAt: currentTimestampLabel(),
-            });
+            };
+            activeRunningSession = await this.deps.checkpointRuntimeMetadata(resetSession, activeRunningSession);
           }
           this.setRuntimeLiveState(sessionId, {
             ...buildEmptyLiveSessionRunState(sessionId, ""),
@@ -1172,6 +1155,7 @@ export class SessionRuntimeService {
         status: "idle",
         runState: "idle",
         threadId: result.threadId ?? activeRunningSession.threadId,
+        ...(activeRunningSession.messageCount !== undefined ? { messageCount: activeRunningSession.messageCount + 1 } : {}),
         messages: [
           ...activeRunningSession.messages,
           {
@@ -1182,7 +1166,7 @@ export class SessionRuntimeService {
         ],
       };
       const affectTurnCorrelationId = `turn:${sessionId}:turn:${runningTurn.id}`;
-      const assistantMessageIndex = completedSession.messages.length - 1;
+      const assistantMessageIndex = (completedSession.messageCount ?? completedSession.messages.length) - 1;
       const requiresDurableAppraisal = this.deps.requireDurableCompletedTurnAppraisal === true
         && completedSession.sessionKind === "default"
         && Boolean(completedSession.characterId);
@@ -1206,7 +1190,7 @@ export class SessionRuntimeService {
       const completedSessionUpsertStartedAt = Date.now();
       const completedThreadId = pickPreferredThreadId(result.threadId, completedSession.threadId);
       terminalPersistenceStarted = true;
-      const storedCompletedSession = await this.upsertTerminalSession(completedSession, {
+      const storedCompletedSession = await this.deps.appendTerminalSession(completedSession, {
         turnId: runningTurn.id,
         sessionId,
         phase: "completed",
@@ -1214,14 +1198,14 @@ export class SessionRuntimeService {
         threadId: completedThreadId,
         errorMessage: "",
         completedAt,
-      }, runningTurn, {
+      }, {
         confirmedFinalAssistantText: result.lastNonEmptyAssistantMessageText,
       });
       logSessionRunStuckInvestigation("runtime.completed-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - completedSessionUpsertStartedAt,
         elapsedMs: Date.now() - investigationStartedAt,
-        messageCount: completedSession.messages.length,
+        messageCount: completedSession.messageCount ?? completedSession.messages.length,
         storedRunState: storedCompletedSession.runState,
         storedStatus: storedCompletedSession.status,
       });
@@ -1288,6 +1272,7 @@ export class SessionRuntimeService {
         status: "idle",
         runState: canceled ? "idle" : "error",
         threadId: nextSessionThreadId,
+        ...(activeRunningSession.messageCount !== undefined ? { messageCount: activeRunningSession.messageCount + 1 } : {}),
         messages: [
           ...activeRunningSession.messages,
           {
@@ -1300,20 +1285,20 @@ export class SessionRuntimeService {
       };
 
       const failedSessionUpsertStartedAt = Date.now();
-      const storedFailedSession = await this.upsertTerminalSession(failedSession, {
+      const storedFailedSession = await this.deps.appendTerminalSession(failedSession, {
         turnId: runningTurn.id,
         sessionId,
         phase: canceled ? "canceled" : "failed",
-        assistantMessageSeq: failedSession.messages.length - 1,
+        assistantMessageSeq: (failedSession.messageCount ?? failedSession.messages.length) - 1,
         threadId: failedTurnThreadId,
         errorMessage: failureMessage,
         completedAt,
-      }, runningTurn);
+      });
       logSessionRunStuckInvestigation("runtime.terminal-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - failedSessionUpsertStartedAt,
         elapsedMs: Date.now() - investigationStartedAt,
-        messageCount: failedSession.messages.length,
+        messageCount: failedSession.messageCount ?? failedSession.messages.length,
         storedRunState: storedFailedSession.runState,
         storedStatus: storedFailedSession.status,
       });

@@ -68,6 +68,11 @@ import type {
 import { assertCharacterDefinitionSnapshotUpdate } from "./session-running-turn-start.js";
 import type { ProviderRuntimeMetadataPatch } from "../providers/provider-runtime-metadata-patch.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import type {
+  SessionMetadataResult, SessionMessageIdentityInput, SessionMessageIdentity,
+  SessionSteerAppendInput, SessionTerminalAppendInput,
+  SessionRunMetadataCheckpointInput,
+} from "./session-runtime-storage-contract.js";
 
 type SessionV6Row = {
   id: string;
@@ -167,6 +172,12 @@ type DecodedSessionV6RuntimeState = {
 const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
+
+// Match decodeMessage's retained rows without hydrating every message or artifact.
+const NORMALIZED_MESSAGE_PREDICATE = `(CASE WHEN role IN ('user', 'assistant') THEN 1
+  WHEN json_valid(body) THEN
+    json_type(body) = 'object' AND json_extract(body, '$.role') IN ('user', 'assistant')
+  ELSE 0 END)`;
 
 function v6RuntimeJsonValue(path: string): string {
   return `CASE WHEN json_valid(s.runtime_policy_json) THEN json_extract(s.runtime_policy_json, '${path}') ELSE NULL END`;
@@ -568,6 +579,139 @@ export class SessionStorageV6 {
       WHERE id = ?
     `).get(sessionId) as SessionV6Row | undefined;
     return row ? this.rowToSessionSummary(row) : null;
+  }
+
+  getSessionMetadata(sessionId: string): SessionMetadataResult | null {
+    const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+    return row ? this.rowToSessionMetadata(row) : null;
+  }
+
+  getSessionMessageIdentity(input: SessionMessageIdentityInput): SessionMessageIdentity | null {
+    if (!Number.isSafeInteger(input.messageIndex) || input.messageIndex < 0) throw new Error("The message index is invalid.");
+    const row = this.db.prepare(`
+      SELECT seq, role, body FROM session_messages_v6
+      WHERE session_id = ? AND ${NORMALIZED_MESSAGE_PREDICATE}
+        AND EXISTS (SELECT 1 FROM sessions_v6 WHERE id = ? AND incarnation_id = ?)
+      ORDER BY seq LIMIT 1 OFFSET ?
+    `).get(input.sessionId, input.sessionId, input.incarnationId, input.messageIndex) as (MessageV6Row & { seq: number }) | undefined;
+    const message = row ? decodeMessage(row) : null;
+    return message && row ? { role: message.role, text: message.text, historyIndex: row.seq } : null;
+  }
+
+  private normalizedMessageCount(sessionId: string): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS count FROM session_messages_v6
+      WHERE session_id = ? AND ${NORMALIZED_MESSAGE_PREDICATE}`).get(sessionId) as { count: number }).count;
+  }
+
+  private rowToSessionMetadata(row: SessionV6Row): SessionMetadataResult {
+    const decoded = decodeSessionV6RuntimeState(row);
+    return {
+      summary: this.rowToSessionSummary(row, decoded),
+      characterRuntimeSnapshot: decoded.snapshot,
+      messageCount: this.normalizedMessageCount(row.id),
+    };
+  }
+
+  private assertAppendOwner(input: { sessionId: string; incarnationId: string; expectedMessageCount: number }, turnId: number): SessionV6Row {
+    if (!input.sessionId.trim() || !Number.isSafeInteger(input.expectedMessageCount) || input.expectedMessageCount < 0
+      || !Number.isSafeInteger(turnId) || turnId < 1) throw new Error("The Session append owner is invalid.");
+    const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ? AND incarnation_id = ?")
+      .get(input.sessionId, input.incarnationId) as SessionV6Row | undefined;
+    if (!row) throw new SessionNotFoundError(input.sessionId);
+    const summary = this.rowToSessionSummary(row);
+    if (summary.accessMode !== "active") throw new Error("The Session is read-only.");
+    if (!this.db.prepare(`SELECT 1 FROM session_turns_v6 WHERE id = ? AND session_id = ?
+      AND auxiliary_session_id IS NULL AND phase = 'running'`).get(turnId, input.sessionId)) {
+      throw new Error(`session turn append target mismatch: ${turnId}`);
+    }
+    const actual = this.normalizedMessageCount(input.sessionId);
+    if (actual !== input.expectedMessageCount) throw new SessionRunningTurnStartConflictError(input.sessionId, input.expectedMessageCount, actual);
+    const tail = this.db.prepare("SELECT MAX(seq) AS seq FROM session_messages_v6 WHERE session_id = ?")
+      .get(input.sessionId) as { seq: number | null };
+    const nextSeq = tail.seq === null ? 0 : tail.seq + 1;
+    if (nextSeq !== input.expectedMessageCount) throw new SessionRunningTurnStartConflictError(input.sessionId, input.expectedMessageCount, nextSeq);
+    return row;
+  }
+
+  private insertAppendedMessage(sessionId: string, message: Message, updatedAt: string): number {
+    const tail = this.db.prepare("SELECT MAX(seq) AS seq FROM session_messages_v6 WHERE session_id = ?")
+      .get(sessionId) as { seq: number | null };
+    const seq = tail.seq === null ? 0 : tail.seq + 1;
+    this.db.prepare(`INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)`).run(sessionId, seq, message.role, encodeMessage(message), encodeMessageArtifact(message), updatedAt);
+    return seq;
+  }
+
+  appendSessionSteer(input: SessionSteerAppendInput): SessionMetadataResult {
+    const message = normalizeMessage(input.userMessage);
+    if (!message || message.role !== "user" || !message.text.trim() || !input.updatedAt.trim()) throw new Error("The steer message is invalid.");
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const row = this.assertAppendOwner(input, input.turnId);
+      this.insertAppendedMessage(input.sessionId, message, input.updatedAt);
+      this.db.prepare("UPDATE sessions_v6 SET updated_at = ?, last_active_at = ? WHERE id = ?")
+        .run(input.updatedAt, input.updatedAt, input.sessionId);
+      const result = this.rowToSessionMetadata({ ...row, updated_at: input.updatedAt, last_active_at: input.updatedAt });
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  appendSessionTerminal(input: SessionTerminalAppendInput): SessionMetadataResult {
+    const message = normalizeMessage(input.assistantMessage);
+    const commit = input.terminalCommit;
+    if (!message || message.role !== "assistant" || !input.metadata.updatedAt.trim()
+      || !["idle", "saved"].includes(input.metadata.status)
+      || commit.sessionId !== input.sessionId || commit.assistantMessageSeq !== input.expectedMessageCount) {
+      throw new Error("The terminal Session append is invalid.");
+    }
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const row = this.assertAppendOwner(input, commit.turnId);
+      const seq = this.insertAppendedMessage(input.sessionId, message, input.metadata.updatedAt);
+      const runtimePolicyJson = JSON.stringify({ ...parseJsonObject(row.runtime_policy_json),
+        appStatus: input.metadata.status, runState: input.metadata.runState });
+      this.db.prepare(`UPDATE sessions_v6 SET state = 'completed', runtime_policy_json = ?, thread_id = ?,
+        updated_at = ?, last_active_at = ? WHERE id = ?`).run(runtimePolicyJson, input.metadata.threadId,
+        input.metadata.updatedAt, input.metadata.updatedAt, input.sessionId);
+      writeSessionTurnTerminalCommit(this.db, { ...commit, assistantMessageSeq: seq });
+      const result = this.rowToSessionMetadata({ ...row, state: "completed", runtime_policy_json: runtimePolicyJson,
+        thread_id: input.metadata.threadId, updated_at: input.metadata.updatedAt, last_active_at: input.metadata.updatedAt });
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  checkpointSessionRunMetadata(input: SessionRunMetadataCheckpointInput): SessionMetadataResult | null {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ? AND incarnation_id = ?")
+        .get(input.sessionId, input.incarnationId) as SessionV6Row | undefined;
+      if (!row) { this.db.exec("ROLLBACK"); return null; }
+      const current = this.rowToSessionSummary(row);
+      if (current.accessMode !== "active" || current.status !== input.expected.status
+        || current.runState !== input.expected.runState || current.threadId !== input.expected.threadId) {
+        this.db.exec("ROLLBACK"); return null;
+      }
+      if (!["running", "idle", "saved"].includes(input.next.status) || !input.next.updatedAt.trim()) {
+        throw new Error("The Session run metadata is invalid.");
+      }
+      const policy = JSON.stringify({ ...parseJsonObject(row.runtime_policy_json), appStatus: input.next.status, runState: input.next.runState });
+      const state = input.next.status === "running" ? "active" : "completed";
+      this.db.prepare(`UPDATE sessions_v6 SET state = ?, runtime_policy_json = ?, thread_id = ?,
+        updated_at = ?, last_active_at = ? WHERE id = ?`).run(state, policy, input.next.threadId,
+        input.next.updatedAt, input.next.updatedAt, input.sessionId);
+      const result = this.rowToSessionMetadata({ ...row, state, runtime_policy_json: policy, thread_id: input.next.threadId,
+        updated_at: input.next.updatedAt, last_active_at: input.next.updatedAt });
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
   listSessionCredentialThreads(): SessionCredentialThreadInfo[] {

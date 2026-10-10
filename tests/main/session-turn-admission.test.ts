@@ -7,10 +7,7 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import type { Session } from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import {
-  SessionRuntimeService,
-  type SessionRuntimeServiceDeps,
-} from "../../src-electron/session/session-runtime-service.js";
+import { SessionRuntimeFixture as SessionRuntimeService, type SessionRuntimeFixtureDeps as SessionRuntimeServiceDeps } from "./session-runtime-fixture.js";
 import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character/character-affect-turn-ownership-coordinator.js";
 import { ProviderRuntimeOperationCoordinator } from "../../src-electron/providers/provider-runtime-operation-coordinator.js";
 import { admitSessionTurn } from "../../src-electron/session/session-turn-admission.js";

@@ -148,13 +148,13 @@ provider 後処理は ownership 解放前に全対象の旧 runtime 参照を同
 
 pending は Session incarnation を保存し、回収時と評価適用時に current owner と照合する。既存 V6 行は `legacy:<id>` へ移行し、incarnation 列のない旧 pending も同じ owner と解釈する。新規行には UUID を発行するため、旧 pending は同じ ID の再作成行に適用されない。既存の要求 fingerprint は変更しない。
 
-unready pending の Session 読取待ちでも storage identity を再確認し、交換された旧 storage への ready / discard を行わない。close / recreate 時には drain cursor も破棄する。
+unready pendingの回収とready pendingの評価は、Session metadataと指定normalized indexのassistant role／textの専用queryを使用し、全履歴を取得しない。normalized indexと保存seqを区別し、対象queryで対応を解決する。unready pending の読取待ちでも storage identity を再確認し、交換された旧 storage への ready / discard を行わない。close / recreate 時には drain cursor も破棄する。readyのowner／message読取はattempt登録後に実施し、読取例外は既存の有限retry／quarantineで扱い、owner有効や削除とみなさない。
 
 completed 保存後の detached readiness 更新も捕捉した persistent store owner を確認し、失効後は `absent` として retry を終える。owner が現行のまま発生した一時障害は既存の retry を維持する。この待機は correlation ID と評価起動callbackだけを保持し、保存済みSessionの全履歴を捕捉しない。評価起動はdurable pendingを読み取るschedulerへの通知であり、全Session snapshotを渡さない。
 
 外部 Provider による Affect 評価は ownership coordinator を保持せずに実行する。無関係な Session の作成・削除を、評価完了待ちへ結合しない。
 
-適用直前の Session 生存、Character owner、committed assistant turn の検証と、既存 `expectedVersion` による appraise、settlement 確定を同じ ownership 境界に置く。評価中に owner が削除された場合は結果を破棄し、Affect を適用しない。同じ Character の競合は既存の version conflict / idempotency / bounded retry 契約で扱い、確定済みの通常 Turn を巻き戻さない。
+新しい評価を保存する前と、appraise直前のownership境界内で、最新metadataと対象messageを再取得してSession生存、incarnation、Character owner、committed assistant role／textを確認する。適用直前の検証、既存 `expectedVersion` による appraise、settlement 確定を同じ ownership 境界に置く。評価中に owner が削除された場合は結果を破棄し、Affect を適用しない。同じ Character の競合は既存の version conflict / idempotency / bounded retry 契約で扱い、確定済みの通常 Turn を巻き戻さない。
 
 非同期処理中に settlement storage または Memory runtime の instance が交換された場合、その評価試行は `invalidated` とする。await 後と適用前に instance identity を確認し、閉じた storage へ評価結果や failure を書かず、新 instance の同名要求にも結果を引き継がない。
 

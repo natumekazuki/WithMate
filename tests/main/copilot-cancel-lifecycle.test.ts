@@ -5,7 +5,7 @@ import { it } from "node:test";
 import { CopilotClient, RuntimeConnection, type CopilotSession, type SessionEvent } from "@github/copilot-sdk";
 
 import { CopilotAdapter } from "../../src-electron/providers/copilot/copilot-adapter.js";
-import { SessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
+import { SessionRuntimeFixture as SessionRuntimeService } from "./session-runtime-fixture.js";
 import { ProviderTurnError } from "../../src-electron/providers/provider-runtime.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";

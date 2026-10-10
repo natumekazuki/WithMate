@@ -25,7 +25,7 @@ Mainの`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を�
 
 turnはMainまたはAuxiliaryの一方だけをownerとし、phase、実行設定、message位置、thread、時刻、error summaryを`session_turns_v6`へ保存する。会話本文と操作結果の正本は通常履歴と`MessageArtifact.operationTimeline`であり、軽量messageと重いartifact detailを分け、detailは対象を開いたときに取得する。開始と終端の最小turn保存、取消・失敗判定、Timing・Affectとの関連付けは[Session Run Lifecycle](session-run-lifecycle.md)を参照する。
 
-会話の表示用readはmetadataと最新60件を返し、過去の本文は60件単位で取得する。messageの`historyIndex`は保存行の`seq`で、`messageCount`は会話全体の件数である。Mainの表示metadataは末尾pageより前にある場合も最新user messageを保持する。全履歴検索とmessage navigatorはstorage Workerで軽量messageを逐次投影し、本文の全件転送・常駐を要求しない。表示pageは保存用full Sessionとは区別し、storageの全文保存入口はpageを拒否する。rendererのmetadata更新はincarnationを照合した最新保存履歴へ適用し、paged本文で履歴を置換しない。runtimeとLLM contextのfull readは別経路のまま保持する。
+会話の表示用readはmetadataと最新60件を返し、過去の本文は60件単位で取得する。messageの`historyIndex`は保存行の`seq`で、`messageCount`は会話全体の件数である。Mainの表示metadataは末尾pageより前にある場合も最新user messageを保持する。全履歴検索とmessage navigatorはstorage Workerで軽量messageを逐次投影し、本文の全件転送・常駐を要求しない。表示pageは保存用full Sessionとは区別し、storageの全文保存入口はpageを拒否する。rendererのmetadata更新はincarnationを照合した最新保存履歴へ適用し、paged本文で履歴を置換しない。turn runtimeはmetadataと全体件数、当該turnで追加したmessageだけを保持し、開始・追加入力・終端を専用commandで追加する。履歴を必要とするconsumerのfull readは明示的な別経路で保持する。
 
 Memoryのowner、scope、忘却、idempotency、保護対象fileは[V6 Memory Foundation](v6-memory-foundation.md)と[V6 Memory Protected Objects](v6-memory-protected-objects.md)を参照する。Characterの定義fileは`<userData>/characters/<character-id>/`に置き、catalog metadataとsession snapshotの境界は[Character Storage](character-storage.md)を参照する。
 

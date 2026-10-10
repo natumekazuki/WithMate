@@ -87,6 +87,18 @@ export class MainSessionPersistenceFacade {
     return this.deps.getSessionPersistenceService().persistRunningTurnStart(session, expectedMessageCount);
   }
 
+  async appendRunningInput(session: Session, text: string, turnId: number): Promise<Session> {
+    return this.deps.getSessionPersistenceService().appendRunningInput(session, text, turnId);
+  }
+
+  async appendTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Promise<Session> {
+    return this.deps.getSessionPersistenceService().appendTerminalSession(session, terminalCommit);
+  }
+
+  async checkpointRuntimeMetadata(session: Session, expected: Session): Promise<Session> {
+    return this.deps.getSessionPersistenceService().checkpointRuntimeMetadata(session, expected);
+  }
+
   async clearCharacterAuthoringRuntimeState(session: Session): Promise<Session> {
     return this.deps.getSessionPersistenceService().clearCharacterAuthoringRuntimeState(session);
   }

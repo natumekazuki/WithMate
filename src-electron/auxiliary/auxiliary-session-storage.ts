@@ -14,6 +14,8 @@ import { CURRENT_SESSION_SCHEMA_VERSION, isReadOnlySession } from "../../src-sha
 import { normalizeMessage, summarizeMessageArtifact, type Message, type MessageArtifact } from "../../src-shared/session/session-state.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import type { ProviderRuntimeMetadataPatch } from "../providers/provider-runtime-metadata-patch.js";
+import type { SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
+import { assertCharacterDefinitionSnapshotUpdate } from "../session/session-running-turn-start.js";
 import type {
   AuxiliaryDraftConsumeInput,
   AuxiliaryDraftConsumeResult,
@@ -92,6 +94,26 @@ export type AuxiliarySessionRuntimeMetadataPatchInput = ProviderRuntimeMetadataP
 export type AuxiliarySessionUpdateIfMatchesInput = {
   session: AuxiliarySession;
   expectedSession: AuxiliarySession;
+};
+
+export type AuxiliaryRuntimeWriteInput = {
+  auxiliarySessionId: string;
+  parentSessionId: string;
+  createdAt: string;
+  expectedMessageCount: number;
+  updatedAt: string;
+};
+export type AuxiliaryRunningTurnStartInput = AuxiliaryRuntimeWriteInput & {
+  userMessage: Message;
+  characterRuntimeSnapshot?: AuxiliarySession["characterRuntimeSnapshot"];
+};
+export type AuxiliarySteerAppendInput = AuxiliaryRuntimeWriteInput & { turnId: number; userMessage: Message };
+export type AuxiliaryTerminalAppendInput = AuxiliaryRuntimeWriteInput & {
+  assistantMessage: Message;
+  runState: AuxiliarySession["runState"];
+  threadId: string;
+  preview: string;
+  terminalCommit: SessionTurnTerminalCommit;
 };
 
 export type AuxiliaryIdentityPatchInput = {
@@ -338,6 +360,86 @@ export class AuxiliarySessionStorage {
       `).get(auxiliarySessionId) as AuxiliarySessionRow | undefined;
       const session = row ? readAuxiliarySession(db, row) : null;
       return session ? this.composeDraft(db, session) : null;
+    });
+  }
+
+  getAuxiliarySessionMetadata(auxiliarySessionId: string): AuxiliarySession | null {
+    return this.withDb((db) => readAuxiliaryMetadata(db, auxiliarySessionId));
+  }
+
+  appendAuxiliaryRunningTurnStart(input: AuxiliaryRunningTurnStartInput): AuxiliarySession | null {
+    return this.writeRuntime(input, (db, current) => {
+      if (current.runState === "running" || input.userMessage.role !== "user" || !input.userMessage.text.trim()) return false;
+      assertCharacterDefinitionSnapshotUpdate(current.characterRuntimeSnapshot, input.characterRuntimeSnapshot,
+        current.characterId ?? input.characterRuntimeSnapshot?.characterId ?? "");
+      insertAuxiliaryMessage(db, current.id, input.expectedMessageCount, input.userMessage, input.updatedAt);
+      db.prepare(`UPDATE auxiliary_sessions SET run_state = 'running', status = 'active', closed_at = '',
+        character_snapshot_json = ?, preview = ?, updated_at = ? WHERE id = ?`).run(
+        input.characterRuntimeSnapshot === undefined ? (current.characterRuntimeSnapshot ? JSON.stringify(current.characterRuntimeSnapshot) : null)
+          : input.characterRuntimeSnapshot === null ? null : JSON.stringify(input.characterRuntimeSnapshot),
+        current.preview || buildAuxiliaryPreview([input.userMessage]), input.updatedAt, current.id);
+      return true;
+    });
+  }
+
+  appendAuxiliarySteer(input: AuxiliarySteerAppendInput): AuxiliarySession | null {
+    return this.writeRuntime(input, (db, current) => {
+      if (current.runState !== "running" || input.userMessage.role !== "user" || !input.userMessage.text.trim()
+        || !db.prepare(`SELECT id FROM session_turns_v6 WHERE id = ? AND session_id IS NULL
+          AND auxiliary_session_id = ? AND phase = 'running'`).get(input.turnId, current.id)) return false;
+      insertAuxiliaryMessage(db, current.id, input.expectedMessageCount, input.userMessage, input.updatedAt);
+      db.prepare("UPDATE auxiliary_sessions SET updated_at = ? WHERE id = ?").run(input.updatedAt, current.id);
+      return true;
+    });
+  }
+
+  appendAuxiliaryTerminal(input: AuxiliaryTerminalAppendInput): AuxiliarySession | null {
+    return this.writeRuntime(input, (db, current) => {
+      const commit = input.terminalCommit;
+      if (current.runState !== "running" || input.assistantMessage.role !== "assistant" || input.runState === "running"
+        || commit.sessionId !== current.id || commit.assistantMessageSeq !== input.expectedMessageCount) return false;
+      insertAuxiliaryMessage(db, current.id, input.expectedMessageCount, input.assistantMessage, input.updatedAt);
+      db.prepare(`UPDATE auxiliary_sessions SET run_state = ?, status = 'active', closed_at = '',
+        thread_id = ?, preview = ?, updated_at = ? WHERE id = ?`)
+        .run(input.runState, input.threadId, input.preview, input.updatedAt, current.id);
+      const result = db.prepare(`UPDATE session_turns_v6 SET phase = ?, assistant_message_seq = ?, thread_id = ?,
+        error_summary = ?, completed_at = ?, updated_at = ? WHERE id = ? AND session_id IS NULL
+        AND auxiliary_session_id = ? AND phase = 'running'`).run(commit.phase, commit.assistantMessageSeq,
+        commit.threadId, commit.errorMessage, commit.completedAt, commit.completedAt, commit.turnId, current.id);
+      if (Number(result.changes) !== 1) throw new Error(`Auxiliary turn terminal commit target mismatch: ${commit.turnId}`);
+      return true;
+    });
+  }
+
+  checkpointAuxiliaryRuntimeMetadata(input: AuxiliaryRuntimeWriteInput & {
+    threadId: string; provider: string; expectedThreadId: string; expectedRunState: AuxiliarySession["runState"];
+    runState: AuxiliarySession["runState"];
+  }): AuxiliarySession | null {
+    return this.writeRuntime(input, (db, current) => {
+      if (current.provider !== input.provider || current.threadId !== input.expectedThreadId || current.runState !== input.expectedRunState) return false;
+      db.prepare("UPDATE auxiliary_sessions SET thread_id = ?, run_state = ?, updated_at = ? WHERE id = ?")
+        .run(input.threadId, input.runState, input.updatedAt, current.id);
+      return true;
+    });
+  }
+
+  private writeRuntime(input: AuxiliaryRuntimeWriteInput,
+    write: (db: DatabaseSync, current: AuxiliarySession) => boolean): AuxiliarySession | null {
+    return this.withDb((db) => {
+      db.exec("BEGIN IMMEDIATE TRANSACTION");
+      try {
+        const current = readAuxiliaryMetadata(db, input.auxiliarySessionId);
+        if (!Number.isSafeInteger(input.expectedMessageCount) || input.expectedMessageCount < 0
+          || !current || current.parentSessionId !== input.parentSessionId || current.createdAt !== input.createdAt
+          || current.characterRuntimeSnapshotInvalid || current.messageCount !== input.expectedMessageCount
+          || !hasWritableAuxiliaryParent(db, current.parentSessionId) || !write(db, current)) {
+          db.exec("ROLLBACK"); return null;
+        }
+        const saved = readAuxiliaryMetadata(db, current.id);
+        if (!saved) throw new Error("The Auxiliary Session could not be read after saving.");
+        db.exec("COMMIT");
+        return saved;
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
     });
   }
 
@@ -882,6 +984,26 @@ function readAuxiliarySession(db: DatabaseSync, row: AuxiliarySessionRow): Auxil
     if (!message) throw new Error(`Invalid Auxiliary message: ${row.id}`);
     return message;
   }) };
+}
+
+function readAuxiliaryMetadata(db: DatabaseSync, id: string): AuxiliarySession | null {
+  const row = db.prepare("SELECT * FROM auxiliary_sessions WHERE id = ?").get(id) as AuxiliarySessionRow | undefined;
+  const session = row ? parseAuxiliarySessionRow(row) : null;
+  if (!session) return null;
+  const count = db.prepare("SELECT COUNT(*) AS count FROM auxiliary_session_messages WHERE auxiliary_session_id = ?")
+    .get(id) as { count: number };
+  return { ...session, messageCount: count.count };
+}
+
+function insertAuxiliaryMessage(db: DatabaseSync, id: string, seq: number, message: Message, updatedAt: string): void {
+  const normalized = normalizeMessage(message);
+  if (!normalized) throw new Error("Invalid Auxiliary message.");
+  const artifact = normalized.artifact;
+  if (artifact?.detailAvailable) throw new Error("Auxiliary appended artifact must contain its full detail.");
+  const body = JSON.stringify({ ...normalized, historyIndex: undefined,
+    artifact: artifact ? summarizeMessageArtifact(artifact) : undefined });
+  db.prepare(`INSERT INTO auxiliary_session_messages (auxiliary_session_id, seq, role, body, artifact_body, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(id, seq, normalized.role, body, artifact ? JSON.stringify(artifact) : null, updatedAt);
 }
 
 function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession): void {
