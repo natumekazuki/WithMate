@@ -240,8 +240,8 @@ describe("V1 to V2 database migration write mode", () => {
   // kind = "contract"
   // claim = "V1 DB から V2 DB を作成し、sessions/messages/artifacts を write する"
   // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
-  // fault = "通常Sessionのmessage順序・accent・artifact本文または設定/catalogを失う"
-  // observable = "V2 session headers、順序付きmessage行、artifact JSON、app settings行とsource行数"
+  // fault = "通常Sessionのmessage順序・accent・artifact本文または設定を失う、あるいはsourceのSession本文・stream・設定を変更する"
+  // observable = "V2 session headers、順序付きmessage行、artifact JSON、app settings行と移行前後のsource保存内容・行数"
   // observation_boundary = "public-boundary"
   // scope = "main/database-v1-to-v2-migration"
   // lifecycle = "permanent"
@@ -289,10 +289,13 @@ describe("V1 to V2 database migration write mode", () => {
         sourceDb.close();
       }
 
-      const v1SessionCountBefore = (() => {
+      const sourceContentsBefore = (() => {
         const sourceDb = new DatabaseSync(fixture.dbPath);
         try {
-          return countRows(sourceDb, "sessions");
+          return {
+            sessions: sourceDb.prepare("SELECT id, task_title, messages_json, stream_json FROM sessions ORDER BY id").all(),
+            appSettings: sourceDb.prepare("SELECT setting_key, setting_value, updated_at FROM app_settings ORDER BY setting_key").all(),
+          };
         } finally {
           sourceDb.close();
         }
@@ -384,8 +387,16 @@ describe("V1 to V2 database migration write mode", () => {
 
       const sourceDbAfter = new DatabaseSync(fixture.dbPath);
       try {
-        const v1SessionCountAfter = countRows(sourceDbAfter, "sessions");
-        assert.equal(v1SessionCountAfter, v1SessionCountBefore);
+        assert.equal(countRows(sourceDbAfter, "sessions"), 2);
+        assert.equal(countRows(sourceDbAfter, "app_settings"), 2);
+        assert.deepEqual(
+          sourceDbAfter.prepare("SELECT id, task_title, messages_json, stream_json FROM sessions ORDER BY id").all(),
+          sourceContentsBefore.sessions,
+        );
+        assert.deepEqual(
+          sourceDbAfter.prepare("SELECT setting_key, setting_value, updated_at FROM app_settings ORDER BY setting_key").all(),
+          sourceContentsBefore.appSettings,
+        );
       } finally {
         sourceDbAfter.close();
       }
@@ -398,8 +409,8 @@ describe("V1 to V2 database migration write mode", () => {
   // kind = "contract"
   // claim = "既存 V2 DB は overwrite 指定がない限り置き換えない"
   // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
-  // fault = "overwriteなしでも既存targetを上書きする"
-  // observable = "migration拒否例外と既存targetの保存session行数"
+  // fault = "overwriteなしで既存targetのSessionやmessageを破壊してから拒否例外を返す"
+  // observable = "migration拒否例外と次のoverwrite前に読んだtargetのSession・message内容と行数"
   // observation_boundary = "public-boundary"
   // scope = "main/database-v1-to-v2-migration"
   // lifecycle = "permanent"
@@ -426,6 +437,14 @@ describe("V1 to V2 database migration write mode", () => {
         v2DbPath,
       });
 
+      const existingTargetDb = new DatabaseSync(v2DbPath);
+      try {
+        existingTargetDb.prepare("UPDATE sessions SET task_title = ? WHERE id = ?").run("existing target task", "session-1");
+        existingTargetDb.prepare("UPDATE session_messages SET text = ? WHERE session_id = ?").run("existing target message", "session-1");
+      } finally {
+        existingTargetDb.close();
+      }
+
       assert.throws(
         () =>
           createMigrationWriteReport({
@@ -434,6 +453,22 @@ describe("V1 to V2 database migration write mode", () => {
           }),
         /V2 database already exists/,
       );
+
+      const targetDbAfterRejection = new DatabaseSync(v2DbPath, { readOnly: true });
+      try {
+        assert.equal(countRows(targetDbAfterRejection, "sessions"), 1);
+        assert.equal(countRows(targetDbAfterRejection, "session_messages"), 1);
+        assert.deepEqual(
+          targetDbAfterRejection.prepare("SELECT id, task_title, message_count FROM sessions ORDER BY id").all().map((row) => ({ ...row })),
+          [{ id: "session-1", task_title: "existing target task", message_count: 1 }],
+        );
+        assert.deepEqual(
+          targetDbAfterRejection.prepare("SELECT session_id, seq, role, text FROM session_messages ORDER BY session_id, seq").all().map((row) => ({ ...row })),
+          [{ session_id: "session-1", seq: 0, role: "user", text: "existing target message" }],
+        );
+      } finally {
+        targetDbAfterRejection.close();
+      }
 
       const overwriteReport = createMigrationWriteReport({
         v1DbPath: fixture.dbPath,
