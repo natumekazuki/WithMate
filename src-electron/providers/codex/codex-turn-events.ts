@@ -1,12 +1,12 @@
 import type {
-  AuditLogUsage,
+  ProviderUsage,
   LiveRunStep,
 } from "../../../src-shared/session/runtime-state.js";
 import {
-  AUDIT_TEXT_PREVIEW_LIMIT,
-  toAuditTextPreview,
-  stringifyBoundedAuditValue,
-} from "../../session/audit-payload-limits.js";
+  PROVIDER_TEXT_PREVIEW_LIMIT,
+  toProviderTextPreview,
+  stringifyBoundedProviderValue,
+} from "../../session/provider-payload-limits.js";
 import { ProviderProgressMap } from "../provider-progress.js";
 
 // The fields consumed here follow Codex App Server 0.159.0's ThreadItem schema.
@@ -61,8 +61,8 @@ export type CodexTurnStreamState = {
   threadId: string | null;
   turnId: string | null;
   reasoningText: string;
-  usage: AuditLogUsage | null;
-  usageBaseline: AuditLogUsage | null;
+  usage: ProviderUsage | null;
+  usageBaseline: ProviderUsage | null;
   streamErrorMessage: string;
   turnCompleted: boolean;
   terminalStatus: string | null;
@@ -114,13 +114,13 @@ class OrderedItemText {
     let hasText = false;
     for (const entry of this.ordered) {
       if (!entry.text) continue;
-      if (hasText) prefix += "\n\n".slice(0, AUDIT_TEXT_PREVIEW_LIMIT - prefix.length);
-      prefix += entry.text.slice(0, AUDIT_TEXT_PREVIEW_LIMIT - prefix.length);
+      if (hasText) prefix += "\n\n".slice(0, PROVIDER_TEXT_PREVIEW_LIMIT - prefix.length);
+      prefix += entry.text.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT - prefix.length);
       hasText = true;
-      if (prefix.length === AUDIT_TEXT_PREVIEW_LIMIT) break;
+      if (prefix.length === PROVIDER_TEXT_PREVIEW_LIMIT) break;
     }
-    this.previewText = originalLength > AUDIT_TEXT_PREVIEW_LIMIT
-      ? `${prefix}\n...[truncated ${originalLength - AUDIT_TEXT_PREVIEW_LIMIT} chars; originalLength=${originalLength}]`
+    this.previewText = originalLength > PROVIDER_TEXT_PREVIEW_LIMIT
+      ? `${prefix}\n...[truncated ${originalLength - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${originalLength}]`
       : prefix;
     return this.previewText;
   }
@@ -167,7 +167,7 @@ export function createCodexTurnStreamState(
   textCaches.set(state, { assistant, reasoning, order: new Map() });
   return state;
 }
-function usageBreakdown(value: unknown): AuditLogUsage | null {
+function usageBreakdown(value: unknown): ProviderUsage | null {
   const usage = record(value);
   if (
     typeof usage.inputTokens !== "number" ||
@@ -190,9 +190,9 @@ function usageBreakdown(value: unknown): AuditLogUsage | null {
   };
 }
 function subtractUsage(
-  total: AuditLogUsage,
-  baseline: AuditLogUsage,
-): AuditLogUsage {
+  total: ProviderUsage,
+  baseline: ProviderUsage,
+): ProviderUsage {
   return {
     inputTokens: Math.max(0, total.inputTokens - baseline.inputTokens),
     outputTokens: Math.max(0, total.outputTokens - baseline.outputTokens),
@@ -229,27 +229,32 @@ export function getCodexCommandOutputPreview(
   item: Extract<CodexTurnItem, { type: "commandExecution" }>,
 ): string | undefined {
   if (item.aggregatedOutput === null) return undefined;
-  if (item.aggregatedOutputOriginalLength === undefined) return toAuditTextPreview(item.aggregatedOutput);
+  if (item.aggregatedOutputOriginalLength === undefined) return toProviderTextPreview(item.aggregatedOutput);
   const originalLength = item.aggregatedOutputOriginalLength ?? item.aggregatedOutput.length;
-  if (originalLength <= AUDIT_TEXT_PREVIEW_LIMIT) return item.aggregatedOutput;
-  return `${item.aggregatedOutput}\n...[truncated ${originalLength - AUDIT_TEXT_PREVIEW_LIMIT} chars; originalLength=${originalLength}]`;
+  if (originalLength <= PROVIDER_TEXT_PREVIEW_LIMIT) return item.aggregatedOutput;
+  return `${item.aggregatedOutput}\n...[truncated ${originalLength - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${originalLength}]`;
+}
+
+export function getCodexMcpResultPreview(
+  item: Extract<CodexTurnItem, { type: "mcpToolCall" }>,
+): string | undefined {
+  return stringifyBoundedProviderValue(
+    item.result?.structuredContent ?? item.result?.content,
+  );
 }
 
 function liveStep(item: CodexTurnItem): LiveRunStep | null {
   const status = "status" in item ? item.status : "completed";
-  const liveStatus =
-    status === "completed"
-      ? "completed"
-      : status === "failed" || status === "declined"
-        ? "failed"
-        : "in_progress";
+  const liveStatus = status === "inProgress" ? "in_progress" : status === "declined" ? "failed" : status;
   switch (item.type) {
     case "commandExecution":
       return {
         id: item.id,
         type: "command_execution",
-        summary: toAuditTextPreview(item.command) ?? "",
+        summary: toProviderTextPreview(item.command) ?? "",
         details: getCodexCommandOutputPreview(item),
+        ...(item.exitCode !== null ? { exitCode: item.exitCode } : {}),
+        ...(item.aggregatedOutputOriginalLength !== undefined ? { truncated: item.aggregatedOutputOriginalLength > (item.aggregatedOutput?.length ?? 0) } : {}),
         status: liveStatus,
       };
     case "fileChange":
@@ -266,11 +271,8 @@ function liveStep(item: CodexTurnItem): LiveRunStep | null {
         id: item.id,
         type: "mcp_tool_call",
         summary: `${item.server}/${item.tool}`,
-        details:
-          item.error?.message ??
-          stringifyBoundedAuditValue(
-            item.result?.structuredContent ?? item.arguments,
-          ),
+        ...(item.error ? { error: { message: toProviderTextPreview(item.error.message) ?? "" } } : {}),
+        details: getCodexMcpResultPreview(item),
         status: liveStatus,
       };
     case "collabAgentToolCall":
@@ -278,7 +280,7 @@ function liveStep(item: CodexTurnItem): LiveRunStep | null {
         id: item.id,
         type: "collab_tool_call",
         summary: item.tool,
-        details: stringifyBoundedAuditValue(item.agentsStates),
+        details: stringifyBoundedProviderValue(item.agentsStates),
         status: liveStatus,
       };
     case "webSearch":
@@ -286,14 +288,14 @@ function liveStep(item: CodexTurnItem): LiveRunStep | null {
         id: item.id,
         type: "web_search",
         summary:
-          item.query ?? stringifyBoundedAuditValue(item.action) ?? "Web search",
+          item.query ?? stringifyBoundedProviderValue(item.action) ?? "Web search",
         status: "completed",
       };
     case "plan":
       return {
         id: item.id,
         type: "plan",
-        summary: toAuditTextPreview(item.text) ?? "",
+        summary: toProviderTextPreview(item.text) ?? "",
         status: "completed",
       };
     default:
@@ -303,7 +305,11 @@ function liveStep(item: CodexTurnItem): LiveRunStep | null {
 function setLiveStep(state: CodexTurnStreamState, step: LiveRunStep): boolean {
   const previous = state.liveSteps.get(step.id);
   if (previous && previous.type === step.type && previous.summary === step.summary
-    && previous.details === step.details && previous.status === step.status) return false;
+    && previous.details === step.details && previous.status === step.status
+    && previous.exitCode === step.exitCode
+    && previous.error?.message === step.error?.message
+    && previous.error?.code === step.error?.code
+    && previous.truncated === step.truncated) return false;
   state.liveSteps.set(step.id, step);
   return true;
 }
@@ -317,8 +323,8 @@ function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput =
     item = {
       ...item,
       aggregatedOutputOriginalLength: item.aggregatedOutput.length,
-      aggregatedOutput: item.aggregatedOutput.length > AUDIT_TEXT_PREVIEW_LIMIT
-        ? JSON.parse(JSON.stringify(item.aggregatedOutput.slice(0, AUDIT_TEXT_PREVIEW_LIMIT))) as string
+      aggregatedOutput: item.aggregatedOutput.length > PROVIDER_TEXT_PREVIEW_LIMIT
+        ? JSON.parse(JSON.stringify(item.aggregatedOutput.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT))) as string
         : item.aggregatedOutput,
     };
   }
@@ -388,7 +394,7 @@ export function applyCodexTurnEvent(
         break;
       const item = state.items.get(params.itemId);
       if (item?.type === "commandExecution") {
-        const remaining = Math.max(0, AUDIT_TEXT_PREVIEW_LIMIT - (item.aggregatedOutput?.length ?? 0));
+        const remaining = Math.max(0, PROVIDER_TEXT_PREVIEW_LIMIT - (item.aggregatedOutput?.length ?? 0));
         const prefix = params.delta.length > remaining
           ? JSON.parse(JSON.stringify(params.delta.slice(0, remaining))) as string
           : params.delta;
@@ -440,7 +446,7 @@ export function applyCodexTurnEvent(
         id: "turn-plan",
         type: "plan",
         summary: `${steps.filter((step) => step.status === "completed").length}/${steps.length} completed`,
-        details: toAuditTextPreview(
+        details: toProviderTextPreview(
           steps
             .map(
               (step) =>

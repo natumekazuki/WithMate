@@ -257,9 +257,9 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:list-session-character-usage",
     args: [],
   });
-  assert.deepEqual(await api.listSessionAuditLogSummaryPage("session-1", { cursor: 50, limit: 25 }), {
-    channel: "withmate:list-session-audit-log-summary-page",
-    args: ["session-1", { cursor: 50, limit: 25 }],
+  assert.deepEqual(await api.getLatestSessionTurn("session-1"), {
+    channel: "withmate:get-latest-session-turn",
+    args: ["session-1"],
   });
   assert.deepEqual(await api.copyFilesToSessionFiles("session-1", ["C:/note.txt"]), {
     channel: "withmate:copy-files-to-session-files",
@@ -674,9 +674,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getSessionSummary",
     "getSessionWindowRestoreSet",
     "getSessionGlossaryProjection",
-    "getSessionAuditLogDetail",
-    "getSessionAuditLogDetailSection",
-    "getSessionAuditLogOperationDetail",
+    "getLatestSessionTurn",
     "getMateProfile",
     "getMateState",
     "getMemoryV6Diagnostics",
@@ -698,9 +696,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listOpenAuxiliarySessionSummaries",
     "listOpenSessionWindowIds",
     "listPromptTemplates",
-    "listSessionAuditLogSummaryPage",
-    "listSessionAuditLogSummaries",
-    "listSessionAuditLogs",
     "listSessionCustomAgents",
     "listSessionSkills",
     "listSessionCharacterUsage",
@@ -786,6 +781,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeModelCatalog",
     "subscribeOpenSessionWindowIds",
     "subscribeSessionWindowRestoreSet",
+    "onSessionTurnUpdated",
     "subscribePromptTemplates",
     "subscribeProviderQuotaTelemetry",
     "subscribeSessionFilePreviewNavigation",

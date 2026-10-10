@@ -1,7 +1,7 @@
-import type { LiveSessionRunState, AuditLogOperation, AuditLogProviderMetadata } from "../../../src-shared/session/runtime-state.js";
+import type { LiveSessionRunState, ProviderDiagnosticMetadata } from "../../../src-shared/session/runtime-state.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
 import type { RunSessionTurnProgressChanges } from "../provider-runtime.js";
-import type { BoundedAuditRawItem } from "../../session/audit-payload-limits.js";
+import type { BoundedProviderRawItem } from "../../session/provider-payload-limits.js";
 import type { CodexNativeNotification, CodexTurnItem } from "./codex-turn-events.js";
 
 export const CODEX_LIVE_PROGRESS_INTERVAL_MS = 33;
@@ -13,20 +13,19 @@ export type CodexProjectionStart = {
   binding?: ProviderAgentRuntimeBindingProjection | null;
   apiKey: string;
   progress: boolean;
+  diagnosticTrace?: boolean;
 };
 export type CodexProjectionProgress = {
   state: LiveSessionRunState;
   changes: RunSessionTurnProgressChanges;
 };
-/** A changed live revision may have no persisted Audit fields (for example reasoning). */
-export type CodexProjectionEvent = { audit: CodexProjectionProgress | null };
+export type CodexProjectionEvent = { changed: boolean; errorMessage?: string };
 export type CodexProjectionFinal = {
   items: CodexTurnItem[];
   assistantText: string;
   lastNonEmptyAssistantMessageText: string;
-  operations: AuditLogOperation[];
-  rawItemsJson: string;
-  providerMetadata: AuditLogProviderMetadata[];
+  rawItemsJson?: string;
+  providerMetadata: ProviderDiagnosticMetadata[];
   usage: LiveSessionRunState["usage"];
   terminalStatus: string | null;
   errorMessage: string;
@@ -36,7 +35,7 @@ export type CodexProjectionCommand =
   | { type: "event"; event: CodexNativeNotification }
   | { type: "events"; events: CodexNativeNotification[] }
   | { type: "live"; inputAvailable: boolean; force?: boolean }
-  | { type: "finish"; diagnostics: BoundedAuditRawItem[] }
+  | { type: "finish"; diagnostics: BoundedProviderRawItem[] }
   | { type: "release" };
 export type CodexProjectionRequest = { id: number; runId: string; command: CodexProjectionCommand };
 export type CodexProjectionResponse = { id: number; value?: unknown; error?: string };

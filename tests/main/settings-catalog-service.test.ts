@@ -39,7 +39,6 @@ type DefaultedSettingsCatalogDependency =
   | "updateSessionRuntimeMetadataIfMatches"
   | "updateAuxiliarySessionRuntimeMetadataIfMatches"
   | "replaceAllSessions"
-  | "clearAuditLogs"
   | "resetAppSettings"
   | "resetModelCatalogToBundled"
   | "clearProjectMemories"
@@ -65,7 +64,6 @@ const defaultSettingsCatalogDependencies: Pick<SettingsCatalogDeps, DefaultedSet
   updateSessionRuntimeMetadataIfMatches: async () => { throw new Error("unexpected updateSessionRuntimeMetadataIfMatches"); },
   updateAuxiliarySessionRuntimeMetadataIfMatches: async () => { throw new Error("unexpected updateAuxiliarySessionRuntimeMetadataIfMatches"); },
   replaceAllSessions: async () => { throw new Error("unexpected replaceAllSessions"); },
-  clearAuditLogs: async () => { throw new Error("unexpected clearAuditLogs"); },
   resetAppSettings: async () => { throw new Error("unexpected resetAppSettings"); },
   resetModelCatalogToBundled: async () => { throw new Error("unexpected resetModelCatalogToBundled"); },
   clearProjectMemories: () => { throw new Error("unexpected clearProjectMemories"); },
@@ -1548,7 +1546,7 @@ describe("SettingsCatalogService", () => {
         resetAppSettings: () => { current = resetSettings; return current; },
         clearAllProviderQuotaTelemetry: () => {}, clearAllSessionContextTelemetry: () => {},
         clearAllSessionBackgroundActivities: () => {}, invalidateAllProviderSessionThreads: async () => {},
-        closeResetTargetWindows: () => {}, resetSessionRuntime: () => {}, clearAuditLogs: async () => {},
+        closeResetTargetWindows: () => {}, resetSessionRuntime: () => {},
         clearProjectMemories: () => {}, recreateDatabaseFile: async () => createCatalogSnapshot(),
         resetModelCatalogToBundled: () => createCatalogSnapshot(),
       });
@@ -2050,7 +2048,6 @@ describe("SettingsCatalogService", () => {
       clearProviderQuotaTelemetry() {},
       clearSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
-      clearAuditLogs() {},
       resetAppSettings() {
         return createDefaultAppSettings();
       },
@@ -2163,9 +2160,6 @@ describe("SettingsCatalogService", () => {
       invalidateProviderSessionThread(providerId, sessionId) {
         calls.push(`invalidate:${providerId}:${sessionId}`);
       },
-      clearAuditLogs() {
-        calls.push("clearAudit");
-      },
       resetAppSettings() {
         calls.push("resetAppSettings");
         return createDefaultAppSettings();
@@ -2229,7 +2223,6 @@ describe("SettingsCatalogService", () => {
     await assert.rejects(failedPartialReset, /replace sessions failed/);
     assert.deepEqual(calls, [
       "closeResetWindows",
-      "clearAudit",
       "replace:0",
     ]);
 
@@ -2238,10 +2231,9 @@ describe("SettingsCatalogService", () => {
       targets: ["sessions", "appSettings", "projectMemory"],
     });
 
-    assert.deepEqual(result.resetTargets, ["sessions", "auditLogs", "appSettings", "projectMemory"]);
+    assert.deepEqual(result.resetTargets, ["sessions", "appSettings", "projectMemory"]);
     assert.deepEqual(calls, [
       "closeResetWindows",
-      "clearAudit",
       "replace:0",
       "dismissNotification:session-partial-1",
       "dismissNotification:session-partial-2",
@@ -2283,7 +2275,6 @@ describe("SettingsCatalogService", () => {
 
     assert.deepEqual(fullResult.resetTargets, [
       "sessions",
-      "auditLogs",
       "appSettings",
       "modelCatalog",
       "projectMemory",
@@ -2390,7 +2381,6 @@ describe("SettingsCatalogService", () => {
       invalidateProviderSessionThread(providerId, sessionId) {
         invalidated.push(`${providerId}:${sessionId}`);
       },
-      clearAuditLogs() {},
       resetAppSettings() {
         return createDefaultAppSettings();
       },

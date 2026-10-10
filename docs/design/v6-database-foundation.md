@@ -20,7 +20,7 @@ V6 schemaは設定・catalog、Project scope、Main／Auxiliary Session、messag
 
 `sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存V6行の列補完と、旧pending Affect settlementのowner解釈はschema更新で扱い、既存の本文やcorrelation fingerprintを変更しない。通常の保存と取消は[Session Run Lifecycle](session-run-lifecycle.md)に従う。
 
-turn contextはMain SessionかAuxiliaryの一方をownerとし、`session_turns_v6`にphaseとterminal markerを置く。`session_turn_interims_v6`と`session_turn_provider_outputs_v6`はinterimとprovider outputを分離する。保存済みfinal message、detail audit、provider outputを同じものとみなさず、通常画面で不要なraw/detailは対象を開いたときに取得する。既存V6 auditからの更新は`src-electron/storage/migrations/migrate-session-turn-storage-v6.ts`が担当する。
+turn contextはMain SessionかAuxiliaryの一方をownerとし、`session_turns_v6`に最小実行情報とterminal markerを置く。保存済み本文と操作結果は通常履歴・artifactを正本とし、artifact detailを対象ごとに遅延取得する。live本文やstdout chunkごとの累積snapshotはDBへ保存しない。既存V6のschema更新では最小turnを継続し、Audit専用のinterim、provider output、legacy event tableを物理削除する。通常会話・artifact、Timing、Affect、Memoryの記録は保持し、過去詳細のバックフィルや既存artifactの全件書換えは行わない。既存artifactの操作結果の欠損は未記録として読み、成功やexitCode 0を補完しない。
 
 ## 検証
 

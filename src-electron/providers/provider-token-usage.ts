@@ -1,4 +1,4 @@
-import type { AuditLogUsage } from "../../src-shared/session/runtime-state.js";
+import type { ProviderUsage } from "../../src-shared/session/runtime-state.js";
 
 export type CodexTokenUsageLike = {
   input_tokens?: unknown;
@@ -28,7 +28,7 @@ function normalizeTokenUsage(input: {
   outputTokens?: unknown;
   reasoningOutputTokens?: unknown;
   totalTokens?: unknown;
-}): AuditLogUsage | null {
+}): ProviderUsage | null {
   const inputTokens = finiteNumber(input.inputTokens);
   const cachedInputTokens = finiteNumber(input.cachedInputTokens);
   const outputTokens = finiteNumber(input.outputTokens);
@@ -37,7 +37,7 @@ function normalizeTokenUsage(input: {
     return null;
   }
 
-  const normalized: AuditLogUsage = {
+  const normalized: ProviderUsage = {
     inputTokens: inputTokens ?? 0,
     cachedInputTokens: cachedInputTokens ?? 0,
     outputTokens: outputTokens ?? 0,
@@ -54,7 +54,7 @@ function normalizeTokenUsage(input: {
   return normalized;
 }
 
-export function normalizeCodexTokenUsage(usage: CodexTokenUsageLike | null | undefined): AuditLogUsage | null {
+export function normalizeCodexTokenUsage(usage: CodexTokenUsageLike | null | undefined): ProviderUsage | null {
   if (!usage) {
     return null;
   }
@@ -68,7 +68,7 @@ export function normalizeCodexTokenUsage(usage: CodexTokenUsageLike | null | und
   });
 }
 
-export function normalizeCopilotTokenUsage(usage: CopilotTokenUsageLike | null | undefined): AuditLogUsage | null {
+export function normalizeCopilotTokenUsage(usage: CopilotTokenUsageLike | null | undefined): ProviderUsage | null {
   if (!usage) {
     return null;
   }

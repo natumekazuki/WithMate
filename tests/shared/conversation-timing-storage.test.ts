@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
-import { AuditLogStorageV6 } from "../../src-electron/session/audit-log-storage-v6.js";
+import { SessionTurnStorageV6 } from "../../src-electron/session/session-turn-storage-v6.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
@@ -61,7 +61,18 @@ function insertTurn(
   );
 }
 
-describe("AuditLogStorageV6 conversation timing", () => {
+describe("SessionTurnStorageV6 conversation timing", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "正常terminal保存は会話とturnを同時確定し再起動後のTimingに公開し、誤ownerと再分類は両方を変更しない"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
+  // fault = "terminal marker保存失敗でも会話だけを保存する、正常commitをread-back失敗で失敗扱いする、またはterminal結果を再分類する"
+  // observable = "会話本文・turn phase・再起動後のConversationTiming snapshot"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionStorageV6 terminal commit and SessionTurnStorageV6 timing"
+  // lifecycle = "permanent"
+  // distinction = "schema/type checkではtransactionとread-back後のTiming可視性を検証できない"
+  // @end-test-value
   it("terminal Session commitだけで次turn・再起動後のConversation Timingへ完了を公開する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-conversation-terminal-commit-"));
     const completedAt = "2026-08-16T00:10:00.000Z";
@@ -99,14 +110,14 @@ describe("AuditLogStorageV6 conversation timing", () => {
         approvalMode: DEFAULT_APPROVAL_MODE,
       }));
       const turnDb = new DatabaseSync(dbPath);
-      let auditLogId = 0;
+      let turnId = 0;
       try {
         const result = turnDb.prepare(`
           INSERT INTO session_turns_v6 (
             session_id, phase, provider_id, user_message_seq, started_at, updated_at
           ) VALUES (?, 'running', 'codex', 0, ?, ?)
         `).run(session.id, "2026-08-16T00:00:00.000Z", "2026-08-16T00:00:00.000Z");
-        auditLogId = Number(result.lastInsertRowid);
+        turnId = Number(result.lastInsertRowid);
       } finally {
         turnDb.close();
       }
@@ -121,7 +132,7 @@ describe("AuditLogStorageV6 conversation timing", () => {
         ],
       };
       assert.throws(() => sessionStorage.upsertTerminalSession(terminalSession, {
-        auditLogId: auditLogId + 1,
+        turnId: turnId + 1,
         sessionId: session.id,
         phase: "completed",
         assistantMessageSeq: 1,
@@ -132,7 +143,7 @@ describe("AuditLogStorageV6 conversation timing", () => {
       assert.equal(sessionStorage.getSession(session.id)?.messages.length, 0);
       const rollbackDb = new DatabaseSync(dbPath);
       try {
-        const row = rollbackDb.prepare("SELECT phase FROM session_turns_v6 WHERE id = ?").get(auditLogId) as
+        const row = rollbackDb.prepare("SELECT phase FROM session_turns_v6 WHERE id = ?").get(turnId) as
           | { phase: string }
           | undefined;
         assert.equal(row?.phase, "running");
@@ -145,7 +156,7 @@ describe("AuditLogStorageV6 conversation timing", () => {
         throw new Error("read-back failed after commit");
       };
       const committedSession = sessionStorage.upsertTerminalSession(terminalSession, {
-        auditLogId,
+        turnId,
         sessionId: session.id,
         phase: "completed",
         assistantMessageSeq: 1,
@@ -163,7 +174,7 @@ describe("AuditLogStorageV6 conversation timing", () => {
           { role: "assistant", text: "failed" },
         ],
       }, {
-        auditLogId,
+        turnId,
         sessionId: session.id,
         phase: "failed",
         assistantMessageSeq: 1,
@@ -174,9 +185,9 @@ describe("AuditLogStorageV6 conversation timing", () => {
       assert.equal(sessionStorage.getSession(session.id)?.messages.at(-1)?.text, "done");
       sessionStorage.close();
 
-      const restartedAuditStorage = new AuditLogStorageV6(dbPath);
+      const restartedTurnStorage = new SessionTurnStorageV6(dbPath);
       try {
-        const snapshot = restartedAuditStorage.getConversationTimingSnapshot(
+        const snapshot = restartedTurnStorage.getConversationTimingSnapshot(
           session.id,
           "2026-08-16T00:10:01.000Z",
         );
@@ -186,7 +197,7 @@ describe("AuditLogStorageV6 conversation timing", () => {
           completedAt,
         }]);
       } finally {
-        restartedAuditStorage.close();
+        restartedTurnStorage.close();
       }
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
@@ -236,7 +247,7 @@ describe("AuditLogStorageV6 conversation timing", () => {
         db.close();
       }
 
-      const storage = new AuditLogStorageV6(dbPath);
+      const storage = new SessionTurnStorageV6(dbPath);
       try {
         const observedAt = "2026-08-04T11:30:00.000Z";
         assert.deepEqual(storage.getConversationTimingSnapshot("current", observedAt), {

@@ -6,7 +6,7 @@ import {
   createProviderAgentRuntimeBindingRedactor,
   PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER,
 } from "../../src-electron/providers/provider-agent-runtime-binding.js";
-import { AUDIT_TEXT_PREVIEW_LIMIT, boundAuditRawItem } from "../../src-electron/session/audit-payload-limits.js";
+import { PROVIDER_TEXT_PREVIEW_LIMIT, boundProviderRawItem } from "../../src-electron/session/provider-payload-limits.js";
 
 describe("buildProviderAgentRuntimeAuthoritySnapshot", () => {
   // @test-value v1
@@ -65,13 +65,13 @@ describe("buildProviderAgentRuntimeAuthoritySnapshot", () => {
 // @test-value v2
 // kind = "security"
 // claim = "budget内raw projectionはkeyと本文のsecretを秘匿化し、preview境界をまたぐsecretの断片も残さない"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md#表示とデータ保護" }
-// fault = "rawを先に切ってからsecret置換するため切断されたbinding prefixを監査に残す、またはkeyの秘匿化を落とす"
-// observable = "boundAuditRawItemのJSON、truncation元長、秘匿化されたkeyと入力原文"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "rawを先に切ってからsecret置換するため切断されたbinding prefixを診断traceに残す、またはkeyの秘匿化を落とす"
+// observable = "boundProviderRawItemのJSON、truncation元長、秘匿化されたkeyと入力原文"
 // observation_boundary = "component-behavior"
 // scope = "bounded raw secret projection"
 // lifecycle = "permanent"
-// impact = "runtime capabilityの一部やsecret-bearing keyが監査へ漏れる"
+// impact = "runtime capabilityの一部やsecret-bearing keyが診断traceへ漏れる"
 // distinction = "既存redaction testはcomplete secretだけ、budget testはsecretなしであり境界横断を検出しない。固定prefixでSDK通信や時刻測定は不要"
 // risk_tags = ["privacy"]
 // @end-test-value
@@ -80,10 +80,10 @@ it("raw preview境界のsecretを断片なしで秘匿化し入力を変更し�
   const shorterSecret = "tiny[+]";
   const redactor = createProviderAgentRuntimeBindingRedactor(null, [secret, shorterSecret]);
   for (let overlap = 1; overlap < secret.length; overlap += 1) {
-    const content = shorterSecret + "x".repeat(AUDIT_TEXT_PREVIEW_LIMIT - overlap - shorterSecret.length)
-      + secret + "y".repeat(AUDIT_TEXT_PREVIEW_LIMIT * 4);
+    const content = shorterSecret + "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - overlap - shorterSecret.length)
+      + secret + "y".repeat(PROVIDER_TEXT_PREVIEW_LIMIT * 4);
     const source = { type: "tool.execution_complete", data: { content, [secret]: shorterSecret } };
-    const item = boundAuditRawItem(source, undefined, redactor.sanitizeText);
+    const item = boundProviderRawItem(source, undefined, redactor.sanitizeText);
     const json = JSON.stringify(item);
     assert.ok(!json.includes("Z9sensitive") && !json.includes(secret) && !json.includes(shorterSecret));
     assert.ok(!json.includes(`x${secret.slice(0, overlap)}`), `secret prefix at overlap ${overlap}`);

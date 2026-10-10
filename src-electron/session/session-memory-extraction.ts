@@ -1,4 +1,4 @@
-import type { AuditLogicalPrompt, AuditLogUsage, AuditTransportPayload } from "../../src-shared/session/runtime-state.js";
+import type { ProviderUsage } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { SessionMemory, SessionMemoryDelta } from "../../src-shared/memory/session-memory-state.js";
 import { normalizeSessionMemoryDelta } from "../../src-shared/memory/session-memory-state.js";
@@ -68,7 +68,7 @@ export type SessionMemoryExtractionRequest = {
   session: Session;
   memory: SessionMemory;
   appSettings: AppSettings;
-  usage: AuditLogUsage | null;
+  usage: ProviderUsage | null;
   force?: boolean;
 };
 
@@ -127,7 +127,7 @@ export function getSessionMemoryExtractionSettings(
 }
 
 export function shouldTriggerSessionMemoryExtraction(
-  usage: AuditLogUsage | null,
+  usage: ProviderUsage | null,
   outputTokensThreshold: number,
   force = false,
 ): boolean {
@@ -198,34 +198,6 @@ export function buildSessionMemoryExtractionPrompt(
     systemText,
     userText,
     outputSchema: SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA,
-  };
-}
-
-export function buildSessionMemoryExtractionLogicalPrompt(
-  prompt: SessionMemoryExtractionPrompt,
-): AuditLogicalPrompt {
-  return {
-    systemText: prompt.systemText,
-    inputText: prompt.userText,
-    composedText: `${prompt.systemText}\n\n${prompt.userText}`.trim(),
-  };
-}
-
-export function buildSessionMemoryExtractionTransportPayload(
-  provider: string,
-  settings: SessionMemoryExtractionResolvedSettings,
-  triggerReason: SessionMemoryExtractionTriggerReason,
-): AuditTransportPayload {
-  return {
-    summary: "Session Memory extraction payload",
-    fields: [
-      { label: "provider", value: provider },
-      { label: "model", value: settings.model },
-      { label: "reasoningEffort", value: settings.reasoningEffort },
-      { label: "trigger", value: triggerReason },
-      { label: "outputTokensThreshold", value: String(settings.outputTokensThreshold) },
-      { label: "timeoutSeconds", value: String(settings.timeoutSeconds) },
-    ],
   };
 }
 

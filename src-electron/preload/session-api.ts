@@ -288,47 +288,8 @@ export function createSessionApi(
         sessionId,
       );
     },
-    listSessionAuditLogs(sessionId) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
-        sessionId,
-      );
-    },
-    listSessionAuditLogSummaries(sessionId) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
-        sessionId,
-      );
-    },
-    listSessionAuditLogSummaryPage(sessionId, request) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
-        sessionId,
-        request ?? null,
-      );
-    },
-    getSessionAuditLogDetail(sessionId, auditLogId) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
-        sessionId,
-        auditLogId,
-      );
-    },
-    getSessionAuditLogDetailSection(sessionId, auditLogId, section) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
-        sessionId,
-        auditLogId,
-        section,
-      );
-    },
-    getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
-        sessionId,
-        auditLogId,
-        operationIndex,
-      );
+    getLatestSessionTurn(sessionId) {
+      return ipcRenderer.invoke(channels.WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL, sessionId);
     },
     getLiveSessionRun(sessionId) {
       return ipcRenderer.invoke(

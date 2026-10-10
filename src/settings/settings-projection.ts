@@ -31,7 +31,7 @@ export function buildHomeSettingsProjection({
   const resetTargetItems = ALL_RESET_APP_DATABASE_TARGETS.map((target) => ({
     target,
     checked: resetDatabaseTargets.includes(target),
-    disabled: resettingDatabase || (target === "auditLogs" && resetDatabaseTargets.includes("sessions")),
+    disabled: resettingDatabase,
   }));
 
   return {

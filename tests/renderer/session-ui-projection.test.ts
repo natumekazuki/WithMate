@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { AuditLogOperation, LiveBackgroundTask, LiveRunStep, ProviderQuotaTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { MessageOperation, LiveBackgroundTask, LiveRunStep, ProviderQuotaTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { GlossaryProjectionState, SessionGlossaryProjection } from "../../src-shared/glossary/glossary-contract.js";
 import {
   buildContextPaneProjection,
@@ -12,7 +12,7 @@ import {
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
   contextPaneTabLabel,
-  findLatestAuditCommandOperation,
+  findLatestCommandOperation,
   findLatestLiveCommandStep,
   resolveAvailableContextPaneTabs,
   shouldIncludeGlossaryContextPane,
@@ -33,6 +33,16 @@ describe("session-ui-projection", () => {
     assert.equal(isGlossarySearchRevisionCurrent("revision-a", null), false);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Latest Commandはliveと通常artifactの配列順で最後のcommandを選ぶ"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Latest Command" }
+  // fault = "最後のtoolをcommandとして採用するか古いcommandを選ぶ"
+  // observable = "選択されたcommand IDとsummary"
+  // observation_boundary = "consumer"
+  // scope = "latest-command-arrival-order"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("latest command helpers は末尾の command_execution を拾う", () => {
     const liveSteps: LiveRunStep[] = [
       {
@@ -54,7 +64,7 @@ describe("session-ui-projection", () => {
         status: "in_progress",
       },
     ];
-    const auditOperations: AuditLogOperation[] = [
+    const operations: MessageOperation[] = [
       {
         type: "command_execution",
         summary: "git status",
@@ -70,9 +80,19 @@ describe("session-ui-projection", () => {
     ];
 
     assert.equal(findLatestLiveCommandStep(liveSteps)?.id, "cmd-new");
-    assert.equal(findLatestAuditCommandOperation(auditOperations)?.summary, "npm test");
+    assert.equal(findLatestCommandOperation(operations)?.summary, "npm test");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "commandを含まない対象turnの操作配列ではLatest Commandを空にする"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Latest Command" }
+  // fault = "command以外のtoolを最新commandとして表示する"
+  // observable = "command選択helperのnull結果"
+  // observation_boundary = "consumer"
+  // scope = "latest-command-no-command"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("latest command helpers は command_execution がなければ null を返す", () => {
     assert.equal(
       findLatestLiveCommandStep([
@@ -86,7 +106,7 @@ describe("session-ui-projection", () => {
       null,
     );
     assert.equal(
-      findLatestAuditCommandOperation([
+      findLatestCommandOperation([
         {
           type: "response_item",
           summary: "assistant text",
@@ -96,22 +116,31 @@ describe("session-ui-projection", () => {
     );
   });
 
-  it("LatestCommand projection は live がなければ audit fallback を使う", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "通常artifactから復元したcommandはdetailsを保ちstatus欠損をunknownとして扱う"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Latest Command" }
+  // fault = "status未記録をcompletedへ補完するか保存出力を失う"
+  // observable = "LatestCommand viewのstatus/summary/details/source"
+  // observation_boundary = "consumer"
+  // scope = "latest-command-legacy-status"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("LatestCommand projection は live がなければ 通常artifact を使い未記録statusを保持する", () => {
     const projection = buildLatestCommandProjection({
       liveSteps: [],
-      auditOperations: [
+      operations: [
         {
           type: "command_execution",
           summary: "npm test",
           details: "ok",
         },
       ],
-      latestTerminalAuditPhase: "completed",
     });
 
     assert.equal(projection.latestLiveCommandStep, null);
     assert.deepEqual(projection.latestCommandView, {
-      status: "completed",
+      status: "unknown",
       summary: "npm test",
       details: "ok",
       sourceLabel: "latest run",
@@ -119,24 +148,18 @@ describe("session-ui-projection", () => {
     });
   });
 
-  it("LatestCommand projection は audit fallback を無効化できる", () => {
-    const projection = buildLatestCommandProjection({
-      liveSteps: [],
-      auditOperations: [
-        {
-          type: "command_execution",
-          summary: "npm test",
-        },
-      ],
-      latestTerminalAuditPhase: "completed",
-      auditFallbackEnabled: false,
-    });
 
-    assert.equal(projection.latestLiveCommandStep, null);
-    assert.equal(projection.latestCommandView, null);
-  });
-
-  it("LatestCommand projection は audit fallback 無効中でも live command を優先する", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "保存commandが存在してもLatest Commandはlive commandを優先する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Latest Command" }
+  // fault = "新しいlive commandを保存済みcommandで上書きする"
+  // observable = "LatestCommand viewのsummary/status/sourceとlive ID"
+  // observation_boundary = "consumer"
+  // scope = "latest-command-live-priority"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("LatestCommand projection は 通常artifactよりlive command を優先する", () => {
     const projection = buildLatestCommandProjection({
       liveSteps: [
         {
@@ -146,14 +169,12 @@ describe("session-ui-projection", () => {
           status: "in_progress",
         },
       ],
-      auditOperations: [
+      operations: [
         {
           type: "command_execution",
           summary: "npm test",
         },
       ],
-      latestTerminalAuditPhase: "completed",
-      auditFallbackEnabled: false,
     });
 
     assert.equal(projection.latestLiveCommandStep?.id, "cmd-live");
@@ -168,18 +189,41 @@ describe("session-ui-projection", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "LatestCommand viewはlive commandをaudit fallbackより優先し、実行中status・summary・details・riskを保持する"
+  // claim = "通常履歴のcommand projectionは個別status・exit code・error・truncationを出力previewと独立して維持する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Latest Command" }
+  // fault = "出力previewがある操作のexit codeや構造化errorを落とすか、turn結果に相当する固定成功へ置換する"
+  // observable = "LatestCommandViewのstatus、exitCode、errorMessage、truncated、details"
+  // observation_boundary = "consumer"
+  // scope = "latest-command-operation-result"
+  // lifecycle = "permanent"
+  // impact = "利用者が出力のあるfailed commandを成功と誤認し、切り詰め出力を完全出力として判断する"
+  // distinction = "型検査はoptional fieldの投影欠落を検出しないため実際のview値を確認する"
+  // @end-test-value
+  it("Latest Command keeps individual results beside output preview", () => {
+    const projection = buildLatestCommandProjection({
+      liveSteps: [],
+      operations: [{ type: "command_execution", summary: "npm test", status: "failed", exitCode: 2, error: { message: "Command failed", code: "EXIT" }, truncated: true, details: "partial stdout" }],
+    });
+    assert.deepEqual(projection.latestCommandView, {
+      status: "failed", summary: "npm test", exitCode: 2, errorMessage: "Command failed", truncated: true,
+      details: "partial stdout", sourceLabel: "latest run", riskLabels: [],
+    });
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "LatestCommand viewはlive commandを通常artifactより優先し、実行中status・summary・details・riskを保持する"
   // oracle = { type = "contract", ref = "src/chat/runtime/session-ui-projection.ts" }
-  // fault = "古いaudit commandを表示するか、live commandのrisk labelとdetailsを失う"
+  // fault = "古い保存commandを表示するか、live commandのrisk labelとdetailsを失う"
   // observable = "LatestCommand viewのstatus、summary、details、source label、Delete risk"
   // observation_boundary = "public-boundary"
   // scope = "session-latest-command-priority"
   // lifecycle = "permanent"
   // impact = "利用者が最新の実行対象と危険操作を誤認する"
-  // distinction = "live/audit双方を入力し、優先順位とderived riskを一つのprojectionで確認する"
+  // distinction = "live/artifact双方を入力し、優先順位とderived riskを一つのprojectionで確認する"
   // @end-test-value
   it("live command があれば latest run より優先して LatestCommand view を作る", () => {
-    const latestAuditCommandOperation: AuditLogOperation = {
+    const latestCommandOperation: MessageOperation = {
       type: "command_execution",
       summary: "git status",
     };
@@ -192,8 +236,7 @@ describe("session-ui-projection", () => {
         status: "in_progress",
         details: "destructive command",
       },
-      latestAuditCommandOperation,
-      latestTerminalAuditPhase: "completed",
+      latestCommandOperation,
     });
 
     assert.deepEqual(view, {

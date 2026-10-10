@@ -57,7 +57,6 @@
 | [Database Schema](database-schema.md) | SQLiteとfile storageの保存構造 |
 | [V6 Database Foundation](v6-database-foundation.md) | DBの責務と移行・データ境界 |
 | [V6 Memory Foundation](v6-memory-foundation.md) | Memoryのowner、scope、API、storage、privacy |
-| [Audit Log](audit-log.md) | 監査記録 |
 | [Session Local Files](session-local-files.md) | Session Folderと添付ファイル |
 
 ### 開発・検証・配布

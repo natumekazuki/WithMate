@@ -13,7 +13,7 @@ WithMateが現在のSession UIから利用できるprovider機能を示す。pro
 | Skill | mentionへ変換 | directiveへ変換 | 選択pathをdirectiveへ変換 | 選択済みSkillをprovider側の入力へ反映する。Claudeのnative Skill探索とは別 |
 | custom agent | UI選択なし | 対応 | UI選択なし | Copilotのagent catalogをSession設定へ解決する |
 | assistant textのstreaming | 対応 | 対応 | 対応 | 確定結果と実行中投影を区別する |
-| command・変更差分・監査 | 対応 | 対応 | 対応 | 共通のoperation、Audit Log、Git差分表示へ投影する |
+| command・操作結果・変更差分 | 対応 | 対応 | 対応 | 共通のoperationTimeline、応答Details、Git差分表示へ投影する |
 | app内の承認・elicitation | 承認・permissions・質問・MCP elicitationに対応 | 対応 | 承認・質問に対応 | Codexは元request IDとの対応を保持して回答し、同一turnの要求を共通pending UIで直列処理する |
 | 実行中の追加入力 | 対応 | 未対応 | 未対応 | Codexの現在turnへexpectedTurnId付きturn/steerを送る。terminal後・turn不一致では拒否する |
 | background task snapshot | UI表示なし | 対応 | UI表示なし | CopilotのTasks tabに現在のsessionのsnapshotを表示する |

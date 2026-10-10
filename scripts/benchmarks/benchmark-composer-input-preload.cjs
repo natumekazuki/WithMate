@@ -139,10 +139,9 @@ function resultFor(name, args) {
   if (name === "getModelCatalog") return { revision: 1, providers: [] };
   if (name === "getSessionGlossaryProjection") return { sessionId: "benchmark-main", revision: 0, state: { status: "ready", entries: [] } };
   if (name === "previewComposerInput") return { text: args[1] ?? "", attachments: [], errors: [] };
-  if (name === "listSessionAuditLogSummaryPage") return { entries: [], nextCursor: null };
   if (name.startsWith("list") || name.startsWith("search")) return [];
   if (name.startsWith("get")) return null;
-  if (name.startsWith("subscribe")) return () => {};
+  if (name.startsWith("subscribe") || name === "onSessionTurnUpdated") return () => {};
   if (name.startsWith("validate")) return { valid: true };
   if (name.startsWith("open") || name.startsWith("report") || name.startsWith("update") || name.startsWith("set")) return name === "updateSession" ? mainSession : undefined;
   return undefined;
@@ -159,7 +158,7 @@ const names = [
   "openPath", "openSessionTerminal", "openSessionFilesDirectory", "openSessionFilesTerminal", "pickFiles", "pickSessionFiles",
   "pickSessionFolder", "pickSessionImageFile", "copyFilesToSessionFiles", "savePastedSessionFile", "reportRendererLog",
   "resolveLiveApproval", "resolveLiveElicitation", "searchSessionGlossary", "getAppBootStatus", "getMemoryV6Diagnostics",
-  "getSessionAuditLogSummaries", "getSessionAuditLogDetail", "listSessionAuditLogs", "getSessionCharacterUsage",
+  "getLatestSessionTurn", "onSessionTurnUpdated", "getSessionCharacterUsage",
   "createAuxiliarySession", "cancelAuxiliaryCreation", "getAuxiliaryCreationContext", "getAuxiliaryCreation",
   "updateChatLayoutPreference",
   "subscribeOpenSessionWindowIds", "subscribeSessionWindowRestoreSet",
@@ -168,7 +167,6 @@ const names = [
   "subscribeSessionDraftFlushRequest",
   "subscribeSessionDraftFlushRelease",
   "subscribeAppSettings",
-  "listSessionAuditLogSummaryPage",
   "getAuxiliaryDraft", "saveAuxiliaryDraft", "getAuxiliarySessionStatus",
   "acknowledgeSessionDraftFlush",
   "getConversationPage", "searchConversation", "listConversationNavigator",
@@ -177,7 +175,7 @@ const names = [
 for (const name of names) {
   api[name] = (...args) => conversationLoading && ["getSession", "getSessionSummary", "listAuxiliarySessions", "getAuxiliarySession", "getConversationPage", "searchConversation", "listConversationNavigator", "setSessionMessageBookmark", "setAuxiliaryMessageBookmark"].includes(name)
     ? ipcRenderer.invoke("benchmark:conversation", name, args, resultFor(name, args))
-    : name.startsWith("subscribe")
+    : name.startsWith("subscribe") || name === "onSessionTurnUpdated"
     ? resultFor(name, args)
     : name === "acknowledgeSessionDraftFlush"
       ? resultFor(name, args)

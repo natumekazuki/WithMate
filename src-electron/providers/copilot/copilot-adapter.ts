@@ -16,7 +16,7 @@ import {
   type Tool,
 } from "@github/copilot-sdk";
 
-import type { AuditLogOperation, AuditLogProviderMetadata, AuditLogUsage, AuditTransportPayload, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationField, LiveElicitationRequest, LiveElicitationResponse, LiveRunStep, ProviderQuotaSnapshot, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../../src-shared/session/runtime-state.js";
+import type { MessageOperation, ProviderDiagnosticMetadata, ProviderUsage, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationField, LiveElicitationRequest, LiveElicitationResponse, LiveRunStep, ProviderQuotaSnapshot, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../../src-shared/session/runtime-state.js";
 import type { MessageArtifact, Session } from "../../../src-shared/session/session-state.js";
 import type { SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import type { SessionMemoryDelta } from "../../../src-shared/memory/session-memory-state.js";
@@ -62,11 +62,10 @@ import {
   resolveProviderBinarySpec,
 } from "../provider-binary-paths.js";
 import {
-  boundAuditRawItem,
-  BoundedAuditRawItems,
-  toAuditTextPreview,
-  type BoundedAuditRawItem,
-} from "../../session/audit-payload-limits.js";
+  boundProviderRawItem,
+  toProviderTextPreview,
+  type BoundedProviderRawItem,
+} from "../../session/provider-payload-limits.js";
 import { toProviderMetadataLogData } from "../provider-metadata-log.js";
 import {
   buildProviderAgentRuntimeBindingCacheKey,
@@ -112,9 +111,11 @@ type CopilotCommandStepState = {
   summary: string;
   details?: string;
   status: LiveRunStep["status"];
+  exitCode?: number;
+  error?: MessageOperation["error"];
 };
 
-type CopilotStableRawItem = BoundedAuditRawItem;
+type CopilotStableRawItem = BoundedProviderRawItem;
 
 type CopilotAdapterLogInput = {
   level: "debug" | "info" | "warn" | "error";
@@ -131,14 +132,13 @@ type CopilotTurnStreamState = {
   toolNamesByCallId: Map<string, string>;
   reasoningDraftsById: Map<string, string>;
   reasoningText: string;
-  rawItems: BoundedAuditRawItems;
-  providerMetadata: AuditLogProviderMetadata[];
+  providerMetadata: ProviderDiagnosticMetadata[];
   redactor: ProviderAgentRuntimeBindingRedactor;
   assistantText: string;
   lastNonEmptyAssistantMessageText: string;
   assistantMessages: string[];
   assistantDraft: string;
-  usage: AuditLogUsage | null;
+  usage: ProviderUsage | null;
   streamErrorMessage: string;
 };
 
@@ -259,14 +259,17 @@ function hasMeaningfulArtifact(artifact: MessageArtifact | undefined): boolean {
   }
 
   return artifact.changedFiles.length > 0
-    || artifact.activitySummary.some((summary) => summary.trim().length > 0)
-    || (artifact.operationTimeline?.length ?? 0) > 0
-    || artifact.runChecks.length > 0;
+    || (artifact.operationTimeline?.some((operation) =>
+      operation.status === "completed"
+      || operation.status === "failed"
+      || operation.status === "canceled"
+      || operation.exitCode !== undefined
+      || operation.error !== undefined
+    ) ?? false);
 }
 
 function hasMeaningfulRetryBlockingPartialResult(partialResult: RunSessionTurnResult): boolean {
   return partialResult.assistantText.trim().length > 0
-    || partialResult.operations.length > 0
     || hasMeaningfulArtifact(partialResult.artifact);
 }
 
@@ -310,7 +313,6 @@ function createCopilotTurnStreamState(redactor = createProviderAgentRuntimeBindi
     toolNamesByCallId: new Map<string, string>(),
     reasoningDraftsById: new Map<string, string>(),
     reasoningText: "",
-    rawItems: new BoundedAuditRawItems(),
     providerMetadata: [],
     redactor,
     assistantText: "",
@@ -323,11 +325,15 @@ function createCopilotTurnStreamState(redactor = createProviderAgentRuntimeBindi
 }
 
 function updateCopilotCommandStep(state: CopilotTurnStreamState, nextState: CopilotCommandStepState): void {
+  const details = toProviderTextPreview(nextState.details);
   state.liveSteps.set(nextState.stepId, {
     id: nextState.stepId,
     type: "command_execution",
     summary: nextState.summary,
-    details: toAuditTextPreview(nextState.details),
+    details,
+    ...(nextState.exitCode !== undefined ? { exitCode: nextState.exitCode } : {}),
+    ...(nextState.error ? { error: nextState.error } : {}),
+    ...(nextState.details !== undefined ? { truncated: state.liveSteps.get(nextState.stepId)?.truncated === true || details !== nextState.details } : {}),
     status: nextState.status,
   });
 }
@@ -489,8 +495,11 @@ function applyCopilotTurnEvent(args: {
         updateCopilotCommandStep(state, {
           stepId: event.data.toolCallId,
           summary: current?.summary ?? buildCopilotToolSummary(toolName, undefined, workspacePath),
-          details: appendDetail(current?.details, extractToolExecutionDetails(event)),
+          details: appendDetail(current?.details, state.redactor.sanitize(extractToolExecutionDetails(event))),
           status: event.data.success ? "completed" : "failed",
+          exitCode: event.data.result?.contents?.find((content) => content.type === "terminal")?.exitCode,
+          error: event.data.error ? { message: toProviderTextPreview(state.redactor.sanitizeText(event.data.error.message)) ?? "",
+            ...(typeof event.data.error.code === "string" ? { code: toProviderTextPreview(state.redactor.sanitizeText(event.data.error.code)) } : {}) } : undefined,
         });
       }
       break;
@@ -502,11 +511,10 @@ function applyCopilotTurnEvent(args: {
       break;
   }
 
-  appendCopilotStableRawItem((item) => {
-    const sanitized = boundAuditRawItem(item, undefined, state.redactor.sanitizeText);
+  if (!shouldDropCopilotRawEvent(event) && !SUPPORTED_COPILOT_EVENT_TYPES.has(event.type)) {
+    const sanitized = boundProviderRawItem(state.redactor.sanitize({ type: event.type, timestamp: event.timestamp }));
     state.providerMetadata.push(...buildCopilotProviderMetadata([sanitized]));
-    state.rawItems.append(sanitized);
-  }, event, workspacePath, state.toolNamesByCallId);
+  }
 }
 
 export function collectCopilotLiveStepsFromEventsForTesting(
@@ -527,12 +535,12 @@ export function collectCopilotLiveStepsFromEventsForTesting(
   return Array.from(state.liveSteps.values());
 }
 
-export function collectCopilotAuditOperationsFromEventsForTesting(
+export function collectCopilotMessageOperationsFromEventsForTesting(
   events: SessionEvent[],
   workspacePath = "C:/workspace",
-): AuditLogOperation[] {
+): MessageOperation[] {
   const steps = collectCopilotLiveStepsFromEventsForTesting(events, workspacePath);
-  return toAuditOperations(new Map(steps.map((step) => [step.id, step])));
+  return toMessageOperations(new Map(steps.map((step) => [step.id, step])));
 }
 
 export function collectCopilotReasoningTextFromEventsForTesting(
@@ -920,176 +928,8 @@ export function buildCopilotSystemMessage(
   };
 }
 
-function buildCopilotTransportPayload(
-  prompt: ProviderPromptComposition,
-  attachments: NonNullable<MessageOptions["attachments"]>,
-): AuditTransportPayload {
-  const fields = [];
 
-  if (prompt.systemBodyText.trim()) {
-    fields.push({
-      label: "session.systemMessage",
-      value: prompt.systemBodyText,
-    });
-  }
 
-  fields.push({
-    label: "session.send.prompt",
-    value: prompt.inputBodyText,
-  });
-
-  if (attachments.length > 0) {
-    fields.push({
-      label: "session.send.attachments",
-      value: attachments
-        .map((attachment) => {
-          const fallbackName = "path" in attachment
-            ? attachment.path
-            : "filePath" in attachment
-              ? attachment.filePath
-              : "selection";
-          return `${attachment.type}: ${attachment.displayName ?? fallbackName}`;
-        })
-        .join("\n"),
-    });
-  }
-
-  return {
-    summary: "Copilot session config + session.send payload",
-    fields,
-  };
-}
-
-export function buildCopilotStableRawItems(
-  events: SessionEvent[],
-  workspacePath: string,
-): CopilotStableRawItem[] {
-  const stableItems: CopilotStableRawItem[] = [];
-  const toolNamesByCallId = new Map<string, string>();
-
-  for (const event of events) {
-    appendCopilotStableRawItem((item) => stableItems.push(boundAuditRawItem(item)), event, workspacePath, toolNamesByCallId);
-  }
-
-  return stableItems;
-}
-
-function appendCopilotStableRawItem(
-  push: (item: CopilotStableRawItem) => void,
-  event: SessionEvent,
-  workspacePath: string,
-  toolNamesByCallId: Map<string, string>,
-): void {
-  if (shouldDropCopilotRawEvent(event)) {
-    return;
-  }
-
-  switch (event.type) {
-    case "user.message":
-      push({
-        type: event.type,
-        timestamp: event.timestamp,
-        data: {
-          content: event.data.content,
-        },
-      });
-      break;
-    case "assistant.message":
-      push({
-        type: event.type,
-        timestamp: event.timestamp,
-        data: {
-          content: event.data.content,
-          parentToolCallId: event.data.parentToolCallId ?? null,
-          ...(event.agentId ? { agentId: event.agentId } : {}),
-        },
-      });
-      break;
-    case "assistant.usage":
-      push({
-        type: event.type,
-        timestamp: event.timestamp,
-        data: {
-          inputTokens: event.data.inputTokens ?? null,
-          cacheReadTokens: event.data.cacheReadTokens ?? null,
-          outputTokens: event.data.outputTokens ?? null,
-          reasoningTokens: event.data.reasoningTokens ?? null,
-        },
-      });
-      break;
-    case "session.error":
-      push({
-        type: event.type,
-        timestamp: event.timestamp,
-        data: {
-          message: event.data.message,
-        },
-      });
-      break;
-    case "session.idle":
-      push({
-        type: event.type,
-        timestamp: event.timestamp,
-      });
-      break;
-    case "permission.requested": {
-      const summary = buildCopilotPermissionSummary(event.data.permissionRequest, workspacePath);
-      push({
-        type: event.type,
-        timestamp: event.timestamp,
-        data: {
-          requestId: event.data.requestId,
-          kind: event.data.permissionRequest.kind,
-          summary: summary ?? event.data.permissionRequest.kind,
-        },
-      });
-      break;
-    }
-    case "permission.completed":
-      push({
-        type: event.type,
-        timestamp: event.timestamp,
-        data: {
-          requestId: event.data.requestId,
-          resultKind: event.data.result.kind,
-        },
-      });
-      break;
-    case "tool.execution_start":
-      toolNamesByCallId.set(event.data.toolCallId, event.data.toolName);
-      push({
-        type: event.type,
-        timestamp: event.timestamp,
-        data: {
-          toolCallId: event.data.toolCallId,
-          toolName: event.data.toolName,
-          summary: buildCopilotToolSummary(event.data.toolName, event.data.arguments, workspacePath),
-        },
-      });
-      break;
-    case "tool.execution_complete": {
-      const toolName = toolNamesByCallId.get(event.data.toolCallId) ?? null;
-      push({
-        type: event.type,
-        timestamp: event.timestamp,
-        data: {
-          toolCallId: event.data.toolCallId,
-          toolName,
-          success: event.data.success,
-          content: event.data.result?.content ?? null,
-          errorMessage: event.data.error?.message ?? null,
-        },
-      });
-      break;
-    }
-    default:
-      push({
-        type: event.type,
-        timestamp: event.timestamp,
-      });
-      break;
-  }
-}
 
 const SUPPORTED_COPILOT_EVENT_TYPES = new Set<string>([
   "user.message",
@@ -1103,7 +943,7 @@ const SUPPORTED_COPILOT_EVENT_TYPES = new Set<string>([
   "tool.execution_complete",
 ]);
 
-export function buildCopilotProviderMetadata(rawItems: readonly CopilotStableRawItem[]): AuditLogProviderMetadata[] {
+export function buildCopilotProviderMetadata(rawItems: readonly CopilotStableRawItem[]): ProviderDiagnosticMetadata[] {
   return rawItems
     .filter((item) => item.type !== "withmate.raw_items_truncated" && !SUPPORTED_COPILOT_EVENT_TYPES.has(item.type))
     .map((item) => ({
@@ -1165,16 +1005,10 @@ function extractToolExecutionDetails(event: Extract<SessionEvent, { type: "tool.
   return normalized.length > 0 ? normalized.join("\n\n") : undefined;
 }
 
-function toAuditOperations(steps: Map<string, LiveRunStep>): AuditLogOperation[] {
+function toMessageOperations(steps: Map<string, LiveRunStep>): MessageOperation[] {
   return Array.from(steps.values())
-    .filter((step) =>
-      step.type === "command_execution"
-      && (step.status === "completed" || step.status === "failed" || step.status === "canceled"))
-    .map((step) => ({
-      type: "command_execution",
-      summary: step.summary,
-      details: step.details,
-    }));
+    .filter((step) => step.type === "command_execution")
+    .map((step) => ({ ...step }));
 }
 
 type PermissionDecisionKind =
@@ -1313,7 +1147,7 @@ async function emitLiveState(
   backgroundTasks: ProviderProgressMap<LiveBackgroundTask>,
   assistantText: string,
   reasoningText: string,
-  usage: AuditLogUsage | null,
+  usage: ProviderUsage | null,
   errorMessage: string,
   redactor = createProviderAgentRuntimeBindingRedactor(null),
 ): Promise<void> {
@@ -1325,8 +1159,8 @@ async function emitLiveState(
   await handler({
     sessionId,
     threadId: threadId ?? "",
-    assistantText: redactor.sanitizeText(toAuditTextPreview(assistantText) ?? ""),
-    reasoningText: redactor.sanitizeText(toAuditTextPreview(reasoningText) ?? ""),
+    assistantText: redactor.sanitizeText(toProviderTextPreview(assistantText) ?? ""),
+    reasoningText: redactor.sanitizeText(toProviderTextPreview(reasoningText) ?? ""),
     steps: stepProgress.snapshot,
     backgroundTasks: sortLiveBackgroundTasks(taskProgress.snapshot),
     usage,
@@ -1903,12 +1737,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     parsedJson: unknown | null;
     structuredOutput: unknown | null;
     rawItemsJson: string;
-    usage: AuditLogUsage | null;
+    usage: ProviderUsage | null;
     providerQuotaTelemetry: ProviderQuotaTelemetry | null;
   }> {
     const client = this.getOrCreateClientByAppSettings(input.providerId, input.appSettings);
     await client.start();
-    let usage: AuditLogUsage | null = null;
+    let usage: ProviderUsage | null = null;
     let structuredOutput: unknown = null;
     let structuredOutputCallCount = 0;
     const submitToolName = "withmate_submit_structured_output";
@@ -2230,15 +2064,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
   private async buildTurnResult(
     agentRuntimeBinding: ProviderAgentRuntimeBindingProjection | null | undefined,
-    prompt: ProviderPromptComposition,
-    messageAttachments: NonNullable<MessageOptions["attachments"]>,
     threadId: string | null,
     assistantText: string,
     lastNonEmptyAssistantMessageText: string,
     steps: Map<string, LiveRunStep>,
-    usage: AuditLogUsage | null,
-    rawItems: BoundedAuditRawItems,
-    providerMetadata: AuditLogProviderMetadata[],
+    usage: ProviderUsage | null,
+    providerMetadata: ProviderDiagnosticMetadata[],
     workspacePath: string,
     session: Session,
     executionOptions: SessionExecutionOptions,
@@ -2255,7 +2086,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           ...normalizeAllowedAdditionalDirectories(workspacePath, session.allowedAdditionalDirectories),
         ])
       : createDisabledWorkspaceSnapshotCapture();
-    const operations = redactor.sanitize(toAuditOperations(steps));
+    const operations = redactor.sanitize(toMessageOperations(steps));
     for (const metadata of providerMetadata) {
       this.writeLog({
         level: "warn",
@@ -2283,10 +2114,6 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       assistantText: redactor.sanitizeText(assistantText),
       lastNonEmptyAssistantMessageText: redactor.sanitizeText(lastNonEmptyAssistantMessageText),
       artifact: redactor.sanitize(artifact),
-      logicalPrompt: prompt.logicalPrompt,
-      transportPayload: buildCopilotTransportPayload(prompt, messageAttachments),
-      operations,
-      rawItemsJson: rawItems.stringify(),
       providerMetadata,
       usage,
       providerQuotaTelemetry,
@@ -2297,6 +2124,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
     onProgress?: RunSessionTurnProgressHandler,
+    onAcquiredToolOutput?: () => void,
   ): Promise<RunSessionTurnResult> {
     const messageAttachments = buildCopilotMessageAttachments(input.attachments);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
@@ -2330,10 +2158,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         {
           threadId: input.session.threadId || null,
           assistantText: "",
-          logicalPrompt: prompt.logicalPrompt,
-          transportPayload: buildCopilotTransportPayload(prompt, messageAttachments),
-          operations: [],
-          rawItemsJson: redactor.sanitizeText(buildCopilotBootstrapDebugItems(input, cliPath, "session-bootstrap", message)),
+          providerMetadata: [{ provider: "copilot", kind: "bootstrap_failure", summary: redactor.sanitizeText(message),
+            payload: redactor.sanitizeText(buildCopilotBootstrapDebugItems(input, cliPath, "session-bootstrap", message)) }],
           usage: null,
           providerQuotaTelemetry: null,
         },
@@ -2390,6 +2216,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         onProviderQuotaTelemetry: input.onProviderQuotaTelemetry,
         onSessionContextTelemetry: input.onSessionContextTelemetry,
       });
+      if (event.type === "tool.execution_partial_result"
+        && streamState.liveSteps.has(event.data.toolCallId)
+        && event.data.partialOutput.trim()) {
+        onAcquiredToolOutput?.();
+      }
       if (event.type === "elicitation.requested" && input.onElicitationRequest) {
         const request = buildElicitationRequestProjection(input.providerCatalog.id, event);
         const redactedRequest = {
@@ -2470,14 +2301,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       if (streamState.streamErrorMessage) {
         const partialResult = await this.buildTurnResult(
           input.agentRuntimeBinding,
-          prompt,
-          messageAttachments,
           session.sessionId,
           streamState.assistantText,
           streamState.lastNonEmptyAssistantMessageText,
           streamState.liveSteps,
           streamState.usage,
-          streamState.rawItems,
           streamState.providerMetadata,
           workspacePath,
           input.session,
@@ -2497,14 +2325,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
       return this.buildTurnResult(
         input.agentRuntimeBinding,
-        prompt,
-        messageAttachments,
         session.sessionId,
         streamState.assistantText,
         streamState.lastNonEmptyAssistantMessageText,
         streamState.liveSteps,
         streamState.usage,
-        streamState.rawItems,
         streamState.providerMetadata,
         workspacePath,
         input.session,
@@ -2526,14 +2351,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       const message = failure instanceof Error ? failure.message : String(failure);
       const partialResult = await this.buildTurnResult(
         input.agentRuntimeBinding,
-        prompt,
-        messageAttachments,
         session.sessionId,
         streamState.assistantText,
         streamState.lastNonEmptyAssistantMessageText,
         streamState.liveSteps,
         streamState.usage,
-        streamState.rawItems,
         streamState.providerMetadata,
         workspacePath,
         input.session,
@@ -2580,11 +2402,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
     const prompt = this.composePrompt(input);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+    let acquiredToolOutput = false;
 
     try {
-      return await this.runSessionTurnOnce(input, prompt, onProgress);
+      return await this.runSessionTurnOnce(input, prompt, onProgress, () => { acquiredToolOutput = true; });
     } catch (error) {
-      if (!shouldRetryCopilotTurn(error)) {
+      if (acquiredToolOutput || !shouldRetryCopilotTurn(error)) {
         throw error;
       }
 

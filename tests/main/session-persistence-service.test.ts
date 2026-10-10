@@ -276,7 +276,7 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(broadcasts, []);
     await service.upsertSessionPreservingPin({ ...session, reasoningEffort: "medium" });
     await service.upsertTerminalSession({ ...session, status: "idle", reasoningEffort: "medium" }, {
-      auditLogId: 1, sessionId: session.id, phase: "completed", assistantMessageSeq: 0,
+      turnId: 1, sessionId: session.id, phase: "completed", assistantMessageSeq: 0,
       threadId: "", errorMessage: "", completedAt: "2026-09-27T00:00:00.000Z",
     });
     assert.deepEqual(storedModels, ["codex-default:high", "codex-default:high"]);
@@ -492,6 +492,16 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(broadcasts, [[session.id]]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "pin変更後のstaleなrunning/retry/terminal保存は最新のpinを保持し終端本文を保存する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts upsertSessionPreservingPin/upsertTerminalSession" }
+  // fault = "並行したstale保存が最新のpinをfalseに戻すかterminal本文を失う"
+  // observable = "保存SessionのisPinned/runState/最終本文とcacheのisPinned"
+  // observation_boundary = "public-boundary"
+  // scope = "session persistence pin concurrency"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("pin変更の後にstaleなrunning・retry・terminal保存が続いても最新のpinを維持する", async () => {
     const runningSession = createSession({
       id: "pin-during-run",
@@ -549,7 +559,7 @@ describe("SessionPersistenceService", () => {
       isPinned: false,
     });
     const terminalWrite = service.upsertTerminalSession(staleCompletedSession, {
-      auditLogId: 1,
+      turnId: 1,
       sessionId: staleCompletedSession.id,
       phase: "completed",
       assistantMessageSeq: staleCompletedSession.messages.length - 1,
@@ -565,6 +575,16 @@ describe("SessionPersistenceService", () => {
     assert.equal(cachedSessions[0]?.isPinned, true);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "確定済みterminal保存はdependency/cache/broadcast投影の失敗で未保存扱いにならない"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md terminal persistence and projection boundaries" }
+  // fault = "永続化成功後のprojection例外を保存失敗として返すか後続projectionを省略する"
+  // observable = "返却Sessionと保存Sessionの終端state/本文および各projectionの呼出記録"
+  // observation_boundary = "public-boundary"
+  // scope = "terminal persistence outcome"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("terminal commit後のprojection failureを保存済み結果へ波及させない", async () => {
     for (const failingProjection of ["dependency", "cache", "broadcast"] as const) {
       const runningSession = createSession({
@@ -624,7 +644,7 @@ describe("SessionPersistenceService", () => {
       });
 
       const result = await service.upsertTerminalSession(terminalSession, {
-        auditLogId: 1,
+        turnId: 1,
         sessionId: terminalSession.id,
         phase: "completed",
         assistantMessageSeq: terminalSession.messages.length - 1,

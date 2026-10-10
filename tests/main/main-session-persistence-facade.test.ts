@@ -51,7 +51,7 @@ test("title facadeはcommit結果と保存前失敗を保持する", async () =>
 test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceService へ委譲する", async () => {
   const session = { id: "s-1", status: "idle", runState: "idle", messages: [] } as never as Session;
   const terminalCommit = {
-    auditLogId: 4,
+    turnId: 4,
     sessionId: "s-1",
     phase: "completed",
     assistantMessageSeq: 1,

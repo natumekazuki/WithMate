@@ -1,7 +1,8 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
 import type { RendererLogInput } from "../../src-shared/window/app-log-types.js";
 
-import type { AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogOperationDetailFragment, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
+import type { LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary } from "../../src-shared/session/session-state.js";
 import type { AppDatabaseDiagnostics } from "../../src-shared/window/app-database-diagnostics-state.js";
@@ -263,23 +264,7 @@ export type MainIpcSessionQueryDepsArgs = {
   listConversationNavigator?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["listConversationNavigator"];
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
-  listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
-  listSessionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
-  listSessionAuditLogSummaryPage(
-    sessionId: string,
-    request?: AuditLogSummaryPageRequest | null,
-  ): Awaitable<AuditLogSummaryPageResult>;
-  getSessionAuditLogDetail(sessionId: string, auditLogId: number): Awaitable<AuditLogDetail | null>;
-  getSessionAuditLogDetailSection(
-    sessionId: string,
-    auditLogId: number,
-    section: AuditLogDetailSection,
-  ): Awaitable<AuditLogDetailFragment | null>;
-  getSessionAuditLogOperationDetail(
-    sessionId: string,
-    auditLogId: number,
-    operationIndex: number,
-  ): Awaitable<AuditLogOperationDetailFragment | null>;
+  getLatestSessionTurn(sessionId: string): Awaitable<SessionTurnRecord | null>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;

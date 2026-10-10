@@ -22,14 +22,6 @@ import type {
   MemoryV6ReviewSearchResult,
 } from "../../src-shared/memory/memory-review-state.js";
 import type {
-  AuditLogDetail,
-  AuditLogDetailFragment,
-  AuditLogDetailSection,
-  AuditLogEntry,
-  AuditLogOperationDetailFragment,
-  AuditLogSummary,
-  AuditLogSummaryPageRequest,
-  AuditLogSummaryPageResult,
   LiveApprovalDecision,
   LiveElicitationResponse,
   LiveSessionRunState,
@@ -475,26 +467,7 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
       request?: SessionSummaryPageRequest | null,
     ): Awaitable<HomeSessionSummaryPageResult>;
     listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
-    listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
-    listSessionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
-    listSessionAuditLogSummaryPage(
-      sessionId: string,
-      request?: AuditLogSummaryPageRequest | null,
-    ): Awaitable<AuditLogSummaryPageResult>;
-    getSessionAuditLogDetail(
-      sessionId: string,
-      auditLogId: number,
-    ): Awaitable<AuditLogDetail | null>;
-    getSessionAuditLogDetailSection(
-      sessionId: string,
-      auditLogId: number,
-      section: AuditLogDetailSection,
-    ): Awaitable<AuditLogDetailFragment | null>;
-    getSessionAuditLogOperationDetail(
-      sessionId: string,
-      auditLogId: number,
-      operationIndex: number,
-    ): Awaitable<AuditLogOperationDetailFragment | null>;
+    getLatestSessionTurn(sessionId: string): Awaitable<import("../../src-shared/session/session-turn-state.js").SessionTurnRecord | null>;
     listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
     listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
     listWorkspaceSkills(

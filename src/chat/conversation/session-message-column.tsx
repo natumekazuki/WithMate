@@ -13,7 +13,7 @@ import { useMarkdownImageResolver } from "../../ui/markdown/image-resource-loade
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { GlossaryAnnotationMatcher } from "../../glossary/glossary-annotation-projection.js";
-import { approvalModeLabel, CharacterAvatar, operationTypeLabel } from "../../ui/ui-utils.js";
+import { approvalModeLabel, CharacterAvatar, liveRunStepStatusLabel, operationTypeLabel } from "../../ui/ui-utils.js";
 
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { LiveRequestSurface } from "../runtime/live-request-surface.js";
@@ -1138,7 +1138,7 @@ export function SessionMessageColumn({
             const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
             const artifactDetailError = artifactDetailErrors[artifactKey];
-            const artifactOperations =
+            const artifactOperations: import("../../../src-shared/session/runtime-state.js").MessageOperation[] =
               artifact?.operationTimeline ??
               artifact?.activitySummary.map((item) => ({
                 type: "summary",
@@ -1367,6 +1367,10 @@ export function SessionMessageColumn({
                                             ) : (
                                               <p>{operation.summary}</p>
                                             )}
+                                            {operation.status ? <p>{liveRunStepStatusLabel(operation.status)}</p> : null}
+                                            {operation.exitCode !== undefined ? <p>Exit Code: {operation.exitCode}</p> : null}
+                                            {operation.error ? <p className="pending-run-error-note" role="alert">{operation.error.message}</p> : null}
+                                            {operation.truncated ? <p>Output Truncated</p> : null}
                                             {operation.details ? <pre>{operation.details}</pre> : null}
                                           </div>
                                         </details>

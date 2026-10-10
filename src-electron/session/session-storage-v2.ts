@@ -77,15 +77,6 @@ type HomeSessionSummaryRow = {
   last_active_at: string | number;
 };
 
-type SessionAuditLogCountRow = {
-  id: string;
-  audit_log_count: number;
-};
-
-type SessionAuditLogCountValueRow = {
-  audit_log_count: number;
-};
-
 type SessionIdRow = {
   id: string;
 };
@@ -127,9 +118,8 @@ const UPSERT_SESSION_SQL = `
     allowed_additional_directories_json,
     thread_id,
     message_count,
-    audit_log_count,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
     status = excluded.status,
@@ -154,7 +144,6 @@ const UPSERT_SESSION_SQL = `
     allowed_additional_directories_json = excluded.allowed_additional_directories_json,
     thread_id = excluded.thread_id,
     message_count = excluded.message_count,
-    audit_log_count = excluded.audit_log_count,
     last_active_at = excluded.last_active_at
 `;
 
@@ -193,17 +182,6 @@ const INSERT_SESSION_MESSAGE_SQL = `
 const INSERT_MESSAGE_ARTIFACT_SQL = `
   INSERT INTO session_message_artifacts (message_id, artifact_json)
   VALUES (?, ?)
-`;
-
-const GET_SESSION_AUDIT_LOG_COUNT_SQL = `
-  SELECT audit_log_count
-  FROM sessions
-  WHERE id = ?
-`;
-
-const LIST_SESSION_AUDIT_LOG_COUNTS_SQL = `
-  SELECT id, audit_log_count
-  FROM sessions
 `;
 
 const SESSION_HEADER_COLUMNS = `
@@ -431,26 +409,15 @@ function rowToSession(row: SessionHeaderRow, messages: Message[], mode: SessionR
   return session;
 }
 
-function readAuditLogCountRows(db: DatabaseSync): Map<string, number> {
-  const rows = db.prepare(LIST_SESSION_AUDIT_LOG_COUNTS_SQL).all() as SessionAuditLogCountRow[];
-  return new Map(rows.map((row) => [row.id, row.audit_log_count]));
-}
-
 function readSessionIds(db: DatabaseSync): Set<string> {
   const rows = db.prepare(LIST_SESSION_IDS_SQL).all() as SessionIdRow[];
   return new Set(rows.map((row) => row.id));
-}
-
-function getAuditLogCountFromDb(db: DatabaseSync, sessionId: string): number {
-  const row = db.prepare(GET_SESSION_AUDIT_LOG_COUNT_SQL).get(sessionId) as SessionAuditLogCountValueRow | undefined;
-  return row?.audit_log_count ?? 0;
 }
 
 function writeSessionHeader(
   statement: ReturnType<DatabaseSync["prepare"]>,
   session: Session,
   lastActiveAt: number,
-  auditLogCount: number,
 ): void {
   statement.run(
     session.id,
@@ -477,7 +444,6 @@ function writeSessionHeader(
     JSON.stringify(session.allowedAdditionalDirectories ?? []),
     session.threadId,
     session.messages.length,
-    auditLogCount,
     lastActiveAt,
   );
 }
@@ -698,7 +664,6 @@ export class SessionStorageV2 {
     }
 
     return this.withDb((db) => {
-      const auditLogCount = getAuditLogCountFromDb(db, normalized.id);
       const upsertSessionStatement = db.prepare(UPSERT_SESSION_SQL);
       const deleteMessagesStatement = db.prepare(DELETE_SESSION_MESSAGES_SQL);
       const insertMessageStatement = db.prepare(INSERT_SESSION_MESSAGE_SQL);
@@ -706,7 +671,7 @@ export class SessionStorageV2 {
 
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
-        writeSessionHeader(upsertSessionStatement, normalized, Date.now(), auditLogCount);
+        writeSessionHeader(upsertSessionStatement, normalized, Date.now());
         deleteMessagesStatement.run(normalized.id);
         writeSessionMessages(insertMessageStatement, insertArtifactStatement, normalized);
         db.exec("COMMIT");
@@ -729,7 +694,6 @@ export class SessionStorageV2 {
     });
 
     return this.withDb((db) => {
-      const existingAuditLogCounts = readAuditLogCountRows(db);
       const existingSessionIds = readSessionIds(db);
       const nextSessionIds = new Set(normalizedSessions.map((session) => session.id));
       const upsertSessionStatement = db.prepare(UPSERT_SESSION_SQL);
@@ -751,7 +715,6 @@ export class SessionStorageV2 {
             upsertSessionStatement,
             session,
             baseLastActiveAt - index,
-            existingAuditLogCounts.get(session.id) ?? 0,
           );
           deleteMessagesStatement.run(session.id);
           writeSessionMessages(insertMessageStatement, insertArtifactStatement, session);

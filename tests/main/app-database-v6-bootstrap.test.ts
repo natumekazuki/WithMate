@@ -10,11 +10,8 @@ import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-da
 import {
   APP_DATABASE_V6_FILENAME,
   APP_DATABASE_V6_SCHEMA_VERSION,
-  CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SCHEMA_SQL,
-  CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
-  CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
   isValidV6Database,
   readV6DatabaseUserVersion,
@@ -72,8 +69,6 @@ describe("createOrVerifyV6FreshDatabase", () => {
         for (const statement of CREATE_V6_SCHEMA_SQL) {
           if (
             statement === CREATE_V6_SESSION_TURNS_TABLE_SQL
-            || statement === CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL
-            || statement === CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL
           ) {
             continue;
           }
@@ -92,31 +87,7 @@ describe("createOrVerifyV6FreshDatabase", () => {
             `);
             continue;
           }
-          db.exec((statement as string) === CREATE_V6_AUDIT_EVENTS_TABLE_SQL
-            ? `
-              CREATE TABLE IF NOT EXISTS audit_events_v6 (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT,
-                event_type TEXT NOT NULL CHECK (event_type IN (
-                  'session_turn',
-                  'memory_mutation',
-                  'runtime_binding',
-                  'diagnostic'
-                )),
-                provider_id TEXT NOT NULL DEFAULT '',
-                summary TEXT NOT NULL DEFAULT '',
-                metadata_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL
-              );
-
-              CREATE INDEX IF NOT EXISTS idx_v6_audit_events_session_created
-                ON audit_events_v6(session_id, created_at DESC, id DESC);
-
-              CREATE INDEX IF NOT EXISTS idx_v6_audit_events_type_created
-                ON audit_events_v6(event_type, created_at DESC);
-            `
-            : statement);
+          db.exec(statement);
         }
       } finally {
         db.close();
@@ -135,8 +106,6 @@ describe("createOrVerifyV6FreshDatabase", () => {
         );
         for (const tableName of [
           "session_turns_v6",
-          "session_turn_interims_v6",
-          "session_turn_provider_outputs_v6",
         ]) {
           assert.equal(tables.has(tableName), true, `missing table: ${tableName}`);
         }

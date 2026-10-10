@@ -24,15 +24,8 @@ import type {
   AuxiliarySessionStatus,
 } from "../../src-shared/auxiliary/auxiliary-draft-contract.js";
 
-type LegacyAuxiliaryPreviewResolver = (auxiliarySessionId: string) => string | null;
-
 export type AuxiliaryDraftStorageSaveInput = AuxiliaryDraftSaveInput;
 export type AuxiliaryDraftStorageConsumeInput = AuxiliaryDraftConsumeInput & { allowRunningInput?: boolean };
-
-type LegacyAuditEntryForPreview = {
-  phase: string;
-  rawItemsJson: string;
-};
 
 type AuxiliarySessionRow = {
   id: string;
@@ -196,10 +189,7 @@ const CREATE_AUXILIARY_SESSION_DRAFTS_TABLE_SQL = `
 export class AuxiliarySessionStorage {
   private db: DatabaseSync | null;
 
-  constructor(
-    dbPath: string,
-    private readonly resolveLegacyPreview?: LegacyAuxiliaryPreviewResolver,
-  ) {
+  constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
     try {
       this.initializeSchema();
@@ -727,7 +717,7 @@ export class AuxiliarySessionStorage {
       ensureAuxiliarySessionCreatedAtColumn(db);
       db.exec(CREATE_AUXILIARY_SESSION_PARENT_UPDATED_INDEX_SQL);
       db.exec(CREATE_AUXILIARY_SESSION_DRAFTS_TABLE_SQL);
-      migrateAuxiliaryStorage(db, this.resolveLegacyPreview);
+      migrateAuxiliaryStorage(db);
       db.exec("DROP INDEX IF EXISTS idx_auxiliary_sessions_parent_created");
     });
   }
@@ -754,9 +744,14 @@ export class AuxiliarySessionStorage {
     return this.withDb((db) => {
       const row = db.prepare(`SELECT artifact_body FROM auxiliary_session_messages
         WHERE auxiliary_session_id = ? AND seq = ?`).get(auxiliarySessionId, messageIndex) as { artifact_body: string | null } | undefined;
-      if (!row?.artifact_body) return null;
-      const message = normalizeMessage({ role: "assistant", text: "", artifact: JSON.parse(row.artifact_body) });
-      return message?.artifact ?? null;
+      if (!row || row.artifact_body === null) return null;
+      const artifact: unknown = JSON.parse(row.artifact_body);
+      if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
+        throw new Error("Stored Auxiliary message artifact must be a JSON object.");
+      }
+      const normalized = normalizeMessage({ role: "assistant", text: "", artifact })?.artifact;
+      if (!normalized) throw new Error("Stored Auxiliary message artifact could not be normalized.");
+      return normalized;
     });
   }
 
@@ -999,7 +994,7 @@ function migrateAuxiliaryDrafts(db: DatabaseSync): void {
     }
 }
 
-function migrateAuxiliaryStorage(db: DatabaseSync, resolveLegacyPreview?: LegacyAuxiliaryPreviewResolver): void {
+function migrateAuxiliaryStorage(db: DatabaseSync): void {
   const columns = new Set((db.prepare("PRAGMA table_info(auxiliary_sessions)").all() as TableInfoRow[]).map(({ name }) => name));
   db.exec("BEGIN IMMEDIATE TRANSACTION");
   try {
@@ -1048,9 +1043,8 @@ function migrateAuxiliaryStorage(db: DatabaseSync, resolveLegacyPreview?: Legacy
           throw new Error(`Invalid Auxiliary migration payload: ${row.id}`);
         }
         const existingSummary = row.summary_json ? JSON.parse(row.summary_json) as { preview?: unknown } : null;
-        const confirmed = resolveLegacyPreview?.(row.id) ?? null;
         const preview = typeof existingSummary?.preview === "string" ? existingSummary.preview
-          : confirmed ? buildAuxiliaryPreview(session.messages, confirmed) : buildAuxiliaryPreview(session.messages);
+          : buildAuxiliaryPreview(session.messages);
         const migrated = { ...session, createdAt: session.createdAt || row.created_at,
           updatedAt: session.updatedAt || row.updated_at, status: row.status as AuxiliarySession["status"], preview };
         writeAuxiliaryMetadata(db, migrated);
@@ -1092,71 +1086,6 @@ function hasWritableAuxiliaryParent(db: DatabaseSync, parentSessionId: string): 
       sourceSchemaVersion: row.source_schema_version,
     }));
   });
-}
-
-/** Extracts a final provider block only from an untruncated completed audit item list. */
-export function resolveLegacyAuxiliaryPreviewFromAuditEntries(
-  entries: readonly LegacyAuditEntryForPreview[],
-): string | null {
-  for (const entry of entries) {
-    if (entry.phase !== "completed" && entry.phase !== "background-completed") {
-      continue;
-    }
-
-    let items: unknown;
-    try {
-      items = JSON.parse(entry.rawItemsJson);
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(items) || containsRawItemTruncationMarker(items)) {
-      continue;
-    }
-
-    for (const item of [...items].reverse()) {
-      if (!item || typeof item !== "object") {
-        continue;
-      }
-      const candidate = item as { type?: unknown; data?: unknown; agentId?: unknown };
-      if (!candidate.data || typeof candidate.data !== "object") {
-        continue;
-      }
-      const data = candidate.data as {
-        text?: unknown;
-        content?: unknown;
-        parentToolCallId?: unknown;
-        agentId?: unknown;
-      };
-      const isSubAgentMessage = candidate.agentId != null || data.agentId != null;
-      const text = candidate.type === "agent_message"
-        ? data.text
-        : candidate.type === "assistant.message" && data.parentToolCallId == null && !isSubAgentMessage
-          ? data.content
-          : null;
-      if (typeof text === "string" && text.trim()) {
-        return text;
-      }
-    }
-  }
-  return null;
-}
-
-function containsRawItemTruncationMarker(value: unknown): boolean {
-  if (Array.isArray(value)) {
-    return value.some(containsRawItemTruncationMarker);
-  }
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  if (
-    record.type === "withmate.value_truncated"
-    || record.type === "withmate.raw_items_truncated"
-    || record.truncated === true
-  ) {
-    return true;
-  }
-  return Object.values(record).some(containsRawItemTruncationMarker);
 }
 
 function parseAuxiliarySessionSummaryRow(

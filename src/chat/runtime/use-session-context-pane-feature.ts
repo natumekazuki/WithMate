@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
-  AuditLogSummary,
+  MessageOperation,
   LiveSessionRunState,
   ProviderQuotaTelemetry,
   SessionContextTelemetry,
@@ -20,7 +20,6 @@ import {
   shouldIncludeGlossaryContextPane,
   type ContextPaneTabKey,
 } from "./session-ui-projection.js";
-import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import { buildLiveSessionCommonContextPaneProps } from "../live-session-projection.js";
 import type { SessionContextPaneProps } from "../shell/session-context-pane.js";
 import {
@@ -39,7 +38,11 @@ export type SessionContextPaneFeatureInput = {
   activeRunSessionId: string | null;
   character?: CharacterProfile | null;
   liveRun: LiveSessionRunState | null;
-  auditLogEntries?: readonly AuditLogSummary[];
+  operations?: readonly MessageOperation[];
+  commandHistoryLoading?: boolean;
+  commandHistoryError?: string | null;
+  commandHistoryUnrecorded?: boolean;
+  onRetryCommandHistory?: () => void;
   selectedSessionContextTelemetry: SessionContextTelemetry | null;
   selectedProviderQuotaTelemetry: ProviderQuotaTelemetry | null;
   availableReasoningEfforts: readonly string[];
@@ -75,7 +78,11 @@ export function useSessionContextPaneFeature({
   activeRunSessionId,
   character,
   liveRun,
-  auditLogEntries = [],
+  operations = [],
+  commandHistoryLoading = false,
+  commandHistoryError = null,
+  commandHistoryUnrecorded = false,
+  onRetryCommandHistory,
   selectedSessionContextTelemetry,
   selectedProviderQuotaTelemetry,
   availableReasoningEfforts,
@@ -116,19 +123,9 @@ export function useSessionContextPaneFeature({
     ],
   );
 
-  const latestTerminalAuditLog = useMemo(
-    () => auditLogEntries.find((entry) => (
-      entry.sessionId === activeRunSessionId && isTerminalAuditLogPhase(entry.phase)
-    )) ?? null,
-    [activeRunSessionId, auditLogEntries],
-  );
   const latestCommandProjection = useMemo(
-    () => buildLatestCommandProjection({
-      liveSteps: liveRun?.steps ?? [],
-      auditOperations: latestTerminalAuditLog?.operations ?? [],
-      latestTerminalAuditPhase: latestTerminalAuditLog?.phase,
-    }),
-    [latestTerminalAuditLog?.operations, latestTerminalAuditLog?.phase, liveRun?.steps],
+    () => buildLatestCommandProjection({ liveSteps: liveRun?.steps ?? [], operations }),
+    [operations, liveRun?.steps],
   );
   const latestLiveCommandStep = latestCommandProjection.latestLiveCommandStep;
   const latestCommandView = latestCommandProjection.latestCommandView;
@@ -200,6 +197,10 @@ export function useSessionContextPaneFeature({
     availableContextPaneTabs,
     contextPaneProjection,
     latestCommandView,
+    commandHistoryLoading,
+    commandHistoryError,
+    commandHistoryUnrecorded,
+    onRetryCommandHistory,
     runningDetailsEntries,
     liveRunReasoningText,
     backgroundTasks,

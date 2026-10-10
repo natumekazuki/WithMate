@@ -8,10 +8,6 @@ import {
 } from "../../src-shared/window/withmate-window-types.js";
 
 describe("resetAppDatabaseTargets", () => {
-  it("sessions を選ぶと auditLogs も自動的に含める", () => {
-    assert.deepEqual(normalizeResetAppDatabaseTargets(["sessions"]), ["sessions", "auditLogs"]);
-  });
-
   it("未指定時は全対象を返す", () => {
     assert.deepEqual(normalizeResetAppDatabaseTargets(undefined), [...ALL_RESET_APP_DATABASE_TARGETS]);
   });

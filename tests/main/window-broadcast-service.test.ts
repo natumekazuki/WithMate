@@ -58,12 +58,12 @@ test("WindowBroadcastServiceはRenderer送信失敗を隔離して他Windowへ�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session invalidation・open ID・templateの既存配送先をlive配信とは独立して維持する"
-// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#main-process-responsibilities" }
-// fault = "live宛先限定を他の通知へ適用しHomeまたはSessionの更新を落とす"
-// observable = "用途別Windowの受信channel列とopen ID payload"
+// claim = "Session一覧・window一覧・prompt templateの用途別配送先をlive配信とは独立して維持し、turn更新は生存windowへ対象Session IDのみを渡す"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-ipc-channels.ts notification contracts" }
+// fault = "必要なWindowへ通知しない、destroyed Windowへ配信する、またはturn通知へ履歴詳細を混入する"
+// observable = "home/session/closed Windowのchannelとpayload"
 // observation_boundary = "public-boundary"
-// scope = "window-broadcast-event-routing"
+// scope = "window broadcast routing"
 // lifecycle = "permanent"
 // @end-test-value
 test("WindowBroadcastService は用途別 window に event を振り分ける", () => {
@@ -82,19 +82,24 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
   service.broadcastSessionInvalidation({ scope: "ids", sessionIds: ["session-1"] });
   service.broadcastOpenSessionWindowIds(["session-1"]);
   service.broadcastPromptTemplates([]);
+  service.broadcastSessionTurnUpdated("session-1");
 
   assert.deepEqual(home.sent.map((entry) => entry.channel), [
     "withmate:sessions-invalidated",
     "withmate:open-session-windows-changed",
     "withmate:prompt-templates-changed",
+    "withmate:session-turn-updated",
   ]);
   assert.deepEqual(session.sent.map((entry) => entry.channel), [
     "withmate:sessions-invalidated",
     "withmate:open-session-windows-changed",
     "withmate:prompt-templates-changed",
+    "withmate:session-turn-updated",
   ]);
   assert.equal(closed.sent.length, 0);
   assert.deepEqual(home.sent[1]?.payload, { scope: "ids", sessionIds: ["session-1"] });
+  assert.equal(home.sent[3]?.payload, "session-1");
+  assert.equal(session.sent[3]?.payload, "session-1");
 });
 
 // @test-value v2

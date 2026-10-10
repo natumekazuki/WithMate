@@ -1,6 +1,7 @@
 import { basename, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
+import { migrateLegacySessionTurnsV6 } from "./migrations/migrate-session-turn-storage-v6.js";
 
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
@@ -21,8 +22,6 @@ export const REQUIRED_V6_TABLES = [
   "auxiliary_sessions",
   "auxiliary_session_messages",
   "session_turns_v6",
-  "session_turn_interims_v6",
-  "session_turn_provider_outputs_v6",
   "memory_entries_v6",
   "memory_entry_tags_v6",
   "memory_entry_relations_v6",
@@ -41,6 +40,9 @@ export const REQUIRED_V6_TABLES = [
 ] as const;
 
 export const FORBIDDEN_V6_TABLES = [
+  "session_turn_interims_v6",
+  "session_turn_provider_outputs_v6",
+  "audit_events_v6",
   "session_memories",
   "project_memory_entries",
   "project_scopes",
@@ -58,8 +60,6 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_session_turns_session_updated",
   "idx_v6_session_turns_auxiliary_updated",
   "idx_v6_session_turns_phase_updated",
-  "idx_v6_session_turn_interims_turn_seq",
-  "idx_v6_session_turn_provider_outputs_turn_kind_seq",
   "idx_v6_memory_entries_target_state_updated",
   "idx_v6_memory_entry_tags_lookup",
   "idx_v6_memory_target_tag_stats_page",
@@ -125,23 +125,10 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "user_message_seq",
     "assistant_message_seq",
     "thread_id",
-    "summary",
     "error_summary",
     "started_at",
     "completed_at",
     "updated_at",
-  ],
-  session_turn_interims_v6: ["id", "turn_id", "seq", "body", "source", "created_at"],
-  session_turn_provider_outputs_v6: [
-    "id",
-    "turn_id",
-    "seq",
-    "provider_id",
-    "kind",
-    "summary",
-    "payload_json",
-    "payload_blob_id",
-    "created_at",
   ],
   memory_entries_v6: [
     "id",
@@ -455,8 +442,6 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     && hasForeignKey(db, "auxiliary_session_messages", "auxiliary_session_id", "auxiliary_sessions")
     && hasForeignKey(db, "session_turns_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions")
-    && hasForeignKey(db, "session_turn_interims_v6", "turn_id", "session_turns_v6")
-    && hasForeignKey(db, "session_turn_provider_outputs_v6", "turn_id", "session_turns_v6")
     && hasForeignKey(db, "memory_entries_v6", "source_app_message_id", "session_messages_v6")
     && hasForeignKey(db, "memory_entries_v6", "superseded_by_id", "memory_entries_v6")
     && hasForeignKey(db, "memory_entry_tags_v6", "entry_id", "memory_entries_v6")
@@ -552,8 +537,6 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const filePinsSql = tableSql(db, "session_file_pins_v6");
   const auxiliarySessionsSql = tableSql(db, "auxiliary_sessions");
   const sessionTurnsSql = tableSql(db, "session_turns_v6");
-  const sessionTurnInterimsSql = tableSql(db, "session_turn_interims_v6");
-  const sessionTurnProviderOutputsSql = tableSql(db, "session_turn_provider_outputs_v6");
   const memoryEntriesSql = tableSql(db, "memory_entries_v6");
   const mutationEventsSql = tableSql(db, "memory_mutation_events_v6");
   const idempotencySql = tableSql(db, "memory_idempotency_keys_v6");
@@ -579,9 +562,6 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && sessionTurnsSql.includes("phase IN ('running', 'completed', 'failed', 'canceled')")
     && sessionTurnsSql.includes("session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL")
     && sessionTurnsSql.includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)")
-    && sessionTurnInterimsSql.includes("source IN ('stream_delta', 'running_snapshot', 'migration')")
-    && sessionTurnProviderOutputsSql.includes("json_valid(payload_json)")
-    && sessionTurnProviderOutputsSql.includes("kind IN")
     && memoryEntriesSql.includes("ON DELETE RESTRICT")
     && mutationEventsSql.includes("result_status TEXT NOT NULL")
     && mutationEventsSql.includes("result_status IN")
@@ -856,7 +836,6 @@ export const CREATE_V6_SESSION_TURNS_TABLE_SQL = `
     user_message_seq INTEGER CHECK (user_message_seq IS NULL OR user_message_seq >= 0),
     assistant_message_seq INTEGER CHECK (assistant_message_seq IS NULL OR assistant_message_seq >= 0),
     thread_id TEXT NOT NULL DEFAULT '',
-    summary TEXT NOT NULL DEFAULT '',
     error_summary TEXT NOT NULL DEFAULT '',
     started_at TEXT NOT NULL,
     completed_at TEXT,
@@ -875,82 +854,6 @@ export const CREATE_V6_SESSION_TURNS_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_session_turns_phase_updated
     ON session_turns_v6(phase, updated_at DESC);
-`;
-
-export const CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS session_turn_interims_v6 (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    turn_id INTEGER NOT NULL,
-    seq INTEGER NOT NULL CHECK (seq >= 0),
-    body TEXT NOT NULL,
-    source TEXT NOT NULL CHECK (source IN ('stream_delta', 'running_snapshot', 'migration')),
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (turn_id) REFERENCES session_turns_v6(id) ON DELETE CASCADE,
-    UNIQUE (turn_id, seq)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_session_turn_interims_turn_seq
-    ON session_turn_interims_v6(turn_id, seq);
-`;
-
-export const CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS session_turn_provider_outputs_v6 (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    turn_id INTEGER NOT NULL,
-    seq INTEGER NOT NULL CHECK (seq >= 0),
-    provider_id TEXT NOT NULL DEFAULT '',
-    kind TEXT NOT NULL CHECK (kind IN (
-      'operation',
-      'raw_items',
-      'usage',
-      'logical_prompt',
-      'transport_payload',
-      'provider_error',
-      'legacy_assistant_text',
-      'quota',
-      'context_telemetry',
-      'background_task',
-      'provider_metadata'
-    )),
-    summary TEXT NOT NULL DEFAULT '',
-    payload_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(payload_json)),
-    payload_blob_id TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (turn_id) REFERENCES session_turns_v6(id) ON DELETE CASCADE,
-    UNIQUE (turn_id, seq)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_session_turn_provider_outputs_turn_kind_seq
-    ON session_turn_provider_outputs_v6(turn_id, kind, seq);
-`;
-
-export const CREATE_V6_AUDIT_EVENTS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS audit_events_v6 (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT,
-    auxiliary_session_id TEXT,
-    event_type TEXT NOT NULL CHECK (event_type IN (
-      'session_turn',
-      'memory_mutation',
-      'runtime_binding',
-      'diagnostic'
-    )),
-    provider_id TEXT NOT NULL DEFAULT '',
-    summary TEXT NOT NULL DEFAULT '',
-    metadata_json TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (auxiliary_session_id) REFERENCES auxiliary_sessions(id) ON DELETE SET NULL
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_audit_events_session_created
-    ON audit_events_v6(session_id, created_at DESC, id DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_v6_audit_events_auxiliary_session_created
-    ON audit_events_v6(auxiliary_session_id, created_at DESC, id DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_v6_audit_events_type_created
-    ON audit_events_v6(event_type, created_at DESC);
 `;
 
 export const CREATE_V6_MEMORY_ENTRIES_TABLE_SQL = `
@@ -1373,8 +1276,6 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
-  CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
-  CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRIES_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_TAGS_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_RELATIONS_TABLE_SQL,
@@ -1406,19 +1307,7 @@ function tableColumnNames(db: DatabaseSync, tableName: string): Set<string> {
 
 function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): void {
   const createdAtExpression = columns.has("created_at") ? "created_at" : "updated_at";
-  const shouldRestoreAuditAuxiliaryOwners =
-    tableExists(db, "audit_events_v6") && tableColumnNames(db, "audit_events_v6").has("auxiliary_session_id");
-
   db.exec("DROP TABLE IF EXISTS auxiliary_sessions_v6_rebuild;");
-  if (shouldRestoreAuditAuxiliaryOwners) {
-    db.exec("DROP TABLE IF EXISTS temp.audit_events_v6_auxiliary_owner_restore;");
-    db.exec(`
-      CREATE TEMP TABLE audit_events_v6_auxiliary_owner_restore AS
-      SELECT id AS audit_event_id, auxiliary_session_id
-      FROM audit_events_v6
-      WHERE auxiliary_session_id IS NOT NULL
-    `);
-  }
   db.exec(`
     CREATE TABLE auxiliary_sessions_v6_rebuild (
       id TEXT PRIMARY KEY,
@@ -1449,30 +1338,6 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
   `);
   db.exec("DROP TABLE auxiliary_sessions;");
   db.exec("ALTER TABLE auxiliary_sessions_v6_rebuild RENAME TO auxiliary_sessions;");
-  if (shouldRestoreAuditAuxiliaryOwners) {
-    db.exec(`
-      UPDATE audit_events_v6
-      SET auxiliary_session_id = (
-        SELECT auxiliary_session_id
-        FROM audit_events_v6_auxiliary_owner_restore
-        WHERE audit_event_id = audit_events_v6.id
-      )
-      WHERE id IN (
-        SELECT audit_event_id
-        FROM audit_events_v6_auxiliary_owner_restore
-      )
-      AND EXISTS (
-        SELECT 1
-        FROM auxiliary_sessions
-        WHERE id = (
-          SELECT auxiliary_session_id
-          FROM audit_events_v6_auxiliary_owner_restore
-          WHERE audit_event_id = audit_events_v6.id
-        )
-      )
-    `);
-    db.exec("DROP TABLE temp.audit_events_v6_auxiliary_owner_restore;");
-  }
 }
 
 function backfillAuxiliarySessionsCreatedAt(db: DatabaseSync): void {
@@ -1506,8 +1371,6 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
       || statement === CREATE_V6_SESSION_TURNS_TABLE_SQL
-      || statement === CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL
-      || statement === CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL
     ) {
       continue;
     }
@@ -1528,6 +1391,8 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
   } else {
     const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
+    db.exec(CREATE_V6_SESSION_TURNS_TABLE_SQL);
+    migrateLegacySessionTurnsV6(db);
     const hasRetainedAuxiliaryTurns = tableExists(db, "session_turns_v6")
       && Boolean(db.prepare("SELECT 1 FROM session_turns_v6 WHERE auxiliary_session_id IS NOT NULL LIMIT 1").get());
     const shouldRebuildAuxiliarySessions = !hasRetainedAuxiliaryTurns && (
@@ -1552,8 +1417,11 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   db.exec("DROP INDEX IF EXISTS idx_auxiliary_sessions_parent_created");
 
   db.exec(CREATE_V6_SESSION_TURNS_TABLE_SQL);
-  db.exec(CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL);
-  db.exec(CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL);
+  migrateLegacySessionTurnsV6(db);
+  cleanupForbiddenV6Tables(db);
+  if (tableColumnNames(db, "session_turns_v6").has("summary")) {
+    db.exec("ALTER TABLE session_turns_v6 DROP COLUMN summary");
+  }
 
   if (tableExists(db, "memory_protected_objects_v6")) {
     const protectedObjectColumns = tableColumnNames(db, "memory_protected_objects_v6");

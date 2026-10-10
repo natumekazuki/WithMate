@@ -1,8 +1,3 @@
-import type {
-  AuditLogDetailSection,
-  AuditLogSummaryPageRequest,
-} from "../../src-shared/session/runtime-state.js";
-
 import type { SessionSummaryPageRequest } from "../../src-shared/session/session-state.js";
 
 import type {
@@ -36,9 +31,7 @@ import {
 import { parseSessionSummaryPageRequest } from "../session/session-summary-query.js";
 import {
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
-  WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
-  WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
-  WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
+  WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_GET_CONVERSATION_PAGE_CHANNEL,
   WITHMATE_SEARCH_CONVERSATION_CHANNEL,
@@ -74,9 +67,6 @@ import {
   WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
-  WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
-  WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
-  WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
@@ -151,45 +141,6 @@ export function registerSessionQueryHandlers(
     deps.listSessionCharacterUsage(),
   );
   ipcMain.handle(
-    WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
-    (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId),
-  );
-  ipcMain.handle(
-    WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
-    (_event, sessionId: string) => deps.listSessionAuditLogSummaries(sessionId),
-  );
-  ipcMain.handle(
-    WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
-    (
-      _event,
-      sessionId: string,
-      request: AuditLogSummaryPageRequest | null | undefined,
-    ) => deps.listSessionAuditLogSummaryPage(sessionId, request),
-  );
-  ipcMain.handle(
-    WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
-    (_event, sessionId: string, auditLogId: number) =>
-      deps.getSessionAuditLogDetail(sessionId, auditLogId),
-  );
-  ipcMain.handle(
-    WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
-    (
-      _event,
-      sessionId: string,
-      auditLogId: number,
-      section: AuditLogDetailSection,
-    ) => deps.getSessionAuditLogDetailSection(sessionId, auditLogId, section),
-  );
-  ipcMain.handle(
-    WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
-    (_event, sessionId: string, auditLogId: number, operationIndex: number) =>
-      deps.getSessionAuditLogOperationDetail(
-        sessionId,
-        auditLogId,
-        operationIndex,
-      ),
-  );
-  ipcMain.handle(
     WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
     async (_event, sessionId: string) => deps.listSessionSkills(sessionId),
   );
@@ -226,6 +177,12 @@ export function registerSessionQueryHandlers(
     const owner = await deps.getConversationOwnerSessionId?.(sessionId) ?? sessionId;
     assertOwningSessionWindowSender(event, owner, deps);
   };
+  ipcMain.handle(WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL, async (event, sessionId: string) => {
+    await authorizeConversation(event, sessionId);
+    const turn = await deps.getLatestSessionTurn(sessionId);
+    await authorizeConversation(event, sessionId);
+    return turn;
+  });
   ipcMain.handle(WITHMATE_GET_CONVERSATION_PAGE_CHANNEL, async (event, sessionId, request) => {
     await authorizeConversation(event, sessionId);
     if (!deps.getConversationPage) throw new Error("Conversation page reads are unavailable.");

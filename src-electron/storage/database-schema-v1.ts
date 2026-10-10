@@ -64,33 +64,6 @@ export const LEGACY_SESSION_COLUMN_DEFINITIONS = {
   source_schema_version: "INTEGER NOT NULL DEFAULT 4",
 } as const;
 
-export const CREATE_AUDIT_LOGS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS audit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    phase TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    reasoning_effort TEXT NOT NULL,
-    approval_mode TEXT NOT NULL,
-    thread_id TEXT NOT NULL DEFAULT '',
-    logical_prompt_json TEXT NOT NULL DEFAULT '{}',
-    transport_payload_json TEXT NOT NULL DEFAULT '',
-    assistant_text TEXT NOT NULL DEFAULT '',
-    operations_json TEXT NOT NULL DEFAULT '[]',
-    raw_items_json TEXT NOT NULL DEFAULT '[]',
-    usage_json TEXT NOT NULL DEFAULT '',
-    error_message TEXT NOT NULL DEFAULT '',
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  );
-`;
-
-export const LEGACY_AUDIT_LOG_COLUMN_DEFINITIONS = {
-  logical_prompt_json: "TEXT NOT NULL DEFAULT '{}'",
-  transport_payload_json: "TEXT NOT NULL DEFAULT ''",
-} as const;
-
 export const CREATE_MODEL_CATALOG_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS model_catalog_revisions (
     revision INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -7,7 +7,7 @@ import type { CopilotClient, CopilotSession, PermissionRequest, SessionEvent } f
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
-import type { AuditLogProviderMetadata, LiveRunStep } from "../../src-shared/session/runtime-state.js";
+import type { ProviderDiagnosticMetadata, LiveRunStep } from "../../src-shared/session/runtime-state.js";
 import type { LiveBackgroundTask, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
@@ -18,11 +18,10 @@ import {
   buildCopilotSessionSettings,
   buildCopilotMessageAttachments,
   buildCopilotProviderMetadata,
-  collectCopilotAuditOperationsFromEventsForTesting,
+  collectCopilotMessageOperationsFromEventsForTesting,
   collectCopilotLiveStepsFromEventsForTesting,
   collectCopilotReasoningTextFromEventsForTesting,
   getCopilotPermissionCompletedLiveStatus,
-  buildCopilotStableRawItems,
   buildCopilotToolSummary,
   buildCopilotClientEnv,
   isCopilotVisibleToolName,
@@ -51,7 +50,6 @@ import {
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
 } from "../../src-electron/providers/provider-agent-runtime-binding.js";
 import { createDisabledWorkspaceSnapshotCapture } from "../../src-electron/files/workspace-diff-policy.js";
-import { AUDIT_RAW_ITEMS_JSON_LIMIT, BoundedAuditRawItems } from "../../src-electron/session/audit-payload-limits.js";
 import {
   ProviderTurnError,
   type RunBackgroundStructuredPromptInput,
@@ -83,18 +81,39 @@ function createPartialResult(overrides?: Partial<RunSessionTurnResult>): RunSess
   return {
     threadId: "",
     assistantText: "",
-    logicalPrompt: {
-      systemText: "",
-      inputText: "",
-      composedText: "",
-    },
-    transportPayload: null,
-    operations: [],
-    rawItemsJson: "[]",
     usage: null,
     ...overrides,
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotはterminal resultの個別成否・exitCode・構造化errorと未完了操作を配列順に通常履歴へ投影する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "未完了操作を除外または成功に補完し取得済み結果情報を落とす"
+// observable = "collectCopilotMessageOperationsFromEventsForTestingが実event処理から返す操作配列"
+// observation_boundary = "component-behavior"
+// scope = "Copilot native event operation projection"
+// lifecycle = "permanent"
+// impact = "失敗・取消後のコマンド結果を誤表示または消失する"
+// distinction = "SDK型検査ではliveからartifactに渡す結果情報の保持を確認できない"
+// @end-test-value
+it("Copilotの個別結果と未完了操作を通常履歴へ保持する", () => {
+  const events = [
+    { type: "tool.execution_start", data: { toolCallId: "done", toolName: "shell", arguments: { command: "check" } } },
+    { type: "tool.execution_complete", data: { toolCallId: "done", success: false,
+      result: { contents: [{ type: "terminal", text: "output", exitCode: 7 }] }, error: { message: "failure", code: "E_TOOL" } } },
+    { type: "tool.execution_start", data: { toolCallId: "partial", toolName: "shell", arguments: { command: "pending" } } },
+  ] as SessionEvent[];
+  const operations = collectCopilotMessageOperationsFromEventsForTesting(events);
+  assert.deepEqual(operations.map(({ id, status }) => ({ id, status })), [
+    { id: "done", status: "failed" }, { id: "partial", status: "in_progress" },
+  ]);
+  assert.equal(operations[0].exitCode, 7);
+  assert.deepEqual(operations[0].error, { message: "failure", code: "E_TOOL" });
+  assert.equal(operations[1].exitCode, undefined);
+  assert.equal(operations[1].details, undefined);
+});
 
 const COPILOT_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "copilot",
@@ -479,6 +498,7 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     assert.equal(stopped, true);
     assert.equal(adapter.clients.size, 0);
   });
+
 
   // @test-value v2
   // kind = "invariant"
@@ -1166,153 +1186,18 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     });
   });
 
-  it("rawItems は delta / ephemeral を落として stable event だけ残す", () => {
-    const items = buildCopilotStableRawItems([
-      {
-        type: "assistant.message_delta",
-        timestamp: "2026-03-23T00:00:00.000Z",
-        data: {
-          deltaContent: "he",
-        },
-      } as never,
-      {
-        type: "permission.requested",
-        timestamp: "2026-03-23T00:00:01.000Z",
-        data: {
-          requestId: "req-1",
-          permissionRequest: {
-            kind: "write",
-            intention: "Create file",
-            fileName: "F:/repo/tmp/output.txt",
-          },
-        },
-        ephemeral: true,
-      } as never,
-      {
-        type: "tool.execution_start",
-        timestamp: "2026-03-23T00:00:02.000Z",
-        data: {
-          toolCallId: "call-1",
-          toolName: "create",
-          arguments: {
-            path: "F:/repo/tmp/output.txt",
-          },
-        },
-      } as never,
-      {
-        type: "tool.execution_complete",
-        timestamp: "2026-03-23T00:00:03.000Z",
-        data: {
-          toolCallId: "call-1",
-          success: true,
-          result: {
-            content: "Created file",
-            detailedContent: "huge diff",
-          },
-        },
-      } as never,
-      {
-        type: "assistant.message",
-        timestamp: "2026-03-23T00:00:04.000Z",
-        data: {
-          content: "done",
-          parentToolCallId: undefined,
-        },
-      } as never,
-    ], "F:/repo");
-
-    assert.deepEqual(items, [
-      {
-        type: "tool.execution_start",
-        timestamp: "2026-03-23T00:00:02.000Z",
-        data: {
-          toolCallId: "call-1",
-          toolName: "create",
-          summary: "create tmp/output.txt",
-        },
-      },
-      {
-        type: "tool.execution_complete",
-        timestamp: "2026-03-23T00:00:03.000Z",
-        data: {
-          toolCallId: "call-1",
-          toolName: "create",
-          success: true,
-          content: "Created file",
-          errorMessage: null,
-        },
-      },
-      {
-        type: "assistant.message",
-        timestamp: "2026-03-23T00:00:04.000Z",
-        data: {
-          content: "done",
-          parentToolCallId: null,
-        },
-      },
-    ]);
-  });
-
   // @test-value v2
   // kind = "contract"
-  // claim = "Copilotのstable raw assistant itemはsub-agentのagentId markerを保持する"
-  // oracle = { type = "contract", ref = "issue-710-preview-legacy-audit-backfill" }
-  // fault = "agentId markerを落とし、legacy resolverがsub-agent messageをtop-level応答と誤認できるraw itemを保存する"
-  // observable = "buildCopilotStableRawItemsのassistant.message data.agentId"
-  // observation_boundary = "public-boundary"
-  // scope = "copilot-stable-raw-sub-agent-marker"
+  // claim = "reasoning deltaと確定reasoningをlive本文へ投影し操作結果へ混入しない"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+  // fault = "reasoningを二重連結またはコマンドへ誤分類する"
+  // observable = "live reasoning文字列と操作配列"
+  // observation_boundary = "component-behavior"
+  // scope = "Copilot reasoning projection"
   // lifecycle = "permanent"
+  // impact = "利用者が誤った推論表示やコマンド表示を見る"
+  // distinction = "SDK型だけではreasoning eventの投影先と重複を確認できない"
   // @end-test-value
-  it("stable raw assistant item は sub-agent の agentId を保持する", () => {
-    const items = buildCopilotStableRawItems([
-      {
-        type: "assistant.message",
-        agentId: "subagent-1",
-        timestamp: "2026-03-23T00:00:00.000Z",
-        data: {
-          content: "sub-agent report",
-          parentToolCallId: null,
-        },
-      } as never,
-    ], "F:/repo");
-
-    assert.deepEqual(items, [
-      {
-        type: "assistant.message",
-        timestamp: "2026-03-23T00:00:00.000Z",
-        data: {
-          content: "sub-agent report",
-          parentToolCallId: null,
-          agentId: "subagent-1",
-        },
-      },
-    ]);
-  });
-
-  it("assistant.reasoning / reasoning_delta は rawItems に残さない", () => {
-    const items = buildCopilotStableRawItems([
-      {
-        type: "assistant.reasoning_delta",
-        timestamp: "2026-03-23T00:00:00.000Z",
-        ephemeral: true,
-        data: {
-          reasoningId: "reasoning-1",
-          deltaContent: "調査",
-        },
-      } as never,
-      {
-        type: "assistant.reasoning",
-        timestamp: "2026-03-23T00:00:01.000Z",
-        data: {
-          reasoningId: "reasoning-1",
-          content: "調査してから実装する",
-        },
-      } as never,
-    ], "F:/repo");
-
-    assert.deepEqual(items, []);
-  });
-
   it("assistant.reasoning_delta / assistant.reasoning は live reasoning text にだけ変換する", () => {
     const events = [
       {
@@ -1344,34 +1229,10 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     ] as never[];
 
     assert.deepEqual(collectCopilotLiveStepsFromEventsForTesting(events, "F:/repo"), []);
-    assert.deepEqual(collectCopilotAuditOperationsFromEventsForTesting(events, "F:/repo"), []);
+    assert.deepEqual(collectCopilotMessageOperationsFromEventsForTesting(events, "F:/repo"), []);
     assert.equal(collectCopilotReasoningTextFromEventsForTesting(events, "F:/repo"), "調査してから実装する");
   });
 
-  it("rawItems の大きな text payload は preview と metadata に畳み込む", () => {
-    const longContent = "x".repeat(70 * 1024);
-    const items = buildCopilotStableRawItems([
-      {
-        type: "assistant.message",
-        timestamp: "2026-03-23T00:00:00.000Z",
-        data: {
-          content: longContent,
-          parentToolCallId: undefined,
-        },
-      } as never,
-    ], "F:/repo");
-
-    const content = items[0]?.data?.content as {
-      text: string;
-      truncated: true;
-      originalLength: number;
-    };
-
-    assert.equal(content.truncated, true);
-    assert.equal(content.originalLength, longContent.length);
-    assert.equal(content.text.includes("...[truncated "), true);
-    assert.equal(content.text.length < longContent.length, true);
-  });
 
   it("未対応 Copilot event の app log metadata は payload を含めない", () => {
     const metadata = buildCopilotProviderMetadata([
@@ -1580,6 +1441,18 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "stale接続のretry判定は開始だけの操作を許可し、取得済み本文・terminal操作・changed filesでは抑止する"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
+  // fault = "未確定操作をretry blockerにする、または取得済み結果付きturnを再実行して副作用を重複する"
+  // observable = "shouldRetryCopilotTurnの結果"
+  // observation_boundary = "component-behavior"
+  // scope = "Copilot retry admission"
+  // lifecycle = "permanent"
+  // impact = "取得済み作業の重複実行を防ぐ"
+  // distinction = "取消testと型検査はstale失敗分類とpartial操作の組合せを検査しない"
+  // @end-test-value
   it("進行途中の user-visible partial が無い stale connection / missing session だけ retry する", () => {
     const emptyPartial = new ProviderTurnError("Connection is closed.", createPartialResult(), false);
     const withAssistantText = new ProviderTurnError("Connection is closed.", createPartialResult({ assistantText: "4" }), false);
@@ -1589,24 +1462,21 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     const missingSessionWithRawItems = new ProviderTurnError(
       "SessionNotFound: session not found",
       createPartialResult({
-        rawItemsJson: JSON.stringify([{ type: "session.error", data: { message: "SessionNotFound" } }]),
+        providerMetadata: [{ provider: "copilot", kind: "diagnostic", summary: "SessionNotFound" }],
       }),
       false,
     );
     const missingSessionWithOperation = new ProviderTurnError(
       "SessionNotFound: session not found",
       createPartialResult({
-        operations: [{ type: "command_execution", summary: "dir", status: "in_progress" } as never],
+        artifact: { title: "Partial", activitySummary: [], changedFiles: [], runChecks: [], operationTimeline: [{ type: "command_execution", summary: "dir", status: "in_progress" }] },
       }),
       false,
     );
     const missingSessionWithToolStartRawItems = new ProviderTurnError(
       "SessionNotFound: session not found",
       createPartialResult({
-        rawItemsJson: JSON.stringify([
-          { type: "tool.execution_start", data: { toolCallId: "call-1", toolName: "shell", summary: "dir" } },
-          { type: "session.error", data: { message: "SessionNotFound" } },
-        ]),
+        providerMetadata: [{ provider: "copilot", kind: "diagnostic", summary: "SessionNotFound" }],
       }),
       false,
     );
@@ -1618,7 +1488,21 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     assert.equal(shouldRetryCopilotTurn(missingSessionSnakeCase), true);
     assert.equal(shouldRetryCopilotTurn(missingSessionWithRawItems), true);
     assert.equal(shouldRetryCopilotTurn(missingSessionWithToolStartRawItems), true);
-    assert.equal(shouldRetryCopilotTurn(missingSessionWithOperation), false);
+    assert.equal(shouldRetryCopilotTurn(missingSessionWithOperation), true);
+    for (const operation of [
+      { type: "command_execution", summary: "dir", status: "completed" },
+      { type: "command_execution", summary: "dir", status: "failed" },
+      { type: "command_execution", summary: "dir", status: "canceled" },
+    ]) {
+      assert.equal(shouldRetryCopilotTurn(new ProviderTurnError("Connection is closed.", createPartialResult({
+        artifact: { title: "Partial", activitySummary: [], changedFiles: [], runChecks: [], operationTimeline: [operation] },
+      }), false)), false);
+    }
+    assert.equal(shouldRetryCopilotTurn(new ProviderTurnError("Connection is closed.", createPartialResult({
+      artifact: { title: "Partial", activitySummary: [], runChecks: [], changedFiles: [
+        { kind: "edit", path: "synthetic.txt", summary: "synthetic.txt updated", diffRows: [] },
+      ] },
+    }), false)), false);
   });
 
   it("CopilotAdapter は cached session の SessionNotFound を 1 回だけ internal retry する", async () => {
@@ -1868,17 +1752,17 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Copilot raw打切り後もunsupported event metadataとassistant全本文を独立して保持する"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md: 512Ki raw traceとCopilot unsupported metadata、assistant全本文保護" }
-// fault = "raw owner打切りでunsupported metadataを失うか合成markerをnative未対応eventへ誤分類する"
-// observable = "実turn resultのraw長とmarker、providerMetadata eventTypeとpayload、assistant全文"
+// claim = "Copilot 多数eventでもunsupported event metadataとassistant全本文を独立して保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "多数eventでunsupported metadataまたは本文を失う"
+// observable = "実turn resultのproviderMetadata eventTypeとpayload、assistant全文"
 // observation_boundary = "public-boundary"
 // scope = "Copilot stream owner and final result"
 // lifecycle = "permanent"
-// impact = "長いturnで監査の未対応event説明やユーザー応答を失う"
+// impact = "長いturnで履歴の未対応event説明やユーザー応答を失う"
 // distinction = "stable raw helperのみではstream metadataの独立保持とfinal接続を確認できない"
 // @end-test-value
-it("Copilot raw打切り後もnative metadataと全本文を保持する", async () => {
+it("Copilot 多数eventでもnative metadataと全本文を保持する", async () => {
   const listeners = new Set<(event: SessionEvent) => void>();
   const body = "answer".repeat(20000);
   const session = {
@@ -1902,27 +1786,26 @@ it("Copilot raw打切り後もnative metadataと全本文を保持する", async
   adapter.fetchProviderQuotaTelemetry = async () => null;
   const completed = await adapter.runSessionTurnOnce(createRunSessionInput(), EMPTY_PROMPT);
   assert.equal(completed.assistantText, body);
-  assert.ok(completed.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
-  assert.ok(JSON.parse(completed.rawItemsJson).some((item: { type: string }) => item.type === "withmate.raw_items_truncated"));
   const unsupported = completed.providerMetadata?.filter((metadata) => metadata.kind === "unsupported_event");
   assert.deepEqual(unsupported?.map((metadata) => metadata.eventType), ["native.unsupported"]);
   assert.deepEqual(unsupported?.[0]?.payload, { type: "native.unsupported", timestamp: "2026-10-05T00:00:00.000Z" });
 });
 
 
+
 // @test-value v2
 // kind = "invariant"
-// claim = "Copilot final projectionはbinding referenceを除去しlogical promptを保持する"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Audit-Logging" }
-// fault = "binding referenceがassistant/operations/raw itemsへ漏れる"
-// observable = "resultのlogicalPromptとassistant/artifact/operations/rawItems"
-// observation_boundary = "component-behavior"
+// claim = "Copilot final projectionはbinding referenceをassistantと通常artifactから除去する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "binding referenceがassistant本文または操作結果へ漏れる"
+// observable = "runSessionTurnのassistantText・artifact・providerMetadata"
+// observation_boundary = "public-boundary"
 // scope = "Copilot final projectionはbinding reference"
 // lifecycle = "permanent"
-// impact = "binding referenceが利用者表示または監査へ漏れる"
+// impact = "binding referenceが利用者表示または通常履歴へ漏れる"
 // distinction = "bootstrap失敗projectionでは通常final projectionを観測しない"
 // @end-test-value
-it("Copilot final projectionはbinding referenceを除去しlogical promptは変更しない", async () => {
+it("Copilot final projectionはbinding referenceを通常履歴から除去する", async () => {
   const bindingReference = "opaque-reference-copilot-redaction-probe";
   const input = createRunSessionInput({
     agentRuntimeBinding: {
@@ -1934,99 +1817,42 @@ it("Copilot final projectionはbinding referenceを除去しlogical promptは変
       expiresAt: null,
     },
   });
-  const prompt: ProviderPromptComposition = {
-    ...EMPTY_PROMPT,
-    inputBodyText: `user supplied ${bindingReference}`,
-    logicalPrompt: {
-      ...EMPTY_PROMPT.logicalPrompt,
-      inputText: `user supplied ${bindingReference}`,
-      composedText: `user supplied ${bindingReference}`,
+  const listeners = new Set<(event: SessionEvent) => void>();
+  const session = {
+    sessionId: "thread-redaction",
+    on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
+    async send() {
+      const emit = (event: unknown) => { for (const listener of listeners) listener(event as SessionEvent); };
+      emit({ type: "tool.execution_start", data: { toolCallId: "command-1", toolName: "shell", arguments: { command: "env" } } });
+      emit({ type: "tool.execution_complete", data: { toolCallId: "command-1", success: true, result: { content: `secret=${bindingReference}` } } });
+      emit({ type: "assistant.message", data: { messageId: "message-1", content: `answer ${bindingReference}` } });
+      emit({ type: "session.idle", data: {} });
+      return "sent";
     },
   };
-  const steps = new Map<string, LiveRunStep>([["command-1", {
-    id: "command-1",
-    type: "command_execution",
-    summary: "env",
-    details: `secret=${bindingReference}`,
-    status: "completed",
-  }]]);
-  const rawItems = new BoundedAuditRawItems();
-  const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
-  for (const item of buildCopilotStableRawItems([{
-    type: "assistant.message",
-    timestamp: new Date().toISOString(),
-    data: {
-      messageId: "message-1",
-      content: `answer ${bindingReference}`,
-    },
-  } as never], input.session.workspacePath)) {
-    rawItems.append(redactor.sanitize(item));
-  }
-  const disabledSnapshot = createDisabledWorkspaceSnapshotCapture();
-  const selection: ResolvedModelSelection = {
-    requestedModel: input.session.model,
-    resolvedModel: input.session.model,
-    requestedReasoningEffort: input.session.reasoningEffort,
-    resolvedReasoningEffort: input.session.reasoningEffort,
-  };
-  const adapter = new CopilotAdapter() as unknown as {
-    buildTurnResult(
-      binding: RunSessionTurnInput["agentRuntimeBinding"],
-      promptValue: ProviderPromptComposition,
-      attachments: never[],
-      threadId: string,
-      assistantText: string,
-      lastAssistantText: string,
-      liveSteps: Map<string, LiveRunStep>,
-      usage: null,
-      rawItemsValue: BoundedAuditRawItems,
-      providerMetadataValue: AuditLogProviderMetadata[],
-      workspacePath: string,
-      session: RunSessionTurnInput["session"],
-      executionOptions: RunSessionTurnInput["executionOptions"],
-      providerCatalog: RunSessionTurnInput["providerCatalog"],
-      selectionValue: ResolvedModelSelection,
-      beforeSnapshot: Map<string, string>,
-      beforeSnapshotStats: ReturnType<typeof createDisabledWorkspaceSnapshotCapture>["stats"],
-      providerQuotaTelemetry: null,
-    ): Promise<RunSessionTurnResult>;
-  };
-
-  const result = await adapter.buildTurnResult(
-    input.agentRuntimeBinding,
-    prompt,
-    [],
-    "thread-redaction",
-    `answer ${bindingReference}`,
-    `answer ${bindingReference}`,
-    steps,
-    null,
-    rawItems,
-    [],
-    input.session.workspacePath,
-    input.session,
-    input.executionOptions,
-    input.providerCatalog,
-    selection,
-    disabledSnapshot.snapshot,
-    disabledSnapshot.stats,
-    null,
-  );
-
-  assert.match(result.logicalPrompt.composedText, new RegExp(bindingReference));
-  assert.match(JSON.stringify(result.transportPayload), new RegExp(bindingReference));
-  assert.doesNotMatch(JSON.stringify({
-    assistantText: result.assistantText,
-    lastNonEmptyAssistantMessageText: result.lastNonEmptyAssistantMessageText,
-    artifact: result.artifact,
-    operations: result.operations,
-    rawItemsJson: result.rawItemsJson,
-    providerMetadata: result.providerMetadata,
-  }), new RegExp(bindingReference));
+  const adapter = new CopilotAdapter();
+  (adapter as unknown as { getSession(): Promise<unknown> }).getSession = async () => ({ session,
+    selection: { requestedModel: input.session.model, resolvedModel: input.session.model,
+      requestedReasoningEffort: input.session.reasoningEffort, resolvedReasoningEffort: input.session.reasoningEffort } });
+  const result = await adapter.runSessionTurn(input);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(bindingReference));
   assert.match(result.assistantText, new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+  assert.match(result.artifact!.operationTimeline![0].details!, new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
 });
 
-it("Copilot bootstrap失敗projectionはbinding referenceを除去しlogical promptは変更しない", async () => {
+// @test-value v2
+// kind = "contract"
+// claim = "bootstrap失敗でopaque binding referenceを返却errorと診断metadataから秘匿する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "SDK bootstrap errorを未秘匿で返す"
+// observable = "ProviderTurnErrorとpartialResult providerMetadata"
+// observation_boundary = "component-behavior"
+// scope = "Copilot bootstrap diagnostic redaction"
+// lifecycle = "permanent"
+// impact = "runtime権限に関連する秘密を診断から漏らす"
+// distinction = "正常turn redactor testはbootstrap前の異常経路を通らない"
+// @end-test-value
+it("Copilot bootstrap失敗診断はbinding referenceを除去する", async () => {
   const bindingReference = "opaque-reference-copilot-bootstrap-redaction-probe";
   const input = createRunSessionInput({
     agentRuntimeBinding: {
@@ -2038,36 +1864,22 @@ it("Copilot bootstrap失敗projectionはbinding referenceを除去しlogical pro
       expiresAt: null,
     },
   });
-  const prompt: ProviderPromptComposition = {
-    ...EMPTY_PROMPT,
-    inputBodyText: `user supplied ${bindingReference}`,
-    logicalPrompt: {
-      ...EMPTY_PROMPT.logicalPrompt,
-      inputText: `user supplied ${bindingReference}`,
-      composedText: `user supplied ${bindingReference}`,
-    },
-  };
   const adapter = new CopilotAdapter() as unknown as {
     getSession(): Promise<never>;
-    runSessionTurnOnce(
-      inputValue: RunSessionTurnInput,
-      promptValue: ProviderPromptComposition,
-    ): Promise<RunSessionTurnResult>;
+    runSessionTurn(inputValue: RunSessionTurnInput): Promise<RunSessionTurnResult>;
   };
   adapter.getSession = async () => {
     throw new Error(`bootstrap failed: ${bindingReference}`);
   };
 
   await assert.rejects(
-    () => adapter.runSessionTurnOnce(input, prompt),
+    () => adapter.runSessionTurn(input),
     (error: unknown) => {
       assert.ok(error instanceof ProviderTurnError);
       assert.doesNotMatch(error.message, new RegExp(bindingReference));
       assert.match(error.message, new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
-      assert.match(error.partialResult.logicalPrompt.composedText, new RegExp(bindingReference));
-      assert.match(JSON.stringify(error.partialResult.transportPayload), new RegExp(bindingReference));
-      assert.doesNotMatch(error.partialResult.rawItemsJson, new RegExp(bindingReference));
-      assert.match(error.partialResult.rawItemsJson, new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+      assert.doesNotMatch(JSON.stringify(error.partialResult.providerMetadata), new RegExp(bindingReference));
+      assert.match(JSON.stringify(error.partialResult.providerMetadata), new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
       return true;
     },
   );
@@ -2075,18 +1887,105 @@ it("Copilot bootstrap失敗projectionはbinding referenceを除去しlogical pro
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Copilotのraw budget超過後もunsupported metadataと本文・operation・artifactを正常終了とcancel partialで保持しsecretを秘匿化する"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md#表示とデータ保護; docs/design/provider-adapter.md" }
-// fault = "省略済みrawからmetadataを組み立てる、raw budgetを本文へ適用する、または追加時のsecret置換後に上限を超える"
-// observable = "runSessionTurnのrawItemsJson・providerMetadata・assistantText・operations・artifactとProviderTurnErrorのpartialResult"
+// claim = "Copilot tool errorのmessage/codeはpreview境界の前後でも全文秘匿され、liveと正常・失敗・取消のartifactへ有限な取得結果として渡る"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Session Flow; src-electron/session/provider-payload-limits.ts#PROVIDER_TEXT_PREVIEW_LIMIT" }
+// fault = "tool errorを秘匿前に切り詰めてbinding referenceの末尾欠け断片をliveまたはartifactに漏らす、または通常errorを消す"
+// observable = "runSessionTurnのprogress stepsと返却artifact/ProviderTurnError.partialResult.artifactのerror.message/code・details・status"
 // observation_boundary = "public-boundary"
-// scope = "copilot-coding-turn raw retention"
+// scope = "Copilot SDK tool.execution_completeからliveおよびcompleted/failed/canceled通常artifactへの投影"
 // lifecycle = "permanent"
-// impact = "未対応eventの診断情報や取得済み応答が失われ、binding secretが監査へ漏れる"
-// distinction = "既存helper testと通常cancel testはraw予算を使い切った後の受信projectionを検査しない。SDK通信なしの固定入力で維持する"
+// impact = "runtime権限に関わるsecretが利用者表示・保存履歴へ漏れ、取得済みエラー内容が失われる"
+// distinction = "既存final秘匿testは完全なsecretだけを観測し、preview境界の断片漏洩やlive error/codeを検出しない。外部接続なしの有限event列でこの秘匿契約を確認できる"
 // risk_tags = ["privacy"]
 // @end-test-value
-it("Copilot raw上限後もmetadataと正常・cancel partialを保持する", async () => {
+it("Copilot tool errorは秘匿後にpreview化しliveと全terminal artifactを保護する", async () => {
+  const limit = 65536;
+  const secret = "opaque-reference-copilot-error-boundary-probe";
+  const errorTexts = [
+    "ordinary tool error",
+    "x".repeat(limit - secret.length - 1) + secret + " tail",
+    "x".repeat(limit - secret.length + 1) + secret + " tail",
+    "x".repeat(limit + 1) + secret + " tail",
+  ];
+  for (const outcome of ["completed", "failed", "canceled"] as const) {
+    const input = createRunSessionInput({ customAgentName: "", agentRuntimeBinding: {
+      bindingId: "binding-error-boundary", bindingReference: secret, providerId: "copilot",
+      executionGeneration: "generation-error-boundary", transport: "env", expiresAt: null,
+    } });
+    const listeners = new Set<(event: SessionEvent) => void>();
+    const sourceEvents: SessionEvent[] = [];
+    const liveOperations = new Map<string, LiveRunStep>();
+    const session = {
+      sessionId: "thread-error-boundary",
+      on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
+      async send() {
+        const emit = (type: string, data: Record<string, unknown>) => {
+          const event = { type, data } as SessionEvent;
+          sourceEvents.push(event);
+          for (const listener of listeners) listener(event);
+        };
+        for (const [index, text] of errorTexts.entries()) {
+          const toolCallId = `error-${index}`;
+          emit("tool.execution_start", { toolCallId, toolName: "shell", arguments: { command: "synthetic check" } });
+          emit("tool.execution_complete", { toolCallId, success: false, error: { message: text, code: text } });
+        }
+        if (outcome !== "completed") throw new Error(outcome === "canceled" ? "Abort requested" : "synthetic turn failed");
+        emit("session.idle", {});
+        return "sent";
+      },
+    };
+    const adapter = new CopilotAdapter();
+    (adapter as unknown as { getSession(): Promise<unknown> }).getSession = async () => ({ session,
+      selection: { requestedModel: "gpt-4.1", resolvedModel: "gpt-4.1", requestedReasoningEffort: "high", resolvedReasoningEffort: "high" } });
+    let result: RunSessionTurnResult;
+    try {
+      result = await adapter.runSessionTurn(input, (state, changes) => {
+        assert.ok(!JSON.stringify(state).includes(secret.slice(0, -1)), "live snapshot leaked a secret fragment");
+        for (const step of changes.steps.upserts) liveOperations.set(step.id, step);
+      });
+      assert.equal(outcome, "completed");
+    } catch (error) {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.notEqual(outcome, "completed");
+      assert.equal(error.canceled, outcome === "canceled");
+      result = error.partialResult;
+    }
+    const operations = result.artifact!.operationTimeline!;
+    assert.equal(operations.length, errorTexts.length);
+    assert.ok(!JSON.stringify(result.artifact).includes(secret.slice(0, -1)), "artifact leaked a secret fragment");
+    for (const [index, rawText] of errorTexts.entries()) {
+      const sanitized = rawText.replace(secret, PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
+      const expected = sanitized.length <= limit ? sanitized
+        : `${sanitized.slice(0, limit)}\n...[truncated ${sanitized.length - limit} chars; originalLength=${sanitized.length}]`;
+      const live = liveOperations.get(`error-${index}`);
+      assert.ok(live, "tool completion did not reach live progress");
+      for (const operation of [live, operations[index]]) {
+        assert.equal(operation.status, "failed");
+        assert.deepEqual(operation.error, { message: expected, code: expected });
+        assert.equal(operation.details, expected);
+        assert.ok(operation.error!.message.length <= limit + 100);
+      }
+      const source = sourceEvents.find((event) => event.type === "tool.execution_complete" && event.data.toolCallId === `error-${index}`);
+      assert.ok(source?.type === "tool.execution_complete");
+      assert.deepEqual(source.data.error, { message: rawText, code: rawText }, "SDK event was mutated");
+    }
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Copilotは正常結果と取消partialで長文全文・操作結果・未対応event診断を保持しbinding referenceを秘匿する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "長文本文や取得済み操作結果を失う、未対応event診断を落とす、またはbinding referenceをartifact/診断へ残す"
+// observable = "正常結果と取消partialResultのassistantText全文・最終非空本文・artifact操作件数/details・秘匿済みproviderMetadata"
+// observation_boundary = "public-boundary"
+// scope = "copilot-coding-turn long text, partial artifact and diagnostic redaction"
+// lifecycle = "permanent"
+// impact = "未対応eventの診断情報や取得済み応答が失われ、binding secretが履歴へ漏れる"
+// distinction = "helper単体や通常cancelのtestは多数event後の長文全文・操作結果・未対応event診断の秘匿を同じ結果境界で観測しない"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("Copilot 長文でもmetadataと正常・cancel partialを保持する", async () => {
   for (const canceled of [false, true]) {
     const input = createRunSessionInput({ customAgentName: "" });
     const secret = input.agentRuntimeBinding!.bindingReference;
@@ -2132,91 +2031,16 @@ it("Copilot raw上限後もmetadataと正常・cancel partialを保持する", a
     }
     assert.equal(completed.assistantText, body);
     assert.equal(completed.lastNonEmptyAssistantMessageText, body);
-    assert.equal(completed.operations.length, 1);
-    assert.equal(completed.operations[0].details, "passed");
+    assert.equal(completed.artifact!.operationTimeline!.length, 1);
+    assert.equal(completed.artifact!.operationTimeline![0].details, "passed");
     assert.equal(completed.artifact?.operationTimeline?.length, 1);
-    assert.ok(completed.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
-    assert.ok(Buffer.byteLength(completed.rawItemsJson, "utf8") > completed.rawItemsJson.length);
-    assert.ok(!completed.rawItemsJson.includes(secret));
-    assert.ok(completed.rawItemsJson.includes(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
-    const raw = JSON.parse(completed.rawItemsJson);
-    assert.equal(raw[0].type, "user.message");
-    assert.equal(raw.at(-1).type, "withmate.raw_items_truncated");
-    assert.equal(raw.at(-1).data.omittedItems, rawEventCount - raw.length + 1);
+    assert.ok(!JSON.stringify(completed.artifact).includes(secret));
     assert.deepEqual(completed.providerMetadata, [{ provider: "copilot", kind: "unsupported_event", source: "copilot.session_event",
       eventType: `custom.event.${PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER}`,
       summary: `Unsupported Copilot event: custom.event.${PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER}`,
       payload: { type: `custom.event.${PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER}`, timestamp: "2026-10-05T00:00:00Z" },
     }]);
   }
-});
-
-// @test-value v2
-// kind = "invariant"
-// claim = "binding有効なCopilotの巨大tool rawは予算内の要素だけを読んで秘匿化し、aggregate上限後も全文走査しない"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md#表示とデータ保護" }
-// fault = "Copilot受信時にbudget cloneより先にrawを再帰redactionし巨大配列全体を読む"
-// observable = "SDK event受信からrunSessionTurn結果までのcontent要素read数、raw JSON長・秘匿marker・omitted count・assistant本文"
-// observation_boundary = "public-boundary"
-// scope = "copilot bounded raw receive path"
-// lifecycle = "permanent"
-// impact = "巨大tool結果の診断コピーがMainをpayload全量に比例して占有する"
-// distinction = "既存aggregate上限testでは最終保持量しか分からず、全量前処理を検出しない。getter read数をoracleとし実時間やSDK接続へ依存しない"
-// risk_tags = ["privacy"]
-// @end-test-value
-it("Copilotは巨大tool rawの保持範囲だけを読みbindingを秘匿化する", async () => {
-  const input = createRunSessionInput({ customAgentName: "" });
-  const secret = input.agentRuntimeBinding!.bindingReference;
-  const listeners = new Set<(event: SessionEvent) => void>();
-  const counts: number[] = [];
-  const session = {
-    sessionId: "bounded-raw-receive",
-    on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
-    async send() {
-      for (let eventIndex = 0; eventIndex < 8; eventIndex += 1) {
-        counts.push(0);
-        const content = new Proxy(new Array<null>(100_000).fill(null), {
-          get(target, key, receiver) {
-            if (typeof key === "string" && /^\d+$/.test(key)) {
-              counts[eventIndex] += 1;
-              assert.ok(counts[eventIndex] < 512, "raw receive must not read the whole tool result");
-              return `${secret}:${"x".repeat(1024)}`;
-            }
-            return Reflect.get(target, key, receiver);
-          },
-        });
-        const event = { type: "tool.execution_complete", timestamp: "2026-10-07T00:00:00Z",
-          data: { toolCallId: `unknown-${eventIndex}`, success: true, result: { content } } } as unknown as SessionEvent;
-        for (const listener of listeners) listener(event);
-      }
-      for (const event of [
-        { type: "assistant.message", data: { messageId: "last", content: "final answer" } },
-        { type: "session.idle", data: {} },
-      ]) {
-        for (const listener of listeners) listener(event as SessionEvent);
-      }
-      return "sent";
-    },
-  };
-  const adapter = new CopilotAdapter() as unknown as {
-    getSession(): Promise<{ session: CopilotSession; selection: ResolvedModelSelection; client: CopilotClient; clientKey: string }>;
-    runSessionTurn(value: RunSessionTurnInput): Promise<RunSessionTurnResult>;
-  };
-  adapter.getSession = async () => ({ session: session as unknown as CopilotSession, client: {} as CopilotClient,
-    clientKey: "fixture", selection: { requestedModel: "gpt-4.1", resolvedModel: "gpt-4.1",
-      requestedReasoningEffort: "high", resolvedReasoningEffort: "high" } });
-  const result = await adapter.runSessionTurn(input);
-  assert.equal(counts.length, 8);
-  assert.ok(counts.every((count) => count > 0 && count < 512));
-  assert.equal(result.assistantText, "final answer");
-  assert.ok(result.rawItemsJson.length <= AUDIT_RAW_ITEMS_JSON_LIMIT);
-  assert.ok(!result.rawItemsJson.includes(secret));
-  assert.ok(result.rawItemsJson.includes(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
-  const raw = JSON.parse(result.rawItemsJson);
-  assert.equal(raw[0].type, "tool.execution_complete");
-  assert.ok(raw[0].data.content.length < 512);
-  assert.equal(raw.at(-1).type, "withmate.raw_items_truncated");
-  assert.equal(raw.at(-1).data.omittedItems, 10 - raw.length + 1);
 });
 
 it("Session完了後のquota telemetry停止はturn resultを待たせない", async () => {
@@ -3207,6 +3031,18 @@ describe("CopilotAdapter background structured prompt", () => {
     assert.deepEqual(cleanup, ["unsubscribe", "disconnect"]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "background structured toolのschema不一致出力を成功として返さない"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+  // fault = "schema制約違反の候補を利用者データへ反映する"
+  // observable = "runBackgroundPromptFromInputのschema拒否"
+  // observation_boundary = "component-behavior"
+  // scope = "Copilot structured output validation"
+  // lifecycle = "permanent"
+  // impact = "不正なMemory候補等を正常値として採用する"
+  // distinction = "型検査ではSDK tool入力の実行時schema検証を確認できない"
+  // @end-test-value
   it("schema submit tool の args が実 schema の anyOf / oneOf / bounds 不一致なら失敗する", async () => {
     const adapter = new CopilotAdapter() as unknown as {
       getOrCreateClientByAppSettings: () => {
@@ -3264,7 +3100,6 @@ describe("CopilotAdapter background structured prompt", () => {
                   remember: true,
                   sourceType: "session",
                   sourceSessionId: 123,
-                  sourceAuditLogId: null,
                   projectDigestId: null,
                 },
               ],

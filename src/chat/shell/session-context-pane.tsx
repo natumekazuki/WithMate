@@ -16,6 +16,7 @@ import {
   type SessionContextTelemetryProjection,
 } from "../runtime/session-ui-projection.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
+import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
 import { SessionSwitcher, type SessionSwitcherOption } from "../../chat/session-switcher.js";
 
@@ -42,6 +43,10 @@ export type SessionContextPaneProps = {
   availableContextPaneTabs: ContextPaneTabKey[];
   contextPaneProjection: ContextPaneProjection;
   latestCommandView: LatestCommandView | null;
+  commandHistoryLoading?: boolean;
+  commandHistoryError?: string | null;
+  commandHistoryUnrecorded?: boolean;
+  onRetryCommandHistory?: () => void;
   runningDetailsEntries: RunningDetailsEntry[];
   liveRunReasoningText: string;
   backgroundTasks: LiveBackgroundTask[];
@@ -162,6 +167,10 @@ export function SessionContextPane({
   availableContextPaneTabs,
   contextPaneProjection,
   latestCommandView,
+  commandHistoryLoading = false,
+  commandHistoryError = null,
+  commandHistoryUnrecorded = false,
+  onRetryCommandHistory,
   runningDetailsEntries,
   liveRunReasoningText,
   backgroundTasks,
@@ -414,6 +423,9 @@ export function SessionContextPane({
                     <code className="live-run-command-text">{latestCommandView.summary}</code>
                   </div>
 
+                  {latestCommandView.exitCode !== undefined ? <p>Exit Code: {latestCommandView.exitCode}</p> : null}
+                  {latestCommandView.errorMessage ? <p className="live-run-error" role="alert">{latestCommandView.errorMessage}</p> : null}
+                  {latestCommandView.truncated ? <p>Output Truncated</p> : null}
                   {latestCommandView.details ? (
                     <details className="command-monitor-details live-run-step-details">
                       <summary>Command Details</summary>
@@ -429,7 +441,11 @@ export function SessionContextPane({
                   ) : null}
                 </div>
               ) : (
-                <div className="command-monitor-empty-shell">
+                <div className="command-monitor-empty-shell" aria-busy={commandHistoryLoading || undefined}>
+                  {commandHistoryLoading ? <LoadingIndicator inline label="Loading command history" /> : null}
+                  {commandHistoryError ? <p className="live-run-error" role="alert">{commandHistoryError}</p> : null}
+                  {commandHistoryError && onRetryCommandHistory ? <button type="button" className="drawer-toggle secondary" onClick={onRetryCommandHistory}>Retry</button> : null}
+                  {commandHistoryUnrecorded ? <p role="status">Command history not recorded.</p> : null}
                   {selectedSessionLiveRunErrorMessage ? (
                     <div className="live-run-error-block" role="alert">
                       <strong>Run Error</strong>

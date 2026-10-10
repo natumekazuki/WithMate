@@ -263,7 +263,6 @@ export function parseImageFilePickerPurpose(value: unknown): ImageFilePickerPurp
 
 export const ALL_RESET_APP_DATABASE_TARGETS = [
   "sessions",
-  "auditLogs",
   "appSettings",
   "modelCatalog",
   "projectMemory",
@@ -279,10 +278,6 @@ export function normalizeResetAppDatabaseTargets(
   targets: readonly ResetAppDatabaseTarget[] | null | undefined,
 ): ResetAppDatabaseTarget[] {
   const selected = new Set<ResetAppDatabaseTarget>(targets ?? ALL_RESET_APP_DATABASE_TARGETS);
-  if (selected.has("sessions")) {
-    selected.add("auditLogs");
-  }
-
   return ALL_RESET_APP_DATABASE_TARGETS.filter((target) => selected.has(target));
 }
 

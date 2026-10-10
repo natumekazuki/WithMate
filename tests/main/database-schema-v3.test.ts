@@ -10,8 +10,6 @@ import {
   APP_DATABASE_V3_SCHEMA_VERSION,
   CREATE_V3_SCHEMA_SQL,
   REQUIRED_V3_TABLES,
-  V3_DETAILS_PREVIEW_MAX_LENGTH,
-  V3_OPERATION_SUMMARY_MAX_LENGTH,
   V3_SCHEMA_STATUS,
   V3_SUMMARY_JSON_MAX_LENGTH,
   V3_TEXT_PREVIEW_MAX_LENGTH,
@@ -66,7 +64,7 @@ function columnNames(db: DatabaseSync, tableName: string): string[] {
 describe("database-schema-v3", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "V3 schema constantsとrequired tablesは現行Session/Audit/blob/catalog schemaを満たす"
+  // claim = "V3 schema constantsとrequired tablesは現行Session/blob/catalog schemaを満たす"
   // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v3.ts" }
   // fault = "schema作成後にrequired tableが欠落するか、定義済みversion/nameと実体が不一致になる"
   // observable = "schema version, filename, table names, and required table coverage"
@@ -84,9 +82,6 @@ describe("database-schema-v3", () => {
       const names = tableNames(db);
       assert.deepEqual(names, [
         "app_settings",
-        "audit_log_details",
-        "audit_log_operations",
-        "audit_logs",
         "blob_objects",
         "model_catalog_models",
         "model_catalog_providers",
@@ -189,14 +184,8 @@ describe("database-schema-v3", () => {
     const schemaSql = CREATE_V3_SCHEMA_SQL.join("\n");
 
     assert.equal(V3_TEXT_PREVIEW_MAX_LENGTH, 500);
-    assert.equal(V3_OPERATION_SUMMARY_MAX_LENGTH, 500);
-    assert.equal(V3_DETAILS_PREVIEW_MAX_LENGTH, 500);
     assert.equal(V3_SUMMARY_JSON_MAX_LENGTH, 8192);
     assert.match(schemaSql, /CHECK \(length\(text_preview\) <= 500\)/);
-    assert.match(schemaSql, /CHECK \(length\(assistant_text_preview\) <= 500\)/);
-    assert.match(schemaSql, /CHECK \(length\(error_message_preview\) <= 500\)/);
-    assert.match(schemaSql, /CHECK \(length\(summary\) <= 500\)/);
-    assert.match(schemaSql, /CHECK \(length\(details_preview\) <= 500\)/);
     assert.match(schemaSql, /CHECK \(length\(artifact_summary_json\) <= 8192\)/);
     assert.doesNotMatch(schemaSql, /\bchanged_files_json\b/);
     assert.doesNotMatch(schemaSql, /\bsibling_warnings_json\b/);

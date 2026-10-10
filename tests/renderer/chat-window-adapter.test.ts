@@ -458,6 +458,16 @@ function createCharacter(): ChatWindowProps["messageColumnProps"]["character"] {
   return createStaticChatCharacterProfile({ id: "mate", name: "Mate" });
 }
 
+// @test-value v2
+// kind = "invariant"
+// claim = "静的会話headerはtitleを保持し実行Session用rename/terminal/delete操作を公開しない"
+// oracle = { type = "contract", ref = "src/chat/chat-window-adapter.ts" }
+// fault = "静的会話に実行Session向け管理操作を混入する"
+// observable = "titleDraftとshowRenameButton/showTerminalButton/showDeleteButton"
+// observation_boundary = "consumer"
+// scope = "static-header-capabilities"
+// lifecycle = "permanent"
+// @end-test-value
 test("createStaticChatHeaderProps は操作を隠す header 既定値を補う", () => {
   const headerProps = createStaticChatHeaderProps({
     taskTitle: "メイトーク",
@@ -468,7 +478,6 @@ test("createStaticChatHeaderProps は操作を隠す header 既定値を補う",
   assert.equal(headerProps.titleDraft, "メイトーク");
   assert.equal(headerProps.isEditingTitle, false);
   assert.equal(headerProps.showRenameButton, false);
-  assert.equal(headerProps.showAuditLogButton, false);
   assert.equal(headerProps.showTerminalButton, false);
   assert.equal(headerProps.showDeleteButton, false);
 });

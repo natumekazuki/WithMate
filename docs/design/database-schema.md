@@ -17,13 +17,13 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 | Main Session | `sessions_v6`、`session_messages_v6` |
 | Files Pin | `session_file_pins_v6` |
 | Auxiliary | `auxiliary_sessions`、`auxiliary_session_messages`、`auxiliary_session_drafts` |
-| Turn・監査 | `session_turns_v6`、`session_turn_interims_v6`、`session_turn_provider_outputs_v6` |
+| Turn | `session_turns_v6` |
 | Memory | `memory_*_v6` |
 | Character Affect | `character_affect_*_v6`、turn settlement |
 
 Mainの`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存行限定の更新とAffect owner検証はIDだけでなくincarnationを照合する。Auxiliaryは親Sessionに従属し、metadataと順序付きmessage行、artifact詳細を分離する。独立draftの正本は`auxiliary_session_drafts`であり、一覧の最終使用順には会話更新時刻とdraft更新時刻の新しい方を使う。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
 
-turnはMainまたはAuxiliaryの一方だけをownerとし、terminal marker、interim、provider outputを別tableへ保存する。Session表示に必要な軽量messageと重いartifact detailも分け、detailは対象を開いたときに取得する。通常turnと監査の契約は[Session Run Lifecycle](session-run-lifecycle.md)と[Audit Log](audit-log.md)を参照する。
+turnはMainまたはAuxiliaryの一方だけをownerとし、phase、実行設定、message位置、thread、時刻、error summaryを`session_turns_v6`へ保存する。会話本文と操作結果の正本は通常履歴と`MessageArtifact.operationTimeline`であり、軽量messageと重いartifact detailを分け、detailは対象を開いたときに取得する。開始と終端の最小turn保存、取消・失敗判定、Timing・Affectとの関連付けは[Session Run Lifecycle](session-run-lifecycle.md)を参照する。
 
 会話の表示用readはmetadataと最新60件を返し、過去の本文は60件単位で取得する。messageの`historyIndex`は保存行の`seq`で、`messageCount`は会話全体の件数である。Mainの表示metadataは末尾pageより前にある場合も最新user messageを保持する。全履歴検索とmessage navigatorはstorage Workerで軽量messageを逐次投影し、本文の全件転送・常駐を要求しない。表示pageは保存用full Sessionとは区別し、storageの全文保存入口はpageを拒否する。rendererのmetadata更新はincarnationを照合した最新保存履歴へ適用し、paged本文で履歴を置換しない。runtimeとLLM contextのfull readは別経路のまま保持する。
 
@@ -43,4 +43,4 @@ list／追加／解除は既存のtyped IPCからstorage Workerへ渡し、親Se
 
 各migrationのsource読取りは元DBのschema、row、journal modeと、共有blob・Character fileを変更しない。新しいV6 DBがinvalidなら、黙って置換しない。既存の空V6 DBとV4が共存する場合も継続データを移し、完了markerで再copyを防ぐ。migration実装は`src-electron/storage/migrations/`、既存データの選択は`app-database-path.ts`で確認する。
 
-起動時の退役データcleanupは、管理対象のV6・移行元DB・backupからCompanion専用table／行、専有file・blob・SessionFolderと専用Git namespaceだけを対象とする。通常Session／Audit、共有Memory／Affect本文、共有file・blob、target branch、他worktree、stashは保持する。退役Session由来の共有データはsource linkageを除去またはNULL化する。詳細な対象判定は`src-electron/storage/migrations/companion-removal.ts`と関連helperを正本とし、一般のDB resetやmigrationによるユーザーデータの無断破棄へ拡張しない。
+起動時の退役データcleanupは、管理対象のV6・移行元DB・backupからCompanion専用table／行、専有file・blob・SessionFolderと専用Git namespaceだけを対象とする。通常Session／最小turn、共有Memory／Affect本文、共有file・blob、target branch、他worktree、stashは保持する。退役Session由来の共有データはsource linkageを除去またはNULL化する。詳細な対象判定は`src-electron/storage/migrations/companion-removal.ts`と関連helperを正本とし、一般のDB resetやmigrationによるユーザーデータの無断破棄へ拡張しない。

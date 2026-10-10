@@ -1,11 +1,11 @@
+import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import assert from "node:assert/strict";
-import { createAuditProgressWriter } from "./helpers/audit-progress-fixture.js";
 import { it } from "node:test";
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
-import type { AuditLogEntry, ComposerPreview, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
+import type { ComposerPreview, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
@@ -79,9 +79,9 @@ function createSessionMemory(sessionId: string): SessionMemory {
   };
 }
 
-type CreateAuditLogInput = Parameters<SessionRuntimeServiceDeps["createAuditLog"]>[0];
+type CreateSessionTurnInput = Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0];
 
-function createAuditLog(input: CreateAuditLogInput): AuditLogEntry {
+function createSessionTurn(input: CreateSessionTurnInput): SessionTurnRecord {
   return { id: 1, ...input };
 }
 
@@ -102,9 +102,8 @@ function createRuntimeDeps(
     getProviderCodingAdapter: () => adapter,
     getSessionMemory: (current) => createSessionMemory(current.id),
     resolveProjectMemoryEntriesForPrompt: () => [],
-    createAuditLog,
-    updateAuditLog: () => undefined,
-    updateAuditLogProgress: createAuditProgressWriter(),
+    createSessionTurn,
+    updateSessionTurn: () => undefined,
     setLiveSessionRun: () => undefined,
     getLiveSessionRun: () => null,
     waitForApprovalDecision: async (): Promise<LiveApprovalDecision> => "approve",
@@ -164,8 +163,8 @@ it("送信時snapshotを先に保存し、Turn中の定義更新は次の送信�
     canonical = { ...canonical, definitionMarkdown: "# Following definition", definitionSha256: "following", snapshotAt: "following" };
     assert.deepEqual(input.session.characterRuntimeSnapshot, adoptedSnapshot);
     return {
-      threadId: "continuing-thread", assistantText: "done", logicalPrompt: prompt.logicalPrompt,
-      transportPayload: null, operations: [], rawItemsJson: "[]", usage: null,
+      threadId: "continuing-thread", assistantText: "done",
+         usage: null,
     };
   });
   adapter.composePrompt = composeProviderPrompt;
@@ -254,7 +253,7 @@ it("snapshotなしneutral SessionはCharacterの再解決を行わない", async
 // claim = "foreground prompt context が無効な turn では timing / affect resolver を呼ばず、provider prompt へ context を渡さない"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
 // fault = "表示しない context のために foreground resolver を実行し、provider prompt へ古い context を渡す"
-// observable = "resolver call count と ProviderCodingAdapter.composePrompt の入力"
+// observable = "resolver call count と ProviderCodingAdapter.runSessionTurn の入力"
 // observation_boundary = "consumer"
 // scope = "session-runtime-prompt-context-resolution"
 // lifecycle = "permanent"
@@ -267,7 +266,8 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
   let affectResolverCalls = 0;
   let composedInput: RunSessionTurnInput | null = null;
   const adapter: ProviderCodingAdapter = {
-    ...createAdapter(async () => {
+    ...createAdapter(async (input) => {
+      composedInput = input;
       throw new Error("provider stopped for resolver boundary test");
     }),
     composePrompt(input) {
@@ -331,7 +331,8 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
       memory: { items: [], updatedAt: null },
     } satisfies NonNullable<RunSessionTurnInput["characterContext"]>;
     const partialAdapter: ProviderCodingAdapter = {
-      ...createAdapter(async () => {
+      ...createAdapter(async (input) => {
+        composedInput = input;
         throw new Error("provider stopped for resolver gate test");
       }),
       composePrompt(input) {
@@ -388,7 +389,7 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
 // claim = "invalid authoring snapshotの専用metadata transactionが失敗した場合はcomposer、thread invalidation、running開始保存、providerへ進まない"
 // oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
 // fault = "snapshot/thread clearがcommitできていないのにvalidationまたはprovider外部副作用を開始する"
-// observable = "composer・invalidation・running保存・provider・auditの呼出フラグ"
+// observable = "composer・invalidation・running保存・provider・turnの呼出フラグ"
 // observation_boundary = "component-behavior"
 // scope = "SessionRuntimeService.runSessionTurn"
 // lifecycle = "permanent"
@@ -403,7 +404,7 @@ it("invalid authoring snapshotのmetadata clear失敗時はcomposerもthread inv
   });
   let providerDispatched = false;
   let providerThreadInvalidated = false;
-  let runningAuditCreated = false;
+  let runningTurnCreated = false;
   let composerResolved = false;
   let runningStartPersisted = false;
   const adapter = createAdapter(async () => {
@@ -426,9 +427,9 @@ it("invalid authoring snapshotのmetadata clear失敗時はcomposerもthread inv
     invalidateProviderSessionThread: () => {
       providerThreadInvalidated = true;
     },
-    createAuditLog: (input) => {
-      runningAuditCreated = true;
-      return createAuditLog(input);
+    createSessionTurn: (input) => {
+      runningTurnCreated = true;
+      return createSessionTurn(input);
     },
   }));
 
@@ -440,7 +441,7 @@ it("invalid authoring snapshotのmetadata clear失敗時はcomposerもthread inv
   assert.equal(runningStartPersisted, false);
   assert.equal(providerDispatched, false);
   assert.equal(providerThreadInvalidated, false);
-  assert.equal(runningAuditCreated, false);
+  assert.equal(runningTurnCreated, false);
 });
 
 // @test-value v2

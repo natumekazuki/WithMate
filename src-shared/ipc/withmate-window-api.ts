@@ -1,4 +1,5 @@
-import type { AuditLogEntry, AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogSummary, AuditLogOperationDetailFragment, AuditLogSummaryPageRequest, AuditLogSummaryPageResult, ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
+import type { ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
+import type { SessionTurnRecord } from "../session/session-turn-state.js";
 import type { AppSettings } from "../settings/provider-settings-state.js";
 import type { LiveSessionRunStatus } from "../session/live-session-run-status.js";
 import type { ConversationPage, ConversationPageRequest, ConversationSearchRequest, ConversationSearchMatch, ConversationNavigatorEntry } from "../session/conversation-page.js";
@@ -236,23 +237,7 @@ export type WithMateWindowSessionApi = {
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   steerSessionTurn(sessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
   cancelSessionRun(sessionId: string): Promise<void>;
-  listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
-  listSessionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]>;
-  listSessionAuditLogSummaryPage(
-    sessionId: string,
-    request?: AuditLogSummaryPageRequest | null,
-  ): Promise<AuditLogSummaryPageResult>;
-  getSessionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null>;
-  getSessionAuditLogDetailSection(
-    sessionId: string,
-    auditLogId: number,
-    section: AuditLogDetailSection,
-  ): Promise<AuditLogDetailFragment | null>;
-  getSessionAuditLogOperationDetail(
-    sessionId: string,
-    auditLogId: number,
-    operationIndex: number,
-  ): Promise<AuditLogOperationDetailFragment | null>;
+  getLatestSessionTurn(sessionId: string): Promise<SessionTurnRecord | null>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): Promise<void>;
@@ -331,6 +316,7 @@ export type WithMateWindowPickerApi = {
 };
 
 export type WithMateWindowSubscriptionApi = {
+  onSessionTurnUpdated(listener: (sessionId: string) => void): () => void;
   subscribeSessionDraftFlushRequest(listener: (request: { requestId: string; sessionId: string; reason: "close" | "quit" }) => void): () => void;
   subscribeSessionDraftFlushRelease(listener: (payload: { success: boolean }) => void): () => void;
   acknowledgeSessionDraftFlush(requestId: string, success: boolean): void;

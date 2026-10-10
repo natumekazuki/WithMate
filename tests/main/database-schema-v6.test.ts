@@ -8,7 +8,6 @@ import { describe, it } from "node:test";
 import {
   APP_DATABASE_V6_FILENAME,
   APP_DATABASE_V6_SCHEMA_VERSION,
-  CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_CHARACTER_AFFECT_TABLES_SQL,
   CREATE_V6_CHARACTERS_TABLE_SQL,
@@ -16,8 +15,6 @@ import {
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SCHEMA_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
-  CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
-  CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
   REQUIRED_V6_TABLES,
   V6_SCHEMA_STATUS,
@@ -27,7 +24,6 @@ import {
   readV6DatabaseUserVersion,
   resolveV6FreshDatabasePath,
 } from "../../src-electron/storage/database-schema-v6.js";
-import { AuditLogStorageV6 } from "../../src-electron/session/audit-log-storage-v6.js";
 
 type TableInfoRow = {
   name: string;
@@ -322,18 +318,17 @@ describe("database-schema-v6", () => {
   });
 
   // @test-value v2
-  // kind = "invariant"
-  // claim = "V6 project・Session・message・Auxiliary・turn・interim・provider outputの列と参照制約が保存契約を維持する"
-  // oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md" }
-  // fault = "必要な列・foreign key・cascade・JSONまたは列挙値制約を欠いたschemaを作成する"
-  // observable = "作成したSQLiteのtable_info・foreign_key_listとtable SQL"
+  // kind = "contract"
+  // claim = "V6のProject・会話・最小turnにはownerと排他的所有のSQLite制約が存在する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md" }
+  // fault = "turn ownerのcascadeまたは排他的owner CHECKを失い、孤立turnや複数ownerを許す"
+  // observable = "実SQLite schemaのcolumns・foreign key・CHECK"
   // observation_boundary = "declaration"
-  // scope = "V6 schema生成のSessionと監査関連DDL"
+  // scope = "V6 project/session/turn schema"
   // lifecycle = "permanent"
-  // impact = "保存・読取の不整合や削除時の孤立データを生む"
-  // distinction = "TypeScript型やbuildでは確認できない実SQLite DDLを一つの一時DBで確認する"
+  // distinction = "TypeScript型はSQLite owner制約を保証しない"
   // @end-test-value
-  it("V6 project scope と session/message/audit の最小 schema を固定する", () => {
+  it("V6 project scope と session/message/turn の最小 schema を固定する", () => {
     const db = createV6Schema();
     try {
       assert.deepEqual(columnNames(db, "project_scopes_v6"), [
@@ -441,7 +436,6 @@ describe("database-schema-v6", () => {
         "user_message_seq",
         "assistant_message_seq",
         "thread_id",
-        "summary",
         "error_summary",
         "started_at",
         "completed_at",
@@ -454,35 +448,6 @@ describe("database-schema-v6", () => {
       assert.equal(tableSql(db, "session_turns_v6").includes("phase IN ('running', 'completed', 'failed', 'canceled')"), true);
       assert.equal(tableSql(db, "session_turns_v6").includes("session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL"), true);
       assert.equal(tableSql(db, "session_turns_v6").includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)"), true);
-
-      assert.deepEqual(columnNames(db, "session_turn_interims_v6"), [
-        "id",
-        "turn_id",
-        "seq",
-        "body",
-        "source",
-        "created_at",
-      ]);
-      assert.equal(findForeignKey(db, "session_turn_interims_v6", "turn_id")?.table, "session_turns_v6");
-      assert.equal(findForeignKey(db, "session_turn_interims_v6", "turn_id")?.on_delete.toUpperCase(), "CASCADE");
-      assert.equal(tableSql(db, "session_turn_interims_v6").includes("source IN ('stream_delta', 'running_snapshot', 'migration')"), true);
-
-      assert.deepEqual(columnNames(db, "session_turn_provider_outputs_v6"), [
-        "id",
-        "turn_id",
-        "seq",
-        "provider_id",
-        "kind",
-        "summary",
-        "payload_json",
-        "payload_blob_id",
-        "created_at",
-      ]);
-      assert.equal(findForeignKey(db, "session_turn_provider_outputs_v6", "turn_id")?.table, "session_turns_v6");
-      assert.equal(findForeignKey(db, "session_turn_provider_outputs_v6", "turn_id")?.on_delete.toUpperCase(), "CASCADE");
-      assert.equal(tableSql(db, "session_turn_provider_outputs_v6").includes("'logical_prompt'"), true);
-      assert.equal(tableSql(db, "session_turn_provider_outputs_v6").includes("'context_telemetry'"), true);
-      assert.equal(tableSql(db, "session_turn_provider_outputs_v6").includes("json_valid(payload_json)"), true);
 
     } finally {
       db.close();
@@ -1000,157 +965,6 @@ describe("database-schema-v6", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "V6 schema repair後もauditのauxiliary ownerを保持する"
-  // oracle = { type = "contract", ref = "V6 database schema repair contract" }
-  // fault = "auxiliary_sessions rebuildでaudit owner参照を失う"
-  // observable = "repaired schemaとaudit summaryのowner fields"
-  // observation_boundary = "public-boundary"
-  // scope = "ensureV6Schema auxiliary rebuild and audit owner preservation"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("ensureV6Schema は auxiliary_sessions rebuild 後も audit の Auxiliary owner を保持する", () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "withmate-v6-schema-"));
-    const dbPath = join(tempDir, APP_DATABASE_V6_FILENAME);
-    let db: DatabaseSync | null = null;
-    let auditStorage: AuditLogStorageV6 | null = null;
-    try {
-      db = new DatabaseSync(dbPath);
-      db.exec("PRAGMA foreign_keys = ON;");
-
-      for (const statement of CREATE_V6_SCHEMA_SQL) {
-        if ((statement as string) !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL && (statement as string) !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL) {
-          db.exec(statement);
-        }
-      }
-
-      db.exec(`
-        CREATE TABLE auxiliary_sessions (
-          id TEXT PRIMARY KEY,
-          parent_session_id TEXT NOT NULL,
-          status TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          payload_json TEXT NOT NULL,
-          FOREIGN KEY (parent_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE audit_events_v6 (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          session_id TEXT,
-          auxiliary_session_id TEXT,
-          event_type TEXT NOT NULL,
-          provider_id TEXT NOT NULL DEFAULT '',
-          summary TEXT NOT NULL DEFAULT '',
-          metadata_json TEXT NOT NULL DEFAULT '{}',
-          created_at TEXT NOT NULL,
-          FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
-          FOREIGN KEY (auxiliary_session_id) REFERENCES auxiliary_sessions(id) ON DELETE SET NULL
-        );
-
-        CREATE INDEX idx_audit_events_v6_session_created
-          ON audit_events_v6(session_id, created_at DESC, id DESC);
-        CREATE INDEX idx_audit_events_v6_auxiliary_created
-          ON audit_events_v6(auxiliary_session_id, created_at DESC, id DESC);
-        CREATE INDEX idx_audit_events_v6_event_type_created
-          ON audit_events_v6(event_type, created_at DESC);
-
-        INSERT INTO sessions_v6 (
-          id,
-          title,
-          state,
-          provider_id,
-          catalog_revision,
-          model_id,
-          approval_mode,
-          created_at,
-          updated_at,
-          last_active_at
-        ) VALUES (
-          'session-1',
-          'Session 1',
-          'active',
-          'codex',
-          1,
-          'gpt-5',
-          'on-request',
-          '2026-07-04T00:00:00.000Z',
-          '2026-07-04T00:00:00.000Z',
-          '2026-07-04T00:00:00.000Z'
-        );
-
-        INSERT INTO auxiliary_sessions (
-          id,
-          parent_session_id,
-          status,
-          updated_at,
-          payload_json
-        ) VALUES (
-          'aux-1',
-          'session-1',
-          'active',
-          '2026-07-04T01:00:00.000Z',
-          '{}'
-        );
-      `);
-
-      db.prepare(`
-        INSERT INTO audit_events_v6 (
-          session_id,
-          auxiliary_session_id,
-          event_type,
-          provider_id,
-          summary,
-          metadata_json,
-          created_at
-        ) VALUES (?, ?, 'session_turn', 'codex', 'Auxiliary summary', ?, ?)
-      `).run(
-        null,
-        "aux-1",
-        JSON.stringify({
-          sessionId: "aux-1",
-          createdAt: "2026-07-04T01:02:00.000Z",
-          phase: "turn",
-          provider: "codex",
-          model: "gpt-5",
-          reasoningEffort: "medium",
-          approvalMode: "on-request",
-          threadId: "",
-          logicalPrompt: { messages: [] },
-          transportPayload: null,
-          assistantText: "assistant response",
-          operations: [],
-          rawItemsJson: "[]",
-          usage: null,
-          errorMessage: "",
-        }),
-        "2026-07-04T01:02:00.000Z",
-      );
-
-      ensureV6Schema(db);
-
-      const auditOwner = db.prepare(`
-        SELECT auxiliary_session_id
-        FROM audit_events_v6
-        WHERE id = 1
-      `).get() as { auxiliary_session_id: string | null } | undefined;
-      assert.equal(auditOwner?.auxiliary_session_id, "aux-1");
-
-      db.close();
-      db = null;
-
-      auditStorage = new AuditLogStorageV6(dbPath);
-      const summaries = auditStorage.listSessionAuditLogSummaries("aux-1");
-      assert.equal(summaries.length, 1);
-      assert.equal(summaries[0]?.sessionId, "aux-1");
-      assert.equal(summaries[0]?.assistantTextPreview, "assistant response");
-    } finally {
-      auditStorage?.close();
-      db?.close();
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  // @test-value v2
-  // kind = "invariant"
   // claim = "V6 schema repair失敗時は部分適用をrollbackする"
   // oracle = { type = "contract", ref = "V6 database schema repair transaction contract" }
   // fault = "repair途中のtableだけが残り、再起動時に不完全schemaをvalid扱いする"
@@ -1171,9 +985,6 @@ describe("database-schema-v6", () => {
           statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
           && statement !== CREATE_V6_CHARACTER_AFFECT_TABLES_SQL
           && statement !== CREATE_V6_SESSION_TURNS_TABLE_SQL
-          && statement !== CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL
-          && statement !== CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL
-          && (statement as string) !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL
         ) {
           db.exec(statement);
         }

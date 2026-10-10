@@ -27,13 +27,12 @@ type BlobIdRow = {
 const BLOB_REFERENCE_QUERIES = [
   "SELECT text_blob_id AS blob_id FROM session_messages WHERE text_blob_id IS NOT NULL",
   "SELECT artifact_blob_id AS blob_id FROM session_message_artifacts WHERE artifact_blob_id IS NOT NULL",
-  "SELECT logical_prompt_blob_id AS blob_id FROM audit_log_details WHERE logical_prompt_blob_id IS NOT NULL",
-  "SELECT transport_payload_blob_id AS blob_id FROM audit_log_details WHERE transport_payload_blob_id IS NOT NULL",
-  "SELECT assistant_text_blob_id AS blob_id FROM audit_log_details WHERE assistant_text_blob_id IS NOT NULL",
-  "SELECT raw_items_blob_id AS blob_id FROM audit_log_details WHERE raw_items_blob_id IS NOT NULL",
-  "SELECT usage_blob_id AS blob_id FROM audit_log_details WHERE usage_blob_id IS NOT NULL",
-  "SELECT details_blob_id AS blob_id FROM audit_log_operations WHERE details_blob_id IS NOT NULL",
 ] as const;
+
+const OPTIONAL_BLOB_REFERENCE_COLUMNS = {
+  audit_log_details: ["logical_prompt_blob_id", "transport_payload_blob_id", "assistant_text_blob_id", "raw_items_blob_id", "usage_blob_id"],
+  audit_log_operations: ["details_blob_id"],
+} as const;
 
 function compactBlobIds(values: Iterable<string | null | undefined>): string[] {
   return [...new Set([...values].filter((value): value is string => typeof value === "string" && value.length > 0))].sort();
@@ -41,7 +40,14 @@ function compactBlobIds(values: Iterable<string | null | undefined>): string[] {
 
 function readReferencedBlobIds(db: DatabaseSync): string[] {
   const blobIds: string[] = [];
-  for (const query of BLOB_REFERENCE_QUERIES) {
+  const queries: string[] = [...BLOB_REFERENCE_QUERIES];
+  const tableExists = db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?");
+  for (const [table, columns] of Object.entries(OPTIONAL_BLOB_REFERENCE_COLUMNS)) {
+    if (tableExists.get(table)) {
+      queries.push(...columns.map((column) => `SELECT ${column} AS blob_id FROM ${table} WHERE ${column} IS NOT NULL`));
+    }
+  }
+  for (const query of queries) {
     const rows = db.prepare(query).all() as BlobIdRow[];
     for (const row of rows) {
       blobIds.push(row.blob_id ?? "");

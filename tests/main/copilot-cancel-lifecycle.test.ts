@@ -1,5 +1,5 @@
+import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import assert from "node:assert/strict";
-import { createAuditProgressWriter } from "./helpers/audit-progress-fixture.js";
 import { ChildProcess } from "node:child_process";
 import { it } from "node:test";
 import { CopilotClient, RuntimeConnection, type CopilotSession, type SessionEvent } from "@github/copilot-sdk";
@@ -11,7 +11,7 @@ import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import type { AuditLogEntry, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 
 function deferred<T>() {
@@ -162,7 +162,7 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
     model: "gpt-4.1", reasoningEffort: "high",
   });
   let live: LiveSessionRunState | null = null;
-  const audits: AuditLogEntry[] = [];
+  const turns: SessionTurnRecord[] = [];
   const clients: FakeClient[] = [];
   const logs: string[] = [];
   const catalog: ModelCatalogProvider = { id: "copilot", label: "Copilot", defaultModelId: "gpt-4.1", defaultReasoningEffort: "high",
@@ -209,8 +209,8 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
     upsertSession: (next) => { stored = next; return next; },
     upsertTerminalSession: (next, commit) => {
       stored = next;
-      const index = audits.findIndex((audit) => audit.id === commit.auditLogId);
-      audits[index] = { ...audits[index], phase: commit.phase, errorMessage: commit.errorMessage };
+      const index = turns.findIndex((turn) => turn.id === commit.turnId);
+      turns[index] = { ...turns[index], phase: commit.phase, errorMessage: commit.errorMessage };
       return next;
     },
     resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
@@ -219,9 +219,8 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
     getProviderCodingAdapter: () => adapter,
     getSessionMemory: (session) => createDefaultSessionMemory(session),
     resolveProjectMemoryEntriesForPrompt: () => [],
-    createAuditLog: (entry) => { const audit = { id: audits.length + 1, ...entry }; audits.push(audit); return audit; },
-    updateAuditLog: (id, entry) => { const index = audits.findIndex((audit) => audit.id === id); audits[index] = { id, ...entry }; },
-    updateAuditLogProgress: createAuditProgressWriter(),
+    createSessionTurn: (entry) => { const turn = { id: turns.length + 1, ...entry }; turns.push(turn); return turn; },
+    updateSessionTurn: (id, entry) => { const index = turns.findIndex((turn) => turn.id === id); turns[index] = { id, ...entry }; },
     setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
     waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
     setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, scheduleProviderQuotaTelemetryRefresh() {},
@@ -229,7 +228,7 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
     broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
   });
   return {
-    adapter, ports, service, clients, audits, logs,
+    adapter, ports, service, clients, turns, logs,
     stored: () => stored, live: () => live,
     start: (message = "first") => service.runSessionTurn(stored.id, { userMessage: message, executionOptions: captureSessionExecutionOptions(stored) }),
     cancel: () => service.cancelRun(stored.id),
@@ -288,6 +287,7 @@ it("Copilotのprogress burstは全量処理しconsumer完了と実失敗を区�
   }
 });
 
+
 // @test-value v2
 // kind = "contract"
 // claim = "send/abort応答未完了の取消はSDK停止応答・旧child実exit・RPC終了を個別に待ち、guard解放後に同じ会話をresumeする"
@@ -328,7 +328,7 @@ it("無応答send/abortを強制停止で収束し、停止完了まで次Send�
     owner.closeTransport();
     await until(() => !f.service.isRunInFlight(f.stored().id));
     assert.equal(old.listeners.size, 0);
-    assert.equal(f.audits[0].phase, "canceled");
+    assert.equal(f.turns[0].phase, "canceled");
     const next = f.start("next");
     await until(() => f.clients.length === 2);
     const fresh = await f.current();
@@ -379,17 +379,17 @@ it("idleとabortの順序が逆でも全RPCと接続停止までguardを保持�
 
 // @test-value v2
 // kind = "contract"
-// claim = "取消のabort/disconnect失敗は成功に置換せずpartial本文・operation・raw traceと共に監査へ残す"
+// claim = "取消の停止失敗は診断ログを維持し、取得済みpartial本文と操作を通常履歴へ保存する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error-Handling; Issue #782" }
 // fault = "停止errorをcatchで消すか取得済みpartialを取消通知だけへ置換する"
-// observable = "保存messages、canceled監査の本文/operation/raw/provider metadataとadapter log"
+// observable = "保存messagesとartifact、canceled最小turn、adapter log"
 // observation_boundary = "public-boundary"
 // scope = "Copilot cancellation partial result and runtime terminal persistence"
 // lifecycle = "permanent"
-// impact = "途中成果と実行監査を保護し停止失敗の診断を可能にする"
+// impact = "途中成果を保護し停止失敗の診断を可能にする"
 // distinction = "汎用runtime partial testはCopilot event変換と停止失敗のcatchを通らない"
 // @end-test-value
-it("停止失敗の詳細とpartial結果を取消の履歴・監査へ保持する", { timeout: 5000 }, async () => {
+it("停止失敗の診断とpartial結果を取消後に保持する", { timeout: 5000 }, async () => {
   const f = fixture(); const run = f.start(); const session = await f.current();
   session.sends[0].resolve("first");
   session.emit("assistant.message", { content: "partial answer", messageId: "partial" });
@@ -400,13 +400,9 @@ it("停止失敗の詳細とpartial結果を取消の履歴・監査へ保持す
   f.cancel(); await session.abortStarted.promise;
   session.abortReply.reject(new Error("abort unavailable"));
   await run;
-  await until(() => f.audits[0].rawItemsJson.includes("tool.execution_complete"));
   assert.match(f.stored().messages.at(-1)!.text, /partial answer/);
-  assert.equal(f.audits[0].phase, "canceled");
-  assert.ok(f.audits[0].operations.some((operation) => operation.summary.includes("echo partial")));
-  assert.match(f.audits[0].rawItemsJson, /tool.execution_complete/);
-  assert.match(JSON.stringify(f.audits[0].providerMetadata), /abort unavailable/);
-  assert.match(JSON.stringify(f.audits[0].providerMetadata), /session disconnect timed out/);
+  assert.equal(f.turns[0].phase, "canceled");
+  assert.ok(f.stored().messages.at(-1)?.artifact?.operationTimeline?.some((operation) => operation.summary.includes("echo partial")));
   assert.match(f.logs.join("\n"), /session disconnect timed out/);
   assert.match(f.logs.join("\n"), /stop unavailable/);
   assert.equal(f.clients[0].forceCalls, 1);
@@ -491,4 +487,104 @@ it("正常turnには取消期限を適用せず、完了後はSessionを再利�
   session.sends[1].resolve("next"); session.emit("session.idle"); await next;
   assert.match(f.stored().messages.at(-1)!.text, /second answer/);
   assert.equal(f.clients[0].stopCalls, 0);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "cached Copilot turnの開始・承認待ち・承認情報を引き継ぐ開始だけのstale失敗は同じthreadをresumeして一度だけ再送できる"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
+// fault = "設定runChecks・未確定操作summary・承認warning/detailsを取得結果と誤認し回復を拒む、または再失敗後も再送する"
+// observable = "SessionRuntimeService.runSessionTurn経由の保存本文/runState、SDK send件数、client数、旧client stop/disconnect件数、新client resumeIds"
+// observation_boundary = "public-boundary"
+// scope = "Copilot cached sessionのproduction retryから同一logical turn終端保存まで"
+// lifecycle = "permanent"
+// impact = "未実行の操作で会話を回復不能にすることとstale失敗の無限再実行を防ぐ"
+// distinction = "shouldRetry単体testは設定・activity summary付きproduction artifactやcache再生成/resume/一回制限を通らない。既存ローカルfixtureを使い外部接続なしで検証する"
+// @end-test-value
+it("開始・承認待ちだけのstale turnは同一threadで一度だけ回復する", { timeout: 5000 }, async () => {
+  for (const failure of ["Connection is closed.", "SessionNotFound: session not found"]) {
+    for (const mode of ["start", "pending", "permission-start", "approved-start"] as const) {
+      for (const recovered of [true, false]) {
+        const f = fixture();
+        const prime = f.start(); const cached = await f.current();
+        cached.emit("assistant.message", { content: "prime answer", messageId: "prime" });
+        cached.emit("session.idle"); cached.sends[0].resolve("prime"); await prime;
+        const run = f.start("recover input");
+        await until(() => cached.sends.length === 2);
+        if (mode === "start") {
+          cached.emit("tool.execution_start", { toolCallId: "not-completed", toolName: "shell", arguments: { command: "synthetic command" } });
+        } else {
+          cached.emit("permission.requested", { requestId: "permission-only", permissionRequest: {
+            kind: "shell", toolCallId: "not-completed", fullCommandText: "synthetic command", warning: "synthetic permission warning",
+          } });
+          if (mode === "approved-start") {
+            cached.emit("permission.completed", { requestId: "permission-only", result: { kind: "approved" } });
+          }
+          if (mode !== "pending") {
+            cached.emit("tool.execution_start", { toolCallId: "not-completed", toolName: "shell", arguments: { command: "synthetic command" } });
+          }
+        }
+        cached.sends[1].reject(new Error(failure));
+        await until(() => f.clients.length === 2 && Boolean(f.clients[1].sessions[0]?.sends.length));
+        const fresh = f.clients[1].sessions[0];
+        assert.deepEqual(f.clients[1].resumeIds, ["preserved-thread"]);
+        assert.equal(f.clients[0].stopCalls, 1);
+        assert.equal(cached.disconnectCalls, 1);
+        if (recovered) {
+          fresh.emit("assistant.message", { content: "recovered answer", messageId: "recovered" });
+          fresh.emit("session.idle"); fresh.sends[0].resolve("recovered");
+        } else {
+          fresh.sends[0].reject(new Error(failure));
+        }
+        await run;
+        assert.equal(f.clients.length, 2, "second stale failure must not trigger another retry");
+        assert.equal(cached.sends.length + fresh.sends.length, 3, "one prime send and two attempts");
+        assert.equal(f.turns.length, 2, "retry stays in the same logical turn");
+        assert.equal(f.turns.at(-1)?.phase, recovered ? "completed" : "failed");
+        if (recovered) assert.match(f.stored().messages.at(-1)!.text, /recovered answer/);
+      }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotは取得済み本文・terminal操作・途中出力があるstale失敗を自動再送せずpartialを保存する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
+// fault = "terminalまたは途中結果を持つ操作を未確定と扱って重複実行する、またはretry抑止時のpartialを捨てる"
+// observable = "runtime経由SDK send/client件数と保存assistant本文・artifact操作status/details/error"
+// observation_boundary = "public-boundary"
+// scope = "Copilot production eventからpartial artifact・retry admission・通常履歴保存まで"
+// lifecycle = "permanent"
+// impact = "実行済み副作用の重複と失敗前に取得した応答の消失を防ぐ"
+// distinction = "helperへpartialを手渡すtestと取消testではstale失敗によるproduction retryを観測しない。既存fixtureの有限event列だけで検証する"
+// @end-test-value
+it("取得済み結果付きstale turnは再送せずpartialを保存する", { timeout: 5000 }, async () => {
+  for (const mode of ["assistant", "completed", "failed", "partial"] as const) {
+    const f = fixture(); const run = f.start(); const session = await f.current();
+    if (mode === "assistant") {
+      session.emit("assistant.message", { content: "acquired answer", messageId: "acquired" });
+    } else {
+      session.emit("tool.execution_start", { toolCallId: "acquired", toolName: "shell", arguments: { command: "synthetic side effect" } });
+      if (mode === "partial") {
+        session.emit("tool.execution_partial_result", { toolCallId: "acquired", partialOutput: "acquired output" });
+      } else {
+        session.emit("tool.execution_complete", { toolCallId: "acquired", success: mode === "completed",
+          result: { content: "acquired output" }, ...(mode === "failed" ? { error: { message: "acquired error", code: "synthetic-error" } } : {}) });
+      }
+    }
+    session.sends[0].reject(new Error("Connection is closed.")); await run;
+    assert.equal(f.clients.length, 1, "acquired results prohibit retry and client replacement");
+    assert.equal(session.sends.length, 1);
+    assert.equal(f.clients[0].stopCalls, 0);
+    assert.equal(f.turns.at(-1)?.phase, "failed");
+    if (mode === "assistant") {
+      assert.match(f.stored().messages.at(-1)!.text, /acquired answer/);
+    } else {
+      const operation = f.stored().messages.at(-1)!.artifact!.operationTimeline![0];
+      assert.equal(operation.status, mode === "partial" ? "in_progress" : mode);
+      assert.match(operation.details!, /acquired output/);
+      if (mode === "failed") assert.deepEqual(operation.error, { message: "acquired error", code: "synthetic-error" });
+    }
+  }
 });

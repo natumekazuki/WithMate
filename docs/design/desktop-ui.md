@@ -26,7 +26,6 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - Session の coding agent 作業 UI
 - Diff Window の閲覧 UI
 - Settings Window と model catalog 操作
-- Session の監査ログ閲覧 UI
 
 ## UI Source Of Truth Boundary
 
@@ -42,7 +41,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - theme tokenと既存CSS variableを優先する。新しいsurface・badge・button等の色を追加する時は、その上のtext・icon・borderのcontrastを同時に確認する。disabled、muted、placeholder、secondary textと、hover、selected、active、focus、error、warning、successの状態も背景へ埋もれないようにする。
 - 現役6 HTML entryのshellは`lang="en"`とする。会話、ユーザーtitle、Character定義、テンプレート本文、ファイル内容・path、raw診断、Provider指示は原文と保存値を維持する。表示用の日時・件数には英語localeを明示し、ローカルtime zone、保存値、parse、sort、raw copyを変更しない。UI用の通常状態copyは各consumerが定義し、ユーザー設定として編集・保存しない。
 - 対象が明確なtoolbar操作は既存iconを使い、英語の操作名・対象、focus、busy、toggle状態を残す。Save等の主CTA、Approve / Reject、Forget、GC、全削除、最終確認は必要な可視labelと影響説明を保つ。
-- 同一対象・同一requestの待機表現を集約する。未取得、pending、利用不可、正常0件、失敗を区別し、Mainと複数Auxiliary、一覧取得とrun、Audit refreshとpaginationの状態を混ぜない。承認・入力待ちは次の操作と要求本文を示す。
+- 同一対象・同一requestの待機表現を集約する。未取得、pending、利用不可、正常0件、失敗を区別し、Mainと複数Auxiliary、一覧取得とrun、artifact detail取得の状態を混ぜない。承認・入力待ちは次の操作と要求本文を示す。
 - 正常0件、検索0件、情報のないpane/listの本文は空にする。既存shell、必要な見出し、create/restore等の操作、accessible nameは残し、未取得・読込中・取得失敗は正常0件と混同しない。読込中は対象領域のspinnerとaccessible status/busyへ集約し、取得失敗・validation・安全・回復に必要な説明と操作は残す。
 - 局所的なmotionを使い、reduced motionでは止まった形状とaccessible statusでも状態を識別できるようにする。spinnerのために処理完了を遅らせず、実際に成功した後だけ完了を示す。通知は意味のある遷移へ絞り、会話本文や全カードを重複して読み上げない。
 - 同じ事実を見出し、label、status、helper文で重ねない。正常状態や操作を言い換えただけの常設説明は省略する。未保存・保存中・失敗・回復は残し、新しい編集に古い保存成功を表示しない。`Stop`はrunの停止要求、`Cancel`は現在操作の取消、`Close`はWindow等を閉じる操作、`Quit`はアプリ終了と区別する。
@@ -60,8 +59,8 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `chat/conversation/session-message-column.tsx` は会話本文、artifact、検索、仮想スクロールと pending row の配置を担当する。pending row 内の承認・入力要求は `chat/runtime/live-request-surface.tsx` が所有し、フォーム状態、validation、応答 payload、送信中の操作制御を conversation 列へ戻さない
 - artifact の展開状態と開閉操作は `chat/conversation/session-chat-conversation-feature.ts` が Window 内の message key ごとに所有する。会話の切り替えで展開状態を失わず、App は状態・setter・開閉 callback を構築しない
 - File Explorer と中央 file / Git preview は `file-explorer/session-files-feature.tsx` が独立した描画境界で `use-session-files-feature.tsx` を呼ぶ。タブ、再読込、preview requestと読込結果をその境界内に保持し、shellの安定したpane／preview hostへ表示する。Windowにはpreview有無、閉じる操作、composerへの挿入接続だけを渡す
-- `chat/runtime/session-context-feature.tsx` はContext tab、telemetry、Glossaryの検索・選択を所有する。会話へ必要なannotation matcherと用語を開く操作だけを共有し、検索入力や結果更新でWindowを再投影しない。`session-audit-feature.tsx` はAudit一覧・詳細取得とmodalを所有し、Retry／Latest Commandに必要な保存済みsummaryだけをWindowへ通知する
-- live本文・step・usageの表示snapshotは会話列、Context、Auditの表示ownerが購読する。Window shellの購読は実行有無、入力待ち、本文出力開始、command実行有無、errorという操作・通知に必要な変化だけを反映し、本文tokenごとに他機能を再構築しない
+- `chat/runtime/session-context-feature.tsx` はContext tab、telemetry、Glossaryの検索・選択を所有する。会話へ必要なannotation matcherと用語を開く操作だけを共有し、検索入力や結果更新でWindowを再投影しない。Retryは最小turnを参照し、Latest Commandはliveと対象turnの通常artifactを使う
+- live本文・step・usageの表示snapshotは会話列、Contextの表示ownerが購読する。Window shellの購読は実行有無、入力待ち、本文出力開始、command実行有無、errorという操作・通知に必要な変化だけを反映し、本文tokenごとに他機能を再構築しない
 - 会話列は確定履歴の投影とlive末尾を分離し、保存確定時のmessage key、Bookmark、検索、navigatorを保持する。Previewや幅0で見えない会話列は表示用live購読と追従を休止し、再表示時に最新snapshotへ追いつく。runとdraft保存の寿命は表示状態から独立する
 - selection toolbarの位置計測は対象列に選択がある時だけ行い、DOMのresize／mutation監視も選択中に限定する。選択・Copy／Quoteとkeyboard操作を維持する
 - splitterのdrag中は対象領域の寸法を局所更新し、pointer up／cancelで最後の表示値を状態ownerへ確定する。中央幅の保存も確定時だけ行い、clickとkeyboard変更はその操作内で確定する
@@ -249,8 +248,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Agent は同じ chat screen / header / message list / composer / pane shell を使い、service adapter で差分を切り替える
 - 新しい会話機能を追加する場合も、chat layout 実装を増やさず、Session UI の mode を追加する
 - session title の rename / delete
-- `Audit log` overlay
-  - approval 表示は `Auto Run / Provider Controlled / Safety Focused` の provider-neutral wording を使う
+- approval 表示は `Auto Run / Provider Controlled / Safety Focused` の provider-neutral wording を使う
 - `Work Chat`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
@@ -289,7 +287,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - ローカルシェルはアプリのOS権限で動き、Providerのapproval／sandboxとは独立する。Workspaceは開始cwdであってアクセス制限ではない
 - `Top Bar`
   - default は hidden とする
-  - 上 splitter を押すと Header の表示と `Rename / Audit Log / Terminal / Delete` を切り替える
+  - 上 splitter を押すと Header の表示と `Rename / Terminal / Delete` を切り替える
   - Header は1行分の固定高とし、splitter の drag による高さ変更は行わない
   - `More` と `Close` は使わない
   - title 編集中は effective state として表示を維持する
@@ -346,7 +344,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - live Git Diff の `Open preview` は対象 file を通常 preview として開く。detached file preview から開いた live Git Diff と Changes から直接開いた detached live Git Diff は、左向き icon または `Open preview` で同じ Window の preview へ戻る。独立 File Preview、snapshot Diff、Character Editor の Window 自体は native window chrome で閉じ、重複する app 内 Close 操作を置かない
   - Character Editor が dirty な状態で native window chrome から閉じようとした場合は、編集内容を保持したまま in-app の破棄確認を表示する。キャンセルでは編集へ戻り、明示的に破棄した場合だけ Window を閉じる
   - `New Session` dialog はfooter左端の`Cancel`で閉じ、右端の`Start`で開始する。開始前の`Cancel`では作成せず、開始後は送信済みの作成を取り消さない。`Start`がdisabledでも`Cancel`は使用でき、重複する常設 Close control は置かない
-  - Auxiliary 起動 dialog と Audit Log overlay も backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
+  - Auxiliary 起動 dialog も backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
   - 破棄確認は単一の dialog surface に確認対象と操作を直接配置し、見出しと重複する補足文や装飾目的の card を置かない。破壊的操作は neutral なキャンセルと色・文言の両方で区別する
   - 同じ root-scoped resource は既存 Window を前面化し、異なる resource は複数 Window を開ける。navigation、認可、lifecycle の決定は ADR 020 を正本とする
 - live Git Diff と chat artifact Diff は別機能とする。artifact の永続化・Diff modelは維持するが、Details UIには `Changed files` と `Open diff` を表示しない。File Explorer の Changes や中央 live Git Diff へ接続する判断は別consumerの契約で扱う
@@ -403,7 +401,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
   - 詳細が欠落・取得失敗した場合はDetails内に状態と再openによる再試行を示し、会話本文と保存済みsummaryを維持する。同じ展開・表示期間では本文更新による自動再取得を行わず、閉じて再open・非表示からの復帰・履歴page復帰で取得し直す
-  - `Changed files` は Details UIには表示しない。artifactの永続化、audit、Diff model、Changes paneのデータはこの表示変更だけでは削除しない
+  - `Changed files` は Details UIには表示しない。artifactの永続化、Diff model、Changes paneのデータはこの表示変更だけでは削除しない
   - `Run checks`
     - approval は `Auto Run / Provider Controlled / Safety Focused` の provider-neutral wording で表示する
   - turn 内の operation timeline は arrival 順を保ち、全 operation を1つの `Operations` groupにまとめる。groupはdefault closedとし、summaryでは件数を示し、展開時は元のoperation単位・元順序で表示する
@@ -441,7 +439,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - terminal state 後の再送導線
   - `runState === "running"` 中は recovery action surface を出さず、既存 pending / `Cancel` を維持する
   - `runState === "interrupted"` + `lastUserMessage` ありで interruption copy、`runState === "error"` + `lastUserMessage` ありで failed copy を出す
-  - `runState === "idle"` でも最新 terminal Audit Log `phase === "canceled"` + `lastUserMessage` ありなら canceled copy を出す
+  - `runState === "idle"` でも最新turn記録 `phase === "canceled"` + `lastUserMessage` ありなら canceled copy を出す
   - `lastUserMessage` がない session では retry 不能のため surface を出さない
   - canonical owner は共通 chat layout の message stack とし、中央 chat / file preview の直下、Action Dock の直上へ置く。詳細は [ADR 019](../adr/019-chat-recovery-action-surface.md) を参照する
   - 状態 badge、title、CTA、必要時の draft conflict notice だけを表示し、`停止地点`、`前回の依頼`、`Details`、`Hide` は置かない
@@ -453,7 +451,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - draft が非空のまま `Edit` を押したときは silent overwrite をせず、composer 内で `Your current draft is preserved.` と短く示したうえで明示的な置換導線を出す
 - inline `Diff Viewer` overlay
 - `Open In Window` による `Diff Window` popout
-- `Audit log` overlay と inline `Diff Viewer` overlay は open 時に dialog 内へ focus を移し、`Escape` で閉じ、`Tab` / `Shift+Tab` を dialog 内で循環させる
+- inline `Diff Viewer` overlay は open 時に dialog 内へ focus を移し、`Escape` で閉じ、`Tab` / `Shift+Tab` を dialog 内で循環させる
 
 ## Diff Window
 
@@ -476,7 +474,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Home の `Monitor` と `Session Monitor Window` は同じ projection / component を使い、open parentに紐づく保存済みAuxiliary summaryを同じ順序で集約する。状態更新は既存のlive eventと軽量summary再読込で反映し、pollingやMonitor専用storageは持たない
 - Auxiliary summary再読込はopen parent集合を一括取得し、親数に比例した個別SQLite取得を行わない
 - MonitorからAuxiliaryを選択して開いたときは、Mainがstable Auxiliary IDとparent IDを検証してnavigationし、既存Windowにはselection event、新規Windowにはentry queryで正確な会話を渡す
-- Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
+- 通常履歴の応答Detailsから操作結果を閲覧する。Latest Commandは実行中・取消待ちのliveを優先し、終了後はReasoning／background tasksのsnapshotを保持していても、対象会話の最新turnとその`assistantMessageSeq`に対応するartifactを遅延取得する。最新turnにcommandがなければ以前のturnへ遡らない。未記録・正常emptyと取得失敗を区別し、対象切替・次turn開始後に遅い結果を適用しない。Window再open・再起動、failed／canceled後も同じ対象境界を使う
 - chat message は限定的な rich text renderer で整形表示する
 - `Settings Window` は app 共通 system prompt や Character 本文を編集しない。Character 定義は `Character Editor Window` と session snapshot を正本にする
 - `userData` は `<appData>/WithMate/` に固定する

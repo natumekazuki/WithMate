@@ -1,6 +1,6 @@
-import type { AuditLogProviderMetadata } from "../../src-shared/session/runtime-state.js";
+import type { ProviderDiagnosticMetadata } from "../../src-shared/session/runtime-state.js";
 
-export type ProviderMetadataLogData = Omit<AuditLogProviderMetadata, "payload"> & {
+export type ProviderMetadataLogData = Omit<ProviderDiagnosticMetadata, "payload"> & {
   payloadPresent: boolean;
   payloadRedacted: boolean;
   payloadType?: string;
@@ -16,7 +16,7 @@ function describePayloadType(payload: unknown): string {
   return typeof payload;
 }
 
-export function toProviderMetadataLogData(metadata: AuditLogProviderMetadata): ProviderMetadataLogData {
+export function toProviderMetadataLogData(metadata: ProviderDiagnosticMetadata): ProviderMetadataLogData {
   const payloadPresent = Object.prototype.hasOwnProperty.call(metadata, "payload");
   const payloadType = payloadPresent ? describePayloadType(metadata.payload) : undefined;
   return {

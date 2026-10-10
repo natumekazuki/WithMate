@@ -2,6 +2,89 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 // @test-value v2
+// kind = "security"
+// claim = "最新turnはMainまたはAuxiliaryの親owner Windowだけへ返し、対象外Windowからはstorageを読まない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts getLatestSessionTurn authorization" }
+// fault = "Auxiliaryの親ownerを認可しないか、対象外Windowへturn実行情報を公開する"
+// observable = "Main/Auxiliary読取結果、storageへ渡るID、非owner要求の拒否とread回数"
+// observation_boundary = "public-boundary"
+// scope = "latest session turn IPC authorization"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("最新turn IPCはMainとAuxiliaryの親owner Windowだけへ返す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=parent");
+  const other = createWindowStub("file:///session.html?sessionId=other");
+  let sender = owner;
+  const reads: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "parent" ? owner : null,
+    getConversationOwnerSessionId: async (id: string) => id === "aux" ? "parent" : id,
+    getLatestSessionTurn: async (id: string) => {
+      reads.push(id);
+      return { id: id === "parent" ? 1 : 2, sessionId: id, phase: "canceled", errorMessage: "canceled" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const read = handlers.get(WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL)!;
+  for (const [id, turnId] of [["parent", 1], ["aux", 2]] as const) {
+    assert.deepEqual(await read({}, id), { id: turnId, sessionId: id, phase: "canceled", errorMessage: "canceled" });
+  }
+  sender = other;
+  await assert.rejects(async () => read({}, "parent"), /target Session window/);
+  await assert.rejects(async () => read({}, "aux"), /target Session window/);
+  assert.deepEqual(reads, ["parent", "aux"]);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "最新turnの遅い読取中にMain WindowまたはAuxiliaryの親ownerが変われば取得結果を公開しない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts getLatestSessionTurn before/after authorization" }
+// fault = "read前だけ認可し、owner変更後も旧Windowへturnを返す"
+// observable = "実際に開始・完了したstorage readの後にIPCが拒否されること"
+// observation_boundary = "public-boundary"
+// scope = "latest session turn asynchronous owner authorization"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("最新turn IPCは遅いreadの完了後にownerを再認可する", async () => {
+  for (const target of ["parent", "aux"] as const) {
+    const { ipcMain, handlers } = createIpcMainStub();
+    const owner = createWindowStub("file:///session.html?sessionId=parent");
+    const replacement = createWindowStub("file:///session.html?sessionId=replacement");
+    let currentWindow = owner;
+    let auxiliaryParent = "parent";
+    let signalStarted!: () => void;
+    let releaseRead!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const paused = new Promise<void>((resolve) => { releaseRead = resolve; });
+    let readFinished = false;
+    const { deps } = createDeps({
+      resolveEventWindow: () => owner,
+      resolveSessionWindow: (id: string) => id === "parent" ? currentWindow : replacement,
+      getConversationOwnerSessionId: async (id: string) => id === "aux" ? auxiliaryParent : id,
+      getLatestSessionTurn: async (id: string) => {
+        assert.equal(id, target);
+        signalStarted();
+        await paused;
+        readFinished = true;
+        return { id: 3, sessionId: id, phase: "completed" };
+      },
+    });
+    registerMainIpcHandlers(ipcMain, deps);
+    const pending = handlers.get(WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL)!({}, target) as Promise<unknown>;
+    await started;
+    if (target === "parent") currentWindow = replacement;
+    else auxiliaryParent = "replacement";
+    releaseRead();
+    await assert.rejects(pending, /target Session window/);
+    assert.equal(readFinished, true);
+  }
+});
+
+// @test-value v2
 // kind = "contract"
 // claim = "会話page・全履歴検索・navigatorはMainまたはAuxiliaryの親Session Windowだけが要求できる"
 // oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts: registerSessionQueryHandlers / authorizeConversation" }
@@ -60,6 +143,7 @@ import {
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_CONVERSATION_PAGE_CHANNEL,
+  WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_CONVERSATION_CHANNEL,
   WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL,
   WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,

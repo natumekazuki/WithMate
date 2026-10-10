@@ -5,7 +5,7 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 | Window | 責務 |
 | --- | --- |
 | Home | Sessionの検索・再開・新規作成、Character catalog、SettingsとSession Monitorへの入口 |
-| Session | Main／Auxiliaryの共通chat shell、承認・実行設定、file／Git preview、Audit Log、会話操作、Window所有の組み込みTerminal |
+| Session | Main／Auxiliaryの共通chat shell、承認・実行設定、file／Git preview、artifact Details、会話操作、Window所有の組み込みTerminal |
 | Character Editor | Character profile、icon、theme、`character.md`、`character-notes.md`の編集 |
 | Settings | app共通設定、provider設定、model catalog、診断 |
 | Session Monitor | 開いているSessionの状態をcompactに監視 |

@@ -34,24 +34,24 @@ runtimeはshared contractの上に次の3 adapterを持つ。
 
 Provider 実行が失敗した場合、adapter は `ProviderTurnError` を投げる。`canceled` は既存の session phase / retry / invalidation 判定のため boolean として維持し、失敗分類は `reason` で渡す。
 
-Provider 固有の error message 判定は adapter 側に閉じる。`SessionRuntimeService` は `reason` を見て audit log と assistant fallback message を分け、provider 固有の英語 message を再 parse しない。
+Provider 固有の error message 判定は adapter 側に閉じる。`SessionRuntimeService` は `reason` を見て最小turnのerrorとassistant fallback messageを分け、provider 固有の英語 message を再 parse しない。
 
-監査用途では、provider 実行結果から `logical prompt`、`transport payload`、operations、raw items、usage も Main Process へ返し、SQLite の監査ログに保存する。
+provider実行結果から取得済みassistant本文とartifactをMainへ返し、正常・失敗・取消の通常履歴へ保存する。操作の正本は`MessageArtifact.operationTimeline`とし、live stepと共通の操作型で実取得したID、status、exitCode、構造化error、truncationを保持する。未取得の値は省略し、turn全体のphaseや自由文から個別操作の成功・失敗を推定しない。
 Main Processでは`MainProviderFacade`がcoding planeとbackground planeの入口を分ける。`SessionRuntimeService`はcoding plane、completed turn後のCharacter Affect評価はbackground planeを使う。
 
 providerごとの差は次。
 
 - `CodexAdapter`
-  - turnごとに公式Codex CLIの`app-server --listen stdio://`を起動し、`initialize` / `initialized`後に`thread/start`または保存済みIDの`thread/resume`、`turn/start`を実行する。native item / delta / usage通知からlive state、監査、workspace snapshotを含むartifactを組み立てる
+  - turnごとに公式Codex CLIの`app-server --listen stdio://`を起動し、`initialize` / `initialized`後に`thread/start`または保存済みIDの`thread/resume`、`turn/start`を実行する。native item / delta / usage通知からlive state、workspace snapshotを含むartifactを組み立てる
   - command / file approval、permissions、user-input、MCP elicitationのserver requestを元のrequest IDとの対応を保持して共通GUIへ直列中継し、応答は元のIDへ返す。GUIのrequest IDは独立したopaque IDとする。`serverRequest/resolved`、turn終了、取消でpendingと待機列を解放し、二重回答・別turnへの回答を拒否する
-  - 実行中追加入力は現在のthread IDと`expectedTurnId`を使う`turn/steer`へ送る。terminal後は入力を受け付けない。dispatch済みsteerの応答はRPC timeoutの有界範囲で待ってからtransportを閉じ、terminalより遅れた成功ACKも受理結果として保持する。一致するACKで受理された本文・file/folder path・image入力は対応turnのRaw Itemsへ秘匿化・サイズ上限付きで保存する。開始時のlogical prompt / transport payloadとは区別し、拒否された入力は受理済みtraceへ含めない
+  - 実行中追加入力は現在のthread IDと`expectedTurnId`を使う`turn/steer`へ送る。terminal後は入力を受け付けない。dispatch済みsteerの応答はRPC timeoutの有界範囲で待ってからtransportを閉じ、terminalより遅れた成功ACKも受理結果として保持する。一致するACKで受理された入力だけを通常会話へ保存し、拒否された入力を受理済みとして扱わない
   - terminalはnative `turn/completed`のstatusを正本とし、受信済み通知は後続EOFでも到着順に処理する。EOF自体は成功の根拠にしない。終了・取消時は所有processと子孫をboundedに終了する。Windowsは起動前にJob Objectへsupervisorを割り当て、POSIXは専用process groupを使う。cleanup失敗は診断として独立して報告し、native terminal outcomeを上書きしない。所有processの終了確認まで同一Session・workspace・threadへの再実行を拒否し、Session runtimeの終了中guardを維持する
   - background structured promptは独立した非継続thread、`read-only` / `never`、`outputSchema`で実行し、interactive requestを拒否する
   - `file / folder / image` 添付を shipped
   - workspace 外 access は session metadata `allowedAdditionalDirectories` を正本にして制御する
   - binary pathは`src-electron/providers/provider-binary-paths.ts`を正本とし、開発時は固定版`@openai/codex`のnative package、配布時は`resources/provider-binaries/`配下のstaged binaryを直接起動する。App Serverのenvironmentへcredentialとturnのruntime bindingを明示し、global `process.env`は書き換えない
 - `CopilotAdapter`
-  - `session.send()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
+  - `session.send()` と session event stream を使い、最小 turn 実行、assistant text streaming、通常履歴用artifactを返す
   - 開始済みturnの取消ではsend応答とcompletionを並行して観測し、abort応答・`session.idle`・send応答の収束を取消専用の猶予内で確認する。取消受付時に当turnのsession/client cacheを同期的に切り離し、捕捉した旧sessionのdisconnectと旧clientのstop、必要時のforceStopへ進む。SDKのstdio clientには公開exit hookがないため、cleanupが破棄する前の`cliProcess`をreadonlyで捕捉する。forceStopのresolveを停止証明にせず、必要時はその旧childだけへSIGKILLを送り、実exitとsend/abort RPC終了までadapter Promiseと共通runtimeの再送guardを保持する。kill失敗も期限だけで解放せずexitを待つ。SDK childを捕捉できない場合は切断を停止証明にせず、元turnのidleとRPC終了を待つ
   - 取消後は旧SDK Sessionを再利用せず、保存済みthread IDからresumeする。disconnectはCopilot側の会話履歴を削除せず、新接続や無関係Sessionのclientを停止しない。正常turnには取消用の期限を適用しない。取消のpartial resultを保持し、停止確認・cleanupの失敗はprovider metadataとapp logへ残す。共通runtimeの取消猶予で先にterminal保存した場合は、その後の停止失敗をapp logで確認する
   - top-level `assistant.message` が複数回来た場合は、arrival 順に空行区切りで連結した本文を `assistantText` として返す
@@ -63,8 +63,7 @@ providerごとの差は次。
   - `on-request` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
   - `elicitation.requested` が来た場合は、Main Process の `onElicitationRequest` bridge を通して Session UI の form / url card へ中継し、user の `accept / decline / cancel` を RPC で返す
   - Electron main process では `src-electron/providers/provider-binary-paths.ts` を正本にして staged native Copilot CLI binary を明示して起動する
-  - `LatestCommand` と audit `operations` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
-  - `rawItemsJson` は full session dump ではなく、`tool.execution_*`、`assistant.message`、`assistant.usage` など監査で読む stable event trace に絞って返す
+  - `LatestCommand` と artifact `operationTimeline` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
   - `artifact` は snapshot diff fallback を使って `changedFiles / runChecks / operationTimeline` を最小構成で返す
   - `Premium Requests` は `client.rpc.account.getQuota()` と `assistant.usage.quotaSnapshots` から app-wide telemetry として更新する
   - `Context Usage` は `session.usage_info` を session local telemetry として Main Process memory に保持する
@@ -75,7 +74,7 @@ providerごとの差は次。
   - `query()`で1 turnを実行し、保存済みの明示session IDを`resume`へ渡す。履歴全件の再送、暗黙の最新会話`continue`は行わない。取消時はSDKの公開spawn hookで子プロセスの実終了を追跡し、実終了までprovider Promiseを保持してruntimeの再送guardにつなぐ。正常なterminal result後のcleanupは[ADR 002](../adr/002-provider-turn-terminal-and-cancellation.md)のbounded graceに従う
   - `claude-opus-5-5`と`low / medium / high / xhigh / max`をcatalogで扱う。`permissionMode: "default"`と共通UIの`Provider Controlled`のみを用い、Codexのsandbox選択は提供しない
   - 共通promptのsystem本文を`claude_code` presetの`append`へ渡し、`snapshot: false`でturnごとのCharacter / Affect / Memoryを反映する。既存のuser / project / local設定、repositoryの`CLAUDE.md`と`.claude/skills`、MCP設定をSDKのnative経路で読み込む
-  - SDKの`PreToolUse`でread-only以外をaskにし、native設定が自動許可する場合も`canUseTool`からWithMateの共通承認UIへ中継する。`AskUserQuestion`は選択肢と自由入力を保持した共通質問UIへ、MCP elicitationも共通UIへ中継する。同一turnの承認・質問は直列化し、未回答のpending要求を上書きしない。MCPのfield変換はCopilotと共有し、選択肢のlabel、既定値、入力制約を保持する。応答・tool操作・usageを共通live state、監査、artifactへ投影し、Bashだけをraw command付きの`command_execution`として扱う
+  - SDKの`PreToolUse`でread-only以外をaskにし、native設定が自動許可する場合も`canUseTool`からWithMateの共通承認UIへ中継する。`AskUserQuestion`は選択肢と自由入力を保持した共通質問UIへ、MCP elicitationも共通UIへ中継する。同一turnの承認・質問は直列化し、未回答のpending要求を上書きしない。MCPのfield変換はCopilotと共有し、選択肢のlabel、既定値、入力制約を保持する。応答・tool操作・usageを共通live state、artifactへ投影し、Bashだけをraw command付きの`command_execution`として扱う
   - background planeは別の非永続sessionで構造化JSONを要求し、tools / MCP / hooksを無効化する。`resolveSettings({ cwd, settingSources: [] })`でmanaged sourceまたは設定検査失敗を検出した場合、実行物を起動せず拒否する。user / project / local設定は読まず、親プロセスの環境変数とSDKが参照する既存CLIログインを利用する。設定ファイルだけにある認証helperや認証・接続先設定は共有しない
   - SDK transcriptはWithMateの履歴・workspaceとは別にClaude側が管理し、WithMateのsession削除で消さない。quota残量は取得不能としてtelemetryを`null`にし、token / cache usageのみturn単位で扱う。API換算USDは実請求額として表示しない。backgroundの補助処理も解決された認証先の利用枠を消費する。同じ契約枠になる条件は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う
 
@@ -116,16 +115,16 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
    - workspace 外 path は `allowedAdditionalDirectories` 配下だけを許可する
 5. prompt composer がCharacter context、user inputと添付referenceをproviderへ渡す形式に正規化する
 6. Main Process が送信された `executionOptions.catalogRevision` と session の `provider` から provider catalog を解決し、revision、model、reasoning depth、実行 option 値を検証する。model が存在しない、depth が非対応などの不正な選択は turn 開始保存・Provider 起動前に拒否し、default や保存値へ置換しない
-7. 検証済み`executionOptions`を独立したturn snapshotとしてprompt、coding plane adapter、監査ログへ渡し、provider-native実行へ変換する
+7. 検証済み`executionOptions`を独立したturn snapshotとしてprompt、coding plane adapter、最小turn記録へ渡し、provider-native実行へ変換する
    - `CodexAdapter`: file / folderのworkspace外accessはsession metadata `allowedAdditionalDirectories`からsandbox policyの`writableRoots`へ変換し、画像は`localImage` inputとして`turn/start`へ渡す。model、effort、approval、sandbox、service tier、reviewerは送信時の検証済み値を使う
-   - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時はaudit logにdebug metadataを残す
+   - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時は診断ログに必要なerror metadataを残す
    - `ClaudeAdapter`: 共通prompt、検証済み添付、実行optionをSDK `query()`へ渡す。`resume`は保存済みの明示session IDだけを使い、承認・質問を共通pending UIへ返す
 8. provider ownerがstream eventからsanitized live stateとprovider telemetryを組み立て、Main ProcessがIPCでSession Windowへ中継する。Codexのprojectionは共有Workerが所有し、transportと制御requestはMain Processに残す
    - live state には `approvalRequest` と `elicitationRequest` を含められる
    - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する
    - Codexはnative `turn/completed`の`completed / failed / interrupted`をterminal outcomeの正本とする。`error`通知はdiagnosticとして扱い、terminal前の切断は失敗とする。transport終了はbounded cleanupとして扱う
 9. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
-10. Main Process が `running / completed / canceled / failed` の監査ログを 1 turn 1 record で SQLite に保存する。terminal phase の最小更新を先に確定し、詳細は bounded enrichment として後段で更新する
+10. Main Processが開始・終端の最小turnをSQLiteへ保存し、終端では通常本文・artifactと関連するmessage位置を確定する。stream中の累積snapshotを永続化しない
 11. Renderer は Session summary invalidation と live state 購読を使って再描画する
 
 ## Prompt Composition Constraint
@@ -189,7 +188,7 @@ approval mode は WithMate が対応する Codex policy 値を正本にする。
 
 方針:
 
-- renderer / shared state / session persistence / audit logではCodex policy値をwrite-pathの正本として扱う
+- renderer / shared state / session persistence / 最小turn記録ではCodex policy値をwrite-pathの正本として扱う
 - 既存 row に残る legacy 値は read-path normalize で吸収する
   - `allow-all -> never`
   - `safety -> untrusted`
@@ -199,7 +198,7 @@ approval mode は WithMate が対応する Codex policy 値を正本にする。
 - ClaudeAdapterは`on-request`だけを選択可能にし、SDKのdefault permissionと共通approval / elicitation UIで処理する
 - UIはpolicy値をそのまま表示せず、`Auto Run` / `Provider Controlled` / `Safety Focused`のdisplay labelへ変換する。保存・API・adapter境界ではpolicy値をrawのまま保持し、providerごとに出すchoicesを分ける
 
-session作成、永続化、監査、artifact表示、resume復元ではpolicy値を追跡し、providerごとの差異はprovider-specific choicesとadapter実装で吸収する。
+session作成、永続化、最小turn、artifact表示、resume復元ではpolicy値を追跡し、providerごとの差異はprovider-specific choicesとadapter実装で吸収する。
 
 ## Sandbox Modes
 
@@ -273,57 +272,53 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
   - 必要なら pending approval request
 - Codex native itemsに`agentMessage`が複数ある場合、Session UIに表示するassistant textはarrival順に空行区切りで連結する
 - Codexの一時的なstream errorは同一thread / turnの有効なitem activityで解除する。別scopeや未知itemへのdeltaでは解除せず、terminal後は確定した失敗理由を保持する
-- Raw Itemsとoperationsは各`agentMessage`を個別に保持し、監査では元の粒度を失わない
 - live state は Main Process の memory 上だけに持ち、session DB へは保存しない
 - Session Window を開き直した場合は、Main Process が保持している live state を再購読して復元する
 - Session Window から `Cancel` を押した場合は、Main Process が保持している `AbortController` で provider 実行を中断する
 - Claudeの個別approval / elicitation要求はSDKのrequest signalとturn signalを共通pending serviceまで渡す。要求取消ではresolverとlive表示を解除してから直列待機列の次要求を表示し、取消済みrequestIdへの回答は拒否する。待機列内の取消済み要求は表示せず、turn全体の取消・子プロセス実終了待ちとは区別する
 - Copilot の approval request は Main Process が pending resolver を保持し、Session UI の `今回だけ許可 / 拒否` を受けて permission handler を再開する
-- turn 完了時だけ session 本体と audit log を確定値で更新する
-- canceled / failedでも、取得済みassistant textとnative itemsはpartial resultとして回収し、Audit Logと`Details`に残す
+- turn終端で通常履歴と最小turnを確定値で保存する
+- canceled / failedでも、取得済みassistant textとnative itemsはpartial resultとして回収し、通常履歴の`Details`に残す
 
 ### Codex projection owner
 
 CodexAdapterは同時turnで1つのprojection Workerを共有し、最後のturnを解放した時に停止する。Workerはopaque run IDごとにnative items、増分text cache、step projection、turn固有のredactorを保持する。次turnや別runへ本文・binding・API keyのcacheを流用しない。binding registry、logical turn、lease、transport、承認・取消、個別process cleanupのownerはMain Processに残す。
 
-assistant／reasoningはitem単位で更新し、arrival順の全量連結とbounded previewを必要時だけ生成する。command deltaは全reasoningを走査せず、terminalの一括item適用後に集約する。変更していないstepは再projection・再redactionしない。表示・Auditに影響しない通知ではsnapshotを生成しないが、取得済みnative itemsと未知itemのraw情報は保持する。
+assistant／reasoningはitem単位で更新し、arrival順の全量連結とbounded previewを必要時だけ生成する。command deltaは全reasoningを走査せず、terminalの一括item適用後に集約する。変更していないstepは再projection・再redactionしない。表示に影響しない通知ではsnapshotを生成しないが、取得済みnative itemsと未知itemのraw情報は保持する。
 
-Audit配送は変更stepと変更したassistant preview／usage／errorだけを返し、reasoningは保存対象にしない。Audit-onlyの空textとnull usageはRuntimeの観測済み値を維持する。Auditの全変更受付とlive表示を分離し、live-onlyは追加保存せず、Audit-onlyは表示を更新しない。live snapshotは33msを目安に生成し、未完了のlive要求は1件とdirty flagだけを持つ。最後のdeltaの後にもtimerで最新表示へ追いつき、終了・取消時は最終snapshotをflushする。承認・取消・terminalの入力入口閉鎖とerror通知はlive timerを待たない。Audit容量超過・保存失敗は明示失敗とし、黙って間引かない。
+live snapshotは33msを目安に生成し、未完了のlive要求は1件とdirty flagだけを持つ。最後のdeltaの後にもtimerで最新表示へ追いつき、終了・取消時は最終snapshotをflushする。承認・取消・terminalの入力入口閉鎖とerror通知はlive timerを待たない。progressは一時的な表示の更新であり、保存queueを持たない。
 
 stdio transportは正常な受信frame、未消費event、送信frameを件数・容量だけで拒否しない。通知・server requestは到着順に保持し、`nextEvent`で取り出した参照は直ちに解放する。FIFOは毎回配列全体を移動せず、消費済み領域をまとめて除去する。RPC応答はeventキューを経由せずIDで解決し、承認・質問・取消・追加入力の応答を塞がないためにstdout全体の読取を停止しない。不正UTF-8／JSON／envelope、通信断、実際のwrite失敗は引き続き失敗とする。
 
-Worker clientは未応答commandの件数・容量だけで受付を拒否せず、容量計測用のJSON化も行わない。adapterは各turnの通知を最大32 eventまたは次のmacrotaskでまとめて配送し、未完了8 batchでは完了を待って次の配送へ進む。通知の順序と各Audit変更を保持し、32 event読取ごとにもyieldする。別threadの通知と不要な別turn通知はWorkerへ転送しないが、usage baselineに必要な過去turnのtokenUsageは保持する。承認・質問・取消・terminalの制御はMainに残し、終了・取消・失敗時にも受信済みbatchを反映してpartialを回収する。5秒以内に応答しないWorkerやWorker異常では要求をrejectし、Mainでの全量projection fallbackや自動再実行をしない。
+Worker clientは未応答commandの件数・容量だけで受付を拒否せず、容量計測用のJSON化も行わない。adapterは各turnの通知を最大32 eventまたは次のmacrotaskでまとめて配送し、未完了8 batchでは完了を待って次の配送へ進む。通知の順序と各投影変更を保持し、32 event読取ごとにもyieldする。別threadの通知と不要な別turn通知はWorkerへ転送しないが、usage baselineに必要な過去turnのtokenUsageは保持する。承認・質問・取消・terminalの制御はMainに残し、終了・取消・失敗時にも受信済みbatchを反映してpartialを回収する。5秒以内に応答しないWorkerやWorker異常では要求をrejectし、Mainでの全量projection fallbackや自動再実行をしない。
 
 runの解放は先行commandの後に配送し、Workerのowner削除応答かWorker異常終了なしにclient登録だけを失わない。native itemsとredactorを孤立したownerとして保持し続けない。
 
-最終assistant本文、operations、bounded raw JSONとmetadataはWorkerで集約・秘匿化し、artifactのfilesystem snapshot／diffはMainで補完する。live previewの長さでfinal本文を切らず、取消・失敗時も取得済みpartialを回収する。rawの個別128×1024・最終512×1024 code units予算と省略markerは診断情報の保持用途に限定し、必要な本文やWorker入力へ適用しない。
+最終assistant本文、operations、必要なprovider metadataはWorkerで集約・秘匿化し、artifactのfilesystem snapshot／diffはMainで補完する。live previewの長さでfinal本文を切らず、取消・失敗時も取得済みpartialを回収する。backgroundの診断traceを取得する場合はrawの個別128×1024・最終512×1024 code units予算と省略markerを維持し、正常なWorker入力へ容量上限を適用しない。通常turnのraw JSONを独立して永続化しない。
 
 ## Error Handling
 
 - provider 実行失敗時は Main Process が session を `runState=error` へ更新する
 - Renderer に raw stack trace は出さず、UI 向けの失敗メッセージへ整形する
 - Codexの失敗時は保存済み`threadId`を保持し、resume拒否を新threadの成功へ置き換えない。他providerのstale session回復は各adapterの契約に従う
-- ユーザーキャンセル時は監査ログに `phase=canceled` を記録する
+- ユーザーキャンセル時は最小turnに `phase=canceled` を記録する
 - setup 中の cancel intent も保持し、setup dependency または provider が abort 後に settle しない場合は cancel grace 後に呼び出しを収束させる。元処理が実際に終了するまでは同一 session の再送を拒否する
 - Main は取消受付を live run の `cancellationState = requested`、cancel grace 後も未終了の処理を `terminating` として投影する。terminal Session の保存が `idle` を返しても取消待ちを解除せず、元処理と終端保存が終了して admission guard が解放された時に live 取消状態を解除・通知する。重複取消は同一 turn の要求として扱う
-- 失敗時は監査ログにも `phase=failed` を記録し、`system / input / composed prompt` と error を残す
-- canceled / failed のどちらでも、取得済みの `assistant text` / operations / raw items / artifact があれば捨てずに残す
+- 失敗時は最小turnに `phase=failed` とerror summaryを記録する
+- canceled / failed のどちらでも、取得済みの `assistant text` / operations / artifact があれば捨てずに残す
 - `CopilotAdapter` は cached session 再利用中の `SessionNotFound` / stale connection も同一 turn 内で 1 回だけ internal retry できる
   - retry 前には cached `CopilotSession` と client cache を破棄する
   - retry 後は既存の `resumeSession(threadId)` を再試行し、missing session なら `createSession()` fallback へ落とす
-  - `raw items` しか無い失敗や `session.error` だけの局面では retry を妨げず、`assistantText` / completed 済みの command / `artifact.changedFiles` など user-visible partial がある時だけ retry を止める
-  - `tool.execution_start` や pending permission のような未確定 step は retry blocker に含めない
+  - `session.error` や未対応event診断だけの局面では retry を妨げず、取得済みの `assistantText` / terminal操作（completed・failed・canceled）/ exitCode・error・操作の非空partial output / `artifact.changedFiles` がある時は retry を止める。partial outputの取得はturn実行中の証拠で判定し、artifactのdetails本文から推定しない
+  - `tool.execution_start` や pending permission のような未確定 step だけでは retry を妨げない。承認情報を継承した開始details、開始step由来のactivity summary、実行設定由来のrun checksも実行結果として扱わない
 - DB reset は running session がある間は拒否し、そのエラーメッセージを renderer にそのまま返す
 
-## Audit Logging
+## 通常履歴と最小turn
 
-- prompt composer が作った `system / input / composed prompt` を監査ログへ保存する
-- 画像添付がある場合の `composed prompt` は text 部分のみで、画像 payload は別送される
- - Copilot の file / folder attachment も text prompt とは別送される
-- provider itemsは読みやすい`operations`とrawの`raw_items_json`の両方で残す
-- Session Window から監査ログを overlay で閲覧できるようにする
-- stream中のassistant snapshotと変更stepは、変更ownerからのprogress情報を使って監査ログへ増分保存する。受付容量超過は明示失敗とし、表示用のlatest-only集約でAuditを省略しない。受付・終端後の保存順序は[Audit Log](audit-log.md)を参照する
-- Settings の DB reset を実行した場合は audit logs も初期化対象に含める
+- assistant本文と操作結果は通常履歴・artifactへ保存し、`Details`で閲覧する。操作の配列順を保持し、独立した順序台帳を設けない
+- prompt、transport payload、raw event、本文tokenやstdout chunkごとの累積snapshotを別に保存しない
+- 最小turnはphase、実行設定、message位置、thread、時刻、error summaryを保存し、取消・retry・Conversation Timing・Character Affectの関連付けに使う
+- 保存失敗、結果不明、owner不一致を正常emptyや成功に変換せず、旧storage generationや削除済みownerへ書き戻さない
 
 ## Slash Command Routing
 
@@ -351,5 +346,4 @@ runの解放は先行commandの後に配送し、Workerのowner削除応答かWo
 - `docs/design/prompt-composition.md`
 - `docs/design/electron-session-store.md`
 - `docs/design/model-catalog.md`
-- `docs/design/audit-log.md`
 - `docs/design/coding-agent-capability-matrix.md`

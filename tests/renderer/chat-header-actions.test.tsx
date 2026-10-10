@@ -19,7 +19,7 @@ const noop = () => {};
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionHeaderは低頻度のsession管理操作をaccessible menu itemとしてPin・Rename・Audit Log・Deleteへまとめる"
+// claim = "SessionHeaderは低頻度のsession管理操作をaccessible menu itemとしてPin・Rename・Deleteへまとめる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
 // fault = "管理操作を常設してsession headerを圧迫するか、menu itemのaccessible nameまたはpressed stateを失う"
 // observable = "Session actions summaryとrole=menu/menuitem、Pinのaria-pressed、各操作label"
@@ -36,7 +36,6 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
       isEditingTitle={false}
       titleDraft="Session"
       isRunning={false}
-      onOpenAuditLog={noop}
       onOpenTerminal={noop}
       onTitleDraftChange={noop}
       onTitleInputKeyDown={noop}
@@ -54,7 +53,6 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
   assert.match(html, /role="menu"/);
   assert.match(html, /role="menuitem" aria-pressed="false" aria-label="Pin">Pin<\/button>/);
   assert.match(html, /role="menuitem">Rename<\/button>/);
-  assert.match(html, /role="menuitem">Audit Log<\/button>/);
   assert.match(html, /role="menuitem">Delete<\/button>/);
 });
 
@@ -106,7 +104,6 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
         isEditingTitle={false}
         titleDraft="Session"
         isRunning={false}
-        onOpenAuditLog={() => actions.push("audit")}
         onOpenTerminal={noop}
         onTitleDraftChange={noop}
         onTitleInputKeyDown={noop}
@@ -142,7 +139,7 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
     assert.equal(details.open, false);
     assert.equal(dom.window.document.activeElement, trigger);
 
-    for (const [label, action] of [["Pin", "pin"], ["Rename", "rename"], ["Audit Log", "audit"], ["Delete", "delete"]]) {
+    for (const [label, action] of [["Pin", "pin"], ["Rename", "rename"], ["Delete", "delete"]]) {
       await act(async () => trigger.click());
       const item = [...container.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]")]
         .find((button) => button.textContent === label);
@@ -216,6 +213,16 @@ test("createMessageCollapseHeaderAction は既存header button語彙とshortcut�
   assert.match(expandedHtml, />Expand<\/button>/);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "live headerはAuxiliaryの親rename/deleteを無効化しworkspaceとsession filesの操作を描画する"
+// oracle = { type = "contract", ref = "src/chat/chat-header-actions.tsx" }
+// fault = "親会話のrename/deleteをAuxiliaryへ許可するかExplorer/Terminal導線を失う"
+// observable = "header visibilityとWorkspace/Session FilesのHTML"
+// observation_boundary = "consumer"
+// scope = "live-header-capabilities"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildLiveSessionHeaderProps は live session header の共通 action を組み立てる", () => {
   const onOpenSessionFilesExplorer = () => {};
   const onOpenSessionFilesTerminal = () => {};
@@ -226,10 +233,7 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
     titleDraft: "Session",
     isRunning: false,
     isAuxiliaryMode: true,
-    canViewAuxiliaryAuditLog: true,
     canDeleteSession: true,
-    canViewAuditLog: true,
-    onOpenAuditLog: noop,
     onOpenTerminal: noop,
     onOpenSessionFilesExplorer,
     onOpenSessionFilesTerminal,
@@ -246,7 +250,6 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
 
   assert.equal(props.taskTitle, "Session");
   assert.equal(props.showRenameButton, false);
-  assert.equal(props.showAuditLogButton, true);
   assert.equal(props.showDeleteButton, false);
   assert.match(workspaceHtml, />Explorer<\/button>/);
   assert.match(sessionFilesHtml, />Explorer<\/button>/);
@@ -275,11 +278,9 @@ test("SessionHeader はpin stateとpending stateを操作ボタンへ投影す�
     isPinned={true}
     isPinPending={true}
     showRenameButton={false}
-    showAuditLogButton={false}
     showTerminalButton={false}
     showDeleteButton={false}
     onTogglePin={noop}
-    onOpenAuditLog={noop}
     onOpenTerminal={noop}
     onTitleDraftChange={noop}
     onTitleInputKeyDown={noop}

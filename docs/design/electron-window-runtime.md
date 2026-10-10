@@ -9,7 +9,7 @@ WithMate の `Home Window`、`Session Window`、`Session Monitor Window`、`Sett
 - この文書は `window-architecture.md` の supporting doc として扱う
 - window の上位責務と mode 切り替え判断は `docs/design/window-architecture.md` を正本とする
 - session 実行 lifecycle は `docs/design/session-run-lifecycle.md` を参照する
-- session / audit / memory persistence は `docs/design/electron-session-store.md` を参照する
+- session / turn / memory persistence は `docs/design/electron-session-store.md` を参照する
 
 ## Scope
 
@@ -141,7 +141,7 @@ current 実装の API surface は次の domain に分かれる。
 
 node-ptyはタブごとのElectron utility process内で起動要求時にloadし、WindowsはSystemRoot内のWindows PowerShell、macOSは`/bin/zsh`を実行する。native moduleや非同期socketの異常をMain・他の端末から隔離し、hostの予期しない終了は当該タブの`Failed`として通知する。Mainとhostの接続にはElectronのメッセージAPIを使う。workspace内や相対PATHの同名プログラムをshellに選ばず、cwdの文字列をtrimしない。load・shell・cwd・spawnの失敗は端末単位の失敗として返し、外部Terminalへのfallbackや自動respawnは行わない。
 
-出力は専用eventからxtermの`write`へ渡し、その完了callbackで処理済み文字数を返す。PTYは未処理量のhigh/low watermarkでpause/resumeする。非選択・折りたたみ中も受信と処理を継続し、本文をReact state、Session保存、Audit Log、Memory、診断ログへ複製しない。端末の履歴はxtermのscrollback上限に従う。
+出力は専用eventからxtermの`write`へ渡し、その完了callbackで処理済み文字数を返す。PTYは未処理量のhigh/low watermarkでpause/resumeする。非選択・折りたたみ中も受信と処理を継続し、本文をReact state、Session保存、Memory、診断ログへ複製しない。端末の履歴はxtermのscrollback上限に従う。
 
 タブ終了、Window破棄、renderer終了・document navigation、Session削除、アプリ終了でownerのPTYと購読を解放する。起動待機中に解放された要求は、後からspawnが完了してもPTYを残さない。Window close時も個別タブと同じ判定で、実行中・起動中・判別不能な端末があれば終了を非同期で一括確認する。入力待ち・終了済み端末だけなら端末理由の確認は省略し、AI実行中ならWindowを閉じても実行を継続する確認へまとめる。確認待ちの重複closeを抑止し、承認後も既存のdraft flushを待つ。確認結果は元のWindow identityへ限定する。
 
@@ -192,6 +192,6 @@ preload API / IPC の成立を優先し、現行実装は `sandbox: false` を�
 - `desktop-ui.md`
   - 現行 desktop UI の構成
 - `electron-session-store.md`
-  - session / audit / memory persistence orchestration
+  - session / turn / memory persistence orchestration
 - `session-run-lifecycle.md`
   - running session の保護制御

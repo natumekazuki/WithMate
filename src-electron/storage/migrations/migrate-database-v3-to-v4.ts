@@ -2,14 +2,10 @@ import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { openAppDatabaseReadOnly, openMigrationDatabase } from "../sqlite-connection.js";
-
-import type { AuditLogEntry } from "../../../src-shared/session/runtime-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL, CREATE_MODEL_CATALOG_TABLES_SQL } from "../database-schema-v1.js";
 import { APP_DATABASE_V3_FILENAME, isValidV3Database } from "../database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME, CREATE_V4_SCHEMA_SQL } from "../database-schema-v4.js";
-import { AuditLogStorage } from "../../session/audit-log-storage.js";
-import { AuditLogStorageV3 } from "../../session/audit-log-storage-v3.js";
 import { MateStorage } from "../../mate/mate-storage.js";
 import { SessionStorage } from "../../session/session-storage.js";
 import { SessionStorageV3 } from "../../session/session-storage-v3.js";
@@ -31,9 +27,6 @@ export type V3ToV4MigrationCounts = {
   sessions: number;
   sessionMessages: number;
   sessionMessageArtifacts: number;
-  auditLogs: number;
-  auditLogDetails: number;
-  auditLogOperations: number;
   appSettings: number;
   modelCatalogRevisions: number;
   modelCatalogProviders: number;
@@ -84,8 +77,6 @@ const MODEL_CATALOG_MODEL_COLUMNS = [
 export const OBSOLETE_V4_IMPORT_TARGET_TABLES = [
   "session_message_artifacts",
   "session_messages",
-  "audit_log_details",
-  "audit_log_operations",
 ] as const;
 
 function sqliteDatabaseFilePaths(dbPath: string): string[] {
@@ -176,9 +167,6 @@ function readCounts(db: DatabaseSync): V3ToV4MigrationCounts {
     sessions: readCount(db, "sessions"),
     sessionMessages: readCount(db, "session_messages"),
     sessionMessageArtifacts: readCount(db, "session_message_artifacts"),
-    auditLogs: readCount(db, "audit_logs"),
-    auditLogDetails: readCount(db, "audit_log_details"),
-    auditLogOperations: readCount(db, "audit_log_operations"),
     appSettings: readCount(db, "app_settings"),
     modelCatalogRevisions: readCount(db, "model_catalog_revisions"),
     modelCatalogProviders: readCount(db, "model_catalog_providers"),
@@ -283,11 +271,6 @@ function dropObsoleteV4ImportTargetTables(targetDb: DatabaseSync): void {
   }
 }
 
-function auditLogInput(entry: AuditLogEntry): Omit<AuditLogEntry, "id"> {
-  const { id: _id, ...input } = entry;
-  return input;
-}
-
 function toLegacyReadOnlySession(session: Session): Session {
   return {
     ...session,
@@ -344,9 +327,7 @@ export async function createMigrationWriteReport(input: {
   const sourceDb = openReadOnlySource(input.sourceDatabaseFile);
   let targetDb: DatabaseSync | null = null;
   let sourceSessionStorage: SessionStorageV3 | null = null;
-  let sourceAuditStorage: AuditLogStorageV3 | null = null;
   let targetSessionStorage: SessionStorage | null = null;
-  let targetAuditStorage: AuditLogStorage | null = null;
   let backups: SqliteBackupFile[] = [];
   let migrationSucceeded = false;
 
@@ -356,20 +337,11 @@ export async function createMigrationWriteReport(input: {
     createV4BaseSchema(tempTargetDatabaseFile, userDataPath);
 
     sourceSessionStorage = new SessionStorageV3(input.sourceDatabaseFile, sourceBlobRootPath, { readOnly: true });
-    sourceAuditStorage = new AuditLogStorageV3(input.sourceDatabaseFile, sourceBlobRootPath, { readOnly: true });
     targetSessionStorage = new SessionStorage(tempTargetDatabaseFile);
-    targetAuditStorage = new AuditLogStorage(tempTargetDatabaseFile);
 
     const sessions = (await sourceSessionStorage.listSessions()).map(toLegacyReadOnlySession);
     await targetSessionStorage.replaceSessions(sessions);
-
-    let migratedAuditLogs = 0;
     for (const session of sessions) {
-      const auditLogs = await sourceAuditStorage.listSessionAuditLogs(session.id);
-      for (const auditLog of auditLogs) {
-        targetAuditStorage.createAuditLog(auditLogInput(auditLog));
-        migratedAuditLogs += 1;
-      }
     }
 
     targetDb = openMigrationDatabase(tempTargetDatabaseFile);
@@ -379,8 +351,6 @@ export async function createMigrationWriteReport(input: {
     targetDb = null;
     targetSessionStorage.close();
     targetSessionStorage = null;
-    targetAuditStorage.close();
-    targetAuditStorage = null;
 
     publishMigratedDatabase(tempTargetDatabaseFile, input.targetDatabaseFile);
     migrationSucceeded = true;
@@ -398,18 +368,13 @@ export async function createMigrationWriteReport(input: {
         sessions: sessions.length,
         sessionMessages: v3Counts.sessionMessages,
         sessionMessageArtifacts: v3Counts.sessionMessageArtifacts,
-        auditLogs: migratedAuditLogs,
-        auditLogDetails: v3Counts.auditLogDetails,
-        auditLogOperations: v3Counts.auditLogOperations,
         ...catalogCounts,
       },
     };
   } finally {
     targetDb?.close();
     sourceSessionStorage?.close();
-    sourceAuditStorage?.close();
     targetSessionStorage?.close();
-    targetAuditStorage?.close();
     sourceDb.close();
 
     if (migrationSucceeded) {

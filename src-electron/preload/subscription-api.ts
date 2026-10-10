@@ -50,6 +50,11 @@ export function createSubscriptionApi(
   ipcRenderer: IpcRendererLike,
 ): WithMateWindowSubscriptionApi {
   return {
+    onSessionTurnUpdated(listener) {
+      return subscribe(ipcRenderer, channels.WITHMATE_SESSION_TURN_UPDATED_EVENT, (payload: unknown) => {
+        if (typeof payload === "string" && payload) listener(payload);
+      });
+    },
     subscribeSessionDraftFlushRequest(listener) {
       return subscribe(
         ipcRenderer,

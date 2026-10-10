@@ -70,10 +70,10 @@ function adapter(
         threadId: value.threadId,
         assistantText: value.assistantText,
         lastNonEmptyAssistantMessageText: value.finalText,
-        logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-        transportPayload: null,
-        operations: [],
-        rawItemsJson: "[]",
+
+
+
+
         usage: null,
       }));
       if (!input.signal) {
@@ -94,10 +94,10 @@ function adapter(
             {
               threadId: null,
               assistantText: "",
-              logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-              transportPayload: null,
-              operations: [],
-              rawItemsJson: "[]",
+
+
+
+
               usage: null,
             },
             true,
@@ -120,7 +120,7 @@ function makeRuntimeService(
   adapters: Map<string, ProviderCodingAdapter>,
   confirmedFinalTexts: string[],
 ) {
-  let auditId = 0;
+  let turnId = 0;
   const liveRuns = new Map<string, any>();
   const appSettings = normalizeAppSettings({});
   appSettings.codingProviderSettings.gemini = { enabled: true, apiKey: "", skillRootPath: "" };
@@ -153,9 +153,8 @@ function makeRuntimeService(
       updatedAt: new Date().toISOString(),
     }),
     resolveProjectMemoryEntriesForPrompt: () => [],
-    createAuditLog: (input) => ({ id: ++auditId, ...input }),
-    updateAuditLog: () => undefined,
-    updateAuditLogProgress: () => ({ insertedOperations: [] }),
+    createSessionTurn: (input) => ({ id: ++turnId, ...input }),
+    updateSessionTurn: () => undefined,
     setLiveSessionRun: (id, state) => state ? liveRuns.set(id, state) : liveRuns.delete(id),
     getLiveSessionRun: (id) => liveRuns.get(id) ?? null,
     waitForApprovalDecision: () => "approve",

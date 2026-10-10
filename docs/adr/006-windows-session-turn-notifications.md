@@ -1,5 +1,9 @@
 # 006 Windows Session Turn Notifications
 
+## 現在の適用範囲
+
+通知条件とpreview sourceの判断は維持する。本文の独立Auditへの保存・詳細更新に関する記述は現行運用の適用対象外とする。操作結果は通常履歴のartifact、実行phaseは最小turnを正本とする後継判断へ置換した。通知は通常履歴と最小turnのterminal保存後に行い、独立した詳細保存を待たない。現行契約は[Session Run Lifecycle](../design/session-run-lifecycle.md)を参照する。本文は当時の判断として保持する。
+
 - 状態: Accepted
 - 日付: 2026-07-29
 - 適用補足: 通知契機、previewの秘匿・上限、activation、失敗分離の判断は引き続き有効。以下の日本語通知文は決定当時の例であり、アプリ所有の通知文言は [Desktop UIの表示言語規約](../design/desktop-ui.md#表示言語操作状態) に従う英語表記へ置き換えた。Session名と返答previewの原文は維持する。

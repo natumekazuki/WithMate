@@ -25,7 +25,6 @@ export type SessionHeaderOperations = {
     isPinPending: boolean;
     isAuxiliaryMode?: boolean;
     isWorkspaceAvailable: boolean;
-    onOpenAuditLog: () => void;
     onOpenSessionTerminal: () => void;
     onOpenExternalTerminal?: () => void;
     onOpenSessionFilesExplorer: () => void;
@@ -126,10 +125,7 @@ export function useSessionHeaderOperations(input: {
       isPinned: view.isPinned,
       isPinPending: view.isPinPending,
       isAuxiliaryMode: view.isAuxiliaryMode,
-      canViewAuxiliaryAuditLog: true,
       canDeleteSession: true,
-      canViewAuditLog: true,
-      onOpenAuditLog: view.onOpenAuditLog,
       onOpenTerminal: view.onOpenSessionTerminal,
       onOpenExternalTerminal: view.onOpenExternalTerminal,
       isTerminalDisabled: !view.isWorkspaceAvailable,

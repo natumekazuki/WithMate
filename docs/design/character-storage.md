@@ -140,7 +140,7 @@ snapshot の field shape は `src-shared/character/character-catalog.ts`、norma
 - `character.md` の invalid update は metadata update と分離して拒否する。
 - Character 作成中に icon コピー後の validation / DB update が失敗した場合は、作成中の `characters/<character-id>/` directory を削除する。
 - Character metadata 更新で managed icon を置換した場合は旧 icon file を best-effort で削除する。削除に失敗しても DB は新しい icon を指し、保存全体は失敗させない。
-- archive は directory を削除しない。過去 session snapshot と audit 参照を優先する。
+- archive は directory を削除しない。過去 session snapshot と通常履歴の参照を優先する。
 - 同名 Character を再作成しても、過去 session を name fallback で自動再接続しない。
 - app database reset / recreate では SQLite metadata と `characters/` file body を同時に削除する。DB だけを消して orphan `character.md` / `character-notes.md` / `icon.<ext>` を残さない。
 

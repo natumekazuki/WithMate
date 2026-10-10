@@ -6,7 +6,6 @@ import {
   APP_DATABASE_V2_FILENAME,
   APP_DATABASE_V2_SCHEMA_VERSION,
   CREATE_V2_SCHEMA_SQL,
-  V2_AUDIT_LOG_SUMMARY_COLUMNS,
   V2_SCHEMA_STATUS,
   V2_SESSION_SUMMARY_COLUMNS,
 } from "../../src-electron/storage/database-schema-v2.js";
@@ -40,36 +39,6 @@ const EXPECTED_SESSION_SUMMARY_COLUMNS = [
   "allowed_additional_directories_json",
   "thread_id",
   "message_count",
-  "audit_log_count",
-] as const;
-
-const EXPECTED_AUDIT_LOG_SUMMARY_COLUMNS = [
-  "id",
-  "session_id",
-  "created_at",
-  "phase",
-  "provider",
-  "model",
-  "reasoning_effort",
-  "approval_mode",
-  "thread_id",
-  "assistant_text_preview",
-  "operation_count",
-  "raw_item_count",
-  "input_tokens",
-  "cached_input_tokens",
-  "output_tokens",
-  "has_error",
-  "error_message",
-  "detail_available",
-] as const;
-
-const AUDIT_DETAIL_PAYLOAD_COLUMNS = [
-  "logical_prompt_json",
-  "transport_payload_json",
-  "assistant_text",
-  "raw_items_json",
-  "usage_json",
 ] as const;
 
 function createV2Schema(): DatabaseSync {
@@ -92,6 +61,18 @@ function columnNames(db: DatabaseSync, tableName: string): string[] {
 }
 
 describe("database-schema-v2", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V2移行元のDB識別定数とCREATE_V2_SCHEMA_SQLが生成する7tableの構成を維持する"
+  // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v2.ts: APP_DATABASE_V2_FILENAME / APP_DATABASE_V2_SCHEMA_VERSION / V2_SCHEMA_STATUS / CREATE_V2_SCHEMA_SQL; docs/design/database-schema.md: 起動時の移行とデータ保護" }
+  // fault = "V2 DBのfilename/version/statusを変えるか、CREATE_V2_SCHEMA_SQLが必要なtableを欠落・余分に作成する"
+  // observable = "V2識別定数とメモリ内SQLiteのsqlite_schema table名一覧"
+  // observation_boundary = "declaration"
+  // scope = "main/database-schema-v2"
+  // lifecycle = "permanent"
+  // impact = "対応するV2移行元のschema構成を誤り、通常会話とartifactを後続migrationが読めなくなる"
+  // distinction = "型検査ではSQLを実行せずtableの欠落を検出できない。移行のrow保持ではなくV2生成DDLの構成を直接確認する"
+  // @end-test-value
   it("withmate-v2.db 用の実装可能 schema として固定する", () => {
     assert.equal(APP_DATABASE_V2_FILENAME, "withmate-v2.db");
     assert.equal(APP_DATABASE_V2_SCHEMA_VERSION, 2);
@@ -101,9 +82,6 @@ describe("database-schema-v2", () => {
     try {
       assert.deepEqual(tableNames(db), [
         "app_settings",
-        "audit_log_details",
-        "audit_log_operations",
-        "audit_logs",
         "model_catalog_models",
         "model_catalog_providers",
         "model_catalog_revisions",
@@ -118,10 +96,10 @@ describe("database-schema-v2", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "V2 session message schema は bookmark stateを既存message detailの列として保持する"
-  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
-  // fault = "V2 session_messagesにis_bookmarked列がなく、bookmark stateの保存先を持てない"
-  // observable = "session_messagesのschema column names"
+  // claim = "V2は一覧用session headerと順序付きmessage、bookmark列、独立artifact detailの列を分離する"
+  // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v2.ts: V2_SESSION_SUMMARY_COLUMNS / CREATE_V2_SESSIONS_TABLE_SQL / CREATE_V2_SESSION_MESSAGES_TABLE_SQL / CREATE_V2_SESSION_MESSAGE_ARTIFACTS_TABLE_SQL" }
+  // fault = "summary列を欠落・変更する、messageのseq/bookmark/artifact_availableを欠落させる、またはheader/messageに全量JSONを置きartifact detailを分離しない"
+  // observable = "V2_SESSION_SUMMARY_COLUMNSとSQLite PRAGMA table_infoのsessions/session_messages/session_message_artifacts列名"
   // observation_boundary = "declaration"
   // scope = "database-schema-v2 session message columns"
   // lifecycle = "permanent"
@@ -151,36 +129,17 @@ describe("database-schema-v2", () => {
   });
 
   // @test-value v2
-  // kind = "invariant"
-  // claim = "V2 audit schemaは一覧summaryとdetail payloadとoperationsを別tableへ分離する"
-  // oracle = { type = "contract", ref = "V2 database schema contract" }
-  // fault = "detail列やoperations列をsummary tableのschemaへ混在させる"
-  // observable = "各tableのcolumn names"
+  // kind = "contract"
+  // claim = "対応V2 schemaの生成DDLはMemoryGenerationとmonologueのtableを含まない"
+  // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v2.ts: V2_SCHEMA_DESIGN_NOTES / CREATE_V2_SCHEMA_SQL" }
+  // fault = "CREATE_V2_SCHEMA_SQLへsession_memories、project/character scope・memory entry、monologue名のtableを混入する"
+  // observable = "メモリ内SQLiteのsqlite_schemaから取得したtable名に対象名が含まれるか"
   // observation_boundary = "declaration"
-  // scope = "V2 audit database schema"
+  // scope = "main/database-schema-v2"
   // lifecycle = "permanent"
+  // impact = "V2移行元を生成するfixtureと対応schemaへ対象外のMemoryGeneration保存先が混入し、保存責務の分離を失う"
+  // distinction = "production DDLをSQLiteで実行してV2の対象外tableを確認し、source row保持や移行処理の成功は主張しない"
   // @end-test-value
-  it("audit log は一覧 summary と detail payload を分離する", () => {
-    const db = createV2Schema();
-    try {
-      const auditColumns = columnNames(db, "audit_logs");
-      const detailColumns = columnNames(db, "audit_log_details");
-      const operationColumns = columnNames(db, "audit_log_operations");
-
-      assert.deepEqual(V2_AUDIT_LOG_SUMMARY_COLUMNS, EXPECTED_AUDIT_LOG_SUMMARY_COLUMNS);
-      assert.deepEqual(auditColumns, [...EXPECTED_AUDIT_LOG_SUMMARY_COLUMNS]);
-      assert.deepEqual(detailColumns, ["audit_log_id", ...AUDIT_DETAIL_PAYLOAD_COLUMNS]);
-      for (const column of AUDIT_DETAIL_PAYLOAD_COLUMNS) {
-        assert.equal((auditColumns as string[]).includes(column), false);
-      }
-      assert.equal((auditColumns as string[]).includes("operations_json"), false);
-      assert.equal((detailColumns as string[]).includes("operations_json"), false);
-      assert.deepEqual(operationColumns, ["id", "audit_log_id", "seq", "operation_type", "summary", "details"]);
-    } finally {
-      db.close();
-    }
-  });
-
   it("MemoryGeneration と独り言の legacy tables を V2 正本 schema に含めない", () => {
     const db = createV2Schema();
     try {

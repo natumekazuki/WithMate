@@ -20,12 +20,9 @@ export type LiveSessionHeaderPropsInput = {
   isPinned?: boolean;
   isPinPending?: boolean;
   isAuxiliaryMode?: boolean;
-  canViewAuxiliaryAuditLog?: boolean;
   canDeleteSession: boolean;
-  canViewAuditLog: boolean;
   showTerminalButton?: boolean;
   isTerminalDisabled?: boolean;
-  onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
   onOpenExternalTerminal?: () => void;
   onOpenSessionFilesExplorer: () => void;
@@ -106,13 +103,10 @@ export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput):
     isPinPending: input.isPinPending,
     ...resolveChatHeaderVisibility({
       isAuxiliaryMode: input.isAuxiliaryMode,
-      canViewAuxiliaryAuditLog: input.canViewAuxiliaryAuditLog,
       canDeleteSession: input.canDeleteSession,
-      canViewAuditLog: input.canViewAuditLog,
     }),
     showTerminalButton: input.showTerminalButton ?? true,
     isTerminalDisabled: input.isTerminalDisabled,
-    onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenTerminal,
     onOpenExternalTerminal: input.onOpenExternalTerminal,
     sessionFilesActions: createSessionFilesActions({

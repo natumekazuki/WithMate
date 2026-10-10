@@ -194,12 +194,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     sessionQuery: {
       listSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
       listSessionCharacterUsage: () => [],
-      listSessionAuditLogs: () => [],
-      listSessionAuditLogSummaries: () => [],
-      listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
-      getSessionAuditLogDetail: () => null,
-      getSessionAuditLogDetailSection: () => null,
-      getSessionAuditLogOperationDetail: () => null,
+        getLatestSessionTurn: () => null,
       async listSessionSkills() { return []; },
       async listSessionCustomAgents() { return []; },
       async listWorkspaceSkills() { return []; },

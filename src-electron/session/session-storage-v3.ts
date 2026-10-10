@@ -19,7 +19,7 @@ import {
   type SessionSummary,
 } from "../../src-shared/session/session-state.js";
 import { normalizeProviderId } from "../../src-shared/settings/model-catalog.js";
-import type { AuditLogOperation, ChangedFile, RunCheck } from "../../src-shared/session/runtime-state.js";
+import type { MessageOperation, ChangedFile, RunCheck } from "../../src-shared/session/runtime-state.js";
 import {
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
@@ -86,15 +86,6 @@ type HomeSessionSummaryRow = {
   run_state: string;
   is_pinned: number;
   last_active_at: string | number;
-};
-
-type SessionAuditLogCountRow = {
-  id: string;
-  audit_log_count: number;
-};
-
-type SessionAuditLogCountValueRow = {
-  audit_log_count: number;
 };
 
 type SessionIdRow = {
@@ -165,9 +156,8 @@ const UPSERT_SESSION_SQL = `
     allowed_additional_directories_json,
     thread_id,
     message_count,
-    audit_log_count,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
     status = excluded.status,
@@ -193,7 +183,6 @@ const UPSERT_SESSION_SQL = `
     allowed_additional_directories_json = excluded.allowed_additional_directories_json,
     thread_id = excluded.thread_id,
     message_count = excluded.message_count,
-    audit_log_count = excluded.audit_log_count,
     last_active_at = excluded.last_active_at
 `;
 
@@ -244,9 +233,6 @@ const INSERT_MESSAGE_ARTIFACT_SQL = `
     artifact_stored_bytes
   ) VALUES (?, ?, ?, ?, ?)
 `;
-
-const GET_SESSION_AUDIT_LOG_COUNT_SQL = "SELECT audit_log_count FROM sessions WHERE id = ?";
-const LIST_SESSION_AUDIT_LOG_COUNTS_SQL = "SELECT id, audit_log_count FROM sessions";
 
 const SESSION_SUMMARY_HEADER_COLUMNS = `
   id,
@@ -409,52 +395,6 @@ const LIST_SESSION_ARTIFACT_REFS_SQL = `
     AND a.artifact_blob_id IS NOT NULL
 `;
 
-const LIST_SESSION_AUDIT_DETAIL_BLOB_IDS_SQL = `
-  SELECT logical_prompt_blob_id AS blob_id
-  FROM audit_log_details AS d
-  INNER JOIN audit_logs AS a
-    ON a.id = d.audit_log_id
-  WHERE a.session_id = ?
-    AND logical_prompt_blob_id IS NOT NULL
-  UNION
-  SELECT transport_payload_blob_id AS blob_id
-  FROM audit_log_details AS d
-  INNER JOIN audit_logs AS a
-    ON a.id = d.audit_log_id
-  WHERE a.session_id = ?
-    AND transport_payload_blob_id IS NOT NULL
-  UNION
-  SELECT assistant_text_blob_id AS blob_id
-  FROM audit_log_details AS d
-  INNER JOIN audit_logs AS a
-    ON a.id = d.audit_log_id
-  WHERE a.session_id = ?
-    AND assistant_text_blob_id IS NOT NULL
-  UNION
-  SELECT raw_items_blob_id AS blob_id
-  FROM audit_log_details AS d
-  INNER JOIN audit_logs AS a
-    ON a.id = d.audit_log_id
-  WHERE a.session_id = ?
-    AND raw_items_blob_id IS NOT NULL
-  UNION
-  SELECT usage_blob_id AS blob_id
-  FROM audit_log_details AS d
-  INNER JOIN audit_logs AS a
-    ON a.id = d.audit_log_id
-  WHERE a.session_id = ?
-    AND usage_blob_id IS NOT NULL
-`;
-
-const LIST_SESSION_AUDIT_OPERATION_BLOB_IDS_SQL = `
-  SELECT o.details_blob_id AS blob_id
-  FROM audit_log_operations AS o
-  INNER JOIN audit_logs AS a
-    ON a.id = o.audit_log_id
-  WHERE a.session_id = ?
-    AND o.details_blob_id IS NOT NULL
-`;
-
 const LIST_ALL_SESSION_MESSAGE_BLOB_IDS_SQL = `
   SELECT text_blob_id AS blob_id
   FROM session_messages
@@ -467,39 +407,9 @@ const LIST_ALL_SESSION_ARTIFACT_BLOB_IDS_SQL = `
   WHERE artifact_blob_id IS NOT NULL
 `;
 
-const LIST_ALL_SESSION_AUDIT_DETAIL_BLOB_IDS_SQL = `
-  SELECT logical_prompt_blob_id AS blob_id
-  FROM audit_log_details
-  WHERE logical_prompt_blob_id IS NOT NULL
-  UNION
-  SELECT transport_payload_blob_id AS blob_id
-  FROM audit_log_details
-  WHERE transport_payload_blob_id IS NOT NULL
-  UNION
-  SELECT assistant_text_blob_id AS blob_id
-  FROM audit_log_details
-  WHERE assistant_text_blob_id IS NOT NULL
-  UNION
-  SELECT raw_items_blob_id AS blob_id
-  FROM audit_log_details
-  WHERE raw_items_blob_id IS NOT NULL
-  UNION
-  SELECT usage_blob_id AS blob_id
-  FROM audit_log_details
-  WHERE usage_blob_id IS NOT NULL
-`;
-
-const LIST_ALL_SESSION_AUDIT_OPERATION_BLOB_IDS_SQL = `
-  SELECT details_blob_id AS blob_id
-  FROM audit_log_operations
-  WHERE details_blob_id IS NOT NULL
-`;
-
 const LIVE_BLOB_REF_QUERIES = [
   "SELECT 1 FROM session_messages WHERE text_blob_id = ? LIMIT 1",
   "SELECT 1 FROM session_message_artifacts WHERE artifact_blob_id = ? LIMIT 1",
-  "SELECT 1 FROM audit_log_details WHERE logical_prompt_blob_id = ? OR transport_payload_blob_id = ? OR assistant_text_blob_id = ? OR raw_items_blob_id = ? OR usage_blob_id = ? LIMIT 1",
-  "SELECT 1 FROM audit_log_operations WHERE details_blob_id = ? LIMIT 1",
 ] as const;
 
 function preview(value: string): string {
@@ -609,26 +519,15 @@ function rowToSession(row: SessionHeaderRow, messages: Message[], mode: SessionR
   return session;
 }
 
-function readAuditLogCountRows(db: DatabaseSync): Map<string, number> {
-  const rows = db.prepare(LIST_SESSION_AUDIT_LOG_COUNTS_SQL).all() as SessionAuditLogCountRow[];
-  return new Map(rows.map((row) => [row.id, row.audit_log_count]));
-}
-
 function readSessionIds(db: DatabaseSync): Set<string> {
   const rows = db.prepare(LIST_SESSION_IDS_SQL).all() as SessionIdRow[];
   return new Set(rows.map((row) => row.id));
-}
-
-function getAuditLogCountFromDb(db: DatabaseSync, sessionId: string): number {
-  const row = db.prepare(GET_SESSION_AUDIT_LOG_COUNT_SQL).get(sessionId) as SessionAuditLogCountValueRow | undefined;
-  return row?.audit_log_count ?? 0;
 }
 
 function writeSessionHeader(
   statement: ReturnType<DatabaseSync["prepare"]>,
   session: Session,
   lastActiveAt: number,
-  auditLogCount: number,
 ): void {
   statement.run(
     session.id,
@@ -656,7 +555,6 @@ function writeSessionHeader(
     JSON.stringify(session.allowedAdditionalDirectories ?? []),
     session.threadId,
     session.messages.length,
-    auditLogCount,
     lastActiveAt,
   );
 }
@@ -712,7 +610,7 @@ function parseArtifactSummary(value: string | null): MessageArtifact | undefined
       activitySummary: parsed.activitySummary.filter((item): item is string => typeof item === "string"),
       operationTimeline: Array.isArray(parsed.operationTimeline)
         ? parsed.operationTimeline
-            .filter((operation): operation is AuditLogOperation =>
+            .filter((operation): operation is MessageOperation =>
               typeof operation === "object" &&
               operation !== null &&
               typeof operation.type === "string" &&
@@ -850,23 +748,13 @@ function compactBlobIds(values: ReadonlyArray<string | null | undefined>): strin
 function collectSessionBlobIds(db: DatabaseSync, sessionId: string): string[] {
   const messageRows = db.prepare(LIST_SESSION_MESSAGE_BLOB_IDS_SQL).all(sessionId) as BlobIdRow[];
   const artifactRows = db.prepare(LIST_SESSION_ARTIFACT_BLOB_IDS_SQL).all(sessionId) as BlobIdRow[];
-  const auditDetailRows = db.prepare(LIST_SESSION_AUDIT_DETAIL_BLOB_IDS_SQL).all(
-    sessionId,
-    sessionId,
-    sessionId,
-    sessionId,
-    sessionId,
-  ) as BlobIdRow[];
-  const auditOperationRows = db.prepare(LIST_SESSION_AUDIT_OPERATION_BLOB_IDS_SQL).all(sessionId) as BlobIdRow[];
-  return compactBlobIds([...messageRows, ...artifactRows, ...auditDetailRows, ...auditOperationRows].map((row) => row.blob_id));
+  return compactBlobIds([...messageRows, ...artifactRows].map((row) => row.blob_id));
 }
 
 function collectAllSessionBlobIds(db: DatabaseSync): string[] {
   const messageRows = db.prepare(LIST_ALL_SESSION_MESSAGE_BLOB_IDS_SQL).all() as BlobIdRow[];
   const artifactRows = db.prepare(LIST_ALL_SESSION_ARTIFACT_BLOB_IDS_SQL).all() as BlobIdRow[];
-  const auditDetailRows = db.prepare(LIST_ALL_SESSION_AUDIT_DETAIL_BLOB_IDS_SQL).all() as BlobIdRow[];
-  const auditOperationRows = db.prepare(LIST_ALL_SESSION_AUDIT_OPERATION_BLOB_IDS_SQL).all() as BlobIdRow[];
-  return compactBlobIds([...messageRows, ...artifactRows, ...auditDetailRows, ...auditOperationRows].map((row) => row.blob_id));
+  return compactBlobIds([...messageRows, ...artifactRows].map((row) => row.blob_id));
 }
 
 function isBlobReferenced(db: DatabaseSync, blobId: string): boolean {
@@ -1177,7 +1065,6 @@ export class SessionStorageV3 {
     let blobIdsToDelete: string[];
     try {
       blobIdsToDelete = this.withDb((db) => {
-        const auditLogCount = getAuditLogCountFromDb(db, normalized.id);
         const upsertSessionStatement = db.prepare(UPSERT_SESSION_SQL);
         const deleteMessagesStatement = db.prepare(DELETE_SESSION_MESSAGES_SQL);
         const insertMessageStatement = db.prepare(INSERT_SESSION_MESSAGE_SQL);
@@ -1189,7 +1076,7 @@ export class SessionStorageV3 {
         try {
           const previousBlobIds = collectSessionBlobIds(db, normalized.id);
           insertBlobObjects(db, payloads, createdAt);
-          writeSessionHeader(upsertSessionStatement, normalized, lastActiveAt, auditLogCount);
+          writeSessionHeader(upsertSessionStatement, normalized, lastActiveAt);
           deleteMessagesStatement.run(normalized.id);
           writeSessionMessages(insertMessageStatement, insertArtifactStatement, normalized, payloads);
           blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);
@@ -1232,7 +1119,6 @@ export class SessionStorageV3 {
     let blobIdsToDelete: string[];
     try {
       blobIdsToDelete = this.withDb((db) => {
-        const existingAuditLogCounts = readAuditLogCountRows(db);
         const existingSessionIds = readSessionIds(db);
         const nextSessionIds = new Set(normalizedSessions.map((session) => session.id));
         const upsertSessionStatement = db.prepare(UPSERT_SESSION_SQL);
@@ -1261,7 +1147,6 @@ export class SessionStorageV3 {
               upsertSessionStatement,
               session,
               baseLastActiveAt - index,
-              existingAuditLogCounts.get(session.id) ?? 0,
             );
             deleteMessagesStatement.run(session.id);
             writeSessionMessages(insertMessageStatement, insertArtifactStatement, session, payloads);

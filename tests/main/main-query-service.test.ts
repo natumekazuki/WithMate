@@ -48,6 +48,16 @@ function createSessionSummary(overrides?: Partial<SessionSummary>): SessionSumma
   return summary;
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Sessionごとのworkspaceをskills/custom agent/preview/terminalへ渡し、利用者が別workspaceを操作しない"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "対象Session以外のworkspaceをdiscoveryまたはterminalへ渡す"
+// observable = "discovery/preview/terminalへの引数とhydration対象ID"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainQueryService は session skills/custom agents と preview/terminal を解決する", async () => {
   const calls: string[] = [];
   const sourceSessions = [
@@ -64,12 +74,7 @@ test("MainQueryService は session skills/custom agents と preview/terminal を
       return sourceSessions.find((session) => session.id === sessionId) ?? null;
     },
     getSessionMessageArtifact: () => null,
-    getAuditLogs: () => [],
-    getAuditLogSummaries: () => [],
-    getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
-    getAuditLogDetail: () => null,
-    getAuditLogDetailSection: () => null,
-    getAuditLogOperationDetail: () => null,
+    getLatestSessionTurn: () => null,
     getAppSettings: () =>
       ({
         providers: {},
@@ -112,6 +117,16 @@ test("MainQueryService は session skills/custom agents と preview/terminal を
   assert.deepEqual(fullSessionRequests, ["session-1"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Home summary pageとCharacter usageは取得結果を複製し内部stateを外部から変更させない"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "取得stateを参照共有したまま返すかHomeへprovider/thread情報を混入する"
+// observable = "pageとusageの値、オブジェクト同一性、Home field"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainQueryService は bounded summary page と Character usage を clone して返す", async () => {
   const entry = createSessionSummary({ id: "page-session" });
   const usage = { characterId: "char-page", sessionKind: "default" as const };
@@ -121,12 +136,7 @@ test("MainQueryService は bounded summary page と Character usage を clone �
     getSessionCharacterUsage: () => [usage],
     getSession: () => null,
     getSessionMessageArtifact: () => null,
-    getAuditLogs: () => [],
-    getAuditLogSummaries: () => [],
-    getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
-    getAuditLogDetail: () => null,
-    getAuditLogDetailSection: () => null,
-    getAuditLogOperationDetail: () => null,
+    getLatestSessionTurn: () => null,
     getAppSettings: () => ({
       providers: {},
       codingProviderSettings: {},
@@ -154,6 +164,16 @@ test("MainQueryService は bounded summary page と Character usage を clone �
   assert.notEqual(usages[0], usage);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "添付参照のないdraftのpreviewは空の正常previewで追加discoveryを要求しない"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "添付参照のないdraftをdiscoveryへ流して不要な失敗を引き起こす"
+// observable = "空previewとSession summary取得回数"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainQueryService は path 参照なし draft の preview を早期 return する", async () => {
   let getSessionSummariesCalls = 0;
   const service = new MainQueryService({
@@ -165,12 +185,7 @@ test("MainQueryService は path 参照なし draft の preview を早期 return 
     getSessionCharacterUsage: () => [],
     getSession: () => createSession(),
     getSessionMessageArtifact: () => null,
-    getAuditLogs: () => [],
-    getAuditLogSummaries: () => [],
-    getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
-    getAuditLogDetail: () => null,
-    getAuditLogDetailSection: () => null,
-    getAuditLogOperationDetail: () => null,
+    getLatestSessionTurn: () => null,
     getAppSettings: () =>
       ({
         providers: {},
@@ -191,6 +206,16 @@ test("MainQueryService は path 参照なし draft の preview を早期 return 
   assert.equal(getSessionSummariesCalls, 0);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "同じworkspaceでもproviderごとのSkill rootをdiscoveryへ渡す"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "CopilotとCodexのskill root設定を取り違える"
+// observable = "discoveryへ渡されたworkspacePath/skillRootPath"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainQueryService は session provider ごとの skill directory を discovery に渡す", async () => {
   const providerSkillRoots: Array<{ workspacePath: string; skillRootPath: string | null }> = [];
   const settings = createDefaultAppSettings();
@@ -217,12 +242,7 @@ test("MainQueryService は session provider ごとの skill directory を discov
     getSessionCharacterUsage: () => [],
     getSession: () => null,
     getSessionMessageArtifact: () => null,
-    getAuditLogs: () => [],
-    getAuditLogSummaries: () => [],
-    getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
-    getAuditLogDetail: () => null,
-    getAuditLogDetailSection: () => null,
-    getAuditLogOperationDetail: () => null,
+    getLatestSessionTurn: () => null,
     getAppSettings: () => settings,
     async discoverSessionSkills(workspacePath, skillRootPath) {
       providerSkillRoots.push({ workspacePath, skillRootPath });
@@ -244,6 +264,16 @@ test("MainQueryService は session provider ごとの skill directory を discov
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Session一覧には会話詳細を持たないsummaryだけを返す"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "一覧結果へmessage/stream本文を混入し全履歴を常駐させる"
+// observable = "一覧結果のmessages/stream keyの有無"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainQueryService は一覧を summary に射影して detail payload を含めない", async () => {
   const service = new MainQueryService({
     getSessionSummaries: () => [createSessionSummary()],
@@ -251,12 +281,7 @@ test("MainQueryService は一覧を summary に射影して detail payload を�
     getSessionCharacterUsage: () => [],
     getSession: () => createSession(),
     getSessionMessageArtifact: () => null,
-    getAuditLogs: () => [],
-    getAuditLogSummaries: () => [],
-    getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
-    getAuditLogDetail: () => null,
-    getAuditLogDetailSection: () => null,
-    getAuditLogOperationDetail: () => null,
+    getLatestSessionTurn: () => null,
     getAppSettings: () =>
       ({
         providers: {},
@@ -277,6 +302,16 @@ test("MainQueryService は一覧を summary に射影して detail payload を�
   assert.deepEqual(Object.keys(summaries[0] ?? {}).includes("stream"), false);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Session詳細は指定Sessionだけを取得してcloneで返す"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "別Sessionを取得するか取得objectをそのまま渡し永続stateへの変更を許す"
+// observable = "取得要求ID、返却Session IDと同一性"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainQueryService は対象 session detail だけを clone して返す", async () => {
   const targetSession = createSession();
   let requestedSessionId: string | null = null;
@@ -289,12 +324,7 @@ test("MainQueryService は対象 session detail だけを clone して返す", a
       return sessionId === targetSession.id ? targetSession : null;
     },
     getSessionMessageArtifact: () => null,
-    getAuditLogs: () => [],
-    getAuditLogSummaries: () => [],
-    getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
-    getAuditLogDetail: () => null,
-    getAuditLogDetailSection: () => null,
-    getAuditLogOperationDetail: () => null,
+    getLatestSessionTurn: () => null,
     getAppSettings: () =>
       ({
         providers: {},

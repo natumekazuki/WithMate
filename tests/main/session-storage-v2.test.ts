@@ -72,9 +72,8 @@ function insertSessionHeader(db: DatabaseSync, input: V2SessionHeaderInput = {})
       allowed_additional_directories_json,
       thread_id,
       message_count,
-      audit_log_count,
       last_active_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.taskTitle ?? "Runtime task",
@@ -100,7 +99,6 @@ function insertSessionHeader(db: DatabaseSync, input: V2SessionHeaderInput = {})
     input.allowedAdditionalDirectoriesJson ?? JSON.stringify(["shared/reference"]),
     "thread-1",
     input.messageCount ?? 0,
-    0,
     input.lastActiveAt ?? 1,
   );
   return id;
@@ -149,79 +147,6 @@ function insertArtifact(db: DatabaseSync, messageId: number, artifact: object): 
 function readCount(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): number {
   const row = db.prepare(sql).get(...params) as { count: number };
   return Number(row.count);
-}
-
-function insertAuditLogForSession(db: DatabaseSync, sessionId: string, summary: string): number {
-  const result = db.prepare(`
-    INSERT INTO audit_logs (
-      session_id,
-      created_at,
-      phase,
-      provider,
-      model,
-      reasoning_effort,
-      approval_mode,
-      thread_id,
-      assistant_text_preview,
-      operation_count,
-      raw_item_count,
-      input_tokens,
-      cached_input_tokens,
-      output_tokens,
-      has_error,
-      error_message,
-      detail_available
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    sessionId,
-    "2026-04-27T10:00:00.000Z",
-    "completed",
-    "codex",
-    "gpt-5.4-mini",
-    "medium",
-    "never",
-    `thread-${sessionId}`,
-    summary,
-    1,
-    1,
-    10,
-    1,
-    2,
-    0,
-    "",
-    1,
-  );
-  const auditLogId = Number(result.lastInsertRowid);
-
-  db.prepare(`
-    INSERT INTO audit_log_details (
-      audit_log_id,
-      logical_prompt_json,
-      transport_payload_json,
-      assistant_text,
-      raw_items_json,
-      usage_json
-    ) VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
-    auditLogId,
-    "{}",
-    "",
-    summary,
-    "[]",
-    JSON.stringify({ inputTokens: 10, cachedInputTokens: 1, outputTokens: 2 }),
-  );
-  db.prepare(`
-    INSERT INTO audit_log_operations (
-      audit_log_id,
-      seq,
-      operation_type,
-      summary,
-      details
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run(auditLogId, 0, "analysis", summary, "details");
-  db.prepare("UPDATE sessions SET audit_log_count = audit_log_count + 1 WHERE id = ?").run(sessionId);
-
-  return auditLogId;
 }
 
 function createSession(taskTitle: string, workspaceLabel: string, characterId: string, character: string) {
@@ -648,80 +573,6 @@ describe("SessionStorageV2", () => {
             ),
             0,
           );
-        } finally {
-          db.close();
-        }
-      } finally {
-        storage.close();
-      }
-    });
-  });
-
-  it("replaceSessions は保持対象 session の audit logs を残し、除外 session の audit logs だけ削除する", async () => {
-    await withTempV2Database((dbPath) => {
-      const storage = new SessionStorageV2(dbPath);
-      try {
-        const targetSession = createSession("Target session", "workspace-target-audit", "char-ta", "T");
-        const removedSession = createSession("Removed session", "workspace-removed-audit", "char-ra", "R");
-
-        storage.upsertSession({
-          ...targetSession,
-          messages: [
-            {
-              role: "assistant",
-              text: "target before replace",
-            },
-          ],
-        });
-        storage.upsertSession({
-          ...removedSession,
-          messages: [
-            {
-              role: "assistant",
-              text: "removed before replace",
-            },
-          ],
-        });
-
-        const db = new DatabaseSync(dbPath);
-        try {
-          const keptAuditLogId = insertAuditLogForSession(db, targetSession.id, "kept audit log");
-          const removedAuditLogId = insertAuditLogForSession(db, removedSession.id, "removed audit log");
-
-          storage.replaceSessions([
-            {
-              ...targetSession,
-              taskTitle: "Target replaced with audit",
-              messages: [
-                {
-                  role: "assistant",
-                  text: "target after replace",
-                },
-              ],
-            },
-          ]);
-
-          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM audit_logs WHERE id = ?", keptAuditLogId), 1);
-          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM audit_log_details WHERE audit_log_id = ?", keptAuditLogId), 1);
-          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM audit_log_operations WHERE audit_log_id = ?", keptAuditLogId), 1);
-          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM audit_logs WHERE id = ?", removedAuditLogId), 0);
-          assert.equal(
-            readCount(db, "SELECT COUNT(*) AS count FROM audit_log_details WHERE audit_log_id = ?", removedAuditLogId),
-            0,
-          );
-          assert.equal(
-            readCount(
-              db,
-              "SELECT COUNT(*) AS count FROM audit_log_operations WHERE audit_log_id = ?",
-              removedAuditLogId,
-            ),
-            0,
-          );
-
-          const countRow = db.prepare("SELECT audit_log_count FROM sessions WHERE id = ?").get(targetSession.id) as {
-            audit_log_count: number;
-          };
-          assert.equal(countRow.audit_log_count, 1);
         } finally {
           db.close();
         }
