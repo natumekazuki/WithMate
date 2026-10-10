@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useState } from "react";
 
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { SessionImageResourceRequest } from "../../../src-shared/file-explorer/file-explorer-contract.js";
-import { PreviewByteAccumulator, SESSION_FILE_READ_CHUNK_BYTES } from "../../file-explorer/file-preview-utils.js";
+import { SESSION_FILE_READ_CHUNK_BYTES } from "../../file-explorer/file-preview-utils.js";
 import { PreviewResourceQueue } from "../../file-explorer/preview-resource-queue.js";
 import { resolveMarkdownImageTarget } from "./image-resource-source.js";
 
@@ -15,7 +15,7 @@ export function createMarkdownImageLoader(
   context: MarkdownImageContext,
   queue = new PreviewResourceQueue(4),
 ) {
-  const accumulators = new Set<PreviewByteAccumulator>();
+  const activeParts = new Set<ArrayBuffer[]>();
   const resolve: MarkdownImageResolver = async (target, signal) => {
     if (signal?.aborted) return null;
     const imageTarget = resolveMarkdownImageTarget(target);
@@ -30,8 +30,10 @@ export function createMarkdownImageLoader(
       if (descriptor.kind !== "image" && descriptor.kind !== "svg") {
         throw new Error("The file is not a supported image.");
       }
-      const accumulator = new PreviewByteAccumulator();
-      accumulators.add(accumulator);
+      const parts: ArrayBuffer[] = [];
+      const release = () => { parts.length = 0; };
+      activeParts.add(parts);
+      signal?.addEventListener("abort", release, { once: true });
       try {
         let offset = 0;
         while (offset < descriptor.byteLength) {
@@ -44,21 +46,25 @@ export function createMarkdownImageLoader(
           if (!isCurrent()) return null;
           if (chunk.offset !== offset || chunk.totalBytes !== descriptor.byteLength
             || chunk.revision !== descriptor.revision || chunk.nextOffset <= offset
-            || chunk.nextOffset !== offset + chunk.data.byteLength) {
+            || chunk.nextOffset !== offset + chunk.data.byteLength
+            || chunk.nextOffset > descriptor.byteLength) {
             throw new Error("Image contents changed while they were being read.");
           }
-          accumulator.append(new Uint8Array(chunk.data));
+          parts.push(chunk.data);
           offset = chunk.nextOffset;
           if (chunk.done) break;
         }
-        const bytes = accumulator.finish(descriptor.byteLength);
+        if (offset !== descriptor.byteLength) {
+          throw new Error("Image contents changed while they were being read.");
+        }
         if (!isCurrent()) return null;
-        const buffer = new ArrayBuffer(bytes.byteLength);
-        new Uint8Array(buffer).set(bytes);
-        return URL.createObjectURL(new Blob([buffer], { type: descriptor.mimeType }));
+        // IPC supplies exact ArrayBuffers. Blob snapshots their bytes in order;
+        // no concatenated buffer or backing-buffer view is needed.
+        return URL.createObjectURL(new Blob(parts, { type: descriptor.mimeType }));
       } finally {
-        accumulators.delete(accumulator);
-        accumulator.release();
+        signal?.removeEventListener("abort", release);
+        activeParts.delete(parts);
+        release();
       }
     });
   };
@@ -66,8 +72,8 @@ export function createMarkdownImageLoader(
     resolve,
     invalidate() {
       queue.invalidate();
-      for (const accumulator of accumulators) accumulator.release();
-      accumulators.clear();
+      for (const parts of activeParts) parts.length = 0;
+      activeParts.clear();
     },
   };
 }
