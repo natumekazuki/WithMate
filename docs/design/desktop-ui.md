@@ -474,7 +474,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Home の `Monitor` と `Session Monitor Window` は同じ projection / component を使い、open parentに紐づく保存済みAuxiliary summaryを同じ順序で集約する。状態更新は既存のlive eventと軽量summary再読込で反映し、pollingやMonitor専用storageは持たない
 - Auxiliary summary再読込はopen parent集合を一括取得し、親数に比例した個別SQLite取得を行わない
 - MonitorからAuxiliaryを選択して開いたときは、Mainがstable Auxiliary IDとparent IDを検証してnavigationし、既存Windowにはselection event、新規Windowにはentry queryで正確な会話を渡す
-- 通常履歴の応答Detailsから操作結果を閲覧する。Latest Commandはliveを優先し、liveがなければ対象会話の最新turnとその`assistantMessageSeq`に対応するartifactを遅延取得する。最新turnにcommandがなければ以前のturnへ遡らない。未記録・正常emptyと取得失敗を区別し、対象切替・次turn開始後に遅い結果を適用しない。Window再open・再起動、failed／canceled後も同じ対象境界を使う
+- 通常履歴の応答Detailsから操作結果を閲覧する。Latest Commandは実行中・取消待ちのliveを優先し、終了後はReasoning／background tasksのsnapshotを保持していても、対象会話の最新turnとその`assistantMessageSeq`に対応するartifactを遅延取得する。最新turnにcommandがなければ以前のturnへ遡らない。未記録・正常emptyと取得失敗を区別し、対象切替・次turn開始後に遅い結果を適用しない。Window再open・再起動、failed／canceled後も同じ対象境界を使う
 - chat message は限定的な rich text renderer で整形表示する
 - `Settings Window` は app 共通 system prompt や Character 本文を編集しない。Character 定義は `Character Editor Window` と session snapshot を正本にする
 - `userData` は `<appData>/WithMate/` に固定する

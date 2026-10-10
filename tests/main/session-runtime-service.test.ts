@@ -2234,6 +2234,43 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "contract"
+  // claim = "全終端のlive snapshotはReasoning/taskを保持してもterminal runStateでstepsを空にし、終了後の履歴復元を妨げない"
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurn finally; docs/design/desktop-ui.md: 操作履歴" }
+  // fault = "終了済みsnapshotをrunningのまま保持するか、Reasoning/taskを消す、または古いlive stepsを残す"
+  // observable = "production runtime終了後のlive runState、steps、reasoningText、backgroundTasksと保存artifact"
+  // observation_boundary = "public-boundary"
+  // scope = "session-runtime-terminal-retained-live"
+  // lifecycle = "permanent"
+  // impact = "Rendererが実行中と終了後の表示保持を区別できず履歴復元またはReasoning/task表示を失う"
+  // distinction = "Renderer fixtureのみではMainが配信するterminal stateとpartial artifact保存を確認できない"
+  // @end-test-value
+  it("全terminal後のretained liveはReasoning/tasksを保持してstepsを空にする", async () => {
+    for (const outcome of ["completed", "failed", "canceled"] as const) {
+      const session = createSession();
+      const retained: { value: LiveSessionRunState | null } = { value: null };
+      const task = { id: "task-1", kind: "shell" as const, status: "running" as const, title: "retained task", updatedAt: "now" };
+      const operation = { id: "command-1", type: "command_execution", status: "completed", summary: "fixture command", exitCode: 0 };
+      const partial = createPartialResult({ assistantText: "acquired response", artifact: { title: "Result", activitySummary: [], runChecks: [], changedFiles: [], operationTimeline: [operation] } });
+      const service = createProgressRuntime(session, async (input, progress) => {
+        await emitTestProgress(progress, createLiveRunState({ sessionId: input.session.id, reasoningText: "retained reasoning", backgroundTasks: [task], steps: [operation] }));
+        if (outcome !== "completed") throw new ProviderTurnError("fixture stopped", partial, outcome === "canceled");
+        return partial;
+      }, {
+        setLiveSessionRun(_id, next) { retained.value = next; },
+        getLiveSessionRun: () => retained.value,
+      });
+      const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "run" });
+      assert.equal(retained.value?.runState, outcome === "failed" ? "error" : "idle");
+      assert.equal(retained.value?.cancellationState, undefined);
+      assert.deepEqual(retained.value?.steps, []);
+      assert.equal(retained.value?.reasoningText, "retained reasoning");
+      assert.deepEqual(retained.value?.backgroundTasks, [task]);
+      assert.deepEqual(result.messages.at(-1)?.artifact?.operationTimeline, [operation]);
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "利用者cancelはidle Sessionを保存し、failed terminal通知を依頼しない"
   // oracle = { type = "contract", ref = "accepted contract: user cancel is not a failure notification" }
   // fault = "利用者cancelをfailed通知して意図した中止をエラーと誤認させる"

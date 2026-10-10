@@ -26,6 +26,8 @@ export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput
   visible: boolean;
 }) {
   const { selectedSessionLiveRun } = useActiveSessionLiveRun(props.api, props.selectedSession, props.activeRunSessionId, props.visible);
+  const hasActiveRun = props.renderedIsRunning || selectedSessionLiveRun?.runState === "running"
+    || selectedSessionLiveRun?.cancellationState === "requested" || selectedSessionLiveRun?.cancellationState === "terminating";
   const scope = `${getSessionIncarnationId(props.selectedSession)}:${getSessionIncarnationId(props.displayedSession)}`;
   const history = useLatestCommandHistory({
     api: props.api,
@@ -33,7 +35,7 @@ export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput
     scope,
     revision: props.displayedSession.updatedAt,
     enabled: props.visible,
-    hasLiveRun: !!selectedSessionLiveRun,
+    hasLiveRun: hasActiveRun,
   });
   const telemetry = useSessionTelemetry(props.visible ? props.api : null, props.displayedSession.provider, props.activeRunSessionId);
   const glossary = useSessionGlossary({
