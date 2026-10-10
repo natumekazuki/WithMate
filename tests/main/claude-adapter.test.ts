@@ -143,6 +143,61 @@ it("Claude tool出力はsecretを秘匿してからpreviewを生成する", asyn
 });
 
 // @test-value v2
+// kind = "security"
+// claim = "Claude Bash commandのpreview境界を跨ぐbinding reference・capability・managed MCP tokenをliveと正常・失敗・取消artifactへ露出しない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Managed HTTP MCP / Streaming Policy" }
+// fault = "全文secretを秘匿する前にcommand summaryを切り、末尾1文字を欠くsecretを公開する"
+// observable = "runSessionTurn進捗のcommand_execution.summaryと結果またはpartialResultのoperationTimeline.summary"
+// observation_boundary = "public-boundary"
+// scope = "Claude Bash command summary redaction"
+// lifecycle = "permanent"
+// risk_tags = ["privacy", "authentication"]
+// impact = "runtime資格情報のほぼ全体が画面と保存履歴へ漏洩する"
+// distinction = "tool_result境界testはcommand入力を通らず、bounded summary testにはsecretがない。SDK通信不要の小さいfixtureで秘匿順序を継続検査する"
+// @end-test-value
+it("Claude Bash commandはsecretを秘匿してからpreviewを生成する", async () => {
+  const secrets = ["synthetic-binding-reference-0123456789XY", "synthetic-turn-capability-0123456789XY", "synthetic-managed-mcp-token-0123456789XY"];
+  for (const secret of secrets) {
+    for (const outcome of ["completed", "failed", "canceled"] as const) {
+      const controller = new AbortController();
+      const request = input("", controller.signal);
+      request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: secrets[0], turnCapability: secrets[1],
+        providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null,
+        managedMcp: { memoryUrl: "http://localhost/mcp/memory", glossaryUrl: "http://localhost/mcp/glossary", token: secrets[2] } };
+      const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1) + secret + " tail".repeat(100);
+      const sanitized = command.replace(secret, PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
+      const expected = `${sanitized.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${sanitized.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${sanitized.length}]`;
+      const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+        yield sdkMessage({ type: "assistant", uuid: "command", parent_tool_use_id: null,
+          message: { content: [{ type: "tool_use", id: "command", name: "Bash", input: { command } }] } });
+        if (outcome === "failed") throw new Error("connection failure");
+        if (outcome === "canceled") controller.abort();
+        yield result("thread");
+      }) });
+      const steps: import("../../src-shared/session/runtime-state.js").LiveRunStep[] = [];
+      let completed;
+      try {
+        completed = await adapter.runSessionTurn(request, (state) => { steps.push(...state.steps); });
+        assert.equal(outcome, "completed");
+      } catch (error) {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.canceled, outcome === "canceled");
+        assert.notEqual(outcome, "completed");
+        completed = error.partialResult;
+      }
+      const live = steps.findLast((step) => step.id === "command");
+      assert.ok(live);
+      const operation = completed.artifact!.operationTimeline![0];
+      for (const projected of [live, operation]) {
+        assert.equal(projected.type, "command_execution");
+        assert.ok(!projected.summary.includes(secret.slice(0, -1)));
+        assert.equal(projected.summary, expected);
+      }
+    }
+  }
+});
+
+// @test-value v2
 // kind = "contract"
 // claim = "Claudeのlive callback拒否は取得済み本文付きの非取消ProviderTurnErrorとなり、後続SDK eventを消費しない"
 // oracle = { type = "contract", ref = "src-electron/providers/claude/claude-adapter.ts: runSessionTurn; src-electron/providers/provider-progress.ts: ProviderProgressDelivery.deliver" }
