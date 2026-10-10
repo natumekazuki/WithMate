@@ -1206,6 +1206,60 @@ async function setMessageFindQuery(mounted: MountedSessionMessageColumn, query: 
 }
 
 // @test-value v2
+// kind = "contract"
+// claim = "paged Findは保存領域の総hitに未保存末尾とpendingだけを加算し、globalordinalを移動して保存hitの本文pageへ進み、Closeでqueryをcancelする"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 全履歴Findの総件数・live末尾・取消" }
+// fault = "loaded保存hitを重複加算する、64件pageを全件と表示する、遠いordinalで誤った本文を読み込む、またはCloseでcancelしない"
+// observable = "Find barの件数、onLoadMessagePageのhistory index、queryのoffset/stamp、cancel requestId"
+// observation_boundary = "component-behavior"
+// scope = "paged-conversation-find"
+// lifecycle = "permanent"
+// impact = "大きな保存履歴と未保存送信・待機本文を一つのFindで正確に探索できる"
+// distinction = "query hook testは実際のFind bar、loaded本文と保存件数の重複排除、pendingの順序を通らない"
+// @end-test-value
+test("paged Find counts global saved hits and only unsaved tail and pending", async () => {
+  const requests: Array<Parameters<NonNullable<SessionMessageColumnProps["searchConversation"]>>[0]> = [];
+  const loaded: number[] = [];
+  const cancelled: string[] = [];
+  const messages: Message[] = [{ role: "user", text: "saved needle", historyIndex: 999 }, { role: "user", text: "unsaved needle", historyIndex: 1000 }];
+  function PagedFind(props: SessionMessageColumnProps) {
+    return React.createElement(SessionMessageColumn, {
+      ...props, searchTailMessages: messages,
+      searchConversation: async (request) => {
+        requests.push(request);
+        const offset = request.offset ?? 0;
+        return { status: "complete", stamp: { generationId: "generation", ownerIdentity: "owner", contentRevision: 1, requestId: request.requestId }, incarnationId: "incarnation", messageCount: 1000, totalCount: 130, offset, items: Array.from({ length: Math.min(64, 130 - offset) }, (_, index) => ({ messageIndex: offset + index + 10, occurrenceIndex: 0 })) };
+      },
+      onLoadMessagePage: async (index) => { loaded.push(index); },
+      cancelConversationQuery: async (request) => { cancelled.push(request.requestId); },
+    });
+  }
+  const mounted = await mountSessionMessageColumn({ messages, component: PagedFind, isRunning: true, pendingMessageText: "pending needle" });
+  try {
+    await setMessageFindQuery(mounted, "needle");
+    const count = () => mounted.container.querySelector(".session-content-find-count")?.textContent;
+    assert.equal(count(), "1/132");
+    assert.equal(loaded.at(-1), 10);
+    const previous = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']");
+    assert.ok(previous);
+    await act(async () => previous.click());
+    assert.equal(count(), "132/132");
+    await act(async () => previous.click());
+    assert.equal(count(), "131/132");
+    assert.equal(loaded.at(-1), 1000);
+    await act(async () => previous.click());
+    assert.equal(count(), "130/132");
+    assert.equal(loaded.at(-1), 139);
+    assert.ok(requests.some((request) => request.offset === 128 && request.stamp?.requestId === requests[0].requestId));
+    await act(async () => {
+      mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']")?.blur();
+      mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Close find']")?.click();
+    });
+    assert.deepEqual(cancelled, [requests[0].requestId]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "検索queryを保ったPreviewのlive更新は確定履歴を再解析せず、変更されたlive本文だけを検索投影する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/737#issuecomment-5979140173 PERF-737-A" }

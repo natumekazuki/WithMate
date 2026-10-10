@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
-import { assertFullConversation, readConversationPage, searchStoredConversation, listStoredConversationNavigator } from "../storage/conversation-query.js";
-import type { ConversationPageRequest, ConversationSearchRequest } from "../../src-shared/session/conversation-page.js";
+import { assertFullConversation, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink } from "../storage/conversation-query.js";
+import type { ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
 import type { SessionFilePinOwner, SessionFilePinReference, StoredSessionFilePin } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { randomUUID } from "node:crypto";
 
@@ -366,7 +366,7 @@ function decodeMessage(row: MessageV6Row): Message | null {
 export class SessionStorageV6 {
   private readonly db: DatabaseSync;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, private readonly onConversationChanged: ConversationMutationSink = () => {}) {
     this.db = openAppDatabase(dbPath);
     registerSessionProviderIdNormalizer(this.db);
     ensureV6Schema(this.db);
@@ -549,12 +549,12 @@ export class SessionStorageV6 {
     return { ...session, messages: page.messages, messageCount: page.totalCount, latestUserMessage: latestUser && latestUserRow ? { ...latestUser, historyIndex: latestUserRow.seq } : null };
   }
 
-  searchConversation(sessionId: string, request: ConversationSearchRequest) {
-    return searchStoredConversation(this.db, "session_messages_v6", sessionId, request);
+  getConversationQuerySnapshot(sessionId: string) {
+    return readConversationQuerySnapshot(this.db, "session_messages_v6", sessionId);
   }
 
-  listConversationNavigator(sessionId: string) {
-    return listStoredConversationNavigator(this.db, "session_messages_v6", sessionId);
+  readConversationQueryBatch(sessionId: string, afterSeq: number) {
+    return readConversationQueryBatch(this.db, "session_messages_v6", sessionId, afterSeq);
   }
 
   getSessionSummary(sessionId: string): SessionSummary | null {
@@ -599,6 +599,8 @@ export class SessionStorageV6 {
 
   setSessionMessageBookmark(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): void {
     if (!Number.isSafeInteger(messageIndex) || messageIndex < 0) throw new Error("The message index is invalid.");
+    const previous = this.db.prepare("SELECT json_type(body, '$.isBookmarked') AS bookmark FROM session_messages_v6 WHERE session_id = ? AND seq = ?")
+      .get(sessionId, messageIndex) as { bookmark: string | null } | undefined;
     const result = this.db.prepare(`
       UPDATE session_messages_v6
       SET body = CASE WHEN ? = 1
@@ -608,6 +610,7 @@ export class SessionStorageV6 {
         AND EXISTS (SELECT 1 FROM sessions_v6 WHERE id = ? AND incarnation_id = ?)
     `).run(isBookmarked ? 1 : 0, sessionId, messageIndex, sessionId, incarnationId);
     if (Number(result.changes) !== 1) throw new SessionNotFoundError(sessionId);
+    if ((previous?.bookmark === "true") !== isBookmarked) this.onConversationChanged("session_messages_v6", sessionId);
   }
 
   setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions): void {
@@ -905,6 +908,7 @@ export class SessionStorageV6 {
         characterRuntimeSnapshot: decodedStoredRow.snapshot,
       };
       this.db.exec("COMMIT");
+      this.onConversationChanged("session_messages_v6", sessionId);
       return storedResult;
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -949,11 +953,12 @@ export class SessionStorageV6 {
           ? existing.incarnation_id?.trim() || `legacy:${normalized.id}`
           : randomUUID();
       normalized.incarnationId = incarnationId;
-      this.writeSession(normalized, operation, incarnationId);
+      const conversationChanged = this.writeSession(normalized, operation, incarnationId);
       if (terminalCommit) {
         writeSessionTurnTerminalCommit(this.db, terminalCommit);
       }
       this.db.exec("COMMIT");
+      if (conversationChanged || !existing) this.onConversationChanged("session_messages_v6", normalized.id);
     } catch (error) {
       this.db.exec("ROLLBACK");
       logSessionRunStuckInvestigation(`storage-v6.${operation}-session.failed`, {
@@ -1012,6 +1017,8 @@ export class SessionStorageV6 {
       }
       this.deleteAuxiliarySessionsByIdsIfTableExists(removedAuxiliarySessionIds);
       this.db.exec("COMMIT");
+      this.onConversationChanged("session_messages_v6");
+      removedAuxiliarySessionIds.forEach((id) => this.onConversationChanged("auxiliary_session_messages", id));
       return this.listSessions();
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -1040,6 +1047,8 @@ export class SessionStorageV6 {
       this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
       this.deleteAuxiliarySessionsForParentsIfTableExists(uniqueSessionIds);
       this.db.exec("COMMIT");
+      uniqueSessionIds.forEach((id) => this.onConversationChanged("session_messages_v6", id));
+      auxiliarySessionIds.forEach((id) => this.onConversationChanged("auxiliary_session_messages", id));
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
@@ -1054,6 +1063,8 @@ export class SessionStorageV6 {
       this.db.exec("DELETE FROM sessions_v6;");
       this.deleteAllAuxiliarySessionsIfTableExists();
       this.db.exec("COMMIT");
+      this.onConversationChanged("session_messages_v6");
+      this.onConversationChanged("auxiliary_session_messages");
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
@@ -1068,7 +1079,7 @@ export class SessionStorageV6 {
     session: Session,
     operation: "create" | "upsert" | "update" = "upsert",
     incarnationId = getSessionIncarnationId(session),
-  ): void {
+  ): boolean {
     const startedAt = Date.now();
     const snapshot = session.characterRuntimeSnapshot;
     const runtimePolicy = {
@@ -1181,11 +1192,15 @@ export class SessionStorageV6 {
       SET role = ?, body = ?, artifact_body = ?, created_at = ?
       WHERE session_id = ? AND seq = ?
     `);
+    let conversationChanged = existingArtifactBodies.size !== session.messages.length;
     session.messages.forEach((message, index) => {
       const previous = existingArtifactBodies.get(index);
       const previousMessage = previous ? decodeMessage(previous) : null;
       const preservedBookmark = previousMessage?.role === message.role && previousMessage.text === message.text
         ? previousMessage.isBookmarked === true : message.isBookmarked === true;
+      if (!previousMessage || previousMessage.role !== message.role || previousMessage.text !== message.text
+        || (previousMessage.accent === true) !== (message.accent === true)
+        || (previousMessage.isBookmarked === true) !== preservedBookmark) conversationChanged = true;
       const body = encodeMessage({ ...message, isBookmarked: preservedBookmark ? true : undefined });
       const artifactBody = encodeMessageArtifactForWrite(message, previous?.artifact_body);
       if (!previous) {
@@ -1204,6 +1219,7 @@ export class SessionStorageV6 {
       runState: session.runState,
       status: session.status,
     });
+    return conversationChanged;
   }
 
   private ensureSchema(): void {

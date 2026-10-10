@@ -1,10 +1,13 @@
 import { useEffect, useRef } from "react";
+import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
 export type SessionContentFindBarProps = {
   open: boolean;
   query: string;
   currentMatch: number;
   matchCount: number;
+  loading?: boolean;
+  unavailable?: boolean;
   onQueryChange: (query: string) => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -16,6 +19,8 @@ export function SessionContentFindBar({
   query,
   currentMatch,
   matchCount,
+  loading = false,
+  unavailable = false,
   onQueryChange,
   onPrevious,
   onNext,
@@ -46,7 +51,7 @@ export function SessionContentFindBar({
   }
 
   return (
-    <div className="session-content-find" role="search">
+    <div className="session-content-find" role="search" aria-busy={loading || undefined}>
       <input
         ref={inputRef}
         type="search"
@@ -67,11 +72,11 @@ export function SessionContentFindBar({
           }
         }}
       />
-      <span className="session-content-find-count">
-        {matchCount > 0 ? `${currentMatch + 1}/${matchCount}` : "0/0"}
+      <span className="session-content-find-count" role="status">
+        {loading ? <LoadingIndicator inline label="Finding Messages" /> : unavailable ? "—" : matchCount > 0 ? `${currentMatch + 1}/${matchCount}` : "0/0"}
       </span>
-      <button type="button" onClick={onPrevious} disabled={matchCount === 0} aria-label="Previous match">↑</button>
-      <button type="button" onClick={onNext} disabled={matchCount === 0} aria-label="Next match">↓</button>
+      <button type="button" onClick={onPrevious} disabled={matchCount === 0 || unavailable} aria-label="Previous match">↑</button>
+      <button type="button" onClick={onNext} disabled={matchCount === 0 || unavailable} aria-label="Next match">↓</button>
       <button type="button" onClick={onClose} aria-label="Close find">×</button>
     </div>
   );

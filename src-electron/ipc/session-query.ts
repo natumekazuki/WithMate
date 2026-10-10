@@ -21,6 +21,7 @@ import type {
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 import type { GlossarySearchRequest } from "../../src-shared/glossary/glossary-contract.js";
+import type { ConversationQueryRequest, ConversationSearchRequest, ConversationNavigatorRequest, ConversationQueryCancelRequest } from "../../src-shared/session/conversation-page.js";
 import {
   areSessionFileResourcesEqual,
   isFileRootGitHistoryComparisonDiffRequest,
@@ -36,6 +37,7 @@ import {
   WITHMATE_GET_CONVERSATION_PAGE_CHANNEL,
   WITHMATE_SEARCH_CONVERSATION_CHANNEL,
   WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL,
+  WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL,
   WITHMATE_GET_SESSION_SUMMARY_CHANNEL,
   WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
@@ -88,6 +90,7 @@ import type {
   MainIpcSessionQueryDeps,
   MainIpcSessionWindowDeps,
   MainIpcWorkspaceValidationDeps,
+  ConversationQueryOwner,
 } from "./contracts.js";
 import {
   assertOwningSessionWindowSender,
@@ -188,15 +191,90 @@ export function registerSessionQueryHandlers(
     if (!deps.getConversationPage) throw new Error("Conversation page reads are unavailable.");
     return deps.getConversationPage(sessionId, request);
   });
-  ipcMain.handle(WITHMATE_SEARCH_CONVERSATION_CHANNEL, async (event, sessionId, request) => {
-    await authorizeConversation(event, sessionId);
-    if (!deps.searchConversation) throw new Error("Conversation search is unavailable.");
-    return deps.searchConversation(sessionId, request);
-  });
-  ipcMain.handle(WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL, async (event, sessionId) => {
-    await authorizeConversation(event, sessionId);
-    if (!deps.listConversationNavigator) throw new Error("Conversation navigation is unavailable.");
-    return deps.listConversationNavigator(sessionId);
+  type QuerySlot = {
+    requestId: string;
+    producerId: string;
+    sessionId: string;
+    kind: "search" | "navigator";
+    signature: string;
+    cancelled: boolean;
+    owner?: ConversationQueryOwner;
+  };
+  const senders = new Map<NonNullable<ReturnType<typeof deps.resolveEventWindow>>, { prefix: string; slots: Map<string, QuerySlot> }>();
+  let senderSequence = 0;
+  const validateIdentity = (request: ConversationQueryCancelRequest) => {
+    if (!request || typeof request.requestId !== "string" || !request.requestId.trim() || request.requestId.length > 128
+      || typeof request.producerId !== "string" || !request.producerId.trim() || request.producerId.length > 128) {
+      throw new TypeError("Conversation query identity is invalid.");
+    }
+  };
+  const cancelSlot = (slot: QuerySlot) => {
+    slot.cancelled = true;
+    if (slot.owner) {
+      void Promise.resolve(slot.owner.cancel({ requestId: slot.requestId, producerId: slot.producerId }))
+        .catch((error: unknown) => console.error("Conversation query cancellation failed.", error));
+    }
+  };
+  const runQuery = async (event: Parameters<typeof assertOwningSessionWindowSender>[0], sessionId: string,
+    request: ConversationSearchRequest | ConversationNavigatorRequest, kind: QuerySlot["kind"]) => {
+    validateIdentity(request);
+    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
+    if (request.offset !== undefined && (!Number.isSafeInteger(request.offset) || request.offset < 0)) throw new TypeError("Conversation query offset is invalid.");
+    if (request.stamp !== undefined && (!request.stamp || typeof request.stamp.generationId !== "string"
+      || typeof request.stamp.ownerIdentity !== "string" || !Number.isSafeInteger(request.stamp.contentRevision)
+      || request.stamp.contentRevision < 0 || request.stamp.requestId !== request.requestId)) throw new TypeError("Conversation query stamp is invalid.");
+    if (kind === "search") {
+      const search = request as ConversationSearchRequest;
+      if (typeof search.query !== "string" || search.query.length > 4096 || (search.mode !== "source" && search.mode !== "preview")) throw new TypeError("Conversation search is invalid.");
+    } else if (!["all", "bookmarks"].includes((request as ConversationNavigatorRequest).filter)) throw new TypeError("Conversation navigator filter is invalid.");
+    const window = deps.resolveEventWindow(event);
+    if (!window) throw new Error("Conversation queries require a Session window.");
+    let sender = senders.get(window);
+    if (!sender) {
+      sender = { prefix: `window-${++senderSequence}:`, slots: new Map() };
+      senders.set(window, sender);
+      event.sender?.once?.("destroyed", () => {
+        for (const slot of sender!.slots.values()) cancelSlot(slot);
+        sender!.slots.clear();
+        senders.delete(window);
+      });
+    }
+    const signature = kind === "search" ? JSON.stringify([(request as ConversationSearchRequest).query, (request as ConversationSearchRequest).mode]) : (request as ConversationNavigatorRequest).filter;
+    let slot = sender.slots.get(request.producerId);
+    if (!slot || slot.requestId !== request.requestId || slot.sessionId !== sessionId || slot.kind !== kind || slot.signature !== signature) {
+      if (slot) cancelSlot(slot);
+      else if (sender.slots.size >= 16) throw new Error("Conversation query producer limit exceeded.");
+      slot = { requestId: request.requestId, producerId: sender.prefix + request.producerId, sessionId, kind, signature, cancelled: false };
+      sender.slots.set(request.producerId, slot);
+    }
+    const current = () => !slot!.cancelled && senders.get(window) === sender
+      && sender!.slots.get(request.producerId) === slot && deps.resolveEventWindow(event) === window;
+    if (!current()) return { status: "cancelled" as const };
+    if (!deps.resolveConversationQueryOwner) throw new Error("Conversation queries are unavailable.");
+    const owner = await deps.resolveConversationQueryOwner(sessionId);
+    if (!current()) return { status: "cancelled" as const };
+    if (!owner.isCurrent()) return { status: "invalidated" as const };
+    assertOwningSessionWindowSender(event, owner.ownerSessionId, deps);
+    slot.owner = owner;
+    const backendRequest = { ...request, producerId: slot.producerId };
+    const result = await (kind === "search" ? owner.search(backendRequest as ConversationSearchRequest) : owner.navigate(backendRequest as ConversationNavigatorRequest));
+    if (!current()) return { status: "cancelled" as const };
+    if (!owner.isCurrent()) return { status: "invalidated" as const };
+    assertOwningSessionWindowSender(event, owner.ownerSessionId, deps);
+    return result;
+  };
+  ipcMain.handle(WITHMATE_SEARCH_CONVERSATION_CHANNEL, (event, sessionId, request) => runQuery(event, sessionId, request, "search"));
+  ipcMain.handle(WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL, (event, sessionId, request) => runQuery(event, sessionId, request, "navigator"));
+  ipcMain.handle(WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL, (event, request: ConversationQueryCancelRequest) => {
+    validateIdentity(request);
+    const window = deps.resolveEventWindow(event);
+    const sender = window ? senders.get(window) : undefined;
+    const slot = sender?.slots.get(request.producerId);
+    if (slot?.requestId === request.requestId) {
+      slot.cancelled = true;
+      sender!.slots.delete(request.producerId);
+      return slot.owner?.cancel({ ...request, producerId: slot.producerId });
+    }
   });
   ipcMain.handle(WITHMATE_GET_SESSION_SUMMARY_CHANNEL, (_event, sessionId: string) => {
     if (!sessionId) {

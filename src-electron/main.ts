@@ -1318,13 +1318,20 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   const auxiliary = await requireAuxiliarySessionStorage().getAuxiliarySessionSummary(sessionId);
                   return auxiliary ? requireAuxiliarySessionStorage().getConversationPage(sessionId, request) : requireSessionStorage().getConversationPage!(sessionId, request);
                 },
-                searchConversation: async (sessionId, request) => {
-                  const auxiliary = await requireAuxiliarySessionStorage().getAuxiliarySessionSummary(sessionId);
-                  return auxiliary ? requireAuxiliarySessionStorage().searchConversation(sessionId, request) : requireSessionStorage().searchConversation!(sessionId, request);
-                },
-                listConversationNavigator: async (sessionId) => {
-                  const auxiliary = await requireAuxiliarySessionStorage().getAuxiliarySessionSummary(sessionId);
-                  return auxiliary ? requireAuxiliarySessionStorage().listConversationNavigator(sessionId) : requireSessionStorage().listConversationNavigator!(sessionId);
+                resolveConversationQueryOwner: async (sessionId) => {
+                  const sessionStorage = requireSessionStorage();
+                  const auxiliaryStorage = requireAuxiliarySessionStorage();
+                  const auxiliary = await auxiliaryStorage.getAuxiliarySessionSummary(sessionId);
+                  const storage = auxiliary ? auxiliaryStorage : sessionStorage;
+                  return {
+                    ownerSessionId: auxiliary?.parentSessionId ?? sessionId,
+                    isCurrent: () => mainStoreContext.sessionStorage === sessionStorage
+                      && mainStoreContext.auxiliarySessionStorage === auxiliaryStorage
+                      && !databaseMaintenanceRequested,
+                    search: (request) => storage.searchConversation!(sessionId, request),
+                    navigate: (request) => storage.listConversationNavigator!(sessionId, request),
+                    cancel: (request) => storage.cancelConversationQuery!(request),
+                  };
                 },
                 getSessionSummary: (sessionId) => getDisplaySessionSummary(sessionId),
                 getSessionGlossaryProjection: (sessionId) =>

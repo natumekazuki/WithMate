@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
-import { assertFullConversation, readConversationPage, searchStoredConversation, listStoredConversationNavigator } from "../storage/conversation-query.js";
-import type { ConversationPageRequest, ConversationSearchRequest } from "../../src-shared/session/conversation-page.js";
+import { assertFullConversation, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink } from "../storage/conversation-query.js";
+import type { ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -189,7 +189,7 @@ const CREATE_AUXILIARY_SESSION_DRAFTS_TABLE_SQL = `
 export class AuxiliarySessionStorage {
   private db: DatabaseSync | null;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, private readonly onConversationChanged: ConversationMutationSink = () => {}) {
     this.db = openAppDatabase(dbPath);
     try {
       this.initializeSchema();
@@ -359,12 +359,12 @@ export class AuxiliarySessionStorage {
     });
   }
 
-  searchConversation(sessionId: string, request: ConversationSearchRequest) {
-    return this.withDb((db) => searchStoredConversation(db, "auxiliary_session_messages", sessionId, request));
+  getConversationQuerySnapshot(sessionId: string) {
+    return this.withDb((db) => readConversationQuerySnapshot(db, "auxiliary_session_messages", sessionId));
   }
 
-  listConversationNavigator(sessionId: string) {
-    return this.withDb((db) => listStoredConversationNavigator(db, "auxiliary_session_messages", sessionId));
+  readConversationQueryBatch(sessionId: string, afterSeq: number) {
+    return this.withDb((db) => readConversationQueryBatch(db, "auxiliary_session_messages", sessionId, afterSeq));
   }
 
   getAuxiliaryDraft(auxiliarySessionId: string): AuxiliaryDraftRecord | null {
@@ -639,11 +639,12 @@ export class AuxiliarySessionStorage {
           return null;
         }
         writeAuxiliaryMetadata(db, input.session);
-        writeAuxiliaryMessages(db, input.session);
+        const conversationChanged = writeAuxiliaryMessages(db, input.session);
         const storedRow = db.prepare(`SELECT * FROM auxiliary_sessions WHERE id = ?`).get(input.session.id) as AuxiliarySessionRow | undefined;
         const stored = storedRow ? readAuxiliarySession(db, storedRow) : null;
         if (!stored) throw new Error("The Auxiliary Session could not be read after saving.");
         db.exec("COMMIT");
+        if (conversationChanged) this.onConversationChanged("auxiliary_session_messages", input.session.id);
         return { ...stored, composerDraft: currentWithDraft?.composerDraft ?? "" };
       } catch (error) {
         db.exec("ROLLBACK");
@@ -658,6 +659,8 @@ export class AuxiliarySessionStorage {
       const existing = db.prepare("SELECT draft_text FROM auxiliary_session_drafts WHERE auxiliary_session_id = ?")
         .get(session.id) as { draft_text: string } | undefined;
       const persisted = existing ? { ...session, composerDraft: existing.draft_text } : session;
+      const previousOwner = db.prepare("SELECT parent_session_id, created_at FROM auxiliary_sessions WHERE id = ?")
+        .get(session.id) as { parent_session_id: string; created_at: string } | undefined;
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         db.prepare(`INSERT OR IGNORE INTO auxiliary_sessions
@@ -665,13 +668,15 @@ export class AuxiliarySessionStorage {
           VALUES (?, ?, ?, ?, ?)`)
           .run(session.id, session.parentSessionId, session.status, session.createdAt, session.updatedAt);
         writeAuxiliaryMetadata(db, persisted);
-        writeAuxiliaryMessages(db, persisted);
+        const conversationChanged = writeAuxiliaryMessages(db, persisted);
         db.prepare(`
           INSERT OR IGNORE INTO auxiliary_session_drafts
             (auxiliary_session_id, parent_session_id, incarnation, durable_revision, draft_text, updated_at)
           VALUES (?, ?, ?, 0, ?, ?)
         `).run(session.id, session.parentSessionId, randomUUID(), session.composerDraft, session.updatedAt);
         db.exec("COMMIT");
+        if (conversationChanged || !existing || previousOwner?.parent_session_id !== session.parentSessionId || previousOwner?.created_at !== session.createdAt)
+          this.onConversationChanged("auxiliary_session_messages", session.id);
         return persisted;
       } catch (error) {
         db.exec("ROLLBACK");
@@ -682,11 +687,13 @@ export class AuxiliarySessionStorage {
 
   deleteAuxiliarySessionsForParent(parentSessionId: string): void {
     this.withDb((db) => {
+      const ids = db.prepare("SELECT id FROM auxiliary_sessions WHERE parent_session_id = ?").all(parentSessionId) as Array<{ id: string }>;
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         db.prepare("DELETE FROM auxiliary_sessions WHERE parent_session_id = ?").run(parentSessionId);
         db.prepare("DELETE FROM auxiliary_session_drafts WHERE parent_session_id = ?").run(parentSessionId);
         db.exec("COMMIT");
+        ids.forEach(({ id }) => this.onConversationChanged("auxiliary_session_messages", id));
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
@@ -697,9 +704,12 @@ export class AuxiliarySessionStorage {
   deleteAuxiliarySessionsExceptParents(parentSessionIds: Iterable<string>): void {
     const retainedParentSessionIds = Array.from(new Set(parentSessionIds));
     this.withDb((db) => {
+      const removed = (db.prepare("SELECT id, parent_session_id FROM auxiliary_sessions").all() as Array<{ id: string; parent_session_id: string }>)
+        .filter((row) => !retainedParentSessionIds.includes(row.parent_session_id));
       if (retainedParentSessionIds.length === 0) {
         db.prepare("DELETE FROM auxiliary_sessions").run();
         db.prepare("DELETE FROM auxiliary_session_drafts").run();
+        removed.forEach(({ id }) => this.onConversationChanged("auxiliary_session_messages", id));
         return;
       }
 
@@ -708,6 +718,7 @@ export class AuxiliarySessionStorage {
         .run(...retainedParentSessionIds);
       db.prepare(`DELETE FROM auxiliary_session_drafts WHERE parent_session_id NOT IN (${placeholders})`)
         .run(...retainedParentSessionIds);
+      removed.forEach(({ id }) => this.onConversationChanged("auxiliary_session_messages", id));
     });
   }
 
@@ -791,6 +802,7 @@ export class AuxiliarySessionStorage {
           .run(JSON.stringify({ ...message, isBookmarked: input.isBookmarked ? true : undefined }), input.auxiliarySessionId, input.messageIndex);
         db.prepare(`UPDATE auxiliary_sessions SET updated_at = ? WHERE id = ?`).run(input.updatedAt, input.auxiliarySessionId);
         db.exec("COMMIT");
+        if ((message.isBookmarked === true) !== input.isBookmarked) this.onConversationChanged("auxiliary_session_messages", input.auxiliarySessionId);
         return true;
       } catch (error) { db.exec("ROLLBACK"); throw error; }
     });
@@ -905,7 +917,7 @@ function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession): vo
   );
 }
 
-function writeAuxiliaryMessages(db: DatabaseSync, session: AuxiliarySession): void {
+function writeAuxiliaryMessages(db: DatabaseSync, session: AuxiliarySession): boolean {
   assertFullConversation(session);
   const existing = new Map((db.prepare(`SELECT seq, role, body, artifact_body FROM auxiliary_session_messages
     WHERE auxiliary_session_id = ?`).all(session.id) as Array<{
@@ -915,6 +927,7 @@ function writeAuxiliaryMessages(db: DatabaseSync, session: AuxiliarySession): vo
     (auxiliary_session_id, seq, role, body, artifact_body, created_at) VALUES (?, ?, ?, ?, ?, ?)`);
   const update = db.prepare(`UPDATE auxiliary_session_messages SET role = ?, body = ?, artifact_body = ?
     WHERE auxiliary_session_id = ? AND seq = ?`);
+  let conversationChanged = existing.size !== session.messages.length;
   session.messages.forEach((message, seq) => {
     const summary = message.artifact ? summarizeMessageArtifact(message.artifact) : undefined;
     let artifactBody = message.artifact ? JSON.stringify(message.artifact) : null;
@@ -923,6 +936,9 @@ function writeAuxiliaryMessages(db: DatabaseSync, session: AuxiliarySession): vo
     if (oldRow && !oldMessage) throw new Error("Invalid Auxiliary message.");
     const preservedBookmark = oldMessage?.role === message.role && oldMessage.text === message.text
       ? oldMessage.isBookmarked === true : message.isBookmarked === true;
+    if (!oldMessage || oldMessage.role !== message.role || oldMessage.text !== message.text
+      || (oldMessage.accent === true) !== (message.accent === true)
+      || (oldMessage.isBookmarked === true) !== preservedBookmark) conversationChanged = true;
     if (message.artifact?.detailAvailable && oldRow?.artifact_body) {
       const old = JSON.parse(oldRow.artifact_body) as MessageArtifact;
       if (JSON.stringify(summarizeMessageArtifact(old)) === JSON.stringify(summary)) artifactBody = oldRow.artifact_body;
@@ -938,6 +954,7 @@ function writeAuxiliaryMessages(db: DatabaseSync, session: AuxiliarySession): vo
     db.prepare("DELETE FROM auxiliary_session_messages WHERE auxiliary_session_id = ? AND seq >= ?")
       .run(session.id, session.messages.length);
   }
+  return conversationChanged;
 }
 
 function toDraftRecord(row: AuxiliaryDraftRow): AuxiliaryDraftRecord {

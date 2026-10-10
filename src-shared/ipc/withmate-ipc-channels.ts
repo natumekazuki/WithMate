@@ -15,6 +15,7 @@ export const WITHMATE_GET_SESSION_CHANNEL = "withmate:get-session";
 export const WITHMATE_GET_CONVERSATION_PAGE_CHANNEL = "withmate:get-conversation-page";
 export const WITHMATE_SEARCH_CONVERSATION_CHANNEL = "withmate:search-conversation";
 export const WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL = "withmate:list-conversation-navigator";
+export const WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL = "withmate:cancel-conversation-query";
 export const WITHMATE_GET_SESSION_SUMMARY_CHANNEL = "withmate:get-session-summary";
 export const WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL = "withmate:get-session-glossary-projection";
 export const WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL = "withmate:search-session-glossary";

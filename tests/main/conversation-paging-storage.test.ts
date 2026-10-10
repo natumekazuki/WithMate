@@ -16,17 +16,17 @@ import { normalizeAppSettings } from "../../src-shared/settings/provider-setting
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxiliaryの表示pageは全履歴seqと総件数を維持し、未取得範囲の検索とBookmark移動を提供し、page保存で履歴を失わない"
+// claim = "Main/Auxiliaryの表示pageは全履歴seqと総件数を維持し、page保存で履歴を失わない"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md#storage-overview" }
-// fault = "pageを全履歴として保存するか検索・navigatorを末尾pageへ限定する"
-// observable = "取得pageの件数とhistoryIndex、検索match、navigator bookmark、再取得したfull履歴"
+// fault = "末尾pageを全履歴として保存するかpageのhistoryIndexを局所indexへ置換する"
+// observable = "取得pageの件数とhistoryIndex、再取得したfull履歴"
 // observation_boundary = "public-boundary"
 // scope = "main-and-auxiliary-conversation-storage"
 // lifecycle = "permanent"
 // impact = "過去会話の不可逆消失と検索・Bookmarkからの移動不能を防ぐ"
 // distinction = "既存full read/write testと型検査はpage保存時の切詰めや未取得履歴検索を観測しない。小さいSQLite fixtureで両保存ownerを確認する"
 // @end-test-value
-test("会話pageは全履歴検索とseqを維持しfull保存へ流れない", async () => {
+test("会話pageは全履歴seqを維持しfull保存へ流れない", async () => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "withmate-conversation-page-"),
   );
@@ -92,19 +92,6 @@ test("会話pageは全履歴検索とseqを維持しfull保存へ流れない", 
         storage.getConversationPage(id, { startIndex: 0 })?.messages[59]
           .historyIndex,
         59,
-      );
-      assert.deepEqual(
-        storage.searchConversation(id, { query: "needle", mode: "preview" }),
-        [
-          { messageIndex: 3, occurrenceIndex: 0 },
-          { messageIndex: 3, occurrenceIndex: 1 },
-        ],
-      );
-      assert.equal(
-        storage
-          .listConversationNavigator(id)
-          .find((entry) => entry.messageIndex === 4)?.isBookmarked,
-        true,
       );
     }
     const mainView = main.getSessionView(session.id)!;

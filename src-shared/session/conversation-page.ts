@@ -14,9 +14,45 @@ export type ConversationPage = {
   totalCount: number;
 };
 
-export type ConversationSearchRequest = {
+export const CONVERSATION_QUERY_PAGE_SIZE = 64;
+
+export type ConversationQueryStamp = {
+  generationId: string;
+  ownerIdentity: string;
+  contentRevision: number;
+  requestId: string;
+};
+
+export type ConversationQueryRequest = {
+  requestId: string;
+  producerId: string;
+  offset?: number;
+  stamp?: ConversationQueryStamp;
+};
+
+export type ConversationQueryPage<T> = {
+  status: "complete";
+  stamp: ConversationQueryStamp;
+  incarnationId: string;
+  messageCount: number;
+  totalCount: number;
+  offset: number;
+  items: T[];
+};
+
+export type ConversationQueryOutcome<T> = ConversationQueryPage<T> | {
+  status: "cancelled" | "invalidated";
+};
+
+export type ConversationQueryCancelRequest = Pick<ConversationQueryRequest, "requestId" | "producerId">;
+
+export type ConversationSearchRequest = ConversationQueryRequest & {
   query: string;
   mode: "source" | "preview";
+};
+
+export type ConversationNavigatorRequest = ConversationQueryRequest & {
+  filter: "all" | "bookmarks";
 };
 
 export type ConversationSearchMatch = {

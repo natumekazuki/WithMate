@@ -265,7 +265,7 @@
   grid-template-rows: auto minmax(0, 1fr);
 }
 
-.command-monitor-shell.messages.has-message-filter-toolbar .messages-navigator-filter-toolbar {
+.command-monitor-shell.messages.has-message-filter-toolbar .messages-navigator-toolbar {
   position: sticky;
   z-index: 1;
   top: 0;
@@ -273,6 +273,11 @@
   margin-bottom: 6px;
   padding: 8px 0 6px;
   background: #12161e;
+}
+
+.messages-navigator-toolbar {
+  display: grid;
+  gap: 6px;
 }
 
 .command-monitor-shell.messages.has-message-filter-toolbar .command-monitor-content {
@@ -683,6 +688,28 @@
   color: var(--ink);
   text-align: left;
   cursor: pointer;
+}
+
+.messages-navigator-virtual-list {
+  display: block;
+  position: relative;
+}
+
+.messages-navigator-paged {
+  display: block;
+  height: auto;
+}
+
+.messages-navigator-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding-bottom: 6px;
+}
+
+.messages-navigator-placeholder {
+  min-height: 48px;
 }
 
 .messages-navigator-row:hover,

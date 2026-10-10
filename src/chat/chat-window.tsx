@@ -83,7 +83,7 @@ export type ChatWindowProps = Omit<
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
   rightPaneProps?: SessionContextPaneProps;
-  renderRightPane?: (navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorSessionId" | "onJumpToMessage" | "onMessageNavigatorActiveChange">, visible: boolean) => ReactNode;
+  renderRightPane?: (navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorPage" | "messageNavigatorSessionId" | "onJumpToMessage" | "onMessageNavigatorActiveChange">, visible: boolean) => ReactNode;
   mainContent?: ChatScreenProps["mainContent"];
   concurrentChats?: ConcurrentChatWindowProps;
 };
@@ -574,6 +574,7 @@ export function ChatWindow({
     ? {
       ...screenProps.rightPaneProps,
       messageNavigatorEntries: targetColumnControls?.messageNavigatorEntries ?? screenProps.rightPaneProps.messageNavigatorEntries,
+      messageNavigatorPage: targetColumnControls?.messageNavigatorPage,
       messageNavigatorSessionId: screenProps.rightPaneProps.messageNavigatorSessionId === undefined
         ? undefined
         : targetColumnControls?.sessionId ?? screenProps.rightPaneProps.messageNavigatorSessionId,
@@ -589,6 +590,7 @@ export function ChatWindow({
         <SessionPaneErrorBoundary>
           {renderRightPane({
             messageNavigatorEntries: targetColumnControls?.messageNavigatorEntries,
+            messageNavigatorPage: targetColumnControls?.messageNavigatorPage,
             messageNavigatorSessionId: targetColumnControls?.sessionId ?? targetSessionId,
             onJumpToMessage: targetColumnControls?.onJumpToMessage,
             onMessageNavigatorActiveChange: setMessageNavigatorActive,

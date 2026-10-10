@@ -35,6 +35,7 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const onQuoteMessageText = useStableOptionalCallback(props.onQuoteMessageText);
   const onActivateGlossaryEntry = useStableOptionalCallback(props.onActivateGlossaryEntry);
   const searchConversation = useStableOptionalCallback(props.searchConversation);
+  const cancelConversationQuery = useStableOptionalCallback(props.cancelConversationQuery);
   const onLoadMessagePage = useStableOptionalCallback(props.onLoadMessagePage);
 
   return (
@@ -55,6 +56,7 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
       onQuoteMessageText={onQuoteMessageText}
       onActivateGlossaryEntry={onActivateGlossaryEntry}
       searchConversation={searchConversation}
+      cancelConversationQuery={cancelConversationQuery}
       onLoadMessagePage={onLoadMessagePage}
     />
   );

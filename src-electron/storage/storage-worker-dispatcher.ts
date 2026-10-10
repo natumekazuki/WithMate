@@ -13,6 +13,7 @@ import { RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admiss
 
 export type StorageWorkerHandlerContext = StorageWorkerRequestContext & {
   reportProgress(progress: unknown): void;
+  scheduleDb<T>(read: () => T): Promise<T>;
 };
 
 export type StorageWorkerCommandHandler = (
@@ -34,7 +35,7 @@ export class StorageWorkerCommandNotAllowedError extends Error {
 export async function dispatchStorageWorkerCall(
   handlers: StorageWorkerCommandHandlers,
   request: StorageWorkerCallRequest,
-  context: Pick<StorageWorkerHandlerContext, "reportProgress"> = { reportProgress: () => {} },
+  context: Pick<StorageWorkerHandlerContext, "reportProgress"> & Partial<Pick<StorageWorkerHandlerContext, "scheduleDb">> = { reportProgress: () => {} },
 ): Promise<unknown> {
   if (!Object.prototype.hasOwnProperty.call(handlers, request.command)) {
     throw new StorageWorkerCommandNotAllowedError(`Storage worker command is not allowed: ${request.command}`);
@@ -43,7 +44,7 @@ export async function dispatchStorageWorkerCall(
   if (!handler) {
     throw new StorageWorkerCommandNotAllowedError(`Storage worker command is not allowed: ${request.command}`);
   }
-  return handler(request.payload, { ...request.context, ...context });
+  return handler(request.payload, { ...request.context, scheduleDb: async (read) => read(), ...context });
 }
 
 export function serializeStorageWorkerError(

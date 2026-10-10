@@ -13,19 +13,23 @@ import { replaceLiveRunAfterResolvedRequest } from "./runtime/session-live-run-s
 import { CONVERSATION_PAGE_SIZE, getMessageHistoryIndex, type ConversationPage } from "../../src-shared/session/conversation-page.js";
 import { setMessageBookmarked } from "../../src-shared/session/session-state.js";
 import { subscribeSessionLiveSelection } from "./runtime/session-window-live-ingress.js";
+import { useConversationQueryPages } from "./conversation/use-conversation-query-pages.js";
+import type { MessageNavigatorPage } from "./shell/session-context-pane.js";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
-  "messages" | "messageCount" | "incarnationId" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors"
+  "messages" | "messageCount" | "incarnationId" | "updatedAt" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors"
 >>;
 
 export type ConversationMessageColumnApi = Partial<Pick<WithMateWindowApi,
-  "subscribeLiveSessionRun" | "getLiveSessionRun" | "resolveLiveApproval" | "resolveLiveElicitation" | "getSessionMessageArtifact" | "getConversationPage" | "searchConversation" | "listConversationNavigator"
+  "subscribeLiveSessionRun" | "getLiveSessionRun" | "resolveLiveApproval" | "resolveLiveElicitation" | "getSessionMessageArtifact" | "getConversationPage" | "searchConversation" | "listConversationNavigator" | "cancelConversationQuery"
 >>;
 
 export type ConversationColumnCache = {
   incarnationId?: string;
   scrollState: { scrollTop: number; isFollowing: boolean } | null;
   collapsedMessageKeys: Set<string>;
+  defaultCollapsed?: boolean;
+  collapseExceptions?: Map<number, boolean>;
   liveRun: LiveSessionRunState | null;
   bridge: Omit<LiveAssistantProjection, "text"> | null;
   approvalRequestId: string | null;
@@ -59,6 +63,7 @@ export type ConversationColumnControls = {
   onToggleAllMessageCollapse: () => void;
   followLatest: () => void;
   messageNavigatorEntries: readonly MessageNavigatorEntry[];
+  messageNavigatorPage?: MessageNavigatorPage;
   onJumpToMessage: (key: string) => void;
 };
 
@@ -83,7 +88,8 @@ export function useConversationMessageColumn({
   const [browsePage, setBrowsePage] = useState<ConversationPage | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
   const [pageError, setPageError] = useState("");
-  const [navigatorEntries, setNavigatorEntries] = useState<readonly MessageNavigatorEntry[] | null>(null);
+  const [navigatorFilter, setNavigatorFilter] = useState<"all" | "bookmarks">("all");
+  const [navigatorOffset, setNavigatorOffset] = useState(0);
   const [navigatorRevision, setNavigatorRevision] = useState(0);
   const pageRevision = useRef(0);
   const requestedPageStart = useRef<number | undefined>(undefined);
@@ -139,16 +145,17 @@ export function useConversationMessageColumn({
     if (conversation.pageStart !== undefined) void loadPage(conversation.pageStart);
     return () => { ++pageRevision.current; };
   }, [pageOwner]);
-  useEffect(() => {
-    setNavigatorEntries(null);
-    if (!enabled || !navigatorActive || session?.messageCount === undefined || !api?.listConversationNavigator) return;
-    let active = true;
-    void api.listConversationNavigator(sessionId).then((entries) => {
-      if (!active) return;
-      setNavigatorEntries(entries.map((entry) => ({ ...entry, key: `session-${sessionId}-${entry.messageIndex}`, sourceKind: messageSourceKind, isCollapsed: conversation.collapsedMessageKeys.has(`session-${sessionId}-${entry.messageIndex}`) })));
-    }).catch(() => { if (active) setPageError("Could Not Load Messages Navigator"); });
-    return () => { active = false; };
-  }, [api, enabled, navigatorActive, pageOwner, totalCount, navigatorRevision]);
+  useEffect(() => { setNavigatorFilter("all"); setNavigatorOffset(0); }, [pageOwner]);
+  const navigator = useConversationQueryPages({
+    identity: `${pageOwner}:${totalCount}:${session?.updatedAt ?? ""}:${navigatorRevision}:${navigatorFilter}`,
+    enabled: enabled && navigatorActive && session?.messageCount !== undefined,
+    ordinal: navigatorOffset,
+    read: api?.listConversationNavigator ? async (request) => {
+      const outcome = await api.listConversationNavigator!(sessionId, { ...request, filter: navigatorFilter });
+      return outcome.status === "complete" && session?.incarnationId && outcome.incarnationId !== session.incarnationId ? { status: "invalidated" } : outcome;
+    } : undefined,
+    cancel: api?.cancelConversationQuery,
+  });
   useEffect(() => {
     const releaseLiveText = () => {
       conversation.liveRun = null;
@@ -219,6 +226,10 @@ export function useConversationMessageColumn({
     ? keyedHistory
     : projectLiveAssistantOnSessionHistory(historyProjection, messages, sessionId, isBrowsing ? null : bridge),
   [historyProjection, keyedHistory, messages, sessionId, hasSavedBridge, bridgeKey, bridge?.text, isBrowsing]);
+  const searchTailMessages = useMemo(() => bridge && !hasPersistedLiveAssistantMessage(tailMessages, [], bridge, sessionId)
+    ? [...tailMessages, { role: "assistant" as const, text: bridge.text, historyIndex: bridge.messageIndex }]
+    : tailMessages, [tailMessages, bridgeKey, bridge?.text, sessionId]);
+  const searchMessageIndexes = useMemo(() => projection.sources.map((source, index) => source.kind === "live-assistant" && bridge ? bridge.messageIndex : getMessageHistoryIndex(projection.messages[index], index)), [projection, bridgeKey]);
   // 保存済みbridgeのkeyは終了後も維持するが、後続promptの待機表示には使わない。
   const pendingResponseMessageKey = bridge && latestUserMessageIndex <= bridge.messageIndex
     ? buildLiveAssistantProjectionKey(bridge.sessionId, bridge.threadId, bridge.messageIndex)
@@ -249,7 +260,11 @@ export function useConversationMessageColumn({
     session?.characterId,
     session?.characterThemeColors,
   ]);
-  const collapsedMessageKeys = useMemo(() => new Set(conversation.collapsedMessageKeys), [conversation.collapsedMessageKeys]);
+  const paged = session?.messageCount !== undefined && !!api?.getConversationPage;
+  const isHistoryCollapsed = (index: number) => conversation.collapseExceptions?.get(index) ?? conversation.defaultCollapsed ?? false;
+  const collapsedMessageKeys = useMemo(() => paged
+    ? new Set(collapseTargets.filter((target) => isHistoryCollapsed(target.source.messageIndex)).map((target) => target.key))
+    : new Set(conversation.collapsedMessageKeys), [paged, collapseTargets, conversation.collapsedMessageKeys, conversation.defaultCollapsed, conversation.collapseExceptions]);
   previousTargets.current = collapseTargets;
   const following = useSessionMessageListFollowing({
     ownerKey: pageOwner,
@@ -299,41 +314,57 @@ export function useConversationMessageColumn({
     }
   }, [conversation, loadPage, pageOwner, refresh, sessionId]);
   const onToggleMessageCollapse = (key: string) => {
+    if (paged) {
+      const target = collapseTargets.find((value) => value.key === key);
+      if (!target) return;
+      const index = target.source.messageIndex;
+      const next = !isHistoryCollapsed(index);
+      conversation.collapseExceptions = new Map(conversation.collapseExceptions);
+      if (next === !!conversation.defaultCollapsed) conversation.collapseExceptions.delete(index);
+      else conversation.collapseExceptions.set(index, next);
+      refresh();
+      return;
+    }
     conversation.collapsedMessageKeys = new Set(conversation.collapsedMessageKeys);
     if (conversation.collapsedMessageKeys.has(key)) conversation.collapsedMessageKeys.delete(key);
     else conversation.collapsedMessageKeys.add(key);
     refresh();
   };
   const onToggleAllMessageCollapse = () => {
-    const keys = navigatorEntries?.map((entry) => collapseTargets.find((target) => target.source.messageIndex === Number(entry.key.slice(`session-${sessionId}-`.length)))?.key ?? entry.key) ?? collapseTargets.map((target) => target.key);
+    if (paged) {
+      conversation.defaultCollapsed = !(conversation.defaultCollapsed && !conversation.collapseExceptions?.size);
+      conversation.collapseExceptions = new Map();
+      refresh();
+      return;
+    }
+    const keys = collapseTargets.map((target) => target.key);
     const allCollapsed = keys.every((key) => conversation.collapsedMessageKeys.has(key));
     conversation.collapsedMessageKeys = allCollapsed ? new Set() : new Set(keys);
     refresh();
   };
-  const collapseKeys = navigatorEntries?.map((entry) => collapseTargets.find((target) => target.source.messageIndex === Number(entry.key.slice(`session-${sessionId}-`.length)))?.key ?? entry.key) ?? collapseTargets.map((target) => target.key);
-  const allMessagesCollapsed = collapseKeys.length > 0
+  const collapseKeys = collapseTargets.map((target) => target.key);
+  const allMessagesCollapsed = paged ? totalCount > 0 && !!conversation.defaultCollapsed && !conversation.collapseExceptions?.size : collapseKeys.length > 0
     && collapseKeys.every((key) => conversation.collapsedMessageKeys.has(key));
   const loadedNavigatorEntries = useMemo(
     () => buildMessageNavigatorEntries(collapseTargets, new Map(
       collapseTargets
-        .filter((target) => conversation.collapsedMessageKeys.has(target.key))
+        .filter((target) => collapsedMessageKeys.has(target.key))
         .map((target) => [target.key, {
           sourceIdentity: target.sourceIdentity,
           role: target.role,
           text: target.text,
         } satisfies MessageCollapseStateEntry]),
     )),
-    [collapseTargets, conversation.collapsedMessageKeys],
+    [collapseTargets, collapsedMessageKeys],
   );
-  const messageNavigatorEntries = useMemo(() => {
-    if (!navigatorEntries) return loadedNavigatorEntries;
-    const entries = navigatorEntries.map((entry) => {
-    const key = collapseTargets.find((target) => target.source.messageIndex === Number(entry.key.slice(`session-${sessionId}-`.length)))?.key ?? entry.key;
-    const loaded = loadedNavigatorEntries.find((target) => target.key === key);
-    return loaded ?? { ...entry, isCollapsed: conversation.collapsedMessageKeys.has(entry.key) };
-    });
-    return [...entries, ...loadedNavigatorEntries.filter((entry) => !entries.some((known) => known.key === entry.key))];
-  }, [navigatorEntries, loadedNavigatorEntries, conversation.collapsedMessageKeys, collapseTargets, sessionId]);
+  const messageNavigatorEntries = loadedNavigatorEntries;
+  const messageNavigatorPage: MessageNavigatorPage | undefined = paged && api?.listConversationNavigator ? {
+    items: navigator.items.map((entry) => ({ ...entry, key: collapseTargets.find((target) => target.source.messageIndex === entry.messageIndex)?.key ?? `session-${sessionId}-${entry.messageIndex}`, sourceKind: messageSourceKind, isCollapsed: isHistoryCollapsed(entry.messageIndex) })),
+    offset: navigator.offset, totalCount: navigator.totalCount, filter: navigatorFilter,
+    loading: navigator.loading, error: navigator.error,
+    onFilterChange: (filter) => { setNavigatorFilter(filter); setNavigatorOffset(0); },
+    onRequestRange: setNavigatorOffset, onRetry: navigator.retry,
+  } : undefined;
   const onJumpToMessage = useCallback(async (key: string) => {
     if (!projection.keys.includes(key)) {
       const index = Number(key.slice(`session-${sessionId}-`.length));
@@ -354,16 +385,17 @@ export function useConversationMessageColumn({
     onColumnControls?.({
       sessionId,
       messageCollapseTargetKeys: collapseTargets.map((target) => target.key),
-      collapsedMessageKeys: new Set(conversation.collapsedMessageKeys),
+      collapsedMessageKeys,
       allMessagesCollapsed,
       isMessageListFollowing: !isBrowsing && following.isMessageListFollowing,
       handleMessageListSend,
       onToggleAllMessageCollapse,
       followLatest,
       messageNavigatorEntries,
+      messageNavigatorPage,
       onJumpToMessage,
     });
-  }, [allMessagesCollapsed, collapseTargets, conversation.collapsedMessageKeys, followLatest, handleMessageListSend, following.isMessageListFollowing, messageNavigatorEntries, onColumnControls, onJumpToMessage, sessionId]);
+  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, handleMessageListSend, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, sessionId]);
   const reloadLiveRun = async (requestId: string, requestKind: "approval" | "elicitation", eventRevision: number) => {
     if (!api?.getLiveSessionRun) return;
     const latestLiveRun = await api.getLiveSessionRun(sessionId);
@@ -445,8 +477,17 @@ export function useConversationMessageColumn({
       onLater: isBrowsing && pageStart + messages.length < totalCount ? () => void changePage(Math.min(Math.max(0, totalCount - CONVERSATION_PAGE_SIZE), pageStart + 30)) : undefined,
       onRetry: () => { setNavigatorRevision((revision) => revision + 1); void loadPage(requestedPageStart.current); },
     } : undefined,
-    searchConversation: api?.searchConversation && session.messageCount !== undefined ? (query, mode) => api.searchConversation!(sessionId, { query, mode }) : undefined,
+    searchConversation: api?.searchConversation && session.messageCount !== undefined ? async (request) => {
+      const outcome = await api.searchConversation!(sessionId, request);
+      return outcome.status === "complete" && session.incarnationId && outcome.incarnationId !== session.incarnationId ? { status: "invalidated" } : outcome;
+    } : undefined,
+    cancelConversationQuery: api?.cancelConversationQuery,
+    conversationQueryOwner: pageOwner,
+    conversationQueryRevision: `${totalCount}:${session.updatedAt ?? ""}`,
+    searchTailMessages: searchTailMessages,
+    searchMessageIndexes,
     onLoadMessagePage: async (messageIndex) => {
+      if (messageIndex >= totalCount) { followLatest(); return; }
       if (!messages.some((message, index) => getMessageHistoryIndex(message, index) === messageIndex)) {
         await loadPage(Math.max(0, messageIndex - 30));
       } else {
@@ -462,7 +503,7 @@ export function useConversationMessageColumn({
       ++bookmarkRevision.current;
       if (activePageOwner.current !== pageOwner) return;
       setBrowsePage((page) => page?.sessionId === sessionId ? { ...page, messages: page.messages.map((message, index) => getMessageHistoryIndex(message, index) === target.source.messageIndex ? setMessageBookmarked(message, !target.isBookmarked) : message) } : page);
-      setNavigatorEntries((entries) => entries?.map((entry) => entry.key === `session-${sessionId}-${target.source.messageIndex}` ? { ...entry, isBookmarked: !target.isBookmarked } : entry) ?? null);
+      setNavigatorRevision((revision) => revision + 1);
     } : undefined,
     onLoadArtifactDetail: baseProps.onLoadArtifactDetail
       ? (messageIndex) => loadProjectedMessageArtifact({

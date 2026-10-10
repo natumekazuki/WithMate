@@ -10,6 +10,30 @@ import type {
 
 type Listener = (...args: unknown[]) => void;
 
+// @test-value v2
+// kind = "contract"
+// claim = "会話queryはproducer/requestとpage stampを保持して専用channelへ送り、取消も同じidentityを伝える"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts WithMateWindowSessionApi" }
+// fault = "検索・navigator・取消を誤channelへ接続するかpage identityを落とす"
+// observable = "invokeのchannelと引数"
+// observation_boundary = "public-boundary"
+// scope = "conversation query preload"
+// lifecycle = "permanent"
+// impact = "ページ切替と即時取消が正しいqueryへ届くことを保持する"
+// distinction = "型検査やkey集合testではruntime channelとpayload伝達を検出できない"
+// @end-test-value
+test("会話query preloadはpage identityと取消を伝達する", async () => {
+  const { ipcRenderer } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  const common = { requestId: "query-1", producerId: "find", offset: 64, stamp: { generationId: "generation", ownerIdentity: "owner", contentRevision: 2, requestId: "query-1" } };
+  const search = { ...common, query: "needle", mode: "preview" as const };
+  assert.deepEqual(await api.searchConversation("aux", search), { channel: "withmate:search-conversation", args: ["aux", search] });
+  const nav = { ...common, filter: "bookmarks" as const };
+  assert.deepEqual(await api.listConversationNavigator("aux", nav), { channel: "withmate:list-conversation-navigator", args: ["aux", nav] });
+  const cancel = { requestId: common.requestId, producerId: common.producerId };
+  assert.deepEqual(await api.cancelConversationQuery(cancel), { channel: "withmate:cancel-conversation-query", args: [cancel] });
+});
+
 function createIpcRendererStub() {
   const listeners = new Map<string, Listener>();
   const removedListeners: Array<{ channel: string; listener: Listener }> = [];
@@ -692,6 +716,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listAuxiliarySessions",
     "listCharacters",
     "listConversationNavigator",
+    "cancelConversationQuery",
     "listOpenActiveAuxiliarySessionSummaries",
     "listOpenAuxiliarySessionSummaries",
     "listOpenSessionWindowIds",

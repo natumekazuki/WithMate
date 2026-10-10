@@ -40,7 +40,7 @@ import { SessionStorageV3 } from "../session/session-storage-v3.js";
 import { SessionStorageV6 } from "../session/session-storage-v6.js";
 import { sessionSummariesToSessions } from "../session/session-summary-adapter.js";
 import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
-import { createV6StorageWorkerBundle, type V6StorageWorkerBundle } from "./storage-worker-bundle.js";
+import { createV6StorageWorkerBundle, type V6StorageWorkerBundle, type ConversationQueryStore } from "./storage-worker-bundle.js";
 import type { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
 import type { SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
 import type {
@@ -73,8 +73,9 @@ export type SessionStorageRead = AwaitableStorageMethods<
 > & Pick<SessionStorage, "close"> & {
   getSessionView?: AwaitableStorageMethods<SessionStorageV6, "getSessionView">["getSessionView"];
   getConversationPage?: AwaitableStorageMethods<SessionStorageV6, "getConversationPage">["getConversationPage"];
-  searchConversation?: AwaitableStorageMethods<SessionStorageV6, "searchConversation">["searchConversation"];
-  listConversationNavigator?: AwaitableStorageMethods<SessionStorageV6, "listConversationNavigator">["listConversationNavigator"];
+  searchConversation?: ConversationQueryStore["searchConversation"];
+  listConversationNavigator?: ConversationQueryStore["listConversationNavigator"];
+  cancelConversationQuery?: ConversationQueryStore["cancelConversationQuery"];
   listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   getSessionSummary?(sessionId: string): Awaitable<import("../../src-shared/session/session-state.js").SessionSummary | null>;
   listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
@@ -124,8 +125,6 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "getAuxiliarySession"
   | "getAuxiliarySessionView"
   | "getConversationPage"
-  | "searchConversation"
-  | "listConversationNavigator"
   | "upsertAuxiliarySession"
   | "updateAuxiliarySessionIfMatches"
   | "deleteAuxiliarySessionsForParent"
@@ -141,7 +140,7 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "updateAuxiliaryMessageBookmarkIfMatches"
   | "updateAuxiliaryExecutionOptionsIfMatches"
   | "updateAuxiliaryDisplayAnchorIfMatches"
-> & Pick<AuxiliarySessionStorage, "close"> & {
+> & Pick<AuxiliarySessionStorage, "close"> & Partial<ConversationQueryStore> & {
   updateAuxiliarySessionThreadIfMatches?(input: import("../auxiliary/auxiliary-session-storage.js").AuxiliarySessionThreadPatchInput): Awaitable<Awaited<ReturnType<AuxiliarySessionStorage["updateAuxiliarySessionThreadIfMatches"]>>>;
   updateAuxiliarySessionRuntimeMetadataIfMatches?(
     input: import("../auxiliary/auxiliary-session-storage.js").AuxiliarySessionRuntimeMetadataPatchInput,
@@ -433,8 +432,6 @@ export class PersistentStoreLifecycleService {
 class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
   getAuxiliarySessionView(): null { return null; }
   getConversationPage(): null { return null; }
-  searchConversation(): [] { return []; }
-  listConversationNavigator(): [] { return []; }
   listAllAuxiliarySessions(): AuxiliarySession[] {
     return [];
   }

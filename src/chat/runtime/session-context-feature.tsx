@@ -21,7 +21,7 @@ export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput
   selectedSession: Session;
   displayedSession: Session;
   ref?: Ref<SessionContextFeatureHandle>;
-  navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorSessionId" | "onJumpToMessage" | "onMessageNavigatorActiveChange">;
+  navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorPage" | "messageNavigatorSessionId" | "onJumpToMessage" | "onMessageNavigatorActiveChange">;
   onAnnotationMatcherChange: (matcher: GlossaryAnnotationMatcher | undefined) => void;
   visible: boolean;
 }) {

@@ -14,6 +14,59 @@ import type { SessionMessageColumnProps } from "../../src/chat/conversation/sess
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { ConversationPage } from "../../src-shared/session/conversation-page.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "全縮小の意図は未読込の履歴pageにも適用され、個別展開の例外はpage復帰で維持し、別incarnationには持ち越さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 全履歴Messagesの縮小状態" }
+// fault = "全縮小を現在pageのkey集合だけへ保存する、page切替で例外を落とす、または別incarnationへ縮小意図を流用する"
+// observable = "columnのcollapsedMessageKeysとcontrolsのallMessagesCollapsed"
+// observation_boundary = "component-behavior"
+// scope = "conversation-global-fold-intent"
+// lifecycle = "permanent"
+// impact = "長い履歴で全縮小後のpage閲覧と個別展開を同じ会話に限定して維持できる"
+// distinction = "既存collapse helper testは有限本文pageを跨ぐowner単位の既定意図を通らない"
+// @end-test-value
+test("paged column applies all-fold intent across unloaded pages", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
+  Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const messages = (start: number) => Array.from({ length: 60 }, (_, index) => ({ role: "user" as const, text: `message ${start + index}`, historyIndex: start + index }));
+  const tail = messages(140);
+  const api: ConversationMessageColumnApi = { getConversationPage: async (sessionId, request) => ({ sessionId, incarnationId: "first", totalCount: 200, startIndex: request?.startIndex ?? 140, messages: messages(request?.startIndex ?? 140) }) };
+  let latest: ReturnType<typeof useConversationMessageColumn> = null;
+  let controls: ConversationColumnControls | undefined;
+  const getLatest = () => { assert.ok(latest); return latest; };
+  const getControls = () => { assert.ok(controls); return controls; };
+  function Probe({ incarnationId }: { incarnationId: string }) {
+    latest = useConversationMessageColumn({ session: { id: "main", incarnationId, messages: tail, messageCount: 200 }, baseProps: createBaseProps("main"), enabled: true, api, liveRun: null, onColumnControls: (value) => { controls = value; } });
+    return React.createElement("div", { ref: latest?.messageListRef });
+  }
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(React.createElement(Probe, { incarnationId: "first" })));
+    await act(async () => getControls().onToggleAllMessageCollapse());
+    assert.equal(getControls().allMessagesCollapsed, true);
+    await act(async () => getControls().onJumpToMessage("session-main-30"));
+    assert.ok(getLatest().collapsedMessageKeys?.has("session-main-30"));
+    await act(async () => getLatest().onToggleMessageCollapse?.("session-main-30"));
+    assert.equal(getControls().allMessagesCollapsed, false);
+    await act(async () => getControls().onJumpToMessage("session-main-150"));
+    assert.ok(getLatest().collapsedMessageKeys?.has("session-main-150"));
+    await act(async () => getControls().onJumpToMessage("session-main-30"));
+    assert.equal(getLatest().collapsedMessageKeys?.has("session-main-30"), false);
+    assert.ok(getLatest().collapsedMessageKeys?.has("session-main-31"));
+    await act(async () => root.render(React.createElement(Probe, { incarnationId: "second" })));
+    assert.equal(getLatest().collapsedMessageKeys?.size, 0);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((key, index) => { const value = previous[index]; if (value) Object.defineProperty(globalThis, key, value); else Reflect.deleteProperty(globalThis, key); });
+  }
+});
+
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {
     sessionId: id,
