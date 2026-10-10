@@ -1617,6 +1617,48 @@ it("最終consumer拒否はcleanup後にpartial付きで伝播し既存失敗を
 }));
 
 // @test-value v2
+// kind = "contract"
+// claim = "Codexのterminal入力閉鎖通知が同期throwまたは非同期rejectしても失敗として返し、受信済みterminal本文と操作結果をpartialへ保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Streaming Policy / Codex projection owner / Error Handling" }
+// fault = "通知先の例外でterminal eventのWorker登録を飛ばし本文・操作結果を捨てる、またはconsumer失敗を成功へ置き換える"
+// observable = "ProviderTurnErrorのmessage/canceled/partialResult.assistantText/artifact.operationTimelineとtransport閉鎖"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter terminal control callback failure through real projection Worker"
+// lifecycle = "permanent"
+// impact = "取得済みの応答と操作結果が失敗履歴から失われ、利用者が処理結果を回収できなくなる"
+// distinction = "既存partial testは通知consumer例外を発生させず、privacy testはpartialを読まない。短い2通知条件で実Workerを通す接続だけを確認する"
+// @end-test-value
+it("terminal制御通知の同期・非同期失敗でも本文と操作結果をpartialへ回収する", async () => workspace(async (directory) => {
+  for (const failureMode of ["sync", "async"] as const) {
+    const transport = new FakeTransport();
+    transport.events = [completed([
+      message("answer", "must retain"),
+      { type: "commandExecution", id: "command", command: "echo retained", aggregatedOutput: "retained output", exitCode: 0, status: "completed" },
+    ])];
+    const failure = new Error(`consumer failure ${failureMode}`);
+    const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
+    await assert.rejects(adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (state) => {
+      if (state.inputAvailable) return;
+      if (failureMode === "sync") throw failure;
+      return Promise.reject(failure);
+    }), (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.message, failure.message);
+      assert.equal(error.canceled, false);
+      assert.equal(error.partialResult.assistantText, "must retain");
+      const operation = error.partialResult.artifact?.operationTimeline?.find((item) => item.id === "command");
+      assert.ok(operation);
+      assert.equal(operation.type, "command_execution");
+      assert.equal(operation.status, "completed");
+      assert.equal(operation.details, "retained output");
+      assert.equal(operation.exitCode, 0);
+      return true;
+    });
+    assert.equal(transport.closed, true);
+  }
+}));
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Codex command出力は保持元で64Ki prefixに制限しdeltaとterminal snapshotの元lengthを表示へ反映する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }

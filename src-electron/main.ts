@@ -63,7 +63,7 @@ import type {
   PromptTemplate,
   UpdatePromptTemplateInput,
 } from "../src-shared/prompt-template.js";
-import { resolveAuxiliaryParentSession } from "./auxiliary/auxiliary-parent-session.js";
+import { sessionSummaryToSession } from "./session/session-summary-adapter.js";
 import { AuxiliarySessionService } from "./auxiliary/auxiliary-session-service.js";
 import { AuxiliaryLiveRunParents } from "./auxiliary/auxiliary-live-run-parents.js";
 import { admitSessionTurn } from "./session/session-turn-admission.js";
@@ -109,6 +109,7 @@ import { CharacterAffectTurnSettlementStorage } from "./character/character-affe
 import { SessionPersistenceService } from "./session/session-persistence-service.js";
 import { createSessionStorageCommandAdapter } from "./session/session-storage-command-adapter.js";
 import { createSessionPersistenceAssembly } from "./session/session-persistence-assembly.js";
+import { readSessionFileExplorerContext } from "./files/session-file-explorer-context.js";
 import { SessionWindowBridge } from "./windows/session-window-bridge.js";
 import { SessionWindowRestoreService } from "./windows/session-window-restore-service.js";
 import { SettingsCatalogService } from "./settings/settings-catalog-service.js";
@@ -532,7 +533,16 @@ const characterAffectTurnMainLifecycle = createCharacterAffectTurnMainLifecycle(
   getCharacterSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
   getAppSettings: () => requireAppSettingsStorage().getSettings(),
   getProviderBackgroundAdapter,
-  getSession: getRuntimeSession,
+  getSessionMetadata: async (sessionId) => {
+    const storage = requireSessionStorage();
+    if (!storage.getSessionMetadata) throw new Error("Session metadata reads are unavailable.");
+    return storage.getSessionMetadata(sessionId);
+  },
+  getSessionMessageIdentity: async (input) => {
+    const storage = requireSessionStorage();
+    if (!storage.getSessionMessageIdentity) throw new Error("Session message identity reads are unavailable.");
+    return storage.getSessionMessageIdentity(input);
+  },
   startupRecoveryCutoff: characterAffectTurnStartupRecoveryCutoff,
   runAppraisalExclusive: (operation) => characterAffectTurnOwnershipCoordinator.runExclusive(operation),
   writeAppLog,
@@ -1002,13 +1012,13 @@ async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean,
     reserve: operation,
     readProvider: async () => {
       const session = auxiliary
-        ? await owner.auxiliarySessionStorage.getAuxiliarySession(sessionId)
-        : await owner.sessionStorage.getSession(sessionId);
+        ? await owner.auxiliarySessionStorage.getAuxiliarySessionMetadata(sessionId)
+        : await getRuntimeSession(sessionId);
       assertPersistentStoreOwnerIsActive(owner, "Turn admission");
       if (!session) {
         throw new Error("The session could not be found.");
       }
-      if ("parentSessionId" in session && !await owner.sessionStorage.getSession(session.parentSessionId)) {
+      if ("parentSessionId" in session && !await owner.sessionStorage.getSessionSummary?.(session.parentSessionId)) {
         throw new Error("The Auxiliary parent session could not be found.");
       }
       assertPersistentStoreOwnerIsActive(owner, "Turn admission");
@@ -1461,7 +1471,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) {
                     throw new Error("The app is quitting, so a new message cannot be sent.");
                   }
-                  const initial = await requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
+                  const initial = await requireAuxiliarySessionService().getAuxiliarySessionMetadata(auxiliarySessionId);
                   assertPersistentStoreOwnerIsActive(owner, "Auxiliary run admission");
                   if (!initial) {
                     throw new Error("The Auxiliary Session could not be found.");
@@ -1494,7 +1504,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                       }
                       await requireAuxiliarySessionRuntimeService().runSessionTurn(auxiliarySessionId, request);
                     }
-                    const session = await requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
+                    const session = await requireAuxiliarySessionService().getAuxiliarySessionView(auxiliarySessionId);
                     if (!session) {
                       throw new Error("The Auxiliary Session could not be found.");
                     }
@@ -1507,7 +1517,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 steerAuxiliarySessionTurn: (auxiliarySessionId, request) => requireAuxiliarySessionService().trackPendingDraftSend(async () => {
                   if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) throw new Error("The app is quitting, so input cannot be sent.");
                   const service = requireAuxiliarySessionService();
-                  const session = await service.getAuxiliarySession(auxiliarySessionId);
+                  const session = await service.getAuxiliarySessionMetadata(auxiliarySessionId);
                   if (!session) throw new Error("The Auxiliary Session could not be found.");
                   if (!request.auxiliaryDraftIncarnation || request.auxiliaryDraftDurableRevision === undefined) throw new Error("The Auxiliary draft revision could not be found.");
                   let accepted: import("../src-shared/session/runtime-state.js").SteerSessionTurnResult | undefined;
@@ -1547,7 +1557,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   for (const sessionId of result.deletedSessionIds) terminalService?.releaseSession(sessionId);
                   return result;
                 },
-                runSessionTurn: async (sessionId, request) => toConversationView(await requireMainSessionCommandFacade().runSessionTurn(sessionId, request)),
+                runSessionTurn: async (sessionId, request) => {
+                  const owner = requireActivePersistentStoreOwnerForFactory("Turn result projection");
+                  await requireMainSessionCommandFacade().runSessionTurn(sessionId, request);
+                  assertPersistentStoreOwnerIsActive(owner, "Turn result projection");
+                  const session = await getDisplaySession(sessionId);
+                  assertPersistentStoreOwnerIsActive(owner, "Turn result projection");
+                  if (!session) throw new Error("The saved Session could not be loaded.");
+                  return session;
+                },
                 steerSessionTurn: async (sessionId, request) => {
                   if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) throw new Error("The app is quitting, so input cannot be sent.");
                   const result = await requireMainSessionCommandFacade().steerSessionTurn(sessionId, request);
@@ -2171,11 +2189,12 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       sessions: {
         getSession: (sessionId) => getRuntimeSession(sessionId),
-        upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
+        appendRunningInput: (session, text, turnId) => requireMainSessionPersistenceFacade().appendRunningInput(session, text, turnId),
+        checkpointRuntimeMetadata: (session, expected) => requireMainSessionPersistenceFacade().checkpointRuntimeMetadata(session, expected),
         persistRunningTurnStart: (session, expectedMessageCount) => requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount),
         clearCharacterAuthoringRuntimeState: (session) => requireMainSessionPersistenceFacade().clearCharacterAuthoringRuntimeState(session),
-        upsertTerminalSession: async (session, terminalCommit) => {
-          const persisted = await requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit);
+        appendTerminalSession: async (session, terminalCommit) => {
+          const persisted = await requireMainSessionPersistenceFacade().appendTerminalSession(session, terminalCommit);
           requireWindowBroadcastService().broadcastSessionTurnUpdated(session.id);
           return persisted;
         },
@@ -2292,22 +2311,18 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       auxiliary: {
         getRuntimeSession: (sessionId) => requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId),
         getSession: async (sessionId) => {
-          const auxiliary = await requireAuxiliarySessionService().getAuxiliarySession(sessionId);
+          const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId);
           assertPersistentStoreOwnerIsActive(owner, "Auxiliary live delivery owner");
           if (auxiliary) auxiliaryLiveRunParents.remember(auxiliary, owner);
           return auxiliary;
         },
         persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
-        upsertRuntimeSession: async (session, options) => {
-          const auxiliaryService = requireAuxiliarySessionService();
-          await auxiliaryService.upsertAuxiliaryRuntimeSession(session, options);
-          const storedSession = await auxiliaryService.getAuxiliaryRuntimeSession(session.id);
-          if (!storedSession) throw new Error("The saved Auxiliary Session could not be loaded.");
-          return storedSession;
-        },
-        isAuxiliarySession: async (sessionId) => Boolean(await requireAuxiliarySessionService().getAuxiliarySession(sessionId)),
+        appendRunningInput: (session, text, turnId) => requireAuxiliarySessionService().appendRunningInput(session, text, turnId),
+        appendTerminalSession: (session, commit, options) => requireAuxiliarySessionService().appendTerminalSession(session, commit, options),
+        checkpointRuntimeMetadata: (session, expected) => requireAuxiliarySessionService().checkpointRuntimeMetadata(session, expected),
+        isAuxiliarySession: async (sessionId) => Boolean(await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId)),
       },
-      parent: { getSession: (sessionId) => Promise.resolve(owner.sessionStorage.getSession(sessionId)) },
+      parent: { getSession: getRuntimeSession },
       resolution: {
         resolveComposerPreview,
         resolveProviderCatalog,
@@ -2793,30 +2808,17 @@ function getSession(sessionId: string): Session | null {
 }
 
 async function getSessionFileExplorerContext(sessionId: string): Promise<SessionFileExplorerContext | null> {
-  const auxiliarySession = await requireAuxiliarySessionService().getAuxiliarySession(sessionId);
-  if (auxiliarySession) {
-    const parentSession = await getAuxiliaryParentSession(auxiliarySession.parentSessionId);
-    if (!parentSession) {
-      return null;
-    }
-    return {
-      workspacePath: parentSession.workspacePath,
-      parentSessionId: parentSession.id,
-      parentIncarnationId: getSessionIncarnationId(parentSession),
-      allowedAdditionalDirectories: auxiliarySession.allowedAdditionalDirectories,
-    };
-  }
-
-  const session = await getRuntimeSession(sessionId);
-  if (session) {
-    return {
-      workspacePath: session.workspacePath,
-      parentSessionId: session.id,
-      parentIncarnationId: getSessionIncarnationId(session),
-      allowedAdditionalDirectories: session.allowedAdditionalDirectories,
-    };
-  }
-  return null;
+  const owner = requireActivePersistentStoreOwnerForFactory("Files authorization metadata");
+  const auxiliary = requireAuxiliarySessionService();
+  return readSessionFileExplorerContext(sessionId, {
+    assertCurrent: () => assertPersistentStoreOwnerIsActive(owner, "Files authorization metadata"),
+    getAuxiliaryMetadata: (id) => auxiliary.getAuxiliarySessionMetadata(id),
+    getSessionSummary: async (id) => {
+      if (!owner.sessionStorage.getSessionSummary) throw new Error("Session summary reads are unavailable.");
+      const summary = await owner.sessionStorage.getSessionSummary(id);
+      return summary ? mainStoreContext.executionSelections.apply(summary) : null;
+    },
+  });
 }
 
 async function getSessionFileExplorerOwnerSessionId(sessionId: string): Promise<string | null> {
@@ -2832,11 +2834,7 @@ function createFileRootGitChangesService(): FileRootGitChangesService {
 }
 
 async function getAuxiliaryParentSession(parentSessionId: string): Promise<Session | null> {
-  return resolveAuxiliaryParentSession({
-    parentSessionId,
-    getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
-    getCachedSession: getSession,
-  });
+  return getRuntimeSession(parentSessionId);
 }
 
 async function getDisplaySession(sessionId: string): Promise<Session | null> {
@@ -2859,7 +2857,15 @@ async function getDisplaySessionSummary(sessionId: string) {
 }
 
 async function getRuntimeSession(sessionId: string): Promise<Session | null> {
-  return await requireSessionStorage().getSession(sessionId) ?? getSession(sessionId);
+  const owner = requireActivePersistentStoreOwnerForFactory("Session runtime metadata");
+  if (!owner.sessionStorage.getSessionMetadata) throw new Error("Session metadata reads are unavailable.");
+  const metadata = await owner.sessionStorage.getSessionMetadata(sessionId);
+  assertPersistentStoreOwnerIsActive(owner, "Session runtime metadata");
+  return metadata ? {
+    ...sessionSummaryToSession(metadata.summary),
+    characterRuntimeSnapshot: metadata.characterRuntimeSnapshot,
+    messageCount: metadata.messageCount,
+  } : null;
 }
 
 async function getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null> {
@@ -3063,7 +3069,7 @@ async function previewComposerInput(
   userMessage: string,
 ) {
   const auxiliaryService = requireAuxiliarySessionService();
-  const auxiliarySession = await auxiliaryService.getAuxiliarySession(sessionId);
+  const auxiliarySession = await auxiliaryService.getAuxiliarySessionMetadata(sessionId);
   const auxiliaryRuntimeSession = auxiliarySession
     ? await auxiliaryService.getAuxiliaryRuntimeSession(sessionId)
     : null;

@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import { ProviderTurnError, type ProviderCodingAdapter } from "../../src-electron/providers/provider-runtime.js";
-import { SessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
+import { SessionRuntimeFixture as SessionRuntimeService } from "./session-runtime-fixture.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";

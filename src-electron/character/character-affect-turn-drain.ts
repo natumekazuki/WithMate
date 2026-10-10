@@ -1,7 +1,7 @@
-import type { Session } from "../../src-shared/session/session-state.js";
+import { getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import type { SessionMetadataResult, SessionMessageIdentityInput, SessionMessageIdentity } from "../session/session-runtime-storage-contract.js";
 import {
   type CharacterAffectTurnSettlementStorageAccess,
-  hasCommittedAssistantMessage,
   hasSettlementSessionOwner,
   type PendingCharacterAffectTurnSettlement,
 } from "./character-affect-turn-settlement-storage.js";
@@ -23,11 +23,9 @@ export async function drainCharacterAffectTurnSettlementBatch(input: {
   storage: CharacterAffectTurnSettlementStorageAccess;
   startupRecoveryCutoff: string;
   readyCursor?: CharacterAffectTurnDrainCursor;
-  getSession(sessionId: string): Promise<Session | null>;
-  settle(
-    item: PendingCharacterAffectTurnSettlement,
-    session: Session,
-  ): Promise<boolean>;
+  getSessionMetadata(sessionId: string): Promise<SessionMetadataResult | null>;
+  getSessionMessageIdentity(input: SessionMessageIdentityInput): Promise<SessionMessageIdentity | null>;
+  settle(item: PendingCharacterAffectTurnSettlement): Promise<boolean>;
   onDiscard(item: PendingCharacterAffectTurnSettlement): void;
   onFailure(item: PendingCharacterAffectTurnSettlement, error: unknown): void;
   isCurrentGeneration?: () => boolean | Promise<boolean>;
@@ -51,15 +49,21 @@ export async function drainCharacterAffectTurnSettlementBatch(input: {
     UNREADY_RECOVERY_LIMIT,
   );
   for (const item of recoveryPending) {
-    const session = await input.getSession(item.sessionId);
+    const metadata = await input.getSessionMetadata(item.sessionId);
     if (!await isCurrentGeneration()) {
       return invalidated();
     }
-    if (
-      session
-      && hasSettlementSessionOwner(session, item)
-      && hasCommittedAssistantMessage(session.messages, item)
-    ) {
+    const message = metadata && hasSettlementSessionOwner(metadata.summary, item)
+      ? await input.getSessionMessageIdentity({
+        sessionId: item.sessionId,
+        incarnationId: getSessionIncarnationId(metadata.summary),
+        messageIndex: item.assistantMessageIndex,
+      })
+      : null;
+    if (!await isCurrentGeneration()) {
+      return invalidated();
+    }
+    if (message?.role === "assistant" && message.text === item.assistantMessage) {
       if (!await isCurrentGeneration()) {
         return invalidated();
       }
@@ -105,24 +109,12 @@ export async function drainCharacterAffectTurnSettlementBatch(input: {
     : undefined;
   let retryRequired = recoveryPending.length > 0 || pending.length === READY_SETTLEMENT_LIMIT;
   for (const item of pending) {
-    const session = await input.getSession(item.sessionId);
     if (!await isCurrentGeneration()) {
       return invalidated();
     }
-    if (!session || !hasSettlementSessionOwner(session, item)) {
-    if (!await isCurrentGeneration()) {
-        return invalidated();
-      }
-      input.onDiscard(item);
-    if (!await isCurrentGeneration()) {
-        return invalidated();
-      }
-      await input.storage.markDiscarded(item.correlationId);
-      continue;
-    }
     try {
-      const settled = await input.settle(item, session);
-    if (!await isCurrentGeneration()) {
+      const settled = await input.settle(item);
+      if (!await isCurrentGeneration()) {
         return invalidated();
       }
       retryRequired ||= !settled;

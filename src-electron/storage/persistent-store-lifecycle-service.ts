@@ -77,6 +77,8 @@ export type SessionStorageRead = AwaitableStorageMethods<
   listConversationNavigator?: AwaitableStorageMethods<SessionStorageV6, "listConversationNavigator">["listConversationNavigator"];
   listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   getSessionSummary?(sessionId: string): Awaitable<import("../../src-shared/session/session-state.js").SessionSummary | null>;
+  getSessionMetadata?: AwaitableStorageMethods<SessionStorageV6, "getSessionMetadata">["getSessionMetadata"];
+  getSessionMessageIdentity?: AwaitableStorageMethods<SessionStorageV6, "getSessionMessageIdentity">["getSessionMessageIdentity"];
   listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
   listSessionCredentialThreads?(): Awaitable<import("../session/session-storage-v6.js").SessionCredentialThreadInfo[]>;
 };
@@ -96,6 +98,9 @@ export type SessionStorageWrite = AwaitableStorageMethods<
   updateTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
+  appendSessionSteer?: AwaitableStorageMethods<SessionStorageV6, "appendSessionSteer">["appendSessionSteer"];
+  appendSessionTerminal?: AwaitableStorageMethods<SessionStorageV6, "appendSessionTerminal">["appendSessionTerminal"];
+  checkpointSessionRunMetadata?: AwaitableStorageMethods<SessionStorageV6, "checkpointSessionRunMetadata">["checkpointSessionRunMetadata"];
   clearCharacterAuthoringRuntimeState?(
     input: SessionCharacterAuthoringRuntimeClearInput,
   ): Awaitable<SessionCharacterAuthoringRuntimeClearResult>;
@@ -122,6 +127,11 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "listRunningActiveAuxiliarySessions"
   | "getActiveAuxiliarySession"
   | "getAuxiliarySession"
+  | "getAuxiliarySessionMetadata"
+  | "appendAuxiliaryRunningTurnStart"
+  | "appendAuxiliarySteer"
+  | "appendAuxiliaryTerminal"
+  | "checkpointAuxiliaryRuntimeMetadata"
   | "getAuxiliarySessionView"
   | "getConversationPage"
   | "searchConversation"
@@ -431,6 +441,11 @@ export class PersistentStoreLifecycleService {
 }
 
 class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
+  getAuxiliarySessionMetadata(): null { return null; }
+  appendAuxiliaryRunningTurnStart(): never { throw new Error("Auxiliary runtime storage requires V6."); }
+  appendAuxiliarySteer(): never { throw new Error("Auxiliary runtime storage requires V6."); }
+  appendAuxiliaryTerminal(): never { throw new Error("Auxiliary runtime storage requires V6."); }
+  checkpointAuxiliaryRuntimeMetadata(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   getAuxiliarySessionView(): null { return null; }
   getConversationPage(): null { return null; }
   searchConversation(): [] { return []; }

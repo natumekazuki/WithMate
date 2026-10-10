@@ -62,6 +62,21 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
       return identities;
     }))).flat(),
     upsertStoredSession: storageCommands.upsertStoredSession,
+    appendStoredSessionSteer: (input) => {
+      assertOwner("Session steer append");
+      if (!deps.storage.appendSessionSteer) throw new Error("Incremental Session input storage is unavailable.");
+      return deps.storage.appendSessionSteer(input);
+    },
+    appendStoredSessionTerminal: (input) => {
+      assertOwner("Session terminal append");
+      if (!deps.storage.appendSessionTerminal) throw new Error("Incremental terminal Session storage is unavailable.");
+      return deps.storage.appendSessionTerminal(input);
+    },
+    checkpointStoredSessionRunMetadata: (input) => {
+      assertOwner("Session runtime checkpoint");
+      if (!deps.storage.checkpointSessionRunMetadata) throw new Error("Session runtime checkpoint storage is unavailable.");
+      return deps.storage.checkpointSessionRunMetadata(input);
+    },
     setStoredSessionTitle: async (sessionId, incarnationId, title) => {
       assertOwner("title update");
       if (!deps.storage.setSessionTitle) throw new Error("Session title storage is unavailable.");

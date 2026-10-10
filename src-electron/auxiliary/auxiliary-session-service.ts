@@ -46,6 +46,7 @@ import type { AuxiliarySessionThreadPatchInput, AuxiliaryThreadPatchResult, Auxi
 import type { AuxiliarySessionRuntimeMetadataPatchInput } from "./auxiliary-session-storage.js";
 import type { AuxiliaryDraftStorageSaveInput, AuxiliaryDraftStorageConsumeInput } from "./auxiliary-session-storage.js";
 import { assertCharacterDefinitionSnapshotUpdate } from "../session/session-running-turn-start.js";
+import type { SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
 import type {
   AuxiliaryDraftConsumeResult,
   AuxiliaryDraftRecord,
@@ -352,6 +353,12 @@ export class AuxiliarySessionService {
 
   async getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null> {
     const session = await this.deps.getStorage().getAuxiliarySession(auxiliarySessionId);
+    if (session) this.assertCharacterSnapshotValid(session);
+    return session ? this.overlayExecutionOptions(session) : null;
+  }
+
+  async getAuxiliarySessionMetadata(auxiliarySessionId: string): Promise<AuxiliarySession | null> {
+    const session = await this.deps.getStorage().getAuxiliarySessionMetadata(auxiliarySessionId);
     if (session) this.assertCharacterSnapshotValid(session);
     return session ? this.overlayExecutionOptions(session) : null;
   }
@@ -852,7 +859,7 @@ export class AuxiliarySessionService {
       threadId: "",
       composerDraft: "",
       messages: [],
-      displayAfterMessageIndex: parent.messages.length - 1,
+      displayAfterMessageIndex: (parent.messageCount ?? parent.messages.length) - 1,
       createdAt: now,
       updatedAt: now,
       closedAt: "",
@@ -959,7 +966,7 @@ export class AuxiliarySessionService {
   }
 
   async getAuxiliaryRuntimeSession(auxiliarySessionId: string): Promise<Session | null> {
-    const auxiliary = await this.getAuxiliarySession(auxiliarySessionId);
+    const auxiliary = await this.getAuxiliarySessionMetadata(auxiliarySessionId);
     if (!auxiliary) {
       return null;
     }
@@ -1130,14 +1137,15 @@ export class AuxiliarySessionService {
 
   async persistRunningTurnStart(runtimeSession: Session, expectedMessageCount: number): Promise<Session> {
     const storage = this.deps.getStorage();
-    const current = await storage.getAuxiliarySession(runtimeSession.id);
+    const identity = this.deps.captureStorageIdentity?.();
+    const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
     if (!current) throw new Error("The Auxiliary Session could not be found.");
     this.assertCharacterSnapshotValid(current);
     const savedRuntime = await this.toRuntimeSession(current);
-    const userMessage = runtimeSession.messages[expectedMessageCount];
+    const userMessage = runtimeSession.messages.at(-1);
     if (!Number.isSafeInteger(expectedMessageCount) || expectedMessageCount < 0
-      || current.messages.length !== expectedMessageCount
-      || runtimeSession.messages.length !== expectedMessageCount + 1
+      || current.messageCount !== expectedMessageCount
+      || runtimeSession.messages.length !== 1
       || !userMessage || userMessage.role !== "user" || !userMessage.text.trim()
       || runtimeSession.runState !== "running" || runtimeSession.status !== "running"
       || runtimeSession.characterId !== savedRuntime.characterId
@@ -1147,20 +1155,74 @@ export class AuxiliarySessionService {
     assertCharacterDefinitionSnapshotUpdate(
       savedRuntime.characterRuntimeSnapshot, runtimeSession.characterRuntimeSnapshot, savedRuntime.characterId,
     );
-    const next: AuxiliarySession = this.overlayExecutionOptions({
-      ...current,
-      status: "active",
-      closedAt: "",
-      runState: "running",
-      characterId: runtimeSession.characterRuntimeSnapshot ? savedRuntime.characterId : current.characterId,
+    this.assertStorageIdentity(storage, identity);
+    const stored = await storage.appendAuxiliaryRunningTurnStart({
+      auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
+      expectedMessageCount, userMessage, updatedAt: runtimeSession.updatedAt,
       characterRuntimeSnapshot: runtimeSession.characterRuntimeSnapshot ?? current.characterRuntimeSnapshot,
-      messages: [...current.messages, userMessage],
-      updatedAt: runtimeSession.updatedAt,
-      preview: resolveAuxiliaryPreview([...current.messages, userMessage], current.preview),
     });
-    const stored = await storage.updateAuxiliarySessionIfMatches({ session: next, expectedSession: current });
     if (!stored) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
-    return this.toRuntimeSession(this.overlayExecutionOptions(stored));
+    return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: runtimeSession.messages };
+  }
+
+  async appendRunningInput(runtimeSession: Session, text: string, turnId: number): Promise<Session> {
+    const storage = this.deps.getStorage();
+    const identity = this.deps.captureStorageIdentity?.();
+    const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
+    if (current) this.assertCharacterSnapshotValid(current);
+    this.assertStorageIdentity(storage, identity);
+    if (!current || current.createdAt !== getSessionIncarnationId(runtimeSession)) {
+      throw new Error("The Auxiliary Session incarnation does not match.");
+    }
+    const userMessage = { role: "user" as const, text };
+    const stored = await storage.appendAuxiliarySteer({
+      auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
+      expectedMessageCount: runtimeSession.messageCount ?? runtimeSession.messages.length,
+      userMessage, turnId, updatedAt: currentTimestampLabel(),
+    });
+    if (!stored) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+    return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: [...runtimeSession.messages, userMessage] };
+  }
+
+  async appendTerminalSession(runtimeSession: Session, terminalCommit: SessionTurnTerminalCommit,
+    options: { confirmedFinalAssistantText?: string | null } = {}): Promise<Session> {
+    const storage = this.deps.getStorage();
+    const identity = this.deps.captureStorageIdentity?.();
+    const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
+    if (current) this.assertCharacterSnapshotValid(current);
+    this.assertStorageIdentity(storage, identity);
+    const assistantMessage = runtimeSession.messages.at(-1);
+    if (!current || current.createdAt !== getSessionIncarnationId(runtimeSession) || !assistantMessage || assistantMessage.role !== "assistant") {
+      throw new Error("The Auxiliary Session terminal identity does not match.");
+    }
+    const stored = await storage.appendAuxiliaryTerminal({
+      auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
+      expectedMessageCount: terminalCommit.assistantMessageSeq, assistantMessage,
+      runState: runtimeSession.runState === "error" ? "error" : "idle", threadId: runtimeSession.threadId,
+      preview: resolveAuxiliaryPreview([assistantMessage], current.preview, options.confirmedFinalAssistantText),
+      updatedAt: runtimeSession.updatedAt, terminalCommit,
+    });
+    if (!stored) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+    return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: runtimeSession.messages };
+  }
+
+  async checkpointRuntimeMetadata(runtimeSession: Session, expected: Session): Promise<Session> {
+    const storage = this.deps.getStorage();
+    const identity = this.deps.captureStorageIdentity?.();
+    const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
+    if (current) this.assertCharacterSnapshotValid(current);
+    this.assertStorageIdentity(storage, identity);
+    if (!current || current.createdAt !== getSessionIncarnationId(runtimeSession)) throw new Error("The Auxiliary Session incarnation does not match.");
+    const stored = await storage.checkpointAuxiliaryRuntimeMetadata({
+      auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
+      expectedMessageCount: expected.messageCount ?? expected.messages.length,
+      expectedThreadId: expected.threadId,
+      expectedRunState: expected.runState === "running" || expected.runState === "error" ? expected.runState : "idle",
+      runState: runtimeSession.runState === "running" || runtimeSession.runState === "error" ? runtimeSession.runState : "idle",
+      provider: runtimeSession.provider, threadId: runtimeSession.threadId, updatedAt: runtimeSession.updatedAt,
+    });
+    if (!stored) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+    return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: runtimeSession.messages };
   }
 
   async upsertAuxiliaryRuntimeSession(
@@ -1325,6 +1387,7 @@ export class AuxiliarySessionService {
     return {
       ...parent,
       id: auxiliary.id,
+      incarnationId: auxiliary.createdAt,
       taskTitle: parent.taskTitle,
       status: auxiliary.runState === "running" ? "running" : "idle",
       updatedAt: auxiliary.updatedAt,
@@ -1341,6 +1404,7 @@ export class AuxiliarySessionService {
       allowedAdditionalDirectories: [...auxiliary.allowedAdditionalDirectories],
       threadId: auxiliary.threadId,
       messages: auxiliary.messages,
+      messageCount: auxiliary.messageCount,
       characterId: auxiliary.characterId ?? parent.characterId,
       character: auxiliary.characterRuntimeSnapshot?.name ?? parent.character,
       characterIconPath: auxiliary.characterRuntimeSnapshot?.iconFilePath ?? parent.characterIconPath,
