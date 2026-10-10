@@ -41,6 +41,8 @@ function parser(full: boolean) {
 // @end-test-value
 test("Markdown projectionは各文字の追記と置換を全文parseと一致させる", () => {
   const fixtures = [
+    "---\ntitle: Sample\n\n# Heading\n\nBody\n\nTail\n---\n",
+    "# Initial\n\n    code\n- \nB\n\nC\n\nD\n",
     "---\ntitle: sample\n---\n\n# Heading\n\nintro\n\nbody<br>line\n\n---\nnot: frontmatter\n---\n",
     "# A\n\nB\n\nC\n\nD\n---\n\n| x | y |\n| :--- | ---: |\n| a | b |\n\nnext\n",
     "# A\n\nB\n\n- one\n  - nested\n\n    continuation\n\n- two\n\n> quote\n>\n> - list\ncontinued\n\nend\n",

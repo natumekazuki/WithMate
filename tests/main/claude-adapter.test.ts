@@ -83,6 +83,57 @@ function sdkMessage(value: Record<string, unknown>): SDKMessage { return value a
 
 // @test-value v2
 // kind = "security"
+// claim = "Bash commandのpreview境界を跨ぐcapabilityはliveと正常・失敗・取消artifactのsummaryに断片を残さない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Managed HTTP MCP / Streaming Policy" }
+// fault = "commandを秘匿前に切り詰め、完全一致しなくなったtokenのprefixを公開する"
+// observable = "progress stepとresultまたはpartialResultのcommand summary"
+// observation_boundary = "public-boundary"
+// scope = "Claude Bash command preview redaction"
+// lifecycle = "permanent"
+// risk_tags = ["privacy", "authentication"]
+// impact = "runtime capabilityの断片が画面と保存履歴へ漏洩する"
+// distinction = "既存tool_result testとbounded command testは入力command内のsecret境界を検査しない"
+// @end-test-value
+it("ClaudeはBash commandを秘匿してからpreviewを生成する", async () => {
+  const secret = "synthetic-command-capability-0123456789";
+  const prefix = secret.slice(0, 8);
+  const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - prefix.length) + secret + " tail";
+  const sanitized = command.replace(secret, PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
+  const expected = `${sanitized.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${sanitized.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${sanitized.length}]`;
+  for (const outcome of ["completed", "failed", "canceled"] as const) {
+    const controller = new AbortController();
+    const request = input("", controller.signal);
+    request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: "fixture-reference", turnCapability: secret,
+      providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null };
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+      yield sdkMessage({ type: "assistant", uuid: "command", parent_tool_use_id: null,
+        message: { content: [{ type: "tool_use", id: "command", name: "Bash", input: { command } }] } });
+      if (outcome === "failed") throw new Error("connection failure");
+      if (outcome === "canceled") controller.abort();
+      yield result("thread");
+    }) });
+    const summaries: string[] = [];
+    let completed;
+    try {
+      completed = await adapter.runSessionTurn(request, (state) => { summaries.push(...state.steps.map((step) => step.summary)); });
+      assert.equal(outcome, "completed");
+    } catch (error) {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.notEqual(outcome, "completed");
+      assert.equal(error.canceled, outcome === "canceled");
+      completed = error.partialResult;
+    }
+    assert.ok(summaries.length > 0);
+    summaries.push(completed.artifact!.operationTimeline![0].summary);
+    for (const summary of summaries) {
+      assert.equal(summary, expected);
+      assert.ok(!summary.includes(prefix));
+    }
+  }
+});
+
+// @test-value v2
+// kind = "security"
 // claim = "Claude tool出力のpreview境界を跨ぐcapabilityは文字列と構造化結果のlive・正常・失敗・取消artifactに断片を残さない"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Agent Runtime Binding / Streaming Policy" }
 // fault = "secret全体の秘匿より先にtool結果を切り詰めて一致しないsecret prefixを公開する"

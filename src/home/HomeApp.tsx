@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createDefaultAppSettings,
@@ -7,13 +7,7 @@ import {
 import { startAppSettingsSubscription } from "../settings/app-settings-subscription.js";
 import {
   projectHomeSessionSummary,
-  type HomeSessionSummary,
-  type SessionCharacterUsage,
 } from "../../src-shared/session/session-state.js";
-import {
-  startSessionSummaryInvalidationSubscription,
-  type SessionSummariesLoadStatus,
-} from "../chat/runtime/session-summary-subscription.js";
 import {
   type AuxiliarySessionSummary,
 } from "../../src-shared/auxiliary/auxiliary-session-state.js";
@@ -58,18 +52,14 @@ import { HomeAppRouter } from "./HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./HomeDashboardSlots.js";
 import { buildHomeRecentSessionsPanelProps } from "./home-recent-sessions-panel-props.js";
 import { mergePinnedSessionSummary } from "./session-pinning.js";
+import { fetchHomeSessionSummaryPage } from "./home-session-summary-query.js";
+import { buildHomeSessionQueryKey, HomeSessionQueryGeneration } from "./home-session-query-generation.js";
 import {
-  buildHomeSessionSummaryEntries,
-  fetchHomeSessionSummaryPage,
-  fetchHomeSessionSummaryPages,
-  listOpenSessionSummaryEntries,
-  type HomeLoadedSessionSummaryPage,
-  type HomeSessionSummaryPageCollection,
-} from "./home-session-summary-query.js";
-import {
-  buildHomeSessionQueryKey,
-  HomeSessionQueryGeneration,
-} from "./home-session-query-generation.js";
+  applyHomeSessionSummaryPages,
+  createEmptyHomeSessionSummariesState,
+  type HomeSessionSummariesState,
+} from "./home-session-summaries-state.js";
+import { useHomeSessionSummaryRefresh } from "./use-home-session-summary-refresh.js";
 import { buildHomeRightPaneProps } from "./home-right-pane-props.js";
 import { buildHomeWindowContentSlots } from "./HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home-window-mode.js";
@@ -112,75 +102,6 @@ import {
 import { resolveRandomHomeLaunchFeedback, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
 
 type HomeRightPaneView = "monitor" | "characters";
-
-type HomeSessionSummariesState = {
-  recentStatus: SessionSummariesLoadStatus;
-  pinnedStatus: SessionSummariesLoadStatus;
-  recentError: string;
-  pinnedError: string;
-  recentPageError: string;
-  pinnedPageError: string;
-  summaries: HomeSessionSummary[];
-  recentPages: HomeLoadedSessionSummaryPage[];
-  recentCursor: string | null;
-  hasMoreRecent: boolean;
-  pinnedPages: HomeLoadedSessionSummaryPage[];
-  pinnedCursor: string | null;
-  hasMorePinned: boolean;
-  loadingRecentPage: boolean;
-  loadingPinnedPage: boolean;
-  openSummaries: HomeSessionSummary[];
-  openStatus: SessionSummariesLoadStatus;
-  openError: string;
-  characterUsageStatus: SessionSummariesLoadStatus;
-  characterUsage: SessionCharacterUsage[];
-};
-
-type HomeSessionSummaryRefreshMode = "replace" | "preserve";
-
-function createEmptyHomeSessionSummariesState(): HomeSessionSummariesState {
-  return {
-    recentStatus: "loading",
-    pinnedStatus: "loading",
-    recentError: "",
-    pinnedError: "",
-    recentPageError: "",
-    pinnedPageError: "",
-    summaries: [],
-    recentPages: [],
-    recentCursor: null,
-    hasMoreRecent: false,
-    pinnedPages: [],
-    pinnedCursor: null,
-    hasMorePinned: false,
-    loadingRecentPage: false,
-    loadingPinnedPage: false,
-    openSummaries: [],
-    openStatus: "loading",
-    openError: "",
-    characterUsageStatus: "loading",
-    characterUsage: [],
-  };
-}
-
-function applyHomeSessionSummaryPages(
-  current: HomeSessionSummariesState,
-  pages: HomeSessionSummaryPageCollection,
-): HomeSessionSummariesState {
-  const recentPage = pages.recent.at(-1)?.page;
-  const pinnedPage = pages.pinned.at(-1)?.page;
-  return {
-    ...current,
-    summaries: buildHomeSessionSummaryEntries(pages),
-    recentPages: pages.recent,
-    recentCursor: recentPage?.nextCursor ?? null,
-    hasMoreRecent: recentPage?.hasMore ?? false,
-    pinnedPages: pages.pinned,
-    pinnedCursor: pinnedPage?.nextCursor ?? null,
-    hasMorePinned: pinnedPage?.hasMore ?? false,
-    openSummaries: pages.open,
-  };
-}
 
 export default function HomeApp() {
   const desktopRuntime = isDesktopRuntime();
@@ -268,22 +189,21 @@ export default function HomeApp() {
   const persistedSettingsDraftRef = useRef<AppSettings | null>(null);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const workspaceValidationControllerRef = useRef<HomeLaunchWorkspaceValidationController | null>(null);
-  const sessionQueryKey = buildHomeSessionQueryKey(sessionSearchText, openSessionWindowIds);
   const sessionQueryGenerationRef = useRef<HomeSessionQueryGeneration | null>(null);
-  const openSummaryQueryGenerationRef = useRef<HomeSessionQueryGeneration | null>(null);
-  const characterUsageGenerationRef = useRef(0);
   const pageRequestsRef = useRef(new Map<"recent" | "pinned", object>());
-  const openSummaryQueryKey = JSON.stringify(openSessionWindowIds);
-  const previousOpenSummaryQueryKeyRef = useRef(openSummaryQueryKey);
-  const previousSessionSearchTextRef = useRef(sessionSearchText);
-  const sessionRefreshModeRef = useRef<HomeSessionSummaryRefreshMode>("replace");
   if (sessionQueryGenerationRef.current === null) {
-    sessionQueryGenerationRef.current = new HomeSessionQueryGeneration(sessionQueryKey);
-    openSummaryQueryGenerationRef.current = new HomeSessionQueryGeneration(openSummaryQueryKey);
+    sessionQueryGenerationRef.current = new HomeSessionQueryGeneration(
+      buildHomeSessionQueryKey(sessionSearchText, openSessionWindowIds),
+    );
   }
-  const refreshSessionSummariesRef = useRef<
-    (mode?: HomeSessionSummaryRefreshMode) => Promise<void>
-  >(() => Promise.resolve());
+  const refreshSessionSummaries = useHomeSessionSummaryRefresh({
+    enabled: !isSettingsWindowMode && !isMemoryReviewWindowMode,
+    sessionSearchText,
+    openSessionWindowIds,
+    sessionSummariesState,
+    setSessionSummariesState,
+    sessionQueryGeneration: sessionQueryGenerationRef.current,
+  });
   if (workspaceValidationControllerRef.current === null) {
     workspaceValidationControllerRef.current = createHomeLaunchWorkspaceValidationController({
       validate: async (targetPath) => (
@@ -303,42 +223,6 @@ export default function HomeApp() {
   }
 
   useEffect(() => () => workspaceValidationControllerRef.current?.cancel(), []);
-  useEffect(() => () => {
-    sessionQueryGenerationRef.current!.beginRequest();
-    openSummaryQueryGenerationRef.current!.beginRequest();
-    characterUsageGenerationRef.current += 1;
-  }, []);
-
-  useLayoutEffect(() => {
-    const searchChanged = previousSessionSearchTextRef.current !== sessionSearchText;
-    const openIdsChanged = previousOpenSummaryQueryKeyRef.current !== openSummaryQueryKey;
-    sessionQueryGenerationRef.current!.syncQueryKey(sessionQueryKey);
-    openSummaryQueryGenerationRef.current!.syncQueryKey(openSummaryQueryKey);
-    sessionRefreshModeRef.current = searchChanged ? "replace" : "preserve";
-    previousSessionSearchTextRef.current = sessionSearchText;
-    previousOpenSummaryQueryKeyRef.current = openSummaryQueryKey;
-    if (isSettingsWindowMode || isMemoryReviewWindowMode || !getWithMateApi()) {
-      return;
-    }
-    if (searchChanged) {
-      setSessionSummariesState((current) => ({
-        ...current,
-        ...applyHomeSessionSummaryPages(current, { recent: [], pinned: [], open: current.openSummaries }),
-        recentStatus: "loading",
-        pinnedStatus: "loading",
-        recentError: "",
-        pinnedError: "",
-        recentPageError: "",
-        pinnedPageError: "",
-        loadingRecentPage: false,
-        loadingPinnedPage: false,
-      }));
-    }
-    if (openIdsChanged) {
-      setSessionSummariesState((current) => ({ ...current, openStatus: "loading" }));
-    }
-  }, [isMemoryReviewWindowMode, isSettingsWindowMode, openSummaryQueryKey, sessionQueryKey, sessionSearchText]);
-
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
     setSettingsDraftLoaded(true);
@@ -358,96 +242,6 @@ export default function HomeApp() {
     setMateDisplayName,
     setMateAvatarUpdating,
   });
-
-  const refreshBoundedSessionSummaries = async (
-    mode: HomeSessionSummaryRefreshMode = "preserve",
-  ): Promise<void> => {
-    const api = getWithMateApi();
-    if (!api) {
-      return;
-    }
-
-    const requestToken = sessionQueryGenerationRef.current!.beginRequest();
-    const openRequestToken = openSummaryQueryGenerationRef.current!.beginRequest();
-    const usageGeneration = ++characterUsageGenerationRef.current;
-    pageRequestsRef.current.clear();
-    const searchText = sessionSearchText;
-    const currentOpenSessionIds = openSessionWindowIds;
-    setSessionSummariesState((current) => ({
-      ...(mode === "replace"
-        ? applyHomeSessionSummaryPages(current, { recent: [], pinned: [], open: current.openSummaries })
-        : current),
-      recentStatus: "loading",
-      pinnedStatus: "loading",
-      openStatus: "loading",
-      characterUsageStatus: "loading",
-      loadingRecentPage: false,
-      loadingPinnedPage: false,
-    }));
-
-    const refreshPages = async (scope: "recent" | "pinned") => {
-      const statusKey = scope === "recent" ? "recentStatus" : "pinnedStatus";
-      const errorKey = scope === "recent" ? "recentError" : "pinnedError";
-      const pageErrorKey = scope === "recent" ? "recentPageError" : "pinnedPageError";
-      const loadedPages = scope === "recent" ? sessionSummariesState.recentPages : sessionSummariesState.pinnedPages;
-      try {
-        const pages = await fetchHomeSessionSummaryPages(api, scope, searchText, mode === "replace" ? 1 : loadedPages.length);
-        if (!sessionQueryGenerationRef.current!.isCurrent(requestToken)) return;
-        setSessionSummariesState((current) => ({
-          ...applyHomeSessionSummaryPages(current, {
-            recent: scope === "recent" ? pages : current.recentPages,
-            pinned: scope === "pinned" ? pages : current.pinnedPages,
-            open: current.openSummaries,
-          }),
-          [statusKey]: "loaded",
-          [errorKey]: "",
-          [pageErrorKey]: "",
-        }));
-      } catch (error) {
-        if (!sessionQueryGenerationRef.current!.isCurrent(requestToken)) return;
-        setSessionSummariesState((current) => ({
-          ...current,
-          [statusKey]: "error",
-          [errorKey]: error instanceof Error ? error.message : `Could not load ${scope} sessions.`,
-        }));
-      }
-    };
-    const refreshOpenSummaries = async () => {
-      try {
-        const open = await listOpenSessionSummaryEntries(api, currentOpenSessionIds);
-        if (!openSummaryQueryGenerationRef.current!.isCurrent(openRequestToken)) return;
-        if (currentOpenSessionIds.some((id) => !open.some((summary) => summary.id === id))) {
-          throw new Error("Could not identify all open session characters. Retry loading sessions.");
-        }
-        setSessionSummariesState((current) => ({
-          ...applyHomeSessionSummaryPages(current, {
-            recent: current.recentPages, pinned: current.pinnedPages, open,
-          }),
-          openStatus: "loaded",
-          openError: "",
-        }));
-      } catch (error) {
-        if (!openSummaryQueryGenerationRef.current!.isCurrent(openRequestToken)) return;
-        setSessionSummariesState((current) => ({
-          ...current,
-          openStatus: "error",
-          openError: error instanceof Error ? error.message : "Could not load open sessions.",
-        }));
-      }
-    };
-    const refreshCharacterUsage = async () => {
-      try {
-        const characterUsage = await api.listSessionCharacterUsage();
-        if (characterUsageGenerationRef.current !== usageGeneration) return;
-        setSessionSummariesState((current) => ({ ...current, characterUsageStatus: "loaded", characterUsage }));
-      } catch {
-        if (characterUsageGenerationRef.current !== usageGeneration) return;
-        setSessionSummariesState((current) => ({ ...current, characterUsageStatus: "error" }));
-      }
-    };
-    await Promise.all([refreshPages("recent"), refreshPages("pinned"), refreshOpenSummaries(), refreshCharacterUsage()]);
-  };
-  refreshSessionSummariesRef.current = refreshBoundedSessionSummaries;
 
   const loadMoreSessionSummaryPage = async (scope: "recent" | "pinned", retry = false): Promise<void> => {
     const api = getWithMateApi();
@@ -520,7 +314,7 @@ export default function HomeApp() {
 
   const retrySessionSummaryLoad = () => {
     if (sessionSummariesState.recentError || sessionSummariesState.pinnedError) {
-      void refreshSessionSummariesRef.current("preserve");
+      void refreshSessionSummaries("preserve");
       return;
     }
     if (sessionSummariesState.pinnedPageError) void loadMoreSessionSummaryPage("pinned", true);
@@ -540,7 +334,7 @@ export default function HomeApp() {
         ...current,
         summaries: mergePinnedSessionSummary(current.summaries, saved),
       }));
-      void refreshSessionSummariesRef.current("preserve");
+      void refreshSessionSummaries("preserve");
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Could not update pin.");
     } finally {
@@ -670,49 +464,6 @@ export default function HomeApp() {
   }, [appSettingsRetry, isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
 
   useEffect(() => {
-    if (isSettingsWindowMode || isMemoryReviewWindowMode || !getWithMateApi()) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      void refreshSessionSummariesRef.current(sessionRefreshModeRef.current);
-    }, 120);
-    return () => window.clearTimeout(timer);
-  }, [isMemoryReviewWindowMode, isSettingsWindowMode, openSessionWindowIds, sessionSearchText]);
-
-  useEffect(() => {
-    if (isSettingsWindowMode || isMemoryReviewWindowMode) {
-      return;
-    }
-
-    return startSessionSummaryInvalidationSubscription({
-      api: getWithMateApi(),
-      onInvalidation: () => {
-        void refreshSessionSummariesRef.current("preserve");
-      },
-    });
-  }, [isMemoryReviewWindowMode, isSettingsWindowMode]);
-
-  useEffect(() => {
-    if (isSettingsWindowMode || isMemoryReviewWindowMode || !getWithMateApi()) {
-      return;
-    }
-
-    let refreshInFlight = false;
-    const refreshOnFocus = () => {
-      if (refreshInFlight) {
-        return;
-      }
-      refreshInFlight = true;
-      void refreshSessionSummariesRef.current("preserve").finally(() => {
-        refreshInFlight = false;
-      });
-    };
-    window.addEventListener("focus", refreshOnFocus);
-    return () => window.removeEventListener("focus", refreshOnFocus);
-  }, [isMemoryReviewWindowMode, isSettingsWindowMode]);
-
-  useEffect(() => {
     if (isSettingsWindowMode || isMemoryReviewWindowMode) return;
     const withmateApi = getWithMateApi();
     if (!withmateApi || isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) {
@@ -833,7 +584,7 @@ export default function HomeApp() {
         && previousState.cancellationState === nextState.cancellationState) return;
       monitorRunStates.set(sessionId, nextState);
       // Notifications invalidate snapshots; only fresh Main queries supply the display state.
-      void refreshSessionSummariesRef.current("preserve");
+      void refreshSessionSummaries("preserve");
       refresher.refresh();
     });
     const unsubscribeSessionInvalidation = withmateApi.subscribeSessionInvalidation(() => {
@@ -846,7 +597,7 @@ export default function HomeApp() {
       unsubscribeLiveRun();
       unsubscribeSessionInvalidation();
     };
-  }, [isMemoryReviewWindowMode, isSettingsWindowMode, openSessionWindowIds]);
+  }, [isMemoryReviewWindowMode, isSettingsWindowMode, openSessionWindowIds, refreshSessionSummaries]);
 
   const sessionProjection = useMemo(
     () => buildHomeSessionProjection(
@@ -986,7 +737,7 @@ export default function HomeApp() {
           ...current.summaries.filter((session) => session.id !== summary.id),
         ],
       }));
-      void refreshSessionSummariesRef.current("preserve");
+      void refreshSessionSummaries("preserve");
     },
   });
 
@@ -1004,7 +755,7 @@ export default function HomeApp() {
     setMateAvatarUpdating,
     setLaunchFeedback,
     refreshSessionSummaries: async () => {
-      await refreshSessionSummariesRef.current("preserve");
+      await refreshSessionSummaries("preserve");
     },
   });
 
@@ -1046,7 +797,7 @@ export default function HomeApp() {
     getSessionCleanupCutoffDate: () => sessionCleanupCutoffDate,
     setDeletingOldSessions,
     refreshSessionSummaries: async () => {
-      await refreshSessionSummariesRef.current("preserve");
+      await refreshSessionSummaries("preserve");
     },
     onSettingsSaved: () => {
       const api = getWithMateApi();
@@ -1152,7 +903,7 @@ export default function HomeApp() {
       runningEmptyMessage: monitorRunningEmptyMessage,
       nonRunningEmptyMessage: monitorCompletedEmptyMessage,
       feedback: monitorFeedback,
-      onRetry: sessionSummariesState.openError ? () => void refreshSessionSummariesRef.current("preserve") : undefined,
+      onRetry: sessionSummariesState.openError ? () => void refreshSessionSummaries("preserve") : undefined,
       onOpenSession: openMonitorSession,
       onShowContextMenu: showSessionMonitorContextMenu,
     }),
@@ -1194,7 +945,7 @@ export default function HomeApp() {
       monitorRunningEmptyMessage,
       monitorNonRunningEmptyMessage: monitorCompletedEmptyMessage,
       sessionMonitorFeedback: monitorFeedback,
-      onRetrySessionSummaries: sessionSummariesState.openError ? () => void refreshSessionSummariesRef.current("preserve") : undefined,
+      onRetrySessionSummaries: sessionSummariesState.openError ? () => void refreshSessionSummaries("preserve") : undefined,
       characterEntries,
       characterLoadStatus,
       characterListFeedback,

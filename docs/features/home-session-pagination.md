@@ -14,6 +14,10 @@ summaryには、一覧表示、検索、pin、open状態の判定に必要な項
 
 Sessionのtitle、pin、実行状態などが更新された場合は一覧を再取得します。既に複数pageを読み込んでいる場合、先頭pageだけへ戻さず、同じ範囲を再構成します。
 
+通知、focus復帰、検索・open Window IDの変更による再取得は、Home専用ownerで実行中1件と最新pending1件へ集約します。pendingは必要なscopeを引き継ぎ、検索変更の先頭pageへの置換を優先します。対象IDは100件まで保持し、超過した場合は全scopeへ昇格します。実行時に最新の検索、open ID、既読page数を使います。
+
+ID通知でもlastActive順、pin、検索membership、Character利用順が変わり得るため、Recent／Pinnedの既読範囲と利用履歴は再取得します。`detailChanged: false`もsummaryの更新通知として扱います。open summaryは通知IDと現在openなIDの交差集合を更新し、未取得・取得失敗時と全scope要求ではopen集合全体を再取得します。
+
 再取得後も可能な限りscroll位置を維持します。削除や検索条件の変更でrow集合が変わった場合は、現在の結果に合わせて位置を調整します。
 
 Recent／Pinnedの取得失敗は、表示済みrowを保持したまま一覧領域に表示します。`Retry`で再取得でき、追加pageの失敗時は続きのpageを再試行します。取得エラーはNew Sessionの開始エラーとは別に管理し、対象の取得が成功すると解消します。
@@ -23,6 +27,8 @@ Recent／Pinnedの取得失敗は、表示済みrowを保持したまま一覧�
 Home用summary page、open Sessionの詳細、検索条件は別の契約として扱います。Home一覧の性能改善を理由に、Session Windowが必要とする詳細情報をsummaryへ追加しません。
 
 database更新通知にはquery generationを使用します。古いgenerationの非同期結果を、更新後の一覧へ反映しません。
+
+新しい要求・検索・open ID変更・Window終了で失効した取得は、次pageまたは次のopen ID chunkを発行しません。open IDは100件ずつ逐次取得します。既に発行したbackend readの取消は行いません。最新要求の取得が成功するまではloaded扱いにせず、部分失敗を正常emptyに変換しません。
 
 Recent、Pinned、open Session summary、Character利用履歴の成功・失敗は独立して反映します。追加pageの取得は、進行中のopen summaryや利用履歴の結果を失効させません。Random開始は表示用pageではなく専用の利用履歴とopen summaryを使い、その情報が取得中・取得失敗なら開始しません。
 

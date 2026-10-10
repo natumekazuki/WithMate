@@ -495,6 +495,62 @@ it("受理steerの本文と添付を秘匿してbounded履歴へ残す", async (
   assert.ok(sent.input[0].text.includes("fake-steer-key"));
   assert.equal(result.assistantText, "done");
 }));
+// @test-value v2
+// kind = "contract"
+// claim = "terminal control callbackが非同期未完了の間はCodex turnを成功にせず、解決は正常結果、拒否はpartial付きfailureとして返す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Streaming Policy / Codex projection owner" }
+// fault = "即時control通知のPromiseをdrainせず、未完了または後発拒否を正常終了にする"
+// observable = "control受付後のrunSessionTurnのsettlementと解決後の本文、拒否時のProviderTurnError"
+// observation_boundary = "public-boundary"
+// scope = "Codex async terminal control consumer"
+// lifecycle = "permanent"
+// impact = "consumerの未完了・失敗を成功へ置換して終了後の状態と保存結果を誤認する"
+// distinction = "既存slow live testは通常snapshotを止めるだけで、独立したcontrol callbackのPromiseを止めない"
+// @end-test-value
+it("Codexは非同期control callbackの完了と拒否をturn結果へ反映する", { timeout: 10_000 }, async () => workspace(async (directory) => {
+  for (const outcome of ["resolve", "reject"] as const) {
+    const transport = new FakeTransport();
+    transport.events = [completed([message("answer", "retained answer")])];
+    let resolveControl!: () => void;
+    let rejectControl!: (error: Error) => void;
+    const controlGate = new Promise<void>((resolve, reject) => { resolveControl = resolve; rejectControl = reject; });
+    let sawControl!: () => void;
+    const controlStarted = new Promise<void>((resolve) => { sawControl = resolve; });
+    let held = false;
+    const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(
+      createCodexRunSessionTurnInput(directory), (state) => {
+        if (!state.inputAvailable && !held) { held = true; sawControl(); return controlGate; }
+      },
+    );
+    const settled = operation.then(() => "resolved", () => "rejected");
+    let pendingGuard: NodeJS.Timeout | undefined;
+    try {
+      await controlStarted;
+      const beforeRelease = await Promise.race([settled, new Promise<string>((resolve) => {
+        pendingGuard = setTimeout(() => resolve("pending"), 250);
+      })]);
+      assert.equal(beforeRelease, "pending");
+      if (outcome === "resolve") {
+        resolveControl();
+        assert.equal((await operation).assistantText, "retained answer");
+      } else {
+        rejectControl(new Error("control consumer failed"));
+        await assert.rejects(operation, (error: unknown) => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.equal(error.canceled, false);
+          assert.match(error.message, /control consumer failed/);
+          assert.equal(error.partialResult.assistantText, "retained answer");
+          return true;
+        });
+      }
+    } finally {
+      clearTimeout(pendingGuard);
+      resolveControl();
+      await settled;
+    }
+  }
+}));
+
 function notification(method: string, params: Record<string, unknown>): CodexProtocolEvent {
   if (method === "thread/tokenUsage/updated") {
     const usage = params.tokenUsage as Record<string, unknown>;

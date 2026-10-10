@@ -14,6 +14,14 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 
 Homeは作業中のchatを抱えず、Sessionはcatalogやapp共通設定の編集面を持たない。Auxiliaryは専用Windowを作らず、親Session Windowの同じchat shell内でMainと切り替える。親配下の複数Auxiliaryはstable IDで保存し、表示中でないrunも継続・terminal保存する。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
 
+## Home rendererの実装方針
+
+Home関連の追加・修正では、`HomeApp`への責務集中を抑えるため、変更対象の責務を独立して保守できるまとまりで分離する。`HomeApp`は画面の組立てと機能間の接続を中心とする。
+
+機能固有の状態・取得・購読・副作用は専用hook、表示はcomponent、純粋処理はhelperなど、責務に適した単位へまとめる。既存の仕組みを利用し、状態の所有とlifecycleを明確にして、既存の動作契約を維持する。
+
+分離は変更対象と、その責務を成立させるために必要な既存の結線に限定する。軽微な修正ごとの分割を必須にせず、行数だけによる細分化、汎用基盤や無関係な全面整理を増やさない。
+
 ## Sessionの起動と継続
 
 HomeのNew Sessionでtitle、workspace、provider、Characterを選び、保存済みSessionを作成してSession Windowを開く。Recent Sessionsからの再開では、同じSessionのWindowが開いていれば再利用・focusする。通常Sessionはstable Character ownerと表示metadataを維持し、active Characterの定義変更だけを送信開始時に反映する。詳細は[Character Storage](character-storage.md#runtime-snapshot)を参照する。Character authoringでは専用のSession種別とworkspaceを使い、Windowの基本lifecycleは通常Sessionと共有する。

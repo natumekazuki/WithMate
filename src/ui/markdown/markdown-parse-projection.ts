@@ -33,11 +33,20 @@ export function createMarkdownParseProjection() {
     if (previous?.text === text) return structuredClone(previous.tree);
 
     let tree: Root;
-    const anchorIndex = Math.max(0, (previous?.tree.children.length ?? 0) - 2);
+    const previousText = previous?.text ?? "";
+    // ATX headings interrupt preceding blocks without depending on their context.
+    // An unclosed document-start YAML block can still absorb every later heading.
+    const openFrontmatter = previous && /^---(?:\r?\n|$)/.test(previousText) && previous.tree.children[0]?.type !== "yaml";
+    const anchorIndex = previous && !openFrontmatter
+      ? previous.tree.children.findLastIndex((node) => {
+          const point = node.position?.start;
+          return node.type === "heading" && point?.offset !== undefined
+            && /^ {0,3}#{1,6}(?:[\t ]|\r?\n|$)/.test(previousText.slice(point.offset - point.column + 1));
+        })
+      : -1;
     const anchor = previous?.tree.children[anchorIndex]?.position?.start;
     if (previous && !previous.references && text.startsWith(previous.text) && anchor?.offset && anchorIndex > 0) {
-      // Keep the last two top-level blocks mutable (lists, fences, setext and tables).
-      // Start at the original line boundary, preserving any indentation.
+      // Reparse from a stable heading, keeping its entire following block context.
       const start = anchor.offset - anchor.column + 1;
       // A leading blank prevents fragment-start YAML from becoming document frontmatter.
       const tail = parse(`\n${text.slice(start)}`);
