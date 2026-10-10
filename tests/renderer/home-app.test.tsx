@@ -8,7 +8,9 @@ import type { CharacterCatalogEntry } from "../../src-shared/character/character
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { MateStorageState } from "../../src-shared/mate/mate-state.js";
-import { buildNewSession, type CreateSessionRequest } from "../../src-shared/session/session-state.js";
+import { buildNewSession, projectHomeSessionSummary, type CreateSessionRequest } from "../../src-shared/session/session-state.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -448,5 +450,155 @@ test("Homeのmate status read中も既存Sessionを開ける", async () => {
     Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
     Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
     Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Homeと独立Monitorはlive通知の実行・取消状態の変化から最新summaryを再取得し、MainとAuxiliaryの開始・終了をリロードなしで表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window / 共通仕様のlive eventと軽量summary再読込" }
+// fault = "取消状態だけの重複判定で通常の開始・終了を捨てる、終了後にlive stateが残る場合を見落とす、またはstream本文更新ごとにsummaryを再取得する"
+// observable = "Running/Stopped sectionの親card、Main/Auxiliaryのaccessible状態、summary API取得回数、unmount後のlive購読数"
+// observation_boundary = "component-behavior"
+// scope = "HomeAppのlive event購読とMonitor描画（home/monitor mode、Main/Auxiliary）"
+// lifecycle = "permanent"
+// impact = "開いている会話の実行状態が古いまま残り、停止確認や実行中会話の識別ができなくなることを防ぐ"
+// distinction = "projection単体・型検査・refresher単体では検出できない通知の重複判定からsummary取得と画面更新への結線を、小さなin-memory APIで確認する"
+// @end-test-value
+test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から同期する", async () => {
+  for (const mode of ["home", "monitor"]) {
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
+      url: `https://withmate.local/?mode=${mode}`,
+    });
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+
+    let summary = projectHomeSessionSummary(buildNewSession({
+      id: "monitor-parent", taskTitle: "Monitor task", workspaceLabel: "Workspace",
+      workspacePath: "C:\\workspace", branch: "main", characterId: "character-1", character: "Mia",
+      characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request",
+    }));
+    let auxiliary: AuxiliarySessionSummary = {
+      id: "monitor-aux", parentSessionId: summary.id, status: "active", runState: "idle",
+      title: "Auxiliary", preview: "Auxiliary task", provider: "codex", catalogRevision: 1,
+      model: "gpt-5.4", reasoningEffort: "high", approvalMode: "on-request", codexSpeed: "standard",
+      codexReviewer: "auto-review", codexSandboxMode: "danger-full-access", customAgentName: "",
+      allowedAdditionalDirectories: [], threadId: "", displayAfterMessageIndex: null,
+      createdAt: "2026-10-07T00:00:00.000Z", updatedAt: "2026-10-07T00:00:00.000Z", closedAt: "",
+    };
+    const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0]>();
+    let summaryReads = 0;
+    let auxiliaryReads = 0;
+    const api: Partial<WithMateWindowApi> = {
+      getMateState: async () => "not_created",
+      getAppSettings: async () => createDefaultAppSettings(),
+      subscribeAppSettings: () => () => {},
+      getModelCatalog: async () => new Promise(() => {}),
+      subscribeModelCatalog: () => () => {},
+      listCharacters: async () => [],
+      listSessionSummaryPage: async (request) => {
+        summaryReads += 1;
+        return { entries: request?.scope === "pinned" ? [] : [summary], hasMore: false, nextCursor: null };
+      },
+      listSessionCharacterUsage: async () => [],
+      subscribeSessionInvalidation: () => () => {},
+      listOpenSessionWindowIds: async () => [summary.id],
+      subscribeOpenSessionWindowIds: () => () => {},
+      getSessionWindowRestoreSet: async () => [],
+      subscribeSessionWindowRestoreSet: () => () => {},
+      listOpenAuxiliarySessionSummaries: async () => {
+        auxiliaryReads += 1;
+        return [auxiliary];
+      },
+      subscribeLiveSessionRun: (listener) => {
+        liveListeners.add(listener);
+        return () => { liveListeners.delete(listener); };
+      },
+    };
+    dom.window.withmate = api as WithMateWindowApi;
+    const rootElement = dom.window.document.getElementById("root");
+    assert.ok(rootElement);
+    const createLiveState = (
+      sessionId: string,
+      runState: string,
+      cancellationState?: LiveSessionRunState["cancellationState"],
+    ): LiveSessionRunState => ({
+      sessionId, threadId: "thread-1", runState, cancellationState, assistantText: "",
+      steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
+    });
+    const emitLive = async (sessionId: string, state: LiveSessionRunState | null) => {
+      await act(async () => {
+        for (const listener of liveListeners) listener(sessionId, state);
+      });
+    };
+    const assertMonitor = (section: "running" | "inactive", mainLabel: string, auxiliaryLabel: string) => {
+      const card = rootElement.querySelector(`[aria-labelledby="home-monitor-${section}"] .home-monitor-card`);
+      assert.ok(card, `${mode}: parent card should be in ${section}`);
+      assert.ok(card.querySelector(`[aria-label="Main ${mainLabel}"]`), `${mode}: Main ${mainLabel}`);
+      assert.ok(card.querySelector(`[aria-label="Auxiliary ${auxiliaryLabel}: 1"]`), `${mode}: Auxiliary ${auxiliaryLabel}`);
+      assert.equal(rootElement.querySelectorAll(".home-monitor-card").length, 1);
+    };
+    let root: Root | null = null;
+    try {
+      const [{ default: HomeApp }, { createRoot }] = await Promise.all([
+        import("../../src/home/HomeApp.js"), import("react-dom/client"),
+      ]);
+      await act(async () => {
+        root = createRoot(rootElement);
+        root.render(<HomeApp />);
+      });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+      assertMonitor("inactive", "Idle", "Idle");
+      await emitLive(summary.id, null);
+
+      summary = { ...summary, status: "running", runState: "running" };
+      await emitLive(summary.id, createLiveState(summary.id, "running"));
+      assertMonitor("running", "Running", "Idle");
+
+      const readsBeforeStreaming = [summaryReads, auxiliaryReads];
+      await emitLive(summary.id, { ...createLiveState(summary.id, "running"), assistantText: "Streaming text" });
+      assert.deepEqual([summaryReads, auxiliaryReads], readsBeforeStreaming);
+
+      summary = { ...summary, status: "idle", runState: "idle" };
+      await emitLive(summary.id, null);
+      assertMonitor("inactive", "Idle", "Idle");
+
+      summary = { ...summary, status: "running", runState: "running" };
+      await emitLive(summary.id, createLiveState(summary.id, "running"));
+      assertMonitor("running", "Running", "Idle");
+      for (const [cancellationState, label] of [["requested", "Canceling"], ["terminating", "Waiting For Stop"]] as const) {
+        summary = { ...summary, cancellationState };
+        await emitLive(summary.id, createLiveState(summary.id, "running", cancellationState));
+        assertMonitor("running", label, "Idle");
+      }
+      summary = { ...summary, status: "idle", runState: "idle", cancellationState: undefined };
+      await emitLive(summary.id, { ...createLiveState(summary.id, "idle"), reasoningText: "Retained reasoning" });
+      assertMonitor("inactive", "Idle", "Idle");
+
+      await emitLive(auxiliary.id, null);
+      auxiliary = { ...auxiliary, runState: "running" };
+      await emitLive(auxiliary.id, createLiveState(auxiliary.id, "running"));
+      assertMonitor("running", "Idle", "Running");
+      auxiliary = { ...auxiliary, runState: "error" };
+      await emitLive(auxiliary.id, createLiveState(auxiliary.id, "error"));
+      assertMonitor("inactive", "Idle", "Error");
+      auxiliary = { ...auxiliary, runState: "running" };
+      await emitLive(auxiliary.id, createLiveState(auxiliary.id, "running"));
+      assertMonitor("running", "Idle", "Running");
+      auxiliary = { ...auxiliary, runState: "idle" };
+      await emitLive(auxiliary.id, null);
+      assertMonitor("inactive", "Idle", "Idle");
+    } finally {
+      await act(async () => root?.unmount());
+      assert.equal(liveListeners.size, 0);
+      dom.window.close();
+      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+    }
   }
 });
