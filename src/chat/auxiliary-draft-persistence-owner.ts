@@ -71,6 +71,14 @@ export class AuxiliaryDraftPersistenceOwner {
     return this.durableRecord;
   }
 
+  dispatchTurn<T>(consume: () => Promise<T>): Promise<T> {
+    if (this.consumption || this.hasPending) throw new Error("Auxiliary draft is still being saved.");
+    // The turn call settles at terminal, not at input acceptance. Later edits
+    // must read the consumed durable revision without waiting for that terminal.
+    this.record = null;
+    return consume();
+  }
+
   async withDraftConsumption<T>(consume: () => Promise<T>): Promise<T> {
     if (this.consumption || this.hasPending) throw new Error("Auxiliary draft is still being saved.");
     let release!: () => void;

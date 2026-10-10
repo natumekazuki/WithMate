@@ -281,6 +281,7 @@ function createDraftPersistenceStub(): AuxiliaryDraftPersistence {
     waitForPendingSends: async () => {},
     flushAll: async () => {},
     pendingSessionIds: () => [],
+    prepareSubmission: async () => null,
   };
 }
 
