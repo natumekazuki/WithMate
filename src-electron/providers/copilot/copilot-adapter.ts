@@ -491,11 +491,11 @@ function applyCopilotTurnEvent(args: {
         updateCopilotCommandStep(state, {
           stepId: event.data.toolCallId,
           summary: current?.summary ?? buildCopilotToolSummary(toolName, undefined, workspacePath),
-          details: appendDetail(current?.details, extractToolExecutionDetails(event)),
+          details: appendDetail(current?.details, state.redactor.sanitize(extractToolExecutionDetails(event))),
           status: event.data.success ? "completed" : "failed",
           exitCode: event.data.result?.contents?.find((content) => content.type === "terminal")?.exitCode,
-          error: event.data.error ? { message: toProviderTextPreview(event.data.error.message) ?? "",
-            ...(typeof event.data.error.code === "string" ? { code: toProviderTextPreview(event.data.error.code) } : {}) } : undefined,
+          error: event.data.error ? { message: toProviderTextPreview(state.redactor.sanitizeText(event.data.error.message)) ?? "",
+            ...(typeof event.data.error.code === "string" ? { code: toProviderTextPreview(state.redactor.sanitizeText(event.data.error.code)) } : {}) } : undefined,
         });
       }
       break;

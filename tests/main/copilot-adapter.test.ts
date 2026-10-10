@@ -1873,6 +1873,93 @@ it("Copilot bootstrap失敗診断はbinding referenceを除去する", async () 
 
 // @test-value v2
 // kind = "invariant"
+// claim = "Copilot tool errorのmessage/codeはpreview境界の前後でも全文秘匿され、liveと正常・失敗・取消のartifactへ有限な取得結果として渡る"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Session Flow; src-electron/session/provider-payload-limits.ts#PROVIDER_TEXT_PREVIEW_LIMIT" }
+// fault = "tool errorを秘匿前に切り詰めてbinding referenceの末尾欠け断片をliveまたはartifactに漏らす、または通常errorを消す"
+// observable = "runSessionTurnのprogress stepsと返却artifact/ProviderTurnError.partialResult.artifactのerror.message/code・details・status"
+// observation_boundary = "public-boundary"
+// scope = "Copilot SDK tool.execution_completeからliveおよびcompleted/failed/canceled通常artifactへの投影"
+// lifecycle = "permanent"
+// impact = "runtime権限に関わるsecretが利用者表示・保存履歴へ漏れ、取得済みエラー内容が失われる"
+// distinction = "既存final秘匿testは完全なsecretだけを観測し、preview境界の断片漏洩やlive error/codeを検出しない。外部接続なしの有限event列でこの秘匿契約を確認できる"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("Copilot tool errorは秘匿後にpreview化しliveと全terminal artifactを保護する", async () => {
+  const limit = 65536;
+  const secret = "opaque-reference-copilot-error-boundary-probe";
+  const errorTexts = [
+    "ordinary tool error",
+    "x".repeat(limit - secret.length - 1) + secret + " tail",
+    "x".repeat(limit - secret.length + 1) + secret + " tail",
+    "x".repeat(limit + 1) + secret + " tail",
+  ];
+  for (const outcome of ["completed", "failed", "canceled"] as const) {
+    const input = createRunSessionInput({ customAgentName: "", agentRuntimeBinding: {
+      bindingId: "binding-error-boundary", bindingReference: secret, providerId: "copilot",
+      executionGeneration: "generation-error-boundary", transport: "env", expiresAt: null,
+    } });
+    const listeners = new Set<(event: SessionEvent) => void>();
+    const sourceEvents: SessionEvent[] = [];
+    const liveOperations = new Map<string, LiveRunStep>();
+    const session = {
+      sessionId: "thread-error-boundary",
+      on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
+      async send() {
+        const emit = (type: string, data: Record<string, unknown>) => {
+          const event = { type, data } as SessionEvent;
+          sourceEvents.push(event);
+          for (const listener of listeners) listener(event);
+        };
+        for (const [index, text] of errorTexts.entries()) {
+          const toolCallId = `error-${index}`;
+          emit("tool.execution_start", { toolCallId, toolName: "shell", arguments: { command: "synthetic check" } });
+          emit("tool.execution_complete", { toolCallId, success: false, error: { message: text, code: text } });
+        }
+        if (outcome !== "completed") throw new Error(outcome === "canceled" ? "Abort requested" : "synthetic turn failed");
+        emit("session.idle", {});
+        return "sent";
+      },
+    };
+    const adapter = new CopilotAdapter();
+    (adapter as unknown as { getSession(): Promise<unknown> }).getSession = async () => ({ session,
+      selection: { requestedModel: "gpt-4.1", resolvedModel: "gpt-4.1", requestedReasoningEffort: "high", resolvedReasoningEffort: "high" } });
+    let result: RunSessionTurnResult;
+    try {
+      result = await adapter.runSessionTurn(input, (state, changes) => {
+        assert.ok(!JSON.stringify(state).includes(secret.slice(0, -1)), "live snapshot leaked a secret fragment");
+        for (const step of changes.steps.upserts) liveOperations.set(step.id, step);
+      });
+      assert.equal(outcome, "completed");
+    } catch (error) {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.notEqual(outcome, "completed");
+      assert.equal(error.canceled, outcome === "canceled");
+      result = error.partialResult;
+    }
+    const operations = result.artifact!.operationTimeline!;
+    assert.equal(operations.length, errorTexts.length);
+    assert.ok(!JSON.stringify(result.artifact).includes(secret.slice(0, -1)), "artifact leaked a secret fragment");
+    for (const [index, rawText] of errorTexts.entries()) {
+      const sanitized = rawText.replace(secret, PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
+      const expected = sanitized.length <= limit ? sanitized
+        : `${sanitized.slice(0, limit)}\n...[truncated ${sanitized.length - limit} chars; originalLength=${sanitized.length}]`;
+      const live = liveOperations.get(`error-${index}`);
+      assert.ok(live, "tool completion did not reach live progress");
+      for (const operation of [live, operations[index]]) {
+        assert.equal(operation.status, "failed");
+        assert.deepEqual(operation.error, { message: expected, code: expected });
+        assert.equal(operation.details, expected);
+        assert.ok(operation.error!.message.length <= limit + 100);
+      }
+      const source = sourceEvents.find((event) => event.type === "tool.execution_complete" && event.data.toolCallId === `error-${index}`);
+      assert.ok(source?.type === "tool.execution_complete");
+      assert.deepEqual(source.data.error, { message: rawText, code: rawText }, "SDK event was mutated");
+    }
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "Copilotは正常結果と取消partialで長文全文・操作結果・未対応event診断を保持しbinding referenceを秘匿する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "長文本文や取得済み操作結果を失う、未対応event診断を落とす、またはbinding referenceをartifact/診断へ残す"
