@@ -374,7 +374,8 @@ export class AuxiliarySessionStorage {
         current.characterId ?? input.characterRuntimeSnapshot?.characterId ?? "");
       insertAuxiliaryMessage(db, current.id, input.expectedMessageCount, input.userMessage, input.updatedAt);
       db.prepare(`UPDATE auxiliary_sessions SET run_state = 'running', status = 'active', closed_at = '',
-        character_snapshot_json = ?, preview = ?, updated_at = ? WHERE id = ?`).run(
+        character_id = COALESCE(character_id, ?), character_snapshot_json = ?, preview = ?, updated_at = ? WHERE id = ?`).run(
+        input.characterRuntimeSnapshot?.characterId ?? null,
         input.characterRuntimeSnapshot === undefined ? (current.characterRuntimeSnapshot ? JSON.stringify(current.characterRuntimeSnapshot) : null)
           : input.characterRuntimeSnapshot === null ? null : JSON.stringify(input.characterRuntimeSnapshot),
         current.preview || buildAuxiliaryPreview([input.userMessage]), input.updatedAt, current.id);
