@@ -1557,6 +1557,66 @@ it("final progress失敗のkey echoをapp logから除去する", async () => wo
 }));
 
 // @test-value v2
+// kind = "contract"
+// claim = "terminal control成功後の最終本文またはstep consumer拒否をpartial付き失敗で返し、cleanupを完遂して既存provider失敗を上書きしない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "最終consumer拒否を警告だけにして成功を返す、partialを捨てる、Workerを解放しない、またはcleanup例外で元の失敗を上書きする"
+// observable = "成功したterminal control callback、ProviderTurnErrorのmessageとpartial本文・操作、transport.closeと実Worker terminateの完了"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter final live consumer and cleanup"
+// lifecycle = "permanent"
+// impact = "最終表示consumerの実失敗をturn成功として保存する誤判定と終了resourceの残留を防ぐ"
+// distinction = "既存key echo testは同期terminal control自体を拒否し、terminal items反映後だけの非同期本文・step拒否を通らない。fake transportと短い実Worker実行で最終配送契約を確認する"
+// @end-test-value
+it("最終consumer拒否はcleanup後にpartial付きで伝播し既存失敗を維持する", async (context) => workspace(async (directory) => {
+  const terminate = Worker.prototype.terminate;
+  let terminated = 0;
+  context.mock.method(Worker.prototype, "terminate", async function (this: Worker) {
+    const result = await terminate.call(this);
+    terminated += 1;
+    return result;
+  });
+  for (const scenario of ["text", "steps", "cleanup", "provider-failure"] as const) {
+    const cleanupFails = scenario === "cleanup" || scenario === "provider-failure";
+    class TerminalTransport extends FakeTransport {
+      override async close() {
+        await super.close();
+        if (cleanupFails) throw new Error("cleanup failure");
+      }
+    }
+    const transport = new TerminalTransport();
+    const command = { type: "commandExecution", id: "command", command: "echo result", cwd: directory,
+      status: "completed", aggregatedOutput: "result", exitCode: 0, durationMs: 1 };
+    transport.events = [completed([message("answer", "final body"), command], scenario === "provider-failure" ? "failed" : "completed")];
+    const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
+    let terminalControlSucceeded = false;
+    let finalRejected = false;
+    const beforeTerminated = terminated;
+    await assert.rejects(adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (state, changes) => {
+      const finalFrame = scenario === "steps" ? changes.steps.upserts.some(step => step.id === "command") : state.assistantText === "final body";
+      if (finalFrame) {
+        assert.equal(terminalControlSucceeded, true);
+        finalRejected = true;
+        return Promise.reject(new Error("final consumer failed"));
+      }
+      if (!state.inputAvailable) terminalControlSucceeded = true;
+    }), (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.message, scenario === "provider-failure" ? "provider failed" : "final consumer failed");
+      assert.equal(error.canceled, false);
+      assert.equal(error.partialResult.assistantText, "final body");
+      assert.ok(error.partialResult.artifact);
+      assert.equal(error.partialResult.artifact.operationTimeline?.find(operation => operation.id === "command")?.status, "completed");
+      if (cleanupFails) assert.match(JSON.stringify(error.partialResult.providerMetadata), /cleanup failure/);
+      assert.equal(transport.closed, true);
+      assert.equal(terminated, beforeTerminated + 1);
+      return true;
+    });
+    assert.equal(finalRejected, true);
+  }
+}));
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Codex command出力は保持元で64Ki prefixに制限しdeltaとterminal snapshotの元lengthを表示へ反映する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
