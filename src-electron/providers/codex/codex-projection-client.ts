@@ -1,17 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
-import { CODEX_PROJECTION_MAX_PENDING, CODEX_PROJECTION_MAX_PENDING_BYTES, type CodexProjectionCommand, type CodexProjectionRequest, type CodexProjectionResponse, type CodexProjectionStart } from "./codex-projection-protocol.js";
+import type { CodexProjectionCommand, CodexProjectionRequest, CodexProjectionResponse, CodexProjectionStart } from "./codex-projection-protocol.js";
 
-type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; bytes: number; timer: NodeJS.Timeout };
+type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 
 /** One Worker per adapter, shared by concurrent turns; raw items never cross back per delta. */
 export class CodexProjectionClient {
   private worker: Worker | null = null;
   private readonly runs = new Map<string, Worker>();
   private readonly pending = new Map<number, Pending>();
-  private pendingBytes = 0;
   private nextId = 0;
-  private capacityAvailable: { promise: Promise<void>; resolve: () => void } | null = null;
 
   private ensureWorker(): Worker {
     if (this.worker) return this.worker;
@@ -23,8 +21,6 @@ export class CodexProjectionClient {
       const pending = this.pending.get(response.id);
       if (!pending) return;
       this.pending.delete(response.id);
-      this.pendingBytes -= pending.bytes;
-      this.notifyCapacity();
       clearTimeout(pending.timer);
       if (response.error !== undefined) pending.reject(new Error(response.error));
       else pending.resolve(response.value);
@@ -39,15 +35,7 @@ export class CodexProjectionClient {
     this.worker = null;
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
     this.pending.clear();
-    this.pendingBytes = 0;
-    this.notifyCapacity();
     void worker.terminate();
-  }
-
-  private notifyCapacity(): void {
-    const available = this.capacityAvailable;
-    this.capacityAvailable = null;
-    available?.resolve();
   }
 
   async begin(input: CodexProjectionStart): Promise<string> {
@@ -58,45 +46,27 @@ export class CodexProjectionClient {
     catch (error) { await this.release(runId); throw error; }
   }
 
-  call<T>(runId: string, command: CodexProjectionCommand, bytes = Buffer.byteLength(JSON.stringify(command), "utf8")): Promise<T> {
+  call<T>(runId: string, command: CodexProjectionCommand): Promise<T> {
     const worker = this.worker;
     if (!worker || this.runs.get(runId) !== worker) return Promise.reject(new Error("Codex projection run is unavailable."));
-    if (this.pending.size >= CODEX_PROJECTION_MAX_PENDING || bytes > CODEX_PROJECTION_MAX_PENDING_BYTES - this.pendingBytes) {
-      return Promise.reject(new Error("Codex projection capacity exceeded."));
-    }
     const id = ++this.nextId;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => this.fail(worker, new Error("Codex projection Worker response timed out.")), 5_000);
-      this.pending.set(id, { resolve: value => resolve(value as T), reject, bytes, timer });
-      this.pendingBytes += bytes;
+      this.pending.set(id, { resolve: value => resolve(value as T), reject, timer });
       try { worker.postMessage({ id, runId, command } satisfies CodexProjectionRequest); }
       catch { this.fail(worker, new Error("Codex projection dispatch failed.")); }
     });
   }
 
   async release(runId: string): Promise<void> {
-    let capacityTimer: NodeJS.Timeout | undefined;
     try {
       const worker = this.worker;
       if (worker && this.runs.get(runId) === worker) {
-        const command = { type: "release" } as const;
-        const bytes = Buffer.byteLength(JSON.stringify(command), "utf8");
         // Keep the run registered until the Worker acknowledges deletion or is failed closed.
-        while (this.worker === worker && (this.pending.size >= CODEX_PROJECTION_MAX_PENDING
-          || bytes > CODEX_PROJECTION_MAX_PENDING_BYTES - this.pendingBytes)) {
-          capacityTimer ??= setTimeout(() => this.fail(worker, new Error("Codex projection release capacity wait timed out.")), 5_000);
-          if (!this.capacityAvailable) {
-            let resolve!: () => void;
-            const promise = new Promise<void>(done => { resolve = done; });
-            this.capacityAvailable = { promise, resolve };
-          }
-          await this.capacityAvailable.promise;
-        }
-        await this.call(runId, command, bytes);
+        await this.call(runId, { type: "release" });
       }
     }
     finally {
-      if (capacityTimer) clearTimeout(capacityTimer);
       this.runs.delete(runId);
       if (this.runs.size === 0 && this.worker) {
         const worker = this.worker;

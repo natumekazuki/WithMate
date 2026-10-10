@@ -2349,7 +2349,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       stopForProgressFailure();
     });
     const scheduleLiveState = () => {
-      if (progressFailure) return Promise.resolve();
+      if (!onProgress || progressFailure) return Promise.resolve();
       return emitLiveState(
           (state, changes) => progressDelivery.deliver(state, changes),
           input.session.id,
@@ -2420,7 +2420,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       prompt: prompt.inputBodyText,
       ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
     }));
-    const execution = Promise.all([send, completion.wait]);
+    const execution = Promise.all([send, completion.wait]).then(() => progressDelivery.drain());
     let cancellationCleanup: Promise<never> | undefined;
     let cancellationFailures: string[] = [];
     let rejectCancellation!: (error: unknown) => void;

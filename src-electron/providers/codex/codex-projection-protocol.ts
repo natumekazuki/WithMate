@@ -5,8 +5,6 @@ import type { BoundedAuditRawItem } from "../../session/audit-payload-limits.js"
 import type { CodexNativeNotification, CodexTurnItem } from "./codex-turn-events.js";
 
 export const CODEX_LIVE_PROGRESS_INTERVAL_MS = 33;
-export const CODEX_PROJECTION_MAX_PENDING = 64;
-export const CODEX_PROJECTION_MAX_PENDING_BYTES = 32 * 1024 * 1024;
 
 export type CodexProjectionStart = {
   sessionId: string;
@@ -36,6 +34,7 @@ export type CodexProjectionFinal = {
 export type CodexProjectionCommand =
   | { type: "start"; input: CodexProjectionStart }
   | { type: "event"; event: CodexNativeNotification }
+  | { type: "events"; events: CodexNativeNotification[] }
   | { type: "live"; inputAvailable: boolean; force?: boolean }
   | { type: "finish"; diagnostics: BoundedAuditRawItem[] }
   | { type: "release" };

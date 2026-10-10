@@ -3,7 +3,7 @@ import test, { mock } from "node:test";
 import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 import { CodexProjectionClient } from "../../src-electron/providers/codex/codex-projection-client.js";
-import { CODEX_PROJECTION_MAX_PENDING, CODEX_PROJECTION_MAX_PENDING_BYTES, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionStart, type CodexProjectionEvent, type CodexProjectionRequest, type CodexProjectionResponse } from "../../src-electron/providers/codex/codex-projection-protocol.js";
+import type { CodexProjectionFinal, CodexProjectionProgress, CodexProjectionStart, CodexProjectionEvent, CodexProjectionRequest, CodexProjectionResponse } from "../../src-electron/providers/codex/codex-projection-protocol.js";
 import { AUDIT_RAW_ITEMS_JSON_LIMIT, AUDIT_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/audit-payload-limits.js";
 
 function input(name: string): CodexProjectionStart {
@@ -15,18 +15,17 @@ function input(name: string): CodexProjectionStart {
 
 // @test-value v2
 // kind = "contract"
-// claim = "共有受付の件数・bytesが満杯でもreleaseは上限内でowner削除を待ち他runと容量を維持する"
+// claim = "共有Workerがburst処理中でもreleaseはowner削除を確認し他runの状態を維持する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner" }
-// fault = "容量拒否でclient登録だけ失いWorker ownerを保持するか解放のため通常受付上限を超える"
-// observable = "実Workerのrelease完了と解放runへのprotocol照会拒否、通常受付拒否、存続runのlive本文"
+// fault = "client登録だけ失いWorker ownerを保持するか別runを破壊する"
+// observable = "実Workerのrelease完了と解放runへのprotocol照会拒否、存続runのlive本文"
 // observation_boundary = "public-boundary"
-// scope = "CodexProjectionClient shared capacity release"
+// scope = "CodexProjectionClient shared Worker release"
 // lifecycle = "permanent"
 // impact = "終了turnの本文とsecretが存続Workerに不要に残り保持が累積することを防ぐ"
-// distinction = "通常releaseとadmission単体は共有満杯時のWorker owner削除を観測しないため実protocol boundaryで確認する"
+// distinction = "通常releaseはburst中の実Worker owner削除を観測しないため実protocol boundaryで確認する"
 // @end-test-value
-test("release drains bounded shared capacity and deletes the Worker owner", { timeout: 10_000 }, async () => {
-  for (const mode of ["count", "bytes"] as const) {
+test("release confirms Worker owner deletion while another run handles a burst", { timeout: 10_000 }, async () => {
     let worker: Worker | undefined;
     const postMessage = Worker.prototype.postMessage;
     const spy = mock.method(Worker.prototype, "postMessage", function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
@@ -34,18 +33,15 @@ test("release drains bounded shared capacity and deletes the Worker owner", { ti
       return postMessage.apply(this, args);
     });
     const client = new CodexProjectionClient();
-    const retired = await client.begin(input(`retired-${mode}`));
-    const survivor = await client.begin(input(`survivor-${mode}`));
+    const retired = await client.begin(input("retired"));
+    const survivor = await client.begin(input("survivor"));
     try {
       for (const [run, text] of [[retired, "retained body"], [survivor, "surviving body"]]) {
         await client.call(run, { type: "event", event: { method: "item/completed", params: { item: { id: "same", type: "agentMessage", text } } } });
       }
-      const count = mode === "count" ? CODEX_PROJECTION_MAX_PENDING : 2;
-      const bytes = mode === "count" ? 1 : CODEX_PROJECTION_MAX_PENDING_BYTES / 2;
-      const pending = Array.from({ length: count }, () => client.call(survivor, { type: "event", event: { method: "unknown" } }, bytes));
+      const pending = Array.from({ length: 100 }, () => client.call(survivor, { type: "event", event: { method: "unknown" } }));
       const release = client.release(retired);
       void release.catch(() => undefined);
-      await assert.rejects(client.call(survivor, { type: "live", inputAvailable: true }), /capacity exceeded/);
       await Promise.all([release, ...pending]);
       assert.ok(worker);
       // Observe deletion at the Worker protocol, rather than only the client run registry.
@@ -61,7 +57,6 @@ test("release drains bounded shared capacity and deletes the Worker owner", { ti
       spy.mock.restore();
       await Promise.all([client.release(retired), client.release(survivor)]);
     }
-  }
 });
 
 // @test-value v2
@@ -149,25 +144,31 @@ test("Audit transports changed scalars and steps without unchanged long text", a
 
 // @test-value v2
 // kind = "contract"
-// claim = "projection受付は64未応答commandと32 MiB入力までを有限にし超過を明示拒否した後も受付済みcommandを完了・解放する"
+// claim = "正常なcommand burstと大きいeventを容量で拒否せずFIFO適用し、batch中のAudit変更と最終本文を保持する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner" }
-// fault = "受付境界を越えてWorker入力を保持するか拒否後に正常な受付まで失敗させる"
-// observable = "過負荷callのreject、受付済みcallの完了とその後のlive応答"
+// fault = "必要commandを件数やbytesで拒否するかbatch内のdelta/Audit変更を落とす"
+// observable = "実Workerのbatch応答数とAudit本文、FIFOのfinal本文、大きい本文のfinal出力"
 // observation_boundary = "public-boundary"
-// scope = "CodexProjectionClient bounded admission"
+// scope = "CodexProjectionClient burst and batch processing"
 // lifecycle = "permanent"
-// impact = "高速event列や巨大frameによる無制限のMain／Worker間保持を防ぐ"
-// distinction = "transport queue境界はprojectionへdispatch済みの要求を計上しないため実Worker client受付のcheckが必要"
+// impact = "正常な集中出力や長い本文が欠落しturnが失敗することを防ぐ"
+// distinction = "小さい逐次event testでは共有burst・batch順序・大きいWorker入力を通らない;固定100commandと36 MiB入力で確認する"
 // @end-test-value
-test("projection admission rejects overload and returns capacity", async () => {
+test("projection preserves bursts, batch changes and large valid input", async () => {
   const client = new CodexProjectionClient();
   const run = await client.begin(input("capacity"));
   try {
-    const pending = Array.from({ length: CODEX_PROJECTION_MAX_PENDING }, () => client.call(run, { type: "event", event: { method: "unknown" } }, 1));
-    await assert.rejects(client.call(run, { type: "live", inputAvailable: true }), /capacity exceeded/);
+    await client.call(run, { type: "event", event: { method: "item/started", params: { item: { id: "answer", type: "agentMessage", text: "" } } } });
+    const deltas = Array.from({ length: 100 }, (_, index) => `${index}:`);
+    const pending = deltas.map(delta => client.call(run, { type: "event", event: { method: "item/agentMessage/delta", params: { itemId: "answer", delta } } }));
+    const live = client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: true });
     await Promise.all(pending);
-    await assert.rejects(client.call(run, { type: "event", event: { method: "unknown" } }, CODEX_PROJECTION_MAX_PENDING_BYTES + 1), /capacity exceeded/);
-    const live = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: true });
-    assert.equal(live.state.sessionId, "capacity");
+    assert.equal((await live).state.assistantText, deltas.join(""));
+    const batch = await client.call<CodexProjectionEvent[]>(run, { type: "events", events: ["a", "b", "c"].map(delta => ({ method: "item/agentMessage/delta", params: { itemId: "answer", delta } })) });
+    assert.deepEqual(batch.map(event => event.audit?.state.assistantText), ["a", "ab", "abc"].map(suffix => deltas.join("") + suffix));
+    const text = "文".repeat(12 * 1024 * 1024);
+    await client.call(run, { type: "event", event: { method: "item/completed", params: { item: { id: "answer", type: "agentMessage", text } } } });
+    const final = await client.call<CodexProjectionFinal>(run, { type: "finish", diagnostics: [] });
+    assert.equal(final.assistantText, text);
   } finally { await client.release(run); }
 });

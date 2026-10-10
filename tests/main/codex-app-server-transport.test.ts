@@ -220,7 +220,7 @@ test("Windows ownership acquisition failure does not launch an unowned process",
   assert.equal(launched, false);
 });
 
-function cleanupFaultTransport(fault: "terminate" | "exit" | "release") {
+function cleanupFaultTransport(fault: "terminate" | "exit" | "release" | "none") {
   const child = new ChildProcess();
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -234,7 +234,7 @@ function cleanupFaultTransport(fault: "terminate" | "exit" | "release") {
   child.stdout = stdout;
   child.stderr = stderr;
   const calls = { terminate: 0, release: 0 };
-  const sut = new CodexAppServerTransport({ executable: "owned-fixture", clientInfo: { name: "test", version: "1" }, closeTimeoutMs: 10 }, {
+  const sut = new CodexAppServerTransport({ executable: "owned-fixture", clientInfo: { name: "test", version: "1" }, closeTimeoutMs: fault === "none" ? 1000 : 10 }, {
     spawnOwnedProcess: () => ({ child: child as ChildProcessWithoutNullStreams, ready: Promise.resolve(),
       terminate() {
         calls.terminate++;
@@ -250,6 +250,81 @@ function cleanupFaultTransport(fault: "terminate" | "exit" | "release") {
   });
   return { sut, calls, child, stdout, streams: [stdin, stdout, stderr] };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "小さい通知burstを順序どおり保持し、後続の承認・質問・terminalとRPC応答を失わない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "正常burstを件数だけで拒否する、通知を間引く、またはRPC応答をevent consumer待ちにする"
+// observable = "未消費burst後のRPC結果、全deltaの順序、server requestのIDと一回応答、terminal通知"
+// observation_boundary = "public-boundary"
+// scope = "Codex stdio transport receive queue"
+// lifecycle = "permanent"
+// impact = "通常turnの本文・承認・質問・完了が欠落して中断することを防ぐ"
+// distinction = "既存相関testは小さいburstの滞留を確認しない;短いin-memory streamで全件と制御イベントを確認する"
+// @end-test-value
+test("notification bursts preserve order, control events and RPC responses", async () => {
+  const { sut, stdout } = cleanupFaultTransport("none");
+  const count = 8192;
+  const params = (index: number) => ({ itemId: "answer", delta: `${index}:${"日本語".repeat(12)}` });
+  const controls = [
+    { id: 77, method: "item/commandExecution/requestApproval", params: { command: "echo" } },
+    { id: "question", method: "item/tool/requestUserInput", params: { questions: [] } },
+  ];
+  const terminal = { method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } };
+  try {
+    await sut.start();
+    const response = sut.request("never");
+    const frames = Array.from({ length: count }, (_, index) => ({ method: "item/agentMessage/delta", params: params(index) }));
+    stdout.write([...frames, ...controls, terminal, { id: 2, result: "ack" }].map(frame => JSON.stringify(frame) + "\n").join(""));
+    assert.equal(await response, "ack");
+    assert.equal(sut.state, "ready");
+    for (let index = 0; index < count; index++) {
+      assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "item/agentMessage/delta", params: params(index) });
+    }
+    for (const control of controls) {
+      const event = await sut.nextEvent();
+      assert.equal(event.kind, "serverRequest");
+      if (event.kind !== "serverRequest") throw new Error("Expected server request");
+      assert.deepEqual({ id: event.id, method: event.method, params: event.params }, control);
+      await event.respond({ accepted: true });
+      await assert.rejects(event.respond({ accepted: true }), /already resolved/);
+    }
+    assert.deepEqual(await sut.nextEvent(), { kind: "notification", ...terminal });
+  } finally { await sut.close(); }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "大きい正常frameと合計32 MiBを超える通知をFIFOで処理し、後続RPCとterminalも受け取れる"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "正常な大きいframeや滞留を容量だけで拒否する、または消費時に通知を欠落させる"
+// observable = "RPC結果、全通知の本文と到着順、dequeue後の新通知、terminal"
+// observation_boundary = "public-boundary"
+// scope = "Codex stdio transport large valid data"
+// lifecycle = "permanent"
+// impact = "長いツール結果や集中した出力を人工的な容量超過で失わない"
+// distinction = "小delta burstでは単一frameと合計容量の境界を通らない;実プロトコルで36 MiBの受信本文を使用する"
+// @end-test-value
+test("large valid frames drain in order without blocking RPC or terminal", async () => {
+  const { sut, stdout } = cleanupFaultTransport("none");
+  const delta = "日".repeat(6 * 1024 * 1024);
+  const frame = JSON.stringify({ method: "item/agentMessage/delta", params: { delta } });
+  try {
+    await sut.start();
+    const response = sut.request("never", { delta });
+    for (let index = 0; index < 2; index++) stdout.write(frame + "\n");
+    stdout.write(JSON.stringify({ id: 2, result: "ack" }) + "\n");
+    assert.equal(await response, "ack");
+    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "item/agentMessage/delta", params: { delta } });
+    stdout.write(JSON.stringify({ method: "extra", params: { index: 2 } }) + "\n");
+    stdout.write(JSON.stringify({ method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } }) + "\n");
+    assert.equal(sut.state, "ready");
+    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "item/agentMessage/delta", params: { delta } });
+    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "extra", params: { index: 2 } });
+    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } });
+  } finally { await sut.close(); }
+});
 
 // @test-value v2
 // kind = "invariant"

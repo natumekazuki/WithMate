@@ -493,12 +493,14 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       const sdkPrompt = await buildImagePrompt(prompt);
       if (controller.signal.aborted) throw new Error("Canceled");
       iterator = this.runQuery({ prompt: sdkPrompt, options });
+      let burst = 0;
       while (true) {
         const next = await signalRace(iterator.next(), controller.signal);
         if (next.done) break;
         this.receive(next.value, trace, Boolean(input.session.threadId));
         await signalRace(progress(), controller.signal);
         if (trace.result) break;
+        if (++burst >= 32) { burst = 0; await signalRace(new Promise<void>(resolve => setImmediate(resolve)), controller.signal); }
       }
       if (progressFailure) throw progressFailure;
       if (controller.signal.aborted) throw new Error("Canceled");

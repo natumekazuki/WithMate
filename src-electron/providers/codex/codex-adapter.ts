@@ -7,7 +7,7 @@ import {
 } from "./app-server-transport.js";
 import { CodexTurnInteractions } from "./codex-app-server-interactions.js";
 import { CodexProjectionClient } from "./codex-projection-client.js";
-import { CODEX_LIVE_PROGRESS_INTERVAL_MS, CODEX_PROJECTION_MAX_PENDING_BYTES, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionEvent } from "./codex-projection-protocol.js";
+import { CODEX_LIVE_PROGRESS_INTERVAL_MS, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionEvent } from "./codex-projection-protocol.js";
 
 import type { AppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import type {
@@ -973,7 +973,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const projectionFailure = new Promise<never>((_resolve, reject) => { rejectProjectionFailure = reject; });
     void projectionFailure.catch(() => undefined);
     const pendingEvents = new Set<Promise<void>>();
-    let pendingEventBytes = 0;
+    let eventBatch: { method: string; params: unknown }[] = [];
+    let batchImmediate: NodeJS.Immediate | undefined;
     let liveTimer: NodeJS.Timeout | undefined;
     let liveRequest: Promise<void> | null = null;
     let liveDirty = false;
@@ -1021,6 +1022,26 @@ export class CodexAdapter implements ProviderTurnAdapter {
       void Promise.resolve(args.onProgress(lastLive, {
         delivery: "live", steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
       })).catch(failProjection);
+    };
+    const flushEvents = () => {
+      if (batchImmediate) { clearImmediate(batchImmediate); batchImmediate = undefined; }
+      if (!projectionId || !eventBatch.length) return;
+      const events = eventBatch;
+      eventBatch = [];
+      const methods = events.map(event => event.method);
+      const completion = this.projection.call<(CodexProjectionEvent | null)[]>(projectionId, { type: "events", events })
+        .then(async (results) => {
+          // Invoke in Worker response order without waiting for earlier consumer completion.
+          await Promise.all(results.map(async (result, index) => {
+            if (!result || !sessionInput || !args.onProgress) return;
+            if (result.audit) {
+              await args.onProgress({ ...result.audit.state, inputAvailable: active?.inputAvailable ?? false }, result.audit.changes);
+              if (methods[index] === "error" && !state.turnCompleted && !signal?.aborted) publishControl({ errorMessage: result.audit.state.errorMessage });
+            }
+            scheduleLive();
+          }));
+        }).catch(failProjection).finally(() => { pendingEvents.delete(completion); });
+      pendingEvents.add(completion);
     };
     const abort = () => {
       if (active) {
@@ -1172,6 +1193,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
         const incomingTurnId = typeof params.turnId === "string" ? params.turnId : turn.id;
         const inScope = (typeof params.threadId !== "string" || params.threadId === state.threadId)
           && (typeof incomingTurnId !== "string" || incomingTurnId === state.turnId);
+        // Prior-turn token usage establishes the baseline; other foreign-turn data has no projection use.
+        if (typeof params.threadId === "string" && params.threadId !== state.threadId
+          || !inScope && event.method !== "thread/tokenUsage/updated") continue;
         if (event.method === "turn/completed" && inScope && typeof turn.id === "string" && typeof turn.status === "string") {
           state.turnCompleted = true;
           state.terminalStatus = turn.status;
@@ -1185,27 +1209,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
           if (sessionInput) this.activeTurns.delete(sessionInput.session.id);
           publishControl();
         }
-        const bytes = event.byteLength ?? Buffer.byteLength(JSON.stringify(event), "utf8");
-        if (bytes > CODEX_PROJECTION_MAX_PENDING_BYTES) throw new Error("Codex projection event is too large.");
-        while (pendingEvents.size >= 8 || pendingEventBytes + bytes > CODEX_PROJECTION_MAX_PENDING_BYTES) {
+        while (pendingEvents.size >= 8) {
           await Promise.race(pendingEvents);
           if (projectionError) throw projectionError;
           signal?.throwIfAborted();
         }
-        pendingEventBytes += bytes;
-        const completion = this.projection.call<CodexProjectionEvent | null>(projectionId, {
-          type: "event", event: { method: event.method, params: event.params },
-        }, bytes).then(async (result) => {
-          if (!result) return;
-          if (sessionInput && args.onProgress) {
-            if (result.audit) {
-              await args.onProgress({ ...result.audit.state, inputAvailable: active?.inputAvailable ?? false }, result.audit.changes);
-              if (event.method === "error" && !state.turnCompleted && !signal?.aborted) publishControl({ errorMessage: result.audit.state.errorMessage });
-            }
-            scheduleLive();
-          }
-        }).catch(failProjection).finally(() => { pendingEvents.delete(completion); pendingEventBytes -= bytes; });
-        pendingEvents.add(completion);
+        eventBatch.push({ method: event.method, params: event.params });
+        if (eventBatch.length >= 32 || state.turnCompleted) flushEvents();
+        else batchImmediate ??= setImmediate(flushEvents);
       }
       await Promise.all(pendingEvents);
       if (projectionError) throw projectionError;
@@ -1217,6 +1228,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     } finally {
       signal?.removeEventListener("abort", abort);
       interactions?.close();
+      flushEvents();
       if (liveTimer) { clearTimeout(liveTimer); liveTimer = undefined; }
       if (active) active.inputAvailable = false;
       if (

@@ -16,6 +16,7 @@ parentPort.on("message", (request: CodexProjectionRequest) => {
       if (!owner) throw new Error("Codex projection run is not open.");
       switch (command.type) {
         case "event": value = owner.apply(command.event); break;
+        case "events": value = command.events.map(event => owner.apply(event)); break;
         case "live": value = owner.live(command.inputAvailable, command.force); break;
         case "finish": value = owner.finish(command.diagnostics); break;
         case "release": owners.delete(request.runId); break;

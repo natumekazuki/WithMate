@@ -6,10 +6,10 @@ import { spawnOwnedCodexProcess, OwnedCodexProcessAcquisitionError, type OwnedCo
 export const CODEX_APP_SERVER_ARGUMENTS = ["app-server", "--listen", "stdio://"] as const;
 export type CodexRequestOptions = { signal?: AbortSignal; timeoutMs?: number };
 export type CodexWireError = { code: number; message: string; data?: unknown };
-export type CodexProtocolEvent = { readonly byteLength?: number } & (
+export type CodexProtocolEvent =
   | { kind: "notification"; method: string; params: unknown }
   | { kind: "serverRequest"; id: string | number; method: string; params: unknown;
-      respond(result: unknown): Promise<void>; reject(error: CodexWireError): Promise<void> });
+      respond(result: unknown): Promise<void>; reject(error: CodexWireError): Promise<void> };
 export type CodexAppServerTransportOptions = {
   executable: string;
   arguments?: readonly string[];
@@ -29,8 +29,6 @@ export class CodexAppServerRpcError extends Error {
 }
 
 type Pending = { resolve(value: unknown): void; reject(error: Error): void; cleanup(): void };
-const MAX_LINE_BYTES = 16 * 1024 * 1024;
-const MAX_QUEUE_BYTES = 32 * 1024 * 1024;
 
 export class CodexAppServerTransport {
   #state: "idle" | "starting" | "ready" | "closing" | "closed" | "failed" = "idle";
@@ -44,11 +42,10 @@ export class CodexAppServerTransport {
   #terminalError?: Error;
   #nextId = 1;
   #pending = new Map<number, Pending>();
-  #events: { event: CodexProtocolEvent; bytes: number }[] = [];
-  #eventBytes = 0;
+  #events: (CodexProtocolEvent | undefined)[] = [];
+  #eventHead = 0;
   #waiters: Pending[] = [];
   #serverRequests = new Set<string>();
-  #queuedWriteBytes = 0;
   #options: CodexAppServerTransportOptions;
   #spawnOwnedProcess: typeof spawnOwnedCodexProcess;
 
@@ -150,17 +147,24 @@ export class CodexAppServerTransport {
   }
 
   nextEvent(): Promise<CodexProtocolEvent> {
-    const queued = this.#events.shift();
-    if (queued) { this.#eventBytes -= queued.bytes; return Promise.resolve(queued.event); }
+    const queued = this.#events[this.#eventHead];
+    if (queued) {
+      this.#events[this.#eventHead++] = undefined;
+      if (this.#eventHead === this.#events.length) { this.#events = []; this.#eventHead = 0; }
+      else if (this.#eventHead >= 1024 && this.#eventHead >= this.#events.length / 2) {
+        this.#events = this.#events.slice(this.#eventHead); this.#eventHead = 0;
+      }
+      return Promise.resolve(queued);
+    }
     if (this.#terminalError) return Promise.reject(this.#terminalError);
     if (this.#state !== "ready" && this.#state !== "starting") return Promise.reject(new Error("Codex transport is closed."));
     return new Promise((resolve, reject) => this.#waiters.push({ resolve: value => resolve(value as CodexProtocolEvent), reject, cleanup() {} }));
   }
 
   #attach(child: ChildProcessWithoutNullStreams): void {
-    let decoder = new TextDecoder("utf-8", { fatal: true });
+    const decoder = new TextDecoder("utf-8", { fatal: true });
     let line = "";
-    let lineBytes = 0;
+    let partialFrame = false;
     child.stdout.on("data", (chunk: Buffer) => {
       if (this.#terminalError || this.#state === "closing" || this.#state === "closed") return;
       try {
@@ -169,20 +173,20 @@ export class CodexAppServerTransport {
           const newline = chunk.indexOf(10, offset);
           const end = newline < 0 ? chunk.length : newline;
           const segment = chunk.subarray(offset, end);
-          lineBytes += segment.byteLength;
-          if (lineBytes > MAX_LINE_BYTES) throw new Error("Codex stdout frame is too large.");
+          partialFrame ||= segment.length > 0;
           line += decoder.decode(segment, { stream: true });
           if (newline < 0) break;
           line += decoder.decode();
-          this.#accept(JSON.parse(line), lineBytes);
-          line = ""; lineBytes = 0; decoder = new TextDecoder("utf-8", { fatal: true });
+          this.#accept(JSON.parse(line));
+          line = "";
+          partialFrame = false;
           offset = newline + 1;
         }
       } catch (error) { this.#fail(new Error("Codex stdout protocol failure.", { cause: error })); }
     });
     child.stdout.on("end", () => {
       if (this.#state === "closing" || this.#state === "closed") return;
-      this.#fail(new Error(lineBytes ? "Codex stdout ended with a partial frame." : "Codex stdout disconnected."));
+      this.#fail(new Error(partialFrame ? "Codex stdout ended with a partial frame." : "Codex stdout disconnected."));
     });
     child.stdout.on("error", error => this.#fail(error));
     child.stdin.on("error", error => this.#fail(error));
@@ -198,7 +202,7 @@ export class CodexAppServerTransport {
     });
   }
 
-  #accept(value: unknown, bytes: number): void {
+  #accept(value: unknown): void {
     if (!isObject(value)) throw new Error("Invalid Codex envelope.");
     const hasId = Object.hasOwn(value, "id");
     if (hasId && !isId(value.id)) throw new Error("Invalid Codex request ID.");
@@ -220,14 +224,9 @@ export class CodexAppServerTransport {
         event = { kind: "serverRequest", id, method: value.method, params: value.params,
           respond: result => respond({ result }), reject: error => respond({ error }) };
       } else event = { kind: "notification", method: value.method, params: value.params };
-      // Reuse the measured wire size for bounded projection admission without reserializing the body.
-      Object.defineProperty(event, "byteLength", { value: bytes });
       const waiter = this.#waiters.shift();
       if (waiter) waiter.resolve(event);
-      else {
-        if (this.#events.length >= 4096 || this.#eventBytes + bytes > MAX_QUEUE_BYTES) throw new Error("Codex event queue overflow.");
-        this.#events.push({ event, bytes }); this.#eventBytes += bytes;
-      }
+      else this.#events.push(event);
       return;
     }
     if (!hasId || Object.hasOwn(value, "result") === Object.hasOwn(value, "error")) throw new Error("Invalid Codex response envelope.");
@@ -248,12 +247,8 @@ export class CodexAppServerTransport {
     }
     let frame: string;
     try { frame = `${JSON.stringify(value)}\n`; } catch (error) { return Promise.reject(asError(error)); }
-    const bytes = Buffer.byteLength(frame);
-    if (bytes > MAX_LINE_BYTES || this.#queuedWriteBytes + bytes > MAX_QUEUE_BYTES) return Promise.reject(new Error("Codex write queue overflow."));
-    this.#queuedWriteBytes += bytes;
     return new Promise((resolve, reject) => {
       this.#child!.stdin.write(frame, error => {
-        this.#queuedWriteBytes -= bytes;
         if (error) { this.#fail(error); reject(error); } else resolve();
       });
     });

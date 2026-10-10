@@ -5,6 +5,8 @@ import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { Worker } from "node:worker_threads";
+import type { CodexProjectionRequest } from "../../src-electron/providers/codex/codex-projection-protocol.js";
 import { _setWalkDirectoryStatOverrideForTesting, captureWorkspaceSnapshotPaths, createWorkspaceSnapshotIndex, refreshWorkspaceSnapshotIndex } from "../../src-electron/platform/snapshot-ignore.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -431,6 +433,72 @@ it("live consumerが遅くてもAudit・承認・terminalと取消を独立さ�
       });
       assert.ok(liveCount <= 3);
     } finally { releaseLive(); controller.abort(); await operation.catch(() => undefined); }
+  }
+}));
+// @test-value v2
+// kind = "contract"
+// claim = "非同期Audit consumerへ全通知をFIFOで渡し、実完了と失敗を追跡しながら承認とterminal入力閉鎖を独立させる"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner / Streaming Policy; src-electron/providers/provider-runtime.ts: RunSessionTurnProgressHandler" }
+// fault = "先行Audit callbackの待機中に後batchが先行通知を追い越す、実完了前に成功する、または承認とterminalをconsumer待ちにする"
+// observable = "consumerが受け取る本文列、gate解除前の承認応答とinputAvailable、gate解除後の成功または非cancel partial failure"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter async Audit delivery across batches"
+// lifecycle = "permanent"
+// impact = "新しい本文の後に古い状態を渡して保存・観測を巻き戻すことと実consumer失敗の成功扱いを防ぐ"
+// distinction = "既存slow live testはAudit consumerを停止しない;通信なしtransportと実Workerで70deltaを配送して非同期順序を確認する"
+// @end-test-value
+it("非同期Audit consumerへの通知順序と実完了をbatch間でも保持する", { timeout: 10_000 }, async () => workspace(async (directory) => {
+  for (const failConsumer of [false, true]) {
+    const count = 70;
+    const transport = new FakeTransport();
+    let releaseAudit!: () => void;
+    let rejectAudit!: (error: Error) => void;
+    const auditGate = new Promise<void>((resolve, reject) => { releaseAudit = resolve; rejectAudit = reject; });
+    let sawLastAudit!: () => void;
+    const lastAudit = new Promise<void>(resolve => { sawLastAudit = resolve; });
+    let sawApproval!: () => void;
+    const approved = new Promise<void>(resolve => { sawApproval = resolve; });
+    let sawClosedInput!: () => void;
+    const closedInput = new Promise<void>(resolve => { sawClosedInput = resolve; });
+    transport.events = [
+      notification("item/started", { item: message("answer", "") }),
+      ...Array.from({ length: count }, () => notification("item/agentMessage/delta", { itemId: "answer", delta: "x" })),
+      { kind: "serverRequest", id: 1, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", turnId: "turn-1", command: "run" },
+        respond: async result => { assert.deepEqual(result, { decision: "accept" }); sawApproval(); }, reject: async () => { throw new Error("Approval was rejected"); } },
+    ];
+    const received: string[] = [];
+    let settled = false;
+    const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
+    const input = { ...createCodexRunSessionTurnInput(directory), onApprovalRequest: () => "approve" as const };
+    const operation = adapter.runSessionTurn(input, async (state, changes) => {
+      if (changes.delivery !== "audit") { if (!state.inputAvailable) sawClosedInput(); return; }
+      if (!state.assistantText) return;
+      received.push(state.assistantText);
+      if (state.assistantText.length === count) sawLastAudit();
+      if (received.length === 1) await auditGate;
+    });
+    void operation.then(() => { settled = true; }, () => { settled = true; });
+    try {
+      await Promise.all([lastAudit, approved]);
+      transport.push(completed());
+      await closedInput;
+      assert.deepEqual(received, Array.from({ length: count }, (_, index) => "x".repeat(index + 1)));
+      assert.equal(settled, false);
+      if (failConsumer) {
+        rejectAudit(new Error("audit consumer failed"));
+        await assert.rejects(operation, error => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.equal(error.canceled, false);
+          assert.match(error.message, /audit consumer failed/);
+          assert.equal(error.partialResult.assistantText, "x".repeat(count));
+          return true;
+        });
+      } else {
+        releaseAudit();
+        assert.equal((await operation).assistantText, "x".repeat(count));
+      }
+      assert.equal(transport.closed, true);
+    } finally { releaseAudit(); transport.push(completed()); await operation.catch(() => undefined); }
   }
 }));
 async function workspace<T>(run: (directory: string) => Promise<T>): Promise<T> {
@@ -1118,6 +1186,76 @@ setInterval(() => {}, 1000);
   });
   assert.equal(transport.state, "closed");
 }));
+
+// @test-value v2
+// kind = "contract"
+// claim = "実stdioのACK前burstは全本文・ツール結果・承認を保持し、別thread通知を破棄してWorker配送をbatch化する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "正常burstを拒否する、本文/承認を失う、別thread通知をWorkerへ転送する、またはevent毎にWorkerへ往復する"
+// observable = "全assistantTextとtool出力、承認回数、transport close、実Worker境界の配送回数とevent数/scope"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter with real stdio transport and projection Worker"
+// lifecycle = "permanent"
+// impact = "開始直後や再開時のburstが有効なturnを中断し本文とツール結果を失うことを防ぐ"
+// distinction = "FakeTransportの既存burst testは受信キューを通らない;短いローカルNode processでACK前滞留と全量projectionを確認する"
+// @end-test-value
+it("実stdioの小delta burstを全量処理して承認後にturnを完了する", { timeout: 10_000 }, async (context) => workspace(async (directory) => {
+  const count = 5000;
+  let dispatches = 0;
+  let forwarded = 0;
+  let foreign = false;
+  const postMessage = Worker.prototype.postMessage;
+  context.mock.method(Worker.prototype, "postMessage", function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
+    const command = (args[0] as CodexProjectionRequest).command;
+    const events = command.type === "events" ? command.events : command.type === "event" ? [command.event] : [];
+    if (events.length) {
+      dispatches++;
+      forwarded += events.length;
+      foreign ||= events.some(event => (event.params as { threadId?: string }).threadId === "other-thread");
+    }
+    return postMessage.apply(this, args);
+  });
+  const fixture = String.raw`
+import { createInterface } from 'node:readline';
+const send = value => process.stdout.write(JSON.stringify(value) + '\n');
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.method === 'initialize') send({ id: request.id, result: { userAgent: 'fixture', codexHome: process.cwd(), platformFamily: 'fixture', platformOs: 'fixture' } });
+  else if (request.method === 'thread/start') send({ id: request.id, result: { thread: { id: 'thread-1' } } });
+  else if (request.method === 'turn/start') {
+    const frames = [{ method: 'item/started', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', id: 'answer', text: '', phase: null } } }];
+    for (let index = 0; index < ${count}; index++) {
+      frames.push({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'answer', delta: index + ':日本語\n' } });
+      frames.push({ method: 'item/agentMessage/delta', params: { threadId: 'other-thread', turnId: 'turn-1', itemId: 'answer', delta: 'unused' } });
+    }
+    frames.push({ id: 77, method: 'item/commandExecution/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-1', command: 'echo tool-result' } });
+    frames.push({ id: request.id, result: { turn: { id: 'turn-1' } } });
+    process.stdout.write(frames.map(frame => JSON.stringify(frame) + '\n').join(''));
+  } else if (request.id === 77 && request.result?.decision === 'accept') {
+    send({ method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'command', command: 'echo tool-result', aggregatedOutput: 'tool-result', exitCode: 0, status: 'completed' } } });
+    send({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } } });
+  }
+});
+setInterval(() => {}, 1000);
+`;
+  let transport!: CodexAppServerTransport;
+  let approvals = 0;
+  const adapter = new CodexAdapter(undefined, { createTransport: (options) => {
+    transport = new CodexAppServerTransport({ ...options, executable: process.execPath, arguments: ["--input-type=module", "-e", fixture] });
+    return transport;
+  } });
+  const input = { ...createCodexRunSessionTurnInput(directory), onApprovalRequest: () => { approvals++; return "approve" as const; } };
+  const result = await adapter.runSessionTurn(input);
+  assert.equal(result.assistantText, Array.from({ length: count }, (_, index) => `${index}:日本語\n`).join(""));
+  assert.equal(approvals, 1);
+  const raw = JSON.parse(result.rawItemsJson) as Array<{ type: string; data?: { aggregatedOutput?: unknown } }>;
+  assert.equal(raw.find(item => item.type === "commandExecution")?.data?.aggregatedOutput, "tool-result");
+  assert.equal(transport.state, "closed");
+  assert.equal(forwarded, count + 3);
+  assert.equal(foreign, false);
+  assert.ok(dispatches < count / 8, `Expected batched Worker delivery, got ${dispatches} dispatches`);
+}));
+
 // @test-value v2
 // kind = "invariant"
 // claim = "current threadのMCP requestでturnIdがnullでも共通UIへ渡す"

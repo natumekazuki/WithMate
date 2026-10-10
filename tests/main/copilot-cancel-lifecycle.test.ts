@@ -239,41 +239,53 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
 
 // @test-value v2
 // kind = "contract"
-// claim = "Copilotの保存待ちcallbackは64件を超えず、超過時は所有接続を停止してpartial付きfailedを返す"
-// oracle = { type = "contract", ref = "docs/design/audit-log.md" }
-// fault = "event-emitter側でcallbackを無制限に積むか、超過を取消や成功として返す"
-// observable = "実adapter callback件数、ProviderTurnError分類とpartial本文、旧client stopとchild exit"
+// claim = "Copilotの集中progressは全量を配送し、native完了後もconsumerの実完了を待ち実失敗はpartial付きfailedへ変換する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy; docs/adr/002-provider-turn-terminal-and-cancellation.md" }
+// fault = "callback件数で正常burstを拒否するか、consumer未完了/失敗を成功にして所有接続cleanupを省く"
+// observable = "全callback件数、gate前後のprovider完了、成功/partial本文、失敗時の旧client stopとchild exit"
 // observation_boundary = "public-boundary"
-// scope = "CopilotAdapter progress pressure through owned SDK cleanup"
+// scope = "CopilotAdapter burst progress and owned SDK cleanup"
 // lifecycle = "permanent"
-// impact = "Runtime外に無制限queueが移ることと生存providerとの次Send競合を防ぐ"
-// distinction = "Runtimeやdelivery helper単体ではSDK event-emitterと既存接続cleanupの結線を通らない"
+// impact = "正常burstで必要本文を失うことと、実失敗後に旧接続と次Sendを競合させることを防ぐ"
+// distinction = "delivery helper単体ではSDK emitter・native terminal・所有接続cleanupとの結線を通らない;小さい固定burstとgateで確認する"
 // @end-test-value
-it("Copilotのprogress超過は有限callbackと所有接続停止のfailureになる", { timeout: 5000 }, async () => {
-  const f = fixture();
-  const session = f.stored();
-  const gate = deferred<void>();
-  let delivered = 0;
-  const run = f.adapter.runSessionTurn({
-    session, executionOptions: captureSessionExecutionOptions(session), sessionMemory: createDefaultSessionMemory(session),
-    projectMemoryEntries: [], providerCatalog: { id: "copilot", label: "Copilot", defaultModelId: "gpt-4.1", defaultReasoningEffort: "high", models: [{ id: "gpt-4.1", label: "GPT", reasoningEfforts: ["high"] }] },
-    userMessage: "pressure", appSettings: normalizeAppSettings({}), attachments: [],
-  }, (state) => { if (state.assistantText) { delivered += 1; return gate.promise; } });
-  const outcome = assert.rejects(run, (error: unknown) => {
-    assert.ok(error instanceof ProviderTurnError);
-    assert.equal(error.canceled, false);
-    assert.match(error.message, /capacity exceeded/);
-    assert.ok(error.partialResult?.assistantText.startsWith("x"));
-    return true;
-  });
-  const owned = await f.current();
-  try {
-    for (let index = 0; index < 100; index += 1) owned.emit("assistant.message_delta", { messageId: "one", deltaContent: "x" });
-    await outcome;
-    assert.equal(delivered, 64);
-    assert.equal(f.clients[0].stopCalls, 1);
-    assert.equal(f.clients[0].child.exitCode, 0);
-  } finally { gate.resolve(); }
+it("Copilotのprogress burstは全量処理しconsumer完了と実失敗を区別する", { timeout: 5000 }, async () => {
+  for (const fail of [false, true]) {
+    const f = fixture();
+    const session = f.stored();
+    const gate = deferred<void>();
+    let delivered = 0;
+    let settled = false;
+    const run = f.adapter.runSessionTurn({
+      session, executionOptions: captureSessionExecutionOptions(session), sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [], providerCatalog: { id: "copilot", label: "Copilot", defaultModelId: "gpt-4.1", defaultReasoningEffort: "high", models: [{ id: "gpt-4.1", label: "GPT", reasoningEfforts: ["high"] }] },
+      userMessage: "pressure", appSettings: normalizeAppSettings({}), attachments: [],
+    }, (state) => { if (state.assistantText) { delivered += 1; return gate.promise; } });
+    const outcome = run.then(result => { settled = true; return result; }, (error: unknown) => { settled = true; return error; });
+    const owned = await f.current();
+    try {
+      for (let index = 0; index < 100; index++) owned.emit("assistant.message_delta", { messageId: "one", deltaContent: "x" });
+      assert.equal(delivered, 100);
+      owned.emit("session.idle");
+      owned.sends[0].resolve("sent");
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal(settled, false);
+      if (fail) gate.reject(new Error("consumer failed")); else gate.resolve();
+      const result = await outcome;
+      if (fail) {
+        assert.ok(result instanceof ProviderTurnError);
+        assert.equal(result.canceled, false);
+        assert.match(result.message, /consumer failed/);
+        assert.equal(result.partialResult.assistantText, "x".repeat(100));
+        assert.equal(f.clients[0].stopCalls, 1);
+        assert.equal(f.clients[0].child.exitCode, 0);
+      } else {
+        assert.ok(result && typeof result === "object" && "assistantText" in result);
+        assert.equal(result.assistantText, "x".repeat(100));
+        assert.equal(f.clients[0].stopCalls, 0);
+      }
+    } finally { gate.resolve(); }
+  }
 });
 
 // @test-value v2

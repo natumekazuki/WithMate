@@ -152,7 +152,7 @@ the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動�
 ## Thread Management
 
 - sessionごとにprovider固有の会話IDを保持する。Codexはturnごとの新しいApp Serverで保存済み`threadId`を`thread/resume`へ渡し、未作成時は`thread/start`する。Claudeは同じ保存fieldの明示IDをSDK `resume`へ渡し、未作成時は新規`query()`を使う
-- Codexの`thread/resume`には`excludeTurns: true`を指定し、WithMateが利用しない過去turnの一括返送を省く。Codex側の会話履歴と保存済みIDは維持し、再開後の通知を処理する。新規`thread/start`には指定せず、transportの有限なframe / queue上限は維持する
+- Codexの`thread/resume`には`excludeTurns: true`を指定し、WithMateが利用しない過去turnの一括返送を省く。Codex側の会話履歴と保存済みIDは維持し、再開後の通知を処理する。新規`thread/start`には指定しない
 - 実行後にproviderが返した会話IDをsession storeへ保存する
 - model または reasoning depth を変更した場合も、その session の `threadId` は維持し、次回 turn は送信された runtime parameter で既存 thread / session の resume を試す
 - Codexは毎turnの`thread/start` / `thread/resume`と`turn/start`へ送信時の実行optionを渡す
@@ -263,6 +263,8 @@ turn 終了後の snapshot は provider outcome に対する enrichment であ�
 ## Streaming Policy
 
 - provider固有のstreaming APIを使い、turn完了前の一時状態をRendererへ中継する
+- providerの正常データを受信・配送する経路では、件数・容量だけでturnを拒否しない。不要なデータは後段へ渡す前に除き、処理済みの受信情報や余分な複製を早期に解放する。必要な本文・ツール結果・未解決の対話は保持し、実際の資源不足、通信・protocol・consumerの失敗は成功へ置き換えない
+- Claude／Copilotのprogress配送は容量計測用のJSON複製や完了後のmacrotask待ちを行わず、consumerの実完了と実失敗を追跡する。Copilotはnative完了後に受付済みcallbackをdrainし、取消はそのdrainを待たない。Claudeは32 messageごとにmacrotaskへyieldして制御処理へ戻る
 - live state には少なくとも次を含める
   - 最新の assistant text
   - 実行中 / 完了 / 失敗の step 一覧
@@ -288,11 +290,13 @@ assistant／reasoningはitem単位で更新し、arrival順の全量連結とbou
 
 Audit配送は変更stepと変更したassistant preview／usage／errorだけを返し、reasoningは保存対象にしない。Audit-onlyの空textとnull usageはRuntimeの観測済み値を維持する。Auditの全変更受付とlive表示を分離し、live-onlyは追加保存せず、Audit-onlyは表示を更新しない。live snapshotは33msを目安に生成し、未完了のlive要求は1件とdirty flagだけを持つ。最後のdeltaの後にもtimerで最新表示へ追いつき、終了・取消時は最終snapshotをflushする。承認・取消・terminalの入力入口閉鎖とerror通知はlive timerを待たない。Audit容量超過・保存失敗は明示失敗とし、黙って間引かない。
 
-Worker clientの未応答command受付は64件・入力合計32MiB、各turnのevent処理待ちは8件までとする。実transportで測定済みのUTF-8 frame bytesを受付計上に再利用する。有限batchと32 event読取ごとのmacrotask yieldにより、queued burstでもMainの制御処理へ戻る。5秒以内に応答しないWorkerやWorker異常では要求をrejectし、Mainでの全量projection fallbackや自動再実行をしない。
+stdio transportは正常な受信frame、未消費event、送信frameを件数・容量だけで拒否しない。通知・server requestは到着順に保持し、`nextEvent`で取り出した参照は直ちに解放する。FIFOは毎回配列全体を移動せず、消費済み領域をまとめて除去する。RPC応答はeventキューを経由せずIDで解決し、承認・質問・取消・追加入力の応答を塞がないためにstdout全体の読取を停止しない。不正UTF-8／JSON／envelope、通信断、実際のwrite失敗は引き続き失敗とする。
 
-runの解放も同じ受付上限を守る。容量満杯なら最大5秒の容量待機を行い、Workerのowner削除応答かWorker異常終了なしにclient登録だけを失わない。待機が期限を超えた場合は共有Workerを停止して失敗を返し、native itemsとredactorを孤立したownerとして保持し続けない。
+Worker clientは未応答commandの件数・容量だけで受付を拒否せず、容量計測用のJSON化も行わない。adapterは各turnの通知を最大32 eventまたは次のmacrotaskでまとめて配送し、未完了8 batchでは完了を待って次の配送へ進む。通知の順序と各Audit変更を保持し、32 event読取ごとにもyieldする。別threadの通知と不要な別turn通知はWorkerへ転送しないが、usage baselineに必要な過去turnのtokenUsageは保持する。承認・質問・取消・terminalの制御はMainに残し、終了・取消・失敗時にも受信済みbatchを反映してpartialを回収する。5秒以内に応答しないWorkerやWorker異常では要求をrejectし、Mainでの全量projection fallbackや自動再実行をしない。
 
-最終assistant本文、operations、bounded raw JSONとmetadataはWorkerで集約・秘匿化し、artifactのfilesystem snapshot／diffはMainで補完する。live previewの長さでfinal本文を切らず、取消・失敗時も取得済みpartialを回収する。rawの個別128×1024・最終512×1024 code units予算と省略markerは維持し、Worker入力のUTF-8 bytes上限と混同しない。
+runの解放は先行commandの後に配送し、Workerのowner削除応答かWorker異常終了なしにclient登録だけを失わない。native itemsとredactorを孤立したownerとして保持し続けない。
+
+最終assistant本文、operations、bounded raw JSONとmetadataはWorkerで集約・秘匿化し、artifactのfilesystem snapshot／diffはMainで補完する。live previewの長さでfinal本文を切らず、取消・失敗時も取得済みpartialを回収する。rawの個別128×1024・最終512×1024 code units予算と省略markerは診断情報の保持用途に限定し、必要な本文やWorker入力へ適用しない。
 
 ## Error Handling
 
