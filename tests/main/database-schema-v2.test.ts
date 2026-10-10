@@ -63,15 +63,15 @@ function columnNames(db: DatabaseSync, tableName: string): string[] {
 describe("database-schema-v2", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "withmate-v2.db 用の実装可能 schema として固定する"
-  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
-  // fault = "保存・移行・取得経路がtest名で示す継続条件に違反する"
-  // observable = "fixtureで構築したDBまたは公開storage APIの戻り値とassertionが読む保存結果"
-  // observation_boundary = "public-boundary"
+  // claim = "V2移行元のDB識別定数とCREATE_V2_SCHEMA_SQLが生成する7tableの構成を維持する"
+  // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v2.ts: APP_DATABASE_V2_FILENAME / APP_DATABASE_V2_SCHEMA_VERSION / V2_SCHEMA_STATUS / CREATE_V2_SCHEMA_SQL; docs/design/database-schema.md: 起動時の移行とデータ保護" }
+  // fault = "V2 DBのfilename/version/statusを変えるか、CREATE_V2_SCHEMA_SQLが必要なtableを欠落・余分に作成する"
+  // observable = "V2識別定数とメモリ内SQLiteのsqlite_schema table名一覧"
+  // observation_boundary = "declaration"
   // scope = "main/database-schema-v2"
   // lifecycle = "permanent"
-  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
-  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // impact = "対応するV2移行元のschema構成を誤り、通常会話とartifactを後続migrationが読めなくなる"
+  // distinction = "型検査ではSQLを実行せずtableの欠落を検出できない。移行のrow保持ではなくV2生成DDLの構成を直接確認する"
   // @end-test-value
   it("withmate-v2.db 用の実装可能 schema として固定する", () => {
     assert.equal(APP_DATABASE_V2_FILENAME, "withmate-v2.db");
@@ -96,10 +96,10 @@ describe("database-schema-v2", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "V2 session message schema は bookmark stateを既存message detailの列として保持する"
-  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
-  // fault = "V2 session_messagesにis_bookmarked列がなく、bookmark stateの保存先を持てない"
-  // observable = "session_messagesのschema column names"
+  // claim = "V2は一覧用session headerと順序付きmessage、bookmark列、独立artifact detailの列を分離する"
+  // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v2.ts: V2_SESSION_SUMMARY_COLUMNS / CREATE_V2_SESSIONS_TABLE_SQL / CREATE_V2_SESSION_MESSAGES_TABLE_SQL / CREATE_V2_SESSION_MESSAGE_ARTIFACTS_TABLE_SQL" }
+  // fault = "summary列を欠落・変更する、messageのseq/bookmark/artifact_availableを欠落させる、またはheader/messageに全量JSONを置きartifact detailを分離しない"
+  // observable = "V2_SESSION_SUMMARY_COLUMNSとSQLite PRAGMA table_infoのsessions/session_messages/session_message_artifacts列名"
   // observation_boundary = "declaration"
   // scope = "database-schema-v2 session message columns"
   // lifecycle = "permanent"
@@ -130,15 +130,15 @@ describe("database-schema-v2", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "MemoryGeneration と独り言の legacy tables を V2 正本 schema に含めない"
-  // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
-  // fault = "保存・移行・取得経路がtest名で示す継続条件に違反する"
-  // observable = "fixtureで構築したDBまたは公開storage APIの戻り値とassertionが読む保存結果"
-  // observation_boundary = "public-boundary"
+  // claim = "対応V2 schemaの生成DDLはMemoryGenerationとmonologueのtableを含まない"
+  // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v2.ts: V2_SCHEMA_DESIGN_NOTES / CREATE_V2_SCHEMA_SQL" }
+  // fault = "CREATE_V2_SCHEMA_SQLへsession_memories、project/character scope・memory entry、monologue名のtableを混入する"
+  // observable = "メモリ内SQLiteのsqlite_schemaから取得したtable名に対象名が含まれるか"
+  // observation_boundary = "declaration"
   // scope = "main/database-schema-v2"
   // lifecycle = "permanent"
-  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
-  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // impact = "V2移行元を生成するfixtureと対応schemaへ対象外のMemoryGeneration保存先が混入し、保存責務の分離を失う"
+  // distinction = "production DDLをSQLiteで実行してV2の対象外tableを確認し、source row保持や移行処理の成功は主張しない"
   // @end-test-value
   it("MemoryGeneration と独り言の legacy tables を V2 正本 schema に含めない", () => {
     const db = createV2Schema();

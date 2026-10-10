@@ -254,7 +254,7 @@ it("Codex MCPの取得結果をliveと成功・失敗・取消artifactへ保持�
 // @test-value v2
 // kind = "contract"
 // claim = "Codex progressは変更stepだけを渡し、resolved event burst中でもmacrotaskを実行する"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner; src-electron/providers/codex/codex-adapter.ts: executeTurn" }
 // fault = "1step変更で既存全stepを変更扱いするか、同期event連鎖でMainのtimerを飢餓させる"
 // observable = "実adapter callbackのchanged step ID列と、受信済みburstの全event読取前に予約したsetImmediateの実行位置"
 // observation_boundary = "public-boundary"
@@ -263,14 +263,17 @@ it("Codex MCPの取得結果をliveと成功・失敗・取消artifactへ保持�
 // impact = "多数operationの履歴増幅と制御応答の遅延を防ぐ"
 // distinction = "共有map単体や型検査ではnative eventからcallbackへの変更情報とevent-loop接続を確認できない"
 // @end-test-value
-it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする", async () => workspace(async (directory) => {
+it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする", { timeout: 10_000 }, async () => workspace(async (directory) => {
   let readEvents = 0;
   let readEventsAtYield = -1;
   let burstProbe: Promise<void> | undefined;
+  let initialStepsDelivered!: () => void;
+  const initialDelivery = new Promise<void>(resolve => { initialStepsDelivered = resolve; });
   class BurstTransport extends FakeTransport {
     override async nextEvent() {
       readEvents += 1;
-      if (!burstProbe) burstProbe = new Promise<void>((resolve) => {
+      if (readEvents === 3) await initialDelivery;
+      if (readEvents > 3 && !burstProbe) burstProbe = new Promise<void>((resolve) => {
         setImmediate(() => { readEventsAtYield = readEvents; resolve(); });
       });
       return super.nextEvent();
@@ -286,14 +289,17 @@ it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする
   ];
   const changes: RunSessionTurnProgressChanges[] = [];
   const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-  await adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (_state, change) => {
+  await adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (state, change) => {
     changes.push(change);
+    if (state.steps.some(step => step.id === "one") && state.steps.some(step => step.id === "two")) initialStepsDelivered();
   });
   assert.ok(burstProbe);
   await burstProbe;
-  assert.ok(changes.flatMap((change) => change.steps.upserts).some((step) => step.id === "one"));
+  assert.deepEqual(changes.flatMap(change => change.steps.upserts.map(step => ({ id: step.id, details: step.details }))), [
+    { id: "one", details: "" }, { id: "two", details: "" }, { id: "one", details: "changed" },
+  ]);
+  assert.ok(changes.every(change => change.steps.removes.length === 0));
   assert.ok(readEventsAtYield > 0 && readEventsAtYield < readEvents);
-  assert.equal(changes.filter((change) => change.steps.upserts.length > 0).at(-1)?.steps.upserts[0].details, "changed");
 }));
 // @test-value v2
 // kind = "invariant"
@@ -1007,9 +1013,9 @@ it("steerはexpectedTurnIdを送信しterminalで入口を閉じる", async () =
 // @test-value v2
 // kind = "invariant"
 // claim = "異なるforeground ownerとbackgroundのbinding・Memory owner envを分離し親env不変でlive artifact error logからsecretを除去する"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// oracle = { type = "contract", ref = "src-electron/providers/codex/codex-adapter.ts: createTransport / executeTurn / buildTurnResult; docs/design/provider-adapter.md: Codex projection owner" }
 // fault = "bindingかMemory owner selectorを欠落・再利用するか出力secretをUIへ公開する"
-// observable = "2 ownerのtransport env、process.env、live state、operations、raw、返却error、logger"
+// observable = "2 ownerとbackgroundのtransport env、process.env、live state、返却artifact.operationTimeline/providerMetadata、ProviderTurnError.messageとlogger出力"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
@@ -1333,16 +1339,16 @@ it("API key login失敗はfallbackせずauth失敗として収束する", async 
 }));
 // @test-value v2
 // kind = "invariant"
-// claim = "providerがAPI keyをechoしてもliveとartifact投影から除去する"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "credentialsをprovider出力経由でUIとSQLite artifactへ残す"
-// observable = "live assistantと通常artifactおよび返却本文"
+// claim = "API key echoを含むCodex応答で、live assistantの少なくとも1件に秘匿markerが現れ、runSessionTurn返却JSONにはAPI keyが残らない"
+// oracle = { type = "contract", ref = "src-electron/providers/codex/codex-projection-owner.ts: live / finish; docs/design/provider-adapter.md: Codex projection owner" }
+// fault = "live assistantへ秘匿markerを一度も投影しない、または返却本文・artifactを含む返却JSONへAPI keyを残す"
+// observable = "progress callbackのassistantText配列とrunSessionTurn返却値のJSON、assistantTextの秘匿marker"
 // observation_boundary = "component-behavior"
 // scope = "codex-api-key-auth"
 // lifecycle = "permanent"
 // risk_tags = ["authentication", "privacy"]
-// impact = "明示API keyを無視して別accountで実行したりCLI認証storeや履歴へkeyを書き込む"
-// distinction = "API key選択とlogin-before-thread順序は型検査では確認できない"
+// impact = "providerがechoしたcredentialの返却会話・artifactへの漏洩と、live側の秘匿投影の欠落を検出する"
+// distinction = "key選択やlogin順序のtestはprovider応答のredactionを観測せず、型検査も返却文字列のsecretを検出できない"
 // @end-test-value
 it("API keyをprovider echoのliveとartifactから除去する", async () => workspace(async (directory) => {
   const transport = new FakeTransport();

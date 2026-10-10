@@ -196,9 +196,9 @@ describe("SessionRuntimeService stale retry helpers", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "stale classifierはnarrowなthread/session系errorだけをretry対象にする"
-  // oracle = { type = "contract", ref = "Session runtime stale classifier contract" }
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: isRetryableStaleThreadSessionError" }
   // fault = "無関係なprovider errorをstale扱いしてretryする、またはstale errorを見逃す"
-  // observable = "classifier result for representative error codes"
+  // observable = "isRetryableStaleThreadSessionErrorのthread/session文字列・codeに対するtrueと汎用not_found/model_incompatible/接続errorに対するfalse"
   // observation_boundary = "component-behavior"
   // scope = "SessionRuntimeService stale error classifier"
   // lifecycle = "permanent"
@@ -220,9 +220,9 @@ describe("SessionRuntimeService stale retry helpers", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "meaningful partial判定はassistantTextまたは通常artifactの情報を観測する"
-  // oracle = { type = "contract", ref = "Session runtime meaningful partial classifier contract" }
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: hasMeaningfulPartialRunResult / hasMeaningfulArtifact" }
   // fault = "利用者に返せるpartial情報を空扱いし、不要なretryまたは破棄を行う"
-  // observable = "meaningful partial classifier result"
+  // observable = "hasMeaningfulPartialRunResultの空結果=false、本文・operationTimeline・changedFilesあり=true"
   // observation_boundary = "component-behavior"
   // scope = "SessionRuntimeService partial response classification"
   // lifecycle = "permanent"
@@ -248,9 +248,9 @@ describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "streamのdelta数にかかわらず最小turnは開始と終端だけ保存し、取得済み本文と個別操作結果は通常履歴へ保持する"
-  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
-  // fault = "deltaごとに累積状態を保存するか、失敗・取消のpartial artifactを捨ててturn phaseから操作結果を生成する"
-  // observable = "turn保存入力数とphase、返却Sessionの本文とoperationTimeline"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: 通常履歴と最小turn; src-electron/session/session-runtime-service.ts: runSessionTurnInternal" }
+  // fault = "deltaごとにcreate/updateSessionTurnを呼ぶか、失敗・取消の返却履歴からpartial artifactを捨ててturn phaseから操作結果を生成する"
+  // observable = "create/updateSessionTurn入力のphase列とcreatedAt/completedAt、返却Session最終messageの本文とoperationTimeline"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService minimal turn and history persistence"
   // lifecycle = "permanent"
@@ -283,7 +283,7 @@ describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Codex失敗時はSessionの保存threadと最小turnの実行threadを維持し、terminal保存後の通知が失敗してもcleanupする"
-  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md; docs/design/session-run-lifecycle.md" }
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal catch / notifySessionTurnTerminalBestEffort / invalidateProviderSessionThreadBestEffort; docs/design/provider-adapter.md: Error Handling" }
   // fault = "保存threadをlive threadで上書きする、partial threadId欠如でturnのlive情報を失う、または通知失敗でcleanupを止める"
   // scope = "session-runtime-failed-terminal-notification"
   // observable = "SessionとturnのthreadId、通知回数と保存・cleanup順序"
@@ -339,8 +339,8 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "終端保存の失敗・unknown outcomeは自動再保存やfailedへの置換をせず呼出元へ返す"
-  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
+  // claim = "終端保存の例外は自動再保存やfailedへの置換をせず呼出元へ返す"
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: upsertTerminalSession / runSessionTurnInternal; docs/design/provider-adapter.md: 通常履歴と最小turn" }
   // fault = "終端保存例外をprovider失敗と扱い別のterminalを書き、未確定結果を成功またはfailedに隠す"
   // observable = "公開run APIのreject、terminal保存とProvider・通知の呼出数"
   // observation_boundary = "public-boundary"
@@ -372,7 +372,7 @@ describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "取消deadlineで取得済みlive本文と操作を通常artifactへ保存し、未完了の操作statusをcanceledへ改変しない"
-  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: buildCanceledPartialResult / waitForProviderTurnWithCancelDeadline; docs/design/provider-adapter.md: Error Handling / 通常履歴と最小turn" }
   // fault = "deadline partialを本文だけ保存するか、turnの取消を個別操作の確定結果として補完する"
   // observable = "返却Sessionの本文とoperationTimeline、最小turnのphase"
   // observation_boundary = "public-boundary"
@@ -405,10 +405,10 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Renderer死亡後の再openと保存待ち中closeでもMainの既存turnは一度だけ実行され、provider最終応答とcompleted turnを保存する"
-  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#decision" }
+  // claim = "Renderer死亡後の再openと保存待ち中closeでもMainの既存Provider実行は一度だけ継続し、Sessionの最終応答保存を待ってrun結果を返す"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: Session Window Close; src-electron/session/session-runtime-service.ts: upsertTerminalSession / runSessionTurnInternal" }
   // fault = "表示の復旧で既存turnをcancelまたは再実行するか、壊れたRendererへの通知例外でterminal応答保存を失う"
-  // observable = "provider呼出し数、abort状態、保存待ち前後のSession本文、completed turnとrun結果"
+  // observable = "provider呼出し数、abort状態、保存gate前後のstoredSession/run結果の本文・runStateと保存待ち中のisRunInFlight"
   // observation_boundary = "public-boundary"
   // scope = "session-runtime-renderer-recovery-persistence"
   // lifecycle = "permanent"
@@ -1100,10 +1100,10 @@ describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "各turnで最新Character contextをprovider promptへ渡し、completed Sessionのterminal commit後に通知を依頼してbackground settlementを待たず次turnを受け付ける"
-  // oracle = { type = "contract", ref = "accepted contract: terminal notification after persisted terminal state" }
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal / notifySessionTurnTerminalBestEffort / completeCompletedTurnAppraisalBestEffort; docs/design/session-run-lifecycle.md: Character Affect の完了後評価" }
   // fault = "永続化前の通知またはbackground settlement待機により、通知先が未保存状態を読むか次turn受付が停止する"
   // observable = "providerへ渡されたturnごとのCharacter context、terminal commit後の通知とready correlation順序、appraisal依頼回数、次turnの完了結果"
-  // observation_boundary = "declaration"
+  // observation_boundary = "public-boundary"
   // scope = "session-runtime-terminal-completion-order"
   // lifecycle = "permanent"
   // @end-test-value
@@ -1919,8 +1919,8 @@ describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "成功turnはrunningからidleを保存し、最小turnのcompletedと本文位置を記録してlive stateを解放する"
-  // oracle = { type = "contract", ref = "Session runtime success transition contract" }
-  // fault = "成功後もrunningを残す、またはlive stateを解放しない"
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal; docs/design/provider-adapter.md: Session Flow 9-10 / 通常履歴と最小turn" }
+  // fault = "runningからidleへの2回のSession保存を失う、completed turnのphase/本文位置を誤る、またはReasoning/taskがない成功turnのlive stateとin-flightを残す"
   // observable = "保存runState、completed turnのphaseとassistantMessageSeq、live stateの解放"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService successful turn completion"
@@ -2066,7 +2066,7 @@ describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "成功時のfinally処理でも保存済みcompleted SessionのthreadIdをlive projectionへ反映し、backgroundTasksを失わない"
-  // oracle = { type = "contract", ref = "Session runtime thread ownership contract" }
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: pickPreferredThreadId / runSessionTurnInternal finally; docs/design/provider-adapter.md: Streaming Policy" }
   // fault = "background task保持処理がliveまたは旧threadIdでcompleted sessionを上書きする"
   // observable = "保存SessionのthreadIdとfinally後のlive projectionに保持されたthreadId/backgroundTasks"
   // observation_boundary = "public-boundary"
@@ -2183,7 +2183,7 @@ describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "成功後のReasoningはlive stateに保持し、次turn開始時のlive stateでは空に初期化する"
-  // oracle = { type = "contract", ref = "Session runtime reasoning projection contract" }
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: buildEmptyLiveSessionRunState / runSessionTurnInternal finally; docs/design/provider-adapter.md: Streaming Policy" }
   // fault = "reasoningをlive stateから失う、または次turnへ古いreasoningを持ち越す"
   // observable = "各turnのlive reasoningText"
   // observation_boundary = "public-boundary"
@@ -3518,10 +3518,10 @@ releaseSecondAttempt!();
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "meaningful partialを伴うstale errorはinternal retryしない"
-  // oracle = { type = "contract", ref = "Session runtime meaningful partial contract" }
-  // fault = "利用者が読めるpartial responseを破棄して再実行する"
-  // observable = "provider call count、保存assistant text、最終error state"
+  // claim = "Codexのstale失敗は再実行せず取得済みpartial本文をerror Sessionへ保持する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal catch; docs/design/provider-adapter.md: Error Handling / 通常履歴と最小turn" }
+  // fault = "Codexの失敗を自動再実行する、取得済み本文を返却履歴から落とす、またはerror Session保存とthread invalidationを省く"
+  // observable = "Codex adapter呼出数、返却SessionのrunState/最終本文、Session保存数とinvalidation対象"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService stale error partial handling"
   // lifecycle = "permanent"
@@ -3619,10 +3619,10 @@ releaseSecondAttempt!();
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "not_found単独codeのprovider errorではinternal retryしない"
-  // oracle = { type = "contract", ref = "Session runtime provider error retry contract" }
-  // fault = "retry対象外のnot_foundを内部retryし、重複実行や誤ったthread更新を起こす"
-  // observable = "provider call countと最終Session/turn state"
+  // claim = "not_foundを返したCodex turnは一回のerror Sessionとして返り、thread invalidationを一回依頼する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal catch / invalidateProviderSessionThreadBestEffort; docs/design/provider-adapter.md: Error Handling" }
+  // fault = "Codexの汎用not_found errorを自動再実行する、error Sessionを保存しない、またはthread invalidationを省く"
+  // observable = "Codex adapter呼出数、返却SessionのrunState/最終error本文、Session保存数とinvalidation対象"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService provider error classification"
   // lifecycle = "permanent"
@@ -3723,7 +3723,7 @@ releaseSecondAttempt!();
   // @test-value v2
   // kind = "invariant"
   // claim = "success後にbackgroundTasksを保持してもcompleted threadIdをlive run projectionへ残す"
-  // oracle = { type = "contract", ref = "Session runtime background task thread contract" }
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: pickPreferredThreadId / runSessionTurnInternal finally; docs/design/provider-adapter.md: Streaming Policy" }
   // fault = "background task保持処理でcompleted threadIdを失い、後続操作が別threadを参照する"
   // observable = "live run projectionのthreadIdとbackgroundTasks（保存済みSessionとは別のlive projection）"
   // observation_boundary = "public-boundary"

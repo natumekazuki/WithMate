@@ -144,14 +144,14 @@ it("Claude tool出力はsecretを秘匿してからpreviewを生成する", asyn
 
 // @test-value v2
 // kind = "contract"
-// claim = "Claude progress保存の拒否はpartialを保持したfailedで返り、後続SDK eventを消費しない"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// claim = "Claudeのlive callback拒否は取得済み本文付きの非取消ProviderTurnErrorとなり、後続SDK eventを消費しない"
+// oracle = { type = "contract", ref = "src-electron/providers/claude/claude-adapter.ts: runSessionTurn; src-electron/providers/provider-progress.ts: ProviderProgressDelivery.deliver" }
 // fault = "callback rejectをwarnだけで握り潰してSDK実行を続けるかユーザー取消へ誤分類する"
-// observable = "ProviderTurnErrorのcanceledとpartial assistant、拒否後のgenerator進行回数"
+// observable = "runSessionTurnがrejectするProviderTurnErrorのmessage/canceled/partialResult.assistantTextと後続generator実行フラグ"
 // observation_boundary = "public-boundary"
 // scope = "ClaudeAdapter progress failure and cleanup"
 // lifecycle = "permanent"
-// impact = "保存できない状態で無制限に実行を進め、失敗を正常完了と誤表示することを防ぐ"
+// impact = "live consumerの失敗を無視した実行継続や取得済み本文の喪失、利用者取消への誤分類を防ぐ"
 // distinction = "delivery helper単体ではSDK loop停止とpartial分類を検査できない"
 // @end-test-value
 it("Claudeはprogress拒否をpartial付きfailureとして返しSDK消費を止める", async () => {
@@ -297,14 +297,14 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Claudeのtool入力は成功扱いされず、実tool_resultでのみ確定する"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md; Issue #751" }
-// fault = "tool_useを実行完了として記録する、または子agentの本文を親応答へ混入する"
-// observable = "確定operations、assistantText、履歴raw items"
+// claim = "Claudeの返却artifactはBashのtool_result本文をcommand operationに保持し、子agent本文を親assistant応答へ混入しない"
+// oracle = { type = "contract", ref = "src-electron/providers/claude/claude-adapter.ts: runSessionTurn; docs/design/provider-adapter.md: ClaudeAdapter / 通常履歴と最小turn" }
+// fault = "tool_resultのfailed本文を失う、Bashをcommand_execution以外へ投影する、または子agentのInternal本文をFinal応答へ混入する"
+// observable = "返却assistantTextとartifact.operationTimelineのdetails配列・先頭type"
 // observation_boundary = "public-boundary"
 // scope = "claude-coding-turn"
 // lifecycle = "permanent"
-// impact = "未実行または失敗した変更を成功と誤認し、内部subagent出力がユーザー応答へ漏れる"
+// impact = "取得済みBash結果がDetailsから失われるか、内部subagent本文が利用者向け応答へ漏れる"
 // distinction = "SDK型と既存provider testはClaude固有のmessage順序と親子境界を検査しない"
 // @end-test-value
 it("records tool completion only from tool results and excludes subagent text", async () => {
@@ -741,10 +741,10 @@ it("bounds background timeout even when SDK next never settles", async () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Claude Bash summaryとoperation previewは既存preview予算を守りassistant本文とoperation順序を保持する"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-// fault = "Bash commandをstepsへ全量保持するか本文とoperationを失う"
-// observable = "SDK消費中のprogress summary、最終operationsとtruncation情報、assistant全文"
+// claim = "Claudeの返却artifactに16件のBash command summaryを有限previewで保持し、観測されたliveのBash summaryも同じpreviewにする。assistant本文は全文保持する"
+// oracle = { type = "contract", ref = "src-electron/providers/claude/claude-adapter.ts: runSessionTurn; src-electron/session/provider-payload-limits.ts: PROVIDER_TEXT_PREVIEW_LIMIT / toProviderTextPreview" }
+// fault = "返却artifactのBash summaryを全量保持・欠落させる、観測されたliveのBash summaryへ全量commandを残す、またはassistant本文を欠落・切り詰める"
+// observable = "progressから収集したsummaryのうちxで始まる値、返却artifactのcommand_execution.summary配列16件、assistantText全文"
 // observation_boundary = "public-boundary"
 // scope = "Claude coding turn owner"
 // lifecycle = "permanent"
