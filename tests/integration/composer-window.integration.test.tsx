@@ -147,11 +147,13 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     return { ...session, composerDraft: "", messages: [...session.messages, { role: "assistant", text: "Auxiliary response" }] };
   };
   api.previewComposerInput = async (_id, text) => ({ text, attachments: [], errors: text === "invalid reference" ? ["Invalid attachment"] : [] } as Awaited<ReturnType<WithMateWindowApi["previewComposerInput"]>>);
-  api.runSessionTurn = async (id, request) => {
+  api.enqueueSessionTurn = async (id, request) => {
     sent.push({ id, text: request.userMessage });
     const session = await api.getSession(id);
     assert.ok(session);
-    return { ...session, messages: [...session.messages, { role: "user", text: request.userMessage }, { role: "assistant", text: "Fresh response" }] };
+    return { sessionId: id, incarnationId: request.incarnationId, id: request.clientRequestId!, requestId: request.clientRequestId!, sequence: sent.length, state: "queued",
+      captured: { request: { ...request, clientRequestId: request.clientRequestId! }, attachments: [], provider: session.provider, workspacePath: session.workspacePath },
+      turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: session.updatedAt, updatedAt: session.updatedAt };
   };
   Object.defineProperty(dom.window, "withmate", { value: api });
   const { createRoot } = await import("react-dom/client");

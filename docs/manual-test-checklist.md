@@ -6,6 +6,12 @@
 
 Main／AuxiliaryそれぞれでCodexの実行中にcomposerの `Send Input` と送信shortcutから追加入力し、現在turnの会話へ一度だけ保存されることを確認する。`Cancel`は維持し、開始準備中・取消中・終了raceでは新しいturnを開始せずdraftを保持する。追加入力受付待ち中の連打、draft編集、対象切替、添付pathの解決失敗も確認する。AuxiliaryのACK待機中に編集してdebounce時間を越えて待ち、成功・拒否のどちらでも後続本文が保存され、保存エラーやRetryなしにSend Inputを再度使えることを確認する。同一turnで通信エラー後にitem activityが再開したら古い診断が消え、回答本文が生成を続けることも確認する。Claude／Copilotの実行中は従来のdisabled `Send`を維持する。Codexの入力質問はpending内の既存formで選択肢・自由記述を回答でき、secret欄はpassword input、取消・失効後の回答は次のrequestへ持ち越さない。実Provider／Electron GUIを未実施の場合は未確認として記録する。
 
+## Main の次Turn予約
+
+同じMain Composerで`Send Input`と`Queue Turn`を別々に操作し、現在Turnへの入力とFIFOの新Turn予約を区別する。承認・質問回答を予約に変換せず、Auxiliaryには予約操作を表示しない。複数予約の個別取消、現在Turnの失敗・Cancel後の実cleanup終了待ち、受付ACK待ちの編集保護、同じ本文の複数Turnを確認する。添付は受付済みpathを使い、待機中の削除・種類変更・認可変更でdispatch前に拒否する。
+
+受付／開始／終端の返信喪失では同じrequest IDの照会で確定し、providerを二重実行しない。atomic開始後の不明実行は後続を保留し、`Release Later Turns`を実guard解放前に押しても開始せず、解放後に元要求を再実行せず後続だけ進むことを確認する。Window再open・app restart後の受付済み要求復元、未開始予約を残したquit、quit中止後の再開、30件のreceipt履歴ページと取得失敗時のRetry、live末尾とpaged履歴の重複・欠落も確認する。未受付Main下書きの自動復元は要求しない。実Provider／Electron GUI／restartを未実施なら未確認と記録する。
+
 ## Auxiliary Session の独立性と切り替え
 
 複数Auxiliaryを追加して最終使用順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、実行中のAuxiliaryはicon内のprocessing indicatorで判別できること、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態ではAuxiliaryのタイトル枠・切り替えUI・追加`＋`を表示せず、Mainが残り幅を使うこと、中央のsplitterだけが残りクリックで既定幅へ戻せることを確認する。Auxiliaryを再度開いた後はタイトル枠、左右切り替え、追加`＋`が利用でき、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。

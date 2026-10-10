@@ -17,6 +17,7 @@ import { approvalModeLabel, CharacterAvatar, liveRunStepStatusLabel, operationTy
 
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { LiveRequestSurface } from "../runtime/live-request-surface.js";
+import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches } from "../../../src-shared/text/find-text-matches.js";
 
@@ -67,6 +68,11 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
 }
 export type SessionMessageColumnProps = {
+  turnQueueMetadata?: ReadonlyMap<string, import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt>;
+  onCancelQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
+  onReleaseInterruptedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
+  queueBusyId?: string | null;
+  queueTail?: ReactNode;
   sessionId: string;
   character: CharacterProfile;
   messages: Message[];
@@ -404,6 +410,11 @@ export function SelectionTextActionSurface({
 }
 
 export function SessionMessageColumn({
+  turnQueueMetadata,
+  onCancelQueuedTurn,
+  onReleaseInterruptedTurn,
+  queueBusyId,
+  queueTail,
   sessionId,
   character,
   messages,
@@ -1106,7 +1117,7 @@ export function SessionMessageColumn({
         </button>
       ) : null}
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
-        {messages.length > 0 || isRunning ? (
+        {messages.length > 0 || isRunning || queueTail ? (
           <div className="session-message-list-window">
             <div
               ref={messageVirtualizer.containerRef}
@@ -1385,6 +1396,7 @@ export function SessionMessageColumn({
                       ) : null}
                       </section>
                     ) : null}
+                    {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} busy={queueBusyId === turnQueueMetadata.get(messageKey)!.id} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} /> : null}
                     {isRunning && absoluteIndex === pendingResponseMessageIndex ? renderPendingContent() : null}
                   </div>
                 </div>
@@ -1395,6 +1407,7 @@ export function SessionMessageColumn({
           })}
             </div>
             {isRunning && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
+            {queueTail}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}

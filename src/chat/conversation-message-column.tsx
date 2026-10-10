@@ -11,8 +11,13 @@ import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { replaceLiveRunAfterResolvedRequest } from "./runtime/session-live-run-state.js";
 import { CONVERSATION_PAGE_SIZE, getMessageHistoryIndex, type ConversationPage } from "../../src-shared/session/conversation-page.js";
-import { setMessageBookmarked } from "../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, setMessageBookmarked } from "../../src-shared/session/session-state.js";
 import { subscribeSessionLiveSelection } from "./runtime/session-window-live-ingress.js";
+import { useSessionTurnQueue } from "./conversation/use-session-turn-queue.js";
+import { projectSessionTurnQueue } from "./conversation/session-turn-queue-projection.js";
+import { SessionTurnQueueRow } from "./conversation/session-turn-queue-row.js";
+import { SessionTurnQueueHistory } from "./conversation/session-turn-queue-history.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
   "messages" | "messageCount" | "incarnationId" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors"
@@ -20,6 +25,7 @@ export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Sessi
 
 export type ConversationMessageColumnApi = Partial<Pick<WithMateWindowApi,
   "subscribeLiveSessionRun" | "getLiveSessionRun" | "resolveLiveApproval" | "resolveLiveElicitation" | "getSessionMessageArtifact" | "getConversationPage" | "searchConversation" | "listConversationNavigator"
+  | "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn"
 >>;
 
 export type ConversationColumnCache = {
@@ -95,6 +101,9 @@ export function useConversationMessageColumn({
   displayEnabled.current = enabled;
   const tailMessages = session?.messages ?? baseProps.messages;
   const totalCount = session?.messageCount ?? tailMessages.length;
+  const queueIncarnationId = session ? getSessionIncarnationId(session) : "";
+  const canonicalUserSeqs = useMemo(() => tailMessages.flatMap((message, index) => message.role === "user" ? [getMessageHistoryIndex(message, index)] : []), [tailMessages]);
+  const queue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled && messageSourceKind === "session", canonicalUserSeqs);
   const currentPage = browsePage?.sessionId === sessionId && (!session?.incarnationId || browsePage.incarnationId === session.incarnationId) ? browsePage : null;
   const isBrowsing = conversation.pageStart !== undefined;
   const messages = isBrowsing && currentPage ? currentPage.messages : tailMessages;
@@ -215,10 +224,14 @@ export function useConversationMessageColumn({
     historyProjection, messages, sessionId,
     hasSavedBridge ? bridge : null,
   ), [historyProjection, messages, sessionId, hasSavedBridge, bridgeKey]);
-  const projection = useMemo(() => hasSavedBridge
+  const liveProjection = useMemo(() => hasSavedBridge
     ? keyedHistory
     : projectLiveAssistantOnSessionHistory(historyProjection, messages, sessionId, isBrowsing ? null : bridge),
   [historyProjection, keyedHistory, messages, sessionId, hasSavedBridge, bridgeKey, bridge?.text, isBrowsing]);
+  const queuedProjection = useMemo(() => projectSessionTurnQueue(liveProjection, isBrowsing ? [] : queue.receipts, {
+    sessionId, incarnationId: queueIncarnationId,
+  }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId]);
+  const projection = queuedProjection.projection;
   // 保存済みbridgeのkeyは終了後も維持するが、後続promptの待機表示には使わない。
   const pendingResponseMessageKey = bridge && latestUserMessageIndex <= bridge.messageIndex
     ? buildLiveAssistantProjectionKey(bridge.sessionId, bridge.threadId, bridge.messageIndex)
@@ -227,9 +240,10 @@ export function useConversationMessageColumn({
     () => `${keyedHistory.keys.join("\u001f")}:${keyedHistory.messages.map((message) => message.text.length).join(",")}`,
     [keyedHistory],
   );
-  const messageScrollSignature = projection.messages.length === keyedHistory.messages.length
+  const messageScrollSignature = (projection.messages.length === keyedHistory.messages.length
     ? historyScrollSignature
-    : `${historyScrollSignature}\u001f${bridgeKey}:${bridge?.text.length ?? 0}`;
+    : `${historyScrollSignature}\u001f${bridgeKey}:${bridge?.text.length ?? 0}`)
+    + `:queue:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`;
   const previousTargets = useRef<SessionMessageColumnProps["messageCollapseTargets"]>([]);
   const collapseTargets = useMemo(() => buildMessageCollapseTargets(keyedHistory.messages, keyedHistory.sources, keyedHistory.keys, previousTargets.current),
     [keyedHistory]);
@@ -418,6 +432,16 @@ export function useConversationMessageColumn({
     character: columnCharacter,
     messages: projection.messages,
     messageKeys: projection.keys,
+    turnQueueMetadata: queuedProjection.metadata,
+    onCancelQueuedTurn: queue.cancel,
+    onReleaseInterruptedTurn: queue.release,
+    queueBusyId: queue.busyId,
+    queueTail: !isBrowsing && messageSourceKind === "session" ? <>
+      {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId === receipt.id} onCancel={queue.cancel} onRelease={queue.release} />)}
+      {queue.loading ? <LoadingIndicator inline label="Loading queued turns" /> : null}
+      {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
+      <SessionTurnQueueHistory key={`${sessionId}:${queueIncarnationId}`} api={api} sessionId={sessionId} incarnationId={queueIncarnationId} busyId={queue.busyId} onCancel={queue.cancel} onRelease={queue.release} />
+    </> : undefined,
     pendingResponseMessageKey,
     messageGroups: projection.groups,
     messageCollapseTargets: collapseTargets,

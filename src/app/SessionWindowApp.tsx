@@ -1083,7 +1083,7 @@ export default function AgentSessionWindowApp() {
 
   const sendMessage = async (
     messageText: string,
-    options?: { clearDraft?: boolean; collapseActionDock?: boolean; submitSource?: "composer" | "retry" },
+    options?: { clearDraft?: boolean; collapseActionDock?: boolean; submitSource?: "composer" | "retry"; queueTurn?: boolean },
   ) => {
     const sendSession = getCurrentMainSession();
     if (!withmateApi || !sendSession) {
@@ -1104,16 +1104,12 @@ export default function AgentSessionWindowApp() {
       request,
       composerOwner,
       clearDraft: options?.clearDraft ?? true,
+      queueTurn: options?.queueTurn,
       shouldCollapseActionDock: options?.collapseActionDock ?? false,
-      isCentralPreviewActive,
-      hasLiveRun,
       selectedSessionRunState,
       blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly,
-      currentTimestamp: currentTimestampLabel(),
       validateWorkspace: () => validateSessionWorkspace(sendSession, true),
-      liveRun: { getRevision: getLiveRunRevision, setState: setLiveRunState },
-      acknowledgePreviewChatMessageCount: (id, count) => setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(current, id, count)),
       collapseActionDock: collapseSentActionDock,
       log: logSessionRunStuckInvestigation,
     });
@@ -2188,6 +2184,8 @@ export default function AgentSessionWindowApp() {
     runtime: {
       isRunning: renderedIsRunning,
       canSendInput,
+      queueTurnBusy: pendingSubmitSessionId === renderedSession.id,
+      hasUncertainTurn: mainSessionRuntime.hasUncertainTurn,
       inputError: steeringError,
       isCanceling: !activeAuxiliarySession && !!selectedSessionCancellationState,
       selectedRunState: selectedSessionRunState,
@@ -2218,6 +2216,19 @@ export default function AgentSessionWindowApp() {
         cancelMain: handleCancelRun,
         cancelAuxiliary: handleCancelAuxiliaryRun,
         input: handleSendInput,
+        queue: async () => {
+          if (composerRegistry.isFrozen || activeAuxiliarySession || isSelectedSessionReadOnly) return;
+          try { await sendMessage(getComposerDraft(), { clearDraft: true, queueTurn: true, submitSource: "composer" }); }
+          catch (error) { window.alert(resolveSessionRunErrorMessage(error, "Could not queue the turn.")); }
+        },
+        checkReceipt: async () => {
+          try { await mainSessionRuntime.checkTurnReceipt(); }
+          catch (error) { window.alert(resolveSessionRunErrorMessage(error, "Could not check the receipt.")); }
+        },
+        retryOriginal: async () => {
+          try { await mainSessionRuntime.retryOriginalTurn(); }
+          catch (error) { window.alert(resolveSessionRunErrorMessage(error, "Could not retry the original turn.")); }
+        },
       },
       runtimeOptions: {
         runMain: async (option) => {

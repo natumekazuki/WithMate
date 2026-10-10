@@ -61,6 +61,10 @@ export type SessionComposerExpandedProps = {
   isCanceling?: boolean;
   canSendInput?: boolean;
   onSendInput?: () => void;
+  onQueueTurn?: () => void;
+  queueTurnBusy?: boolean;
+  onCheckTurnReceipt?: () => void;
+  onRetryOriginalTurn?: () => void;
   submissionError?: string;
   targetDock?: ReactNode;
   dockModeSwitch?: ReactNode;
@@ -147,6 +151,10 @@ export function SessionComposerExpanded({
   isCanceling = false,
   canSendInput = false,
   onSendInput,
+  onQueueTurn,
+  queueTurnBusy = false,
+  onCheckTurnReceipt,
+  onRetryOriginalTurn,
   submissionError,
   targetDock = null,
   dockModeSwitch = null,
@@ -250,7 +258,7 @@ export function SessionComposerExpanded({
     ? { ...resolvedComposerSendability, primaryFeedback: submissionError, feedbackTone: "blocked" as const, shouldShowFeedback: true }
     : resolvedComposerSendability;
   const displayedIsSendDisabled = composerController
-    ? isComposerDisabled || projectedComposerSendability!.isSendDisabled || composerSaveFailed
+    ? isComposerDisabled || projectedComposerSendability!.isSendDisabled || composerSaveFailed || !!onCheckTurnReceipt
     : isSendDisabled;
   const displayedSendButtonTitle = composerSaveFailed
     ? "Draft could not be saved. Retry before sending."
@@ -270,10 +278,10 @@ export function SessionComposerExpanded({
   const keyboardShortcuts = useShortcutSettings();
 
   useEffect(() => {
-    if (!showAttachmentControls || (isRunning && !canSendInput) || composerBlocked || composerFrozen) {
+    if (!showAttachmentControls || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen) {
       setIsAttachmentMenuOpen(false);
     }
-  }, [canSendInput, composerBlocked, composerFrozen, isRunning, showAttachmentControls]);
+  }, [canSendInput, composerBlocked, composerFrozen, isRunning, onQueueTurn, showAttachmentControls]);
 
   useEffect(() => {
     if (!isAgentPickerOpen) {
@@ -307,7 +315,7 @@ export function SessionComposerExpanded({
           ) : null}
           {showAttachmentControls ? (
             <ComposerAttachmentMenu
-              disabled={(isRunning && !canSendInput) || composerBlocked || composerFrozen}
+              disabled={(isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen}
               isOpen={isAttachmentMenuOpen}
               onOpenChange={(isOpen) => {
                 if (isOpen) {
@@ -568,6 +576,13 @@ export function SessionComposerExpanded({
               ) : null}
             </div>
           ) : null}
+          {onCheckTurnReceipt ? (
+            <div className="composer-save-feedback">
+              <span>Turn acceptance is unknown. Your draft is preserved.</span>
+              <button type="button" className="drawer-toggle compact secondary" onClick={onCheckTurnReceipt} disabled={queueTurnBusy}>Check Receipt</button>
+              <button type="button" className="drawer-toggle compact secondary" onClick={onRetryOriginalTurn} disabled={queueTurnBusy}>Retry Original Turn</button>
+            </div>
+          ) : null}
           {displayedComposerSendability.isBusy && displayedComposerSendability.busyReason ? (
             <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
               {displayedComposerSendability.busyReason}
@@ -708,6 +723,16 @@ export function SessionComposerExpanded({
           ) : null}
         </div>
 
+        {isRunning && onQueueTurn ? (
+          <button
+            className="session-send-button secondary"
+            type="button"
+            onClick={onQueueTurn}
+            disabled={composerBlocked || composerFrozen || queueTurnBusy || !displayedDraft.trim() || composerControllerState.preview.errors.length > 0 || !!onCheckTurnReceipt}
+            aria-busy={queueTurnBusy || undefined}
+            title="Save this input for the next turn"
+          >Queue Turn</button>
+        ) : null}
         <button
           className={`session-send-button${showBusySendState ? " loading" : ""}`}
           type="button"

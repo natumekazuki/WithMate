@@ -58,9 +58,9 @@ test("WindowBroadcastServiceはRenderer送信失敗を隔離して他Windowへ�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session一覧・window一覧・prompt templateの用途別配送先をlive配信とは独立して維持し、turn更新は生存windowへ対象Session IDのみを渡す"
+// claim = "用途別配送を維持し、turn更新は生存windowへ、queue変更は生存Session windowだけへ対象Session IDを渡す"
 // oracle = { type = "contract", ref = "src-shared/ipc/withmate-ipc-channels.ts notification contracts" }
-// fault = "必要なWindowへ通知しない、destroyed Windowへ配信する、またはturn通知へ履歴詳細を混入する"
+// fault = "必要なWindowへ通知しない、destroyed Windowへ配信する、またはturn/queue通知へ本文や履歴詳細を混入する"
 // observable = "home/session/closed Windowのchannelとpayload"
 // observation_boundary = "public-boundary"
 // scope = "window broadcast routing"
@@ -83,6 +83,7 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
   service.broadcastOpenSessionWindowIds(["session-1"]);
   service.broadcastPromptTemplates([]);
   service.broadcastSessionTurnUpdated("session-1");
+  service.broadcastSessionTurnQueueChanged("session-1");
 
   assert.deepEqual(home.sent.map((entry) => entry.channel), [
     "withmate:sessions-invalidated",
@@ -95,11 +96,13 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
     "withmate:open-session-windows-changed",
     "withmate:prompt-templates-changed",
     "withmate:session-turn-updated",
+    "withmate:session-turn-queue-changed",
   ]);
   assert.equal(closed.sent.length, 0);
   assert.deepEqual(home.sent[1]?.payload, { scope: "ids", sessionIds: ["session-1"] });
   assert.equal(home.sent[3]?.payload, "session-1");
   assert.equal(session.sent[3]?.payload, "session-1");
+  assert.equal(session.sent[4]?.payload, "session-1");
 });
 
 // @test-value v2

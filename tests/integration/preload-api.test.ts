@@ -633,6 +633,13 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
 
   const keys = Object.keys(api).sort();
   const expectedKeys = [
+    "enqueueSessionTurn",
+    "getSessionTurnQueueReceipt",
+    "listSessionTurnQueue",
+    "listSessionTurnQueueReceipts",
+    "cancelQueuedSessionTurn",
+    "releaseInterruptedSessionTurn",
+    "onSessionTurnQueueChanged",
     "acknowledgeSessionDraftFlush",
     "acknowledgeTerminalOutput",
     "cancelAuxiliarySessionRun",
@@ -812,6 +819,42 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   ] satisfies Array<keyof WithMateWindowApi>;
 
   assert.deepEqual(keys, [...expectedKeys].sort());
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "キュー専用APIはSession/owner/request/cursor/item識別子を対応するIPCへ渡しchanged購読を解除する"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts queue APIs and onSessionTurnQueueChanged" }
+// fault = "queue APIが誤channelや欠落引数で呼ばれるかchanged listenerを解除できない"
+// observable = "invoke channelとpayload、changed callbackのSession IDとremoveListenerの対象"
+// observation_boundary = "public-boundary"
+// scope = "Main durable queue preload boundary"
+// lifecycle = "permanent"
+// distinction = "公開key集合と型検査はruntime channel/payload接続とlistener解除を保証しない"
+// @end-test-value
+test("queue preloadは専用引数を伝達しchanged購読を解除する", async () => {
+  const { ipcRenderer, listeners, removedListeners } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  const request = { incarnationId: "owner-1", clientRequestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
+    userMessage: "Inspect", submitSource: "composer" as const, executionOptions: {
+      catalogRevision: 1, model: "gpt-5", reasoningEffort: "medium" as const, approvalMode: "on-request" as const,
+      codexSandboxMode: "workspace-write" as const, codexSpeed: "standard" as const, codexReviewer: "user" as const, customAgentName: "",
+    } };
+  assert.deepEqual(await api.enqueueSessionTurn("session-1", request), { channel: "withmate:enqueue-session-turn", args: ["session-1", request] });
+  assert.deepEqual(await api.getSessionTurnQueueReceipt("session-1", request.clientRequestId), { channel: "withmate:get-session-turn-queue-receipt", args: ["session-1", request.clientRequestId] });
+  assert.deepEqual(await api.listSessionTurnQueue("session-1"), { channel: "withmate:list-session-turn-queue", args: ["session-1"] });
+  assert.deepEqual(await api.listSessionTurnQueueReceipts("session-1", { cursor: 4, limit: 20 }), { channel: "withmate:list-session-turn-queue-receipts", args: ["session-1", { cursor: 4, limit: 20 }] });
+  assert.deepEqual(await api.cancelQueuedSessionTurn("session-1", "item-1"), { channel: "withmate:cancel-queued-session-turn", args: ["session-1", "item-1"] });
+  assert.deepEqual(await api.releaseInterruptedSessionTurn("session-1", "item-1"), { channel: "withmate:release-interrupted-session-turn", args: ["session-1", "item-1"] });
+  const changed: string[] = [];
+  const dispose = api.onSessionTurnQueueChanged((id) => changed.push(id));
+  const listener = listeners.get("withmate:session-turn-queue-changed");
+  assert.ok(listener);
+  listener({}, "session-1");
+  assert.deepEqual(changed, ["session-1"]);
+  dispose();
+  assert.equal(listeners.has("withmate:session-turn-queue-changed"), false);
+  assert.deepEqual(removedListeners.at(-1), { channel: "withmate:session-turn-queue-changed", listener });
 });
 
 test("preload type surface は destructive storage maintenance API を Settings domain に置く", () => {

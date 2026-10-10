@@ -15,6 +15,7 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 | 設定・catalog | `app_settings`、`prompt_templates`、`model_catalog_*`、`characters` |
 | Project | `project_scopes_v6` |
 | Main Session | `sessions_v6`、`session_messages_v6` |
+| Main Turn Queue | `session_turn_queue_v6` |
 | Files Pin | `session_file_pins_v6` |
 | Auxiliary | `auxiliary_sessions`、`auxiliary_session_messages`、`auxiliary_session_drafts` |
 | Turn | `session_turns_v6` |
@@ -24,6 +25,8 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 Mainの`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存行限定の更新とAffect owner検証はIDだけでなくincarnationを照合する。Auxiliaryは親Sessionに従属し、metadataと順序付きmessage行、artifact詳細を分離する。独立draftの正本は`auxiliary_session_drafts`であり、一覧の最終使用順には会話更新時刻とdraft更新時刻の新しい方を使う。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
 
 turnはMainまたはAuxiliaryの一方だけをownerとし、phase、実行設定、message位置、thread、時刻、error summaryを`session_turns_v6`へ保存する。会話本文と操作結果の正本は通常履歴と`MessageArtifact.operationTimeline`であり、軽量messageと重いartifact detailを分け、detailは対象を開いたときに取得する。開始と終端の最小turn保存、取消・失敗判定、Timing・Affectとの関連付けは[Session Run Lifecycle](session-run-lifecycle.md)を参照する。
+
+Main Turn QueueはSession ID／incarnation、GUI request ID、受付順、捕捉値、状態、最小turn ID／user seq、結果不明後の明示解放時刻を保持する。同owner・request IDを一意にし、親Session削除でreceiptも削除する。receiptは通常messageとは別の受付・実行状態であり、会話本文やturnの正本を置換しない。受付・開始・終端のtransaction境界は[Electron Session Store](electron-session-store.md#main-turn-queue)を参照する。
 
 会話の表示用readはmetadataと最新60件を返し、過去の本文は60件単位で取得する。messageの`historyIndex`は保存行の`seq`で、`messageCount`は会話全体の件数である。Mainの表示metadataは末尾pageより前にある場合も最新user messageを保持する。全履歴検索とmessage navigatorはstorage Workerで軽量messageを逐次投影し、本文の全件転送・常駐を要求しない。表示pageは保存用full Sessionとは区別し、storageの全文保存入口はpageを拒否する。rendererのmetadata更新はincarnationを照合した最新保存履歴へ適用し、paged本文で履歴を置換しない。turn runtimeはmetadataと全体件数、当該turnで追加したmessageだけを保持し、開始・追加入力・終端を専用commandで追加する。履歴を必要とするconsumerのfull readは明示的な別経路で保持する。
 

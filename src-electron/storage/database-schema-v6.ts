@@ -22,6 +22,7 @@ export const REQUIRED_V6_TABLES = [
   "auxiliary_sessions",
   "auxiliary_session_messages",
   "session_turns_v6",
+  "session_turn_queue_v6",
   "memory_entries_v6",
   "memory_entry_tags_v6",
   "memory_entry_relations_v6",
@@ -60,6 +61,7 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_session_turns_session_updated",
   "idx_v6_session_turns_auxiliary_updated",
   "idx_v6_session_turns_phase_updated",
+  "idx_v6_session_turn_queue_owner_state",
   "idx_v6_memory_entries_target_state_updated",
   "idx_v6_memory_entry_tags_lookup",
   "idx_v6_memory_target_tag_stats_page",
@@ -110,6 +112,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
   ],
   session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
   session_file_pins_v6: ["session_id", "root_kind", "root_path", "relative_path", "relative_path_key", "kind", "root_label"],
+  session_turn_queue_v6: ["sequence", "id", "session_id", "incarnation_id", "request_id", "state", "captured_json", "turn_id", "user_message_seq", "reason", "released_at", "created_at", "updated_at"],
   auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at"],
   auxiliary_session_messages: ["auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at"],
   session_turns_v6: [
@@ -439,6 +442,7 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     && hasForeignKey(db, "sessions_v6", "project_scope_id", "project_scopes_v6")
     && hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "session_file_pins_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_turn_queue_v6", "session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "auxiliary_session_messages", "auxiliary_session_id", "auxiliary_sessions")
     && hasForeignKey(db, "session_turns_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions")
@@ -535,6 +539,7 @@ function tableSql(db: DatabaseSync, tableName: string): string {
 function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionsSql = tableSql(db, "sessions_v6");
   const filePinsSql = tableSql(db, "session_file_pins_v6");
+  const turnQueueSql = tableSql(db, "session_turn_queue_v6");
   const auxiliarySessionsSql = tableSql(db, "auxiliary_sessions");
   const sessionTurnsSql = tableSql(db, "session_turns_v6");
   const memoryEntriesSql = tableSql(db, "memory_entries_v6");
@@ -557,6 +562,9 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && filePinsSql.includes("relative_path <> ''")
     && filePinsSql.includes("relative_path_key <> ''")
     && filePinsSql.includes("PRIMARY KEY (session_id, root_kind, root_path, relative_path_key)")
+    && turnQueueSql.includes("state IN ('queued', 'starting', 'running', 'completed', 'failed', 'canceled', 'interrupted')")
+    && turnQueueSql.includes("json_valid(captured_json)")
+    && turnQueueSql.includes("UNIQUE (session_id, incarnation_id, request_id)")
     && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
     && auxiliaryStatusConstrained
     && sessionTurnsSql.includes("phase IN ('running', 'completed', 'failed', 'canceled')")
@@ -1265,6 +1273,28 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
     ON character_affect_observations_v6(character_id, user_id, created_at DESC, id DESC);
 `;
 
+export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_turn_queue_v6 (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    session_id TEXT NOT NULL,
+    incarnation_id TEXT NOT NULL CHECK (incarnation_id <> ''),
+    request_id TEXT NOT NULL CHECK (request_id <> ''),
+    state TEXT NOT NULL CHECK (state IN ('queued', 'starting', 'running', 'completed', 'failed', 'canceled', 'interrupted')),
+    captured_json TEXT NOT NULL CHECK (json_valid(captured_json)),
+    turn_id TEXT,
+    user_message_seq INTEGER CHECK (user_message_seq IS NULL OR user_message_seq >= 0),
+    reason TEXT,
+    released_at TEXT CHECK (released_at IS NULL OR state = 'interrupted'),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (session_id, incarnation_id, request_id),
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_owner_state
+    ON session_turn_queue_v6(session_id, incarnation_id, state, sequence);
+`;
+
 export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_APP_SETTINGS_TABLE_SQL,
   CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL,
@@ -1276,6 +1306,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
+  CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRIES_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_TAGS_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_RELATIONS_TABLE_SQL,

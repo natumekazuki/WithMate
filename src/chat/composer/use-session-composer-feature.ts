@@ -87,6 +87,8 @@ export type SessionComposerFeatureBridge = {
     isRunning: boolean;
     isCanceling?: boolean;
     canSendInput?: boolean;
+    queueTurnBusy?: boolean;
+    hasUncertainTurn?: boolean;
     inputError?: string;
     selectedRunState: Session["runState"] | null;
     auxiliaryRunState: Session["runState"] | null;
@@ -115,6 +117,9 @@ export type SessionComposerFeatureBridge = {
       cancelMain: SessionComposerOperation;
       cancelAuxiliary: SessionComposerOperation;
       input?: SessionComposerOperation;
+      queue?: SessionComposerOperation;
+      checkReceipt?: SessionComposerOperation;
+      retryOriginal?: SessionComposerOperation;
     };
     runtimeOptions: {
       runMain: (option: MainRuntimeOption) => void | Promise<void>;
@@ -320,7 +325,7 @@ export function useSessionComposerFeature(input: {
         });
     const isComposerDisabled = bridge.runtime.isReadOnly
       || !!bridge.runtime.blockedReason
-      || (composerSendability.isRunning && !bridge.runtime.canSendInput);
+      || (composerSendability.isRunning && !bridge.runtime.canSendInput && bridge.target !== "main");
     const onSendOrCancel = buildAuxiliaryAwareSendOrCancelHandler({
       shouldSendAuxiliary: isAuxiliaryTarget,
       isAuxiliarySessionRunning: bridge.runtime.auxiliaryRunState === "running",
@@ -512,6 +517,10 @@ export function useSessionComposerFeature(input: {
       canSendInput: bridge.runtime.canSendInput,
       submissionError: bridge.runtime.inputError,
       onSendInput: () => void bridge.operations.send.input?.(),
+      onQueueTurn: bridge.target === "main" && bridge.operations.send.queue ? () => void bridge.operations.send.queue?.() : undefined,
+      queueTurnBusy: bridge.runtime.queueTurnBusy || !!bridge.runtime.busyReason,
+      onCheckTurnReceipt: bridge.target === "main" && bridge.runtime.hasUncertainTurn ? () => void bridge.operations.send.checkReceipt?.() : undefined,
+      onRetryOriginalTurn: bridge.target === "main" && bridge.runtime.hasUncertainTurn ? () => void bridge.operations.send.retryOriginal?.() : undefined,
       composerBlocked: bridge.runtime.isReadOnly || !!bridge.runtime.blockedReason,
       isAgentPickerOpen,
       isSkillPickerOpen,

@@ -39,6 +39,7 @@ import type {
 } from "./session-running-turn-start.js";
 import type { SessionRuntimeMetadataPatchInput, SessionRuntimeMetadataPatchResult, SessionThreadPatchInput, SessionThreadPatchResult } from "./session-storage-v6.js";
 import type { SessionMetadataResult, SessionSteerAppendInput, SessionTerminalAppendInput, SessionRunMetadataCheckpointInput } from "./session-runtime-storage-contract.js";
+import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -574,47 +575,68 @@ export class SessionPersistenceService {
     nextSession: Session,
     expectedMessageCount: number,
   ): Promise<Session> {
-    return this.enqueueSessionMutation(async () => {
-      const currentSession = this.deps.getSession(nextSession.id);
-      if (currentSession) {
-        assertSessionWritable(currentSession);
-      }
-      const userMessage = nextSession.messages.at(-1);
-      if (
-        nextSession.status !== "running"
-        || nextSession.runState !== "running"
-        || (nextSession.messageCount ?? nextSession.messages.length) !== expectedMessageCount + 1
-        || !userMessage
-        || userMessage.role !== "user"
-      ) {
-        throw new Error("The Session is invalid for starting a running turn.");
-      }
-      if (!this.deps.appendStoredRunningTurnStart) {
-        throw new Error("Incremental storage for starting a running turn is unavailable.");
-      }
+    return this.enqueueSessionMutation(async () => (await this.persistRunningTurnStartNow(nextSession, expectedMessageCount)).session);
+  }
 
-      const storedResult = await this.deps.appendStoredRunningTurnStart({
-        sessionId: nextSession.id,
-        incarnationId: nextSession.incarnationId,
-        expectedMessageCount,
-        userMessage,
-        updatedAt: nextSession.updatedAt,
-        characterRuntimeSnapshot: nextSession.characterRuntimeSnapshot,
-      });
-      const stored = cloneSessions([{
-        ...nextSession,
-        ...storedResult.summary,
-        characterRuntimeSnapshot: storedResult.characterRuntimeSnapshot,
-        ...(nextSession.messageCount !== undefined ? { messageCount: expectedMessageCount + 1 } : {}),
-      }])[0];
-      this.runCommittedProjectionBestEffort("running turn", "cache update", () => {
-        this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
-      });
-      this.runCommittedProjectionBestEffort("running turn", "broadcast", () => {
-        this.deps.broadcastSessions([stored.id]);
-      });
-      return stored;
+  async persistQueuedTurnStart(
+    nextSession: Session,
+    expectedMessageCount: number,
+    queueId: string,
+    turn: SessionTurnInput,
+  ): Promise<{ session: Session; turn: SessionTurnRecord }> {
+    return this.enqueueSessionMutation(async () => {
+      const result = await this.persistRunningTurnStartNow(nextSession, expectedMessageCount, { queueId, turn });
+      if (!result.turn) throw new Error("The queued turn start did not return its committed turn.");
+      return { session: result.session, turn: result.turn };
     });
+  }
+
+  private async persistRunningTurnStartNow(
+    nextSession: Session,
+    expectedMessageCount: number,
+    queuedTurn?: SessionRunningTurnStartInput["queuedTurn"],
+  ): Promise<{ session: Session; turn?: SessionTurnRecord }> {
+    const currentSession = this.deps.getSession(nextSession.id);
+    if (currentSession) {
+      assertSessionWritable(currentSession);
+    }
+    const userMessage = nextSession.messages.at(-1);
+    if (
+      nextSession.status !== "running"
+      || nextSession.runState !== "running"
+      || (nextSession.messageCount ?? nextSession.messages.length) !== expectedMessageCount + 1
+      || !userMessage
+      || userMessage.role !== "user"
+    ) {
+      throw new Error("The Session is invalid for starting a running turn.");
+    }
+    if (!this.deps.appendStoredRunningTurnStart) {
+      throw new Error("Incremental storage for starting a running turn is unavailable.");
+    }
+
+    const storedResult = await this.deps.appendStoredRunningTurnStart({
+      sessionId: nextSession.id,
+      incarnationId: nextSession.incarnationId,
+      expectedMessageCount,
+      userMessage,
+      updatedAt: nextSession.updatedAt,
+      characterRuntimeSnapshot: nextSession.characterRuntimeSnapshot,
+      ...(queuedTurn ? { queuedTurn } : {}),
+    });
+    if (queuedTurn && !storedResult.queuedTurn) throw new Error("The queued turn start did not return its committed turn.");
+    const stored = cloneSessions([{
+      ...nextSession,
+      ...storedResult.summary,
+      characterRuntimeSnapshot: storedResult.characterRuntimeSnapshot,
+      ...(nextSession.messageCount !== undefined ? { messageCount: expectedMessageCount + 1 } : {}),
+    }])[0];
+    this.runCommittedProjectionBestEffort("running turn", "cache update", () => {
+      this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+    });
+    this.runCommittedProjectionBestEffort("running turn", "broadcast", () => {
+      this.deps.broadcastSessions([stored.id]);
+    });
+    return { session: stored, ...(storedResult.queuedTurn ? { turn: storedResult.queuedTurn } : {}) };
   }
 
   async appendRunningInput(nextSession: Session, text: string, turnId: number): Promise<Session> {

@@ -61,6 +61,52 @@ export function deleteSessionTurnsForTargets(
     ).run(...params);
 }
 
+function turnRowToRecord(row: TurnRow): SessionTurnRecord {
+  return {
+    id: row.id,
+    sessionId: row.session_id ?? row.auxiliary_session_id!,
+    phase: row.phase,
+    provider: row.provider_id,
+    model: row.model_id,
+    reasoningEffort: row.reasoning_effort,
+    approvalMode: row.approval_mode,
+    ...(row.sandbox_mode
+      ? { sandboxMode: row.sandbox_mode as SessionTurnRecord["sandboxMode"] }
+      : {}),
+    ...(row.user_message_seq !== null
+      ? { userMessageSeq: row.user_message_seq }
+      : {}),
+    ...(row.assistant_message_seq !== null
+      ? { assistantMessageSeq: row.assistant_message_seq }
+      : {}),
+    threadId: row.thread_id,
+    errorMessage: row.error_summary,
+    createdAt: row.started_at,
+    ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
+    updatedAt: row.updated_at,
+  };
+}
+
+export function insertSessionTurn(
+  db: DatabaseSync,
+  target: { sessionId: string | null; auxiliarySessionId: string | null },
+  input: SessionTurnInput,
+): SessionTurnRecord {
+  const result = db.prepare(`
+    INSERT INTO session_turns_v6 (session_id, auxiliary_session_id, phase, provider_id, model_id,
+      reasoning_effort, approval_mode, sandbox_mode, user_message_seq, assistant_message_seq,
+      thread_id, error_summary, started_at, completed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    target.sessionId, target.auxiliarySessionId, input.phase, input.provider, input.model,
+    input.reasoningEffort, input.approvalMode, input.sandboxMode ?? "", input.userMessageSeq ?? null,
+    input.assistantMessageSeq ?? null, input.threadId, input.errorMessage, input.createdAt,
+    input.phase === "running" ? null : (input.completedAt ?? input.createdAt), input.updatedAt ?? input.createdAt,
+  );
+  const row = db.prepare("SELECT * FROM session_turns_v6 WHERE id = ?").get(Number(result.lastInsertRowid)) as TurnRow;
+  return turnRowToRecord(row);
+}
+
 export class SessionTurnStorageV6 {
   private readonly db;
   constructor(dbPath: string) {
@@ -70,35 +116,7 @@ export class SessionTurnStorageV6 {
 
   createSessionTurn(input: SessionTurnInput): SessionTurnRecord {
     const target = this.resolveTarget(input.sessionId);
-    const result = this.db
-      .prepare(
-        `
-      INSERT INTO session_turns_v6 (session_id, auxiliary_session_id, phase, provider_id, model_id,
-        reasoning_effort, approval_mode, sandbox_mode, user_message_seq, assistant_message_seq,
-        thread_id, error_summary, started_at, completed_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-      )
-      .run(
-        target.sessionId,
-        target.auxiliarySessionId,
-        input.phase,
-        input.provider,
-        input.model,
-        input.reasoningEffort,
-        input.approvalMode,
-        input.sandboxMode ?? "",
-        input.userMessageSeq ?? null,
-        input.assistantMessageSeq ?? null,
-        input.threadId,
-        input.errorMessage,
-        input.createdAt,
-        input.phase === "running"
-          ? null
-          : (input.completedAt ?? input.createdAt),
-        input.updatedAt ?? input.createdAt,
-      );
-    return this.readTurn(Number(result.lastInsertRowid), input.sessionId)!;
+    return insertSessionTurn(this.db, target, input);
   }
 
   updateSessionTurn(id: number, input: SessionTurnInput): SessionTurnRecord {
@@ -142,7 +160,7 @@ export class SessionTurnStorageV6 {
         "SELECT * FROM session_turns_v6 WHERE session_id = ? OR auxiliary_session_id = ? ORDER BY id DESC LIMIT 1",
       )
       .get(sessionId, sessionId) as TurnRow | undefined;
-    return row ? this.toRecord(row) : null;
+    return row ? turnRowToRecord(row) : null;
   }
 
   getConversationTimingSnapshot(
@@ -247,34 +265,9 @@ export class SessionTurnStorageV6 {
         "SELECT * FROM session_turns_v6 WHERE id = ? AND (session_id = ? OR auxiliary_session_id = ?)",
       )
       .get(id, sessionId, sessionId) as TurnRow | undefined;
-    return row ? this.toRecord(row) : null;
+    return row ? turnRowToRecord(row) : null;
   }
 
-  private toRecord(row: TurnRow): SessionTurnRecord {
-    return {
-      id: row.id,
-      sessionId: row.session_id ?? row.auxiliary_session_id!,
-      phase: row.phase,
-      provider: row.provider_id,
-      model: row.model_id,
-      reasoningEffort: row.reasoning_effort,
-      approvalMode: row.approval_mode,
-      ...(row.sandbox_mode
-        ? { sandboxMode: row.sandbox_mode as SessionTurnRecord["sandboxMode"] }
-        : {}),
-      ...(row.user_message_seq !== null
-        ? { userMessageSeq: row.user_message_seq }
-        : {}),
-      ...(row.assistant_message_seq !== null
-        ? { assistantMessageSeq: row.assistant_message_seq }
-        : {}),
-      threadId: row.thread_id,
-      errorMessage: row.error_summary,
-      createdAt: row.started_at,
-      ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
-      updatedAt: row.updated_at,
-    };
-  }
 
   private resolveTarget(sessionId: string): {
     sessionId: string | null;

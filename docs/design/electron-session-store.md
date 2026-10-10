@@ -28,6 +28,14 @@ Session identity、確定message、最小turnの実行記録、provider thread�
 
 開始・steer・terminalは既存storage owner内の専用commandを使い、Session incarnation、expected countと保存順序を照合する。steerとterminalは対象のrunning turnも照合し、追加message以外の既存body／artifactを読み戻して比較しない。terminal messageとturnの終端更新は同じtransactionで確定し、metadataと件数のACKだけを返す。既存のtitle、Pin、Bookmark、実行設定、Auxiliary draftは置換しない。setup失敗やthread再試行はownerと元runState／threadを照合したmetadata checkpointを使用する。結果不明のcommandを自動再送しない。Rendererへ返す終端結果は保存済みの最新60件を別途取得する。
 
+### Main Turn Queue
+
+永続受付は`session_turn_queue_v6`を正本とし、Session incarnationとGUI request IDで一意にする。受付時の本文・実行設定・添付path descriptor・provider／workspaceを保存し、同じIDの再送は捕捉済み要求との直接比較で照合する。受付はtransaction commit後にACKする。返信不明は正本照会で収束させ、mutationやprovider実行を自動再送しない。
+
+queued開始は`appendRunningTurnStart`の既存transactionで、user message、最小turn、queue receiptのturn ID／user seqとrunning状態を同時保存する。terminalも既存append transactionへreceipt終端を含める。確定したterminalの返信喪失を、後からinterruptedに退行させない。queue専用commandも既存Workerのtyped proxy／generation境界を使い、Mainの同期SQLite接続やSession全履歴保存を追加しない。
+
+active取得、request IDによる個別照会、cursor付きreceipt履歴取得を分ける。変更通知はSession Windowへ対象IDだけを送り、Homeへ本文や履歴をbroadcastしない。実行・明示解放・shutdownの契約は[Session Run Lifecycle](session-run-lifecycle.md#main-gui-turn-queue)を参照する。
+
 ### Files認可metadata
 
 Filesのcontextとsender owner解決は、Main／親のsummaryとAuxiliary metadataだけを読み、会話本文やartifactを取得しない。Auxiliary metadataもserviceのCharacter snapshot検証を通し、親workspaceと親incarnation、対象Auxiliary固有のAdditional Directoriesを使用する。各読取の前後で捕捉したstorage ownerを確認し、削除やgeneration交換、読取失敗を旧cacheや親Characterへのfallbackで成功扱いしない。

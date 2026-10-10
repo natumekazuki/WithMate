@@ -82,7 +82,7 @@ import {
 import { CodexAdapter } from "./providers/codex/codex-adapter.js";
 import { CopilotAdapter } from "./providers/copilot/copilot-adapter.js";
 import { ClaudeAdapter } from "./providers/claude/claude-adapter.js";
-import { resolveComposerPreview } from "./files/composer-attachments.js";
+import { assertCapturedComposerAttachmentsAvailable, resolveComposerPreview } from "./files/composer-attachments.js";
 import { areDirectoryPathsEquivalent } from "./files/additional-directories.js";
 import { ModelCatalogStorage } from "./settings/model-catalog-storage.js";
 import {
@@ -98,6 +98,8 @@ import { SessionMemoryStorage } from "./session/session-memory-storage.js";
 import { ProjectMemoryStorage } from "./memory/project-memory-storage.js";
 import { SessionRuntimeService } from "./session/session-runtime-service.js";
 import { createMainSessionRuntime } from "./app/main-session-runtime-assembly.js";
+import { MainSessionTurnQueueFacade } from "./app/main-session-turn-queue-facade.js";
+import { SessionTurnQueueService } from "./session/session-turn-queue-service.js";
 import { createAuxiliarySessionRuntime } from "./auxiliary/auxiliary-session-runtime-assembly.js";
 import { SessionTurnNotificationService } from "./session/session-turn-notification-service.js";
 import { createCharacterAffectTurnRecoveryFailureLogData } from "./character/character-affect-turn-recovery.js";
@@ -190,7 +192,8 @@ import {
 } from "./skills/managed-skill-distribution-service.js";
 import { MemoryCliShimService } from "./memory/memory-cli-shim-service.js";
 import { hydrateSessionsFromSummaries } from "./session/session-summary-adapter.js";
-import type { AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import { getProviderAppSettings, type AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import { resolveWorkspaceDirectoryValidationMessage } from "../src-shared/window/workspace-directory-validation.js";
 import type { ChatLayoutPreferenceUpdate } from "../src-shared/settings/chat-layout-preference.js";
 import { discoverSessionSkills } from "./skills/skill-discovery.js";
 import { discoverSessionCustomAgents } from "./skills/custom-agent-discovery.js";
@@ -404,7 +407,14 @@ const mainWindowRuntime = new MainWindowRuntime({
   isSessionRunInFlight,
   getTerminalCloseConfirmationCount: (window) => terminalService?.countRequiringCloseConfirmation(window) ?? 0,
   cancelInFlightSessionRuns,
-  waitForPendingDraftSends: () => auxiliarySessionService?.waitForPendingDraftSends() ?? Promise.resolve(true),
+  waitForPendingDraftSends: async () => {
+    const [auxiliarySaved] = await Promise.all([
+      auxiliarySessionService?.waitForPendingDraftSends() ?? Promise.resolve(true),
+      sessionTurnQueueService?.waitForPending(),
+      sessionRuntimeService?.waitForPendingRuns(),
+    ]);
+    return auxiliarySaved;
+  },
   onSessionWindowClosed: (sessionId) => {
     terminalService?.releaseSession(sessionId);
     auxiliarySessionService?.releaseAuxiliaryCreationOwner(sessionId);
@@ -509,6 +519,8 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 ipcMain.handle(WITHMATE_GET_APP_BOOT_STATUS_CHANNEL, () => appBootStatus);
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
+let sessionTurnQueueService: SessionTurnQueueService | null = null;
+let mainSessionTurnQueueFacade: MainSessionTurnQueueFacade | null = null;
 let sessionTurnNotificationService: SessionTurnNotificationService<NativeImage> | null = null;
 let auxiliarySessionService: AuxiliarySessionService | null = null;
 let auxiliarySessionRuntimeService: SessionRuntimeService | null = null;
@@ -1169,7 +1181,16 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             },
             prepareSessionWindowSnapshotForQuit: () =>
               requireSessionWindowBridge().prepareSnapshotForQuit(),
-            flushSessionWindowDrafts: () => requireSessionWindowBridge().flushSessionWindowDrafts(),
+            flushSessionWindowDrafts: async () => {
+              sessionTurnQueueService?.beginShutdown();
+              let flushed = false;
+              try {
+                flushed = await requireSessionWindowBridge().flushSessionWindowDrafts();
+                return flushed;
+              } finally {
+                if (!flushed) sessionTurnQueueService?.resume();
+              }
+            },
             stopMemoryRuntime: stopMemoryV6RuntimeApiBestEffort,
             closePersistentStores,
             invalidateAllProviderSessionThreads,
@@ -1296,12 +1317,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     throw new Error("Database initialization is already in progress.");
                   }
                   databaseMaintenanceRequested = true;
+                  sessionTurnQueueService?.beginShutdown();
                   try {
                     return await characterWorkspaceOperationCoordinator.runMaintenance(
                       () => requireSettingsCatalogService().resetAppDatabase(request),
                     );
                   } finally {
                     databaseMaintenanceRequested = false;
+                    if (!requireSessionWindowBridge().isQuitPending()) sessionTurnQueueService?.resume();
                   }
                 },
               },
@@ -1536,6 +1559,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireAuxiliarySessionRuntimeService().cancelRun(auxiliarySessionId),
               },
               sessionRuntime: {
+                queue: {
+                  enqueueSessionTurn: (sessionId, request) => requireMainSessionTurnQueueFacade().enqueueSessionTurn(sessionId, request),
+                  getSessionTurnQueueReceipt: (sessionId, requestId) => requireMainSessionTurnQueueFacade().getSessionTurnQueueReceipt(sessionId, requestId),
+                  listSessionTurnQueue: (sessionId) => requireMainSessionTurnQueueFacade().listSessionTurnQueue(sessionId),
+                  listSessionTurnQueueReceipts: (sessionId, options) => requireMainSessionTurnQueueFacade().listSessionTurnQueueReceipts(sessionId, options),
+                  cancelQueuedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().cancelQueuedSessionTurn(sessionId, id),
+                  releaseInterruptedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().releaseInterruptedSessionTurn(sessionId, id),
+                },
                 getLiveSessionRun: (sessionId) => getLiveSessionRun(sessionId),
                 getProviderQuotaTelemetry: getOrRefreshProviderQuotaTelemetry,
                 getSessionContextTelemetry: (sessionId) => getSessionContextTelemetry(sessionId),
@@ -1559,7 +1590,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 },
                 runSessionTurn: async (sessionId, request) => {
                   const owner = requireActivePersistentStoreOwnerForFactory("Turn result projection");
-                  await requireMainSessionCommandFacade().runSessionTurn(sessionId, request);
+                  const current = await getRuntimeSession(sessionId);
+                  assertPersistentStoreOwnerIsActive(owner, "Turn result projection");
+                  if (!current) throw new Error("The Session could not be found.");
+                  await requireMainSessionTurnQueueFacade().enqueueSessionTurn(sessionId, { ...request, incarnationId: getSessionIncarnationId(current) });
                   assertPersistentStoreOwnerIsActive(owner, "Turn result projection");
                   const session = await getDisplaySession(sessionId);
                   assertPersistentStoreOwnerIsActive(owner, "Turn result projection");
@@ -2175,6 +2209,68 @@ async function drainPendingCharacterAffectTurns(): Promise<boolean> {
   return characterAffectTurnMainLifecycle.drain();
 }
 
+async function assertSessionQueueWorkspaceAvailable(session: Session): Promise<void> {
+  const validation = await workspaceDirectoryValidationService.validate(session.workspacePath);
+  if (!validation.valid) throw new Error(`Workspace is unavailable. ${resolveWorkspaceDirectoryValidationMessage(validation)}`);
+}
+
+function requireMainSessionTurnQueueService(): SessionTurnQueueService {
+  if (!sessionTurnQueueService) {
+    const owner = requireActivePersistentStoreOwnerForFactory("Session turn queue");
+    const store = owner.storageWorker?.stores.queue;
+    if (!store) throw new Error("The Session turn queue is unavailable for this database.");
+    sessionTurnQueueService = new SessionTurnQueueService({
+      store,
+      isRunInFlight: (sessionId) => databaseMaintenanceRequested
+        || requireSessionWindowBridge().isQuitPending()
+        || Boolean(settingsCatalogService && !settingsCatalogService.isProviderAvailableForTurn(getSession(sessionId)?.provider ?? ""))
+        || Boolean(sessionRuntimeService?.isRunInFlight(sessionId)),
+      dispatch: async (receipt, onStarted) => {
+        assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
+        const result = await requireSessionRuntimeService().runQueuedSessionTurn(receipt, onStarted);
+        assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
+        return result;
+      },
+      onChanged: ({ sessionId }) => {
+        if (mainStoreContext.activePersistentStoreOwner === owner) {
+          requireWindowBroadcastService().broadcastSessionTurnQueueChanged(sessionId);
+        }
+      },
+    });
+  }
+  return sessionTurnQueueService;
+}
+
+function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
+  if (!mainSessionTurnQueueFacade) {
+    const owner = requireActivePersistentStoreOwnerForFactory("Session turn queue facade");
+    const store = owner.storageWorker?.stores.queue;
+    if (!store) throw new Error("The Session turn queue is unavailable for this database.");
+    mainSessionTurnQueueFacade = new MainSessionTurnQueueFacade({
+      assertActive: () => assertPersistentStoreOwnerIsActive(owner, "Queue acceptance"),
+      assertAccepting: () => {
+        assertPersistentStoreOwnerIsActive(owner, "Queue acceptance");
+        if (databaseMaintenanceRequested || requireSessionWindowBridge().isQuitPending()) {
+          throw new Error("The app is quitting or maintaining its database, so a new Turn cannot be queued.");
+        }
+      },
+      getSession: getRuntimeSession,
+      validateWorkspace: assertSessionQueueWorkspaceAvailable,
+      validateProvider: async (session, revision) => {
+        if (!getProviderAppSettings(await requireAppSettingsStorage().getSettings(), session.provider).enabled) {
+          throw new Error("This provider is disabled in Settings.");
+        }
+        const catalog = await resolveProviderCatalog(session.provider, revision);
+        return { provider: catalog.provider, revision: catalog.snapshot.revision };
+      },
+      preview: (session, message) => resolveComposerPreview(appendSessionFilesDirectory(app.getPath("userData"), session), message),
+      store,
+      service: requireMainSessionTurnQueueService(),
+    });
+  }
+  return mainSessionTurnQueueFacade;
+}
+
 function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     const owner = requireActivePersistentStoreOwnerForFactory("Session runtime service");
@@ -2192,6 +2288,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         appendRunningInput: (session, text, turnId) => requireMainSessionPersistenceFacade().appendRunningInput(session, text, turnId),
         checkpointRuntimeMetadata: (session, expected) => requireMainSessionPersistenceFacade().checkpointRuntimeMetadata(session, expected),
         persistRunningTurnStart: (session, expectedMessageCount) => requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount),
+        persistQueuedTurnStart: (session, count, queueId, turn) => requireMainSessionPersistenceFacade().persistQueuedTurnStart(session, count, queueId, turn),
         clearCharacterAuthoringRuntimeState: (session) => requireMainSessionPersistenceFacade().clearCharacterAuthoringRuntimeState(session),
         appendTerminalSession: async (session, terminalCommit) => {
           const persisted = await requireMainSessionPersistenceFacade().appendTerminalSession(session, terminalCommit);
@@ -2204,6 +2301,10 @@ function requireSessionRuntimeService(): SessionRuntimeService {
           ? resolveCharacterAuthoringRuntimeSessionForTurn(session, (characterId) => requireCharacterService().createRuntimeSnapshot(characterId))
           : refreshSessionCharacterRuntimeSnapshot(session, (characterId, previousSnapshot) => requireCharacterService().refreshRuntimeSnapshot(characterId, previousSnapshot)),
         resolveComposerPreview,
+        assertCapturedComposerAttachmentsAvailable: async (session, attachments) => {
+          await assertSessionQueueWorkspaceAvailable(session);
+          await assertCapturedComposerAttachmentsAvailable(session, attachments);
+        },
         resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
         resolveSessionFolderPath: (sessionId) => ensureSessionFilesDirectory(sessionId),
         resolveProviderCatalog,
@@ -2223,7 +2324,10 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },
       interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId, decision) => { const requestId = getLiveSessionRun(sessionId)?.approvalRequest?.requestId; if (requestId) requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision); }, resolvePendingElicitationRequest: (sessionId, response) => { const requestId = getLiveSessionRun(sessionId)?.elicitationRequest?.requestId; if (requestId) requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response); }, invalidateProviderSessionThread },
-      notification: { notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); } },
+      notification: {
+        notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); },
+        onSessionRunReleased: (sessionId) => sessionTurnQueueService?.wake(sessionId),
+      },
       timing: { currentTimestampLabel },
     });
   }
@@ -2438,6 +2542,11 @@ function requireSettingsCatalogService(): SettingsCatalogService {
     settingsCatalogService = new SettingsCatalogService({
       captureStorageIdentity: () => requireActivePersistentStoreOwnerForFactory("Settings catalog"),
       isStorageIdentityCurrent: (owner) => mainStoreContext.activePersistentStoreOwner === owner,
+      onProviderTurnAvailable: (providerId) => {
+        for (const session of mainStoreContext.sessions) {
+          if (session.provider === providerId) sessionTurnQueueService?.wake(session.id);
+        }
+      },
       runProviderRuntimeOperationExclusive: (operation) =>
         providerRuntimeOperationCoordinator.runExclusive(operation),
       hasInFlightSessionRuns,
@@ -2654,6 +2763,10 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 }
 
 async function closePersistentStores(): Promise<void> {
+  await sessionTurnQueueService?.close();
+  await sessionRuntimeService?.waitForPendingRuns();
+  sessionTurnQueueService = null;
+  mainSessionTurnQueueFacade = null;
   await mainStoreContext.close((bundle, currentDbPath) =>
     requirePersistentStoreLifecycleService().close(bundle, currentDbPath));
   characterService = null;
@@ -2688,6 +2801,10 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
     throw new Error("Saved data is not initialized.");
   }
 
+  await sessionTurnQueueService?.close();
+  await sessionRuntimeService?.waitForPendingRuns();
+  sessionTurnQueueService = null;
+  mainSessionTurnQueueFacade = null;
   mainStoreContext.setActivePersistentStoreOwner(null);
   auxiliaryLiveRunParents.clear();
   const memoryRuntimeToStop = memoryV6RuntimeApi;
@@ -2749,6 +2866,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
 
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
   mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
+  if (mainStoreContext.storageWorker) await requireMainSessionTurnQueueService().start();
   if (memoryRuntimeToStop) {
     await startMemoryV6RuntimeApiBestEffort();
     if (!memoryV6RuntimeApi) {
@@ -3062,6 +3180,7 @@ async function replaceAllSessions(
 async function recoverInterruptedSessions(): Promise<void> {
   await requireMainSessionPersistenceFacade().recoverInterruptedSessions();
   await requireAuxiliarySessionService().recoverInterruptedSessions();
+  if (mainStoreContext.storageWorker) await requireMainSessionTurnQueueService().start();
 }
 
 async function previewComposerInput(

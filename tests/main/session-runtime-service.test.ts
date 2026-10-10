@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it, mock } from "node:test";
 
-import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import type { ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
@@ -190,6 +191,200 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     ...overrides,
   });
 }
+
+function queuedReceipt(session: Session): SessionTurnQueueReceipt {
+  return { sessionId: session.id, incarnationId: getSessionIncarnationId(session), id: "queue-1", requestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
+    sequence: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+    captured: { provider: session.provider, workspacePath: session.workspacePath,
+      request: { clientRequestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10", submitSource: "composer", userMessage: "captured message",
+        executionOptions: captureSessionExecutionOptions(session) },
+      attachments: [{ id: "captured-file", kind: "file", source: "text", absolutePath: "C:/workspace/captured.txt",
+        displayPath: "captured.txt", workspaceRelativePath: "captured.txt", isOutsideWorkspace: false }],
+    } };
+}
+
+function queueGate() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "queued実行は捕捉入力と開始時threadで原子的開始しterminal ACK後だけ確定しcleanup guard解放まで次runを許可しない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Run Cancel; src-electron/session/session-running-turn-start.ts" }
+// fault = "本文を再previewするか捕捉設定を現在選択で置換し、開始を分割保存するかterminal応答でcleanup guardを解放する"
+// observable = "atomic開始payload・Provider request・onStarted identity・terminal待機中の返却と実guard/release通知"
+// observation_boundary = "public-boundary"
+// scope = "queued runtime captured start terminal and real guard"
+// lifecycle = "permanent"
+// impact = "受付時と異なる入力を実行し、旧provider cleanup中に後続を二重開始する"
+// distinction = "store/service testだけではruntimeのProvider request構築とterminal保存ACK境界を通らない"
+// @end-test-value
+it("queued runtimeは捕捉入力・atomic開始・terminal ACK・実cleanup解放を守る", async () => {
+  const session = createSession({ incarnationId: "owner", threadId: "current-thread" });
+  const receipt = queuedReceipt(session);
+  const capturedOptions = receipt.captured.request.executionOptions;
+  const currentSession = { ...session, model: "current-selection", catalogRevision: 2 };
+  const terminalEntered = queueGate();
+  const commit = queueGate();
+  const cleanup = queueGate();
+  const starts: Array<{ turnId: string; userMessageSeq: number }> = [];
+  let atomics = 0;
+  let releases = 0;
+  let runtime!: SessionRuntimeService;
+  runtime = createProgressRuntime(currentSession, async (input) => {
+    assert.equal(input.session.threadId, "current-thread");
+    assert.equal(input.userMessage, "captured message");
+    assert.deepEqual(input.executionOptions, { ...capturedOptions, catalogRevision: 2 });
+    assert.deepEqual(input.attachments, receipt.captured.attachments);
+    input.onCleanupPending?.(cleanup.promise);
+    return createPartialResult({ assistantText: "done" });
+  }, {
+    resolveComposerPreview: async () => { assert.fail("queued input must not be re-previewed"); },
+    persistRunningTurnStart: () => { assert.fail("queued start must be atomic"); },
+    createSessionTurn: () => { assert.fail("minimum turn belongs to atomic start"); },
+    assertCapturedComposerAttachmentsAvailable: async (current, attachments) => {
+      assert.equal(current.threadId, "current-thread");
+      assert.deepEqual(attachments, receipt.captured.attachments);
+    },
+    resolveProviderCatalog: (_, revision) => {
+      assert.equal(revision, undefined);
+      const provider = createProviderCatalog();
+      return { snapshot: { revision: 2, providers: [provider] }, provider };
+    },
+    persistQueuedTurnStart: (next, count, id, turn) => {
+      atomics += 1;
+      assert.equal(id, receipt.id);
+      assert.equal(count, 0);
+      assert.equal(next.messages.at(-1)?.text, "captured message");
+      assert.equal(turn.userMessageSeq, count);
+      return { session: next, turn: { ...turn, id: 41 } };
+    },
+    appendTerminalSession: async (next, terminal) => {
+      assert.equal(terminal.phase, "completed");
+      assert.equal(terminal.turnId, 41);
+      terminalEntered.resolve();
+      await commit.promise;
+      return next;
+    },
+    onSessionRunReleased: () => { assert.equal(runtime.isRunInFlight(session.id), false); releases += 1; },
+  });
+  let returned = false;
+  const running = runtime.runQueuedSessionTurn(receipt, async (start) => { starts.push(start); }).then((result) => { returned = true; return result; });
+  await terminalEntered.promise;
+  assert.equal(returned, false);
+  assert.equal(runtime.isRunInFlight(session.id), true);
+  commit.resolve();
+  assert.deepEqual(await running, { state: "completed" });
+  assert.equal(atomics, 1);
+  assert.deepEqual(starts, [{ turnId: "41", userMessageSeq: 0 }]);
+  assert.equal(runtime.isRunInFlight(session.id), true);
+  assert.equal(releases, 0);
+  let drained = false;
+  const draining = runtime.waitForPendingRuns().then(() => { drained = true; });
+  assert.equal(drained, false);
+  cleanup.resolve();
+  await draining;
+  assert.equal(runtime.isRunInFlight(session.id), false);
+  assert.ok(releases > 0);
+  assert.equal(receipt.captured.request.executionOptions.catalogRevision, 1);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "queued開始前にowner/provider/workspace/添付または捕捉modelが無効なら未開始の確定failedを返す"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Delete; src-shared/session/session-execution-options.ts validateSessionExecutionOptions" }
+// fault = "変更されたowner/実行先や失われた添付を実行するか別modelへ自動切替する"
+// observable = "failed返却、atomic開始とProviderの呼出し件数0"
+// observation_boundary = "public-boundary"
+// scope = "queued runtime pre-provider capture validation"
+// lifecycle = "permanent"
+// impact = "古いownerへの送信や受付と異なるpath/modelの外部実行を防ぐ"
+// distinction = "受付時facadeとstore検査では実行開始時の現在認可とcatalogを検証できない"
+// @end-test-value
+it("queued runtimeは無効になった捕捉入力を開始前にfailedで返す", async () => {
+  for (const stage of ["owner", "provider", "workspace", "attachment", "model"] as const) {
+    const session = createSession({ incarnationId: "owner" });
+    const receipt = queuedReceipt(session);
+    const current = { ...session, ...(stage === "owner" ? { incarnationId: "new-owner" } : {}),
+      ...(stage === "provider" ? { provider: "copilot" } : {}), ...(stage === "workspace" ? { workspacePath: "C:/other" } : {}) };
+    let starts = 0;
+    let providers = 0;
+    const runtime = createProgressRuntime(current, async () => { providers += 1; return createPartialResult(); }, {
+      assertCapturedComposerAttachmentsAvailable: async () => { if (stage === "attachment") throw new Error("Captured attachment disappeared"); },
+      persistQueuedTurnStart: (next, _, __, turn) => { starts += 1; return { session: next, turn: { id: 1, ...turn } }; },
+      resolveProviderCatalog: () => {
+        const provider = createProviderCatalog();
+        if (stage === "model") provider.models = [];
+        return { snapshot: { revision: 2, providers: [provider] }, provider };
+      },
+    });
+    const result = await runtime.runQueuedSessionTurn(receipt, async () => { assert.fail("Rejected start cannot be observed as started"); });
+    assert.equal(result.state, "failed");
+    assert.ok(result.reason);
+    assert.equal(starts, 0);
+    assert.equal(providers, 0);
+    assert.equal(runtime.isRunInFlight(session.id), false);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "queued atomic開始またはterminal保存の結果不明はgeneric throwのまま伝播し別failed保存で救済しない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Decision" }
+// fault = "commit返信喪失を確定failedへ変換し後続を自動dispatch可能にする"
+// observable = "元error同一性、terminal保存phase列、Provider呼出し件数"
+// observation_boundary = "public-boundary"
+// scope = "queued runtime unknown persistence boundary"
+// lifecycle = "permanent"
+// impact = "保存済みか不明な要求を再実行したり後続を誤って進める"
+// distinction = "store testではruntimeの保存失敗catchとfailed保存への変換を観測できない"
+// @end-test-value
+it("queued runtimeは開始とterminal保存の不明結果を救済しない", async () => {
+  for (const stage of ["start", "terminal"] as const) {
+    const session = createSession({ incarnationId: "owner" });
+    const receipt = queuedReceipt(session);
+    const failure = new Error(`${stage} commit outcome unknown`);
+    const phases: string[] = [];
+    let providers = 0;
+    const runtime = createProgressRuntime(session, async () => { providers += 1; return createPartialResult({ assistantText: "done" }); }, {
+      assertCapturedComposerAttachmentsAvailable: async () => {},
+      persistQueuedTurnStart: (next, _, __, turn) => { if (stage === "start") throw failure; return { session: next, turn: { id: 41, ...turn } }; },
+      appendTerminalSession: (_, terminal) => { phases.push(terminal.phase); throw failure; },
+    });
+    await assert.rejects(runtime.runQueuedSessionTurn(receipt, async () => {}), (error) => error === failure);
+    assert.equal(providers, stage === "start" ? 0 : 1);
+    assert.deepEqual(phases, stage === "start" ? [] : ["completed"]);
+    await runtime.waitForPendingRuns();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "queued provider失敗/取消はACKされたterminal phaseを確定結果として返す"
+// oracle = { type = "contract", ref = "src-electron/session/session-turn-terminal-commit.ts SessionTurnTerminalCommit" }
+// fault = "保存済み取消をfailedへ変換するかACK前に結果を返す"
+// observable = "appendTerminal phaseとdispatch返却state、onStarted minimum turn ID"
+// observation_boundary = "public-boundary"
+// scope = "queued runtime confirmed failure and cancellation"
+// lifecycle = "permanent"
+// distinction = "serviceのfake dispatch resultではruntimeの実terminal phaseとの対応を保証できない"
+// @end-test-value
+it("queued runtimeは保存済みfailedとcanceledを区別する", async () => {
+  for (const canceled of [false, true]) {
+    const session = createSession({ incarnationId: "owner" });
+    const phases: string[] = [];
+    const runtime = createProgressRuntime(session, async () => { throw new ProviderTurnError("stopped", createPartialResult(), canceled); }, {
+      assertCapturedComposerAttachmentsAvailable: async () => {},
+      persistQueuedTurnStart: (next, _, __, turn) => ({ session: next, turn: { id: 41, ...turn } }),
+      appendTerminalSession: (next, terminal) => { phases.push(terminal.phase); return next; },
+    });
+    const result = await runtime.runQueuedSessionTurn(queuedReceipt(session), async (started) => { assert.equal(started.turnId, "41"); });
+    assert.equal(result.state, canceled ? "canceled" : "failed");
+    assert.deepEqual(phases, [canceled ? "canceled" : "failed"]);
+  }
+});
 
 describe("SessionRuntimeService stale retry helpers", () => {
   // @test-value v2

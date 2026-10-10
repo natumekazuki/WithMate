@@ -235,6 +235,12 @@ export type WithMateWindowSessionApi = {
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest & { incarnationId: string }): Promise<import("../session/session-turn-queue.js").SessionTurnQueueAcceptanceResult>;
+  getSessionTurnQueueReceipt(sessionId: string, requestId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt | null>;
+  listSessionTurnQueue(sessionId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt[]>;
+  listSessionTurnQueueReceipts(sessionId: string, options?: { cursor?: number; limit?: number }): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceiptPage>;
+  cancelQueuedSessionTurn(sessionId: string, id: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
+  releaseInterruptedSessionTurn(sessionId: string, id: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
   steerSessionTurn(sessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
   cancelSessionRun(sessionId: string): Promise<void>;
   getLatestSessionTurn(sessionId: string): Promise<SessionTurnRecord | null>;
@@ -317,6 +323,7 @@ export type WithMateWindowPickerApi = {
 
 export type WithMateWindowSubscriptionApi = {
   onSessionTurnUpdated(listener: (sessionId: string) => void): () => void;
+  onSessionTurnQueueChanged(listener: (sessionId: string) => void): () => void;
   subscribeSessionDraftFlushRequest(listener: (request: { requestId: string; sessionId: string; reason: "close" | "quit" }) => void): () => void;
   subscribeSessionDraftFlushRelease(listener: (payload: { success: boolean }) => void): () => void;
   acknowledgeSessionDraftFlush(requestId: string, success: boolean): void;

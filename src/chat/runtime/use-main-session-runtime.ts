@@ -24,18 +24,11 @@ import {
   StateMutationRevision,
 } from "./session-submit-coordinator.js";
 import { runMainSessionTurnOperation } from "./run-main-session-turn-operation.js";
-import type { OwnedLiveSessionRunState } from "./session-live-run-state.js";
+import { SessionTurnAcceptance } from "./session-turn-acceptance.js";
 import {
   persistMainSession,
   toggleMainSessionPin,
 } from "./main-session-mutation-operations.js";
-
-type LiveRunPort = {
-  getRevision: () => number;
-  setState: (
-    update: (current: OwnedLiveSessionRunState) => OwnedLiveSessionRunState,
-  ) => void;
-};
 
 export function useMainSessionRuntime({
   api,
@@ -50,6 +43,8 @@ export function useMainSessionRuntime({
     | "reportRendererLog"
     | "previewComposerInput"
     | "runSessionTurn"
+    | "enqueueSessionTurn"
+    | "getSessionTurnQueueReceipt"
     | "getLiveSessionRun"
     | "updateSession"
     | "setSessionPinned"
@@ -93,6 +88,7 @@ export function useMainSessionRuntime({
   const projectionRevisionRef = useRef(new StateMutationRevision());
   const refetchRevisionRef = useRef(new LatestRequestRevision());
   const submitCoordinatorRef = useRef(new SessionSubmitCoordinator());
+  const acceptanceRef = useRef(new SessionTurnAcceptance());
   const [pendingSubmitSessionId, setPendingSubmitSessionId] = useState<
     string | null
   >(null);
@@ -273,19 +269,12 @@ export function useMainSessionRuntime({
       request: RunSessionTurnRequest;
       composerOwner: ComposerOwner;
       clearDraft: boolean;
+      queueTurn?: boolean;
       shouldCollapseActionDock: boolean;
-      isCentralPreviewActive: boolean;
-      hasLiveRun: boolean;
       selectedSessionRunState: Session["runState"] | null;
       blockedReason: string | null;
       isReadOnly: boolean;
-      currentTimestamp: string;
       validateWorkspace: () => Promise<unknown>;
-      liveRun: LiveRunPort;
-      acknowledgePreviewChatMessageCount: (
-        sessionId: string,
-        count: number,
-      ) => void;
       collapseActionDock: () => void;
       log: (event: string, details: Record<string, unknown>) => void;
     }) =>
@@ -297,38 +286,43 @@ export function useMainSessionRuntime({
         composerRegistry,
         composerOwner: input.composerOwner,
         submitCoordinator: submitCoordinatorRef.current,
+        acceptance: acceptanceRef.current,
+        queueTurn: input.queueTurn,
         clearDraft: input.clearDraft,
         collapseActionDock: input.shouldCollapseActionDock,
-        isCentralPreviewActive: input.isCentralPreviewActive,
-        hasLiveRun: input.hasLiveRun,
         selectedSessionRunState: input.selectedSessionRunState,
         blockedReason: input.blockedReason,
         isReadOnly: input.isReadOnly,
-        currentTimestamp: input.currentTimestamp,
         validateWorkspace: input.validateWorkspace,
         state: {
-          setAuthoritativeSessions,
-          setLiveRunState: input.liveRun.setState,
           setComposerPreview: (preview) =>
             composerRegistry.setPreview(input.composerOwner, preview),
-          acknowledgePreviewChatMessageCount:
-            input.acknowledgePreviewChatMessageCount,
           setPendingSubmitSessionId,
           setForceComposerBlockedFeedback,
           collapseActionDock: input.collapseActionDock,
         },
-        revisions: {
-          mutation: mutationRevisionRef.current,
-          projection: projectionRevisionRef.current,
-          liveRun: {
-            capture: input.liveRun.getRevision,
-            isCurrent: (revision) => input.liveRun.getRevision() === revision,
-          },
-        },
         log: input.log,
       }),
-    [api, composerRegistry, setAuthoritativeSessions],
+    [api, composerRegistry],
   );
+
+  const resolveUncertainTurn = async (retry: boolean) => {
+    if (!api || !selectedId) return;
+    const ownerId = selectedId;
+    const lease = submitCoordinatorRef.current.tryAcquire(ownerId);
+    if (!lease) return;
+    setPendingSubmitSessionId(ownerId);
+    try {
+      const receipt = retry
+        ? await acceptanceRef.current.retry(api, ownerId, composerRegistry)
+        : await acceptanceRef.current.check(api, ownerId, composerRegistry);
+      setReadRevision((current) => current + 1);
+      if (!receipt && acceptanceRef.current.hasUncertain(ownerId)) throw new Error("No receipt is available yet. Retry Original Turn uses the same request identity and captured input.");
+    } finally {
+      lease.release();
+      setPendingSubmitSessionId((current) => current === ownerId ? null : current);
+    }
+  };
 
   return {
     sessions,
@@ -350,5 +344,8 @@ export function useMainSessionRuntime({
     toggleSessionPin,
     isSessionPinPending,
     runMainSessionTurn,
+    hasUncertainTurn: selectedId ? acceptanceRef.current.hasUncertain(selectedId) : false,
+    checkTurnReceipt: () => resolveUncertainTurn(false),
+    retryOriginalTurn: () => resolveUncertainTurn(true),
   };
 }

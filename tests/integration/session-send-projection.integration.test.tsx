@@ -6,6 +6,7 @@ import React, { act, useState } from "react";
 import { JSDOM } from "jsdom";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
@@ -40,6 +41,8 @@ async function setup() {
   });
   const registry = new ComposerControllerRegistry();
   let listener: Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0] | undefined;
+  let queueListener: ((id: string) => void) | undefined;
+  api.onSessionTurnQueueChanged = (next) => { queueListener = next; return () => { queueListener = undefined; }; };
   api.subscribeLiveSessionRun = (next) => { listener = next; return () => { listener = undefined; }; };
   const baseProps = createStaticTextConversationMessageColumnProps({
     sessionId: "benchmark-main", characterId: "character", characterName: "Mate", characterIconPath: "",
@@ -51,7 +54,7 @@ async function setup() {
     const auxiliary = useAuxiliaryWorkspace({ api, parentSessionId: "benchmark-main" });
     const [live, setLive] = useState<OwnedLiveSessionRunState>({ ownerSessionId: null, state: null });
     const mainColumn = useConversationMessageColumn({
-      session: main.sessions[0] ?? null, baseProps, enabled: true,
+      session: main.sessions[0] ?? null, baseProps, enabled: true, api,
       liveRun: live.ownerSessionId === "benchmark-main" ? live.state : null,
     });
     const auxiliaryColumn = useConversationMessageColumn({
@@ -68,17 +71,16 @@ async function setup() {
     api, registry,
     get current() { return current; },
     emit(state: OwnedLiveSessionRunState["state"]) { listener?.(current.auxiliary.selectedId!, state); },
+    emitQueue() { queueListener?.("benchmark-main"); },
     sendMain(text: string) {
       const session = current.main.sessions[0];
       const owner = { kind: "main" as const, id: session.id };
       registry.setDraft(owner, text);
       return current.main.runMainSessionTurn({
-        sessionId: session.id, selectedSession: session, request: { userMessage: text, submitSource: "composer", executionOptions: captureSessionExecutionOptions(session) },
-        composerOwner: owner, clearDraft: true, shouldCollapseActionDock: false, isCentralPreviewActive: false,
-        hasLiveRun: false, selectedSessionRunState: session.runState, blockedReason: null, isReadOnly: false,
-        currentTimestamp: "sending", validateWorkspace: async () => true,
-        liveRun: { getRevision: () => 0, setState: current.setLive },
-        acknowledgePreviewChatMessageCount() {}, collapseActionDock() {}, log() {},
+        sessionId: session.id, selectedSession: session, request: { userMessage: text, clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc", submitSource: "composer", executionOptions: captureSessionExecutionOptions(session) },
+        composerOwner: owner, clearDraft: true, shouldCollapseActionDock: false,
+        selectedSessionRunState: session.runState, blockedReason: null, isReadOnly: false,
+        validateWorkspace: async () => true, collapseActionDock() {}, log() {},
       });
     },
     sendAuxiliary(text: string) {
@@ -108,46 +110,61 @@ async function setup() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainとAuxiliaryはProvider応答を待たず送信文とPendingを会話列へ反映し、完了結果で送信文を重複させない"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信直後の共通反映" }
-// fault = "refだけを変更して状態ownerの通知を省略し、Pendingだけが表示されるか確定時に送信文が二重になる"
-// observable = "実会話columnのmessagesとisRunning、更新ownerから返る確定本文"
+// claim = "Mainのdurable受付後starting本文はcanonical到着まで会話に保持し、Auxiliaryの応答待ち本文と独立する"
+// oracle = { type = "contract", ref = "Issue #801: durable queue canonical projection; docs/design/auxiliary-session.md: 送信直後の共通反映" }
+// fault = "未ACK Mainを送信済み表示にする、starting receiptを表示しない、canonical arrivalで重複させる、またはAuxiliaryへ本文を混入する"
+// observable = "実会話columnのmessages、ACK前後のdraft、canonical更新後の本文件数、AuxiliaryのPending"
 // observation_boundary = "consumer"
-// scope = "main-auxiliary-send-projection"
+// scope = "main-queue-auxiliary-send-projection"
 // lifecycle = "permanent"
-// impact = "利用者が送信内容を確認できず、重複送信や応答との対応誤認を招く"
-// distinction = "状態setterをstub化せずruntime/workspaceの実hookと送信operationから表示projectionまでを接続し、保留したAPI応答より前を観測する"
+// impact = "利用者が受付された入力を見失うことと会話間の誤表示を防ぐ"
+// distinction = "runtime/workspaceの実hookから会話列のqueue購読へ接続し、ACKとcanonical読込の順序を制御する"
 // @end-test-value
-test("MainとAuxiliaryは応答待ちの間から送信文を会話列へ表示する", async () => {
+test("Mainのqueue受付とAuxiliaryの送信は独立してcanonicalへ接続する", async () => {
   const view = await setup();
   try {
     const main = view.current.main.sessions[0];
     const auxiliary = view.current.auxiliary.selectedSession!;
-    const mainRun = deferred<typeof main>();
+    const mainRun = deferred<SessionTurnQueueReceipt>();
     const auxiliaryRun = deferred<AuxiliarySession>();
-    view.api.runSessionTurn = () => mainRun.promise;
+    let received!: Parameters<WithMateWindowApi["enqueueSessionTurn"]>[1];
+    let receipt: SessionTurnQueueReceipt | null = null;
+    view.api.listSessionTurnQueue = async () => receipt && receipt.state !== "completed" ? [receipt] : [];
+    view.api.getSessionTurnQueueReceipt = async () => receipt;
+    view.api.enqueueSessionTurn = (_id, request) => { received = request; return mainRun.promise; };
     view.api.runAuxiliarySessionTurn = () => auxiliaryRun.promise;
     let mainOperation!: ReturnType<typeof view.sendMain>;
     let auxiliaryOperation!: ReturnType<typeof view.sendAuxiliary>;
     await act(async () => { mainOperation = view.sendMain("main prompt"); });
-    assert.deepEqual(view.current.mainColumn?.messages.at(-1), { role: "user", text: "main prompt" });
-    assert.equal(view.current.mainColumn?.isRunning, true);
-    assert.deepEqual(structuredClone(view.current.auxiliaryColumn?.messages), structuredClone(auxiliary.messages));
+    assert.deepEqual(structuredClone(view.current.mainColumn?.messages), structuredClone(main.messages));
+    assert.equal(view.registry.get({ kind: "main", id: main.id }).draft, "main prompt");
+    await act(async () => {
+      receipt = { sessionId: main.id, incarnationId: received.incarnationId, id: "queue-item", requestId: received.clientRequestId!, sequence: 1,
+        state: "starting", captured: { request: { ...received, clientRequestId: received.clientRequestId! }, attachments: [], provider: main.provider, workspacePath: main.workspacePath },
+        turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: main.updatedAt, updatedAt: main.updatedAt };
+      mainRun.resolve(receipt); await mainOperation;
+      view.current.main.retryRead();
+    });
+    await act(async () => { view.emitQueue(); });
+    assert.equal(view.current.mainColumn?.messages.at(-1)?.text, "main prompt");
+    assert.equal(view.registry.get({ kind: "main", id: main.id }).draft, "");
     await act(async () => { auxiliaryOperation = view.sendAuxiliary("auxiliary prompt"); });
     assert.deepEqual(view.current.auxiliaryColumn?.messages.at(-1), { role: "user", text: "auxiliary prompt" });
     assert.equal(view.current.auxiliaryColumn?.isRunning, true);
     assert.equal(view.current.mainColumn?.messages.at(-1)?.text, "main prompt");
     await act(async () => {
-      mainRun.resolve({ ...main, messages: [...main.messages, { role: "user", text: "main prompt" }, { role: "assistant", text: "main answer" }] });
+      const saved = { ...main, messages: [...main.messages, { role: "user" as const, text: "main prompt" }, { role: "assistant" as const, text: "main answer" }] };
+      view.api.getSession = async () => saved;
+      receipt = { ...receipt!, state: "completed", userMessageSeq: main.messages.length, turnId: "turn" };
+      view.current.main.retryRead(); view.emitQueue();
       auxiliaryRun.resolve({ ...auxiliary, messages: [...auxiliary.messages, { role: "user", text: "auxiliary prompt" }, { role: "assistant", text: "auxiliary answer" }] });
-      await Promise.all([mainOperation, auxiliaryOperation]);
+      await auxiliaryOperation;
       view.current.setLive({ ownerSessionId: auxiliary.id, state: null });
     });
     assert.equal(view.current.mainColumn?.messages.filter((message) => message.text === "main prompt").length, 1);
     assert.equal(view.current.auxiliaryColumn?.messages.filter((message) => message.text === "auxiliary prompt").length, 1);
     assert.equal(view.current.mainColumn?.messages.at(-1)?.text, "main answer");
     assert.equal(view.current.auxiliaryColumn?.messages.at(-1)?.text, "auxiliary answer");
-    assert.equal(view.current.auxiliaryColumn?.isRunning, false);
   } finally { await view.unmount(); }
 });
 
@@ -203,15 +220,15 @@ test("Auxiliaryは遅い取得と切替で送信文を失わず失敗後に再�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main送信runtimeは要求待機中に同じComposer ownerへ設定された新入力を旧rejectで上書きせず、再取得した会話へ収束する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信直後の共通反映 / Composer の更新・保存境界" }
-// fault = "runtimeが送信時のclear revisionではなく現在のrevisionで復元し、新しいdraftを旧送信文で上書きする"
+// claim = "Main送信runtimeはACK待機中のdraftを保持し、受付結果不明でも同じComposer ownerの新入力を上書きしない"
+// oracle = { type = "contract", ref = "Issue #801: durable ACK and uncertain acceptance" }
+// fault = "runtimeがACK前にdraftを消し、旧rejectで新しいdraftを旧送信文に戻す"
 // observable = "実ComposerControllerRegistryのdraft、要求開始時のIDと本文、reject後の実会話column"
 // observation_boundary = "consumer"
 // scope = "Main runtime rejected request and Composer owner revision"
 // lifecycle = "permanent"
 // impact = "遅い送信失敗が同一ownerの後続編集を失わせる"
-// distinction = "controller単体では検出できないruntimeのcapture・clear・restore接続を検証する。新入力はcontrollerの公開APIで設定し、送信中にdisabledなtextareaでユーザーが入力できるとは主張しない"
+// distinction = "controller単体では検出できないruntimeのcaptureとdurable受付待機、結果不明の接続を検証する"
 // @end-test-value
 test("Main runtimeの旧rejectは同じComposer ownerの新入力を上書きしない", async () => {
   const view = await setup();
@@ -219,8 +236,8 @@ test("Main runtimeの旧rejectは同じComposer ownerの新入力を上書きし
     const initial = view.current.main.sessions[0];
     const owner = { kind: "main" as const, id: initial.id };
     const started = deferred<void>();
-    const run = deferred<Session>();
-    view.api.runSessionTurn = (id, request) => {
+    const run = deferred<SessionTurnQueueReceipt>();
+    view.api.enqueueSessionTurn = (id, request) => {
       assert.equal(id, initial.id);
       assert.equal(request.userMessage, "old prompt");
       started.resolve();
@@ -228,11 +245,11 @@ test("Main runtimeの旧rejectは同じComposer ownerの新入力を上書きし
     };
     let operation!: ReturnType<typeof view.sendMain>;
     await act(async () => { operation = view.sendMain("old prompt"); await started.promise; });
-    assert.equal(view.registry.capture(owner).draft, "");
+    assert.equal(view.registry.capture(owner).draft, "old prompt");
     view.registry.setDraft(owner, "new draft");
     assert.equal(view.registry.capture(owner).draft, "new draft");
     await act(async () => {
-      const rejected = assert.rejects(operation, /old request rejected/);
+      const rejected = assert.rejects(operation, /acceptance could not be confirmed/);
       run.reject(new Error("old request rejected"));
       await rejected;
     });
@@ -244,15 +261,15 @@ test("Main runtimeの旧rejectは同じComposer ownerの新入力を上書きし
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryは終了通知後に同じComposerへ編集した新入力を旧要求のrejectで上書きしない。Main/AuxiliaryのProvider失敗Sessionがresolveした場合は送信済みuser・partial・失敗本文を会話に残し、送信入力を復元しない"
+// claim = "Auxiliaryは終了通知後の新入力を旧rejectで上書きしない。Mainのqueue受付後のcanonical失敗通知とAuxiliaryのresolve失敗は送信済みuser・partial・失敗本文を保持する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信直後の共通反映 / docs/manual-test-checklist.md MT-030, MT-030A" }
-// fault = "Appの失敗callbackが捕捉revisionを誤って新入力を旧本文で上書きするか、resolveされたerror Sessionをrejectと混同して会話・入力を巻き戻す"
+// fault = "Appが旧Auxiliary rejectで新入力を上書きする、またはMain canonical失敗更新やAuxiliary resolve失敗を未受付と混同して入力と本文を巻き戻す"
 // observable = "実SessionWindowAppのtextarea値、送信APIの対象IDと本文、要求待機中とsettle後の対象会話のuser/assistant本文、rejectのalert"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp Main/Auxiliary rejected request and resolved Provider failure"
 // lifecycle = "permanent"
 // impact = "送信失敗時の後続入力消失、送信済み本文・途中応答の消失、旧入力の復活による再送を防ぐ"
-// distinction = "Composer単体と既存App testの別owner・終了凍結時復元とは異なり、API要求開始→terminal通知→同一Auxiliary編集→旧rejectを実Appの送信callbackからtextareaまで接続する。Main/Auxiliaryのresolve失敗も観測し、Provider実通信・永続化・OS操作は対象にしない"
+// distinction = "実Appでqueue ACK後のMain canonical通知と、Auxiliary terminal通知→同一owner編集→旧rejectをtextareaと会話まで接続する。Provider実通信・永続化・OS操作は対象にしない"
 // @end-test-value
 test("Session Windowは旧rejectから新入力を保護し、resolveするProvider失敗の本文を保持する", { timeout: 30_000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
@@ -296,6 +313,9 @@ test("Session Windowは旧rejectから新入力を保護し、resolveするProvi
     return () => { liveListeners.delete(listener); };
   };
   const emitTerminal = (id: string) => liveListeners.forEach((listener) => listener(id, null));
+  let mainInvalidation: Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0] | undefined;
+  api.subscribeSessionInvalidation = (listener) => { mainInvalidation = listener; return () => { mainInvalidation = undefined; }; };
+  const notifyMain = () => mainInvalidation?.({ scope: "ids", sessionIds: [main.id] });
   let reportedError = deferred<string>();
   const alerts: string[] = [];
   dom.window.alert = (message) => { alerts.push(String(message)); reportedError.resolve(String(message)); };
@@ -348,13 +368,16 @@ test("Session Windowは旧rejectから新入力を保護し、resolveするProvi
         const partial = `${target} partial answer`;
         const failureNotice = `${target} provider execution failed`;
         const started = deferred<void>();
-        const mainResult = deferred<Session>();
         const auxiliaryResult = deferred<AuxiliarySession>();
         const requests: Array<{ id: string; text: string }> = [];
-        api.runSessionTurn = (sessionId, request) => {
+        api.enqueueSessionTurn = async (sessionId, request) => {
           requests.push({ id: sessionId, text: request.userMessage });
+          main = { ...main, status: "running", runState: "running", messages: [...main.messages, { role: "user", text: request.userMessage }] };
+          notifyMain();
           started.resolve();
-          return mainResult.promise;
+          return { sessionId, incarnationId: request.incarnationId, id: request.clientRequestId!, requestId: request.clientRequestId!, sequence: 1, state: "running",
+            captured: { request: { ...request, clientRequestId: request.clientRequestId! }, attachments: [], provider: main.provider, workspacePath: main.workspacePath },
+            turnId: "turn", userMessageSeq: main.messages.length - 1, reason: null, releasedAt: null, createdAt: main.updatedAt, updatedAt: main.updatedAt };
         };
         api.runAuxiliarySessionTurn = (sessionId, request) => {
           requests.push({ id: sessionId, text: request.userMessage });
@@ -373,8 +396,7 @@ test("Session Windowは旧rejectから新入力を保護し、resolveするProvi
           reportedError = deferred<string>();
           const error = new Error(`${target} request rejected`);
           await act(async () => {
-            if (target === "Main") mainResult.reject(error);
-            else auxiliaryResult.reject(error);
+            auxiliaryResult.reject(error);
             assert.equal(await reportedError.promise, error.message);
           });
           assert.equal(textarea().value, newInput, `${target}: old rejection must not restore over a later edit`);
@@ -383,9 +405,9 @@ test("Session Windowは旧rejectから新入力を保護し、resolveするProvi
           await act(async () => {
             if (target === "Main") {
               main = { ...main, status: "idle", runState: "error", messages: [
-                ...main.messages, { role: "user", text: prompt }, { role: "assistant", text: `${partial}\n\n${failureNotice}` },
+                ...main.messages, { role: "assistant", text: `${partial}\n\n${failureNotice}` },
               ] };
-              mainResult.resolve(main);
+              notifyMain();
             } else {
               auxiliary = { ...auxiliary, runState: "error", composerDraft: "", messages: [
                 ...auxiliary.messages, { role: "user", text: prompt }, { role: "assistant", text: `${partial}\n\n${failureNotice}` },

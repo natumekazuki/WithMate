@@ -12,6 +12,7 @@ import type {
 } from "../../src-shared/session/session-state.js";
 
 import { parseCreateSessionRequest } from "../session/create-session-request.js";
+import { SessionTurnQueuePreflightRejectedError } from "../app/main-session-turn-queue-facade.js";
 
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
@@ -26,6 +27,12 @@ import {
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_STEER_SESSION_TURN_CHANNEL,
+  WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL,
+  WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL,
+  WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL,
+  WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL,
+  WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL,
+  WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
   WITHMATE_SET_SESSION_TITLE_CHANNEL,
@@ -78,6 +85,45 @@ export function registerSessionRuntimeHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcSessionRuntimeDeps,
 ): void {
+  const queue = () => {
+    if (!deps.queue) throw new Error("The session turn queue is unavailable.");
+    return deps.queue;
+  };
+  ipcMain.handle(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL, async (event, sessionId: string, request: RunSessionTurnRequest & { incarnationId: string }) => {
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    try {
+      return await queue().enqueueSessionTurn(sessionId, request);
+    } catch (error) {
+      if (error instanceof SessionTurnQueuePreflightRejectedError) return { state: "rejected", reason: error.message };
+      throw error;
+    }
+  });
+  ipcMain.handle(WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL, async (event, sessionId: string, requestId: string) => {
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    const receipt = await queue().getSessionTurnQueueReceipt(sessionId, requestId);
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    return receipt;
+  });
+  ipcMain.handle(WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL, async (event, sessionId: string) => {
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    const receipts = await queue().listSessionTurnQueue(sessionId);
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    return receipts;
+  });
+  ipcMain.handle(WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL, async (event, sessionId: string, options?: { cursor?: number; limit?: number }) => {
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    const page = await queue().listSessionTurnQueueReceipts(sessionId, options);
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    return page;
+  });
+  ipcMain.handle(WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL, (event, sessionId: string, id: string) => {
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    return queue().cancelQueuedSessionTurn(sessionId, id);
+  });
+  ipcMain.handle(WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL, (event, sessionId: string, id: string) => {
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    return queue().releaseInterruptedSessionTurn(sessionId, id);
+  });
   ipcMain.handle(
     WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
     (_event, sessionId: string) => {
@@ -195,8 +241,10 @@ export function registerSessionRuntimeHandlers(
   );
   ipcMain.handle(
     WITHMATE_RUN_SESSION_TURN_CHANNEL,
-    async (_event, sessionId: string, request: RunSessionTurnRequest) =>
-      deps.runSessionTurn(sessionId, request),
+    async (event, sessionId: string, request: RunSessionTurnRequest) => {
+      assertOwningSessionWindowSender(event, sessionId, deps);
+      return deps.runSessionTurn(sessionId, request);
+    },
   );
   ipcMain.handle(
     WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
