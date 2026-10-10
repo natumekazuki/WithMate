@@ -108,11 +108,12 @@ test("Character usage は fallback・空ID・無効JSON・owner回復・同時�
 // scope = "session-storage-v6-character-usage-distribution"
 // lifecycle = "permanent"
 // impact = "Character使用履歴の欠落や重複でHomeのランダム選択の重みが変わる"
-// distinction = "小さいedge fixtureと異なり20/3000 Character分布の全返却を固定した入力規則から検証する。時間閾値は置かず、metadataのみのbatch挿入でCI費用を限定する"
+// distinction = "小さいedge fixtureと異なり19/3000 Character分布の全返却を固定した入力規則から検証する。時間閾値は置かず、metadataのみのbatch挿入でCI費用を限定する"
 // @end-test-value
 test("Character usage は少数/多数Character分布の全件を最新使用順で返す", async () => {
   const count = 3000;
-  for (const characterCount of [20, count]) {
+  // 19 makes repeated IDs use both storage routes and gives oldest/latest rows different orders.
+  for (const characterCount of [19, count]) {
     const rows = Array.from({ length: count }, (_, index): UsageRow => {
       const characterId = `char-${index % characterCount}`;
       return {
