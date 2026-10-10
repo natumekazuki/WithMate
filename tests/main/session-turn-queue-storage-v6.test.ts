@@ -242,6 +242,7 @@ test("queue receipt はcapture・再送照合・FIFO・中断保留を永続化�
     const firstInput = input();
     const original = structuredClone(firstInput);
     const first = queue.enqueue(owner, firstInput);
+    assert.deepEqual(first.captured, original);
     firstInput.request.userMessage = "changed later";
     firstInput.attachments[0]!.absolutePath = "C:/workspace/other.txt";
     const second = queue.enqueue(owner, input("Second"));
@@ -249,6 +250,7 @@ test("queue receipt はcapture・再送照合・FIFO・中断保留を永続化�
     queue.cancelQueued(owner, third.id);
     queue.close();
     queue = new SessionTurnQueueStorageV6(dbPath);
+    assert.deepEqual(queue.getReceipt(owner, original.request.clientRequestId)?.captured, original);
     assert.deepEqual(queue.getReceipt(owner, original.request.clientRequestId), first);
     assert.equal(queue.enqueue(owner, original).id, first.id);
     assert.throws(() => queue.enqueue(owner, { ...original, request: { ...original.request, userMessage: "different" } }), /different payload/);

@@ -155,7 +155,7 @@ test("Main Affect drainはtarget照合と最新Character ownerを検証し読取
 // scope = "Main Affect lifecycle factory・drain・settler・ownership coordinator・実SQLite settlement storage"
 // lifecycle = "permanent"
 // impact = "runtime再起動やDB交換により完了済みTurnのAffectが永久待機または誤適用になる"
-// distinction = "settlerへ直接依存を注入するtestと異なり、Mainと同じdrainのattempt取得・例外処理・中断回収・cursor管理を通す。外部LLM/contextのみ制御し一時DBで短時間に検証する"
+// distinction = "settlerへ直接依存を注入するtestと異なり、Mainと同じdrainのattempt取得・例外処理・中断回収・cursor管理と実SQLite settlement storageを通す。LLM/contextとSession metadata・target identityはfixtureで待機と例外を制御する"
 // @end-test-value
 test("Main Affect drainは交換前の評価・owner読取結果と例外を破棄してcurrent pendingを回復する", { timeout: 10_000 }, async (t) => {
   for (const replacement of ["runtime", "storage"] as const) {

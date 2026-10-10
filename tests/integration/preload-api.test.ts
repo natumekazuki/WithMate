@@ -625,7 +625,7 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
 // observation_boundary = "public-boundary"
 // scope = "preload public API keys"
 // lifecycle = "permanent"
-// distinction = "型検査では確認できない実際の公開objectを現行method集合と比較して余剰keyと不足keyを検出する"
+// distinction = "不足keyは型検査でも検出できるが、spread等で混入する余剰runtime keyは型だけでは排除できない。実際の公開objectを現行method集合と比較して公開surfaceの過不足を検出する"
 // @end-test-value
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();

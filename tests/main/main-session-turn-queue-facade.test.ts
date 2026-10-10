@@ -104,7 +104,13 @@ test("再送は正規化済みrequestのreceiptを返し再捕捉しない", asy
 // @end-test-value
 test("受付は本文と設定と添付path descriptorを捕捉する", async () => {
   const { facade, deps, input, preview, session, service } = fixture();
-  const options = captureSessionExecutionOptions(input.executionOptions);
+  const options = {
+    catalogRevision: 7, model: "captured-model", reasoningEffort: "high", approvalMode: "on-request",
+    codexSandboxMode: "workspace-write-network", codexSpeed: "fast", codexReviewer: "auto-review", customAgentName: "captured-agent",
+  } as const;
+  input.executionOptions = { ...options };
+  session.model = options.model;
+  session.reasoningEffort = options.reasoningEffort;
   const descriptors = structuredClone(preview.attachments);
   deps.preview = async (_, message) => {
     assert.equal(message, "Inspect @input.txt");

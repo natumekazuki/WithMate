@@ -58,6 +58,7 @@ test("ContextFeature retains acquired commands through refresh failures and expo
   const render = async () => { await act(async () => root.render(<SessionContextFeature api={api} selectedSession={session} displayedSession={session} activeRunSessionId={session.id} renderedIsRunning={false} visible availableReasoningEfforts={["medium"]} navigator={{}} onShowContextRail={noop} onAnnotationMatcherChange={noop} />)); };
   const publish = async () => { await act(async () => { for (const listener of listeners) listener(session.id); }); };
   const command = () => container.querySelector("[aria-label='Executed command']")?.textContent ?? "";
+  const details = () => container.querySelector("details")?.textContent ?? "";
   const retry = async () => {
     const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "Retry");
     assert.ok(button, "Retry remains available beside the acquired command");
@@ -66,21 +67,24 @@ test("ContextFeature retains acquired commands through refresh failures and expo
   try {
     await render();
     assert.match(command(), /npm test/);
-    assert.match(container.querySelector("details")!.textContent ?? "", /Command Details.*acquired output/);
+    assert.match(details(), /Command Details.*acquired output/);
     for (const trigger of ["notification", "session revision"] as const) {
       const pending = deferred<SessionTurnRecord | null>();
       nextTurn = pending;
       if (trigger === "notification") await publish();
       else { session = { ...session, updatedAt: "refresh revision" }; await render(); }
       assert.match(command(), /npm test/, trigger);
+      assert.match(details(), /Command Details.*acquired output/, trigger);
       assert.ok(container.querySelector("[aria-busy='true']"));
       await act(async () => pending.reject(new Error("temporary turn read failed")));
       assert.match(command(), /npm test/);
+      assert.match(details(), /Command Details.*acquired output/);
       assert.match(container.querySelector("[role='alert']")!.textContent ?? "", /temporary turn read failed/);
       const retryTurn = deferred<SessionTurnRecord | null>();
       nextTurn = retryTurn;
       await retry();
       assert.match(command(), /npm test/);
+      assert.match(details(), /Command Details.*acquired output/);
       await act(async () => retryTurn.resolve(turn));
       assert.equal(container.querySelector("[role='alert']"), null);
     }
@@ -88,14 +92,17 @@ test("ContextFeature retains acquired commands through refresh failures and expo
     nextArtifact = artifactRead;
     await publish();
     assert.match(command(), /npm test/);
+    assert.match(details(), /Command Details.*acquired output/);
     assert.ok(container.querySelector("[aria-busy='true']"));
     await act(async () => artifactRead.reject(new Error("temporary artifact read failed")));
     assert.match(command(), /npm test/);
+    assert.match(details(), /Command Details.*acquired output/);
     assert.match(container.querySelector("[role='alert']")!.textContent ?? "", /temporary artifact read failed/);
     const retryArtifact = deferred<MessageArtifact | null>();
     nextArtifact = retryArtifact;
     await retry();
     assert.match(command(), /npm test/);
+    assert.match(details(), /Command Details.*acquired output/);
     await act(async () => retryArtifact.resolve(saved));
     assert.equal(container.querySelector("[role='alert']"), null);
     turn = { ...turn, id: 2, phase: "running", assistantMessageSeq: undefined };

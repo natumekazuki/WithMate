@@ -193,6 +193,14 @@ test("queuedの取消は現在runを継続させる", async () => {
 test("closeは受付済みmutationと実行終端を待ち後続を開始しない", async () => {
   const { store, rows } = boundary();
   const terminal = deferred<{ state: "completed" }>();
+  const terminalCommit = deferred<void>();
+  const settling = deferred<void>();
+  const settle = store.settle;
+  store.settle = async (...args) => {
+    settling.resolve();
+    await terminalCommit.promise;
+    return settle(...args);
+  };
   const ids: string[] = [];
   const service = new SessionTurnQueueService({ store, isRunInFlight: () => false, dispatch: async (receipt) => {
     ids.push(receipt.id);
@@ -208,10 +216,15 @@ test("closeは受付済みmutationと実行終端を待ち後続を開始しな�
   const closing = service.close().then(() => { closed = true; });
   assert.throws(() => service.enqueue(owner, captured("third")), /shutting down/);
   terminal.resolve({ state: "completed" });
+  await settling.promise;
   await flush();
   assert.equal(closed, false);
   commit.resolve();
   assert.equal((await accepted).state, "queued");
+  await flush();
+  assert.equal(closed, false);
+  assert.equal(rows[0]!.state, "starting");
+  terminalCommit.resolve();
   await closing;
   assert.deepEqual(ids, ["first"]);
   assert.deepEqual(rows.map((row) => row.state), ["completed", "queued"]);
@@ -289,9 +302,9 @@ test("startは未claimを再開しclaim済みは再実行しない", async () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "terminal保存結果が不明なとき同process内のwakeや追加受付で後続を実行しない"
+// claim = "terminal保存返信が不明で正本照会も失敗したとき同process内のwakeや追加受付で後続を実行しない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Decision" }
-// fault = "保存がcommit後にthrowした場合にterminal行を根拠に次要求を実行する"
+// fault = "terminal保存返信喪失後、正本照会も失敗したのに確認済み終端と推定して次要求を実行する"
 // observable = "保存返信失敗後のdispatch ID列と追加受付のqueued state"
 // observation_boundary = "component-behavior"
 // scope = "Main durable queue unknown terminal commit"

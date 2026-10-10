@@ -362,9 +362,9 @@ it("queued runtimeは開始とterminal保存の不明結果を救済しない", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued provider失敗/取消はACKされたterminal phaseを確定結果として返す"
+// claim = "queued provider失敗/取消のterminal保存phaseと返却stateがそれぞれfailed/canceledに対応する"
 // oracle = { type = "contract", ref = "src-electron/session/session-turn-terminal-commit.ts SessionTurnTerminalCommit" }
-// fault = "保存済み取消をfailedへ変換するかACK前に結果を返す"
+// fault = "provider取消をfailedとして保存または返却し、terminal phaseとdispatch stateの対応を失う"
 // observable = "appendTerminal phaseとdispatch返却state、onStarted minimum turn ID"
 // observation_boundary = "public-boundary"
 // scope = "queued runtime confirmed failure and cancellation"
@@ -3915,15 +3915,15 @@ releaseSecondAttempt!();
 
   // @test-value v2
   // kind = "contract"
-  // claim = "completed Sessionを保存した後にその保存結果で通知し、通知の非同期failureはturn成功を変更しない"
+  // claim = "成功turnの通知には保存されたcompleted Sessionと同じ内容を渡し、通知Promise rejectionはturn成功を変更しない"
   // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
-  // fault = "永続化前snapshotを通知するか、通知Promise rejectionでcompleted turnをfailedへ変更する"
+  // fault = "保存結果と異なるSessionを通知するか、通知Promise rejectionでcompleted turnをfailedへ変更する"
   // scope = "session-runtime-completed-terminal-notification"
   // observable = "通知へ渡される保存済みSessionとturn結果"
   // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // @end-test-value
-  it("Session success を保存後に通知し、通知 failure は turn を失敗させない", async () => {
+  it("Session success の保存内容を通知し、通知 failure は turn を失敗させない", async () => {
     const session = createSession();
     let persistedCompletedSession: Session | null = null;
     let notifiedSession: Session | null = null;

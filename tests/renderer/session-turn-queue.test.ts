@@ -161,9 +161,9 @@ test("known rejection preserves draft and releases uncertainty without receipt l
 
 // @test-value v2
 // kind = "contract"
-// claim = "同文queue turnは保存seqとincarnationだけで接続し、terminal先着でもcanonical user到着まで本文を保持する"
+// claim = "同文queue turnは保存seqとincarnationだけで接続し、terminal先着でもcanonical user到着まで本文を保持し、queued tailは受付順に並ぶ"
 // oracle = { type = "contract", ref = "Issue #801: queue projection canonical barrier" }
-// fault = "本文一致で別turnを結合し、terminal通知で未接続promptを落とすか旧incarnationを表示する"
+// fault = "本文一致で別turnを結合し、terminal通知で未接続promptを落とすか旧incarnationを表示する、またはqueued tailの受付順を逆転する"
 // observable = "queue source・key・本文の投影、canonical到着後の重複なし接続、FIFO tail順序"
 // observation_boundary = "consumer"
 // scope = "queue-conversation-projection"
@@ -176,11 +176,12 @@ test("queue projection uses canonical sequence and preserves terminal barrier", 
     { liveAssistant: { sessionId: owner.id, threadId: "thread", messageIndex: 41, text: "live" } });
   const started = receipt({ state: "running", turnId: "turn", userMessageSeq: 42 });
   const queued = receipt({ id: "next", sequence: 2 });
+  const queuedLater = receipt({ id: "later", sequence: 3 });
   const context = { sessionId: owner.id, incarnationId: request.incarnationId };
-  const projected = projectSessionTurnQueue(history, [queued, started, receipt({ id: "old", incarnationId: "old" })], context);
+  const projected = projectSessionTurnQueue(history, [queuedLater, queued, started, receipt({ id: "old", incarnationId: "old" })], context);
   assert.deepEqual(projected.projection.messages.map((message) => message.text), ["A", "A", "live"]);
   assert.equal(projected.projection.sources[1].kind, "turn-queue");
-  assert.deepEqual(projected.tail.map((row) => row.id), ["next"]);
+  assert.deepEqual(projected.tail.map((row) => row.id), ["next", "later"]);
   const terminal = projectSessionTurnQueue(history, [{ ...started, state: "completed" }, queued], context);
   assert.deepEqual(terminal.projection.messages.map((message) => message.text), ["A", "A", "live"]);
   assert.deepEqual(projectSessionTurnQueue(history, [{ ...started, state: "canceled" }], context).projection.messages.map((message) => message.text), ["A", "A", "live"]);
