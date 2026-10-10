@@ -49,12 +49,29 @@ export class CodexProjectionOwner {
   apply(event: CodexNativeNotification): CodexProjectionEvent {
     const revision = this.state.revision;
     const errorMessage = this.state.streamErrorMessage;
+    if (event.params && typeof event.params === "object") {
+      const params = event.params as Record<string, unknown>;
+      if (event.method === "item/started" || event.method === "item/completed") {
+        event = { ...event, params: { ...params, item: this.sanitizeMcpResult(params.item) } };
+      } else if (event.method === "turn/completed" && params.turn && typeof params.turn === "object") {
+        const turn = params.turn as Record<string, unknown>;
+        if (Array.isArray(turn.items)) {
+          event = { ...event, params: { ...params, turn: { ...turn, items: turn.items.map(item => this.sanitizeMcpResult(item)) } } };
+        }
+      }
+    }
     applyCodexTurnEvent(this.state, event);
     return {
       changed: this.input.progress && revision !== this.state.revision,
       ...(this.input.progress && errorMessage !== this.state.streamErrorMessage
         ? { errorMessage: this.redactor.sanitizeText(this.state.streamErrorMessage) } : {}),
     };
+  }
+
+  private sanitizeMcpResult(value: unknown): unknown {
+    if (!value || typeof value !== "object" || (value as Record<string, unknown>).type !== "mcpToolCall") return value;
+    const item = value as Record<string, unknown>;
+    return { ...item, result: this.redactor.sanitize(item.result), error: this.redactor.sanitize(item.error) };
   }
 
   live(inputAvailable: boolean, force = false): CodexProjectionProgress | null {

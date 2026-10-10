@@ -19,6 +19,7 @@ import { SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA } from "../../src-electron/sess
 import { PROVIDER_RAW_ITEMS_JSON_LIMIT, PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
 import { buildCodexStableRawItems, toMessageOperations } from "../../src-electron/providers/codex/codex-event-projection.js";
 import { WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
+import type { LiveRunStep } from "../../src-shared/session/runtime-state.js";
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
   label: "OpenAI Codex",
@@ -172,6 +173,83 @@ class FakeTransport {
   async close() { this.closed = true; }
   whenClosed(): Promise<void> { return Promise.resolve(); }
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Codex MCPの取得済みcontentとstructured false/0・明示空結果はliveと通常artifactに一致して残り、未取得は入力で補完せず失敗・取消でもpartial結果と個別error/statusを維持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Boundary / Session Flow 8-10; src-electron/providers/codex/codex-turn-events.ts: CodexTurnItem mcpToolCall result" }
+// fault = "content-onlyをargumentsへ置換する、false/0や空contentを未取得と混同する、errorまたはturn終端で取得結果を消す、結果のsecretや巨大出力をそのまま公開する"
+// observable = "実Workerを使うCodexAdapterのprogress stepsとcompleted/failed/canceled result.artifact.operationTimelineのdetails・ID・status・error・exitCode"
+// observation_boundary = "public-boundary"
+// scope = "Codex MCP native通知から通常artifactとlive callbackまで"
+// lifecycle = "permanent"
+// impact = "利用者が取得済みtool結果をDetailsで読めない、入力を結果と誤認する、またはcredentialを公開する"
+// distinction = "projection単体や型検査ではadapterの成功・partial artifact接続と実Worker redactionを確認できない。短い合成通知の3終端ケースで接続を維持する"
+// @end-test-value
+it("Codex MCPの取得結果をliveと成功・失敗・取消artifactへ保持する", async () => workspace(async (directory) => {
+  const secret = "synthetic-mcp-api-secret";
+  for (const terminal of ["completed", "failed", "interrupted"] as const) {
+    const base = { type: "mcpToolCall", server: "fixture", tool: "lookup", arguments: { query: "synthetic input" }, error: null, status: "completed" };
+    const items = [
+      { ...base, id: "content", result: { structuredContent: null, content: [{ type: "text", text: "synthetic acquired result" }] } },
+      { ...base, id: "structured", result: { structuredContent: { answer: "structured acquired result" }, content: [{ type: "text", text: "not selected" }] } },
+      { ...base, id: "false", result: { structuredContent: false, content: [] } },
+      { ...base, id: "zero", result: { structuredContent: 0, content: [] } },
+      { ...base, id: "empty", result: { structuredContent: null, content: [] } },
+      { ...base, id: "unavailable", result: null, status: "inProgress" },
+      { ...base, id: "partial", result: { structuredContent: null, content: [{ type: "text", text: "partial acquired result" }] }, error: { message: "tool failure " + secret }, status: "failed" },
+      { ...base, id: "large", result: { structuredContent: null, content: [{ type: "text", text: "protected " + secret + " " + "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 20) }] } },
+    ];
+    const transport = new FakeTransport();
+    transport.events = [
+      ...items.map(item => notification(item.status === "inProgress" ? "item/started" : "item/completed", { item })),
+      notification("turn/completed", { turn: { id: "turn-1", status: terminal, items, error: terminal === "failed" ? { message: "turn failure" } : null } }),
+    ];
+    const input = createCodexRunSessionTurnInput(directory);
+    input.appSettings.codingProviderSettings.codex.apiKey = secret;
+    const live = new Map<string, LiveRunStep>();
+    let rejected = false;
+    const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input, state => {
+      for (const step of state.steps) live.set(step.id, step);
+    }).catch((error: unknown) => {
+      rejected = true;
+      assert.notEqual(terminal, "completed");
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.canceled, terminal === "interrupted");
+      return error.partialResult;
+    });
+    assert.equal(rejected, terminal !== "completed");
+    const operations = result.artifact!.operationTimeline!;
+    assert.deepEqual(operations.map(operation => operation.id), items.map(item => item.id));
+    const expectedDetails = [
+      '[{"type":"text","text":"synthetic acquired result"}]',
+      '{"answer":"structured acquired result"}', "false", "0", "[]", undefined,
+      '[{"type":"text","text":"partial acquired result"}]',
+    ];
+    for (const [index, item] of items.entries()) {
+      const operation = operations[index];
+      const step = live.get(item.id);
+      assert.ok(step, `${terminal}: missing live ${item.id}`);
+      assert.ok(step.details === operation.details, `${terminal}: inconsistent live/artifact ${item.id}`);
+      if (item.id !== "large") assert.equal(operation.details, expectedDetails[index]);
+      assert.equal(operation.status, item.status === "inProgress" ? "in_progress" : item.status);
+      assert.equal(step.status, operation.status);
+      assert.equal(operation.exitCode, undefined);
+      assert.equal(step.exitCode, undefined);
+      assert.deepEqual(step.error, operation.error);
+    }
+    const partial = operations.find(operation => operation.id === "partial")!;
+    assert.ok(partial.error);
+    assert.ok(partial.error.message.startsWith("tool failure "));
+    assert.match(partial.error.message, /REDACTED/);
+    const large = operations.find(operation => operation.id === "large")!.details!;
+    assert.ok(large.length <= PROVIDER_TEXT_PREVIEW_LIMIT + 100);
+    assert.match(large, /truncated/);
+    assert.match(large, /REDACTED/);
+    assert.ok(!JSON.stringify([...live.values(), operations]).includes(secret));
+    assert.equal(transport.closed, true);
+  }
+}));
 
 // @test-value v2
 // kind = "contract"

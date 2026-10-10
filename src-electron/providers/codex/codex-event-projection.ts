@@ -12,7 +12,7 @@ import {
   type BoundedProviderRawItem,
 } from "../../session/provider-payload-limits.js";
 import type { WorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
-import { getCodexCommandOutputPreview, type CodexTurnItem } from "./codex-turn-events.js";
+import { getCodexCommandOutputPreview, getCodexMcpResultPreview, type CodexTurnItem } from "./codex-turn-events.js";
 export type { CodexTurnItem } from "./codex-turn-events.js";
 export type CodexChangedFileProjectionDeps = {
   normalizeWorkspaceRelativePath: (
@@ -157,11 +157,7 @@ export function toMessageOperations(items: CodexTurnItem[]): MessageOperation[] 
             ...(item.error ? { error: { message: toProviderTextPreview(item.error.message) ?? "" } } : {}),
             type: "mcp_tool_call",
             summary: `${item.server}/${item.tool}`,
-            details:
-              toProviderTextPreview(item.error?.message) ??
-              stringifyBoundedProviderValue(
-                item.result?.structuredContent ?? item.arguments,
-              ),
+            details: getCodexMcpResultPreview(item),
           },
         ];
       case "collabAgentToolCall":

@@ -235,6 +235,14 @@ export function getCodexCommandOutputPreview(
   return `${item.aggregatedOutput}\n...[truncated ${originalLength - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${originalLength}]`;
 }
 
+export function getCodexMcpResultPreview(
+  item: Extract<CodexTurnItem, { type: "mcpToolCall" }>,
+): string | undefined {
+  return stringifyBoundedProviderValue(
+    item.result?.structuredContent ?? item.result?.content,
+  );
+}
+
 function liveStep(item: CodexTurnItem): LiveRunStep | null {
   const status = "status" in item ? item.status : "completed";
   const liveStatus = status === "inProgress" ? "in_progress" : status === "declined" ? "failed" : status;
@@ -264,11 +272,7 @@ function liveStep(item: CodexTurnItem): LiveRunStep | null {
         type: "mcp_tool_call",
         summary: `${item.server}/${item.tool}`,
         ...(item.error ? { error: { message: toProviderTextPreview(item.error.message) ?? "" } } : {}),
-        details:
-          toProviderTextPreview(item.error?.message) ??
-          stringifyBoundedProviderValue(
-            item.result?.structuredContent ?? item.arguments,
-          ),
+        details: getCodexMcpResultPreview(item),
         status: liveStatus,
       };
     case "collabAgentToolCall":
