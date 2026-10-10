@@ -945,6 +945,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const projectionFailure = new Promise<never>((_resolve, reject) => { rejectProjectionFailure = reject; });
     void projectionFailure.catch(() => undefined);
     const pendingEvents = new Set<Promise<void>>();
+    const pendingControls = new Set<Promise<void>>();
     let eventBatch: { method: string; params: unknown }[] = [];
     let batchImmediate: NodeJS.Immediate | undefined;
     let liveTimer: NodeJS.Timeout | undefined;
@@ -991,9 +992,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const publishControl = (patch: Partial<CodexProjectionProgress["state"]> = { inputAvailable: false }) => {
       if (!lastLive || !args.onProgress) return;
       lastLive = { ...lastLive, ...patch };
-      void Promise.resolve(args.onProgress(lastLive, {
+      const completion = Promise.resolve(args.onProgress(lastLive, {
         steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
-      })).catch(failProjection);
+      })).catch(failProjection).finally(() => { pendingControls.delete(completion); });
+      pendingControls.add(completion);
     };
     const flushEvents = () => {
       if (batchImmediate) { clearImmediate(batchImmediate); batchImmediate = undefined; }
@@ -1201,6 +1203,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         else batchImmediate ??= setImmediate(flushEvents);
       }
       await Promise.all(pendingEvents);
+      await Promise.all(pendingControls);
       if (projectionError) throw projectionError;
       if (interactionError) throw interactionError;
       if (state.terminalStatus !== "completed")
@@ -1219,6 +1222,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       )
         this.activeTurns.delete(sessionInput.session.id);
       await Promise.all(pendingEvents);
+      await Promise.all(pendingControls);
       await progress(true).catch((error) =>
         this.writeLog({
           level: "warn",
