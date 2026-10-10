@@ -99,7 +99,7 @@ Window復元候補のsnapshotは任意保存とし、open完了・quit準備は�
 
 Home／Session Monitorには別の`withmate:live-session-run-status` eventで`runState`・`cancellationState`だけを明示投影する。本文、reasoning、step、operation、承認・質問詳細を生成・転送・保持せず、本文サイズと独立したpayloadにする。Settings／MemoryReview等はこの通知の宛先に含めない。Home／Monitorは通知をsummary再取得の契機とし、表示の正本は既存のsummary応答とする。
 
-Auxiliaryの配送用親関連は実行受付とruntimeの保存済み会話読込みから得る。admissionの予約とは分け、run呼出しが収束した後も取消実終了待ち・background通知・終端`null`へ適用する。persistent storeのclose・交換時に破棄する。Session Window内のdetail consumer、controls projection、初回取得・detail再open・古い取得の破棄は既存の単一live ingressが所有する。
+Auxiliaryの配送用親関連は実行受付とruntimeの保存済みactive会話読込みから得る。admissionの予約とは分け、run呼出しが収束した後も取消実終了待ち・retained live・background通知・終端`null`へ適用する。admission・実行（取消実終了待ちを含む）・保持liveがすべてなくなった時に、終端通知の配送後に解除する。Auxiliaryのclose・親Session削除でも解除し、遅い会話読込みで不要な関連を再登録しない。persistent storeのclose・交換時に破棄し、古いstorage ownerの登録・通知・解除を新しいownerへ適用しない。Session Window内のdetail consumer、controls projection、初回取得・detail再open・古い取得の破棄は既存の単一live ingressが所有する。
 
 ### AuxWindowService
 

@@ -66,6 +66,7 @@ import type {
 } from "../src-shared/prompt-template.js";
 import { resolveAuxiliaryParentSession } from "./auxiliary/auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "./auxiliary/auxiliary-session-service.js";
+import { AuxiliaryLiveRunParents } from "./auxiliary/auxiliary-live-run-parents.js";
 import { admitSessionTurn } from "./session/session-turn-admission.js";
 import {
   AuxiliarySessionStorage,
@@ -994,8 +995,13 @@ async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean,
 }
 
 const auxiliaryRunParents = new Map<string, string>();
-// Unlike admission reservations, live delivery ownership survives cancellation grace.
-const auxiliaryLiveRunParents = new Map<string, string>();
+const auxiliaryLiveRunParents = new AuxiliaryLiveRunParents({
+  getStorageOwner: () => mainStoreContext.activePersistentStoreOwner,
+  isRunPending: (sessionId) => auxiliaryRunParents.has(sessionId)
+    || Boolean(auxiliarySessionRuntimeService?.isRunInFlight(sessionId)),
+  hasLiveSessionRun: (sessionId) => Boolean(sessionObservabilityService?.getLiveSessionRun(sessionId)),
+  broadcastLiveSessionRun: (sessionId, state) => requireWindowBroadcastService().broadcastLiveSessionRun(sessionId, state),
+});
 let databaseMaintenanceRequested = false;
 function requireActivePersistentStoreOwnerForFactory(ownerName: string): PersistentStoreBundle {
   return capturePersistentStoreOwner(
@@ -1431,6 +1437,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                       const service = requireAuxiliarySessionService();
                       const current = await service.getAuxiliarySession(auxiliarySessionId);
                       const closed = await service.closeAuxiliarySession(auxiliarySessionId);
+                      auxiliaryLiveRunParents.delete(auxiliarySessionId, owner);
                       return { current, closed };
                     }, "auxiliary-session-close"),
                     "auxiliary-session-close",
@@ -1443,10 +1450,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   return closed;
                 },
                 runAuxiliarySessionTurn: (auxiliarySessionId, request) => requireAuxiliarySessionService().trackPendingDraftSend(async () => {
+                  const owner = requireActivePersistentStoreOwnerForFactory("Auxiliary run admission");
                   if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) {
                     throw new Error("The app is quitting, so a new message cannot be sent.");
                   }
                   const initial = await requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
+                  assertPersistentStoreOwnerIsActive(owner, "Auxiliary run admission");
                   if (!initial) {
                     throw new Error("The Auxiliary Session could not be found.");
                   }
@@ -1457,7 +1466,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     throw new Error("The Auxiliary Session is already running.");
                   }
                   auxiliaryRunParents.set(auxiliarySessionId, initial.parentSessionId);
-                  auxiliaryLiveRunParents.set(auxiliarySessionId, initial.parentSessionId);
+                  auxiliaryLiveRunParents.remember(initial, owner);
                   try {
                     if (request.submitSource === "composer") {
                       if (!request.auxiliaryDraftIncarnation || request.auxiliaryDraftDurableRevision === undefined) {
@@ -1485,6 +1494,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     return session;
                   } finally {
                     auxiliaryRunParents.delete(auxiliarySessionId);
+                    auxiliaryLiveRunParents.releaseIfUnused(auxiliarySessionId, owner);
                   }
                 }),
                 steerAuxiliarySessionTurn: (auxiliarySessionId, request) => requireAuxiliarySessionService().trackPendingDraftSend(async () => {
@@ -2300,7 +2310,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         getSession: async (sessionId) => {
           const auxiliary = await requireAuxiliarySessionService().getAuxiliarySession(sessionId);
           assertPersistentStoreOwnerIsActive(owner, "Auxiliary live delivery owner");
-          if (auxiliary) auxiliaryLiveRunParents.set(sessionId, auxiliary.parentSessionId);
+          if (auxiliary) auxiliaryLiveRunParents.remember(auxiliary, owner);
           return auxiliary;
         },
         persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
@@ -2396,7 +2406,10 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         clearSessionContextTelemetry,
         clearSessionBackgroundActivities,
         invalidateProviderSessionThread,
-        revokeSessionAgentRuntimeBindings: (sessionId) => agentRuntimeBindingRegistry.revokeSession(sessionId),
+        revokeSessionAgentRuntimeBindings: (sessionId) => {
+          agentRuntimeBindingRegistry.revokeSession(sessionId);
+          auxiliaryLiveRunParents.delete(sessionId, owner);
+        },
         closeSessionWindow: (sessionId) => {
           requireSessionWindowBridge().closeSessionWindow(sessionId);
           requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
@@ -2502,6 +2515,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
 
 function requireSessionObservabilityService(): SessionObservabilityService {
   if (!sessionObservabilityService) {
+    const owner = mainStoreContext.activePersistentStoreOwner;
     sessionObservabilityService = new SessionObservabilityService({
       onProviderQuotaTelemetryChanged: (providerId, telemetry) => {
         requireWindowBroadcastService().broadcastProviderQuotaTelemetry(providerId, telemetry);
@@ -2513,7 +2527,7 @@ function requireSessionObservabilityService(): SessionObservabilityService {
         requireWindowBroadcastService().broadcastSessionBackgroundActivity(sessionId, kind, state);
       },
       onLiveSessionRunChanged: (sessionId, state) => {
-        requireWindowBroadcastService().broadcastLiveSessionRun(sessionId, state);
+        auxiliaryLiveRunParents.publish(sessionId, state, owner);
       },
     });
     copilotAdapter.setBackgroundTasksObserver((sessionId, tasks) => {
