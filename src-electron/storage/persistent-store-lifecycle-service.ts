@@ -127,6 +127,7 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "getConversationPage"
   | "upsertAuxiliarySession"
   | "updateAuxiliarySessionIfMatches"
+  | "updateTerminalAuxiliarySessionIfMatches"
   | "deleteAuxiliarySessionsForParent"
   | "deleteAuxiliarySessionsExceptParents"
   | "getAuxiliaryDraft"
@@ -499,6 +500,10 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
   }
 
   updateAuxiliarySessionIfMatches(): AuxiliarySession | null {
+    return null;
+  }
+
+  updateTerminalAuxiliarySessionIfMatches(): AuxiliarySession | null {
     return null;
   }
 

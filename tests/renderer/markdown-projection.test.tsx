@@ -137,7 +137,7 @@ test("KaTeX projectionは同じ数式を再利用し変更・削除を通常変�
 // kind = "contract"
 // claim = "mount済みrendererの追記後final DOMは通常全文描画に一致しcode copy・link・選択対象を保つ"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Streaming projection / Link Handling" }
-// fault = "parser projectionがcomponentへ接続されない、後続定義がDOMへ反映されない、code offsetがずれる、または再利用で古いlinkを開く"
+// fault = "後続定義がDOMへ反映されない、code copy対象や選択対象がずれる、または再利用で古いlinkを開く"
 // observable = "更新後innerHTML、選択文字列、clipboard受信本文、openPath受信target"
 // observation_boundary = "component-behavior"
 // scope = "MessageRichText streaming consumer"

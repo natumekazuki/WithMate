@@ -13,6 +13,7 @@ import {
 import { CURRENT_SESSION_SCHEMA_VERSION, isReadOnlySession } from "../../src-shared/session/session-state.js";
 import { normalizeMessage, summarizeMessageArtifact, type Message, type MessageArtifact } from "../../src-shared/session/session-state.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
+import { writeSessionTurnTerminalCommit, type SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
 import type { ProviderRuntimeMetadataPatch } from "../providers/provider-runtime-metadata-patch.js";
 import type {
   AuxiliaryDraftConsumeInput,
@@ -590,6 +591,23 @@ export class AuxiliarySessionStorage {
   }
 
   updateAuxiliarySessionIfMatches(input: AuxiliarySessionUpdateIfMatchesInput): AuxiliarySession | null {
+    return this.storeAuxiliarySessionIfMatches(input);
+  }
+
+  updateTerminalAuxiliarySessionIfMatches(
+    input: AuxiliarySessionUpdateIfMatchesInput,
+    terminalCommit: SessionTurnTerminalCommit,
+  ): AuxiliarySession | null {
+    if (terminalCommit.sessionId !== input.session.id) {
+      throw new Error("The terminal Auxiliary Session owner does not match the turn marker.");
+    }
+    return this.storeAuxiliarySessionIfMatches(input, terminalCommit);
+  }
+
+  private storeAuxiliarySessionIfMatches(
+    input: AuxiliarySessionUpdateIfMatchesInput,
+    terminalCommit?: SessionTurnTerminalCommit,
+  ): AuxiliarySession | null {
     assertFullConversation(input.session);
     assertFullConversation(input.expectedSession);
     return this.withDb((db) => {
@@ -643,6 +661,7 @@ export class AuxiliarySessionStorage {
         const storedRow = db.prepare(`SELECT * FROM auxiliary_sessions WHERE id = ?`).get(input.session.id) as AuxiliarySessionRow | undefined;
         const stored = storedRow ? readAuxiliarySession(db, storedRow) : null;
         if (!stored) throw new Error("The Auxiliary Session could not be read after saving.");
+        if (terminalCommit) writeSessionTurnTerminalCommit(db, terminalCommit, "auxiliary");
         db.exec("COMMIT");
         if (conversationChanged) this.onConversationChanged("auxiliary_session_messages", input.session.id);
         return { ...stored, composerDraft: currentWithDraft?.composerDraft ?? "" };

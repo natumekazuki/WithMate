@@ -94,6 +94,90 @@ function createBaseProps(id: string): SessionMessageColumnProps {
 
 // @test-value v2
 // kind = "contract"
+// claim = "有限Messages一覧は未保存userとassistantを末尾ordinalへ合流し、Bookmark絞込・本文jump・保存確定後の一意性を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 会話列は確定履歴の投影とlive末尾を分離し、保存確定時のmessage key、Bookmark、検索、navigatorを保持する" }
+// fault = "未保存末尾を一覧件数から落とす、同identityまたは保存済み行を二重計上する、または過去閲覧中の未保存jumpをbackendへ送る"
+// observable = "hook controlsのnavigator page items・offset・totalCount、ColumnのmessageJumpRequestと本文、page API呼出回数"
+// observation_boundary = "component-behavior"
+// scope = "conversation-navigator-unsaved-tail"
+// lifecycle = "permanent"
+// impact = "保存を待たず本文に見える送信と応答へMessagesから移動できる"
+// distinction = "既存collapse testはbackend有限ordinalと未保存末尾の合流を通らず、型検査では行と総件数の重複を検知できない"
+// @end-test-value
+test("paged navigator merges unsaved tail with finite ordinals and bookmark filter", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  const previousAct = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const saved = Array.from({ length: 130 }, (_, historyIndex) => ({ role: "user" as const, text: `saved ${historyIndex}`, historyIndex }));
+  const tail = [
+    ...saved.slice(-60),
+    { role: "user" as const, text: "unsaved request", historyIndex: 130 },
+    { role: "assistant" as const, text: "unsaved response", historyIndex: 131, isBookmarked: true },
+    { role: "user" as const, text: "unsaved request", historyIndex: 130 },
+  ];
+  let persistedCount = 130;
+  let pageReads = 0;
+  const api: ConversationMessageColumnApi = {
+    getConversationPage: async (sessionId, request) => {
+      pageReads += 1;
+      const startIndex = request?.startIndex ?? 70;
+      return { sessionId, incarnationId: "first", totalCount: persistedCount, startIndex, messages: saved.slice(startIndex, startIndex + 60) };
+    },
+    listConversationNavigator: async (_sessionId, request) => {
+      const items = [...saved, ...tail.slice(60, 62)].slice(0, persistedCount)
+        .filter((message) => request.filter === "all" || ("isBookmarked" in message && message.isBookmarked))
+        .map((message) => ({ messageIndex: message.historyIndex, role: message.role, preview: message.text, accent: false, isBookmarked: "isBookmarked" in message && message.isBookmarked === true }));
+      return { status: "complete", stamp: { generationId: "generation", ownerIdentity: "main:first", contentRevision: persistedCount, requestId: request.requestId }, incarnationId: "first", messageCount: persistedCount, totalCount: items.length, offset: request.offset ?? 0, items: items.slice(request.offset ?? 0, (request.offset ?? 0) + 64) };
+    },
+  };
+  let latest: ReturnType<typeof useConversationMessageColumn> = null;
+  let controls: ConversationColumnControls | undefined;
+  const getLatest = () => { assert.ok(latest); return latest; };
+  const getControls = () => { assert.ok(controls); return controls; };
+  const getPage = () => { const page = getControls().messageNavigatorPage; assert.ok(page); return page; };
+  function Probe() {
+    latest = useConversationMessageColumn({ session: { id: "main", incarnationId: "first", messages: tail, messageCount: persistedCount }, baseProps: createBaseProps("main"), enabled: true, navigatorActive: true, api, liveRun: null, onColumnControls: (value) => { controls = value; } });
+    return null;
+  }
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(React.createElement(Probe)));
+    assert.equal(getPage().totalCount, 132);
+    await act(async () => getPage().onRequestRange(128));
+    assert.equal(getPage().offset, 64);
+    assert.equal(getPage().items[130 - getPage().offset]?.preview, "unsaved request");
+    assert.equal(getPage().items[131 - getPage().offset]?.preview, "unsaved response");
+    assert.ok(getPage().items.length <= 192);
+    await act(async () => getControls().onJumpToMessage("session-main-3"));
+    assert.equal(pageReads, 1);
+    await act(async () => getControls().onJumpToMessage("session-main-131"));
+    assert.equal(pageReads, 1);
+    assert.equal(getLatest().messageJumpRequest?.key, "session-main-131");
+    assert.ok(getLatest().messages.some((message) => message.text === "unsaved response"));
+    await act(async () => getPage().onFilterChange("bookmarks"));
+    assert.equal(getPage().totalCount, 1);
+    assert.deepEqual(getPage().items.map((entry) => entry.key), ["session-main-131"]);
+    persistedCount = 132;
+    await act(async () => root.render(React.createElement(Probe)));
+    assert.equal(getPage().totalCount, 1);
+    assert.deepEqual(getPage().items.map((entry) => entry.key), ["session-main-131"]);
+    await act(async () => getPage().onFilterChange("all"));
+    await act(async () => getPage().onRequestRange(128));
+    assert.equal(getPage().totalCount, 132);
+    assert.equal(getPage().items.filter((entry) => entry.key === "session-main-131").length, 1);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousAct;
+    globals.forEach((key, index) => { const value = previous[index]; if (value) Object.defineProperty(globalThis, key, value); else Reflect.deleteProperty(globalThis, key); });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "過去pageの閲覧は60件とglobal位置を維持し、live更新を混入せず、会話切替後の遅いpage応答を破棄し、旧会話のlive本文をcacheへ保持しない"
 // oracle = { type = "contract", ref = "Issue #781: bounded conversation pages" }
 // fault = "過去pageへliveをappendする、global keyをlocal位置へ戻す、旧会話のpageを新会話へ適用する、または非表示会話cacheへlive本文を保持する"

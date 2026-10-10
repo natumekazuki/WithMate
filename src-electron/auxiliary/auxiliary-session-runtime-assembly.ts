@@ -18,6 +18,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     getRuntimeSession(sessionId: string): Promise<Session | null>;
     getSession(sessionId: string): Promise<AuxiliarySession | null>;
     upsertRuntimeSession(session: Session, options?: { confirmedFinalAssistantText?: string | null }): Promise<Session>;
+    upsertTerminalRuntimeSession: NonNullable<SessionRuntimeServiceDeps["upsertTerminalSession"]>;
     persistRunningTurnStart(session: Session, expectedMessageCount: number): Promise<Session>;
     isAuxiliarySession(sessionId: string): Promise<boolean>;
   };
@@ -75,6 +76,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => guarded("session read", () => deps.auxiliary.getRuntimeSession(sessionId)),
     upsertSession: (session, options) => guarded("session upsert", () => deps.auxiliary.upsertRuntimeSession(session, options)),
+    upsertTerminalSession: (session, terminalCommit, options) => guarded("terminal session update", () => deps.auxiliary.upsertTerminalRuntimeSession(session, terminalCommit, options)),
     persistRunningTurnStart: (session, expectedMessageCount) => guarded("running turn start", () => deps.auxiliary.persistRunningTurnStart(session, expectedMessageCount)),
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, userMessage) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, userMessage)),

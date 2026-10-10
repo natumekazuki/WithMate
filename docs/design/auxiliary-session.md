@@ -130,6 +130,8 @@ Auxiliary の作成準備は provider / ownership coordinator の外で行う。
 
 既存 Auxiliary の更新・runtime 保存・終了・中断復旧は、非同期読込み時に捕捉した storage へ update-only で送る。transaction 内で読込み済み会話と現行行、親の生存を照合し、削除後の再挿入や並行変更の上書きを行わない。時刻ラベルは分精度のため、更新時刻だけを変更検知の根拠にしない。通常の作成・明示的な collection 置換と、この既存行更新を区別する。
 
+terminal保存は通常本文・artifactと同ownerのrunning最小turnを同じtransactionで確定する。turn markerの更新が失敗した場合は本文もrollbackし、marker未確定の本文だけが保存済みとなった状態へ送信失敗のdraftを復元させない。結果不明の自動再保存・再送は行わない。
+
 `auxiliary_sessions` は会話の metadata を列として保存する。provider / model / runtime option、thread、表示anchor、Character identity と snapshot、作成request identityを保持し、Character snapshotと作成requestの詳細だけを専用 JSON 列へ置く。`auxiliary_session_messages` は会話順序と軽量本文を行ごとに保存し、artifact 詳細は対象行の `artifact_body` に分離する。詳細は対象を開いたときに取得する。
 
 `composerDraft` は `auxiliary_session_drafts` の単一正本から全会話読込み時に合成する。既存の payload 形式は起動時に transaction 内で metadata、message、artifact、draft へ変換し、旧 payload と派生 summary の列を同時に除去する。不正な行があれば変換全体を rollback し、部分移行や黙った破棄をしない。

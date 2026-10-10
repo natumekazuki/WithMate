@@ -941,10 +941,12 @@ export class CodexAdapter implements ProviderTurnAdapter {
     let active: ActiveCodexTurn | null = null;
     let projectionId: string | null = null;
     let projectionError: unknown;
+    let projectionFailed = false;
     let rejectProjectionFailure!: (error: unknown) => void;
     const projectionFailure = new Promise<never>((_resolve, reject) => { rejectProjectionFailure = reject; });
     void projectionFailure.catch(() => undefined);
     const pendingEvents = new Set<Promise<void>>();
+    const pendingControls = new Set<Promise<void>>();
     let eventBatch: { method: string; params: unknown }[] = [];
     let batchImmediate: NodeJS.Immediate | undefined;
     let liveTimer: NodeJS.Timeout | undefined;
@@ -953,8 +955,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
     let lastLiveAt = 0;
     let lastLive: CodexProjectionProgress["state"] | null = null;
     const failProjection = (error: unknown) => {
-      projectionError ??= error;
-      rejectProjectionFailure(error);
+      if (!projectionFailed) projectionError = error;
+      projectionFailed = true;
+      rejectProjectionFailure(projectionError);
       void transport.close().catch(() => undefined);
     };
     const scheduleLive = () => {
@@ -991,9 +994,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const publishControl = (patch: Partial<CodexProjectionProgress["state"]> = { inputAvailable: false }) => {
       if (!lastLive || !args.onProgress) return;
       lastLive = { ...lastLive, ...patch };
-      void Promise.resolve(args.onProgress(lastLive, {
-        steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
-      })).catch(failProjection);
+      try {
+        const completion = Promise.resolve(args.onProgress(lastLive, {
+          steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
+        })).catch(failProjection).finally(() => { pendingControls.delete(completion); });
+        pendingControls.add(completion);
+      } catch (error) {
+        failProjection(error);
+      }
     };
     const flushEvents = () => {
       if (batchImmediate) { clearImmediate(batchImmediate); batchImmediate = undefined; }
@@ -1133,7 +1141,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       let burst = 0;
       while (!state.turnCompleted) {
         signal?.throwIfAborted();
-        if (projectionError) throw projectionError;
+        if (projectionFailed) throw projectionError;
         // Bound work even when nextEvent returns an already-resolved queue entry.
         if (++burst >= 32) { burst = 0; await new Promise<void>((resolve) => setImmediate(resolve)); }
         const event = await Promise.race([transport.nextEvent(), projectionFailure]);
@@ -1193,7 +1201,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         }
         while (pendingEvents.size >= 8) {
           await Promise.race(pendingEvents);
-          if (projectionError) throw projectionError;
+          if (projectionFailed) throw projectionError;
           signal?.throwIfAborted();
         }
         eventBatch.push({ method: event.method, params: event.params });
@@ -1201,7 +1209,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         else batchImmediate ??= setImmediate(flushEvents);
       }
       await Promise.all(pendingEvents);
-      if (projectionError) throw projectionError;
+      if (projectionFailed) throw projectionError;
       if (interactionError) throw interactionError;
       if (state.terminalStatus !== "completed")
         throw new Error(
@@ -1219,13 +1227,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
       )
         this.activeTurns.delete(sessionInput.session.id);
       await Promise.all(pendingEvents);
-      await progress(true).catch((error) =>
+      await progress(true).catch((error) => {
+        failProjection(error);
         this.writeLog({
           level: "warn",
           kind: "codex.run.final-progress-failed",
           message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
-        }),
-      );
+        });
+      });
+      await Promise.all(pendingControls);
       if (state.turnCompleted && active) {
         await Promise.allSettled([...active.pendingInputs]);
       }
@@ -1254,6 +1264,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           state.terminalStatus = final.terminalStatus;
         } finally { await this.projection.release(projectionId); }
       }
+      if (projectionFailed) throw projectionError;
     }
   }
   async runBackgroundStructuredPrompt<TOutput = unknown>(

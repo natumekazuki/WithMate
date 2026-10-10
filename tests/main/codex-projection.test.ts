@@ -109,7 +109,7 @@ test("release confirms Worker owner deletion while another run handles a burst",
 // claim = "共有projection Workerの同じitem IDを持つ同時turnと次turnは原文・secret cacheを混ぜず全出力を秘匿化しfinal本文をpreviewで切らない"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Streaming Policy / Codex projection owner" }
 // fault = "runまたはsecret集合の境界を越えてcacheを再利用する、final本文をlive長で切る、rawとdiagnosticのsecretを残す"
-// observable = "実Workerから受け取る変更通知、live snapshot、final本文、items、metadata"
+// observable = "実Workerから受け取る変更通知、live snapshot、final本文、items、metadata、trace有効時のrawItemsJsonとdiagnostics"
 // observation_boundary = "public-boundary"
 // scope = "CodexProjectionClient concurrent and sequential turn isolation"
 // lifecycle = "permanent"
@@ -119,8 +119,8 @@ test("release confirms Worker owner deletion while another run handles a burst",
 // @end-test-value
 test("shared Worker isolates turns and sanitizes complete final output", async () => {
   const client = new CodexProjectionClient();
-  const first = await client.begin(input("first"));
-  const second = await client.begin(input("second"));
+  const first = await client.begin({ ...input("first"), diagnosticTrace: true });
+  const second = await client.begin({ ...input("second"), diagnosticTrace: true });
   const runs = [first, second];
   try {
     for (const [index, runId] of runs.entries()) {
@@ -133,6 +133,13 @@ test("shared Worker isolates turns and sanitizes complete final output", async (
 
       assert.equal(await client.call(runId, { type: "live", inputAvailable: true }), null);
       const final = await client.call<CodexProjectionFinal>(runId, { type: "finish", diagnostics: [{ type: "diagnostic", data: { value: `binding-${name}` } }] });
+      assert.equal(typeof final.rawItemsJson, "string");
+      assert.ok(final.rawItemsJson!.includes("unsupported"));
+      const rawItems = JSON.parse(final.rawItemsJson!) as Array<{ type: string; data?: { value?: string } }>;
+      assert.ok(rawItems.some(item => item.type === "diagnostic" && item.data?.value === "[WITHMATE_BINDING_REFERENCE_REDACTED]"));
+      for (const secret of [`binding-${name}`, `cap-${name}`, `api-${name}`]) {
+        assert.ok(!final.rawItemsJson!.includes(secret));
+      }
       const combined = JSON.stringify({ event, live, final });
       for (const secret of [`binding-${name}`, `cap-${name}`, `api-${name}`]) assert.ok(!combined.includes(secret));
       assert.ok(final.assistantText.startsWith(`${name} `));

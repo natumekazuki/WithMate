@@ -2312,6 +2312,8 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
           if (!storedSession) throw new Error("The saved Auxiliary Session could not be loaded.");
           return storedSession;
         },
+        upsertTerminalRuntimeSession: (session, terminalCommit, options) =>
+          requireAuxiliarySessionService().upsertTerminalAuxiliaryRuntimeSession(session, terminalCommit, options),
         isAuxiliarySession: async (sessionId) => Boolean(await requireAuxiliarySessionService().getAuxiliarySession(sessionId)),
       },
       parent: { getSession: (sessionId) => Promise.resolve(owner.sessionStorage.getSession(sessionId)) },

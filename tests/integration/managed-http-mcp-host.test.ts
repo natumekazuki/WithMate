@@ -128,8 +128,14 @@ test("shared HTTP MCP preserves canonical tools and actor-bound operations", asy
     assert.notEqual(saved.isError, true, JSON.stringify(saved));
     const id = (saved.structuredContent as { entry: { id: string } }).entry.id;
     assert.equal(f.storage.getEntry(id)?.source.sessionId, "actor-a");
-    const invalid = await memory.client.callTool({ name: "memory.append", arguments: { ...append, target: { kind: "character", characterId: "other" } } });
+    const invalid = await memory.client.callTool({ name: "memory.append", arguments: {
+      ...append, target: { kind: "project", project: { type: "id", id: "ungranted-project" } },
+    } });
     assert.equal(invalid.isError, true);
+    assert.deepEqual((invalid.structuredContent as { error: Record<string, unknown> }).error, {
+      code: "MEMORY_INVALID_FIELD", message: "Memory target is invalid or not authorized.", field: "target",
+      retryable: false, conversationMayContinue: true, effect: "none",
+    });
     const created = await glossary.client.callTool({ name: "glossary.create", arguments: {
       selector: { kind: "primary" }, mode: "explicit", entry: { term: "Captured", definition: "Actor-bound HTTP" },
     } });

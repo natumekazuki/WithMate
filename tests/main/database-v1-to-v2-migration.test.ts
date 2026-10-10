@@ -488,12 +488,12 @@ describe("V1 to V2 database migration write mode", () => {
   // claim = "V1 と V2 が同一パスの場合は overwrite 指定でも拒否する"
   // oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
   // fault = "同一source/targetを許可しsource DBを破棄する"
-  // observable = "migration拒否例外とsource sessions行数"
+  // observable = "migration拒否例外とsource sessions tableの存在"
   // observation_boundary = "public-boundary"
   // scope = "main/database-v1-to-v2-migration"
   // lifecycle = "permanent"
   // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
-  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // distinction = "型検査では同一pathのruntime拒否と拒否後のsource tableの存在を確認できない"
   // @end-test-value
   it("V1 と V2 が同一パスの場合は overwrite 指定でも拒否する", () => {
     const fixture = createV1FixtureDatabase();

@@ -27,6 +27,7 @@ import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js
 import { appendSessionFilesDirectoryForSessionId, resolveSessionFilesDirectory } from "../../src-electron/files/session-files.js";
 import { SessionStorage } from "../../src-electron/session/session-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
+import { SessionTurnStorageV6 } from "../../src-electron/session/session-turn-storage-v6.js";
 import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
 import { AuxiliaryDraftPersistenceOwner } from "../../src/chat/auxiliary-draft-persistence-owner.js";
 
@@ -502,6 +503,96 @@ test("Auxiliary turn draft operation は失敗時復元と後続save保全を行
   } finally {
     auxiliaryStorage.close();
     parentStorage.close();
+    await removeDirectoryWithRetry(directory);
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary terminal markerのSQLite更新失敗では本文とartifactもrollbackされ、送信draftは復元される。成功時は同じownerのmarkerと本文を確定しdraftをconsumeする"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// fault = "本文だけをcommitした後marker更新が失敗し、保存済み応答と復元draftが併存する"
+// observable = "service送信結果、storageから再取得した本文・artifact詳細・draft、turn storageのphaseとassistant位置"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-terminal-storage-and-draft-send"
+// lifecycle = "permanent"
+// impact = "応答履歴とLatest Commandの最小turnが分裂し、復元promptの再送を誘発する"
+// distinction = "通常のdraft CASとruntime例外testはSQLite terminal marker更新の実故障による本文rollbackを観測しない。小さい隔離DBで保存結果を確認する"
+// @end-test-value
+test("Auxiliary terminal保存はmarker故障で本文をrollbackし送信draftと整合する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-terminal-"));
+  const dbPath = path.join(directory, "app.db");
+  const parentStorage = new SessionStorageV6(dbPath);
+  const auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+  const turnStorage = new SessionTurnStorageV6(dbPath);
+  const faultDb = new DatabaseSync(dbPath);
+  const parent = buildNewSession({
+    id: "session-1", taskTitle: "parent", workspaceLabel: "workspace", workspacePath: "C:/workspace",
+    branch: "main", characterId: "mate", character: "Mate", characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: DEFAULT_APPROVAL_MODE,
+  });
+  parentStorage.upsertSession(parent);
+  const service = new AuxiliarySessionService({
+    getParentSession: (id) => parentStorage.getSession(id), getStorage: () => auxiliaryStorage,
+  });
+  try {
+    for (const injectFault of [true, false]) {
+      const auxiliary = auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
+        id: injectFault ? "aux-failure" : "aux-success", composerDraft: "submitted prompt",
+      }));
+      const draft = auxiliaryStorage.getAuxiliaryDraft(auxiliary.id)!;
+      assert.equal(turnStorage.getLatestSessionTurn(auxiliary.id), null);
+      assert.equal(auxiliaryStorage.getAuxiliarySession(auxiliary.id)?.messages.length, 0);
+      if (injectFault) faultDb.exec(`CREATE TRIGGER reject_aux_terminal BEFORE UPDATE ON session_turns_v6
+        WHEN NEW.phase <> 'running' AND NEW.auxiliary_session_id = 'aux-failure'
+        BEGIN SELECT RAISE(ABORT, 'injected terminal marker failure'); END`);
+      let terminalSaves = 0;
+      const send = service.runAuxiliaryTurnWithDraft({
+        auxiliarySessionId: auxiliary.id, parentSessionId: auxiliary.parentSessionId,
+        incarnation: draft.incarnation, expectedDurableRevision: draft.durableRevision,
+        userMessage: "submitted prompt",
+        run: async () => {
+          const runtime = await service.getAuxiliaryRuntimeSession(auxiliary.id);
+          assert.ok(runtime);
+          const running = await service.persistRunningTurnStart({
+            ...runtime, status: "running", runState: "running", messages: [{ role: "user", text: "submitted prompt" }],
+          }, 0);
+          const turn = turnStorage.createSessionTurn({
+            sessionId: auxiliary.id, phase: "running", createdAt: auxiliary.createdAt,
+            provider: auxiliary.provider, model: auxiliary.model, reasoningEffort: auxiliary.reasoningEffort,
+            approvalMode: auxiliary.approvalMode, userMessageSeq: 0, threadId: "", errorMessage: "",
+          });
+          assert.equal(auxiliaryStorage.getAuxiliaryDraft(auxiliary.id)?.text, "");
+          assert.equal(turnStorage.getLatestSessionTurn(auxiliary.id)?.phase, "running");
+          terminalSaves += 1;
+          await service.upsertTerminalAuxiliaryRuntimeSession({
+            ...running, status: "saved", runState: "idle", messages: [...running.messages, {
+              role: "assistant", text: "completed response",
+              artifact: { title: "terminal artifact", activitySummary: ["done"], changedFiles: [], runChecks: [] },
+            }],
+          }, {
+            sessionId: auxiliary.id, turnId: turn.id, phase: "completed", assistantMessageSeq: 1,
+            threadId: "completed-thread", completedAt: "2026-10-10T00:00:00.000Z", errorMessage: "",
+          }, { confirmedFinalAssistantText: "completed response" });
+        },
+      });
+      if (injectFault) await assert.rejects(send, /injected terminal marker failure/);
+      else await send;
+      assert.equal(terminalSaves, 1);
+      const stored = await service.getAuxiliarySession(auxiliary.id);
+      assert.ok(stored);
+      assert.equal(stored.runState, injectFault ? "running" : "idle");
+      assert.equal(stored.messages.length, injectFault ? 1 : 2);
+      assert.equal(stored.composerDraft, injectFault ? "submitted prompt" : "");
+      assert.equal(auxiliaryStorage.getAuxiliaryMessageArtifactDetail(auxiliary.id, 1)?.title ?? null,
+        injectFault ? null : "terminal artifact");
+      const marker = turnStorage.getLatestSessionTurn(auxiliary.id);
+      assert.equal(marker?.phase, injectFault ? "running" : "completed");
+      assert.equal(marker?.assistantMessageSeq ?? null, injectFault ? null : 1);
+      if (!injectFault) assert.equal(stored.messages[1]?.text, "completed response");
+    }
+  } finally {
+    faultDb.close(); turnStorage.close(); auxiliaryStorage.close(); parentStorage.close();
     await removeDirectoryWithRetry(directory);
   }
 });

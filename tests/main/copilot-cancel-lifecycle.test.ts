@@ -491,7 +491,7 @@ it("正常turnには取消期限を適用せず、完了後はSessionを再利�
 
 // @test-value v2
 // kind = "contract"
-// claim = "cached Copilot turnの開始・承認待ち・承認情報を引き継ぐ開始だけのstale失敗は同じthreadをresumeして一度だけ再送できる"
+// claim = "cached Copilot turnの表示/非表示toolの開始・空partial・承認待ちだけのstale失敗は同じthreadをresumeして一度だけ再送できる"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
 // fault = "設定runChecks・未確定操作summary・承認warning/detailsを取得結果と誤認し回復を拒む、または再失敗後も再送する"
 // observable = "SessionRuntimeService.runSessionTurn経由の保存本文/runState、SDK send件数、client数、旧client stop/disconnect件数、新client resumeIds"
@@ -503,7 +503,7 @@ it("正常turnには取消期限を適用せず、完了後はSessionを再利�
 // @end-test-value
 it("開始・承認待ちだけのstale turnは同一threadで一度だけ回復する", { timeout: 5000 }, async () => {
   for (const failure of ["Connection is closed.", "SessionNotFound: session not found"]) {
-    for (const mode of ["start", "pending", "permission-start", "approved-start"] as const) {
+    for (const mode of ["start", "hidden-start", "empty-partial", "pending", "permission-start", "approved-start"] as const) {
       for (const recovered of [true, false]) {
         const f = fixture();
         const prime = f.start(); const cached = await f.current();
@@ -511,8 +511,11 @@ it("開始・承認待ちだけのstale turnは同一threadで一度だけ回復
         cached.emit("session.idle"); cached.sends[0].resolve("prime"); await prime;
         const run = f.start("recover input");
         await until(() => cached.sends.length === 2);
-        if (mode === "start") {
-          cached.emit("tool.execution_start", { toolCallId: "not-completed", toolName: "shell", arguments: { command: "synthetic command" } });
+        if (mode === "start" || mode === "hidden-start" || mode === "empty-partial") {
+          cached.emit("tool.execution_start", { toolCallId: "not-completed", toolName: mode === "start" ? "shell" : "custom_fixture", arguments: { command: "synthetic command" } });
+          if (mode === "empty-partial") {
+            cached.emit("tool.execution_partial_result", { toolCallId: "not-completed", partialOutput: " \n " });
+          }
         } else {
           cached.emit("permission.requested", { requestId: "permission-only", permissionRequest: {
             kind: "shell", toolCallId: "not-completed", fullCommandText: "synthetic command", warning: "synthetic permission warning",
@@ -549,10 +552,10 @@ it("開始・承認待ちだけのstale turnは同一threadで一度だけ回復
 
 // @test-value v2
 // kind = "contract"
-// claim = "Copilotは取得済み本文・terminal操作・途中出力があるstale失敗を自動再送せずpartialを保存する"
+// claim = "cached Copilotは取得済み本文・表示/非表示toolのterminal結果・非空partialを持つstale失敗を自動再送せず通常artifactへ保存する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
 // fault = "terminalまたは途中結果を持つ操作を未確定と扱って重複実行する、またはretry抑止時のpartialを捨てる"
-// observable = "runtime経由SDK send/client件数と保存assistant本文・artifact操作status/details/error"
+// observable = "prime後のruntime経由SDK send/client件数、live step ID、保存assistant本文・artifact操作ID/type/status/details/error/exitCode"
 // observation_boundary = "public-boundary"
 // scope = "Copilot production eventからpartial artifact・retry admission・通常履歴保存まで"
 // lifecycle = "permanent"
@@ -560,31 +563,47 @@ it("開始・承認待ちだけのstale turnは同一threadで一度だけ回復
 // distinction = "helperへpartialを手渡すtestと取消testではstale失敗によるproduction retryを観測しない。既存fixtureの有限event列だけで検証する"
 // @end-test-value
 it("取得済み結果付きstale turnは再送せずpartialを保存する", { timeout: 5000 }, async () => {
-  for (const mode of ["assistant", "completed", "failed", "partial"] as const) {
-    const f = fixture(); const run = f.start(); const session = await f.current();
-    if (mode === "assistant") {
-      session.emit("assistant.message", { content: "acquired answer", messageId: "acquired" });
-    } else {
-      session.emit("tool.execution_start", { toolCallId: "acquired", toolName: "shell", arguments: { command: "synthetic side effect" } });
-      if (mode === "partial") {
-        session.emit("tool.execution_partial_result", { toolCallId: "acquired", partialOutput: "acquired output" });
+  for (const toolName of ["shell", "withmate-memory.append_episode", "custom_fixture"]) {
+    for (const mode of ["assistant", "completed", "completed-empty", "failed", "partial"] as const) {
+      const f = fixture(); const prime = f.start(); const session = await f.current();
+      session.emit("assistant.message", { content: "prime answer", messageId: "prime" });
+      session.emit("session.idle"); session.sends[0].resolve("prime"); await prime;
+      const run = f.start("input after prime");
+      await until(() => session.sends.length === 2);
+      if (mode === "assistant") {
+        session.emit("assistant.message", { content: "acquired answer", messageId: "acquired" });
       } else {
-        session.emit("tool.execution_complete", { toolCallId: "acquired", success: mode === "completed",
-          result: { content: "acquired output" }, ...(mode === "failed" ? { error: { message: "acquired error", code: "synthetic-error" } } : {}) });
+        session.emit("tool.execution_start", { toolCallId: "acquired", toolName, arguments: { command: "synthetic side effect" } });
+        if (mode === "partial") {
+          session.emit("tool.execution_partial_result", { toolCallId: "acquired", partialOutput: "acquired output" });
+        } else {
+          session.emit("tool.execution_complete", { toolCallId: "acquired", success: mode !== "failed",
+            ...(mode === "completed-empty" ? {} : { result: { contents: [{ type: "terminal", text: "acquired output", exitCode: mode === "failed" ? 1 : 0 }] } }),
+            ...(mode === "failed" ? { error: { message: "acquired error", code: "synthetic-error" } } : {}) });
+        }
       }
-    }
-    session.sends[0].reject(new Error("Connection is closed.")); await run;
-    assert.equal(f.clients.length, 1, "acquired results prohibit retry and client replacement");
-    assert.equal(session.sends.length, 1);
-    assert.equal(f.clients[0].stopCalls, 0);
-    assert.equal(f.turns.at(-1)?.phase, "failed");
-    if (mode === "assistant") {
-      assert.match(f.stored().messages.at(-1)!.text, /acquired answer/);
-    } else {
-      const operation = f.stored().messages.at(-1)!.artifact!.operationTimeline![0];
-      assert.equal(operation.status, mode === "partial" ? "in_progress" : mode);
-      assert.match(operation.details!, /acquired output/);
-      if (mode === "failed") assert.deepEqual(operation.error, { message: "acquired error", code: "synthetic-error" });
+      await until(() => mode === "assistant" ? Boolean(f.live()?.assistantText.includes("acquired answer"))
+        : toolName === "shell" ? Boolean(f.live()?.steps.some((step) => step.id === "acquired")) : true);
+      if (mode !== "assistant" && toolName !== "shell") {
+        assert.equal(f.live()?.steps.some((step) => step.id === "acquired"), false);
+      }
+      session.sends[1].reject(new Error("Connection is closed.")); await run;
+      assert.equal(f.clients.length, 1, "acquired results prohibit retry and client replacement");
+      assert.equal(session.sends.length, 2, "only the prime and cached turn are sent");
+      assert.equal(f.clients[0].stopCalls, 0);
+      assert.equal(f.turns.at(-1)?.phase, "failed");
+      if (mode === "assistant") {
+        assert.match(f.stored().messages.at(-1)!.text, /acquired answer/);
+      } else {
+        const operation = f.stored().messages.at(-1)!.artifact!.operationTimeline![0];
+        assert.equal(operation.id, "acquired");
+        assert.equal(operation.type, toolName === "shell" ? "command_execution" : "tool_call");
+        assert.equal(operation.status, mode === "partial" ? "in_progress" : mode === "completed-empty" ? "completed" : mode);
+        if (mode === "completed-empty") assert.equal(operation.details, undefined);
+        else assert.match(operation.details!, /acquired output/);
+        if (mode === "completed" || mode === "failed") assert.equal(operation.exitCode, mode === "failed" ? 1 : 0);
+        if (mode === "failed") assert.deepEqual(operation.error, { message: "acquired error", code: "synthetic-error" });
+      }
     }
   }
 });

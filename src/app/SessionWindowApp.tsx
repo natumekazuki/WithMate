@@ -2324,6 +2324,9 @@ export default function AgentSessionWindowApp() {
   const chatRuntimeFeature = buildSessionChatRuntimeFeature({
     recovery: {
       retryBanner: activeAuxiliarySession ? null : retryBanner,
+      latestTurnLoading: !activeAuxiliarySession && latestMainTurn.loading,
+      latestTurnError: activeAuxiliarySession ? null : latestMainTurn.error,
+      onRetryLatestTurn: latestMainTurn.retry,
       isRetryActionDisabled,
       isRetryEditDisabled,
       isRetryDraftReplacePending,

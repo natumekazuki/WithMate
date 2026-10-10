@@ -81,10 +81,13 @@ function summarizeTool(name: string, input: unknown): string {
   return target ? `${name}: ${toProviderTextPreview(target, 300)}` : name;
 }
 
-function commandOf(name: string, input: unknown): string | null {
+function commandOf(name: string, input: unknown, redactor: ProviderAgentRuntimeBindingRedactor): string | null {
   if (name !== "Bash") return null;
   const command = textOf(objectOf(input).command);
-  const preview = toProviderTextPreview(command) || null;
+  const sanitized = redactor.sanitizeText(command, PROVIDER_TEXT_PREVIEW_LIMIT).slice(0, PROVIDER_TEXT_PREVIEW_LIMIT);
+  const preview = (command.length > PROVIDER_TEXT_PREVIEW_LIMIT
+    ? `${sanitized}\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`
+    : sanitized) || null;
   // Detach the bounded preview from the native command's backing string.
   return command.length > PROVIDER_TEXT_PREVIEW_LIMIT
     ? JSON.parse(JSON.stringify(preview)) as string
@@ -266,7 +269,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       }
       for (const block of content) {
         if (block.type !== "tool_use") continue;
-        const command = commandOf(block.name, block.input);
+          const command = commandOf(block.name, block.input, trace.redactor);
         const summary = command ?? summarizeTool(block.name, block.input);
         const step: LiveRunStep = { id: block.id, type: command === null ? "tool_call" : "command_execution", summary, status: "in_progress" };
         trace.steps.set(block.id, step);

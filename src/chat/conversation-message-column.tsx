@@ -10,7 +10,7 @@ import type { Session } from "../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { replaceLiveRunAfterResolvedRequest } from "./runtime/session-live-run-state.js";
-import { CONVERSATION_PAGE_SIZE, getMessageHistoryIndex, type ConversationPage } from "../../src-shared/session/conversation-page.js";
+import { CONVERSATION_PAGE_SIZE, CONVERSATION_QUERY_PAGE_SIZE, getMessageHistoryIndex, type ConversationPage } from "../../src-shared/session/conversation-page.js";
 import { setMessageBookmarked } from "../../src-shared/session/session-state.js";
 import { subscribeSessionLiveSelection } from "./runtime/session-window-live-ingress.js";
 import { useConversationQueryPages } from "./conversation/use-conversation-query-pages.js";
@@ -358,15 +358,54 @@ export function useConversationMessageColumn({
     [collapseTargets, collapsedMessageKeys],
   );
   const messageNavigatorEntries = loadedNavigatorEntries;
+  const tailNavigatorTargets = useMemo(() => {
+    if (!paged || !api?.listConversationNavigator) return [];
+    const boundary = Math.max(totalCount, navigator.messageCount ?? totalCount);
+    const unsaved = tailMessages.flatMap((message, index) => {
+      const historyIndex = getMessageHistoryIndex(message, index);
+      return historyIndex >= boundary ? [{ ...message, historyIndex }] : [];
+    });
+    const history = buildMessageListProjection(unsaved, [], sessionId, { primaryMessageSourceKind: messageSourceKind });
+    const keyed = projectLiveAssistantOnSessionHistory(history, unsaved, sessionId,
+      hasPersistedLiveAssistantMessage(unsaved, [], bridge, sessionId) ? bridge : null);
+    return buildMessageCollapseTargets(keyed.messages, keyed.sources, keyed.keys);
+  }, [paged, api?.listConversationNavigator, tailMessages, totalCount, navigator.messageCount, sessionId, messageSourceKind, bridgeKey]);
+  const unsavedNavigatorTargets = tailNavigatorTargets.filter((target) =>
+    target.source.messageIndex >= Math.max(totalCount, navigator.messageCount ?? totalCount)
+    && (navigatorFilter === "all" || target.isBookmarked));
+  const uniqueUnsavedTargets = [...new Map(unsavedNavigatorTargets.map((target) => [target.sourceIdentity, target])).values()];
+  const navigatorTotalCount = navigator.messageCount === undefined ? 0 : navigator.totalCount + uniqueUnsavedTargets.length;
+  const navigatorPageStart = Math.floor(Math.max(0, navigatorOffset) / CONVERSATION_QUERY_PAGE_SIZE) * CONVERSATION_QUERY_PAGE_SIZE;
+  let mergedNavigatorOffset = Math.max(0, navigatorPageStart - CONVERSATION_QUERY_PAGE_SIZE);
+  const mergedNavigatorItems: MessageNavigatorEntry[] = [];
+  for (let ordinal = mergedNavigatorOffset; ordinal < Math.min(navigatorTotalCount, navigatorPageStart + 2 * CONVERSATION_QUERY_PAGE_SIZE); ordinal += 1) {
+    const entry = ordinal < navigator.totalCount ? navigator.itemAt(ordinal) : undefined;
+    const target = ordinal >= navigator.totalCount ? uniqueUnsavedTargets[ordinal - navigator.totalCount]
+      : collapseTargets.find((value) => value.source.messageIndex === entry?.messageIndex);
+    if (!entry && !target) {
+      if (mergedNavigatorItems.length) break;
+      mergedNavigatorOffset = ordinal + 1;
+      continue;
+    }
+    mergedNavigatorItems.push({
+      key: target?.key ?? `session-${sessionId}-${entry!.messageIndex}`,
+      sourceKind: messageSourceKind, role: entry?.role ?? target!.role,
+      preview: entry?.preview ?? target!.preview, accent: entry?.accent ?? target!.accent,
+      isBookmarked: entry?.isBookmarked ?? target!.isBookmarked,
+      isCollapsed: isHistoryCollapsed(target?.source.messageIndex ?? entry!.messageIndex),
+    });
+  }
   const messageNavigatorPage: MessageNavigatorPage | undefined = paged && api?.listConversationNavigator ? {
-    items: navigator.items.map((entry) => ({ ...entry, key: collapseTargets.find((target) => target.source.messageIndex === entry.messageIndex)?.key ?? `session-${sessionId}-${entry.messageIndex}`, sourceKind: messageSourceKind, isCollapsed: isHistoryCollapsed(entry.messageIndex) })),
-    offset: navigator.offset, totalCount: navigator.totalCount, filter: navigatorFilter,
+    items: mergedNavigatorItems,
+    offset: mergedNavigatorOffset, totalCount: navigatorTotalCount, filter: navigatorFilter,
     loading: navigator.loading, error: navigator.error,
     onFilterChange: (filter) => { setNavigatorFilter(filter); setNavigatorOffset(0); },
     onRequestRange: setNavigatorOffset, onRetry: navigator.retry,
   } : undefined;
   const onJumpToMessage = useCallback(async (key: string) => {
-    if (!projection.keys.includes(key)) {
+    if (isBrowsing && tailNavigatorTargets.some((target) => target.key === key && target.source.messageIndex >= totalCount)) {
+      followLatest();
+    } else if (!projection.keys.includes(key)) {
       const index = Number(key.slice(`session-${sessionId}-`.length));
       if (!Number.isInteger(index)) return;
       const revision = await loadPage(Math.max(0, index - Math.floor(CONVERSATION_PAGE_SIZE / 2)));
@@ -380,7 +419,7 @@ export function useConversationMessageColumn({
     conversation.messageJumpRequestId += 1;
     conversation.messageJumpRequest = { sessionId, key, requestId: conversation.messageJumpRequestId };
     refresh();
-  }, [conversation, refresh, sessionId, projection.keys, loadPage, pageOwner]);
+  }, [conversation, refresh, sessionId, projection.keys, loadPage, pageOwner, isBrowsing, tailNavigatorTargets, totalCount, followLatest]);
   useEffect(() => {
     onColumnControls?.({
       sessionId,

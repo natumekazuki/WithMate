@@ -13,7 +13,10 @@ export type SessionTurnTerminalCommit = {
 export function writeSessionTurnTerminalCommit(
   db: DatabaseSync,
   commit: SessionTurnTerminalCommit,
+  ownerKind: "main" | "auxiliary" = "main",
 ): void {
+  const ownerColumn = ownerKind === "auxiliary" ? "auxiliary_session_id" : "session_id";
+  const otherOwnerColumn = ownerKind === "auxiliary" ? "session_id" : "auxiliary_session_id";
   const result = db.prepare(`
     UPDATE session_turns_v6
     SET phase = ?,
@@ -23,8 +26,8 @@ export function writeSessionTurnTerminalCommit(
         completed_at = ?,
         updated_at = ?
     WHERE id = ?
-      AND session_id = ?
-      AND auxiliary_session_id IS NULL
+      AND ${ownerColumn} = ?
+      AND ${otherOwnerColumn} IS NULL
       AND phase = 'running'
   `).run(
     commit.phase,
