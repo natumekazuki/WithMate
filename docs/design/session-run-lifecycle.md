@@ -2,7 +2,7 @@
 
 ## Auxiliary Session (Issue #710)
 
-AuxiliaryのrunはMainや兄弟Auxiliaryと独立し、非表示でも継続・terminal保存する。新規追加・表示切り替え・折りたたみはProvider turnを開始せず、同一会話内の二重実行だけを拒否する。Window close、親削除、設定変更では親配下の全Auxiliary runを列挙して扱う。正常terminalで確定した最終assistant本文は、必要な場合に一覧preview projectionを更新する。
+AuxiliaryのrunはMainや兄弟Auxiliaryと独立し、非表示でも継続・terminal保存する。新規追加・表示切り替え・折りたたみはProvider turnを開始せず、同一会話内の二重実行だけを拒否する。Window close、親削除、共有credential変更では親配下の全Auxiliary runを列挙して扱う。会話ごとの実行設定変更は対象自身のstarting / running / 取消終了待ちを判定し、子Auxiliaryだけが実行中の待機Mainには変更を許可する。変更はMainの次送信へ反映し、実行中Auxiliaryの捕捉済み設定を変えない。正常terminalで確定した最終assistant本文は、必要な場合に一覧preview projectionを更新する。
 
 
 ## Goal

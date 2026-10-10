@@ -53,7 +53,7 @@ export type SessionPersistenceServiceDeps = {
   setSessions(nextSessions: Session[]): void;
   getSession(sessionId: string): Session | null;
   getStoredSession?(sessionId: string): Awaitable<Session | null>;
-  isSessionRunInFlight(sessionId: string): boolean;
+  isSessionRunInFlight(sessionId: string, scope?: "self" | "with-auxiliary"): boolean;
   listRunningActiveAuxiliaryParentIds?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
   listAuxiliarySessionRuntimeIdentities?(
     parentSessionIds: readonly string[],
@@ -292,7 +292,7 @@ export class SessionPersistenceService {
     const provider = catalog.providers.find((entry) => entry.id === fresh.provider);
     if (!provider) throw new Error("The Session provider is not in the model catalog.");
     const validated = validateSessionExecutionOptions(options, provider, catalog.revision);
-    if (this.deps.isSessionRunInFlight(sessionId) || isRunningSession(fresh)) {
+    if (this.deps.isSessionRunInFlight(sessionId, "self") || isRunningSession(fresh)) {
       if (
         validated.approvalMode !== fresh.approvalMode || validated.codexSandboxMode !== fresh.codexSandboxMode
         || validated.codexSpeed !== fresh.codexSpeed || validated.codexReviewer !== fresh.codexReviewer

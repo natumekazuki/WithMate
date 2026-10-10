@@ -1041,12 +1041,12 @@ function assertPersistentStoreOwnerIsActive(
   assertPersistentStoreOwnerActive(() => mainStoreContext.activePersistentStoreOwner, owner, operation);
 }
 
-function isSessionRunInFlight(sessionId: string): boolean {
+function isSessionRunInFlight(sessionId: string, scope: "self" | "with-auxiliary" = "with-auxiliary"): boolean {
   if (sessionRuntimeService?.isRunInFlight(sessionId) ||
       auxiliarySessionRuntimeService?.isRunInFlight(sessionId) || auxiliaryRunParents.has(sessionId)) {
     return true;
   }
-  return [...auxiliaryRunParents.values()].includes(sessionId);
+  return scope === "with-auxiliary" && [...auxiliaryRunParents.values()].includes(sessionId);
 }
 
 function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly string[]): Set<string> {
