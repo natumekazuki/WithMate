@@ -305,8 +305,8 @@ runの解放も同じ受付上限を守る。容量満杯なら最大5秒の容�
 - `CopilotAdapter` は cached session 再利用中の `SessionNotFound` / stale connection も同一 turn 内で 1 回だけ internal retry できる
   - retry 前には cached `CopilotSession` と client cache を破棄する
   - retry 後は既存の `resumeSession(threadId)` を再試行し、missing session なら `createSession()` fallback へ落とす
-  - `raw items` しか無い失敗や `session.error` だけの局面では retry を妨げず、`assistantText` / completed 済みの command / `artifact.changedFiles` など user-visible partial がある時だけ retry を止める
-  - `tool.execution_start` や pending permission のような未確定 step は retry blocker に含めない
+  - `session.error` や未対応event診断だけの局面では retry を妨げず、取得済みの `assistantText` / terminal操作（completed・failed・canceled）/ exitCode・error・操作の非空partial output / `artifact.changedFiles` がある時は retry を止める。partial outputの取得はturn実行中の証拠で判定し、artifactのdetails本文から推定しない
+  - `tool.execution_start` や pending permission のような未確定 step だけでは retry を妨げない。承認情報を継承した開始details、開始step由来のactivity summary、実行設定由来のrun checksも実行結果として扱わない
 - DB reset は running session がある間は拒否し、そのエラーメッセージを renderer にそのまま返す
 
 ## 通常履歴と最小turn

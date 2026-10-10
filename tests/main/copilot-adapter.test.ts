@@ -1443,9 +1443,9 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
 
   // @test-value v2
   // kind = "contract"
-  // claim = "stale接続でも取得済み本文やartifact操作がある場合は自動retryしない"
-  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
-  // fault = "partial操作付きturnを再実行して副作用を重複する"
+  // claim = "stale接続のretry判定は開始だけの操作を許可し、取得済み本文・terminal操作・changed filesでは抑止する"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
+  // fault = "未確定操作をretry blockerにする、または取得済み結果付きturnを再実行して副作用を重複する"
   // observable = "shouldRetryCopilotTurnの結果"
   // observation_boundary = "component-behavior"
   // scope = "Copilot retry admission"
@@ -1488,7 +1488,21 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     assert.equal(shouldRetryCopilotTurn(missingSessionSnakeCase), true);
     assert.equal(shouldRetryCopilotTurn(missingSessionWithRawItems), true);
     assert.equal(shouldRetryCopilotTurn(missingSessionWithToolStartRawItems), true);
-    assert.equal(shouldRetryCopilotTurn(missingSessionWithOperation), false);
+    assert.equal(shouldRetryCopilotTurn(missingSessionWithOperation), true);
+    for (const operation of [
+      { type: "command_execution", summary: "dir", status: "completed" },
+      { type: "command_execution", summary: "dir", status: "failed" },
+      { type: "command_execution", summary: "dir", status: "canceled" },
+    ]) {
+      assert.equal(shouldRetryCopilotTurn(new ProviderTurnError("Connection is closed.", createPartialResult({
+        artifact: { title: "Partial", activitySummary: [], changedFiles: [], runChecks: [], operationTimeline: [operation] },
+      }), false)), false);
+    }
+    assert.equal(shouldRetryCopilotTurn(new ProviderTurnError("Connection is closed.", createPartialResult({
+      artifact: { title: "Partial", activitySummary: [], runChecks: [], changedFiles: [
+        { kind: "edit", path: "synthetic.txt", summary: "synthetic.txt updated", diffRows: [] },
+      ] },
+    }), false)), false);
   });
 
   it("CopilotAdapter は cached session の SessionNotFound を 1 回だけ internal retry する", async () => {

@@ -437,3 +437,103 @@ it("正常turnには取消期限を適用せず、完了後はSessionを再利�
   assert.match(f.stored().messages.at(-1)!.text, /second answer/);
   assert.equal(f.clients[0].stopCalls, 0);
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "cached Copilot turnの開始・承認待ち・承認情報を引き継ぐ開始だけのstale失敗は同じthreadをresumeして一度だけ再送できる"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
+// fault = "設定runChecks・未確定操作summary・承認warning/detailsを取得結果と誤認し回復を拒む、または再失敗後も再送する"
+// observable = "SessionRuntimeService.runSessionTurn経由の保存本文/runState、SDK send件数、client数、旧client stop/disconnect件数、新client resumeIds"
+// observation_boundary = "public-boundary"
+// scope = "Copilot cached sessionのproduction retryから同一logical turn終端保存まで"
+// lifecycle = "permanent"
+// impact = "未実行の操作で会話を回復不能にすることとstale失敗の無限再実行を防ぐ"
+// distinction = "shouldRetry単体testは設定・activity summary付きproduction artifactやcache再生成/resume/一回制限を通らない。既存ローカルfixtureを使い外部接続なしで検証する"
+// @end-test-value
+it("開始・承認待ちだけのstale turnは同一threadで一度だけ回復する", { timeout: 5000 }, async () => {
+  for (const failure of ["Connection is closed.", "SessionNotFound: session not found"]) {
+    for (const mode of ["start", "pending", "permission-start", "approved-start"] as const) {
+      for (const recovered of [true, false]) {
+        const f = fixture();
+        const prime = f.start(); const cached = await f.current();
+        cached.emit("assistant.message", { content: "prime answer", messageId: "prime" });
+        cached.emit("session.idle"); cached.sends[0].resolve("prime"); await prime;
+        const run = f.start("recover input");
+        await until(() => cached.sends.length === 2);
+        if (mode === "start") {
+          cached.emit("tool.execution_start", { toolCallId: "not-completed", toolName: "shell", arguments: { command: "synthetic command" } });
+        } else {
+          cached.emit("permission.requested", { requestId: "permission-only", permissionRequest: {
+            kind: "shell", toolCallId: "not-completed", fullCommandText: "synthetic command", warning: "synthetic permission warning",
+          } });
+          if (mode === "approved-start") {
+            cached.emit("permission.completed", { requestId: "permission-only", result: { kind: "approved" } });
+          }
+          if (mode !== "pending") {
+            cached.emit("tool.execution_start", { toolCallId: "not-completed", toolName: "shell", arguments: { command: "synthetic command" } });
+          }
+        }
+        cached.sends[1].reject(new Error(failure));
+        await until(() => f.clients.length === 2 && Boolean(f.clients[1].sessions[0]?.sends.length));
+        const fresh = f.clients[1].sessions[0];
+        assert.deepEqual(f.clients[1].resumeIds, ["preserved-thread"]);
+        assert.equal(f.clients[0].stopCalls, 1);
+        assert.equal(cached.disconnectCalls, 1);
+        if (recovered) {
+          fresh.emit("assistant.message", { content: "recovered answer", messageId: "recovered" });
+          fresh.emit("session.idle"); fresh.sends[0].resolve("recovered");
+        } else {
+          fresh.sends[0].reject(new Error(failure));
+        }
+        await run;
+        assert.equal(f.clients.length, 2, "second stale failure must not trigger another retry");
+        assert.equal(cached.sends.length + fresh.sends.length, 3, "one prime send and two attempts");
+        assert.equal(f.turns.length, 2, "retry stays in the same logical turn");
+        assert.equal(f.turns.at(-1)?.phase, recovered ? "completed" : "failed");
+        if (recovered) assert.match(f.stored().messages.at(-1)!.text, /recovered answer/);
+      }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotは取得済み本文・terminal操作・途中出力があるstale失敗を自動再送せずpartialを保存する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
+// fault = "terminalまたは途中結果を持つ操作を未確定と扱って重複実行する、またはretry抑止時のpartialを捨てる"
+// observable = "runtime経由SDK send/client件数と保存assistant本文・artifact操作status/details/error"
+// observation_boundary = "public-boundary"
+// scope = "Copilot production eventからpartial artifact・retry admission・通常履歴保存まで"
+// lifecycle = "permanent"
+// impact = "実行済み副作用の重複と失敗前に取得した応答の消失を防ぐ"
+// distinction = "helperへpartialを手渡すtestと取消testではstale失敗によるproduction retryを観測しない。既存fixtureの有限event列だけで検証する"
+// @end-test-value
+it("取得済み結果付きstale turnは再送せずpartialを保存する", { timeout: 5000 }, async () => {
+  for (const mode of ["assistant", "completed", "failed", "partial"] as const) {
+    const f = fixture(); const run = f.start(); const session = await f.current();
+    if (mode === "assistant") {
+      session.emit("assistant.message", { content: "acquired answer", messageId: "acquired" });
+    } else {
+      session.emit("tool.execution_start", { toolCallId: "acquired", toolName: "shell", arguments: { command: "synthetic side effect" } });
+      if (mode === "partial") {
+        session.emit("tool.execution_partial_result", { toolCallId: "acquired", partialOutput: "acquired output" });
+      } else {
+        session.emit("tool.execution_complete", { toolCallId: "acquired", success: mode === "completed",
+          result: { content: "acquired output" }, ...(mode === "failed" ? { error: { message: "acquired error", code: "synthetic-error" } } : {}) });
+      }
+    }
+    session.sends[0].reject(new Error("Connection is closed.")); await run;
+    assert.equal(f.clients.length, 1, "acquired results prohibit retry and client replacement");
+    assert.equal(session.sends.length, 1);
+    assert.equal(f.clients[0].stopCalls, 0);
+    assert.equal(f.turns.at(-1)?.phase, "failed");
+    if (mode === "assistant") {
+      assert.match(f.stored().messages.at(-1)!.text, /acquired answer/);
+    } else {
+      const operation = f.stored().messages.at(-1)!.artifact!.operationTimeline![0];
+      assert.equal(operation.status, mode === "partial" ? "in_progress" : mode);
+      assert.match(operation.details!, /acquired output/);
+      if (mode === "failed") assert.deepEqual(operation.error, { message: "acquired error", code: "synthetic-error" });
+    }
+  }
+});

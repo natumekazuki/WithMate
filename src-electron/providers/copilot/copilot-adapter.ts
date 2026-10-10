@@ -259,9 +259,13 @@ function hasMeaningfulArtifact(artifact: MessageArtifact | undefined): boolean {
   }
 
   return artifact.changedFiles.length > 0
-    || artifact.activitySummary.some((summary) => summary.trim().length > 0)
-    || (artifact.operationTimeline?.length ?? 0) > 0
-    || artifact.runChecks.length > 0;
+    || (artifact.operationTimeline?.some((operation) =>
+      operation.status === "completed"
+      || operation.status === "failed"
+      || operation.status === "canceled"
+      || operation.exitCode !== undefined
+      || operation.error !== undefined
+    ) ?? false);
 }
 
 function hasMeaningfulRetryBlockingPartialResult(partialResult: RunSessionTurnResult): boolean {
@@ -2120,6 +2124,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
     onProgress?: RunSessionTurnProgressHandler,
+    onAcquiredToolOutput?: () => void,
   ): Promise<RunSessionTurnResult> {
     const messageAttachments = buildCopilotMessageAttachments(input.attachments);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
@@ -2211,6 +2216,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         onProviderQuotaTelemetry: input.onProviderQuotaTelemetry,
         onSessionContextTelemetry: input.onSessionContextTelemetry,
       });
+      if (event.type === "tool.execution_partial_result"
+        && streamState.liveSteps.has(event.data.toolCallId)
+        && event.data.partialOutput.trim()) {
+        onAcquiredToolOutput?.();
+      }
       if (event.type === "elicitation.requested" && input.onElicitationRequest) {
         const request = buildElicitationRequestProjection(input.providerCatalog.id, event);
         const redactedRequest = {
@@ -2392,11 +2402,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
     const prompt = this.composePrompt(input);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+    let acquiredToolOutput = false;
 
     try {
-      return await this.runSessionTurnOnce(input, prompt, onProgress);
+      return await this.runSessionTurnOnce(input, prompt, onProgress, () => { acquiredToolOutput = true; });
     } catch (error) {
-      if (!shouldRetryCopilotTurn(error)) {
+      if (acquiredToolOutput || !shouldRetryCopilotTurn(error)) {
         throw error;
       }
 
