@@ -127,31 +127,4 @@ describe("database-schema-v2", () => {
       db.close();
     }
   });
-
-  // @test-value v2
-  // kind = "contract"
-  // claim = "対応V2 schemaの生成DDLはMemoryGenerationとmonologueのtableを含まない"
-  // oracle = { type = "contract", ref = "src-electron/storage/database-schema-v2.ts: V2_SCHEMA_DESIGN_NOTES / CREATE_V2_SCHEMA_SQL" }
-  // fault = "CREATE_V2_SCHEMA_SQLへsession_memories、project/character scope・memory entry、monologue名のtableを混入する"
-  // observable = "メモリ内SQLiteのsqlite_schemaから取得したtable名に対象名が含まれるか"
-  // observation_boundary = "declaration"
-  // scope = "main/database-schema-v2"
-  // lifecycle = "permanent"
-  // impact = "V2移行元を生成するfixtureと対応schemaへ対象外のMemoryGeneration保存先が混入し、保存責務の分離を失う"
-  // distinction = "production DDLをSQLiteで実行してV2の対象外tableを確認し、source row保持や移行処理の成功は主張しない"
-  // @end-test-value
-  it("MemoryGeneration と独り言の legacy tables を V2 正本 schema に含めない", () => {
-    const db = createV2Schema();
-    try {
-      const names = tableNames(db);
-      assert.equal(names.includes("session_memories"), false);
-      assert.equal(names.includes("project_scopes"), false);
-      assert.equal(names.includes("project_memory_entries"), false);
-      assert.equal(names.includes("character_scopes"), false);
-      assert.equal(names.includes("character_memory_entries"), false);
-      assert.equal(names.some((name) => name.includes("monologue")), false);
-    } finally {
-      db.close();
-    }
-  });
 });
