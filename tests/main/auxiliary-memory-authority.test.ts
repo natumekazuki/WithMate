@@ -7,7 +7,7 @@ import { buildProviderAgentRuntimeAuthoritySnapshot } from "../../src-electron/p
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { AuxiliarySessionService } from "../../src-electron/auxiliary/auxiliary-session-service.js";
 import { createMemoryV6HttpServer, getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory/memory-v6-http-server.js";
-import { callWithMateMemoryRuntime } from "../../src-cli/memory/withmate-memory-runtime-client.js";
+import { callWithMateMemoryRuntime } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 
 const API_SECRET = "api-secret";
 const MCP_SECRET = "mcp-secret";

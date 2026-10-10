@@ -22,7 +22,7 @@ import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/memory/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory/memory-v6-storage.js";
-import { callWithMateMemoryRuntime } from "../../src-cli/memory/withmate-memory-runtime-client.js";
+import { callWithMateMemoryRuntime } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 
 const TEST_API_SECRET = "test-secret";
 const TEST_OPERATOR_API_SECRET = "test-operator-secret";

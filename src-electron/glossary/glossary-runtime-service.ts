@@ -35,6 +35,7 @@ import {
   type GlossaryProactiveTurnHandle,
 } from "./glossary-proactive-turn.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
+import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 
 type BindingRegistry = {
   resolve(
@@ -157,6 +158,7 @@ export class GlossaryRuntimeService {
   readonly #resolveActorSession: GlossaryRuntimeServiceDeps["resolveActorSession"];
   readonly #getProactiveCreateLimit: GlossaryRuntimeServiceDeps["getProactiveCreateLimit"];
   readonly #proactiveTurns: GlossaryProactiveTurnCoordinator;
+  readonly #providerTurns: ProviderAgentRuntimeTurnCoordinator;
 
   constructor(deps: GlossaryRuntimeServiceDeps) {
     this.#applicationService = deps.applicationService;
@@ -164,6 +166,7 @@ export class GlossaryRuntimeService {
     this.#resolveActorSession = deps.resolveActorSession;
     this.#getProactiveCreateLimit = deps.getProactiveCreateLimit;
     this.#proactiveTurns = new GlossaryProactiveTurnCoordinator(deps.providerAgentRuntimeTurns);
+    this.#providerTurns = deps.providerAgentRuntimeTurns;
   }
 
   async beginProviderTurn(
@@ -213,17 +216,68 @@ export class GlossaryRuntimeService {
     const selector: GlossaryCheckoutSelector = operation === "list_targets"
       ? { kind: "primary" }
       : glossaryCheckoutSelectorSchema.parse((parsed.data as { selector?: unknown }).selector);
+    const captured = this.#bindingRegistry.resolve(request.bindingReference, glossaryAgentRuntimeOperation(operation));
+    if (!captured.ok) {
+      return this.#respond(runtimeError(bindingErrorCode(captured.code), "Glossary operation requires the active provider Session runtime binding."));
+    }
+    const capturedBinding = captured.binding;
+    const mutation = ["create", "create_batch", "update", "delete"].includes(operation);
+    let turnAdmission: RuntimeTurnAdmission | undefined;
+    if (request.turnCapability || (request.transport === "mcp" && mutation)) {
+      const admitted = this.#providerTurns.admit({
+        actorSessionId: capturedBinding.actorSessionId,
+        providerId: capturedBinding.providerId,
+        turnCapability: request.turnCapability,
+      });
+      if (!admitted.ok) {
+        return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Glossary operation requires the captured provider Session turn."));
+      }
+      const handle = admitted.handle;
+      turnAdmission = {
+        state: handle.revocationState,
+        isCurrent: () => {
+          const current = this.#bindingRegistry.resolve(request.bindingReference, glossaryAgentRuntimeOperation(operation));
+          const turn = this.#providerTurns.admit({
+            actorSessionId: capturedBinding.actorSessionId,
+            providerId: capturedBinding.providerId,
+            turnCapability: request.turnCapability,
+          });
+          return current.ok
+            && current.binding.bindingId === capturedBinding.bindingId
+            && current.binding.executionGeneration === capturedBinding.executionGeneration
+            && current.binding.actorSessionId === capturedBinding.actorSessionId
+            && current.binding.providerId === capturedBinding.providerId
+            && turn.ok && turn.handle === handle;
+        },
+      };
+    }
+    const admissionCurrent = (): boolean => {
+      try {
+        if (turnAdmission) runWithRuntimeTurnAdmission(turnAdmission, () => undefined);
+        return true;
+      } catch (error) {
+        if (error instanceof RuntimeTurnInactiveError) return false;
+        throw error;
+      }
+    };
     const authorization = await this.#authorize(request.bindingReference, operation, selector);
     if ("error" in authorization) {
       return this.#respond(authorization.error);
     }
     const { binding, target, checkoutId } = authorization;
+    if (binding.bindingId !== capturedBinding.bindingId
+      || binding.executionGeneration !== capturedBinding.executionGeneration
+      || !admissionCurrent()) {
+      return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Captured provider Session authority is no longer active."));
+    }
     const guard = async (): Promise<ResolvedGlossaryCheckout | null> => {
+      if (!admissionCurrent()) return null;
       const current = await this.#authorize(request.bindingReference, operation, selector);
       if (
         "error" in current
         || current.binding.bindingId !== binding.bindingId
         || current.binding.executionGeneration !== binding.executionGeneration
+        || !admissionCurrent()
       ) {
         return null;
       }

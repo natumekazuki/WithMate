@@ -9,13 +9,13 @@ import {
 import {
   GLOSSARY_MCP_TOOL_DEFINITIONS,
   GLOSSARY_PUBLIC_INPUT_SCHEMAS,
-  startWithMateGlossaryMcpServer,
-} from "./withmate-glossary-mcp.js";
+} from "../../src-electron/platform/mcp/withmate-glossary-mcp.js";
+import { startWithMateGlossaryMcpServer } from "./withmate-glossary-mcp.js";
 import {
   callGlossaryRuntime,
   createGlossaryTransportError,
   type GlossaryRuntimeClientDeps,
-} from "./withmate-glossary-runtime-client.js";
+} from "../../src-electron/platform/mcp/withmate-glossary-runtime-client.js";
 
 export type GlossaryCliDeps = Omit<GlossaryRuntimeClientDeps, "adapter" | "apiUrl" | "discoveryFilePath"> & {
   stdin?: NodeJS.ReadableStream;

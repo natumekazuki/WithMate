@@ -31,7 +31,7 @@ import {
   callWithMateMemoryRuntime,
   discoverWithMateMemoryApi,
   WithMateMemoryRuntimeExchangeError,
-} from "../../src-cli/memory/withmate-memory-runtime-client.js";
+} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 
 async function readDiscoveryProjection(pointerFilePath: string, adapter: "cli" | "mcp" = "cli") {
   const pointer = JSON.parse(await readFile(pointerFilePath, "utf8"));
@@ -60,7 +60,7 @@ describe("Memory V6 runtime API", () => {
   // @test-value v2
   // kind = "security"
   // claim = "preflight成功後の不正headerによるHTTP request生成失敗を、dispatched=falseのexchange errorへ正規化する"
-  // oracle = { type = "contract", ref = "src-cli/memory/withmate-memory-runtime-client.ts: callWithMateMemoryRuntime / WithMateMemoryRuntimeExchangeError" }
+  // oracle = { type = "contract", ref = "src-electron/platform/mcp/withmate-memory-runtime-client.ts: callWithMateMemoryRuntime / WithMateMemoryRuntimeExchangeError" }
   // fault = "HTTP request生成失敗をdispatch済みとして扱う、原因を失う、またはpreflight URLへbodyやapiSecretを混入させる"
   // observable = "exchange errorのmessage、dispatched=false、causeのERR_INVALID_CHAR、preflight request数1、preflight URLのbody/API secret非混入"
   // observation_boundary = "public-boundary"

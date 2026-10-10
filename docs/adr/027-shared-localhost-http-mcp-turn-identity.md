@@ -6,7 +6,7 @@
 
 ## 適用状態
 
-採用済み・未適用。共有HTTP MCPとprovider配線は未実装であり、現行のstdio MCP、runtime discovery、同一接続のidentity challengeは引き続き適用する。本判断は新しいprovider → 共有HTTP MCPの入口に限定し、operator CLI、agent-bound CLI fallback、MCPから既存runtime exchangeへの内側の接続を置換しない。
+共有HTTP host、captured turnの失効と副作用guard、Codex／Copilot／Claudeへの一時HTTP設定注入へ適用した。本判断はprovider → 共有HTTP MCPの入口に限定し、operator CLI、agent-bound CLI fallback、手動stdio MCP、MCPから既存runtime exchangeへの内側の接続を置換しない。実装への適用と、全providerの実接続・credential非保存・効果測定・統合・公開の確認は区別する。
 
 ## 背景
 

@@ -7,6 +7,7 @@ import type {
 } from "./memory-v6-worker-protocol.js";
 import type { MemoryV6TargetResolverDeps } from "./memory-v6-context-resolver.js";
 import { StorageWorkerClient } from "../storage/storage-worker-client.js";
+import { assertRuntimeTurnAdmission, currentRuntimeTurnAdmissionState } from "../platform/memory/runtime-turn-admission.js";
 
 export type MemoryV6WorkerClientOptions = {
   workerUrl: URL | string;
@@ -46,7 +47,12 @@ export class MemoryV6WorkerClient {
       const commandPayload: unknown = observedAt && payload && typeof payload === "object" && !Array.isArray(payload)
         ? { ...(payload as Record<string, unknown>), __observedAt: observedAt }
         : payload;
-      return this.client.call<MemoryV6WorkerResultFor<Operation>>(command, commandPayload, { mutation });
+      const state = mutation ? currentRuntimeTurnAdmissionState() : undefined;
+      if (mutation) assertRuntimeTurnAdmission();
+      return this.client.call<MemoryV6WorkerResultFor<Operation>>(command, state ? {
+        __runtimeTurnAdmissionState: state,
+        __runtimeTurnPayload: commandPayload,
+      } : commandPayload, { mutation });
     };
     this.storage = {
       appendEntry: (input) => call("memory.appendEntry", input, true),

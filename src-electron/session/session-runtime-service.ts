@@ -131,6 +131,7 @@ export type SessionRuntimeServiceDeps = {
     session: Session;
     provider: ModelCatalogProvider;
     binding: ProviderAgentRuntimeBindingProjection | null;
+    signal: AbortSignal;
   }): Awaitable<{
     handle: unknown;
     binding: ProviderAgentRuntimeBindingProjection | null;
@@ -1496,6 +1497,7 @@ export class SessionRuntimeService {
           session: activeRunningSession,
           provider,
           binding: agentRuntimeBinding,
+          signal: runAbortController.signal,
         }),
       );
       providerAgentRuntimeTurnHandle = providerAgentRuntimeTurn?.handle;

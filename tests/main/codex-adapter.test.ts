@@ -175,6 +175,56 @@ class FakeTransport {
 
 // @test-value v2
 // kind = "contract"
+// claim = "CodexはHTTP credentialをprocess envだけへ渡し、存在する既知managed設定だけをturnで無効化し、第三者設定とpromptを維持してWorker出力からtokenを除去する"
+// oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
+// fault = "tokenをargvやthread設定へ埋める、存在しないserverを無効化する、第三者serverを無効化する、またはWorker投影からtokenを漏らす"
+// observable = "transport作成envとargv、config/readとthread/startの送信params、runSessionTurnの確定結果"
+// observation_boundary = "consumer"
+// scope = "Codex foreground HTTP MCP bootstrap and Worker projection"
+// lifecycle = "permanent"
+// impact = "native設定のvalidationに失敗してturnを開始できないか、第三者MCPが失われ、credentialが監査へ漏れる"
+// distinction = "既存env testはHTTP tokenを扱わず、SDK型はnested native設定の存在依存やWorker越しの秘匿化を検査できない。fake transportでモデル通信せず確認する"
+// risk_tags = ["privacy", "authentication"]
+// @end-test-value
+it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async () => workspace(async (directory) => {
+  const input = createCodexRunSessionTurnInput(directory);
+  input.agentRuntimeBinding = {
+    bindingId: "binding", bindingReference: "reference", providerId: "codex",
+    executionGeneration: "generation", transport: "env", expiresAt: null,
+    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", token: "opaque-http-token" },
+  };
+  const transport = new FakeTransport();
+  const request = transport.request.bind(transport);
+  transport.request = async <T>(method: string, params?: unknown): Promise<T> => {
+    if (method === "config/read") {
+      transport.calls.push({ method, params });
+      return { config: { mcp_servers: { "withmate-memory": { command: "stdio-fixture" }, "third-party": { command: "third-party-fixture" } } } } as T;
+    }
+    return request<T>(method, params);
+  };
+  transport.events = [completed([message("http", "echo opaque-http-token")])];
+  let options: { env?: NodeJS.ProcessEnv; arguments?: readonly string[] } | undefined;
+  const adapter = new CodexAdapter(undefined, { createTransport: (value) => { options = value; return transport; } });
+  const output = await adapter.runSessionTurn(input);
+  assert.equal(options?.env?.WITHMATE_MANAGED_MCP_TOKEN, "opaque-http-token");
+  const argumentsText = options!.arguments!.join("\n");
+  assert.match(argumentsText, /mcp_servers.withmate-memory-http=.*env_http_headers/);
+  assert.match(argumentsText, /mcp_servers.withmate-glossary-http=.*env_http_headers/);
+  assert.doesNotMatch(argumentsText, /opaque-http-token/);
+  assert.deepEqual(transport.calls.find((call) => call.method === "config/read")?.params, { cwd: directory, includeLayers: false });
+  const thread = transport.calls.find((call) => call.method === "thread/start")!.params as { config: { mcp_servers: unknown } };
+  assert.deepEqual(thread.config.mcp_servers, {
+    "withmate-memory": { enabled: false },
+    "withmate-memory-http": { url: "http://127.0.0.1:47891/memory", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
+    "withmate-glossary-http": { url: "http://127.0.0.1:47891/glossary", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
+  });
+  assert.doesNotMatch(JSON.stringify(transport.calls), /opaque-http-token/);
+  assert.match(output.assistantText, /WITHMATE_BINDING_REFERENCE_REDACTED/);
+  assert.doesNotMatch(JSON.stringify(output), /opaque-http-token/);
+}));
+
+// @test-value v2
+// kind = "contract"
 // claim = "Codex progressは変更stepだけを渡し、resolved event burst中でもmacrotaskを実行する"
 // oracle = { type = "contract", ref = "docs/design/audit-log.md" }
 // fault = "1step変更で既存全stepを変更扱いするか、同期event連鎖でMainのtimerを飢餓させる"

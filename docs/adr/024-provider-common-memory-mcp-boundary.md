@@ -6,7 +6,7 @@ Accepted
 
 ## 適用状態
 
-[ADR 027](027-shared-localhost-http-mcp-turn-identity.md)は、新しいprovider → 共有localhost HTTP MCPの接続認証とfallback reporterの所有者を部分的に置換する採用済み・未適用の判断である。現行stdio MCPは引き続き適用する。actor-relative schema、CLI authority分離、tools/list正常送出後のfallback admission、内側のruntime exchange、effect certaintyは維持する。
+[ADR 027](027-shared-localhost-http-mcp-turn-identity.md)は、新しいprovider → 共有localhost HTTP MCPの接続認証とfallback reporterの所有者を部分的に置換する実装へ適用した判断である。手動stdio MCPは引き続き適用する。actor-relative schema、CLI authority分離、tools/list正常送出後のfallback admission、内側のruntime exchange、effect certaintyは維持する。
 
 ## Context
 

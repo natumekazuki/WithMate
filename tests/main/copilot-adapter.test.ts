@@ -206,6 +206,36 @@ function createRunSessionInput(options?: {
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Copilot foregroundは当turnのHTTP MCP endpointとcredentialをsession設定へ渡し、promptや第三者設定探索を変更しない"
+// oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
+// fault = "HTTP serverや認証headerを欠落させる、tokenをpromptへ混ぜる、またはnative設定探索を無効にする"
+// observable = "buildCopilotSessionSettingsのconfigとcomposePromptの戻り値"
+// observation_boundary = "consumer"
+// scope = "Copilot native foreground session HTTP MCP configuration"
+// lifecycle = "permanent"
+// impact = "MemoryとGlossaryが認証できず、第三者設定が使えなくなるかtokenがprompt監査へ漏れる"
+// distinction = "SDKの型だけではWithMateが設定を渡すことやprompt分離を保証しない。固定fixtureでnative設定境界を確認する"
+// risk_tags = ["privacy", "authentication"]
+// @end-test-value
+it("Copilot foregroundの当turn HTTP MCP設定をpromptから分離する", () => {
+  const input = createRunSessionInput();
+  input.agentRuntimeBinding = {
+    ...input.agentRuntimeBinding!,
+    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", token: "opaque-http-token" },
+  };
+  const prompt = new CopilotAdapter().composePrompt(input);
+  const { config } = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
+  assert.deepEqual(config.mcpServers, {
+    "withmate-memory": { type: "http", url: "http://127.0.0.1:47891/memory", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
+    "withmate-glossary": { type: "http", url: "http://127.0.0.1:47891/glossary", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
+  });
+  assert.notEqual(config.enableConfigDiscovery, false);
+  assert.equal(config.disabledMcpServers, undefined);
+  assert.doesNotMatch(JSON.stringify(prompt), /opaque-http-token/);
+});
+
 function createBackgroundPromptInput(
   overrides?: Partial<RunBackgroundStructuredPromptInput>,
 ): RunBackgroundStructuredPromptInput {

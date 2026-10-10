@@ -7,8 +7,8 @@ import {
   MEMORY_FORGET_REASONS,
   MEMORY_RESULT_LIMIT_MAX,
   MEMORY_V6_SCHEMA_VERSION,
-} from "../../src-shared/memory/memory-contract.js";
-import { MEMORY_ABSOLUTE_PATH_PATTERN } from "../../src-shared/memory/memory-validation.js";
+} from "../../../src-shared/memory/memory-contract.js";
+import { MEMORY_ABSOLUTE_PATH_PATTERN } from "../../../src-shared/memory/memory-validation.js";
 import { buildWithMateMemoryMcpRuntimeBody } from "./withmate-memory-mcp-operation.js";
 
 type GeneralMemoryRuntimeCall = (operation: {

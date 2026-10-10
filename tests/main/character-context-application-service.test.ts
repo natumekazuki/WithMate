@@ -21,6 +21,7 @@ import { CharacterAffectStorage } from "../../src-electron/character/character-a
 import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
 import { MemoryV6Service } from "../../src-electron/memory/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory/memory-v6-storage.js";
+import { runWithRuntimeTurnAdmission } from "../../src-electron/platform/memory/runtime-turn-admission.js";
 import {
   LOCAL_USER_MEMORY_PERMISSIONS,
   type MemoryV6SessionBindingPrincipal,
@@ -113,6 +114,7 @@ function createFixture(options: {
     dbPath,
     service,
     memoryService,
+    affectService,
     close() {
       affectStorage.close();
       memoryStorage.close();
@@ -400,6 +402,50 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(isCharacterContextError(second), false);
       if (isCharacterContextError(second)) return;
       assert.notEqual(second.saved[0]?.eventId, first.saved[0]?.eventId);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "複数Affect候補の途中でturnが失効すると、先にcommit済みのeventを保持し、後続を拒否してpartial effectを返す"
+  // oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
+  // fault = "late revocationをeffect noneへ集約して先行commitを隠す、または後続eventを保存する"
+  // observable = "appraiseのpartial failureと実SQLiteに保存されたevent数"
+  // observation_boundary = "public-boundary"
+  // scope = "character-context-application-service"
+  // lifecycle = "permanent"
+  // impact = "caller retry and truthful mutation effects"
+  // distinction = "単一候補の拒否では検出できない先行commit後のturn失効を実storage経由で確認する"
+  // @end-test-value
+  it("候補間のturn失効で先行commitをpartial effectとして保持する", async () => {
+    const fixture = createFixture();
+    const state = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+    const recordAppraisal = fixture.affectService.recordAppraisal.bind(fixture.affectService);
+    fixture.affectService.recordAppraisal = async (...args) => {
+      const result = await recordAppraisal(...args);
+      Atomics.store(new Int32Array(state), 0, 1);
+      return result;
+    };
+    try {
+      const result = await runWithRuntimeTurnAdmission({ state }, () => fixture.service.appraise({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        authority: { kind: "conversation" },
+        candidates: [
+          affectCandidate({ idempotencyKey: "before-revocation" }),
+          affectCandidate({ idempotencyKey: "after-revocation" }),
+        ],
+      }));
+      assert.equal(isCharacterContextError(result), true);
+      if (!isCharacterContextError(result)) return;
+      assert.equal(result.error.code, "partial_failure");
+      assert.equal(result.error.effect, "partial");
+      assert.equal((result.error.details?.saved as unknown[])?.length, 1);
+      const metrics = await fixture.service.getMetrics();
+      assert.equal(metrics.affect.storage.events, 1);
     } finally {
       fixture.close();
     }

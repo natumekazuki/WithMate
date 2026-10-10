@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 
 import {
   AFFECT_SCHEMA_VERSION,
@@ -1129,9 +1130,12 @@ export class CharacterAffectStorage {
   }
 
   private transaction<T>(run: () => T, readOnly = false): T {
+    if (!readOnly) assertRuntimeTurnAdmission();
     this.db.exec(readOnly ? "BEGIN TRANSACTION;" : "BEGIN IMMEDIATE TRANSACTION;");
     try {
+      if (!readOnly) assertRuntimeTurnAdmission();
       const result = run();
+      if (!readOnly) assertRuntimeTurnAdmission();
       this.db.exec("COMMIT;");
       return result;
     } catch (error) {

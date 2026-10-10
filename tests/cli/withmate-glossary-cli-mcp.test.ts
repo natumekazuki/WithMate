@@ -11,8 +11,8 @@ import {
 import {
   GLOSSARY_MCP_TOOL_DEFINITIONS,
   createWithMateGlossaryMcpServer,
-} from "../../src-cli/glossary/withmate-glossary-mcp.js";
-import { callGlossaryRuntime } from "../../src-cli/glossary/withmate-glossary-runtime-client.js";
+} from "../../src-electron/platform/mcp/withmate-glossary-mcp.js";
+import { callGlossaryRuntime } from "../../src-electron/platform/mcp/withmate-glossary-runtime-client.js";
 import {
   runWithMateGlossaryCli,
   WITHMATE_GLOSSARY_CLI_EXIT_CODES,
@@ -20,7 +20,7 @@ import {
 import type {
   WithMateMemoryRuntimeOperation,
   WithMateMemoryRuntimeResponse,
-} from "../../src-cli/memory/withmate-memory-runtime-client.js";
+} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
 
 const CLI_ENV = {
@@ -219,7 +219,7 @@ it("dispatch済みwriteの非glossary responseはHTTP statusによらずeffect u
 // @test-value v2
 // kind = "security"
 // claim = "Glossary CLIのruntime dispatchが413応答をGLOSSARY_LIMIT_EXCEEDED/effect noneへ分類する"
-// oracle = { type = "contract", ref = "src-cli/glossary/withmate-glossary-runtime-client.ts" }
+// oracle = { type = "contract", ref = "src-electron/platform/mcp/withmate-glossary-runtime-client.ts" }
 // fault = "runtimeから返された413を成功、transport error、またはretryableとして誤分類する"
 // observable = "exchange path、turn capability、runtime dispatch call count、413 responseのenvelope分類"
 // observation_boundary = "public-boundary"

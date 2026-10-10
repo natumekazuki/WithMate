@@ -114,6 +114,46 @@ function fakeQuery(
 }
 
 // @test-value v2
+// kind = "contract"
+// claim = "Claude foregroundは当turnのHTTP MCP設定をSDKへ渡し、native設定探索とresumeを維持し、SDK応答中のtokenを保存用結果から除去する"
+// oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md; docs/design/provider-adapter.md#Thread Management" }
+// fault = "HTTP接続設定を欠落させる、第三者MCPをstrict設定で隠す、resumeを落とす、またはtokenを結果へ漏らす"
+// observable = "queryのoptionsとprompt、runSessionTurnの確定結果"
+// observation_boundary = "consumer"
+// scope = "Claude foreground managed HTTP MCP injection and projection"
+// lifecycle = "permanent"
+// impact = "MemoryとGlossaryが使えない、既存第三者設定の探索や会話継続が失われる、またはtokenが監査へ保存される"
+// distinction = "設定型検査では実行時queryへ渡す値やSDK応答のredactionを保証できない。fake SDKで通信せずadapter境界を確認する"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("Claude foregroundのHTTP MCP設定とtoken秘匿化を保つ", async () => {
+  const request = input("saved-thread");
+  request.agentRuntimeBinding = {
+    bindingId: "binding", bindingReference: "reference", providerId: "claude",
+    executionGeneration: "generation", transport: "env", expiresAt: null,
+    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", token: "opaque-http-token" },
+  };
+  let seen: Options | undefined;
+  let submittedPrompt: unknown;
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+    yield sdkMessage({ type: "assistant", session_id: "saved-thread", uuid: "http", parent_tool_use_id: null,
+      message: { content: [{ type: "text", text: "echo opaque-http-token" }] } });
+    yield result("saved-thread");
+  }, (options, prompt) => { seen = options; submittedPrompt = prompt; }) });
+  const output = await adapter.runSessionTurn(request);
+  assert.deepEqual(seen?.mcpServers, {
+    "withmate-memory": { type: "http", url: "http://127.0.0.1:47891/memory", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
+    "withmate-glossary": { type: "http", url: "http://127.0.0.1:47891/glossary", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
+  });
+  assert.deepEqual(seen?.settingSources, ["user", "project", "local"]);
+  assert.notEqual(seen?.strictMcpConfig, true);
+  assert.equal(seen?.resume, "saved-thread");
+  assert.doesNotMatch(JSON.stringify(submittedPrompt), /opaque-http-token/);
+  assert.match(output.assistantText, /WITHMATE_BINDING_REFERENCE_REDACTED/);
+  assert.doesNotMatch(JSON.stringify(output), /opaque-http-token/);
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Claudeの多数stable messageでraw上限を超えても全文・operation・artifactを正常終了とcancel partialで保持しsecretを除去する"
 // oracle = { type = "contract", ref = "docs/design/audit-log.md#表示とデータ保護; docs/design/provider-adapter.md" }

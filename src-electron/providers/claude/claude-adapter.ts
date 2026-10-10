@@ -23,6 +23,7 @@ import {
 import { parseSessionMemoryDeltaText } from "../../session/session-memory-extraction.js";
 import { resolveDevelopmentProviderBinaryPath, resolvePackagedProviderBinaryPath } from "../provider-binary-paths.js";
 import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv, type ProviderAgentRuntimeBindingRedactor } from "../provider-agent-runtime-binding.js";
+import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
 import { AUDIT_TEXT_PREVIEW_LIMIT, boundAuditRawItem, BoundedAuditRawItems, toAuditTextPreview } from "../../session/audit-payload-limits.js";
 import { buildArtifactFromOperations } from "../provider-artifact.js";
 import { captureWorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
@@ -395,6 +396,9 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       systemPrompt: { type: "preset", preset: "claude_code", append: prompt.systemBodyText, snapshot: false },
       additionalDirectories: prompt.additionalDirectories,
       settingSources: ["user", "project", "local"],
+      ...(input.agentRuntimeBinding?.managedMcp
+        ? { mcpServers: buildManagedHttpMcpServers(input.agentRuntimeBinding) }
+        : {}),
       includePartialMessages: true,
       abortController: controller,
       spawnClaudeCodeProcess: (spawnOptions) => {

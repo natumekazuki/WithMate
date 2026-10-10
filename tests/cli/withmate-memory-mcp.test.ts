@@ -11,7 +11,7 @@ import {
   CHARACTER_MCP_SERVER_INSTRUCTIONS,
   WITHMATE_MEMORY_MCP_TOOL_DEFINITIONS,
   createWithMateMemoryMcpServer,
-} from "../../src-cli/memory/withmate-memory-mcp.js";
+} from "../../src-electron/platform/mcp/withmate-memory-mcp.js";
 import {
   createWithMateMemoryRuntimeChallenge,
   WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
@@ -27,7 +27,7 @@ import {
   type WithMateMemoryRuntimeConnection,
   type WithMateMemoryRuntimeOperation,
   type WithMateMemoryRuntimeResponse,
-} from "../../src-cli/memory/withmate-memory-runtime-client.js";
+} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 
 it("一般Memoryの非domain HTTP failureは4xxをeffect none、write 5xxだけunknownにする", () => {
   for (const status of [403, 429]) {

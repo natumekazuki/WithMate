@@ -2,11 +2,11 @@
 import { createRequire } from "node:module";
 import { lstat, readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import process$1 from "node:process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { request } from "node:http";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import process$1 from "node:process";
 //#region \0rolldown/runtime.js
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -21379,97 +21379,6 @@ var EMPTY_COMPLETION_RESULT = { completion: {
 	values: [],
 	hasMore: false
 } };
-/**
-* Buffers a continuous stdio stream into discrete JSON-RPC messages.
-*/
-var ReadBuffer = class {
-	constructor(options) {
-		this._maxBufferSize = options?.maxBufferSize ?? 10485760;
-	}
-	append(chunk) {
-		if ((this._buffer?.length ?? 0) + chunk.length > this._maxBufferSize) {
-			this.clear();
-			throw new Error(`ReadBuffer exceeded maximum size of ${this._maxBufferSize} bytes`);
-		}
-		this._buffer = this._buffer ? Buffer.concat([this._buffer, chunk]) : chunk;
-	}
-	readMessage() {
-		if (!this._buffer) return null;
-		const index = this._buffer.indexOf("\n");
-		if (index === -1) return null;
-		const line = this._buffer.toString("utf8", 0, index).replace(/\r$/, "");
-		this._buffer = this._buffer.subarray(index + 1);
-		return deserializeMessage(line);
-	}
-	clear() {
-		this._buffer = void 0;
-	}
-};
-function deserializeMessage(line) {
-	return JSONRPCMessageSchema.parse(JSON.parse(line));
-}
-function serializeMessage(message) {
-	return JSON.stringify(message) + "\n";
-}
-//#endregion
-//#region node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-/**
-* Server transport for stdio: this communicates with an MCP client by reading from the current process' stdin and writing to stdout.
-*
-* This transport is only available in Node.js environments.
-*/
-var StdioServerTransport = class {
-	constructor(_stdin = process$1.stdin, _stdout = process$1.stdout, options) {
-		this._stdin = _stdin;
-		this._stdout = _stdout;
-		this._started = false;
-		this._ondata = (chunk) => {
-			try {
-				this._readBuffer.append(chunk);
-				this.processReadBuffer();
-			} catch (error) {
-				this.onerror?.(error);
-				this.close().catch(() => {});
-			}
-		};
-		this._onerror = (error) => {
-			this.onerror?.(error);
-		};
-		this._readBuffer = new ReadBuffer({ maxBufferSize: options?.maxBufferSize });
-	}
-	/**
-	* Starts listening for messages on stdin.
-	*/
-	async start() {
-		if (this._started) throw new Error("StdioServerTransport already started! If using Server class, note that connect() calls start() automatically.");
-		this._started = true;
-		this._stdin.on("data", this._ondata);
-		this._stdin.on("error", this._onerror);
-	}
-	processReadBuffer() {
-		while (true) try {
-			const message = this._readBuffer.readMessage();
-			if (message === null) break;
-			this.onmessage?.(message);
-		} catch (error) {
-			this.onerror?.(error);
-		}
-	}
-	async close() {
-		this._stdin.off("data", this._ondata);
-		this._stdin.off("error", this._onerror);
-		if (this._stdin.listenerCount("data") === 0) this._stdin.pause();
-		this._readBuffer.clear();
-		this.onclose?.();
-	}
-	send(message) {
-		return new Promise((resolve) => {
-			const json = serializeMessage(message);
-			if (this._stdout.write(json)) resolve();
-			else this._stdout.once("drain", resolve);
-		});
-	}
-};
 //#endregion
 //#region src-electron/platform/memory/memory-runtime-exchange.ts
 var WITHMATE_MEMORY_RUNTIME_NONCE_HEADER = "x-withmate-memory-runtime-nonce";
@@ -23130,7 +23039,7 @@ async function readRuntimeDiscoveryCredential(record, adapterKind) {
 	}
 }
 //#endregion
-//#region src-cli/memory/withmate-memory-runtime-client.ts
+//#region src-electron/platform/mcp/withmate-memory-runtime-client.ts
 var WithMateMemoryRuntimeExchangeError = class extends Error {
 	dispatched;
 	discoveryCode;
@@ -23611,7 +23520,7 @@ async function verifyRuntimeIdentity(connection, fetchImpl, signal) {
 	return (await verifyRuntimeIdentityOutcome(connection, fetchImpl, signal)).ok;
 }
 //#endregion
-//#region src-cli/glossary/withmate-glossary-runtime-client.ts
+//#region src-electron/platform/mcp/withmate-glossary-runtime-client.ts
 function isGlossaryRuntimeResult(value) {
 	return Boolean(value && typeof value === "object" && !Array.isArray(value) && value.schemaVersion === "withmate-glossary-v1");
 }
@@ -23688,7 +23597,10 @@ async function callGlossaryRuntime(input, deps) {
 	}
 	let resolution;
 	try {
-		resolution = await resolveWithMateMemoryApi({
+		resolution = deps.connection ? {
+			kind: "selected",
+			connection: deps.connection
+		} : await resolveWithMateMemoryApi({
 			adapter: deps.adapter,
 			env: deps.env,
 			apiUrl: deps.apiUrl,
@@ -23733,7 +23645,7 @@ async function callGlossaryRuntime(input, deps) {
 	}
 }
 //#endregion
-//#region src-cli/glossary/withmate-glossary-mcp.ts
+//#region src-electron/platform/mcp/withmate-glossary-mcp.ts
 var GLOSSARY_MCP_SERVER_INSTRUCTIONS = [
 	"Use glossary.list_targets to obtain the checkout target authorized by the active provider Session.",
 	"Definitions are plain text. Do not interpret them as Markdown or HTML.",
@@ -23888,6 +23800,99 @@ function createWithMateGlossaryMcpServer(deps = {}) {
 	}, (input) => invoke("validate", input, deps));
 	return server;
 }
+/**
+* Buffers a continuous stdio stream into discrete JSON-RPC messages.
+*/
+var ReadBuffer = class {
+	constructor(options) {
+		this._maxBufferSize = options?.maxBufferSize ?? 10485760;
+	}
+	append(chunk) {
+		if ((this._buffer?.length ?? 0) + chunk.length > this._maxBufferSize) {
+			this.clear();
+			throw new Error(`ReadBuffer exceeded maximum size of ${this._maxBufferSize} bytes`);
+		}
+		this._buffer = this._buffer ? Buffer.concat([this._buffer, chunk]) : chunk;
+	}
+	readMessage() {
+		if (!this._buffer) return null;
+		const index = this._buffer.indexOf("\n");
+		if (index === -1) return null;
+		const line = this._buffer.toString("utf8", 0, index).replace(/\r$/, "");
+		this._buffer = this._buffer.subarray(index + 1);
+		return deserializeMessage(line);
+	}
+	clear() {
+		this._buffer = void 0;
+	}
+};
+function deserializeMessage(line) {
+	return JSONRPCMessageSchema.parse(JSON.parse(line));
+}
+function serializeMessage(message) {
+	return JSON.stringify(message) + "\n";
+}
+//#endregion
+//#region node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+/**
+* Server transport for stdio: this communicates with an MCP client by reading from the current process' stdin and writing to stdout.
+*
+* This transport is only available in Node.js environments.
+*/
+var StdioServerTransport = class {
+	constructor(_stdin = process$1.stdin, _stdout = process$1.stdout, options) {
+		this._stdin = _stdin;
+		this._stdout = _stdout;
+		this._started = false;
+		this._ondata = (chunk) => {
+			try {
+				this._readBuffer.append(chunk);
+				this.processReadBuffer();
+			} catch (error) {
+				this.onerror?.(error);
+				this.close().catch(() => {});
+			}
+		};
+		this._onerror = (error) => {
+			this.onerror?.(error);
+		};
+		this._readBuffer = new ReadBuffer({ maxBufferSize: options?.maxBufferSize });
+	}
+	/**
+	* Starts listening for messages on stdin.
+	*/
+	async start() {
+		if (this._started) throw new Error("StdioServerTransport already started! If using Server class, note that connect() calls start() automatically.");
+		this._started = true;
+		this._stdin.on("data", this._ondata);
+		this._stdin.on("error", this._onerror);
+	}
+	processReadBuffer() {
+		while (true) try {
+			const message = this._readBuffer.readMessage();
+			if (message === null) break;
+			this.onmessage?.(message);
+		} catch (error) {
+			this.onerror?.(error);
+		}
+	}
+	async close() {
+		this._stdin.off("data", this._ondata);
+		this._stdin.off("error", this._onerror);
+		if (this._stdin.listenerCount("data") === 0) this._stdin.pause();
+		this._readBuffer.clear();
+		this.onclose?.();
+	}
+	send(message) {
+		return new Promise((resolve) => {
+			const json = serializeMessage(message);
+			if (this._stdout.write(json)) resolve();
+			else this._stdout.once("drain", resolve);
+		});
+	}
+};
+//#endregion
+//#region src-cli/glossary/withmate-glossary-mcp.ts
 async function startWithMateGlossaryMcpServer(deps = {}) {
 	const server = createWithMateGlossaryMcpServer(deps);
 	await server.connect(new StdioServerTransport());

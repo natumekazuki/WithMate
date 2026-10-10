@@ -1,5 +1,6 @@
 import { stat, readFile } from "node:fs/promises";
 import { extname } from "node:path";
+import { assertRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 import {
   MEMORY_PROTECTED_OBJECT_ENVELOPE_OVERHEAD_BYTES,
@@ -66,13 +67,15 @@ export async function prepareMemoryProtectedObjectFile(
   input: PrepareMemoryProtectedObjectFileInput,
 ): Promise<MemoryV6AppendProtectedObjectInput> {
   const inspected = await inspectMemoryProtectedObjectInputFile(input.file);
+  assertRuntimeTurnAdmission();
   const objectId = createMemoryProtectedObjectId();
   let key: MemoryProtectedObjectKey;
   let plaintext: Buffer;
   try {
     key = await dependencies.keyStore.getOrCreateActiveKey();
     plaintext = await readFile(input.file.path);
-  } catch {
+  } catch (error) {
+    if (error instanceof RuntimeTurnInactiveError) throw error;
     throw new MemoryProtectedObjectImportError(
       "MEMORY_FILE_IMPORT_FAILED",
       "files",
@@ -98,11 +101,13 @@ export async function prepareMemoryProtectedObjectFile(
         objectId,
       }),
     });
+    assertRuntimeTurnAdmission();
     writeResult = await dependencies.objectStore.writeObject({
       objectId,
       payload: encrypted.encryptedPayload,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof RuntimeTurnInactiveError) throw error;
     throw new MemoryProtectedObjectImportError(
       "MEMORY_FILE_IMPORT_FAILED",
       "files",

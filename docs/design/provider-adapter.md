@@ -81,6 +81,17 @@ providerごとの差は次。
 
 ## Plane Separation
 
+### Managed HTTP MCP
+
+Coding planeのMemory／CharacterとGlossaryは、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。endpointは`/mcp/memory`と`/mcp/glossary`であり、tool schemaとruntime clientは`src-electron/platform/mcp/`をstdio CLIと共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
+
+- Mainはactor、provider、runtime owner、binding generation、captured logical turnへ固定した短命tokenをmemory内で発行する。全requestを`x-withmate-mcp-token`で認証し、MCP session IDはprotocol stateの選択にだけ使う。
+- Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認した`withmate-memory`／`withmate-glossary`だけを当threadで無効化し、`withmate-memory-http`／`withmate-glossary-http`を登録する。第三者MCPと永続configは変更しない。
+- CopilotとClaudeは当turnのnative session／query optionsへ標準managed名のHTTP設定を渡す。既存native設定の探索と保存済みthreadのresumeは維持する。
+- tokenはprompt、通常log、Audit、artifactへ投影せず、bindingと同じredactorで除去する。background planeはforeground tokenを大小文字を区別せずenvから除去する。
+- 取消受付、turn終了、binding失効、runtime停止でtokenとcaptured turnを失効させる。queued Workerにも共有失効stateを渡し、SQLite transactionとfilesystem副作用の境界で再確認する。確定済み副作用はpartial／unknownとして維持する。
+- HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。operator CLIとadmission付きagent CLI fallbackは別経路で維持する。
+
 provider 境界は current 実装で次の 2 plane に分けて扱う。
 
 ### Coding Plane

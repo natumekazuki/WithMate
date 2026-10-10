@@ -68,13 +68,13 @@ import {
   type WithMateMemoryRuntimeResolution,
   type WithMateMemoryRuntimeResponse,
   type WithMateMemoryRuntimeConnection,
-} from "./withmate-memory-runtime-client.js";
+} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 import { isUuid, type RuntimeDiscoveryClock } from "../../src-electron/platform/runtime-discovery/runtime-discovery-contract.js";
 import { startWithMateMemoryMcpServer } from "./withmate-memory-mcp.js";
 import {
   buildWithMateMemoryMcpRuntimeBody,
   type WithMateMemoryMcpCommand,
-} from "./withmate-memory-mcp-operation.js";
+} from "../../src-electron/platform/mcp/withmate-memory-mcp-operation.js";
 
 export {
   DEFAULT_REQUEST_TIMEOUT_MS,

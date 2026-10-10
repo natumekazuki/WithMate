@@ -50,6 +50,7 @@ import {
 } from "../platform/memory/memory-runtime-exchange.js";
 import type { MemoryV6ProjectContext } from "./memory-v6-context-resolver.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
+import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 
 export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
@@ -1021,39 +1022,48 @@ async function routeResolvedRequest(input: {
   if (input.fallbackFrom === "mcp") {
     input.options.characterContextService?.recordFallback("mcp", "cli");
   }
-  const bindingResolution = await resolveRouteAgentRuntimeBinding({
-    options: input.options,
-    route: input.route,
-    body: input.body,
-    bindingReference: input.bindingReference,
-    transport: input.transport,
-    fallbackFrom: input.fallbackFrom,
-    turnCapability: input.turnCapability,
-  });
-  if (!bindingResolution.ok) {
-    return bindingResolution.error;
+  const transport = input.transport;
+  try {
+    const bindingResolution = await resolveRouteAgentRuntimeBinding({
+      options: input.options,
+      route: input.route,
+      body: input.body,
+      bindingReference: input.bindingReference,
+      transport: input.transport,
+      fallbackFrom: input.fallbackFrom,
+      turnCapability: input.turnCapability,
+    });
+    if (!bindingResolution.ok) {
+      return bindingResolution.error;
+    }
+    const mcpGeneralPolicyError = validateMcpGeneralMutationPolicy(input.route, bindingResolution.body, input.transport);
+    if (mcpGeneralPolicyError) {
+      return mcpGeneralPolicyError;
+    }
+    const dispatch = () => (input.route.startsWith("character_")
+      ? routeCharacterContextRequest(
+          input.options.characterContextService,
+          bindingResolution.principal ?? createLocalUserMemoryPrincipal(),
+          input.route,
+          bindingResolution.body,
+          transport,
+        )
+      : routeServiceRequest(
+          input.options.service,
+          bindingResolution.principal ?? createLocalUserMemoryPrincipal(),
+          input.route,
+          bindingResolution.body,
+        ));
+    const result = await (bindingResolution.turnAdmission
+      ? runWithRuntimeTurnAdmission(bindingResolution.turnAdmission, dispatch)
+      : dispatch());
+    return bindingResolution.authority
+      ? projectAgentBoundResponse(input.route, bindingResolution.body, result, bindingResolution.authority)
+      : result;
+  } catch (error) {
+    if (error instanceof RuntimeTurnInactiveError) return turnAdmissionFailure(input.route);
+    throw error;
   }
-  const mcpGeneralPolicyError = validateMcpGeneralMutationPolicy(input.route, bindingResolution.body, input.transport);
-  if (mcpGeneralPolicyError) {
-    return mcpGeneralPolicyError;
-  }
-  const result = await (input.route.startsWith("character_")
-    ? routeCharacterContextRequest(
-        input.options.characterContextService,
-        bindingResolution.principal ?? createLocalUserMemoryPrincipal(),
-        input.route,
-        bindingResolution.body,
-        input.transport,
-      )
-    : routeServiceRequest(
-        input.options.service,
-        bindingResolution.principal ?? createLocalUserMemoryPrincipal(),
-        input.route,
-        bindingResolution.body,
-      ));
-  return bindingResolution.authority
-    ? projectAgentBoundResponse(input.route, bindingResolution.body, result, bindingResolution.authority)
-    : result;
 }
 
 type RouteBindingResolution =
@@ -1062,6 +1072,7 @@ type RouteBindingResolution =
       body: unknown;
       principal: MemoryV6Principal | null;
       authority: ProviderAgentRuntimeAuthoritySnapshot | null;
+      turnAdmission?: RuntimeTurnAdmission;
     }
   | { ok: false; error: unknown };
 
@@ -1183,6 +1194,34 @@ async function resolveRouteAgentRuntimeBinding(input: {
       error: bindingFailure(input.route, resolved?.code ?? "SESSION_BINDING_REQUIRED"),
     };
   }
+  const binding = resolved.binding;
+  let turnAdmission: RuntimeTurnAdmission | undefined;
+  if (agentBound && (input.turnCapability || input.fallbackFrom === "mcp" || requiresCurrentTurnCapability(input.route, input.body))) {
+    const admission = input.options.providerAgentRuntimeTurns?.admit({
+      actorSessionId: binding.actorSessionId,
+      providerId: binding.providerId,
+      turnCapability: input.turnCapability,
+    });
+    if (!admission?.ok) return { ok: false, error: turnAdmissionFailure(input.route) };
+    const handle = admission.handle;
+    turnAdmission = {
+      state: handle.revocationState,
+      isCurrent: () => {
+        const currentBinding = input.options.agentRuntimeBindingRegistry?.resolve(reference, agentRuntimeOperationForMemoryRoute(input.route));
+        const currentTurn = input.options.providerAgentRuntimeTurns?.admit({
+          actorSessionId: binding.actorSessionId,
+          providerId: binding.providerId,
+          turnCapability: input.turnCapability,
+        });
+        return Boolean(currentBinding?.ok
+          && currentBinding.binding.bindingId === binding.bindingId
+          && currentBinding.binding.executionGeneration === binding.executionGeneration
+          && currentBinding.binding.actorSessionId === binding.actorSessionId
+          && currentBinding.binding.providerId === binding.providerId
+          && currentTurn?.ok && currentTurn.handle === handle);
+      },
+    };
+  }
   const actorSession = await input.options.resolveActorSession?.(resolved.binding.actorSessionId) ?? null;
   if (
     !actorSession
@@ -1191,7 +1230,6 @@ async function resolveRouteAgentRuntimeBinding(input: {
   ) {
     return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
   }
-  const binding = resolved.binding;
   if (!agentBound) {
     return {
       ok: true,
@@ -1208,16 +1246,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
   if (identityField) {
     return { ok: false, error: agentInputError(input.route, identityField, "Caller identity is not accepted.") };
   }
-  if (input.fallbackFrom === "mcp" || requiresCurrentTurnCapability(input.route, input.body)) {
-    const admission = input.options.providerAgentRuntimeTurns?.admit({
-      actorSessionId: binding.actorSessionId,
-      providerId: binding.providerId,
-      turnCapability: input.turnCapability,
-    });
-    if (!admission?.ok) {
-      return { ok: false, error: turnAdmissionFailure(input.route) };
-    }
-  }
+  if (turnAdmission) runWithRuntimeTurnAdmission(turnAdmission, () => undefined);
   const body = await resolveAgentBoundRequestBody(input.options, input.route, input.body, actorSession, authority);
   if (!body.ok) {
     return { ok: false, error: body.error };
@@ -1227,6 +1256,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
     body: body.value,
     principal: createSessionBindingMemoryPrincipal(binding, actorSession, authority),
     authority,
+    turnAdmission,
   };
 }
 

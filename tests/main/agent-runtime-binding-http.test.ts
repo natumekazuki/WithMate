@@ -18,7 +18,7 @@ import {
   WITHMATE_MEMORY_FALLBACK_LISTED_PATH,
   WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH,
 } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
-import { callWithMateMemoryRuntime } from "../../src-cli/memory/withmate-memory-runtime-client.js";
+import { callWithMateMemoryRuntime } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 
 const API_SECRET = "api-secret";
 const OPERATOR_SECRET = "operator-secret";
@@ -751,11 +751,54 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(calls.length, 1);
   });
 
+  // @test-value v2
+  // kind = "security"
+  // claim = "Memory mutationのactor解決待ち中にcaptured turnが終了したらapplicationへdispatchせずeffect noneで拒否する"
+  // oracle = { type = "adr", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
+  // fault = "actor解決後にturnを捕捉するか受付後の取消を無視してappendへdispatchする"
+  // observable = "HTTP拒否statusとeffect、Memory applicationのdispatch件数"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory runtime exchangeの非同期actor解決とturn admission"
+  // lifecycle = "permanent"
+  // impact = "取消済みproviderの遅延mutationを実行せず次turnへ誤帰属させない"
+  // distinction = "Worker storage testはHTTP actor解決前のturn捕捉を通らない"
+  // @end-test-value
+  it("actor解決待ち中に終了したMemory turnはdispatchしない", async () => {
+    const registry = new AgentRuntimeBindingRegistry();
+    const binding = registry.issueOrReuse({
+      actorSessionId: "session-a", providerId: "codex",
+      authoritySnapshot: { userId: "local-user", characterId: "character-a", allowedProjectIds: [] },
+      operationGrants: getMemoryV6AgentRuntimeOperations(),
+    });
+    let entered!: () => void;
+    let release!: () => void;
+    const enteredPromise = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let dispatches = 0;
+    const runtime = await startServer({
+      registry,
+      beforeResolveActor: async () => { entered(); await gate; },
+      service: { append: async () => { dispatches += 1; return {}; } } as unknown as MemoryV6Service,
+    });
+    const pending = runtime.call("/v1/append", {
+      schemaVersion: "withmate-memory-v1", target: { kind: "user-global" }, kind: "decision",
+      title: "Delayed", body: "Delayed", preview: "Delayed", tags: [], idempotencyKey: "delayed-turn",
+    }, binding.bindingReference);
+    await enteredPromise;
+    runtime.expireTurn();
+    release();
+    const result = await pending;
+    assert.equal(result.status, 403);
+    assert.equal((result.value as { error: { effect: string } }).error.effect, "none");
+    assert.equal(dispatches, 0);
+  });
+
   async function startServer(input: {
     registry: AgentRuntimeBindingRegistry;
     service?: MemoryV6Service;
     characterContextService?: CharacterContextApplicationService;
     now?: () => Date;
+    beforeResolveActor?: () => Promise<void>;
   }): Promise<{
     call(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     callRead(path: string, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
@@ -781,9 +824,12 @@ describe("Memory HTTP agent runtime binding policy", () => {
       runtimeInstanceId: RUNTIME_ID,
       agentRuntimeBindingRegistry: input.registry,
       providerAgentRuntimeTurns: turns,
-      resolveActorSession: (sessionId) => sessionId === "session-a"
-        ? { id: "session-a", providerId: "codex", characterId: "character-a" }
-        : null,
+      resolveActorSession: async (sessionId) => {
+        await input.beforeResolveActor?.();
+        return sessionId === "session-a"
+          ? { id: "session-a", providerId: "codex", characterId: "character-a" }
+          : null;
+      },
       resolveProjectById: (projectId) => projectId === "project-a"
         ? { id: "project-a", displayName: "Project A" }
         : null,

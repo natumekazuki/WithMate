@@ -27,6 +27,11 @@ export type ProviderAgentRuntimeBindingProjection = {
   expiresAt: string | null;
   turnCapability?: string;
   memoryRuntimeOwner?: MemoryRuntimeOwnerSelector;
+  managedMcp?: {
+    memoryUrl: string;
+    glossaryUrl: string;
+    token: string;
+  };
 };
 
 export type ResolvedAgentRuntimeBinding = Omit<

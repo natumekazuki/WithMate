@@ -73,6 +73,7 @@ import { MemoryV6WorkerClient } from "./memory-v6-worker-client.js";
 import type { MemoryV6StorageAccess } from "./memory-v6-service.js";
 import type { CharacterAffectStorageAccess } from "../character/character-affect-service.js";
 import { secureWindowsRuntimePath } from "../platform/runtime-path-security.js";
+import { ManagedHttpMcpHost } from "./managed-http-mcp-host.js";
 
 export type MemoryV6RuntimeApiHandle = {
   baseUrl: string;
@@ -88,6 +89,7 @@ export type MemoryV6RuntimeApiHandle = {
   characterContextService: CharacterContextApplicationService;
   memoryStorage: MemoryV6StorageAccess;
   affectStorage: CharacterAffectStorageAccess;
+  managedMcp: ManagedHttpMcpHost | null;
   stop(): Promise<void>;
 };
 
@@ -106,8 +108,8 @@ export type StartMemoryV6RuntimeApiOptions = {
   now?: () => Date;
   log?: (input: AppLogInput) => void;
   storageOperationDiagnosticSink?: StorageOperationDiagnosticSink;
-  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
-  providerAgentRuntimeTurns?: Pick<ProviderAgentRuntimeTurnCoordinator, "admit">;
+  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve"> & Partial<Pick<AgentRuntimeBindingRegistry, "subscribeChanges">>;
+  providerAgentRuntimeTurns?: Pick<ProviderAgentRuntimeTurnCoordinator, "admit"> & Partial<Pick<ProviderAgentRuntimeTurnCoordinator, "end">>;
   resolveActorSession?: (
     sessionId: string,
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
@@ -1344,6 +1346,7 @@ export async function startMemoryV6RuntimeApi(
   let workerClient: MemoryV6WorkerClient | null = null;
   let bootstrapWorker: ReturnType<typeof createAppDatabaseBootstrapWorker> | null = null;
   let server: MemoryV6HttpServer | null = null;
+  let managedMcp: ManagedHttpMcpHost | null = null;
   let registryPublication: RuntimeDiscoveryRegistryPublication | null = null;
   let legacyDiscoveryFile: PublishedMemoryV6DiscoveryFile | null = null;
   let legacyPointerBeforeRegistryPublication: string | null = null;
@@ -1477,6 +1480,21 @@ export async function startMemoryV6RuntimeApi(
       throw new Error("Memory V6 runtime API did not expose an HTTP address.");
     }
     const baseUrl = `http://127.0.0.1:${address.port}`;
+    const registry = options.agentRuntimeBindingRegistry;
+    const turns = options.providerAgentRuntimeTurns;
+    if (registry?.subscribeChanges && turns?.end) {
+      managedMcp = new ManagedHttpMcpHost({
+        connection: {
+          api: { baseUrl, apiSecret, applicationInstanceId: options.applicationInstanceId,
+            runtimeGenerationId, runtimeInstanceId: runtimeGenerationId },
+          credential: { adapter: "mcp", adapterSecret: mcpApiSecret },
+        },
+        fallbackAdmissionSecret: fallbackAdmissionApiSecret,
+        bindingRegistry: { resolve: registry.resolve.bind(registry), subscribeChanges: registry.subscribeChanges.bind(registry) },
+        turns: { admit: turns.admit.bind(turns), end: turns.end.bind(turns) },
+      });
+      await managedMcp.start();
+    }
     const publishedAt = clock.now().toISOString();
     await ensureSecureRuntimeDirectory(legacyPaths.runtimeDirectoryPath, security);
     registryPublication = await publishRuntimeDiscoveryEntry({
@@ -1690,8 +1708,14 @@ export async function startMemoryV6RuntimeApi(
       characterContextService,
       memoryStorage: storage,
       affectStorage,
+      managedMcp,
       async stop(): Promise<void> {
         const cleanupErrors: unknown[] = [];
+        try {
+          await managedMcp?.stop();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
         let legacyReplacement: ResolvedLegacyPointerReplacement | null = null;
         try {
           await registryPublication?.unpublish();
@@ -1761,6 +1785,7 @@ export async function startMemoryV6RuntimeApi(
       },
     };
   } catch (error) {
+    await managedMcp?.stop().catch(() => undefined);
     await registryPublication?.unpublish().catch(() => undefined);
     await server?.stop().catch(() => undefined);
     await registryPublication?.cleanupGeneration().catch(() => undefined);

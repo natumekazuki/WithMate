@@ -713,6 +713,32 @@ const glossaryRuntimeService = new GlossaryRuntimeService({
   providerAgentRuntimeTurns,
 });
 
+async function beginManagedProviderTurn(
+  session: Session,
+  binding: import("./providers/agent-runtime-binding.js").ProviderAgentRuntimeBindingProjection | null,
+  signal: AbortSignal,
+) {
+  if (!binding) return undefined;
+  signal.throwIfAborted();
+  const turn = await glossaryRuntimeService.beginProviderTurn(session.id, binding);
+  try {
+    const host = memoryV6RuntimeApi?.managedMcp;
+    if (!host) throw new Error("Managed MCP runtime is unavailable.");
+    const managedMcp = host.issue(turn.binding, turn.handle, signal);
+    signal.throwIfAborted();
+    return { handle: turn.handle, binding: { ...turn.binding, managedMcp } };
+  } catch (error) {
+    glossaryRuntimeService.endProviderTurn(turn.handle);
+    throw error;
+  }
+}
+
+function endManagedProviderTurn(handle: unknown): void {
+  const turn = handle as import("./glossary/glossary-proactive-turn.js").GlossaryProactiveTurnHandle;
+  memoryV6RuntimeApi?.managedMcp?.release(turn);
+  glossaryRuntimeService.endProviderTurn(turn);
+}
+
 async function issueProviderAgentRuntimeBinding(
   session: Pick<Session, "id" | "characterId" | "sessionKind" | "workspacePath">,
   providerId: string,
@@ -2189,7 +2215,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         resolveSessionFolderPath: (sessionId) => ensureSessionFilesDirectory(sessionId),
         resolveProviderCatalog,
       },
-      provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, provider, binding }) => binding ? glossaryRuntimeService.beginProviderTurn(session.id, binding) : undefined, endProviderAgentRuntimeTurn: (handle) => glossaryRuntimeService.endProviderTurn(handle as import("./glossary/glossary-proactive-turn.js").GlossaryProactiveTurnHandle) },
+      provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, binding, signal }) => beginManagedProviderTurn(session, binding, signal), endProviderAgentRuntimeTurn: endManagedProviderTurn },
       memory: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
         resolveProjectMemoryEntriesForPrompt: () => [],
@@ -2312,11 +2338,11 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       provider: {
         getProviderCodingAdapter,
         resetProviderSessionThread,
-        endProviderAgentRuntimeTurn: (handle) => glossaryRuntimeService.endProviderTurn(handle as import("./glossary/glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
+        endProviderAgentRuntimeTurn: endManagedProviderTurn,
         resolveProviderSession: (session, parentSessionId) => appendSessionFilesDirectoryForSessionId(app.getPath("userData"), session, parentSessionId),
         resolveSessionFolderPath: (parentSessionId) => ensureSessionFilesDirectory(parentSessionId),
         issueRuntimeBinding: async (session, provider) => await issueProviderAgentRuntimeBinding(session, provider.id),
-        beginRuntimeTurn: ({ session, binding }) => binding ? glossaryRuntimeService.beginProviderTurn(session.id, binding) : undefined,
+        beginRuntimeTurn: ({ session, binding, signal }) => beginManagedProviderTurn(session, binding, signal),
       },
       memory: { getAppSettings: () => requireAppSettingsStorage().getSettings() },
       audit: { createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry), updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry), updateAuditLogProgress: (id, patch) => requireAuditLogService().updateAuditLogProgress(id, patch) },

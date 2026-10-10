@@ -23,7 +23,7 @@ import {
   createMemoryRuntimeDiscoveryError,
   resolveWithMateMemoryApi,
   WithMateMemoryRuntimeExchangeError,
-} from "../../src-cli/memory/withmate-memory-runtime-client.js";
+} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 import {
   listRuntimeDiscoveryRegistryEntries,
   publishRuntimeDiscoveryEntry,

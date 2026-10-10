@@ -33,6 +33,8 @@ fileが`invalid`、`unsupported`、`watch-error`、`missing`になった場合�
 
 WithMateから起動したprovider Sessionではmanaged `withmate-glossary` Skillを利用できる。公開operationは`list-targets`、`list`、`search`、`get`、`create`、`create-batch`、`update`、`delete`、`validate`である。operation schemaと利用例はmanaged Skillの`SKILL.md`を参照する。
 
-CLIとMCPは起動中のprovider Sessionのruntime bindingを必要とする。Session IDやabsolute pathを入力して別checkoutへ切り替えることはできない。`list-targets`が返すprimary targetだけを使用する。
+MCPはMainの共有localhost HTTP listenerの`/mcp/glossary`へ当turnの短命tokenで接続する。providerの一時設定へ注入し、永続設定やpromptへtokenを保存しない。Memory／Characterとlistenerを共有するが、protocol stateとapplication boundaryは独立している。手動stdio MCPも同じcanonical tool定義を利用する。
+
+CLIとMCPは起動中のprovider Sessionのruntime bindingを必要とする。Session IDやabsolute pathを入力して別checkoutへ切り替えることはできない。`list-targets`が返すprimary targetだけを使用する。MCP mutationはcaptured turnの有効性を非同期actor解決前とfile commit前に照合し、取消・終了したturnへ新turnの権限を付け替えない。GlossaryにはMemory CLI fallbackを設けない。
 
 updateとdeleteはread時の`revision`を`expectedRevision`へ渡す。`effect: unknown`では自動retryせず、current valueをreadし直してからユーザーへ確認する。`outcome: converged`は現在値が要求postconditionに一致するという意味であり、そのretry試行がwriteしたことを示さない。
