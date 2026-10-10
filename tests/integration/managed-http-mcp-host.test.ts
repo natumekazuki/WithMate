@@ -102,9 +102,9 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "共有HTTP入口はcanonical MemoryとGlossary toolを公開し、捕捉actorのread・mutation・domain errorを既存runtimeへ届ける"
+// claim = "共有HTTP入口はcanonical Memory・Glossaryのtool名一覧を公開し、list_targets・append・createとappendのdomain errorを届け、保存entryを接続actor-aへ帰属させる"
 // oracle = { type = "adr", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
-// fault = "HTTP専用tool定義が機能を落とす、内側exchangeを迂回する、またはbody actorに保存を帰属させる"
+// fault = "HTTPのtool名一覧がcanonical一覧と異なる、実行したread・mutation・domain errorが届かない、または保存entryのsource Sessionが接続actor-aと異なる"
 // observable = "SDK tools list・call resultとSQLite entry source、および保存済みGlossary YAML"
 // observation_boundary = "public-boundary"
 // scope = "実HTTP MCP SDKから既存runtime challenge・SQLite・Glossary filesystemまで"

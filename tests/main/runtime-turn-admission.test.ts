@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { Worker } from "node:worker_threads";
 
@@ -57,17 +58,17 @@ test("queued Memory worker mutation checks the captured turn after arrival", asy
 
 // @test-value v2
 // kind = "contract"
-// claim = "SQLite write lock待ちで取消されたMemory appendはtransactionをrollbackしentryを残さない"
+// claim = "最後のentry admission確認を過ぎてSQLite BEGIN execへ到達したMemory appendは、その後の取消をBEGIN戻り後に検出しrollbackしてentryを残さない"
 // oracle = { type = "adr", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
-// fault = "BEGIN前だけturnを確認し、lock待機中に失効したtransactionをcommitする"
-// observable = "appendの失効例外とlock解放後のSQLite entry一覧"
+// fault = "BEGIN前だけturnを確認し、BEGIN exec到達後に失効したtransactionをcommitする"
+// observable = "BEGIN exec到達時のactive state、BEGIN戻り後のrevoked state、appendのeffect none失効例外、ROLLBACK execとSQLite entry一覧"
 // observation_boundary = "public-boundary"
 // scope = "実SQLite競合中のMemoryV6Storage transaction"
 // lifecycle = "permanent"
 // impact = "DB混雑時の取消済みproviderによる遅延保存を防ぐ"
-// distinction = "Worker enqueueと非同期file testは同期SQLite lock待ち中の別thread失効を再現しない"
+// distinction = "Worker enqueueと非同期file testはproduction transactionのentry確認後・BEGIN exec到達後の別thread失効と実SQLite rollbackを確認しない"
 // @end-test-value
-test("Memory transaction rechecks revocation after a SQLite write lock wait", async () => {
+test("Memory transaction rechecks revocation after SQLite BEGIN entry", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-turn-lock-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
   const storage = new MemoryV6Storage(dbPath);
@@ -81,7 +82,6 @@ test("Memory transaction rechecks revocation after a SQLite write lock wait", as
     parentPort.postMessage("locked");
     const start = new Int32Array(workerData.start);
     Atomics.wait(start, 0, 0);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
     Atomics.store(new Int32Array(workerData.state), 0, 1);
     db.exec("COMMIT");
     db.close();
@@ -92,13 +92,32 @@ test("Memory transaction rechecks revocation after a SQLite write lock wait", as
       worker.once("message", () => resolve());
       worker.once("error", reject);
     });
-    assert.throws(() => runWithRuntimeTurnAdmission({ state, isCurrent: () => {
-      Atomics.store(new Int32Array(start), 0, 1);
-      Atomics.notify(new Int32Array(start), 0);
-      return true;
-    } }, () => storage.appendEntry(appendInput)), RuntimeTurnInactiveError);
+    const exec = DatabaseSync.prototype.exec;
+    const commands: string[] = [];
+    let stateAtBeginEntry: number | undefined;
+    let stateAfterBegin: number | undefined;
+    t.mock.method(DatabaseSync.prototype, "exec", function (this: DatabaseSync, sql: string) {
+      commands.push(sql);
+      if (sql === "BEGIN IMMEDIATE TRANSACTION") {
+        stateAtBeginEntry = Atomics.load(new Int32Array(state), 0);
+        // Notify only after production's last entry check, at the real BEGIN exec boundary.
+        // The worker revokes before releasing its lock; native busy-wait entry is not assumed.
+        Atomics.store(new Int32Array(start), 0, 1);
+        Atomics.notify(new Int32Array(start), 0);
+        exec.call(this, sql);
+        stateAfterBegin = Atomics.load(new Int32Array(state), 0);
+        return;
+      }
+      exec.call(this, sql);
+    });
+    assert.throws(() => runWithRuntimeTurnAdmission({ state }, () => storage.appendEntry(appendInput)),
+      (error: unknown) => error instanceof RuntimeTurnInactiveError && error.effect === "none");
+    assert.equal(stateAtBeginEntry, 0);
+    assert.equal(stateAfterBegin, 1);
+    assert.deepEqual(commands, ["BEGIN IMMEDIATE TRANSACTION", "ROLLBACK"]);
     assert.deepEqual(storage.listEntries({ target }).items, []);
   } finally {
+    t.mock.restoreAll();
     await worker.terminate();
     storage.close();
     await rm(directory, { recursive: true, force: true });
