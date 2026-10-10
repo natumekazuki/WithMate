@@ -205,8 +205,8 @@ test("通常Sendの結果待ち中の再編集は終端を待たず保存され�
 // kind = "invariant"
 // claim = "通常Send準備中の編集・対象変更・freezeはrunを開始せず、拒否後は捕捉した同一draftだけを復元し、再作成先へ旧結果を反映しない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界と送信直後の共通反映" }
-// fault = "古いcaptureでrunを開始する、別draftをclear/restoreする、または同じIDの再作成先へ旧turn結果を適用する"
-// observable = "run呼出数、Composerの本文と保存状態、binding本文とidentity、復元したdurable draft"
+// fault = "古いcaptureでrunを開始する、別draftをclear/restoreする、consume後の復元保存を省く、または同じIDの再作成先へ旧turn結果を適用する"
+// observable = "run呼出数、Composerの本文と保存状態、binding本文とidentity、consume後に復元したdurable本文とrevision"
 // observation_boundary = "component-behavior"
 // scope = "Auxiliary send capture invalidation and rejection recovery"
 // lifecycle = "permanent"
@@ -230,10 +230,44 @@ test("通常Sendは古いcaptureを無効化し、拒否復元を同一ownerへ�
   const stale = send(); await h.edit(session(), "edited during preparation"); await stale;
   assert.equal(runCalls, 0); assert.equal(h.registry.get(owner).draft, "edited during preparation");
   assert.notEqual(h.registry.get(owner).saveState, "error");
-  selected = false; await send(); assert.equal(runCalls, 0);
-  selected = true; h.registry.freeze(); await send(); assert.equal(runCalls, 0); h.registry.unfreeze();
+  for (const invalidation of ["target", "freeze"] as const) {
+    const saveDraft = h.api.saveAuxiliaryDraft;
+    const savingStarted = deferred<void>();
+    const releaseSave = deferred<void>();
+    h.api.saveAuxiliaryDraft = async (request) => {
+      savingStarted.resolve();
+      await releaseSave.promise;
+      return saveDraft(request);
+    };
+    const text = `draft before ${invalidation} invalidation`;
+    const saving = h.drafts.changeDraft(session(), text, text.length);
+    const pending = send();
+    await savingStarted.promise;
+    assert.equal(state.retained, 1);
+    assert.equal(runCalls, 0, "run must wait for draft preparation");
+    if (invalidation === "target") selected = false;
+    else h.registry.freeze();
+    releaseSave.resolve();
+    await saving; await pending;
+    h.api.saveAuxiliaryDraft = saveDraft;
+    assert.equal(runCalls, 0, `${invalidation} changed while preparation was pending`);
+    assert.equal(h.registry.get(owner).draft, text);
+    assert.equal(h.recordFor(owner.id).text, text);
+    assert.equal(h.registry.get(owner).saveState, "saved");
+    assert.equal(state.retained, 0);
+    selected = true; h.registry.unfreeze();
+  }
+  await h.edit(session(), "rejected capture");
+  const beforeRejection = { ...h.recordFor(owner.id) };
+  run = async () => {
+    h.records.set(owner.id, { ...beforeRejection, text: "", durableRevision: beforeRejection.durableRevision + 1 });
+    throw new Error("rejected after consume");
+  };
   await assert.rejects(send(), /rejected/); await h.drafts.flushAll();
-  assert.equal(h.registry.get(owner).draft, "edited during preparation"); assert.equal(h.recordFor(owner.id).text, "edited during preparation");
+  assert.equal(h.registry.get(owner).draft, "rejected capture");
+  assert.equal(h.recordFor(owner.id).text, "rejected capture");
+  assert.equal(h.recordFor(owner.id).durableRevision, beforeRejection.durableRevision + 2, "recovery must CAS-save after the consumed revision");
+  assert.equal(h.registry.get(owner).saveState, "saved");
   const started = deferred<void>(); const response = deferred<AuxiliarySession>();
   run = async () => { started.resolve(); return response.promise; };
   const pending = send(); await started.promise;
