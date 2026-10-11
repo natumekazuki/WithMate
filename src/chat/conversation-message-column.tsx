@@ -87,6 +87,7 @@ export function useConversationMessageColumn({
   displayedId.current = sessionId;
   const mounted = useRef(true);
   const displayedBridge = useRef<{ owner: string; projection: LiveAssistantProjection } | null>(null);
+  const liveResponseOwner = useRef<{ owner: string; turnId?: string; messageIndex: number } | null>(null);
   const [browsePage, setBrowsePage] = useState<ConversationPage | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
   const [pageError, setPageError] = useState("");
@@ -195,10 +196,35 @@ export function useConversationMessageColumn({
 
   const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
   const assistantText = api ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
+  const queuedResponseIndex = queue.receipts.reduce((index, receipt) => {
+    const ownsRun = receipt.state === "running" && !receipt.inputTurnId
+      || receipt.state === "completed" && !!receipt.inputTurnId && receipt.inputTurnId === liveRun?.turnId;
+    return ownsRun && receipt.userMessageSeq !== null ? Math.max(index, receipt.userMessageSeq + 1) : index;
+  }, 0);
+  const tail = tailMessages.at(-1);
+  if (!liveRun) liveResponseOwner.current = null;
+  else if (liveRun.runState === "running" && api?.listSessionTurnQueue) {
+    if (liveResponseOwner.current?.owner !== pageOwner || liveResponseOwner.current.turnId !== liveRun.turnId) {
+      // 新runは保存済み応答を再利用しない。user未着なら次のuserと応答の位置を開始時に確保する。
+      liveResponseOwner.current = {
+        owner: pageOwner, turnId: liveRun.turnId,
+        messageIndex: tail ? getMessageHistoryIndex(tail, tailMessages.length - 1) + (tail.role === "assistant" ? 2 : 1) : 1,
+      };
+    }
+    liveResponseOwner.current.messageIndex = Math.max(
+      liveResponseOwner.current.messageIndex,
+      tail?.role === "user" ? getMessageHistoryIndex(tail, tailMessages.length - 1) + 1 : 0,
+      queuedResponseIndex,
+    );
+  }
   const currentBridge = assistantText ? {
     sessionId,
     threadId: liveRun?.threadId ?? session?.threadId ?? null,
-    messageIndex: resolveLiveAssistantMessageIndex(tailMessages, [], sessionId, sessionId, assistantText),
+    messageIndex: Math.max(
+      liveResponseOwner.current?.owner === pageOwner ? liveResponseOwner.current.messageIndex : 0,
+      resolveLiveAssistantMessageIndex(tailMessages, [], sessionId, sessionId, assistantText),
+      queuedResponseIndex,
+    ),
     text: assistantText,
   } : null;
   if (currentBridge && enabled) {
@@ -213,12 +239,6 @@ export function useConversationMessageColumn({
     cachedBridge && (hasSavedBridge || session?.runState === "running")
       ? cachedBridge : null
   );
-  const latestUserMessageIndex = useMemo(() => {
-    for (let index = tailMessages.length - 1; index >= 0; index -= 1) {
-      if (tailMessages[index].role === "user") return getMessageHistoryIndex(tailMessages[index], index);
-    }
-    return -1;
-  }, [tailMessages]);
   const historyProjection = useMemo(() => buildMessageListProjection(messages, [], sessionId, {
     primaryMessageSourceKind: messageSourceKind,
   }), [messages, sessionId, messageSourceKind]);
@@ -237,10 +257,12 @@ export function useConversationMessageColumn({
     sessionId, incarnationId: queueIncarnationId,
   }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId]);
   const projection = queuedProjection.projection;
-  // 保存済みbridgeのkeyは終了後も維持するが、後続promptの待機表示には使わない。
-  const pendingResponseMessageKey = bridge && latestUserMessageIndex <= bridge.messageIndex
-    ? buildLiveAssistantProjectionKey(bridge.sessionId, bridge.threadId, bridge.messageIndex)
-    : null;
+  // 受付済みuserも含めた表示順で、現在のprompt後の応答だけを待機表示の所有先にする。
+  const responseIndex = bridgeKey ? projection.keys.indexOf(bridgeKey) : -1;
+  const pendingResponseMessageKey = responseIndex >= 0
+    && (liveResponseOwner.current?.owner !== pageOwner || bridge?.messageIndex === liveResponseOwner.current.messageIndex)
+    && !projection.messages.slice(responseIndex + 1).some((message) => message.role === "user")
+    ? bridgeKey : null;
   const historyScrollSignature = useMemo(
     () => `${keyedHistory.keys.join("\u001f")}:${keyedHistory.messages.map((message) => message.text.length).join(",")}`,
     [keyedHistory],
@@ -460,7 +482,7 @@ export function useConversationMessageColumn({
     messageCollapseTargets: collapseTargets,
     collapsedMessageKeys,
     messageJumpRequest: conversation.messageJumpRequest,
-    isRunning: !isBrowsing && (session.runState === "running" || !!liveRun),
+    isRunning: !isBrowsing && (liveRun?.runState !== undefined ? liveRun.runState === "running" : session.runState === "running" || !!liveRun),
     pendingRunIndicatorAnnouncement: messageSourceKind === "session"
       ? baseProps.pendingRunIndicatorAnnouncement
       : "Running",

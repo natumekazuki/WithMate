@@ -1019,6 +1019,10 @@
   overflow-anchor: auto;
 }
 
+.session-message-list-window:has(.session-turn-queue-status) .message-list-bottom-anchor {
+  min-height: 40px;
+}
+
 .composer {
   display: grid;
   gap: 8px;
@@ -4009,7 +4013,6 @@
   gap: 8px;
   margin-top: 8px;
   padding-top: 8px;
-  padding-right: 40px;
   border-top: 1px solid rgba(148, 163, 184, 0.2);
   color: var(--muted);
   font-size: 0.78rem;

@@ -13,6 +13,7 @@ import {
 import type { SessionMessageColumnProps } from "../../src/chat/conversation/session-message-column.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { ConversationPage } from "../../src-shared/session/conversation-page.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {
@@ -38,6 +39,116 @@ function createBaseProps(id: string): SessionMessageColumnProps {
     onResolveLiveElicitation() {},
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "canonical user未到着の次Turnも現在user後の応答を所有し、本文先行とSteerのuser追記から終端保存まで応答を一度だけ表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Window / pending response所属" }
+// fault = "前Turnの完了応答へpendingを付ける、次Turn本文を前応答で隠す、終端で本文を二重化する、またはidle liveを実行中にする"
+// observable = "Column propsのuser/assistant順序、pendingResponseMessageKey、messageKeys、isRunning"
+// observation_boundary = "component-behavior"
+// scope = "conversation-response-owner"
+// lifecycle = "permanent"
+// impact = "利用者が次の要求の進行と応答を区別できず、完了した要求を実行中と誤認する"
+// distinction = "既存projection testは非同期queue受付と更新されない保存済みColumnの組合せを通らず、型検査では到着順を検出できない。小さいJS DOM状態遷移1件で契約を保持する"
+// @end-test-value
+test("conversation column は保存本文が遅れても次Turnの応答を所有する", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  const actEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const oldMessages = [{ role: "user" as const, text: "first" }, { role: "assistant" as const, text: "same response" }];
+  let receipts: SessionTurnQueueReceipt[] = [];
+  const terminalReceipts = new Map<string, SessionTurnQueueReceipt>();
+  let changed: ((id: string) => void) | undefined;
+  const api: ConversationMessageColumnApi = {
+    listSessionTurnQueue: async () => receipts,
+    getSessionTurnQueueReceipt: async (_id, requestId) => terminalReceipts.get(requestId) ?? null,
+    onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
+  };
+  let latest: SessionMessageColumnProps | null = null;
+  const column = () => latest!;
+  const run = (text: string, turnId: string, runState = "running"): LiveSessionRunState => ({
+    sessionId: "aux", threadId: "thread", turnId, runState, assistantText: text,
+    steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
+  });
+  function Probe({ live, saved = oldMessages }: { live: LiveSessionRunState | null; saved?: typeof oldMessages }) {
+    latest = useConversationMessageColumn({ session: { id: "aux", incarnationId: "inc", messages: saved, runState: live?.runState ?? "idle" },
+      baseProps: createBaseProps("aux"), messageSourceKind: "auxiliary", enabled: true, api, liveRun: live });
+    return null;
+  }
+  let root: Root | null = null;
+  try {
+    await act(async () => { root = createRoot(dom.window.document.getElementById("root")!); root.render(React.createElement(Probe, { live: run("same response", "first"), saved: oldMessages.slice(0, 1) })); });
+    const oldResponseKey = column().messageKeys?.[1];
+    await act(async () => root?.render(React.createElement(Probe, { live: null })));
+    await act(async () => root?.render(React.createElement(Probe, { live: run("", "second") })));
+    assert.equal(column().pendingResponseMessageKey, null);
+    await act(async () => root?.render(React.createElement(Probe, { live: run("same response", "second") })));
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "same response"], "live delta stays visible before the receipt arrives");
+    const earlyResponseKey = column().messageKeys?.[2];
+    assert.equal(column().pendingResponseMessageKey, earlyResponseKey);
+    assert.notEqual(earlyResponseKey, oldResponseKey);
+    receipts = [{ sessionId: "aux", incarnationId: "inc", id: "next", requestId: "request", sequence: 2, state: "running", turnId: "2", userMessageSeq: 2,
+      captured: { request: { userMessage: "second", clientRequestId: "request", executionOptions: {
+        catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
+      } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+      reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" }];
+    await act(async () => changed?.("aux"));
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "same response"]);
+    assert.equal(column().pendingResponseMessageKey, earlyResponseKey);
+    assert.equal(column().isRunning, true);
+    await act(async () => root?.render(React.createElement(Probe, { live: run("same response", "second") })));
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "same response"]);
+    const newResponseKey = column().messageKeys?.[3];
+    assert.equal(column().pendingResponseMessageKey, newResponseKey);
+    assert.notEqual(newResponseKey, oldResponseKey);
+    assert.equal(newResponseKey, earlyResponseKey);
+    const saved = [...oldMessages, { role: "user" as const, text: "second" }, { role: "assistant" as const, text: "saved response" }];
+    await act(async () => root?.render(React.createElement(Probe, { live: run("same response", "second", "idle"), saved })));
+    assert.equal(column().isRunning, false);
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "saved response"]);
+    assert.equal(column().messageKeys?.[3], newResponseKey);
+    await act(async () => root?.render(React.createElement(Probe, { live: null, saved })));
+    assert.equal(column().isRunning, false);
+    assert.equal(column().messageKeys?.[3], newResponseKey);
+    assert.equal(column().messages.length, 4);
+    const thirdUser = [...saved, { role: "user" as const, text: "third" }];
+    terminalReceipts.set(receipts[0].requestId, { ...receipts[0], state: "completed" });
+    receipts = [{ ...receipts[0], id: "third", requestId: "third-request", sequence: 3, turnId: "3", userMessageSeq: 4,
+      captured: { ...receipts[0].captured, request: { ...receipts[0].captured.request, clientRequestId: "third-request", userMessage: "third" } } }];
+    await act(async () => { changed?.("aux"); root?.render(React.createElement(Probe, { live: run("third response", "third"), saved: thirdUser })); });
+    assert.equal(column().pendingResponseMessageKey, column().messageKeys?.[5]);
+    const inputReceipt: SessionTurnQueueReceipt = { ...receipts[0], id: "steer", requestId: "steer-request", sequence: 4, state: "queued", turnId: null, userMessageSeq: null,
+      captured: { ...receipts[0].captured, request: { ...receipts[0].captured.request, clientRequestId: "steer-request", userMessage: "steer" } } };
+    receipts = [...receipts, inputReceipt];
+    await act(async () => changed?.("aux"));
+    terminalReceipts.set(inputReceipt.requestId, { ...inputReceipt, state: "completed", inputTurnId: "third", userMessageSeq: 5 });
+    receipts = receipts.filter((receipt) => receipt.id !== inputReceipt.id);
+    await act(async () => { changed?.("aux"); root?.render(React.createElement(Probe, { live: run("steered response", "third"), saved: thirdUser })); });
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "saved response", "third", "steer", "steered response"]);
+    const acceptedSteerResponseKey = column().messageKeys?.[6];
+    assert.equal(column().pendingResponseMessageKey, acceptedSteerResponseKey);
+    const steeredUser = [...thirdUser, { role: "user" as const, text: "steer" }];
+    await act(async () => root?.render(React.createElement(Probe, { live: run("steered response", "third"), saved: steeredUser })));
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "saved response", "third", "steer", "steered response"]);
+    const steeredResponseKey = column().messageKeys?.[6];
+    assert.equal(steeredResponseKey, acceptedSteerResponseKey);
+    assert.equal(column().pendingResponseMessageKey, steeredResponseKey);
+    const steeredSaved = [...steeredUser, { role: "assistant" as const, text: "final steered response" }];
+    await act(async () => root?.render(React.createElement(Probe, { live: run("steered response", "third", "idle"), saved: steeredSaved })));
+    assert.equal(column().isRunning, false);
+    assert.equal(column().messageKeys?.[6], steeredResponseKey);
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "saved response", "third", "steer", "final steered response"]);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    globals.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+  }
+});
 
 // @test-value v2
 // kind = "contract"
