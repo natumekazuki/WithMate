@@ -103,26 +103,203 @@ test("会話page/search/navigatorは親owner Windowだけが取得できる", as
   let eventWindow = ownerWindow;
   const reads: string[] = [];
   const page = { sessionId: "aux", incarnationId: "created", messages: [], startIndex: 0, totalCount: 0 };
+  const queryPage = { status: "complete", stamp: { generationId: "generation", ownerIdentity: "aux", contentRevision: 1, requestId: "find-1" }, incarnationId: "created", messageCount: 4, totalCount: 1, offset: 0, items: [{ messageIndex: 3, occurrenceIndex: 0 }] };
+  const navPage = { ...queryPage, stamp: { ...queryPage.stamp, requestId: "nav-1" }, totalCount: 0, items: [] };
   const { deps } = createDeps({
     resolveEventWindow: () => eventWindow,
     resolveSessionWindow: (id: string) => id === "parent" ? ownerWindow : null,
     getConversationOwnerSessionId: async (id: string) => id === "aux" ? "parent" : id,
     getConversationPage: async (id: string) => { reads.push(`page:${id}`); return page; },
-    searchConversation: async (id: string) => { reads.push(`search:${id}`); return [{ messageIndex: 3, occurrenceIndex: 0 }]; },
-    listConversationNavigator: async (id: string) => { reads.push(`navigator:${id}`); return []; },
+    resolveConversationQueryOwner: async (id: string) => ({
+      ownerSessionId: "parent", isCurrent: () => true, cancel: () => undefined,
+      search: async () => { reads.push(`search:${id}`); return queryPage; },
+      navigate: async () => { reads.push(`navigator:${id}`); return navPage; },
+    }),
   });
   registerMainIpcHandlers(ipcMain, deps);
   assert.deepEqual(await handlers.get(WITHMATE_GET_CONVERSATION_PAGE_CHANNEL)?.({}, "aux", { startIndex: 0 }), page);
-  assert.deepEqual(await handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)?.({}, "aux", { query: "x", mode: "source" }), [{ messageIndex: 3, occurrenceIndex: 0 }]);
-  assert.deepEqual(await handlers.get(WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL)?.({}, "aux"), []);
+  assert.deepEqual(await handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)?.({}, "aux", { requestId: "find-1", producerId: "find", query: "x", mode: "source" }), queryPage);
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL)?.({}, "aux", { requestId: "nav-1", producerId: "nav", filter: "all" }), navPage);
   eventWindow = otherWindow;
   for (const channel of [WITHMATE_GET_CONVERSATION_PAGE_CHANNEL, WITHMATE_SEARCH_CONVERSATION_CHANNEL, WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL]) {
-    await assert.rejects(() => handlers.get(channel)?.({}, "aux", { query: "x", mode: "source" }) as Promise<unknown>);
+    await assert.rejects(() => handlers.get(channel)?.({}, "aux", { requestId: "other", producerId: "other", query: "x", mode: "source", filter: "all" }) as Promise<unknown>, /target Session window/);
   }
   assert.deepEqual(reads, ["page:aux", "search:aux", "navigator:aux"]);
 });
 
 import type { IpcMain } from "electron";
+
+// @test-value v2
+// kind = "security"
+// claim = "検索実行中にstorage ownerまたは送信元Session Windowが変わると旧結果を公開しない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts query response current and authorization fence" }
+// fault = "検索開始時だけownerを確認して失効したownerの結果を返す"
+// observable = "read完了後のinvalidated応答またはowner Window認可拒否"
+// observation_boundary = "public-boundary"
+// scope = "conversation IPC asynchronous response fence"
+// lifecycle = "permanent"
+// impact = "reset/reopenやWindow置換後に旧会話結果を公開しない"
+// distinction = "storage stampと型検査だけではMain Window authorityの非同期変更を検出できない"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("会話queryは検索完了時にもownerとWindowを照合する", async () => {
+  for (const change of ["storage", "window"] as const) {
+    const { ipcMain, handlers } = createIpcMainStub();
+    const sender = createWindowStub("file:///session.html?sessionId=parent");
+    const replacement = createWindowStub("file:///session.html?sessionId=parent");
+    let currentWindow = sender;
+    let ownerCurrent = true;
+    let started!: () => void;
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    const pause = new Promise<void>((resolve) => { release = resolve; });
+    const { deps } = createDeps({
+      resolveEventWindow: () => sender, resolveSessionWindow: () => currentWindow,
+      resolveConversationQueryOwner: async () => ({
+        ownerSessionId: "parent", isCurrent: () => ownerCurrent, cancel: () => undefined,
+        search: async () => { started(); await pause; return { status: "cancelled" }; },
+      }),
+    });
+    registerMainIpcHandlers(ipcMain, deps);
+    const pending = handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)!({}, "parent", { requestId: "q", producerId: "find", query: "x", mode: "source" });
+    await ready;
+    if (change === "storage") ownerCurrent = false;
+    else currentWindow = replacement;
+    release();
+    if (change === "storage") assert.deepEqual(await pending, { status: "invalidated" });
+    else await assert.rejects(async () => pending, /target Session window/);
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Window破棄と明示取消はqueryのproducer枠を解放し、無制限producer admissionは拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts sender lifecycle and producer budget" }
+// fault = "Window破棄または明示取消でproducer枠が残るかproducer上限を適用せずMain状態が増える"
+// observable = "17番目producerの拒否、取消後のadmission、破棄時取消件数、再admission時のbackend producer identity"
+// observation_boundary = "public-boundary"
+// scope = "conversation IPC window lifecycle budget"
+// lifecycle = "permanent"
+// impact = "閉じたWindowのCPU仕事と無制限Main producer状態を保持しない"
+// distinction = "storage側のqueue制限ではMainの認可lookup中slotやwebContents lifecycleを制御できない"
+// @end-test-value
+test("会話queryはWindow破棄と明示取消でproducer予算を解放する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const window = createWindowStub("file:///session.html?sessionId=parent");
+  let destroyed!: () => void;
+  const event = { sender: { once: (name: string, listener: () => void) => { assert.equal(name, "destroyed"); destroyed = listener; } } };
+  const producers: string[] = [];
+  const cancelled: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => window, resolveSessionWindow: () => window,
+    resolveConversationQueryOwner: async () => ({
+      ownerSessionId: "parent", isCurrent: () => true,
+      search: async (request: { producerId: string }) => { producers.push(request.producerId); return { status: "cancelled" }; },
+      cancel: (request: { producerId: string }) => { cancelled.push(request.producerId); },
+    }),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const search = handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)!;
+  const request = { requestId: "one", producerId: "producer-0", query: "x", mode: "source" };
+  await assert.rejects(async () => search(event, "parent", { ...request, producerId: "x".repeat(129) }), /identity is invalid/);
+  for (let index = 0; index < 16; index++) await search(event, "parent", { ...request, producerId: `producer-${index}` });
+  await assert.rejects(async () => search(event, "parent", { ...request, producerId: "overflow" }), /producer limit/);
+  await handlers.get(WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL)!(event, request);
+  await search(event, "parent", { ...request, producerId: "overflow" });
+  destroyed();
+  assert.deepEqual(cancelled, producers);
+  await search(event, "parent", request);
+  assert.notEqual(producers[17], producers[0]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "owner lookup中に新queryまたは取消が到着した場合、旧queryはstorageへdispatchしない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts query admission latest/cancel" }
+// fault = "lookup後にlatestを検査せず古い検索をstorageへ流す"
+// observable = "旧queryのcancelled応答とstorage dispatch requestId"
+// observation_boundary = "public-boundary"
+// scope = "conversation IPC admission race"
+// lifecycle = "permanent"
+// impact = "入力更新や検索close後に不要な全履歴検索がDBとCPUを占有することを防ぐ"
+// distinction = "storage testではMainの非同期認可lookup前に到着する取消を観測できない"
+// @end-test-value
+test("会話queryはlookup中のlatest更新と取消をdispatch前に反映する", async () => {
+  for (const action of ["replace", "cancel"] as const) {
+    const { ipcMain, handlers } = createIpcMainStub();
+    const ownerWindow = createWindowStub("file:///session.html?sessionId=parent");
+    let release!: () => void;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    const dispatched: string[] = [];
+    let lookups = 0;
+    const { deps } = createDeps({
+      resolveEventWindow: () => ownerWindow,
+      resolveSessionWindow: () => ownerWindow,
+      resolveConversationQueryOwner: async () => {
+        if (++lookups === 1) await paused;
+        return {
+          ownerSessionId: "parent", isCurrent: () => true, cancel: () => undefined,
+          search: async (request: { requestId: string }) => { dispatched.push(request.requestId); return { status: "cancelled" }; },
+        };
+      },
+    });
+    registerMainIpcHandlers(ipcMain, deps);
+    const search = handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)!;
+    const request = { requestId: "old", producerId: "find", query: "x", mode: "source" };
+    const old = search({}, "parent", request);
+    if (action === "replace") await search({}, "parent", { ...request, requestId: "new" });
+    else await handlers.get(WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL)!({}, request);
+    release();
+    assert.deepEqual(await old, { status: "cancelled" });
+    assert.deepEqual(dispatched, action === "replace" ? ["new"] : []);
+  }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "query取消はsender所有producerだけに作用し、owner失効後のlookup結果はdispatchしない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts sender isolation and owner snapshot fence" }
+// fault = "別Windowのproducerを取消するか旧storage ownerを検索に使う"
+// observable = "backend producerIdの分離、取消件数、失効応答とdispatch件数"
+// observation_boundary = "public-boundary"
+// scope = "conversation IPC sender and owner isolation"
+// lifecycle = "permanent"
+// impact = "別Windowの検索妨害とDB reset/reopen後の旧ownerへの読取を防ぐ"
+// distinction = "store generation testではWindow sender認可と非同期Main snapshotを扱わない"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("会話queryはsenderごとにproducerを隔離しowner失効を拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const first = createWindowStub("file:///session.html?sessionId=first");
+  const second = createWindowStub("file:///session.html?sessionId=second");
+  let sender = first;
+  let current = true;
+  const producers: string[] = [];
+  const cancellations: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "first" ? first : second,
+    resolveConversationQueryOwner: async (id: string) => ({
+      ownerSessionId: id, isCurrent: () => current,
+      search: async (request: { producerId: string }) => { producers.push(request.producerId); return { status: "cancelled" }; },
+      cancel: (request: { producerId: string }) => { cancellations.push(request.producerId); },
+    }),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { requestId: "same", producerId: "find", query: "x", mode: "source" };
+  const search = handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)!;
+  await search({}, "first", request);
+  sender = second;
+  await handlers.get(WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL)!({}, request);
+  assert.deepEqual(cancellations, []);
+  await search({}, "second", request);
+  assert.notEqual(producers[0], producers[1]);
+  await handlers.get(WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL)!({}, request);
+  assert.deepEqual(cancellations, [producers[1]]);
+  current = false;
+  assert.deepEqual(await search({}, "second", { ...request, requestId: "reopened" }), { status: "invalidated" });
+  assert.equal(producers.length, 2);
+});
 
 import {
   registerMainIpcHandlers,
@@ -146,6 +323,7 @@ import {
   WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_CONVERSATION_CHANNEL,
   WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL,
+  WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL,
   WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,

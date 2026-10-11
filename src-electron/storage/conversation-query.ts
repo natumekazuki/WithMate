@@ -8,18 +8,50 @@ import {
   type ConversationPage,
   type ConversationPageRequest,
 } from "../../src-shared/session/conversation-page.js";
-import type {
-  ConversationSearchRequest,
-  ConversationSearchMatch,
-  ConversationNavigatorEntry,
-} from "../../src-shared/session/conversation-page.js";
-import {
-  projectMessageRenderedSearchText,
-  projectMessagePlainText,
-} from "../../src-shared/session/message-search.js";
-import { findTextMatches } from "../../src-shared/text/find-text-matches.js";
 
-type MessageTable = "session_messages_v6" | "auxiliary_session_messages";
+export type MessageTable = "session_messages_v6" | "auxiliary_session_messages";
+export type ConversationMutationSink = (table: MessageTable, id?: string) => void;
+export type ConversationQuerySnapshot = {
+  ownerIdentity: string;
+  incarnationId: string;
+  messageCount: number;
+};
+export type ConversationQueryRow = { seq: number; role: string; body: string };
+
+/** A cursor read ends synchronously; neither its statement nor a transaction crosses an await. */
+export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable, id: string, afterSeq: number): ConversationQueryRow[] {
+  const owner = table === "session_messages_v6" ? "session_id" : "auxiliary_session_id";
+  const rows: ConversationQueryRow[] = [];
+  let bytes = 0;
+  for (const raw of db.prepare(`SELECT seq, role, body FROM ${table} WHERE ${owner} = ? AND seq > ? ORDER BY seq ASC LIMIT 32`).iterate(id, afterSeq)) {
+    const row = raw as ConversationQueryRow;
+    const size = Buffer.byteLength(row.body, "utf8");
+    if (rows.length && bytes + size > 256 * 1024) break;
+    rows.push(row);
+    bytes += size;
+    if (bytes >= 256 * 1024) break;
+  }
+  return rows;
+}
+
+export function readConversationQuerySnapshot(db: DatabaseSync, table: MessageTable, id: string): ConversationQuerySnapshot | null {
+  if (table === "session_messages_v6") {
+    const row = db.prepare(`SELECT incarnation_id FROM sessions_v6 WHERE id = ?`).get(id) as { incarnation_id: string } | undefined;
+    if (!row) return null;
+    const incarnationId = row.incarnation_id?.trim() || `legacy:${id}`;
+    const count = db.prepare(`SELECT COUNT(*) AS count FROM session_messages_v6 WHERE session_id = ?`).get(id) as { count: number };
+    return { ownerIdentity: JSON.stringify(["main", id, incarnationId]), incarnationId, messageCount: count.count };
+  }
+  const row = db.prepare(`SELECT a.created_at, d.incarnation, a.parent_session_id, p.incarnation_id AS parent_incarnation
+    FROM auxiliary_sessions a JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
+    JOIN sessions_v6 p ON p.id = a.parent_session_id WHERE a.id = ?`).get(id) as {
+      created_at: string; incarnation: string; parent_session_id: string; parent_incarnation: string;
+    } | undefined;
+  if (!row) return null;
+  const count = db.prepare(`SELECT COUNT(*) AS count FROM auxiliary_session_messages WHERE auxiliary_session_id = ?`).get(id) as { count: number };
+  return { ownerIdentity: JSON.stringify(["auxiliary", id, row.incarnation, row.parent_session_id, row.parent_incarnation, row.created_at]),
+    incarnationId: row.created_at, messageCount: count.count };
+}
 export function toConversationView<
   T extends { messages: Message[]; messageCount?: number },
 >(session: T): T {
@@ -103,70 +135,4 @@ export function assertFullConversation(session: {
       "A paged conversation cannot be saved as a complete transcript.",
     );
   }
-}
-
-function* iterateConversation(
-  db: DatabaseSync,
-  table: MessageTable,
-  sessionId: string,
-): Generator<{ message: Message; index: number }> {
-  const owner =
-    table === "session_messages_v6" ? "session_id" : "auxiliary_session_id";
-  for (const row of db
-    .prepare(
-      `SELECT seq, role, body FROM ${table} WHERE ${owner} = ? ORDER BY seq ASC`,
-    )
-    .iterate(sessionId)) {
-    const message = normalizeMessage({
-      ...JSON.parse(row.body as string),
-      role: row.role,
-    });
-    if (!message)
-      throw new Error(`Invalid conversation message: ${sessionId}:${row.seq}`);
-    yield { message, index: row.seq as number };
-  }
-}
-
-export function searchStoredConversation(
-  db: DatabaseSync,
-  table: MessageTable,
-  sessionId: string,
-  request: ConversationSearchRequest,
-): ConversationSearchMatch[] {
-  if (
-    typeof request?.query !== "string" ||
-    (request.mode !== "source" && request.mode !== "preview")
-  )
-    throw new TypeError("Conversation search is invalid.");
-  if (!request.query.trim()) return [];
-  const matches: ConversationSearchMatch[] = [];
-  for (const { message, index } of iterateConversation(db, table, sessionId)) {
-    const text =
-      request.mode === "source"
-        ? message.text
-        : projectMessageRenderedSearchText(message.text);
-    findTextMatches(text, request.query).forEach((_, occurrenceIndex) =>
-      matches.push({ messageIndex: index, occurrenceIndex }),
-    );
-  }
-  return matches;
-}
-
-export function listStoredConversationNavigator(
-  db: DatabaseSync,
-  table: MessageTable,
-  sessionId: string,
-): ConversationNavigatorEntry[] {
-  const entries: ConversationNavigatorEntry[] = [];
-  for (const { message, index } of iterateConversation(db, table, sessionId)) {
-    if (message.role !== "user" && message.role !== "assistant") continue;
-    entries.push({
-      messageIndex: index,
-      role: message.role,
-      preview: projectMessagePlainText(message.text),
-      accent: message.accent === true,
-      isBookmarked: message.isBookmarked === true,
-    });
-  }
-  return entries;
 }

@@ -2,7 +2,7 @@ import type { ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveAppro
 import type { SessionTurnRecord } from "../session/session-turn-state.js";
 import type { AppSettings } from "../settings/provider-settings-state.js";
 import type { LiveSessionRunStatus } from "../session/live-session-run-status.js";
-import type { ConversationPage, ConversationPageRequest, ConversationSearchRequest, ConversationSearchMatch, ConversationNavigatorEntry } from "../session/conversation-page.js";
+import type { ConversationPage, ConversationPageRequest, ConversationSearchRequest, ConversationSearchMatch, ConversationNavigatorEntry, ConversationNavigatorRequest, ConversationQueryOutcome, ConversationQueryCancelRequest } from "../session/conversation-page.js";
 import type { CreateTerminalRequest, CreateTerminalResult, TerminalEvent } from "../terminal/terminal-contract.js";
 import type { CharacterProfile } from "../character/character-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, SessionCharacterUsage, Session, SessionSummaryInvalidation, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary, SetSessionPinnedRequest } from "../session/session-state.js";
@@ -168,8 +168,9 @@ export type WithMateWindowSessionApi = {
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
   getConversationPage(sessionId: string, request?: ConversationPageRequest): Promise<ConversationPage | null>;
-  searchConversation(sessionId: string, request: ConversationSearchRequest): Promise<ConversationSearchMatch[]>;
-  listConversationNavigator(sessionId: string): Promise<ConversationNavigatorEntry[]>;
+  searchConversation(sessionId: string, request: ConversationSearchRequest): Promise<ConversationQueryOutcome<ConversationSearchMatch>>;
+  listConversationNavigator(sessionId: string, request: ConversationNavigatorRequest): Promise<ConversationQueryOutcome<ConversationNavigatorEntry>>;
+  cancelConversationQuery(request: ConversationQueryCancelRequest): Promise<void>;
   getSessionSummary(sessionId: string): Promise<SessionSummary | null>;
   getSessionGlossaryProjection(sessionId: string): Promise<SessionGlossaryProjection>;
   searchSessionGlossary(

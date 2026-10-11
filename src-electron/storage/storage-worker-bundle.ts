@@ -14,6 +14,16 @@ import { openAppDatabase, truncateAppDatabaseWalIfLargerThan } from "./sqlite-co
 import { StorageWorkerClient } from "./storage-worker-client.js";
 import type { StorageWorkerEntryData } from "./storage-worker-protocol.js";
 import type { StorageOperationDiagnosticSink } from "./storage-operation-diagnostics.js";
+import { ConversationQueryCoordinator } from "./conversation-query-coordinator.js";
+import type { StorageWorkerHandlerContext } from "./storage-worker-dispatcher.js";
+import type { ConversationSearchRequest, ConversationNavigatorRequest, ConversationSearchMatch, ConversationNavigatorEntry,
+  ConversationQueryOutcome, ConversationQueryCancelRequest } from "../../src-shared/session/conversation-page.js";
+
+export type ConversationQueryStore = {
+  searchConversation(id: string, request: ConversationSearchRequest): Promise<ConversationQueryOutcome<ConversationSearchMatch>>;
+  listConversationNavigator(id: string, request: ConversationNavigatorRequest): Promise<ConversationQueryOutcome<ConversationNavigatorEntry>>;
+  cancelConversationQuery(request: ConversationQueryCancelRequest): Promise<void>;
+};
 
 type AnyMethod = (...args: any[]) => any;
 type AsyncStore<T extends object> = {
@@ -24,7 +34,7 @@ type AsyncStore<T extends object> = {
 
 const STORE_METHODS = {
   session: [
-    "getSessionView", "getConversationPage", "searchConversation", "listConversationNavigator",
+    "getSessionView", "getConversationPage", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
     "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
@@ -36,13 +46,13 @@ const STORE_METHODS = {
   ],
   turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn", "getConversationTimingSnapshot"],
   auxiliary: [
-    "getAuxiliarySessionView", "getConversationPage", "searchConversation", "listConversationNavigator",
+    "getAuxiliarySessionView", "getConversationPage", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
     "listActiveAuxiliarySessionSummaries", "listRunningActiveAuxiliarySessions", "getActiveAuxiliarySession",
     "getAuxiliarySession", "getAuxiliarySessionSummary", "getAuxiliarySessionMetadata", "listAuxiliaryCredentialThreads", "getAuxiliaryMessageArtifactDetail",
     "appendAuxiliaryRunningTurnStart", "appendAuxiliarySteer", "appendAuxiliaryTerminal", "checkpointAuxiliaryRuntimeMetadata",
     "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches",
-    "updateAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent", "deleteAuxiliarySessionsExceptParents",
+    "updateAuxiliarySessionIfMatches", "updateTerminalAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent", "deleteAuxiliarySessionsExceptParents",
     "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches",
     "updateAuxiliaryDisplayAnchorIfMatches",
     "getAuxiliaryDraft", "saveAuxiliaryDraft", "consumeAuxiliaryDraft",
@@ -76,7 +86,7 @@ const MUTATIONS = new Set([
   "upsertTerminalSession", "updateTerminalSession", "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "appendSessionSteer", "appendSessionTerminal", "checkpointSessionRunMetadata", "insertSession",
   "appendAuxiliaryRunningTurnStart", "appendAuxiliarySteer", "appendAuxiliaryTerminal", "checkpointAuxiliaryRuntimeMetadata",
   "replaceSessions", "deleteSession", "deleteSessions", "clearSessions", "createSessionTurn", "updateSessionTurn",
-  "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches", "updateAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent",
+  "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches", "updateAuxiliarySessionIfMatches", "updateTerminalAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent",
   "deleteAuxiliarySessionsExceptParents", "saveAuxiliaryDraft", "consumeAuxiliaryDraft",
   "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches", "updateAuxiliaryDisplayAnchorIfMatches",
   "createCharacter", "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter",
@@ -91,6 +101,7 @@ const MUTATIONS = new Set([
 type StorageInstances = Record<keyof typeof STORE_METHODS, object>;
 
 let instances: StorageInstances | null = null;
+let conversationQueries: ConversationQueryCoordinator | null = null;
 
 function createStoreHandlers(data: StorageWorkerEntryData) {
   if (!data.dbPath || !data.bundledModelCatalogPath || !data.userDataPath) {
@@ -106,9 +117,12 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   if (!isValidV6Database(dbPath)) {
     throw new Error("V6 storage worker database schema validation failed.");
   }
-  const session = new SessionStorageV6(data.dbPath);
+  const changed: import("./conversation-query.js").ConversationMutationSink = (table, id) => conversationQueries?.invalidate(table, id);
+  const session = new SessionStorageV6(data.dbPath, changed);
   const turn = new SessionTurnStorageV6(data.dbPath);
-  const auxiliary = new AuxiliarySessionStorage(data.dbPath);
+  const auxiliary = new AuxiliarySessionStorage(data.dbPath, changed);
+  conversationQueries = new ConversationQueryCoordinator(data.generationId, { session_messages_v6: session, auxiliary_session_messages: auxiliary });
+  const queries = conversationQueries;
   const character = new CharacterStorage(data.dbPath, data.userDataPath);
   const settings = new AppSettingsStorage(data.dbPath);
   const catalog = new ModelCatalogStorage(data.dbPath, data.bundledModelCatalogPath);
@@ -120,6 +134,14 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   catalog.ensureSeeded();
 
   return {
+    "conversation.query": (payload: unknown, context: StorageWorkerHandlerContext) => {
+      const input = payload as { store?: string; method?: string; args?: unknown[] };
+      if (!input || (input.store !== "session" && input.store !== "auxiliary") || !Array.isArray(input.args)
+        || typeof input.args[0] !== "string" || (input.method !== "searchConversation" && input.method !== "listConversationNavigator")) throw new TypeError("Conversation query command is invalid.");
+      return queries.request(input.store === "session" ? "session_messages_v6" : "auxiliary_session_messages", input.args[0],
+        input.args[1] as ConversationSearchRequest | ConversationNavigatorRequest, input.method === "searchConversation" ? "search" : "navigator", context.scheduleDb);
+    },
+    "conversation.cancel": (payload: unknown) => queries.cancel(payload as ConversationQueryCancelRequest),
     "bundle.initialize": async () => ({
       activeModelCatalog: await catalog.ensureSeeded(),
       sessions: sessionSummariesToSessions(await session.listSessionSummaries()),
@@ -138,6 +160,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       }
       const methods = STORE_METHODS[input.store as keyof typeof STORE_METHODS] as readonly string[];
       if (!methods.includes(input.method)) throw new Error(`Storage worker method is not allowed: ${input.store}.${input.method}`);
+      if (["searchConversation", "listConversationNavigator", "cancelConversationQuery"].includes(input.method)) throw new Error("Conversation queries require their isolated command.");
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
@@ -151,10 +174,16 @@ export async function createStorageWorkerCommandHandlers(data: StorageWorkerEntr
 }
 
 export async function closeStorageWorker(): Promise<void> {
+  await stopStorageConversationQueries();
   for (const store of Object.values(instances ?? {})) {
     (store as { close?: () => void }).close?.();
   }
   instances = null;
+}
+
+export async function stopStorageConversationQueries(): Promise<void> {
+  await conversationQueries?.close();
+  conversationQueries = null;
 }
 
 export function createV6StorageWorkerBundle(options: {
@@ -187,7 +216,9 @@ export function createV6StorageWorkerBundle(options: {
     new Proxy({}, {
       get: (_target, property: string) => {
         if (!methods.includes(property as never)) return undefined;
-        return (...args: unknown[]) => client.call("store.call", { store, method: property, args }, {
+        return (...args: unknown[]) => client.call(property === "cancelConversationQuery" ? "conversation.cancel"
+          : property === "searchConversation" || property === "listConversationNavigator" ? "conversation.query" : "store.call",
+          property === "cancelConversationQuery" ? args[0] : { store, method: property, args }, {
           mutation: MUTATIONS.has(property),
           operation: `${store}.${property}`,
         });
@@ -207,9 +238,9 @@ export type V6StorageWorkerBundle = {
   initialize(): Promise<unknown>;
   truncateWal(): Promise<boolean>;
   stores: {
-    session: AsyncStore<SessionStorageV6>;
+    session: AsyncStore<Omit<SessionStorageV6, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
     turn: AsyncStore<SessionTurnStorageV6>;
-    auxiliary: AsyncStore<AuxiliarySessionStorageType>;
+    auxiliary: AsyncStore<Omit<AuxiliarySessionStorageType, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
     character: AsyncStore<CharacterStorage>;
     settings: AsyncStore<AppSettingsStorage>;
     catalog: AsyncStore<ModelCatalogStorage>;

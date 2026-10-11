@@ -253,6 +253,8 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
 - Main／Auxiliaryの会話は最新60件を初回表示する。会話上部の`Earlier Messages`／`Later Messages`で前後の範囲を取得し、最新への移動で追従を再開する。読込中・取得失敗と`Retry`は対象会話内に表示し、取得済み本文とComposerを保持する。FindとMessages navigatorのBookmarkは全履歴を対象とし、対象移動時に必要な本文を取得する。ページ変更・Auxiliary再選択では履歴上の位置を使い、別messageへの位置ずれを防ぐ
+- 全履歴FindとMessages navigatorは64件の結果pageを使い、現在と隣接の最大3pageだけを保持する。Findは保存済み全履歴の総件数とglobal ordinalを維持し、未保存末尾とpending本文だけを重複なく加える。source／previewの検索意味を維持し、未取得位置への移動では必要な結果と本文pageを取得する。query変更、Close、会話owner変更、非表示では旧queryを取消し、遅い旧応答を適用しない。読込中はspinner／busy、失効・errorは理由と`Retry`を表示し、成功0件とは区別する
+- 全履歴Messagesの縮小状態は、会話owner単位の既定意図と個別messageの例外で保持する。全縮小・全展開は未読込の履歴pageにも適用し、個別の操作はpage復帰時も維持する。別incarnationの会話へ持ち越さない
 - wide desktop (`1920x1080` baseline) では Session 本体を、中央の `message list または preview` と上下左右の dock に分ける
   - HeaderとActionDockは常に全幅を使い、外側をカードの枠・背景で囲まない。中央surfaceと左右paneの下に単一のActionDock splitterと共有下部パネルを配置し、パネル内をPrompt／Terminalで切り替える
   - Headerと共有下部パネルはclickで開閉する。左右paneは排他表示とし、clickで開閉する。閉じた領域からのdrag展開は行わない。共有下部パネルは開いた状態でdragと上下矢印キーによる高さ調整ができ、最大高はHeaderとsplitterを除いた残余高。中央領域が160px未満になる場合は高さ0で非表示にし、戻すと会話stateとスクロール位置を保って再表示する
@@ -370,6 +372,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - right pane 上部には collapsed state の `title handle` を置く
 - right pane shell は Agent で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
 - right pane の本文scrollbarはtab直下からpane下端まで共通の高さにし、`Messages`のfilterと`Glossary`の検索欄は本文の上端へ固定して一覧だけを流す
+- Messages navigatorと全履歴query pageは総件数に対してrowをvirtualizeし、All／Bookmarkのいずれも未取得pageを含む全履歴を対象にする。native rowのaccessible nameとfocusを保ち、Arrowで全件内を巡回、Home／Endで先頭／末尾、Enterで本文へjumpする。結果pageの到着でscroll位置を初期化しない。Bookmark切替と会話owner変更では一覧を先頭へ戻し、owner変更ではAllへ戻す。loading／error／Retryと成功0件の空本文を区別する
 - `Generate Memory` は current UI では表示しない
 - command 実行中は `Latest Command` を最優先で自動表示する
 - MemoryGeneration / 独り言の right pane 自動切り替えは行わない

@@ -14,6 +14,59 @@ import type { SessionMessageColumnProps } from "../../src/chat/conversation/sess
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { ConversationPage } from "../../src-shared/session/conversation-page.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "全縮小の意図は未読込の履歴pageにも適用され、個別展開の例外はpage復帰で維持し、別incarnationには持ち越さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 全履歴Messagesの縮小状態" }
+// fault = "全縮小を現在pageのkey集合だけへ保存する、page切替で例外を落とす、または別incarnationへ縮小意図を流用する"
+// observable = "columnのcollapsedMessageKeysとcontrolsのallMessagesCollapsed"
+// observation_boundary = "component-behavior"
+// scope = "conversation-global-fold-intent"
+// lifecycle = "permanent"
+// impact = "長い履歴で全縮小後のpage閲覧と個別展開を同じ会話に限定して維持できる"
+// distinction = "既存collapse helper testは有限本文pageを跨ぐowner単位の既定意図を通らない"
+// @end-test-value
+test("paged column applies all-fold intent across unloaded pages", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
+  Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const messages = (start: number) => Array.from({ length: 60 }, (_, index) => ({ role: "user" as const, text: `message ${start + index}`, historyIndex: start + index }));
+  const tail = messages(140);
+  const api: ConversationMessageColumnApi = { getConversationPage: async (sessionId, request) => ({ sessionId, incarnationId: "first", totalCount: 200, startIndex: request?.startIndex ?? 140, messages: messages(request?.startIndex ?? 140) }) };
+  let latest: ReturnType<typeof useConversationMessageColumn> = null;
+  let controls: ConversationColumnControls | undefined;
+  const getLatest = () => { assert.ok(latest); return latest; };
+  const getControls = () => { assert.ok(controls); return controls; };
+  function Probe({ incarnationId }: { incarnationId: string }) {
+    latest = useConversationMessageColumn({ session: { id: "main", incarnationId, messages: tail, messageCount: 200 }, baseProps: createBaseProps("main"), enabled: true, api, liveRun: null, onColumnControls: (value) => { controls = value; } });
+    return React.createElement("div", { ref: latest?.messageListRef });
+  }
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(React.createElement(Probe, { incarnationId: "first" })));
+    await act(async () => getControls().onToggleAllMessageCollapse());
+    assert.equal(getControls().allMessagesCollapsed, true);
+    await act(async () => getControls().onJumpToMessage("session-main-30"));
+    assert.ok(getLatest().collapsedMessageKeys?.has("session-main-30"));
+    await act(async () => getLatest().onToggleMessageCollapse?.("session-main-30"));
+    assert.equal(getControls().allMessagesCollapsed, false);
+    await act(async () => getControls().onJumpToMessage("session-main-150"));
+    assert.ok(getLatest().collapsedMessageKeys?.has("session-main-150"));
+    await act(async () => getControls().onJumpToMessage("session-main-30"));
+    assert.equal(getLatest().collapsedMessageKeys?.has("session-main-30"), false);
+    assert.ok(getLatest().collapsedMessageKeys?.has("session-main-31"));
+    await act(async () => root.render(React.createElement(Probe, { incarnationId: "second" })));
+    assert.equal(getLatest().collapsedMessageKeys?.size, 0);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((key, index) => { const value = previous[index]; if (value) Object.defineProperty(globalThis, key, value); else Reflect.deleteProperty(globalThis, key); });
+  }
+});
+
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {
     sessionId: id,
@@ -38,6 +91,90 @@ function createBaseProps(id: string): SessionMessageColumnProps {
     onResolveLiveElicitation() {},
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "有限Messages一覧は未保存userとassistantを末尾ordinalへ合流し、Bookmark絞込・本文jump・保存確定後の一意性を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 会話列は確定履歴の投影とlive末尾を分離し、保存確定時のmessage key、Bookmark、検索、navigatorを保持する" }
+// fault = "未保存末尾を一覧件数から落とす、同identityまたは保存済み行を二重計上する、または過去閲覧中の未保存jumpをbackendへ送る"
+// observable = "hook controlsのnavigator page items・offset・totalCount、ColumnのmessageJumpRequestと本文、page API呼出回数"
+// observation_boundary = "component-behavior"
+// scope = "conversation-navigator-unsaved-tail"
+// lifecycle = "permanent"
+// impact = "保存を待たず本文に見える送信と応答へMessagesから移動できる"
+// distinction = "既存collapse testはbackend有限ordinalと未保存末尾の合流を通らず、型検査では行と総件数の重複を検知できない"
+// @end-test-value
+test("paged navigator merges unsaved tail with finite ordinals and bookmark filter", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  const previousAct = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const saved = Array.from({ length: 130 }, (_, historyIndex) => ({ role: "user" as const, text: `saved ${historyIndex}`, historyIndex }));
+  const tail = [
+    ...saved.slice(-60),
+    { role: "user" as const, text: "unsaved request", historyIndex: 130 },
+    { role: "assistant" as const, text: "unsaved response", historyIndex: 131, isBookmarked: true },
+    { role: "user" as const, text: "unsaved request", historyIndex: 130 },
+  ];
+  let persistedCount = 130;
+  let pageReads = 0;
+  const api: ConversationMessageColumnApi = {
+    getConversationPage: async (sessionId, request) => {
+      pageReads += 1;
+      const startIndex = request?.startIndex ?? 70;
+      return { sessionId, incarnationId: "first", totalCount: persistedCount, startIndex, messages: saved.slice(startIndex, startIndex + 60) };
+    },
+    listConversationNavigator: async (_sessionId, request) => {
+      const items = [...saved, ...tail.slice(60, 62)].slice(0, persistedCount)
+        .filter((message) => request.filter === "all" || ("isBookmarked" in message && message.isBookmarked))
+        .map((message) => ({ messageIndex: message.historyIndex, role: message.role, preview: message.text, accent: false, isBookmarked: "isBookmarked" in message && message.isBookmarked === true }));
+      return { status: "complete", stamp: { generationId: "generation", ownerIdentity: "main:first", contentRevision: persistedCount, requestId: request.requestId }, incarnationId: "first", messageCount: persistedCount, totalCount: items.length, offset: request.offset ?? 0, items: items.slice(request.offset ?? 0, (request.offset ?? 0) + 64) };
+    },
+  };
+  let latest: ReturnType<typeof useConversationMessageColumn> = null;
+  let controls: ConversationColumnControls | undefined;
+  const getLatest = () => { assert.ok(latest); return latest; };
+  const getControls = () => { assert.ok(controls); return controls; };
+  const getPage = () => { const page = getControls().messageNavigatorPage; assert.ok(page); return page; };
+  function Probe() {
+    latest = useConversationMessageColumn({ session: { id: "main", incarnationId: "first", messages: tail, messageCount: persistedCount }, baseProps: createBaseProps("main"), enabled: true, navigatorActive: true, api, liveRun: null, onColumnControls: (value) => { controls = value; } });
+    return null;
+  }
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(React.createElement(Probe)));
+    assert.equal(getPage().totalCount, 132);
+    await act(async () => getPage().onRequestRange(128));
+    assert.equal(getPage().offset, 64);
+    assert.equal(getPage().items[130 - getPage().offset]?.preview, "unsaved request");
+    assert.equal(getPage().items[131 - getPage().offset]?.preview, "unsaved response");
+    assert.ok(getPage().items.length <= 192);
+    await act(async () => getControls().onJumpToMessage("session-main-3"));
+    assert.equal(pageReads, 1);
+    await act(async () => getControls().onJumpToMessage("session-main-131"));
+    assert.equal(pageReads, 1);
+    assert.equal(getLatest().messageJumpRequest?.key, "session-main-131");
+    assert.ok(getLatest().messages.some((message) => message.text === "unsaved response"));
+    await act(async () => getPage().onFilterChange("bookmarks"));
+    assert.equal(getPage().totalCount, 1);
+    assert.deepEqual(getPage().items.map((entry) => entry.key), ["session-main-131"]);
+    persistedCount = 132;
+    await act(async () => root.render(React.createElement(Probe)));
+    assert.equal(getPage().totalCount, 1);
+    assert.deepEqual(getPage().items.map((entry) => entry.key), ["session-main-131"]);
+    await act(async () => getPage().onFilterChange("all"));
+    await act(async () => getPage().onRequestRange(128));
+    assert.equal(getPage().totalCount, 132);
+    assert.equal(getPage().items.filter((entry) => entry.key === "session-main-131").length, 1);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousAct;
+    globals.forEach((key, index) => { const value = previous[index]; if (value) Object.defineProperty(globalThis, key, value); else Reflect.deleteProperty(globalThis, key); });
+  }
+});
 
 // @test-value v2
 // kind = "contract"

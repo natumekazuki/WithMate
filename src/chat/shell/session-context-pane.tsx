@@ -1,4 +1,5 @@
-import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ErrorInfo, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ErrorInfo, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 import type { LiveBackgroundTask, SessionContextTelemetry } from "../../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
@@ -38,6 +39,18 @@ function liveBackgroundTaskToneClassName(status: LiveBackgroundTask["status"]): 
   }
 }
 
+export type MessageNavigatorPage = {
+  items: readonly MessageNavigatorEntry[];
+  offset: number;
+  totalCount: number;
+  filter: "all" | "bookmarks";
+  loading: boolean;
+  error: string;
+  onFilterChange: (filter: "all" | "bookmarks") => void;
+  onRequestRange: (offset: number) => void;
+  onRetry: () => void;
+};
+
 export type SessionContextPaneProps = {
   activeContextPaneTab: ContextPaneTabKey;
   availableContextPaneTabs: ContextPaneTabKey[];
@@ -59,6 +72,7 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetry: SessionContextTelemetry | null;
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   messageNavigatorEntries?: readonly MessageNavigatorEntry[];
+  messageNavigatorPage?: MessageNavigatorPage;
   messageNavigatorSessionId?: string;
   messageNavigatorCharacter?: CharacterProfile;
   glossaryPaneProps?: SessionGlossaryPaneProps;
@@ -67,6 +81,100 @@ export type SessionContextPaneProps = {
   onJumpToMessage?: (key: string) => void;
   onMessageNavigatorActiveChange?: (active: boolean) => void;
 };
+
+function PagedMessageNavigator({ page, scrollRef, speakerLabel, renderSpeaker, onJump }: {
+  page: MessageNavigatorPage;
+  scrollRef: RefObject<HTMLDivElement | null>;
+  speakerLabel: (entry: MessageNavigatorEntry) => string;
+  renderSpeaker: (entry: MessageNavigatorEntry) => ReactNode;
+  onJump?: (key: string) => void;
+}) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const rowRefs = useRef(new Map<number, HTMLButtonElement>());
+  const requestedFocus = useRef<number | null>(null);
+  const [focusIndex, setFocusIndex] = useState(0);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  const virtualizer = useVirtualizer({
+    count: page.totalCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 54,
+    overscan: 6,
+    scrollMargin,
+    initialRect: { width: 280, height: 600 },
+    useFlushSync: false,
+  });
+  const virtualRows = virtualizer.getVirtualItems();
+  const firstIndex = virtualRows[0]?.index ?? 0;
+  const lastIndex = virtualRows.at(-1)?.index ?? firstIndex;
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const scroll = scrollRef.current;
+    if (list && scroll) setScrollMargin(list.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop);
+  }, [page.error, page.loading, scrollRef]);
+  useEffect(() => {
+    if (!page.totalCount || page.loading || page.error) return;
+    const offset = requestedFocus.current ?? firstIndex;
+    const inPage = offset >= page.offset && offset < page.offset + page.items.length;
+    const endInPage = lastIndex >= page.offset && lastIndex < page.offset + page.items.length;
+    if (!inPage || !endInPage) page.onRequestRange(offset);
+  }, [firstIndex, lastIndex, page]);
+  useLayoutEffect(() => {
+    const index = requestedFocus.current;
+    if (index !== null) {
+      const row = rowRefs.current.get(index);
+      if (row) {
+        row.focus({ preventScroll: true });
+        requestedFocus.current = null;
+      }
+    } else if (!rowRefs.current.has(focusIndex) && !listRef.current?.contains(document.activeElement)) {
+      setFocusIndex(firstIndex);
+    }
+  }, [firstIndex, focusIndex, page.items, virtualRows]);
+  const moveFocus = (index: number) => {
+    setFocusIndex(index);
+    requestedFocus.current = index;
+    virtualizer.scrollToIndex(index, { align: "auto" });
+    const row = rowRefs.current.get(index);
+    if (row) {
+      row.focus({ preventScroll: true });
+      requestedFocus.current = null;
+    } else page.onRequestRange(index);
+  };
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number, entry: MessageNavigatorEntry) => {
+    let next: number | undefined;
+    if (event.key === "ArrowDown") next = (index + 1) % page.totalCount;
+    else if (event.key === "ArrowUp") next = (index - 1 + page.totalCount) % page.totalCount;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = page.totalCount - 1;
+    else if (event.key === "Enter") { event.preventDefault(); onJump?.(entry.key); }
+    if (next !== undefined) { event.preventDefault(); moveFocus(next); }
+  };
+  return (
+    <div className="messages-navigator messages-navigator-paged" aria-busy={page.loading}>
+      <div ref={listRef} className="messages-navigator-list messages-navigator-virtual-list" role="list" aria-label="Messages"
+        style={{ height: virtualizer.getTotalSize() }}>
+        {virtualRows.map((row) => {
+          const entry = page.items[row.index - page.offset];
+          return <div key={row.key} data-index={row.index} ref={virtualizer.measureElement}
+            className="messages-navigator-virtual-row" style={{ transform: `translateY(${row.start - scrollMargin}px)` }}>
+            {entry ? <button type="button" className={`messages-navigator-row${entry.isCollapsed ? " is-collapsed" : ""}`}
+              ref={(node) => { if (node) rowRefs.current.set(row.index, node); else rowRefs.current.delete(row.index); }}
+              tabIndex={row.index === focusIndex ? 0 : -1}
+              aria-label={`${speakerLabel(entry)}${entry.isBookmarked ? ", Bookmark saved" : ""}: ${entry.preview}`}
+              title={`${speakerLabel(entry)}${entry.isBookmarked ? ", Bookmark saved" : ""}: ${entry.preview}`}
+              onFocus={() => setFocusIndex(row.index)} onKeyDown={(event) => onKeyDown(event, row.index, entry)}
+              onClick={() => onJump?.(entry.key)}>
+              <span className={`messages-navigator-speaker${entry.accent ? " accent" : ""}`}>{renderSpeaker(entry)}</span>
+              <span className="messages-navigator-copy"><span className="messages-navigator-preview">{entry.preview}</span>
+                {entry.isCollapsed ? <span className="messages-navigator-state" aria-label="Collapsed">Collapsed</span> : null}
+              </span>
+            </button> : <div className="messages-navigator-placeholder" aria-hidden="true" />}
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
 
 type SessionPaneErrorBoundaryProps = {
   children: ReactNode;
@@ -183,6 +291,7 @@ export function SessionContextPane({
   selectedSessionContextTelemetry,
   selectedSessionContextTelemetryProjection,
   messageNavigatorEntries = [],
+  messageNavigatorPage,
   messageNavigatorSessionId,
   messageNavigatorCharacter,
   onMessageNavigatorActiveChange,
@@ -197,7 +306,9 @@ export function SessionContextPane({
   }, [activeContextPaneTab, onMessageNavigatorActiveChange]);
   const messageNavigatorButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [messageNavigatorFocusIndex, setMessageNavigatorFocusIndex] = useState(0);
-  const [messageNavigatorFilter, setMessageNavigatorFilter] = useState<"all" | "bookmarks">("all");
+  const [localMessageNavigatorFilter, setLocalMessageNavigatorFilter] = useState<"all" | "bookmarks">("all");
+  const messageNavigatorFilter = messageNavigatorPage?.filter ?? localMessageNavigatorFilter;
+  const setMessageNavigatorFilter = messageNavigatorPage?.onFilterChange ?? setLocalMessageNavigatorFilter;
   const taskEntries = backgroundTasks ?? [];
   const messageNavigatorBookmarksEnabled = messageNavigatorSessionId !== undefined;
   const visibleMessageNavigatorEntries = useMemo(
@@ -225,6 +336,7 @@ export function SessionContextPane({
       case "reasoning":
         return `${isSelectedSessionRunning ? "running" : "idle"}:${liveRunReasoningText.length}`;
       case "messages":
+        if (messageNavigatorPage) return `${messageNavigatorSessionId}:${messageNavigatorFilter}`;
         return visibleMessageNavigatorEntries
           .map((entry) => `${entry.key}:${entry.preview}:${entry.isCollapsed ? "collapsed" : "expanded"}:${entry.isBookmarked ? "bookmarked" : "unbookmarked"}`)
           .join("|");
@@ -241,6 +353,9 @@ export function SessionContextPane({
     isSelectedSessionRunning,
     messageNavigatorEntries,
     visibleMessageNavigatorEntries,
+    messageNavigatorPage,
+    messageNavigatorSessionId,
+    messageNavigatorFilter,
     taskEntries,
     selectedSessionLiveRunErrorMessage,
   ]);
@@ -252,7 +367,7 @@ export function SessionContextPane({
   }, [visibleMessageNavigatorEntries.length]);
 
   useEffect(() => {
-    setMessageNavigatorFilter("all");
+    setLocalMessageNavigatorFilter("all");
     setMessageNavigatorFocusIndex(0);
   }, [messageNavigatorSessionId]);
 
@@ -334,6 +449,7 @@ export function SessionContextPane({
 
         <div ref={contentRef} className="command-monitor-content">
           {activeContextPaneTab === "messages" && messageNavigatorBookmarksEnabled ? (
+            <div className="messages-navigator-toolbar">
             <div className="messages-navigator-filter-toolbar" role="group" aria-label="Messages filter">
               <button
                 className={`messages-navigator-filter${messageNavigatorFilter === "all" ? " is-active" : ""}`}
@@ -351,6 +467,12 @@ export function SessionContextPane({
               >
                 Bookmark
               </button>
+            </div>
+            {messageNavigatorPage?.loading ? <LoadingIndicator label="Loading Messages" /> : null}
+            {messageNavigatorPage?.error ? <div role="alert" className="live-run-error-block">
+              <p className="live-run-error">{messageNavigatorPage.error}</p>
+              <button type="button" onClick={messageNavigatorPage.onRetry}>Retry</button>
+            </div> : null}
             </div>
           ) : null}
           <div className={`command-monitor-stack ${activeContextPaneTab}`}>
@@ -519,7 +641,10 @@ export function SessionContextPane({
               )
             ) : null}
 
-            {activeContextPaneTab === "messages" ? (
+            {activeContextPaneTab === "messages" && messageNavigatorPage ? (
+              <PagedMessageNavigator key={`${messageNavigatorSessionId}:${messageNavigatorFilter}`} page={messageNavigatorPage}
+                scrollRef={contentRef} speakerLabel={messageNavigatorSpeakerLabel} renderSpeaker={renderMessageNavigatorSpeaker} onJump={onJumpToMessage} />
+            ) : activeContextPaneTab === "messages" ? (
               <div className="messages-navigator">
                 <div className="messages-navigator-list" role="list" aria-label="Messages">
                   {visibleMessageNavigatorEntries.length > 0 ? visibleMessageNavigatorEntries.map((entry, index) => {

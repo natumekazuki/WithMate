@@ -459,6 +459,14 @@ export type MainIpcAuxiliaryDepsRequired = {
   cancelAuxiliarySessionRun: (auxiliarySessionId: string) => Awaitable<void>;
 };
 
+export type ConversationQueryOwner = {
+  ownerSessionId: string;
+  isCurrent(): boolean;
+  search(request: import("../../src-shared/session/conversation-page.js").ConversationSearchRequest): Awaitable<import("../../src-shared/session/conversation-page.js").ConversationQueryOutcome<import("../../src-shared/session/conversation-page.js").ConversationSearchMatch>>;
+  navigate(request: import("../../src-shared/session/conversation-page.js").ConversationNavigatorRequest): Awaitable<import("../../src-shared/session/conversation-page.js").ConversationQueryOutcome<import("../../src-shared/session/conversation-page.js").ConversationNavigatorEntry>>;
+  cancel(request: import("../../src-shared/session/conversation-page.js").ConversationQueryCancelRequest): Awaitable<void>;
+};
+
 export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
   MainIpcSessionWindowDeps &
   MainIpcWorkspaceValidationDeps &
@@ -484,8 +492,7 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
     getSession(sessionId: string): Awaitable<Session | null>;
     getConversationOwnerSessionId?(sessionId: string): Awaitable<string>;
     getConversationPage?(sessionId: string, request?: import("../../src-shared/session/conversation-page.js").ConversationPageRequest): Awaitable<import("../../src-shared/session/conversation-page.js").ConversationPage | null>;
-    searchConversation?(sessionId: string, request: import("../../src-shared/session/conversation-page.js").ConversationSearchRequest): Awaitable<import("../../src-shared/session/conversation-page.js").ConversationSearchMatch[]>;
-    listConversationNavigator?(sessionId: string): Awaitable<import("../../src-shared/session/conversation-page.js").ConversationNavigatorEntry[]>;
+    resolveConversationQueryOwner?(sessionId: string): Awaitable<ConversationQueryOwner>;
     getSessionSummary(sessionId: string): Awaitable<SessionSummary | null>;
     getSessionGlossaryProjection(
       sessionId: string,

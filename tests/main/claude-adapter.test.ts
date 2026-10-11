@@ -99,7 +99,7 @@ it("ClaudeはBash commandを秘匿してからpreviewを生成する", async () 
   const prefix = secret.slice(0, 8);
   const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - prefix.length) + secret + " tail";
   const sanitized = command.replace(secret, PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
-  const expected = `${sanitized.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${sanitized.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${sanitized.length}]`;
+  const expected = `${sanitized.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`;
   for (const outcome of ["completed", "failed", "canceled"] as const) {
     const controller = new AbortController();
     const request = input("", controller.signal);
@@ -216,8 +216,8 @@ it("Claude Bash commandはsecretを秘匿してからpreviewを生成する", as
         providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null,
         managedMcp: { memoryUrl: "http://localhost/mcp/memory", glossaryUrl: "http://localhost/mcp/glossary", token: secrets[2] } };
       const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1) + secret + " tail".repeat(100);
-      const sanitized = command.replace(secret, PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
-      const expected = `${sanitized.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${sanitized.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${sanitized.length}]`;
+      const prefix = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1);
+      const expected = `${(prefix + PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER).slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`;
       const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
         yield sdkMessage({ type: "assistant", uuid: "command", parent_tool_use_id: null,
           message: { content: [{ type: "tool_use", id: "command", name: "Bash", input: { command } }] } });
@@ -940,4 +940,59 @@ it("ClaudeはBash summaryとoperation previewをboundedにし本文と操作順�
   assert.ok(summaries.filter((summary) => summary.startsWith("x")).every((summary) => summary === expected));
   assert.deepEqual(completed.artifact!.operationTimeline!.filter((operation) => operation.type === "command_execution").map((operation) => operation.summary), Array(16).fill(expected));
   assert.equal(completed.assistantText, body);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "ClaudeのBash summaryはpreview境界を跨ぐbinding reference・turn capability・MCP tokenのprefixをliveと正常・失敗・取消artifactに残さない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Agent Runtime Binding / Streaming Policy" }
+// fault = "Bash commandを秘匿化より先に切り詰めて一致しないsecret prefixを表示・保存する"
+// observable = "受信したcommand_execution進捗summaryと結果またはProviderTurnError.partialResultのoperation summary"
+// observation_boundary = "public-boundary"
+// scope = "Claude tool_use Bash bounded projection"
+// lifecycle = "permanent"
+// risk_tags = ["privacy", "authentication"]
+// impact = "runtime認証情報の断片が画面と保存履歴へ漏洩することを防ぐ"
+// distinction = "tool_result出力の秘匿化testはBash入力のcommand summary生成を通らない"
+// @end-test-value
+it("ClaudeのBash previewは切断境界のsecret prefixを秘匿する", async () => {
+  const secrets = ["binding-reference-fixture-0123456789", "turn-capability-fixture-0123456789", "mcp-token-fixture-0123456789"];
+  for (const secret of secrets) {
+    for (const outcome of ["completed", "failed", "canceled"] as const) {
+      const controller = new AbortController();
+      const request = input("", controller.signal);
+      request.agentRuntimeBinding = {
+        bindingId: "binding", bindingReference: secrets[0], turnCapability: secrets[1], providerId: "claude",
+        executionGeneration: "generation", transport: "env", expiresAt: null,
+        managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", token: secrets[2] },
+      };
+      const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10) + secret + " tail";
+      const expected = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10)
+        + PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER.slice(0, 10)
+        + `\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`;
+      const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+        yield sdkMessage({ type: "assistant", uuid: "tool", parent_tool_use_id: null,
+          message: { content: [{ type: "tool_use", id: "boundary", name: "Bash", input: { command } }] } });
+        if (outcome === "failed") throw new Error("connection failure");
+        if (outcome === "canceled") controller.abort();
+        yield result("thread");
+      }) });
+      const summaries: string[] = [];
+      let completed;
+      try {
+        completed = await adapter.runSessionTurn(request, (state) => {
+          summaries.push(...state.steps.filter((step) => step.type === "command_execution").map((step) => step.summary));
+        });
+        assert.equal(outcome, "completed");
+      } catch (error) {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.notEqual(outcome, "completed");
+        assert.equal(error.canceled, outcome === "canceled");
+        completed = error.partialResult;
+      }
+      assert.ok(summaries.length > 0);
+      assert.ok(summaries.every((summary) => summary === expected && !summary.includes(secret.slice(0, 10))));
+      assert.equal(completed.artifact!.operationTimeline![0].summary, expected);
+    }
+  }
 });

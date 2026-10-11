@@ -1229,6 +1229,22 @@ export class AuxiliarySessionService {
     runtimeSession: Session,
     options: { confirmedFinalAssistantText?: string | null } = {},
   ): Promise<AuxiliarySession> {
+    return this.storeAuxiliaryRuntimeSession(runtimeSession, options);
+  }
+
+  async upsertTerminalAuxiliaryRuntimeSession(
+    runtimeSession: Session,
+    terminalCommit: SessionTurnTerminalCommit,
+    options: { confirmedFinalAssistantText?: string | null } = {},
+  ): Promise<Session> {
+    return this.toRuntimeSession(await this.storeAuxiliaryRuntimeSession(runtimeSession, options, terminalCommit));
+  }
+
+  private async storeAuxiliaryRuntimeSession(
+    runtimeSession: Session,
+    options: { confirmedFinalAssistantText?: string | null },
+    terminalCommit?: SessionTurnTerminalCommit,
+  ): Promise<AuxiliarySession> {
     const storage = this.deps.getStorage();
     const current = await storage.getAuxiliarySession(runtimeSession.id);
     if (current) this.assertCharacterSnapshotValid(current);
@@ -1260,10 +1276,13 @@ export class AuxiliarySessionService {
       preview: resolveAuxiliaryPreview(runtimeSession.messages, current.preview, options.confirmedFinalAssistantText),
       updatedAt: runtimeSession.updatedAt,
     });
-    const updated = await storage.updateAuxiliarySessionIfMatches({
+    const input = {
       session: next,
       expectedSession: current,
-    });
+    };
+    const updated = terminalCommit
+      ? await storage.updateTerminalAuxiliarySessionIfMatches(input, terminalCommit)
+      : await storage.updateAuxiliarySessionIfMatches(input);
     if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
     return this.overlayExecutionOptions(updated);
   }

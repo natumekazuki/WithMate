@@ -941,6 +941,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     let active: ActiveCodexTurn | null = null;
     let projectionId: string | null = null;
     let projectionError: unknown;
+    let projectionFailed = false;
     let rejectProjectionFailure!: (error: unknown) => void;
     const projectionFailure = new Promise<never>((_resolve, reject) => { rejectProjectionFailure = reject; });
     void projectionFailure.catch(() => undefined);
@@ -954,9 +955,11 @@ export class CodexAdapter implements ProviderTurnAdapter {
     let lastLiveAt = 0;
     let lastLive: CodexProjectionProgress["state"] | null = null;
     let turnFailed = false;
+    let turnCanceled = false;
     const failProjection = (error: unknown) => {
-      projectionError ??= error;
-      rejectProjectionFailure(error);
+      if (!projectionFailed) projectionError = error;
+      projectionFailed = true;
+      rejectProjectionFailure(projectionError);
       void transport.close().catch(() => undefined);
     };
     const scheduleLive = () => {
@@ -1140,7 +1143,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       let burst = 0;
       while (!state.turnCompleted) {
         signal?.throwIfAborted();
-        if (projectionError) throw projectionError;
+        if (projectionFailed) throw projectionError;
         // Bound work even when nextEvent returns an already-resolved queue entry.
         if (++burst >= 32) { burst = 0; await new Promise<void>((resolve) => setImmediate(resolve)); }
         const event = await Promise.race([transport.nextEvent(), projectionFailure]);
@@ -1201,7 +1204,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         }
         while (pendingEvents.size >= 8) {
           await Promise.race(pendingEvents);
-          if (projectionError) throw projectionError;
+          if (projectionFailed) throw projectionError;
           signal?.throwIfAborted();
         }
         if (eventBatch.length >= 32 || state.turnCompleted) flushEvents();
@@ -1209,7 +1212,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       }
       await Promise.all(pendingEvents);
       await Promise.all(pendingControls);
-      if (projectionError) throw projectionError;
+      if (projectionFailed) throw projectionError;
       if (interactionError) throw interactionError;
       if (state.terminalStatus !== "completed")
         throw new Error(
@@ -1217,6 +1220,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         );
     } catch (error) {
       turnFailed = true;
+      turnCanceled = signal?.aborted === true && error === signal.reason;
       throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
@@ -1230,18 +1234,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
       )
         this.activeTurns.delete(sessionInput.session.id);
       await Promise.all(pendingEvents);
-      await Promise.all(pendingControls);
-      let finalProgressFailed = false;
-      let finalProgressError: unknown;
       await progress(true).catch((error) => {
-        finalProgressFailed = true;
-        finalProgressError = error;
+        failProjection(error);
         this.writeLog({
           level: "warn",
           kind: "codex.run.final-progress-failed",
           message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
         });
       });
+      await Promise.all(pendingControls);
       if (state.turnCompleted && active) {
         await Promise.allSettled([...active.pendingInputs]);
       }
@@ -1269,16 +1270,16 @@ export class CodexAdapter implements ProviderTurnAdapter {
           state.streamErrorMessage = final.errorMessage;
           state.terminalStatus = final.terminalStatus;
         } catch (error) {
-          if (!turnFailed && !finalProgressFailed) throw error;
+          if (!turnFailed && !projectionFailed) throw error;
           this.writeLog({ level: "warn", kind: "codex.run.projection-cleanup-failed", message: redactor.sanitizeText(String(error)) });
         } finally {
           await this.projection.release(projectionId).catch((error) => {
-            if (!turnFailed && !finalProgressFailed) throw error;
+            if (!turnFailed && !projectionFailed) throw error;
             this.writeLog({ level: "warn", kind: "codex.run.projection-cleanup-failed", message: redactor.sanitizeText(String(error)) });
           });
         }
       }
-      if (!turnFailed && finalProgressFailed) throw finalProgressError;
+      if ((!turnFailed || turnCanceled) && projectionFailed) throw projectionError;
     }
   }
   async runBackgroundStructuredPrompt<TOutput = unknown>(

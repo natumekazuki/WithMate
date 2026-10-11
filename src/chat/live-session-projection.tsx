@@ -8,16 +8,7 @@ import {
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 import type { ChatErrorNotice } from "./chat-window.js";
 
-export type LiveSessionRecoveryActionsInput = {
-  retryBanner: SessionRetryBannerProps["retryBanner"];
-  isRetryActionDisabled: boolean;
-  isRetryEditDisabled: boolean;
-  isRetryDraftReplacePending: boolean;
-  onResendLastMessage: () => void;
-  onEditLastMessage: () => void;
-  onConfirmRetryDraftReplace: () => void;
-  onCancelRetryDraftReplace: () => void;
-};
+export type LiveSessionRecoveryActionsInput = SessionRetryBannerProps;
 
 export function buildLiveSessionRecoveryActions(input: LiveSessionRecoveryActionsInput) {
   return buildLiveSessionRetryBanner(input);

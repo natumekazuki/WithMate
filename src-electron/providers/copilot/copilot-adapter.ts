@@ -114,6 +114,8 @@ type CopilotCommandStepState = {
   status: LiveRunStep["status"];
   exitCode?: number;
   error?: MessageOperation["error"];
+  type?: string;
+  visible?: boolean;
 };
 
 type CopilotStableRawItem = BoundedProviderRawItem;
@@ -128,6 +130,7 @@ type CopilotAdapterLogInput = {
 
 type CopilotTurnStreamState = {
   liveSteps: ProviderProgressMap<LiveRunStep>;
+  operationSteps: Map<string, LiveRunStep>;
   backgroundTasks: ProviderProgressMap<LiveBackgroundTask>;
   permissionToStepId: Map<string, string>;
   toolNamesByCallId: Map<string, string>;
@@ -309,6 +312,7 @@ function stringifyUnknown(value: unknown): string | undefined {
 function createCopilotTurnStreamState(redactor = createProviderAgentRuntimeBindingRedactor(null)): CopilotTurnStreamState {
   return {
     liveSteps: new ProviderProgressMap<LiveRunStep>(),
+    operationSteps: new Map<string, LiveRunStep>(),
     backgroundTasks: new ProviderProgressMap<LiveBackgroundTask>(),
     permissionToStepId: new Map<string, string>(),
     toolNamesByCallId: new Map<string, string>(),
@@ -327,16 +331,18 @@ function createCopilotTurnStreamState(redactor = createProviderAgentRuntimeBindi
 
 function updateCopilotCommandStep(state: CopilotTurnStreamState, nextState: CopilotCommandStepState): void {
   const details = toProviderTextPreview(nextState.details);
-  state.liveSteps.set(nextState.stepId, {
+  const step: LiveRunStep = {
     id: nextState.stepId,
-    type: "command_execution",
+    type: nextState.type ?? "command_execution",
     summary: nextState.summary,
     details,
     ...(nextState.exitCode !== undefined ? { exitCode: nextState.exitCode } : {}),
     ...(nextState.error ? { error: nextState.error } : {}),
-    ...(nextState.details !== undefined ? { truncated: state.liveSteps.get(nextState.stepId)?.truncated === true || details !== nextState.details } : {}),
+    ...(nextState.details !== undefined ? { truncated: state.operationSteps.get(nextState.stepId)?.truncated === true || details !== nextState.details } : {}),
     status: nextState.status,
-  });
+  };
+  state.operationSteps.set(nextState.stepId, step);
+  if (nextState.visible !== false) state.liveSteps.set(nextState.stepId, step);
 }
 
 function refreshCopilotReasoningText(state: CopilotTurnStreamState): void {
@@ -461,43 +467,48 @@ function applyCopilotTurnEvent(args: {
     }
     case "tool.execution_start":
       state.toolNamesByCallId.set(event.data.toolCallId, event.data.toolName);
-      if (isCopilotVisibleToolName(event.data.toolName)) {
-        const current = state.liveSteps.get(event.data.toolCallId);
+      {
+        const visible = isCopilotVisibleToolName(event.data.toolName);
+        const current = state.operationSteps.get(event.data.toolCallId);
         updateCopilotCommandStep(state, {
           stepId: event.data.toolCallId,
           summary:
-            current?.summary ?? buildCopilotToolSummary(event.data.toolName, event.data.arguments, workspacePath),
+            current?.summary ?? (visible ? buildCopilotToolSummary(event.data.toolName, event.data.arguments, workspacePath) : event.data.toolName),
           details: current?.details,
           status: "in_progress",
+          type: visible ? "command_execution" : "tool_call",
+          visible,
         });
       }
       break;
     case "tool.execution_partial_result": {
-      const current = state.liveSteps.get(event.data.toolCallId);
-      if (!current) {
+      const current = state.operationSteps.get(event.data.toolCallId);
+      if (!event.data.partialOutput.trim()) {
         break;
       }
 
       updateCopilotCommandStep(state, {
-        stepId: current.id,
-        summary: current.summary,
-        details: appendDetail(current.details, event.data.partialOutput),
+        stepId: event.data.toolCallId,
+        summary: current?.summary ?? state.toolNamesByCallId.get(event.data.toolCallId) ?? "tool",
+        details: appendDetail(current?.details, state.redactor.sanitizeText(event.data.partialOutput)),
         status: "in_progress",
+        type: current?.type ?? "tool_call",
+        visible: state.liveSteps.has(event.data.toolCallId),
       });
       break;
     }
     case "tool.execution_complete":
-      if (
-        state.liveSteps.has(event.data.toolCallId)
-        || isCopilotVisibleToolName(state.toolNamesByCallId.get(event.data.toolCallId) ?? "")
-      ) {
-        const current = state.liveSteps.get(event.data.toolCallId);
-        const toolName = state.toolNamesByCallId.get(event.data.toolCallId) ?? "shell";
+      {
+        const current = state.operationSteps.get(event.data.toolCallId);
+        const toolName = state.toolNamesByCallId.get(event.data.toolCallId) ?? "tool";
+        const visible = state.liveSteps.has(event.data.toolCallId) || isCopilotVisibleToolName(toolName);
         updateCopilotCommandStep(state, {
           stepId: event.data.toolCallId,
-          summary: current?.summary ?? buildCopilotToolSummary(toolName, undefined, workspacePath),
+          summary: current?.summary ?? (visible ? buildCopilotToolSummary(toolName, undefined, workspacePath) : toolName),
           details: appendDetail(current?.details, state.redactor.sanitize(extractToolExecutionDetails(event))),
           status: event.data.success ? "completed" : "failed",
+          type: visible ? "command_execution" : "tool_call",
+          visible,
           exitCode: event.data.result?.contents?.find((content) => content.type === "terminal")?.exitCode,
           error: event.data.error ? { message: toProviderTextPreview(state.redactor.sanitizeText(event.data.error.message)) ?? "",
             ...(typeof event.data.error.code === "string" ? { code: toProviderTextPreview(state.redactor.sanitizeText(event.data.error.code)) } : {}) } : undefined,
@@ -540,8 +551,11 @@ export function collectCopilotMessageOperationsFromEventsForTesting(
   events: SessionEvent[],
   workspacePath = "C:/workspace",
 ): MessageOperation[] {
-  const steps = collectCopilotLiveStepsFromEventsForTesting(events, workspacePath);
-  return toMessageOperations(new Map(steps.map((step) => [step.id, step])));
+  const state = createCopilotTurnStreamState();
+  for (const event of events) {
+    applyCopilotTurnEvent({ event, state, providerId: "copilot", sessionId: "session-1", workspacePath });
+  }
+  return toMessageOperations(state.operationSteps);
 }
 
 export function collectCopilotReasoningTextFromEventsForTesting(
@@ -1008,7 +1022,6 @@ function extractToolExecutionDetails(event: Extract<SessionEvent, { type: "tool.
 
 function toMessageOperations(steps: Map<string, LiveRunStep>): MessageOperation[] {
   return Array.from(steps.values())
-    .filter((step) => step.type === "command_execution")
     .map((step) => ({ ...step }));
 }
 
@@ -2128,7 +2141,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
     onProgress?: RunSessionTurnProgressHandler,
-    onAcquiredToolOutput?: () => void,
+    onAcquiredToolResult?: () => void,
   ): Promise<RunSessionTurnResult> {
     const messageAttachments = buildCopilotMessageAttachments(input.attachments);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
@@ -2220,10 +2233,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         onProviderQuotaTelemetry: input.onProviderQuotaTelemetry,
         onSessionContextTelemetry: input.onSessionContextTelemetry,
       });
-      if (event.type === "tool.execution_partial_result"
-        && streamState.liveSteps.has(event.data.toolCallId)
-        && event.data.partialOutput.trim()) {
-        onAcquiredToolOutput?.();
+      if (event.type === "tool.execution_complete"
+        || (event.type === "tool.execution_partial_result" && event.data.partialOutput.trim())) {
+        onAcquiredToolResult?.();
       }
       if (event.type === "elicitation.requested" && input.onElicitationRequest) {
         const request = buildElicitationRequestProjection(input.providerCatalog.id, event);
@@ -2308,7 +2320,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           session.sessionId,
           streamState.assistantText,
           streamState.lastNonEmptyAssistantMessageText,
-          streamState.liveSteps,
+          streamState.operationSteps,
           streamState.usage,
           streamState.providerMetadata,
           workspacePath,
@@ -2332,7 +2344,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         session.sessionId,
         streamState.assistantText,
         streamState.lastNonEmptyAssistantMessageText,
-        streamState.liveSteps,
+        streamState.operationSteps,
         streamState.usage,
         streamState.providerMetadata,
         workspacePath,
@@ -2358,7 +2370,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         session.sessionId,
         streamState.assistantText,
         streamState.lastNonEmptyAssistantMessageText,
-        streamState.liveSteps,
+        streamState.operationSteps,
         streamState.usage,
         streamState.providerMetadata,
         workspacePath,
@@ -2406,12 +2418,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
     const prompt = this.composePrompt(input);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
-    let acquiredToolOutput = false;
+    let acquiredToolResult = false;
 
     try {
-      return await this.runSessionTurnOnce(input, prompt, onProgress, () => { acquiredToolOutput = true; });
+      return await this.runSessionTurnOnce(input, prompt, onProgress, () => { acquiredToolResult = true; });
     } catch (error) {
-      if (acquiredToolOutput || !shouldRetryCopilotTurn(error)) {
+      if (acquiredToolResult || !shouldRetryCopilotTurn(error)) {
         throw error;
       }
 

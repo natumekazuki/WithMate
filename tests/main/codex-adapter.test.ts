@@ -668,6 +668,118 @@ async function workspace<T>(run: (directory: string) => Promise<T>): Promise<T> 
   try { return await run(directory); } finally { await rm(directory, { recursive: true, force: true }); }
 }
 // @test-value v2
+// kind = "contract"
+// claim = "最終snapshotのconsumer rejectionを成功へ変換せず取得済み本文とcleanupを維持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Streaming Policy / Codex projection owner" }
+// fault = "timer前に完了したturnのfinal progress rejectionをwarnだけに変換する"
+// observable = "本文付きcallbackの回数、ProviderTurnError message・partial本文・canceled、transport.closed"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter final-only progress failure"
+// lifecycle = "permanent"
+// impact = "live表示consumerが失敗したturnを正常完了と誤認させず取得済み応答を保持する"
+// distinction = "通常progress失敗testではcoalescing後のfinallyだけで届く本文consumer失敗を検出できない;短いfake transportで確認する"
+// @end-test-value
+it("最終snapshotのconsumer rejectionをpartial付き失敗へ伝播する", async (context) => workspace(async (directory) => {
+  const transport = new FakeTransport();
+  transport.events = [completed([message("answer", "final acquired body")])];
+  let bodyCallbacks = 0;
+  try {
+    const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory), state => {
+      if (state.inputAvailable) context.mock.timers.enable({ apis: ["setTimeout"] });
+      if (state.assistantText) { bodyCallbacks += 1; return Promise.reject(new Error("final consumer failure")); }
+    });
+    await assert.rejects(operation, error => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.message, "final consumer failure");
+      assert.equal(error.partialResult.assistantText, "final acquired body");
+      assert.equal(error.canceled, false);
+      return true;
+    });
+    assert.equal(bodyCallbacks, 1);
+    assert.equal(transport.closed, true);
+  } finally { context.mock.timers.reset(); }
+}));
+
+// @test-value v2
+// kind = "contract"
+// claim = "terminal controlの遅延consumer rejectionもturn結果へ伝播しnative終端で追加入力は先に閉じる"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Streaming Policy / Codex projection owner" }
+// fault = "final snapshot配送後に受けたterminal control rejectionを正常turn結果へ変換する"
+// observable = "final snapshot後のsteer拒否とcontrol reject後のProviderTurnError message・partial本文"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter delayed terminal control consumer"
+// lifecycle = "permanent"
+// impact = "制御consumer失敗を正常完了と誤認せず入力受付と実行結果を一致させる"
+// distinction = "同期callback失敗とslow live testではfinal配送後にrejectするcontrol Promiseを検知できない;明示gateのfake transportで確認する"
+// @end-test-value
+it("final配送後のterminal control rejectionをpartial付き失敗へ伝播する", async () => workspace(async (directory) => {
+  const transport = new FakeTransport();
+  transport.events = [completed([message("answer", "terminal acquired body")])];
+  let rejectControl!: (error: Error) => void;
+  const control = new Promise<void>((_resolve, reject) => { rejectControl = reject; });
+  let sawFinal!: () => void;
+  const finalSeen = new Promise<void>(resolve => { sawFinal = resolve; });
+  let heldControl = false;
+  let settled = false;
+  const input = createCodexRunSessionTurnInput(directory);
+  const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
+  const operation = adapter.runSessionTurn(input, state => {
+    if (!state.inputAvailable && !heldControl) { heldControl = true; return control; }
+    if (state.assistantText === "terminal acquired body") sawFinal();
+  });
+  void operation.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await finalSeen;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(settled, false);
+    await assert.rejects(adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "late", attachments: [] }), /no longer accepting/);
+    rejectControl(new Error("delayed control failure"));
+    await assert.rejects(operation, error => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.message, "delayed control failure");
+      assert.equal(error.partialResult.assistantText, "terminal acquired body");
+      return true;
+    });
+    assert.equal(transport.closed, true);
+  } finally { rejectControl(new Error("test cleanup")); await operation.catch(() => undefined); }
+}));
+
+// @test-value v2
+// kind = "contract"
+// claim = "AbortSignalからのcontrol同期throwを未捕捉例外にせず取消partial結果へ伝播する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Streaming Policy / Error Handling" }
+// fault = "Promise.resolveの引数評価で同期callback例外がabort listenerから漏れる"
+// observable = "abort後のProviderTurnError message・canceled・partial本文とtransport.closed"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter AbortSignal control callback"
+// lifecycle = "permanent"
+// impact = "取消操作でMainの未捕捉例外を発生させず取得済み応答と取消状態を保持する"
+// distinction = "非同期rejectionや通常通知からのthrowではAbortSignalの同期listener境界を通らない;fake transportの本文配送後に取消する"
+// @end-test-value
+it("abort controlの同期throwを取消partial結果へ閉じ込める", async () => workspace(async (directory) => {
+  const transport = new FakeTransport();
+  transport.events = [notification("item/completed", { item: message("answer", "cancel acquired body") })];
+  const controller = new AbortController();
+  let sawBody!: () => void;
+  const bodySeen = new Promise<void>(resolve => { sawBody = resolve; });
+  let threw = false;
+  const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn({ ...createCodexRunSessionTurnInput(directory), signal: controller.signal }, state => {
+    if (state.assistantText) sawBody();
+    if (!state.inputAvailable && !threw) { threw = true; throw new Error("abort control sync failure"); }
+  });
+  void operation.catch(() => undefined);
+  await bodySeen;
+  controller.abort();
+  await assert.rejects(operation, error => {
+    assert.ok(error instanceof ProviderTurnError);
+    assert.equal(error.message, "abort control sync failure");
+    assert.equal(error.canceled, true);
+    assert.equal(error.partialResult.assistantText, "cancel acquired body");
+    return true;
+  });
+  assert.equal(transport.closed, true);
+}));
+// @test-value v2
 // kind = "invariant"
 // claim = "native itemの到着順とdeltaからassistant本文を確定する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }

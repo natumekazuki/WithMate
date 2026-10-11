@@ -83,8 +83,11 @@ function summarizeTool(name: string, input: unknown): string {
 
 function commandOf(name: string, input: unknown, redactor: ProviderAgentRuntimeBindingRedactor): string | null {
   if (name !== "Bash") return null;
-  const command = redactor.sanitizeText(textOf(objectOf(input).command));
-  const preview = toProviderTextPreview(command) || null;
+  const command = textOf(objectOf(input).command);
+  const sanitized = redactor.sanitizeText(command, PROVIDER_TEXT_PREVIEW_LIMIT).slice(0, PROVIDER_TEXT_PREVIEW_LIMIT);
+  const preview = (command.length > PROVIDER_TEXT_PREVIEW_LIMIT
+    ? `${sanitized}\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`
+    : sanitized) || null;
   // Detach the bounded preview from the native command's backing string.
   return command.length > PROVIDER_TEXT_PREVIEW_LIMIT
     ? JSON.parse(JSON.stringify(preview)) as string

@@ -33,6 +33,7 @@ if (!createHandlers) {
 }
 const handlers = await createHandlers(entryData);
 const closeHandlers = handlersModule.closeStorageWorker as (() => void | Promise<void>) | undefined;
+const stopQueries = handlersModule.stopStorageConversationQueries as (() => void | Promise<void>) | undefined;
 
 parentPort.postMessage({ type: "ready", generationId: entryData.generationId } satisfies StorageWorkerMessage);
 
@@ -73,6 +74,11 @@ async function executeRequest(
       throw new Error("Storage worker request generation does not match.");
     }
     const value = await dispatchStorageWorkerCall(handlers, request, {
+      scheduleDb: <T>(read: () => T): Promise<T> => {
+        const scheduled = tail.then(read);
+        tail = scheduled.then(() => {}, () => {});
+        return scheduled;
+      },
       reportProgress: (progress) => {
         parentPort!.postMessage({
           type: "progress",
@@ -124,7 +130,9 @@ parentPort.on("message", (rawRequest: unknown) => {
   if (isStorageWorkerShutdownRequest(rawRequest)) {
     const request = rawRequest;
     shuttingDown = true;
+    const stopped = Promise.resolve(stopQueries?.());
     tail = tail.then(async () => {
+      await stopped;
       await Promise.all([...resourceLanes.values()]);
       return Promise.resolve(closeHandlers?.()).then(() => {
         parentPort!.postMessage({
@@ -153,6 +161,10 @@ parentPort.on("message", (rawRequest: unknown) => {
   }
 
   const receivedAt = performance.now();
+  if (request.command === "conversation.query" || request.command === "conversation.cancel") {
+    void executeRequest(request, receivedAt).catch(scheduleFatalWorkerError);
+    return;
+  }
   const lane = resourceLaneForRequest(request);
   if (lane) {
     enqueueResourceRequest(lane, request, receivedAt);

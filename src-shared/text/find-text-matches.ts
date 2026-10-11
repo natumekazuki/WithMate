@@ -32,26 +32,28 @@ function normalizeSearchText(value: string): NormalizedSearchText {
   return { text, sourceStarts, sourceEnds };
 }
 
-export function findTextMatches(value: string, query: string): TextSearchMatch[] {
+export function* iterateTextMatches(value: string, query: string): Generator<TextSearchMatch> {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) {
-    return [];
+    return;
   }
   const normalizedValue = normalizeSearchText(value);
-  const matches: TextSearchMatch[] = [];
   let normalizedOffset = normalizedValue.text.indexOf(normalizedQuery);
   while (normalizedOffset >= 0) {
     const normalizedEndOffset = normalizedOffset + normalizedQuery.length - 1;
-    matches.push({
+    yield {
       startOffset: normalizedValue.sourceStarts?.[normalizedOffset] ?? normalizedOffset,
       endOffset: normalizedValue.sourceEnds?.[normalizedEndOffset] ?? normalizedEndOffset + 1,
-    });
+    };
     normalizedOffset = normalizedValue.text.indexOf(
       normalizedQuery,
       normalizedOffset + normalizedQuery.length,
     );
   }
-  return matches;
+}
+
+export function findTextMatches(value: string, query: string): TextSearchMatch[] {
+  return Array.from(iterateTextMatches(value, query));
 }
 
 export function clampFindMatchIndex(currentIndex: number, matchCount: number): number {

@@ -90,6 +90,7 @@ it("Auxiliary runtime sessionからMemory public actor authorityをowner別に�
       listActiveAuxiliarySessionSummaries: () => [],
       listRunningActiveAuxiliarySessions: () => [],
       updateAuxiliarySessionIfMatches: () => null,
+      updateTerminalAuxiliarySessionIfMatches: () => null,
       upsertAuxiliarySession: () => { throw new Error("unused"); },
       deleteAuxiliarySessionsForParent: () => undefined,
       deleteAuxiliarySessionsExceptParents: () => undefined,

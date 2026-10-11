@@ -33,8 +33,11 @@ export function createSessionApi(
     searchConversation(sessionId, request) {
       return ipcRenderer.invoke(channels.WITHMATE_SEARCH_CONVERSATION_CHANNEL, sessionId, request);
     },
-    listConversationNavigator(sessionId) {
-      return ipcRenderer.invoke(channels.WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL, sessionId);
+    listConversationNavigator(sessionId, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL, sessionId, request);
+    },
+    cancelConversationQuery(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL, request);
     },
     getSessionSummary(sessionId) {
       return ipcRenderer.invoke(

@@ -11,13 +11,13 @@ describe("data loading benchmark", () => {
   // kind = "contract"
   // claim = "synthetic V2 DB を生成して主要 read path を計測できる"
   // oracle = { type = "contract", ref = "scripts/benchmarks/benchmark-data-loading.ts" }
-  // fault = "生成した通常会話・artifactの件数やpage/read結果が入力規模と一致しない"
-  // observable = "generated件数・dbBytes・各read件数・計測時間"
+  // fault = "generated件数の報告値や通常会話のpage/read結果が入力規模と一致しない"
+  // observable = "generated件数の算出報告値・実dbBytes・通常会話read件数・計測時間"
   // observation_boundary = "public-boundary"
   // scope = "integration/data-loading-benchmark"
   // lifecycle = "permanent"
-  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
-  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // impact = "benchmark fixtureの規模とread件数がずれ、性能比較の入力条件を誤る"
+  // distinction = "型検査では生成済みSQLite fixtureの実query件数・DB bytes・計測結果を観測できない"
   // @end-test-value
   it("synthetic V2 DB を生成して主要 read path を計測できる", async () => {
     const dirPath = mkdtempSync(join(tmpdir(), "withmate-data-loading-benchmark-test-"));
@@ -59,8 +59,8 @@ describe("data loading benchmark", () => {
   // observation_boundary = "public-boundary"
   // scope = "integration/data-loading-benchmark"
   // lifecycle = "permanent"
-  // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
-  // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
+  // impact = "CLIで指定した規模や保存optionが計測に反映されず、比較条件を誤る"
+  // distinction = "型検査ではCLI文字列から数値・path・保存optionへのruntime変換を確認できない"
   // @end-test-value
   it("CLI 引数を benchmark options に変換できる", () => {
     assert.deepEqual(parseBenchmarkArgs([
