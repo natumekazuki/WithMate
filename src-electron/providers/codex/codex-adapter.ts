@@ -4,6 +4,7 @@ import {
   CODEX_APP_SERVER_ARGUMENTS,
   CodexAppServerRpcError,
   CodexAppServerTransport,
+  type CodexProtocolEvent,
 } from "./app-server-transport.js";
 import { CodexTurnInteractions } from "./codex-app-server-interactions.js";
 import { CodexProjectionClient } from "./codex-projection-client.js";
@@ -942,9 +943,6 @@ export class CodexAdapter implements ProviderTurnAdapter {
     let projectionId: string | null = null;
     let projectionError: unknown;
     let projectionFailed = false;
-    let rejectProjectionFailure!: (error: unknown) => void;
-    const projectionFailure = new Promise<never>((_resolve, reject) => { rejectProjectionFailure = reject; });
-    void projectionFailure.catch(() => undefined);
     const pendingEvents = new Set<Promise<void>>();
     const pendingControls = new Set<Promise<void>>();
     let eventBatch: { method: string; params: unknown }[] = [];
@@ -959,7 +957,6 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const failProjection = (error: unknown) => {
       if (!projectionFailed) projectionError = error;
       projectionFailed = true;
-      rejectProjectionFailure(projectionError);
       void transport.close().catch(() => undefined);
     };
     const scheduleLive = () => {
@@ -1032,7 +1029,6 @@ export class CodexAdapter implements ProviderTurnAdapter {
           .catch(() => undefined);
       }
       interactions?.close();
-      rejectProjectionFailure(signal?.reason ?? new Error("Codex turn canceled"));
       if (liveTimer) { clearTimeout(liveTimer); liveTimer = undefined; }
       publishControl();
       void transport.close().catch(() => undefined);
@@ -1146,7 +1142,18 @@ export class CodexAdapter implements ProviderTurnAdapter {
         if (projectionFailed) throw projectionError;
         // Bound work even when nextEvent returns an already-resolved queue entry.
         if (++burst >= 32) { burst = 0; await new Promise<void>((resolve) => setImmediate(resolve)); }
-        const event = await Promise.race([transport.nextEvent(), projectionFailure]);
+        let event: CodexProtocolEvent;
+        try {
+          // close() rejects the transport's idle waiter without retaining consumed events.
+          event = await transport.nextEvent();
+        } catch (error) {
+          signal?.throwIfAborted();
+          if (projectionFailed) throw projectionError;
+          if (interactionError) throw interactionError;
+          throw error;
+        }
+        signal?.throwIfAborted();
+        if (projectionFailed) throw projectionError;
         const params = asRecord(event.params);
         if (event.kind === "serverRequest") {
           if (
