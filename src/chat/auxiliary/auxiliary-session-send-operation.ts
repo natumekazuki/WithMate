@@ -16,6 +16,90 @@ import {
   applyOptimisticSessionRunUpdate,
   type OwnedLiveSessionRunState,
 } from "../runtime/session-live-run-state.js";
+import type { AuxiliaryDraftPersistence } from "./use-auxiliary-draft-persistence.js";
+import type { ComposerControllerRegistry } from "../composer-controller.js";
+import type { AuxiliarySessionBinding } from "../use-auxiliary-workspace.js";
+
+type AuxiliaryComposerSendInput = {
+  api: AuxiliarySessionSendOperationApi;
+  binding: AuxiliarySessionBinding;
+  drafts: AuxiliaryDraftPersistence;
+  composerRegistry: ComposerControllerRegistry;
+  blockedReason: string | null;
+  busyReason: string;
+  parentMessageCount: number | null;
+  updatedAt: string;
+  isCurrentTarget(): boolean;
+  collapseActionDock(): void;
+  updateLiveRunState(updater: (current: OwnedLiveSessionRunState) => OwnedLiveSessionRunState): void;
+  onRunningSessionApplied(session: AuxiliarySession): void;
+  onBlocked(): void;
+};
+
+export class AuxiliaryComposerSendOwner {
+  private readonly inFlightIds = new Set<string>();
+
+  send(input: AuxiliaryComposerSendInput): Promise<void> {
+    const session = input.binding.getSession();
+    if (!session || input.composerRegistry.isFrozen) return Promise.resolve();
+    if (this.inFlightIds.has(session.id) || input.busyReason) return Promise.resolve();
+    const executionOptions = captureSessionExecutionOptions(session);
+    const captured = input.composerRegistry.capture({ kind: "auxiliary", id: session.id });
+    const composer = input.composerRegistry.get(captured.owner);
+    if (composer.saveState === "error" || composer.preview.errors.length > 0 || !captured.draft.trim() || session.runState === "running") {
+      input.onBlocked();
+      return Promise.resolve();
+    }
+    this.inFlightIds.add(session.id);
+    const releaseDetail = input.binding.retainDetail();
+    const perform = async () => {
+      const submission = await input.drafts.prepareSubmission(session, captured, "turn");
+      if (!submission) return;
+      const result = await runAuxiliarySessionSendOperation({
+        activeSession: session,
+        executionOptions,
+        composerBlockedReason: input.blockedReason,
+        messageText: captured.draft,
+        auxiliaryDraftIncarnation: submission.durable.incarnation,
+        auxiliaryDraftDurableRevision: submission.durable.durableRevision,
+        parentMessageCount: input.parentMessageCount,
+        updatedAt: input.updatedAt,
+        draftSaveQueue: input.binding.draftSaveQueue,
+        mutationRevision: input.binding.mutationRevision,
+        getCurrentSession: input.binding.getSession,
+        canStartRun: () => !input.composerRegistry.isFrozen && input.isCurrentTarget() && submission.isCurrent(),
+        beforeRunningSessionApplied: () => {
+          submission.clear();
+          input.collapseActionDock();
+        },
+        onRunError: () => {
+          const current = input.binding.getSession();
+          if (current?.id === session.id && current.createdAt === session.createdAt) submission.restore();
+        },
+        applyRunningSession: createAuxiliarySessionRunningApplier({
+          activeSessionRef: input.binding.sessionRef,
+          setActiveSession: input.binding.setSession,
+          updateLiveRunState: input.updateLiveRunState,
+        }),
+        afterRunningSessionApplied: input.onRunningSessionApplied,
+        ...createAuxiliarySessionSendResultAppliers({ activeSessionRef: input.binding.sessionRef, setActiveSession: input.binding.setSession }),
+        clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({ updateLiveRunState: input.updateLiveRunState }),
+        runAuxiliarySessionTurn: (id, request) => submission.consume(() => input.api.runAuxiliarySessionTurn(id, request)),
+      });
+      await submission.reload().catch(() => undefined);
+      handleAuxiliarySessionSendOperationResult({
+        result,
+        onBlocked: (preflight) => { throw new Error(preflight.blockedMessage); },
+        onRunningTargetBlocked: () => { throw new Error("The Auxiliary session is still running."); },
+        onError: (error) => { console.error(error); throw error; },
+      });
+    };
+    return input.drafts.trackSend(perform().finally(() => {
+      releaseDetail();
+      this.inFlightIds.delete(session.id);
+    }));
+  }
+}
 
 export type AuxiliarySessionSendOperationResult =
   | {
@@ -189,6 +273,7 @@ export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSe
     if (
       input.mutationRevision.current !== runOperationRevision
       || input.getCurrentSession()?.id !== saved.id
+      || input.getCurrentSession()?.createdAt !== saved.createdAt
     ) {
       return { status: "stale" };
     }
@@ -202,6 +287,7 @@ export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSe
     if (
       input.mutationRevision.current !== runOperationRevision
       || input.getCurrentSession()?.id !== currentAuxiliarySession.id
+      || input.getCurrentSession()?.createdAt !== currentAuxiliarySession.createdAt
     ) {
       return { status: "stale" };
     }

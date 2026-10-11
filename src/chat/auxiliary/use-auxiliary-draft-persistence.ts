@@ -8,7 +8,16 @@ import {
   AuxiliaryDraftPersistenceOwner,
   type AuxiliaryDraftPersistenceSaveResult,
 } from "../auxiliary-draft-persistence-owner.js";
-import { ComposerControllerRegistry, type ComposerOwner } from "../composer-controller.js";
+import { ComposerControllerRegistry, type ComposerDraftCapture, type ComposerOwner } from "../composer-controller.js";
+
+export type AuxiliaryDraftSubmission = {
+  durable: AuxiliaryDraftRecord;
+  isCurrent(): boolean;
+  clear(): void;
+  restore(): void;
+  consume<T>(operation: () => Promise<T>): Promise<T>;
+  reload(): Promise<AuxiliaryDraftRecord | null>;
+};
 
 export type AuxiliaryDraftPersistence = {
   getOwner(session: AuxiliarySession): AuxiliaryDraftPersistenceOwner | null;
@@ -19,10 +28,11 @@ export type AuxiliaryDraftPersistence = {
   waitForPendingSends(): Promise<void>;
   flushAll(): Promise<void>;
   pendingSessionIds(): string[];
+  prepareSubmission(session: AuxiliarySession, captured: ComposerDraftCapture, kind: "turn" | "input"): Promise<AuxiliaryDraftSubmission | null>;
 };
 
 export function useAuxiliaryDraftPersistence(input: {
-  api: WithMateWindowAuxiliaryApi | null;
+  api: Pick<WithMateWindowAuxiliaryApi, "getAuxiliarySessionStatus" | "getAuxiliaryDraft" | "saveAuxiliaryDraft"> | null;
   composerRegistry: ComposerControllerRegistry;
   touchRecency(id: string, updatedAt: string): void;
   isFrozen(): boolean;
@@ -123,6 +133,45 @@ export function useAuxiliaryDraftPersistence(input: {
     void observeSave(session.id, inputRef.current.composerRegistry.capture(owner).revision, operation);
   }, [getOwner, observeSave, ownerForId]);
 
+  const prepareSubmission = useCallback(async (session: AuxiliarySession, captured: ComposerDraftCapture, kind: "turn" | "input"): Promise<AuxiliaryDraftSubmission | null> => {
+    const registry = inputRef.current.composerRegistry;
+    const owner = ownerForId(session.id);
+    const persistence = getOwner(session);
+    const isCurrent = () => {
+      const latest = registry.capture(owner);
+      return latest.revision === captured.revision && latest.draft === captured.draft;
+    };
+    try {
+      await persistence?.flush();
+      if (kind === "input") await persistence?.reload();
+      else await persistence?.ensureLoaded();
+      if (registry.isFrozen) return null;
+      if (kind === "turn" && !isCurrent()) {
+        registry.setSaveState(owner, "saved");
+        return null;
+      }
+      const durable = persistence?.durableRecord;
+      if (!persistence || !durable || durable.text !== captured.draft) throw new Error("Draft could not be saved.");
+      let clearedRevision: number | null = null;
+      return {
+        durable,
+        isCurrent,
+        clear: () => { clearedRevision = registry.clearIfRevision(owner, captured.revision); },
+        restore: () => {
+          if (clearedRevision === null) return;
+          const restored = registry.restoreIfRevision(owner, clearedRevision, () => captured.draft);
+          if (restored !== null) void observeSave(session.id, restored, persistence.enqueue(captured.draft, durable));
+        },
+        consume: (operation) => kind === "turn" ? persistence.dispatchTurn(operation) : persistence.withDraftConsumption(operation),
+        reload: () => persistence.reload(),
+      };
+    } catch (error) {
+      if (kind === "input") throw error;
+      registry.setSaveState(owner, "error", "Draft could not be saved.");
+      return null;
+    }
+  }, [getOwner, observeSave, ownerForId]);
+
   const trackSend = useCallback(<T,>(operation: Promise<T>) => {
     const tracked = operation as Promise<unknown>;
     pendingSendsRef.current.add(tracked);
@@ -143,5 +192,5 @@ export function useAuxiliaryDraftPersistence(input: {
     .filter(([, owner]) => owner.hasPending)
     .map(([sessionId]) => sessionId), []);
 
-  return useMemo(() => ({ getOwner, observeSave, changeDraft, retrySave, trackSend, waitForPendingSends, flushAll, pendingSessionIds }), [changeDraft, flushAll, getOwner, observeSave, pendingSessionIds, retrySave, trackSend, waitForPendingSends]);
+  return useMemo(() => ({ getOwner, observeSave, changeDraft, retrySave, trackSend, waitForPendingSends, flushAll, pendingSessionIds, prepareSubmission }), [changeDraft, flushAll, getOwner, observeSave, pendingSessionIds, prepareSubmission, retrySave, trackSend, waitForPendingSends]);
 }

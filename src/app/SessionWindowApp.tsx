@@ -7,7 +7,7 @@ import {
 } from "react";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
-import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { getAuxiliarySessionIdFromLocation, getSessionIdFromLocation } from "./session-location.js";
 import {
@@ -80,6 +80,8 @@ import {
   type ComposerOwner,
 } from "../chat/composer-controller.js";
 import { useAuxiliaryDraftPersistence } from "../chat/auxiliary/use-auxiliary-draft-persistence.js";
+import { AuxiliaryExecutionOptionsOwner } from "../chat/auxiliary/auxiliary-runtime-option-operation.js";
+import { useSessionTurnInput } from "../chat/runtime/use-session-turn-input.js";
 import { useSessionComposerFeature } from "../chat/composer/use-session-composer-feature.js";
 import {
   runMainRuntimeOptionOperation,
@@ -180,13 +182,7 @@ import {
   runAddAuxiliaryAdditionalDirectoryOperationWithApi,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "../chat/auxiliary/auxiliary-additional-directory-operation.js";
-import {
-  createAuxiliarySessionPendingLiveRunClearer,
-  createAuxiliarySessionRunningApplier,
-  createAuxiliarySessionSendResultAppliers,
-  handleAuxiliarySessionSendOperationResult,
-  runAuxiliarySessionSendOperationWithApi,
-} from "../chat/auxiliary/auxiliary-session-send-operation.js";
+import { AuxiliaryComposerSendOwner } from "../chat/auxiliary/auxiliary-session-send-operation.js";
 import {
   applyComposerSubmitCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -446,11 +442,11 @@ export default function AgentSessionWindowApp() {
   });
   const { starting: auxiliaryCreationStarting, cancelling: auxiliaryCreationCancelling, status: auxiliaryCreationStatus } = auxiliaryCreation;
   const activeAuxiliarySessionRef = auxiliaryBinding.sessionRef;
-  const auxiliaryExecutionOptionsRequestRevisionsRef = useRef(new Map<string, number>());
+  const auxiliaryExecutionOptionsOwner = useMemo(() => new AuxiliaryExecutionOptionsOwner(), []);
   const auxiliarySessionMutationRevisionRef = auxiliaryBinding.mutationRevision;
   const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
   const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
-  const auxiliarySendInFlightIdsRef = useRef<Set<string>>(new Set());
+  const auxiliarySendOwner = useMemo(() => new AuxiliaryComposerSendOwner(), []);
   const loadedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? null,
     [selectedId, sessions],
@@ -800,13 +796,11 @@ export default function AgentSessionWindowApp() {
 
     return "";
   }, [activeAuxiliarySession, auxiliaryWorkspace.detailError, auxiliaryWorkspace.error, auxiliaryWorkspace.target, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate, loadedSession, mainSessionRuntime.readError, appSettingsLoadStatus, modelCatalogLoadStatus, appSettingsLoadError, modelCatalogLoadError]);
-  const steeringInFlightRef = useRef(new Set<string>());
-  const [steeringPendingIds, setSteeringPendingIds] = useState<Set<string>>(new Set());
-  const [steeringErrors, setSteeringErrors] = useState<Record<string, { revision: number; message: string }>>({});
+  const turnInput = useSessionTurnInput({ api: withmateApi, composerRegistry, drafts: auxiliaryDraftPersistence });
   const canSendInput = displayedSession?.provider === "codex" && visibleSessionRunState === "running" && !!inputTurnId;
-  const steeringError = activeRunSessionId && steeringErrors[activeRunSessionId]?.revision === composerRegistry.get(composerOwner).revision
-    ? steeringErrors[activeRunSessionId].message : "";
-  const composerBusyReason = activeRunSessionId && steeringPendingIds.has(activeRunSessionId)
+  const steeringError = activeRunSessionId && turnInput.errors[activeRunSessionId]?.revision === composerRegistry.get(composerOwner).revision
+    ? turnInput.errors[activeRunSessionId].message : "";
+  const composerBusyReason = activeRunSessionId && turnInput.pendingIds.has(activeRunSessionId)
     ? "Input submission is in progress."
     : pendingSubmitSessionId !== null && pendingSubmitSessionId === activeRunSessionId
     ? "Message submission is in progress."
@@ -1126,29 +1120,11 @@ export default function AgentSessionWindowApp() {
       return;
     }
     if (activeAuxiliarySession) {
-      const auxiliaryDraft = composerState.capture().draft;
-      const currentComposerState = composerRegistry.get(composerOwner);
-      const auxiliarySessionId = activeAuxiliarySession.id;
-      if (auxiliarySendInFlightIdsRef.current.has(auxiliarySessionId) || composerBusyReason) {
-        return;
-      }
-      if (currentComposerState.saveState === "error" || currentComposerState.preview.errors.length > 0) {
-        triggerComposerBlockedFeedback();
-        return;
-      }
-      if (!auxiliaryDraft.trim() || activeAuxiliarySession.runState === "running") {
-        triggerComposerBlockedFeedback();
-        return;
-      }
-
-      auxiliarySendInFlightIdsRef.current.add(auxiliarySessionId);
       try {
         setForceComposerBlockedFeedback(false);
-        await sendAuxiliaryMessage(auxiliaryDraft);
+        await sendAuxiliaryMessage();
       } catch (error) {
         window.alert(resolveSessionRunErrorMessage(error, "Could not send the message."));
-      } finally {
-        auxiliarySendInFlightIdsRef.current.delete(auxiliarySessionId);
       }
       return;
     }
@@ -1171,57 +1147,25 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSendInput = async () => {
-    const owner = composerOwner;
     const selectionContext = dockContextRef.current;
-    const turnId = inputTurnId;
-    const target = activeAuxiliarySession ?? getCurrentMainSession();
-    if (!withmateApi || !target || !canSendInput || !turnId || composerRegistry.isFrozen
-      || composerBlockedReason || isSelectedSessionReadOnly || steeringInFlightRef.current.has(owner.id)) return;
-    const captured = composerRegistry.capture(owner);
-    const current = composerRegistry.get(owner);
-    if (!captured.draft.trim() || current.isImeComposing || current.saveState === "error" || current.preview.errors.length > 0) {
-      triggerComposerBlockedFeedback();
-      return;
-    }
-    steeringInFlightRef.current.add(owner.id);
-    setSteeringPendingIds(new Set(steeringInFlightRef.current));
-    setSteeringErrors((errors) => { const next = { ...errors }; delete next[owner.id]; return next; });
-    const operation = async () => {
-      const draftOwner = owner.kind === "auxiliary" ? auxiliaryDraftPersistence.getOwner(target as AuxiliarySession) : null;
-      try {
-        await draftOwner?.flush();
-        await draftOwner?.reload();
-        const durable = draftOwner?.durableRecord;
-        if (owner.kind === "auxiliary" && (!durable || durable.text !== captured.draft)) throw new Error("Draft could not be saved.");
-        const preview = await withmateApi.previewComposerInput(owner.id, captured.draft);
-        if (composerRegistry.isFrozen || dockContextRef.current !== selectionContext || composerOwnerRef.current !== owner.id
-          || composerRegistry.capture(owner).revision !== captured.revision) return;
-        composerRegistry.setPreview(owner, preview);
-        if (preview.errors.length > 0) { setForceComposerBlockedFeedback(true); return; }
-        const request = {
-          expectedTurnId: turnId,
-          userMessage: captured.draft,
-          clientRequestId: createSessionTurnClientRequestId(),
-          ...(durable ? { auxiliaryDraftIncarnation: durable.incarnation, auxiliaryDraftDurableRevision: durable.durableRevision } : {}),
-        };
-        const result = owner.kind === "auxiliary"
-          ? await draftOwner!.withDraftConsumption(() => withmateApi.steerAuxiliarySessionTurn(owner.id, request))
-          : await withmateApi.steerSessionTurn(owner.id, request);
-        if (result.turnId !== turnId) throw new Error("Input acceptance could not be confirmed.");
-        composerRegistry.clearIfRevision(owner, captured.revision);
-        await draftOwner?.reload().catch(() => undefined);
-      } catch (error) {
-        await draftOwner?.reload().catch(() => undefined);
-        setSteeringErrors((errors) => ({ ...errors, [owner.id]: {
-          revision: captured.revision,
-          message: `Input to ${owner.kind === "auxiliary" ? "Auxiliary" : "Main"} was not confirmed. Your draft is preserved. ${resolveSessionRunErrorMessage(error, "Could not send input.")}`,
-        } }));
-      } finally {
-        steeringInFlightRef.current.delete(owner.id);
-        setSteeringPendingIds(new Set(steeringInFlightRef.current));
-      }
-    };
-    await (owner.kind === "auxiliary" ? auxiliaryDraftPersistence.trackSend(operation()) : operation());
+    const mainSession = getCurrentMainSession();
+    if (!activeAuxiliarySession && !mainSession) return;
+    await turnInput.send({
+      owner: composerOwner,
+      auxiliarySession: activeAuxiliarySession,
+      turnId: inputTurnId ?? null,
+      canSendInput,
+      blockedReason: composerBlockedReason,
+      isReadOnly: isSelectedSessionReadOnly,
+      isCurrent: () => dockContextRef.current === selectionContext && composerOwnerRef.current === composerOwner.id,
+      isCurrentOwner: () => {
+        if (activeAuxiliarySession) return auxiliaryBinding.getSession()?.createdAt === activeAuxiliarySession.createdAt;
+        const latest = getCurrentMainSession();
+        return !!mainSession && !!latest && getSessionIncarnationId(latest) === getSessionIncarnationId(mainSession);
+      },
+      retainDetail: activeAuxiliarySession ? auxiliaryBinding.retainDetail : () => () => {},
+      onBlocked: () => setForceComposerBlockedFeedback(true),
+    });
   };
 
   const handleCancelRun = async () => {
@@ -1366,47 +1310,13 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const updateAuxiliaryExecutionOptions = async (recipe: (current: AuxiliarySession) => AuxiliarySession) => {
-    const current = activeAuxiliarySessionRef.current;
-    if (!withmateApi || !current || isSelectedSessionReadOnly) return;
-    const next = recipe(current);
-    if (next === current) return;
-    if ((current.runState === "running" && (
-      next.approvalMode !== current.approvalMode ||
-      next.codexSandboxMode !== current.codexSandboxMode ||
-      next.codexSpeed !== current.codexSpeed ||
-      next.codexReviewer !== current.codexReviewer
-    )) || (current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer)) return;
-    const executionOptions = captureSessionExecutionOptions(next);
-    const selectionKey = `${current.id}:${current.createdAt}`;
-    const revision = (auxiliaryExecutionOptionsRequestRevisionsRef.current.get(selectionKey) ?? 0) + 1;
-    auxiliaryExecutionOptionsRequestRevisionsRef.current.set(selectionKey, revision);
-    setExecutionOptionsFeedback(null);
-    auxiliaryBinding.setExecutionSelection(next);
-    void withmateApi.setAuxiliaryExecutionOptions({
-        auxiliarySessionId: current.id,
-        parentSessionId: current.parentSessionId,
-        createdAt: current.createdAt,
-        executionOptions,
-      }).then((result) => {
-        if (result.status === "accepted" && !result.checkpointSaved) {
-          void withmateApi.reportRendererLog({ level: "error", kind: "renderer.auxiliary-execution-options.failed", message: "Auxiliary execution options could not be saved", data: { auxiliarySessionId: current.id } });
-        }
-      }).catch((error) => {
-        const selected = auxiliaryBinding.getSession();
-        if (auxiliaryExecutionOptionsRequestRevisionsRef.current.get(selectionKey) !== revision || selected?.id !== current.id
-          || selected.createdAt !== current.createdAt) return;
-        const message = error instanceof Error ? error.message : String(error);
-        setExecutionOptionsFeedback({ ownerId: current.id, message: `Execution options were not changed: ${message}` });
-        void withmateApi.getAuxiliarySession(current.id).then((accepted) => {
-          const latest = auxiliaryBinding.getSession();
-          if (auxiliaryExecutionOptionsRequestRevisionsRef.current.get(selectionKey) !== revision || latest?.id !== current.id
-            || latest.createdAt !== current.createdAt || accepted?.id !== current.id
-            || accepted.createdAt !== current.createdAt) return;
-          auxiliaryBinding.setExecutionSelection({ ...latest, ...captureSessionExecutionOptions(accepted) });
-        }).catch(() => undefined);
-      });
-  };
+  const updateAuxiliaryExecutionOptions = (recipe: (current: AuxiliarySession) => AuxiliarySession) => auxiliaryExecutionOptionsOwner.update({
+    api: withmateApi,
+    binding: auxiliaryBinding,
+    isReadOnly: isSelectedSessionReadOnly,
+    recipe,
+    onFeedback: setExecutionOptionsFeedback,
+  });
 
   const handleToggleMessageBookmark = createMessageBookmarkHandler({
     api: withmateApi,
@@ -1594,77 +1504,22 @@ export default function AgentSessionWindowApp() {
     auxiliaryDraftPersistence.retrySave(activeAuxiliarySession);
   };
 
-  const sendAuxiliaryMessage = (messageText: string): Promise<void> => {
-    if (composerRegistry.isFrozen) return Promise.resolve();
-    const selected = activeAuxiliarySessionRef.current;
-    if (!selected) return Promise.resolve();
-    const executionOptions = captureSessionExecutionOptions(selected);
-    const releaseDetail = auxiliaryBinding.retainDetail();
-    return auxiliaryDraftPersistence.trackSend(performAuxiliarySend(messageText, selected, executionOptions).finally(releaseDetail));
-  };
-
-  const performAuxiliarySend = async (messageText: string, sendSession: AuxiliarySession, executionOptions: SessionExecutionOptions) => {
-    if (!withmateApi) {
-      return;
-    }
-
-    const collapseSentActionDock = captureSendDockCollapse();
-    const sendCapture = composerRegistry.capture(composerOwner);
-    messageText = sendCapture.draft;
-    const draftOwner = auxiliaryDraftPersistence.getOwner(sendSession);
-    try {
-      await draftOwner?.flush();
-      await draftOwner?.ensureLoaded();
-    } catch {
-      composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
-      return;
-    }
-    if (composerRegistry.isFrozen) return;
-    const durableDraft = draftOwner?.durableRecord;
-    const latestCapture = composerRegistry.capture(composerOwner);
-    if (!draftOwner || !durableDraft || latestCapture.revision !== sendCapture.revision || latestCapture.draft !== sendCapture.draft || durableDraft.text !== sendCapture.draft) {
-      // A newer local revision is a normal send-capture invalidation, not a save failure.
-      // Keep it editable and let the next explicit Send capture that revision.
-      if (latestCapture.revision !== sendCapture.revision || latestCapture.draft !== sendCapture.draft) {
-        composerRegistry.setSaveState(composerOwner, "saved");
-      } else {
-        composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
-      }
-      return;
-    }
-
-    let clearedRevision: number | null = null;
-    const result = await runAuxiliarySessionSendOperationWithApi({
-      activeSession: sendSession,
-      executionOptions,
-      composerBlockedReason: sessionExecutionBlockedReason,
-      messageText,
-      auxiliaryDraftIncarnation: durableDraft.incarnation,
-      auxiliaryDraftDurableRevision: durableDraft.durableRevision,
+  const sendAuxiliaryMessage = (): Promise<void> => {
+    if (!withmateApi) return Promise.resolve();
+    return auxiliarySendOwner.send({
+      api: withmateApi,
+      binding: auxiliaryBinding,
+      drafts: auxiliaryDraftPersistence,
+      composerRegistry,
+      blockedReason: sessionExecutionBlockedReason,
+      busyReason: composerBusyReason,
+      onBlocked: triggerComposerBlockedFeedback,
       parentMessageCount: selectedSession?.messageCount ?? selectedSession?.messages.length ?? null,
       updatedAt: currentTimestampLabel(),
-      draftSaveQueue: auxiliaryDraftSaveQueueRef,
-      mutationRevision: auxiliarySessionMutationRevisionRef,
-      getCurrentSession: () => activeAuxiliarySessionRef.current,
-      canStartRun: () => !composerRegistry.isFrozen,
-      beforeRunningSessionApplied: () => {
-        clearedRevision = composerRegistry.clearIfRevision(composerOwner, sendCapture.revision);
-        collapseSentActionDock();
-      },
-      onRunError: () => {
-        if (clearedRevision !== null) {
-          const restoredRevision = composerRegistry.restoreIfRevision(composerOwner, clearedRevision, () => sendCapture.draft);
-          if (restoredRevision !== null) {
-            void auxiliaryDraftPersistence.observeSave(sendSession.id, restoredRevision, draftOwner.enqueue(sendCapture.draft, durableDraft));
-          }
-        }
-      },
-      applyRunningSession: createAuxiliarySessionRunningApplier({
-        activeSessionRef: activeAuxiliarySessionRef,
-        setActiveSession: setActiveAuxiliarySession,
-        updateLiveRunState: (update) => setLiveRunState(update),
-      }),
-      afterRunningSessionApplied: (runningSession) => {
+      isCurrentTarget: () => composerOwnerRef.current === auxiliaryBinding.getSession()?.id,
+      collapseActionDock: captureSendDockCollapse(),
+      updateLiveRunState: setLiveRunState,
+      onRunningSessionApplied: (runningSession) => {
         if (isCentralPreviewActive) {
           setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(
             current,
@@ -1672,28 +1527,6 @@ export default function AgentSessionWindowApp() {
             runningSession.messageCount ?? runningSession.messages.length,
           ));
         }
-      },
-      ...createAuxiliarySessionSendResultAppliers({
-        activeSessionRef: activeAuxiliarySessionRef,
-        setActiveSession: setActiveAuxiliarySession,
-      }),
-      clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({
-        updateLiveRunState: (update) => setLiveRunState(update),
-      }),
-      api: withmateApi,
-    });
-    await draftOwner?.reload().catch(() => undefined);
-    handleAuxiliarySessionSendOperationResult({
-      result,
-      onBlocked: (preflight) => {
-        throw new Error(preflight.blockedMessage);
-      },
-      onRunningTargetBlocked: () => {
-        throw new Error("The Auxiliary session is still running.");
-      },
-      onError: (error) => {
-        console.error(error);
-        throw error;
       },
     });
   };
