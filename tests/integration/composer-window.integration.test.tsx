@@ -6,18 +6,19 @@ import React, { act } from "react";
 import { JSDOM } from "jsdom";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-draft-contract.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryの送信を相互にbusy扱いせず、同一Auxiliaryの重複送信を一度に抑止する。送信時のActionDockはMain/Auxiliaryとも設定を守り、保存待機中の手動開閉を遅い送信で巻き戻さない。quitでは未確定送信と失敗復元の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは実行完了を待たず、凍結後の送信前保存からのrun開始と添付を止める"
+// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryのdurable受付を相互にbusy扱いせず、同一Auxiliaryの未確定受付中の重複送信を抑止する。送信時のActionDockはMain/Auxiliaryとも設定を守り、保存待機中の手動開閉を遅い送信で巻き戻さない。受付ACKはcaptured revisionだけを消し、拒否・不明では入力を保持する。不明結果の正本照会で再送せず後続編集を守る。quitでは未確定受付と後続編集の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは受付完了を待たず、凍結後の送信前保存からの受付と添付を止める"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
-// fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの重複runを発行する、設定無効でもActionDockを縮小する、保存待機後に新しい手動開閉を上書きする、凍結中の失敗復元を表示しない、復元を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
+// fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの未確定受付中に重複要求を発行する、設定無効でもActionDockを縮小する、保存待機後に新しい手動開閉を上書きする、ACKで後続編集を消す、拒否でdraftをconsumeする、不明結果から新規要求を自動再送する、後続編集を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
 // observable = "textarea/feedback/SendとActionDock expanded classの状態、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数"
 // observation_boundary = "component-behavior"
 // scope = "composer-window-input-wiring"
 // lifecycle = "permanent"
 // impact = "多数会話での入力遅延、切替による下書き消失、古い入力や別会話への誤送信を防ぐ"
-// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証し、設定切替と保存待機中の手動開閉、A送信pending中のB送信、同一Aの重複入力、送信pending→quit待機→失敗復元保存→ACKの順序、非選択owner、closeとの違いも確認する。壁時計の性能値をCI合否にしない"
+// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証し、設定切替と保存待機中の手動開閉、A受付pending中のB受付、同一Aの重複入力、受付pending→quit待機→ACK→後続編集保存→quit ACKの順序、非選択owner、closeとの違いも確認する。壁時計の性能値をCI合否にしない"
 // @end-test-value
 test("Session Windowの入力境界と切替後の最新値送信を実配線で守る", { timeout: 30_000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
@@ -94,7 +95,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       await wait;
     }
     const current = await api.getAuxiliaryDraft(input.auxiliarySessionId);
-    if (!current || current.durableRevision !== input.expectedDurableRevision) return { outcome: "stale" };
+    if (!current || current.incarnation !== input.incarnation || current.parentSessionId !== input.parentSessionId || current.durableRevision !== input.expectedDurableRevision) return { outcome: "stale" };
     const next = { ...current, text: input.text, durableRevision: current.durableRevision + 1, updatedAt: input.updatedAt };
     drafts.set(next.auxiliarySessionId, next);
     notifySaved?.(next.text);
@@ -110,50 +111,49 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
   api.subscribeAuxiliarySessionNavigation = (listener) => { navigateAuxiliary = listener; return () => { navigateAuxiliary = undefined; }; };
   api.acknowledgeSessionDraftFlush = (id, success) => { flushAcks.push({ id, success }); notifyFlushAck?.(); };
   const sent: Array<{ id: string; text: string }> = [];
-  let heldRun: Promise<void> | null = null;
-  let notifyRunStarted: (() => void) | undefined;
-  let notifyRunCompleted: ((id: string) => void) | undefined;
-  let rejectRun = false;
-  let failRunRestore = false;
-  let notifyRunFailed: (() => void) | undefined;
-  api.runAuxiliarySessionTurn = async (id, request) => {
-    const current = await api.getAuxiliaryDraft(id);
-    assert.ok(current);
-    assert.equal(request.auxiliaryDraftIncarnation, current.incarnation);
-    assert.equal(request.auxiliaryDraftDurableRevision, current.durableRevision);
-    assert.equal(request.userMessage, current.text);
-    drafts.set(id, { ...current, text: "", durableRevision: current.durableRevision + 1 });
-    sent.push({ id, text: request.userMessage });
-    if (heldRun) {
-      const wait = heldRun;
-      heldRun = null;
-      notifyRunStarted?.();
-      await wait;
-    }
-    if (rejectRun) {
-      rejectRun = false;
-      if (failRunRestore) {
-        failRunRestore = false;
-        failDraftWrites = true;
-        notifyRunFailed?.();
-        throw new Error("Auxiliary turn failed and draft restore failed.");
-      }
-      drafts.set(id, { ...current, durableRevision: current.durableRevision + 2 });
-      throw new Error("Auxiliary admission failed");
-    }
-    const session = await api.getAuxiliarySession(id);
-    assert.ok(session);
-    notifyRunCompleted?.(id);
-    return { ...session, composerDraft: "", messages: [...session.messages, { role: "assistant", text: "Auxiliary response" }] };
-  };
+  let heldAdmission: Promise<void> | null = null;
+  let notifyAdmissionStarted: (() => void) | undefined;
+  let notifyAdmissionCompleted: ((id: string) => void) | undefined;
+  let rejectAdmission = false;
+  let loseAdmissionReply = false;
+  let receiptVisible = true;
+  const receipts = new Map<string, SessionTurnQueueReceipt>();
+  api.getSessionTurnQueueReceipt = async (id, requestId) => receiptVisible ? receipts.get(`${id}:${requestId}`) ?? null : null;
+  api.runAuxiliarySessionTurn = async () => { throw new Error("Normal Send must use durable queue admission."); };
   api.previewComposerInput = async (_id, text) => ({ text, attachments: [], errors: text === "invalid reference" ? ["Invalid attachment"] : [] } as Awaited<ReturnType<WithMateWindowApi["previewComposerInput"]>>);
   api.enqueueSessionTurn = async (id, request) => {
+    const current = id === "benchmark-main" ? null : await api.getAuxiliaryDraft(id);
+    if (id !== "benchmark-main") {
+      assert.ok(current);
+      assert.equal(request.auxiliaryDraftIncarnation, current.incarnation);
+      assert.equal(request.auxiliaryDraftDurableRevision, current.durableRevision);
+      assert.equal(request.userMessage, current.text);
+    }
     sent.push({ id, text: request.userMessage });
+    if (heldAdmission) {
+      const wait = heldAdmission;
+      heldAdmission = null;
+      notifyAdmissionStarted?.();
+      await wait;
+    }
+    if (rejectAdmission) {
+      rejectAdmission = false;
+      return { state: "rejected", reason: "Auxiliary admission failed" };
+    }
+    // Admission atomically commits the receipt and captured Auxiliary consume.
+    if (current) drafts.set(id, { ...current, text: "", durableRevision: current.durableRevision + 1 });
     const session = await api.getSession(id);
     assert.ok(session);
-    return { sessionId: id, incarnationId: request.incarnationId, id: request.clientRequestId!, requestId: request.clientRequestId!, sequence: sent.length, state: "queued",
+    const receipt: SessionTurnQueueReceipt = { sessionId: id, incarnationId: request.incarnationId, id: request.clientRequestId!, requestId: request.clientRequestId!, sequence: sent.length, state: "queued",
       captured: { request: { ...request, clientRequestId: request.clientRequestId! }, attachments: [], provider: session.provider, workspacePath: session.workspacePath },
       turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: session.updatedAt, updatedAt: session.updatedAt };
+    receipts.set(`${id}:${receipt.requestId}`, receipt);
+    if (loseAdmissionReply) {
+      loseAdmissionReply = false;
+      throw new Error("Admission reply lost");
+    }
+    notifyAdmissionCompleted?.(id);
+    return receipt;
   };
   Object.defineProperty(dom.window, "withmate", { value: api });
   const { createRoot } = await import("react-dom/client");
@@ -253,17 +253,17 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       resolveParallelACompleted = resolve;
     });
     const parallelBCompleted = new Promise<void>((resolve) => { resolveParallelBCompleted = resolve; });
-    notifyRunCompleted = (id) => {
+    notifyAdmissionCompleted = (id) => {
       if (id === parallelAuxiliaryAId) resolveParallelACompleted();
       if (id === parallelAuxiliaryBId) resolveParallelBCompleted();
     };
-    heldRun = new Promise<void>((resolve) => { releaseParallelA = resolve; });
-    const parallelARunStarted = new Promise<void>((resolve) => { notifyRunStarted = resolve; });
+    heldAdmission = new Promise<void>((resolve) => { releaseParallelA = resolve; });
+    const parallelAAdmissionStarted = new Promise<void>((resolve) => { notifyAdmissionStarted = resolve; });
     await input("Auxiliary A pending");
     const parallelSentStart = sent.length;
     await act(async () => {
       dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
-      await parallelARunStarted;
+      await parallelAAdmissionStarted;
     });
     parallelAuxiliaryAId = sent.at(-1)!.id;
     parallelAuxiliaryBId = ["benchmark-aux-1", "benchmark-aux-2", "benchmark-aux-3"]
@@ -280,12 +280,12 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.deepEqual(sent.slice(parallelSentStart), [
       { id: parallelAuxiliaryAId, text: "Auxiliary A pending" },
       { id: parallelAuxiliaryBId, text: "restored auxiliary draft" },
-    ], "a pending Auxiliary A run must not block a distinct Auxiliary B run");
+    ], "a pending Auxiliary A admission must not block a distinct Auxiliary B admission");
     await act(async () => {
       releaseParallelA();
       await parallelACompleted;
     });
-    notifyRunCompleted = undefined;
+    notifyAdmissionCompleted = undefined;
 
     const duplicateAuxiliaryId = ["benchmark-aux-1", "benchmark-aux-2", "benchmark-aux-3"]
       .find((id) => id !== parallelAuxiliaryAId && id !== parallelAuxiliaryBId);
@@ -295,10 +295,10 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     });
     assert.equal(textarea().value, "restored auxiliary draft");
     let releaseDuplicate!: () => void;
-    heldRun = new Promise<void>((resolve) => { releaseDuplicate = resolve; });
-    const duplicateRunStarted = new Promise<void>((resolve) => { notifyRunStarted = resolve; });
+    heldAdmission = new Promise<void>((resolve) => { releaseDuplicate = resolve; });
+    const duplicateAdmissionStarted = new Promise<void>((resolve) => { notifyAdmissionStarted = resolve; });
     const duplicateCompleted = new Promise<void>((resolve) => {
-      notifyRunCompleted = (id) => {
+      notifyAdmissionCompleted = (id) => {
         if (id === duplicateAuxiliaryId) resolve();
       };
     });
@@ -309,7 +309,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       const click = () => button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       click();
       click();
-      await duplicateRunStarted;
+      await duplicateAdmissionStarted;
     });
     assert.equal(sent.length, duplicateSentStart + 1, "the same Auxiliary ID must admit one in-flight send");
     assert.equal(sent.at(-1)?.id, duplicateAuxiliaryId);
@@ -317,17 +317,17 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       releaseDuplicate();
       await duplicateCompleted;
     });
-    notifyRunCompleted = undefined;
+    notifyAdmissionCompleted = undefined;
 
-    let releaseRun!: () => void;
-    heldRun = new Promise<void>((resolve) => { releaseRun = resolve; });
-    const runStarted = new Promise<void>((resolve) => { notifyRunStarted = resolve; });
+    let releaseAdmission!: () => void;
+    heldAdmission = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+    const admissionStarted = new Promise<void>((resolve) => { notifyAdmissionStarted = resolve; });
     await input("switch during send");
     await act(async () => {
       dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
-      await runStarted;
+      await admissionStarted;
     });
-    assert.equal(textarea().value, "", "the captured draft clears when its run starts");
+    assert.equal(textarea().value, "switch during send", "an unacknowledged admission must preserve the captured draft");
     await target("Main");
     await input("Main while Auxiliary sends");
     const runningCloseAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
@@ -335,110 +335,113 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       flushRequest?.({ requestId: "running-close", sessionId: "benchmark-main", reason: "close" });
       await runningCloseAck;
     });
-    assert.deepEqual(flushAcks, [{ id: "running-close", success: true }], "normal close must allow the run to continue in Main");
+    assert.deepEqual(flushAcks, [{ id: "running-close", success: true }], "normal close must not wait for the hidden owner's admission result");
     const runningQuitAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
     await act(async () => { flushRequest?.({ requestId: "running-quit", sessionId: "benchmark-main", reason: "quit" }); });
     assert.equal(flushAcks.length, 1, "quit cannot reuse a save-only close ACK while a hidden owner's send is pending");
-    await act(async () => { releaseRun(); await runningQuitAck; });
+    await act(async () => { releaseAdmission(); await runningQuitAck; });
     assert.deepEqual(flushAcks.at(-1), { id: "running-quit", success: true });
     await act(async () => { flushRelease?.({ success: false }); });
     flushAcks.length = 0;
-    assert.equal(textarea().value, "Main while Auxiliary sends", "another owner's completion must preserve Main input");
+    assert.equal(textarea().value, "Main while Auxiliary sends", "another owner's admission ACK must preserve Main input");
     await target("Auxiliary");
     assert.equal(textarea().value, "", "a consumed draft must not reappear after switching back");
 
-    // A shutdown flush may freeze editing while the send is still pending.
-    // The failed-send recovery must still become visible before release.
-    heldRun = new Promise<void>((resolve) => { releaseRun = resolve; });
-    const frozenRunStarted = new Promise<void>((resolve) => { notifyRunStarted = resolve; });
-    await input("recover during quit");
+    // An edit after capture stays pending until the admission consume revision
+    // is available; quit must persist that edit before acknowledging shutdown.
+    heldAdmission = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+    const frozenAdmissionStarted = new Promise<void>((resolve) => { notifyAdmissionStarted = resolve; });
+    await input("captured before quit");
     await act(async () => {
       dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
-      await frozenRunStarted;
+      await frozenAdmissionStarted;
     });
     const frozenAuxiliaryId = sent.at(-1)!.id;
-    rejectRun = true;
+    await input("new draft during admission");
     const frozenFlushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
     await act(async () => {
-      flushRequest?.({ requestId: "frozen-recovery-quit", sessionId: "benchmark-main", reason: "quit" });
+      flushRequest?.({ requestId: "pending-draft-quit", sessionId: "benchmark-main", reason: "quit" });
     });
     assert.deepEqual(flushAcks, [], "quit must not ACK before the pending send settles");
     assert.equal(textarea().disabled, true, "flush freezes editing while the send is pending");
-    assert.equal(textarea().value, "", "the consumed draft stays hidden until send failure");
-    failRunRestore = true;
-    const frozenRunFailed = new Promise<void>((resolve) => { notifyRunFailed = resolve; });
-    const frozenRecoveryWriteFailed = new Promise<void>((resolve) => { notifyDraftSaveFailed = resolve; });
-    await act(async () => { releaseRun(); await frozenRunFailed; await frozenRecoveryWriteFailed; await frozenFlushAck; });
-    assert.deepEqual(flushAcks, [{ id: "frozen-recovery-quit", success: false }], "failed restoration must prevent quit");
+    assert.equal(textarea().value, "new draft during admission", "the later edit remains visible while acceptance is pending");
+    failDraftWrites = true;
+    const pendingDraftWriteFailed = new Promise<void>((resolve) => { notifyDraftSaveFailed = resolve; });
+    await act(async () => { releaseAdmission(); await pendingDraftWriteFailed; await frozenFlushAck; });
+    assert.deepEqual(flushAcks, [{ id: "pending-draft-quit", success: false }], "a later edit's failed save must prevent quit");
     notifyDraftSaveFailed = undefined;
-    assert.equal(textarea().value, "recover during quit", "failed-send recovery updates the visible draft during freeze");
-    assert.equal(textarea().disabled, true, "recovery does not release the shutdown freeze");
-    assert.equal(drafts.get(frozenAuxiliaryId)?.text, "", "Main and renderer recovery writes failed");
+    assert.equal(textarea().value, "new draft during admission", "the admission ACK must not clear a newer revision during freeze");
+    assert.equal(textarea().disabled, true, "save failure does not release the shutdown freeze");
+    assert.equal(drafts.get(frozenAuxiliaryId)?.text, "", "the captured draft was consumed but the newer draft is not yet durable");
     await act(async () => { flushRelease?.({ success: false }); });
     assert.equal(textarea().disabled, false, "failed shutdown release restores editing");
-    assert.ok(dom.window.document.getElementById("composer-save-feedback"), "failed recovery save remains retryable after release");
+    assert.ok(dom.window.document.getElementById("composer-save-feedback"), "the failed pending save remains retryable after release");
     failDraftWrites = false;
-    const frozenRecoverySaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "recover during quit") resolve(); }; });
+    const pendingDraftSaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "new draft during admission") resolve(); }; });
     await act(async () => {
       dom.window.document.querySelector<HTMLButtonElement>(".composer-save-retry")!.click();
-      await frozenRecoverySaved;
+      await pendingDraftSaved;
     });
-    assert.equal(drafts.get(frozenAuxiliaryId)?.text, "recover during quit", "retry must persist the restored draft");
-    const frozenRecoveryFlushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
-    await act(async () => { flushRequest?.({ requestId: "frozen-recovery-retry", sessionId: "benchmark-main", reason: "quit" }); await frozenRecoveryFlushAck; });
-    assert.deepEqual(flushAcks.at(-1), { id: "frozen-recovery-retry", success: true }, "retry must be persisted before the subsequent close ACK");
+    assert.equal(drafts.get(frozenAuxiliaryId)?.text, "new draft during admission", "retry must CAS-save the later draft against the post-consume revision");
+    const pendingDraftFlushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
+    await act(async () => { flushRequest?.({ requestId: "pending-draft-retry", sessionId: "benchmark-main", reason: "quit" }); await pendingDraftFlushAck; });
+    assert.deepEqual(flushAcks.at(-1), { id: "pending-draft-retry", success: true }, "retry must be persisted before the subsequent close ACK");
     await act(async () => { flushRelease?.({ success: false }); });
-    assert.deepEqual(alerts, ["Auxiliary turn failed and draft restore failed."]);
+    assert.deepEqual(alerts, []);
     alerts.length = 0;
     flushAcks.length = 0;
 
     const previousAuxiliaryId = sent.at(-1)!.id;
-    heldRun = new Promise<void>((resolve) => { releaseRun = resolve; });
-    const failedRunStarted = new Promise<void>((resolve) => { notifyRunStarted = resolve; });
-    rejectRun = true;
-    await input("restore failed send");
+    heldAdmission = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+    const rejectedAdmissionStarted = new Promise<void>((resolve) => { notifyAdmissionStarted = resolve; });
+    rejectAdmission = true;
+    await input("rejected admission draft");
     await act(async () => {
       dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
-      await failedRunStarted;
+      await rejectedAdmissionStarted;
     });
+    const rejectedDraft = { ...drafts.get(previousAuxiliaryId)! };
     await act(async () => { navigateAuxiliary?.({ parentSessionId: "benchmark-main", auxiliarySessionId: "benchmark-aux-1" }); });
     await input("another Auxiliary draft");
-    const hiddenRecoveryAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
-    await act(async () => { flushRequest?.({ requestId: "hidden-recovery-quit", sessionId: "benchmark-main", reason: "quit" }); });
+    const hiddenRejectionAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
+    await act(async () => { flushRequest?.({ requestId: "hidden-rejection-quit", sessionId: "benchmark-main", reason: "quit" }); });
     assert.deepEqual(flushAcks, [], "quit must include the non-selected owner's pending send");
-    await act(async () => { releaseRun(); await hiddenRecoveryAck; });
-    assert.deepEqual(flushAcks, [{ id: "hidden-recovery-quit", success: true }]);
-    assert.equal(drafts.get(previousAuxiliaryId)?.text, "restore failed send", "recovery must be durable before quit ACK");
+    await act(async () => { releaseAdmission(); await hiddenRejectionAck; });
+    assert.deepEqual(flushAcks, [{ id: "hidden-rejection-quit", success: true }]);
+    assert.equal(rejectedDraft.text, "rejected admission draft");
+    assert.deepEqual(drafts.get(previousAuxiliaryId), rejectedDraft, "a rejected admission must preserve the saved text and durable revision before quit ACK");
     await act(async () => { flushRelease?.({ success: false }); });
     flushAcks.length = 0;
-    assert.equal(textarea().value, "another Auxiliary draft", "a failed old send must not restore into the selected owner");
+    assert.equal(textarea().value, "another Auxiliary draft", "a rejected old admission must not alter the selected owner");
     await act(async () => { navigateAuxiliary?.({ parentSessionId: "benchmark-main", auxiliarySessionId: previousAuxiliaryId }); });
-    assert.equal(textarea().value, "restore failed send", "the failed send restores only its captured owner");
+    assert.equal(textarea().value, "rejected admission draft", "the rejected admission preserves only its captured owner");
     assert.deepEqual(alerts, ["Auxiliary admission failed"]);
     alerts.length = 0;
 
-    rejectRun = true;
-    failRunRestore = true;
-    const recoveryRunFailed = new Promise<void>((resolve) => { notifyRunFailed = resolve; });
-    await input("recover after storage failure");
+    loseAdmissionReply = true;
+    receiptVisible = false;
+    await input("unknown admission draft");
     await act(async () => {
       dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
-      await recoveryRunFailed;
     });
-    assert.equal(textarea().value, "recover after storage failure");
+    assert.equal(textarea().value, "unknown admission draft", "a missing ACK must not clear the captured draft");
     assert.equal(drafts.get(previousAuxiliaryId)?.text, "");
-    const failedFlushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
-    await act(async () => { flushRequest?.({ requestId: "recovery-close", sessionId: "benchmark-main", reason: "close" }); await failedFlushAck; });
-    assert.deepEqual(flushAcks, [{ id: "recovery-close", success: false }], "restored unsaved input must prevent a successful close ACK");
-    await act(async () => { flushRelease?.({ success: false }); });
-    assert.equal(textarea().value, "recover after storage failure");
-    assert.ok(dom.window.document.getElementById("composer-save-feedback"));
-    failDraftWrites = false;
-    const recovered = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "recover after storage failure") resolve(); }; });
-    await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-save-retry")!.click(); await recovered; });
-    assert.equal(drafts.get(previousAuxiliaryId)?.text, "recover after storage failure");
+    const sentBeforeCheck = sent.length;
+    assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.disabled, true);
+    assert.match(alerts.at(-1)!, /acceptance could not be confirmed/);
+    await input("new draft after unknown admission");
+    receiptVisible = true;
+    await act(async () => {
+      const check = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Check Receipt");
+      assert.ok(check);
+      check.click();
+    });
+    assert.equal(sent.length, sentBeforeCheck, "receipt recovery must not enqueue a new request");
+    assert.equal(textarea().value, "new draft after unknown admission", "recovered ACK must preserve the newer edit");
     assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.disabled, false);
-    assert.deepEqual(alerts, ["Auxiliary turn failed and draft restore failed."]);
+    const unknownDraftSaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "new draft after unknown admission") resolve(); }; });
+    await act(async () => { await unknownDraftSaved; });
+    assert.equal(drafts.get(previousAuxiliaryId)?.text, "new draft after unknown admission");
     alerts.length = 0;
     flushAcks.length = 0;
 
@@ -527,10 +530,10 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     await toggleDock();
     await toggleDock();
     assert.equal(dockExpanded(), true);
-    const dockRunCompleted = new Promise<void>((resolve) => { notifyRunCompleted = () => resolve(); });
-    await act(async () => { releaseSave(); await dockRunCompleted; });
+    const dockAdmissionCompleted = new Promise<void>((resolve) => { notifyAdmissionCompleted = () => resolve(); });
+    await act(async () => { releaseSave(); await dockAdmissionCompleted; });
     assert.equal(dockExpanded(), true, "a delayed Auxiliary send preserves the newer manual dock intent");
-    notifyRunCompleted = undefined;
+    notifyAdmissionCompleted = undefined;
     await input("Auxiliary auto collapse");
     await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
     assert.equal(dockExpanded(), false, "a fresh Auxiliary send follows enabled auto-collapse");

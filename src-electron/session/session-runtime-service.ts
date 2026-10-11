@@ -303,8 +303,9 @@ function createCanceledRunError(message: string): Error {
   return error;
 }
 
-function throwIfRunCanceled(signal: AbortSignal): void {
+function throwIfRunCanceled(signal: AbortSignal, queued?: QueuedTurnContext): void {
   if (signal.aborted) {
+    if (queued && !queued.startIssued) throw new QueuedTurnPreStartCanceledError("Session setup was canceled");
     throw createCanceledRunError("Session setup was canceled");
   }
 }
@@ -559,10 +560,15 @@ function buildRunningTurn(params: {
 type QueuedTurnContext = {
   receipt: SessionTurnQueueReceipt;
   onStarted: (input: { turnId: string; userMessageSeq: number }) => Promise<void>;
+  startIssued?: boolean;
   outcome?: SessionTurnQueueDispatchResult;
 };
 
 class QueuedTurnPreflightError extends Error {}
+
+class QueuedTurnPreStartCanceledError extends Error {
+  override name = "AbortError";
+}
 
 export class SessionRuntimeService {
   private readonly inFlightSessionRuns = new Set<string>();
@@ -804,6 +810,9 @@ export class SessionRuntimeService {
       await this.trackRun(this.executeSessionTurn(receipt.sessionId, receipt.captured.request, queued));
     } catch (error) {
       if (queued.outcome) return queued.outcome;
+      if (error instanceof QueuedTurnPreStartCanceledError && !this.isRunInFlight(receipt.sessionId)) {
+        return { state: "canceled", reason: error.message };
+      }
       if (error instanceof QueuedTurnPreflightError) return { state: "failed", reason: error.message };
       throw error;
     }
@@ -867,7 +876,7 @@ export class SessionRuntimeService {
         } else {
           admit();
         }
-        throwIfRunCanceled(runAbortController.signal);
+        throwIfRunCanceled(runAbortController.signal, queued);
       } catch (error) {
         this.waitingSessionRunAdmissions.delete(sessionId);
         if (!admitted) {
@@ -934,7 +943,7 @@ export class SessionRuntimeService {
     const observedAt = (this.deps.currentDate ?? (() => new Date()))();
     const investigationStartedAt = Date.now();
     const storedSession = await this.deps.getSession(sessionId);
-    throwIfRunCanceled(runAbortController.signal);
+    throwIfRunCanceled(runAbortController.signal, queued);
     if (!storedSession) {
       if (queued) throw new QueuedTurnPreflightError("The session could not be found.");
       throw new Error("The session could not be found.");
@@ -963,7 +972,7 @@ export class SessionRuntimeService {
       session = await this.deps.clearCharacterAuthoringRuntimeState(session);
       await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
     }
-    throwIfRunCanceled(runAbortController.signal);
+    throwIfRunCanceled(runAbortController.signal, queued);
     logSessionRunStuckInvestigation("runtime.start", {
       sessionId,
       clientRequestId,
@@ -1009,7 +1018,7 @@ export class SessionRuntimeService {
     } else {
       composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
     }
-    throwIfRunCanceled(runAbortController.signal);
+    throwIfRunCanceled(runAbortController.signal, queued);
     if (composerPreview.errors.length > 0) {
       throw new Error(composerPreview.errors[0] ?? "Failed to resolve attachment.");
     }
@@ -1048,7 +1057,7 @@ export class SessionRuntimeService {
         this.deps.resolveCharacterContext?.(session, nextMessage) ?? null,
       )
       : null;
-    throwIfRunCanceled(runAbortController.signal);
+    throwIfRunCanceled(runAbortController.signal, queued);
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
 
     let runningSession: Session;
@@ -1068,6 +1077,7 @@ export class SessionRuntimeService {
 
       const runningUpsertStartedAt = Date.now();
       if (queued) {
+        queued.startIssued = true;
         const started = await this.deps.persistQueuedTurnStart!(runningSession, session.messageCount ?? session.messages.length, queued.receipt.id,
           buildRunningTurn({ sessionId, createdAt: new Date().toISOString(), session: runningSession, executionOptions }));
         runningSession = started.session;

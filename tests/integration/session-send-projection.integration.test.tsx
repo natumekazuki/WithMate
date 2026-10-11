@@ -367,9 +367,13 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
     return () => { liveListeners.delete(listener); };
   };
   const emitTerminal = (id: string) => liveListeners.forEach((listener) => listener(id, null));
-  let mainInvalidation: Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0] | undefined;
-  api.subscribeSessionInvalidation = (listener) => { mainInvalidation = listener; return () => { mainInvalidation = undefined; }; };
-  const notifyMain = () => mainInvalidation?.({ scope: "ids", sessionIds: [main.id] });
+  const invalidationListeners = new Set<{ listener: Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0] }>();
+  api.subscribeSessionInvalidation = (listener) => {
+    const registration = { listener };
+    invalidationListeners.add(registration);
+    return () => { invalidationListeners.delete(registration); };
+  };
+  const notifyMain = () => invalidationListeners.forEach(({ listener }) => listener({ scope: "ids", sessionIds: [main.id] }));
   let reportedError = deferred<string>();
   const alerts: string[] = [];
   dom.window.alert = (message) => { alerts.push(String(message)); reportedError.resolve(String(message)); };

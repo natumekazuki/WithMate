@@ -380,6 +380,55 @@ it("queued runtimeは無効になった捕捉入力を開始前にfailedで返�
 
 // @test-value v2
 // kind = "contract"
+// claim = "atomic開始前に実終了したqueued取消だけcanceledへ収束し、setup生存中のtimeoutと開始保存の結果不明はthrowを維持する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md GUI Turn Queue / Session Run Cancel" }
+// fault = "確定した未開始取消をinterruptedへ変換するか、未終了setupや開始commit不明を既知canceledとして後続を許可する"
+// observable = "queued実行の返却state/throw、atomic開始・Provider呼出し件数、取消後の実guardと終了wait"
+// observation_boundary = "public-boundary"
+// scope = "SessionRuntimeService.runQueuedSessionTurn pre-start cancellation"
+// lifecycle = "permanent"
+// impact = "副作用未開始の取消でFIFOが停止することと結果不明の要求の誤った自動継続を防ぐ"
+// distinction = "Provider開始後の取消testとqueue単体ではatomic前のruntime取消分類と未終了guardを検証できない"
+// @end-test-value
+it("queued runtimeはatomic前の確定取消と結果不明を区別する", async () => {
+  for (const mode of ["before-start", "setup-timeout", "start-unknown"] as const) {
+    const session = createSession({ incarnationId: "owner" });
+    const entered = queueGate();
+    const validation = queueGate();
+    const failure = new Error("Atomic start reply lost after cancel");
+    let atomics = 0;
+    let providers = 0;
+    let runtime!: SessionRuntimeService;
+    runtime = createProgressRuntime(session, async () => { providers += 1; return createPartialResult(); }, {
+      providerCancelGraceMs: mode === "setup-timeout" ? 0 : 1_000,
+      assertCapturedComposerAttachmentsAvailable: async () => { entered.resolve(); await validation.promise; },
+      persistQueuedTurnStart: () => { atomics += 1; runtime.cancelRun(session.id); throw failure; },
+    });
+    const running = runtime.runQueuedSessionTurn(queuedReceipt(session), async () => { assert.fail("Canceled start cannot be observed as started"); });
+    try {
+      await entered.promise;
+      if (mode !== "start-unknown") runtime.cancelRun(session.id);
+      if (mode !== "setup-timeout") validation.resolve();
+      if (mode === "before-start") {
+        assert.equal((await running).state, "canceled");
+        assert.equal(runtime.isRunInFlight(session.id), false);
+      } else {
+        await assert.rejects(running, mode === "setup-timeout" ? /did not stop/ : (error: unknown) => error === failure);
+        assert.equal(runtime.isRunInFlight(session.id), mode === "setup-timeout");
+      }
+      assert.equal(atomics, mode === "start-unknown" ? 1 : 0);
+      assert.equal(providers, 0);
+    } finally {
+      validation.resolve();
+      await running.catch(() => {});
+      await runtime.waitForPendingRuns();
+    }
+    assert.equal(runtime.isRunInFlight(session.id), false);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "queued atomic開始またはterminal保存の結果不明はgeneric throwのまま伝播し別failed保存で救済しない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Decision" }
 // fault = "commit返信喪失を確定failedへ変換し後続を自動dispatch可能にする"

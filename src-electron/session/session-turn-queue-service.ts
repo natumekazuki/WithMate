@@ -106,19 +106,7 @@ export class SessionTurnQueueService {
                 && canonical.inputTurnId === expectedTurnId && canonical.turnId === null && canonical.userMessageSeq === null) {
                 // No provider call has begun. Restore only this confirmed input
                 // claim, and resolve a lost restore reply by reading, not retrying.
-                let restored: SessionTurnQueueReceipt;
-                try {
-                  restored = await this.deps.store.restoreQueuedInput(owner, id, expectedTurnId);
-                } catch {
-                  const current = await this.deps.store.getReceipt(owner, candidate.requestId);
-                  if (current?.state === "queued") restored = current;
-                  else {
-                    if (current?.state === "starting" && current.inputTurnId === expectedTurnId) {
-                      await this.deps.store.settle(owner, id, "interrupted", "The input claim recovery could not be confirmed.");
-                    }
-                    throw error;
-                  }
-                }
+                const restored = await this.restoreInputClaim(owner, id, expectedTurnId, candidate.requestId);
                 if (restored.state === "queued" && this.isCurrentOwner(owner)) {
                   this.blocked.delete(owner.sessionId);
                   this.lastClaim.delete(owner.sessionId);
@@ -156,10 +144,16 @@ export class SessionTurnQueueService {
             return canonical;
           }
           if (error instanceof QueuedInputPreDispatchError) {
-            await this.deps.store.restoreQueuedInput(owner, id, expectedTurnId);
-            if (this.isCurrentOwner(owner)) this.blocked.delete(owner.sessionId);
-            this.notify(owner);
-            this.wake(owner.sessionId);
+            try {
+              const restored = await this.restoreInputClaim(owner, id, expectedTurnId, receipt.requestId);
+              if (restored.state === "queued" && this.isCurrentOwner(owner)) {
+                this.blocked.delete(owner.sessionId);
+                this.lastClaim.delete(owner.sessionId);
+                this.wake(owner.sessionId);
+              }
+            } finally {
+              this.notify(owner);
+            }
             throw error;
           }
           if (this.isCurrentOwner(owner)) this.blocked.add(owner.sessionId);
@@ -172,6 +166,20 @@ export class SessionTurnQueueService {
         });
       }
     })());
+  }
+
+  private async restoreInputClaim(owner: SessionTurnQueueOwner, id: string, expectedTurnId: string, requestId: string): Promise<SessionTurnQueueReceipt> {
+    try {
+      return await this.deps.store.restoreQueuedInput(owner, id, expectedTurnId);
+    } catch (error) {
+      const current = await this.deps.store.getReceipt(owner, requestId);
+      if (current?.state === "queued") return current;
+      if (current?.state === "starting" && current.id === id && current.inputTurnId === expectedTurnId
+        && current.turnId === null && current.userMessageSeq === null) {
+        await this.deps.store.settle(owner, id, "interrupted", "The input claim recovery could not be confirmed.");
+      }
+      throw error;
+    }
   }
 
   releaseInterrupted(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt> {

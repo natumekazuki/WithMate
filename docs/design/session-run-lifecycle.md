@@ -135,11 +135,11 @@ atomic開始後に結果不明となった要求の明示解放は、実guard解
 - `Session Window` の `Cancel` は Main Process の `AbortController` を通して provider 実行を止める
 - キャンセル後の session は `runState = idle` に戻る
 - admission の開始予約後の Worker 読込み・最終排他取得、setup または provider が cancel grace 後も生存する場合、turn 呼出しは収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
-- 取消受付直後は live run の `cancellationState = requested` を通知し、grace 後も元処理が未終了なら `terminating` を通知する。admission / setup 中に live run が未作成でも同じ状態を投影する。Renderer は保存済み `runState = idle` よりこの取消待ちを優先し、Send と重複 Cancel を無効化する
-- 終端保存中と全ての未終了処理が settle するまで取消待ちを保持する。最後の admission guard 解放時に live 取消状態を解除して通知し、次の Send を可能にする。繰り返しの Cancel は同じ turn の要求として冪等に扱い、旧 turn の遅延 progress / 応答を次 turn へ反映しない
+- 取消受付直後は live run の `cancellationState = requested` を通知し、grace 後も元処理が未終了なら `terminating` を通知する。admission / setup 中に live run が未作成でも同じ状態を投影する。Renderer は保存済み `runState = idle` よりこの取消待ちを優先し、重複 Cancel と現在Turnへの追加入力を無効化する。Sendによる次Turnの永続予約は受け付けるが、実guard解放まで開始しない
+- 終端保存中と全ての未終了処理が settle するまで取消待ちを保持する。最後の admission guard 解放時に live 取消状態を解除して通知し、予約済みの次Turnを開始可能にする。繰り返しの Cancel は同じ turn の要求として冪等に扱い、旧 turn の遅延 progress / 応答を次 turn へ反映しない
 - chat にはキャンセル結果を 1 件追加する
 - 最小turnは同じ record を `phase = canceled` へ更新し、`errorMessage` にユーザーキャンセルを残す。取得済みpartial本文・artifactは通常履歴へ保存する
-- ActionDockのmodel / depthはCancel押下だけでは変更可能に戻さず、対象会話の取消完了まで無効状態を保つ。通常完了・エラー終了後も、既存のblocked / freeze条件がなければ再び変更できる
+- ActionDockのmodel / depthは次送信用の選択として、取消終了待ちでも既存のblocked / freeze条件がなければ変更できる。実行中Turnと受付済み予約の捕捉値は変えない
 - stale thread / session 起因エラー、または meaningful partial を持たない Codex bootstrap failure を Main Process が検知した場合だけ、同一 turn の内部で `threadId clear + provider cache invalidate` を行って 1 回だけ再試行する
 - internal retry は same turn の処理として扱い、user message / assistant message / 最小turn record を二重化しない
 - Main Session の保存が確定した後に初期 Auxiliary の準備または commit が失敗した場合、Main Session や他の既存会話を削除・巻き戻ししない。呼出し元には Main 保存済み、Auxiliary の結果未確定または失敗という部分結果を返し、Auxiliary の commit 結果は request identity の再照会でのみ確定する。

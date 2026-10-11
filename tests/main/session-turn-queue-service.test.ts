@@ -128,53 +128,55 @@ test("queued inputはdispatch境界を区別し正本completedを優先する", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "input claim返信喪失はProvider未送信証明でqueuedへ戻り、restore失敗は明示解放可能なinterruptedとして保留する"
+// claim = "input claim返信喪失と準備拒否は未送信のままqueuedへ戻り、restore返信喪失は正本照会で解決し未commitなら明示解放可能なinterruptedで保留する"
 // oracle = { type = "contract", ref = "GitHub Issue #801: pre-provider queued input recovery and unknown no replay" }
 // fault = "claim返信喪失をstartingへ固定するかProviderを送信し、restore不明を再実行する"
 // observable = "receipt state、入力とrestore回数、明示解放前後のFIFO dispatch"
 // observation_boundary = "public-boundary"
-// scope = "SessionTurnQueueService.sendQueuedInput claim failure recovery"
+// scope = "SessionTurnQueueService.sendQueuedInput pre-provider recovery"
 // lifecycle = "permanent"
 // impact = "未送信指示の回復不能と外部操作の重複を防ぐ"
 // distinction = "storage単体testはserviceのclaim返信喪失とProvider非dispatchを検知しない"
 // @end-test-value
-test("queued input claim ACK喪失は未送信のまま回復する", async () => {
-  for (const mode of ["restored", "restore-reply-lost", "restore-failed"] as const) {
-    const { store, rows } = boundary();
-    const claim = store.claimForInput;
-    const restore = store.restoreQueuedInput;
-    let restores = 0;
-    let inputs = 0;
-    let guarded = true;
-    const dispatched: string[] = [];
-    store.claimForInput = async (...args) => { await claim(...args); throw new Error("claim reply lost"); };
-    store.restoreQueuedInput = async (...args) => {
-      restores += 1;
-      if (mode === "restore-failed") throw new Error("restore unavailable");
-      const receipt = await restore(...args);
-      if (mode === "restore-reply-lost") throw new Error("restore reply lost");
-      return receipt;
-    };
-    const service = new SessionTurnQueueService({ store, isRunInFlight: () => guarded,
-      sendInput: async () => { inputs += 1; },
-      dispatch: async (receipt) => { dispatched.push(receipt.id); return { state: "completed" }; },
-    });
-    await service.enqueue(owner, captured("input"));
-    await service.enqueue(owner, captured("follower"));
-    await assert.rejects(service.sendQueuedInput(owner, "input", "provider-turn"), /claim reply lost/);
-    assert.equal(inputs, 0);
-    assert.equal(restores, 1);
-    assert.equal(rows[0]!.state, mode === "restore-failed" ? "interrupted" : "queued");
-    guarded = false;
-    service.wake(owner.sessionId);
-    await flush();
-    if (mode === "restore-failed") {
-      assert.deepEqual(dispatched, []);
-      await service.releaseInterrupted(owner, "input");
+test("queued inputのclaim ACK喪失と準備拒否は未送信のまま回復する", async () => {
+  for (const origin of ["claim", "preflight"] as const) {
+    for (const mode of ["restored", "restore-reply-lost", "restore-failed"] as const) {
+      const { store, rows } = boundary();
+      const claim = store.claimForInput;
+      const restore = store.restoreQueuedInput;
+      let restores = 0;
+      let inputs = 0;
+      let guarded = true;
+      const dispatched: string[] = [];
+      if (origin === "claim") store.claimForInput = async (...args) => { await claim(...args); throw new Error("claim reply lost"); };
+      store.restoreQueuedInput = async (...args) => {
+        restores += 1;
+        if (mode === "restore-failed") throw new Error("restore unavailable");
+        const receipt = await restore(...args);
+        if (mode === "restore-reply-lost") throw new Error("restore reply lost");
+        return receipt;
+      };
+      const service = new SessionTurnQueueService({ store, isRunInFlight: () => guarded,
+        sendInput: async () => { inputs += 1; throw new QueuedInputPreDispatchError("not dispatched"); },
+        dispatch: async (receipt) => { dispatched.push(receipt.id); return { state: "completed" }; },
+      });
+      await service.enqueue(owner, captured("input"));
+      await service.enqueue(owner, captured("follower"));
+      await assert.rejects(service.sendQueuedInput(owner, "input", "provider-turn"), origin === "claim" ? /claim reply lost/ : mode === "restore-failed" ? /restore unavailable/ : /not dispatched/);
+      assert.equal(inputs, origin === "claim" ? 0 : 1);
+      assert.equal(restores, 1);
+      assert.equal(rows[0]!.state, mode === "restore-failed" ? "interrupted" : "queued");
+      guarded = false;
+      service.wake(owner.sessionId);
       await flush();
-      assert.deepEqual(dispatched, ["follower"]);
-    } else assert.deepEqual(dispatched, ["input", "follower"]);
-    await service.close();
+      if (mode === "restore-failed") {
+        assert.deepEqual(dispatched, []);
+        await service.releaseInterrupted(owner, "input");
+        await flush();
+        assert.deepEqual(dispatched, ["follower"]);
+      } else assert.deepEqual(dispatched, ["input", "follower"]);
+      await service.close();
+    }
   }
 });
 

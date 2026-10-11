@@ -412,6 +412,7 @@ const mainWindowRuntime = new MainWindowRuntime({
       auxiliarySessionService?.waitForPendingDraftSends() ?? Promise.resolve(true),
       sessionTurnQueueService?.waitForPending(),
       sessionRuntimeService?.waitForPendingRuns(),
+      auxiliarySessionRuntimeService?.waitForPendingRuns(),
     ]);
     return auxiliarySaved;
   },
@@ -2809,7 +2810,7 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 
 async function closePersistentStores(): Promise<void> {
   await sessionTurnQueueService?.close();
-  await sessionRuntimeService?.waitForPendingRuns();
+  await Promise.all([sessionRuntimeService?.waitForPendingRuns(), auxiliarySessionRuntimeService?.waitForPendingRuns()]);
   sessionTurnQueueService = null;
   mainSessionTurnQueueFacade = null;
   await mainStoreContext.close((bundle, currentDbPath) =>
@@ -2847,7 +2848,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   }
 
   await sessionTurnQueueService?.close();
-  await sessionRuntimeService?.waitForPendingRuns();
+  await Promise.all([sessionRuntimeService?.waitForPendingRuns(), auxiliarySessionRuntimeService?.waitForPendingRuns()]);
   sessionTurnQueueService = null;
   mainSessionTurnQueueFacade = null;
   mainStoreContext.setActivePersistentStoreOwner(null);
