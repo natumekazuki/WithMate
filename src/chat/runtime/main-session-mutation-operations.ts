@@ -34,7 +34,6 @@ export type MainRuntimeOption =
 export async function runMainRuntimeOptionOperation(input: {
   session: Session | null;
   isReadOnly: boolean;
-  runState: Session["runState"] | null;
   providerCatalog: ModelCatalogProvider | null;
   catalogRevision: number | null;
   option: MainRuntimeOption;
@@ -44,7 +43,6 @@ export async function runMainRuntimeOptionOperation(input: {
   const {
     session,
     isReadOnly,
-    runState,
     providerCatalog,
     catalogRevision,
     option,
@@ -69,7 +67,6 @@ export async function runMainRuntimeOptionOperation(input: {
   }
 
   if (option.kind === "approval-mode") {
-    if (runState === "running") return null;
     const next = buildSessionWithApprovalMode(
       session,
       option.value,
@@ -79,7 +76,7 @@ export async function runMainRuntimeOptionOperation(input: {
   }
 
   if (option.kind === "codex-sandbox-mode") {
-    if (session.provider !== "codex" || runState === "running") return null;
+    if (session.provider !== "codex") return null;
     const next = buildSessionWithCodexSandboxMode(
       session,
       option.value,
@@ -88,7 +85,7 @@ export async function runMainRuntimeOptionOperation(input: {
     return next ? persist(next) : null;
   }
   if (option.kind === "codex-speed") {
-    if (session.provider !== "codex" || runState === "running") return null;
+    if (session.provider !== "codex") return null;
     const next = buildSessionWithCodexSpeed(
       session,
       option.value,
@@ -99,8 +96,7 @@ export async function runMainRuntimeOptionOperation(input: {
   if (option.kind === "codex-reviewer") {
     if (
       session.provider !== "codex" ||
-      session.approvalMode === "never" ||
-      runState === "running"
+      session.approvalMode === "never"
     )
       return null;
     const next = buildSessionWithCodexReviewer(

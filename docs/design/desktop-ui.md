@@ -297,9 +297,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Agent Sessionでは`Preview / Source`の右に同じ表示形式の`Prompt / Terminal`切替を置き、押したmodeを展開する。初期選択はPrompt。既定shortcutはWindows／Linuxの`Ctrl+Shift+T`、macOSの`Cmd+Shift+T`で、Settingsから変更できる。composerと端末本文のどちらにfocusがあっても切り替えられ、IME変換中とkey repeatでは発火しない
   - PromptとTerminalは同時表示せず、非表示側をinertにしてmountを維持する。Promptのdraft・selectionとTerminalのタブ・出力・PTYを保持し、Promptへ戻るとcomposerへ、Terminalを選ぶと選択端末へfocusする。splitterで再展開した時は選択modeを維持する。Quote／参照挿入などcomposerを開く操作はPromptへ戻す
   - compact では末尾移動とmessage表示切替を必要に応じて操作列に残す。draft入力と`Send`はPromptのexpandedで表示し、実行中indicatorはmessage listに置く
-  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` / `Canceling` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では114pxを使い、viewportが760px以下では操作列幅へ追従する。expanded の下段には disabled の `Send` を残し、開閉や Main / Auxiliary 切替で `Cancel` の位置を変えない
+  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` / `Canceling` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では114pxを使い、viewportが760px以下では操作列幅へ追従する。expanded の下段には単一の `Send` を置き、開閉や Main / Auxiliary 切替で主操作の位置を変えない
   - 開閉は下 splitter を主導線とし、compact では実行状態によらずdock全体の余白からも展開できる。非表示の `Cancel` 予約領域と操作間の隙間も対象とし、表示中の操作ボタンは自身の操作を優先してdockを展開しない。dock 内に `Hide` は置かない
-  - Promptのexpandedでは上部操作列と下部設定・送信列の高さを固定し、dragで中央のtextarea領域を伸縮させる。Terminalでは切替操作列とタブバーを固定し、端末本文へ残りの高さを割り当てる
+  - Promptのexpandedでは上部操作列と下部設定・送信列の高さを固定し、dragで中央のtextarea領域を伸縮させる。Main／Auxiliaryの実行中も次の依頼を準備するため、Template・Skill・添付・Additional Directory・対応する実行設定を使える。実行中Turnの設定・認可済みdirectoryは捕捉値を維持し、編集値は次の送信から適用する。read-only、入力のblocked条件、quit／close凍結は維持する。Terminalでは切替操作列とタブバーを固定し、端末本文へ残りの高さを割り当てる
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - Promptではskill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。Terminalへ切り替えるとpickerを閉じ、非表示Promptの候補やfeedbackは共有パネルの折りたたみを妨げない。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
@@ -398,8 +398,8 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - right pane は run 中の command 安全確認面として扱い、full timeline や `Turn Inspector` は常設しない
 - 実行中は上段に `Cancel` を表示する。下段の主ボタンはMain／Auxiliaryとも常に単一の `Send` とし、入力欄を編集可能に保つ。通常送信shortcutも同じ永続受付を使い、実行中は次Turnを予約する。現在Turnが追加入力を受け付けないproviderや取消終了待ちでも予約を受け付け、実guard解放まで開始しない。quit／closeの入力凍結中は送信と添付を無効にする
 - Codexの現在Turnが入力受付可能な間はチャットの予約項目に `Send to Current Turn` を表示する。捕捉した本文・添付を同じTurnへ一度だけ送り、開始準備中・取消中・終了後の操作を新Turnへ振り替えない。追加入力は実行中Turnの設定を維持する。独立した追加入力shortcutは現在のComposer下書きを直接送り、通常Sendとは混在させない
-- 予約行は本文・`Queued N`・個別`Cancel`を近接表示し、現在Turnの応答より後へ置く。開始・失敗・結果不明をspinnerだけで隠さず、保存理由と必要な回復操作を示す。結果不明の`Release Later Turns`は元要求を再実行しない。受付応答が不明ならComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。受付ACKは一致するdraft revisionだけを消す
-- `Queue Receipts`は明示展開し、30件ずつPrevious／Nextで表示する。通常購読で全receiptを保持せず、取得失敗でも既存本文を保ちRetryを出す。狭幅では操作を折り返し、本文を縮小しない
+- 予約は通常のuser bubbleとして現在Turnの応答より後へ置く。本文を主役にし、下部に右寄せ・muted色の`Queued N`・個別`Cancel`と、利用可能な時だけ`Send to Current Turn`を添える。空queueに専用sectionは出さず、通常履歴と別のreceipt一覧や重複本文も表示しない。狭幅では操作を折り返し、本文を縮小しない
+- 開始・失敗・結果不明は対象bubbleに状態と理由を示し、必要な回復操作だけを近接表示する。結果不明の`Release Later Turns`は元要求を再実行しない。queue取得・操作の失敗は取得済み本文を保ち、理由と`Retry Queue`を表示する。受付応答が不明ならComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。受付ACKは一致するdraft revisionだけを消す
 - 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は既存のElicitation formで回答し、secret textはpassword inputで扱う。nonblockingの質問は `Input Requested` とし、必須待ちと区別して応答生成中のstatusを維持する
 - Mainの取消受付後は同じ位置をdisabledの`Canceling`とbusy stateにする。取消終了待ちでも予約受付は可能だが、現在Turnへの追加入力と新しい実行開始は許可しない。保存済みSessionがidleになってもlive取消状態を優先し、元処理と必要な終了処理の解放通知後に後続の実行を開始する。
 - assistant message ごとの `Turn Summary`
@@ -423,10 +423,10 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer toolbar に `Add Directory` を置き、その横の toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
-  - composer 下の runtime settings は shared chat composer を正本とし、`Approval / Sandbox / Model / Depth`を表示する。Codex providerでは`Approval`の直後にcompactな`Reviewer`選択、そのほかのruntime optionと同じ列に`Speed`選択を追加する。`Reviewer`は`User` / `Auto Review`、`Speed`は`Standard` / `Fast`をSession単位で保持する。Codex以外では両方を表示しない。`Reviewer`はrunning、read-only、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionは既存の制約に従う
+  - composer 下の runtime settings は shared chat composer を正本とし、`Approval / Sandbox / Model / Depth`を表示する。Codex providerでは`Approval`の直後にcompactな`Reviewer`選択、そのほかのruntime optionと同じ列に`Speed`選択を追加する。`Reviewer`は`User` / `Auto Review`、`Speed`は`Standard` / `Fast`をSession単位で保持する。Codex以外では両方を表示しない。`Reviewer`はread-only、blocked、入力凍結、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionもproviderの対応範囲と編集制約に従う
   - approval chip は `Auto Run / Provider Controlled / Safety Focused`
   - ClaudeのApprovalは`Provider Controlled`のみを選べる。保存値が非対応の場合は`Unsupported (保存値)`を選択表示し、invalid stateを保持する。ユーザーが`Provider Controlled`を選ぶことで有効値へ修正でき、黙って権限設定を置き換えない
-  - `Model / Depth`はActionDockの対象会話がrunningの間、現在値を表示したままnative selectを無効にする。Cancel押下だけでは解除せず、通常完了・Cancel完了・エラー終了後に既存のblocked / freeze条件がなければ変更可能に戻る。Main / Auxiliaryの対象切替では表示値と変更可否を切り替え、別会話のrunningを待機中の対象へ波及させない
+  - runtime設定のnative selectは、Main／Auxiliaryの次送信用の現在選択を表示する。runningや取消終了待ちでも選べるが、実行中Turnと受付済み予約の捕捉値は変えない。対象切替では各会話の選択値・provider能力・read-only／blocked／freeze条件に対応する
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`
 - assistant本文はgradientを使わず、`main`の細い左線とavatarの縁、控えめな背景色で周囲から区別する。user本文は控えめなsurfaceで区別し、通常のassistantとuserの枠は同じ丸みを持つ。pendingとAuxiliary groupの状態表現は維持する

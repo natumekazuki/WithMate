@@ -27,7 +27,7 @@ export async function runAddAuxiliaryAdditionalDirectoryOperation(input: {
   updateActiveAuxiliarySession: UpdateAuxiliarySession;
   createTimestampLabel: () => string;
 }): Promise<void> {
-  if (!input.activeAuxiliarySession || input.activeAuxiliarySession.runState === "running") {
+  if (!input.activeAuxiliarySession) {
     return;
   }
 

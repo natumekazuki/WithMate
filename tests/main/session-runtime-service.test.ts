@@ -210,6 +210,55 @@ function queueGate() {
 }
 
 // @test-value v2
+// kind = "invariant"
+// claim = "開始後の次設定とdirectory選択は現在TurnのProvider再試行へ混入せず次queued Turnに適用される"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: 次送信用設定と現在Turnのcapture分離" }
+// fault = "checkpoint ACKの新directoryや設定を現在Turnの内部再試行へ渡すか次queued Turnで旧captureを再利用する"
+// observable = "初回/内部再試行/次queued実行のProvider optionsとadditionalDirectories"
+// observation_boundary = "public-boundary"
+// scope = "session runtime current capture and next queued execution"
+// lifecycle = "permanent"
+// impact = "実行中Turnの権限を無断で広げるか次依頼が利用者の選択を使わない"
+// distinction = "selection service testはProvider内部再試行を通らず、adapter testはcheckpoint ACKとの競合を作らない"
+// @end-test-value
+it("次設定とdirs変更は現在provider再試行を変えず次queueへ適用する", async () => {
+  const session = createSession({ provider: "copilot", threadId: "stale-thread", approvalMode: "on-request",
+    allowedAdditionalDirectories: ["C:/current-context"] });
+  let current = session;
+  const oldOptions = captureSessionExecutionOptions(session);
+  let attempts = 0;
+  const runtime = createProgressRuntime(session, async (input) => {
+    attempts += 1;
+    if (attempts <= 2) {
+      assert.deepEqual(input.executionOptions, oldOptions);
+      assert.deepEqual(input.session.allowedAdditionalDirectories, ["C:/current-context"]);
+    } else {
+      assert.equal(input.executionOptions.approvalMode, "never");
+      assert.equal(input.executionOptions.customAgentName, "next-agent");
+      assert.deepEqual(input.session.allowedAdditionalDirectories, ["C:/next-context"]);
+    }
+    if (attempts === 1) {
+      current = { ...current, approvalMode: "never", customAgentName: "next-agent", allowedAdditionalDirectories: ["C:/next-context"] };
+      throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "stale-thread" }), false);
+    }
+    return createPartialResult({ threadId: "fresh-thread", assistantText: "done" });
+  }, {
+    getSession: () => current,
+    upsertSession: (next) => { current = { ...next, ...captureSessionExecutionOptions(current), allowedAdditionalDirectories: [...current.allowedAdditionalDirectories] }; return current; },
+    getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } }),
+    resolveProviderCatalog: () => ({ snapshot: { revision: session.catalogRevision, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") }),
+    resetProviderSessionThread: () => undefined,
+    assertCapturedComposerAttachmentsAvailable: async () => undefined,
+    persistQueuedTurnStart: (next, count, _id, turn) => ({ session: next, turn: { ...turn, id: 42, userMessageSeq: count } }),
+    appendTerminalSession: (next) => { current = { ...next, ...captureSessionExecutionOptions(current), allowedAdditionalDirectories: [...current.allowedAdditionalDirectories] }; return current; },
+  });
+  await runtime.runSessionTurn(session.id, { userMessage: "current", executionOptions: oldOptions });
+  assert.equal(current.runState, "idle");
+  assert.deepEqual(await runtime.runQueuedSessionTurn(queuedReceipt(current), async () => undefined), { state: "completed" });
+  assert.equal(attempts, 3);
+});
+
+// @test-value v2
 // kind = "contract"
 // claim = "queued実行は捕捉入力と開始時threadで原子的開始しterminal ACK後だけ確定しcleanup guard解放まで次runを許可しない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Run Cancel; src-electron/session/session-running-turn-start.ts" }

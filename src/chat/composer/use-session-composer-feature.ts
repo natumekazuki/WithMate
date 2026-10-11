@@ -620,8 +620,7 @@ export function useSessionComposerFeature(input: {
           bridge.session.provider === "codex",
         ),
         isInteractionDisabled:
-          bridge.runtime.isRunning
-          || bridge.runtime.isReadOnly
+          bridge.runtime.isReadOnly
           || !!bridge.runtime.blockedReason
           || isComposerFrozen,
         onRemove: onRemoveAdditionalDirectory,

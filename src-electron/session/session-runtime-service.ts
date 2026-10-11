@@ -994,6 +994,7 @@ export class SessionRuntimeService {
     }
 
     const providerSession = await (this.deps.resolveProviderSession?.(session) ?? session);
+    const capturedAdditionalDirectories = [...providerSession.allowedAdditionalDirectories];
     let composerPreview: ComposerPreview;
     if (queued) {
       if (!this.deps.persistQueuedTurnStart || !this.deps.assertCapturedComposerAttachmentsAvailable) {
@@ -1153,7 +1154,8 @@ export class SessionRuntimeService {
     });
     const runProviderTurn = async (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
-      const effectiveTurnSession = await (this.deps.resolveProviderSession?.(turnSession) ?? turnSession);
+      const effectiveTurnSession = { ...await (this.deps.resolveProviderSession?.(turnSession) ?? turnSession),
+        allowedAdditionalDirectories: [...capturedAdditionalDirectories] };
       const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
         executionOptions,

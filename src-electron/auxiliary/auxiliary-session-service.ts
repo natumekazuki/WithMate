@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-reviewer.js";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
@@ -432,20 +433,18 @@ export class AuxiliarySessionService {
     }
     if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
     const fresh = this.overlayExecutionOptions(current);
+    const parent = await this.deps.getParentSession(fresh.parentSessionId);
+    this.assertStorageIdentity(storage, identity);
+    if (!parent || parent.accessMode !== "active") throw new Error("The parent Session is unavailable or read-only.");
+    if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
     const provider = getProviderCatalog(snapshot?.providers ?? [], fresh.provider);
     if (!snapshot || !provider || provider.id !== session.provider) {
       throw new Error("The Auxiliary Session provider is not in the model catalog.");
     }
-    const options = validateSessionExecutionOptions(request.executionOptions, provider, snapshot.revision);
+    const options = { ...validateSessionExecutionOptions(request.executionOptions, provider, snapshot.revision),
+      codexReviewer: resolveCodexReviewerUpdate(fresh, request.executionOptions.codexReviewer) };
     this.assertStorageIdentity(storage, identity);
     if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
-    if (fresh.runState === "running" || this.deps.isAuxiliaryRunInFlight?.(fresh.id)) {
-      if (options.approvalMode !== fresh.approvalMode || options.codexSandboxMode !== fresh.codexSandboxMode
-        || options.codexSpeed !== fresh.codexSpeed || options.codexReviewer !== fresh.codexReviewer
-        || options.customAgentName !== fresh.customAgentName) {
-        throw new Error("A running Auxiliary Session cannot change these execution options.");
-      }
-    }
     this.deps.rememberExecutionOptions?.(fresh, options);
     const previous = this.selectionCheckpoints.get(session.id) ?? Promise.resolve();
     const checkpoint = previous.catch(() => {}).then(async () => {
@@ -1266,7 +1265,7 @@ export class AuxiliarySessionService {
       codexSpeed: runtimeSession.codexSpeed,
       codexReviewer: runtimeSession.codexReviewer,
       customAgentName: runtimeSession.customAgentName,
-      allowedAdditionalDirectories: [...runtimeSession.allowedAdditionalDirectories],
+      allowedAdditionalDirectories: [...current.allowedAdditionalDirectories],
       threadId: runtimeSession.threadId,
       composerDraft: "",
       messages: runtimeSession.messages,
@@ -1288,13 +1287,23 @@ export class AuxiliarySessionService {
     if (!current) {
       throw new Error("The Auxiliary Session could not be found.");
     }
-    if (current.runState === "running") {
-      throw new Error("A running Auxiliary Session cannot be updated.");
-    }
-
     const hasStaleRuntimeThread = session.threadId !== current.threadId && current.threadId !== "";
     if (session.createdAt !== current.createdAt || session.parentSessionId !== current.parentSessionId) {
       throw new Error("The Auxiliary Session incarnation does not match.");
+    }
+    if (current.runState === "running" || this.deps.isAuxiliaryRunInFlight?.(current.id)) {
+      const parent = await this.deps.getParentSession(current.parentSessionId);
+      if (!parent || parent.accessMode !== "active") throw new Error("The parent Session is unavailable or read-only.");
+      if (session.title !== current.title || session.provider !== current.provider || session.status !== current.status
+        || session.runState !== current.runState || session.threadId !== current.threadId) {
+        throw new Error("A running Auxiliary Session cannot be updated.");
+      }
+      const updated = await storage.updateAuxiliarySessionIfMatches({
+        session: { ...current, allowedAdditionalDirectories: [...session.allowedAdditionalDirectories], updatedAt: currentTimestampLabel() },
+        expectedSession: current,
+      });
+      if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+      return this.overlayExecutionOptions(updated);
     }
     const isRuntimeStalePayload =
       session.runState !== current.runState ||

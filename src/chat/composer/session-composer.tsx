@@ -243,6 +243,7 @@ export function SessionComposerExpanded({
   const composerFrozen = composerController?.registry.isFrozen === true;
   const composerSaveFailed = composerControllerState.saveState === "error";
   const canQueueTurn = isRunning && !!onQueueTurn;
+  const composerControlsDisabled = composerBlocked || composerFrozen || (isRunning && !canQueueTurn);
   const projectedComposerSendability = composerController
     ? resolveComposerSendabilityState({
         runState: isRunning ? "running" : "idle",
@@ -360,7 +361,7 @@ export function SessionComposerExpanded({
                 onOpenPromptTemplates();
               }}
               aria-pressed={isPromptTemplateWorkspaceOpen}
-              disabled={isRunning || composerBlocked || composerFrozen}
+              disabled={composerControlsDisabled}
             >
               Template
             </button>
@@ -377,7 +378,7 @@ export function SessionComposerExpanded({
                   }
                   onToggleAgentPicker();
                 }}
-                disabled={!canSelectCustomAgent || isRunning || composerBlocked || composerFrozen}
+                disabled={!canSelectCustomAgent || composerControlsDisabled}
                 aria-expanded={isAgentPickerOpen}
                 aria-haspopup="listbox"
                 aria-controls={isAgentPickerOpen ? "composer-agent-picker-list" : undefined}
@@ -400,7 +401,7 @@ export function SessionComposerExpanded({
                 }
                 onToggleSkillPicker();
               }}
-              disabled={isRunning || composerBlocked || composerFrozen}
+              disabled={composerControlsDisabled}
               aria-expanded={isSkillPickerOpen}
               aria-haspopup="listbox"
               aria-controls={isSkillPickerOpen ? "composer-skill-picker-list" : undefined}
@@ -426,7 +427,7 @@ export function SessionComposerExpanded({
                   }
                   onAddAdditionalDirectory();
                 }}
-                disabled={isRunning || composerBlocked || composerFrozen}
+                disabled={composerControlsDisabled}
               >
                 Add Directory
               </button>
@@ -545,7 +546,7 @@ export function SessionComposerExpanded({
       ) : null}
 
       <div className="composer-input-row">
-        <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
+        <div className={`composer-box${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
           <textarea
             ref={composerTextareaRef}
             data-shortcut-scope="composer"
@@ -617,7 +618,7 @@ export function SessionComposerExpanded({
                 <select
                   value={selectedApprovalMode}
                   onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
-                  disabled={isRunning || composerBlocked}
+                  disabled={composerControlsDisabled}
                   aria-label="Approval"
                   aria-invalid={approvalOptions.some((option) => option.value === selectedApprovalMode && option.disabled) || undefined}
                 >
@@ -637,8 +638,8 @@ export function SessionComposerExpanded({
                     onChange={(event) => onChangeCodexReviewer(event.target.value as CodexReviewer)}
                     disabled={isCodexReviewerControlDisabled({
                       approvalMode: selectedApprovalMode,
-                      isRunning,
-                      composerBlocked,
+                      isRunning: isRunning && !canQueueTurn,
+                      composerBlocked: composerBlocked || composerFrozen,
                     })}
                     aria-label="Reviewer"
                   >
@@ -657,7 +658,7 @@ export function SessionComposerExpanded({
                   <select
                     value={selectedCodexSandboxMode}
                     onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
-                    disabled={isRunning || composerBlocked}
+                    disabled={composerControlsDisabled}
                     aria-label="Sandbox"
                   >
                     {sandboxOptions.map((option) => (
@@ -676,7 +677,7 @@ export function SessionComposerExpanded({
             <select
               value={selectedModel}
               onChange={(event) => onChangeModel(event.target.value)}
-              disabled={isRunning || composerBlocked || composerFrozen}
+              disabled={composerControlsDisabled}
             >
               {modelOptions.length > 0 ? (
                 modelOptions.map((option) => (
@@ -695,7 +696,7 @@ export function SessionComposerExpanded({
             <select
               value={selectedReasoningEffort}
               onChange={(event) => onChangeReasoningEffort(event.target.value)}
-              disabled={isRunning || composerBlocked || composerFrozen}
+              disabled={composerControlsDisabled}
               aria-label="Reasoning depth"
             >
               {reasoningOptions.map((option) => (
@@ -712,7 +713,7 @@ export function SessionComposerExpanded({
               <select
                 value={selectedCodexSpeed}
                 onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
-                disabled={isRunning || composerBlocked}
+                disabled={composerControlsDisabled}
                 aria-label="Speed"
               >
                 {speedOptions.map((option) => (

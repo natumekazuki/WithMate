@@ -3159,7 +3159,7 @@
   background: var(--surface-strong);
 }
 
-.composer-box.running textarea {
+.composer-box textarea:disabled {
   cursor: not-allowed;
   opacity: 0.72;
 }
@@ -4005,28 +4005,24 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   margin-top: 8px;
-  color: var(--ink);
-  font-size: 12px;
+  padding-top: 8px;
+  padding-right: 40px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
   overflow-wrap: anywhere;
 }
 
-.session-turn-queue-history {
-  min-width: 0;
-  margin-top: 12px;
-  overflow-wrap: anywhere;
+.session-turn-queue-status .drawer-toggle {
+  min-height: 28px;
 }
 
-.session-turn-queue-history > label {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.session-turn-queue-history select {
-  min-width: 0;
-  max-width: 100%;
+.session-turn-queue-reason {
+  flex-basis: 100%;
+  text-align: left;
+  font-weight: 400;
 }

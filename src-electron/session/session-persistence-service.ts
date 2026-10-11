@@ -214,7 +214,23 @@ export class SessionPersistenceService {
     }
 
     if (this.deps.isSessionRunInFlight(nextSession.id) || isRunningSession(currentSession)) {
-      throw new Error("A running session cannot be updated.");
+      if (nextSession.taskTitle !== currentSession.taskTitle || nextSession.provider !== currentSession.provider
+        || nextSession.workspacePath !== currentSession.workspacePath || nextSession.threadId !== storedCurrentSession.threadId
+        || nextSession.status !== currentSession.status || nextSession.runState !== currentSession.runState) {
+        throw new Error("A running session cannot be updated.");
+      }
+      return this.enqueueSessionMutation(async () => {
+        const latest = this.deps.getSession(nextSession.id);
+        if (!latest || getSessionIncarnationId(latest) !== getSessionIncarnationId(nextSession)) throw new SessionNotFoundError(nextSession.id);
+        assertSessionWritable(latest);
+        const stored = await this.deps.getStoredSession?.(nextSession.id) ?? latest;
+        if (getSessionIncarnationId(stored) !== getSessionIncarnationId(nextSession)) throw new SessionNotFoundError(nextSession.id);
+        return this.upsertSessionNow({
+          ...stored,
+          allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(stored.workspacePath, nextSession.allowedAdditionalDirectories),
+          updatedAt: nextSession.updatedAt,
+        }, "upsert");
+      });
     }
 
     const shouldResetThreadId =
@@ -296,14 +312,8 @@ export class SessionPersistenceService {
     const fresh = this.deps.overlayCurrentExecutionOptions?.(current) ?? current;
     const provider = catalog.providers.find((entry) => entry.id === fresh.provider);
     if (!provider) throw new Error("The Session provider is not in the model catalog.");
-    const validated = validateSessionExecutionOptions(options, provider, catalog.revision);
-    if (this.deps.isSessionRunInFlight(sessionId, "self") || isRunningSession(fresh)) {
-      if (
-        validated.approvalMode !== fresh.approvalMode || validated.codexSandboxMode !== fresh.codexSandboxMode
-        || validated.codexSpeed !== fresh.codexSpeed || validated.codexReviewer !== fresh.codexReviewer
-        || validated.customAgentName !== fresh.customAgentName
-      ) throw new Error("A running session cannot change these execution options.");
-    }
+    const validated = { ...validateSessionExecutionOptions(options, provider, catalog.revision),
+      codexReviewer: resolveCodexReviewerUpdate(fresh, options.codexReviewer) };
     this.deps.rememberExecutionOptions?.(fresh, validated);
     this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
       ? { ...session, ...validated } : session));

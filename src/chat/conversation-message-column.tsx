@@ -16,7 +16,6 @@ import { subscribeSessionLiveSelection } from "./runtime/session-window-live-ing
 import { useSessionTurnQueue } from "./conversation/use-session-turn-queue.js";
 import { projectSessionTurnQueue } from "./conversation/session-turn-queue-projection.js";
 import { SessionTurnQueueRow } from "./conversation/session-turn-queue-row.js";
-import { SessionTurnQueueHistory } from "./conversation/session-turn-queue-history.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
 
@@ -437,12 +436,12 @@ export function useConversationMessageColumn({
     if (canSendQueuedInput && !composerRegistry.isFrozen && currentInputTurnId) queue.sendInput(receipt, currentInputTurnId);
   }, [canSendQueuedInput, composerRegistry, currentInputTurnId, queue.sendInput]);
   const inputAction = canSendQueuedInput ? sendQueuedInput : undefined;
-  const queueTail = useMemo(() => !isBrowsing && api?.listSessionTurnQueue ? <>
+  const queueTail = useMemo(() => !isBrowsing && api?.listSessionTurnQueue
+    && (queuedProjection.tail.length > 0 || queue.error || queue.loading && queue.receipts.length > 0) ? <>
     {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
-    {queue.loading ? <LoadingIndicator inline label="Loading queued turns" /> : null}
+    {queue.loading && queue.receipts.length > 0 ? <LoadingIndicator inline label="Loading queued turns" /> : null}
     {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
-    <SessionTurnQueueHistory key={`${sessionId}:${queueIncarnationId}`} api={api} sessionId={sessionId} incarnationId={queueIncarnationId} busyId={queue.busyId} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />
-  </> : undefined, [isBrowsing, api, queuedProjection.tail, queue.busyId, queue.cancel, queue.release, queue.loading, queue.error, queue.reload, inputAction, sessionId, queueIncarnationId]);
+  </> : undefined, [isBrowsing, api, queuedProjection.tail, queue.busyId, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction]);
   if (!session) return null;
   return {
     ...baseProps,

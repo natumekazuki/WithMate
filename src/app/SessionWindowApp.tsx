@@ -1315,7 +1315,6 @@ export default function AgentSessionWindowApp() {
     await runMainRuntimeOptionOperation({
       session: getCurrentMainSession(),
       isReadOnly: isSelectedSessionReadOnly,
-      runState: selectedSessionRunState,
       providerCatalog: selectedProviderCatalog,
       catalogRevision: modelCatalog?.revision ?? null,
       option,
@@ -1357,12 +1356,7 @@ export default function AgentSessionWindowApp() {
     if (!withmateApi || !current || isSelectedSessionReadOnly) return;
     const next = recipe(current);
     if (next === current) return;
-    if ((current.runState === "running" && (
-      next.approvalMode !== current.approvalMode ||
-      next.codexSandboxMode !== current.codexSandboxMode ||
-      next.codexSpeed !== current.codexSpeed ||
-      next.codexReviewer !== current.codexReviewer
-    )) || (current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer)) return;
+    if (current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer) return;
     const executionOptions = captureSessionExecutionOptions(next);
     const selectionKey = `${current.id}:${current.createdAt}`;
     const revision = (auxiliaryExecutionOptionsRequestRevisionsRef.current.get(selectionKey) ?? 0) + 1;
@@ -1847,8 +1841,7 @@ export default function AgentSessionWindowApp() {
       canPickDirectory: () => !!withmateApi &&
         !composerRegistry.isFrozen &&
         !!selectedSession &&
-        !isSelectedSessionReadOnly &&
-        selectedSessionRunState !== "running",
+        !isSelectedSessionReadOnly,
       getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, selectedSession?.workspacePath),
       pickDirectory: (baseDirectory) => withmateApi?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
       applyPickedDirectory: async (selectedPath) => {
@@ -1871,8 +1864,7 @@ export default function AgentSessionWindowApp() {
       canRemoveDirectory: () => !!selectedSession &&
         !composerRegistry.isFrozen &&
         !isSelectedSessionReadOnly &&
-        selectedSession.provider === "codex" &&
-        selectedSessionRunState !== "running",
+        selectedSession.provider === "codex",
       removeDirectory: async (targetPath) => {
         if (!selectedSession) {
           return false;

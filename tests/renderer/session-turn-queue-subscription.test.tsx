@@ -3,7 +3,6 @@ import test from "node:test";
 import React, { act } from "react";
 import { JSDOM } from "jsdom";
 import { useSessionTurnQueue, type SessionTurnQueueApi } from "../../src/chat/conversation/use-session-turn-queue.js";
-import { SessionTurnQueueHistory } from "../../src/chat/conversation/session-turn-queue-history.js";
 import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-queue-row.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
@@ -22,8 +21,8 @@ async function mount(api: SessionTurnQueueApi) {
   function View({ seqs }: { seqs: number[] }) {
     current = useSessionTurnQueue(api, "session", "incarnation", true, seqs);
     return <>
-      {current.receipts.filter((item) => item.state === "queued").map((item) => <SessionTurnQueueRow key={item.id} receipt={item} busy={current.busyId !== null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />)}
-      <SessionTurnQueueHistory api={api} sessionId="session" incarnationId="incarnation" busyId={current.busyId} onCancel={current.cancel} onRelease={current.release} />
+      {current.receipts.map((item) => <SessionTurnQueueRow key={item.id} receipt={item} busy={current.busyId !== null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />)}
+      {current.error ? <div role="alert">{current.error}<button onClick={current.reload}>Retry Queue</button></div> : null}
     </>;
   }
   const { createRoot } = await import("react-dom/client");
@@ -32,7 +31,6 @@ async function mount(api: SessionTurnQueueApi) {
   return {
     get current() { return current; }, document: dom.window.document,
     async canonical(seqs: number[]) { await act(async () => { root.render(<View seqs={seqs} />); }); },
-    async openHistory() { await act(async () => { const details = dom.window.document.querySelector("details")!; details.open = true; details.dispatchEvent(new dom.window.Event("toggle")); }); },
     async click(text: string) { await act(async () => {
       const button = [...dom.window.document.querySelectorAll("button")].find((item) => item.textContent === text);
       assert.ok(button, text); button.click();
@@ -125,45 +123,87 @@ test("queued chat input captures the turn once and bridges a fast canonical acce
 
 // @test-value v2
 // kind = "contract"
-// claim = "再open後の通常terminal receiptは明示的に一pageずつ選択でき、次page失敗時は既存pageとRetryを保持する"
-// oracle = { type = "contract", ref = "Issue #801: explicit paged receipt history" }
-// fault = "履歴を自動全page取得する、completedを選択表示できない、またはpage失敗を空成功へ置換する"
-// observable = "明示操作前後のcursor呼出し列、Completed本文、失敗後の既存optionとRetry、次pageへの置換"
+// claim = "結果不明の予約本文は同じbubbleに保持し、後続turnの解放を一度だけ要求し、取得失敗時は本文と明示Retryを維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 予約行の結果不明とRelease Later Turns" }
+// fault = "結果不明の本文を落とす、解放を連打で重複する、または取得失敗を空成功へ置換する"
+// observable = "bubbleの本文と状態、解放API引数と回数、待機中disabled、失敗後本文とRetry後error解消"
 // observation_boundary = "component-behavior"
-// scope = "queue-receipt-history"
+// scope = "queue-bubble-recovery"
 // lifecycle = "permanent"
-// impact = "再open後の受付照会を可能にし、過去全件の常駐と取得失敗の隠蔽を防ぐ"
-// distinction = "active subscriptionのtestは利用者による履歴選択・ページ遷移を検証しない"
+// impact = "元要求を再実行せず後続を解放でき、取得障害中に受付本文を見失わない"
+// distinction = "純粋projectionやstorage testではbubbleの回復buttonと購読hookへの接続を検証できない"
 // @end-test-value
-test("receipt history fetches one page per explicit action and exposes retry", async () => {
-  const cursors: Array<number | undefined> = []; let failNext = true;
+test("interrupted bubble releases later turns once and retains its body through retry", async () => {
+  let interrupted = receipt({ state: "interrupted", turnId: null, userMessageSeq: null });
+  let fail = false;
+  let completeRelease!: () => void;
+  const released: Array<[string, string]> = [];
+  let listener!: (id: string) => void;
   const view = await mount({
-    listSessionTurnQueue: async () => [],
-    listSessionTurnQueueReceipts: async (_session, options) => {
-      cursors.push(options?.cursor);
-      if (options?.cursor === 1) {
-        if (failNext) throw new Error("history unavailable");
-        return { receipts: [receipt({ id: "second", sequence: 2, state: "canceled", captured: { ...receipt().captured, request: { ...receipt().captured.request, clientRequestId: "second", userMessage: "second prompt" } } })], nextCursor: null };
-      }
-      return { receipts: [receipt({ state: "completed" })], nextCursor: 1 };
+    listSessionTurnQueue: async () => { if (fail) throw new Error("queue unavailable"); return [interrupted]; },
+    onSessionTurnQueueChanged: (next) => { listener = next; return () => {}; },
+    releaseInterruptedSessionTurn: async (sessionId, id) => {
+      released.push([sessionId, id]);
+      await new Promise<void>((resolve) => { completeRelease = resolve; });
+      interrupted = { ...interrupted, releasedAt: "released" };
+      return interrupted;
     },
   });
   try {
-    assert.equal(cursors.length, 0);
-    await view.openHistory();
-    assert.deepEqual(cursors, [undefined]);
-    assert.match(view.document.body.textContent!, /Completed/);
-    assert.match(view.document.body.textContent!, /original prompt/);
-    await view.click("Next Receipts");
-    assert.deepEqual(cursors, [undefined, 1]);
-    assert.match(view.document.querySelector("[role=alert]")!.textContent!, /history unavailable/);
-    assert.match(view.document.querySelector("option")!.textContent!, /Completed/);
-    failNext = false; await view.click("Retry Receipts");
-    assert.deepEqual(cursors, [undefined, 1, 1]);
-    assert.equal(view.document.querySelectorAll("option").length, 1);
-    assert.match(view.document.querySelector("option")!.textContent!, /Canceled/);
-    assert.doesNotMatch(view.document.body.textContent!, /original prompt/);
-    await view.click("Previous Receipts");
-    assert.deepEqual(cursors, [undefined, 1, 1, undefined]);
+    const bubble = view.document.querySelector(".message-card.user")!;
+    assert.match(bubble.textContent!, /original prompt/);
+    assert.match(bubble.textContent!, /Execution outcome is unknown/);
+    await view.click("Release Later Turns");
+    await view.click("Release Later Turns");
+    assert.deepEqual(released, [["session", "item"]]);
+    assert.equal(bubble.querySelector("button")!.disabled, true);
+    await act(async () => completeRelease());
+    assert.equal(view.current.receipts[0]?.releasedAt, "released");
+    fail = true;
+    await act(async () => listener("session"));
+    assert.match(bubble.textContent!, /original prompt/);
+    assert.match(view.document.querySelector("[role=alert]")!.textContent!, /queue unavailable/);
+    fail = false;
+    await view.click("Retry Queue");
+    assert.equal(view.current.error, "");
+    assert.equal(view.current.receipts[0]?.captured.request.userMessage, "original prompt");
+    assert.equal(released.length, 1);
+  } finally { await view.unmount(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "予約bubbleの取消は対象要求を一度だけ指定し、取消確定まで本文を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 予約行の個別Cancel" }
+// fault = "取消を別要求へ送る、連打で重複する、または未確定取消で本文を消す"
+// observable = "bubble本文、取消API引数と回数、待機中disabled、確定後queue"
+// observation_boundary = "component-behavior"
+// scope = "queued-bubble-cancellation"
+// lifecycle = "permanent"
+// impact = "取消対象の誤りと未確定時の受付本文消失を防ぐ"
+// distinction = "storage取消testはbubble操作からhookへの接続と待機中表示を確認しない"
+// @end-test-value
+test("queued bubble preserves input until its single cancellation settles", async () => {
+  let active = [receipt({ state: "queued", turnId: null, userMessageSeq: null })];
+  let completeCancel!: () => void;
+  const canceled: Array<[string, string]> = [];
+  const view = await mount({
+    listSessionTurnQueue: async () => active,
+    cancelQueuedSessionTurn: async (sessionId, id) => {
+      canceled.push([sessionId, id]);
+      await new Promise<void>((resolve) => { completeCancel = resolve; });
+      active = [];
+      return receipt({ state: "canceled" });
+    },
+  });
+  try {
+    await view.click("Cancel");
+    await view.click("Cancel");
+    assert.deepEqual(canceled, [["session", "item"]]);
+    assert.match(view.document.querySelector(".message-card.user")!.textContent!, /original prompt/);
+    assert.equal(view.document.querySelector<HTMLButtonElement>('button[aria-label="Cancel queued turn"]')!.disabled, true);
+    await act(async () => completeCancel());
+    assert.equal(view.current.receipts.length, 0);
+    assert.equal(canceled.length, 1);
   } finally { await view.unmount(); }
 });

@@ -29,9 +29,9 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - `Session Window` から実行中 session を明示キャンセルできる
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
-- 実行中 session の approval / sandbox / Reviewer / Speed / custom agent / title / delete の変更は UI と Main Process の両方でブロックする。ActionDockのmodel / depthも対象会話の実行中は現在値を表示したまま変更不可にする。実行中 turn が捕捉した設定は変更しない。現在選択と保存 checkpoint の境界は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する。
+- ActionDockは次の依頼の編集面として、Main / Auxiliaryの実行中も対応するapproval / sandbox / Reviewer / Speed / custom agent / model / depthとAdditional Directoryを変更できる。実行中 turn の捕捉済み設定やprovider権限は変更せず、現在選択は次の送信へ適用する。title / deleteの変更は引き続きUIとMain Processでブロックする。現在選択と保存 checkpoint の境界は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する。
 - Turn の admission は対象 session の開始登録と provider の利用中判定だけを短い ownership 境界で行う。provider 入力の準備、workspace / SessionFolder 操作、Character 読込、外部 provider 呼出し、長い SQLite command の完了待ちはその境界の外で行い、別 session の開始・削除を不要に待たせない。
-- admission は provider → ownership の順で開始予約を登録し、Worker の Session / 親読込みを排他外で待つ。その間は starting 判定が削除・設定変更・Auxiliary 終了から対象を保護する。読込み後は短い同順序の排他内で owner、maintenance、cancel、provider cleanup 状態を再確認する。予約より先に所有権を得た削除は読込み発行前に完了し、拒否時は予約を解放して provider を開始しない。
+- admission は provider → ownership の順で開始予約を登録し、Worker の Session / 親読込みを排他外で待つ。その間は starting 判定が削除・provider変更・Auxiliary 終了から対象を保護する。次送信用の実行設定選択は捕捉済みturnとは独立して変更できる。読込み後は短い同順序の排他内で owner、maintenance、cancel、provider cleanup 状態を再確認する。予約より先に所有権を得た削除は読込み発行前に完了し、拒否時は予約を解放して provider を開始しない。
 - V6 の保存 command は current storage Worker generation に送る。close / reset / reopen 後の旧 generation からの応答は current DB へ書き換えず、commit 結果不明を自動 retry しない。
 
 ## Lifecycle Model
@@ -64,7 +64,7 @@ atomic開始後に結果不明となった要求の明示解放は、実guard解
 
 予約項目の現在Turnへの入力は通常claim／取消と同じSession lockで`starting`へclaimし、捕捉済み添付を検証してからproviderへ送る。受理したuser messageとreceiptの`completed`を同じtransactionで保存する。provider未呼出を証明できる失敗だけ予約へ戻し、送信結果不明では`interrupted`として後続を保留する。追加入力の解放は現在Turnのruntime状態を書き換えず、元要求を再送しない。
 
-通常購読はactive receiptだけを取得する。running行は保存user seq／incarnationで通常messageへ対応付け、terminal通知が保存本文より先に届いても小さい表示bridgeを保持する。live応答は待機列より前に表示し、保存本文とqueue本文を本文一致で結合しない。全receipt履歴は明示操作で30件ずつ取得する。取得失敗で既存表示を空へ置換せずRetryを提供する。
+通常購読はactive receiptだけを取得する。running行は保存user seq／incarnationで通常messageへ対応付け、terminal通知が保存本文より先に届いても小さい表示bridgeを保持する。live応答は待機列より前に表示し、保存本文とqueue本文を本文一致で結合しない。予約の状態と必要な操作は対象user bubbleに添え、通常履歴と別のreceipt一覧は表示しない。取得失敗で既存表示を空へ置換せずRetryを提供する。
 
 ## Ownership
 

@@ -668,6 +668,18 @@ test("resolveAuxiliarySessionSendTarget は session 変更と running を区別�
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "編集対象resolverは実行中も同ownerの現行Auxiliaryを返し異なるID/親/incarnationを拒否する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: 次の依頼の編集面" }
+// fault = "running編集を黙って捨てるか別ownerのSessionを編集対象へ返す"
+// observable = "現行Session参照またはnullの戻り値"
+// observation_boundary = "public-boundary"
+// scope = "Auxiliary editable target resolution"
+// lifecycle = "permanent"
+// impact = "次依頼のdirectory選択が消えるか切替後の別会話へ反映される"
+// distinction = "backend mutation testはRenderer共有resolverの対象選択を通らない"
+// @end-test-value
 test("resolveEditableActiveAuxiliarySession は保存対象の active session を返す", () => {
   const activeSession = createAuxiliarySession();
   const currentSession = createAuxiliarySession({ title: "current" });
@@ -693,15 +705,25 @@ test("resolveEditableActiveAuxiliarySession は保存対象の active session �
     }),
     null,
   );
-  assert.equal(
-    resolveEditableActiveAuxiliarySession({
-      activeSession,
-      currentSession: createAuxiliarySession({ runState: "running" }),
-    }),
-    null,
-  );
+  const running = createAuxiliarySession({ runState: "running" });
+  assert.equal(resolveEditableActiveAuxiliarySession({ activeSession, currentSession: running }), running);
+  for (const changed of [createAuxiliarySession({ parentSessionId: "other-parent" }), createAuxiliarySession({ createdAt: "other-incarnation" })]) {
+    assert.equal(resolveEditableActiveAuxiliarySession({ activeSession, currentSession: changed }), null);
+  }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary編集recipeは同ownerの実行中Sessionにも適用しdirectory以外の本文/runStateを保持して異なるIDを拒否する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: Additional Directoryの次送信用編集" }
+// fault = "running recipeを適用しないか古いactive Sessionを基底にして現行本文を失う"
+// observable = "recipe適用結果のdirectory/本文/runStateとowner不一致のnull"
+// observation_boundary = "public-boundary"
+// scope = "Auxiliary editable recipe resolution"
+// lifecycle = "permanent"
+// impact = "次依頼のdirectory追加を反映できないか現在会話の状態を戻す"
+// distinction = "resolver参照のtestだけではrecipeに渡された実基底を検証できない"
+// @end-test-value
 test("buildEditableActiveAuxiliarySessionPatch は保存対象 session に recipe を適用する", () => {
   const activeSession = createAuxiliarySession({ title: "active" });
   const currentSession = createAuxiliarySession({ title: "current" });
@@ -725,13 +747,14 @@ test("buildEditableActiveAuxiliarySessionPatch は保存対象 session に recip
     }),
     null,
   );
-  assert.equal(
+  const running = createAuxiliarySession({ runState: "running", messages: [{ role: "user", text: "current" }] });
+  assert.deepEqual(
     buildEditableActiveAuxiliarySessionPatch({
       activeSession,
-      currentSession: createAuxiliarySession({ runState: "running" }),
-      recipe: (current) => ({ ...current, title: "next" }),
+      currentSession: running,
+      recipe: (current) => ({ ...current, allowedAdditionalDirectories: ["C:/next"] }),
     }),
-    null,
+    { ...running, allowedAdditionalDirectories: ["C:/next"] },
   );
 });
 
