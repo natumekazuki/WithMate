@@ -16,6 +16,7 @@ import {
 } from "../../src/chat/chat-window-adapter.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { SessionSummaryInvalidation } from "../../src-shared/session/session-state.js";
 
 type AuxiliaryWorkspaceApi = Omit<WorkspaceApi, "getAuxiliarySessionStatus"> & Partial<Pick<WorkspaceApi, "getAuxiliarySessionStatus">>;
 
@@ -128,6 +129,115 @@ function deferred<T>() {
   const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; });
   return { promise, resolve, reject };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "実行状態が変わらないAuxiliary追加入力も親の保存通知で表示され、本文deltaや対象外・metadata通知では詳細再読込みを増やさない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+// fault = "保存通知を購読せず同じrunの受理済入力を表示しない、またはlive本文deltaだけで詳細を再取得する"
+// observable = "hookのselectedSession.messages/runState、getAuxiliarySession呼出件数、実行設定とBookmark"
+// observation_boundary = "component-behavior"
+// scope = "Auxiliary workspaceの保存済入力反映とlive statusの分離"
+// lifecycle = "permanent"
+// impact = "Providerに届いた追加入力が会話から欠落し、利用者が入力到達を判断できなくなることを防ぐ"
+// distinction = "storage/runtime testはRenderer購読を通らず、terminal testは同じrunの途中での反映を検出できない。小さい実hook fixtureで通知境界を検証する"
+// @end-test-value
+test("同じAuxiliary runの追加入力は保存通知で表示し、live deltaでは本文を再取得しない", async () => {
+  const initial = session("a", "created", { runState: "running" });
+  let stored = initial;
+  let reads = 0;
+  let savedListener: ((payload: SessionSummaryInvalidation) => void) | undefined;
+  let liveListener: Parameters<NonNullable<WorkspaceApi["subscribeLiveSessionRun"]>>[0] | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => [initial],
+    getAuxiliarySession: async () => { reads += 1; return stored; },
+    getAuxiliarySessionStatus: async () => ({ ...initial, runState: "running" }),
+    subscribeSessionInvalidation: (listener) => { savedListener = listener; return () => { savedListener = undefined; }; },
+    subscribeLiveSessionRun: (listener) => { liveListener = listener; return () => { liveListener = undefined; }; },
+  });
+  try {
+    await view.render();
+    const binding = view.current.getBinding(initial.id);
+    await act(async () => {
+      binding.setExecutionSelection({ ...initial, reasoningEffort: "high" });
+      binding.setMessageBookmark(0, true);
+      liveListener?.(initial.id, { runState: "running", turnId: "turn-1", inputAvailable: true } as never);
+    });
+    stored = { ...initial, messages: [{ ...initial.messages[0], isBookmarked: true }, { role: "user", text: "割込み本文" }] };
+    await act(async () => {
+      savedListener?.({ scope: "ids", sessionIds: ["unrelated"] });
+      savedListener?.({ scope: "ids", sessionIds: [initial.parentSessionId], detailChanged: false });
+      liveListener?.(initial.id, { runState: "running", turnId: "turn-1", inputAvailable: true, assistantText: "delta" } as never);
+    });
+    assert.equal(reads, 1);
+    await act(async () => { savedListener?.({ scope: "ids", sessionIds: [initial.parentSessionId] }); });
+    assert.deepEqual(view.current.selectedSession?.messages.map((message) => message.text), ["a response", "割込み本文"]);
+    assert.equal(view.current.selectedSession?.runState, "running");
+    assert.equal(view.current.selectedSession?.reasoningEffort, "high");
+    assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked, true);
+    assert.equal(reads, 2);
+    await act(async () => { savedListener?.({ scope: "all" }); });
+    assert.equal(view.current.selectedSession?.messages.filter((message) => message.text === "割込み本文").length, 1);
+    assert.equal(reads, 3);
+  } finally { await view.unmount(); }
+  assert.equal(savedListener, undefined);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryの保存通知とterminalの詳細取得が逆順に完了しても最新本文とBookmarkを保持し、再取得失敗では本文を失わず次の通知で回復する"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md: 読取と通知" }
+// fault = "古い保存通知の応答でterminal本文を巻き戻すか、読込中Bookmark変更を落とすか、取得失敗で表示済み本文を消す"
+// observable = "selectedSession.messages/runState/Bookmark、detailErrorと再取得後の本文"
+// observation_boundary = "component-behavior"
+// scope = "Auxiliary workspaceの保存通知・terminal詳細readと局所失敗回復"
+// lifecycle = "permanent"
+// impact = "割込みと完了応答の喪失・誤表示、利用者のBookmark消失を防ぐ"
+// distinction = "同期したreadやterminal同士のtestでは保存通知との交差を検証できず、型では応答順とBookmark revisionの保持を検出できない"
+// @end-test-value
+test("保存通知とterminalの逆順readでも最新本文を保持し、読込失敗から回復する", async () => {
+  const initial = session("a", "created", { runState: "running" });
+  const oldRead = deferred<AuxiliarySession>();
+  const terminalRead = deferred<AuxiliarySession>();
+  let reads = 0;
+  let savedListener: ((payload: SessionSummaryInvalidation) => void) | undefined;
+  let liveListener: Parameters<NonNullable<WorkspaceApi["subscribeLiveSessionRun"]>>[0] | undefined;
+  const completed = { ...initial, runState: "idle" as const,
+    messages: [...initial.messages, { role: "user" as const, text: "割込み" }, { role: "assistant" as const, text: "完了応答" }] };
+  const view = setup({
+    listAuxiliarySessions: async () => [initial],
+    getAuxiliarySession: async () => {
+      reads += 1;
+      if (reads === 1) return initial;
+      if (reads === 2) return oldRead.promise;
+      if (reads === 3) return terminalRead.promise;
+      if (reads === 4) throw new Error("read failed");
+      return completed;
+    },
+    subscribeSessionInvalidation: (listener) => { savedListener = listener; return () => { savedListener = undefined; }; },
+    subscribeLiveSessionRun: (listener) => { liveListener = listener; return () => { liveListener = undefined; }; },
+  });
+  try {
+    await view.render();
+    await act(async () => { savedListener?.({ scope: "ids", sessionIds: [initial.parentSessionId] }); });
+    await act(async () => { liveListener?.(initial.id, null); });
+    await act(async () => { view.current.getBinding(initial.id).setMessageBookmark(0, true); });
+    await act(async () => { terminalRead.resolve(completed); });
+    assert.deepEqual(view.current.selectedSession?.messages.map((message) => message.text), ["a response", "割込み", "完了応答"]);
+    assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked, true);
+    await act(async () => { oldRead.resolve(initial); });
+    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "完了応答");
+    assert.equal(view.current.selectedSession?.runState, "idle");
+    completed.messages[0] = { ...completed.messages[0], isBookmarked: true };
+    await act(async () => { savedListener?.({ scope: "all" }); });
+    assert.match(view.current.detailError?.message ?? "", /read failed/);
+    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "完了応答");
+    await act(async () => { savedListener?.({ scope: "all" }); });
+    assert.equal(view.current.detailError, null);
+    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "完了応答");
+    assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked, true);
+  } finally { await view.unmount(); }
+});
 
 // @test-value v2
 // kind = "contract"

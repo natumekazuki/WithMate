@@ -26,6 +26,7 @@ import {
 import { runMainSessionTurnOperation } from "./run-main-session-turn-operation.js";
 import { SessionTurnAcceptance } from "./session-turn-acceptance.js";
 import type { AuxiliaryDraftPersistenceOwner } from "../auxiliary-draft-persistence-owner.js";
+import { startConversationDetailSubscription } from "./session-summary-subscription.js";
 import {
   persistMainSession,
   toggleMainSessionPin,
@@ -214,14 +215,10 @@ export function useMainSessionRuntime({
         });
     };
     hydrate();
-    const unsubscribe = api.subscribeSessionInvalidation((payload) => {
-      if (
-        !active ||
-        payload.detailChanged === false ||
-        (payload.scope === "ids" && !payload.sessionIds.includes(selectedId))
-      )
-        return;
-      hydrate();
+    const unsubscribe = startConversationDetailSubscription({
+      api,
+      ownerSessionId: selectedId,
+      onChange: hydrate,
     });
     return () => {
       active = false;
