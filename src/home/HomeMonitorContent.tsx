@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 
 import type {
   SessionMonitorContextMenuPoint,
@@ -13,6 +13,7 @@ import { CharacterAvatar } from "../ui/ui-utils.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
+import { ChatDockSplitter } from "../chat/chat-window.js";
 
 export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];
@@ -100,6 +101,15 @@ export function HomeMonitorContent({
   onShowContextMenu,
 }: HomeMonitorContentProps) {
   const [expandedEntryKeys, setExpandedEntryKeys] = useState<Set<string>>(() => new Set());
+  const [runningRatio, setRunningRatio] = useState(0.5);
+  const resizeStartRef = useRef<{ ratio: number; height: number } | null>(null);
+  const sectionsId = useId();
+
+  const resizeSections = (ratio: number, height: number) => {
+    if (height <= 0) return;
+    const minimumRatio = Math.min(0.5, 48 / height);
+    setRunningRatio(Math.max(minimumRatio, Math.min(1 - minimumRatio, ratio)));
+  };
 
   const toggleEntry = (entry: HomeMonitorEntry) => {
     const key = getEntryKey(entry);
@@ -264,8 +274,11 @@ export function HomeMonitorContent({
       {!feedback && isLoading && (auxiliaryDataState === "loading" || (runningEntries.length === 0 && nonRunningEntries.length === 0)) ? (
         <LoadingIndicator label={loadingMessage.replace(/…$/, "")} className="home-session-list-load-status" />
       ) : null}
-      <div className="home-monitor-sections">
-        <section className="home-monitor-section" aria-labelledby="home-monitor-running">
+      <div
+        className="home-monitor-sections"
+        style={{ gridTemplateRows: `minmax(48px, ${runningRatio}fr) var(--session-dock-splitter-size) minmax(48px, ${1 - runningRatio}fr)` }}
+      >
+        <section id={sectionsId} className="home-monitor-section" aria-labelledby="home-monitor-running">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-running">Running</h3>
             <span className="home-monitor-count">{runningEntries.length}</span>
@@ -278,6 +291,38 @@ export function HomeMonitorContent({
                 : null}
           </div>
         </section>
+
+        <ChatDockSplitter
+          edge="bottom"
+          className="home-monitor-splitter"
+          canCollapse={false}
+          ariaLabel="Resize Running and Stopped"
+          ariaControls={sectionsId}
+          ariaOrientation="horizontal"
+          ariaValueNow={Math.round(runningRatio * 100)}
+          title="Drag or use Up/Down arrows to resize Running and Stopped"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            const splitter = event.currentTarget;
+            resizeStartRef.current = {
+              ratio: runningRatio,
+              height: (splitter.parentElement?.getBoundingClientRect().height ?? 0) - splitter.getBoundingClientRect().height,
+            };
+          }}
+          onDrag={(_event, delta) => {
+            const start = resizeStartRef.current;
+            if (start) resizeSections(start.ratio + delta.y / start.height, start.height);
+          }}
+          onPointerEnd={() => { resizeStartRef.current = null; }}
+          onKeyDown={(event) => {
+            if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const splitter = event.currentTarget;
+            const height = (splitter.parentElement?.getBoundingClientRect().height ?? 0) - splitter.getBoundingClientRect().height;
+            const nextRatio = event.key === "Home" ? 0 : event.key === "End" ? 1 : runningRatio + (event.key === "ArrowDown" ? 24 : -24) / height;
+            resizeSections(nextRatio, height);
+          }}
+        />
 
         <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
           <div className="home-monitor-section-head">
