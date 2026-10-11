@@ -650,6 +650,7 @@ export function ChatWindow({
             <ConversationMessageColumn
               session={concurrentChats.mainSession ?? { id: resolvedMessageColumnProps.sessionId }}
               messageSourceKind="session"
+              composerRegistry={composerProps.composerController?.registry}
               baseProps={{
                 ...resolvedMessageColumnProps,
                 isContentActive: (resolvedMessageColumnProps.isContentActive ?? true)
@@ -716,6 +717,7 @@ export function ChatWindow({
                 <ConversationMessageColumn
                   session={concurrentChats.auxiliarySession ?? { id: concurrentChats.auxiliary.sessionId }}
                   messageSourceKind="auxiliary"
+                  composerRegistry={composerProps.composerController?.registry}
                   baseProps={{
                     ...concurrentChats.auxiliary,
                     isContentActive: (concurrentChats.auxiliary.isContentActive ?? true)

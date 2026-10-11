@@ -13,6 +13,48 @@ import {
 } from "../../src/chat/composer/session-composer-feedback.js";
 
 describe("session composer feedback", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "実行中でもqueue受付可能なら現在turnのinput能力に依存せず送信でき、blank・busy・実エラーは送信を止める"
+  // oracle = { type = "contract", ref = "Issue #801: Main/Auxiliary共通のSendは実行中にdurable queueへ受付する" }
+  // fault = "queue送信をcurrent-turn input能力で抑止する、またはqueue時に入力検証やbusy guardを省略する"
+  // observable = "resolverのisSendDisabled、primaryFeedback、send button title"
+  // observation_boundary = "public-boundary"
+  // scope = "running composer queue sendability"
+  // lifecycle = "permanent"
+  // impact = "実行中の次turn受付と不正・重複送信防止を維持する"
+  // distinction = "既存idle/busy testではrunning中のqueue能力とcurrent-turn input能力の独立性を検出できない"
+  // @end-test-value
+  it("queue可能なrunning送信はinput能力不要で、通常の送信guardとfeedbackを使う", () => {
+    const options = {
+      runState: "running",
+      canSendInput: false,
+      canQueueTurn: true,
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "next turn",
+      forceBlockedFeedback: true,
+    };
+    const ready = resolveComposerSendabilityState(options);
+    assert.equal(ready.isSendDisabled, false);
+    assert.equal(getComposerSendButtonTitle(ready), "Save this input for the next turn");
+
+    const blank = resolveComposerSendabilityState({ ...options, draftText: " \n " });
+    assert.equal(blank.isSendDisabled, true);
+    assert.equal(blank.primaryFeedback, BLANK_DRAFT_FEEDBACK);
+    for (const guard of [
+      { busyReason: "Message submission is in progress." },
+      { blockedReason: "Read-only session." },
+      { inputErrors: ["Path not found."] },
+    ]) {
+      assert.equal(resolveComposerSendabilityState({ ...options, ...guard }).isSendDisabled, true);
+    }
+    const invalid = resolveComposerSendabilityState({ ...options, inputErrors: ["Path not found."] });
+    assert.equal(invalid.primaryFeedback, "Path not found.");
+    assert.equal(invalid.shouldShowFeedback, true);
+    assert.equal(resolveComposerSendabilityState({ ...options, canQueueTurn: false }).isSendDisabled, true);
+  });
+
   it("blank draft は通常時は disabled だが inline feedback を出さない", () => {
     const state = buildComposerSendabilityState({
       runState: "idle",

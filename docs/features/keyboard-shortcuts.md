@@ -15,7 +15,8 @@ Settingsの`Keyboard shortcuts`では、変更可能なcommandの現在値を確
 - file preview内の検索
 - MarkdownのPreviewとSourceの切り替え
 - 下部パネルのPromptとTerminalの切り替え（既定はWindows／Linuxで`Ctrl+Shift+T`、macOSで`Cmd+Shift+T`）
-- message送信
+- message送信（Windows／Linuxは`Ctrl+Enter`、macOSは`Cmd+Enter`。実行中は次Turnを予約）
+- Codexの実行中追加入力（Windows／Linuxは`Ctrl+Shift+Enter`、macOSは`Cmd+Shift+Enter`。現在のComposer下書きを現在Turnへ送信）
 
 固定操作やOSと衝突しやすい操作は変更対象にしません。
 

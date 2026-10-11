@@ -347,6 +347,7 @@ export type MainIpcAuxiliaryDepsArgs = {
 
 export type MainIpcSessionRuntimeDepsArgs = {
   queue?: MainIpcSessionRuntimeServiceDeps["queue"];
+  getAuxiliarySessionStatus?: MainIpcSessionRuntimeServiceDeps["getAuxiliarySessionStatus"];
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
   getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
   getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null;

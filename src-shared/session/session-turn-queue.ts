@@ -15,6 +15,7 @@ export type SessionTurnQueueReceipt = SessionTurnQueueOwner & {
   state: SessionTurnQueueState;
   captured: SessionTurnQueueCapturedInput;
   turnId: string | null;
+  inputTurnId?: string | null;
   userMessageSeq: number | null;
   reason: string | null;
   releasedAt: string | null;
@@ -33,6 +34,8 @@ export type SessionTurnQueueStore = {
   listReceipts(owner: SessionTurnQueueOwner, options?: { cursor?: number; limit?: number }): Promise<SessionTurnQueueReceiptPage>;
   listPendingOwners(): Promise<SessionTurnQueueOwner[]>;
   claimNext(owner: SessionTurnQueueOwner): Promise<SessionTurnQueueReceipt | null>;
+  claimForInput(owner: SessionTurnQueueOwner, id: string, expectedTurnId: string): Promise<SessionTurnQueueReceipt>;
+  restoreQueuedInput(owner: SessionTurnQueueOwner, id: string, expectedTurnId: string): Promise<SessionTurnQueueReceipt>;
   markStarted(owner: SessionTurnQueueOwner, id: string, input: { turnId: string; userMessageSeq: number }): Promise<SessionTurnQueueReceipt>;
   settle(owner: SessionTurnQueueOwner, id: string, state: Extract<SessionTurnQueueState, "completed" | "failed" | "canceled" | "interrupted">, reason?: string): Promise<SessionTurnQueueReceipt>;
   cancelQueued(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt>;

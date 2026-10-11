@@ -62,6 +62,8 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_session_turns_auxiliary_updated",
   "idx_v6_session_turns_phase_updated",
   "idx_v6_session_turn_queue_owner_state",
+  "idx_v6_session_turn_queue_main_request",
+  "idx_v6_session_turn_queue_auxiliary_request",
   "idx_v6_memory_entries_target_state_updated",
   "idx_v6_memory_entry_tags_lookup",
   "idx_v6_memory_target_tag_stats_page",
@@ -112,7 +114,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
   ],
   session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
   session_file_pins_v6: ["session_id", "root_kind", "root_path", "relative_path", "relative_path_key", "kind", "root_label"],
-  session_turn_queue_v6: ["sequence", "id", "session_id", "incarnation_id", "request_id", "state", "captured_json", "turn_id", "user_message_seq", "reason", "released_at", "created_at", "updated_at"],
+  session_turn_queue_v6: ["sequence", "id", "session_id", "auxiliary_session_id", "incarnation_id", "request_id", "state", "captured_json", "turn_id", "input_turn_id", "user_message_seq", "reason", "released_at", "created_at", "updated_at"],
   auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at"],
   auxiliary_session_messages: ["auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at"],
   session_turns_v6: [
@@ -443,6 +445,7 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     && hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "session_file_pins_v6", "session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "session_turn_queue_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_turn_queue_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "CASCADE")
     && hasForeignKey(db, "auxiliary_session_messages", "auxiliary_session_id", "auxiliary_sessions")
     && hasForeignKey(db, "session_turns_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions")
@@ -564,7 +567,7 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && filePinsSql.includes("PRIMARY KEY (session_id, root_kind, root_path, relative_path_key)")
     && turnQueueSql.includes("state IN ('queued', 'starting', 'running', 'completed', 'failed', 'canceled', 'interrupted')")
     && turnQueueSql.includes("json_valid(captured_json)")
-    && turnQueueSql.includes("UNIQUE (session_id, incarnation_id, request_id)")
+    && turnQueueSql.includes("FOREIGN KEY (auxiliary_session_id)")
     && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
     && auxiliaryStatusConstrained
     && sessionTurnsSql.includes("phase IN ('running', 'completed', 'failed', 'canceled')")
@@ -1278,21 +1281,27 @@ export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     session_id TEXT NOT NULL,
+    auxiliary_session_id TEXT,
     incarnation_id TEXT NOT NULL CHECK (incarnation_id <> ''),
     request_id TEXT NOT NULL CHECK (request_id <> ''),
     state TEXT NOT NULL CHECK (state IN ('queued', 'starting', 'running', 'completed', 'failed', 'canceled', 'interrupted')),
     captured_json TEXT NOT NULL CHECK (json_valid(captured_json)),
     turn_id TEXT,
+    input_turn_id TEXT,
     user_message_seq INTEGER CHECK (user_message_seq IS NULL OR user_message_seq >= 0),
     reason TEXT,
     released_at TEXT CHECK (released_at IS NULL OR state = 'interrupted'),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE (session_id, incarnation_id, request_id),
-    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (auxiliary_session_id) REFERENCES auxiliary_sessions(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_owner_state
-    ON session_turn_queue_v6(session_id, incarnation_id, state, sequence);
+    ON session_turn_queue_v6(session_id, auxiliary_session_id, incarnation_id, state, sequence);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_turn_queue_main_request
+    ON session_turn_queue_v6(session_id, incarnation_id, request_id) WHERE auxiliary_session_id IS NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_turn_queue_auxiliary_request
+    ON session_turn_queue_v6(auxiliary_session_id, incarnation_id, request_id) WHERE auxiliary_session_id IS NOT NULL;
 `;
 
 export const CREATE_V6_SCHEMA_SQL = [
@@ -1402,6 +1411,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
       || statement === CREATE_V6_SESSION_TURNS_TABLE_SQL
+      || statement === CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL
     ) {
       continue;
     }
@@ -1449,6 +1459,26 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
 
   db.exec(CREATE_V6_SESSION_TURNS_TABLE_SQL);
   migrateLegacySessionTurnsV6(db);
+  if (tableExists(db, "session_turn_queue_v6") && !tableColumnNames(db, "session_turn_queue_v6").has("auxiliary_session_id")) {
+    const previousSequence = db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'session_turn_queue_v6'")
+      .get() as { seq: number } | undefined;
+    db.exec("ALTER TABLE session_turn_queue_v6 RENAME TO session_turn_queue_previous_v6");
+    db.exec("DROP INDEX IF EXISTS idx_v6_session_turn_queue_owner_state");
+    db.exec(CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL);
+    db.exec(`INSERT INTO session_turn_queue_v6
+      (sequence, id, session_id, incarnation_id, request_id, state, captured_json, turn_id,
+        user_message_seq, reason, released_at, created_at, updated_at)
+      SELECT sequence, id, session_id, incarnation_id, request_id, state, captured_json, turn_id,
+        user_message_seq, reason, released_at, created_at, updated_at FROM session_turn_queue_previous_v6`);
+    db.exec("DROP TABLE session_turn_queue_previous_v6");
+    if (previousSequence) {
+      db.prepare("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'session_turn_queue_v6'").run(previousSequence.seq);
+      if (!db.prepare("SELECT 1 FROM sqlite_sequence WHERE name = 'session_turn_queue_v6'").get()) {
+        db.prepare("INSERT INTO sqlite_sequence (name, seq) VALUES ('session_turn_queue_v6', ?)").run(previousSequence.seq);
+      }
+    }
+  }
+  db.exec(CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL);
   cleanupForbiddenV6Tables(db);
   if (tableColumnNames(db, "session_turns_v6").has("summary")) {
     db.exec("ALTER TABLE session_turns_v6 DROP COLUMN summary");

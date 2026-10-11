@@ -43,6 +43,9 @@ export class MainSessionTurnQueueFacade {
       clientRequestId: requestId,
       submitSource: source,
       executionOptions: captureSessionExecutionOptions(input.executionOptions),
+      ...(input.auxiliaryDraftIncarnation === undefined ? {} : { auxiliaryDraftIncarnation: input.auxiliaryDraftIncarnation }),
+      ...(input.auxiliaryDraftDurableRevision === undefined ? {} : { auxiliaryDraftDurableRevision: input.auxiliaryDraftDurableRevision }),
+      ...(input.displayAnchorParentMessageCount === undefined ? {} : { displayAnchorParentMessageCount: input.displayAnchorParentMessageCount }),
     };
     const previous = await this.deps.store.getReceipt(owner, requestId);
     this.deps.assertActive();
@@ -54,6 +57,9 @@ export class MainSessionTurnQueueFacade {
     let preview: ComposerPreview;
     try {
       this.deps.assertAccepting();
+      if (request.auxiliaryDraftIncarnation !== undefined && (typeof request.auxiliaryDraftIncarnation !== "string" || !request.auxiliaryDraftIncarnation.trim())) throw new Error("The Auxiliary draft identity is invalid.");
+      if (request.auxiliaryDraftDurableRevision !== undefined && (!Number.isSafeInteger(request.auxiliaryDraftDurableRevision) || request.auxiliaryDraftDurableRevision < 0)) throw new Error("The Auxiliary draft revision is invalid.");
+      if (request.displayAnchorParentMessageCount !== undefined && (!Number.isSafeInteger(request.displayAnchorParentMessageCount) || request.displayAnchorParentMessageCount < 0)) throw new Error("The Auxiliary display anchor is invalid.");
       await this.deps.validateWorkspace(session);
       const catalog = await this.deps.validateProvider(session, request.executionOptions.catalogRevision);
       request.executionOptions = validateSessionExecutionOptions(request.executionOptions, catalog.provider, catalog.revision);
@@ -102,6 +108,14 @@ export class MainSessionTurnQueueFacade {
   async releaseInterruptedSessionTurn(sessionId: string, id: string) {
     this.deps.assertAccepting();
     return this.deps.service.releaseInterrupted(this.owner(await this.readSession(sessionId)), this.requireId(id));
+  }
+
+  async sendQueuedSessionInput(sessionId: string, id: string, expectedTurnId: string) {
+    this.deps.assertAccepting();
+    const owner = this.owner(await this.readSession(sessionId));
+    if (typeof expectedTurnId !== "string" || !expectedTurnId.trim()) throw new Error("A current Turn identity is required.");
+    this.deps.assertAccepting();
+    return this.deps.service.sendQueuedInput(owner, this.requireId(id), expectedTurnId);
   }
 
   private async readSession(sessionId: string): Promise<Session> {

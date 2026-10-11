@@ -4,9 +4,10 @@ import type { SessionTurnQueueApi } from "./use-session-turn-queue.js";
 import { SessionTurnQueueRow } from "./session-turn-queue-row.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
-export function SessionTurnQueueHistory({ api, sessionId, incarnationId, busyId, onCancel, onRelease }: {
+export function SessionTurnQueueHistory({ api, sessionId, incarnationId, busyId, onCancel, onRelease, onSendInput }: {
   api?: SessionTurnQueueApi; sessionId: string; incarnationId: string; busyId: string | null;
   onCancel: (receipt: SessionTurnQueueReceipt) => void; onRelease: (receipt: SessionTurnQueueReceipt) => void;
+  onSendInput?: (receipt: SessionTurnQueueReceipt) => void;
 }) {
   const [page, setPage] = useState<{ receipts: SessionTurnQueueReceipt[]; cursor?: number; previous: Array<number | undefined>; next: number | null; selectedId: string; loaded: boolean }>({ receipts: [], previous: [], next: null, selectedId: "", loaded: false });
   const [loading, setLoading] = useState(false);
@@ -42,6 +43,6 @@ export function SessionTurnQueueHistory({ api, sessionId, incarnationId, busyId,
     {page.receipts.length > 0 ? <label>Turn Receipt <select aria-label="Turn Receipt" value={page.selectedId} onChange={(event) => setPage((current) => ({ ...current, selectedId: event.target.value }))}>
       {page.receipts.map((receipt) => <option key={receipt.id} value={receipt.id}>{`#${receipt.sequence} ${receipt.state[0].toUpperCase() + receipt.state.slice(1)} — ${receipt.captured.request.userMessage.slice(0, 60)}`}</option>)}
     </select></label> : null}
-    {selected ? <SessionTurnQueueRow receipt={selected} showTerminalStatus busy={busyId === selected.id} onCancel={onCancel} onRelease={onRelease} /> : null}
+    {selected ? <SessionTurnQueueRow receipt={selected} showTerminalStatus busy={busyId !== null} onCancel={onCancel} onRelease={onRelease} onSendInput={onSendInput} /> : null}
   </details>;
 }

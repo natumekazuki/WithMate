@@ -32,6 +32,7 @@ import {
   WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL,
   WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL,
+  WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL,
   WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
@@ -89,8 +90,15 @@ export function registerSessionRuntimeHandlers(
     if (!deps.queue) throw new Error("The session turn queue is unavailable.");
     return deps.queue;
   };
+  const assertQueueSender = async (event: import("electron").IpcMainInvokeEvent, sessionId: string) => {
+    const auxiliary = await deps.getAuxiliarySessionStatus?.(sessionId);
+    const parentId = auxiliary?.parentSessionId ?? sessionId;
+    assertOwningSessionWindowSender(event, parentId, deps);
+    return parentId;
+  };
   ipcMain.handle(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL, async (event, sessionId: string, request: RunSessionTurnRequest & { incarnationId: string }) => {
-    assertOwningSessionWindowSender(event, sessionId, deps);
+    const parentId = await assertQueueSender(event, sessionId);
+    assertOwningSessionWindowSender(event, parentId, deps);
     try {
       return await queue().enqueueSessionTurn(sessionId, request);
     } catch (error) {
@@ -99,30 +107,34 @@ export function registerSessionRuntimeHandlers(
     }
   });
   ipcMain.handle(WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL, async (event, sessionId: string, requestId: string) => {
-    assertOwningSessionWindowSender(event, sessionId, deps);
+    const parentId = await assertQueueSender(event, sessionId);
     const receipt = await queue().getSessionTurnQueueReceipt(sessionId, requestId);
-    assertOwningSessionWindowSender(event, sessionId, deps);
+    assertOwningSessionWindowSender(event, parentId, deps);
     return receipt;
   });
   ipcMain.handle(WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL, async (event, sessionId: string) => {
-    assertOwningSessionWindowSender(event, sessionId, deps);
+    const parentId = await assertQueueSender(event, sessionId);
     const receipts = await queue().listSessionTurnQueue(sessionId);
-    assertOwningSessionWindowSender(event, sessionId, deps);
+    assertOwningSessionWindowSender(event, parentId, deps);
     return receipts;
   });
   ipcMain.handle(WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL, async (event, sessionId: string, options?: { cursor?: number; limit?: number }) => {
-    assertOwningSessionWindowSender(event, sessionId, deps);
+    const parentId = await assertQueueSender(event, sessionId);
     const page = await queue().listSessionTurnQueueReceipts(sessionId, options);
-    assertOwningSessionWindowSender(event, sessionId, deps);
+    assertOwningSessionWindowSender(event, parentId, deps);
     return page;
   });
-  ipcMain.handle(WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL, (event, sessionId: string, id: string) => {
-    assertOwningSessionWindowSender(event, sessionId, deps);
+  ipcMain.handle(WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL, async (event, sessionId: string, id: string) => {
+    await assertQueueSender(event, sessionId);
     return queue().cancelQueuedSessionTurn(sessionId, id);
   });
-  ipcMain.handle(WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL, (event, sessionId: string, id: string) => {
-    assertOwningSessionWindowSender(event, sessionId, deps);
+  ipcMain.handle(WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL, async (event, sessionId: string, id: string) => {
+    await assertQueueSender(event, sessionId);
     return queue().releaseInterruptedSessionTurn(sessionId, id);
+  });
+  ipcMain.handle(WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL, async (event, sessionId: string, id: string, expectedTurnId: string) => {
+    await assertQueueSender(event, sessionId);
+    return queue().sendQueuedSessionInput(sessionId, id, expectedTurnId);
   });
   ipcMain.handle(
     WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,

@@ -25,6 +25,7 @@ import {
 } from "./session-submit-coordinator.js";
 import { runMainSessionTurnOperation } from "./run-main-session-turn-operation.js";
 import { SessionTurnAcceptance } from "./session-turn-acceptance.js";
+import type { AuxiliaryDraftPersistenceOwner } from "../auxiliary-draft-persistence-owner.js";
 import {
   persistMainSession,
   toggleMainSessionPin,
@@ -270,6 +271,8 @@ export function useMainSessionRuntime({
       composerOwner: ComposerOwner;
       clearDraft: boolean;
       queueTurn?: boolean;
+      auxiliaryDraftOwner?: AuxiliaryDraftPersistenceOwner;
+      isCurrentSubmission?: () => boolean;
       shouldCollapseActionDock: boolean;
       selectedSessionRunState: Session["runState"] | null;
       blockedReason: string | null;
@@ -288,6 +291,8 @@ export function useMainSessionRuntime({
         submitCoordinator: submitCoordinatorRef.current,
         acceptance: acceptanceRef.current,
         queueTurn: input.queueTurn,
+        auxiliaryDraftOwner: input.auxiliaryDraftOwner,
+        isCurrentSubmission: input.isCurrentSubmission,
         clearDraft: input.clearDraft,
         collapseActionDock: input.shouldCollapseActionDock,
         selectedSessionRunState: input.selectedSessionRunState,
@@ -306,9 +311,9 @@ export function useMainSessionRuntime({
     [api, composerRegistry],
   );
 
-  const resolveUncertainTurn = async (retry: boolean) => {
-    if (!api || !selectedId) return;
-    const ownerId = selectedId;
+  const resolveUncertainTurn = async (retry: boolean, ownerId: string | null = selectedId) => {
+    if (!api || !ownerId) return;
+    if (retry && composerRegistry.isFrozen) return;
     const lease = submitCoordinatorRef.current.tryAcquire(ownerId);
     if (!lease) return;
     setPendingSubmitSessionId(ownerId);
@@ -345,7 +350,8 @@ export function useMainSessionRuntime({
     isSessionPinPending,
     runMainSessionTurn,
     hasUncertainTurn: selectedId ? acceptanceRef.current.hasUncertain(selectedId) : false,
-    checkTurnReceipt: () => resolveUncertainTurn(false),
-    retryOriginalTurn: () => resolveUncertainTurn(true),
+    hasUncertainTurnFor: (sessionId: string | null) => sessionId ? acceptanceRef.current.hasUncertain(sessionId) : false,
+    checkTurnReceipt: (sessionId: string | null = selectedId) => resolveUncertainTurn(false, sessionId),
+    retryOriginalTurn: (sessionId: string | null = selectedId) => resolveUncertainTurn(true, sessionId),
   };
 }

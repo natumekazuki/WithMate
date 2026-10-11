@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setImmediate } from "node:timers/promises";
-import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
+import { QueuedInputPreDispatchError, SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 import type { SessionTurnQueueCapturedInput, SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 
 const owner = { sessionId: "session", incarnationId: "incarnation" };
@@ -47,6 +47,18 @@ function boundary() {
       const row = ownedRows.find((row) => row.state === "queued");
       return row ? update(row.id, "starting") : null;
     },
+    claimForInput: async (_, id, inputTurnId) => {
+      const row = rows.find((entry) => entry.id === id)!;
+      assert.equal(row.state, "queued");
+      row.inputTurnId = inputTurnId;
+      return update(id, "starting");
+    },
+    restoreQueuedInput: async (_, id, inputTurnId) => {
+      const row = rows.find((entry) => entry.id === id)!;
+      assert.equal(row.inputTurnId, inputTurnId);
+      row.inputTurnId = null;
+      return update(id, "queued");
+    },
     markStarted: async (_, id, input) => {
       Object.assign(rows.find((row) => row.id === id)!, input);
       return update(id, "running");
@@ -69,6 +81,102 @@ function boundary() {
   };
   return { rows, store };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "queued入力は未dispatch証明時だけqueuedへ戻り、dispatch結果不明は後続を保留し、commit返信喪失はcompletedへ収束する"
+// oracle = { type = "contract", ref = "GitHub Issue #801: queued item current-turn input and unknown no replay" }
+// fault = "結果不明入力をqueuedへ戻し重複送信するか、後続を自動開始する"
+// observable = "receipt stateとprovider入力回数、後続dispatch回数"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueService.sendQueuedInput"
+// lifecycle = "permanent"
+// impact = "外部操作の重複実行と未送信指示の消失を防ぐ"
+// distinction = "storage遷移testではprovider失敗分類と自動drainの接続を確認できない"
+// @end-test-value
+test("queued inputはdispatch境界を区別し正本completedを優先する", async () => {
+  for (const mode of ["preflight", "unknown", "committed"] as const) {
+    const { store, rows } = boundary();
+    let guarded = true;
+    let dispatched = 0;
+    let inputs = 0;
+    const service = new SessionTurnQueueService({ store, isRunInFlight: async () => guarded,
+      dispatch: async () => { dispatched += 1; return { state: "completed" }; },
+      sendInput: async (receipt) => {
+        inputs += 1;
+        if (mode === "preflight") throw new QueuedInputPreDispatchError("not dispatched");
+        if (mode === "committed") await store.settle(receipt, receipt.id, "completed");
+        throw new Error("reply lost");
+      },
+    });
+    await service.enqueue(owner, captured("input"));
+    await service.enqueue(owner, captured("follower"));
+    if (mode === "committed") assert.equal((await service.sendQueuedInput(owner, "input", "provider-turn")).state, "completed");
+    else await assert.rejects(service.sendQueuedInput(owner, "input", "provider-turn"), mode === "preflight" ? /not dispatched/ : /reply lost/);
+    assert.equal(rows[0]!.state, mode === "preflight" ? "queued" : mode === "unknown" ? "interrupted" : "completed");
+    assert.equal(inputs, 1);
+    if (mode === "unknown") {
+      guarded = false;
+      service.wake(owner.sessionId);
+      await flush();
+      assert.equal(dispatched, 0);
+      assert.equal(rows[1]!.state, "queued");
+    }
+    await service.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "input claim返信喪失はProvider未送信証明でqueuedへ戻り、restore失敗は明示解放可能なinterruptedとして保留する"
+// oracle = { type = "contract", ref = "GitHub Issue #801: pre-provider queued input recovery and unknown no replay" }
+// fault = "claim返信喪失をstartingへ固定するかProviderを送信し、restore不明を再実行する"
+// observable = "receipt state、入力とrestore回数、明示解放前後のFIFO dispatch"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueService.sendQueuedInput claim failure recovery"
+// lifecycle = "permanent"
+// impact = "未送信指示の回復不能と外部操作の重複を防ぐ"
+// distinction = "storage単体testはserviceのclaim返信喪失とProvider非dispatchを検知しない"
+// @end-test-value
+test("queued input claim ACK喪失は未送信のまま回復する", async () => {
+  for (const mode of ["restored", "restore-reply-lost", "restore-failed"] as const) {
+    const { store, rows } = boundary();
+    const claim = store.claimForInput;
+    const restore = store.restoreQueuedInput;
+    let restores = 0;
+    let inputs = 0;
+    let guarded = true;
+    const dispatched: string[] = [];
+    store.claimForInput = async (...args) => { await claim(...args); throw new Error("claim reply lost"); };
+    store.restoreQueuedInput = async (...args) => {
+      restores += 1;
+      if (mode === "restore-failed") throw new Error("restore unavailable");
+      const receipt = await restore(...args);
+      if (mode === "restore-reply-lost") throw new Error("restore reply lost");
+      return receipt;
+    };
+    const service = new SessionTurnQueueService({ store, isRunInFlight: () => guarded,
+      sendInput: async () => { inputs += 1; },
+      dispatch: async (receipt) => { dispatched.push(receipt.id); return { state: "completed" }; },
+    });
+    await service.enqueue(owner, captured("input"));
+    await service.enqueue(owner, captured("follower"));
+    await assert.rejects(service.sendQueuedInput(owner, "input", "provider-turn"), /claim reply lost/);
+    assert.equal(inputs, 0);
+    assert.equal(restores, 1);
+    assert.equal(rows[0]!.state, mode === "restore-failed" ? "interrupted" : "queued");
+    guarded = false;
+    service.wake(owner.sessionId);
+    await flush();
+    if (mode === "restore-failed") {
+      assert.deepEqual(dispatched, []);
+      await service.releaseInterrupted(owner, "input");
+      await flush();
+      assert.deepEqual(dispatched, ["follower"]);
+    } else assert.deepEqual(dispatched, ["input", "follower"]);
+    await service.close();
+  }
+});
 
 // @test-value v2
 // kind = "contract"

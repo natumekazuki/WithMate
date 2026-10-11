@@ -11,7 +11,7 @@ import { toProviderTextPreview } from "./provider-payload-limits.js";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { getSessionIncarnationId, isReadOnlySession, type Session } from "../../src-shared/session/session-state.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
-import type { SessionTurnQueueDispatchResult } from "./session-turn-queue-service.js";
+import { QueuedInputPreDispatchError, QueuedInputRuntimeRecoveryError, type SessionTurnQueueDispatchResult } from "./session-turn-queue-service.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { MateStorageState } from "../../src-shared/mate/mate-state.js";
 import {
@@ -49,7 +49,8 @@ export type SessionRuntimeServiceDeps = {
   persistQueuedTurnStart?(session: Session, expectedMessageCount: number, queueId: string, turn: SessionTurnInput): Awaitable<{ session: Session; turn: SessionTurnRecord }>;
   assertCapturedComposerAttachmentsAvailable?(session: Session, attachments: ComposerAttachment[]): Promise<void>;
   onSessionRunReleased?(sessionId: string): void;
-  appendRunningInput(session: Session, text: string, turnId: number): Awaitable<Session>;
+  getQueuedInputReceipt?(receipt: SessionTurnQueueReceipt): Awaitable<SessionTurnQueueReceipt | null>;
+  appendRunningInput(session: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }): Awaitable<Session>;
   checkpointRuntimeMetadata(session: Session, expected: Session): Awaitable<Session>;
   appendTerminalSession(
     session: Session,
@@ -573,7 +574,7 @@ export class SessionRuntimeService {
   private readonly pendingSessionInputs = new Map<string, Promise<SteerSessionTurnResult>>();
   private readonly dispatchedSessionInputs = new Set<string>();
   private readonly finishingSessionTurns = new Set<string>();
-  private readonly appendSessionInput = new Map<string, (text: string) => Promise<void>>();
+  private readonly appendSessionInput = new Map<string, (text: string, queued?: SessionTurnQueueReceipt, inputTurnId?: string) => Promise<void>>();
   private readonly pendingRuns = new Set<Promise<Session>>();
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
@@ -707,11 +708,20 @@ export class SessionRuntimeService {
   }
 
   steerSessionTurn(sessionId: string, request: SteerSessionTurnRequest): Promise<SteerSessionTurnResult> {
+    return this.sendSessionInput(sessionId, request);
+  }
+
+  steerQueuedSessionTurn(receipt: SessionTurnQueueReceipt, expectedTurnId: string): Promise<SteerSessionTurnResult> {
+    return this.sendSessionInput(receipt.sessionId, { expectedTurnId, userMessage: receipt.captured.request.userMessage }, receipt);
+  }
+
+  private sendSessionInput(sessionId: string, request: SteerSessionTurnRequest, queued?: SessionTurnQueueReceipt): Promise<SteerSessionTurnResult> {
+    const preflightError = (message: string) => queued ? new QueuedInputPreDispatchError(message) : new Error(message);
     if (!request || typeof request.expectedTurnId !== "string" || !request.expectedTurnId.trim()
       || typeof request.userMessage !== "string" || !request.userMessage.trim()) {
-      return Promise.reject(new Error("The active turn and a message are required."));
+      return Promise.reject(preflightError("The active turn and a message are required."));
     }
-    if (this.pendingSessionInputs.has(sessionId)) return Promise.reject(new Error("Session input is already being sent."));
+    if (this.pendingSessionInputs.has(sessionId)) return Promise.reject(preflightError("Session input is already being sent."));
     const runController = this.sessionRunControllers.get(sessionId);
     const appendInput = this.appendSessionInput.get(sessionId);
     const assertActiveTurn = () => {
@@ -720,30 +730,52 @@ export class SessionRuntimeService {
         || !runController || this.sessionRunControllers.get(sessionId) !== runController
         || this.sessionRunControllers.get(sessionId)?.signal.aborted || this.terminatingSessionRuns.has(sessionId) || this.finishingSessionTurns.has(sessionId)
         || live?.cancellationState || live?.turnId !== request.expectedTurnId || live.inputAvailable !== true) {
-        throw new Error("The selected turn no longer accepts input. Your draft is preserved.");
+        throw preflightError("The selected turn no longer accepts input. Your draft is preserved.");
       }
     };
-    const operation = (async () => {
+    let dispatched = false;
+    // Register the input before preparation starts, including synchronous deps.
+    const operation = Promise.resolve().then(async () => {
       assertActiveTurn();
       const session = await this.deps.getSession(sessionId);
       if (!session || session.provider !== "codex" || isReadOnlySession(session)) throw new Error("This session cannot accept input.");
+      if (queued && (getSessionIncarnationId(session) !== queued.incarnationId || session.provider !== queued.captured.provider
+        || session.workspacePath !== queued.captured.workspacePath || queued.inputTurnId !== request.expectedTurnId)) {
+        throw new Error("The queued Session owner or execution target changed.");
+      }
       const adapter = this.deps.getProviderCodingAdapter(session.provider);
       if (!adapter.steerSessionTurn) throw new Error("This provider cannot accept input during a turn.");
       const providerSession = await (this.deps.resolveProviderSession?.(session) ?? session);
-      const preview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
+      let preview: ComposerPreview;
+      if (queued) {
+        if (!this.deps.assertCapturedComposerAttachmentsAvailable) throw new Error("Captured attachment validation is unavailable.");
+        await this.deps.assertCapturedComposerAttachmentsAvailable(providerSession, queued.captured.attachments);
+        preview = { attachments: queued.captured.attachments, errors: [] };
+      } else {
+        preview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
+      }
       if (preview.errors.length) throw new Error(preview.errors[0]);
+      if (queued && !getProviderAppSettings(await this.deps.getAppSettings(), session.provider).enabled) {
+        throw new Error("This provider is disabled in Settings.");
+      }
       assertActiveTurn();
       this.dispatchedSessionInputs.add(sessionId);
+      dispatched = true;
       try {
         const result = await adapter.steerSessionTurn({ sessionId, expectedTurnId: request.expectedTurnId, userMessage: request.userMessage.trim(), attachments: preview.attachments });
         if (result.turnId !== request.expectedTurnId) throw new Error("The provider did not confirm input for the selected turn.");
         if (!appendInput || this.appendSessionInput.get(sessionId) !== appendInput) throw new Error("The selected turn ended before input could be saved.");
-        await appendInput(request.userMessage.trim());
+        await appendInput(request.userMessage.trim(), queued, request.expectedTurnId);
         return result;
       } finally {
         this.dispatchedSessionInputs.delete(sessionId);
       }
-    })();
+    }).catch((error: unknown) => {
+      if (queued && !dispatched && !(error instanceof QueuedInputPreDispatchError)) {
+        throw new QueuedInputPreDispatchError(error instanceof Error ? error.message : "Session input preparation failed.");
+      }
+      throw error;
+    });
     this.pendingSessionInputs.set(sessionId, operation);
     const release = () => {
       if (this.pendingSessionInputs.get(sessionId) === operation) this.pendingSessionInputs.delete(sessionId);
@@ -1097,8 +1129,26 @@ export class SessionRuntimeService {
     let runtimePersistenceFailed = false;
     let liveProgressGeneration = 0;
     let activeRunningSession = runningSession;
-    if (runningSession.provider === "codex") this.appendSessionInput.set(sessionId, async (text) => {
-      activeRunningSession = await this.deps.appendRunningInput({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id);
+    let queuedInputRecoveryError: QueuedInputRuntimeRecoveryError | null = null;
+    if (runningSession.provider === "codex") this.appendSessionInput.set(sessionId, async (text, queuedInput, inputTurnId) => {
+      try {
+        activeRunningSession = await this.deps.appendRunningInput({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id,
+          queuedInput && inputTurnId ? { queueId: queuedInput.id, inputTurnId } : undefined);
+      } catch (error) {
+        if (!queuedInput || !inputTurnId) throw error;
+        try {
+          if (!this.deps.getQueuedInputReceipt) throw error;
+          const receipt = await this.deps.getQueuedInputReceipt(queuedInput);
+          if (receipt?.state !== "completed" || receipt.inputTurnId !== inputTurnId) throw error;
+          const canonical = await this.deps.getSession(sessionId);
+          if (!canonical || getSessionIncarnationId(canonical) !== queuedInput.incarnationId
+            || canonical.messageCount !== (activeRunningSession.messageCount ?? activeRunningSession.messages.length) + 1) throw error;
+          activeRunningSession = { ...canonical, messages: [...activeRunningSession.messages, { role: "user", text }] };
+        } catch (recoveryError) {
+          queuedInputRecoveryError = new QueuedInputRuntimeRecoveryError(recoveryError instanceof Error ? recoveryError.message : "Queued input runtime persistence could not be confirmed.");
+          throw queuedInputRecoveryError;
+        }
+      }
       this.deps.broadcastLiveSessionRun(sessionId);
     });
     const runProviderTurn = async (turnSession: Session) => {
@@ -1168,6 +1218,7 @@ export class SessionRuntimeService {
         }
         const pendingInput = this.pendingSessionInputs.get(sessionId);
         if (pendingInput && this.dispatchedSessionInputs.has(sessionId)) await pendingInput.catch(() => undefined);
+        if (queuedInputRecoveryError) throw queuedInputRecoveryError;
       }
     };
 
@@ -1322,7 +1373,7 @@ export class SessionRuntimeService {
 
       return storedCompletedSession;
     } catch (error: unknown) {
-      if (terminalPersistenceStarted || (queued && (terminalSettled || runtimePersistenceFailed))) {
+      if (queuedInputRecoveryError || terminalPersistenceStarted || (queued && (terminalSettled || runtimePersistenceFailed))) {
         throw error;
       }
       const providerTurnError = error instanceof ProviderTurnError ? error : null;

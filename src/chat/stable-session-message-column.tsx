@@ -36,6 +36,8 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const onActivateGlossaryEntry = useStableOptionalCallback(props.onActivateGlossaryEntry);
   const searchConversation = useStableOptionalCallback(props.searchConversation);
   const onLoadMessagePage = useStableOptionalCallback(props.onLoadMessagePage);
+  const onCancelQueuedTurn = useStableOptionalCallback(props.onCancelQueuedTurn);
+  const onReleaseInterruptedTurn = useStableOptionalCallback(props.onReleaseInterruptedTurn);
 
   return (
     <MemoizedSessionMessageColumn
@@ -56,6 +58,8 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
       onActivateGlossaryEntry={onActivateGlossaryEntry}
       searchConversation={searchConversation}
       onLoadMessagePage={onLoadMessagePage}
+      onCancelQueuedTurn={onCancelQueuedTurn}
+      onReleaseInterruptedTurn={onReleaseInterruptedTurn}
     />
   );
 }

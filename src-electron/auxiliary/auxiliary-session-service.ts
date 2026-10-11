@@ -47,6 +47,7 @@ import type { AuxiliarySessionRuntimeMetadataPatchInput } from "./auxiliary-sess
 import type { AuxiliaryDraftStorageSaveInput, AuxiliaryDraftStorageConsumeInput } from "./auxiliary-session-storage.js";
 import { assertCharacterDefinitionSnapshotUpdate } from "../session/session-running-turn-start.js";
 import type { SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
+import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import type {
   AuxiliaryDraftConsumeResult,
   AuxiliaryDraftRecord,
@@ -1136,6 +1137,16 @@ export class AuxiliarySessionService {
   }
 
   async persistRunningTurnStart(runtimeSession: Session, expectedMessageCount: number): Promise<Session> {
+    return (await this.persistTurnStart(runtimeSession, expectedMessageCount)).session;
+  }
+
+  async persistQueuedTurnStart(runtimeSession: Session, expectedMessageCount: number, queueId: string, turn: SessionTurnInput): Promise<{ session: Session; turn: SessionTurnRecord }> {
+    const result = await this.persistTurnStart(runtimeSession, expectedMessageCount, { queueId, turn });
+    if (!result.turn) throw new Error("The queued Auxiliary turn identity was not persisted.");
+    return { session: result.session, turn: result.turn };
+  }
+
+  private async persistTurnStart(runtimeSession: Session, expectedMessageCount: number, queuedTurn?: { queueId: string; turn: SessionTurnInput }): Promise<{ session: Session; turn?: SessionTurnRecord }> {
     const storage = this.deps.getStorage();
     const identity = this.deps.captureStorageIdentity?.();
     const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
@@ -1160,12 +1171,13 @@ export class AuxiliarySessionService {
       auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
       expectedMessageCount, userMessage, updatedAt: runtimeSession.updatedAt,
       characterRuntimeSnapshot: runtimeSession.characterRuntimeSnapshot ?? current.characterRuntimeSnapshot,
+      queuedTurn,
     });
     if (!stored) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
-    return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: runtimeSession.messages };
+    return { session: { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: runtimeSession.messages }, turn: stored.queuedTurn };
   }
 
-  async appendRunningInput(runtimeSession: Session, text: string, turnId: number): Promise<Session> {
+  async appendRunningInput(runtimeSession: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }): Promise<Session> {
     const storage = this.deps.getStorage();
     const identity = this.deps.captureStorageIdentity?.();
     const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
@@ -1179,6 +1191,7 @@ export class AuxiliarySessionService {
       auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
       expectedMessageCount: runtimeSession.messageCount ?? runtimeSession.messages.length,
       userMessage, turnId, updatedAt: currentTimestampLabel(),
+      queuedInput,
     });
     if (!stored) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
     return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: [...runtimeSession.messages, userMessage] };

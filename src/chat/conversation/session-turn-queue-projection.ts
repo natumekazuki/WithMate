@@ -8,13 +8,13 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
   const projection: MessageListProjection = { messages: [...history.messages], keys: [...history.keys], sources: [...history.sources], groups: [...history.groups] };
   const tail: SessionTurnQueueReceipt[] = [];
   for (const receipt of owned) {
-    const savedIndex = receipt.userMessageSeq === null ? -1 : projection.sources.findIndex((source) => source.kind === "session" && source.messageIndex === receipt.userMessageSeq);
+    const savedIndex = receipt.userMessageSeq === null ? -1 : projection.sources.findIndex((source) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId) && source.messageIndex === receipt.userMessageSeq);
     if (savedIndex >= 0) {
       if (receipt.state !== "completed" && receipt.state !== "canceled") metadata.set(projection.keys[savedIndex], receipt);
       continue;
     }
-    const firstSaved = projection.sources.find((source) => source.kind === "session");
-    if (receipt.userMessageSeq !== null && firstSaved?.kind === "session" && receipt.userMessageSeq < firstSaved.messageIndex) continue;
+    const firstSaved = projection.sources.find((source) => source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId);
+    if (receipt.userMessageSeq !== null && (firstSaved?.kind === "session" || firstSaved?.kind === "auxiliary") && receipt.userMessageSeq < firstSaved.messageIndex) continue;
     if (receipt.state === "queued" || ((receipt.state === "failed" || receipt.state === "interrupted") && receipt.userMessageSeq === null)) {
       tail.push(receipt);
       continue;

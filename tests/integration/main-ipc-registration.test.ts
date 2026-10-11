@@ -30,10 +30,10 @@ test("enqueue IPCはtyped preflight rejectだけを未受付replyへ変換する
 
 // @test-value v2
 // kind = "security"
-// claim = "6 queue APIはowning Main Session Windowの引数を委譲し別WindowとAuxiliary IDを依存呼出し前に拒否する"
+// claim = "7 queue APIはMainとAuxの実IDを保持しowning parent Session Window以外を依存呼出し前に拒否する"
 // oracle = { type = "contract", ref = "src-electron/ipc/session-runtime.ts queue handlers" }
-// fault = "別WindowまたはAuxiliary会話IDからMain queueの本文/receiptへアクセスを許可する"
-// observable = "ownerの返却payloadと委譲引数、非owner/Auxiliary要求の拒否と依存件数"
+// fault = "Auxの親と異なるWindowへqueue本文/receiptアクセスを許可するかtargetを親IDに置換する"
+// observable = "Main/Aux ownerの返却payloadと実target引数、非owner要求の拒否と依存件数"
 // observation_boundary = "public-boundary"
 // scope = "Main durable queue IPC owner authorization"
 // lifecycle = "permanent"
@@ -46,13 +46,14 @@ test("queue IPCはowning Main Windowに限定し引数を保持する", async ()
   const other = createWindowStub("file:///session.html?sessionId=other");
   let eventWindow = owner;
   const calls: Array<{ method: string; args: unknown[] }> = [];
-  const methods = ["enqueueSessionTurn", "getSessionTurnQueueReceipt", "listSessionTurnQueue", "listSessionTurnQueueReceipts", "cancelQueuedSessionTurn", "releaseInterruptedSessionTurn"];
+  const methods = ["enqueueSessionTurn", "getSessionTurnQueueReceipt", "listSessionTurnQueue", "listSessionTurnQueueReceipts", "cancelQueuedSessionTurn", "releaseInterruptedSessionTurn", "sendQueuedSessionInput"];
   const queue = Object.fromEntries(methods.map((method) => [method, async (...args: unknown[]) => {
     const payload = { method, args };
     calls.push(payload);
     return payload;
   }]));
   const { deps } = createDeps({ queue, resolveEventWindow: () => eventWindow,
+    getAuxiliarySessionStatus: async (id: string) => id === "aux-1" ? { id, parentSessionId: "session-1" } : null,
     resolveSessionWindow: (id: string) => id === "session-1" ? owner : null });
   registerMainIpcHandlers(ipcMain, deps);
   const request = { incarnationId: "owner-1", clientRequestId: "request-1", userMessage: "Inspect" };
@@ -63,21 +64,24 @@ test("queue IPCはowning Main Windowに限定し引数を保持する", async ()
     ["withmate:list-session-turn-queue-receipts", "listSessionTurnQueueReceipts", [{ cursor: 4, limit: 20 }]],
     ["withmate:cancel-queued-session-turn", "cancelQueuedSessionTurn", ["item-1"]],
     ["withmate:release-interrupted-session-turn", "releaseInterruptedSessionTurn", ["item-1"]],
+    ["withmate:send-queued-session-input", "sendQueuedSessionInput", ["item-1", "turn-1"]],
   ] as const;
   for (const [channel, method, args] of cases) {
     assert.deepEqual(await handlers.get(channel)?.({}, "session-1", ...args), { method, args: ["session-1", ...args] });
+    assert.deepEqual(await handlers.get(channel)?.({}, "aux-1", ...args), { method, args: ["aux-1", ...args] });
   }
   for (const window of [other, createWindowStub("file:///home.html"), createWindowStub("file:///settings.html")]) {
     eventWindow = window;
     for (const [channel, , args] of cases) {
       await assert.rejects(async () => handlers.get(channel)?.({}, "session-1", ...args), /target Session window/);
+      await assert.rejects(async () => handlers.get(channel)?.({}, "aux-1", ...args), /target Session window/);
     }
   }
   eventWindow = owner;
   for (const [channel, , args] of cases) {
-    await assert.rejects(async () => handlers.get(channel)?.({}, "aux-1", ...args), /target Session window/);
+    await assert.rejects(async () => handlers.get(channel)?.({}, "unknown-aux", ...args), /target Session window/);
   }
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 14);
 });
 
 // @test-value v2
@@ -109,6 +113,7 @@ test("queue readは遅い結果の返却前にWindow ownerを再認可する", a
       resolveSessionWindow: (id: string) => id === "session-1" ? currentOwner : null });
     registerMainIpcHandlers(ipcMain, deps);
     const pending = handlers.get(channel)?.({}, "session-1", ...args) as Promise<unknown>;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(reads, 1);
     currentOwner = createWindowStub("file:///session.html?sessionId=session-1");
     complete({ privateReceipt: "must not leak" });

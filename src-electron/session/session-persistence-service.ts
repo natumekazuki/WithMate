@@ -639,7 +639,7 @@ export class SessionPersistenceService {
     return { session: stored, ...(storedResult.queuedTurn ? { turn: storedResult.queuedTurn } : {}) };
   }
 
-  async appendRunningInput(nextSession: Session, text: string, turnId: number): Promise<Session> {
+  async appendRunningInput(nextSession: Session, text: string, turnId: number, queuedInput?: SessionSteerAppendInput["queuedInput"]): Promise<Session> {
     return this.enqueueSessionMutation(async () => {
       if (!this.deps.appendStoredSessionSteer) throw new Error("Incremental Session input storage is unavailable.");
       const message = { role: "user" as const, text };
@@ -650,6 +650,7 @@ export class SessionPersistenceService {
         turnId,
         userMessage: message,
         updatedAt: nextSession.updatedAt,
+        ...(queuedInput ? { queuedInput } : {}),
       });
       return this.projectRuntimeAppend(nextSession, result, [...nextSession.messages, message]);
     });

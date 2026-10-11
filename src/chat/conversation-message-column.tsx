@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type UIEvent } from "react";
 
 import { type SessionMessageColumnProps } from "./conversation/session-message-column.js";
 import { useSessionMessageListFollowing } from "./shell/session-chat-layout-hooks.js";
@@ -18,14 +18,15 @@ import { projectSessionTurnQueue } from "./conversation/session-turn-queue-proje
 import { SessionTurnQueueRow } from "./conversation/session-turn-queue-row.js";
 import { SessionTurnQueueHistory } from "./conversation/session-turn-queue-history.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
-  "messages" | "messageCount" | "incarnationId" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors"
+  "messages" | "messageCount" | "incarnationId" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors" | "accessMode" | "provider"
 >>;
 
 export type ConversationMessageColumnApi = Partial<Pick<WithMateWindowApi,
   "subscribeLiveSessionRun" | "getLiveSessionRun" | "resolveLiveApproval" | "resolveLiveElicitation" | "getSessionMessageArtifact" | "getConversationPage" | "searchConversation" | "listConversationNavigator"
-  | "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn"
+  | "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput"
 >>;
 
 export type ConversationColumnCache = {
@@ -53,6 +54,7 @@ export type UseConversationMessageColumnInput = {
   liveRun?: LiveSessionRunState | null;
   stateCache?: Map<string, ConversationColumnCache>;
   onColumnControls?: (controls: ConversationColumnControls) => void;
+  composerRegistry?: ComposerControllerRegistry;
 };
 
 export type ConversationColumnControls = {
@@ -69,7 +71,7 @@ export type ConversationColumnControls = {
 };
 
 export function useConversationMessageColumn({
-  session, baseProps, messageSourceKind = "session", enabled, navigatorActive = false, api, liveRun: liveRunOverride, stateCache, onColumnControls,
+  session, baseProps, messageSourceKind = "session", enabled, navigatorActive = false, api, liveRun: liveRunOverride, stateCache, onColumnControls, composerRegistry = composerControllerRegistry,
 }: UseConversationMessageColumnInput): SessionMessageColumnProps | null {
   const localCache = useRef(new Map<string, ConversationColumnCache>());
   const caches = stateCache ?? localCache.current;
@@ -103,7 +105,11 @@ export function useConversationMessageColumn({
   const totalCount = session?.messageCount ?? tailMessages.length;
   const queueIncarnationId = session ? getSessionIncarnationId(session) : "";
   const canonicalUserSeqs = useMemo(() => tailMessages.flatMap((message, index) => message.role === "user" ? [getMessageHistoryIndex(message, index)] : []), [tailMessages]);
-  const queue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled && messageSourceKind === "session", canonicalUserSeqs);
+  const queue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs);
+  const queueComposerOwner = useMemo(() => ({ kind: messageSourceKind === "auxiliary" ? "auxiliary" as const : "main" as const, id: sessionId }), [messageSourceKind, sessionId]);
+  const subscribeFreeze = useCallback((listener: () => void) => composerRegistry.subscribe(queueComposerOwner, listener), [composerRegistry, queueComposerOwner]);
+  const readFreeze = useCallback(() => composerRegistry.isFrozen, [composerRegistry]);
+  const queueActionsFrozen = useSyncExternalStore(subscribeFreeze, readFreeze, readFreeze);
   const currentPage = browsePage?.sessionId === sessionId && (!session?.incarnationId || browsePage.incarnationId === session.incarnationId) ? browsePage : null;
   const isBrowsing = conversation.pageStart !== undefined;
   const messages = isBrowsing && currentPage ? currentPage.messages : tailMessages;
@@ -424,6 +430,19 @@ export function useConversationMessageColumn({
       refresh();
     }
   };
+  const canSendQueuedInput = !!api?.sendQueuedSessionInput && !!liveRun?.turnId && liveRun.inputAvailable === true
+    && !liveRun.cancellationState && (session?.accessMode === undefined || session.accessMode === "active") && !queueActionsFrozen;
+  const currentInputTurnId = liveRun?.turnId;
+  const sendQueuedInput = useCallback((receipt: import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => {
+    if (canSendQueuedInput && !composerRegistry.isFrozen && currentInputTurnId) queue.sendInput(receipt, currentInputTurnId);
+  }, [canSendQueuedInput, composerRegistry, currentInputTurnId, queue.sendInput]);
+  const inputAction = canSendQueuedInput ? sendQueuedInput : undefined;
+  const queueTail = useMemo(() => !isBrowsing && api?.listSessionTurnQueue ? <>
+    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
+    {queue.loading ? <LoadingIndicator inline label="Loading queued turns" /> : null}
+    {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
+    <SessionTurnQueueHistory key={`${sessionId}:${queueIncarnationId}`} api={api} sessionId={sessionId} incarnationId={queueIncarnationId} busyId={queue.busyId} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />
+  </> : undefined, [isBrowsing, api, queuedProjection.tail, queue.busyId, queue.cancel, queue.release, queue.loading, queue.error, queue.reload, inputAction, sessionId, queueIncarnationId]);
   if (!session) return null;
   return {
     ...baseProps,
@@ -436,12 +455,7 @@ export function useConversationMessageColumn({
     onCancelQueuedTurn: queue.cancel,
     onReleaseInterruptedTurn: queue.release,
     queueBusyId: queue.busyId,
-    queueTail: !isBrowsing && messageSourceKind === "session" ? <>
-      {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId === receipt.id} onCancel={queue.cancel} onRelease={queue.release} />)}
-      {queue.loading ? <LoadingIndicator inline label="Loading queued turns" /> : null}
-      {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
-      <SessionTurnQueueHistory key={`${sessionId}:${queueIncarnationId}`} api={api} sessionId={sessionId} incarnationId={queueIncarnationId} busyId={queue.busyId} onCancel={queue.cancel} onRelease={queue.release} />
-    </> : undefined,
+    queueTail,
     pendingResponseMessageKey,
     messageGroups: projection.groups,
     messageCollapseTargets: collapseTargets,

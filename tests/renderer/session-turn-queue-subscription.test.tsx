@@ -4,6 +4,7 @@ import React, { act } from "react";
 import { JSDOM } from "jsdom";
 import { useSessionTurnQueue, type SessionTurnQueueApi } from "../../src/chat/conversation/use-session-turn-queue.js";
 import { SessionTurnQueueHistory } from "../../src/chat/conversation/session-turn-queue-history.js";
+import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-queue-row.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 function receipt(overrides: Partial<SessionTurnQueueReceipt> = {}): SessionTurnQueueReceipt {
@@ -20,7 +21,10 @@ async function mount(api: SessionTurnQueueApi) {
   let current!: ReturnType<typeof useSessionTurnQueue>;
   function View({ seqs }: { seqs: number[] }) {
     current = useSessionTurnQueue(api, "session", "incarnation", true, seqs);
-    return <SessionTurnQueueHistory api={api} sessionId="session" incarnationId="incarnation" busyId={current.busyId} onCancel={current.cancel} onRelease={current.release} />;
+    return <>
+      {current.receipts.filter((item) => item.state === "queued").map((item) => <SessionTurnQueueRow key={item.id} receipt={item} busy={current.busyId !== null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />)}
+      <SessionTurnQueueHistory api={api} sessionId="session" incarnationId="incarnation" busyId={current.busyId} onCancel={current.cancel} onRelease={current.release} />
+    </>;
   }
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(dom.window.document.getElementById("root")!);
@@ -77,6 +81,45 @@ test("active subscription bridges only disappeared runs and retains failures", a
     await act(async () => listener("session"));
     assert.equal(lookups.length, 1);
     assert.equal(historyCalls, 0);
+  } finally { await view.unmount(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "チャットの予約から現在turnへの入力を一度だけ要求し、成功receiptの本文をcanonical seq到着まで保持する"
+// oracle = { type = "contract", ref = "Main/Auxiliary queue: Send to Current Turn" }
+// fault = "現在turn IDを送らない、連打で重複操作する、または開始通知なしの完了で受付本文が消える"
+// observable = "button操作のAPI引数と回数、待機中のdisabled、完了後のbridgeとcanonical到着後の除去"
+// observation_boundary = "component-behavior"
+// scope = "queued-current-turn-input"
+// lifecycle = "permanent"
+// impact = "予約本文の二重入力とACK先着による本文消失を防ぐ"
+// distinction = "service/storage testsはチャット操作とrenderer bridgeを通らない"
+// @end-test-value
+test("queued chat input captures the turn once and bridges a fast canonical acceptance", async () => {
+  const queued = receipt({ state: "queued", turnId: null, userMessageSeq: null });
+  let active = [queued];
+  let resolve!: (value: SessionTurnQueueReceipt) => void;
+  const calls: Array<[string, string, string]> = [];
+  const view = await mount({
+    listSessionTurnQueue: async () => active,
+    sendQueuedSessionInput: async (sessionId, id, turnId) => {
+      calls.push([sessionId, id, turnId]);
+      return new Promise((accept) => { resolve = accept; });
+    },
+  });
+  try {
+    await view.click("Send to Current Turn");
+    await view.click("Send to Current Turn");
+    assert.deepEqual(calls, [["session", "item", "current-turn"]]);
+    assert.equal([...view.document.querySelectorAll("button")].find((button) => button.textContent === "Send to Current Turn")!.disabled, true);
+    active = [];
+    await act(async () => resolve(receipt({ state: "completed", inputTurnId: "current-turn" })));
+    assert.equal(view.current.receipts[0]?.captured.request.userMessage, "original prompt");
+    assert.equal(view.current.receipts[0]?.state, "completed");
+    await view.canonical([42]);
+    assert.equal(view.current.receipts.length, 0);
+    assert.equal(calls.length, 1);
   } finally { await view.unmount(); }
 });
 

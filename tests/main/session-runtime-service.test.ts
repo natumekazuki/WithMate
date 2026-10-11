@@ -844,6 +844,75 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "contract"
+  // claim = "queued steerは捕捉添付を再解決せず、準備中の重複を拒否し、append返信喪失でも正本件数をterminalへ維持する"
+  // oracle = { type = "contract", ref = "GitHub Issue #801: current-turn queued input atomic commit and captured attachments" }
+  // fault = "queued本文を再previewするか、commit済み追加入力の件数を失いterminal保存を失敗させる"
+  // observable = "provider attachments、重複reject、append queue contextと件数、terminal本文"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService.steerQueuedSessionTurn and terminal persistence"
+  // lifecycle = "permanent"
+  // impact = "保存済み入力が別pathへ変わるか終端履歴が失われる"
+  // distinction = "通常steerとstorage単体testはqueued append返信喪失後のactive runtimeを確認できない"
+  // @end-test-value
+  it("queued steerは捕捉添付とcommit済み入力をterminalへ維持する", async () => {
+    let stored = createSession({ threadId: "thread-existing" });
+    let live: LiveSessionRunState | null = null;
+    let finishTurn!: () => void;
+    const turnEnd = new Promise<void>((resolve) => { finishTurn = resolve; });
+    let finishPrepare!: () => void;
+    const preparing = new Promise<void>((resolve) => { finishPrepare = resolve; });
+    let verifying = false;
+    const sent: Array<Parameters<NonNullable<ProviderCodingAdapter["steerSessionTurn"]>>[0]> = [];
+    const adapter: ProviderCodingAdapter = {
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
+      getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
+      runSessionTurn: async (input, progress) => {
+        await emitTestProgress(progress, { ...createLiveRunState(), sessionId: input.session.id, threadId: "thread-existing", turnId: "provider-turn", inputAvailable: true });
+        await turnEnd;
+        return createPartialResult({ threadId: "thread-existing", assistantText: "done" });
+      },
+      steerSessionTurn: async (input) => { sent.push(input); return { turnId: input.expectedTurnId }; },
+    };
+    const receipt: SessionTurnQueueReceipt = {
+      sessionId: stored.id, incarnationId: getSessionIncarnationId(stored), id: "queued-input", requestId: "queued-request", sequence: 1,
+      state: "starting", turnId: null, inputTurnId: "provider-turn", userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+      captured: { request: { userMessage: "queued @captured", clientRequestId: "queued-request", executionOptions: TEST_EXECUTION_OPTIONS },
+        attachments: [{ id: "captured", kind: "file", source: "text", absolutePath: "captured-path", displayPath: "captured", workspaceRelativePath: "captured", isOutsideWorkspace: false }], provider: stored.provider, workspacePath: stored.workspacePath },
+    };
+    const service = createTestRuntime({
+      getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
+      resolveComposerPreview: async (_, text) => { assert.equal(text, "start"); return { attachments: [], errors: [] }; },
+      assertCapturedComposerAttachmentsAvailable: async (_, attachments) => { assert.deepEqual(attachments, receipt.captured.attachments); verifying = true; await preparing; },
+      getQueuedInputReceipt: () => receipt,
+      appendRunningInput: (session, text, localTurnId, context) => {
+        assert.equal(localTurnId, 1);
+        assert.deepEqual(context, { queueId: receipt.id, inputTurnId: "provider-turn" });
+        stored = { ...stored, messages: [...stored.messages, { role: "user", text }] };
+        receipt.state = "completed";
+        throw new Error("append commit reply lost");
+      },
+      getAppSettings: () => normalizeAppSettings({}),
+      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+      waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
+      setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    });
+    const turn = service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
+    await waitForCondition(() => live?.inputAvailable === true, "active queued input turn");
+    const steer = service.steerQueuedSessionTurn(receipt, "provider-turn");
+    await waitForCondition(() => verifying, "captured verification held");
+    await assert.rejects(service.steerQueuedSessionTurn(receipt, "provider-turn"), /already being sent/);
+    finishPrepare();
+    await steer;
+    assert.deepEqual(sent[0]?.attachments, receipt.captured.attachments);
+    assert.equal(sent.length, 1);
+    finishTurn();
+    assert.deepEqual((await turn).messages.map((message) => message.text), ["start", "queued @captured", "done"]);
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "添付解決中に取消されたCodex steerはproviderへ送信せず会話本文へ追加しない"
   // oracle = { type = "contract", ref = "Issue #780 same-turn input cancellation fence" }
   // fault = "添付解決前だけturnを照合し、取消後に遅延inputをdispatchする"

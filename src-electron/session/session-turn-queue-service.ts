@@ -12,13 +12,17 @@ export type SessionTurnQueueDispatchResult = {
 
 export type SessionTurnQueueServiceDeps = {
   store: SessionTurnQueueStore;
-  isRunInFlight(sessionId: string): boolean;
+  isRunInFlight(sessionId: string): boolean | Promise<boolean>;
+  sendInput?(receipt: SessionTurnQueueReceipt, expectedTurnId: string): Promise<unknown>;
   dispatch(
     receipt: SessionTurnQueueReceipt,
     onStarted: (input: { turnId: string; userMessageSeq: number }) => Promise<void>,
   ): Promise<SessionTurnQueueDispatchResult>;
   onChanged?(owner: SessionTurnQueueOwner): void;
 };
+
+export class QueuedInputPreDispatchError extends Error {}
+export class QueuedInputRuntimeRecoveryError extends Error {}
 
 export class SessionTurnQueueService {
   private readonly owners = new Map<string, SessionTurnQueueOwner>();
@@ -78,6 +82,98 @@ export class SessionTurnQueueService {
     }));
   }
 
+  sendQueuedInput(owner: SessionTurnQueueOwner, id: string, expectedTurnId: string): Promise<SessionTurnQueueReceipt> {
+    this.requireAccepting();
+    if (!expectedTurnId?.trim()) return Promise.reject(new Error("The active turn is required."));
+    return this.track((async () => {
+      const receipt = await this.withLock(owner.sessionId, async () => {
+        this.requireAccepting();
+        if (!this.deps.sendInput) throw new Error("Queued Session input is unavailable.");
+        const candidate = (await this.deps.store.listActive(owner)).find((entry) => entry.id === id);
+        if (!candidate || candidate.state !== "queued") throw new Error("The queued input is no longer available.");
+        let claimed: SessionTurnQueueReceipt;
+        try {
+          claimed = await this.deps.store.claimForInput(owner, id, expectedTurnId);
+        } catch (error) {
+          try {
+            const canonical = await this.deps.store.getReceipt(owner, candidate.requestId);
+            if (canonical?.state === "starting" || canonical?.state === "interrupted") {
+              this.adoptOwner(owner);
+              this.lastClaim.set(owner.sessionId, canonical);
+              this.blocked.add(owner.sessionId);
+              if (canonical.state === "starting" && canonical.sessionId === owner.sessionId
+                && canonical.incarnationId === owner.incarnationId && canonical.id === id
+                && canonical.inputTurnId === expectedTurnId && canonical.turnId === null && canonical.userMessageSeq === null) {
+                // No provider call has begun. Restore only this confirmed input
+                // claim, and resolve a lost restore reply by reading, not retrying.
+                let restored: SessionTurnQueueReceipt;
+                try {
+                  restored = await this.deps.store.restoreQueuedInput(owner, id, expectedTurnId);
+                } catch {
+                  const current = await this.deps.store.getReceipt(owner, candidate.requestId);
+                  if (current?.state === "queued") restored = current;
+                  else {
+                    if (current?.state === "starting" && current.inputTurnId === expectedTurnId) {
+                      await this.deps.store.settle(owner, id, "interrupted", "The input claim recovery could not be confirmed.");
+                    }
+                    throw error;
+                  }
+                }
+                if (restored.state === "queued" && this.isCurrentOwner(owner)) {
+                  this.blocked.delete(owner.sessionId);
+                  this.lastClaim.delete(owner.sessionId);
+                  this.wake(owner.sessionId);
+                }
+              }
+            }
+          } catch {
+            if (this.isCurrentOwner(owner)) this.blocked.add(owner.sessionId);
+          }
+          this.notify(owner);
+          throw error;
+        }
+        this.adoptOwner(owner);
+        this.lastClaim.set(owner.sessionId, claimed);
+        this.notify(owner);
+        return claimed;
+      });
+      try {
+        await this.deps.sendInput!(receipt, expectedTurnId);
+        const canonical = await this.deps.store.getReceipt(owner, receipt.requestId);
+        if (!canonical || canonical.state !== "completed") throw new Error("The queued input commit could not be confirmed.");
+        this.reconcileKnownReceipt(canonical);
+        return canonical;
+      } catch (error) {
+        return this.withLock(owner.sessionId, async () => {
+          if (this.isCurrentOwner(owner)) this.blocked.add(owner.sessionId);
+          const canonical = await this.deps.store.getReceipt(owner, receipt.requestId);
+          if (canonical?.state === "completed") {
+            if (error instanceof QueuedInputRuntimeRecoveryError) {
+              this.notify(owner);
+              throw error;
+            }
+            this.reconcileKnownReceipt(canonical);
+            return canonical;
+          }
+          if (error instanceof QueuedInputPreDispatchError) {
+            await this.deps.store.restoreQueuedInput(owner, id, expectedTurnId);
+            if (this.isCurrentOwner(owner)) this.blocked.delete(owner.sessionId);
+            this.notify(owner);
+            this.wake(owner.sessionId);
+            throw error;
+          }
+          if (this.isCurrentOwner(owner)) this.blocked.add(owner.sessionId);
+          try {
+            await this.deps.store.settle(owner, id, "interrupted", error instanceof Error ? error.message : "The input outcome could not be confirmed.");
+          } finally {
+            this.notify(owner);
+          }
+          throw error;
+        });
+      }
+    })());
+  }
+
   releaseInterrupted(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt> {
     this.requireAccepting();
     return this.track(this.withLock(owner.sessionId, async () => {
@@ -85,7 +181,7 @@ export class SessionTurnQueueService {
       const current = claimed?.id === id ? await this.deps.store.getReceipt(owner, claimed.requestId) : null;
       const receipt = current && isConfirmedTerminal(current)
         ? current
-        : await this.deps.store.releaseInterrupted(owner, id, { runReleased: !this.deps.isRunInFlight(owner.sessionId) });
+        : await this.deps.store.releaseInterrupted(owner, id, { runReleased: !await this.deps.isRunInFlight(owner.sessionId) });
       if (this.isCurrentOwner(owner)) {
         this.blocked.delete(owner.sessionId);
         this.notify(owner);
@@ -142,13 +238,13 @@ export class SessionTurnQueueService {
     const { sessionId } = owner;
     while (!this.closing && this.isCurrentOwner(owner) && !this.blocked.has(sessionId)) {
       const receipt = await this.withLock(sessionId, async () => {
-        if (this.closing || !this.isCurrentOwner(owner) || this.blocked.has(sessionId) || this.deps.isRunInFlight(sessionId)) return null;
+        if (this.closing || !this.isCurrentOwner(owner) || this.blocked.has(sessionId) || await this.deps.isRunInFlight(sessionId)) return null;
         const active = await this.deps.store.listActive(owner);
-        if (this.closing || !this.isCurrentOwner(owner) || this.deps.isRunInFlight(sessionId)) return null;
+        if (this.closing || !this.isCurrentOwner(owner) || await this.deps.isRunInFlight(sessionId)) return null;
         for (const released of active) {
           if (released.state !== "interrupted" || released.releasedAt === null) continue;
           await this.deps.store.releaseInterrupted(owner, released.id, { runReleased: true });
-          if (this.closing || !this.isCurrentOwner(owner) || this.deps.isRunInFlight(sessionId)) return null;
+          if (this.closing || !this.isCurrentOwner(owner) || await this.deps.isRunInFlight(sessionId)) return null;
         }
         return this.deps.store.claimNext(owner);
       });
@@ -174,7 +270,7 @@ export class SessionTurnQueueService {
         this.notify(receipt);
         if (!isConfirmedTerminal(canonical)) return;
         this.blocked.delete(sessionId);
-        if (this.deps.isRunInFlight(sessionId)) return;
+        if (await this.deps.isRunInFlight(sessionId)) return;
         continue;
       }
       if (!this.isCurrentOwner(owner)) return;
@@ -194,7 +290,7 @@ export class SessionTurnQueueService {
       this.notify(receipt);
       // A terminal response is not proof that provider/setup/terminal guards
       // have been released. The runtime's actual release signal wakes this loop.
-      if (this.deps.isRunInFlight(sessionId)) return;
+      if (await this.deps.isRunInFlight(sessionId)) return;
     }
   }
 

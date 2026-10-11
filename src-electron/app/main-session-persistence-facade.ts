@@ -92,8 +92,8 @@ export class MainSessionPersistenceFacade {
     return this.deps.getSessionPersistenceService().persistQueuedTurnStart(session, expectedMessageCount, queueId, turn);
   }
 
-  async appendRunningInput(session: Session, text: string, turnId: number): Promise<Session> {
-    return this.deps.getSessionPersistenceService().appendRunningInput(session, text, turnId);
+  async appendRunningInput(session: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }): Promise<Session> {
+    return this.deps.getSessionPersistenceService().appendRunningInput(session, text, turnId, queuedInput);
   }
 
   async appendTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Promise<Session> {

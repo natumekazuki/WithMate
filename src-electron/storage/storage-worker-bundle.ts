@@ -36,7 +36,7 @@ const STORE_METHODS = {
     "deleteSession", "deleteSessions", "clearSessions",
   ],
   turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn", "getConversationTimingSnapshot"],
-  queue: ["enqueue", "getReceipt", "listActive", "listReceipts", "listPendingOwners", "claimNext", "markStarted", "settle", "cancelQueued", "recoverInterrupted", "releaseInterrupted"],
+  queue: ["enqueue", "getReceipt", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "recoverInterrupted", "releaseInterrupted"],
   auxiliary: [
     "getAuxiliarySessionView", "getConversationPage", "searchConversation", "listConversationNavigator",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
@@ -72,7 +72,7 @@ const STORE_METHODS = {
 } as const;
 
 const MUTATIONS = new Set([
-  "claimNext", "markStarted", "settle", "cancelQueued", "recoverInterrupted", "releaseInterrupted",
+  "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "recoverInterrupted", "releaseInterrupted",
   "pinSessionFile", "unpinSessionFile",
   "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
   "setSessionPinned", "upsertSession", "updateSessionThreadIfMatches", "updateSessionRuntimeMetadataIfMatches", "updateSession",

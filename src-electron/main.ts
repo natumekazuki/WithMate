@@ -1560,6 +1560,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               },
               sessionRuntime: {
                 queue: {
+                  sendQueuedSessionInput: (sessionId, id, expectedTurnId) => requireMainSessionTurnQueueFacade().sendQueuedSessionInput(sessionId, id, expectedTurnId),
                   enqueueSessionTurn: (sessionId, request) => requireMainSessionTurnQueueFacade().enqueueSessionTurn(sessionId, request),
                   getSessionTurnQueueReceipt: (sessionId, requestId) => requireMainSessionTurnQueueFacade().getSessionTurnQueueReceipt(sessionId, requestId),
                   listSessionTurnQueue: (sessionId) => requireMainSessionTurnQueueFacade().listSessionTurnQueue(sessionId),
@@ -1567,6 +1568,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   cancelQueuedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().cancelQueuedSessionTurn(sessionId, id),
                   releaseInterruptedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().releaseInterruptedSessionTurn(sessionId, id),
                 },
+                getAuxiliarySessionStatus: (sessionId) => requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId),
                 getLiveSessionRun: (sessionId) => getLiveSessionRun(sessionId),
                 getProviderQuotaTelemetry: getOrRefreshProviderQuotaTelemetry,
                 getSessionContextTelemetry: (sessionId) => getSessionContextTelemetry(sessionId),
@@ -2214,6 +2216,18 @@ async function assertSessionQueueWorkspaceAvailable(session: Session): Promise<v
   if (!validation.valid) throw new Error(`Workspace is unavailable. ${resolveWorkspaceDirectoryValidationMessage(validation)}`);
 }
 
+async function getQueueRuntimeSession(sessionId: string): Promise<Session | null> {
+  const main = await getRuntimeSession(sessionId);
+  if (main) return main;
+  return requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
+}
+
+async function resolveQueueSessionRuntime(sessionId: string): Promise<SessionRuntimeService> {
+  return await requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId)
+    ? requireAuxiliarySessionRuntimeService()
+    : requireSessionRuntimeService();
+}
+
 function requireMainSessionTurnQueueService(): SessionTurnQueueService {
   if (!sessionTurnQueueService) {
     const owner = requireActivePersistentStoreOwnerForFactory("Session turn queue");
@@ -2221,19 +2235,33 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
     if (!store) throw new Error("The Session turn queue is unavailable for this database.");
     sessionTurnQueueService = new SessionTurnQueueService({
       store,
-      isRunInFlight: (sessionId) => databaseMaintenanceRequested
-        || requireSessionWindowBridge().isQuitPending()
-        || Boolean(settingsCatalogService && !settingsCatalogService.isProviderAvailableForTurn(getSession(sessionId)?.provider ?? ""))
-        || Boolean(sessionRuntimeService?.isRunInFlight(sessionId)),
+      isRunInFlight: async (sessionId) => {
+        const session = await getQueueRuntimeSession(sessionId);
+        return databaseMaintenanceRequested || requireSessionWindowBridge().isQuitPending()
+          || Boolean(session && settingsCatalogService && !settingsCatalogService.isProviderAvailableForTurn(session.provider))
+          || isSessionRunInFlight(sessionId, "self");
+      },
       dispatch: async (receipt, onStarted) => {
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
-        const result = await requireSessionRuntimeService().runQueuedSessionTurn(receipt, onStarted);
+        const runtime = await resolveQueueSessionRuntime(receipt.sessionId);
+        const result = await runtime.runQueuedSessionTurn(receipt, onStarted);
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
+        return result;
+      },
+      sendInput: async (receipt, expectedTurnId) => {
+        assertPersistentStoreOwnerIsActive(owner, "Queue input");
+        const runtime = await resolveQueueSessionRuntime(receipt.sessionId);
+        const result = await runtime.steerQueuedSessionTurn(receipt, expectedTurnId);
+        assertPersistentStoreOwnerIsActive(owner, "Queue input");
         return result;
       },
       onChanged: ({ sessionId }) => {
         if (mainStoreContext.activePersistentStoreOwner === owner) {
-          requireWindowBroadcastService().broadcastSessionTurnQueueChanged(sessionId);
+          void requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId).then((auxiliary) => {
+            if (mainStoreContext.activePersistentStoreOwner === owner) {
+              requireWindowBroadcastService().broadcastSessionTurnQueueChanged(sessionId, auxiliary?.parentSessionId ?? sessionId);
+            }
+          }).catch((error) => writeAppLog({ level: "warn", kind: "session.queue.broadcast-failed", process: "main", message: "Queue change publication failed", error: appLogService.errorToLogError(error) }));
         }
       },
     });
@@ -2254,7 +2282,7 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
           throw new Error("The app is quitting or maintaining its database, so a new Turn cannot be queued.");
         }
       },
-      getSession: getRuntimeSession,
+      getSession: getQueueRuntimeSession,
       validateWorkspace: assertSessionQueueWorkspaceAvailable,
       validateProvider: async (session, revision) => {
         if (!getProviderAppSettings(await requireAppSettingsStorage().getSettings(), session.provider).enabled) {
@@ -2263,7 +2291,13 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
         const catalog = await resolveProviderCatalog(session.provider, revision);
         return { provider: catalog.provider, revision: catalog.snapshot.revision };
       },
-      preview: (session, message) => resolveComposerPreview(appendSessionFilesDirectory(app.getPath("userData"), session), message),
+      preview: async (session, message) => {
+        const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(session.id);
+        const providerSession = auxiliary
+          ? appendSessionFilesDirectoryForSessionId(app.getPath("userData"), session, auxiliary.parentSessionId)
+          : appendSessionFilesDirectory(app.getPath("userData"), session);
+        return resolveComposerPreview(providerSession, message);
+      },
       store,
       service: requireMainSessionTurnQueueService(),
     });
@@ -2285,7 +2319,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       sessions: {
         getSession: (sessionId) => getRuntimeSession(sessionId),
-        appendRunningInput: (session, text, turnId) => requireMainSessionPersistenceFacade().appendRunningInput(session, text, turnId),
+        appendRunningInput: (session, text, turnId, queuedInput) => requireMainSessionPersistenceFacade().appendRunningInput(session, text, turnId, queuedInput),
+        getQueuedInputReceipt: (receipt) => owner.storageWorker!.stores.queue.getReceipt(receipt, receipt.requestId),
         checkpointRuntimeMetadata: (session, expected) => requireMainSessionPersistenceFacade().checkpointRuntimeMetadata(session, expected),
         persistRunningTurnStart: (session, expectedMessageCount) => requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount),
         persistQueuedTurnStart: (session, count, queueId, turn) => requireMainSessionPersistenceFacade().persistQueuedTurnStart(session, count, queueId, turn),
@@ -2421,7 +2456,8 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
           return auxiliary;
         },
         persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
-        appendRunningInput: (session, text, turnId) => requireAuxiliarySessionService().appendRunningInput(session, text, turnId),
+        persistQueuedTurnStart: (session, count, queueId, turn) => requireAuxiliarySessionService().persistQueuedTurnStart(session, count, queueId, turn),
+        appendRunningInput: (session, text, turnId, queuedInput) => requireAuxiliarySessionService().appendRunningInput(session, text, turnId, queuedInput),
         appendTerminalSession: (session, commit, options) => requireAuxiliarySessionService().appendTerminalSession(session, commit, options),
         checkpointRuntimeMetadata: (session, expected) => requireAuxiliarySessionService().checkpointRuntimeMetadata(session, expected),
         isAuxiliarySession: async (sessionId) => Boolean(await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId)),
@@ -2430,6 +2466,10 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       resolution: {
         resolveComposerPreview,
         resolveProviderCatalog,
+        assertCapturedComposerAttachmentsAvailable: async (session, attachments) => {
+          await assertSessionQueueWorkspaceAvailable(session);
+          await assertCapturedComposerAttachmentsAvailable(session, attachments);
+        },
         resolveRuntimeSessionForTurn: (session) => refreshSessionCharacterRuntimeSnapshot(session, (characterId, previousSnapshot) => requireCharacterService().refreshRuntimeSnapshot(characterId, previousSnapshot)),
       },
       provider: {
@@ -2459,6 +2499,8 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         invalidateProviderSessionThread,
       },
       notification: async (notification, context) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification, context); },
+      getQueuedInputReceipt: (receipt) => owner.storageWorker!.stores.queue.getReceipt(receipt, receipt.requestId),
+      onSessionRunReleased: (sessionId) => sessionTurnQueueService?.wake(sessionId),
       currentTimestampLabel,
     });
   }
@@ -2546,6 +2588,9 @@ function requireSettingsCatalogService(): SettingsCatalogService {
         for (const session of mainStoreContext.sessions) {
           if (session.provider === providerId) sessionTurnQueueService?.wake(session.id);
         }
+        void requireAuxiliarySessionService().listAllAuxiliarySessions().then((sessions) => {
+          for (const session of sessions) if (session.provider === providerId) sessionTurnQueueService?.wake(session.id);
+        }).catch((error) => writeAppLog({ level: "warn", kind: "session.queue.provider-wake-failed", process: "main", message: "Auxiliary queue wake failed", error: appLogService.errorToLogError(error) }));
       },
       runProviderRuntimeOperationExclusive: (operation) =>
         providerRuntimeOperationCoordinator.runExclusive(operation),

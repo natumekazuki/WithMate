@@ -242,11 +242,13 @@ export function SessionComposerExpanded({
   const displayedDraft = composerController ? composerControllerState.draft : draft;
   const composerFrozen = composerController?.registry.isFrozen === true;
   const composerSaveFailed = composerControllerState.saveState === "error";
+  const canQueueTurn = isRunning && !!onQueueTurn;
   const projectedComposerSendability = composerController
     ? resolveComposerSendabilityState({
         runState: isRunning ? "running" : "idle",
-        canSendInput: canSendInput && !isCanceling,
-        busyReason: composerSendability.busyReason,
+        canSendInput: !canQueueTurn && canSendInput && !isCanceling,
+        canQueueTurn,
+        busyReason: queueTurnBusy ? "Message submission is in progress." : composerSendability.busyReason,
         blockedReason: composerBlocked ? (composerSendability.primaryFeedback ?? "") : "",
         inputErrors: composerControllerState.preview.errors,
         draftText: displayedDraft,
@@ -259,13 +261,13 @@ export function SessionComposerExpanded({
     : resolvedComposerSendability;
   const displayedIsSendDisabled = composerController
     ? isComposerDisabled || projectedComposerSendability!.isSendDisabled || composerSaveFailed || !!onCheckTurnReceipt
-    : isSendDisabled;
+    : isComposerDisabled || isSendDisabled || composerSaveFailed || !!onCheckTurnReceipt;
   const displayedSendButtonTitle = composerSaveFailed
     ? "Draft could not be saved. Retry before sending."
     : projectedComposerSendability
       ? getComposerSendButtonTitle(projectedComposerSendability)
       : sendButtonTitle;
-  const showBusySendState = (!isRunning || canSendInput) && displayedComposerSendability.isBusy === true;
+  const showBusySendState = queueTurnBusy || ((!isRunning || canSendInput || canQueueTurn) && displayedComposerSendability.isBusy === true);
   const composerDescriptionIds = [
     externalErrorDescriptionIds,
     composerSaveFailed ? "composer-save-feedback" : undefined,
@@ -723,26 +725,16 @@ export function SessionComposerExpanded({
           ) : null}
         </div>
 
-        {isRunning && onQueueTurn ? (
-          <button
-            className="session-send-button secondary"
-            type="button"
-            onClick={onQueueTurn}
-            disabled={composerBlocked || composerFrozen || queueTurnBusy || !displayedDraft.trim() || composerControllerState.preview.errors.length > 0 || !!onCheckTurnReceipt}
-            aria-busy={queueTurnBusy || undefined}
-            title="Save this input for the next turn"
-          >Queue Turn</button>
-        ) : null}
         <button
           className={`session-send-button${showBusySendState ? " loading" : ""}`}
           type="button"
-          onClick={canSendInput ? onSendInput : onSendOrCancel}
-          disabled={(isRunning && !canSendInput) || isCanceling || displayedIsSendDisabled || composerFrozen}
+          onClick={canQueueTurn ? onQueueTurn : canSendInput ? onSendInput : onSendOrCancel}
+          disabled={(isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn) || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy}
           aria-busy={showBusySendState || undefined}
           title={
             showBusySendState
               ? undefined
-              : isRunning && !canSendInput
+              : isRunning && !canSendInput && !canQueueTurn
               ? "Cannot send while a run is active"
               : appendShortcutLabel(
                   displayedSendButtonTitle,
@@ -753,7 +745,7 @@ export function SessionComposerExpanded({
           }
         >
           {showBusySendState ? <span className="loading-indicator-spinner" aria-hidden="true" /> : null}
-          <span>{canSendInput ? "Send Input" : "Send"}</span>
+          <span>Send</span>
         </button>
       </div>
     </div>

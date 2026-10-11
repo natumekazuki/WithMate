@@ -297,6 +297,9 @@ export function createSessionApi(
     cancelQueuedSessionTurn(sessionId, id) {
       return ipcRenderer.invoke(channels.WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL, sessionId, id);
     },
+    sendQueuedSessionInput(sessionId, id, expectedTurnId) {
+      return ipcRenderer.invoke(channels.WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL, sessionId, id, expectedTurnId);
+    },
     releaseInterruptedSessionTurn(sessionId, id) {
       return ipcRenderer.invoke(channels.WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL, sessionId, id);
     },

@@ -106,8 +106,9 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
     this.broadcast(WITHMATE_SESSION_TURN_UPDATED_EVENT, sessionId);
   }
 
-  public broadcastSessionTurnQueueChanged(sessionId: string): void {
-    this.broadcastTo(this.options.getSessionWindows(), WITHMATE_SESSION_TURN_QUEUE_CHANGED_EVENT, sessionId);
+  public broadcastSessionTurnQueueChanged(sessionId: string, ownerSessionId = sessionId): void {
+    const window = this.options.getLiveSessionRunWindow(ownerSessionId);
+    if (window) this.broadcastTo([window], WITHMATE_SESSION_TURN_QUEUE_CHANGED_EVENT, sessionId);
   }
 
   public broadcastAuxiliarySessionSelection(parentSessionId: string, auxiliarySessionId: string): void {

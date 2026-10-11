@@ -31,6 +31,7 @@ function fixture() {
     listActive: unexpected, listReceipts: unexpected, listPendingOwners: unexpected,
     claimNext: async () => null, markStarted: unexpected, settle: unexpected, cancelQueued: unexpected,
     recoverInterrupted: unexpected, releaseInterrupted: unexpected,
+    claimForInput: unexpected, restoreQueuedInput: unexpected,
   };
   const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: unexpected });
   const preview: ComposerPreview = { errors: [], attachments: [{ id: "path", kind: "file", source: "text",
@@ -52,6 +53,33 @@ function fixture() {
   };
   return { session, rows, calls, service, preview, deps, input, facade: new MainSessionTurnQueueFacade(deps) };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Aux targetのqueue受付はdraft incarnation/revisionとdisplay anchorを保存し既知receipt再照会でdraftを再消費しない"
+// oracle = { type = "contract", ref = "src-shared/session/runtime-state.ts RunSessionTurnRequest Auxiliary draft identity" }
+// fault = "facade正規化でAux draft identityを落とすか既知要求の再送を再受付する"
+// observable = "receipt captured.requestのAux fieldsと受付/preview件数"
+// observation_boundary = "public-boundary"
+// scope = "generic queue facade Auxiliary captured request"
+// lifecycle = "permanent"
+// impact = "保存済み下書きと予約が原子的に対応せず重複送信または下書き損失になる"
+// distinction = "storage testはpublic facadeによるAux fieldsの脱落を検出できない"
+// @end-test-value
+test("Aux queue受付はdraft identityとanchorを保持する", async () => {
+  const { facade, session, input, calls, service } = fixture();
+  session.id = "aux-1";
+  const request = { ...input, auxiliaryDraftIncarnation: "draft-1", auxiliaryDraftDurableRevision: 7, displayAnchorParentMessageCount: 3 };
+  const receipt = await facade.enqueueSessionTurn(session.id, request);
+  assert.equal(receipt.sessionId, "aux-1");
+  assert.equal(receipt.captured.request.auxiliaryDraftIncarnation, "draft-1");
+  assert.equal(receipt.captured.request.auxiliaryDraftDurableRevision, 7);
+  assert.equal(receipt.captured.request.displayAnchorParentMessageCount, 3);
+  assert.equal(await facade.enqueueSessionTurn(session.id, request), receipt);
+  assert.equal(calls.acceptance, 1);
+  assert.equal(calls.preview, 1);
+  await service.close();
+});
 
 // @test-value v2
 // kind = "contract"

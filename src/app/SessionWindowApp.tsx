@@ -7,7 +7,7 @@ import {
 } from "react";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
-import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { getAuxiliarySessionIdFromLocation, getSessionIdFromLocation } from "./session-location.js";
 import {
@@ -120,7 +120,6 @@ import { insertComposerTextAtSelection } from "../chat/message-text-actions.js";
 import type { GlossaryAnnotationMatcher } from "../glossary/glossary-annotation-projection.js";
 import { SessionFilesFeature, type SessionFilesFeatureHandle } from "../file-explorer/session-files-feature.js";
 import {
-  acknowledgePreviewChatMessageCount,
   beginPreviewChatActivity,
   endPreviewChatActivity,
   observePreviewChatMessageCount,
@@ -180,13 +179,6 @@ import {
   runAddAuxiliaryAdditionalDirectoryOperationWithApi,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "../chat/auxiliary/auxiliary-additional-directory-operation.js";
-import {
-  createAuxiliarySessionPendingLiveRunClearer,
-  createAuxiliarySessionRunningApplier,
-  createAuxiliarySessionSendResultAppliers,
-  handleAuxiliarySessionSendOperationResult,
-  runAuxiliarySessionSendOperationWithApi,
-} from "../chat/auxiliary/auxiliary-session-send-operation.js";
 import {
   applyComposerSubmitCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -450,7 +442,6 @@ export default function AgentSessionWindowApp() {
   const auxiliarySessionMutationRevisionRef = auxiliaryBinding.mutationRevision;
   const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
   const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
-  const auxiliarySendInFlightIdsRef = useRef<Set<string>>(new Set());
   const loadedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? null,
     [selectedId, sessions],
@@ -1011,11 +1002,12 @@ export default function AgentSessionWindowApp() {
     retryBanner,
     draft: getComposerDraft(),
   });
-  const isComposerDisabled = (selectedSessionRunState === "running" && !canSendInput) || !!composerBlockedReason || isSelectedSessionReadOnly;
+  const isComposerDisabled = !!composerBlockedReason || isSelectedSessionReadOnly;
   const composerSendability = useMemo(
     () =>
       resolveComposerSendabilityState({
         runState: selectedSessionRunState,
+        canQueueTurn: true,
         busyReason: composerBusyReason,
         blockedReason: sessionExecutionBlockedReason,
         inputErrors: composerPreview.errors,
@@ -1074,7 +1066,7 @@ export default function AgentSessionWindowApp() {
   }, [selectedSession?.id]);
 
   const triggerComposerBlockedFeedback = () => {
-    if (!selectedSession || (selectedSessionRunState === "running" && !canSendInput)) {
+    if (!selectedSession) {
       return;
     }
 
@@ -1083,13 +1075,14 @@ export default function AgentSessionWindowApp() {
 
   const sendMessage = async (
     messageText: string,
-    options?: { clearDraft?: boolean; collapseActionDock?: boolean; submitSource?: "composer" | "retry"; queueTurn?: boolean },
+    options?: { clearDraft?: boolean; collapseActionDock?: boolean; submitSource?: "composer" | "retry" },
   ) => {
     const sendSession = getCurrentMainSession();
     if (!withmateApi || !sendSession) {
       return;
     }
     const sessionId = sendSession.id;
+    const selectionContext = dockContextRef.current;
     const collapseSentActionDock = captureSendDockCollapse();
     const clientRequestId = createSessionTurnClientRequestId();
     const request: RunSessionTurnRequest = {
@@ -1104,7 +1097,8 @@ export default function AgentSessionWindowApp() {
       request,
       composerOwner,
       clearDraft: options?.clearDraft ?? true,
-      queueTurn: options?.queueTurn,
+      queueTurn: true,
+      isCurrentSubmission: () => dockContextRef.current === selectionContext && composerOwnerRef.current === sessionId,
       shouldCollapseActionDock: options?.collapseActionDock ?? false,
       selectedSessionRunState,
       blockedReason: sessionExecutionBlockedReason,
@@ -1122,34 +1116,31 @@ export default function AgentSessionWindowApp() {
       return;
     }
     if (activeAuxiliarySession) {
-      const auxiliaryDraft = composerState.capture().draft;
       const currentComposerState = composerRegistry.get(composerOwner);
-      const auxiliarySessionId = activeAuxiliarySession.id;
-      if (auxiliarySendInFlightIdsRef.current.has(auxiliarySessionId) || composerBusyReason) {
+      if (composerBusyReason || mainSessionRuntime.hasUncertainTurnFor(activeAuxiliarySession.id)) {
         return;
       }
       if (currentComposerState.saveState === "error" || currentComposerState.preview.errors.length > 0) {
         triggerComposerBlockedFeedback();
         return;
       }
-      if (!auxiliaryDraft.trim() || activeAuxiliarySession.runState === "running") {
+      if (!currentComposerState.draft.trim() || composerBlockedReason || isSelectedSessionReadOnly) {
         triggerComposerBlockedFeedback();
         return;
       }
 
-      auxiliarySendInFlightIdsRef.current.add(auxiliarySessionId);
       try {
         setForceComposerBlockedFeedback(false);
-        await sendAuxiliaryMessage(auxiliaryDraft);
+        await sendAuxiliaryMessage();
       } catch (error) {
         window.alert(resolveSessionRunErrorMessage(error, "Could not send the message."));
-      } finally {
-        auxiliarySendInFlightIdsRef.current.delete(auxiliarySessionId);
       }
       return;
     }
 
-    if (isComposerDisabled || !getComposerDraft().trim()) {
+    const currentComposerState = composerRegistry.get(composerOwner);
+    if (isComposerDisabled || mainSessionRuntime.hasUncertainTurnFor(selectedId) || currentComposerState.saveState === "error"
+      || currentComposerState.preview.errors.length > 0 || !getComposerDraft().trim()) {
       triggerComposerBlockedFeedback();
       return;
     }
@@ -1172,7 +1163,7 @@ export default function AgentSessionWindowApp() {
     const turnId = inputTurnId;
     const target = activeAuxiliarySession ?? getCurrentMainSession();
     if (!withmateApi || !target || !canSendInput || !turnId || composerRegistry.isFrozen
-      || composerBlockedReason || isSelectedSessionReadOnly || steeringInFlightRef.current.has(owner.id)) return;
+      || composerBlockedReason || isSelectedSessionReadOnly || mainSessionRuntime.hasUncertainTurnFor(owner.id) || steeringInFlightRef.current.has(owner.id)) return;
     const captured = composerRegistry.capture(owner);
     const current = composerRegistry.get(owner);
     if (!captured.draft.trim() || current.isImeComposing || current.saveState === "error" || current.preview.errors.length > 0) {
@@ -1235,16 +1226,14 @@ export default function AgentSessionWindowApp() {
       return composerRegistry.isFrozen
         || current.isImeComposing
         || current.saveState === "error"
-        || (activeAuxiliarySession
-          ? activeAuxiliarySession.runState === "running" && !canSendInput
-          : current.preview.errors.length > 0 || selectedSessionRunState === "running" && !canSendInput);
+        || mainSessionRuntime.hasUncertainTurnFor(composerOwner.id);
     },
     isSubmitBlocked: () => {
       const current = composerRegistry.get(composerOwner);
       const activeSendability = activeAuxiliarySession
         ? buildComposerSendabilityState({
             runState: activeAuxiliarySession.runState,
-            canSendInput,
+            canQueueTurn: true,
             busyReason: composerBusyReason,
             blockedReason: sessionExecutionBlockedReason,
             inputErrors: current.preview.errors,
@@ -1252,7 +1241,7 @@ export default function AgentSessionWindowApp() {
           })
         : resolveComposerSendabilityState({
             runState: selectedSessionRunState,
-            canSendInput,
+            canQueueTurn: true,
             busyReason: composerBusyReason,
             blockedReason: sessionExecutionBlockedReason,
             inputErrors: current.preview.errors,
@@ -1262,12 +1251,13 @@ export default function AgentSessionWindowApp() {
       return current.saveState === "error" || activeSendability.isSendDisabled;
     },
     notifySubmitBlocked: triggerComposerBlockedFeedback,
-    submit: () => void (canSendInput ? handleSendInput() : handleSend()),
+    submit: () => void handleSend(),
   });
 
   useShortcutDispatcherSettings(appSettings.keyboardShortcuts);
   useShortcutScope("composer");
   useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.composerSubmit, handleComposerSubmitShortcut);
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.composerSendInput, () => { void handleSendInput(); });
 
   const handleSelectSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
     getProvider: () => selectedSession?.provider,
@@ -1590,108 +1580,39 @@ export default function AgentSessionWindowApp() {
     auxiliaryDraftPersistence.retrySave(activeAuxiliarySession);
   };
 
-  const sendAuxiliaryMessage = (messageText: string): Promise<void> => {
-    if (composerRegistry.isFrozen) return Promise.resolve();
+  const sendAuxiliaryMessage = (): Promise<unknown> => {
+    if (!withmateApi || composerRegistry.isFrozen) return Promise.resolve();
     const selected = activeAuxiliarySessionRef.current;
-    if (!selected) return Promise.resolve();
-    const executionOptions = captureSessionExecutionOptions(selected);
-    const releaseDetail = auxiliaryBinding.retainDetail();
-    return auxiliaryDraftPersistence.trackSend(performAuxiliarySend(messageText, selected, executionOptions).finally(releaseDetail));
-  };
-
-  const performAuxiliarySend = async (messageText: string, sendSession: AuxiliarySession, executionOptions: SessionExecutionOptions) => {
-    if (!withmateApi) {
-      return;
-    }
-
+    if (!selected || !displayedSession) return Promise.resolve();
+    const owner: ComposerOwner = { kind: "auxiliary", id: selected.id };
+    const draftOwner = auxiliaryDraftPersistence.getOwner(selected);
+    if (!draftOwner) return Promise.resolve();
+    const selectionContext = dockContextRef.current;
     const collapseSentActionDock = captureSendDockCollapse();
-    const sendCapture = composerRegistry.capture(composerOwner);
-    messageText = sendCapture.draft;
-    const draftOwner = auxiliaryDraftPersistence.getOwner(sendSession);
-    try {
-      await draftOwner?.flush();
-      await draftOwner?.ensureLoaded();
-    } catch {
-      composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
-      return;
-    }
-    if (composerRegistry.isFrozen) return;
-    const durableDraft = draftOwner?.durableRecord;
-    const latestCapture = composerRegistry.capture(composerOwner);
-    if (!draftOwner || !durableDraft || latestCapture.revision !== sendCapture.revision || latestCapture.draft !== sendCapture.draft || durableDraft.text !== sendCapture.draft) {
-      // A newer local revision is a normal send-capture invalidation, not a save failure.
-      // Keep it editable and let the next explicit Send capture that revision.
-      if (latestCapture.revision !== sendCapture.revision || latestCapture.draft !== sendCapture.draft) {
-        composerRegistry.setSaveState(composerOwner, "saved");
-      } else {
-        composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
-      }
-      return;
-    }
-
-    let clearedRevision: number | null = null;
-    const result = await runAuxiliarySessionSendOperationWithApi({
-      activeSession: sendSession,
-      executionOptions,
-      composerBlockedReason: sessionExecutionBlockedReason,
-      messageText,
-      auxiliaryDraftIncarnation: durableDraft.incarnation,
-      auxiliaryDraftDurableRevision: durableDraft.durableRevision,
-      parentMessageCount: selectedSession?.messageCount ?? selectedSession?.messages.length ?? null,
-      updatedAt: currentTimestampLabel(),
-      draftSaveQueue: auxiliaryDraftSaveQueueRef,
-      mutationRevision: auxiliarySessionMutationRevisionRef,
-      getCurrentSession: () => activeAuxiliarySessionRef.current,
-      canStartRun: () => !composerRegistry.isFrozen,
-      beforeRunningSessionApplied: () => {
-        clearedRevision = composerRegistry.clearIfRevision(composerOwner, sendCapture.revision);
-        collapseSentActionDock();
+    const releaseDetail = auxiliaryBinding.retainDetail();
+    return auxiliaryDraftPersistence.trackSend(runMainSessionTurnFromRuntime({
+      sessionId: selected.id,
+      selectedSession: { ...displayedSession, id: selected.id, incarnationId: selected.createdAt },
+      request: {
+        userMessage: composerRegistry.capture(owner).draft,
+        clientRequestId: createSessionTurnClientRequestId(),
+        submitSource: "composer",
+        executionOptions: captureSessionExecutionOptions(selected),
+        displayAnchorParentMessageCount: selectedSession?.messageCount ?? selectedSession?.messages.length ?? 0,
       },
-      onRunError: () => {
-        if (clearedRevision !== null) {
-          const restoredRevision = composerRegistry.restoreIfRevision(composerOwner, clearedRevision, () => sendCapture.draft);
-          if (restoredRevision !== null) {
-            void auxiliaryDraftPersistence.observeSave(sendSession.id, restoredRevision, draftOwner.enqueue(sendCapture.draft, durableDraft));
-          }
-        }
-      },
-      applyRunningSession: createAuxiliarySessionRunningApplier({
-        activeSessionRef: activeAuxiliarySessionRef,
-        setActiveSession: setActiveAuxiliarySession,
-        updateLiveRunState: (update) => setLiveRunState(update),
-      }),
-      afterRunningSessionApplied: (runningSession) => {
-        if (isCentralPreviewActive) {
-          setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(
-            current,
-            runningSession.id,
-            runningSession.messageCount ?? runningSession.messages.length,
-          ));
-        }
-      },
-      ...createAuxiliarySessionSendResultAppliers({
-        activeSessionRef: activeAuxiliarySessionRef,
-        setActiveSession: setActiveAuxiliarySession,
-      }),
-      clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({
-        updateLiveRunState: (update) => setLiveRunState(update),
-      }),
-      api: withmateApi,
-    });
-    await draftOwner?.reload().catch(() => undefined);
-    handleAuxiliarySessionSendOperationResult({
-      result,
-      onBlocked: (preflight) => {
-        throw new Error(preflight.blockedMessage);
-      },
-      onRunningTargetBlocked: () => {
-        throw new Error("The Auxiliary session is still running.");
-      },
-      onError: (error) => {
-        console.error(error);
-        throw error;
-      },
-    });
+      composerOwner: owner,
+      auxiliaryDraftOwner: draftOwner,
+      isCurrentSubmission: () => dockContextRef.current === selectionContext && composerOwnerRef.current === selected.id,
+      clearDraft: true,
+      queueTurn: true,
+      shouldCollapseActionDock: appSettings.autoCollapseActionDockOnSend,
+      selectedSessionRunState: selected.runState,
+      blockedReason: sessionExecutionBlockedReason,
+      isReadOnly: isSelectedSessionReadOnly,
+      validateWorkspace: () => selectedSession ? validateSessionWorkspace(selectedSession, true) : Promise.resolve(false),
+      collapseActionDock: collapseSentActionDock,
+      log: logSessionRunStuckInvestigation,
+    }).finally(releaseDetail));
   };
 
   const handleCopyMessageText = createCopyMessageTextHandler({
@@ -1705,7 +1626,7 @@ export default function AgentSessionWindowApp() {
   const handleQuoteMessageText = createQuoteMessageTextHandler({
     isBlocked: () => (
       composerRegistry.isFrozen || (activeAuxiliarySession
-        ? activeAuxiliarySession.runState === "running" || !!composerBlockedReason
+        ? !!composerBlockedReason
         : isComposerDisabled)
     ),
     notifyBlocked: triggerComposerBlockedFeedback,
@@ -1903,15 +1824,11 @@ export default function AgentSessionWindowApp() {
   const handleComposerPaste = createPastedSessionAttachmentHandler({
     alertError: (message) => window.alert(message),
     canPaste: () => {
-      const targetAuxiliarySession = activeAuxiliarySession;
       return !!withmateApi &&
         !composerRegistry.isFrozen &&
         !!selectedSession &&
         !isAuxiliaryTargetUnavailable &&
-        !isSelectedSessionReadOnly &&
-        !(targetAuxiliarySession
-          ? targetAuxiliarySession.runState === "running" && !canSendInput
-          : selectedSessionRunState === "running" && !canSendInput);
+        !isSelectedSessionReadOnly;
     },
     currentTimestampLabel,
     fallbackErrorMessage: "Could not save the pasted file.",
@@ -2128,7 +2045,7 @@ export default function AgentSessionWindowApp() {
   }
 
   const canInsertFileTreePathReference = activeAuxiliarySession
-    ? (activeAuxiliarySession.runState !== "running" || canSendInput) && !composerBlockedReason
+    ? !composerBlockedReason
     : !isComposerDisabled;
   const fileExplorerPane = <div ref={setFilesPaneHost} className="session-feature-host" />;
   const previewChatNotice = isApprovalRequestPending
@@ -2151,7 +2068,7 @@ export default function AgentSessionWindowApp() {
     <PromptTemplateWorkspace
       api={withmateApi}
       canInsert={!isComposerFrozen && (activeAuxiliarySession
-        ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason
+        ? !composerBlockedReason
         : !isComposerDisabled)}
       onRegisterCloseGuard={registerPromptTemplateCloseGuard}
       onBack={closeCentralPreview}
@@ -2185,7 +2102,7 @@ export default function AgentSessionWindowApp() {
       isRunning: renderedIsRunning,
       canSendInput,
       queueTurnBusy: pendingSubmitSessionId === renderedSession.id,
-      hasUncertainTurn: mainSessionRuntime.hasUncertainTurn,
+      hasUncertainTurn: mainSessionRuntime.hasUncertainTurnFor(renderedSession.id),
       inputError: steeringError,
       isCanceling: !activeAuxiliarySession && !!selectedSessionCancellationState,
       selectedRunState: selectedSessionRunState,
@@ -2216,17 +2133,13 @@ export default function AgentSessionWindowApp() {
         cancelMain: handleCancelRun,
         cancelAuxiliary: handleCancelAuxiliaryRun,
         input: handleSendInput,
-        queue: async () => {
-          if (composerRegistry.isFrozen || activeAuxiliarySession || isSelectedSessionReadOnly) return;
-          try { await sendMessage(getComposerDraft(), { clearDraft: true, queueTurn: true, submitSource: "composer" }); }
-          catch (error) { window.alert(resolveSessionRunErrorMessage(error, "Could not queue the turn.")); }
-        },
+        queue: handleSend,
         checkReceipt: async () => {
-          try { await mainSessionRuntime.checkTurnReceipt(); }
+          try { await mainSessionRuntime.checkTurnReceipt(renderedSession.id); }
           catch (error) { window.alert(resolveSessionRunErrorMessage(error, "Could not check the receipt.")); }
         },
         retryOriginal: async () => {
-          try { await mainSessionRuntime.retryOriginalTurn(); }
+          try { await mainSessionRuntime.retryOriginalTurn(renderedSession.id); }
           catch (error) { window.alert(resolveSessionRunErrorMessage(error, "Could not retry the original turn.")); }
         },
       },

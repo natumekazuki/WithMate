@@ -50,9 +50,9 @@ stateDiagram-v2
 window は上の状態機械とは分離する。  
 `Running` 中に `Session Window` が閉じても、session state は Main Process 内で継続する。
 
-## Main GUI Turn Queue
+## GUI Turn Queue
 
-Mainのidle `Send`／`Resend`と明示的な`Queue Turn`は、同じ永続受付を通る。実行中の`Send Input`は現在Turnへの追加入力であり、承認・質問への回答も予約に変換しない。受付・照会・取消・解放のIPCはowning Session Windowだけに許可する。Auxiliaryはこのキューの対象ではない。
+Main／Auxiliaryの`Send`と通常送信shortcutは同じ永続受付を通り、実行中は次Turnを予約する。予約項目の`Send to Current Turn`は現在Codex Turnへの追加入力である。独立した追加入力shortcutは現在のComposer下書きを直接送る。承認・質問への回答は予約に変換しない。受付・照会・取消・追加入力・解放のIPCはowning Session Windowだけに許可し、Auxiliaryは親Windowをownerとする。
 
 `MainSessionTurnQueueFacade`がSession ID／incarnation、本文、実行設定、provider／workspace、解決済み添付descriptorを捕捉する。添付はpath参照でありbytesをコピーしない。dispatchでは現在のowner・設定の利用可否・path認可と対象種類を再検証し、本文から添付を再解決しない。本文・設定は捕捉値、thread継続状態は最新Sessionを使う。
 
@@ -61,6 +61,8 @@ Mainのidle `Send`／`Resend`と明示的な`Queue Turn`は、同じ永続受付
 確定した失敗・取消では、admission／setup／provider cleanup／追加入力／terminal保存の実guard解放後に後続を開始する。Promiseの返却やCancel受付だけでは解放としない。同providerのSettings cleanup中、quit、DB maintenance中もclaimしない。結果不明の実行は自動再実行せず、同Sessionの後続を保留する。`Release Later Turns`は不明な要求そのものの再実行ではなく後続の明示解放であり、実guardを迂回しない。
 
 atomic開始後に結果不明となった要求の明示解放は、実guard解放後だけ、同incarnation・receiptのturn ID／user seq・最新running最小turnに一致するSessionの実行metadataをidle／interruptedへ収束させる。早期解放はreceiptの解放だけを保存し、後続claim前に収束する。本文・thread・設定や最小turnの未確定結果を上書きせず、過去receiptを新しいTurnへ適用しない。
+
+予約項目の現在Turnへの入力は通常claim／取消と同じSession lockで`starting`へclaimし、捕捉済み添付を検証してからproviderへ送る。受理したuser messageとreceiptの`completed`を同じtransactionで保存する。provider未呼出を証明できる失敗だけ予約へ戻し、送信結果不明では`interrupted`として後続を保留する。追加入力の解放は現在Turnのruntime状態を書き換えず、元要求を再送しない。
 
 通常購読はactive receiptだけを取得する。running行は保存user seq／incarnationで通常messageへ対応付け、terminal通知が保存本文より先に届いても小さい表示bridgeを保持する。live応答は待機列より前に表示し、保存本文とqueue本文を本文一致で結合しない。全receipt履歴は明示操作で30件ずつ取得する。取得失敗で既存表示を空へ置換せずRetryを提供する。
 
@@ -193,7 +195,7 @@ Memory runtime だけが交換され、元の settlement storage がまだ curre
   - `戻る`: quit をキャンセル
   - `終了する`: 新規実行を止めて実行中 session にキャンセルを要求し、draft flushと復元保存の成功後にアプリを終了する
 - 通常quitはDBを開いたまま実行をキャンセルし、全Session Windowの送信結果確定・失敗復元を含むdraft flush完了を確認する。既に閉じたWindowからの未確定Auxiliary送信とMain側に残る復元失敗も再保存まで待ってからsnapshot保存、provider等のcleanup、DB closeへ進む。quitの待機期限はキャンセル猶予後の保存時間も確保する。1つでも保存失敗・例外・待機timeoutがあれば終了を中止し、各Windowの凍結を解除する。開始済みキャンセルは取り消さず、未保存draftのあるWindowでは編集・再試行導線を保持し、再度quitできる
-- quitのflush開始でMain queueの受付と新規claimを止め、受付済みmutation・claim済み実行・terminal保存・取消終了待ちをMain側でも待つ。未開始queued項目は永続保存したまま終了する。quit中止時はqueueを再開する。DB close／再生成もqueueとruntimeの待機完了後に旧storage ownerを失効させる。
+- quitのflush開始でMain／Auxiliary queueの受付と新規claimを止め、受付済みmutation・claim済み実行・追加入力・terminal保存・取消終了待ちをMain側でも待つ。未開始queued項目は永続保存したまま終了する。quit中止時はqueueを再開する。DB close／再生成もqueueとruntimeの待機完了後に旧storage ownerを失効させる。
 
 キャンセルは `Session Window` から明示操作で行い、アプリ終了時の accidental quit 保護とは別責務で扱う。
 

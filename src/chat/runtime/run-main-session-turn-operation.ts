@@ -8,6 +8,7 @@ import type { SessionSubmitCoordinator } from "./session-submit-coordinator.js";
 import { resolveComposerSendPreflight } from "../composer/session-composer-feedback.js";
 import { SessionTurnAcceptance } from "./session-turn-acceptance.js";
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
+import type { AuxiliaryDraftPersistenceOwner } from "../auxiliary-draft-persistence-owner.js";
 
 type SessionRunApi = Pick<WithMateWindowApi, "previewComposerInput" | "enqueueSessionTurn" | "getSessionTurnQueueReceipt">;
 
@@ -20,6 +21,8 @@ export async function runMainSessionTurnOperation(input: {
   composerOwner: ComposerOwner;
   submitCoordinator: SessionSubmitCoordinator;
   acceptance: SessionTurnAcceptance;
+  auxiliaryDraftOwner?: AuxiliaryDraftPersistenceOwner;
+  isCurrentSubmission?: () => boolean;
   queueTurn?: boolean;
   clearDraft: boolean;
   collapseActionDock: boolean;
@@ -48,10 +51,28 @@ export async function runMainSessionTurnOperation(input: {
       state.setForceComposerBlockedFeedback(true);
       return null;
     }
+    if (input.acceptance.hasUncertain(sessionId)) throw new Error("A previous turn's acceptance is unknown. Check Receipt before sending another turn.");
+    if (input.auxiliaryDraftOwner) {
+      try {
+        await input.auxiliaryDraftOwner.flush();
+        await input.auxiliaryDraftOwner.reload();
+      } catch (error) {
+        composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
+        throw error;
+      }
+      const durable = input.auxiliaryDraftOwner.durableRecord;
+      if (composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false) return null;
+      if (!durable || durable.auxiliarySessionId !== sessionId || durable.incarnation !== request.incarnationId || durable.text !== captured.draft) {
+        composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
+        return null;
+      }
+      request.auxiliaryDraftIncarnation = durable.incarnation;
+      request.auxiliaryDraftDurableRevision = durable.durableRevision;
+    }
     const previewRequest = createComposerPreviewRequest({ api, sessionId });
     if (!previewRequest) return null;
     const preview = await previewRequest(messageText);
-    if (composerRegistry.isFrozen || composerRegistry.capture(composerOwner).revision !== captured.revision) return null;
+    if (composerRegistry.isFrozen || composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false) return null;
     state.setComposerPreview(preview);
     const preflight = resolveComposerSendPreflight({
       runState: input.queueTurn ? "idle" : input.selectedSessionRunState,
@@ -63,6 +84,7 @@ export async function runMainSessionTurnOperation(input: {
     }
     const receipt = await input.acceptance.submit(api, sessionId, {
       request, owner: composerOwner, revision: captured.revision, clearDraft: input.clearDraft,
+      auxiliaryDraftOwner: input.auxiliaryDraftOwner,
     }, composerRegistry);
     state.setForceComposerBlockedFeedback(false);
     input.log("renderer.queue.accepted", { sessionId, clientRequestId: receipt.requestId, state: receipt.state });

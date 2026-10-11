@@ -357,7 +357,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - `selectedSession.id` 切替時は follow / unread state をリセットする
   - `Jump to latest` で末尾へ移動して追従へ復帰できる
 - pending 中の live activity / streaming response
-- Mainはdurable受付後にqueue行を表示し、実開始後は保存user seq／incarnationで通常messageへ対応付ける。Auxiliaryは送信直後に同じ会話のuser messageとPendingを表示する。どちらも遅い状態取得や会話切替で送信文を消したり、確定時に重複追加したりしない
+- Main／Auxiliaryはdurable受付後に予約行を表示し、実開始後は保存user seq／incarnationで通常messageへ対応付ける。遅い状態取得や会話切替で送信文を消したり、確定時に重複追加したりしない
 - streamingの`assistantText`は会話本文として表示する。run開始直後から応答用のassistant行にCharacter avatarとdot bubbleを置き、本文の到着後は同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
 - 処理中表示の所属は、投影が会話ID・thread・メッセージ位置から生成するmessage keyで識別する。保存済み本文とlive本文が異なる場合も対象の応答枠を使い、本文一致や最後のassistantから推測しない。Main／Auxiliaryで所属を分離し、完了・失敗・キャンセル後は本文を重複させず処理中表示を消す
 - pending bubble には provider-native pending item を差し込める
@@ -396,12 +396,12 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `liveRun.errorMessage` は `Latest Command` のalert blockとして扱い、`Run Error` 見出しを `var(--ink)` の前景色で表示する
 - right pane 自体の描画失敗は pane 専用 fallback に切り替え、`Retry Right Pane` と `Reload Window` を出す
 - right pane は run 中の command 安全確認面として扱い、full timeline や `Turn Inspector` は常設しない
-- 実行中は上段に `Cancel` を表示する。Codexの現在turnが入力受付可能な場合だけ下段の同じ位置を `Send Input` とし、既存composerと送信shortcutから現在turnへ追加入力する。それ以外はdisabledの `Send` を残す。開始準備中・取消中・終了後の追加入力を新しいturnへ振り替えない。追加入力は既存の添付解決を通し、実行設定を変更しない
-- 実行中のMainでは同じComposerの送信列に`Queue Turn`を置き、新しいTurnの予約と`Send Input`を明示的に分ける。idleの`Send`／`Resend`も同じ永続受付を使う。現在Turnが追加入力を受け付けないproviderや取消終了待ちでも、受付条件を満たすMainの予約は可能であり、現在Turnの実guard解放まで開始しない。AuxiliaryにQueue Turnを表示しない。quit／closeの入力凍結中は両送信と添付を無効にする
-- 予約行は本文・`Queued N`・個別`Cancel`を近接表示し、現在Turnの応答より後へ置く。開始・失敗・結果不明をspinnerだけで隠さず、保存理由と必要な回復操作を示す。結果不明の`Release Later Turns`は元要求を再実行しない。受付応答が不明ならComposerに`Check Acceptance`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。受付ACKは一致するdraft revisionだけを消す
+- 実行中は上段に `Cancel` を表示する。下段の主ボタンはMain／Auxiliaryとも常に単一の `Send` とし、入力欄を編集可能に保つ。通常送信shortcutも同じ永続受付を使い、実行中は次Turnを予約する。現在Turnが追加入力を受け付けないproviderや取消終了待ちでも予約を受け付け、実guard解放まで開始しない。quit／closeの入力凍結中は送信と添付を無効にする
+- Codexの現在Turnが入力受付可能な間はチャットの予約項目に `Send to Current Turn` を表示する。捕捉した本文・添付を同じTurnへ一度だけ送り、開始準備中・取消中・終了後の操作を新Turnへ振り替えない。追加入力は実行中Turnの設定を維持する。独立した追加入力shortcutは現在のComposer下書きを直接送り、通常Sendとは混在させない
+- 予約行は本文・`Queued N`・個別`Cancel`を近接表示し、現在Turnの応答より後へ置く。開始・失敗・結果不明をspinnerだけで隠さず、保存理由と必要な回復操作を示す。結果不明の`Release Later Turns`は元要求を再実行しない。受付応答が不明ならComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。受付ACKは一致するdraft revisionだけを消す
 - `Queue Receipts`は明示展開し、30件ずつPrevious／Nextで表示する。通常購読で全receiptを保持せず、取得失敗でも既存本文を保ちRetryを出す。狭幅では操作を折り返し、本文を縮小しない
 - 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は既存のElicitation formで回答し、secret textはpassword inputで扱う。nonblockingの質問は `Input Requested` とし、必須待ちと区別して応答生成中のstatusを維持する
-- Mainの取消受付後は同じ位置をdisabledの`Canceling`とbusy stateにする。取消猶予後に保存済みSessionがidleになっても、Mainのlive取消状態が残る間はSend・送信shortcut・再送導線を有効にしない。元処理と必要な終了処理の解放通知後に通常の送信可能判定へ戻す。
+- Mainの取消受付後は同じ位置をdisabledの`Canceling`とbusy stateにする。取消終了待ちでも予約受付は可能だが、現在Turnへの追加入力と新しい実行開始は許可しない。保存済みSessionがidleになってもlive取消状態を優先し、元処理と必要な終了処理の解放通知後に後続の実行を開始する。
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
   - 詳細が欠落・取得失敗した場合はDetails内に状態と再openによる再試行を示し、会話本文と保存済みsummaryを維持する。同じ展開・表示期間では本文更新による自動再取得を行わず、閉じて再open・非表示からの復帰・履歴page復帰で取得し直す

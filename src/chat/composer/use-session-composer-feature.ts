@@ -309,6 +309,7 @@ export function useSessionComposerFeature(input: {
       ? buildComposerSendabilityState({
           runState: bridge.runtime.auxiliaryRunState,
           canSendInput: bridge.runtime.canSendInput,
+          canQueueTurn: !!bridge.operations.send.queue,
           busyReason: bridge.runtime.busyReason,
           blockedReason: bridge.runtime.blockedReason,
           inputErrors: composerPreview.errors,
@@ -317,6 +318,7 @@ export function useSessionComposerFeature(input: {
       : resolveComposerSendabilityState({
           runState: bridge.runtime.selectedRunState,
           canSendInput: bridge.runtime.canSendInput,
+          canQueueTurn: !!bridge.operations.send.queue,
           busyReason: bridge.runtime.busyReason,
           blockedReason: bridge.runtime.blockedReason,
           inputErrors: composerPreview.errors,
@@ -324,8 +326,7 @@ export function useSessionComposerFeature(input: {
           forceBlockedFeedback: bridge.runtime.forceBlockedFeedback,
         });
     const isComposerDisabled = bridge.runtime.isReadOnly
-      || !!bridge.runtime.blockedReason
-      || (composerSendability.isRunning && !bridge.runtime.canSendInput && bridge.target !== "main");
+      || !!bridge.runtime.blockedReason;
     const onSendOrCancel = buildAuxiliaryAwareSendOrCancelHandler({
       shouldSendAuxiliary: isAuxiliaryTarget,
       isAuxiliarySessionRunning: bridge.runtime.auxiliaryRunState === "running",
@@ -517,10 +518,10 @@ export function useSessionComposerFeature(input: {
       canSendInput: bridge.runtime.canSendInput,
       submissionError: bridge.runtime.inputError,
       onSendInput: () => void bridge.operations.send.input?.(),
-      onQueueTurn: bridge.target === "main" && bridge.operations.send.queue ? () => void bridge.operations.send.queue?.() : undefined,
+      onQueueTurn: bridge.operations.send.queue ? () => void bridge.operations.send.queue?.() : undefined,
       queueTurnBusy: bridge.runtime.queueTurnBusy || !!bridge.runtime.busyReason,
-      onCheckTurnReceipt: bridge.target === "main" && bridge.runtime.hasUncertainTurn ? () => void bridge.operations.send.checkReceipt?.() : undefined,
-      onRetryOriginalTurn: bridge.target === "main" && bridge.runtime.hasUncertainTurn ? () => void bridge.operations.send.retryOriginal?.() : undefined,
+      onCheckTurnReceipt: bridge.runtime.hasUncertainTurn ? () => void bridge.operations.send.checkReceipt?.() : undefined,
+      onRetryOriginalTurn: bridge.runtime.hasUncertainTurn ? () => void bridge.operations.send.retryOriginal?.() : undefined,
       composerBlocked: bridge.runtime.isReadOnly || !!bridge.runtime.blockedReason,
       isAgentPickerOpen,
       isSkillPickerOpen,
