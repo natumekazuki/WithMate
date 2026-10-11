@@ -28,7 +28,7 @@ function deferred<T>() {
 // scope = "latest-command-same-owner-refresh-and-recovery"
 // lifecycle = "permanent"
 // impact = "一時読取障害だけで既知の実行結果と回復導線を失い、旧結果を新turnの結果と誤認する"
-// distinction = "同期projectionやowner切替testでは取得済みデータと再取得状態の共存・paneの回復導線を観測できない。短いdeferred API応答で実feature境界を検証する"
+// distinction = "同期projectionやowner切替testでは再取得状態との共存、live/Sessionで新turnを認識した後の読取障害を観測できない。短いdeferred API応答で実feature境界を検証する"
 // @end-test-value
 test("ContextFeature retains acquired commands through refresh failures and exposes Retry", async () => {
   const dom = new JSDOM("<div id='root'></div>");
@@ -39,13 +39,16 @@ test("ContextFeature retains acquired commands through refresh failures and expo
   let session = buildNewSession({ id: "main", provider: "codex", taskTitle: "Context test", workspaceLabel: "fixture", workspacePath: "C:/fixture", branch: "main", characterId: "fixture-character", character: "Fixture", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "never" });
   let turn: SessionTurnRecord = { id: 1, sessionId: session.id, phase: "completed", createdAt: "now", provider: "codex", model: "model", reasoningEffort: "medium", approvalMode: "never", threadId: "thread", errorMessage: "", assistantMessageSeq: 3 };
   let nextTurn: ReturnType<typeof deferred<SessionTurnRecord | null>> | null = null;
+  let latestLoadError: Error | null = null;
   let nextArtifact: ReturnType<typeof deferred<MessageArtifact | null>> | null = null;
   const saved: MessageArtifact = { title: "Result", runChecks: [], activitySummary: [], changedFiles: [], operationTimeline: [{ type: "command_execution", summary: "npm test", status: "completed", details: "acquired output", exitCode: 0 }] };
   const listeners = new Set<(id: string) => void>();
+  const liveListeners = new Set<(id: string, state: LiveSessionRunState | null) => void>();
+  let running = false;
   const api = {
     getLiveSessionRun: async () => null,
-    subscribeLiveSessionRun: () => noop,
-    getLatestSessionTurn: async () => { const pending = nextTurn; nextTurn = null; return pending ? pending.promise : turn; },
+    subscribeLiveSessionRun: (listener: (id: string, state: LiveSessionRunState | null) => void) => { liveListeners.add(listener); return () => liveListeners.delete(listener); },
+    getLatestSessionTurn: async () => { if (latestLoadError) throw latestLoadError; const pending = nextTurn; nextTurn = null; return pending ? pending.promise : turn; },
     onSessionTurnUpdated: (listener: (id: string) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
     getSessionMessageArtifact: async () => { const pending = nextArtifact; nextArtifact = null; return pending ? pending.promise : saved; },
     getProviderQuotaTelemetry: async () => null,
@@ -55,7 +58,7 @@ test("ContextFeature retains acquired commands through refresh failures and expo
     subscribeSessionGlossary: () => noop,
     getSessionGlossaryProjection: async () => ({ sessionId: session.id, sequence: 1, scopeRevision: "fixture", checkout: { repositoryName: "fixture", branch: "main", pathLabel: "fixture" }, state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null } }),
   } as unknown as WithMateWindowApi;
-  const render = async () => { await act(async () => root.render(<SessionContextFeature api={api} selectedSession={session} displayedSession={session} activeRunSessionId={session.id} renderedIsRunning={false} visible availableReasoningEfforts={["medium"]} navigator={{}} onShowContextRail={noop} onAnnotationMatcherChange={noop} />)); };
+  const render = async () => { await act(async () => root.render(<SessionContextFeature api={api} selectedSession={session} displayedSession={session} activeRunSessionId={session.id} renderedIsRunning={running} visible availableReasoningEfforts={["medium"]} navigator={{}} onShowContextRail={noop} onAnnotationMatcherChange={noop} />)); };
   const publish = async () => { await act(async () => { for (const listener of listeners) listener(session.id); }); };
   const command = () => container.querySelector("[aria-label='Executed command']")?.textContent ?? "";
   const details = () => container.querySelector("details")?.textContent ?? "";
@@ -105,7 +108,33 @@ test("ContextFeature retains acquired commands through refresh failures and expo
     assert.match(details(), /Command Details.*acquired output/);
     await act(async () => retryArtifact.resolve(saved));
     assert.equal(container.querySelector("[role='alert']"), null);
-    turn = { ...turn, id: 2, phase: "running", assistantMessageSeq: undefined };
+    for (const source of ["Session", "live"] as const) {
+      latestLoadError = new Error("new turn start read failed");
+      await act(async () => {
+        if (source === "Session") running = true;
+        else for (const listener of liveListeners) listener(session.id, { sessionId: session.id, threadId: "thread", runState: "running", assistantText: "", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null });
+        for (const listener of listeners) listener(session.id);
+      });
+      await render();
+      assert.equal(command(), "", source);
+      latestLoadError = new Error("new turn end read failed");
+      await act(async () => {
+        running = false;
+        for (const listener of liveListeners) listener(session.id, null);
+        for (const listener of listeners) listener(session.id);
+      });
+      await render();
+      assert.equal(command(), "", source);
+      assert.equal(details(), "", source);
+      assert.match(container.querySelector("[role='alert']")!.textContent ?? "", /new turn end read failed/);
+      turn = { ...turn, id: turn.id + 1, assistantMessageSeq: turn.assistantMessageSeq! + 1 };
+      latestLoadError = null;
+      await retry();
+      assert.match(command(), /npm test/);
+      assert.match(details(), /Command Details.*acquired output/);
+      assert.equal(container.querySelector("[role='alert']"), null);
+    }
+    turn = { ...turn, id: turn.id + 1, phase: "running", assistantMessageSeq: undefined };
     await publish();
     assert.equal(command(), "");
     turn = { ...turn, phase: "completed", assistantMessageSeq: 4 };

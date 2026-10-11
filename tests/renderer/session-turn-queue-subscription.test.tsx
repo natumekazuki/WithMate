@@ -3,7 +3,8 @@ import test from "node:test";
 import React, { act } from "react";
 import { JSDOM } from "jsdom";
 import { useSessionTurnQueue, type SessionTurnQueueApi } from "../../src/chat/conversation/use-session-turn-queue.js";
-import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-queue-row.js";
+import { SessionTurnQueueRow, SessionTurnQueueStatus } from "../../src/chat/conversation/session-turn-queue-row.js";
+import { projectSessionTurnQueue } from "../../src/chat/conversation/session-turn-queue-projection.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 function receipt(overrides: Partial<SessionTurnQueueReceipt> = {}): SessionTurnQueueReceipt {
@@ -20,8 +21,14 @@ async function mount(api: SessionTurnQueueApi) {
   let current!: ReturnType<typeof useSessionTurnQueue>;
   function View({ seqs }: { seqs: number[] }) {
     current = useSessionTurnQueue(api, "session", "incarnation", true, seqs);
+    const { projection, metadata, tail } = projectSessionTurnQueue({
+      messages: seqs.map(() => ({ role: "user" as const, text: "saved prompt" })),
+      keys: seqs.map((seq) => `saved-${seq}`), sources: seqs.map((seq) => ({ kind: "session" as const, messageIndex: seq })), groups: seqs.map(() => null),
+    }, current.receipts, { sessionId: "session", incarnationId: "incarnation" });
+    const row = (item: SessionTurnQueueReceipt) => <SessionTurnQueueRow key={item.id} receipt={item} busy={current.busyId !== null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />;
     return <>
-      {current.receipts.map((item) => <SessionTurnQueueRow key={item.id} receipt={item} busy={current.busyId !== null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />)}
+      {projection.messages.map((message, index) => <div key={projection.keys[index]}><p>{message.text}</p>{metadata.has(projection.keys[index]) ? <SessionTurnQueueStatus receipt={metadata.get(projection.keys[index])!} busy={current.busyId !== null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} /> : null}</div>)}
+      {tail.map(row)}
       {current.error ? <div role="alert">{current.error}<button onClick={current.reload}>Retry Queue</button></div> : null}
     </>;
   }
@@ -80,6 +87,55 @@ test("active subscription bridges only disappeared runs and retains failures", a
     assert.equal(lookups.length, 1);
     assert.equal(historyCalls, 0);
   } finally { await view.unmount(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "予約から開始を観測せずterminalへ進んでも、receipt照会失敗時は受付本文とRetryを保持し、照会回復後はcanonical到着まで本文を橋渡しする"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: GUI Turn Queueのterminal先着bridgeと取得失敗時の表示保持" }
+// fault = "消えたqueuedを照会しない、照会失敗で空にする、またはcanonical保存本文より先にterminal本文を捨てる"
+// observable = "同request IDのreceipt照会、本文とRetry、completed/failed/canceled receiptからcanonical本文への重複なしの切替"
+// observation_boundary = "consumer"
+// scope = "queued-terminal-subscription-bridge"
+// lifecycle = "permanent"
+// impact = "ACK後にdraftが消えた受付済み本文を読取障害や短時間の実行で見失うことを防ぐ"
+// distinction = "runningからの既存購読testとSteer応答testは通常queuedの開始通知を観測しない経路を通らない。実hookとprojectionの小さい検証で通知順序の契約を守る"
+// @end-test-value
+test("queued receipts bridge skipped starts and failed receipt reads until canonical arrival", async () => {
+  for (const terminalState of ["completed", "failed", "canceled"] as const) {
+    let active = [receipt({ state: "queued", turnId: null, userMessageSeq: null })];
+    let lookupFails = true;
+    let listener!: (id: string) => void;
+    const lookups: Array<[string, string]> = [];
+    const view = await mount({
+      listSessionTurnQueue: async () => active,
+      getSessionTurnQueueReceipt: async (sessionId, requestId) => {
+        lookups.push([sessionId, requestId]);
+        if (lookupFails) throw new Error("receipt unavailable");
+        return receipt({ state: terminalState });
+      },
+      onSessionTurnQueueChanged: (next) => { listener = next; return () => {}; },
+    });
+    try {
+      assert.match(view.document.body.textContent!, /original prompt/);
+      active = [];
+      await act(async () => listener("session"));
+      assert.deepEqual(lookups, [["session", "request"]]);
+      assert.match(view.document.body.textContent!, /original prompt/);
+      assert.match(view.document.querySelector("[role=alert]")!.textContent!, /receipt unavailable/);
+      lookupFails = false;
+      await view.click("Retry Queue");
+      assert.equal(view.current.receipts[0]?.state, terminalState);
+      assert.equal(view.current.error, "");
+      assert.equal(view.document.querySelectorAll("p").length, 1);
+      assert.match(view.document.body.textContent!, /original prompt/);
+      await view.canonical([42]);
+      assert.equal(view.current.receipts.length, 0);
+      assert.equal(view.document.querySelectorAll("p").length, 1);
+      assert.equal(view.document.querySelector("p")!.textContent, "saved prompt");
+      assert.deepEqual(lookups, [["session", "request"], ["session", "request"]]);
+    } finally { await view.unmount(); }
+  }
 });
 
 // @test-value v2
@@ -173,10 +229,10 @@ test("interrupted bubble releases later turns once and retains its body through 
 
 // @test-value v2
 // kind = "contract"
-// claim = "予約bubbleの取消は対象要求を一度だけ指定し、取消確定まで本文を保持する"
+// claim = "予約bubbleの取消は対象要求を一度だけ指定し、取消確定まで本文を保持し、保存user seqのない取消は本文bridgeを残さない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 予約行の個別Cancel" }
 // fault = "取消を別要求へ送る、連打で重複する、または未確定取消で本文を消す"
-// observable = "bubble本文、取消API引数と回数、待機中disabled、確定後queue"
+// observable = "bubble本文、取消API引数と回数、待機中disabled、確定後queueと本文bridge"
 // observation_boundary = "component-behavior"
 // scope = "queued-bubble-cancellation"
 // lifecycle = "permanent"
@@ -189,11 +245,12 @@ test("queued bubble preserves input until its single cancellation settles", asyn
   const canceled: Array<[string, string]> = [];
   const view = await mount({
     listSessionTurnQueue: async () => active,
+    getSessionTurnQueueReceipt: async () => receipt({ state: "canceled", turnId: null, userMessageSeq: null }),
     cancelQueuedSessionTurn: async (sessionId, id) => {
       canceled.push([sessionId, id]);
       await new Promise<void>((resolve) => { completeCancel = resolve; });
       active = [];
-      return receipt({ state: "canceled" });
+      return receipt({ state: "canceled", turnId: null, userMessageSeq: null });
     },
   });
   try {
@@ -204,6 +261,7 @@ test("queued bubble preserves input until its single cancellation settles", asyn
     assert.equal(view.document.querySelector<HTMLButtonElement>('button[aria-label="Cancel queued turn"]')!.disabled, true);
     await act(async () => completeCancel());
     assert.equal(view.current.receipts.length, 0);
+    assert.equal(view.document.querySelectorAll("p").length, 0);
     assert.equal(canceled.length, 1);
   } finally { await view.unmount(); }
 });

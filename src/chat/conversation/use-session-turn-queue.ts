@@ -38,8 +38,8 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     void (async () => {
       const active = (await api.listSessionTurnQueue!(sessionId)).filter((receipt) => receipt.sessionId === sessionId && receipt.incarnationId === incarnationId);
       const bridges = [...(previous?.bridges ?? [])];
-      const missingRuns = (previous?.active ?? []).filter((receipt) => (receipt.state === "starting" || receipt.state === "running") && !active.some((candidate) => candidate.id === receipt.id));
-      for (const missing of missingRuns) {
+      const missingTurns = (previous?.active ?? []).filter((receipt) => (receipt.state === "queued" || receipt.state === "starting" || receipt.state === "running") && !active.some((candidate) => candidate.id === receipt.id));
+      for (const missing of missingTurns) {
         if (!api.getSessionTurnQueueReceipt) throw new Error("Could not resolve the finished turn's receipt.");
         const terminal = await api.getSessionTurnQueueReceipt(sessionId, missing.requestId);
         if (!terminal || terminal.sessionId !== sessionId || terminal.incarnationId !== incarnationId || terminal.id !== missing.id) throw new Error("The finished turn's receipt could not be confirmed. Retry Queue.");

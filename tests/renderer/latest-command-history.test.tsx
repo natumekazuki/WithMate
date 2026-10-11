@@ -118,6 +118,8 @@ test("Latest Command history isolates turn, owner, incarnation, and read states"
     assert.deepEqual(state().operations, []);
     hasLiveRun = false;
     await render();
+    assert.deepEqual(state().operations, []);
+    await act(async () => pending.at(-1)!.result.resolve(artifact("saved command")));
     assert.equal(state().operations[0]?.summary, "saved command");
     sessionId = null;
     await render();
