@@ -2881,9 +2881,9 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
     fields: [{ type: "select", name: "branch", title: "Branch", required: true, defaultValue: "main", options: [{ value: "main", label: "main" }, { value: "feature", label: "feature" }] }],
   };
   const responses: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
-  const paging = { startIndex: 60, endIndex: 120, totalCount: 120, loading: false, error: "", onRetry() {} };
+  const paging = { loading: false, error: "", onRetry() {} };
   function Column(props: SessionMessageColumnProps) {
-    return React.createElement(SessionMessageColumn, { ...props, conversationPaging: props.isRunning ? paging : { ...paging, startIndex: 0, endIndex: 60 } });
+    return React.createElement(SessionMessageColumn, { ...props, conversationPaging: paging });
   }
   const mounted = await mountSessionMessageColumn({ component: Column, messages: createMessages(60), isRunning: true, liveElicitationRequest: request, onResolveLiveElicitation: (...args) => responses.push(args) });
   try {

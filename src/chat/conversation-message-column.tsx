@@ -499,7 +499,7 @@ export function useConversationMessageColumn({
     onMessageListScroll,
     onJumpToBottom: followLatest,
     conversationPaging: session.messageCount !== undefined && api?.getConversationPage ? {
-      startIndex: pageStart, endIndex: pageStart + messages.length, totalCount, loading: pageLoading, error: pageError,
+      loading: pageLoading, error: pageError,
       onEarlier: pageStart > 0 ? () => void changePage(Math.max(0, pageStart - 30)) : undefined,
       onLater: isBrowsing && pageStart + messages.length < totalCount ? () => void changePage(Math.min(Math.max(0, totalCount - CONVERSATION_PAGE_SIZE), pageStart + 30)) : undefined,
       onRetry: () => { setNavigatorRevision((revision) => revision + 1); void loadPage(requestedPageStart.current); },

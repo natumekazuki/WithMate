@@ -82,7 +82,7 @@ export type SessionMessageColumnProps = {
   collapsedMessageKeys?: ReadonlySet<string>;
   messageJumpRequest?: MessageJumpRequest | null;
   conversationPaging?: {
-    startIndex: number; endIndex: number; totalCount: number; loading: boolean; error: string;
+    loading: boolean; error: string;
     onEarlier?: () => void; onLater?: () => void; onRetry: () => void;
   };
   searchConversation?: (query: string, mode: "source" | "preview") => Promise<ConversationSearchMatch[]>;
@@ -1085,11 +1085,10 @@ export function SessionMessageColumn({
         onClose={() => setFindOpen(false)}
       />
       {conversationFindError ? <div role="alert">{conversationFindError}<button className="drawer-toggle compact secondary" type="button" onClick={() => setFindRevision((revision) => revision + 1)}>Retry</button></div> : null}
-      {conversationPaging ? (
+      {conversationPaging && (conversationPaging.onEarlier || conversationPaging.onLater || conversationPaging.loading || conversationPaging.error) ? (
         <div className="conversation-page-controls" aria-busy={conversationPaging.loading}>
           {conversationPaging.onEarlier ? <button className="drawer-toggle compact secondary" type="button" disabled={conversationPaging.loading} onClick={conversationPaging.onEarlier}>Earlier Messages</button> : null}
           {conversationPaging.onLater ? <button className="drawer-toggle compact secondary" type="button" disabled={conversationPaging.loading} onClick={conversationPaging.onLater}>Later Messages</button> : null}
-          <span>{conversationPaging.totalCount > 0 ? `${conversationPaging.startIndex + 1}–${conversationPaging.endIndex} / ${conversationPaging.totalCount}` : ""}</span>
           {conversationPaging.loading ? <LoadingIndicator label="Loading Messages" /> : null}
           {conversationPaging.error ? <><span role="alert">{conversationPaging.error}</span><button className="drawer-toggle compact secondary" type="button" onClick={conversationPaging.onRetry}>Retry</button></> : null}
         </div>

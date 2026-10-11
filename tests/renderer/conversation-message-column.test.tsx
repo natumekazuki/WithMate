@@ -216,7 +216,7 @@ test("conversation pages は過去閲覧と会話ownerを保持する", async ()
 // claim = "Messages navigatorの連続移動は最後に選んだ本文と移動先を保持し、先行page応答で巻き戻さない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Window / 全履歴Messages navigator" }
 // fault = "未読込対象の取得待ちに読込済み対象へ移動すると旧pageを適用するか、逆順応答で旧jumpを設定する"
-// observable = "最後に選んだmessage keyの存在、pageのstartIndex、messageJumpRequestのkey、読込完了状態"
+// observable = "最後に選んだmessage keyの存在、本文先頭のglobal位置、messageJumpRequestのkey、読込完了状態"
 // observation_boundary = "component-behavior"
 // scope = "conversation-navigation-latest-intent"
 // lifecycle = "permanent"
@@ -261,7 +261,7 @@ test("conversation navigator は連続選択の最後の移動先を保持する
   };
   const assertTarget = (messageIndex: number, startIndex: number) => {
     const column = getLatest();
-    assert.equal(column.conversationPaging?.startIndex, startIndex);
+    assert.equal(column.messages[0]?.historyIndex, startIndex);
     assert.equal(column.messageJumpRequest?.key, `session-main-${messageIndex}`);
     assert.ok(column.messageKeys?.includes(`session-main-${messageIndex}`));
   };
@@ -299,7 +299,7 @@ test("conversation navigator は連続選択の最後の移動先を保持する
 // claim = "Findで最後に選んだ読込済み本文は、先行する未読込hitのpage応答後も表示を保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Window / 全履歴Find" }
 // fault = "未読込hitの取得待ちに読込済みhitを選ぶと、先行page応答が最後に選んだ本文を画面から外す"
-// observable = "最後に選んだmessage keyの存在、pageのstartIndex、読込完了状態"
+// observable = "最後に選んだmessage keyの存在、本文先頭のglobal位置、読込完了状態"
 // observation_boundary = "component-behavior"
 // scope = "conversation-find-latest-intent"
 // lifecycle = "permanent"
@@ -344,7 +344,7 @@ test("conversation Find は連続選択の最後の読込済み本文を保持�
     assert.equal(getLatest().conversationPaging?.loading, false);
     assert.ok(resolvePage);
     await act(async () => resolvePage!({ sessionId: "main", incarnationId: "main", startIndex: 70, totalCount: 200, messages: messages(70) }));
-    assert.equal(getLatest().conversationPaging?.startIndex, 140);
+    assert.equal(getLatest().messages[0]?.historyIndex, 140);
     assert.ok(getLatest().messageKeys?.includes("session-main-150"));
     assert.equal(getLatest().conversationPaging?.loading, false);
   } finally {
