@@ -7,6 +7,8 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
 import type { CodexProjectionRequest } from "../../src-electron/providers/codex/codex-projection-protocol.js";
+import { CodexProjectionClient } from "../../src-electron/providers/codex/codex-projection-client.js";
+import type { CodexProjectionCommand, CodexProjectionProgress } from "../../src-electron/providers/codex/codex-projection-protocol.js";
 import { _setWalkDirectoryStatOverrideForTesting, captureWorkspaceSnapshotPaths, createWorkspaceSnapshotIndex, refreshWorkspaceSnapshotIndex } from "../../src-electron/platform/snapshot-ignore.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -211,8 +213,9 @@ it("Codex MCPの取得結果をliveと成功・失敗・取消artifactへ保持�
     input.appSettings.codingProviderSettings.codex.apiKey = secret;
     const live = new Map<string, LiveRunStep>();
     let rejected = false;
-    const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input, state => {
-      for (const step of state.steps) live.set(step.id, step);
+    const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input, (_state, changes) => {
+      for (const id of changes.steps.removes) live.delete(id);
+      for (const step of changes.steps.upserts) live.set(step.id, step);
     }).catch((error: unknown) => {
       rejected = true;
       assert.notEqual(terminal, "completed");
@@ -341,9 +344,9 @@ it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする
   ];
   const changes: RunSessionTurnProgressChanges[] = [];
   const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-  await adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (state, change) => {
+  await adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (_state, change) => {
     changes.push(change);
-    if (state.steps.some(step => step.id === "one") && state.steps.some(step => step.id === "two")) initialStepsDelivered();
+    if (change.steps.upserts.some(step => step.id === "one") && change.steps.upserts.some(step => step.id === "two")) initialStepsDelivered();
   });
   assert.ok(burstProbe);
   await burstProbe;
@@ -352,6 +355,61 @@ it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする
   ]);
   assert.ok(changes.every(change => change.steps.removes.length === 0));
   assert.ok(readEventsAtYield > 0 && readEventsAtYield < readEvents);
+}));
+
+// @test-value v2
+// kind = "contract"
+// claim = "Worker liveで消費済みの変更は応答直前の取消でもMainへ一度配送し、失敗したlive要求の未配送変更は終端flushしpartial artifactとcleanupを維持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner / Streaming Policy" }
+// fault = "取消signalで受信済み変更を捨てるか、live拒否後に終端変更またはpartial operationを失う"
+// observable = "実Worker経由adapterの変更callbackにあるID/details・閉じたinputAvailable・ProviderTurnError partial artifact・transport閉鎖"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter live response cancellation and rejected live flush"
+// lifecycle = "permanent"
+// impact = "Main snapshotと取消時Detailsに取得済み操作が欠落するか失敗を成功と誤認する"
+// distinction = "通常取消testはWorkerが変更を消費した後からcallbackまでのsignal競合を固定せず、final consumer拒否とは別の配送境界。2件の短いfixtureで確認する"
+// @end-test-value
+it("live応答と取消の交差でも変更を届けlive拒否時は終端flushする", { timeout: 10_000 }, async (context) => workspace(async (directory) => {
+  for (const scenario of ["cancel", "live-failure"] as const) {
+    const transport = new FakeTransport();
+    const command = { id: "one", type: "commandExecution", command: "one", aggregatedOutput: "acquired output", exitCode: 0, status: "completed" };
+    transport.events = [notification("item/completed", { item: command })];
+    const controller = new AbortController();
+    const call = CodexProjectionClient.prototype.call;
+    let intercepted = false;
+    let eventsApplied = false;
+    const spy = context.mock.method(CodexProjectionClient.prototype, "call", async function<T>(this: CodexProjectionClient, id: string, request: CodexProjectionCommand): Promise<T> {
+      if (scenario === "live-failure" && request.type === "live" && !request.force && eventsApplied && !intercepted) {
+        intercepted = true;
+        throw new Error("live response failed");
+      }
+      const result = await call.call(this, id, request) as T;
+      if (request.type === "events") eventsApplied = true;
+      if (scenario === "cancel" && request.type === "live" && (result as CodexProjectionProgress | null)?.changes.steps.upserts.length && !intercepted) {
+        intercepted = true;
+        controller.abort();
+      }
+      return result;
+    });
+    const delivered: LiveRunStep[] = [];
+    try {
+      await assert.rejects(new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(
+        { ...createCodexRunSessionTurnInput(directory), signal: controller.signal }, (state, changes) => {
+          assert.equal(changes.snapshot, false);
+          if (intercepted) assert.equal(state.inputAvailable, false);
+          delivered.push(...changes.steps.upserts);
+        }), (error: unknown) => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.equal(error.canceled, scenario === "cancel");
+          if (scenario === "live-failure") assert.match(error.message, /live response failed/);
+          assert.equal(error.partialResult.artifact?.operationTimeline?.[0].details, "acquired output");
+          return true;
+        });
+      assert.equal(intercepted, true);
+      assert.deepEqual(delivered.map(step => [step.id, step.details]), [["one", "acquired output"]]);
+      assert.equal(transport.closed, true);
+    } finally { spy.mock.restore(); controller.abort(); }
+  }
 }));
 // @test-value v2
 // kind = "invariant"
@@ -1345,8 +1403,8 @@ it("native commandとMCPの大きい出力をlive artifact予算へ投影する"
   const mcps = Array.from({ length: 10 }, (_, index) => ({ type: "mcpToolCall", id: "mcp-" + index, server: "fixture", tool: "large", arguments: {}, result: { structuredContent: { text: largeText }, content: [] }, error: null, status: "completed" }));
   transport.events = [notification("item/completed", { item: command }), ...mcps.map((item) => notification("item/completed", { item })), completed([message("answer", "本文保持")])];
   const details: string[] = [];
-  const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory), (state) => {
-    for (const step of state.steps) if (step.details) details.push(step.details);
+  const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory), (_state, changes) => {
+    for (const step of changes.steps.upserts) if (step.details) details.push(step.details);
   });
   assert.ok(details.length > 0);
   for (const detail of details) {

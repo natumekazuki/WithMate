@@ -40,6 +40,7 @@ import { SessionApprovalService } from "../../src-electron/session/session-appro
 import { SessionElicitationService } from "../../src-electron/session/session-elicitation-service.js";
 import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
+import { SessionObservabilityService } from "../../src-electron/session/session-observability-service.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -208,6 +209,58 @@ function queueGate() {
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "runtimeはsnapshotなしprogressの追加・同ID更新・削除を順序付き完全状態へ統合し、無変更controlで本文・usage・pending要求と操作を保持しsnapshot取得へ返す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Streaming Policy / Codex projection owner" }
+// fault = "空の配送stateで既存操作を消す、更新を末尾へ移動する、removeを無視する、またはpending要求を上書きする"
+// observable = "runtime callback後の実SessionObservabilityService snapshotのID順・Details・本文/usage・approval/elicitation・inputAvailable"
+// observation_boundary = "consumer"
+// scope = "SessionRuntimeService incremental progress to Main complete snapshot owner"
+// lifecycle = "permanent"
+// impact = "再接続したWindowで取得済みDetailsが消えるか制御待ちを誤認する"
+// distinction = "projection testはMain consumerを通らず、snapshot付きprovider testは変更配送からの再構築を検査しない。固定更新列のみでCI負担を抑える"
+// @end-test-value
+it("変更progressをMainの完全snapshotへ統合しcontrolでも保持する", async () => {
+  const session = createSession();
+  const owner = new SessionObservabilityService({ onLiveSessionRunChanged() {}, onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {}, onSessionBackgroundActivityChanged() {} });
+  const step = (id: string, details = id): LiveSessionRunState["steps"][number] => ({ id, type: "command", status: "completed", summary: id, details });
+  const runtime = createProgressRuntime(session, async (_input, progress) => {
+    assert.ok(progress);
+    const frame = createLiveRunState({ sessionId: session.id, threadId: "thread", assistantText: "assistant", reasoningText: "reasoning", usage: { inputTokens: 5, cachedInputTokens: 0, outputTokens: 2 } });
+    const publish = (upserts: LiveSessionRunState["steps"], removes: string[] = []) => progress(frame, {
+      snapshot: false, steps: { upserts, removes }, backgroundTasks: { upserts: [], removes: [] },
+    });
+    await publish([step("one"), step("two")]);
+    assert.deepEqual(owner.getLiveSessionRun(session.id)?.steps.map(item => item.id), ["one", "two"]);
+    await publish([step("one", "corrected"), step("three")]);
+    assert.deepEqual(owner.getLiveSessionRun(session.id)?.steps.map(item => [item.id, item.details]), [["one", "corrected"], ["two", "two"], ["three", "three"]]);
+    await publish([step("four")], ["two"]);
+    const current = owner.getLiveSessionRun(session.id)!;
+    const approvalRequest: LiveApprovalRequest = { requestId: "approval", provider: "codex", kind: "command", title: "Approve", summary: "command", decisionMode: "direct-decision" };
+    const elicitationRequest: LiveElicitationRequest = { requestId: "question", provider: "codex", mode: "form", message: "answer", fields: [] };
+    owner.setLiveSessionRun(session.id, { ...current, approvalRequest, elicitationRequest });
+    await publish([]);
+    const snapshot = owner.getLiveSessionRun(session.id)!;
+    assert.equal(snapshot.steps, current.steps);
+    assert.deepEqual(snapshot.steps.map(item => item.id), ["one", "three", "four"]);
+    assert.equal(snapshot.approvalRequest, approvalRequest);
+    assert.equal(snapshot.elicitationRequest, elicitationRequest);
+    assert.equal(snapshot.assistantText, "assistant");
+    assert.equal(snapshot.reasoningText, "reasoning");
+    assert.deepEqual(snapshot.usage, frame.usage);
+    assert.equal(snapshot.inputAvailable, false);
+    // Snapshot-bearing providers still replace collections, including an explicit empty snapshot.
+    await progress({ ...frame, steps: [step("snapshot")] }, { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
+    assert.deepEqual(owner.getLiveSessionRun(session.id)?.steps.map(item => item.id), ["snapshot"]);
+    await progress(frame, { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
+    assert.deepEqual(owner.getLiveSessionRun(session.id)?.steps, []);
+    return createPartialResult({ assistantText: "final", threadId: "thread" });
+  }, { setLiveSessionRun: (id, state) => owner.setLiveSessionRun(id, state), getLiveSessionRun: id => owner.getLiveSessionRun(id) });
+  try { await runtime.runSessionTurn(session.id, { userMessage: "start", executionOptions: TEST_EXECUTION_OPTIONS }); }
+  finally { owner.dispose(); }
+});
 
 // @test-value v2
 // kind = "invariant"

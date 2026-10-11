@@ -26,6 +26,7 @@ import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
+import { applyProviderProgressChanges } from "../providers/provider-progress.js";
 
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
@@ -1199,7 +1200,7 @@ export class SessionRuntimeService {
         onSessionContextTelemetry: (telemetry) => {
           this.deps.setSessionContextTelemetry(telemetry);
         },
-      }, (state) => {
+      }, (state, changes) => {
         if (terminalSettled || progressGeneration !== liveProgressGeneration) {
           return;
         }
@@ -1207,6 +1208,10 @@ export class SessionRuntimeService {
         const currentLiveState = this.deps.getLiveSessionRun(sessionId);
         const nextLiveState: LiveSessionRunState = {
           ...state,
+          steps: changes.snapshot === false
+            ? applyProviderProgressChanges(currentLiveState?.steps ?? [], changes.steps) : state.steps,
+          backgroundTasks: changes.snapshot === false
+            ? applyProviderProgressChanges(currentLiveState?.backgroundTasks ?? [], changes.backgroundTasks) : state.backgroundTasks,
           reasoningText: state.reasoningText ?? currentLiveState?.reasoningText ?? "",
           approvalRequest: currentLiveState?.approvalRequest ?? null,
           elicitationRequest: currentLiveState?.elicitationRequest ?? null,

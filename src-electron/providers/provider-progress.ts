@@ -2,6 +2,17 @@ import type { ProviderAgentRuntimeBindingRedactor } from "./provider-agent-runti
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { RunSessionTurnProgressChanges, RunSessionTurnProgressHandler } from "./provider-runtime.js";
 
+/** Updates the existing Main snapshot without retaining another collection owner. */
+export function applyProviderProgressChanges<T extends { id: string }>(
+  current: T[], changes: { upserts: T[]; removes: string[] },
+): T[] {
+  if (!changes.upserts.length && !changes.removes.length) return current;
+  const items = new Map(current.map(item => [item.id, item]));
+  for (const id of changes.removes) items.delete(id);
+  for (const item of changes.upserts) items.set(item.id, item);
+  return [...items.values()];
+}
+
 /** Tracks mutations at the provider owner; unchanged detail is not projected again. */
 export class ProviderProgressMap<T extends { id: string }> extends Map<string, T> {
   private readonly changed = new Set<string>();

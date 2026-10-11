@@ -16,6 +16,7 @@ export type CodexProjectionStart = {
   diagnosticTrace?: boolean;
 };
 export type CodexProjectionProgress = {
+  /** Scalar live frame; collection content is delivered only through changes. */
   state: LiveSessionRunState;
   changes: RunSessionTurnProgressChanges;
 };

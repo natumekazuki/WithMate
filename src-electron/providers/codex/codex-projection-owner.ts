@@ -77,10 +77,10 @@ export class CodexProjectionOwner {
   live(inputAvailable: boolean, force = false): CodexProjectionProgress | null {
     if (!this.input.progress || !force && this.liveRevision === this.state.revision) return null;
     this.liveRevision = this.state.revision;
-    const steps = this.state.liveSteps.takeProgress(this.redactor);
+    const steps = this.state.liveSteps.takeProgress(this.redactor, false);
     return {
       state: { ...this.frame(steps.snapshot), inputAvailable },
-      changes: { steps: steps.changes, backgroundTasks: { upserts: [], removes: [] } },
+      changes: { snapshot: false, steps: steps.changes, backgroundTasks: { upserts: [], removes: [] } },
     };
   }
 
