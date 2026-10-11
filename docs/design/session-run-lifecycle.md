@@ -2,7 +2,7 @@
 
 ## Auxiliary Session (Issue #710)
 
-AuxiliaryのrunはMainや兄弟Auxiliaryと独立し、非表示でも継続・terminal保存する。新規追加・表示切り替え・折りたたみはProvider turnを開始せず、同一会話内の二重実行だけを拒否する。Window close、親削除、共有credential変更では親配下の全Auxiliary runを列挙して扱う。会話ごとの実行設定変更は対象自身のstarting / running / 取消終了待ちを判定し、子Auxiliaryだけが実行中の待機Mainには変更を許可する。変更はMainの次送信へ反映し、実行中Auxiliaryの捕捉済み設定を変えない。正常terminalで確定した最終assistant本文は、必要な場合に一覧preview projectionを更新する。
+AuxiliaryのrunはMainや兄弟Auxiliaryと独立し、非表示でも継続・terminal保存する。新規追加・表示切り替え・折りたたみはProvider turnを開始せず、同一会話内の二重実行だけを拒否する。Window close、親削除、共有credential変更では親配下の全Auxiliary runを列挙して扱う。会話ごとの実行設定選択はMain / Auxiliaryの実行中も変更でき、対象会話の次送信へ反映する。実行中turnの捕捉済み設定は変えない。正常terminalで確定した最終assistant本文は、必要な場合に一覧preview projectionを更新する。
 
 
 ## Goal
@@ -52,7 +52,7 @@ window は上の状態機械とは分離する。
 
 ## GUI Turn Queue
 
-Main／Auxiliaryの`Send`と通常送信shortcutは同じ永続受付を通り、実行中は次Turnを予約する。予約項目の`Send to Current Turn`は現在Codex Turnへの追加入力である。独立した追加入力shortcutは現在のComposer下書きを直接送る。承認・質問への回答は予約に変換しない。受付・照会・取消・追加入力・解放のIPCはowning Session Windowだけに許可し、Auxiliaryは親Windowをownerとする。
+Main／Auxiliaryの`Send`と通常送信shortcutは同じ永続受付を通り、実行中は次Turnを予約する。予約項目の`Steer`は現在Codex Turnへの追加入力である。独立した追加入力shortcutは現在のComposer下書きを直接送る。承認・質問への回答は予約に変換しない。受付・照会・取消・追加入力・解放のIPCはowning Session Windowだけに許可し、Auxiliaryは親Windowをownerとする。
 
 `MainSessionTurnQueueFacade`がSession ID／incarnation、本文、実行設定、provider／workspace、解決済み添付descriptorを捕捉する。添付はpath参照でありbytesをコピーしない。dispatchでは現在のowner・設定の利用可否・path認可と対象種類を再検証し、本文から添付を再解決しない。本文・設定は捕捉値、thread継続状態は最新Sessionを使う。
 

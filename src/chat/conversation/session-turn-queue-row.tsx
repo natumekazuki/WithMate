@@ -6,15 +6,13 @@ export function SessionTurnQueueStatus({ receipt, position, busy, onCancel, onRe
   onCancel: (receipt: SessionTurnQueueReceipt) => void; onRelease: (receipt: SessionTurnQueueReceipt) => void;
   onSendInput?: (receipt: SessionTurnQueueReceipt) => void;
 }) {
-  if (receipt.state === "completed" || receipt.state === "canceled") return null;
-  const label = receipt.state === "queued" ? `Queued ${position ?? ""}`.trim()
-    : receipt.inputTurnId && receipt.state === "starting" ? "Sending to Current Turn"
-    : receipt.state[0].toUpperCase() + receipt.state.slice(1);
-  return <div className="session-turn-queue-status" role="status" aria-label={label}>
+  if (receipt.state !== "queued" && receipt.state !== "failed" && receipt.state !== "interrupted") return null;
+  const label = receipt.state === "failed" ? "Failed" : receipt.state === "interrupted" ? "Interrupted" : undefined;
+  return <div className="session-turn-queue-status" role={label ? "status" : undefined} aria-label={label}>
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <span className="session-turn-queue-reason">Execution outcome is unknown. Later turns are held.</span> : null}
-    <span>{label}</span>
-    {receipt.state === "queued" && onSendInput ? <button className="drawer-toggle compact secondary" type="button" disabled={busy} aria-busy={busy || undefined} onClick={() => onSendInput(receipt)}>Send to Current Turn</button> : null}
+    {label ? <span>{label}</span> : null}
+    {receipt.state === "queued" && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy} aria-busy={busy || undefined} onClick={() => onSendInput(receipt)}>Steer</button> : null}
     {receipt.state === "queued" ? <button className="drawer-toggle compact secondary" type="button" aria-label={position === undefined ? "Cancel queued turn" : `Cancel queued turn ${position}`} disabled={busy} aria-busy={busy || undefined} onClick={() => onCancel(receipt)}>Cancel</button> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <button className="drawer-toggle compact secondary" type="button" disabled={busy} aria-busy={busy || undefined} onClick={() => onRelease(receipt)}>Release Later Turns</button> : null}
   </div>;

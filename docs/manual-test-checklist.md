@@ -4,7 +4,7 @@
 
 ## Codex の実行中入力
 
-Main／AuxiliaryそれぞれでCodexの実行中に予約項目の`Send to Current Turn`と独立した追加入力shortcut（`Ctrl+Shift+Enter`／`Cmd+Shift+Enter`）を試し、現在Turnの会話へ一度だけ保存されることを確認する。shortcutは現在のComposer下書きを直接送る。`Cancel`は維持し、開始準備中・取消中・終了raceを新Turnへ振り替えず、未送信の下書き／予約を保持する。受付待ち中の連打、編集、対象切替、添付pathの失敗、Auxiliaryの後続編集の保存も確認する。予約入力のprovider送信／append返信喪失では自動再送せず正本照会し、結果不明の解放で現在Turnのmetadataを上書きしない。同一Turnで通信エラー後にitem activityが再開したら診断が消え、応答が続くことも確認する。Claude／Copilotは追加入力しないが、実行中の`Send`予約は利用できる。Codexの入力質問は既存formで回答し、secret欄はpassword input、取消・失効後の回答は次のrequestへ持ち越さない。実Provider／Electron GUIを未実施の場合は未確認として記録する。
+Main／AuxiliaryそれぞれでCodexの実行中に予約項目の`Steer`と独立した追加入力shortcut（`Ctrl+Shift+Enter`／`Cmd+Shift+Enter`）を試し、現在Turnの会話へ一度だけ保存されることを確認する。shortcutは現在のComposer下書きを直接送る。`Cancel`は維持し、開始準備中・取消中・終了raceを新Turnへ振り替えず、未送信の下書き／予約を保持する。受付待ち中の連打、編集、対象切替、添付pathの失敗、Auxiliaryの後続編集の保存も確認する。予約入力のprovider送信／append返信喪失では自動再送せず正本照会し、結果不明の解放で現在Turnのmetadataを上書きしない。同一Turnで通信エラー後にitem activityが再開したら診断が消え、応答が続くことも確認する。Claude／Copilotは追加入力しないが、実行中の`Send`予約は利用できる。Codexの入力質問は既存formで回答し、secret欄はpassword input、取消・失効後の回答は次のrequestへ持ち越さない。実Provider／Electron GUIを未実施の場合は未確認として記録する。
 
 ## Main／Auxiliary の次Turn予約
 

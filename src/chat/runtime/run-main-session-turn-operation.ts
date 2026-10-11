@@ -62,7 +62,7 @@ export async function runMainSessionTurnOperation(input: {
       }
       const durable = input.auxiliaryDraftOwner.durableRecord;
       if (composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false) return null;
-      if (!durable || durable.auxiliarySessionId !== sessionId || durable.incarnation !== request.incarnationId || durable.text !== captured.draft) {
+      if (!durable || durable.auxiliarySessionId !== sessionId || durable.text !== captured.draft) {
         composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
         return null;
       }

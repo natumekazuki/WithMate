@@ -85,7 +85,7 @@ test("active subscription bridges only disappeared runs and retains failures", a
 // @test-value v2
 // kind = "contract"
 // claim = "チャットの予約から現在turnへの入力を一度だけ要求し、成功receiptの本文をcanonical seq到着まで保持する"
-// oracle = { type = "contract", ref = "Main/Auxiliary queue: Send to Current Turn" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 予約項目のSteer" }
 // fault = "現在turn IDを送らない、連打で重複操作する、または開始通知なしの完了で受付本文が消える"
 // observable = "button操作のAPI引数と回数、待機中のdisabled、完了後のbridgeとcanonical到着後の除去"
 // observation_boundary = "component-behavior"
@@ -107,10 +107,10 @@ test("queued chat input captures the turn once and bridges a fast canonical acce
     },
   });
   try {
-    await view.click("Send to Current Turn");
-    await view.click("Send to Current Turn");
+    await view.click("Steer");
+    await view.click("Steer");
     assert.deepEqual(calls, [["session", "item", "current-turn"]]);
-    assert.equal([...view.document.querySelectorAll("button")].find((button) => button.textContent === "Send to Current Turn")!.disabled, true);
+    assert.equal([...view.document.querySelectorAll("button")].find((button) => button.textContent === "Steer")!.disabled, true);
     active = [];
     await act(async () => resolve(receipt({ state: "completed", inputTurnId: "current-turn" })));
     assert.equal(view.current.receipts[0]?.captured.request.userMessage, "original prompt");

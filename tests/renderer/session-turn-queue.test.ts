@@ -43,7 +43,8 @@ function session(): Session {
 test("Auxiliary running Send consumes only its durable capture and preserves ACK-wait edits", async () => {
   const auxiliaryOwner = { kind: "auxiliary" as const, id: "aux" };
   const incarnation = "2026-10-11T00:00:00Z";
-  let durable = { auxiliarySessionId: "aux", parentSessionId: "session", incarnation, durableRevision: 3, text: "A", updatedAt: "" };
+  const draftIncarnation = "730d0664-8452-4d50-9ee9-4b0e4f55c0be";
+  let durable = { auxiliarySessionId: "aux", parentSessionId: "session", incarnation: draftIncarnation, durableRevision: 3, text: "A", updatedAt: "" };
   const saves: number[] = [];
   const draftOwner = new AuxiliaryDraftPersistenceOwner({
     load: async () => ({ ...durable }), now: () => "now", debounceMs: 0,
@@ -77,7 +78,7 @@ test("Auxiliary running Send consumes only its durable capture and preserves ACK
     state: { setComposerPreview: (preview) => registry.setPreview(auxiliaryOwner, preview), setPendingSubmitSessionId() {}, setForceComposerBlockedFeedback() {}, collapseActionDock() {} }, log() {},
   });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(submitted, { ...request, incarnationId: incarnation, displayAnchorParentMessageCount: 9, auxiliaryDraftIncarnation: incarnation, auxiliaryDraftDurableRevision: 3 });
+  assert.deepEqual(submitted, { ...request, incarnationId: incarnation, displayAnchorParentMessageCount: 9, auxiliaryDraftIncarnation: draftIncarnation, auxiliaryDraftDurableRevision: 3 });
   assert.equal(registry.get(auxiliaryOwner).draft, "A");
   registry.setDraft(auxiliaryOwner, "B");
   const saving = draftOwner.enqueue("B");
