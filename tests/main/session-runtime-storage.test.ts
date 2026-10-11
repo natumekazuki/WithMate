@@ -103,8 +103,8 @@ it("steerとterminalは非所有データを保ち失敗をatomicに戻す", asy
 // kind = "invariant"
 // claim = "run metadata checkpointは期待owner/state/thread一致時だけ非所有metadataとmessageを保持して更新する"
 // oracle = { type = "contract", ref = "docs/design/electron-session-store.md 書込みとowner" }
-// fault = "遅延checkpointが新しいthreadやrun stateを巻き戻す、read-only ownerを更新する"
-// observable = "checkpointのnull ACKと更新後summaryおよび保存message"
+// fault = "owner/status/runState/threadのいずれかのCAS条件を省略する、非所有metadataを初期化する、read-only ownerを更新する"
+// observable = "各条件を単独で不一致にしたcheckpointのnull ACKと保存Session不変、成功時の限定metadata更新とTitle・Pinを含む非所有Session全体の保持"
 // observation_boundary = "component-behavior"
 // scope = "Main Session run checkpoint"
 // lifecycle = "permanent"
@@ -113,14 +113,33 @@ it("steerとterminalは非所有データを保ち失敗をatomicに戻す", asy
 // @end-test-value
 it("run checkpointはCASとread-onlyを保護する", async () => {
   await withStore((storage, db, incarnationId) => {
+    storage.setSessionTitle("session", incarnationId, "User renamed title");
+    storage.setSessionPinned("session", true);
+    const before = storage.getSession("session")!;
     const input = { sessionId: "session", incarnationId, expected: { status: "running" as const, runState: "running", threadId: "" },
       next: { status: "idle" as const, runState: "error", threadId: "next", updatedAt: "checkpoint" } };
-    assert.equal(storage.checkpointSessionRunMetadata(input)?.summary.runState, "error");
+    for (const mismatch of [
+      { ...input, incarnationId: "stale" },
+      { ...input, expected: { ...input.expected, status: "idle" as const } },
+      { ...input, expected: { ...input.expected, runState: "error" } },
+      { ...input, expected: { ...input.expected, threadId: "stale-thread" } },
+    ]) {
+      assert.equal(storage.checkpointSessionRunMetadata(mismatch), null);
+      assert.deepEqual(storage.getSession("session"), before);
+    }
+    const checkpoint = storage.checkpointSessionRunMetadata(input)!;
+    assert.equal(checkpoint.summary.runState, "error");
+    assert.equal(checkpoint.summary.taskTitle, "User renamed title");
+    assert.equal(checkpoint.summary.isPinned, true);
+    const after = storage.getSession("session");
+    assert.deepEqual(after, { ...before, ...input.next });
     assert.equal(storage.checkpointSessionRunMetadata(input), null);
-    assert.equal(storage.getSession("session")?.messages[0].text, "start");
+    assert.deepEqual(storage.getSession("session"), after);
     db.prepare("UPDATE sessions_v6 SET runtime_policy_json = json_set(runtime_policy_json, '$.accessMode', 'legacy_readonly') WHERE id = 'session'").run();
     const readonlyInput = { ...input, expected: { status: "idle" as const, runState: "error", threadId: "next" } };
+    const readonlyBefore = storage.getSession("session");
     assert.equal(storage.checkpointSessionRunMetadata(readonlyInput), null);
+    assert.deepEqual(storage.getSession("session"), readonlyBefore);
     assert.throws(() => storage.appendSessionSteer({ sessionId: "session", incarnationId, expectedMessageCount: 1,
       turnId: 1, userMessage: { role: "user", text: "forbidden" }, updatedAt: "later" }), /read-only/);
   });

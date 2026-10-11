@@ -1,6 +1,7 @@
 import { AuxiliarySessionStorage, type AuxiliarySessionStorage as AuxiliarySessionStorageType } from "../auxiliary/auxiliary-session-storage.js";
 import type { WorkerOptions } from "node:worker_threads";
 import { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
+import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
 import { CharacterAffectTurnSettlementStorage } from "../character/character-affect-turn-settlement-storage.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
@@ -45,6 +46,7 @@ const STORE_METHODS = {
     "deleteSession", "deleteSessions", "clearSessions",
   ],
   turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn", "getConversationTimingSnapshot"],
+  queue: ["enqueue", "getReceipt", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "recoverInterrupted", "releaseInterrupted"],
   auxiliary: [
     "getAuxiliarySessionView", "getConversationPage", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
@@ -80,6 +82,7 @@ const STORE_METHODS = {
 } as const;
 
 const MUTATIONS = new Set([
+  "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "recoverInterrupted", "releaseInterrupted",
   "pinSessionFile", "unpinSessionFile",
   "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
   "setSessionPinned", "upsertSession", "updateSessionThreadIfMatches", "updateSessionRuntimeMetadataIfMatches", "updateSession",
@@ -120,6 +123,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const changed: import("./conversation-query.js").ConversationMutationSink = (table, id) => conversationQueries?.invalidate(table, id);
   const session = new SessionStorageV6(data.dbPath, changed);
   const turn = new SessionTurnStorageV6(data.dbPath);
+  const queue = new SessionTurnQueueStorageV6(data.dbPath);
   const auxiliary = new AuxiliarySessionStorage(data.dbPath, changed);
   conversationQueries = new ConversationQueryCoordinator(data.generationId, { session_messages_v6: session, auxiliary_session_messages: auxiliary });
   const queries = conversationQueries;
@@ -129,7 +133,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const mate = new MateStorage(data.dbPath, data.userDataPath);
   const prompt = new PromptTemplateStorage(data.dbPath);
   const settlement = new CharacterAffectTurnSettlementStorage(data.dbPath);
-  instances = { session, turn, auxiliary, character, settings, catalog, mate, prompt, settlement };
+  instances = { session, turn, queue, auxiliary, character, settings, catalog, mate, prompt, settlement };
   const currentInstances = instances;
   catalog.ensureSeeded();
 
@@ -240,6 +244,7 @@ export type V6StorageWorkerBundle = {
   stores: {
     session: AsyncStore<Omit<SessionStorageV6, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
     turn: AsyncStore<SessionTurnStorageV6>;
+    queue: AsyncStore<SessionTurnQueueStorageV6>;
     auxiliary: AsyncStore<Omit<AuxiliarySessionStorageType, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
     character: AsyncStore<CharacterStorage>;
     settings: AsyncStore<AppSettingsStorage>;

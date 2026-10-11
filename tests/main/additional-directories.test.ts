@@ -11,7 +11,7 @@ import {
   isPathWithinDirectory,
   normalizeAllowedAdditionalDirectories,
 } from "../../src-electron/files/additional-directories.js";
-import { resolveComposerPreview } from "../../src-electron/files/composer-attachments.js";
+import { assertCapturedComposerAttachmentsAvailable, resolveComposerPreview } from "../../src-electron/files/composer-attachments.js";
 import {
   appendSessionFilesDirectory,
   resolveSessionFilesDirectory,
@@ -34,6 +34,45 @@ function createSession(workspacePath: string, allowedAdditionalDirectories: stri
 }
 
 describe("additional directories", () => {
+  // @test-value v2
+  // kind = "security"
+  // claim = "受付済み添付pathは内容変更を許容するが、現認可の取消・不存在・種類変更を実行前に拒否する"
+  // oracle = { type = "issue", ref = "GitHub #801 添付path参照と現在root認可 / docs/design/database-schema.md Files Pin current authorization" }
+  // fault = "保存済みdescriptorの認可を現在値へ照合せず、取消済みrootや不存在・別種類をproviderへ渡す"
+  // observable = "捕捉したpathの検証成功または具体的な認可・存在・種類error"
+  // observation_boundary = "public-boundary"
+  // scope = "queue captured attachment filesystem authorization"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization", "privacy"]
+  // distinction = "通常previewのtestは受付後の認可取消・target変更を検証せず、型やbuildは実filesystemを検証しない"
+  // @end-test-value
+  it("捕捉した添付pathを現認可と存在・種類で再検証する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-captured-attachment-"));
+    const workspacePath = path.join(tempDirectory, "workspace");
+    const externalPath = path.join(tempDirectory, "external");
+    const filePath = path.join(externalPath, "input.txt");
+    await mkdir(workspacePath);
+    await mkdir(externalPath);
+    await writeFile(filePath, "accepted contents", "utf8");
+    try {
+      const session = createSession(workspacePath, [externalPath]);
+      const preview = await resolveComposerPreview(session, `@${filePath.replace(/\\/g, "/")}`);
+      assert.deepEqual(preview.errors, []);
+      assert.equal(preview.attachments.length, 1);
+      const captured = structuredClone(preview.attachments);
+      await writeFile(filePath, "changed contents", "utf8");
+      await assertCapturedComposerAttachmentsAvailable(session, captured);
+      assert.deepEqual(captured, preview.attachments);
+      await assert.rejects(assertCapturedComposerAttachmentsAvailable(createSession(workspacePath), captured), /outside the workspace/);
+      await rm(filePath);
+      await assert.rejects(assertCapturedComposerAttachmentsAvailable(session, captured), /Path not found/);
+      await mkdir(filePath);
+      await assert.rejects(assertCapturedComposerAttachmentsAvailable(session, captured), /Expected a file/);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("Windows path は大文字小文字が異なっても同じ directory として比較する", () => {
     assert.equal(
       areDirectoryPathsEquivalent(

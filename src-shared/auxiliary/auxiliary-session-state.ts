@@ -350,7 +350,8 @@ export function resolveEditableActiveAuxiliarySession(input: {
   currentSession: AuxiliarySession | null;
 }): AuxiliarySession | null {
   const currentSession = input.currentSession ?? input.activeSession;
-  if (currentSession.id !== input.activeSession.id || currentSession.runState === "running") {
+  if (currentSession.id !== input.activeSession.id || currentSession.parentSessionId !== input.activeSession.parentSessionId
+    || currentSession.createdAt !== input.activeSession.createdAt) {
     return null;
   }
 

@@ -15,11 +15,13 @@ import { applyExecutionOptionsCatalog } from "../../src-shared/session/execution
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import { subscribeSessionLiveEvents } from "./runtime/session-window-live-ingress.js";
+import { startConversationDetailSubscription, type SessionSummaryInvalidationSubscriptionApi } from "./runtime/session-summary-subscription.js";
 
 export type AuxiliaryWorkspaceApi = {
   listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
   getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliarySessionStatus(auxiliarySessionId: string): Promise<Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "runState"> | null>;
+  subscribeSessionInvalidation?: SessionSummaryInvalidationSubscriptionApi["subscribeSessionInvalidation"];
   subscribeLiveSessionRun?: (
     listener: (sessionId: string, state: LiveSessionRunState | null) => void,
   ) => () => void;
@@ -189,14 +191,14 @@ export function useAuxiliaryWorkspace(input: {
   const detailOperationsRef = useRef(new Map<string, number>());
   const operationWasDirtyRef = useRef(new Map<string, boolean>());
   const detailQueuesRef = useRef(new Map<string, number>());
-  const terminalLoadingRef = useRef(new Set<string>());
+  const detailLoadingIdsRef = useRef(new Set<string>());
   const pruneDetails = useCallback(() => {
     const reusable = [...detailsRef.current.keys()].filter((id) => id !== selectedIdRef.current
       && detailsRef.current.get(id)?.runState !== "running"
       && !dirtyDetailsRef.current.has(id)
       && !detailOperationsRef.current.has(id)
       && !detailQueuesRef.current.has(id)
-      && !terminalLoadingRef.current.has(id));
+      && !detailLoadingIdsRef.current.has(id));
     for (const id of reusable.slice(0, Math.max(0, reusable.length - HIDDEN_DETAIL_CACHE_LIMIT))) {
       detailsRef.current.delete(id);
       const binding = bindingsRef.current.get(id);
@@ -229,7 +231,7 @@ export function useAuxiliaryWorkspace(input: {
   const workspaceGenerationRef = useRef(0);
   const detailMutationEpochRef = useRef(new Map<string, number>());
   const bookmarkRevisionRef = useRef(new Map<string, number>());
-  const terminalRevisionRef = useRef(new Map<string, number>());
+  const detailReadRevisionRef = useRef(new Map<string, number>());
   const recencyRef = useRef(new Map<string, string>());
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -332,10 +334,10 @@ export function useAuxiliaryWorkspace(input: {
     detailOperationsRef.current.clear();
     operationWasDirtyRef.current.clear();
     detailQueuesRef.current.clear();
-    terminalLoadingRef.current.clear();
+    detailLoadingIdsRef.current.clear();
     detailMutationEpochRef.current.clear();
     bookmarkRevisionRef.current.clear();
-    terminalRevisionRef.current.clear();
+    detailReadRevisionRef.current.clear();
     recencyRef.current.clear();
     workspaceGenerationRef.current += 1;
     mutationRevisionRef.current += 1;
@@ -397,15 +399,16 @@ export function useAuxiliaryWorkspace(input: {
   }, [api, cacheDetail, mergeExecutionSelection, pruneDetails, selectedId]);
 
   useEffect(() => {
-    if (!api?.subscribeLiveSessionRun) return;
+    if (!api || !parentSessionId) return;
+    let active = true;
     const subscriptionGeneration = workspaceGenerationRef.current;
     const statusRequests = new Map<string, { pending: boolean }>();
     const liveStatusKeys = new Map<string, { key: string }>();
-    const terminalLoads = new Map<string, number>();
-    const applySession = (id: string, session: AuxiliarySession, terminalRevision: number, terminalEpoch: number, bookmarkRevision: number) => {
-      if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
-        || terminalRevision !== terminalRevisionRef.current.get(id)
-        || terminalEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
+    const detailLoads = new Map<string, { revision: number; terminal: boolean }>();
+    const applySession = (id: string, session: AuxiliarySession, readRevision: number, readEpoch: number, bookmarkRevision: number) => {
+      if (!active || !mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
+        || readRevision !== detailReadRevisionRef.current.get(id)
+        || readEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
       session = mergeExecutionSelection(session);
       if (bookmarkRevision !== (bookmarkRevisionRef.current.get(id) ?? 0)) {
         const projected = detailsRef.current.get(id);
@@ -434,15 +437,15 @@ export function useAuxiliaryWorkspace(input: {
       const request = { pending: false };
       statusRequests.set(id, request);
       const liveStatusKey = liveStatusKeys.get(id);
-      const revision = terminalRevisionRef.current.get(id);
+      const revision = detailReadRevisionRef.current.get(id);
       const epoch = detailMutationEpochRef.current.get(id) ?? 0;
       void api.getAuxiliarySessionStatus(id).then((status) => {
-        if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
-          || revision !== terminalRevisionRef.current.get(id)
+        if (!active || !mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
+          || revision !== detailReadRevisionRef.current.get(id)
           || epoch !== (detailMutationEpochRef.current.get(id) ?? 0) || !status) return;
         const summary = summariesRef.current.find((item) => item.id === id);
         if (!summary || summary.parentSessionId !== status.parentSessionId || summary.createdAt !== status.createdAt) return;
-        if (status.runState === "running" && terminalLoads.has(id)) {
+        if (status.runState === "running" && detailLoads.get(id)?.terminal) {
           // A confirmed new run supersedes an earlier terminal read. Retained live
           // state with an idle status must not discard that read's final messages.
           detailMutationEpochRef.current.set(id, epoch + 1);
@@ -465,63 +468,49 @@ export function useAuxiliaryWorkspace(input: {
         // Clear only this observation: a newer A/B/A transition can have the
         // same semantic key while still owning a queued status refresh.
         if (liveStatusKeys.get(id) === liveStatusKey) liveStatusKeys.delete(id);
-        if (mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
-          && revision === terminalRevisionRef.current.get(id)) {
+        if (active && mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
+          && revision === detailReadRevisionRef.current.get(id)) {
           console.error("Failed to refresh Auxiliary session run state", cause);
         }
       }).finally(() => {
         statusRequests.delete(id);
-        if (request.pending && mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current) refreshStatus(id);
+        if (request.pending && active && mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current) refreshStatus(id);
       });
     };
-    return subscribeSessionLiveEvents(api as AuxiliaryWorkspaceApi & Required<Pick<AuxiliaryWorkspaceApi, "subscribeLiveSessionRun">>, (id, state) => {
-      if (subscriptionGeneration !== workspaceGenerationRef.current) return;
-      if (!summariesRef.current.some((summary) => summary.id === id)) return;
-      if (!api) return;
-      if (state !== null) {
-        const summary = summariesRef.current.find((item) => item.id === id)!;
-        const key = JSON.stringify([summary.createdAt, state.runState, state.turnId, state.cancellationState, state.inputAvailable]);
-        if (liveStatusKeys.get(id)?.key === key) return;
-        liveStatusKeys.set(id, { key });
-        refreshStatus(id);
-        return;
-      }
-      liveStatusKeys.delete(id);
-      const terminalRevision = (terminalRevisionRef.current.get(id) ?? 0) + 1;
-      terminalRevisionRef.current.set(id, terminalRevision);
-      terminalLoads.set(id, terminalRevision);
-      terminalLoadingRef.current.add(id);
+    const refreshDetail = (id: string, terminal: boolean) => {
+      if (terminal) liveStatusKeys.delete(id);
+      const readRevision = (detailReadRevisionRef.current.get(id) ?? 0) + 1;
+      detailReadRevisionRef.current.set(id, readRevision);
+      detailLoads.set(id, { revision: readRevision, terminal });
+      detailLoadingIdsRef.current.add(id);
       const pendingStatus = statusRequests.get(id);
-      if (pendingStatus) pendingStatus.pending = false;
-      const terminalStartEpoch = detailMutationEpochRef.current.get(id) ?? 0;
-      const terminalBookmarkRevision = bookmarkRevisionRef.current.get(id) ?? 0;
+      if (terminal && pendingStatus) pendingStatus.pending = false;
+      const readStartEpoch = detailMutationEpochRef.current.get(id) ?? 0;
+      const readBookmarkRevision = bookmarkRevisionRef.current.get(id) ?? 0;
       void api.getAuxiliarySession(id).then((session) => {
-        if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
-          || terminalRevision !== terminalRevisionRef.current.get(id)) return;
-        if (state === null) {
-          if (terminalStartEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
-          mutationRevisionRef.current += 1;
-          setLoading(false);
-          const resolvedEpoch = terminalStartEpoch + 1;
-          detailMutationEpochRef.current.set(id, resolvedEpoch);
-          if (session) {
-            applySession(id, session, terminalRevision, resolvedEpoch, terminalBookmarkRevision);
-            return;
-          }
-          detailsRef.current.delete(id);
-          const binding = bindingsRef.current.get(id);
-          if (binding) binding.sessionRef.current = null;
-          if (selectedIdRef.current === id) {
-            setSelectedSession(null);
-            setDetailLoading(false);
-            setDetailError(new Error(`Auxiliary session ${id} was not found`));
-          }
-          void refreshSummaries();
+        if (!active || !mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
+          || readRevision !== detailReadRevisionRef.current.get(id)) return;
+        if (readStartEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
+        mutationRevisionRef.current += 1;
+        setLoading(false);
+        const resolvedEpoch = readStartEpoch + 1;
+        detailMutationEpochRef.current.set(id, resolvedEpoch);
+        if (session) {
+          applySession(id, session, readRevision, resolvedEpoch, readBookmarkRevision);
           return;
         }
+        detailsRef.current.delete(id);
+        const binding = bindingsRef.current.get(id);
+        if (binding) binding.sessionRef.current = null;
+        if (selectedIdRef.current === id) {
+          setSelectedSession(null);
+          setDetailLoading(false);
+          setDetailError(new Error(`Auxiliary session ${id} was not found`));
+        }
+        void refreshSummaries();
       }).catch((cause) => {
-        if (mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
-          && terminalRevision === terminalRevisionRef.current.get(id)) {
+        if (active && mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
+          && readRevision === detailReadRevisionRef.current.get(id)) {
           const detailCause = cause instanceof Error ? cause : new Error(String(cause));
           if (selectedIdRef.current === id) {
             setDetailLoading(false);
@@ -529,15 +518,44 @@ export function useAuxiliaryWorkspace(input: {
           }
         }
       }).finally(() => {
-        if (terminalLoads.get(id) === terminalRevision) {
-          terminalLoads.delete(id);
-          if (subscriptionGeneration === workspaceGenerationRef.current) {
-            terminalLoadingRef.current.delete(id);
+        if (detailLoads.get(id)?.revision === readRevision) {
+          detailLoads.delete(id);
+          if (active && subscriptionGeneration === workspaceGenerationRef.current) {
+            detailLoadingIdsRef.current.delete(id);
             pruneDetails();
           }
         }
       });
+    };
+    const unsubscribeLive = api.subscribeLiveSessionRun
+      ? subscribeSessionLiveEvents(api as AuxiliaryWorkspaceApi & Required<Pick<AuxiliaryWorkspaceApi, "subscribeLiveSessionRun">>, (id, state) => {
+        if (!active || subscriptionGeneration !== workspaceGenerationRef.current) return;
+        const summary = summariesRef.current.find((item) => item.id === id);
+        if (!summary) return;
+        if (state === null) {
+          refreshDetail(id, true);
+          return;
+        }
+        const key = JSON.stringify([summary.createdAt, state.runState, state.turnId, state.cancellationState, state.inputAvailable]);
+        if (liveStatusKeys.get(id)?.key === key) return;
+        liveStatusKeys.set(id, { key });
+        refreshStatus(id);
+      })
+      : () => undefined;
+    const unsubscribeSaved = startConversationDetailSubscription({
+      api,
+      ownerSessionId: parentSessionId,
+      onChange: () => {
+        const ids = new Set(detailsRef.current.keys());
+        if (selectedIdRef.current) ids.add(selectedIdRef.current);
+        for (const id of ids) refreshDetail(id, false);
+      },
     });
+    return () => {
+      active = false;
+      unsubscribeLive();
+      unsubscribeSaved();
+    };
   }, [api, cacheDetail, mergeExecutionSelection, parentSessionId, pruneDetails, refreshSummaries]);
 
   const touchRecency = useCallback((id: string, updatedAt: string) => {

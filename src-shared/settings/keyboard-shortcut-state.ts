@@ -177,6 +177,17 @@ export const DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES: readonly KeyboardShortcut
     customizable: true,
     bindingKind: "enter",
   },
+  {
+    id: "session.composer.send-input",
+    scope: "composer",
+    accelerators: {
+      windows: { key: "Enter", ctrlKey: true, shiftKey: true },
+      linux: { key: "Enter", ctrlKey: true, shiftKey: true },
+      macos: { key: "Enter", metaKey: true, shiftKey: true },
+    },
+    customizable: true,
+    bindingKind: "enter",
+  },
 ];
 
 const MODIFIER_ONLY_KEYS = new Set([

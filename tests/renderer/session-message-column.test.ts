@@ -177,6 +177,59 @@ test("Claudeの不正Approvalを明示表示し有効値への操作で復旧す
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryの実行中Composerは編集可能な入力と単一のSend操作から予約し、終了凍結中は予約を受け付けない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dockの送信と予約" }
+// fault = "実行中の入力を無効化する、Sendを現在turn入力へ誤配送する、または凍結中にも予約する"
+// observable = "textareaのdisabled、Sendの表示とclickによるowner別の予約callback、freeze後のdisabledとcallback回数"
+// observation_boundary = "component-behavior"
+// scope = "running-composer-send"
+// lifecycle = "permanent"
+// impact = "実行中の次要求を入力・送信できず、誤配送や終了中の受付が発生する"
+// distinction = "feedback helperや型検査では実際のbutton配線とcontroller凍結購読を確認できない"
+// @end-test-value
+test("running Main and Auxiliary Send enqueue through the editable Composer and honor freeze", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const queued: string[] = [];
+  let directInputs = 0;
+  try {
+    for (const kind of ["main", "auxiliary"] as const) {
+      const registry = new ComposerControllerRegistry();
+      const owner = { kind, id: `${kind}-conversation` };
+      registry.setDraft(owner, `${kind} next request`);
+      await act(async () => root.render(React.createElement(SessionComposerExpanded, createComposerTestProps({
+        isRunning: true, canSendInput: false, isComposerDisabled: false,
+        composerController: { owner, registry },
+        onQueueTurn: () => queued.push(registry.capture(owner).draft),
+        onSendInput: () => { ++directInputs; },
+      }))));
+      assert.equal(dom.window.document.querySelector("textarea")!.disabled, false);
+      const sends = [...dom.window.document.querySelectorAll("button")].filter((button) => button.textContent === "Send");
+      assert.equal(sends.length, 1);
+      assert.equal(sends[0].disabled, false);
+      await act(async () => sends[0].click());
+      assert.equal(queued.at(-1), `${kind} next request`);
+      assert.equal(directInputs, 0);
+      await act(async () => registry.freeze());
+      assert.equal(dom.window.document.querySelector("textarea")!.disabled, true);
+      assert.equal(sends[0].disabled, true);
+      await act(async () => sends[0].click());
+      assert.equal(queued.length, kind === "main" ? 1 : 2);
+    }
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+  }
+});
+
 function createCharacterProfile(): CharacterProfile {
   return {
     id: "char-1",
@@ -2882,9 +2935,9 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
     fields: [{ type: "select", name: "branch", title: "Branch", required: true, defaultValue: "main", options: [{ value: "main", label: "main" }, { value: "feature", label: "feature" }] }],
   };
   const responses: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
-  const paging = { startIndex: 60, endIndex: 120, totalCount: 120, loading: false, error: "", onRetry() {} };
+  const paging = { loading: false, error: "", onRetry() {} };
   function Column(props: SessionMessageColumnProps) {
-    return React.createElement(SessionMessageColumn, { ...props, conversationPaging: props.isRunning ? paging : { ...paging, startIndex: 0, endIndex: 60 } });
+    return React.createElement(SessionMessageColumn, { ...props, conversationPaging: paging });
   }
   const mounted = await mountSessionMessageColumn({ component: Column, messages: createMessages(60), isRunning: true, liveElicitationRequest: request, onResolveLiveElicitation: (...args) => responses.push(args) });
   try {

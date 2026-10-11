@@ -1046,6 +1046,10 @@
   overflow-anchor: auto;
 }
 
+.session-message-list-window:has(.session-turn-queue-status) .message-list-bottom-anchor {
+  min-height: 40px;
+}
+
 .composer {
   display: grid;
   gap: 8px;
@@ -3186,7 +3190,7 @@
   background: var(--surface-strong);
 }
 
-.composer-box.running textarea {
+.composer-box textarea:disabled {
   cursor: not-allowed;
   opacity: 0.72;
 }
@@ -4032,4 +4036,28 @@
   .session-page .chat-skill-picker-spinner {
     animation: none;
   }
+}
+.session-turn-queue-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.session-turn-queue-status .drawer-toggle {
+  min-height: 28px;
+}
+
+.session-turn-queue-reason {
+  flex-basis: 100%;
+  text-align: left;
+  font-weight: 400;
 }

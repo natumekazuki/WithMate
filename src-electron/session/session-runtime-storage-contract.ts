@@ -26,6 +26,7 @@ export type SessionSteerAppendInput = SessionAppendOwner & {
   turnId: number;
   userMessage: Message;
   updatedAt: string;
+  queuedInput?: { queueId: string; inputTurnId: string };
 };
 
 export type SessionTerminalAppendInput = SessionAppendOwner & {

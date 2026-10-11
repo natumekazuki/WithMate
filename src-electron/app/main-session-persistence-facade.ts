@@ -8,6 +8,7 @@ import type { SessionRuntimeMetadataPatchInput, SessionThreadPatchInput } from "
 import type { SessionRuntimeMetadataPatchResult, SessionThreadPatchResult } from "../session/session-storage-v6.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SetExecutionOptionsResult, SetSessionTitleResult } from "../../src-shared/session/session-mutation-contract.js";
+import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 
 type ReplaceAllSessionsOptions = {
   broadcast?: boolean;
@@ -87,8 +88,12 @@ export class MainSessionPersistenceFacade {
     return this.deps.getSessionPersistenceService().persistRunningTurnStart(session, expectedMessageCount);
   }
 
-  async appendRunningInput(session: Session, text: string, turnId: number): Promise<Session> {
-    return this.deps.getSessionPersistenceService().appendRunningInput(session, text, turnId);
+  async persistQueuedTurnStart(session: Session, expectedMessageCount: number, queueId: string, turn: SessionTurnInput): Promise<{ session: Session; turn: SessionTurnRecord }> {
+    return this.deps.getSessionPersistenceService().persistQueuedTurnStart(session, expectedMessageCount, queueId, turn);
+  }
+
+  async appendRunningInput(session: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }): Promise<Session> {
+    return this.deps.getSessionPersistenceService().appendRunningInput(session, text, turnId, queuedInput);
   }
 
   async appendTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Promise<Session> {

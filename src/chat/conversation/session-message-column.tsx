@@ -18,6 +18,7 @@ import { approvalModeLabel, CharacterAvatar, liveRunStepStatusLabel, operationTy
 
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { LiveRequestSurface } from "../runtime/live-request-surface.js";
+import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches, iterateTextMatches } from "../../../src-shared/text/find-text-matches.js";
 
@@ -68,6 +69,11 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
 }
 export type SessionMessageColumnProps = {
+  turnQueueMetadata?: ReadonlyMap<string, import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt>;
+  onCancelQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
+  onReleaseInterruptedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
+  queueBusyId?: string | null;
+  queueTail?: ReactNode;
   sessionId: string;
   character: CharacterProfile;
   messages: Message[];
@@ -77,7 +83,7 @@ export type SessionMessageColumnProps = {
   collapsedMessageKeys?: ReadonlySet<string>;
   messageJumpRequest?: MessageJumpRequest | null;
   conversationPaging?: {
-    startIndex: number; endIndex: number; totalCount: number; loading: boolean; error: string;
+    loading: boolean; error: string;
     onEarlier?: () => void; onLater?: () => void; onRetry: () => void;
   };
   searchConversation?: (request: ConversationSearchRequest) => Promise<ConversationQueryOutcome<ConversationSearchMatch>>;
@@ -410,6 +416,11 @@ export function SelectionTextActionSurface({
 }
 
 export function SessionMessageColumn({
+  turnQueueMetadata,
+  onCancelQueuedTurn,
+  onReleaseInterruptedTurn,
+  queueBusyId,
+  queueTail,
   sessionId,
   character,
   messages,
@@ -1113,11 +1124,10 @@ export function SessionMessageColumn({
         onClose={() => setFindOpen(false)}
       />
       {findOpen && (conversationFindError || conversationFind.error) ? <div role="alert">{conversationFindError || conversationFind.error}<button className="drawer-toggle compact secondary" type="button" onClick={() => { setConversationFindError(""); conversationFind.retry(); }}>Retry</button></div> : null}
-      {conversationPaging ? (
+      {conversationPaging && (conversationPaging.onEarlier || conversationPaging.onLater || conversationPaging.loading || conversationPaging.error) ? (
         <div className="conversation-page-controls" aria-busy={conversationPaging.loading}>
           {conversationPaging.onEarlier ? <button className="drawer-toggle compact secondary" type="button" disabled={conversationPaging.loading} onClick={conversationPaging.onEarlier}>Earlier Messages</button> : null}
           {conversationPaging.onLater ? <button className="drawer-toggle compact secondary" type="button" disabled={conversationPaging.loading} onClick={conversationPaging.onLater}>Later Messages</button> : null}
-          <span>{conversationPaging.totalCount > 0 ? `${conversationPaging.startIndex + 1}–${conversationPaging.endIndex} / ${conversationPaging.totalCount}` : ""}</span>
           {conversationPaging.loading ? <LoadingIndicator label="Loading Messages" /> : null}
           {conversationPaging.error ? <><span role="alert">{conversationPaging.error}</span><button className="drawer-toggle compact secondary" type="button" onClick={conversationPaging.onRetry}>Retry</button></> : null}
         </div>
@@ -1145,7 +1155,7 @@ export function SessionMessageColumn({
         </button>
       ) : null}
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
-        {messages.length > 0 || isRunning ? (
+        {messages.length > 0 || isRunning || queueTail ? (
           <div className="session-message-list-window">
             <div
               ref={messageVirtualizer.containerRef}
@@ -1424,6 +1434,7 @@ export function SessionMessageColumn({
                       ) : null}
                       </section>
                     ) : null}
+                    {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} busy={queueBusyId === turnQueueMetadata.get(messageKey)!.id} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} /> : null}
                     {isRunning && absoluteIndex === pendingResponseMessageIndex ? renderPendingContent() : null}
                   </div>
                 </div>
@@ -1434,6 +1445,7 @@ export function SessionMessageColumn({
           })}
             </div>
             {isRunning && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
+            {queueTail}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}

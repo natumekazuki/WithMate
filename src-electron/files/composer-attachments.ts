@@ -52,8 +52,9 @@ function toDisplayPath(workspacePath: string, absolutePath: string): string {
 async function resolveAttachmentCandidate(
   session: ComposerPreviewSessionContext,
   candidate: ComposerAttachmentInput,
+  capturedAbsolutePath?: string,
 ): Promise<ComposerAttachment> {
-  const absolutePath = resolveCandidatePath(session.workspacePath, candidate.path);
+  const absolutePath = capturedAbsolutePath ?? resolveCandidatePath(session.workspacePath, candidate.path);
   if (!absolutePath) {
     throw new Error("Attachment path is empty.");
   }
@@ -96,6 +97,20 @@ async function resolveAttachmentCandidate(
     workspaceRelativePath,
     isOutsideWorkspace: workspaceRelativePath === null,
   };
+}
+
+export async function assertCapturedComposerAttachmentsAvailable(
+  session: ComposerPreviewSessionContext,
+  attachments: readonly ComposerAttachment[],
+): Promise<void> {
+  await Promise.all(attachments.map(async (attachment) => {
+    if (!path.isAbsolute(attachment.absolutePath)) throw new Error("Captured attachment path must be absolute.");
+    await resolveAttachmentCandidate(session, {
+      path: attachment.absolutePath,
+      kind: attachment.kind,
+      source: attachment.source,
+    }, attachment.absolutePath);
+  }));
 }
 
 export async function resolveComposerPreview(

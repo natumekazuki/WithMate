@@ -8,6 +8,7 @@ import {
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "../../src/chat/auxiliary/auxiliary-additional-directory-operation.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import { createGuardedActiveAuxiliarySessionUpdater } from "../../src/chat/auxiliary/auxiliary-session-update-operation.js";
 
 function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
   return {
@@ -93,22 +94,44 @@ describe("runAddAuxiliaryAdditionalDirectoryOperation", () => {
     assert.equal(picked, false);
   });
 
-  it("running session の場合は picker を開かない", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "実行中Auxiliaryでも次の依頼に使うAdditional Directoryを選び、現在本文・runStateを保持して更新する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dockは実行中も次依頼を編集する" }
+  // fault = "実行中にpickerまたは共通updaterがdirectory更新を黙って捨てるか本文/runStateを変える"
+  // observable = "picker呼出、guarded updaterからpersistへ渡されたdirectory・本文・runStateと表示結果"
+  // observation_boundary = "public-boundary"
+  // scope = "Auxiliary running additional directory selection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("running session でも次の依頼用のdirectoryを追加できる", async () => {
     let picked = false;
+    const current = makeAuxiliarySession({ runState: "running", composerDraft: "next request", messages: [{ role: "user", text: "current turn" }] });
+    let updated = current;
+    const persisted: AuxiliarySession[] = [];
+    const guardedUpdater = createGuardedActiveAuxiliarySessionUpdater({
+      activeSession: current, getCurrentSession: () => updated,
+      setActiveSession: (next) => { updated = next; },
+      getApi: () => ({ getAuxiliarySession: async () => current,
+        updateAuxiliarySession: async (next) => { persisted.push(next); return next; } }),
+      draftSaveQueue: { current: Promise.resolve() }, sessionSaveQueue: { current: Promise.resolve() }, mutationRevision: { current: 0 },
+    });
 
     await runAddAuxiliaryAdditionalDirectoryOperation({
-      activeAuxiliarySession: makeAuxiliarySession({ runState: "running" }),
+      activeAuxiliarySession: current,
       pickerBaseDirectory: "",
       pickDirectory: async () => {
         picked = true;
         return "C:/selected";
       },
       setPickerBaseDirectory: () => {},
-      updateActiveAuxiliarySession: async () => {},
+      updateActiveAuxiliarySession: async (recipe) => { await guardedUpdater(recipe); },
       createTimestampLabel: () => "updated",
     });
 
-    assert.equal(picked, false);
+    assert.equal(picked, true);
+    assert.deepEqual(updated, { ...current, allowedAdditionalDirectories: ["C:/selected"], updatedAt: "updated" });
+    assert.deepEqual(persisted, [updated]);
   });
 
   it("選択された directory を picker base と active session に反映する", async () => {

@@ -282,33 +282,44 @@ describe("SessionPersistenceService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Approval・Sandboxを含む実行オプション選択は任意checkpoint失敗後もメモリ正本に残り、後続のstale retry・terminal保存へ重ねられる"
+  // claim = "実行中の次設定とdirectory更新は旧captureを変えずcheckpoint失敗とstale保存で巻き戻らず並行steer本文を保持する"
   // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send" }
-  // fault = "checkpoint失敗で選択を巻き戻す、または後続の古いSession保存が新しい選択を上書きする"
-  // observable = "選択memory、checkpoint失敗、retry/terminal storage引数と最終保存値、checkpoint通知数"
+  // fault = "running選択を拒否するか元captureを編集するかcheckpoint/古い保存で次選択を戻すかread-only/旧ownerを受理する"
+  // observable = "旧captureと選択memory、directory更新後の並行steer本文/設定、read-only/旧owner拒否、retry/terminal保存引数と通知数"
   // observation_boundary = "component-behavior"
   // scope = "session-persistence-service-selection-overlay"
   // lifecycle = "permanent"
   // impact = "表示・後続保存に旧設定が残り、利用者の実行設定選択が失われる"
   // distinction = "SQL列更新テストでなく、同じmutation queue内の選択記憶と後続upsertの競合を確認する"
   // @end-test-value
-  it("checkpoint失敗後も選択を保持しstale保存へoverlayする", async () => {
+  it("実行中も次送信用選択を保持しstale保存へoverlayする", async () => {
     const session = createSession({
       id: "selection-service", incarnationId: "owner-a", provider: "codex",
       catalogRevision: 2, model: "codex-default", reasoningEffort: "low",
       messages: [{ role: "user", text: "prompt" }],
+      status: "running", runState: "running",
     });
+    const runningCapture = captureSessionExecutionOptions(session);
     let cached = [session];
     let stored = session;
     const selections = new CurrentExecutionSelections();
     const broadcasts: string[][] = [];
     const storedModels: string[] = [];
+    let directoryReads = 0;
     const service = new SessionPersistenceService({
       getSessions: () => cached,
       setSessions: (next) => { cached = next; },
       getSession: (id) => cached.find((item) => item.id === id) ?? null,
-      getStoredSession: () => { throw new Error("full read"); },
-      isSessionRunInFlight: () => false,
+      getStoredSession: () => {
+        const snapshot = stored;
+        if (directoryReads++ === 0) void service.appendRunningInput(session, "concurrent input", 1);
+        return snapshot;
+      },
+      appendStoredSessionSteer: () => {
+        stored = { ...stored, messages: [...stored.messages, { role: "user", text: "concurrent input" }] };
+        return { summary: projectSessionSummary(stored), characterRuntimeSnapshot: stored.characterRuntimeSnapshot, messageCount: stored.messages.length };
+      },
+      isSessionRunInFlight: () => true,
       upsertStoredSession: (next) => { storedModels.push(`${next.model}:${next.reasoningEffort}`); stored = next; return next; },
       upsertStoredTerminalSession: (next) => { storedModels.push(`${next.model}:${next.reasoningEffort}`); stored = next; return next; },
       setStoredSessionExecutionOptions: () => { throw new Error("checkpoint unavailable"); },
@@ -327,7 +338,8 @@ describe("SessionPersistenceService", () => {
     });
     const selected = {
       ...captureSessionExecutionOptions(session), reasoningEffort: "high" as const,
-      approvalMode: "never" as const, codexSandboxMode: "danger-full-access" as const,
+      approvalMode: "on-request" as const, codexSandboxMode: "danger-full-access" as const,
+      codexSpeed: "fast" as const, codexReviewer: "auto-review" as const,
     };
     assert.deepEqual(await service.setSessionExecutionOptions(session.id, "owner-a", selected), {
       status: "accepted", checkpointSaved: false,
@@ -335,12 +347,22 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(captureSessionExecutionOptions(selections.apply(session)), selected);
     assert.deepEqual(captureSessionExecutionOptions(cached[0]!), selected);
     assert.deepEqual(broadcasts, []);
+    assert.deepEqual(captureSessionExecutionOptions(session), runningCapture);
+    const directories = await service.updateSession({ ...cached[0]!, allowedAdditionalDirectories: ["C:/next-context"] });
+    assert.deepEqual(directories.allowedAdditionalDirectories, ["C:\\next-context"]);
+    assert.deepEqual(directories.messages, [...session.messages, { role: "user", text: "concurrent input" }]);
+    assert.deepEqual(captureSessionExecutionOptions(directories), selected);
+    await assert.rejects(service.setSessionExecutionOptions(session.id, "obsolete-owner", selected), /could not be found/i);
+    cached = [{ ...cached[0]!, accessMode: "legacy_readonly" }];
+    await assert.rejects(service.setSessionExecutionOptions(session.id, "owner-a", selected), /read-only/i);
+    cached = [{ ...cached[0]!, accessMode: "active" }];
+    assert.deepEqual(broadcasts, [[session.id], [session.id]]);
     await service.upsertSessionPreservingPin({ ...session, reasoningEffort: "medium" });
     await service.upsertTerminalSession({ ...session, status: "idle", reasoningEffort: "medium" }, {
       turnId: 1, sessionId: session.id, phase: "completed", assistantMessageSeq: 0,
       threadId: "", errorMessage: "", completedAt: "2026-09-27T00:00:00.000Z",
     });
-    assert.deepEqual(storedModels, ["codex-default:high", "codex-default:high"]);
+    assert.deepEqual(storedModels, ["codex-default:high", "codex-default:high", "codex-default:high"]);
     assert.deepEqual(captureSessionExecutionOptions(stored), selected);
   });
 

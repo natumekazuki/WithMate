@@ -201,7 +201,7 @@ describe("ComposerControllerRegistry", () => {
   // observation_boundary = "public-boundary"
   // scope = "composer-send-lifecycle"
   // lifecycle = "permanent"
-  // distinction = "通常のsetDraftと異なり、restoreIfRevisionだけが失敗送信の内部復元として凍結中のdraft mutationを許可する"
+  // distinction = "一般編集と異なり、revision guardedな受付ACK消去・失敗復元は凍結中も反映する"
   // @end-test-value
   it("restores a failed send while shutdown freeze blocks user edits", () => {
     const registry = new ComposerControllerRegistry();
@@ -222,6 +222,42 @@ describe("ComposerControllerRegistry", () => {
     registry.unfreeze();
     assert.equal(registry.setDraft(owner, "follow-up edit"), restoredRevision! + 1);
     assert.equal(registry.capture(owner).draft, "follow-up edit");
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Main/Auxiliaryの受付ACKは終了凍結中も一致revisionだけを消費し、後続編集と凍結を保護する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 受付ACKは一致するdraft revisionだけを消す" }
+  // fault = "凍結中のACKが消費済みdraftを残すか、後続revisionを消去する"
+  // observable = "ACK後と凍結解除後のdraft/revision、一般編集の拒否"
+  // observation_boundary = "public-boundary"
+  // scope = "composer guarded acceptance during shutdown"
+  // lifecycle = "permanent"
+  // impact = "受付済み指示の下書き再表示と重複送信を防ぐ"
+  // distinction = "window integrationとは異なりMain/Aux共通controllerのrevision一致と不一致を直接検証する"
+  // @end-test-value
+  it("consumes accepted revisions during freeze without clearing newer edits", () => {
+    for (const kind of ["main", "auxiliary"] as const) {
+      const registry = new ComposerControllerRegistry();
+      const owner = { kind, id: kind };
+      const accepted = registry.setDraft(owner, "accepted");
+      registry.freeze();
+      assert.equal(registry.clearIfRevision(owner, accepted), accepted + 1);
+      assert.equal(registry.capture(owner).draft, "");
+      assert.equal(registry.isFrozen, true);
+      assert.equal(registry.setDraft(owner, "blocked edit"), accepted + 1);
+      registry.unfreeze();
+      assert.equal(registry.capture(owner).draft, "");
+      const stale = registry.setDraft(owner, "next accepted");
+      const newer = registry.setDraft(owner, "follow-up");
+      registry.freeze();
+      assert.equal(registry.clearIfRevision(owner, stale), null);
+      assert.deepEqual(registry.capture(owner), { owner, draft: "follow-up", revision: newer });
+      registry.clearDraft(owner);
+      assert.equal(registry.capture(owner).draft, "follow-up");
+      registry.unfreeze();
+      assert.equal(registry.capture(owner).draft, "follow-up");
+    }
   });
 
   // @test-value v2

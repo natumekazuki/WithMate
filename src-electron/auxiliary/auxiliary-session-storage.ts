@@ -15,6 +15,9 @@ import { normalizeMessage, summarizeMessageArtifact, type Message, type MessageA
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { writeSessionTurnTerminalCommit, type SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
 import type { ProviderRuntimeMetadataPatch } from "../providers/provider-runtime-metadata-patch.js";
+import { insertSessionTurn } from "../session/session-turn-storage-v6.js";
+import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
+import type { SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
 import { assertCharacterDefinitionSnapshotUpdate } from "../session/session-running-turn-start.js";
 import type {
   AuxiliaryDraftConsumeInput,
@@ -106,8 +109,9 @@ export type AuxiliaryRuntimeWriteInput = {
 export type AuxiliaryRunningTurnStartInput = AuxiliaryRuntimeWriteInput & {
   userMessage: Message;
   characterRuntimeSnapshot?: AuxiliarySession["characterRuntimeSnapshot"];
+  queuedTurn?: { queueId: string; turn: SessionTurnInput };
 };
-export type AuxiliarySteerAppendInput = AuxiliaryRuntimeWriteInput & { turnId: number; userMessage: Message };
+export type AuxiliarySteerAppendInput = AuxiliaryRuntimeWriteInput & { turnId: number; userMessage: Message; queuedInput?: { queueId: string; inputTurnId: string } };
 export type AuxiliaryTerminalAppendInput = AuxiliaryRuntimeWriteInput & {
   assistantMessage: Message;
   runState: AuxiliarySession["runState"];
@@ -367,11 +371,32 @@ export class AuxiliarySessionStorage {
     return this.withDb((db) => readAuxiliaryMetadata(db, auxiliarySessionId));
   }
 
-  appendAuxiliaryRunningTurnStart(input: AuxiliaryRunningTurnStartInput): AuxiliarySession | null {
-    return this.writeRuntime(input, (db, current) => {
+  appendAuxiliaryRunningTurnStart(input: AuxiliaryRunningTurnStartInput): (AuxiliarySession & { queuedTurn?: SessionTurnRecord }) | null {
+    let queuedTurn: SessionTurnRecord | undefined;
+    const result = this.writeRuntime(input, (db, current) => {
       if (current.runState === "running" || input.userMessage.role !== "user" || !input.userMessage.text.trim()) return false;
       assertCharacterDefinitionSnapshotUpdate(current.characterRuntimeSnapshot, input.characterRuntimeSnapshot,
         current.characterId ?? input.characterRuntimeSnapshot?.characterId ?? "");
+      if (input.queuedTurn) {
+        const row = db.prepare(`SELECT captured_json FROM session_turn_queue_v6 WHERE id = ?
+          AND session_id = ? AND auxiliary_session_id = ? AND incarnation_id = ? AND state = 'starting' AND input_turn_id IS NULL`)
+          .get(input.queuedTurn.queueId, current.parentSessionId, current.id, current.createdAt) as { captured_json: string } | undefined;
+        if (!row) throw new Error("The Auxiliary queued turn is not starting.");
+        const captured = JSON.parse(row.captured_json) as SessionTurnQueueCapturedInput;
+        const turn = input.queuedTurn.turn;
+        if (captured.request.userMessage !== input.userMessage.text || turn.sessionId !== current.id || turn.phase !== "running"
+          || turn.userMessageSeq !== input.expectedMessageCount || turn.assistantMessageSeq !== undefined || turn.completedAt !== undefined
+          || turn.provider !== captured.provider || turn.model !== captured.request.executionOptions.model
+          || turn.reasoningEffort !== captured.request.executionOptions.reasoningEffort
+          || turn.approvalMode !== captured.request.executionOptions.approvalMode || turn.sandboxMode !== captured.request.executionOptions.codexSandboxMode) {
+          throw new Error("The Auxiliary queued turn does not match its captured request.");
+        }
+        queuedTurn = insertSessionTurn(db, { sessionId: null, auxiliarySessionId: current.id }, turn);
+        const result = db.prepare(`UPDATE session_turn_queue_v6 SET state = 'running', turn_id = ?, user_message_seq = ?, updated_at = ?
+          WHERE id = ? AND state = 'starting' AND input_turn_id IS NULL`)
+          .run(String(queuedTurn.id), input.expectedMessageCount, input.updatedAt, input.queuedTurn.queueId);
+        if (Number(result.changes) !== 1) throw new Error("The Auxiliary queued turn could not be committed.");
+      }
       insertAuxiliaryMessage(db, current.id, input.expectedMessageCount, input.userMessage, input.updatedAt);
       db.prepare(`UPDATE auxiliary_sessions SET run_state = 'running', status = 'active', closed_at = '',
         character_id = COALESCE(character_id, ?), character_snapshot_json = ?, preview = ?, updated_at = ? WHERE id = ?`).run(
@@ -381,6 +406,7 @@ export class AuxiliarySessionStorage {
         current.preview || buildAuxiliaryPreview([input.userMessage]), input.updatedAt, current.id);
       return true;
     }, true);
+    return result ? { ...result, ...(queuedTurn ? { queuedTurn } : {}) } : null;
   }
 
   appendAuxiliarySteer(input: AuxiliarySteerAppendInput): AuxiliarySession | null {
@@ -388,7 +414,24 @@ export class AuxiliarySessionStorage {
       if (current.runState !== "running" || input.userMessage.role !== "user" || !input.userMessage.text.trim()
         || !db.prepare(`SELECT id FROM session_turns_v6 WHERE id = ? AND session_id IS NULL
           AND auxiliary_session_id = ? AND phase = 'running'`).get(input.turnId, current.id)) return false;
+      if (input.queuedInput) {
+        if (!db.prepare("SELECT 1 FROM session_turns_v6 WHERE id = ? AND id = (SELECT MAX(id) FROM session_turns_v6 WHERE auxiliary_session_id = ?)")
+          .get(input.turnId, current.id)) throw new Error("The current Auxiliary queued input turn no longer matches.");
+        const receipt = db.prepare(`SELECT captured_json FROM session_turn_queue_v6 WHERE id = ?
+          AND session_id = ? AND auxiliary_session_id = ? AND incarnation_id = ?
+          AND state = 'starting' AND input_turn_id = ? AND user_message_seq IS NULL`)
+          .get(input.queuedInput.queueId, current.parentSessionId, current.id, current.createdAt, input.queuedInput.inputTurnId) as { captured_json: string } | undefined;
+        if (!receipt || (JSON.parse(receipt.captured_json) as SessionTurnQueueCapturedInput).request.userMessage !== input.userMessage.text) {
+          throw new Error("The Auxiliary queued input does not match its captured message.");
+        }
+      }
       insertAuxiliaryMessage(db, current.id, input.expectedMessageCount, input.userMessage, input.updatedAt);
+      if (input.queuedInput) {
+        const result = db.prepare(`UPDATE session_turn_queue_v6 SET state = 'completed', turn_id = ?, user_message_seq = ?, updated_at = ?
+          WHERE id = ? AND state = 'starting' AND input_turn_id = ?`)
+          .run(String(input.turnId), input.expectedMessageCount, input.updatedAt, input.queuedInput.queueId, input.queuedInput.inputTurnId);
+        if (Number(result.changes) !== 1) throw new Error("The Auxiliary queued input could not be committed.");
+      }
       db.prepare("UPDATE auxiliary_sessions SET updated_at = ? WHERE id = ?").run(input.updatedAt, current.id);
       return true;
     }, true);
@@ -408,6 +451,15 @@ export class AuxiliarySessionStorage {
         AND auxiliary_session_id = ? AND phase = 'running'`).run(commit.phase, commit.assistantMessageSeq,
         commit.threadId, commit.errorMessage, commit.completedAt, commit.completedAt, commit.turnId, current.id);
       if (Number(result.changes) !== 1) throw new Error(`Auxiliary turn terminal commit target mismatch: ${commit.turnId}`);
+      const queueResult = db.prepare(`UPDATE session_turn_queue_v6 SET state = ?, reason = ?, updated_at = ?
+        WHERE auxiliary_session_id = ? AND session_id = ? AND incarnation_id = ? AND turn_id = ?
+          AND state = 'running' AND input_turn_id IS NULL
+          AND user_message_seq = (SELECT user_message_seq FROM session_turns_v6 WHERE id = ? AND auxiliary_session_id = ?)`)
+        .run(commit.phase, commit.errorMessage || null, commit.completedAt, current.id, current.parentSessionId,
+          current.createdAt, String(commit.turnId), commit.turnId, current.id);
+      if (Number(queueResult.changes) === 0 && db.prepare(`SELECT 1 FROM session_turn_queue_v6
+        WHERE auxiliary_session_id = ? AND incarnation_id = ? AND turn_id = ? AND state = 'running' AND input_turn_id IS NULL`)
+        .get(current.id, current.createdAt, String(commit.turnId))) throw new Error("The Auxiliary queued terminal receipt does not match.");
       return true;
     }, true);
   }
@@ -570,40 +622,10 @@ export class AuxiliarySessionStorage {
     return this.withDb((db) => {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
-        const session = db.prepare(`
-          SELECT parent_session_id, status, created_at, run_state
-          FROM auxiliary_sessions WHERE id = ?
-        `).get(input.auxiliarySessionId) as { parent_session_id: string; status: "active" | "closed"; created_at: string; run_state: string } | undefined;
-        if (!session) {
-          db.exec("ROLLBACK");
-          return { outcome: "not-found" };
-        }
-        if (!session || !hasWritableAuxiliaryParent(db, session.parent_session_id)) {
-          db.exec("ROLLBACK");
-          return { outcome: "rejected" };
-        }
-        const row = db.prepare(`
-          SELECT auxiliary_session_id AS id, parent_session_id, incarnation,
-            durable_revision, draft_text, updated_at
-          FROM auxiliary_session_drafts
-          WHERE auxiliary_session_id = ?
-        `).get(input.auxiliarySessionId) as AuxiliaryDraftRow | undefined;
-        if (session.parent_session_id !== input.parentSessionId
-            || (session.run_state === "running" && input.allowRunningInput !== true) || !row || row.parent_session_id !== input.parentSessionId) {
-          db.exec("ROLLBACK");
-          return { outcome: "not-found" };
-        }
-        if (row.incarnation !== input.incarnation || row.durable_revision !== input.expectedDurableRevision) {
-          db.exec("ROLLBACK");
-          return { outcome: "stale", ack: toDraftAck(row) };
-        }
-        const next = { ...toDraftRecord(row), durableRevision: row.durable_revision + 1, text: "" };
-        db.prepare(`UPDATE auxiliary_session_drafts
-          SET durable_revision = ?, draft_text = '', updated_at = ?
-          WHERE auxiliary_session_id = ? AND durable_revision = ? AND incarnation = ?
-        `).run(next.durableRevision, next.updatedAt, input.auxiliarySessionId, input.expectedDurableRevision, input.incarnation);
+        const result = consumeAuxiliaryDraftInTransaction(db, input);
+        if (result.outcome !== "consumed") { db.exec("ROLLBACK"); return result; }
         db.exec("COMMIT");
-        return { outcome: "consumed", ack: toDraftAck(next) };
+        return result;
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
@@ -1221,7 +1243,32 @@ function migrateAuxiliaryStorage(db: DatabaseSync): void {
   }
 }
 
-function hasWritableAuxiliaryParent(db: DatabaseSync, parentSessionId: string): boolean {
+export function consumeAuxiliaryDraftInTransaction(db: DatabaseSync,
+  input: AuxiliaryDraftStorageConsumeInput & { expectedText?: string }): AuxiliaryDraftConsumeResult {
+  const session = db.prepare("SELECT parent_session_id, run_state FROM auxiliary_sessions WHERE id = ?")
+    .get(input.auxiliarySessionId) as { parent_session_id: string; run_state: string } | undefined;
+  if (!session) return { outcome: "not-found" };
+  if (!hasWritableAuxiliaryParent(db, session.parent_session_id)) return { outcome: "rejected" };
+  const row = db.prepare(`SELECT auxiliary_session_id AS id, parent_session_id, incarnation,
+    durable_revision, draft_text, updated_at FROM auxiliary_session_drafts WHERE auxiliary_session_id = ?`)
+    .get(input.auxiliarySessionId) as AuxiliaryDraftRow | undefined;
+  if (session.parent_session_id !== input.parentSessionId
+    || (session.run_state === "running" && input.allowRunningInput !== true)
+    || !row || row.parent_session_id !== input.parentSessionId) return { outcome: "not-found" };
+  if (row.incarnation !== input.incarnation || row.durable_revision !== input.expectedDurableRevision
+    || (input.expectedText !== undefined && row.draft_text.trim() !== input.expectedText.trim())) {
+    return { outcome: "stale", ack: toDraftAck(row) };
+  }
+  const next = { ...toDraftRecord(row), durableRevision: row.durable_revision + 1, text: "" };
+  const result = db.prepare(`UPDATE auxiliary_session_drafts SET durable_revision = ?, draft_text = '', updated_at = ?
+    WHERE auxiliary_session_id = ? AND parent_session_id = ? AND durable_revision = ? AND incarnation = ?`)
+    .run(next.durableRevision, next.updatedAt, input.auxiliarySessionId, input.parentSessionId,
+      input.expectedDurableRevision, input.incarnation);
+  if (Number(result.changes) !== 1) return { outcome: "stale", ack: toDraftAck(row) };
+  return { outcome: "consumed", ack: toDraftAck(next) };
+}
+
+export function hasWritableAuxiliaryParent(db: DatabaseSync, parentSessionId: string): boolean {
   const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'
     AND name IN ('sessions_v6', 'sessions')`).all() as Array<{ name: string }>;
   if (tables.some(({ name }) => name === "sessions_v6")) {

@@ -122,7 +122,6 @@ import { insertComposerTextAtSelection } from "../chat/message-text-actions.js";
 import type { GlossaryAnnotationMatcher } from "../glossary/glossary-annotation-projection.js";
 import { SessionFilesFeature, type SessionFilesFeatureHandle } from "../file-explorer/session-files-feature.js";
 import {
-  acknowledgePreviewChatMessageCount,
   beginPreviewChatActivity,
   endPreviewChatActivity,
   observePreviewChatMessageCount,
@@ -182,7 +181,6 @@ import {
   runAddAuxiliaryAdditionalDirectoryOperationWithApi,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "../chat/auxiliary/auxiliary-additional-directory-operation.js";
-import { AuxiliaryComposerSendOwner } from "../chat/auxiliary/auxiliary-session-send-operation.js";
 import {
   applyComposerSubmitCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -446,7 +444,6 @@ export default function AgentSessionWindowApp() {
   const auxiliarySessionMutationRevisionRef = auxiliaryBinding.mutationRevision;
   const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
   const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
-  const auxiliarySendOwner = useMemo(() => new AuxiliaryComposerSendOwner(), []);
   const loadedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? null,
     [selectedId, sessions],
@@ -1005,11 +1002,12 @@ export default function AgentSessionWindowApp() {
     retryBanner,
     draft: getComposerDraft(),
   });
-  const isComposerDisabled = (selectedSessionRunState === "running" && !canSendInput) || !!composerBlockedReason || isSelectedSessionReadOnly;
+  const isComposerDisabled = !!composerBlockedReason || isSelectedSessionReadOnly;
   const composerSendability = useMemo(
     () =>
       resolveComposerSendabilityState({
         runState: selectedSessionRunState,
+        canQueueTurn: true,
         busyReason: composerBusyReason,
         blockedReason: sessionExecutionBlockedReason,
         inputErrors: composerPreview.errors,
@@ -1068,7 +1066,7 @@ export default function AgentSessionWindowApp() {
   }, [selectedSession?.id]);
 
   const triggerComposerBlockedFeedback = () => {
-    if (!selectedSession || (selectedSessionRunState === "running" && !canSendInput)) {
+    if (!selectedSession) {
       return;
     }
 
@@ -1084,6 +1082,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
     const sessionId = sendSession.id;
+    const selectionContext = dockContextRef.current;
     const collapseSentActionDock = captureSendDockCollapse();
     const clientRequestId = createSessionTurnClientRequestId();
     const request: RunSessionTurnRequest = {
@@ -1098,16 +1097,13 @@ export default function AgentSessionWindowApp() {
       request,
       composerOwner,
       clearDraft: options?.clearDraft ?? true,
+      queueTurn: true,
+      isCurrentSubmission: () => dockContextRef.current === selectionContext && composerOwnerRef.current === sessionId,
       shouldCollapseActionDock: options?.collapseActionDock ?? false,
-      isCentralPreviewActive,
-      hasLiveRun,
       selectedSessionRunState,
       blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly,
-      currentTimestamp: currentTimestampLabel(),
       validateWorkspace: () => validateSessionWorkspace(sendSession, true),
-      liveRun: { getRevision: getLiveRunRevision, setState: setLiveRunState },
-      acknowledgePreviewChatMessageCount: (id, count) => setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(current, id, count)),
       collapseActionDock: collapseSentActionDock,
       log: logSessionRunStuckInvestigation,
     });
@@ -1120,6 +1116,18 @@ export default function AgentSessionWindowApp() {
       return;
     }
     if (activeAuxiliarySession) {
+      const currentComposerState = composerRegistry.get(composerOwner);
+      if (composerBusyReason || mainSessionRuntime.hasUncertainTurnFor(activeAuxiliarySession.id)) {
+        return;
+      }
+      if (currentComposerState.saveState === "error" || currentComposerState.preview.errors.length > 0) {
+        triggerComposerBlockedFeedback();
+        return;
+      }
+      if (!currentComposerState.draft.trim() || composerBlockedReason || isSelectedSessionReadOnly) {
+        triggerComposerBlockedFeedback();
+        return;
+      }
       try {
         setForceComposerBlockedFeedback(false);
         await sendAuxiliaryMessage();
@@ -1129,7 +1137,9 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    if (isComposerDisabled || !getComposerDraft().trim()) {
+    const currentComposerState = composerRegistry.get(composerOwner);
+    if (isComposerDisabled || mainSessionRuntime.hasUncertainTurnFor(selectedId) || currentComposerState.saveState === "error"
+      || currentComposerState.preview.errors.length > 0 || !getComposerDraft().trim()) {
       triggerComposerBlockedFeedback();
       return;
     }
@@ -1148,6 +1158,7 @@ export default function AgentSessionWindowApp() {
 
   const handleSendInput = async () => {
     const selectionContext = dockContextRef.current;
+    if (mainSessionRuntime.hasUncertainTurnFor(composerOwner.id)) return;
     const mainSession = getCurrentMainSession();
     if (!activeAuxiliarySession && !mainSession) return;
     await turnInput.send({
@@ -1183,16 +1194,14 @@ export default function AgentSessionWindowApp() {
       return composerRegistry.isFrozen
         || current.isImeComposing
         || current.saveState === "error"
-        || (activeAuxiliarySession
-          ? activeAuxiliarySession.runState === "running" && !canSendInput
-          : current.preview.errors.length > 0 || selectedSessionRunState === "running" && !canSendInput);
+        || mainSessionRuntime.hasUncertainTurnFor(composerOwner.id);
     },
     isSubmitBlocked: () => {
       const current = composerRegistry.get(composerOwner);
       const activeSendability = activeAuxiliarySession
         ? buildComposerSendabilityState({
             runState: activeAuxiliarySession.runState,
-            canSendInput,
+            canQueueTurn: true,
             busyReason: composerBusyReason,
             blockedReason: sessionExecutionBlockedReason,
             inputErrors: current.preview.errors,
@@ -1200,7 +1209,7 @@ export default function AgentSessionWindowApp() {
           })
         : resolveComposerSendabilityState({
             runState: selectedSessionRunState,
-            canSendInput,
+            canQueueTurn: true,
             busyReason: composerBusyReason,
             blockedReason: sessionExecutionBlockedReason,
             inputErrors: current.preview.errors,
@@ -1210,12 +1219,13 @@ export default function AgentSessionWindowApp() {
       return current.saveState === "error" || activeSendability.isSendDisabled;
     },
     notifySubmitBlocked: triggerComposerBlockedFeedback,
-    submit: () => void (canSendInput ? handleSendInput() : handleSend()),
+    submit: () => void handleSend(),
   });
 
   useShortcutDispatcherSettings(appSettings.keyboardShortcuts);
   useShortcutScope("composer");
   useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.composerSubmit, handleComposerSubmitShortcut);
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.composerSendInput, () => { void handleSendInput(); });
 
   const handleSelectSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
     getProvider: () => selectedSession?.provider,
@@ -1273,7 +1283,6 @@ export default function AgentSessionWindowApp() {
     await runMainRuntimeOptionOperation({
       session: getCurrentMainSession(),
       isReadOnly: isSelectedSessionReadOnly,
-      runState: selectedSessionRunState,
       providerCatalog: selectedProviderCatalog,
       catalogRevision: modelCatalog?.revision ?? null,
       option,
@@ -1504,31 +1513,40 @@ export default function AgentSessionWindowApp() {
     auxiliaryDraftPersistence.retrySave(activeAuxiliarySession);
   };
 
-  const sendAuxiliaryMessage = (): Promise<void> => {
-    if (!withmateApi) return Promise.resolve();
-    return auxiliarySendOwner.send({
-      api: withmateApi,
-      binding: auxiliaryBinding,
-      drafts: auxiliaryDraftPersistence,
-      composerRegistry,
-      blockedReason: sessionExecutionBlockedReason,
-      busyReason: composerBusyReason,
-      onBlocked: triggerComposerBlockedFeedback,
-      parentMessageCount: selectedSession?.messageCount ?? selectedSession?.messages.length ?? null,
-      updatedAt: currentTimestampLabel(),
-      isCurrentTarget: () => composerOwnerRef.current === auxiliaryBinding.getSession()?.id,
-      collapseActionDock: captureSendDockCollapse(),
-      updateLiveRunState: setLiveRunState,
-      onRunningSessionApplied: (runningSession) => {
-        if (isCentralPreviewActive) {
-          setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(
-            current,
-            runningSession.id,
-            runningSession.messageCount ?? runningSession.messages.length,
-          ));
-        }
+  const sendAuxiliaryMessage = (): Promise<unknown> => {
+    if (!withmateApi || composerRegistry.isFrozen) return Promise.resolve();
+    const selected = activeAuxiliarySessionRef.current;
+    if (!selected || !displayedSession) return Promise.resolve();
+    const owner: ComposerOwner = { kind: "auxiliary", id: selected.id };
+    const draftOwner = auxiliaryDraftPersistence.getOwner(selected);
+    if (!draftOwner) return Promise.resolve();
+    const selectionContext = dockContextRef.current;
+    const collapseSentActionDock = captureSendDockCollapse();
+    const releaseDetail = auxiliaryBinding.retainDetail();
+    return auxiliaryDraftPersistence.trackSend(runMainSessionTurnFromRuntime({
+      sessionId: selected.id,
+      selectedSession: { ...displayedSession, id: selected.id, incarnationId: selected.createdAt },
+      request: {
+        userMessage: composerRegistry.capture(owner).draft,
+        clientRequestId: createSessionTurnClientRequestId(),
+        submitSource: "composer",
+        executionOptions: captureSessionExecutionOptions(selected),
+        displayAnchorParentMessageCount: selectedSession?.messageCount ?? selectedSession?.messages.length ?? 0,
       },
-    });
+      composerOwner: owner,
+      auxiliaryDraftOwner: draftOwner,
+      isCurrentSubmission: () => dockContextRef.current === selectionContext && composerOwnerRef.current === selected.id
+        && auxiliaryBinding.getSession()?.createdAt === selected.createdAt,
+      clearDraft: true,
+      queueTurn: true,
+      shouldCollapseActionDock: appSettings.autoCollapseActionDockOnSend,
+      selectedSessionRunState: selected.runState,
+      blockedReason: sessionExecutionBlockedReason,
+      isReadOnly: isSelectedSessionReadOnly,
+      validateWorkspace: () => selectedSession ? validateSessionWorkspace(selectedSession, true) : Promise.resolve(false),
+      collapseActionDock: collapseSentActionDock,
+      log: logSessionRunStuckInvestigation,
+    }).finally(releaseDetail));
   };
 
   const handleCopyMessageText = createCopyMessageTextHandler({
@@ -1542,7 +1560,7 @@ export default function AgentSessionWindowApp() {
   const handleQuoteMessageText = createQuoteMessageTextHandler({
     isBlocked: () => (
       composerRegistry.isFrozen || (activeAuxiliarySession
-        ? activeAuxiliarySession.runState === "running" || !!composerBlockedReason
+        ? !!composerBlockedReason
         : isComposerDisabled)
     ),
     notifyBlocked: triggerComposerBlockedFeedback,
@@ -1740,15 +1758,11 @@ export default function AgentSessionWindowApp() {
   const handleComposerPaste = createPastedSessionAttachmentHandler({
     alertError: (message) => window.alert(message),
     canPaste: () => {
-      const targetAuxiliarySession = activeAuxiliarySession;
       return !!withmateApi &&
         !composerRegistry.isFrozen &&
         !!selectedSession &&
         !isAuxiliaryTargetUnavailable &&
-        !isSelectedSessionReadOnly &&
-        !(targetAuxiliarySession
-          ? targetAuxiliarySession.runState === "running" && !canSendInput
-          : selectedSessionRunState === "running" && !canSendInput);
+        !isSelectedSessionReadOnly;
     },
     currentTimestampLabel,
     fallbackErrorMessage: "Could not save the pasted file.",
@@ -1767,8 +1781,7 @@ export default function AgentSessionWindowApp() {
       canPickDirectory: () => !!withmateApi &&
         !composerRegistry.isFrozen &&
         !!selectedSession &&
-        !isSelectedSessionReadOnly &&
-        selectedSessionRunState !== "running",
+        !isSelectedSessionReadOnly,
       getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, selectedSession?.workspacePath),
       pickDirectory: (baseDirectory) => withmateApi?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
       applyPickedDirectory: async (selectedPath) => {
@@ -1791,8 +1804,7 @@ export default function AgentSessionWindowApp() {
       canRemoveDirectory: () => !!selectedSession &&
         !composerRegistry.isFrozen &&
         !isSelectedSessionReadOnly &&
-        selectedSession.provider === "codex" &&
-        selectedSessionRunState !== "running",
+        selectedSession.provider === "codex",
       removeDirectory: async (targetPath) => {
         if (!selectedSession) {
           return false;
@@ -1965,7 +1977,7 @@ export default function AgentSessionWindowApp() {
   }
 
   const canInsertFileTreePathReference = activeAuxiliarySession
-    ? (activeAuxiliarySession.runState !== "running" || canSendInput) && !composerBlockedReason
+    ? !composerBlockedReason
     : !isComposerDisabled;
   const fileExplorerPane = <div ref={setFilesPaneHost} className="session-feature-host" />;
   const previewChatNotice = isApprovalRequestPending
@@ -1988,7 +2000,7 @@ export default function AgentSessionWindowApp() {
     <PromptTemplateWorkspace
       api={withmateApi}
       canInsert={!isComposerFrozen && (activeAuxiliarySession
-        ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason
+        ? !composerBlockedReason
         : !isComposerDisabled)}
       onRegisterCloseGuard={registerPromptTemplateCloseGuard}
       onBack={closeCentralPreview}
@@ -2021,6 +2033,8 @@ export default function AgentSessionWindowApp() {
     runtime: {
       isRunning: renderedIsRunning,
       canSendInput,
+      queueTurnBusy: pendingSubmitSessionId === renderedSession.id,
+      hasUncertainTurn: mainSessionRuntime.hasUncertainTurnFor(renderedSession.id),
       inputError: steeringError,
       isCanceling: !activeAuxiliarySession && !!selectedSessionCancellationState,
       selectedRunState: selectedSessionRunState,
@@ -2051,6 +2065,15 @@ export default function AgentSessionWindowApp() {
         cancelMain: handleCancelRun,
         cancelAuxiliary: handleCancelAuxiliaryRun,
         input: handleSendInput,
+        queue: handleSend,
+        checkReceipt: async () => {
+          try { await mainSessionRuntime.checkTurnReceipt(renderedSession.id); }
+          catch (error) { window.alert(resolveSessionRunErrorMessage(error, "Could not check the receipt.")); }
+        },
+        retryOriginal: async () => {
+          try { await mainSessionRuntime.retryOriginalTurn(renderedSession.id); }
+          catch (error) { window.alert(resolveSessionRunErrorMessage(error, "Could not retry the original turn.")); }
+        },
       },
       runtimeOptions: {
         runMain: async (option) => {

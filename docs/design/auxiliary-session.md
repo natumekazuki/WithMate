@@ -70,17 +70,16 @@ Window内live受信はrendererの`session-window-live-ingress.ts`が公開APIの
 
 非選択Auxiliaryのlive更新は軽量status取得へ集約し、同じrun状態の本文deltaごとには再取得しない。取得が一時失敗した場合は同じrunの次のlive通知から再取得できる。古い取得の失敗で新しいrunの取得keyを失効させず、一覧のprocessing表示と保持detailの実行状態を復旧する。
 
-### 送信直後の共通反映
+### 送信受付の共通反映
 
-Main / Auxiliary は送信文の追加と `running` 状態の生成を共通化する。生成した Session を各会話の状態 owner へ適用してから、同じ会話 ID の Pending を反映する。Provider の応答を待たず、Pending と送信した user message を対象 Column に表示する。
+Main／Auxiliaryの`Send`は同じdurable queue受付を使う。受付ACK後に対象Columnへ予約本文を表示し、実開始で保存されたuser seqへ対応付ける。受付だけで`running` Sessionを楽観生成せず、保存結果とlive ingressから実行状態を反映する。
 
-Auxiliary の状態更新は workspace の binding setter を入口とし、呼び出し側から binding の ref を先に書き換えない。setter が ref、詳細 cache、選択中の React state、一覧 summary、詳細取得の更新世代をまとめて更新する。送信前に開始した古い詳細取得や状態取得で本文を巻き戻さず、会話切替後も送信文を保持する。確定結果は Session の置換で反映し、送信文を二重追加しない。
+Auxiliaryの状態更新はworkspaceのbinding setterを入口とし、ref、詳細cache、選択中のReact state、一覧summary、詳細取得の更新世代をまとめて更新する。古い詳細取得や状態取得で本文を巻き戻さず、会話切替後も予約と保存本文を保持する。canonical user seqの到着前にreceipt完了が通知された場合は小さい表示bridgeを保持し、確定結果を二重追加しない。
 
-共通化するのは送信直後の表示遷移と適用順序までとする。Main の再取得・完了収束、Auxiliary の保存 queue・draft revision・失敗復元はそれぞれの owner が保持する。送信要求の reject と、Provider の実行失敗が保存済み Session として返る場合を区別する。
+MainのローカルdraftとAuxiliaryの永続draftはそれぞれのownerが保持する。Auxiliaryは保存済みdraftのincarnation／durable revisionを指定し、queue受付とconsumeを同一transactionで保存する。受付ACKは捕捉した編集revisionだけを消し、待機中の後続編集を上書きしない。
 
-- Auxiliary の送信処理（anchor 保存を含む）が reject された場合は、対象 Session と mutation revision が一致するときだけ Pending を解除して送信前の会話を復元する。入力復元は捕捉した Composer revision と照合し、後続の編集を上書きしない。
-- Main の送信要求が reject された場合は、再取得した Session / live run と更新世代に従って収束する。Session 再取得も失敗して live run を取得できない場合は、楽観更新がまだ現行のときだけ、送信文を含む楽観本文を保持したまま `idle` / `error` へ復旧する。live run を取得できれば実行中状態を維持し、正常な `null` 取得で削除済みと分かった Session は復元しない。詳細は [Session Run Lifecycle](session-run-lifecycle.md#position) に従う。
-- Provider の実行失敗が処理され、失敗 Session の保存と返却が成功した場合は、Main / Auxiliary とも送信済み user message、取得済みの途中応答、失敗表示を確定結果として保持する。送信前の会話へ戻さず、送信要求の reject に伴う入力復元も行わない。実行結果の保持は [Provider Adapter](provider-adapter.md#error-handling) に従う。
+- 受付拒否ではdraftを保持し、会話本文を楽観生成・巻き戻ししない。受付結果不明では同じrequest IDの照会／明示再試行だけを許可し、異なるIDを発行して自動再送しない。
+- Providerの実行失敗が保存された場合は、送信済みuser message、途中応答、失敗表示を確定結果として保持する。受付前のdraftを復元しない。実行結果の保持は[Provider Adapter](provider-adapter.md#error-handling)に従う。
 
 ## Context boundary
 
@@ -106,15 +105,17 @@ Auxiliary の永続 draft は会話 metadata と独立した保存単位を唯�
 
 Send／終了時の明示flushは保留中のdebounceを解除し、保存を開始する。既に進行中の保存を並列化せず、その完了と後続の最新pending値まで待つ。
 
-renderer の `src/chat/auxiliary/use-auxiliary-draft-persistence.ts` が Auxiliary draft owner のMap、送信待ち、quit flushと送信captureの保存・revision照合・clear／失敗復元を管理する。通常Sendの実行・optimistic投影・結果適用・detail保持は `src/chat/auxiliary/auxiliary-session-send-operation.ts`、Main／Auxiliaryの現在turnへの入力・preview・ACK適用・入力失敗表示は `src/chat/runtime/use-session-turn-input.ts` が所有する。Session Windowは対象会話と機能間の接続を渡す。
+renderer の `src/chat/auxiliary/use-auxiliary-draft-persistence.ts` が Auxiliary draft owner のMap、送信待ち、quit flushと送信captureの保存・revision照合・clear／失敗復元を管理する。Main／Auxiliaryの通常Sendの予約受付は `src/chat/runtime/session-turn-acceptance.ts`、receipt再照会・予約操作は `src/chat/conversation/use-session-turn-queue.ts`、現在turnへの入力・preview・ACK適用・入力失敗表示は `src/chat/runtime/use-session-turn-input.ts` が所有する。Session Windowは対象会話と機能間の接続を渡す。
 
 Auxiliaryの実行設定選択は `src/chat/auxiliary/auxiliary-runtime-option-operation.ts` のownerが、会話identityごとの要求revision、optimistic反映、失敗時の再取得・rollbackを管理する。遅い失敗や再取得で後続の選択・別identityの設定を巻き戻さず、checkpoint保存失敗は受理済みの選択と区別してdiagnosticへ通知する。
 
-送信は controller の最新値と編集 revision を捕捉し、当該 owner の保存を確定してから durable revision を指定する。送信時の明示 consume と通常 runtime 保存を区別し、古い save / terminal が入力を復活・消去させない。通常Sendは開始時にcaptured durable値のcacheを失効させ、後続編集ではconsume後のrevisionを取得する。turnの結果待ちを追加入力の受付待ちと同一視せず、終端までdraft保存やSend Inputを待たせない。送信拒否・失敗時の復元は捕捉した編集 revision と照合し、後続の新しい入力を上書きしない。通常Window closeは未保存ownerのflushを試みるが、失敗・timeout・Renderer終了では入力中promptの未保存範囲を破棄して閉じる。provider応答とMainの保存処理は破棄対象にしない。app quitは保存失敗時に終了を中止し、生存Windowの入力と再試行導線を保持する。強制終了では最後のack後の未保存範囲を失い得る。
+送信は controller の最新値と編集 revision を捕捉し、当該 owner の保存を確定してから durable revision を指定する。受付の明示 consume と通常 runtime 保存を区別し、古い save / terminal が入力を復活・消去させない。通常Sendは予約受付時にcaptured durable値のcacheを失効させ、後続編集ではconsume後のrevisionを取得する。turnの結果待ちを受付待ちと同一視せず、終端までdraft保存やSend Inputを待たせない。予約受付の拒否ではdraftを保持し、受付結果不明では正本を照会する。直接追加入力の失敗時の復元は捕捉した編集 revision と照合し、後続の新しい入力を上書きしない。通常Window closeは未保存ownerのflushを試みるが、失敗・timeout・Renderer終了では入力中promptの未保存範囲を破棄して閉じる。provider応答とMainの保存処理は破棄対象にしない。app quitは保存失敗時に終了を中止し、生存Windowの入力と再試行導線を保持する。強制終了では最後のack後の未保存範囲を失い得る。
 
-Codexの実行中turnが入力受付可能な間は、Main / Auxiliaryの既存Composerから`Send Input`で同じturnへ追加入力できる。捕捉したturn IDをMainとadapterの両方で照合し、終了・取消・不一致・送信結果不明では失敗を表示してdraftを保持する。新規turnの開始や自動再送へ切り替えず、実行設定と既存bindingを維持する。受理済みuser本文は実行中の会話へ追加し、元turnのterminal保存に含める。
+Codexの実行中Turnが入力受付可能な間は、Main／Auxiliaryのチャット内の予約項目から`Steer`で追加入力できる。独立した追加入力shortcutは現在のComposer下書きを直接送る。捕捉したTurn IDをMainとadapterの両方で照合し、終了・取消・不一致を新規Turnへ振り替えず、実行設定と既存bindingを維持する。予約の追加入力が送信結果不明になった場合はreceiptを保留し、直接下書き入力の失敗ではdraftを保持する。受理済みuser本文は実行中の会話へ追加し、元Turnのterminal保存に含める。
 
-Auxiliaryの追加入力も同じdraft owner / incarnation / durable revisionの保存・consume・失敗復元を使う。draft ownerはconsumeから受付結果の確定まで後続編集の保存を待機させ、成功・拒否後に再取得したdurable revisionで最新本文をCAS保存する。再取得・保存の失敗はpending本文を保持して明示再試行へ渡す。draftの保存と失敗復元は入力受付可否から独立し、terminal / cancel後も親の生存、owner / incarnation / durable revisionの照合を保って保存する。実行中consumeの許可は、Main serviceが現在のCodex turnと取消状態を確認してstorage内部inputへ付与する。rendererのpayloadを許可の根拠にせず、他providerの実行中送信を許可しない。
+Main／Auxiliaryの本文更新は共通の保存通知購読を使う。Auxiliaryの通知ownerは親Session IDであり、対象の保存通知を受けると表示中・保持中のAuxiliary detailを再取得する。`detailChanged: false`や対象外の通知は本文を再取得しない。同じ実行状態の追加入力もこの経路で反映し、live本文deltaを保存通知の代用にしない。保存通知とterminalの詳細取得は同じ適用経路を使い、後続read・親切替・局所変更で古くなった応答を捨て、読込中のBookmarkと現在の実行設定を保持する。
+
+Auxiliaryの直接追加入力も同じdraft owner / incarnation / durable revisionの保存・consume・失敗復元を使う。draft ownerはconsumeから受付結果の確定まで後続編集の保存を待機させ、成功・拒否後に再取得したdurable revisionで最新本文をCAS保存する。再取得・保存の失敗はpending本文を保持して明示再試行へ渡す。draftの保存と失敗復元は入力受付可否から独立し、terminal / cancel後も親の生存、owner / incarnation / durable revisionの照合を保って保存する。直接追加入力の実行中consume許可は、Main serviceが現在のCodex turnと取消状態を確認してstorage内部inputへ付与する。rendererのpayloadを許可の根拠にせず、他providerには追加入力しない。次Turn予約はproviderの追加入力能力とは独立し、実guard解放まで開始しない。
 
 送信失敗でlocal draftを復元した場合は、その場で保存ownerのpendingへ戻す。終了待ちの入力凍結中も、編集revisionが一致する内部復元は表示へ反映する。復元では凍結を解除せず、終了中止後に復元本文を編集できるようにする。Main側の復元にも失敗した値を終了flushから漏らさず、保存障害ではRetryを表示する。永続値を再取得し、同じownerの復元済本文なら追加書込みせず受理する。空のconsume直後のrevisionにだけ復元を書き込み、後続の永続編集や別incarnationは上書きしない。Retryでもこの条件を維持する。
 

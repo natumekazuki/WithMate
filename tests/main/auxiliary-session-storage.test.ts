@@ -2507,10 +2507,10 @@ test("Auxiliary draft migration はactive/closedを移行しmalformed payloadを
 
 // @test-value v2
 // kind = "contract"
-// claim = "AuxiliaryのApproval・Sandboxを含む実行設定はcheckpoint失敗でも現在値として保持され、Additional Directory更新は保存済みprovider threadを維持する"
+// claim = "実行中Auxiliaryの次送信用設定は旧captureを変更せずcheckpoint失敗でも保持され、directory更新は本文とthreadを維持しread-only親の選択を拒否する"
 // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send" }
-// fault = "checkpoint失敗で現在選択を戻すか、一般更新が現在選択と保存済みmodelの差をruntime変更と誤認してthreadIdを消す"
-// observable = "checkpoint失敗とdirectory更新後の現在選択、および保存済みmodelとthreadId"
+// fault = "running選択を拒否するか旧captureを変えるかcheckpoint失敗で選択を戻すかdirectory更新でthread/本文を変えるかread-only親を受理する"
+// observable = "旧capture、checkpoint失敗とdirectory更新後の選択/本文/runState、保存済みmodel/threadとread-only親の拒否"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-session-service"
 // lifecycle = "permanent"
@@ -2540,8 +2540,12 @@ test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthread�
     };
     sessionStorage.upsertSession(parent);
     const selections = new CurrentExecutionSelections();
+    let parentReadOnly = false;
     const service = new AuxiliarySessionService({
-      getParentSession: (parentSessionId) => sessionStorage.getSession(parentSessionId),
+      getParentSession: (parentSessionId) => {
+        const saved = sessionStorage.getSession(parentSessionId);
+        return saved && parentReadOnly ? { ...saved, accessMode: "legacy_readonly" as const } : saved;
+      },
       getStorage: () => auxiliaryStorage,
       getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
       rememberExecutionOptions: (session, options) => selections.remember(session, options),
@@ -2551,13 +2555,16 @@ test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthread�
       parentSessionId: parent.id,
       provider: parent.provider,
     });
-    const withThread = auxiliaryStorage.upsertAuxiliarySession({ ...auxiliary, threadId: "existing-provider-thread" });
+    const withThread = auxiliaryStorage.upsertAuxiliarySession({ ...auxiliary, runState: "running", threadId: "existing-provider-thread" });
+    const runningCapture = captureSessionExecutionOptions(withThread);
     const selectedOptions = {
       ...captureSessionExecutionOptions(withThread),
       model: "gpt-5.4-mini",
       reasoningEffort: "medium" as const,
-      approvalMode: "never" as const,
+      approvalMode: "on-request" as const,
       codexSandboxMode: "danger-full-access" as const,
+      codexSpeed: "fast" as const,
+      codexReviewer: "auto-review" as const,
     };
     auxiliaryStorage.updateAuxiliaryExecutionOptionsIfMatches = () => {
       throw new Error("checkpoint unavailable");
@@ -2573,7 +2580,15 @@ test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthread�
     const currentSelection = await service.getAuxiliarySession(withThread.id);
     assert.ok(currentSelection);
     assert.deepEqual(captureSessionExecutionOptions(currentSelection), selectedOptions);
+    assert.deepEqual(captureSessionExecutionOptions(withThread), runningCapture);
     assert.equal(auxiliaryStorage.getAuxiliarySession(withThread.id)?.model, withThread.model);
+    parentReadOnly = true;
+    await assert.rejects(service.setAuxiliaryExecutionOptions({
+      auxiliarySessionId: withThread.id, parentSessionId: withThread.parentSessionId, createdAt: withThread.createdAt,
+      executionOptions: { ...selectedOptions, codexSpeed: "standard" },
+    }), /read-only/);
+    assert.deepEqual(captureSessionExecutionOptions(selections.apply(withThread)), selectedOptions);
+    parentReadOnly = false;
     const updated = await service.updateAuxiliarySession({
       ...currentSelection,
       allowedAdditionalDirectories: ["C:/review-context"],
@@ -2581,6 +2596,8 @@ test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthread�
     assert.deepEqual(updated.allowedAdditionalDirectories, ["C:/review-context"]);
     assert.deepEqual(captureSessionExecutionOptions(updated), selectedOptions);
     assert.equal(updated.threadId, "existing-provider-thread");
+    assert.equal(updated.runState, "running");
+    assert.deepEqual(updated.messages, withThread.messages);
     assert.equal(auxiliaryStorage.getAuxiliarySession(withThread.id)?.threadId, "existing-provider-thread");
     assert.equal(auxiliaryStorage.getAuxiliarySession(withThread.id)?.model, withThread.model);
   } finally {

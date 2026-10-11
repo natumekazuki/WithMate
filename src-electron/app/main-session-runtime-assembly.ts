@@ -18,13 +18,14 @@ export type MainSessionRuntimeAssemblyDeps = {
     isActive(): boolean;
   };
   admission: Required<Pick<SessionRuntimeServiceDeps, "runSessionAdmissionExclusive">>;
-  sessions: Required<Pick<SessionRuntimeServiceDeps, "getSession" | "persistRunningTurnStart" | "clearCharacterAuthoringRuntimeState" | "appendRunningInput" | "appendTerminalSession" | "checkpointRuntimeMetadata">>;
+  sessions: Required<Pick<SessionRuntimeServiceDeps, "getSession" | "persistRunningTurnStart" | "clearCharacterAuthoringRuntimeState" | "appendRunningInput" | "appendTerminalSession" | "checkpointRuntimeMetadata">> & Pick<SessionRuntimeServiceDeps, "persistQueuedTurnStart" | "getQueuedInputReceipt">;
   resolution: Pick<SessionRuntimeServiceDeps, "resolveRuntimeSessionForTurn" | "resolveComposerPreview" | "resolveProviderSession" | "resolveSessionFolderPath" | "resolveProviderCatalog"> & {
     resolveRuntimeSessionForTurn: NonNullable<SessionRuntimeServiceDeps["resolveRuntimeSessionForTurn"]>;
     resolveComposerPreview: SessionRuntimeServiceDeps["resolveComposerPreview"];
     resolveProviderSession: NonNullable<SessionRuntimeServiceDeps["resolveProviderSession"]>;
     resolveSessionFolderPath: NonNullable<SessionRuntimeServiceDeps["resolveSessionFolderPath"]>;
     resolveProviderCatalog: SessionRuntimeServiceDeps["resolveProviderCatalog"];
+    assertCapturedComposerAttachmentsAvailable?: SessionRuntimeServiceDeps["assertCapturedComposerAttachmentsAvailable"];
   };
   provider: Pick<SessionRuntimeServiceDeps, "getProviderCodingAdapter" | "resetProviderSessionThread" | "getProviderAgentRuntimeBinding" | "beginProviderAgentRuntimeTurn" | "endProviderAgentRuntimeTurn">;
   memory: {
@@ -41,7 +42,7 @@ export type MainSessionRuntimeAssemblyDeps = {
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
   interaction: Pick<SessionRuntimeServiceDeps, "waitForApprovalDecision" | "waitForElicitationResponse" | "resolvePendingApprovalRequest" | "resolvePendingElicitationRequest" | "invalidateProviderSessionThread">;
-  notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal">;
+  notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal" | "onSessionRunReleased">;
   timing: {
     currentTimestampLabel?: () => string;
   };
@@ -119,13 +120,22 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => { assertOwner("session read"); return deps.sessions.getSession(sessionId); },
-    appendRunningInput: (session, text, turnId) => guarded("Session input append", () => deps.sessions.appendRunningInput(session, text, turnId)),
+    appendRunningInput: (session, text, turnId, queuedInput) => guarded("Session input append", () => deps.sessions.appendRunningInput(session, text, turnId, queuedInput)),
+    getQueuedInputReceipt: deps.sessions.getQueuedInputReceipt
+      ? (receipt) => guarded("queued input receipt", () => deps.sessions.getQueuedInputReceipt!(receipt))
+      : undefined,
     appendTerminalSession: (session, commit, options) => guarded("terminal Session append", () => deps.sessions.appendTerminalSession(session, commit, options)),
     checkpointRuntimeMetadata: (session, expected) => guarded("runtime metadata checkpoint", () => deps.sessions.checkpointRuntimeMetadata(session, expected)),
     persistRunningTurnStart: (session, count) => guarded("running turn start", () => deps.sessions.persistRunningTurnStart(session, count)),
+    persistQueuedTurnStart: deps.sessions.persistQueuedTurnStart
+      ? (session, count, queueId, turn) => guarded("queued turn start", () => deps.sessions.persistQueuedTurnStart!(session, count, queueId, turn))
+      : undefined,
     clearCharacterAuthoringRuntimeState: (session) => guarded("authoring runtime clear", () => deps.sessions.clearCharacterAuthoringRuntimeState(session)),
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, message) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, message)),
+    assertCapturedComposerAttachmentsAvailable: deps.resolution.assertCapturedComposerAttachmentsAvailable
+      ? (session, attachments) => guarded("captured attachments", () => deps.resolution.assertCapturedComposerAttachmentsAvailable!(session, attachments))
+      : undefined,
     resolveProviderSession: (session) => guarded("provider session path", () => deps.resolution.resolveProviderSession(session)),
     resolveSessionFolderPath: (id) => guarded("session folder path", () => deps.resolution.resolveSessionFolderPath(id)),
     getAppSettings: () => guarded("settings read", deps.memory.getAppSettings),
@@ -166,6 +176,9 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     resolvePendingApprovalRequest: deps.interaction.resolvePendingApprovalRequest,
     resolvePendingElicitationRequest: deps.interaction.resolvePendingElicitationRequest,
     notifySessionTurnTerminal: deps.notification.notifySessionTurnTerminal,
+    onSessionRunReleased: (sessionId) => {
+      if (deps.owner.isActive()) deps.notification.onSessionRunReleased?.(sessionId);
+    },
     currentTimestampLabel: deps.timing.currentTimestampLabel,
   };
   return new SessionRuntimeService(assembled);

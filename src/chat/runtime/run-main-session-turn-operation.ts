@@ -1,308 +1,98 @@
-import type {
-  LiveSessionRunState,
-  RunSessionTurnRequest,
-  ComposerPreview,
-} from "../../../src-shared/session/runtime-state.js";
+import type { RunSessionTurnRequest, ComposerPreview } from "../../../src-shared/session/runtime-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
-import { createOptimisticRunningSessionState } from "../../../src-shared/session/session-run-transition.js";
+import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
-import type {
-  ComposerControllerRegistry,
-  ComposerOwner,
-} from "../../chat/composer-controller.js";
+import type { ComposerControllerRegistry, ComposerOwner } from "../composer-controller.js";
 import { createComposerPreviewRequest } from "../use-composer-preview-resolution.js";
-import {
-  applyOptimisticSessionRunUpdate,
-  type OwnedLiveSessionRunState,
-} from "./session-live-run-state.js";
-import {
-  convergeRejectedLiveRunState,
-  convergeRejectedSessionSnapshot,
-  convergeResolvedSessionProjection,
-  recoverRejectedSessionSnapshot,
-  mergeRejectedSessionDraft,
-  mergeMessageBookmarkProjection,
-  fingerprintSessionDraft,
-  type SessionSubmitCoordinator,
-} from "./session-submit-coordinator.js";
+import type { SessionSubmitCoordinator } from "./session-submit-coordinator.js";
 import { resolveComposerSendPreflight } from "../composer/session-composer-feedback.js";
-import { getConversationMessageCount } from "../../../src-shared/session/conversation-page.js";
+import { SessionTurnAcceptance } from "./session-turn-acceptance.js";
+import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
+import type { AuxiliaryDraftPersistenceOwner } from "../auxiliary-draft-persistence-owner.js";
 
-type RevisionPort = { capture(): number; isCurrent(revision: number): boolean };
-type SessionRunApi = Pick<
-  WithMateWindowApi,
-  "previewComposerInput" | "runSessionTurn" | "getSession" | "getLiveSessionRun"
->;
-type ComposerPorts = Pick<
-  ComposerControllerRegistry,
-  "capture" | "clearIfRevision" | "restoreIfRevision"
->;
-
-type StatePorts = {
-  setAuthoritativeSessions: (update: (current: Session[]) => Session[]) => void;
-  setLiveRunState: (
-    update: (current: OwnedLiveSessionRunState) => OwnedLiveSessionRunState,
-  ) => void;
-  setComposerPreview: (
-    preview: ComposerPreview,
-  ) => void;
-  acknowledgePreviewChatMessageCount: (
-    sessionId: string,
-    messageCount: number,
-  ) => void;
-  setPendingSubmitSessionId: (
-    update: string | null | ((current: string | null) => string | null),
-  ) => void;
-  setForceComposerBlockedFeedback: (value: boolean) => void;
-  collapseActionDock: () => void;
-};
+type SessionRunApi = Pick<WithMateWindowApi, "previewComposerInput" | "enqueueSessionTurn" | "getSessionTurnQueueReceipt">;
 
 export async function runMainSessionTurnOperation(input: {
   api: SessionRunApi | null;
   sessionId: string;
   selectedSession: Session;
   request: RunSessionTurnRequest;
-  composerRegistry: ComposerPorts;
+  composerRegistry: ComposerControllerRegistry;
   composerOwner: ComposerOwner;
   submitCoordinator: SessionSubmitCoordinator;
+  acceptance: SessionTurnAcceptance;
+  auxiliaryDraftOwner?: AuxiliaryDraftPersistenceOwner;
+  isCurrentSubmission?: () => boolean;
+  queueTurn?: boolean;
   clearDraft: boolean;
   collapseActionDock: boolean;
-  isCentralPreviewActive: boolean;
-  hasLiveRun: boolean;
   selectedSessionRunState: Session["runState"] | null;
   blockedReason: string | null;
   isReadOnly: boolean;
-  currentTimestamp: string;
   validateWorkspace: () => Promise<unknown>;
-  state: StatePorts;
-  revisions: {
-    mutation: RevisionPort;
-    projection: RevisionPort;
-    liveRun: RevisionPort;
+  state: {
+    setComposerPreview: (preview: ComposerPreview) => void;
+    setPendingSubmitSessionId: (update: string | null | ((current: string | null) => string | null)) => void;
+    setForceComposerBlockedFeedback: (value: boolean) => void;
+    collapseActionDock: () => void;
   };
   log: (event: string, details: Record<string, unknown>) => void;
-}): Promise<Session | null> {
-  const {
-    api,
-    sessionId,
-    selectedSession,
-    composerRegistry,
-    composerOwner,
-    submitCoordinator,
-    clearDraft,
-    collapseActionDock,
-    isCentralPreviewActive,
-    hasLiveRun,
-    selectedSessionRunState,
-    blockedReason,
-    isReadOnly,
-    validateWorkspace,
-    state,
-    revisions,
-    log,
-  } = input;
+}): Promise<SessionTurnQueueReceipt | null> {
+  const { api, sessionId, composerRegistry, composerOwner, state } = input;
   if (!api) return null;
-  const sendCapture = composerRegistry.capture(composerOwner);
-  let messageText = input.request.userMessage;
-  if (input.request.submitSource === "composer")
-    messageText = sendCapture.draft;
-  const request: RunSessionTurnRequest = {
-    ...input.request,
-    userMessage: messageText,
-  };
-  const submitLease = submitCoordinator.tryAcquire(sessionId);
-  if (!submitLease) {
-    state.setForceComposerBlockedFeedback(true);
-    return null;
-  }
+  const captured = composerRegistry.capture(composerOwner);
+  const messageText = input.request.submitSource === "composer" ? captured.draft : input.request.userMessage;
+  const request = { ...input.request, userMessage: messageText, incarnationId: getSessionIncarnationId(input.selectedSession) };
+  const lease = input.submitCoordinator.tryAcquire(sessionId);
+  if (!lease) return null;
   state.setPendingSubmitSessionId(sessionId);
-  const optimisticSessionProjectionRevision = revisions.projection.capture();
-  const clientRequestId = input.request.clientRequestId;
-  const investigationStartedAt = Date.now();
-  log("renderer.send.start", {
-    sessionId,
-    clientRequestId,
-    submitSource: input.request.submitSource,
-    draftFingerprint: fingerprintSessionDraft(messageText),
-    runState: selectedSession.runState,
-    status: selectedSession.status,
-    messageCount: getConversationMessageCount(selectedSession),
-    hasLiveRun,
-    draftChars: messageText.length,
-  });
   try {
-    if (blockedReason || isReadOnly) {
+    if (composerRegistry.isFrozen || input.blockedReason || input.isReadOnly || !(await input.validateWorkspace())) {
       state.setForceComposerBlockedFeedback(true);
       return null;
     }
-    if (!(await validateWorkspace())) {
-      state.setForceComposerBlockedFeedback(true);
-      return null;
+    if (input.acceptance.hasUncertain(sessionId)) throw new Error("A previous turn's acceptance is unknown. Check Receipt before sending another turn.");
+    if (input.auxiliaryDraftOwner) {
+      try {
+        await input.auxiliaryDraftOwner.flush();
+        await input.auxiliaryDraftOwner.reload();
+      } catch (error) {
+        composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
+        throw error;
+      }
+      const durable = input.auxiliaryDraftOwner.durableRecord;
+      if (composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false) return null;
+      if (!durable || durable.auxiliarySessionId !== sessionId || durable.text !== captured.draft) {
+        composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
+        return null;
+      }
+      request.auxiliaryDraftIncarnation = durable.incarnation;
+      request.auxiliaryDraftDurableRevision = durable.durableRevision;
     }
     const previewRequest = createComposerPreviewRequest({ api, sessionId });
     if (!previewRequest) return null;
-    const nextMessage = messageText.trim();
-    const preview: ComposerPreview = await previewRequest(messageText);
-    const displayPreview = preview;
-    log("renderer.composer-preview.done", {
-      sessionId,
-      clientRequestId,
-      elapsedMs: Date.now() - investigationStartedAt,
-      attachmentCount: preview.attachments.length,
-      errorCount: preview.errors.length,
-    });
-    const previewCapture = composerRegistry.capture(composerOwner);
-    if (
-      previewCapture.revision !== sendCapture.revision ||
-      previewCapture.draft !== sendCapture.draft
-    )
-      return null;
-    state.setComposerPreview(displayPreview);
+    const preview = await previewRequest(messageText);
+    if (composerRegistry.isFrozen || composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false) return null;
+    state.setComposerPreview(preview);
     const preflight = resolveComposerSendPreflight({
-      runState: selectedSessionRunState,
-      blockedReason: blockedReason ?? "",
-      inputErrors: displayPreview.errors,
-      draftText: messageText,
+      runState: input.queueTurn ? "idle" : input.selectedSessionRunState,
+      blockedReason: input.blockedReason ?? "", inputErrors: preview.errors, draftText: messageText,
     });
     if (preflight.blockedMessage) {
       state.setForceComposerBlockedFeedback(true);
       return null;
     }
-    if (collapseActionDock) state.collapseActionDock();
-    const clearRevision = clearDraft
-      ? composerRegistry.clearIfRevision(composerOwner, sendCapture.revision)
-      : null;
-    const updatedSession = applyOptimisticSessionRunUpdate({
-      runningSession: createOptimisticRunningSessionState(
-        selectedSession, nextMessage, input.currentTimestamp, { status: "running" },
-      ),
-      updateLiveRunState: state.setLiveRunState,
-      applyRunningSession: (runningSession) =>
-        state.setAuthoritativeSessions((current) => {
-          const projected = current.find((session) => session.id === runningSession.id);
-          return [{
-            ...runningSession,
-            messages: projected && projected.incarnationId === runningSession.incarnationId
-              ? mergeMessageBookmarkProjection(projected.messages, runningSession.messages)
-              : runningSession.messages,
-          }];
-        }),
-    });
-    const optimisticSessionMutationRevision = revisions.mutation.capture();
-    const optimisticLiveRunRevision = revisions.liveRun.capture();
-    if (isCentralPreviewActive)
-      state.acknowledgePreviewChatMessageCount(
-        updatedSession.id,
-        getConversationMessageCount(updatedSession),
-      );
-    log("renderer.optimistic-running-applied", {
-      sessionId: updatedSession.id,
-      clientRequestId,
-      elapsedMs: Date.now() - investigationStartedAt,
-      messageCount: getConversationMessageCount(updatedSession),
-      runState: updatedSession.runState,
-      status: updatedSession.status,
-    });
-    try {
-      const savedSession = await api.runSessionTurn(sessionId, request);
-      const preserveCurrentPin = !revisions.projection.isCurrent(
-        optimisticSessionProjectionRevision,
-      );
-      state.setAuthoritativeSessions((current) => [
-        convergeResolvedSessionProjection(
-          current.find((session) => session.id === savedSession.id) ??
-            selectedSession,
-          savedSession,
-          preserveCurrentPin,
-        ),
-      ]);
-      log("renderer.run-session-turn.resolved", {
-        sessionId: savedSession.id,
-        clientRequestId,
-        elapsedMs: Date.now() - investigationStartedAt,
-        messageCount: getConversationMessageCount(savedSession),
-        runState: savedSession.runState,
-        status: savedSession.status,
-      });
-      return savedSession;
-    } catch (error) {
-      if (clearRevision !== null)
-        composerRegistry.restoreIfRevision(
-          composerOwner,
-          clearRevision,
-          (draft) => mergeRejectedSessionDraft(request.userMessage, draft),
-        );
-      const [refreshedSessionResult, refreshedLiveRunResult] =
-        await Promise.allSettled([
-          api.getSession(sessionId),
-          api.getLiveSessionRun(sessionId),
-          validateWorkspace(),
-        ]);
-      const canReplaceOptimisticBody = revisions.mutation.isCurrent(
-        optimisticSessionMutationRevision,
-      );
-      const preserveCurrentPin = !revisions.projection.isCurrent(
-        optimisticSessionProjectionRevision,
-      );
-      if (
-        refreshedSessionResult.status === "fulfilled" &&
-        canReplaceOptimisticBody
-      ) {
-        state.setAuthoritativeSessions((current) => {
-          const converged = convergeRejectedSessionSnapshot(
-            current.find((session) => session.id === sessionId) ??
-              selectedSession,
-            updatedSession,
-            refreshedSessionResult.value,
-            true,
-            preserveCurrentPin,
-          );
-          return converged ? [converged] : [];
-        });
-      } else if (
-        canReplaceOptimisticBody &&
-        (refreshedLiveRunResult.status === "rejected" ||
-          refreshedLiveRunResult.value === null)
-      ) {
-        state.setAuthoritativeSessions((current) => {
-          const recovered = recoverRejectedSessionSnapshot(
-            current.find((session) => session.id === sessionId) ??
-              selectedSession,
-            updatedSession,
-            true,
-          );
-          return recovered ? [recovered] : current;
-        });
-      }
-      if (revisions.liveRun.isCurrent(optimisticLiveRunRevision)) {
-        const refreshedLiveRun: LiveSessionRunState | null =
-          refreshedLiveRunResult.status === "fulfilled"
-            ? refreshedLiveRunResult.value
-            : null;
-        state.setLiveRunState((current) =>
-          convergeRejectedLiveRunState(
-            current,
-            sessionId,
-            refreshedLiveRun,
-            optimisticLiveRunRevision,
-            optimisticLiveRunRevision,
-          ),
-        );
-      }
-      log("renderer.run-session-turn.failed", {
-        sessionId: updatedSession.id,
-        clientRequestId,
-        elapsedMs: Date.now() - investigationStartedAt,
-        messageCount: getConversationMessageCount(updatedSession),
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
-  } finally {
-    submitLease.release();
-    state.setPendingSubmitSessionId((current) =>
-      current === sessionId ? null : current,
-    );
+    const receipt = await input.acceptance.submit(api, sessionId, {
+      request, owner: composerOwner, revision: captured.revision, clearDraft: input.clearDraft,
+      auxiliaryDraftOwner: input.auxiliaryDraftOwner,
+    }, composerRegistry);
     state.setForceComposerBlockedFeedback(false);
+    input.log("renderer.queue.accepted", { sessionId, clientRequestId: receipt.requestId, state: receipt.state });
+    if (input.collapseActionDock) state.collapseActionDock();
+    // Queue acceptance is not a saved message or an optimistic running Session.
+    return receipt;
+  } finally {
+    lease.release();
+    state.setPendingSubmitSessionId((current) => current === sessionId ? null : current);
   }
 }

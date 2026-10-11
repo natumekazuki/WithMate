@@ -78,6 +78,80 @@ function createKeyboardEvent(dom: JSDOM, init: KeyboardEventInit): KeyboardEvent
 }
 
 describe("shortcut registry validation", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "current-turn input shortcutはplatform別のShift付きEnterで独立登録され、設定変更・Help・衝突検査に参加する"
+  // oracle = { type = "contract", ref = "Issue #801: session.composer.send-inputはCtrl/Cmd+Shift+EnterでcomposerSubmitと独立する" }
+  // fault = "新commandが設定policyから欠落する、既存submitと同じbindingになる、または衝突するoverrideを許可する"
+  // observable = "shortcut label、Help項目、override後label、collision validationの例外"
+  // observation_boundary = "consumer"
+  // scope = "composer send-input shortcut settings"
+  // lifecycle = "permanent"
+  // impact = "予約送信と現在turnへの追加入力を利用者が別操作で選べる"
+  // distinction = "既存composerSubmit testは別commandの登録と同scopeでのbinding衝突を検証しない"
+  // @end-test-value
+  it("Send Input shortcutはsubmitと独立してcustomize・Help・衝突検査できる", () => {
+    const id = SHORTCUT_COMMAND_IDS.composerSendInput;
+    assert.equal(getShortcutLabel(id, "windows"), "Ctrl+Shift+Enter");
+    assert.equal(getShortcutLabel(id, "linux"), "Ctrl+Shift+Enter");
+    assert.equal(getShortcutLabel(id, "macos"), "⌘⇧Enter");
+    const help = getShortcutHelpProjection("windows").find((group) => group.scope === "composer");
+    assert.equal(help?.items.find((item) => item.id === id)?.label, "Send Input To Current Turn");
+    const settings = updateShortcutBinding(DEFAULT_KEYBOARD_SHORTCUT_SETTINGS, id, "windows", { key: "Enter", altKey: true });
+    assert.equal(getShortcutLabel(id, "windows", settings), "Alt+Enter");
+    assert.equal(getShortcutLabel(SHORTCUT_COMMAND_IDS.composerSubmit, "windows", settings), "Ctrl+Enter");
+    assert.throws(() => validateShortcutSettings(SHORTCUT_ENTRIES, {
+      overrides: { [id]: { windows: { key: "Enter", ctrlKey: true } } },
+    }), ShortcutRegistryError);
+    assert.deepEqual(normalizeKeyboardShortcutSettings({
+      overrides: { [id]: { windows: { key: "Enter", ctrlKey: true } } },
+    }).overrides, {});
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "composerのSendとSend Inputは別handlerへdispatchし、IME・repeat・別入力欄からの追加入力は発火しない"
+  // oracle = { type = "contract", ref = "Issue #801: composerSubmitとcomposerSendInputを独立し既存IME/repeat guardを維持する" }
+  // fault = "Shift付きEnterが通常送信へ流れる、または追加入力commandがIME・repeat・composer外で発火する"
+  // observable = "dispatch後のhandler呼出列とdefaultPrevented"
+  // observation_boundary = "consumer"
+  // scope = "composer send-input keyboard dispatch"
+  // lifecycle = "permanent"
+  // impact = "現在turnへの入力と次turn受付の誤操作を防ぐ"
+  // distinction = "既存汎用dispatcher testに対して実registryの新commandとsubmitの同時有効化を確認する"
+  // @end-test-value
+  it("SendとSend Inputを独立dispatchしIME・repeat・別入力を除外する", () => {
+    const dom = new JSDOM('<body><textarea data-shortcut-scope="composer"></textarea><input /></body>');
+    const restore = installDomGlobals(dom);
+    const dispatcher = new ShortcutDispatcher({ eventTarget: dom.window, platform: "windows" });
+    try {
+      const calls: string[] = [];
+      dispatcher.registerScope("composer");
+      dispatcher.registerHandler(SHORTCUT_COMMAND_IDS.composerSubmit, () => { calls.push("send"); });
+      dispatcher.registerHandler(SHORTCUT_COMMAND_IDS.composerSendInput, () => { calls.push("input"); });
+      const composer = dom.window.document.querySelector("textarea")!;
+      for (const shiftKey of [false, true]) {
+        const event = createKeyboardEvent(dom, { key: "Enter", ctrlKey: true, shiftKey });
+        composer.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, true);
+      }
+      assert.deepEqual(calls, ["send", "input"]);
+      for (const guard of [{ isComposing: true }, { repeat: true }]) {
+        const event = createKeyboardEvent(dom, { key: "Enter", ctrlKey: true, shiftKey: true, ...guard });
+        composer.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, false);
+      }
+      const outside = createKeyboardEvent(dom, { key: "Enter", ctrlKey: true, shiftKey: true });
+      dom.window.document.querySelector("input")!.dispatchEvent(outside);
+      assert.equal(outside.defaultPrevented, false);
+      assert.deepEqual(calls, ["send", "input"]);
+    } finally {
+      dispatcher.dispose();
+      restore();
+      dom.window.close();
+    }
+  });
+
   it("command IDの重複を拒否する", () => {
     assert.throws(
       () => validateShortcutEntries([

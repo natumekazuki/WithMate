@@ -21,6 +21,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     appendTerminalSession: SessionRuntimeServiceDeps["appendTerminalSession"];
     checkpointRuntimeMetadata: SessionRuntimeServiceDeps["checkpointRuntimeMetadata"];
     persistRunningTurnStart(session: Session, expectedMessageCount: number): Promise<Session>;
+    persistQueuedTurnStart?: SessionRuntimeServiceDeps["persistQueuedTurnStart"];
     isAuxiliarySession(sessionId: string): Promise<boolean>;
   };
   parent: {
@@ -30,6 +31,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     resolveRuntimeSessionForTurn: NonNullable<SessionRuntimeServiceDeps["resolveRuntimeSessionForTurn"]>;
     resolveComposerPreview: SessionRuntimeServiceDeps["resolveComposerPreview"];
     resolveProviderCatalog: SessionRuntimeServiceDeps["resolveProviderCatalog"];
+    assertCapturedComposerAttachmentsAvailable?: SessionRuntimeServiceDeps["assertCapturedComposerAttachmentsAvailable"];
   };
   provider: {
     getProviderCodingAdapter: NonNullable<SessionRuntimeServiceDeps["getProviderCodingAdapter"]>;
@@ -61,6 +63,8 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
   };
   notification(notification: Parameters<NonNullable<SessionRuntimeServiceDeps["notifySessionTurnTerminal"]>>[0], target: SessionTurnNotificationTarget): void | Promise<void>;
   currentTimestampLabel?: () => string;
+  getQueuedInputReceipt?: SessionRuntimeServiceDeps["getQueuedInputReceipt"];
+  onSessionRunReleased?: SessionRuntimeServiceDeps["onSessionRunReleased"];
 };
 
 export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssemblyDeps): SessionRuntimeService {
@@ -76,10 +80,14 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => guarded("session read", () => deps.auxiliary.getRuntimeSession(sessionId)),
-    appendRunningInput: (session, text, turnId) => guarded("Session input append", () => deps.auxiliary.appendRunningInput(session, text, turnId)),
+    appendRunningInput: (session, text, turnId, queuedInput) => guarded("Session input append", () => deps.auxiliary.appendRunningInput(session, text, turnId, queuedInput)),
     appendTerminalSession: (session, commit, options) => guarded("terminal Session append", () => deps.auxiliary.appendTerminalSession(session, commit, options)),
     checkpointRuntimeMetadata: (session, expected) => guarded("runtime metadata checkpoint", () => deps.auxiliary.checkpointRuntimeMetadata(session, expected)),
     persistRunningTurnStart: (session, expectedMessageCount) => guarded("running turn start", () => deps.auxiliary.persistRunningTurnStart(session, expectedMessageCount)),
+    persistQueuedTurnStart: deps.auxiliary.persistQueuedTurnStart ? (session, count, queueId, turn) => guarded("queued turn start", () => deps.auxiliary.persistQueuedTurnStart!(session, count, queueId, turn)) : undefined,
+    assertCapturedComposerAttachmentsAvailable: deps.resolution.assertCapturedComposerAttachmentsAvailable ? (session, attachments) => guarded("captured attachments", () => deps.resolution.assertCapturedComposerAttachmentsAvailable!(session, attachments)) : undefined,
+    getQueuedInputReceipt: deps.getQueuedInputReceipt ? (receipt) => guarded("queued input receipt", () => deps.getQueuedInputReceipt!(receipt)) : undefined,
+    onSessionRunReleased: deps.onSessionRunReleased,
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, userMessage) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, userMessage)),
     resolveProviderSession: (session) => guarded("provider session path", async () => {

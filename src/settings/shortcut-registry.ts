@@ -36,6 +36,7 @@ export const SHORTCUT_COMMAND_IDS = {
   filePreviewClose: "session.file-preview.close",
   filePreviewSelectAll: "session.file-preview.select-all",
   composerSubmit: "session.composer.submit",
+  composerSendInput: "session.composer.send-input",
 } as const;
 
 export type ShortcutCommandId = typeof SHORTCUT_COMMAND_IDS[keyof typeof SHORTCUT_COMMAND_IDS];
@@ -218,6 +219,16 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     showInHelp: true,
     // This is an existing WithMate assignment retained for compatibility.
     assignment: "existing",
+  },
+  {
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.composerSendInput),
+    label: "Send Input To Current Turn",
+    kind: "withmate",
+    allowInEditingTarget: true,
+    editingTargetScope: "composer",
+    allowRepeat: false,
+    showInHelp: true,
+    assignment: "new",
   },
 ];
 

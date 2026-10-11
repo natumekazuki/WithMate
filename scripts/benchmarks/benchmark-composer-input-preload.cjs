@@ -139,9 +139,16 @@ function resultFor(name, args) {
   if (name === "getModelCatalog") return { revision: 1, providers: [] };
   if (name === "getSessionGlossaryProjection") return { sessionId: "benchmark-main", revision: 0, state: { status: "ready", entries: [] } };
   if (name === "previewComposerInput") return { text: args[1] ?? "", attachments: [], errors: [] };
+  if (name === "listSessionTurnQueueReceipts") return { receipts: [], nextCursor: null };
+  if (name === "enqueueSessionTurn") {
+    const request = args[1];
+    return { sessionId: args[0], incarnationId: request.incarnationId, id: request.clientRequestId, requestId: request.clientRequestId,
+      sequence: 1, state: "queued", captured: { request, attachments: [], provider: mainSession.provider, workspacePath: mainSession.workspacePath },
+      turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: now, updatedAt: now };
+  }
   if (name.startsWith("list") || name.startsWith("search")) return [];
   if (name.startsWith("get")) return null;
-  if (name.startsWith("subscribe") || name === "onSessionTurnUpdated") return () => {};
+  if (name.startsWith("subscribe") || name === "onSessionTurnUpdated" || name === "onSessionTurnQueueChanged") return () => {};
   if (name.startsWith("validate")) return { valid: true };
   if (name.startsWith("open") || name.startsWith("report") || name.startsWith("update") || name.startsWith("set")) return name === "updateSession" ? mainSession : undefined;
   return undefined;
@@ -154,6 +161,7 @@ const names = [
   "subscribeAuxiliarySessionNavigation", "subscribeSessionGlossary", "getLiveSessionRun", "getSessionMessageArtifact",
   "listSessionSkills", "listSessionCustomAgents", "listWorkspaceSkills", "listWorkspaceCustomAgents", "validateSessionWorkspace",
   "updateSession", "runSessionTurn", "cancelSessionRun", "cancelAuxiliarySessionRun", "setSessionPinned", "deleteSession",
+  "enqueueSessionTurn", "getSessionTurnQueueReceipt", "listSessionTurnQueue", "listSessionTurnQueueReceipts", "cancelQueuedSessionTurn", "releaseInterruptedSessionTurn", "onSessionTurnQueueChanged",
   "getFileRootDiff", "getFileRootGitHistoryDiff", "listFileRootChanges", "listSessionFilePins", "openSessionFilePreviewWindow", "openDiffWindow",
   "openPath", "openSessionTerminal", "openSessionFilesDirectory", "openSessionFilesTerminal", "pickFiles", "pickSessionFiles",
   "pickSessionFolder", "pickSessionImageFile", "copyFilesToSessionFiles", "savePastedSessionFile", "reportRendererLog",
@@ -175,7 +183,7 @@ const names = [
 for (const name of names) {
   api[name] = (...args) => conversationLoading && ["getSession", "getSessionSummary", "listAuxiliarySessions", "getAuxiliarySession", "getConversationPage", "searchConversation", "listConversationNavigator", "setSessionMessageBookmark", "setAuxiliaryMessageBookmark"].includes(name)
     ? ipcRenderer.invoke("benchmark:conversation", name, args, resultFor(name, args))
-    : name.startsWith("subscribe") || name === "onSessionTurnUpdated"
+    : name.startsWith("subscribe") || name === "onSessionTurnUpdated" || name === "onSessionTurnQueueChanged"
     ? resultFor(name, args)
     : name === "acknowledgeSessionDraftFlush"
       ? resultFor(name, args)

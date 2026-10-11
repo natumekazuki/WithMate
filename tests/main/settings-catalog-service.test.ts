@@ -1616,9 +1616,9 @@ describe("SettingsCatalogService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "同一providerの重複cleanupは最後のoperation完了までadmissionを保持する"
-  // fault = "先行cleanup中に後続cleanupが完了するとSet解放でTurnを許可する"
-  // observable = "重複cleanup完了順序とprovider admission"
+  // claim = "同一providerの重複cleanupは最後のoperation完了までadmissionを保持し、最後の解放時だけ待機Turnへ通知する"
+  // fault = "先行cleanup中に後続cleanupの完了でTurnを許可・通知するか、最後の解放を通知せずqueueを停止する"
+  // observable = "重複cleanup完了順序、provider admission、解放通知providerと通知時の利用可否"
   // observation_boundary = "component-behavior"
   // scope = "provider-cleanup-admission-overlap"
   // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
@@ -1631,9 +1631,13 @@ describe("SettingsCatalogService", () => {
     const session = createSession();
     let current = previous;
     let cleanupCount = 0;
+    const available: Array<{ provider: string; admitted: boolean }> = [];
     const firstCleanup = createDeferred();
     const firstCleanupRelease = createDeferred();
     const service = new SettingsCatalogService({
+      onProviderTurnAvailable: (provider) => {
+        available.push({ provider, admitted: service.isProviderAvailableForTurn(provider) });
+      },
       getAppSettings: () => current,
       updateAppSettings: (settings) => { current = settings; return settings; },
       hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
@@ -1651,11 +1655,14 @@ describe("SettingsCatalogService", () => {
     await firstCleanup.promise;
     const second = service.updateAppSettings({ ...current, codingProviderSettings: { ...current.codingProviderSettings, codex: { ...current.codingProviderSettings.codex, apiKey: "second" } } });
     await second;
+    assert.deepEqual(available, []);
+    assert.equal(service.isProviderAvailableForTurn("codex"), false);
     assert.throws(() => service.assertProviderAvailableForTurn("codex"), /A provider settings update is in progress/);
     assert.doesNotThrow(() => service.assertProviderAvailableForTurn("copilot"));
     firstCleanupRelease.resolve();
     await assert.rejects(first);
     assert.doesNotThrow(() => service.assertProviderAvailableForTurn("codex"));
+    assert.deepEqual(available, [{ provider: "codex", admitted: true }]);
   });
 
   // @test-value v2

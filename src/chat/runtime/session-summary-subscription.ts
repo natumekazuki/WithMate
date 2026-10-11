@@ -26,3 +26,19 @@ export function startSessionSummaryInvalidationSubscription(input: {
     unsubscribe();
   };
 }
+
+export function startConversationDetailSubscription(input: {
+  api: Partial<SessionSummaryInvalidationSubscriptionApi> | null;
+  ownerSessionId: string;
+  onChange: () => void;
+}): () => void {
+  if (!input.api?.subscribeSessionInvalidation) return () => undefined;
+  return startSessionSummaryInvalidationSubscription({
+    api: { subscribeSessionInvalidation: input.api.subscribeSessionInvalidation.bind(input.api) },
+    onInvalidation: (payload) => {
+      if (payload.detailChanged === false
+        || (payload.scope === "ids" && !payload.sessionIds.includes(input.ownerSessionId))) return;
+      input.onChange();
+    },
+  });
+}

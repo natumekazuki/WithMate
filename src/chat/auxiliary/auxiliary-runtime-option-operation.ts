@@ -31,10 +31,7 @@ export class AuxiliaryExecutionOptionsOwner {
     if (!api || !current || input.isReadOnly) return;
     const next = input.recipe(current);
     if (next === current) return;
-    if ((current.runState === "running" && (
-      next.approvalMode !== current.approvalMode || next.codexSandboxMode !== current.codexSandboxMode
-      || next.codexSpeed !== current.codexSpeed || next.codexReviewer !== current.codexReviewer
-    )) || (current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer)) return;
+    if (current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer) return;
     const key = `${current.id}:${current.createdAt}`;
     const revision = (this.revisions.get(key) ?? 0) + 1;
     this.revisions.set(key, revision);

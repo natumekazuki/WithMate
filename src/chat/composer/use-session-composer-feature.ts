@@ -87,6 +87,8 @@ export type SessionComposerFeatureBridge = {
     isRunning: boolean;
     isCanceling?: boolean;
     canSendInput?: boolean;
+    queueTurnBusy?: boolean;
+    hasUncertainTurn?: boolean;
     inputError?: string;
     selectedRunState: Session["runState"] | null;
     auxiliaryRunState: Session["runState"] | null;
@@ -115,6 +117,9 @@ export type SessionComposerFeatureBridge = {
       cancelMain: SessionComposerOperation;
       cancelAuxiliary: SessionComposerOperation;
       input?: SessionComposerOperation;
+      queue?: SessionComposerOperation;
+      checkReceipt?: SessionComposerOperation;
+      retryOriginal?: SessionComposerOperation;
     };
     runtimeOptions: {
       runMain: (option: MainRuntimeOption) => void | Promise<void>;
@@ -304,6 +309,7 @@ export function useSessionComposerFeature(input: {
       ? buildComposerSendabilityState({
           runState: bridge.runtime.auxiliaryRunState,
           canSendInput: bridge.runtime.canSendInput,
+          canQueueTurn: !!bridge.operations.send.queue,
           busyReason: bridge.runtime.busyReason,
           blockedReason: bridge.runtime.blockedReason,
           inputErrors: composerPreview.errors,
@@ -312,6 +318,7 @@ export function useSessionComposerFeature(input: {
       : resolveComposerSendabilityState({
           runState: bridge.runtime.selectedRunState,
           canSendInput: bridge.runtime.canSendInput,
+          canQueueTurn: !!bridge.operations.send.queue,
           busyReason: bridge.runtime.busyReason,
           blockedReason: bridge.runtime.blockedReason,
           inputErrors: composerPreview.errors,
@@ -319,8 +326,7 @@ export function useSessionComposerFeature(input: {
           forceBlockedFeedback: bridge.runtime.forceBlockedFeedback,
         });
     const isComposerDisabled = bridge.runtime.isReadOnly
-      || !!bridge.runtime.blockedReason
-      || (composerSendability.isRunning && !bridge.runtime.canSendInput);
+      || !!bridge.runtime.blockedReason;
     const onSendOrCancel = buildAuxiliaryAwareSendOrCancelHandler({
       shouldSendAuxiliary: isAuxiliaryTarget,
       isAuxiliarySessionRunning: bridge.runtime.auxiliaryRunState === "running",
@@ -512,6 +518,10 @@ export function useSessionComposerFeature(input: {
       canSendInput: bridge.runtime.canSendInput,
       submissionError: bridge.runtime.inputError,
       onSendInput: () => void bridge.operations.send.input?.(),
+      onQueueTurn: bridge.operations.send.queue ? () => void bridge.operations.send.queue?.() : undefined,
+      queueTurnBusy: bridge.runtime.queueTurnBusy || !!bridge.runtime.busyReason,
+      onCheckTurnReceipt: bridge.runtime.hasUncertainTurn ? () => void bridge.operations.send.checkReceipt?.() : undefined,
+      onRetryOriginalTurn: bridge.runtime.hasUncertainTurn ? () => void bridge.operations.send.retryOriginal?.() : undefined,
       composerBlocked: bridge.runtime.isReadOnly || !!bridge.runtime.blockedReason,
       isAgentPickerOpen,
       isSkillPickerOpen,
@@ -610,8 +620,7 @@ export function useSessionComposerFeature(input: {
           bridge.session.provider === "codex",
         ),
         isInteractionDisabled:
-          bridge.runtime.isRunning
-          || bridge.runtime.isReadOnly
+          bridge.runtime.isReadOnly
           || !!bridge.runtime.blockedReason
           || isComposerFrozen,
         onRemove: onRemoveAdditionalDirectory,

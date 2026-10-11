@@ -1,5 +1,125 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { SessionTurnQueuePreflightRejectedError } from "../../src-electron/app/main-session-turn-queue-facade.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "enqueue IPCは専用preflight rejectだけをstructured未受付replyにしgeneric保存errorを伝播する"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-runtime.ts enqueue known reject handling" }
+// fault = "generic storage errorをrejectedへ変換し受付結果不明を未受付として返す"
+// observable = "専用型の返却state/reasonとgeneric errorのreject同一性"
+// observation_boundary = "public-boundary"
+// scope = "Main queue IPC known preflight rejection"
+// lifecycle = "permanent"
+// impact = "Rendererが受付済み要求を未受付と誤認し再送や下書き復元を行う"
+// distinction = "facade分類testはIPCを跨ぐstructured replyへの変換を確認しない"
+// @end-test-value
+test("enqueue IPCはtyped preflight rejectだけを未受付replyへ変換する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  let failure: Error = new SessionTurnQueuePreflightRejectedError("workspace unavailable");
+  const { deps } = createDeps({ resolveEventWindow: () => owner,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    queue: { enqueueSessionTurn: async () => { throw failure; } } });
+  registerMainIpcHandlers(ipcMain, deps);
+  const invoke = () => handlers.get("withmate:enqueue-session-turn")?.({}, "session-1", { incarnationId: "owner-1" }) as Promise<unknown>;
+  assert.deepEqual(await invoke(), { state: "rejected", reason: "workspace unavailable" });
+  failure = new Error("storage commit reply unknown");
+  await assert.rejects(invoke(), (error) => error === failure);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "7 queue APIはMainとAuxの実IDを保持しowning parent Session Window以外を依存呼出し前に拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-runtime.ts queue handlers" }
+// fault = "Auxの親と異なるWindowへqueue本文/receiptアクセスを許可するかtargetを親IDに置換する"
+// observable = "Main/Aux ownerの返却payloadと実target引数、非owner要求の拒否と依存件数"
+// observation_boundary = "public-boundary"
+// scope = "Main durable queue IPC owner authorization"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "facade/service testはElectron senderとMain Session Windowの対応を認可しない"
+// @end-test-value
+test("queue IPCはowning Main Windowに限定し引数を保持する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const other = createWindowStub("file:///session.html?sessionId=other");
+  let eventWindow = owner;
+  const calls: Array<{ method: string; args: unknown[] }> = [];
+  const methods = ["enqueueSessionTurn", "getSessionTurnQueueReceipt", "listSessionTurnQueue", "listSessionTurnQueueReceipts", "cancelQueuedSessionTurn", "releaseInterruptedSessionTurn", "sendQueuedSessionInput"];
+  const queue = Object.fromEntries(methods.map((method) => [method, async (...args: unknown[]) => {
+    const payload = { method, args };
+    calls.push(payload);
+    return payload;
+  }]));
+  const { deps } = createDeps({ queue, resolveEventWindow: () => eventWindow,
+    getAuxiliarySessionStatus: async (id: string) => id === "aux-1" ? { id, parentSessionId: "session-1" } : null,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { incarnationId: "owner-1", clientRequestId: "request-1", userMessage: "Inspect" };
+  const cases = [
+    ["withmate:enqueue-session-turn", "enqueueSessionTurn", [request]],
+    ["withmate:get-session-turn-queue-receipt", "getSessionTurnQueueReceipt", ["request-1"]],
+    ["withmate:list-session-turn-queue", "listSessionTurnQueue", []],
+    ["withmate:list-session-turn-queue-receipts", "listSessionTurnQueueReceipts", [{ cursor: 4, limit: 20 }]],
+    ["withmate:cancel-queued-session-turn", "cancelQueuedSessionTurn", ["item-1"]],
+    ["withmate:release-interrupted-session-turn", "releaseInterruptedSessionTurn", ["item-1"]],
+    ["withmate:send-queued-session-input", "sendQueuedSessionInput", ["item-1", "turn-1"]],
+  ] as const;
+  for (const [channel, method, args] of cases) {
+    assert.deepEqual(await handlers.get(channel)?.({}, "session-1", ...args), { method, args: ["session-1", ...args] });
+    assert.deepEqual(await handlers.get(channel)?.({}, "aux-1", ...args), { method, args: ["aux-1", ...args] });
+  }
+  for (const window of [other, createWindowStub("file:///home.html"), createWindowStub("file:///settings.html")]) {
+    eventWindow = window;
+    for (const [channel, , args] of cases) {
+      await assert.rejects(async () => handlers.get(channel)?.({}, "session-1", ...args), /target Session window/);
+      await assert.rejects(async () => handlers.get(channel)?.({}, "aux-1", ...args), /target Session window/);
+    }
+  }
+  eventWindow = owner;
+  for (const [channel, , args] of cases) {
+    await assert.rejects(async () => handlers.get(channel)?.({}, "unknown-aux", ...args), /target Session window/);
+  }
+  assert.equal(calls.length, 14);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "3 queue readは非同期取得中にWindow ownerが失効した場合receiptと履歴を返さない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-runtime.ts queue query after-await authorization" }
+// fault = "取得開始時の認可だけで失効Windowへ遅延receipt/queue履歴を返す"
+// observable = "依存取得済みの各readがowner交換後にrejectすること"
+// observation_boundary = "public-boundary"
+// scope = "Main durable queue IPC delayed read authorization"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "即時非owner拒否testではawaitを跨ぐWindow owner変更を検知できない"
+// @end-test-value
+test("queue readは遅い結果の返却前にWindow ownerを再認可する", async () => {
+  for (const [channel, method, args] of [
+    ["withmate:get-session-turn-queue-receipt", "getSessionTurnQueueReceipt", ["request-1"]],
+    ["withmate:list-session-turn-queue", "listSessionTurnQueue", []],
+    ["withmate:list-session-turn-queue-receipts", "listSessionTurnQueueReceipts", [{ cursor: 4, limit: 20 }]],
+  ] as const) {
+    const { ipcMain, handlers } = createIpcMainStub();
+    const owner = createWindowStub("file:///session.html?sessionId=session-1");
+    let currentOwner = owner;
+    let complete!: (value: unknown) => void;
+    let reads = 0;
+    const result = new Promise<unknown>((resolve) => { complete = resolve; });
+    const queue = { [method]: async () => { reads += 1; return result; } };
+    const { deps } = createDeps({ queue, resolveEventWindow: () => owner,
+      resolveSessionWindow: (id: string) => id === "session-1" ? currentOwner : null });
+    registerMainIpcHandlers(ipcMain, deps);
+    const pending = handlers.get(channel)?.({}, "session-1", ...args) as Promise<unknown>;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(reads, 1);
+    currentOwner = createWindowStub("file:///session.html?sessionId=session-1");
+    complete({ privateReceipt: "must not leak" });
+    await assert.rejects(pending, /target Session window/);
+  }
+});
 
 // @test-value v2
 // kind = "security"
@@ -2168,10 +2288,24 @@ test("Markdown link context menu IPCはtargetと認可用file contextを変換�
   assert.deepEqual(requests, [request]);
 });
 
-test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC を block しない", async () => {
+// @test-value v2
+// kind = "contract"
+// claim = "Mate未作成でもowning Session WindowのTurn送信を許可し、別Windowからの送信を拒否する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Main GUI turn ownership" }
+// fault = "Mate状態でMain送信をblockするか、別WindowのSessionへ送信できる"
+// observable = "ownerの送信呼出しと非ownerの拒否、依存呼出し数"
+// observation_boundary = "public-boundary"
+// scope = "Main turn IPC sender ownership"
+// lifecycle = "permanent"
+// @end-test-value
+test("registerMainIpcHandlers は Mate 未作成でもowning Session Windowの送信を許可する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  let currentWindow = owner;
   const { deps, calls } = createDeps({
     getMateState: async () => "not_created",
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
   });
 
   registerMainIpcHandlers(ipcMain, deps);
@@ -2179,6 +2313,9 @@ test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC �
   await handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", { userMessage: "hello" });
 
   assert.deepEqual(calls, ["runSessionTurn:session-1,[object Object]"]);
+  currentWindow = createWindowStub("file:///home.html");
+  await assert.rejects(() => handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", { userMessage: "hello" }) as Promise<unknown>, /target Session window/);
+  assert.deepEqual(calls.filter((call) => call.startsWith("runSessionTurn:")), ["runSessionTurn:session-1,[object Object]"]);
 });
 
 // @test-value v2
@@ -2281,10 +2418,25 @@ test("narrow session mutation IPC はowner windowとmutation identityを確認�
   assert.equal(fullAuxiliaryReads, 0);
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "owning Session WindowのTurn拒否ログは本文を除外し正規request IDだけを相関情報として残す"
+// oracle = { type = "contract", ref = "src-electron/ipc/register-main-ipc.ts IPC failure correlation" }
+// fault = "拒否ログへ本文または不正request identity文字列を記録する"
+// observable = "IPC rejectとlog payloadのchannel/request ID、本文不在"
+// observation_boundary = "public-boundary"
+// scope = "Main turn IPC diagnostic privacy"
+// lifecycle = "permanent"
+// impact = "利用者の入力本文が不要な診断ログへ流出する"
+// distinction = "型検査は実際のlogger payloadとruntime正規化を検証しない"
+// @end-test-value
 test("run-session-turn IPC拒否ログは本文を含めずclient request IDを相関情報として渡す", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
   const errors: Array<{ channel: string; clientRequestId?: string }> = [];
   const { deps } = createDeps({
+    resolveEventWindow: () => owner,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
     runSessionTurn: async () => {
       throw new Error("このセッションはまだ実行中だよ。");
     },

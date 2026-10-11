@@ -1,5 +1,6 @@
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import type { Message, SessionSummary } from "../../src-shared/session/session-state.js";
+import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 
 export type SessionRunningTurnStartInput = {
   sessionId: string;
@@ -8,11 +9,13 @@ export type SessionRunningTurnStartInput = {
   userMessage: Message;
   updatedAt: string;
   characterRuntimeSnapshot?: CharacterRuntimeSnapshot | null;
+  queuedTurn?: { queueId: string; turn: SessionTurnInput };
 };
 
 export type SessionRunningTurnStartResult = {
   summary: SessionSummary;
   characterRuntimeSnapshot: CharacterRuntimeSnapshot | null;
+  queuedTurn?: SessionTurnRecord;
 };
 
 export function assertCharacterDefinitionSnapshotUpdate(

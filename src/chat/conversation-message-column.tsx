@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type UIEvent } from "react";
 
 import { type SessionMessageColumnProps } from "./conversation/session-message-column.js";
 import { useSessionMessageListFollowing } from "./shell/session-chat-layout-hooks.js";
@@ -11,17 +11,23 @@ import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { replaceLiveRunAfterResolvedRequest } from "./runtime/session-live-run-state.js";
 import { CONVERSATION_PAGE_SIZE, CONVERSATION_QUERY_PAGE_SIZE, getMessageHistoryIndex, type ConversationPage } from "../../src-shared/session/conversation-page.js";
-import { setMessageBookmarked } from "../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, setMessageBookmarked } from "../../src-shared/session/session-state.js";
 import { subscribeSessionLiveSelection } from "./runtime/session-window-live-ingress.js";
 import { useConversationQueryPages } from "./conversation/use-conversation-query-pages.js";
 import type { MessageNavigatorPage } from "./shell/session-context-pane.js";
+import { useSessionTurnQueue } from "./conversation/use-session-turn-queue.js";
+import { projectSessionTurnQueue } from "./conversation/session-turn-queue-projection.js";
+import { SessionTurnQueueRow } from "./conversation/session-turn-queue-row.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
-  "messages" | "messageCount" | "incarnationId" | "updatedAt" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors"
+  "messages" | "messageCount" | "incarnationId" | "updatedAt" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors" | "accessMode" | "provider"
 >>;
 
 export type ConversationMessageColumnApi = Partial<Pick<WithMateWindowApi,
   "subscribeLiveSessionRun" | "getLiveSessionRun" | "resolveLiveApproval" | "resolveLiveElicitation" | "getSessionMessageArtifact" | "getConversationPage" | "searchConversation" | "listConversationNavigator" | "cancelConversationQuery"
+  | "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput"
 >>;
 
 export type ConversationColumnCache = {
@@ -51,6 +57,7 @@ export type UseConversationMessageColumnInput = {
   liveRun?: LiveSessionRunState | null;
   stateCache?: Map<string, ConversationColumnCache>;
   onColumnControls?: (controls: ConversationColumnControls) => void;
+  composerRegistry?: ComposerControllerRegistry;
 };
 
 export type ConversationColumnControls = {
@@ -68,7 +75,7 @@ export type ConversationColumnControls = {
 };
 
 export function useConversationMessageColumn({
-  session, baseProps, messageSourceKind = "session", enabled, navigatorActive = false, api, liveRun: liveRunOverride, stateCache, onColumnControls,
+  session, baseProps, messageSourceKind = "session", enabled, navigatorActive = false, api, liveRun: liveRunOverride, stateCache, onColumnControls, composerRegistry = composerControllerRegistry,
 }: UseConversationMessageColumnInput): SessionMessageColumnProps | null {
   const localCache = useRef(new Map<string, ConversationColumnCache>());
   const caches = stateCache ?? localCache.current;
@@ -85,6 +92,7 @@ export function useConversationMessageColumn({
   displayedId.current = sessionId;
   const mounted = useRef(true);
   const displayedBridge = useRef<{ owner: string; projection: LiveAssistantProjection } | null>(null);
+  const liveResponseOwner = useRef<{ owner: string; turnId?: string; messageIndex: number } | null>(null);
   const [browsePage, setBrowsePage] = useState<ConversationPage | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
   const [pageError, setPageError] = useState("");
@@ -101,6 +109,13 @@ export function useConversationMessageColumn({
   displayEnabled.current = enabled;
   const tailMessages = session?.messages ?? baseProps.messages;
   const totalCount = session?.messageCount ?? tailMessages.length;
+  const queueIncarnationId = session ? getSessionIncarnationId(session) : "";
+  const canonicalUserSeqs = useMemo(() => tailMessages.flatMap((message, index) => message.role === "user" ? [getMessageHistoryIndex(message, index)] : []), [tailMessages]);
+  const queue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs);
+  const queueComposerOwner = useMemo(() => ({ kind: messageSourceKind === "auxiliary" ? "auxiliary" as const : "main" as const, id: sessionId }), [messageSourceKind, sessionId]);
+  const subscribeFreeze = useCallback((listener: () => void) => composerRegistry.subscribe(queueComposerOwner, listener), [composerRegistry, queueComposerOwner]);
+  const readFreeze = useCallback(() => composerRegistry.isFrozen, [composerRegistry]);
+  const queueActionsFrozen = useSyncExternalStore(subscribeFreeze, readFreeze, readFreeze);
   const currentPage = browsePage?.sessionId === sessionId && (!session?.incarnationId || browsePage.incarnationId === session.incarnationId) ? browsePage : null;
   const isBrowsing = conversation.pageStart !== undefined;
   const messages = isBrowsing && currentPage ? currentPage.messages : tailMessages;
@@ -188,10 +203,35 @@ export function useConversationMessageColumn({
 
   const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
   const assistantText = api ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
+  const queuedResponseIndex = queue.receipts.reduce((index, receipt) => {
+    const ownsRun = receipt.state === "running" && !receipt.inputTurnId
+      || receipt.state === "completed" && !!receipt.inputTurnId && receipt.inputTurnId === liveRun?.turnId;
+    return ownsRun && receipt.userMessageSeq !== null ? Math.max(index, receipt.userMessageSeq + 1) : index;
+  }, 0);
+  const tail = tailMessages.at(-1);
+  if (!liveRun) liveResponseOwner.current = null;
+  else if (liveRun.runState === "running" && api?.listSessionTurnQueue) {
+    if (liveResponseOwner.current?.owner !== pageOwner || liveResponseOwner.current.turnId !== liveRun.turnId) {
+      // 新runは保存済み応答を再利用しない。user未着なら次のuserと応答の位置を開始時に確保する。
+      liveResponseOwner.current = {
+        owner: pageOwner, turnId: liveRun.turnId,
+        messageIndex: tail ? getMessageHistoryIndex(tail, tailMessages.length - 1) + (tail.role === "assistant" ? 2 : 1) : 1,
+      };
+    }
+    liveResponseOwner.current.messageIndex = Math.max(
+      liveResponseOwner.current.messageIndex,
+      tail?.role === "user" ? getMessageHistoryIndex(tail, tailMessages.length - 1) + 1 : 0,
+      queuedResponseIndex,
+    );
+  }
   const currentBridge = assistantText ? {
     sessionId,
     threadId: liveRun?.threadId ?? session?.threadId ?? null,
-    messageIndex: resolveLiveAssistantMessageIndex(tailMessages, [], sessionId, sessionId, assistantText),
+    messageIndex: Math.max(
+      liveResponseOwner.current?.owner === pageOwner ? liveResponseOwner.current.messageIndex : 0,
+      resolveLiveAssistantMessageIndex(tailMessages, [], sessionId, sessionId, assistantText),
+      queuedResponseIndex,
+    ),
     text: assistantText,
   } : null;
   if (currentBridge && enabled) {
@@ -206,12 +246,6 @@ export function useConversationMessageColumn({
     cachedBridge && (hasSavedBridge || session?.runState === "running")
       ? cachedBridge : null
   );
-  const latestUserMessageIndex = useMemo(() => {
-    for (let index = tailMessages.length - 1; index >= 0; index -= 1) {
-      if (tailMessages[index].role === "user") return getMessageHistoryIndex(tailMessages[index], index);
-    }
-    return -1;
-  }, [tailMessages]);
   const historyProjection = useMemo(() => buildMessageListProjection(messages, [], sessionId, {
     primaryMessageSourceKind: messageSourceKind,
   }), [messages, sessionId, messageSourceKind]);
@@ -222,25 +256,44 @@ export function useConversationMessageColumn({
     historyProjection, messages, sessionId,
     hasSavedBridge ? bridge : null,
   ), [historyProjection, messages, sessionId, hasSavedBridge, bridgeKey]);
-  const projection = useMemo(() => hasSavedBridge
+  const liveProjection = useMemo(() => hasSavedBridge
     ? keyedHistory
     : projectLiveAssistantOnSessionHistory(historyProjection, messages, sessionId, isBrowsing ? null : bridge),
   [historyProjection, keyedHistory, messages, sessionId, hasSavedBridge, bridgeKey, bridge?.text, isBrowsing]);
-  const searchTailMessages = useMemo(() => bridge && !hasPersistedLiveAssistantMessage(tailMessages, [], bridge, sessionId)
-    ? [...tailMessages, { role: "assistant" as const, text: bridge.text, historyIndex: bridge.messageIndex }]
-    : tailMessages, [tailMessages, bridgeKey, bridge?.text, sessionId]);
-  const searchMessageIndexes = useMemo(() => projection.sources.map((source, index) => source.kind === "live-assistant" && bridge ? bridge.messageIndex : getMessageHistoryIndex(projection.messages[index], index)), [projection, bridgeKey]);
-  // 保存済みbridgeのkeyは終了後も維持するが、後続promptの待機表示には使わない。
-  const pendingResponseMessageKey = bridge && latestUserMessageIndex <= bridge.messageIndex
-    ? buildLiveAssistantProjectionKey(bridge.sessionId, bridge.threadId, bridge.messageIndex)
-    : null;
+  const queuedProjection = useMemo(() => projectSessionTurnQueue(liveProjection, isBrowsing ? [] : queue.receipts, {
+    sessionId, incarnationId: queueIncarnationId,
+  }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId]);
+  const projection = queuedProjection.projection;
+  const searchTailMessages = useMemo(() => {
+    const searchTail = bridge && !hasPersistedLiveAssistantMessage(tailMessages, [], bridge, sessionId)
+      ? [...tailMessages, { role: "assistant" as const, text: bridge.text, historyIndex: bridge.messageIndex }]
+      : tailMessages;
+    const searchProjection = projectSessionTurnQueue(buildMessageListProjection(searchTail, [], sessionId, {
+      primaryMessageSourceKind: messageSourceKind,
+    }), queue.receipts, { sessionId, incarnationId: queueIncarnationId }).projection;
+    return searchProjection.messages.flatMap((message, index) => {
+      const source = searchProjection.sources[index];
+      if (source.kind !== "turn-queue") return [message];
+      return source.receipt.userMessageSeq === null ? [] : [{ ...message, historyIndex: source.receipt.userMessageSeq }];
+    });
+  }, [tailMessages, bridgeKey, bridge?.text, sessionId, messageSourceKind, queue.receipts, queueIncarnationId]);
+  const searchMessageIndexes = useMemo(() => projection.sources.map((source, index) => source.kind === "live-assistant" && bridge
+    ? bridge.messageIndex : source.kind === "turn-queue" && source.receipt.userMessageSeq !== null
+    ? source.receipt.userMessageSeq : getMessageHistoryIndex(projection.messages[index], index)), [projection, bridgeKey]);
+  // 受付済みuserも含めた表示順で、現在のprompt後の応答だけを待機表示の所有先にする。
+  const responseIndex = bridgeKey ? projection.keys.indexOf(bridgeKey) : -1;
+  const pendingResponseMessageKey = responseIndex >= 0
+    && (liveResponseOwner.current?.owner !== pageOwner || bridge?.messageIndex === liveResponseOwner.current.messageIndex)
+    && !projection.messages.slice(responseIndex + 1).some((message) => message.role === "user")
+    ? bridgeKey : null;
   const historyScrollSignature = useMemo(
     () => `${keyedHistory.keys.join("\u001f")}:${keyedHistory.messages.map((message) => message.text.length).join(",")}`,
     [keyedHistory],
   );
-  const messageScrollSignature = projection.messages.length === keyedHistory.messages.length
+  const messageScrollSignature = (projection.messages.length === keyedHistory.messages.length
     ? historyScrollSignature
-    : `${historyScrollSignature}\u001f${bridgeKey}:${bridge?.text.length ?? 0}`;
+    : `${historyScrollSignature}\u001f${bridgeKey}:${bridge?.text.length ?? 0}`)
+    + `:queue:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`;
   const previousTargets = useRef<SessionMessageColumnProps["messageCollapseTargets"]>([]);
   const collapseTargets = useMemo(() => buildMessageCollapseTargets(keyedHistory.messages, keyedHistory.sources, keyedHistory.keys, previousTargets.current),
     [keyedHistory]);
@@ -481,6 +534,19 @@ export function useConversationMessageColumn({
       refresh();
     }
   };
+  const canSendQueuedInput = !!api?.sendQueuedSessionInput && !!liveRun?.turnId && liveRun.inputAvailable === true
+    && !liveRun.cancellationState && (session?.accessMode === undefined || session.accessMode === "active") && !queueActionsFrozen;
+  const currentInputTurnId = liveRun?.turnId;
+  const sendQueuedInput = useCallback((receipt: import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => {
+    if (canSendQueuedInput && !composerRegistry.isFrozen && currentInputTurnId) queue.sendInput(receipt, currentInputTurnId);
+  }, [canSendQueuedInput, composerRegistry, currentInputTurnId, queue.sendInput]);
+  const inputAction = canSendQueuedInput ? sendQueuedInput : undefined;
+  const queueTail = useMemo(() => !isBrowsing && api?.listSessionTurnQueue
+    && (queuedProjection.tail.length > 0 || queue.error || queue.loading && queue.receipts.length > 0) ? <>
+    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
+    {queue.loading && queue.receipts.length > 0 ? <LoadingIndicator inline label="Loading queued turns" /> : null}
+    {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
+  </> : undefined, [isBrowsing, api, queuedProjection.tail, queue.busyId, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction]);
   if (!session) return null;
   return {
     ...baseProps,
@@ -489,12 +555,17 @@ export function useConversationMessageColumn({
     character: columnCharacter,
     messages: projection.messages,
     messageKeys: projection.keys,
+    turnQueueMetadata: queuedProjection.metadata,
+    onCancelQueuedTurn: queue.cancel,
+    onReleaseInterruptedTurn: queue.release,
+    queueBusyId: queue.busyId,
+    queueTail,
     pendingResponseMessageKey,
     messageGroups: projection.groups,
     messageCollapseTargets: collapseTargets,
     collapsedMessageKeys,
     messageJumpRequest: conversation.messageJumpRequest,
-    isRunning: !isBrowsing && (session.runState === "running" || !!liveRun),
+    isRunning: !isBrowsing && (liveRun?.runState !== undefined ? liveRun.runState === "running" : session.runState === "running" || !!liveRun),
     pendingRunIndicatorAnnouncement: messageSourceKind === "session"
       ? baseProps.pendingRunIndicatorAnnouncement
       : "Running",
@@ -511,7 +582,7 @@ export function useConversationMessageColumn({
     onMessageListScroll,
     onJumpToBottom: followLatest,
     conversationPaging: session.messageCount !== undefined && api?.getConversationPage ? {
-      startIndex: pageStart, endIndex: pageStart + messages.length, totalCount, loading: pageLoading, error: pageError,
+      loading: pageLoading, error: pageError,
       onEarlier: pageStart > 0 ? () => void changePage(Math.max(0, pageStart - 30)) : undefined,
       onLater: isBrowsing && pageStart + messages.length < totalCount ? () => void changePage(Math.min(Math.max(0, totalCount - CONVERSATION_PAGE_SIZE), pageStart + 30)) : undefined,
       onRetry: () => { setNavigatorRevision((revision) => revision + 1); void loadPage(requestedPageStart.current); },

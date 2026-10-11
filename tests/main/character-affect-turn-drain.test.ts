@@ -468,7 +468,7 @@ describe("drainCharacterAffectTurnSettlementBatch", () => {
   // claim = "generation交換後に旧ready settlementのcursorを返さない"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#character-affect-の完了後評価" }
   // fault = "ready itemのsettle待機中のstorage交換を無視して旧cursorを採用する"
-  // observable = "close/reopen後もready pendingが不変でcursorなしのretry要求になり、新storageの次回drainでsettleする"
+  // observable = "同じ100件fixtureの通常drainは非空cursorを返すが、close/reopenによる失効後はready pendingが不変でcursorなしのretry要求になり、新storageの次回drainでsettleする"
   // observation_boundary = "public-boundary"
   // scope = "character affect drain ready settlement"
   // lifecycle = "permanent"
@@ -485,6 +485,26 @@ describe("drainCharacterAffectTurnSettlementBatch", () => {
     try {
       enqueue(storage, "ready-generation", "ready-session", "assistant");
       storage.markReady("ready-generation");
+      const correlationIds = ["ready-generation"];
+      for (let index = 1; index < 100; index += 1) {
+        const correlationId = `ready-generation-${String(index).padStart(3, "0")}`;
+        enqueue(storage, correlationId, "ready-session", "assistant");
+        storage.markReady(correlationId);
+        correlationIds.push(correlationId);
+      }
+      let normalSettlements = 0;
+      const normalResult = await drainCharacterAffectTurnSettlementBatch({
+        storage,
+        startupRecoveryCutoff: "2000-01-01T00:00:00.000Z",
+        getSessionMetadata: async () => toMetadata(createCommittedSession("ready-session", "assistant")),
+        getSessionMessageIdentity: async () => null,
+        settle: async () => { normalSettlements += 1; return true; },
+        onDiscard: () => assert.fail("ready fixture must not be discarded"),
+        onFailure: (_item, error) => { throw error; },
+        now: () => "9999-12-31T23:59:59.999Z",
+      });
+      assert.equal(normalSettlements, 100);
+      assert.ok(normalResult.nextReadyCursor);
 
       const draining = drainCharacterAffectTurnSettlementBatch({
         storage,
@@ -499,14 +519,14 @@ describe("drainCharacterAffectTurnSettlementBatch", () => {
       });
 
       await reading.promise;
-      const pendingBefore = storage.getPending("ready-generation");
+      const pendingBefore = correlationIds.map((id) => storage.getPending(id));
       storage.close();
       storage = new CharacterAffectTurnSettlementStorage(dbPath);
       sessionReady.resolve(createCommittedSession("ready-session", "assistant"));
 
       const result = await draining;
       assert.deepEqual(result, { retryRequired: true, nextReadyCursor: undefined });
-      assert.deepEqual(storage.getPending("ready-generation"), pendingBefore);
+      assert.deepEqual(correlationIds.map((id) => storage.getPending(id)), pendingBefore);
       await drainCharacterAffectTurnSettlementBatch({
         storage,
         startupRecoveryCutoff: "2000-01-01T00:00:00.000Z",
@@ -516,7 +536,7 @@ describe("drainCharacterAffectTurnSettlementBatch", () => {
         onDiscard: () => assert.fail("current owner must not be discarded"),
         onFailure: (_item, error) => { throw error; },
       });
-      assert.equal(storage.getPending("ready-generation"), null);
+      assert.deepEqual(correlationIds.map((id) => storage.getPending(id)), correlationIds.map(() => null));
     } finally {
       storage.close();
       await rm(directory, { recursive: true, force: true });

@@ -3,6 +3,7 @@ import type { Message } from "../../../src-shared/session/session-state.js";
 import { getMessageHistoryIndex } from "../../../src-shared/session/conversation-page.js";
 
 export type MessageListSource =
+  | { kind: "turn-queue"; receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt }
   | {
       kind: "session";
       messageIndex: number;
@@ -91,7 +92,7 @@ export function loadProjectedMessageArtifact({
     return Promise.resolve(source.artifact ?? null);
   }
 
-  if (source.kind === "live-assistant") {
+  if (source.kind === "live-assistant" || source.kind === "turn-queue") {
     return Promise.resolve(null);
   }
 

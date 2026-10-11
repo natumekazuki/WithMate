@@ -152,7 +152,8 @@ export class ComposerControllerRegistry {
 
   clearIfRevision(owner: ComposerOwner, expectedRevision: number): number | null {
     if (this.get(owner).revision !== expectedRevision) return null;
-    return this.clearDraft(owner);
+    // Accepted sends still consume their captured revision during shutdown.
+    return this.setDraftInternal(owner, "", { start: 0, end: 0 }, true);
   }
 
   restoreIfRevision(

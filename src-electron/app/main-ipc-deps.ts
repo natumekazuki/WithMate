@@ -145,7 +145,7 @@ import type {
 import { createAuxiliaryIpcDeps } from "../ipc/auxiliary.js";
 import { createCatalogIpcDeps } from "../ipc/catalog.js";
 import { createSessionQueryIpcDeps } from "../ipc/session-query.js";
-import { createSessionRuntimeIpcDeps } from "../ipc/session-runtime.js";
+import { createSessionRuntimeIpcDeps, type MainIpcSessionRuntimeServiceDeps } from "../ipc/session-runtime.js";
 import { createSettingsIpcDeps } from "../ipc/settings.js";
 import { createWindowIpcDeps } from "../ipc/window.js";
 import type { SessionWindowRestoreResult } from "../../src-shared/window/session-window-restore.js";
@@ -345,6 +345,8 @@ export type MainIpcAuxiliaryDepsArgs = {
 };
 
 export type MainIpcSessionRuntimeDepsArgs = {
+  queue?: MainIpcSessionRuntimeServiceDeps["queue"];
+  getAuxiliarySessionStatus?: MainIpcSessionRuntimeServiceDeps["getAuxiliarySessionStatus"];
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
   getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
   getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null;

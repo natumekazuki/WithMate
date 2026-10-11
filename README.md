@@ -35,6 +35,7 @@ Claude Agent は公式 Claude Agent SDK に付属する未改変の実行物を�
 coding agentと作業する中心画面です。
 
 - チャットの送信、応答のstreaming表示、実行中turnのcancel
+- Main／Auxiliaryの`Send`から次Turnを予約し、チャットの予約項目からCodexの現在Turnへ追加入力できる。予約は受付順に実行し、個別取消できる
 - approval、model、depthなどの実行オプションを変更
 - `LatestCommand`、Copilotのbackground tasks、usage情報を確認
 - Terminal、session title変更、session削除へ移動

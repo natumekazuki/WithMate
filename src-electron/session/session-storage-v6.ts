@@ -39,7 +39,9 @@ import {
   registerSessionProviderIdNormalizer,
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
 } from "./session-provider-id-sql.js";
-import { deleteSessionTurnsForTargets } from "./session-turn-storage-v6.js";
+import { deleteSessionTurnsForTargets, insertSessionTurn } from "./session-turn-storage-v6.js";
+import type { SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import {
@@ -644,7 +646,25 @@ export class SessionStorageV6 {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       const row = this.assertAppendOwner(input, input.turnId);
+      if (input.queuedInput) {
+        if (this.rowToSessionSummary(row).runState !== "running"
+          || !this.db.prepare("SELECT 1 FROM session_turns_v6 WHERE id = ? AND id = (SELECT MAX(id) FROM session_turns_v6 WHERE session_id = ?)")
+            .get(input.turnId, input.sessionId)) throw new Error("The current queued input turn no longer matches.");
+        const receipt = this.db.prepare(`SELECT captured_json FROM session_turn_queue_v6 WHERE id = ?
+          AND session_id = ? AND auxiliary_session_id IS NULL AND incarnation_id = ?
+          AND state = 'starting' AND input_turn_id = ? AND user_message_seq IS NULL`)
+          .get(input.queuedInput.queueId, input.sessionId, input.incarnationId, input.queuedInput.inputTurnId) as { captured_json: string } | undefined;
+        if (!receipt || (JSON.parse(receipt.captured_json) as SessionTurnQueueCapturedInput).request.userMessage !== message.text) {
+          throw new Error("The queued input does not match its captured message.");
+        }
+      }
       this.insertAppendedMessage(input.sessionId, message, input.updatedAt);
+      if (input.queuedInput) {
+        const result = this.db.prepare(`UPDATE session_turn_queue_v6 SET state = 'completed', turn_id = ?,
+          user_message_seq = ?, updated_at = ? WHERE id = ? AND state = 'starting' AND input_turn_id = ?`)
+          .run(String(input.turnId), input.expectedMessageCount, input.updatedAt, input.queuedInput.queueId, input.queuedInput.inputTurnId);
+        if (Number(result.changes) !== 1) throw new Error("The queued input could not be committed.");
+      }
       this.db.prepare("UPDATE sessions_v6 SET updated_at = ?, last_active_at = ? WHERE id = ?")
         .run(input.updatedAt, input.updatedAt, input.sessionId);
       const result = this.rowToSessionMetadata({ ...row, updated_at: input.updatedAt, last_active_at: input.updatedAt });
@@ -675,6 +695,17 @@ export class SessionStorageV6 {
         updated_at = ?, last_active_at = ? WHERE id = ?`).run(runtimePolicyJson, input.metadata.threadId,
         input.metadata.updatedAt, input.metadata.updatedAt, input.sessionId);
       writeSessionTurnTerminalCommit(this.db, { ...commit, assistantMessageSeq: seq });
+      const queueUpdate = this.db.prepare(`UPDATE session_turn_queue_v6
+        SET state = ?, reason = ?, updated_at = ?
+        WHERE session_id = ? AND auxiliary_session_id IS NULL AND input_turn_id IS NULL AND incarnation_id = ? AND turn_id = ? AND state = 'running'
+          AND user_message_seq = (SELECT user_message_seq FROM session_turns_v6 WHERE id = ? AND session_id = ?)`)
+        .run(commit.phase, commit.errorMessage || null, commit.completedAt, input.sessionId, input.incarnationId,
+          String(commit.turnId), commit.turnId, input.sessionId);
+      if (Number(queueUpdate.changes) === 0 && this.db.prepare(`SELECT 1 FROM session_turn_queue_v6
+        WHERE session_id = ? AND auxiliary_session_id IS NULL AND input_turn_id IS NULL AND incarnation_id = ? AND turn_id = ? AND state = 'running'`)
+        .get(input.sessionId, input.incarnationId, String(commit.turnId))) {
+        throw new Error("The queued terminal receipt does not match its turn message sequence.");
+      }
       const result = this.rowToSessionMetadata({ ...row, state: "completed", runtime_policy_json: runtimePolicyJson,
         thread_id: input.metadata.threadId, updated_at: input.metadata.updatedAt, last_active_at: input.metadata.updatedAt });
       this.db.exec("COMMIT");
@@ -984,6 +1015,26 @@ export class SessionStorageV6 {
         );
       }
 
+      if (input.queuedTurn) {
+        const { queueId, turn } = input.queuedTurn;
+        const queueRow = this.db.prepare(`SELECT captured_json, request_id FROM session_turn_queue_v6
+          WHERE id = ? AND session_id = ? AND auxiliary_session_id IS NULL AND input_turn_id IS NULL AND incarnation_id = ? AND state = 'starting'`)
+          .get(queueId, sessionId, currentRow.incarnation_id) as { captured_json: string; request_id: string } | undefined;
+        if (!queueRow) throw new Error("The queued turn is not starting for the current Session owner.");
+        const captured = JSON.parse(queueRow.captured_json) as SessionTurnQueueCapturedInput;
+        const options = captured.request.executionOptions;
+        if (captured.request.clientRequestId !== queueRow.request_id
+          || captured.request.userMessage !== input.userMessage.text
+          || turn.sessionId !== sessionId || turn.phase !== "running"
+          || turn.userMessageSeq !== input.expectedMessageCount
+          || turn.assistantMessageSeq !== undefined || turn.completedAt !== undefined
+          || turn.provider !== captured.provider || turn.model !== options.model
+          || turn.reasoningEffort !== options.reasoningEffort || turn.approvalMode !== options.approvalMode
+          || turn.sandboxMode !== options.codexSandboxMode) {
+          throw new Error("The queued turn start does not match its captured request and message sequence.");
+        }
+      }
+
       const runtimePolicyJson = JSON.stringify({
         ...parseJsonObject(currentRow.runtime_policy_json),
         appStatus: "running",
@@ -1034,6 +1085,16 @@ export class SessionStorageV6 {
         encodeMessage(input.userMessage),
         input.updatedAt,
       );
+      let queuedTurn: SessionTurnRecord | undefined;
+      if (input.queuedTurn) {
+        queuedTurn = insertSessionTurn(this.db, { sessionId, auxiliarySessionId: null }, input.queuedTurn.turn);
+        const queueUpdate = this.db.prepare(`UPDATE session_turn_queue_v6
+          SET state = 'running', turn_id = ?, user_message_seq = ?, updated_at = ?
+          WHERE id = ? AND session_id = ? AND auxiliary_session_id IS NULL AND input_turn_id IS NULL AND incarnation_id = ? AND state = 'starting'`)
+          .run(String(queuedTurn.id), input.expectedMessageCount, input.updatedAt,
+            input.queuedTurn.queueId, sessionId, currentRow.incarnation_id);
+        if (Number(queueUpdate.changes) !== 1) throw new Error("The queued turn start could not be committed.");
+      }
       const storedRow: SessionV6Row = {
         ...currentRow,
         state: "active",
@@ -1048,6 +1109,7 @@ export class SessionStorageV6 {
       const storedResult: SessionRunningTurnStartResult = {
         summary: this.rowToSessionSummary(storedRow, decodedStoredRow),
         characterRuntimeSnapshot: decodedStoredRow.snapshot,
+        ...(queuedTurn ? { queuedTurn } : {}),
       };
       this.db.exec("COMMIT");
       this.onConversationChanged("session_messages_v6", sessionId);

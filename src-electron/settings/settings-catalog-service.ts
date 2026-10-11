@@ -65,6 +65,7 @@ export type SettingsCatalogServiceDeps = {
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<void>;
   onChatLayoutPreferenceSaveError?(update: ChatLayoutPreferenceUpdate, error: unknown): void;
+  onProviderTurnAvailable?(providerId: string): void;
   getModelCatalog(revision?: number | null): Awaitable<ModelCatalogSnapshot | null>;
   ensureModelCatalogSeeded(): Awaitable<ModelCatalogSnapshot>;
   importModelCatalogDocument(
@@ -203,15 +204,24 @@ export class SettingsCatalogService {
     const count = this.affectedProviders.get(providerId) ?? 0;
     if (count <= 1) {
       this.affectedProviders.delete(providerId);
+      try {
+        this.deps.onProviderTurnAvailable?.(providerId);
+      } catch (error) {
+        console.warn("Provider turn availability notification failed", error);
+      }
     } else {
       this.affectedProviders.set(providerId, count - 1);
     }
   }
 
   assertProviderAvailableForTurn(providerId: string): void {
-    if ((this.affectedProviders.get(providerId) ?? 0) > 0) {
+    if (!this.isProviderAvailableForTurn(providerId)) {
         throw new Error("A provider settings update is in progress. Wait for it to finish before starting a new session.");
     }
+  }
+
+  isProviderAvailableForTurn(providerId: string): boolean {
+    return (this.affectedProviders.get(providerId) ?? 0) === 0;
   }
 
   async getAppSettings(): Promise<AppSettings> {

@@ -285,6 +285,27 @@ export function createSessionApi(
     steerSessionTurn(sessionId, request) {
       return ipcRenderer.invoke(channels.WITHMATE_STEER_SESSION_TURN_CHANNEL, sessionId, request);
     },
+    enqueueSessionTurn(sessionId, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL, sessionId, request);
+    },
+    getSessionTurnQueueReceipt(sessionId, requestId) {
+      return ipcRenderer.invoke(channels.WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL, sessionId, requestId);
+    },
+    listSessionTurnQueue(sessionId) {
+      return ipcRenderer.invoke(channels.WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL, sessionId);
+    },
+    listSessionTurnQueueReceipts(sessionId, options) {
+      return ipcRenderer.invoke(channels.WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL, sessionId, options);
+    },
+    cancelQueuedSessionTurn(sessionId, id) {
+      return ipcRenderer.invoke(channels.WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL, sessionId, id);
+    },
+    sendQueuedSessionInput(sessionId, id, expectedTurnId) {
+      return ipcRenderer.invoke(channels.WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL, sessionId, id, expectedTurnId);
+    },
+    releaseInterruptedSessionTurn(sessionId, id) {
+      return ipcRenderer.invoke(channels.WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL, sessionId, id);
+    },
     cancelSessionRun(sessionId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_CANCEL_SESSION_RUN_CHANNEL,

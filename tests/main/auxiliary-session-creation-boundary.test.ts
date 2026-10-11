@@ -1457,9 +1457,9 @@ test("Auxiliaryの取消レコードは回収し、遅延要求を拒否して�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Auxiliaryの軽量変更は履歴を再読込せず、実行中の確定messageのbookmarkを更新でき、失敗や遅延検証・checkpointの後も最後の実行設定選択を保持する"
-// oracle = { type = "contract", ref = "Auxiliary current execution selection and narrow mutation boundary" }
-// fault = "軽量変更が全履歴をhydrationする、実行中のbookmarkを拒否する、または失敗・遅延検証・checkpointで現在選択を消す"
+// claim = "Auxiliaryの軽量変更は履歴を再読込せず、実行中のbookmarkと次送信向け実行設定を更新でき、失敗や遅延検証・checkpointの後も最後の選択を保持する"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md: 実行設定と Send; docs/design/session-run-lifecycle.md: GUI Turn Queue" }
+// fault = "軽量変更が全履歴をhydrationする、実行中のbookmarkや次送信向け設定を拒否する、または失敗・遅延検証・checkpointで現在選択を消す"
 // observable = "title/bookmark保存結果とservice summary・storageの実行設定"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-narrow-mutations"
@@ -1559,11 +1559,13 @@ test("Auxiliary軽量変更は全履歴を読まずcheckpoint失敗後も現在�
     assert.equal(storage.getAuxiliarySession(created.id)?.messages[0]?.isBookmarked, undefined);
     await service.setAuxiliaryMessageBookmark({ ...identity, messageIndex: 0, isBookmarked: true });
     assert.equal(storage.getAuxiliarySession(created.id)?.messages[0]?.isBookmarked, true);
-    await assert.rejects(service.setAuxiliaryExecutionOptions({
+    assert.deepEqual(await service.setAuxiliaryExecutionOptions({
       ...identity,
       executionOptions: { ...chosen, approvalMode: "never" },
-    }), /A running Auxiliary Session cannot change these execution options/);
-    assert.equal(selected.get(created.id)?.approvalMode, chosen.approvalMode);
+    }), { status: "accepted", checkpointSaved: true });
+    assert.equal(selected.get(created.id)?.approvalMode, "never");
+    assert.equal(storage.getAuxiliarySession(created.id)?.approvalMode, "never");
+    assert.equal(storage.getAuxiliarySession(created.id)?.runState, "running");
   } finally {
     releaseCatalog();
     storage.getAuxiliarySession = originalGet;

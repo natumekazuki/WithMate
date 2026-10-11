@@ -13,7 +13,7 @@ export function useLatestCommandHistory(input: {
   enabled: boolean;
   hasLiveRun: boolean;
 }) {
-  const latest = useLatestSessionTurn(input.enabled ? input.api : null, input.sessionId, input.scope, input.revision);
+  const latest = useLatestSessionTurn(input.enabled ? input.api : null, input.sessionId, input.scope, input.revision, input.hasLiveRun);
   const turn = latest.turn;
   const key = !turn || turn.phase === "running" || turn.assistantMessageSeq === undefined ? null
     : `${latest.key}:${turn.id}:${turn.assistantMessageSeq}`;

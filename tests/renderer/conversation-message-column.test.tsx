@@ -11,8 +11,109 @@ import {
   type ConversationMessageColumnApi,
 } from "../../src/chat/conversation-message-column.js";
 import type { SessionMessageColumnProps } from "../../src/chat/conversation/session-message-column.js";
+import { SessionMessageColumn } from "../../src/chat/conversation/session-message-column.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { ConversationPage } from "../../src-shared/session/conversation-page.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "有限FindはSteer受付済みuserのcanonical未着bridgeを正しい履歴seqで数え、保存到着後も1件を維持し、未開始予約と過去閲覧pageをtailへ混ぜない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 全履歴Findのglobal ordinalと未保存末尾の一意な合流" }
+// fault = "receipt bridgeを検索tailから落とす、列内indexで検索対象へ渡す、保存後に二重計上する、または予約本文やbrowse pageを未保存末尾へ加える"
+// observable = "実Find barの件数、column検索tailのhistoryIndexと本文、canonical前後の本文投影"
+// observation_boundary = "component-behavior"
+// scope = "Auxiliary queue receipt bridge through finite conversation Find"
+// lifecycle = "permanent"
+// impact = "画面に見える受付済み入力を検索できず、件数と選択位置が不一致になる"
+// distinction = "queue投影単体とFind単体はreceipt→column検索tail→有限Findの接合を通らない。小さいJS DOM遷移1件で保存到着順を検証する"
+// @end-test-value
+test("finite Find counts accepted Steer bridge once before and after canonical arrival", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "DOMRect", "Event", "MouseEvent"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  const actEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { value(this: HTMLElement, name: string, listener: EventListener) { this.addEventListener(name.replace(/^on/, ""), listener); } });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { value(this: HTMLElement, name: string, listener: EventListener) { this.removeEventListener(name.replace(/^on/, ""), listener); } });
+  dom.window.HTMLElement.prototype.scrollTo = function () {};
+  dom.window.HTMLElement.prototype.scrollIntoView = function () {};
+  const saved = [
+    { role: "user" as const, text: "old request", historyIndex: 60 },
+    { role: "assistant" as const, text: "old response", historyIndex: 61 },
+    { role: "user" as const, text: "current request", historyIndex: 62 },
+    { role: "assistant" as const, text: "current response", historyIndex: 63 },
+  ];
+  let canonical = false;
+  let active: SessionTurnQueueReceipt[] = [{
+    sessionId: "aux", incarnationId: "inc", id: "steer", requestId: "request", sequence: 1, state: "queued", turnId: null, userMessageSeq: null,
+    captured: { request: { userMessage: "needle", clientRequestId: "request", executionOptions: {
+      catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
+    } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+    reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+  }];
+  const completed = { ...active[0], state: "completed" as const, inputTurnId: "turn", userMessageSeq: 64 };
+  const live: LiveSessionRunState = { sessionId: "aux", threadId: "thread", turnId: "turn", runState: "running", inputAvailable: true,
+    assistantText: "", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+  const api: ConversationMessageColumnApi = {
+    listSessionTurnQueue: async () => active,
+    getSessionTurnQueueReceipt: async () => completed,
+    sendQueuedSessionInput: async () => { active = []; return completed; },
+    getConversationPage: async () => ({ sessionId: "aux", incarnationId: "inc", startIndex: 0, totalCount: canonical ? 65 : 64, messages: [{ role: "user", text: "browse request", historyIndex: 0 }] }),
+    searchConversation: async (_id, request) => ({
+      status: "complete", stamp: { generationId: "generation", ownerIdentity: "aux:inc", contentRevision: canonical ? 65 : 64, requestId: request.requestId },
+      incarnationId: "inc", messageCount: canonical ? 65 : 64, totalCount: canonical ? 1 : 0, offset: 0,
+      items: canonical ? [{ messageIndex: 64, occurrenceIndex: 0 }] : [],
+    }),
+  };
+  let latest: SessionMessageColumnProps | null = null;
+  let controls: ConversationColumnControls | undefined;
+  function Probe() {
+    latest = useConversationMessageColumn({ session: { id: "aux", incarnationId: "inc", provider: "codex", runState: "running",
+      messages: canonical ? [...saved, { role: "user", text: "needle", historyIndex: 64 }] : saved, messageCount: canonical ? 65 : 64 },
+      baseProps: createBaseProps("aux"), enabled: true, api, messageSourceKind: "auxiliary", liveRun: live, onColumnControls: (value) => { controls = value; } });
+    return latest ? React.createElement(SessionMessageColumn, latest) : null;
+  }
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(React.createElement(Probe)));
+    await act(async () => dom.window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true })));
+    const input = dom.window.document.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, "needle");
+      const event = new dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(event, "propertyName", { value: "value" }); input.dispatchEvent(event);
+    });
+    const count = () => dom.window.document.querySelector(".session-content-find-count")?.textContent;
+    assert.equal(count(), "0/0", "unstarted queue text is not conversation history");
+    const steer = Array.from(dom.window.document.querySelectorAll("button")).find((button) => button.textContent === "Steer");
+    assert.ok(steer);
+    await act(async () => steer.click());
+    assert.equal(count(), "1/1");
+    assert.equal(latest!.messages.filter((message) => message.text === "needle").length, 1);
+    assert.deepEqual(latest!.searchTailMessages?.filter((message) => message.text === "needle").map((message) => message.historyIndex), [64]);
+    assert.equal(latest!.searchMessageIndexes?.[latest!.messages.findIndex((message) => message.text === "needle")], 64);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Close find']")!.click());
+    await act(async () => controls!.onJumpToMessage("session-aux-0"));
+    assert.ok(latest!.messages.some((message) => message.text === "browse request"));
+    assert.equal(latest!.searchTailMessages?.filter((message) => message.historyIndex === 0).length, 0, "browse window is not appended to tail");
+    assert.deepEqual(latest!.searchTailMessages?.filter((message) => message.text === "needle").map((message) => message.historyIndex), [64]);
+    await act(async () => dom.window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true })));
+    assert.equal(count(), "1/1");
+    canonical = true;
+    await act(async () => root.render(React.createElement(Probe)));
+    assert.equal(count(), "1/1");
+    assert.equal(latest!.searchTailMessages?.filter((message) => message.text === "needle").length, 1);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+  }
+});
+
 
 // @test-value v2
 // kind = "contract"
@@ -178,6 +279,116 @@ test("paged navigator merges unsaved tail with finite ordinals and bookmark filt
 
 // @test-value v2
 // kind = "contract"
+// claim = "canonical user未到着の次Turnも現在user後の応答を所有し、本文先行とSteerのuser追記から終端保存まで応答を一度だけ表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Window / pending response所属" }
+// fault = "前Turnの完了応答へpendingを付ける、次Turn本文を前応答で隠す、終端で本文を二重化する、またはidle liveを実行中にする"
+// observable = "Column propsのuser/assistant順序、pendingResponseMessageKey、messageKeys、isRunning"
+// observation_boundary = "component-behavior"
+// scope = "conversation-response-owner"
+// lifecycle = "permanent"
+// impact = "利用者が次の要求の進行と応答を区別できず、完了した要求を実行中と誤認する"
+// distinction = "既存projection testは非同期queue受付と更新されない保存済みColumnの組合せを通らず、型検査では到着順を検出できない。小さいJS DOM状態遷移1件で契約を保持する"
+// @end-test-value
+test("conversation column は保存本文が遅れても次Turnの応答を所有する", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  const actEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const oldMessages = [{ role: "user" as const, text: "first" }, { role: "assistant" as const, text: "same response" }];
+  let receipts: SessionTurnQueueReceipt[] = [];
+  const terminalReceipts = new Map<string, SessionTurnQueueReceipt>();
+  let changed: ((id: string) => void) | undefined;
+  const api: ConversationMessageColumnApi = {
+    listSessionTurnQueue: async () => receipts,
+    getSessionTurnQueueReceipt: async (_id, requestId) => terminalReceipts.get(requestId) ?? null,
+    onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
+  };
+  let latest: SessionMessageColumnProps | null = null;
+  const column = () => latest!;
+  const run = (text: string, turnId: string, runState = "running"): LiveSessionRunState => ({
+    sessionId: "aux", threadId: "thread", turnId, runState, assistantText: text,
+    steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
+  });
+  function Probe({ live, saved = oldMessages }: { live: LiveSessionRunState | null; saved?: typeof oldMessages }) {
+    latest = useConversationMessageColumn({ session: { id: "aux", incarnationId: "inc", messages: saved, runState: live?.runState ?? "idle" },
+      baseProps: createBaseProps("aux"), messageSourceKind: "auxiliary", enabled: true, api, liveRun: live });
+    return null;
+  }
+  let root: Root | null = null;
+  try {
+    await act(async () => { root = createRoot(dom.window.document.getElementById("root")!); root.render(React.createElement(Probe, { live: run("same response", "first"), saved: oldMessages.slice(0, 1) })); });
+    const oldResponseKey = column().messageKeys?.[1];
+    await act(async () => root?.render(React.createElement(Probe, { live: null })));
+    await act(async () => root?.render(React.createElement(Probe, { live: run("", "second") })));
+    assert.equal(column().pendingResponseMessageKey, null);
+    await act(async () => root?.render(React.createElement(Probe, { live: run("same response", "second") })));
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "same response"], "live delta stays visible before the receipt arrives");
+    const earlyResponseKey = column().messageKeys?.[2];
+    assert.equal(column().pendingResponseMessageKey, earlyResponseKey);
+    assert.notEqual(earlyResponseKey, oldResponseKey);
+    receipts = [{ sessionId: "aux", incarnationId: "inc", id: "next", requestId: "request", sequence: 2, state: "running", turnId: "2", userMessageSeq: 2,
+      captured: { request: { userMessage: "second", clientRequestId: "request", executionOptions: {
+        catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
+      } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+      reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" }];
+    await act(async () => changed?.("aux"));
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "same response"]);
+    assert.equal(column().pendingResponseMessageKey, earlyResponseKey);
+    assert.equal(column().isRunning, true);
+    await act(async () => root?.render(React.createElement(Probe, { live: run("same response", "second") })));
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "same response"]);
+    const newResponseKey = column().messageKeys?.[3];
+    assert.equal(column().pendingResponseMessageKey, newResponseKey);
+    assert.notEqual(newResponseKey, oldResponseKey);
+    assert.equal(newResponseKey, earlyResponseKey);
+    const saved = [...oldMessages, { role: "user" as const, text: "second" }, { role: "assistant" as const, text: "saved response" }];
+    await act(async () => root?.render(React.createElement(Probe, { live: run("same response", "second", "idle"), saved })));
+    assert.equal(column().isRunning, false);
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "saved response"]);
+    assert.equal(column().messageKeys?.[3], newResponseKey);
+    await act(async () => root?.render(React.createElement(Probe, { live: null, saved })));
+    assert.equal(column().isRunning, false);
+    assert.equal(column().messageKeys?.[3], newResponseKey);
+    assert.equal(column().messages.length, 4);
+    const thirdUser = [...saved, { role: "user" as const, text: "third" }];
+    terminalReceipts.set(receipts[0].requestId, { ...receipts[0], state: "completed" });
+    receipts = [{ ...receipts[0], id: "third", requestId: "third-request", sequence: 3, turnId: "3", userMessageSeq: 4,
+      captured: { ...receipts[0].captured, request: { ...receipts[0].captured.request, clientRequestId: "third-request", userMessage: "third" } } }];
+    await act(async () => { changed?.("aux"); root?.render(React.createElement(Probe, { live: run("third response", "third"), saved: thirdUser })); });
+    assert.equal(column().pendingResponseMessageKey, column().messageKeys?.[5]);
+    const inputReceipt: SessionTurnQueueReceipt = { ...receipts[0], id: "steer", requestId: "steer-request", sequence: 4, state: "queued", turnId: null, userMessageSeq: null,
+      captured: { ...receipts[0].captured, request: { ...receipts[0].captured.request, clientRequestId: "steer-request", userMessage: "steer" } } };
+    receipts = [...receipts, inputReceipt];
+    await act(async () => changed?.("aux"));
+    terminalReceipts.set(inputReceipt.requestId, { ...inputReceipt, state: "completed", inputTurnId: "third", userMessageSeq: 5 });
+    receipts = receipts.filter((receipt) => receipt.id !== inputReceipt.id);
+    await act(async () => { changed?.("aux"); root?.render(React.createElement(Probe, { live: run("steered response", "third"), saved: thirdUser })); });
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "saved response", "third", "steer", "steered response"]);
+    const acceptedSteerResponseKey = column().messageKeys?.[6];
+    assert.equal(column().pendingResponseMessageKey, acceptedSteerResponseKey);
+    const steeredUser = [...thirdUser, { role: "user" as const, text: "steer" }];
+    await act(async () => root?.render(React.createElement(Probe, { live: run("steered response", "third"), saved: steeredUser })));
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "saved response", "third", "steer", "steered response"]);
+    const steeredResponseKey = column().messageKeys?.[6];
+    assert.equal(steeredResponseKey, acceptedSteerResponseKey);
+    assert.equal(column().pendingResponseMessageKey, steeredResponseKey);
+    const steeredSaved = [...steeredUser, { role: "assistant" as const, text: "final steered response" }];
+    await act(async () => root?.render(React.createElement(Probe, { live: run("steered response", "third", "idle"), saved: steeredSaved })));
+    assert.equal(column().isRunning, false);
+    assert.equal(column().messageKeys?.[6], steeredResponseKey);
+    assert.deepEqual(column().messages.map((message) => message.text), ["first", "same response", "second", "saved response", "third", "steer", "final steered response"]);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    globals.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "過去pageの閲覧は60件とglobal位置を維持し、live更新を混入せず、会話切替後の遅いpage応答を破棄し、旧会話のlive本文をcacheへ保持しない"
 // oracle = { type = "contract", ref = "Issue #781: bounded conversation pages" }
 // fault = "過去pageへliveをappendする、global keyをlocal位置へ戻す、旧会話のpageを新会話へ適用する、または非表示会話cacheへlive本文を保持する"
@@ -242,7 +453,7 @@ test("conversation pages は過去閲覧と会話ownerを保持する", async ()
 // claim = "Messages navigatorの連続移動は最後に選んだ本文と移動先を保持し、先行page応答で巻き戻さない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Window / 全履歴Messages navigator" }
 // fault = "未読込対象の取得待ちに読込済み対象へ移動すると旧pageを適用するか、逆順応答で旧jumpを設定する"
-// observable = "最後に選んだmessage keyの存在、pageのstartIndex、messageJumpRequestのkey、読込完了状態"
+// observable = "最後に選んだmessage keyの存在、本文先頭のglobal位置、messageJumpRequestのkey、読込完了状態"
 // observation_boundary = "component-behavior"
 // scope = "conversation-navigation-latest-intent"
 // lifecycle = "permanent"
@@ -287,7 +498,7 @@ test("conversation navigator は連続選択の最後の移動先を保持する
   };
   const assertTarget = (messageIndex: number, startIndex: number) => {
     const column = getLatest();
-    assert.equal(column.conversationPaging?.startIndex, startIndex);
+    assert.equal(column.messages[0]?.historyIndex, startIndex);
     assert.equal(column.messageJumpRequest?.key, `session-main-${messageIndex}`);
     assert.ok(column.messageKeys?.includes(`session-main-${messageIndex}`));
   };
@@ -325,7 +536,7 @@ test("conversation navigator は連続選択の最後の移動先を保持する
 // claim = "Findで最後に選んだ読込済み本文は、先行する未読込hitのpage応答後も表示を保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Window / 全履歴Find" }
 // fault = "未読込hitの取得待ちに読込済みhitを選ぶと、先行page応答が最後に選んだ本文を画面から外す"
-// observable = "最後に選んだmessage keyの存在、pageのstartIndex、読込完了状態"
+// observable = "最後に選んだmessage keyの存在、本文先頭のglobal位置、読込完了状態"
 // observation_boundary = "component-behavior"
 // scope = "conversation-find-latest-intent"
 // lifecycle = "permanent"
@@ -370,7 +581,7 @@ test("conversation Find は連続選択の最後の読込済み本文を保持�
     assert.equal(getLatest().conversationPaging?.loading, false);
     assert.ok(resolvePage);
     await act(async () => resolvePage!({ sessionId: "main", incarnationId: "main", startIndex: 70, totalCount: 200, messages: messages(70) }));
-    assert.equal(getLatest().conversationPaging?.startIndex, 140);
+    assert.equal(getLatest().messages[0]?.historyIndex, 140);
     assert.ok(getLatest().messageKeys?.includes("session-main-150"));
     assert.equal(getLatest().conversationPaging?.loading, false);
   } finally {
