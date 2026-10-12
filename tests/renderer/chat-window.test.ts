@@ -160,6 +160,12 @@ test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", 
     assert.equal(terminalSurface.hasAttribute("inert"), false);
     assert.equal(document.querySelector("[data-terminal-subtree]"), terminal);
     assert.equal(terminalSurface.querySelectorAll('[aria-label="Action dock mode"] button')[1].getAttribute("aria-pressed"), "true");
+    await act(async () => document.querySelector<HTMLButtonElement>("[data-collapse-dock]")!.click());
+    const compactTerminal = document.querySelector<HTMLButtonElement>('.session-action-dock-compact-content [aria-label="Action dock mode"] button:last-child')!;
+    await act(async () => compactTerminal.click());
+    assert.equal(terminalSurface.hasAttribute("inert"), false);
+    assert.equal(terminalSurface.querySelector('[aria-label="Action dock mode"]'), terminalSurface.querySelector('[aria-label="Message display mode"]')?.nextElementSibling);
+    assert.equal(document.querySelector("[data-terminal-subtree]"), terminal);
     await act(async () => terminalSurface.querySelector<HTMLButtonElement>('[aria-label="Action dock mode"] button')!.click());
     assert.equal(promptSurface.hasAttribute("inert"), false);
     assert.equal(terminalSurface.hasAttribute("inert"), true);

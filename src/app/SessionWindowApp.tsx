@@ -2231,7 +2231,7 @@ export default function AgentSessionWindowApp() {
       ref={terminalRef}
       api={withmateApi}
       expanded={actionDockMode === "terminal" && chatShellFeature.isActionDockExpanded}
-      onCollapse={chatShellFeature.handleCollapseActionDock}
+      onEmpty={() => chatShellFeature.handleChangeActionDockMode("prompt")}
     /> : undefined,
     mainContent: filePreviewContent,
     leftPane: fileExplorerPane,

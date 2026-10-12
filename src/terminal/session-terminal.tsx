@@ -222,10 +222,10 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
   );
 }
 
-export function SessionTerminal({ api, expanded, onCollapse, ref }: {
+export function SessionTerminal({ api, expanded, onEmpty, ref }: {
   api: WithMateWindowTerminalApi;
   expanded: boolean;
-  onCollapse(): void;
+  onEmpty(): void;
   ref?: Ref<SessionTerminalHandle>;
 }) {
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
@@ -278,7 +278,7 @@ export function SessionTerminal({ api, expanded, onCollapse, ref }: {
       if (current.selectedId === id) {
         setSelectedId(remaining[Math.min(index, remaining.length - 1)]?.id ?? null);
       }
-      if (remaining.length === 0) onCollapse();
+      if (remaining.length === 0) onEmpty();
     } catch (error) {
       setCloseError(`Terminal could not be closed: ${String(error)}`);
     } finally {
