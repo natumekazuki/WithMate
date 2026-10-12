@@ -8,6 +8,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { SessionDiffPreview, SessionFilePreview } from "../../src/file-explorer/SessionFilePreview.js";
+import { areSessionFileResourcesEqual } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import type {
   SessionFileDescriptor,
   SessionFileGitCommitResourceRequest,
@@ -338,7 +339,7 @@ async function renderPreview(
 // scope = "SessionFilePreview header absolute file path"
 // lifecycle = "permanent"
 // impact = "利用者がプレビュー対象の実際の所在を取り違えず確認・copyできる"
-// distinction = "Main側path解決と型検査だけでは検出できないheader投影と対象切替を確認する"
+// distinction = "同じAPIでrequestだけを切り替え、Main側path解決と型検査だけでは検出できないheader投影と対象切替を確認する"
 // @end-test-value
 test("file preview は絶対パスをread-only表示し対象切替へ追従する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true, url: "http://localhost/" });
@@ -356,17 +357,19 @@ test("file preview は絶対パスをread-only表示し対象切替へ追従す�
         absoluteFilePath: "C:\\workspace\\docs\\readme.md",
       },
     ];
+    const api: PreviewApi = {
+      ...createPreviewApi(async () => IMAGE_DESCRIPTOR).api,
+      async inspectSessionFile(request) {
+        const selected = cases.find((item) => areSessionFileResourcesEqual(item.request, request));
+        assert.ok(selected);
+        return {
+          ...request, absoluteFilePath: selected.absoluteFilePath, name: "readme.md", kind: "binary", byteLength: 4,
+          modifiedAt: MARKDOWN_DESCRIPTOR.modifiedAt, mimeType: "application/octet-stream",
+          suggestedEncoding: "utf-8", revision: "path-r1",
+        };
+      },
+    };
     for (const { request, absoluteFilePath } of cases) {
-      const api: PreviewApi = {
-        ...createPreviewApi(async () => IMAGE_DESCRIPTOR).api,
-        async inspectSessionFile() {
-          return {
-            ...request, absoluteFilePath, name: "readme.md", kind: "binary", byteLength: 4,
-            modifiedAt: MARKDOWN_DESCRIPTOR.modifiedAt, mimeType: "application/octet-stream",
-            suggestedEncoding: "utf-8", revision: "path-r1",
-          };
-        },
-      };
       await act(async () => {
         root?.render(React.createElement(SessionFilePreview, { api, request, onCopyText() {} }));
       });
@@ -908,8 +911,8 @@ test("File Preview はcopy availability APIが有効な場合だけCopy Fileを�
 // kind = "contract"
 // claim = "Markdownのroot外local file linkはcurrent resourceを基準にdetached preview navigationへ渡される"
 // oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
-// fault = "Markdown local linkがopenPathへ誤送信される、base resourceを失う、またはdetached preview resourceを誤る"
-// observable = "preview navigation requestのkind、target、baseResource、detached resource"
+// fault = "Markdown local linkがopenPathへ誤送信される、base resourceを失う、またはnavigation requestのtargetを誤る"
+// observable = "preview navigation requestのkind、sessionId、target、baseResource"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview.markdown-local-link"
 // lifecycle = "permanent"
