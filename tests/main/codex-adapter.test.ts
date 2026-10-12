@@ -650,7 +650,7 @@ it("idle受信の取消とtransport失敗を元原因・partial付きで解除�
     const projected = new Promise<void>(resolve => { bodySeen = resolve; });
     const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(
       { ...createCodexRunSessionTurnInput(directory), signal: controller.signal },
-      state => { if (state.assistantText && state.steps.length) bodySeen(); },
+      (state, changes) => { if (state.assistantText && changes.steps.upserts.length) bodySeen(); },
     );
     void operation.catch(() => undefined);
     try {
