@@ -33,7 +33,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - 画像専用loaderはIPCのexact ArrayBuffer chunkを順序どおりBlobへ渡し、全サイズの連結bufferを作らない。Blobがbytesをsnapshotした後、完了／error／取消／世代無効化時にはloaderが保持するchunk参照を解放する。decodeとBlob内部の割当は別であり、同時数とコピー削減は総メモリー容量の保証ではない。
 - local画像はMainの画像専用inspect/chunk APIでSessionとbase resourceの所有関係、通常file、実path・identity・revision、画像headerを確認する。拡張子だけで認定せず、ブラウザーがdecodeできる画像を表示する。汎用file read・directory列挙のroot認可は維持する
 - 画像の resolving/loading はresourceの待機状態として保持し、表示開始から1,000ms未満は補助UIを表示しない。閾値を超えて未完了の場合だけ、画像領域内へ小さなspinnerを重ねて表示し、完了またはerrorで除去する。resolvingからloadingへ進む同一resourceの待機では表示タイマーをリセットしない。spinnerは`role="status"`相当の読み上げ名を持つが、本文の検索対象へ補助文字列を追加しない。errorは対象resourceを識別できる既存の失敗表示を維持する
-- Markdownの`img`、`a`、`pre` component typeはrenderごとに再生成せず、動的な操作callback、resource resolver、render modeだけを現在のcontextとして渡す。これによりcallback更新、本文末尾への追記、light/full切替では同じ位置の画像DOM・読み込みstate・lightbox stateを保持し、sourceまたはresource世代の変更では既存のresolver lifecycleに従って再読み込みする
+- Markdownの`img`、`a`、`pre` component typeはrenderごとに再生成せず、動的な操作callback、resource resolver、受信状態だけを現在のcontextとして渡す。これによりcallback更新と本文末尾への追記では同じ位置の画像DOM・読み込みstate・lightbox stateを保持し、sourceまたはresource世代の変更では既存のresolver lifecycleに従って再読み込みする
 
 ## Mermaid Images
 
@@ -62,7 +62,7 @@ flowchart LR
 ## Rendering Policy
 
 - message と file preview は同じ component mapping を使う
-- GFMの表・list・link等はlight/fullの両方で解釈する。表の構文が成立した後は逐次追記やfull描画への昇格でも同じ表DOMを更新し、未整形のparagraphとの往復や表示のための追加遅延を作らない。KaTeXとMermaidの高度描画は既存の遅延経路を使用する。
+- PreviewはGFM・KaTeX・footnoteを含む完全Markdown描画を常に使用し、本文更新で未整形表示へ巻き戻さない。受信中の追記だけを100ms単位のsnapshotへまとめ、継続受信でも予定を延期せず最新本文を反映する。初回、追記以外の置換、受信終了（成功・失敗・取消）、検索中の`forceFullRender`指定は即時反映し、Sourceは常に最新の原文を表示する。会話の実行状態はMain／Auxiliaryの対象応答とpending本文のownerから渡す。
 - 呼び出し元は path open と local image resolution の context だけを注入する
 - Quote を提供する共通 chat window は Preview を既定とし、ActionDock の表示切替で message column 全体を Source にできる。Source は元 Markdown を plain text として表示し、選択、Quote、検索は表示中の source text を対象にする
 - assistant response の選択 action は Session chat root が overlay と stacking context を所有し、message surface や ActionDock の局所 stacking context から分離する。位置と lifecycle の executable contract は `src/chat/selection-action-overlay.ts` と `tests/renderer/session-message-column.test.ts` を正本とする
@@ -72,11 +72,11 @@ flowchart LR
 
 ## Streaming projection
 
-- light/fullの構文設定ごとに、現在表示中のmessage ownerが各modeの直近の本文とparse結果だけを保持する。本文不変の操作更新では再parseせず、unmount時に解放する。全履歴cache、worker、永続cacheは持たない。
+- 現在表示中のmessage ownerが直近の本文とparse結果だけを保持する。本文不変の操作更新では再parseせず、unmount時にparse結果と受信snapshotのtimerを解放する。全履歴cache、worker、永続cacheは持たない。
 - append-only更新では、直前のblock文脈を切り離せる最後のtop-level ATX見出し行から通常parserで再parseし、それより前のblockを再利用する。fragment開始をdocument先頭と扱わず、元本文の絶対offset・行・列を保持する。見出し以降の未閉じfence、list、表、setext等の未確定tailを切り捨てない。
 - document先頭の未閉鎖frontmatter、安全な見出し境界がない本文、reference定義、reference node、footnote、未解決reference候補を含む本文と、追記以外の置換は全文parseする。後続のdelimiter・定義が前方の表示を変える場合も、通常の完全Markdown描画と一致させる。
 - KaTeXは現在のmessageの同一HAST blockを再利用する。blockの内容・position・propertyが変われば再変換し、次のfull変換に含まれないblockの結果を解放する。Glossary annotationとURL変換には独立したmutable projectionを渡し、message全体の注釈budgetと順序を維持する。
-- Mermaidはsource単位でfull描画へ昇格する。同じsourceの図は別blockの追記によるlight表示へ戻さず、viewport・図のstateを保持する。source変更は現行のlight/full遅延とresource lifecycleへ従う。検索中は従来どおり即時full描画を使用する。
+- Mermaidはsource不変の本文追記で図・viewportを再生成しない。受信中のsourceは150msの静止後に計算し、終了時は待機中の最新sourceを即時計算する。再計算中は前回成功した図と画像resourceを`aria-busy`で保持し、新結果への置換後またはunmountで旧resourceを解放する。描画IDは計算ごとに変え、Mermaid自身による表示中SVGの削除を防ぐ。受信中の未確定sourceのerrorで既存の図を消さず、受信終了後に最新sourceのerrorと原文を本文内で明示する。Mermaid自身のerror SVG挿入は無効化し、本文外へ仮描画を残さない。古い計算結果を新sourceへ適用しない。
 - 表示内容の削減や要約を行わず、Source、検索、copy、選択、link、imageの既存契約を維持する。parseは同期であり、未確定tail自体が長い場合やreference系本文では全文処理の負荷が残る。
 
 ## Repository Glossary Annotation
@@ -88,7 +88,7 @@ flowchart LR
 - 候補compileはvalid内容revision・Session・checkout scopeを単位とする。sequenceやcheckout表示だけの通知ではmatcher identityを維持し、activationは現在のscopeとentryを確認する。invalid化・scope切替では旧注釈を使用しない。
 - 注釈projectionはmessageの表示ownerが現在の通常text nodeだけを保持する。同じtextと流入budgetならrangeと消費budgetを再利用し、先行nodeが変わった時は現在の残budgetを適用する。候補0件ではUnicode投影を行わない。matcher・message scopeの切替、表示ownerのunmountで保持を解放し、全履歴cacheや永続cacheを持たない。
 - append-only textでは、実際に分割したASCII空白開始graphemeより前のUnicode offsetを再利用し、そのgrapheme以降を再構築する。空白でNFKCとlowercaseの文脈を切り、最後の結合文字・Greek Final Sigmaを未変更とみなさない。安全な境界がないtextや置換は全量投影する。一致探索、URL除外とnode順の共有hard limitは変更しない。
-- Markdown要素は本文とparse設定が同じ間は再利用する。注釈focus・tooltip・copy feedbackやactivation callbackの変更だけではMarkdown parseとUnicode全文処理を起動しない。light/fullでtext nodeの形が変われば現在のparse結果を使う。本文追記時の構文・高度描画の再利用は上記Streaming projectionに従う。
+- Markdown要素は表示snapshotとparse設定が同じ間は再利用する。注釈focus・tooltip・copy feedbackやactivation callbackの変更だけではMarkdown parseとUnicode全文処理を起動しない。本文追記時の構文・高度描画の再利用は上記Streaming projectionに従う。
 
 ## Safety
 

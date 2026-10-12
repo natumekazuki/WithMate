@@ -152,7 +152,18 @@ test("MessageRichTextはMarkdown parse後の通常textだけを注釈し本文�
   }
 });
 
-test("MessageRichTextはlight renderから数式projectionを注釈対象にしない", async () => {
+// @test-value v2
+// kind = "contract"
+// claim = "数式projectionは初回表示と本文追記の両方で用語注釈の対象外になる"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Repository Glossary Annotation" }
+// fault = "数式の内部文字列に用語注釈を付け、表示・選択・検索対象へ補助UIを混入させる"
+// observable = "初回と追記後の用語注釈の文字列"
+// observation_boundary = "component-behavior"
+// scope = "MessageRichTextの数式と用語注釈"
+// lifecycle = "permanent"
+// distinction = "通常textだけの注釈testと異なり実KaTeX変換後の数式と本文の境界を更新前後で確認する"
+// @end-test-value
+test("MessageRichTextは初回と本文追記で数式projectionを注釈対象にしない", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
     url: "https://example.test/",
@@ -173,15 +184,18 @@ test("MessageRichTextはlight renderから数式projectionを注釈対象にし�
       }));
     });
 
-    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "light");
+    assert.ok(container.querySelector(".katex"));
     assert.deepEqual(
       Array.from(container.querySelectorAll<HTMLElement>(".glossary-annotation"), (element) => element.textContent),
       ["Runtime"],
     );
 
     await act(async () => {
-      await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => {
-        dom.window.requestAnimationFrame(() => resolve());
+      root?.render(React.createElement(MessageRichText, {
+        text: "$$Runtime$$\n\nRuntime updated",
+        glossaryAnnotationMatcher: matcher,
+        glossaryAnnotationScopeKey: "message-math",
+        onActivateGlossaryEntry: () => undefined,
       }));
     });
 

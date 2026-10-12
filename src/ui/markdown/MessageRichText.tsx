@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
@@ -38,6 +38,7 @@ type MessageRichTextProps = {
   text: string;
   className?: string;
   forceFullRender?: boolean;
+  isStreaming?: boolean;
   displayMode?: MessageViewMode;
   onOpenPath?: (target: string) => void;
   resolveImageSource?: MarkdownImageResolver;
@@ -47,79 +48,39 @@ type MessageRichTextProps = {
   onActivateGlossaryEntry?: (canonicalTerm: string) => void;
 };
 
-type MarkdownRenderMode = "light" | "full";
+function useStreamingMarkdownText(text: string, isStreaming: boolean, forceFullRender: boolean): string {
+  const [snapshot, setSnapshot] = useState(text);
+  const latestText = useRef(text);
+  const timer = useRef<number | null>(null);
+  const immediate = !isStreaming || forceFullRender || !text.startsWith(snapshot) || typeof window === "undefined";
 
-export function resolveMessageMarkdownRenderMode(
-  forceFullRender: boolean,
-  text: string,
-  renderState: { text: string; mode: MarkdownRenderMode },
-  shouldDefer: boolean,
-): MarkdownRenderMode {
-  if (forceFullRender) {
-    return "full";
-  }
-  if (renderState.text === text) {
-    return renderState.mode;
-  }
-  return shouldDefer ? "light" : "full";
-}
-
-type MermaidRenderState =
-  | { status: "pending" }
-  | { status: "ready"; svg: string }
-  | { status: "error"; message: string };
-
-function shouldDeferRichMarkdownRender(): boolean {
-  return typeof window !== "undefined";
-}
-
-function scheduleFullMarkdownRender(callback: () => void): () => void {
-  if (typeof window === "undefined") {
-    return () => undefined;
-  }
-
-  const browserWindow = window as Window & {
-    requestIdleCallback?: (
-      callback: IdleRequestCallback,
-      options?: IdleRequestOptions,
-    ) => number;
-    cancelIdleCallback?: (handle: number) => void;
-  };
-  let canceled = false;
-  let frameId: number | null = null;
-  let idleId: number | null = null;
-  const run = () => {
-    if (!canceled) {
-      callback();
+  useEffect(() => {
+    latestText.current = text;
+    if (immediate) {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      timer.current = null;
+      if (snapshot !== text) setSnapshot(text);
+    } else if (text !== snapshot && timer.current === null) {
+      // Keep the current full rendering while continuous input advances the next snapshot.
+      timer.current = window.setTimeout(() => {
+        timer.current = null;
+        setSnapshot(latestText.current);
+      }, 100);
     }
-  };
+  }, [immediate, snapshot, text]);
 
-  if (typeof browserWindow.requestIdleCallback === "function") {
-    idleId = browserWindow.requestIdleCallback(run, { timeout: 500 });
-  } else {
-    frameId = browserWindow.requestAnimationFrame(() => {
-      frameId = browserWindow.requestAnimationFrame(run);
-    });
-  }
+  useEffect(() => () => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+  }, []);
 
-  return () => {
-    canceled = true;
-    if (
-      idleId !== null &&
-      typeof browserWindow.cancelIdleCallback === "function"
-    ) {
-      browserWindow.cancelIdleCallback(idleId);
-    }
-    if (frameId !== null) {
-      browserWindow.cancelAnimationFrame(frameId);
-    }
-  };
+  return immediate ? text : snapshot;
 }
 
 function MessageMarkdownPreview({
   text,
   className = "message-body",
   forceFullRender = false,
+  isStreaming = false,
   onOpenPath,
   resolveImageSource,
   markdownLinkFileContext,
@@ -133,34 +94,17 @@ function MessageMarkdownPreview({
     [reactId],
   );
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
-  const shouldDefer = !forceFullRender && shouldDeferRichMarkdownRender();
+  const renderText = useStreamingMarkdownText(text, isStreaming, forceFullRender);
   const [copyFeedback, setCopyFeedback] = useState<MessageCopyFeedback | null>(
     null,
   );
   const glossaryAnnotations = useMessageGlossaryAnnotations({
     matcher: glossaryAnnotationMatcher,
     scopeKey: glossaryAnnotationScopeKey,
-    text,
+    text: renderText,
     onActivate: onActivateGlossaryEntry,
   });
-  const [renderState, setRenderState] = useState<{
-    text: string;
-    mode: MarkdownRenderMode;
-  }>(() => ({
-    text,
-    mode: shouldDefer ? "light" : "full",
-  }));
-  const renderMode = resolveMessageMarkdownRenderMode(
-    forceFullRender,
-    text,
-    renderState,
-    shouldDefer,
-  );
-  const isFullRender = renderMode === "full";
-  const parseProjections = useMemo(() => ({
-    light: createMarkdownParseProjectionPlugin(),
-    full: createMarkdownParseProjectionPlugin(),
-  }), []);
+  const parseProjection = useMemo(() => createMarkdownParseProjectionPlugin(), []);
   const katexProjection = useMemo(() => createKatexProjectionPlugin(), []);
   const handleLinkContextMenuResult = useCallback(
     (result: MarkdownLinkContextMenuResult) => {
@@ -189,8 +133,8 @@ function MessageMarkdownPreview({
     import("./markdown-context.js").MarkdownRenderContextValue
   >(
     () => ({
-      enableMermaid: isFullRender,
-      markdown: text,
+      isStreaming,
+      markdown: renderText,
       onCodeBlockCopyResult: handleCodeBlockCopyResult,
       onLinkContextMenuResult: handleLinkContextMenuResult,
       linkFileContext: markdownLinkFileContext,
@@ -200,42 +144,32 @@ function MessageMarkdownPreview({
     [
       handleCodeBlockCopyResult,
       handleLinkContextMenuResult,
-      isFullRender,
+      isStreaming,
       markdownLinkFileContext,
       onOpenPath,
       resolveImageSource,
-      text,
+      renderText,
     ],
   );
   const rehypePlugins = useMemo<PluggableList>(
     () => [
-      ...(isFullRender
-        ? [katexProjection, createFootnoteLabelIdPlugin(footnoteLabelId)]
-        : []),
+      katexProjection,
+      createFootnoteLabelIdPlugin(footnoteLabelId),
       ...(glossaryAnnotations.rehypePlugin
         ? [glossaryAnnotations.rehypePlugin]
         : []),
     ],
-    [footnoteLabelId, glossaryAnnotations.rehypePlugin, isFullRender, katexProjection],
+    [footnoteLabelId, glossaryAnnotations.rehypePlugin, katexProjection],
   );
   const remarkPlugins = useMemo<PluggableList>(
-    () =>
-      isFullRender
-        ? [
-            remarkFrontmatter,
-            remarkGfm,
-            [remarkMath, { singleDollarTextMath: false }],
-            parseProjections.full,
-            sharedRemarkHtmlLineBreaks,
-          ]
-        : [
-            remarkFrontmatter,
-            remarkGfm,
-            [remarkMath, { singleDollarTextMath: false }],
-            parseProjections.light,
-            sharedRemarkHtmlLineBreaks,
-          ],
-    [isFullRender, parseProjections],
+    () => [
+      remarkFrontmatter,
+      remarkGfm,
+      [remarkMath, { singleDollarTextMath: false }],
+      parseProjection,
+      sharedRemarkHtmlLineBreaks,
+    ],
+    [parseProjection],
   );
   const markdownContent = useMemo(() => (
     <ReactMarkdown
@@ -248,23 +182,9 @@ function MessageMarkdownPreview({
         handlers: { yaml: renderMarkdownFrontmatter },
       }}
     >
-      {text}
+      {renderText}
     </ReactMarkdown>
-  ), [footnotePrefix, rehypePlugins, remarkPlugins, text]);
-
-  useEffect(() => {
-    if (!shouldDefer) {
-      setRenderState({ text, mode: "full" });
-      return;
-    }
-
-    setRenderState({ text, mode: "light" });
-    return scheduleFullMarkdownRender(() => {
-      setRenderState((current) =>
-        current.text === text ? { text, mode: "full" } : current,
-      );
-    });
-  }, [shouldDefer, text]);
+  ), [footnotePrefix, rehypePlugins, remarkPlugins, renderText]);
 
   useEffect(() => {
     if (!copyFeedback) {
@@ -277,7 +197,7 @@ function MessageMarkdownPreview({
   return (
     <div
       className={`${className} rich-text`.trim()}
-      data-markdown-render-mode={renderMode}
+      data-markdown-render-mode="full"
     >
       <MessageGlossaryAnnotationProvider
         controller={glossaryAnnotations.controller}

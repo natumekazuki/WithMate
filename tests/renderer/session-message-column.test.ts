@@ -1916,27 +1916,47 @@ test("SessionMessageColumn はappend時の末尾移動をfollow ownerへ委ね�
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "同じ仮想範囲内の連続scrollは、表示済みMarkdown本文を再計算しない"
+// fault = "scroll offsetだけの変更を各本文のrenderへ伝播し、履歴閲覧中に不要なMarkdown解析を繰り返す"
+// observable = "初回には実Markdown preview関数が呼ばれ、同じ範囲の連続scrollでは呼出しが0である"
+// observation_boundary = "implementation"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: memo化したMessageRichTextとstableなMarkdown component" }
+// scope = "100件の履歴、同じ仮想範囲内でのscroll offset更新"
+// lifecycle = "permanent"
+// impact = "長い履歴のscrollごとにMarkdown本文が再計算されると操作が重くなる"
+// distinction = "列全体のProfiler更新数は仮想範囲管理も数えるため、本文の再計算を直接区別できない"
+// @end-test-value
 test("SessionMessageColumn は同じ仮想範囲内の連続scrollでmessageを再描画しない", async () => {
-  let renderCount = 0;
+  const inspector = new InspectorSession();
+  inspector.connect();
+  await inspector.post("Profiler.enable");
+  await inspector.post("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
+  const takeMarkdownRenderCount = async () => {
+    const { result } = await inspector.post("Profiler.takePreciseCoverage");
+    return result.filter((script) => script.url.includes("/MessageRichText."))
+      .flatMap((script) => script.functions)
+      .filter((fn) => fn.functionName === "MessageMarkdownPreview")
+      .reduce((count, fn) => count + fn.ranges[0].count, 0);
+  };
   const messages = Array.from({ length: 100 }, (_, index) => ({
     role: index % 2 === 0 ? "user" as const : "assistant" as const,
     text: `message ${index + 1}`,
   }));
   const mounted = await mountSessionMessageColumn({
     messages,
-    onRender: () => {
-      renderCount += 1;
-    },
   });
 
   try {
+    assert.ok(await takeMarkdownRenderCount() > 0);
     const messageList = mounted.messageListRef.current;
     assert.ok(messageList);
     await act(async () => {
       messageList.scrollTop = 3_000;
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
     });
-    const rendersAfterFirstScroll = renderCount;
+    await takeMarkdownRenderCount();
 
     for (const scrollTop of [3_002, 3_004, 3_006, 3_008, 3_010]) {
       await act(async () => {
@@ -1945,8 +1965,10 @@ test("SessionMessageColumn は同じ仮想範囲内の連続scrollでmessageを�
       });
     }
 
-    assert.equal(renderCount, rendersAfterFirstScroll);
+    assert.equal(await takeMarkdownRenderCount(), 0);
   } finally {
+    await inspector.post("Profiler.stopPreciseCoverage");
+    inspector.disconnect();
     await mounted.cleanup();
   }
 });

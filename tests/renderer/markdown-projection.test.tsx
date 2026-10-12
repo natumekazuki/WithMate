@@ -22,9 +22,9 @@ import { MarkdownRenderContext } from "../../src/ui/markdown/markdown-context.js
 import { markdownUrlTransform } from "../../src/ui/markdown/markdown-links.js";
 import { remarkHtmlLineBreaks } from "../../src/ui/markdown/markdown-plugins.js";
 
-function parser(full: boolean) {
+function parser() {
   return unified().use(remarkParse).use(remarkFrontmatter)
-    .use(full ? [remarkGfm] : []).use(remarkMath, { singleDollarTextMath: false });
+    .use(remarkGfm).use(remarkMath, { singleDollarTextMath: false });
 }
 
 // @test-value v2
@@ -34,7 +34,7 @@ function parser(full: boolean) {
 // fault = "未閉鎖blockを確定する、fragmentのYAMLをfrontmatterにする、後続referenceを反映しない、またはoffsetをずらす"
 // observable = "全prefixのAST・positionと置換後のAST"
 // observation_boundary = "consumer"
-// scope = "light/full Markdown parse projection"
+// scope = "Markdown parse projection"
 // lifecycle = "permanent"
 // impact = "構文・code copy・reference・footnote・選択の表示がstreaming中も全文parserと一致する"
 // distinction = "単発renderer testや型検査では観測できない追記境界と絶対offsetを独立した全文parserで照合する"
@@ -52,85 +52,115 @@ test("Markdown projectionは各文字の追記と置換を全文parseと一致�
     "# A\n\nB\n\n[inline](https://example.com) ![icon](image.png)\n\nC\n\n[late]\n\n[late]: target.md\n",
     "# A\n\nB\n\n<div>\nparagraph\n\n</div>\n\n---\n\n~~~mermaid\nflowchart LR\n A[one] --> B[two]\n~~~\n\nend\n",
   ];
-  for (const full of [false, true]) {
-    const normal = parser(full);
-    const project = createMarkdownParseProjection();
-    for (const fixture of fixtures) {
-      for (let length = 0; length <= fixture.length; length++) {
-        const text = fixture.slice(0, length);
-        assert.deepEqual(project(text, (source) => normal.parse(source)), normal.parse(text), `full=${full}, length=${length}, text=${JSON.stringify(text)}`);
-      }
+  const normal = parser();
+  const project = createMarkdownParseProjection();
+  for (const fixture of fixtures) {
+    for (let length = 0; length <= fixture.length; length++) {
+      const text = fixture.slice(0, length);
+      assert.deepEqual(project(text, (source) => normal.parse(source)), normal.parse(text), `length=${length}, text=${JSON.stringify(text)}`);
     }
   }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "構文が成立したMarkdown表は逐次追記と高度描画への昇格を通じて同じDOMで表示され、最新のセル内容を保持する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/819 / docs/design/message-rich-text.md: Rendering Policy" }
-// fault = "軽量描画で表がparagraphへ戻る、昇格で表DOMを交換する、または追記・置換したセルが更新されない"
-// observable = "light/fullの各更新におけるtable要素の同一性、headerとcellの文字列、置換後の表示"
+// claim = "受信中の追記を100ms単位でまとめても既存の表・数式・frontmatter・改行と選択を保持し、最終化・検索・置換・Sourceは最新本文を即時表示する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Rendering Policy / Streaming projection" }
+// fault = "更新ごとに数式や表を未整形へ戻す、継続受信で表示が進まない、または最終本文・検索・Sourceへ未反映の内容を残す"
+// observable = "timer数と間隔、更新前後のDOM参照、セル内容、選択文字列、各即時経路の本文、unmount後のtimer数"
 // observation_boundary = "component-behavior"
-// scope = "MessageRichTextの既定Previewにおける表の逐次受信"
+// scope = "MessageRichTextのstreaming snapshotと即時反映境界"
 // lifecycle = "permanent"
-// impact = "読み進めている表と選択対象が更新ごとに消失せず、受信内容を遅延なく読める"
-// distinction = "既存のforceFullRender最終DOM比較では通らない既定のlight/full遷移を制御し、少数の文字追記で表の連続性を検出する"
+// impact = "受信中の既存内容を読み続けられ、完了・取消・検索で最新の内容が欠落しない"
+// distinction = "全文parseと最終DOMだけの既存確認では検出できない時間境界と表示の連続性を、実componentと制御したtimerで確認する"
 // @end-test-value
-test("MessageRichTextはlight/full切替と文字追記で表のDOMと最新内容を保つ", async () => {
+test("MessageRichTextは追記をまとめてrich DOMを保ち最終本文を即時反映する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: "http://localhost/", pretendToBeVisual: true });
   const keys = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const previous = keys.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
-  const idleCallbacks = new Map<number, () => void>();
-  let idleId = 0;
-  Object.defineProperty(dom.window, "requestIdleCallback", { value: (callback: () => void) => {
-    idleCallbacks.set(++idleId, callback);
-    return idleId;
+  const timers = new Map<number, { callback: () => void; delay: number }>();
+  let timerId = 0;
+  Object.defineProperty(dom.window, "setTimeout", { value: (callback: () => void, delay: number) => {
+    timers.set(++timerId, { callback, delay });
+    return timerId;
   } });
-  Object.defineProperty(dom.window, "cancelIdleCallback", { value: (id: number) => idleCallbacks.delete(id) });
+  Object.defineProperty(dom.window, "clearTimeout", { value: (id: number) => timers.delete(id) });
   for (const [key, value] of [["window", dom.window], ["document", dom.window.document], ["IS_REACT_ACT_ENVIRONMENT", true]] as const) {
     Object.defineProperty(globalThis, key, { configurable: true, value });
   }
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
-  const render = async (text: string) => {
-    await act(async () => root.render(<MessageRichText text={text} />));
-    assert.equal(container.firstElementChild?.getAttribute("data-markdown-render-mode"), "light");
+  const render = async (text: string, isStreaming = true, forceFullRender = false, displayMode: "preview" | "source" = "preview") => {
+    await act(async () => root.render(<MessageRichText text={text} isStreaming={isStreaming} forceFullRender={forceFullRender} displayMode={displayMode} />));
   };
-  const promote = async () => {
+  const advance = async () => {
     await act(async () => {
-      const callbacks = [...idleCallbacks.values()];
-      idleCallbacks.clear();
-      callbacks.forEach((callback) => callback());
+      const callbacks = [...timers.values()];
+      timers.clear();
+      callbacks.forEach(({ callback }) => callback());
     });
-    assert.equal(container.firstElementChild?.getAttribute("data-markdown-render-mode"), "full");
   };
-  let text = "| Name | Value |\n| --- | ---: |\n| First | 1 |\n";
+  let text = "---\ntitle: Report\n---\n\n$$x^2$$\n\nfirst<br>second\n\n| Name | Value |\n| --- | ---: |\n| First | 1 |\n";
   try {
     await render(text);
-    const table = container.querySelector("table");
-    assert.ok(table, "成立した表は高度描画の待機中も表示する");
-    const header = table.querySelector("thead");
-    const firstCell = table.querySelector("td");
-    for (const character of "| Second | 234 |\n") {
-      await promote();
-      assert.equal(container.querySelector("table"), table);
-      text += character;
+    const table = container.querySelector("table:not(.message-frontmatter-table)");
+    const math = container.querySelector(".katex");
+    const frontmatter = container.querySelector(".message-frontmatter-table");
+    const br = container.querySelector("br");
+    assert.ok(table && math && frontmatter && br);
+    const firstCell = table.querySelector("td")!;
+    const range = dom.window.document.createRange();
+    range.selectNodeContents(firstCell);
+    dom.window.getSelection()!.addRange(range);
+    const tail = "| Second | 234 |\n";
+    let scheduledId: number | undefined;
+    for (let index = 0; index < tail.length; index++) {
+      text += tail[index];
       await render(text);
-      assert.equal(container.querySelector("table"), table);
-      assert.equal(table.querySelector("thead"), header);
-      assert.equal(table.querySelector("td"), firstCell);
+      assert.equal(timers.size, 1, "継続受信でも同じ予定で次のsnapshotを反映する");
+      const currentId = [...timers.keys()][0]!;
+      if (scheduledId !== undefined) assert.equal(currentId, scheduledId, "追記で予定を延期しない");
+      scheduledId = currentId;
+      assert.equal([...timers.values()][0]!.delay, 100);
+      if (index % 4 === 3) {
+        await advance();
+        scheduledId = undefined;
+      }
+      assert.equal(container.querySelector("table:not(.message-frontmatter-table)"), table);
+      assert.equal(container.querySelector(".katex"), math);
+      assert.equal(container.querySelector(".message-frontmatter-table"), frontmatter);
+      assert.equal(container.querySelector("br"), br);
+      assert.equal(dom.window.getSelection()!.toString(), "First");
     }
-    assert.deepEqual([...table.querySelectorAll("th")].map((cell) => cell.textContent), ["Name", "Value"]);
+    await advance();
     assert.deepEqual([...table.querySelectorAll("td")].map((cell) => cell.textContent), ["First", "1", "Second", "234"]);
-    await promote();
-    await render(text.replace("234", "567"));
-    assert.deepEqual([...container.querySelectorAll("td")].map((cell) => cell.textContent), ["First", "1", "Second", "567"]);
-    await promote();
-    await render("現在の本文");
-    await promote();
-    assert.equal(container.textContent, "現在の本文");
+
+    text += "\n完了した本文";
+    await render(text);
+    assert.ok(!container.textContent!.includes("完了した本文"));
+    await render(text, false);
+    assert.ok(container.textContent!.includes("完了した本文"));
+    assert.equal(timers.size, 0);
+
+    text += "\n検索対象";
+    await render(text);
+    assert.ok(!container.textContent!.includes("検索対象"));
+    await render(text, true, true);
+    assert.ok(container.textContent!.includes("検索対象"));
+    assert.equal(timers.size, 0);
+
+    text = text.replace("234", "567");
+    await render(text);
+    assert.deepEqual([...table.querySelectorAll("td")].map((cell) => cell.textContent), ["First", "1", "Second", "567"]);
+    await render(text + " source", true, false, "source");
+    assert.equal(container.textContent, text + " source");
+    await render("別の応答");
+    assert.equal(container.textContent, "別の応答");
+    await render("別の応答の追記");
+    assert.equal(timers.size, 1);
   } finally {
     await act(async () => root.unmount());
+    assert.equal(timers.size, 0);
     keys.forEach((key, index) => previous[index] ? Object.defineProperty(globalThis, key, previous[index]!) : Reflect.deleteProperty(globalThis, key));
     dom.window.close();
   }
@@ -149,7 +179,7 @@ test("MessageRichTextはlight/full切替と文字追記で表のDOMと最新内�
 // distinction = "時間の閾値を使わず実parser入力を数え、performance要求とmutable transform境界を少数の更新で検出する"
 // @end-test-value
 test("Markdown projectionは確定blockを再parseせず下流のmutationから保持ASTを守る", () => {
-  const normal = parser(true);
+  const normal = parser();
   const project = createMarkdownParseProjection();
   let parsedUnits = 0;
   let calls = 0;
@@ -182,7 +212,7 @@ test("Markdown projectionは確定blockを再parseせず下流のmutationから�
 // distinction = "単発数式testでは測れない再利用と更新を実KaTeX経路の呼出回数と独立oracleで検出する"
 // @end-test-value
 test("KaTeX projectionは同じ数式を再利用し変更・削除を通常変換と一致させる", () => {
-  const hast = parser(true).use(remarkRehype);
+  const hast = parser().use(remarkRehype);
   const cached = unified().use(createKatexProjectionPlugin());
   const normal = unified().use(rehypeKatex);
   const originalRender = katex.renderToString;
@@ -238,7 +268,7 @@ test("MessageRichTextのstreaming finalは全文DOMに一致しcopy・link・選
       await act(async () => root.render(<MessageRichText text={text} forceFullRender onOpenPath={(target) => opened.push(target)} />));
       const expected = renderToStaticMarkup(
         <div className="message-body rich-text" data-markdown-render-mode="full">
-          <MarkdownRenderContext.Provider value={{ markdown: text, enableMermaid: true, onCodeBlockCopyResult: () => undefined }}>
+          <MarkdownRenderContext.Provider value={{ markdown: text, isStreaming: false, onCodeBlockCopyResult: () => undefined }}>
             <ReactMarkdown components={markdownComponents} urlTransform={markdownUrlTransform}
               remarkPlugins={[remarkFrontmatter, remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks]}
               rehypePlugins={[rehypeKatex]} remarkRehypeOptions={{ handlers: { yaml: renderMarkdownFrontmatter } }}>
