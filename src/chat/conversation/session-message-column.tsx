@@ -84,7 +84,7 @@ export type SessionMessageColumnProps = {
   messageJumpRequest?: MessageJumpRequest | null;
   conversationPaging?: {
     loading: boolean; error: string;
-    onEarlier?: () => void; onLater?: () => void; onRetry: () => void;
+    onRetry: () => void;
   };
   searchConversation?: (request: ConversationSearchRequest) => Promise<ConversationQueryOutcome<ConversationSearchMatch>>;
   cancelConversationQuery?: (request: ConversationQueryCancelRequest) => Promise<void>;
@@ -1124,10 +1124,8 @@ export function SessionMessageColumn({
         onClose={() => setFindOpen(false)}
       />
       {findOpen && (conversationFindError || conversationFind.error) ? <div role="alert">{conversationFindError || conversationFind.error}<button className="drawer-toggle compact secondary" type="button" onClick={() => { setConversationFindError(""); conversationFind.retry(); }}>Retry</button></div> : null}
-      {conversationPaging && (conversationPaging.onEarlier || conversationPaging.onLater || conversationPaging.loading || conversationPaging.error) ? (
+      {conversationPaging && (conversationPaging.loading || conversationPaging.error) ? (
         <div className="conversation-page-controls" aria-busy={conversationPaging.loading}>
-          {conversationPaging.onEarlier ? <button className="drawer-toggle compact secondary" type="button" disabled={conversationPaging.loading} onClick={conversationPaging.onEarlier}>Earlier Messages</button> : null}
-          {conversationPaging.onLater ? <button className="drawer-toggle compact secondary" type="button" disabled={conversationPaging.loading} onClick={conversationPaging.onLater}>Later Messages</button> : null}
           {conversationPaging.loading ? <LoadingIndicator label="Loading Messages" /> : null}
           {conversationPaging.error ? <><span role="alert">{conversationPaging.error}</span><button className="drawer-toggle compact secondary" type="button" onClick={conversationPaging.onRetry}>Retry</button></> : null}
         </div>
