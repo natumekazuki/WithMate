@@ -259,6 +259,8 @@ export type ChatDockSplitterProps = {
   onTogglePanel?: MouseEventHandler<HTMLButtonElement>;
   ariaLabel?: string;
   ariaControls?: string;
+  ariaOrientation?: "horizontal" | "vertical";
+  ariaValueNow?: number;
   title?: string;
 };
 
@@ -854,6 +856,8 @@ export function ChatDockSplitter({
   onTogglePanel,
   ariaLabel,
   ariaControls,
+  ariaOrientation,
+  ariaValueNow,
   title,
 }: ChatDockSplitterProps) {
   const pointerStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
@@ -932,10 +936,12 @@ export function ChatDockSplitter({
     if (draggedRef.current) onDrag?.(event, { x: event.clientX - start.x, y: event.clientY - start.y });
   };
   const handlePointerEnd: PointerEventHandler<HTMLButtonElement> = (event) => {
+    if (pointerStartRef.current?.pointerId !== event.pointerId) return;
     pointerStartRef.current = null;
     if (draggedRef.current) onPointerEnd?.(event);
   };
   const handlePointerCancel: PointerEventHandler<HTMLButtonElement> = (event) => {
+    if (pointerStartRef.current?.pointerId !== event.pointerId) return;
     const didDrag = draggedRef.current;
     pointerStartRef.current = null;
     draggedRef.current = false;
@@ -960,13 +966,19 @@ export function ChatDockSplitter({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerCancel}
+      onLostPointerCapture={handlePointerCancel}
       onClick={handleClick}
       onKeyDown={(event) => {
         onKeyDown?.(event);
         if (event.defaultPrevented) onActivate?.();
       }}
       aria-label={resolvedAriaLabel}
-      aria-controls={effectiveTogglePanel ? (ariaControls ?? controlledId) : undefined}
+      role={ariaValueNow === undefined ? undefined : "separator"}
+      aria-orientation={ariaOrientation}
+      aria-valuenow={ariaValueNow}
+      aria-valuemin={ariaValueNow === undefined ? undefined : 0}
+      aria-valuemax={ariaValueNow === undefined ? undefined : 100}
+      aria-controls={ariaControls ?? (effectiveTogglePanel ? controlledId : undefined)}
       aria-expanded={effectiveTogglePanel ? isPanelExpanded : undefined}
       title={resolvedTitle}
     >

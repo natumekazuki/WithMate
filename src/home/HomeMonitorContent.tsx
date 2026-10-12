@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 
 import type {
   SessionMonitorContextMenuPoint,
@@ -13,6 +13,7 @@ import { CharacterAvatar } from "../ui/ui-utils.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
+import { ChatDockSplitter } from "../chat/chat-window.js";
 
 export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];
@@ -32,6 +33,12 @@ export type HomeMonitorContentProps = {
 };
 
 type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading" | "closed";
+
+function clampRunningRatio(ratio: number, height: number): number {
+  if (height <= 0) return ratio;
+  const minimumRatio = Math.min(0.5, 48 / height);
+  return Math.max(minimumRatio, Math.min(1 - minimumRatio, ratio));
+}
 
 function getEntryKey(entry: HomeMonitorEntry): string {
   return `${entry.kind}:${entry.session.id}`;
@@ -100,6 +107,53 @@ export function HomeMonitorContent({
   onShowContextMenu,
 }: HomeMonitorContentProps) {
   const [expandedEntryKeys, setExpandedEntryKeys] = useState<Set<string>>(() => new Set());
+  const [runningRatio, setRunningRatio] = useState(0.5);
+  const resizeStartRef = useRef<{ ratio: number; height: number } | null>(null);
+  const sectionsId = useId();
+  const sectionsRef = useRef<HTMLDivElement>(null);
+  const [collapsedLists, setCollapsedLists] = useState<boolean[]>([false, false]);
+
+  useLayoutEffect(() => {
+    const container = sectionsRef.current;
+    if (!container) return;
+    const sections = [...container.querySelectorAll<HTMLElement>(":scope > section")];
+    const updateLayout = () => {
+      const splitter = container.querySelector<HTMLElement>(".home-monitor-splitter");
+      const height = container.getBoundingClientRect().height - (splitter?.getBoundingClientRect().height ?? 0);
+      setRunningRatio((current) => clampRunningRatio(current, height));
+      const next = sections.map((section) => {
+        const list = section.querySelector<HTMLElement>(".home-monitor-list");
+        const card = list?.querySelector<HTMLElement>(".home-monitor-card");
+        if (!list || !card) return false;
+        const auxiliaryList = card.querySelector<HTMLElement>(".home-monitor-auxiliary-list");
+        const minimumHeight = card.getBoundingClientRect().height - (auxiliaryList?.getBoundingClientRect().height ?? 0);
+        const collapsed = list.getBoundingClientRect().height < minimumHeight;
+        if (collapsed && list.contains(container.ownerDocument.activeElement)) {
+          container.querySelector<HTMLButtonElement>(".home-monitor-splitter")?.focus({ preventScroll: true });
+        }
+        return collapsed;
+      });
+      setCollapsedLists((current) => current.every((value, index) => value === next[index]) ? current : next);
+    };
+    updateLayout();
+    const Observer = container.ownerDocument.defaultView?.ResizeObserver;
+    if (!Observer) return;
+    const observer = new Observer(updateLayout);
+    observer.observe(container);
+    for (const section of sections) {
+      observer.observe(section);
+      const head = section.querySelector(".home-monitor-section-head");
+      const card = section.querySelector(".home-monitor-card");
+      if (head) observer.observe(head);
+      if (card) observer.observe(card);
+    }
+    return () => observer.disconnect();
+  }, [runningEntries, nonRunningEntries]);
+
+  const resizeSections = (ratio: number, height: number) => {
+    if (height <= 0) return;
+    setRunningRatio(clampRunningRatio(ratio, height));
+  };
 
   const toggleEntry = (entry: HomeMonitorEntry) => {
     const key = getEntryKey(entry);
@@ -264,13 +318,17 @@ export function HomeMonitorContent({
       {!feedback && isLoading && (auxiliaryDataState === "loading" || (runningEntries.length === 0 && nonRunningEntries.length === 0)) ? (
         <LoadingIndicator label={loadingMessage.replace(/…$/, "")} className="home-session-list-load-status" />
       ) : null}
-      <div className="home-monitor-sections">
-        <section className="home-monitor-section" aria-labelledby="home-monitor-running">
+      <div
+        ref={sectionsRef}
+        className="home-monitor-sections"
+        style={{ gridTemplateRows: `minmax(48px, ${runningRatio}fr) var(--session-dock-splitter-size) minmax(48px, ${1 - runningRatio}fr)` }}
+      >
+        <section id={sectionsId} className="home-monitor-section" aria-labelledby="home-monitor-running">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-running">Running</h3>
             <span className="home-monitor-count">{runningEntries.length}</span>
           </div>
-          <div className="home-monitor-list">
+          <div className={`home-monitor-list${collapsedLists[0] ? " is-collapsed" : ""}`} inert={collapsedLists[0]}>
             {runningEntries.length > 0
               ? renderMonitorEntries(runningEntries)
               : showEmptyState && runningEmptyMessage
@@ -279,12 +337,48 @@ export function HomeMonitorContent({
           </div>
         </section>
 
+        <ChatDockSplitter
+          edge="bottom"
+          className="home-monitor-splitter"
+          canCollapse={false}
+          ariaLabel="Resize Running and Stopped"
+          ariaControls={sectionsId}
+          ariaOrientation="horizontal"
+          ariaValueNow={Math.round(runningRatio * 100)}
+          title="Drag or use Up/Down arrows to resize Running and Stopped"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            const splitter = event.currentTarget;
+            const height = (splitter.parentElement?.getBoundingClientRect().height ?? 0) - splitter.getBoundingClientRect().height;
+            const ratio = clampRunningRatio(runningRatio, height);
+            resizeSections(ratio, height);
+            resizeStartRef.current = {
+              ratio,
+              height,
+            };
+          }}
+          onDrag={(_event, delta) => {
+            const start = resizeStartRef.current;
+            if (start) resizeSections(start.ratio + delta.y / start.height, start.height);
+          }}
+          onPointerEnd={() => { resizeStartRef.current = null; }}
+          onKeyDown={(event) => {
+            if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const splitter = event.currentTarget;
+            const height = (splitter.parentElement?.getBoundingClientRect().height ?? 0) - splitter.getBoundingClientRect().height;
+            const ratio = clampRunningRatio(runningRatio, height);
+            const nextRatio = event.key === "Home" ? 0 : event.key === "End" ? 1 : ratio + (event.key === "ArrowDown" ? 24 : -24) / height;
+            resizeSections(nextRatio, height);
+          }}
+        />
+
         <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-inactive">Stopped</h3>
             <span className="home-monitor-count">{nonRunningEntries.length}</span>
           </div>
-          <div className="home-monitor-list">
+          <div className={`home-monitor-list${collapsedLists[1] ? " is-collapsed" : ""}`} inert={collapsedLists[1]}>
             {nonRunningEntries.length > 0
               ? renderMonitorEntries(nonRunningEntries)
               : showEmptyState && nonRunningEmptyMessage

@@ -43,17 +43,17 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Homeと独立MonitorのRunning／Stopped領域は、件数や空状態に依存せず同じ高さの2行を維持する"
+// claim = "Monitorは空・読込状態でもRunning／Stoppedを初期5:5で配置し、両一覧の間に操作可能な水平スプリッターを置く"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "片側が空の時にsectionを縮める、見出しを下へずらす、またはloading indicatorで2領域の高さを変える"
-// observable = "描画した2 sectionの親子関係、等分rowとsection内配置とloading overlayのCSS"
+// fault = "初期比率を偏らせる、スプリッターを一覧内へ置く、またはloading indicatorで領域の高さを変える"
+// observable = "描画したsectionとseparatorの順序、初期grid rows、separatorのaccessible属性、section配置とloading overlayのCSS"
 // observation_boundary = "implementation"
 // scope = "HomeMonitorContentとhome.cssのMonitor専用layout"
 // lifecycle = "permanent"
-// impact = "Session Windowの開閉や片側0件のときにもMonitor領域が跳ねず、両状態を同じ面積で確認できる"
-// distinction = "手動の実描画確認とは別に、5:5を破るCSS・DOM構造の変更を自動検出する"
+// impact = "空状態や読込時も両状態を同じ初期面積で確認でき、配分変更操作へ到達できる"
+// distinction = "操作testと別に、初期のDOM・CSSとloading overlayを低コストで検証する。実寸法は実描画確認で扱う"
 // @end-test-value
-test("MonitorのRunning／Stopped領域は空状態と読込状態でも等分する", async () => {
+test("Monitorの初期表示は空状態と読込状態でもスプリッターを挟んで等分する", async () => {
   const stylesSource = await readStylesheet();
   const html = renderToStaticMarkup(createElement(HomeMonitorContent, {
     runningEntries: [],
@@ -66,10 +66,14 @@ test("MonitorのRunning／Stopped領域は空状態と読込状態でも等分�
   const sections = document.querySelector(".home-monitor-sections");
 
   assert.deepEqual(
-    [...(sections?.children ?? [])].map((section) => section.getAttribute("aria-labelledby")),
-    ["home-monitor-running", "home-monitor-inactive"],
+    [...(sections?.children ?? [])].map((section) => section.getAttribute("aria-labelledby") ?? section.getAttribute("role")),
+    ["home-monitor-running", "separator", "home-monitor-inactive"],
   );
-  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-sections"), /grid-template-rows:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/);
+  assert.equal(sections?.getAttribute("style"), "grid-template-rows:minmax(48px, 0.5fr) var(--session-dock-splitter-size) minmax(48px, 0.5fr)");
+  const splitter = sections?.querySelector('[role="separator"]');
+  assert.equal(splitter?.getAttribute("aria-orientation"), "horizontal");
+  assert.equal(splitter?.getAttribute("aria-valuenow"), "50");
+  assert.equal(document.getElementById(splitter?.getAttribute("aria-controls") ?? "")?.getAttribute("aria-labelledby"), "home-monitor-running");
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-sections > .home-monitor-section"), /display:\s*flex;\s*flex-direction:\s*column;/);
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-body > .home-session-list-load-status"), /position:\s*absolute;/);
   assert.doesNotMatch(stylesSource, /\.home-monitor-section\.is-empty/);
