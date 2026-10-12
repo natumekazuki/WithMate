@@ -3,8 +3,8 @@ import { it } from "node:test";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import type { Terminal } from "@xterm/xterm";
-import type { WithMateWindowTerminalApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { ILink, ILinkProvider, Terminal } from "@xterm/xterm";
+import type { WithMateWindowNavigationApi, WithMateWindowTerminalApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { SessionTerminal } from "../../src/terminal/session-terminal.js";
 
 // @test-value v2
@@ -61,7 +61,8 @@ it("端末のClipboard操作とシェルへの制御入力を分離する", asyn
   } });
   const writes: Array<{ terminalId: string; data: string }> = [];
   let terminalId = "";
-  const api: WithMateWindowTerminalApi = {
+  const api: WithMateWindowTerminalApi & Pick<WithMateWindowNavigationApi, "openPath"> = {
+    openPath: async (target) => ({ status: "opened", targetType: "external-url", target }),
     createTerminal: async (request) => { terminalId = request.terminalId; return { shellName: "PowerShell" }; },
     writeTerminalInput: (id, data) => { writes.push({ terminalId: id, data }); },
     resizeTerminal() {},
@@ -162,6 +163,145 @@ it("端末のClipboard操作とシェルへの制御入力を分離する", asyn
     await pressPaste(false);
     assert.deepEqual(writes, []);
     assert.match(dom.window.document.querySelector('[role="alert"]')?.textContent ?? "", /Paste failed:.*Clipboard unavailable/);
+  } finally {
+    await act(async () => { root.unmount(); });
+    dom.window.close();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "端末出力のHTTP(S)リンクとOSC 8のWebリンクはCtrl＋左クリックでだけopenPathへ届き、開けない場合は端末内に失敗を示す"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/815; docs/design/desktop-ui.md: TerminalのWebリンク" }
+// fault = "WebLinksAddonを組み込まない、修飾キーやbuttonを無視する、OSC 8を別経路で開く、非Web URIを開く、またはopenPath失敗を隠す"
+// observable = "実addonが出力から検出したリンク、openPathの対象と回数、PTYへの入力、端末alert"
+// observation_boundary = "component-behavior"
+// scope = "SessionTerminalの出力受信から実xtermの公開link provider／OSC 8 handlerとopenPathまで（OSブラウザー起動は対象外）"
+// lifecycle = "permanent"
+// impact = "PowerShell／WSLのWebリンクを開けない、通常の文字選択で意図せず外部へ移動する、または失敗を認識できない"
+// distinction = "型検査やClipboard testでは実addonの出力検出とリンク操作の配送を確認できない。既存のJSDOMで小さな単一componentを検証する"
+// @end-test-value
+it("端末出力のWebリンクをCtrl＋左クリックで開き、失敗を表示する", async (context) => {
+  const dom = new JSDOM('<!doctype html><body><div id="root"></div></body>', { pretendToBeVisual: true });
+  const globals: Record<string, unknown> = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement,
+    Node: dom.window.Node,
+    self: dom.window,
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    ResizeObserver: class { observe() {} disconnect() {} },
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) {
+    Object.defineProperty(globalThis, key, { configurable: true, value });
+  }
+  Object.defineProperty(dom.window, "matchMedia", { value: () => ({
+    matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {},
+  }) });
+  Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", { value: () => ({
+    measureText: () => ({ width: 8 }),
+    createLinearGradient: () => ({ addColorStop() {} }),
+  }) });
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  const opened: string[] = [];
+  const writes: string[] = [];
+  let openFailure: "result" | "throw" | undefined;
+  let terminalId = "";
+  let emit: Parameters<WithMateWindowTerminalApi["subscribeTerminalEvents"]>[0] | undefined;
+  const api: WithMateWindowTerminalApi & Pick<WithMateWindowNavigationApi, "openPath"> = {
+    openPath: async (target) => {
+      opened.push(target);
+      if (openFailure === "throw") throw new Error("Browser unavailable");
+      if (openFailure === "result") return { status: "failed", targetType: "unknown", target, message: "Browser unavailable" };
+      return { status: "opened", targetType: "external-url", target };
+    },
+    createTerminal: async (request) => { terminalId = request.terminalId; return { shellName: "PowerShell" }; },
+    writeTerminalInput: (_id, data) => { writes.push(data); },
+    resizeTerminal() {},
+    acknowledgeTerminalOutput() {},
+    closeTerminal: async () => true,
+    releaseTerminal: async () => {},
+    subscribeTerminalEvents: (listener) => { emit = listener; return () => { emit = undefined; }; },
+  };
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    const { Terminal: Xterm } = await import("@xterm/xterm");
+    let terminal: Terminal | undefined;
+    let provider: ILinkProvider | undefined;
+    const open = Xterm.prototype.open;
+    const registerLinkProvider = Xterm.prototype.registerLinkProvider;
+    context.mock.method(Xterm.prototype, "open", function (this: Terminal, ...args: Parameters<Terminal["open"]>) {
+      terminal = this;
+      return open.apply(this, args);
+    });
+    context.mock.method(Xterm.prototype, "registerLinkProvider", function (this: Terminal, value: ILinkProvider) {
+      provider = value;
+      return registerLinkProvider.call(this, value);
+    });
+    await act(async () => { root.render(createElement(SessionTerminal, { api, expanded: true, onCollapse() {} })); });
+    for (let attempt = 0; attempt < 100 && !terminalId; attempt += 1) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    }
+    assert.notEqual(terminalId, "");
+    assert.ok(terminal);
+    assert.ok(provider, "the real web-links addon must register its public provider");
+    assert.ok(emit);
+    await act(async () => {
+      emit!({ type: "data", terminalId, data: "PS> https://example.com/powershell\r\nWSL$ http://localhost:3000/wsl\r\n" });
+      await new Promise<void>((resolve) => terminal!.write("", resolve));
+    });
+    const findLink = async (line: number) => {
+      const links = await new Promise<ILink[] | undefined>((resolve) => provider!.provideLinks(line, resolve));
+      assert.equal(links?.length, 1);
+      return links![0];
+    };
+    const psLink = await findLink(1);
+    const wslLink = await findLink(2);
+    assert.equal(psLink.text, "https://example.com/powershell");
+    assert.equal(wslLink.text, "http://localhost:3000/wsl");
+    const activate = async (link: ILink, options: MouseEventInit) => {
+      await act(async () => { link.activate(new dom.window.MouseEvent("click", options), link.text); });
+    };
+    for (const link of [psLink, wslLink]) {
+      for (const options of [{ button: 0 }, { button: 1, ctrlKey: true }, { button: 2, ctrlKey: true }]) {
+        await activate(link, options);
+        assert.deepEqual(opened, []);
+      }
+    }
+    await activate(psLink, { button: 0, ctrlKey: true });
+    await activate(wslLink, { button: 0, ctrlKey: true });
+    assert.deepEqual(opened, [psLink.text, wslLink.text]);
+    assert.deepEqual(writes, [], "link activation must not send shell input");
+
+    const oscHandler = terminal.options.linkHandler;
+    assert.ok(oscHandler);
+    const oscRange = { start: { x: 1, y: 1 }, end: { x: 4, y: 1 } };
+    await act(async () => {
+      oscHandler.activate(new dom.window.MouseEvent("click", { button: 0 }), psLink.text, oscRange);
+      for (const target of ["file:///C:/local.txt", "javascript:alert(1)", "mailto:test@example.com"]) {
+        oscHandler.activate(new dom.window.MouseEvent("click", { button: 0, ctrlKey: true }), target, oscRange);
+      }
+    });
+    assert.equal(opened.length, 2);
+    await act(async () => {
+      oscHandler.activate(new dom.window.MouseEvent("click", { button: 0, ctrlKey: true }), "https://example.com/osc", oscRange);
+    });
+    assert.equal(opened.at(-1), "https://example.com/osc");
+
+    for (const failure of ["result", "throw"] as const) {
+      openFailure = failure;
+      await activate(psLink, { button: 0, ctrlKey: true });
+      assert.match(dom.window.document.querySelector('[role="alert"]')?.textContent ?? "", /Link could not be opened: Browser unavailable/);
+    }
   } finally {
     await act(async () => { root.unmount(); });
     dom.window.close();
