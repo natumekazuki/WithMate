@@ -65,6 +65,78 @@ test("Markdown projectionは各文字の追記と置換を全文parseと一致�
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "構文が成立したMarkdown表は逐次追記と高度描画への昇格を通じて同じDOMで表示され、最新のセル内容を保持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/819 / docs/design/message-rich-text.md: Rendering Policy" }
+// fault = "軽量描画で表がparagraphへ戻る、昇格で表DOMを交換する、または追記・置換したセルが更新されない"
+// observable = "light/fullの各更新におけるtable要素の同一性、headerとcellの文字列、置換後の表示"
+// observation_boundary = "component-behavior"
+// scope = "MessageRichTextの既定Previewにおける表の逐次受信"
+// lifecycle = "permanent"
+// impact = "読み進めている表と選択対象が更新ごとに消失せず、受信内容を遅延なく読める"
+// distinction = "既存のforceFullRender最終DOM比較では通らない既定のlight/full遷移を制御し、少数の文字追記で表の連続性を検出する"
+// @end-test-value
+test("MessageRichTextはlight/full切替と文字追記で表のDOMと最新内容を保つ", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: "http://localhost/", pretendToBeVisual: true });
+  const keys = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const previous = keys.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  const idleCallbacks = new Map<number, () => void>();
+  let idleId = 0;
+  Object.defineProperty(dom.window, "requestIdleCallback", { value: (callback: () => void) => {
+    idleCallbacks.set(++idleId, callback);
+    return idleId;
+  } });
+  Object.defineProperty(dom.window, "cancelIdleCallback", { value: (id: number) => idleCallbacks.delete(id) });
+  for (const [key, value] of [["window", dom.window], ["document", dom.window.document], ["IS_REACT_ACT_ENVIRONMENT", true]] as const) {
+    Object.defineProperty(globalThis, key, { configurable: true, value });
+  }
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  const render = async (text: string) => {
+    await act(async () => root.render(<MessageRichText text={text} />));
+    assert.equal(container.firstElementChild?.getAttribute("data-markdown-render-mode"), "light");
+  };
+  const promote = async () => {
+    await act(async () => {
+      const callbacks = [...idleCallbacks.values()];
+      idleCallbacks.clear();
+      callbacks.forEach((callback) => callback());
+    });
+    assert.equal(container.firstElementChild?.getAttribute("data-markdown-render-mode"), "full");
+  };
+  let text = "| Name | Value |\n| --- | ---: |\n| First | 1 |\n";
+  try {
+    await render(text);
+    const table = container.querySelector("table");
+    assert.ok(table, "成立した表は高度描画の待機中も表示する");
+    const header = table.querySelector("thead");
+    const firstCell = table.querySelector("td");
+    for (const character of "| Second | 234 |\n") {
+      await promote();
+      assert.equal(container.querySelector("table"), table);
+      text += character;
+      await render(text);
+      assert.equal(container.querySelector("table"), table);
+      assert.equal(table.querySelector("thead"), header);
+      assert.equal(table.querySelector("td"), firstCell);
+    }
+    assert.deepEqual([...table.querySelectorAll("th")].map((cell) => cell.textContent), ["Name", "Value"]);
+    assert.deepEqual([...table.querySelectorAll("td")].map((cell) => cell.textContent), ["First", "1", "Second", "234"]);
+    await promote();
+    await render(text.replace("234", "567"));
+    assert.deepEqual([...container.querySelectorAll("td")].map((cell) => cell.textContent), ["First", "1", "Second", "567"]);
+    await promote();
+    await render("現在の本文");
+    await promote();
+    assert.equal(container.textContent, "現在の本文");
+  } finally {
+    await act(async () => root.unmount());
+    keys.forEach((key, index) => previous[index] ? Object.defineProperty(globalThis, key, previous[index]!) : Reflect.deleteProperty(globalThis, key));
+    dom.window.close();
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "確定blockのある長文追記は全文再parseより少ない文字数を処理し同じASTを返す"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Streaming projection" }

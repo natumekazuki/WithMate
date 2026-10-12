@@ -1572,16 +1572,16 @@ test("Markdown ordered list は2桁marker用の論理方向余白を持ち、独
 
 // @test-value v2
 // kind = "contract"
-// claim = "MessageRichText は browser 初回 render を light markdown にして後から full markdown に差し替える"
+// claim = "MessageRichText は browser 初回表示で数式の高度描画を遅延し、後続full描画でKaTeXを表示する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "browser初回表示をfullへ同期実行しlight modeを経由しない、または後続fullへ切替できない"
-// observable = "data-markdown-render-modeのlightからfullへの遷移"
+// fault = "browser初回表示でKaTeXを同期描画する、または後続full描画へ切り替わらず数式を表示しない"
+// observable = "data-markdown-render-modeのlightからfullへの遷移と各modeのKaTeX要素"
 // observation_boundary = "component-behavior"
 // scope = "MessageRichText deferred render mode"
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
-test("MessageRichText は browser 初回 render を light markdown にして後から full markdown に差し替える", async () => {
+test("MessageRichText は browser 初回で数式の高度描画を遅延しfullで表示する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
     url: "http://localhost/",
@@ -1596,7 +1596,7 @@ test("MessageRichText は browser 初回 render を light markdown にして後�
     await act(async () => {
       root?.render(
         React.createElement(MessageRichText, {
-          text: ["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n"),
+          text: "$$x^2$$",
         }),
       );
     });
@@ -1607,7 +1607,7 @@ test("MessageRichText は browser 初回 render を light markdown にして後�
         ?.getAttribute("data-markdown-render-mode"),
       "light",
     );
-    assert.equal(container.querySelector("table"), null);
+    assert.equal(container.querySelector(".katex"), null);
 
     await act(async () => {
       await waitForAnimationFrame(dom.window);
@@ -1620,7 +1620,7 @@ test("MessageRichText は browser 初回 render を light markdown にして後�
         ?.getAttribute("data-markdown-render-mode"),
       "full",
     );
-    assert.notEqual(container.querySelector("table.message-table"), null);
+    assert.ok(container.querySelector(".katex"));
   } finally {
     if (root) {
       await act(async () => root?.unmount());

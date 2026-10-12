@@ -62,6 +62,7 @@ flowchart LR
 ## Rendering Policy
 
 - message と file preview は同じ component mapping を使う
+- GFMの表・list・link等はlight/fullの両方で解釈する。表の構文が成立した後は逐次追記やfull描画への昇格でも同じ表DOMを更新し、未整形のparagraphとの往復や表示のための追加遅延を作らない。KaTeXとMermaidの高度描画は既存の遅延経路を使用する。
 - 呼び出し元は path open と local image resolution の context だけを注入する
 - Quote を提供する共通 chat window は Preview を既定とし、ActionDock の表示切替で message column 全体を Source にできる。Source は元 Markdown を plain text として表示し、選択、Quote、検索は表示中の source text を対象にする
 - assistant response の選択 action は Session chat root が overlay と stacking context を所有し、message surface や ActionDock の局所 stacking context から分離する。位置と lifecycle の executable contract は `src/chat/selection-action-overlay.ts` と `tests/renderer/session-message-column.test.ts` を正本とする

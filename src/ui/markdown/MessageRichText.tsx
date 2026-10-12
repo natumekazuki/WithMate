@@ -230,6 +230,7 @@ function MessageMarkdownPreview({
           ]
         : [
             remarkFrontmatter,
+            remarkGfm,
             [remarkMath, { singleDollarTextMath: false }],
             parseProjections.light,
             sharedRemarkHtmlLineBreaks,
