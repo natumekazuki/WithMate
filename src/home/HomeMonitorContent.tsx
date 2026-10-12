@@ -34,6 +34,12 @@ export type HomeMonitorContentProps = {
 
 type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading" | "closed";
 
+function clampRunningRatio(ratio: number, height: number): number {
+  if (height <= 0) return ratio;
+  const minimumRatio = Math.min(0.5, 48 / height);
+  return Math.max(minimumRatio, Math.min(1 - minimumRatio, ratio));
+}
+
 function getEntryKey(entry: HomeMonitorEntry): string {
   return `${entry.kind}:${entry.session.id}`;
 }
@@ -111,7 +117,10 @@ export function HomeMonitorContent({
     const container = sectionsRef.current;
     if (!container) return;
     const sections = [...container.querySelectorAll<HTMLElement>(":scope > section")];
-    const updateCollapsedLists = () => {
+    const updateLayout = () => {
+      const splitter = container.querySelector<HTMLElement>(".home-monitor-splitter");
+      const height = container.getBoundingClientRect().height - (splitter?.getBoundingClientRect().height ?? 0);
+      setRunningRatio((current) => clampRunningRatio(current, height));
       const next = sections.map((section) => {
         const list = section.querySelector<HTMLElement>(".home-monitor-list");
         const card = list?.querySelector<HTMLElement>(".home-monitor-card");
@@ -126,10 +135,11 @@ export function HomeMonitorContent({
       });
       setCollapsedLists((current) => current.every((value, index) => value === next[index]) ? current : next);
     };
-    updateCollapsedLists();
+    updateLayout();
     const Observer = container.ownerDocument.defaultView?.ResizeObserver;
     if (!Observer) return;
-    const observer = new Observer(updateCollapsedLists);
+    const observer = new Observer(updateLayout);
+    observer.observe(container);
     for (const section of sections) {
       observer.observe(section);
       const head = section.querySelector(".home-monitor-section-head");
@@ -142,8 +152,7 @@ export function HomeMonitorContent({
 
   const resizeSections = (ratio: number, height: number) => {
     if (height <= 0) return;
-    const minimumRatio = Math.min(0.5, 48 / height);
-    setRunningRatio(Math.max(minimumRatio, Math.min(1 - minimumRatio, ratio)));
+    setRunningRatio(clampRunningRatio(ratio, height));
   };
 
   const toggleEntry = (entry: HomeMonitorEntry) => {
@@ -340,9 +349,12 @@ export function HomeMonitorContent({
           onPointerDown={(event) => {
             event.preventDefault();
             const splitter = event.currentTarget;
+            const height = (splitter.parentElement?.getBoundingClientRect().height ?? 0) - splitter.getBoundingClientRect().height;
+            const ratio = clampRunningRatio(runningRatio, height);
+            resizeSections(ratio, height);
             resizeStartRef.current = {
-              ratio: runningRatio,
-              height: (splitter.parentElement?.getBoundingClientRect().height ?? 0) - splitter.getBoundingClientRect().height,
+              ratio,
+              height,
             };
           }}
           onDrag={(_event, delta) => {
@@ -355,7 +367,8 @@ export function HomeMonitorContent({
             event.preventDefault();
             const splitter = event.currentTarget;
             const height = (splitter.parentElement?.getBoundingClientRect().height ?? 0) - splitter.getBoundingClientRect().height;
-            const nextRatio = event.key === "Home" ? 0 : event.key === "End" ? 1 : runningRatio + (event.key === "ArrowDown" ? 24 : -24) / height;
+            const ratio = clampRunningRatio(runningRatio, height);
+            const nextRatio = event.key === "Home" ? 0 : event.key === "End" ? 1 : ratio + (event.key === "ArrowDown" ? 24 : -24) / height;
             resizeSections(nextRatio, height);
           }}
         />

@@ -175,3 +175,97 @@ test("Monitorは小領域の一覧を操作不可にしfocusとscrollを維持�
   }
   assert.equal(disconnected, true);
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "Monitorの領域高が縮むと上下48pxを維持した表示比率をARIAへ反映し、最初の矢印操作は24px、dragはpointer移動量だけ表示位置から動く"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "旧高さで保存した比率を縮小後も使い、ARIAの配分と最初のkeyboard／drag移動を表示位置からずらす"
+// observable = "領域高変更・resize通知・keyboard／pointerイベント後のgridTemplateRowsの比率とseparatorのaria-valuenow"
+// observation_boundary = "component-behavior"
+// scope = "HomeMonitorContentの領域resizeから共有Splitterの入力起点と表示比率への同期"
+// lifecycle = "permanent"
+// impact = "Home／独立MonitorのWindowを縮めた後も、仕切りが入力に追従し支援技術へ実際の配分を伝えられる"
+// distinction = "既存の固定高resize操作testでは検出できない高さ変更を1つのJSDOMで確認する。実際のCSS寸法とpointer追従はbrowser検証で確認する"
+// @end-test-value
+test("Monitorは領域縮小後の比率と最初のkeyboard／dragを現在の高さへ合わせる", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  const names = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const descriptors = names.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
+  for (const name of names) {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name],
+    });
+  }
+  let containerHeight = 790;
+  let notifyResize = () => {};
+  class TestResizeObserver implements ResizeObserver {
+    constructor(callback: ResizeObserverCallback) { notifyResize = () => callback([], this); }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  dom.window.ResizeObserver = TestResizeObserver;
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function (): DOMRect {
+    const height = this.classList.contains("home-monitor-sections") ? containerHeight : this.classList.contains("home-monitor-splitter") ? 20 : 0;
+    return { x: 0, y: 0, top: 0, left: 0, right: 300, bottom: height, width: 300, height, toJSON: () => ({}) };
+  };
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(createElement(HomeMonitorContent, {
+      runningEntries: [], nonRunningEntries: [], onOpenSession() {}, onShowContextMenu() {},
+    })));
+    const sections = dom.window.document.querySelector<HTMLDivElement>(".home-monitor-sections")!;
+    const splitter = sections.querySelector<HTMLButtonElement>('[role="separator"]')!;
+    const key = async (value: string) => {
+      await act(async () => { splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: value, bubbles: true })); });
+    };
+    const pointer = async (type: string, y: number) => {
+      const event = new dom.window.MouseEvent(type, { bubbles: true, button: 0, clientY: y });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      await act(async () => { splitter.dispatchEvent(event); });
+    };
+    const assertRunningHeight = (expected: number) => {
+      const ratio = Number(sections.style.gridTemplateRows.match(/minmax\(48px, ([\d.]+)fr\)/)?.[1]);
+      assert.ok(Math.abs(ratio * (containerHeight - 20) - expected) < 0.000001);
+      assert.equal(splitter.getAttribute("aria-valuenow"), String(Math.round(expected / (containerHeight - 20) * 100)));
+    };
+    for (const edge of ["Home", "End"]) {
+      containerHeight = 790;
+      await act(async () => notifyResize());
+      await key(edge);
+      containerHeight = 470;
+      await act(async () => notifyResize());
+      assertRunningHeight(edge === "Home" ? 48 : 402);
+      await key(edge === "Home" ? "ArrowDown" : "ArrowUp");
+      assertRunningHeight(edge === "Home" ? 72 : 378);
+
+      // 入力がResizeObserver通知より先でも、表示中の限界位置から動く。
+      containerHeight = 790;
+      await act(async () => notifyResize());
+      await key(edge);
+      containerHeight = 470;
+      await key(edge === "Home" ? "ArrowDown" : "ArrowUp");
+      assertRunningHeight(edge === "Home" ? 72 : 378);
+
+      containerHeight = 790;
+      await act(async () => notifyResize());
+      await key(edge);
+      containerHeight = 470;
+      await pointer("pointerdown", 400);
+      assertRunningHeight(edge === "Home" ? 48 : 402);
+      await pointer("pointermove", edge === "Home" ? 430 : 370);
+      assertRunningHeight(edge === "Home" ? 78 : 372);
+      await pointer("pointerup", edge === "Home" ? 430 : 370);
+    }
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    names.forEach((name, index) => {
+      const descriptor = descriptors[index];
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    });
+  }
+});
