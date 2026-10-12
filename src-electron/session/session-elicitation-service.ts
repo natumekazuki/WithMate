@@ -6,6 +6,7 @@ type PendingElicitationRequest = {
 };
 
 type SessionElicitationServiceOptions = {
+  notifyQuestion?: (sessionId: string, signal: AbortSignal) => void;
   updateLiveSessionRun: (
     sessionId: string,
     recipe: (current: LiveSessionRunState) => LiveSessionRunState,
@@ -43,11 +44,13 @@ export class SessionElicitationService {
     }
 
     return new Promise<LiveElicitationResponse>((resolve) => {
+      const notificationController = new AbortController();
       const handleAbort = () => {
         settle({ action: "cancel" });
       };
 
       const cleanup = () => {
+        notificationController.abort();
         signal.removeEventListener("abort", handleAbort);
         const currentPendingRequest = this.pendingRequests.get(sessionId);
         if (currentPendingRequest?.requestId === request.requestId) {
@@ -75,6 +78,9 @@ export class SessionElicitationService {
         ...current,
         elicitationRequest: request,
       }));
+      if (request.provider === "codex" && request.kind === "question") {
+        this.options.notifyQuestion?.(sessionId, notificationController.signal);
+      }
     });
   }
 }

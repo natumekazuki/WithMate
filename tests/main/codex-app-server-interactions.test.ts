@@ -20,6 +20,42 @@ const inputMethod = "item/tool/requestUserInput";
 const mcpMethod = "mcpServer/elicitation/request";
 
 // @test-value v2
+// kind = "contract"
+// claim = "native Codex質問だけがquestion種別を持ち、blocking/nonblocking両方を通知対象として識別できる"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
+// fault = "native質問の種別を落とすかMCP入力要求もquestionとして投影する"
+// observable = "onElicitationRequestへ渡すkindとblockingおよび元RPCの応答"
+// observation_boundary = "consumer"
+// scope = "Codex native question discrimination"
+// lifecycle = "permanent"
+// impact = "質問の到着通知を失うかMCP入力要求をCodex質問と誤通知する"
+// distinction = "native RPCから共通UIへの種別投影は型検査や通知service単体では検出できない"
+// @end-test-value
+test("distinguishes native questions from MCP input requests", async () => {
+  const displayed: LiveElicitationRequest[] = [];
+  const helper = new CodexTurnInteractions({ onElicitationRequest: (ui) => {
+    displayed.push(ui);
+    return { action: "accept", content: { q: "answer" } };
+  } });
+  const requests = [
+    request(1, inputMethod, { isBlocking: true, questions: [question("q")] }),
+    request(2, inputMethod, { isBlocking: false, questions: [question("q")] }),
+    request(3, mcpMethod, { mode: "form", serverName: "MCP", message: "Input", requestedSchema: {
+      type: "object", properties: { q: { type: "string" } }, required: ["q"],
+    } }),
+  ];
+  for (const entry of requests) helper.accept(entry.wire);
+  await setImmediate();
+  assert.deepEqual(displayed.map(({ kind, blocking }) => ({ kind, blocking })), [
+    { kind: "question", blocking: true },
+    { kind: "question", blocking: false },
+    { kind: undefined, blocking: undefined },
+  ]);
+  assert.deepEqual(requests.map(({ results, errors }) => [results.length, errors.length]), [[1, 0], [1, 0], [1, 0]]);
+  helper.close();
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "承認・質問・MCPを一つずつ表示し元のRPCへ回答する"
 // oracle = { type = "contract", ref = "Issue #780: concurrent server requests use the one-slot interaction services" }

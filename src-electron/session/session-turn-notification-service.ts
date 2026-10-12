@@ -161,6 +161,29 @@ export class SessionTurnNotificationService<TIcon> {
 
   constructor(private readonly deps: SessionTurnNotificationServiceDeps<TIcon>) {}
 
+  async notifyQuestion(
+    session: Session,
+    signal: AbortSignal,
+    target: SessionTurnNotificationTarget = { kind: "session", sessionId: session.id },
+  ): Promise<boolean> {
+    const notificationKey = this.getNotificationKey(target);
+    if (signal.aborted) return false;
+    let enabled: boolean;
+    try {
+      enabled = await this.deps.isNotificationEnabled();
+    } catch (error) {
+      this.deps.logWarning("eligibility-check-failed", notificationKey, error);
+      return false;
+    }
+    if (signal.aborted || !this.isEligibleSync(this.getFocusSessionId(target), notificationKey, enabled)) {
+      return false;
+    }
+    return this.showNotification({ session }, target, notificationKey, {
+      title: "WithMate",
+      body: `${session.taskTitle.trim() || "Session"}: Codex has a question.`,
+    }, signal);
+  }
+
   notifyTurnTerminal(
     notificationInput: SessionTurnTerminalNotification,
     target: SessionTurnNotificationTarget = { kind: "session", sessionId: notificationInput.session.id },
@@ -243,10 +266,11 @@ export class SessionTurnNotificationService<TIcon> {
   }
 
   private showNotification(
-    notificationInput: SessionTurnTerminalNotification,
+    notificationInput: { session: Session },
     target: SessionTurnNotificationTarget,
     notificationKey: string,
     content: Pick<SessionTurnNotificationOptions<TIcon>, "title" | "body">,
+    signal?: AbortSignal,
   ): boolean {
     const { session } = notificationInput;
     const options: SessionTurnNotificationOptions<TIcon> = {
@@ -269,13 +293,14 @@ export class SessionTurnNotificationService<TIcon> {
       return false;
     }
 
-    this.trackNotification(notificationKey, target, notification);
+    const stopTrackingSignal = this.trackNotification(notificationKey, target, notification, signal);
 
     try {
       notification.show();
       return true;
     } catch (error) {
       this.clearIfCurrent(notificationKey, notification);
+      stopTrackingSignal();
       this.deps.logWarning("show-failed", notificationKey, error);
       return false;
     }
@@ -285,23 +310,35 @@ export class SessionTurnNotificationService<TIcon> {
     notificationKey: string,
     target: SessionTurnNotificationTarget,
     notification: SessionTurnNotificationHandle,
-  ): void {
+    signal?: AbortSignal,
+  ): () => void {
+    const dismiss = () => {
+      if (this.trackedNotifications.get(notificationKey) === notification) {
+        this.closeTrackedNotification(notificationKey, "dismiss-close-failed");
+      }
+      signal?.removeEventListener("abort", dismiss);
+    };
+    signal?.addEventListener("abort", dismiss, { once: true });
     notification.onClick(() => {
       if (!this.clearIfCurrent(notificationKey, notification)) {
         return;
       }
+      signal?.removeEventListener("abort", dismiss);
       void this.openNotificationTarget(target, notificationKey);
     });
     notification.onClose((reason) => {
       if (reason !== "timedOut") {
         this.clearIfCurrent(notificationKey, notification);
+        signal?.removeEventListener("abort", dismiss);
       }
     });
     notification.onFailed((error) => {
       this.clearIfCurrent(notificationKey, notification);
+      signal?.removeEventListener("abort", dismiss);
       this.deps.logWarning("delivery-failed", notificationKey, error);
     });
     this.trackedNotifications.set(notificationKey, notification);
+    return () => signal?.removeEventListener("abort", dismiss);
   }
 
   private isEligibleSync(focusSessionId: string, notificationKey: string, enabled: boolean): boolean {

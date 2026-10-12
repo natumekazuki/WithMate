@@ -160,6 +160,7 @@ export type LiveElicitationField =
 export type LiveElicitationRequest = {
   requestId: string;
   provider: string;
+  kind?: "question";
   mode: "form" | "url";
   message: string;
   source?: string;

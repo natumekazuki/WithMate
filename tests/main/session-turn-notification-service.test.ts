@@ -151,6 +151,111 @@ async function flushAsyncListeners(): Promise<void> {
 describe("SessionTurnNotificationService", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "Codex質問通知は既存のWindows・設定・対象Window非focus条件を使い、本文previewを読まず固定文とCharacter iconで通知する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#windows-session-notifications" }
+  // fault = "対象Windowのfocusや設定を無視するか質問通知に会話本文を露出する"
+  // observable = "通知表示の有無、title/body/iconとpreview設定読込み回数"
+  // observation_boundary = "public-boundary"
+  // scope = "Codex question notification eligibility and content"
+  // lifecycle = "permanent"
+  // impact = "入力待ちを見落とすか秘密を含む会話内容がOS通知に表示される"
+  // distinction = "完了previewのtestでは質問通知のeligibilityと固定文を確認できず、軽量なfake通知で継続確認する"
+  // @end-test-value
+  it("質問を固定文で通知し、既存の通知条件を維持する", async () => {
+    for (const condition of ["enabled", "disabled", "focused", "unsupported", "macOS"] as const) {
+      let previewReads = 0;
+      const harness = createHarness({
+        platform: condition === "macOS" ? "darwin" : "win32",
+        isNotificationEnabled: async () => condition !== "disabled",
+        isNotificationSupported: () => condition !== "unsupported",
+        isSessionWindowFocused: () => condition === "focused",
+        isResponsePreviewEnabled: () => { previewReads++; return true; },
+      });
+      const session = createSession({ messages: [{ role: "assistant", text: "secret conversation" }] });
+      assert.equal(await harness.terminalService.notifyQuestion(session, new AbortController().signal), condition === "enabled");
+      assert.equal(previewReads, 0);
+      assert.equal(harness.notifications.length, condition === "enabled" ? 1 : 0);
+      if (condition === "enabled") {
+        assert.equal(harness.notifications[0]?.shown, true);
+        assert.deepEqual(harness.options[0], {
+          id: harness.options[0]?.id, groupId: "WithMateSessions", title: "WithMate",
+          body: "通知テスト: Codex has a question.", icon: { path: "C:/characters/a.png" },
+        });
+      }
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "質問の解決は表示済み通知を閉じ、設定読込み中の遅延通知を抑止し、後続の同会話通知は閉じない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#windows-session-notifications" }
+  // fault = "解決後に古い質問通知を表示するか、古いsignalで次の通知を撤去する"
+  // observable = "notifyQuestion結果、通知instanceのshown/closedと遅延clickによるWindow open件数"
+  // observation_boundary = "public-boundary"
+  // scope = "question notification resolution and replacement"
+  // lifecycle = "permanent"
+  // impact = "回答済み質問の通知が残るか、次の入力待ち通知を利用者が受け取れない"
+  // distinction = "設定Promiseと質問解決のraceは型検査やterminal通知testでは捕捉できない"
+  // @end-test-value
+  it("解決済みの質問通知を撤去し、遅延表示と後続通知への干渉を防ぐ", async () => {
+    let resolveEnabled!: (enabled: boolean) => void;
+    const delayed = createHarness({ isNotificationEnabled: () => new Promise((resolve) => { resolveEnabled = resolve; }) });
+    const canceled = new AbortController();
+    const pending = delayed.terminalService.notifyQuestion(delayed.session, canceled.signal);
+    canceled.abort();
+    resolveEnabled(true);
+    assert.equal(await pending, false);
+    assert.equal(delayed.notifications.length, 0);
+
+    const harness = createHarness();
+    const first = new AbortController();
+    assert.equal(await harness.terminalService.notifyQuestion(harness.session, first.signal), true);
+    harness.notifications[0]?.timeout();
+    first.abort();
+    assert.equal(harness.notifications[0]?.closed, true);
+    harness.notifications[0]?.click();
+    await flushAsyncListeners();
+    assert.deepEqual(harness.openedSessions, []);
+
+    const second = new AbortController();
+    assert.equal(await harness.terminalService.notifyQuestion(harness.session, second.signal), true);
+    assert.equal(harness.service.notifyTurnCompleted(harness.session), true);
+    assert.equal(harness.notifications[1]?.closed, true);
+    second.abort();
+    assert.equal(harness.notifications[2]?.closed, false);
+    harness.notifications[2]?.click();
+    await flushAsyncListeners();
+    assert.deepEqual(harness.openedSessions, [harness.session.id]);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary質問通知は親Windowのfocusを判定し、クリックでその親の対象Auxiliaryへ戻る"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#windows-session-notifications" }
+  // fault = "Auxiliary IDでWindowを探索するか通知clickでMain会話を開く"
+  // observable = "focus判定対象IDとopenAuxiliarySessionWindow引数"
+  // observation_boundary = "consumer"
+  // scope = "Auxiliary Codex question notification target"
+  // lifecycle = "permanent"
+  // impact = "質問への回答先を取り違えるか親Window非focus時の質問を通知しない"
+  // distinction = "質問notifyQuestion入口のtarget転送はterminal通知の既存testだけでは保証されない"
+  // @end-test-value
+  it("Auxiliaryの質問通知から対象会話へ戻る", async () => {
+    const focusIds: string[] = [];
+    const harness = createHarness({ isSessionWindowFocused: (id) => { focusIds.push(id); return false; } });
+    const auxiliary = createSession({ id: "auxiliary-1" });
+    assert.equal(await harness.terminalService.notifyQuestion(auxiliary, new AbortController().signal, {
+      kind: "auxiliary", parentSessionId: harness.session.id, auxiliarySessionId: auxiliary.id,
+    }), true);
+    harness.notifications[0]?.click();
+    await flushAsyncListeners();
+    assert.deepEqual(focusIds, [harness.session.id]);
+    assert.deepEqual(harness.openedAuxiliarySessions, [{ parentSessionId: harness.session.id, auxiliarySessionId: auxiliary.id }]);
+    assert.deepEqual(harness.openedSessions, []);
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "並行する通知設定読込みの失敗は順序によらず通知service内で処理し、previewだけの失敗は固定文へ戻す"
   // oracle = { type = "contract", ref = "docs/adr/006-windows-session-turn-notifications.md#decision" }
   // fault = "先行するeligibility失敗の早期returnかpreview先行失敗で未処理rejectionを残す"

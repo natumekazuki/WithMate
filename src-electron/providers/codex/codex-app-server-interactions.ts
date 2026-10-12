@@ -90,7 +90,7 @@ function questions(params: Record<string, unknown>, requestId: string): LiveElic
     if (options.length === 0 && !question.isOther) return null;
     fields.push(question.isSecret ? { ...base, type: "text", secret: true } : { ...base, type: "select", options, allowFreeText: question.isOther });
   }
-  return { requestId, provider: "codex", mode: "form", message: "Codex has a question", fields, blocking: params.isBlocking };
+  return { requestId, provider: "codex", kind: "question", mode: "form", message: "Codex has a question", fields, blocking: params.isBlocking };
 }
 
 // Projection is deliberately limited to constraints represented by the existing form UI.

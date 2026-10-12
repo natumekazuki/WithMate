@@ -2734,12 +2734,42 @@ function requireSessionApprovalService(): SessionApprovalService {
 function requireSessionElicitationService(): SessionElicitationService {
   if (!sessionElicitationService) {
     sessionElicitationService = new SessionElicitationService({
+      notifyQuestion: (sessionId, signal) => {
+        void notifyLiveCodexQuestion(sessionId, signal).catch((error: unknown) => {
+          writeAppLog({
+            level: "warn",
+            kind: "session.question-notification.failed",
+            process: "main",
+            message: "Session question notification failed",
+            data: { sessionId },
+            error: appLogService.errorToLogError(error),
+          });
+        });
+      },
       updateLiveSessionRun: (sessionId, recipe) =>
         requireSessionObservabilityService().updateLiveSessionRun(sessionId, recipe),
     });
   }
 
   return sessionElicitationService;
+}
+
+async function notifyLiveCodexQuestion(sessionId: string, signal: AbortSignal): Promise<void> {
+  const session = await getRuntimeSession(sessionId);
+  if (signal.aborted) return;
+  if (session) {
+    await requireSessionTurnNotificationService().notifyQuestion(session, signal);
+    return;
+  }
+  const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId);
+  if (signal.aborted || !auxiliary || !await getRuntimeSession(auxiliary.parentSessionId)) return;
+  const runtimeSession = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
+  if (signal.aborted || !runtimeSession) return;
+  await requireSessionTurnNotificationService().notifyQuestion(runtimeSession, signal, {
+    kind: "auxiliary",
+    parentSessionId: auxiliary.parentSessionId,
+    auxiliarySessionId: sessionId,
+  });
 }
 
 function requireSessionMemoryStorage(): SessionMemoryStorageAccess {
