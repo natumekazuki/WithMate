@@ -15,10 +15,50 @@ function input(name: string): CodexProjectionStart {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Codexの本文・statusが同じでもexitCodeとerrorだけの補正をWorkerのlive step snapshotとupsertへ反映し重複通知を抑止する"
+// claim = "Workerのlive配送は変更operationだけを秘匿化して渡し、同ID補正・無変更flush後もfinishには取得済み全本文と全operationが残る"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner" }
+// fault = "無変更Detailsを再送する、同ID補正を落とす、または変更配送でfinalの取得済みoperationを失う"
+// observable = "実Workerのsnapshot指定・live変更ID/details・無変更flushとfinishの全items/assistant本文"
+// observation_boundary = "public-boundary"
+// scope = "CodexProjectionClient incremental live and complete finish"
+// lifecycle = "permanent"
+// impact = "多数operationでMainへの反復コピーが増幅し、実行中表示または確定Detailsが欠落する"
+// distinction = "map単体や型検査ではWorker clone境界の配送単位とfinalへの全本文保持を検査できない。小さい固定3通知で継続コストを抑える"
+// @end-test-value
+test("Worker liveは変更operationだけを配送してfinishの完全本文を維持する", async () => {
+  const client = new CodexProjectionClient();
+  const run = await client.begin(input("delta"));
+  const command = (id: string, output: string) => ({ id, type: "commandExecution", command: id, aggregatedOutput: output, status: "completed", exitCode: 0 });
+  try {
+    for (const item of [command("one", "first cap-delta"), command("two", "second"), command("one", "corrected")]) {
+      await client.call(run, { type: "event", event: { method: "item/completed", params: { item } } });
+      const live = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: true });
+      assert.equal(live.changes.snapshot, false);
+      assert.deepEqual(live.state.steps, []);
+      assert.deepEqual(live.changes.steps.upserts.map(step => step.id), [item.id]);
+      assert.deepEqual(live.changes.steps.removes, []);
+      assert.ok(!JSON.stringify(live).includes("cap-delta"));
+      assert.equal(live.changes.steps.upserts[0].details, item.id === "one" && item.aggregatedOutput.startsWith("first")
+        ? "first [WITHMATE_BINDING_REFERENCE_REDACTED]" : item.aggregatedOutput);
+    }
+    const unchanged = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false, force: true });
+    assert.deepEqual(unchanged.state.steps, []);
+    assert.deepEqual(unchanged.changes.steps, { upserts: [], removes: [] });
+    const body = "全文".repeat(PROVIDER_TEXT_PREVIEW_LIMIT);
+    await client.call(run, { type: "event", event: { method: "item/completed", params: { item: { id: "answer", type: "agentMessage", text: body } } } });
+    const final = await client.call<CodexProjectionFinal>(run, { type: "finish", diagnostics: [] });
+    assert.equal(final.assistantText, body);
+    assert.deepEqual(final.items.filter(item => item.type === "commandExecution").map(item => ({ id: item.id, output: item.aggregatedOutput })),
+      [{ id: "one", output: "corrected" }, { id: "two", output: "second" }]);
+  } finally { await client.release(run); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Codexの本文・statusが同じでもexitCodeとerrorだけの補正をWorkerのlive step変更配送へ反映し重複通知を抑止する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner / 通常履歴と最小turn" }
 // fault = "step同値判定が結果fieldを比較せず補正を落とす、または同じ結果で不要な変更通知を生成する"
-// observable = "実projection Workerのlive step exitCode・errorと変更upsert・再通知時のnull"
+// observable = "実projection Workerの変更upsertにあるexitCode・errorと再通知時のnull"
 // observation_boundary = "public-boundary"
 // scope = "CodexProjectionClient result-only live step corrections"
 // lifecycle = "permanent"
@@ -36,24 +76,24 @@ test("Worker liveは結果だけの補正を反映して同値通知を抑止す
   try {
     await apply([command, mcp]);
     const initial = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
-    assert.equal(initial.state.steps[0].exitCode, undefined);
-    assert.equal(initial.state.steps[1].error, undefined);
+    assert.equal(initial.changes.steps.upserts[0].exitCode, undefined);
+    assert.equal(initial.changes.steps.upserts[1].error, undefined);
     const corrected = [{ ...command, exitCode: 7 }, { ...mcp, error: { message: "{}" } }];
     await apply(corrected);
     const live = await client.call<CodexProjectionProgress | null>(run, { type: "live", inputAvailable: false });
     assert.ok(live);
-    assert.equal(live.state.steps[0].exitCode, 7);
-    assert.deepEqual(live.state.steps[1].error, { message: "{}" });
+    assert.equal(live.changes.steps.upserts[0].exitCode, 7);
+    assert.deepEqual(live.changes.steps.upserts[1].error, { message: "{}" });
     assert.deepEqual(live.changes.steps.upserts.map((step) => step.id), ["command", "mcp"]);
-    assert.deepEqual(live.state.steps.map(({ summary, details, status }) => ({ summary, details, status })),
-      initial.state.steps.map(({ summary, details, status }) => ({ summary, details, status })));
+    assert.deepEqual(live.changes.steps.upserts.map(({ summary, details, status }) => ({ summary, details, status })),
+      initial.changes.steps.upserts.map(({ summary, details, status }) => ({ summary, details, status })));
     await apply(corrected);
     assert.equal(await client.call(run, { type: "live", inputAvailable: false }), null);
     await client.call(run, { type: "event", event: { method: "turn/completed",
       params: { turn: { id: "turn", status: "completed", items: [command, mcp] } } } });
     const cleared = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
-    assert.equal(cleared.state.steps[0].exitCode, undefined);
-    assert.equal(cleared.state.steps[1].error, undefined);
+    assert.equal(cleared.changes.steps.upserts[0].exitCode, undefined);
+    assert.equal(cleared.changes.steps.upserts[1].error, undefined);
     assert.deepEqual(cleared.changes.steps.upserts.map((step) => step.id), ["command", "mcp"]);
   } finally { await client.release(run); }
 });

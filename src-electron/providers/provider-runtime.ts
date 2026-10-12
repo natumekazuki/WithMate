@@ -50,6 +50,8 @@ export function resolveRunWorkspacePath(input: Pick<RunSessionTurnInput, "sessio
 }
 
 export type RunSessionTurnProgressChanges = {
+  /** False when state collections are empty and changes carry the collection update. */
+  snapshot?: false;
   steps: { upserts: LiveSessionRunState["steps"]; removes: string[] };
   backgroundTasks: { upserts: LiveSessionRunState["backgroundTasks"]; removes: string[] };
 };

@@ -978,7 +978,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       const runId = projectionId;
       const request = this.projection.call<CodexProjectionProgress | null>(runId, { type: "live", inputAvailable: active?.inputAvailable ?? false, force })
         .then(async (result) => {
-          if (!result || signal?.aborted && !force) return;
+          if (!result) return;
           lastLive = { ...result.state, inputAvailable: active?.inputAvailable ?? false };
           lastLiveAt = Date.now();
           await args.onProgress!(lastLive, result.changes);
@@ -995,7 +995,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       lastLive = { ...lastLive, ...patch };
       try {
         const completion = Promise.resolve(args.onProgress(lastLive, {
-          steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
+          snapshot: false, steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
         })).catch(failProjection).finally(() => { pendingControls.delete(completion); });
         pendingControls.add(completion);
       } catch (error) {
