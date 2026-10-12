@@ -11,9 +11,9 @@ import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-
 // @test-value v2
 // kind = "invariant"
 // claim = "Codexの受付可能な現在turnだけにMain/Auxiliary composerから追加入力し、重複送信を防ぎ、受付確認したrevisionだけを消す。AuxiliaryのACK待ち中に編集したdraftは成功/拒否後のdurable revisionへ保存され、拒否後に明示再送できる。対象切替ではdraftを保持し、nonblocking質問では生成を継続表示する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 実行中のSend Inputとdraft revision" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 独立した追加入力shortcutとdraft revision" }
 // fault = "追加入力を新turnへ振り替える、二重送信する、拒否や編集後のdraftを消す、対象切替後の古い送信を開始する、AuxiliaryのACK前の編集を古いdurable revisionで保存してCAS staleにする、失敗後に古いdurable revisionで再送する、またはnonblocking質問を承認待ちと表示する"
-// observable = "実SessionWindowのSend Input/Cancel、textarea、pending status、preload steer/run呼出とrequest、CAS付きdraft record"
+// observable = "実SessionWindowの追加入力shortcut/Cancel、textarea、pending status、preload steer/queue呼出とrequest、CAS付きdraft record"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp mid-turn composer input"
 // lifecycle = "permanent"
@@ -78,6 +78,8 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
   let runCalls = 0;
   api.runSessionTurn = async () => { runCalls++; throw new Error("unexpected new turn"); };
   api.runAuxiliarySessionTurn = async () => { runCalls++; throw new Error("unexpected auxiliary new turn"); };
+  let queueCalls = 0;
+  api.enqueueSessionTurn = async () => { queueCalls++; throw new Error("unexpected queued turn"); };
   const calls: Array<{ id: string; request: SteerSessionTurnRequest }> = [];
   let accept!: () => void;
   let reject!: (error: Error) => void;
@@ -112,10 +114,16 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(field, value);
     field.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
   });
+  const sendInput = async () => act(async () => {
+    textarea().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, shiftKey: true, bubbles: true }));
+  });
   try {
     await act(async () => { root.render(<App />); });
     await emit("benchmark-main", false);
-    assert.equal(button("Send").disabled, true);
+    await draft("input before ready");
+    await sendInput();
+    assert.equal(calls.length, 0);
+    assert.equal(textarea().value, "input before ready");
     await emit("benchmark-main", true);
     assert.ok(button("Cancel"));
     assert.equal(textarea().disabled, false);
@@ -126,30 +134,33 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     assert.match(dom.window.document.body.textContent!, /Generating a response/);
     await emit("benchmark-main", true);
     await draft("first input");
-    await act(async () => { button("Send Input").click(); });
+    await sendInput();
     assert.equal(calls.length, 1);
     assert.deepEqual([calls[0].id, calls[0].request.expectedTurnId, calls[0].request.userMessage], ["benchmark-main", "current-turn", "first input"]);
-    assert.equal(button("Send Input").disabled, true);
-    await act(async () => { textarea().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true })); });
+    await sendInput();
     assert.equal(calls.length, 1);
     await draft("newer draft");
     await act(async () => { accept(); });
     assert.equal(textarea().value, "newer draft");
-    await act(async () => { button("Send Input").click(); });
+    await sendInput();
     await act(async () => { reject(new Error("turn ended")); });
     assert.equal(textarea().value, "newer draft");
     assert.match(dom.window.document.body.textContent!, /Main was not confirmed.*draft is preserved/);
-    await act(async () => { textarea().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true })); });
+    await sendInput();
     await act(async () => { accept(); });
     assert.equal(textarea().value, "");
     await emit("benchmark-main", true, "requested");
-    assert.equal(button("Send").disabled, true);
+    await draft("input while canceling");
+    const beforeCancelingInput = calls.length;
+    await sendInput();
+    assert.equal(calls.length, beforeCancelingInput);
+    assert.equal(textarea().value, "input while canceling");
     await act(async () => { dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Open Auxiliary']")!.click(); });
     await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".concurrent-chat-target-dock button:last-child")!.click(); });
     await emit(auxiliaryId, true);
-    assert.ok(button("Send Input"));
+    assert.equal(textarea().disabled, false);
     await draft("auxiliary input");
-    await act(async () => { button("Send Input").click(); });
+    await sendInput();
     assert.equal(calls.at(-1)!.id, auxiliaryId);
     assert.equal(calls.at(-1)!.request.auxiliaryDraftIncarnation, "benchmark-incarnation");
     assert.equal(typeof calls.at(-1)!.request.auxiliaryDraftDurableRevision, "number");
@@ -157,12 +168,12 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     await act(async () => { reject(new Error("steer was rejected")); });
     assert.equal(textarea().value, "auxiliary input");
     assert.equal(records.get(auxiliaryId)!.durableRevision, rejectedDraftRevision + 2);
-    await act(async () => { button("Send Input").click(); });
+    await sendInput();
     assert.equal(calls.at(-1)!.request.auxiliaryDraftDurableRevision, rejectedDraftRevision + 2);
     await act(async () => { accept(); });
     assert.equal(textarea().value, "");
     await draft("auxiliary next input");
-    await act(async () => { button("Send Input").click(); });
+    await sendInput();
     const acceptedInputRevision = calls.at(-1)!.request.auxiliaryDraftDurableRevision!;
     await draft("draft edited during accepted input");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
@@ -171,8 +182,7 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     assert.equal(textarea().value, "draft edited during accepted input");
     assert.equal(records.get(auxiliaryId)!.text, textarea().value);
     assert.equal(records.get(auxiliaryId)!.durableRevision, acceptedInputRevision + 2);
-    assert.equal(button("Send Input").disabled, false);
-    await act(async () => { button("Send Input").click(); });
+    await sendInput();
     const failedInputRevision = calls.at(-1)!.request.auxiliaryDraftDurableRevision!;
     await draft("draft edited during rejected input");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
@@ -180,14 +190,13 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     assert.equal(textarea().value, "draft edited during rejected input");
     assert.equal(records.get(auxiliaryId)!.text, textarea().value);
     assert.equal(records.get(auxiliaryId)!.durableRevision, failedInputRevision + 3);
-    assert.equal(button("Send Input").disabled, false);
     await draft("preserved after switch");
     const preview = api.previewComposerInput;
     let releasePreview!: () => void;
     const delayedPreview = new Promise<void>((resolve) => { releasePreview = resolve; });
     api.previewComposerInput = async (id, message) => { await delayedPreview; return preview(id, message); };
     const beforeSwitch = calls.length;
-    await act(async () => { button("Send Input").click(); });
+    await sendInput();
     await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".concurrent-chat-target-dock button:first-child")!.click(); });
     await act(async () => { releasePreview(); });
     assert.equal(calls.length, beforeSwitch);
@@ -195,6 +204,7 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".concurrent-chat-target-dock button:last-child")!.click(); });
     assert.equal(textarea().value, "preserved after switch");
     assert.equal(runCalls, 0);
+    assert.equal(queueCalls, 0, "the input shortcut must not become ordinary Send admission");
   } finally {
     await act(async () => { root.unmount(); }); dom.window.close();
     for (const [key, descriptor] of originals) {

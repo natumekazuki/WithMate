@@ -203,17 +203,17 @@ it("Auxiliary実行中のMain選択を次turnへ渡し親削除を保護する",
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Main自身がstarting/running/取消終了待ちの間は権限等の変更を拒否し、runtimeの実終了後にだけ受理する"
-// oracle = { type = "contract", ref = "Issue #800; docs/design/session-run-lifecycle.md#decision" }
-// fault = "self scopeが開始予約または取消終了待ちを見落とし実行中の権限選択を受理する"
-// observable = "setSessionExecutionOptionsの拒否/受理、checkpoint件数、現在選択、SessionRuntimeServiceのin-flight"
+// claim = "Mainのstarting/running/取消終了待ちでも次送信用の設定選択を受理し、開始時に捕捉したProviderと最小turnの実行設定は変更しない"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md: 実行設定と Send; docs/design/desktop-ui.md: 次送信用の現在選択" }
+// fault = "実行中の次送信用選択を拒否する、または現在選択から進行中turnの実行設定を再取得する"
+// observable = "各phaseのsetSessionExecutionOptions ACKとcheckpoint、現在選択、Provider入力と最小turnの捕捉設定"
 // observation_boundary = "component-behavior"
-// scope = "Main persistence execution guard with real SessionRuntimeService lifecycle and controlled provider/preview"
+// scope = "Main current selection and captured execution options across real SessionRuntimeService lifecycle with controlled provider/preview"
 // lifecycle = "permanent"
-// impact = "開始中や取消未終了のMainに別権限が表示され、実行条件との不一致を招く"
-// distinction = "既存cancel testは再送可否を確認するが、各phaseで五つの制限対象の選択受理を確認しない。短いcancel graceと手動gateで外部Providerを不要にする"
+// impact = "次送信用の選択を妨げず、進行中turnを別の権限や設定へ変えてしまうことを防ぐ"
+// distinction = "renderer選択testや単一phaseのruntime testでは、開始準備・Provider待ち・取消終了待ちの実lifecycleを通した設定捕捉を確認できない。短いcancel graceと手動gateで外部Providerを不要にする"
 // @end-test-value
-it("Mainの開始中・実行中・取消終了待ちは実行設定変更を拒否する", async () => {
+it("Mainの各実行phaseで次送信用設定を選べるが、進行中turnの捕捉値は変わらない", async () => {
   const observe = { composed: [] as RunSessionTurnInput[], executed: [] as RunSessionTurnInput[], turn: [] as Array<Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0]>, persisted: [] as Session[] };
   let releasePreview!: () => void;
   let previewEntered!: () => void;
@@ -246,24 +246,27 @@ it("Mainの開始中・実行中・取消終了待ちは実行設定変更を拒
     { ...original, codexReviewer: "auto-review" },
     { ...original, customAgentName: "reviewer" },
   ];
-  const assertBlocked = async () => {
+  const assertNextSelectionAccepted = async () => {
     assert.equal(runtime.isRunInFlight(stored.id), true);
+    const before = checkpoints.length;
     for (const changed of changes) {
-      await assert.rejects(persistence.setSessionExecutionOptions(stored.id, getSessionIncarnationId(stored), changed), /running session cannot change these execution options/);
+      assert.deepEqual(await persistence.setSessionExecutionOptions(stored.id, getSessionIncarnationId(stored), changed), {
+        status: "accepted", checkpointSaved: true,
+      });
+      assert.deepEqual(captureSessionExecutionOptions(selections.apply(stored)), changed);
     }
-    assert.deepEqual(checkpoints, []);
-    assert.deepEqual(captureSessionExecutionOptions(selections.apply(stored)), original);
+    assert.deepEqual(checkpoints.slice(before), changes);
   };
   const run = runtime.runSessionTurn(stored.id, { userMessage: "run", executionOptions: original });
   try {
     await previewStarted;
-    await assertBlocked();
+    await assertNextSelectionAccepted();
     releasePreview();
     await providerStarted;
-    await assertBlocked();
+    await assertNextSelectionAccepted();
     runtime.cancelRun(stored.id);
     await run;
-    await assertBlocked();
+    await assertNextSelectionAccepted();
   } finally {
     releasePreview();
     releaseProvider();
@@ -273,6 +276,12 @@ it("Mainの開始中・実行中・取消終了待ちは実行設定変更を拒
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
   assert.equal(runtime.isRunInFlight(stored.id), false);
+  assert.equal(observe.executed.length, 1);
+  assert.deepEqual(observe.executed[0]?.executionOptions, original);
+  const capturedTurn = observe.turn.find((entry) => entry.phase === "running");
+  assert.ok(capturedTurn);
+  assert.equal(capturedTurn.approvalMode, original.approvalMode);
+  assert.equal(capturedTurn.sandboxMode, original.codexSandboxMode);
   assert.deepEqual(await persistence.setSessionExecutionOptions(stored.id, getSessionIncarnationId(stored), changes[0]!), {
     status: "accepted", checkpointSaved: true,
   });

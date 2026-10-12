@@ -266,8 +266,8 @@ describe("SessionRuntimeService session admission", () => {
   // kind = "invariant"
   // claim = "Session turn は削除 admission と直列化し、delete-first では削除後に開始しない"
   // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts#runSessionTurn" }
-  // fault = "DB削除待機中にturnが先にstarting登録され、削除済みsessionを再作成する"
-  // observable = "delete admission 完了後のturnが対象session不在で失敗し、保存を行わない"
+  // fault = "削除admissionを抜けて読取り・Provider起動・保存を開始する、または削除後のSession不在を無視する"
+  // observable = "delete admission待機中に読取り・Provider起動・保存を行わず、完了後は対象session不在で失敗しguardを解放する"
   // observation_boundary = "public-boundary"
   // scope = "session-turn-admission-delete-first"
   // lifecycle = "permanent"
@@ -279,11 +279,13 @@ describe("SessionRuntimeService session admission", () => {
     const releaseDelete = deferred();
     let deleted = false;
     let reads = 0;
+    const providerCallCount = { value: 0 };
     const provider = new ProviderRuntimeOperationCoordinator();
     const ownership = new CharacterAffectTurnOwnershipCoordinator();
     const runAdmission = <T>(_sessionId: string, operation: () => T | Promise<T>): Promise<T> =>
       provider.runExclusive(() => ownership.runExclusive(operation));
     const runtime = createRuntime({
+      providerCallCount,
       runSessionAdmissionExclusive: (sessionId, reserve, signal) => admitSessionTurn({
         runExclusive: (operation) => runAdmission(sessionId, operation),
         assertCurrent: () => signal.throwIfAborted(),
@@ -307,12 +309,14 @@ describe("SessionRuntimeService session admission", () => {
     const rejection = assert.rejects(turn, /対象セッションが見つからない/);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(reads, 0);
-    assert.equal(runtime.service.isRunInFlight("session-1"), false);
+    assert.equal(providerCallCount.value, 0);
+    assert.equal(runtime.saveCount(), 0);
     releaseDelete.resolve();
     await deletion;
     await rejection;
     assert.equal(reads, 1);
     assert.equal(runtime.service.isRunInFlight("session-1"), false);
+    assert.equal(providerCallCount.value, 0);
     assert.equal(runtime.saveCount(), 0);
   });
 

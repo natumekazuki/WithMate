@@ -10,17 +10,17 @@ import type { Session } from "../../src-shared/session/session-state.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Mainの取消受付と終了待ちは保存Sessionがidleでも、AuxiliaryからMainへ戻ってもCancelingと送信不可へ投影される。終了通知後は次のSendを受け付け、旧取消応答は巻き戻さない"
+// claim = "Mainの取消受付と終了待ちは保存Sessionがidleでも、AuxiliaryからMainへ戻ってもCancelingへ投影される。通常Sendは次Turnを予約し、現在Turnへの追加入力は拒否する。後続runの通知後に旧取消ACKが届いても巻き戻さない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Mainの取消受付後; https://github.com/natumekazuki/WithMate/issues/773" }
-// fault = "live取消状態を無視または切替で消去してSendや再送を許す、解放後もbusyが残る、または取消応答で新しい状態を巻き戻す"
-// observable = "実SessionWindowAppのexpanded/compact Canceling button、Send disabled、送信shortcutのrun呼出数、次Turnのrunning表示"
+// fault = "live取消状態を切替で消去する、取消中の次Turn受付を拒否する、現在Turnへsteerや直接runを送る、または旧取消ACKで後続run表示を巻き戻す"
+// observable = "実SessionWindowAppのexpanded/compact Canceling、Send受付とdraft consume、preload enqueue/steer/run呼出数、後続run通知後のCancel表示"
 // observation_boundary = "component-behavior"
 // scope = "Main cancellation live projection and composer actions"
 // lifecycle = "permanent"
 // impact = "取消後のSend拒否や次Turnの状態破損で同じSessionの会話を継続できなくなる"
 // distinction = "Mainのguard単体や型検査ではlive購読の更新抑制・保存snapshotとの優先順位・二つのdockとshortcutの実配線を検査できない。合成IPCとdeferredで待機順序を固定する"
 // @end-test-value
-test("Mainの取消完了までSendを止め、遅い取消応答は次Turnへ反映しない", { timeout: 30_000 }, async () => {
+test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run表示へ反映しない", { timeout: 30_000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
     url: "http://withmate.test/session.html?sessionId=benchmark-main", pretendToBeVisual: true,
   });
@@ -49,7 +49,7 @@ test("Mainの取消完了までSendを止め、遅い取消応答は次Turnへ�
   const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0]>();
   const sessionListeners = new Set<Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]>();
   let live: LiveSessionRunState | null = {
-    sessionId: session.id, threadId: session.threadId, assistantText: "partial response",
+    sessionId: session.id, threadId: session.threadId, turnId: "current-turn", inputAvailable: true, assistantText: "partial response",
     steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
   };
   api.getSession = async () => session;
@@ -72,12 +72,20 @@ test("Mainの取消完了までSendを止め、遅い取消応答は次Turnへ�
     broadcastLive();
     await cancelAck;
   };
-  let finishNextRun!: (value: Session) => void;
   let sendCalls = 0;
-  api.runSessionTurn = async (_id, request) => {
+  api.runSessionTurn = async () => {
     sendCalls += 1;
-    session = { ...session, runState: "running", status: "running", messages: [...session.messages, { role: "user", text: request.userMessage }] };
-    return new Promise<Session>((resolve) => { finishNextRun = resolve; });
+    throw new Error("unexpected direct run");
+  };
+  let steerCalls = 0;
+  api.steerSessionTurn = async () => { steerCalls += 1; throw new Error("unexpected input while canceling"); };
+  const enqueue = api.enqueueSessionTurn;
+  let queueCalls = 0;
+  api.enqueueSessionTurn = async (id, request) => {
+    queueCalls += 1;
+    assert.equal(id, session.id);
+    assert.equal(request.userMessage, "next prompt");
+    return enqueue(id, request);
   };
   Object.defineProperty(dom.window, "withmate", { value: api });
   const { createRoot } = await import("react-dom/client");
@@ -110,35 +118,44 @@ test("Mainの取消完了までSendを止め、遅い取消応答は次Turnへ�
       broadcastLive();
       sessionListeners.forEach((listener) => listener({ scope: "ids", sessionIds: [session.id] }));
     });
-    assert.equal(send().disabled, true, "stored idle cannot enable Send before the runtime releases the run");
     await act(async () => { buttons("Auxiliary")[0]!.click(); });
     await act(async () => { buttons("Main")[0]!.click(); });
     assert.equal(liveListeners.size, 1, "target switching must keep one Window ingress");
     assert.ok(buttons("Canceling").length >= 2, "resubscription must preserve cancellation in both docks until authoritative state arrives");
-    assert.equal(send().disabled, true, "a provisional subscription reset must not enable Send");
     const textarea = dom.window.document.querySelector<HTMLTextAreaElement>('textarea[data-shortcut-scope="composer"]')!;
     assert.ok(textarea);
     await act(async () => {
       Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "next prompt");
       textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    assert.equal(send().disabled, false, "cancellation must allow admission for a later turn");
+    await act(async () => {
+      textarea.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, shiftKey: true, bubbles: true }));
+    });
+    assert.equal(steerCalls, 0, "the current turn cannot receive input while canceling");
+    await act(async () => {
       textarea.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
       send().click();
     });
     assert.equal(sendCalls, 0);
+    assert.equal(queueCalls, 1, "shortcut and button must share one pending admission");
+    assert.equal(textarea.value, "", "durable admission must consume only the submitted draft");
     await act(async () => { live = null; broadcastLive(); });
     assert.equal(buttons("Canceling").length, 0);
-    assert.equal(send().disabled, false);
-    await act(async () => { send().click(); });
-    assert.equal(sendCalls, 1);
-    assert.equal(send().disabled, true);
+    await act(async () => {
+      session = { ...session, runState: "running", status: "running" };
+      live = { sessionId: session.id, threadId: session.threadId, turnId: "next-turn", inputAvailable: true, assistantText: "next response",
+        steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+      broadcastLive();
+      sessionListeners.forEach((listener) => listener({ scope: "ids", sessionIds: [session.id] }));
+    });
     await act(async () => { finishCancel(); });
     assert.ok(buttons("Cancel").length >= 2, "old cancel acknowledgement must leave the next run active");
-    assert.equal(send().disabled, true);
-    await act(async () => { finishNextRun({ ...session, runState: "idle", status: "idle" }); });
+    assert.equal(buttons("Canceling").length, 0);
+    assert.equal(sendCalls, 0);
     assert.deepEqual(alerts, []);
   } finally {
     finishCancel();
-    finishNextRun?.({ ...session, runState: "idle", status: "idle" });
     await act(async () => { root.unmount(); });
     dom.window.close();
     for (const [key, descriptor] of originals) {
