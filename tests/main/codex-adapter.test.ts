@@ -150,6 +150,7 @@ class FakeTransport {
   closed = false;
   failure: Error | null = null;
   waiter: ((event: CodexProtocolEvent) => void) | null = null;
+  rejectWaiter: ((error: Error) => void) | null = null;
   steerResponse: Promise<{ turnId: string }> | null = null;
   loginError: Error | null = null;
   loginType = "apiKey";
@@ -169,10 +170,16 @@ class FakeTransport {
     const event = this.events.shift();
     if (event) return event;
     if (this.failure) throw this.failure;
-    return new Promise((resolve) => { this.waiter = resolve; });
+    if (this.closed) throw new Error("Codex transport closed.");
+    return new Promise((resolve, reject) => { this.waiter = resolve; this.rejectWaiter = reject; });
   }
-  push(event: CodexProtocolEvent) { if (this.waiter) { const waiter = this.waiter; this.waiter = null; waiter(event); } else this.events.push(event); }
-  async close() { this.closed = true; }
+  push(event: CodexProtocolEvent) { if (this.waiter) { const waiter = this.waiter; this.waiter = null; this.rejectWaiter = null; waiter(event); } else this.events.push(event); }
+  async close() {
+    this.closed = true;
+    this.rejectWaiter?.(this.failure ?? new Error("Codex transport closed."));
+    this.waiter = null;
+    this.rejectWaiter = null;
+  }
   whenClosed(): Promise<void> { return Promise.resolve(); }
 }
 
@@ -560,6 +567,156 @@ function notification(method: string, params: Record<string, unknown>): CodexPro
 }
 function message(id: string, text: string) { return { type: "agentMessage", id, text, phase: null }; }
 function completed(items: unknown[] = [], status = "completed") { return notification("turn/completed", { turn: { id: "turn-1", status, items, error: status === "failed" ? { message: "provider failed" } : null } }); }
+
+// @test-value v2
+// kind = "contract"
+// claim = "idle受信中の取消とtransport失敗は待機を解除し元の原因・取得済み本文とDetailsをpartialに保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: CodexAdapter / Error Handling" }
+// fault = "idle waiterを解除しない、closeの汎用errorで元原因を隠す、またはpartial本文と操作結果を捨てる"
+// observable = "ProviderTurnErrorのmessage・canceled・partial本文/操作Details、interrupt requestとtransport.closed"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter idle event wait cancellation and transport failure"
+// lifecycle = "permanent"
+// impact = "取消不能なturnと切断時の取得済み結果消失を防ぐ"
+// distinction = "既存terminal失敗とabort callback失敗はidle受信を単独で解除した元原因とDetailsを確認しない。短い2ケースを実Workerで処理する"
+// @end-test-value
+it("idle受信の取消とtransport失敗を元原因・partial付きで解除する", { timeout: 10_000 }, async () => workspace(async (directory) => {
+  for (const mode of ["cancel", "transport"] as const) {
+    const transport = new FakeTransport();
+    transport.events = [
+      notification("item/completed", { item: message("answer", "acquired body") }),
+      notification("item/completed", { item: { type: "commandExecution", id: "command", command: "check", aggregatedOutput: "acquired details", exitCode: 0, status: "completed" } }),
+    ];
+    const controller = new AbortController();
+    let bodySeen!: () => void;
+    const projected = new Promise<void>(resolve => { bodySeen = resolve; });
+    const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(
+      { ...createCodexRunSessionTurnInput(directory), signal: controller.signal },
+      state => { if (state.assistantText && state.steps.length) bodySeen(); },
+    );
+    void operation.catch(() => undefined);
+    try {
+      await projected;
+      assert.ok(transport.waiter, "turn must be idle before failure/cancel");
+      const cause = new Error(`idle ${mode} cause`);
+      if (mode === "cancel") controller.abort(cause);
+      else { transport.failure = cause; await transport.close(); }
+      await assert.rejects(operation, error => {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.message, cause.message);
+        assert.equal(error.canceled, mode === "cancel");
+        assert.equal(error.partialResult.assistantText, "acquired body");
+        assert.equal(error.partialResult.artifact?.operationTimeline?.find(item => item.type === "command_execution")?.details, "acquired details");
+        return true;
+      });
+      assert.equal(transport.calls.some(call => call.method === "turn/interrupt"), mode === "cancel");
+      assert.equal(transport.closed, true);
+      assert.equal(transport.waiter, null);
+    } finally { controller.abort(); await transport.close(); await operation.catch(() => undefined); }
+  }
+}));
+
+// @test-value v2
+// kind = "contract"
+// claim = "idle受信中のprojection Worker失敗はclose経由で待機を解除しWorker原因を報告してWorkerを終了する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner / Error Handling" }
+// fault = "Worker失敗後にnextEventが停止し続ける、close errorがWorker原因を上書きする、またはWorkerを解放しない"
+// observable = "ProviderTurnErrorのmessage/canceled、transport.closed、実Worker terminate完了と終了threadId"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter idle transport wait with pending projection Worker request"
+// lifecycle = "permanent"
+// impact = "Worker故障でturnが停止し取消・再実行できなくなることを防ぐ"
+// distinction = "projection client単体ではadapterのidle受信解除と原因選択を通らない。実Workerの一要求を保持してerror eventを注入する短いケース"
+// @end-test-value
+it("idle受信中のWorker失敗を元原因で返してWorkerを解放する", { timeout: 10_000 }, async context => workspace(async (directory) => {
+  const transport = new FakeTransport();
+  transport.events = [notification("probe/fail", {})];
+  let worker!: Worker;
+  let dispatched!: () => void;
+  const pending = new Promise<void>(resolve => { dispatched = resolve; });
+  const postMessage = Worker.prototype.postMessage;
+  context.mock.method(Worker.prototype, "postMessage", function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
+    if ((args[0] as CodexProjectionRequest).command.type === "events") { worker = this; dispatched(); return; }
+    return postMessage.apply(this, args);
+  });
+  let termination: Promise<number> | undefined;
+  const terminate = Worker.prototype.terminate;
+  context.mock.method(Worker.prototype, "terminate", function (this: Worker) {
+    termination = terminate.call(this);
+    return termination;
+  });
+  const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory));
+  void operation.catch(() => undefined);
+  try {
+    await pending;
+    assert.ok(transport.waiter, "turn must be idle with a pending Worker request");
+    worker.emit("error", new Error("injected Worker failure"));
+    await assert.rejects(operation, error => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.message, "Codex projection Worker failed.");
+      assert.equal(error.canceled, false);
+      return true;
+    });
+    assert.equal(transport.closed, true);
+    assert.ok(termination);
+    await termination;
+    assert.equal(worker.threadId, -1);
+  } finally { await transport.close(); await operation.catch(() => undefined); }
+}));
+
+// @test-value v2
+// kind = "contract"
+// claim = "EOF前に受信済みの本文・Details・completedは到着順に処理し、completedなしのEOFだけを失敗にする"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: CodexAdapter native terminal and EOF" }
+// fault = "transport終端errorをFIFOより先に扱って受信済み結果を捨てる、またはEOFを成功にする"
+// observable = "実stdio transportを使うadapterのcompleted結果と切断partial本文/Details・canceled、transport.state"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapter buffered native events before stdio EOF"
+// lifecycle = "permanent"
+// impact = "Providerが出力後に切断した場合の正常結果と取得済みpartialの消失を防ぐ"
+// distinction = "FakeTransportのterminal testは実EOFとACK前FIFOを通らずtransport単体はWorkerの最終投影を確認しない。2つの短いローカルNode processのみ使う"
+// @end-test-value
+it("実stdioのEOF前completedと取得済み本文・Detailsを保持する", { timeout: 10_000 }, async () => workspace(async directory => {
+  for (const terminal of [true, false]) {
+    const fixture = String.raw`
+import { createInterface } from 'node:readline';
+const send = value => process.stdout.write(JSON.stringify(value) + '\n');
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.method === 'initialize') send({ id: request.id, result: { userAgent: 'fixture', codexHome: process.cwd(), platformFamily: 'fixture', platformOs: 'fixture' } });
+  else if (request.method === 'thread/start') send({ id: request.id, result: { thread: { id: 'thread-1' } } });
+  else if (request.method === 'turn/start') {
+    send({ method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', id: 'answer', text: 'before EOF' } } });
+    send({ method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'command', command: 'check', aggregatedOutput: 'EOF details', exitCode: 0, status: 'completed' } } });
+    if (${terminal}) send({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [] } } });
+    send({ id: request.id, result: { turn: { id: 'turn-1' } } });
+    process.stdout.end(() => process.exit(0));
+  }
+});
+setInterval(() => {}, 1000);
+`;
+    let transport!: CodexAppServerTransport;
+    const adapter = new CodexAdapter(undefined, { createTransport: options => {
+      transport = new CodexAppServerTransport({ ...options, executable: process.execPath, arguments: ["--input-type=module", "-e", fixture] });
+      return transport;
+    } });
+    const operation = adapter.runSessionTurn({ ...createCodexRunSessionTurnInput(directory), signal: AbortSignal.timeout(5_000) });
+    let result: Awaited<typeof operation> | undefined;
+    if (terminal) result = await operation;
+    else await assert.rejects(operation, error => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.match(error.message, /stdout disconnected/);
+      assert.equal(error.canceled, false);
+      result = error.partialResult;
+      return true;
+    });
+    assert.ok(result);
+    assert.equal(result.assistantText, "before EOF");
+    assert.equal(result.artifact?.operationTimeline?.find(item => item.type === "command_execution")?.details, "EOF details");
+    assert.equal(transport.state, "closed");
+  }
+}));
+
 
 // @test-value v2
 // kind = "contract"
