@@ -275,6 +275,7 @@ export type SessionFileOpenRequest = SessionFileResourceRequest & {
 };
 
 export type SessionFileDescriptor = SessionFilePreviewResourceRequest & {
+  absoluteFilePath: string;
   name: string;
   kind: SessionFileResourceKind;
   byteLength: number;

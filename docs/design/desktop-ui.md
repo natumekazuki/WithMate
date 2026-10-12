@@ -324,6 +324,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Git rootがない、または変更が0件という正常状態はblankで表現する。Git repositoryのdiscovery・availability・rejectと、Changes / Historyの取得・diff操作の失敗は理由を持つ実エラーとして扱い、正常blankへ潰さない。File Explorerのroot読込失敗は`role="alert"`で示し、読込中はspinner/statusと区別する
 - 中央 file preview
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
+  - headerのファイル名の下に絶対パスをread-only欄で表示する。Tabでfocusして選択・copyでき、hoverでも全文を確認できる。狭幅ではpath欄を維持して操作群を折り返す。通常fileはMainが解決したcanonical path、commit snapshotは選択root内の対応pathを表示し、Commit表示で本文の版を区別する。resourceの識別・認可や読込先は表示pathから変更しない
   - Text、Markdown、Mermaid（`.mmd`）、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
   - Markdown は shared rich text renderer、Mermaid は shared Mermaid renderer の Preview を既定とし、Source へ切り替えられる
   - Mermaid内のlinkは通常のMarkdownと同じMainの解決・認可経路へ渡し、相対pathはpreview fileの親directoryを基準にする。diagramのanchorからWindow自体を遷移させず、無効・不存在・不許可の場合も図を保持してerrorを表示する。strictが除去したdestinationは復元しない。auxiliary clickとCtrl＋drag後のclickはopenしない

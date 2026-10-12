@@ -10,6 +10,47 @@ import { listIdentityBoundDirectory } from "../../src-electron/files/identity-bo
 import { SessionFileExplorerService } from "../../src-electron/files/session-file-explorer-service.js";
 
 // @test-value v2
+// kind = "contract"
+// claim = "各Session rootと明示absolute resourceのdescriptorはプレビュー実体の絶対パスを返す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 中央 file preview" }
+// fault = "root相対pathや別rootのpathをabsoluteFilePathとして返す"
+// observable = "inspectFileが返すabsoluteFilePathとresourceの識別field"
+// observation_boundary = "public-boundary"
+// scope = "SessionFileExplorerService.inspectFile absolute file path"
+// lifecycle = "permanent"
+// impact = "プレビュー中のfileの所在を正しく確認できる"
+// distinction = "型検査では判別できない複数rootの実filesystemとdescriptorの対応を確認する"
+// @end-test-value
+test("file descriptor は各rootとabsolute resourceの絶対パスを返す", async () => {
+  const temporaryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-preview-path-"));
+  const workspacePath = path.join(temporaryPath, "workspace");
+  const additionalPath = path.join(temporaryPath, "additional");
+  const service = new SessionFileExplorerService({
+    userDataPath: path.join(temporaryPath, "user-data"),
+    getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [additionalPath] }),
+  });
+  try {
+    for (const root of await service.listRoots("session-1")) {
+      await mkdir(root.displayPath, { recursive: true });
+      const filePath = path.join(root.displayPath, "日本語 sample.txt");
+      await writeFile(filePath, "preview");
+      const request = { sessionId: "session-1", rootId: root.id, relativePath: "日本語 sample.txt" };
+      const descriptor = await service.inspectFile(request);
+      assert.equal(descriptor.absoluteFilePath, await realpath(filePath));
+      assert.equal("rootId" in descriptor && descriptor.rootId, root.id);
+      assert.equal("relativePath" in descriptor && descriptor.relativePath, request.relativePath);
+    }
+    const absolutePath = path.join(temporaryPath, "outside.txt");
+    await writeFile(absolutePath, "outside preview");
+    const descriptor = await service.inspectFile({ sessionId: "session-1", absolutePath });
+    assert.equal(descriptor.absoluteFilePath, await realpath(absolutePath));
+    assert.equal("absolutePath" in descriptor && descriptor.absolutePath, absolutePath);
+  } finally {
+    await rm(temporaryPath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
 // kind = "security"
 // claim = "tree path actionは現在のSession root内にあるroot・directory・regular fileのlexical pathだけを期待kind一致後に返す"
 // oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: resolvePathActionTarget" }

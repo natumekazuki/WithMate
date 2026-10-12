@@ -78,6 +78,7 @@ function resourcePath(resource: { relativePath: string } | { absolutePath: strin
 
 const MARKDOWN_DESCRIPTOR: SessionFileDescriptor = {
   ...MARKDOWN_REQUEST,
+  absoluteFilePath: "C:\\workspace\\docs\\readme.md",
   name: "readme.md",
   kind: "markdown",
   byteLength: MARKDOWN_BYTES.byteLength,
@@ -90,6 +91,7 @@ const IMAGE_DESCRIPTOR: SessionFileDescriptor = {
   sessionId: "session-1",
   rootId: "workspace",
   relativePath: "docs/image.png",
+  absoluteFilePath: "C:\\workspace\\docs\\image.png",
   name: "image.png",
   kind: "image",
   byteLength: IMAGE_BYTES.byteLength,
@@ -255,6 +257,7 @@ function createTextPreviewApi(
     async inspectSessionFile() {
       return {
         ...request,
+        absoluteFilePath: "absolutePath" in request ? request.absolutePath : `C:/workspace/${request.relativePath}`,
         name,
         kind: "text",
         byteLength: bytes.byteLength,
@@ -324,6 +327,64 @@ async function renderPreview(
   });
   return root;
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "file preview headerはroot・absolute・commit resourceの絶対パスをread-onlyで確認でき、対象切替に追従する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 中央 file preview" }
+// fault = "表示pathを相対pathへ置換する、編集可能にする、または別resourceへ旧pathを表示する"
+// observable = "Absolute file path欄のvalue・readOnly・titleとcommit表示"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview header absolute file path"
+// lifecycle = "permanent"
+// impact = "利用者がプレビュー対象の実際の所在を取り違えず確認・copyできる"
+// distinction = "Main側path解決と型検査だけでは検出できないheader投影と対象切替を確認する"
+// @end-test-value
+test("file preview は絶対パスをread-only表示し対象切替へ追従する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true, url: "http://localhost/" });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    const cases = [
+      { request: MARKDOWN_REQUEST, absoluteFilePath: "C:\\workspace\\日本語 folder\\docs\\readme.md" },
+      { request: { sessionId: "session-1", absolutePath: "/outside/notes.md" }, absoluteFilePath: "/outside/notes.md" },
+      {
+        request: { resourceKind: "git-commit-file" as const, sessionId: "session-1", rootId: "workspace", repositoryId: "git:repo", commitId: "a".repeat(40), relativePath: "docs/readme.md" },
+        absoluteFilePath: "C:\\workspace\\docs\\readme.md",
+      },
+    ];
+    for (const { request, absoluteFilePath } of cases) {
+      const api: PreviewApi = {
+        ...createPreviewApi(async () => IMAGE_DESCRIPTOR).api,
+        async inspectSessionFile() {
+          return {
+            ...request, absoluteFilePath, name: "readme.md", kind: "binary", byteLength: 4,
+            modifiedAt: MARKDOWN_DESCRIPTOR.modifiedAt, mimeType: "application/octet-stream",
+            suggestedEncoding: "utf-8", revision: "path-r1",
+          };
+        },
+      };
+      await act(async () => {
+        root?.render(React.createElement(SessionFilePreview, { api, request, onCopyText() {} }));
+      });
+      await waitFor(() => container.querySelector<HTMLInputElement>("input[aria-label='Absolute file path']")?.value === absoluteFilePath);
+      const input: HTMLInputElement | null = container.querySelector<HTMLInputElement>("input[aria-label='Absolute file path']");
+      assert.ok(input);
+      assert.equal(input.readOnly, true);
+      assert.equal(input.title, absoluteFilePath);
+      if ("resourceKind" in request) {
+        assert.match(container.querySelector(".session-file-preview-title")?.textContent ?? "", /Commit aaaaaaa/);
+      }
+    }
+  } finally {
+    await act(async () => root?.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
 
 // @test-value v2
 // kind = "invariant"
@@ -574,6 +635,7 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
   const bytes = new TextEncoder().encode("loaded preview");
   const descriptor: SessionFileDescriptor = {
     ...request,
+    absoluteFilePath: "C:\\workspace\\notes.txt",
     name: "notes.txt",
     kind: "text",
     byteLength: bytes.byteLength,
@@ -868,6 +930,7 @@ test("Markdown preview の local file link は current resource を基準に det
   const navigationRequests: unknown[] = [];
   const descriptor: SessionFileDescriptor = {
     ...request,
+    absoluteFilePath: "C:\\outside\\current.md",
     name: "current.md",
     kind: "markdown",
     byteLength: bytes.byteLength,
@@ -1013,6 +1076,7 @@ test("binary commit file preview はmetadata内にもworking tree操作を表示
   };
   const descriptor: SessionFileDescriptor = {
     ...request,
+    absoluteFilePath: "C:\\workspace\\assets\\archive.bin",
     name: "archive.bin",
     kind: "binary",
     byteLength: 4,
@@ -1957,6 +2021,7 @@ test("寸法情報のあるSVGも初回はFitで表示する", async () => {
   );
   const descriptor: SessionFileDescriptor = {
     ...request,
+    absoluteFilePath: "C:\\workspace\\assets\\icon.svg",
     name: "icon.svg",
     kind: "svg",
     byteLength: bytes.byteLength,
@@ -2382,6 +2447,7 @@ test("file切替後に完了したOpenの結果を新しいpreviewへ表示し�
     async inspectSessionFile(inspectRequest) {
       return {
         ...inspectRequest,
+        absoluteFilePath: `C:/workspace/${resourcePath(inspectRequest)}`,
         name: resourcePath(inspectRequest),
         kind: "text",
         byteLength: bytes.byteLength,

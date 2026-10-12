@@ -7,6 +7,7 @@ import type { SessionFileDescriptor, SessionImageResourceRequest, SessionImageCh
 const MIB = 1024 * 1024;
 const descriptor: SessionFileDescriptor = {
   sessionId: "session-1", absolutePath: "C:/outside/image.png", name: "image.png",
+  absoluteFilePath: "C:/outside/image.png",
   kind: "image", byteLength: MIB + 3, mimeType: "image/png", revision: "image-r1",
   modifiedAt: "2026-10-03T00:00:00.000Z", suggestedEncoding: "utf-8",
 };

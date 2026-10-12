@@ -1160,7 +1160,7 @@ export function SessionFilePreview({
       aria-label="File preview"
       aria-busy={contentLoading || reloadPending || Boolean(busyAction) || diffLoadingScope !== null || undefined}
     >
-      <header className="session-file-preview-header">
+      <header className="session-file-preview-header session-file-preview-file-header">
         {backNavigation ? (
           <BackNavigationButton
             label={backNavigation.label}
@@ -1171,6 +1171,15 @@ export function SessionFilePreview({
         <div className="session-file-preview-title">
           <strong>{descriptor?.name ?? getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}</strong>
           {isSessionFileGitCommitResource(request) ? <span>Commit {request.commitId.slice(0, 7)}</span> : null}
+          {descriptor ? (
+            <input
+              className="session-file-preview-path"
+              aria-label="Absolute file path"
+              readOnly
+              value={descriptor.absoluteFilePath}
+              title={descriptor.absoluteFilePath}
+            />
+          ) : null}
         </div>
         <div className="session-file-preview-actions">
           {descriptor && (previewKind === "text" || isRichPreview) ? (

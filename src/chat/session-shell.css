@@ -1545,6 +1545,18 @@
   min-width: 0;
 }
 
+.session-file-preview-file-header {
+  flex-wrap: wrap;
+}
+
+.session-file-preview-file-header .session-file-preview-title {
+  flex: 1 1 12rem;
+}
+
+.session-file-preview-file-header .session-file-preview-actions {
+  max-width: 100%;
+}
+
 .session-file-preview-title strong,
 .session-file-preview-title span {
   overflow: hidden;
@@ -1555,6 +1567,19 @@
 .session-file-preview-title span {
   color: var(--muted);
   font-size: 0.74rem;
+}
+
+.session-file-preview-title .session-file-preview-path {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  user-select: text;
 }
 
 .session-file-preview-title .session-diff-preview-context {

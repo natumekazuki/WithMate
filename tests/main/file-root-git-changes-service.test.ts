@@ -327,6 +327,8 @@ test("FileRootGitChangesService はdirectとbranch changesを固定OIDで比較�
         commitId: featureCommitId,
         relativePath: "only.txt",
       });
+      const nestedDescriptor = await service.inspectHistoryFile(nestedDiff.previewAfterResource);
+      assert.equal(nestedDescriptor.absoluteFilePath, path.join(repositoryPath, "nested", "only.txt"));
     }
 
     assert.equal((await runGitForTest(repositoryPath, ["update-ref", "refs/heads/feature/compare", mainCommitId])).exitCode, 0);
@@ -467,6 +469,7 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
       await writeFile(path.join(repositoryPath, "binary.bin"), Buffer.from([9, 9, 9]));
       allowBlobInspection = true;
       const descriptor = await metadataOnlyService.inspectHistoryFile(binaryDiff.previewResource);
+      assert.equal(descriptor.absoluteFilePath, path.join(repositoryPath, "binary.bin"));
       assert.equal(blobReadAttempts, 1);
       assert.equal(descriptor.revision.length, binaryCommit.id.length);
       assert.equal(descriptor.kind, "binary");

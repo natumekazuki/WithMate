@@ -2141,6 +2141,7 @@ export class FileRootGitChangesService {
         ...request,
         commitId: commit.id,
         relativePath,
+        absoluteFilePath: path.resolve(operation.workspacePath, relativePath),
         name: path.posix.basename(relativePath),
         kind: resource.kind,
         byteLength: entry.byteLength,
