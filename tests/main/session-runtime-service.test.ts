@@ -228,7 +228,7 @@ it("変更progressをMainの完全snapshotへ統合しcontrolでも保持する"
   const step = (id: string, details = id): LiveSessionRunState["steps"][number] => ({ id, type: "command", status: "completed", summary: id, details });
   const runtime = createProgressRuntime(session, async (_input, progress) => {
     assert.ok(progress);
-    const frame = createLiveRunState({ sessionId: session.id, threadId: "thread", assistantText: "assistant", reasoningText: "reasoning", usage: { inputTokens: 5, cachedInputTokens: 0, outputTokens: 2 } });
+    const frame = { ...createLiveRunState({ sessionId: session.id, threadId: "thread", assistantText: "assistant", reasoningText: "reasoning", usage: { inputTokens: 5, cachedInputTokens: 0, outputTokens: 2 } }), inputAvailable: false };
     const publish = (upserts: LiveSessionRunState["steps"], removes: string[] = []) => progress(frame, {
       snapshot: false, steps: { upserts, removes }, backgroundTasks: { upserts: [], removes: [] },
     });
@@ -258,7 +258,11 @@ it("変更progressをMainの完全snapshotへ統合しcontrolでも保持する"
     assert.deepEqual(owner.getLiveSessionRun(session.id)?.steps, []);
     return createPartialResult({ assistantText: "final", threadId: "thread" });
   }, { setLiveSessionRun: (id, state) => owner.setLiveSessionRun(id, state), getLiveSessionRun: id => owner.getLiveSessionRun(id) });
-  try { await runtime.runSessionTurn(session.id, { userMessage: "start", executionOptions: TEST_EXECUTION_OPTIONS }); }
+  try {
+    const completed = await runtime.runSessionTurn(session.id, { userMessage: "start", executionOptions: TEST_EXECUTION_OPTIONS });
+    assert.equal(completed.runState, "idle");
+    assert.equal(completed.messages.at(-1)?.text, "final");
+  }
   finally { owner.dispose(); }
 });
 
