@@ -101,6 +101,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
     - `Running`: `running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
     - `Stopped`: `interrupted` / `error` / `neutral` を含む non-running
   - `Running` と `Stopped` の一覧はそれぞれ独立してスクロールし、件数や空状態にかかわらず初期表示領域を5:5にする。Session Windowと共通のスプリッターをドラッグ、または上下矢印キーで配分を変更でき、Home／Endで上下の限界へ移動する。両sectionの見出しを維持し、比率は表示中のMonitor内だけで保持する
+  - 一覧に親Session cardのタイトル・状態2行分が収まらない高さでは、一覧を非表示・操作不可にして見出しと件数だけ残す。領域を広げると展開・スクロール状態を保った一覧へ戻る。非表示になる一覧内にfocusがある場合はスプリッターへ移す
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける

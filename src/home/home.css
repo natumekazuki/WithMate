@@ -485,6 +485,10 @@
   box-shadow: none;
 }
 
+.home-page .home-monitor-list.is-collapsed {
+  visibility: hidden;
+}
+
 .home-page .home-monitor-card:hover {
   border-color: rgba(111, 140, 255, 0.24);
   background: rgba(255, 255, 255, 0.07);

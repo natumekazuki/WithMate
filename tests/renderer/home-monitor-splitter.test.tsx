@@ -5,6 +5,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
+import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
 
 // @test-value v2
 // kind = "contract"
@@ -88,4 +89,89 @@ test("Monitorはdragとkeyboardで比率を変更・保持し終了後のmoveを
       else Reflect.deleteProperty(globalThis, name);
     });
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Monitorは親cardの2行分が収まらない一覧をinertにしてfocusをdividerへ移し、広げると同じ一覧DOMとscroll位置を復帰する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "小領域の一覧を操作可能なまま残す、非表示のbuttonへfocusを残す、または復帰時に一覧を再mountしてscroll位置を失う"
+// observable = "resize通知前後の一覧のinert属性・collapsed class・DOM同一性・scrollTopとdocument.activeElement"
+// observation_boundary = "component-behavior"
+// scope = "HomeMonitorContentの領域寸法から一覧の表示・操作状態への投影"
+// lifecycle = "permanent"
+// impact = "小領域の隠れた操作へkeyboard focusが入り込まず、配分を戻した後も同じ一覧位置から作業を続けられる"
+// distinction = "既存の比率操作testや型検査では観測できない一覧の操作境界と復帰を、実componentで確認する。実寸法・Tab順・展開状態はbrowser検証へ分担する"
+// @end-test-value
+test("Monitorは小領域の一覧を操作不可にしfocusとscrollを維持して復帰する", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  const names = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const descriptors = names.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
+  for (const name of names) {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name],
+    });
+  }
+  let notifyResize = () => {};
+  let disconnected = false;
+  class TestResizeObserver implements ResizeObserver {
+    constructor(callback: ResizeObserverCallback) { notifyResize = () => callback([], this); }
+    observe() {}
+    unobserve() {}
+    disconnect() { disconnected = true; }
+  }
+  dom.window.ResizeObserver = TestResizeObserver;
+  const entry: HomeMonitorEntry = {
+    kind: "agent", state: { kind: "neutral", label: "Idle" }, mainState: { kind: "neutral", label: "Idle" }, auxiliarySessions: [],
+    session: {
+      id: "session-1", taskTitle: "Task", status: "idle", runState: "idle", updatedAt: "2026-10-12T00:00:00.000Z", isPinned: false,
+      workspaceLabel: "workspace", workspacePath: "C:/workspace", sessionKind: "default", accessMode: "active", sourceSchemaVersion: 5,
+      characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#223344", sub: "#88bbcc" },
+    },
+  };
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(createElement(HomeMonitorContent, {
+      runningEntries: [entry], nonRunningEntries: [], onOpenSession() {}, onShowContextMenu() {},
+    })));
+    const document = dom.window.document;
+    const list = document.querySelector<HTMLDivElement>(".home-monitor-list")!;
+    const card = list.querySelector<HTMLDivElement>(".home-monitor-card")!;
+    const splitter = document.querySelector<HTMLButtonElement>('[role="separator"]')!;
+    let availableHeight = 80;
+    const rectangle = (height: number): DOMRect => ({ x: 0, y: 0, top: 0, left: 0, right: 300, bottom: height, width: 300, height, toJSON: () => ({}) });
+    list.getBoundingClientRect = () => rectangle(availableHeight);
+    card.getBoundingClientRect = () => rectangle(70);
+    list.scrollTop = 42;
+    await act(async () => notifyResize());
+    assert.equal(list.hasAttribute("inert"), false);
+    availableHeight = 70;
+    await act(async () => notifyResize());
+    assert.equal(list.hasAttribute("inert"), false);
+    list.querySelector<HTMLButtonElement>(".home-monitor-parent-button")!.focus();
+    assert.ok(list.contains(document.activeElement));
+    availableHeight = 69;
+    await act(async () => notifyResize());
+    assert.equal(list.hasAttribute("inert"), true);
+    assert.equal(list.classList.contains("is-collapsed"), true);
+    assert.equal(document.activeElement, splitter);
+    assert.equal(list.isConnected, true);
+    availableHeight = 80;
+    await act(async () => notifyResize());
+    assert.equal(document.querySelector(".home-monitor-list"), list);
+    assert.equal(list.hasAttribute("inert"), false);
+    assert.equal(list.classList.contains("is-collapsed"), false);
+    assert.equal(list.scrollTop, 42);
+    assert.equal(document.activeElement, splitter);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    names.forEach((name, index) => {
+      const descriptor = descriptors[index];
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    });
+  }
+  assert.equal(disconnected, true);
 });

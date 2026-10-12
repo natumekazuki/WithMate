@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 
 import type {
   SessionMonitorContextMenuPoint,
@@ -104,6 +104,41 @@ export function HomeMonitorContent({
   const [runningRatio, setRunningRatio] = useState(0.5);
   const resizeStartRef = useRef<{ ratio: number; height: number } | null>(null);
   const sectionsId = useId();
+  const sectionsRef = useRef<HTMLDivElement>(null);
+  const [collapsedLists, setCollapsedLists] = useState<boolean[]>([false, false]);
+
+  useLayoutEffect(() => {
+    const container = sectionsRef.current;
+    if (!container) return;
+    const sections = [...container.querySelectorAll<HTMLElement>(":scope > section")];
+    const updateCollapsedLists = () => {
+      const next = sections.map((section) => {
+        const list = section.querySelector<HTMLElement>(".home-monitor-list");
+        const card = list?.querySelector<HTMLElement>(".home-monitor-card");
+        if (!list || !card) return false;
+        const auxiliaryList = card.querySelector<HTMLElement>(".home-monitor-auxiliary-list");
+        const minimumHeight = card.getBoundingClientRect().height - (auxiliaryList?.getBoundingClientRect().height ?? 0);
+        const collapsed = list.getBoundingClientRect().height < minimumHeight;
+        if (collapsed && list.contains(container.ownerDocument.activeElement)) {
+          container.querySelector<HTMLButtonElement>(".home-monitor-splitter")?.focus({ preventScroll: true });
+        }
+        return collapsed;
+      });
+      setCollapsedLists((current) => current.every((value, index) => value === next[index]) ? current : next);
+    };
+    updateCollapsedLists();
+    const Observer = container.ownerDocument.defaultView?.ResizeObserver;
+    if (!Observer) return;
+    const observer = new Observer(updateCollapsedLists);
+    for (const section of sections) {
+      observer.observe(section);
+      const head = section.querySelector(".home-monitor-section-head");
+      const card = section.querySelector(".home-monitor-card");
+      if (head) observer.observe(head);
+      if (card) observer.observe(card);
+    }
+    return () => observer.disconnect();
+  }, [runningEntries, nonRunningEntries]);
 
   const resizeSections = (ratio: number, height: number) => {
     if (height <= 0) return;
@@ -275,6 +310,7 @@ export function HomeMonitorContent({
         <LoadingIndicator label={loadingMessage.replace(/…$/, "")} className="home-session-list-load-status" />
       ) : null}
       <div
+        ref={sectionsRef}
         className="home-monitor-sections"
         style={{ gridTemplateRows: `minmax(48px, ${runningRatio}fr) var(--session-dock-splitter-size) minmax(48px, ${1 - runningRatio}fr)` }}
       >
@@ -283,7 +319,7 @@ export function HomeMonitorContent({
             <h3 id="home-monitor-running">Running</h3>
             <span className="home-monitor-count">{runningEntries.length}</span>
           </div>
-          <div className="home-monitor-list">
+          <div className={`home-monitor-list${collapsedLists[0] ? " is-collapsed" : ""}`} inert={collapsedLists[0]}>
             {runningEntries.length > 0
               ? renderMonitorEntries(runningEntries)
               : showEmptyState && runningEmptyMessage
@@ -329,7 +365,7 @@ export function HomeMonitorContent({
             <h3 id="home-monitor-inactive">Stopped</h3>
             <span className="home-monitor-count">{nonRunningEntries.length}</span>
           </div>
-          <div className="home-monitor-list">
+          <div className={`home-monitor-list${collapsedLists[1] ? " is-collapsed" : ""}`} inert={collapsedLists[1]}>
             {nonRunningEntries.length > 0
               ? renderMonitorEntries(nonRunningEntries)
               : showEmptyState && nonRunningEmptyMessage
