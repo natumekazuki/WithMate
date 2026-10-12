@@ -123,6 +123,28 @@ export const DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES: readonly KeyboardShortcut
     bindingKind: "letter",
   },
   {
+    id: "session.main.scroll-to-bottom",
+    scope: "session",
+    accelerators: {
+      windows: { key: "b", ctrlKey: true, shiftKey: true },
+      linux: { key: "b", ctrlKey: true, shiftKey: true },
+      macos: { key: "b", metaKey: true, shiftKey: true },
+    },
+    customizable: true,
+    bindingKind: "letter",
+  },
+  {
+    id: "session.auxiliary.scroll-to-bottom",
+    scope: "session",
+    accelerators: {
+      windows: { key: "n", ctrlKey: true, shiftKey: true },
+      linux: { key: "n", ctrlKey: true, shiftKey: true },
+      macos: { key: "n", metaKey: true, shiftKey: true },
+    },
+    customizable: true,
+    bindingKind: "letter",
+  },
+  {
     id: "session.action-dock.toggle-mode",
     scope: "session",
     accelerators: {

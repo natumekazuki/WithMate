@@ -14,6 +14,8 @@ Settingsの`Keyboard shortcuts`では、変更可能なcommandの現在値を確
 - messageの一括縮小と展開
 - file preview内の検索
 - MarkdownのPreviewとSourceの切り替え
+- Mainの最下部へ移動（`Scroll Main To Bottom`。既定はWindows／Linuxで`Ctrl+Shift+B`、macOSで`Cmd+Shift+B`）
+- 選択中Auxiliaryの最下部へ移動（`Scroll Auxiliary To Bottom`。既定はWindows／Linuxで`Ctrl+Shift+N`、macOSで`Cmd+Shift+N`）
 - 下部パネルのPromptとTerminalの切り替え（既定はWindows／Linuxで`Ctrl+Shift+T`、macOSで`Cmd+Shift+T`）
 - message送信（Windows／Linuxは`Ctrl+Enter`、macOSは`Cmd+Enter`。実行中は次Turnを予約）
 - Codexの実行中追加入力（Windows／Linuxは`Ctrl+Shift+Enter`、macOSは`Cmd+Shift+Enter`。現在のComposer下書きを現在Turnへ送信）
@@ -25,6 +27,8 @@ Settingsの`Keyboard shortcuts`では、変更可能なcommandの現在値を確
 shortcut commandは、chat、file preview、入力欄、dialogなどのscopeを持ちます。同じキーに複数の候補がある場合も、現在activeなsurfaceだけを対象にします。
 
 入力要素がfocusされている場合、文字編集と競合するcommandは実行しません。中央surfaceが切り替わった場合、非表示surfaceのhandlerを候補に含めません。
+
+MainとAuxiliaryの末尾移動はそれぞれ独立して登録でき、Composer入力中も使えます。送信対象やfocusを切り替えず、指定した表示中の列だけ末尾へ移動して最新messageへの追従を再開します。未取得・折りたたみ中の列、Auxiliaryの読込中・取得失敗、中央Preview表示中は実行しません。
 
 端末本文ではPrompt／Terminal切替だけをアプリshortcutとして扱い、会話送信・検索・cancelなどは横取りしません。切替はcomposer内でも利用でき、IME変換中とkey repeatでは発火しません。
 

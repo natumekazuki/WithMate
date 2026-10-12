@@ -623,6 +623,46 @@ describe("shortcut projection", () => {
     );
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "MainとAuxiliaryの末尾移動はplatform別の既定キーとHelpを持ち、個別変更・復元が可能で同じキーの登録を拒否する"
+  // oracle = { type = "contract", ref = "docs/features/keyboard-shortcuts.md: MainとAuxiliaryの末尾移動" }
+  // fault = "片方のキー変更が他方に適用される、保存値を失う、Helpが実効値と食い違う、または同じキーを両方へ許す"
+  // observable = "Helpのlabelとaccelerator、normalize後の個別設定、衝突例外、Reset後の実効値"
+  // observation_boundary = "consumer"
+  // scope = "session-bottom-shortcut-settings"
+  // lifecycle = "permanent"
+  // impact = "利用者がMainとAuxiliaryを区別してキー登録・実行できなくなる"
+  // distinction = "汎用binding検証や型検査では新規2commandの独立した保存・Help・衝突への参加を検出できない"
+  // @end-test-value
+  it("MainとAuxiliaryの末尾移動キーを個別に登録・復元する", () => {
+    const main = SHORTCUT_COMMAND_IDS.mainScrollToBottom;
+    const auxiliary = SHORTCUT_COMMAND_IDS.auxiliaryScrollToBottom;
+    for (const platform of ["windows", "linux", "macos"] as const) {
+      const defaults = getShortcutHelpProjection(platform).flatMap((group) => group.items);
+      assert.deepEqual(defaults.find((item) => item.id === main), {
+        id: main, label: "Scroll Main To Bottom", acceleratorLabel: platform === "macos" ? "⌘⇧B" : "Ctrl+Shift+B",
+      });
+      assert.deepEqual(defaults.find((item) => item.id === auxiliary), {
+        id: auxiliary, label: "Scroll Auxiliary To Bottom", acceleratorLabel: platform === "macos" ? "⌘⇧N" : "Ctrl+Shift+N",
+      });
+      const modifiers = platform === "macos" ? { metaKey: true, shiftKey: true } : { ctrlKey: true, shiftKey: true };
+      let settings = updateShortcutBinding(DEFAULT_KEYBOARD_SHORTCUT_SETTINGS, main, platform, { key: "u", ...modifiers });
+      settings = updateShortcutBinding(settings, auxiliary, platform, { key: "i", ...modifiers });
+      settings = normalizeKeyboardShortcutSettings(JSON.parse(JSON.stringify(settings)));
+      const prefix = platform === "macos" ? "⌘⇧" : "Ctrl+Shift+";
+      assert.equal(getShortcutLabel(main, platform, settings), `${prefix}U`);
+      assert.equal(getShortcutLabel(auxiliary, platform, settings), `${prefix}I`);
+      const help = getShortcutHelpProjection(platform, settings).flatMap((group) => group.items);
+      assert.equal(help.find((item) => item.id === main)?.acceleratorLabel, `${prefix}U`);
+      assert.equal(help.find((item) => item.id === auxiliary)?.acceleratorLabel, `${prefix}I`);
+      assert.throws(() => updateShortcutBinding(settings, auxiliary, platform, { key: "u", ...modifiers }), /collision/i);
+      settings = updateShortcutBinding(settings, main, platform, null);
+      assert.equal(getShortcutLabel(main, platform, settings), `${prefix}B`);
+      assert.equal(getShortcutLabel(auxiliary, platform, settings), `${prefix}I`);
+    }
+  });
+
   it("ユーザー設定のoverrideを実効labelとHelp projectionへ反映する", () => {
     const settings = updateShortcutBinding(
       DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,

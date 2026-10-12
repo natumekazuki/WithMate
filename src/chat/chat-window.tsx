@@ -450,6 +450,8 @@ export function ChatWindow({
 }: ChatWindowProps) {
   const [messageViewMode, setMessageViewMode] = useState<MessageViewMode>("preview");
   const conversationStateCacheRef = useRef(new Map<string, ConversationColumnCache>());
+  const mainColumnElementRef = useRef<HTMLDivElement | null>(null);
+  const auxiliaryColumnElementRef = useRef<HTMLDivElement | null>(null);
   const mainColumnControlsRef = useRef<ConversationColumnControls | null>(null);
   const [messageNavigatorActive, setMessageNavigatorActive] = useState(false);
   const auxiliaryColumnControlsRef = useRef<ConversationColumnControls | null>(null);
@@ -509,6 +511,32 @@ export function ChatWindow({
       return true;
     },
     Boolean(concurrentChats),
+  );
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.mainScrollToBottom,
+    () => {
+      const controls = mainColumnControlsRef.current;
+      const sessionId = concurrentChats?.mainSession?.id ?? concurrentChats?.main.sessionId;
+      if (!controls || controls.sessionId !== sessionId
+        || mainColumnElementRef.current?.closest("[inert], [hidden], [aria-hidden=\"true\"]")) return false;
+      controls.followLatest();
+      return true;
+    },
+    Boolean(concurrentChats && concurrentChats.mainContentReady !== false
+      && concurrentChats.widthRatio < 1 && !screenProps.mainContent),
+  );
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.auxiliaryScrollToBottom,
+    () => {
+      const controls = auxiliaryColumnControlsRef.current;
+      const sessionId = concurrentChats?.auxiliarySession?.id ?? concurrentChats?.auxiliary?.sessionId;
+      if (!controls || controls.sessionId !== sessionId
+        || auxiliaryColumnElementRef.current?.closest("[inert], [hidden], [aria-hidden=\"true\"]")) return false;
+      controls.followLatest();
+      return true;
+    },
+    Boolean(concurrentChats?.auxiliary && !concurrentChats.loading && !concurrentChats.error
+      && concurrentChats.widthRatio > 0 && !screenProps.mainContent),
   );
 
   useEffect(() => {
@@ -648,7 +676,7 @@ export function ChatWindow({
       ) : null}
       workSurfaceOverlay={skillPickerProps ? <ChatSkillPickerPanel {...skillPickerProps} /> : null}
       messageColumn={(
-        <div id="session-main-chat-pane" className="concurrent-chat-column-content">
+        <div ref={mainColumnElementRef} id="session-main-chat-pane" className="concurrent-chat-column-content">
           {concurrentChats?.mainReadFeedback}
           {concurrentChats && concurrentChats.mainContentReady === false ? null : concurrentChats ? (
             <ConversationMessageColumn
@@ -711,7 +739,7 @@ export function ChatWindow({
       ) : null}
       auxiliaryMessageColumn={concurrentChats ? (
         <>
-          <div id="session-auxiliary-chat-pane" className="concurrent-chat-column-content">
+          <div ref={auxiliaryColumnElementRef} id="session-auxiliary-chat-pane" className="concurrent-chat-column-content">
             {concurrentChats.loading ? (
               <LoadingIndicator label="Loading Auxiliary" className="concurrent-chat-state" />
             ) : concurrentChats.error ? (
