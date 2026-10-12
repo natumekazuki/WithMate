@@ -3504,6 +3504,14 @@
   min-width: 0;
 }
 
+.additional-directory-path-dialog {
+  width: min(560px, 100%);
+}
+
+.additional-directory-path-dialog .launch-dialog-foot {
+  gap: 8px;
+}
+
 .composer-toolbar-view-actions {
   display: inline-flex;
   align-items: center;

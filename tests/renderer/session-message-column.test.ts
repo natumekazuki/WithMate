@@ -3143,10 +3143,10 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionComposerExpandedのidle DOMはattachment/view操作、closedなattachment menu、Add Directory/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
+// claim = "SessionComposerExpandedのidle DOMはattachment/view操作、closedなattachment menu、Add Directory/Add Path/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023C, MT-023D4; docs/design/desktop-ui.md: Action Dock" }
-// fault = "idle表示でattachment/view action・closedなattachment menu・Add Directory/Dirs・target dock・Cancel slot・SendのDOM配置が崩れる、Hide/reopen導線が混入する、Cancel slotがactiveまたはbuttonを持つ、Sendがsettings group内へ移動する"
-// observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAdd Directory/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row直下のsettings groupとSend button"
+// fault = "idle表示でattachment/view action・closedなattachment menu・Add Directory/Add Path/Dirs・target dock・Cancel slot・SendのDOM配置が崩れる、Hide/reopen導線が混入する、Cancel slotがactiveまたはbuttonを持つ、Sendがsettings group内へ移動する"
+// observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAdd Directory/Add Path/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row直下のsettings groupとSend button"
 // observation_boundary = "component-behavior"
 // scope = "expanded ActionDock idle layout and Cancel slot"
 // lifecycle = "permanent"
@@ -3234,7 +3234,8 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
     .find((button) => button.textContent?.trim() === "Skill");
   const additionalDirectoryToolbar = attachmentToolbar?.querySelector(".composer-additional-directory-toolbar");
   const addDirectoryButton = additionalDirectoryToolbar?.querySelector("button:nth-child(1)");
-  const directoriesButton = additionalDirectoryToolbar?.querySelector("button:nth-child(2)");
+  const addPathButton = additionalDirectoryToolbar?.querySelector("button:nth-child(2)");
+  const directoriesButton = additionalDirectoryToolbar?.querySelector("button:nth-child(3)");
   const viewActions = renderedDocument.querySelector(".composer-toolbar-view-actions");
   const cancelSlot = viewActions?.querySelector(":scope > .session-action-dock-cancel-slot");
   const targetSlot = viewActions?.querySelector(":scope > .composer-target-dock-slot");
@@ -3253,6 +3254,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   assert.ok(skillButton);
   assert.ok(additionalDirectoryToolbar);
   assert.ok(addDirectoryButton);
+  assert.ok(addPathButton);
   assert.ok(directoriesButton);
   assert.ok(viewActions);
   assert.ok(cancelSlot);
@@ -3273,6 +3275,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   assert.equal(skillButton.nextElementSibling, additionalDirectoryToolbar);
   assert.match(attachmentButton.textContent ?? "", /Attach/);
   assert.equal(addDirectoryButton.textContent, "Add Directory");
+  assert.equal(addPathButton.textContent, "Add Path");
   assert.equal(directoriesButton.textContent, "Dirs0");
   assert.ok((additionalDirectoryToolbar.compareDocumentPosition(viewActions) & 4) !== 0);
   assert.ok((attachmentMenu.compareDocumentPosition(viewActions) & 4) !== 0);

@@ -105,6 +105,7 @@ import {
 import { runAuxiliarySkillPromptInsertionOperation } from "../chat/auxiliary/auxiliary-skill-prompt-operation.js";
 import {
   pickComposerReferencePath,
+  selectAdditionalDirectoryPath,
   type ComposerPathPickerKind,
   type ComposerReferenceInput,
 } from "../chat/composer/session-composer-paths.js";
@@ -1776,19 +1777,25 @@ export default function AgentSessionWindowApp() {
     insertAttachments: insertPastedAttachments,
   });
 
-  const handleAddAdditionalDirectory = async () => {
+  const handleAddAdditionalDirectory = async (directoryPath?: string) => {
     await runPickedAdditionalDirectoryOperation({
       canPickDirectory: () => !!withmateApi &&
         !composerRegistry.isFrozen &&
         !!selectedSession &&
         !isSelectedSessionReadOnly,
       getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, selectedSession?.workspacePath),
-      pickDirectory: (baseDirectory) => withmateApi?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
+      pickDirectory: (initialPath) => withmateApi
+        ? selectAdditionalDirectoryPath({ directoryPath, initialPath, api: withmateApi })
+        : Promise.resolve(null),
       applyPickedDirectory: async (selectedPath) => {
         if (composerRegistry.isFrozen || !selectedSession) {
           return;
         }
-        const nextSession: Session = buildSessionWithAddedAdditionalDirectory(selectedSession, selectedPath);
+        const current = getCurrentMainSession();
+        if (!current || current.id !== selectedSession.id || getSessionIncarnationId(current) !== getSessionIncarnationId(selectedSession)) {
+          throw new Error("Wait for the conversation to load before changing this session.");
+        }
+        const nextSession: Session = buildSessionWithAddedAdditionalDirectory(current, selectedPath);
         applyPickedAdditionalDirectoryUiStateCommand({
           selectedPath,
           setPickerBaseDirectory,
@@ -1819,12 +1826,12 @@ export default function AgentSessionWindowApp() {
     });
   };
 
-  const handleAddAuxiliaryAdditionalDirectory = async () => {
+  const handleAddAuxiliaryAdditionalDirectory = async (directoryPath?: string) => {
     if (composerRegistry.isFrozen || !withmateApi) return;
     await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
       api: {
         pickDirectory: async (basePath) => {
-          const selectedPath = await withmateApi.pickDirectory(basePath);
+          const selectedPath = await selectAdditionalDirectoryPath({ directoryPath, initialPath: basePath, api: withmateApi });
           return composerRegistry.isFrozen ? null : selectedPath;
         },
       },

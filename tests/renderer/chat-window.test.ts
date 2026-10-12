@@ -64,7 +64,7 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
     sandboxOptions: [{ value: "workspace-write", label: "Workspace Write" }],
     speedOptions: [{ value: "standard", label: "Standard" }],
     onOpenPromptTemplates: () => events.push("template"), onToggleSkillPicker: () => events.push("skill"),
-    onToggleAgentPicker: () => events.push("agent"), onAddAdditionalDirectory: () => events.push("directory"),
+    onToggleAgentPicker: () => events.push("agent"), onAddAdditionalDirectory: () => { events.push("directory"); },
     onChangeApprovalMode: (value) => events.push(value),
   };
   const root = createRoot(dom.window.document.getElementById("root")!);

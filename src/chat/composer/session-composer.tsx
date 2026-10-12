@@ -13,6 +13,7 @@ import { isCodexReviewerControlDisabled, type CodexReviewer } from "../../../src
 import { useShortcutSettings } from "../../settings/shortcut-settings-context.js";
 
 import { ComposerAttachmentMenu } from "../../chat/composer-attachment-menu.js";
+import { AdditionalDirectoryPathControl } from "./additional-directory-path-control.js";
 import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "../../chat/composer-controller.js";
 import {
   getComposerSendButtonTitle,
@@ -123,7 +124,7 @@ export type SessionComposerExpandedProps = {
   onToggleAgentPicker: () => void;
   onToggleSkillPicker: () => void;
   onOpenPromptTemplates?: () => void;
-  onAddAdditionalDirectory: () => void;
+  onAddAdditionalDirectory: (directoryPath?: string) => void | Promise<void>;
   onToggleAdditionalDirectoryList: () => void;
   onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
@@ -431,6 +432,11 @@ export function SessionComposerExpanded({
               >
                 Add Directory
               </button>
+              <AdditionalDirectoryPathControl
+                key={`${controllerOwner.kind}:${controllerOwner.id}`}
+                disabled={composerControlsDisabled}
+                onAdd={onAddAdditionalDirectory}
+              />
               <button
                 className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
                 type="button"

@@ -7,10 +7,89 @@ import {
   buildPathReferenceInsertionState,
   buildSelectedPathReferenceInsertionState,
   pickComposerReferencePath,
+  selectAdditionalDirectoryPath,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
 } from "../../src/chat/composer/session-composer-paths.js";
+import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window/workspace-directory-validation.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "Additional Directoryの選択は入力pathをMain APIで検証して返し、path未指定時だけ従来pickerの選択・取消を返す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory / Add Path" }
+// fault = "入力pathでpickerを開く、検証を省く、空白を含むpathを破損する、pickerのbaseまたは取消を失う"
+// observable = "選択結果、検証APIへ渡すpath、pickerのbaseと呼出回数"
+// observation_boundary = "consumer"
+// scope = "Main／Auxiliaryが共用するAdditional Directoryの選択"
+// lifecycle = "permanent"
+// impact = "pickerを使えない利用者のpath入力と既存pickerの双方を維持する"
+// distinction = "filesystem検証testと異なり、入力方式によるAPI選択とpath転送を軽量な純粋adapter testで検出する"
+// @end-test-value
+test("Additional Directoryは入力pathを検証し、未指定時はpickerを使う", async () => {
+  const validated: string[] = [];
+  const picked: Array<string | null> = [];
+  let pickerResult: string | null = "C:/selected";
+  const api = {
+    async validateWorkspaceDirectory(targetPath: string): Promise<WorkspaceDirectoryValidationResult> {
+      validated.push(targetPath);
+      return { valid: true };
+    },
+    async pickDirectory(base: string | null) {
+      picked.push(base);
+      return pickerResult;
+    },
+  };
+  assert.equal(await selectAdditionalDirectoryPath({ directoryPath: "  C:\\作業\\shared folder  ", initialPath: "C:/base", api }), "C:\\作業\\shared folder");
+  assert.deepEqual(validated, ["C:\\作業\\shared folder"]);
+  assert.deepEqual(picked, []);
+  assert.equal(await selectAdditionalDirectoryPath({ initialPath: "C:/base", api }), "C:/selected");
+  pickerResult = null;
+  assert.equal(await selectAdditionalDirectoryPath({ initialPath: null, api }), null);
+  assert.deepEqual(picked, ["C:/base", null]);
+  assert.equal(validated.length, 1);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "空入力、相対path、不存在、file、利用不可と検証API失敗はDirectory選択成功にならず、利用者向けの理由を伝播する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Path; src-shared/window/workspace-directory-validation.ts" }
+// fault = "無効な入力を返す、検証失敗をpicker選択へ救済する、検証理由またはtransport errorを消す"
+// observable = "選択Promiseのreject messageとpickerの呼出回数"
+// observation_boundary = "consumer"
+// scope = "入力path選択の失敗境界"
+// lifecycle = "permanent"
+// impact = "誤ったdirectoryの登録と検証失敗の成功扱いを防ぎ、再入力に必要な理由を渡す"
+// distinction = "Main validatorのfilesystem判定でなく、判定結果とAPI失敗が登録前にrejectとして届くことを低コストに確認する"
+// @end-test-value
+test("Additional Directoryは無効pathと検証API失敗を理由付きで拒否する", async () => {
+  let picked = 0;
+  const cases = [
+    ["empty", "Enter an absolute path."],
+    ["not-absolute", "Enter an absolute path."],
+    ["missing", "Path not found."],
+    ["not-directory", "Not a directory."],
+    ["unavailable", "Directory unavailable."],
+  ] as const;
+  for (const [reason, message] of cases) {
+    await assert.rejects(selectAdditionalDirectoryPath({
+      directoryPath: reason === "empty" ? " " : "invalid",
+      initialPath: null,
+      api: {
+        validateWorkspaceDirectory: async () => ({ valid: false, reason }),
+        pickDirectory: async () => { picked += 1; return "C:/unwanted"; },
+      },
+    }), { message });
+  }
+  await assert.rejects(selectAdditionalDirectoryPath({
+    directoryPath: "C:/valid", initialPath: null,
+    api: {
+      validateWorkspaceDirectory: async () => { throw new Error("Validation unavailable"); },
+      pickDirectory: async () => { picked += 1; return "C:/unwanted"; },
+    },
+  }), { message: "Validation unavailable" });
+  assert.equal(picked, 0);
+});
 
 test("buildPathReferenceInsertionState は caret 位置に path reference を挿入する", () => {
   assert.deepEqual(
