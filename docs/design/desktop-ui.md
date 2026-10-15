@@ -253,7 +253,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Work Chat`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
-- Main／Auxiliaryの会話は最新60件を初回表示する。会話上部の`Earlier Messages`／`Later Messages`で前後の範囲を取得し、最新への移動で追従を再開する。読込中・取得失敗と`Retry`は対象会話内に表示し、取得済み本文とComposerを保持する。FindとMessages navigatorのBookmarkは全履歴を対象とし、対象移動時に必要な本文を取得する。ページ変更・Auxiliary再選択では履歴上の位置を使い、別messageへの位置ずれを防ぐ
+- Main／Auxiliaryの会話は最新60件を初回表示する。FindとMessages navigatorは全履歴を対象とし、検索結果・message・Bookmarkへの移動時に必要な本文を取得する。最新への移動で追従を再開する。読込中・取得失敗と`Retry`は対象会話内に表示し、取得済み本文とComposerを保持する。ページ変更・Auxiliary再選択では履歴上の位置を使い、別messageへの位置ずれを防ぐ
 - 全履歴FindとMessages navigatorは64件の結果pageを使い、現在と隣接の最大3pageだけを保持する。Findは保存済み全履歴の総件数とglobal ordinalを維持し、未保存末尾とpending本文だけを重複なく加える。source／previewの検索意味を維持し、未取得位置への移動では必要な結果と本文pageを取得する。query変更、Close、会話owner変更、非表示では旧queryを取消し、遅い旧応答を適用しない。読込中はspinner／busy、失効・errorは理由と`Retry`を表示し、成功0件とは区別する
 - 全履歴Messagesの縮小状態は、会話owner単位の既定意図と個別messageの例外で保持する。全縮小・全展開は未読込の履歴pageにも適用し、個別の操作はpage復帰時も維持する。別incarnationの会話へ持ち越さない
 - wide desktop (`1920x1080` baseline) では Session 本体を、中央の `message list または preview` と上下左右の dock に分ける

@@ -425,20 +425,20 @@ test("conversation pages は過去閲覧と会話ownerを保持する", async ()
   let root: Root | null = null;
   try {
     await act(async () => { root = createRoot(dom.window.document.getElementById("root")!); root.render(React.createElement(Probe, { id: "main", text: "live" })); });
-    await act(async () => latest?.conversationPaging?.onEarlier?.());
-    assert.deepEqual(requests, [110]);
-    await act(async () => resolvePage?.({ sessionId: "main", incarnationId: "main", startIndex: 110, totalCount: 200, messages: messages(110) }));
+    await act(async () => { void latest?.onLoadMessagePage?.(110); });
+    assert.deepEqual(requests, [80]);
+    await act(async () => resolvePage?.({ sessionId: "main", incarnationId: "main", startIndex: 80, totalCount: 200, messages: messages(80) }));
     assert.equal(getLatest()?.messages.length, 60);
-    assert.equal(getLatest()?.messageKeys?.[0], "session-main-110");
+    assert.equal(getLatest()?.messageKeys?.[0], "session-main-80");
     await act(async () => root?.render(React.createElement(Probe, { id: "main", text: "live updated" })));
-    assert.equal(getLatest()?.messages.at(-1)?.text, "message 169");
+    assert.equal(getLatest()?.messages.at(-1)?.text, "message 139");
     assert.equal(getLatest()?.isRunning, false);
-    await act(async () => latest?.conversationPaging?.onEarlier?.());
+    await act(async () => { void latest?.onLoadMessagePage?.(50); });
     const stale = resolvePage;
     await act(async () => root?.render(React.createElement(Probe, { id: "other", text: "other live" })));
     assert.equal(cache.get("main")?.liveRun, null);
     assert.deepEqual(cache.get("main")?.bridge, { sessionId: "main", threadId: "thread", messageIndex: 200 });
-    await act(async () => stale?.({ sessionId: "main", incarnationId: "main", startIndex: 80, totalCount: 200, messages: messages(80) }));
+    await act(async () => stale?.({ sessionId: "main", incarnationId: "main", startIndex: 20, totalCount: 200, messages: messages(20) }));
     assert.equal(getLatest()?.sessionId, "other");
     assert.equal(getLatest()?.messageKeys?.[0], "session-other-140");
   } finally {

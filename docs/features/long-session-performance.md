@@ -6,7 +6,7 @@ Session数やmessage数が増えた場合の操作遅延と本文保持量を抑
 
 ## 会話の読込み
 
-Main／Auxiliaryは最初に最新60件を表示します。`Earlier Messages`／`Later Messages`で過去・後続の範囲へ移動し、最新への移動で追従を再開できます。表示済みページを無制限に積み上げず、最新tailと閲覧中のpageだけを保持します。
+Main／Auxiliaryは最初に最新60件を表示します。Findの検索結果やMessages navigatorから過去のmessageへ移動すると、対象範囲の本文を取得します。最新への移動で追従を再開できます。表示済みページを無制限に積み上げず、最新tailと閲覧中のpageだけを保持します。
 
 Findの検索対象とMessages navigatorのBookmarkは保存済み全履歴です。Source／Previewの検索の意味は変えず、検索結果やBookmarkへ移動すると対象範囲の本文を取得します。履歴の保存位置を使うため、ページを変えても別messageへBookmarkやDetailsの操作が移りません。
 

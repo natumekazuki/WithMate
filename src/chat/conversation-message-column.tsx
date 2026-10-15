@@ -119,7 +119,6 @@ export function useConversationMessageColumn({
   const currentPage = browsePage?.sessionId === sessionId && (!session?.incarnationId || browsePage.incarnationId === session.incarnationId) ? browsePage : null;
   const isBrowsing = conversation.pageStart !== undefined;
   const messages = isBrowsing && currentPage ? currentPage.messages : tailMessages;
-  const pageStart = messages[0] ? getMessageHistoryIndex(messages[0], 0) : 0;
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
@@ -358,14 +357,6 @@ export function useConversationMessageColumn({
     if (scrollToLatestOnSend && isBrowsing) followLatest();
     following.handleMessageListSend(scrollToLatestOnSend);
   }, [isBrowsing, followLatest, following.handleMessageListSend]);
-  const changePage = useCallback(async (startIndex: number) => {
-    const anchor = conversation.anchor;
-    const revision = await loadPage(startIndex);
-    if (revision !== undefined && revision === pageRevision.current && anchor && mounted.current && activePageOwner.current === pageOwner) {
-      conversation.messageJumpRequest = { sessionId, ...anchor, requestId: ++conversation.messageJumpRequestId };
-      refresh();
-    }
-  }, [conversation, loadPage, pageOwner, refresh, sessionId]);
   const onToggleMessageCollapse = (key: string) => {
     if (paged) {
       const target = collapseTargets.find((value) => value.key === key);
@@ -583,8 +574,6 @@ export function useConversationMessageColumn({
     onJumpToBottom: followLatest,
     conversationPaging: session.messageCount !== undefined && api?.getConversationPage ? {
       loading: pageLoading, error: pageError,
-      onEarlier: pageStart > 0 ? () => void changePage(Math.max(0, pageStart - 30)) : undefined,
-      onLater: isBrowsing && pageStart + messages.length < totalCount ? () => void changePage(Math.min(Math.max(0, totalCount - CONVERSATION_PAGE_SIZE), pageStart + 30)) : undefined,
       onRetry: () => { setNavigatorRevision((revision) => revision + 1); void loadPage(requestedPageStart.current); },
     } : undefined,
     searchConversation: api?.searchConversation && session.messageCount !== undefined ? async (request) => {

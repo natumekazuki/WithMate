@@ -100,36 +100,11 @@ async function verifyUi(window) {
   const observations = [];
   await window.webContents.executeJavaScript(`(() => {
     const pane = document.querySelector('#session-main-chat-pane');
-    const button = [...pane.querySelectorAll('button')].find(item=>item.textContent.trim()==='Earlier Messages');
-    if (!button) throw new Error('Earlier Messages unavailable'); button.click();
-  })()`);
-  await new Promise(resolve => setTimeout(resolve, 300));
-  observations.push({ operation: "earlier", page: transfers.filter(item => item.name === "getConversationPage").at(-1) });
-  writeFileSync(resolve(outputDir, `${label}-earlier.png`), (await window.webContents.capturePage()).toPNG());
-  await window.webContents.executeJavaScript(`(() => {
-    const pane = document.querySelector('#session-main-chat-pane');
     const bookmark = pane.querySelector('button[aria-label="Add bookmark"]');
     if (!bookmark) throw new Error('Bookmark unavailable'); bookmark.click();
   })()`);
   await new Promise(resolve => setTimeout(resolve, 100));
   observations.push({ operation: "bookmark", calls: counters.setSessionMessageBookmark ?? 0, markedButtonRendered: await window.webContents.executeJavaScript("Boolean(document.querySelector('#session-main-chat-pane button[aria-label=\"Remove bookmark\"]'))") });
-  await window.webContents.executeJavaScript(`(() => {
-    const pane = document.querySelector('#session-main-chat-pane');
-    const button = [...pane.querySelectorAll('button')].find(item=>item.textContent.trim()==='Later Messages');
-    if (!button) throw new Error('Later Messages unavailable'); button.click();
-  })()`);
-  await new Promise(resolve => setTimeout(resolve, 300));
-  observations.push({ operation: "later", page: transfers.filter(item => item.name === "getConversationPage").at(-1) });
-  for (const operation of ["Earlier Messages", "Later Messages"]) {
-    await window.webContents.executeJavaScript(`(() => {
-      const pane=document.querySelector('#session-auxiliary-chat-pane');
-      const button=[...pane.querySelectorAll('button')].find(item=>item.textContent.trim()===${JSON.stringify(operation)});
-      if(!button)throw new Error('Auxiliary page button unavailable');button.click();
-    })()`);
-    await new Promise(resolve=>setTimeout(resolve,300));
-    observations.push({ operation: `auxiliary-${operation}`, page: transfers.filter(item=>item.name==='getConversationPage').at(-1), errors: await window.webContents.executeJavaScript("[...document.querySelectorAll('#session-auxiliary-chat-pane [role=alert]')].map(item=>item.textContent)") });
-  }
-  writeFileSync(resolve(outputDir, `${label}-auxiliary-later.png`), (await window.webContents.capturePage()).toPNG());
   await window.webContents.executeJavaScript("document.querySelector('[aria-label=\"Collapse Auxiliary\"]')?.click()");
   await new Promise(resolve => setTimeout(resolve, 100));
   await window.webContents.executeJavaScript("document.querySelector('[aria-label=\"Open Auxiliary\"]')?.click()");
