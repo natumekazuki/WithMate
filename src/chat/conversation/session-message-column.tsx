@@ -1081,6 +1081,7 @@ export function SessionMessageColumn({
           <MessageRichText
             resolveImageSource={resolveImageSource}
             text={pendingMessageText}
+            isStreaming={isRunning}
             forceFullRender={findOpen && hasFindQuery}
             displayMode={messageViewMode}
             onOpenPath={onOpenPath}
@@ -1317,6 +1318,7 @@ export function SessionMessageColumn({
                           <MessageRichText
                             resolveImageSource={resolveImageSource}
                             text={message.text}
+                            isStreaming={isRunning && absoluteIndex === pendingResponseMessageIndex}
                             forceFullRender={findOpen && hasFindQuery}
                             displayMode={messageViewMode}
                             onOpenPath={onOpenPath}

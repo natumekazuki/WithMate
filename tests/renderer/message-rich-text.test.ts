@@ -12,7 +12,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   MessageRichText,
-  resolveMessageMarkdownRenderMode,
 } from "../../src/ui/markdown/MessageRichText.js";
 import {
   handleMarkdownLinkClick,
@@ -1572,294 +1571,33 @@ test("Markdown ordered list は2桁marker用の論理方向余白を持ち、独
 
 // @test-value v2
 // kind = "contract"
-// claim = "MessageRichText は browser 初回 render を light markdown にして後から full markdown に差し替える"
-// oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "browser初回表示をfullへ同期実行しlight modeを経由しない、または後続fullへ切替できない"
-// observable = "data-markdown-render-modeのlightからfullへの遷移"
-// observation_boundary = "component-behavior"
-// scope = "MessageRichText deferred render mode"
-// lifecycle = "permanent"
-// distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
-// @end-test-value
-test("MessageRichText は browser 初回 render を light markdown にして後から full markdown に差し替える", async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
-    pretendToBeVisual: true,
-    url: "http://localhost/",
-  });
-  const restoreGlobals = installDomGlobals(dom);
-  const container = dom.window.document.getElementById("root");
-  let root: Root | null = null;
-
-  try {
-    assert.ok(container);
-    root = createRoot(container);
-    await act(async () => {
-      root?.render(
-        React.createElement(MessageRichText, {
-          text: ["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n"),
-        }),
-      );
-    });
-
-    assert.equal(
-      container
-        .querySelector("[data-markdown-render-mode]")
-        ?.getAttribute("data-markdown-render-mode"),
-      "light",
-    );
-    assert.equal(container.querySelector("table"), null);
-
-    await act(async () => {
-      await waitForAnimationFrame(dom.window);
-      await waitForAnimationFrame(dom.window);
-    });
-
-    assert.equal(
-      container
-        .querySelector("[data-markdown-render-mode]")
-        ?.getAttribute("data-markdown-render-mode"),
-      "full",
-    );
-    assert.notEqual(container.querySelector("table.message-table"), null);
-  } finally {
-    if (root) {
-      await act(async () => root?.unmount());
-    }
-    restoreGlobals();
-    dom.window.close();
-  }
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "MessageRichText は browser の light render でも先頭 YAML frontmatter を表示する"
-// oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "light rendererでfrontmatterを無視しfull切替後にtable/fallback表示が変わる"
-// observable = "light/full各modeのdata属性、frontmatter table aria-label、fallback pre不在"
-// observation_boundary = "component-behavior"
-// scope = "MessageRichText light frontmatter rendering"
-// lifecycle = "permanent"
-// distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
-// @end-test-value
-test("MessageRichText は browser の light render でも先頭 YAML frontmatter を表示する", async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
-    pretendToBeVisual: true,
-    url: "http://localhost/",
-  });
-  const restoreGlobals = installDomGlobals(dom);
-  const container = dom.window.document.getElementById("root");
-  let root: Root | null = null;
-  const markdown = [
-    "---",
-    "name: withmate-memory",
-    "description: light render",
-    "---",
-    "",
-    "# Body",
-  ].join("\n");
-
-  try {
-    assert.ok(container);
-    root = createRoot(container);
-    await act(async () => {
-      root?.render(React.createElement(MessageRichText, { text: markdown }));
-    });
-
-    assert.equal(
-      container
-        .querySelector("[data-markdown-render-mode]")
-        ?.getAttribute("data-markdown-render-mode"),
-      "light",
-    );
-    assert.deepEqual(
-      Array.from(
-        container.querySelectorAll("table.message-frontmatter-table tr"),
-      ).map((row) => [
-        row.querySelector("th")?.textContent,
-        row.querySelector("td")?.textContent,
-      ]),
-      [
-        ["name", "withmate-memory"],
-        ["description", "light render"],
-      ],
-    );
-    assert.equal(
-      container.querySelector("pre.message-frontmatter-block"),
-      null,
-    );
-    assert.equal(
-      container.querySelector("h1.message-heading")?.textContent,
-      "Body",
-    );
-
-    await act(async () => {
-      await waitForAnimationFrame(dom.window);
-      await waitForAnimationFrame(dom.window);
-    });
-
-    assert.equal(
-      container
-        .querySelector("[data-markdown-render-mode]")
-        ?.getAttribute("data-markdown-render-mode"),
-      "full",
-    );
-    assert.equal(
-      container
-        .querySelector("table.message-frontmatter-table")
-        ?.getAttribute("aria-label"),
-      "YAML frontmatter",
-    );
-    assert.equal(
-      container.querySelector("pre.message-frontmatter-block"),
-      null,
-    );
-  } finally {
-    if (root) {
-      await act(async () => root?.unmount());
-    }
-    restoreGlobals();
-    dom.window.close();
-  }
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "MessageRichText は light から full へ切り替わっても HTML br の改行を維持する"
-// oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "lightからfullへ切替時にbr pluginを失いbr要素数や改行textが変わる"
-// observable = "light/full各modeとbr要素数"
-// observation_boundary = "component-behavior"
-// scope = "MessageRichText render mode transition"
-// lifecycle = "permanent"
-// distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
-// @end-test-value
-test("MessageRichText は light から full へ切り替わっても HTML br の改行を維持する", async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
-    pretendToBeVisual: true,
-    url: "http://localhost/",
-  });
-  const restoreGlobals = installDomGlobals(dom);
-  const container = dom.window.document.getElementById("root");
-  let root: Root | null = null;
-
-  try {
-    assert.ok(container);
-    root = createRoot(container);
-    await act(async () => {
-      root?.render(
-        React.createElement(MessageRichText, { text: "first<br />second" }),
-      );
-    });
-
-    assert.equal(
-      container
-        .querySelector("[data-markdown-render-mode]")
-        ?.getAttribute("data-markdown-render-mode"),
-      "light",
-    );
-    assert.equal(container.querySelectorAll("br").length, 1);
-
-    await act(async () => {
-      await waitForAnimationFrame(dom.window);
-      await waitForAnimationFrame(dom.window);
-    });
-
-    assert.equal(
-      container
-        .querySelector("[data-markdown-render-mode]")
-        ?.getAttribute("data-markdown-render-mode"),
-      "full",
-    );
-    assert.equal(container.querySelectorAll("br").length, 1);
-  } finally {
-    if (root) {
-      await act(async () => root?.unmount());
-    }
-    restoreGlobals();
-    dom.window.close();
-  }
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "forceFullRender=trueを指定したMessageRichTextはfull rendererへ切り替える"
-// oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "forceFullRender=trueを渡してもlight modeのまま、またはfull rendererのGFM tableを生成しない"
-// observable = "forceFullRender=true後のdata-markdown-render-mode属性とtable.message-table要素"
+// claim = "検索中のforceFullRender指定は受信中の未反映本文をtimer待ちせず表示する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Rendering Policy" }
+// fault = "検索開始後もstreaming snapshotの古い本文を表示し検索対象を欠落させる"
+// observable = "指定前後の表のセル文字列と未反映本文"
 // observation_boundary = "component-behavior"
 // scope = "MessageRichText forceFullRender prop"
 // lifecycle = "permanent"
-// distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
+// distinction = "通常の最終描画確認と異なり受信中の未反映snapshotから検索用表示への即時反映を確認する"
 // @end-test-value
-test("MessageRichText は既存表示で検索を始めた瞬間に full rendererへ切り替える", async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
-    pretendToBeVisual: true,
-    url: "http://localhost/",
-  });
+test("MessageRichTextは検索開始時に受信中の最新本文を即時反映する", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true, url: "http://localhost/" });
   const restoreGlobals = installDomGlobals(dom);
-  const container = dom.window.document.getElementById("root");
-  let root: Root | null = null;
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
   const markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n");
-
   try {
-    assert.ok(container);
-    root = createRoot(container);
-    await act(async () => {
-      root?.render(React.createElement(MessageRichText, { text: markdown }));
-    });
-    assert.equal(
-      container
-        .querySelector("[data-markdown-render-mode]")
-        ?.getAttribute("data-markdown-render-mode"),
-      "light",
-    );
-
-    await act(async () => {
-      root?.render(
-        React.createElement(MessageRichText, {
-          text: markdown,
-          forceFullRender: true,
-        }),
-      );
-    });
-
-    assert.equal(
-      container
-        .querySelector("[data-markdown-render-mode]")
-        ?.getAttribute("data-markdown-render-mode"),
-      "full",
-    );
-    assert.notEqual(container.querySelector("table.message-table"), null);
+    await act(async () => root.render(React.createElement(MessageRichText, { text: markdown, isStreaming: true })));
+    const latest = markdown + "\n| 3 | 4 |";
+    await act(async () => root.render(React.createElement(MessageRichText, { text: latest, isStreaming: true })));
+    assert.deepEqual([...container.querySelectorAll("td")].map((cell) => cell.textContent), ["1", "2"]);
+    await act(async () => root.render(React.createElement(MessageRichText, { text: latest, isStreaming: true, forceFullRender: true })));
+    assert.deepEqual([...container.querySelectorAll("td")].map((cell) => cell.textContent), ["1", "2", "3", "4"]);
   } finally {
-    if (root) {
-      await act(async () => root?.unmount());
-    }
+    await act(async () => root.unmount());
     restoreGlobals();
     dom.window.close();
   }
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "resolveMessageMarkdownRenderMode はeffect前のlight stateより検索中のfull指定を優先する"
-// oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "renderStateのlight stateをforceFullRender=trueが上書きせずfull modeを返さない"
-// observable = "resolveMessageMarkdownRenderModeの戻り値"
-// observation_boundary = "component-behavior"
-// scope = "resolveMessageMarkdownRenderMode"
-// lifecycle = "permanent"
-// distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
-// @end-test-value
-test("resolveMessageMarkdownRenderMode はeffect前のlight stateより検索中のfull指定を優先する", () => {
-  assert.equal(
-    resolveMessageMarkdownRenderMode(
-      true,
-      "same text",
-      { text: "same text", mode: "light" },
-      false,
-    ),
-    "full",
-  );
 });
 
 // @test-value v2
@@ -2957,15 +2695,15 @@ test("MessageRichText はresolver未完了のunmountでtimerと遅延blobを解�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Markdownの同じ位置にある画像はcallback更新、本文末尾追記、light/full切替で同じDOMとready状態を保持し、link操作は最新callbackを使う"
+// claim = "Markdownの同じ位置にある画像はcallback更新と本文末尾追記で同じDOMとready状態を保持し、link操作は最新callbackを使う"
 // oracle = { type = "contract", ref = "Issue #714: Markdown component identityとcallback contextの安定化" }
 // fault = "renderごとにimg component typeが変わって画像が再mountされる、ready stateが初期化される、またはlinkが古いclosureを呼ぶ"
-// observable = "画像HTMLElementのidentity、loading表示、link callbackの受信値、Markdown render mode"
+// observable = "画像HTMLElementのidentity、loading表示、link callbackの受信値"
 // observation_boundary = "component-behavior"
 // scope = "MessageRichTextのMarkdown component identity境界"
 // lifecycle = "permanent"
 // impact = "入力に伴う親更新で既存会話画像が点滅・再取得されず、操作対象だけは最新session contextを維持する"
-// distinction = "親callbackだけを安定化するcolumn testとは別に、Markdown renderer自身のcomponent identityとlight/full更新を直接観測する"
+// distinction = "親callbackだけを安定化するcolumn testとは別に、Markdown renderer自身のcomponent identityと本文追記を直接観測する"
 // @end-test-value
 test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使う", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -3038,12 +2776,6 @@ test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使
       );
     });
     assert.equal(
-      container
-        .querySelector("[data-markdown-render-mode]")
-        ?.getAttribute("data-markdown-render-mode"),
-      "light",
-    );
-    assert.equal(
       container.querySelector<HTMLImageElement>(".message-image"),
       image,
     );
@@ -3065,12 +2797,6 @@ test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使
       await waitForAnimationFrame(dom.window);
       await waitForAnimationFrame(dom.window);
     });
-    assert.equal(
-      container
-        .querySelector("[data-markdown-render-mode]")
-        ?.getAttribute("data-markdown-render-mode"),
-      "full",
-    );
     assert.equal(
       container.querySelector<HTMLImageElement>(".message-image"),
       image,

@@ -24,15 +24,22 @@ type HastNode = {
   position?: { start?: { offset?: number } };
   children?: HastNode[];
 };
+type MermaidReady = {
+  source: string;
+  svg: string;
+  imageErrors: MermaidImageError[];
+  controller: AbortController;
+};
 type MermaidRenderState =
-  | { status: "pending" }
-  | { status: "ready"; svg: string; imageErrors: MermaidImageError[] }
-  | { status: "error"; message: string };
+  | { status: "pending"; previous?: MermaidReady }
+  | { status: "ready"; result: MermaidReady }
+  | { status: "error"; source: string; message: string; previous?: MermaidReady };
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
 function loadMermaid() {
   mermaidModulePromise ??= import("mermaid").then((module) => {
     module.default.initialize({
       startOnLoad: false,
+      suppressErrorRendering: true,
       securityLevel: "strict",
       theme: "base",
     });
@@ -149,54 +156,94 @@ export const MermaidDiagram = memo(function MermaidDiagram({
     [reactId],
   );
   const diagramSource = source.trim();
+  const isStreaming = context.isStreaming ?? false;
+  const renderSequence = useRef(0);
+  const completed = useRef<{ source: string; resolver: MermaidImageResolver | undefined; state: MermaidRenderState } | null>(null);
+  const retainedControllers = useRef(new Set<AbortController>());
   const [renderState, setRenderState] = useState<MermaidRenderState>({
     status: "pending",
   });
+  const displayed = renderState.status === "ready" ? renderState.result
+    : renderState.status === "pending" || isStreaming || renderState.source !== diagramSource
+      ? renderState.previous : undefined;
+
   useEffect(() => {
-    let cancelled = false;
-    const controller = new AbortController();
-    if (!diagramSource) {
-      setRenderState({ status: "error", message: "Empty Mermaid diagram." });
-      return () => {
-        cancelled = true;
-      };
+    for (const controller of retainedControllers.current) {
+      if (controller !== displayed?.controller) {
+        controller.abort();
+        retainedControllers.current.delete(controller);
+      }
     }
-    setRenderState({ status: "pending" });
-    loadMermaid()
-      .then((module) => renderMermaidWithImages(module.default, diagramId, diagramSource, imageResolver, controller.signal))
-      .then(({ svg, imageErrors }) => {
-        if (!cancelled) setRenderState({ status: "ready", svg, imageErrors });
-      })
-      .catch((error: unknown) => {
-        if (!cancelled)
-          setRenderState({
-            status: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to render Mermaid diagram.",
-          });
-      });
+  }, [displayed]);
+  useEffect(() => () => {
+    for (const controller of retainedControllers.current) controller.abort();
+    retainedControllers.current.clear();
+  }, []);
+
+  useEffect(() => {
+    const cached = completed.current;
+    if (cached?.source === diagramSource && cached.resolver === imageResolver
+      && (cached.state.status !== "ready" || !cached.state.result.controller.signal.aborted)) {
+      setRenderState(cached.state);
+      return;
+    }
+    let cancelled = false;
+    let succeeded = false;
+    const controller = new AbortController();
+    const previousResult = (current: MermaidRenderState) => current.status === "ready" ? current.result : current.previous;
+    const run = () => {
+      setRenderState((current) => ({ status: "pending", previous: previousResult(current) }));
+      // Mermaid removes DOM with its render ID; never reuse the displayed SVG's ID.
+      const renderId = `${diagramId}-${++renderSequence.current}`;
+      loadMermaid()
+        .then((module) => {
+          controller.signal.throwIfAborted();
+          if (!diagramSource) throw new Error("Empty Mermaid diagram.");
+          return renderMermaidWithImages(module.default, renderId, diagramSource, imageResolver, controller.signal);
+        })
+        .then(({ svg, imageErrors }) => {
+          if (cancelled) return;
+          succeeded = true;
+          retainedControllers.current.add(controller);
+          const state: MermaidRenderState = { status: "ready", result: { source: diagramSource, svg, imageErrors, controller } };
+          completed.current = { source: diagramSource, resolver: imageResolver, state };
+          setRenderState(state);
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          const message = error instanceof Error ? error.message : "Failed to render Mermaid diagram.";
+          completed.current = { source: diagramSource, resolver: imageResolver, state: { status: "error", source: diagramSource, message } };
+          setRenderState((current) => ({
+            status: "error", source: diagramSource, previous: previousResult(current),
+            message,
+          }));
+        });
+    };
+    const timer = isStreaming ? window.setTimeout(run, 150) : null;
+    if (!isStreaming) run();
     return () => {
       cancelled = true;
-      controller.abort();
+      if (timer !== null) window.clearTimeout(timer);
+      if (!succeeded) controller.abort();
     };
-  }, [diagramId, diagramSource, imageResolver]);
-  if (renderState.status === "ready")
+  }, [diagramId, diagramSource, imageResolver, isStreaming]);
+  const busy = renderState.status === "pending" || displayed?.source !== diagramSource
+    || (isStreaming && renderState.status === "error");
+  if (displayed)
     return (
-      <div className="message-code-block-shell mermaid">
+      <div className="message-code-block-shell mermaid" aria-busy={busy}>
         <MermaidViewport
-          key={diagramSource}
-          svg={renderState.svg}
+          key={displayed.source}
+          svg={displayed.svg}
           onOpenPath={onOpenPath ?? context.onOpenPath}
-          imageErrors={renderState.imageErrors}
+          imageErrors={displayed.imageErrors}
         />
       </div>
     );
   return (
-    <div className="message-code-block-shell mermaid">
+    <div className="message-code-block-shell mermaid" aria-busy={renderState.status === "pending" || isStreaming}>
       <div className="message-mermaid fallback">
-        {renderState.status === "error" ? (
+        {renderState.status === "error" && renderState.source === diagramSource && !isStreaming ? (
           <p className="message-mermaid-error">{renderState.message}</p>
         ) : null}
         <pre className="message-code-block">
@@ -209,20 +256,12 @@ export const MermaidDiagram = memo(function MermaidDiagram({
 export type MarkdownPreComponentProps = ComponentPropsWithoutRef<"pre"> & {
   node?: unknown;
 };
-function MermaidCodeBlock({ source, enabled, fallback }: { source: string; enabled: boolean; fallback: ReactNode }) {
-  const [promotedSource, setPromotedSource] = useState<string | null>(null);
-  const showDiagram = enabled || promotedSource === source;
-  useEffect(() => {
-    setPromotedSource(enabled ? source : (current) => current === source ? current : null);
-  }, [enabled, source]);
-  return showDiagram ? <MermaidDiagram source={source} /> : fallback;
-}
 export function MarkdownPre({
   children,
   node,
   ...props
 }: MarkdownPreComponentProps) {
-  const { enableMermaid, markdown, onCodeBlockCopyResult } = useContext(
+  const { markdown, onCodeBlockCopyResult } = useContext(
     MarkdownRenderContext,
   );
   const isFenced = isFencedCodeBlock(node as HastNode | undefined, markdown);
@@ -249,7 +288,7 @@ export function MarkdownPre({
     isValidElement<{ className?: string; children?: ReactNode }>(child) &&
     resolveCodeLanguage(child.props.className) === "mermaid"
   ) {
-    return <MermaidCodeBlock source={extractTextContent(child.props.children)} enabled={enableMermaid} fallback={codeBlock} />;
+    return <MermaidDiagram source={extractTextContent(child.props.children)} />;
   }
   return codeBlock;
 }

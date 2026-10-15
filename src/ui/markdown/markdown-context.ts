@@ -12,7 +12,7 @@ export type MessageCopyFeedback = {
 };
 
 export type MarkdownRenderContextValue = {
-  enableMermaid: boolean;
+  isStreaming?: boolean;
   markdown: string;
   onCodeBlockCopyResult?: (feedback: MessageCopyFeedback) => void;
   onLinkContextMenuResult?: (result: MarkdownLinkContextMenuResult) => void;
@@ -22,6 +22,5 @@ export type MarkdownRenderContextValue = {
 };
 
 export const MarkdownRenderContext = createContext<MarkdownRenderContextValue>({
-  enableMermaid: true,
   markdown: "",
 });

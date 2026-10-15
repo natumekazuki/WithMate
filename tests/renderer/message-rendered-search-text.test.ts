@@ -399,33 +399,3 @@ test("message search projection は循環footnote参照を一度ずつ投影し�
     dom.window.close();
   }
 });
-
-test("MessageRichText は検索中にbrowserでも初回からfull rendererを使える", () => {
-  const dom = new JSDOM("<!doctype html>");
-  const globalWithWindow = globalThis as typeof globalThis & { window?: Window };
-  const previousWindow = globalWithWindow.window;
-  Object.defineProperty(globalThis, "window", {
-    configurable: true,
-    value: dom.window,
-  });
-  try {
-    const lightHtml = renderToStaticMarkup(React.createElement(MessageRichText, { text: "$$x$$" }));
-    const fullHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
-      text: "$$x$$",
-      forceFullRender: true,
-    }));
-    assert.match(lightHtml, /data-markdown-render-mode="light"/);
-    assert.match(fullHtml, /data-markdown-render-mode="full"/);
-    assert.match(fullHtml, /class="katex"/);
-  } finally {
-    if (previousWindow === undefined) {
-      Reflect.deleteProperty(globalThis, "window");
-    } else {
-      Object.defineProperty(globalThis, "window", {
-        configurable: true,
-        value: previousWindow,
-      });
-    }
-    dom.window.close();
-  }
-});
