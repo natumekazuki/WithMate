@@ -1,4 +1,28 @@
 import { formatMarkdownImageReference } from "../../../src-shared/files/composer-image-reference.js";
+import {
+  resolveWorkspaceDirectoryValidationMessage,
+  type WorkspaceDirectoryValidationResult,
+} from "../../../src-shared/window/workspace-directory-validation.js";
+
+export async function selectAdditionalDirectoryPath(input: {
+  sessionId: string;
+  directoryPath?: string;
+  initialPath: string | null;
+  api: {
+    pickDirectory(initialPath: string | null): Promise<string | null>;
+    validateSessionAdditionalDirectory(sessionId: string, targetPath: string): Promise<WorkspaceDirectoryValidationResult>;
+  };
+}): Promise<string | null> {
+  if (input.directoryPath === undefined) {
+    return input.api.pickDirectory(input.initialPath);
+  }
+  const directoryPath = input.directoryPath.trim();
+  const result = await input.api.validateSessionAdditionalDirectory(input.sessionId, directoryPath);
+  if (!result.valid) {
+    throw new Error(resolveWorkspaceDirectoryValidationMessage(result) || "Enter an absolute path.");
+  }
+  return directoryPath;
+}
 
 export type AdditionalDirectoryDisplay = {
   primaryLabel: string;

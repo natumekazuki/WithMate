@@ -178,6 +178,7 @@ export type WithMateWindowSessionApi = {
     request: GlossarySearchRequest,
   ): Promise<GlossaryOperationResult<GlossaryListResult>>;
   validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;
+  validateSessionAdditionalDirectory(sessionId: string, targetPath: string): Promise<WorkspaceDirectoryValidationResult>;
   listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
   listSessionFilePins(sessionId: string): Promise<SessionFilePin[]>;
   pinSessionFile(request: SessionFileRootResourceRequest): Promise<SessionFilePin>;

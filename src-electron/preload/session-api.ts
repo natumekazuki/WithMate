@@ -64,6 +64,13 @@ export function createSessionApi(
         sessionId,
       );
     },
+    validateSessionAdditionalDirectory(sessionId, targetPath) {
+      return ipcRenderer.invoke(
+        channels.WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL,
+        sessionId,
+        targetPath,
+      );
+    },
     listSessionFileRoots(sessionId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,

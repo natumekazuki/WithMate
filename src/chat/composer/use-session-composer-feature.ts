@@ -155,8 +155,8 @@ export type SessionComposerFeatureBridge = {
       beforeOpenSkillPicker?: () => boolean;
       openPromptTemplates?: SessionComposerOperation;
       addAdditionalDirectory: {
-        main: SessionComposerOperation;
-        auxiliary: SessionComposerOperation;
+        main: (directoryPath?: string) => void | Promise<void>;
+        auxiliary: (directoryPath?: string) => void | Promise<void>;
       };
       removeAdditionalDirectory: {
         main: (path: string) => void | Promise<void>;
@@ -473,10 +473,10 @@ export function useSessionComposerFeature(input: {
       }
       setIsAdditionalDirectoryListOpen((current) => !current);
     };
-    const onAddAdditionalDirectory = () => {
-      void (isAuxiliaryTarget
-        ? bridge.operations.layout.addAdditionalDirectory.auxiliary()
-        : bridge.operations.layout.addAdditionalDirectory.main());
+    const onAddAdditionalDirectory = (directoryPath?: string) => {
+      return isAuxiliaryTarget
+        ? bridge.operations.layout.addAdditionalDirectory.auxiliary(directoryPath)
+        : bridge.operations.layout.addAdditionalDirectory.main(directoryPath);
     };
     const onRemoveAdditionalDirectory = (path: string) => {
       void (isAuxiliaryTarget

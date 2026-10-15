@@ -41,6 +41,7 @@ import {
   WITHMATE_GET_SESSION_SUMMARY_CHANNEL,
   WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
+  WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL,
   WITHMATE_PIN_SESSION_FILE_CHANNEL,
@@ -325,6 +326,21 @@ export function registerSessionQueryHandlers(
         return { valid: false, reason: "unavailable" };
       }
       return deps.validateWorkspaceDirectory(session.workspacePath);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL,
+    async (event, sessionId: string, targetPath: unknown) => {
+      if (typeof sessionId !== "string" || !sessionId) {
+        throw new TypeError("Session ID is invalid.");
+      }
+      const window = deps.resolveEventWindow(event);
+      if (!window || deps.resolveSessionWindow(sessionId) !== window) {
+        throw new Error(
+          "Additional directory validation IPC is only available from the target Session window.",
+        );
+      }
+      return deps.validateWorkspaceDirectory(targetPath);
     },
   );
   ipcMain.handle(

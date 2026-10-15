@@ -20,6 +20,7 @@ export const WITHMATE_GET_SESSION_SUMMARY_CHANNEL = "withmate:get-session-summar
 export const WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL = "withmate:get-session-glossary-projection";
 export const WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL = "withmate:search-session-glossary";
 export const WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL = "withmate:validate-session-workspace";
+export const WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL = "withmate:validate-session-additional-directory";
 export const WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL = "withmate:list-session-file-roots";
 export const WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL = "withmate:list-session-file-pins";
 export const WITHMATE_PIN_SESSION_FILE_CHANNEL = "withmate:pin-session-file";
