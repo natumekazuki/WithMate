@@ -6,7 +6,7 @@ import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
-import { LiveRequestSurface } from "../../src/chat/runtime/live-request-surface.js";
+import { LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,7 +28,7 @@ async function mountElicitation(request: LiveElicitationRequest) {
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(container);
   const responses: unknown[] = [];
-  const render = async (nextRequest: LiveElicitationRequest) => {
+  const render = async (nextRequest: LiveElicitationRequest, props: Partial<LiveRequestSurfaceProps> = {}) => {
     await act(async () => root.render(React.createElement(LiveRequestSurface, {
       liveApprovalRequest: null,
       approvalActionRequestId: null,
@@ -36,6 +36,7 @@ async function mountElicitation(request: LiveElicitationRequest) {
       elicitationActionRequestId: null,
       onResolveLiveApproval() {},
       onResolveLiveElicitation(_request, response) { responses.push(response); },
+      ...props,
     })));
   };
   await render(request);
@@ -255,11 +256,89 @@ test("LiveRequestSurface は自由入力の複数選択を候補と併用でき�
     await submit(mounted.container);
     assert.deepEqual(mounted.responses[1], { action: "accept", content: { tools: ["editor", "terminal"] } });
     await mounted.render({ ...request, requestId: "multi-free-next" });
-    assert.equal(input.value, "", "新しいrequestへ自由入力を持ち越さない");
-    await act(async () => checkbox.click());
+    const nextInput = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Tools Other"]');
+    const nextCheckbox = mounted.container.querySelector<HTMLInputElement>('.live-elicitation-option input[type="checkbox"]');
+    assert.ok(nextInput);
+    assert.ok(nextCheckbox);
+    assert.equal(nextInput.value, "", "新しいrequestへ自由入力を持ち越さない");
+    await act(async () => nextCheckbox.click());
     await submit(mounted.container);
     assert.deepEqual(mounted.responses[2], { action: "accept", content: { tools: ["editor"] } });
   } finally {
     await mounted.cleanup();
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同時に有効な質問は別々のフォームを保持し、通常入力が利用不可の間は非同期回答を送らず、再描画後にdraftを再利用できる"
+// oracle = { type = "contract", ref = "Issue #823 accepted question lifecycle: concurrent questions, current-turn input availability, draft preservation" }
+// fault = "複数質問を単一フォームへ上書きする、入力不可でも送信する、またはsurface再配置でdraftを失う"
+// observable = "表示されたフォーム数、Submitのdisabled状態、再マウント後の入力値と回答payload"
+// observation_boundary = "component-behavior"
+// scope = "live-elicitation-lifecycle"
+// lifecycle = "permanent"
+// impact = "有効な質問への回答または入力中の内容が失われ、providerへ誤ったタイミングで入力される"
+// distinction = "型検査や単一フォームのtestでは複数requestのidentity、可用性遷移とunmount後のdraft復元を検出できない"
+// @end-test-value
+test("LiveRequestSurface preserves concurrent question drafts across availability and remount", async () => {
+  const request: LiveElicitationRequest = {
+    requestId: "async-a", provider: "codex", delivery: "user-message", mode: "form", message: "Choose direction",
+    fields: [{ type: "text", name: "direction", title: "Direction", required: true }],
+  };
+  const native: LiveElicitationRequest = { ...request, requestId: "native-b", delivery: undefined, message: "Choose branch",
+    fields: [{ type: "text", name: "branch", title: "Branch", required: true }] };
+  const mounted = await mountElicitation(request);
+  const drafts: LiveElicitationDrafts = new Map();
+  const active = { liveElicitationRequests: [request, native], drafts };
+  try {
+    await mounted.render(request, { ...active, inputAvailable: false });
+    assert.equal(mounted.container.querySelectorAll(".live-elicitation-card").length, 2);
+    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Direction"]');
+    assert.ok(input);
+    await enterText(mounted.dom, input, "northeast");
+    const buttons = [...mounted.container.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent === "Submit");
+    assert.equal(buttons[0].disabled, true);
+    assert.equal(buttons[1].disabled, false);
+    await act(async () => buttons[0].click());
+    assert.deepEqual(mounted.responses, []);
+    await mounted.render(request, { liveElicitationRequests: [], drafts });
+    await mounted.render(request, { ...active, inputAvailable: true });
+    assert.equal(mounted.container.querySelector<HTMLInputElement>('input[aria-label="Direction"]')?.value, "northeast");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { direction: "northeast" } }]);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "質問記録は本文と選択肢とフォーム処理結果を読み取り専用で示し、有効なフォームと同じ質問を重複表示しない"
+// oracle = { type = "contract", ref = "Issue #823 accepted question lifecycle: read-only question records after resolution" }
+// fault = "完了済み質問から操作可能なフォームを作るか、フォームと記録の重複で質問状態を誤認させる"
+// observable = "質問本文の出現数、記録の選択肢と状態ラベル、フォームcontrol数"
+// observation_boundary = "component-behavior"
+// scope = "live-elicitation-records"
+// lifecycle = "permanent"
+// impact = "解決済み質問に再回答できるように見え、通常チャット回答とフォーム未送信の違いが失われる"
+// distinction = "backendのrecord生成検査と型検査は利用者へ提示される状態・操作境界を検査しない。小さな静的描画で継続検査する"
+// @end-test-value
+test("LiveRequestSurface renders question records and active forms without duplicate questions", () => {
+  const request: LiveElicitationRequest = { requestId: "active", provider: "codex", mode: "form", message: "Active question", fields: [] };
+  const html = renderToStaticMarkup(React.createElement(LiveRequestSurface, {
+    liveApprovalRequest: null, approvalActionRequestId: null, liveElicitationRequest: request,
+    elicitationActionRequestId: null, onResolveLiveApproval() {}, onResolveLiveElicitation() {},
+    elicitationRecords: [
+      { requestId: "active", message: "Active question", fields: [], status: "pending" },
+      { requestId: "answered", message: "Resolved question", fields: [{ title: "Branch", options: ["Main", "Feature"] }], status: "answered" },
+      { requestId: "ended", message: "Ended question", fields: [], status: "expired" },
+    ],
+  }));
+  assert.equal((html.match(/Active question/g) ?? []).length, 1);
+  assert.match(html, /Answer Submitted/);
+  assert.match(html, /No Form Response/);
+  assert.match(html, /<li>Main<\/li><li>Feature<\/li>/);
+  assert.equal((html.match(/<button/g) ?? []).length, 3);
+  assert.equal((html.match(/aria-label="Question record"/g) ?? []).length, 2);
 });

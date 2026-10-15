@@ -16,7 +16,8 @@ export type CodexFileChange = {
   diff: string;
 };
 export type CodexTurnItem =
-  | { type: "agentMessage"; id: string; text: string; phase?: string | null }
+  | { type: "agentMessage"; id: string; text: string; phase?: string | null;
+      delivery?: "async" | null; questions?: { title: string; options?: string[] | null }[] | null }
   | { type: "reasoning"; id: string; summary: string[]; content: string[] }
   | { type: "plan"; id: string; text: string }
   | {

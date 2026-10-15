@@ -596,6 +596,106 @@ describe("SessionRuntimeService stale retry helpers", () => {
 describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "async質問の回答は通常steerと区別され、受理ACKと終端が競合しても回答本文と全質問の最終状態を同じturnに保存する"
+  // oracle = { type = "contract", ref = "Issue #823; Issue #780 explicit same-turn input" }
+  // fault = "通常steerで質問を回答済みにする、provider progressで質問を消す、ACK前に回答済みへ進める、または終端保存が回答ACKを追い越して質問履歴を失う"
+  // observable = "実SessionElicitationServiceのlive要求・record、adapter steer入力、保存Sessionのuser本文とterminal elicitationRecords"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionElicitationServiceとSessionRuntimeServiceのasync質問・同turn入力・正常取消失敗終端の統合"
+  // lifecycle = "permanent"
+  // impact = "利用者の回答が未送信のまま回答済み表示になるか、受理済み回答と未回答質問を履歴から失う"
+  // distinction = "service単体ではruntimeのACK待機・progress合流・terminal保存順を検出できない。短いfake providerの3終端ケースで実service接続を検証する"
+  // @end-test-value
+  it("Codex async質問のACKと終端の競合でも回答と全質問履歴を保存する", async () => {
+    for (const outcome of ["completed", "canceled", "failed"] as const) {
+      let stored = createSession({ threadId: "thread-existing" });
+      let live: LiveSessionRunState | null = null;
+      const currentLive = () => live!;
+      let finishProvider!: () => void;
+      const providerEnd = new Promise<void>((resolve) => { finishProvider = resolve; });
+      let acknowledgeAnswer!: () => void;
+      const answerAck = new Promise<void>((resolve) => { acknowledgeAnswer = resolve; });
+      let publishProgress!: () => Promise<void>;
+      const sent: string[] = [];
+      const phases: string[] = [];
+      let service!: SessionRuntimeService;
+      const questions = new SessionElicitationService({
+        updateLiveSessionRun: (_id, recipe) => { live = recipe(currentLive()); return live; },
+        sendUserMessage: async (id, turnId, userMessage) => { await service.steerSessionTurn(id, { expectedTurnId: turnId, userMessage }); },
+      });
+      const adapter: ProviderCodingAdapter = {
+        composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
+        getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
+        runSessionTurn: async (input, progress) => {
+          publishProgress = async () => { await emitTestProgress(progress, { ...createLiveRunState(), sessionId: input.session.id, threadId: "thread-existing", turnId: "turn-one", inputAvailable: true, assistantText: "still running" }); };
+          await publishProgress();
+          const controller = new AbortController();
+          for (const requestId of ["answer-me", "unanswered"]) {
+            void input.onElicitationRequest!({ requestId, provider: "codex", kind: "question", mode: "form", blocking: false,
+              delivery: "user-message", turnId: "turn-one", message: "Codex has a question",
+              fields: [{ name: "answer", title: requestId === "answer-me" ? "Choose a direction" : "Any constraints?", type: "text", required: true }],
+            }, controller.signal);
+          }
+          await providerEnd;
+          controller.abort();
+          const result = createPartialResult({ threadId: "thread-existing", assistantText: "provider result" });
+          if (outcome !== "completed") throw new ProviderTurnError("provider stopped", result, outcome === "canceled");
+          return result;
+        },
+        steerSessionTurn: async (input) => {
+          sent.push(input.userMessage);
+          if (input.userMessage !== "ordinary steer") await answerAck;
+          return { turnId: input.expectedTurnId };
+        },
+      };
+      service = createTestRuntime({
+        getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
+        resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
+        resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+        getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+        createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, update) => { phases.push(update.phase); },
+        setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+        waitForApprovalDecision: () => "deny", waitForElicitationResponse: (id, request, signal) => questions.waitForLiveElicitationResponse(id, request, signal),
+        setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {},
+        resolvePendingElicitationRequest: (id) => questions.cancelSession(id),
+      });
+      let turnSettled = false;
+      const turn = service.runSessionTurn(stored.id, { executionOptions: captureSessionExecutionOptions(stored), userMessage: "start" });
+      void turn.then(() => { turnSettled = true; }, () => { turnSettled = true; });
+      try {
+        await waitForCondition(() => currentLive()?.elicitationRequests?.length === 2, "both async questions displayed");
+        await service.steerSessionTurn(stored.id, { expectedTurnId: "turn-one", userMessage: "ordinary steer" });
+        assert.deepEqual(currentLive().elicitationRecords?.map(record => record.status), ["pending", "pending"]);
+        await publishProgress();
+        assert.equal(currentLive().elicitationRequests?.length, 2, "provider progress preserves active questions");
+        assert.equal(currentLive().elicitationRecords?.length, 2, "provider progress preserves history");
+        const answer = questions.resolveLiveElicitation(stored.id, "answer-me", { action: "accept", content: { answer: "Take option A" } });
+        await waitForCondition(() => sent.length === 2, "answer dispatched through existing steer");
+        assert.equal(currentLive().elicitationRecords?.[0].status, "pending", "ACK is required before answered");
+        assert.deepEqual(stored.messages.map(message => message.text), ["start", "ordinary steer"]);
+        if (outcome === "canceled") service.cancelRun(stored.id);
+        finishProvider();
+        await waitForCondition(() => currentLive().inputAvailable === false, "provider terminal stops input admission");
+        assert.equal(turnSettled, false, "terminal persistence must wait for answer ACK");
+        assert.equal(currentLive().elicitationRequests?.length, 0, "terminal questions are no longer actionable");
+        assert.throws(() => questions.resolveLiveElicitation(stored.id, "unanswered", { action: "accept", content: { answer: "late" } }), /no longer exists/);
+        acknowledgeAnswer();
+        await answer;
+        await turn;
+        assert.deepEqual(sent, ["ordinary steer", "Choose a direction\nTake option A"]);
+        assert.deepEqual(stored.messages.filter(message => message.role === "user").map(message => message.text), ["start", "ordinary steer", "Choose a direction\nTake option A"]);
+        assert.deepEqual(stored.messages.at(-1)?.elicitationRecords?.map(record => [record.requestId, record.status]), [["answer-me", "answered"], ["unanswered", "expired"]]);
+        assert.equal(phases.at(-1), outcome);
+        assert.throws(() => questions.resolveLiveElicitation(stored.id, "answer-me", { action: "accept", content: { answer: "duplicate" } }), /no longer exists/);
+      } finally {
+        finishProvider(); acknowledgeAnswer();
+        await turn;
+      }
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "streamのdelta数にかかわらず最小turnは開始と終端だけ保存し、取得済み本文と個別操作結果は通常履歴へ保持する"
   // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: 通常履歴と最小turn; src-electron/session/session-runtime-service.ts: runSessionTurnInternal" }
   // fault = "deltaごとにcreate/updateSessionTurnを呼ぶか、失敗・取消の返却履歴からpartial artifactを捨ててturn phaseから操作結果を生成する"

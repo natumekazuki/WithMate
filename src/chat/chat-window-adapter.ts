@@ -30,6 +30,7 @@ type StaticChatCharacterInput = {
 type ChatRoleMessage = {
   role: string;
   text: string;
+  elicitationRecords?: Message["elicitationRecords"];
 };
 
 type StaticChatHeaderProps = {
@@ -174,6 +175,9 @@ export type LiveSessionMessageColumnProps = {
   liveApprovalRequest: ChatMessageColumnProps["liveApprovalRequest"];
   approvalActionRequestId: ChatMessageColumnProps["approvalActionRequestId"];
   liveElicitationRequest: ChatMessageColumnProps["liveElicitationRequest"];
+  liveElicitationRequests?: ChatMessageColumnProps["liveElicitationRequests"];
+  liveElicitationRecords?: ChatMessageColumnProps["liveElicitationRecords"];
+  elicitationInputAvailable?: boolean;
   elicitationActionRequestId: ChatMessageColumnProps["elicitationActionRequestId"];
   liveRunAssistantText: string;
   hasLiveRunAssistantText?: boolean;
@@ -352,6 +356,9 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     liveApprovalRequest: input.liveApprovalRequest,
     approvalActionRequestId: input.approvalActionRequestId,
     liveElicitationRequest: input.liveElicitationRequest,
+    liveElicitationRequests: input.liveElicitationRequests,
+    liveElicitationRecords: input.liveElicitationRecords,
+    elicitationInputAvailable: input.elicitationInputAvailable,
     elicitationActionRequestId: input.elicitationActionRequestId,
     liveRunAssistantText: input.liveRunAssistantText,
     hasLiveRunAssistantText: input.hasLiveRunAssistantText ?? input.liveRunAssistantText.length > 0,
@@ -473,6 +480,7 @@ export function toConversationMessages(messages: ChatRoleMessage[]): Message[] {
   return messages.map((message) => ({
     role: message.role === "user" ? "user" : "assistant",
     text: message.text,
+    ...(message.elicitationRecords ? { elicitationRecords: message.elicitationRecords } : {}),
   }));
 }
 

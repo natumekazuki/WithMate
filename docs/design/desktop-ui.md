@@ -48,6 +48,21 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - 局所的なmotionを使い、reduced motionでは止まった形状とaccessible statusでも状態を識別できるようにする。spinnerのために処理完了を遅らせず、実際に成功した後だけ完了を示す。通知は意味のある遷移へ絞り、会話本文や全カードを重複して読み上げない。
 - 同じ事実を見出し、label、status、helper文で重ねない。正常状態や操作を言い換えただけの常設説明は省略する。未保存・保存中・失敗・回復は残し、新しい編集に古い保存成功を表示しない。`Stop`はrunの停止要求、`Cancel`は現在操作の取消、`Close`はWindow等を閉じる操作、`Quit`はアプリ終了と区別する。
 
+## Windows Session Notifications
+
+- `Session Turn Notification`は既存のturn完了・失敗通知とCodexの構造化質問通知を有効／無効にする。Windowsの通常Session、Character作成Session、Auxiliary Sessionが対象で、対象Session Windowがfocus中なら通知しない。Auxiliaryでは親Windowのfocusを使う。
+- 質問は`item/tool/requestUserInput`のblocking／nonblocking両方と、`agentMessage`の`delivery = async`かつ`questions`を持つ通知を対象とし、質問フォームを表示する時点で通知する。同一itemの開始・完了で二重通知しない。通常の会話本文を質問と推測せず、MCP elicitation・承認待ち・他providerの質問はこの通知に含めない。Monitorのstatusは変更しない。
+- 質問通知はtitleを`WithMate`、bodyを`<Session名>: Codex has a question.`とし、Character icon、通知の識別・置換、クリック時の会話復帰は既存のturn通知を共有する。質問文・選択肢・入力値・会話本文はOS通知へ出さず、`Notification Response Preview`は成功したturnの完了通知だけに適用する。
+- 回答、取消、server側解決、runtime resetで質問通知を撤去する。解決後に設定読込みが完了しても古い通知を表示せず、同じ会話の後続通知を古い質問の解決で撤去しない。通知の作成・配送・撤去失敗は診断として扱い、質問への回答やprovider実行を失敗させない。
+
+## Question Forms
+
+- Main／Auxiliaryとも、有効な入力要求だけを既存formで操作できる。同じturnに複数届いた質問は個別のformとし、他の質問の受信や通常チャットの割り込みで未送信回答を消さない。
+- Codexの非同期質問は選択肢と自由入力を表示し、選択肢がない場合は自由入力だけにする。最初の候補は選択するが、自動送信はしない。`Submit`は質問と回答を現在turnへの通常追加入力として送る。入力を受け付けないturnでは送信できず、次turnへ自動振替しない。RPC質問の回答は元のrequestへの応答とする。
+- 送信中は重複操作を止め、受付失敗時は有効なformと入力値を保持してerrorを示す。通常チャットの本文からform回答を推測せず、通常割り込みだけでは回答済みにしない。
+- 回答・拒否・Close・要求失効・turn終了後は質問文と選択肢をチャットへ残し、操作を取り除く。formで回答を受け付けた記録は`Answer Submitted`、それ以外は`No Form Response`と表示する。通常チャットで回答したかどうかは判定しない。
+- 終端時の記録は通常assistant messageへ保存し、次turnや会話再表示でも操作を復元しない。記録にはformの入力値・既定値を保存しない。非同期回答を受け付けた本文は通常user messageとして保存する。強制終了前のlive formや未送信回答の復元は行わない。
+
 ## UI Implementation Boundary
 
 Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示す。保存済みで通知・投影だけが失敗した場合はtitleの表示を正本summaryから復旧し、保存済みであることと他Windowの再openによる更新をalertで伝える。復旧readも失敗した場合はcommit済みtitleを表示に保持し、再openでの再取得を案内する。保存応答・復旧readが遅れても、別会話・別incarnation・後続のtitle保存へ古いtitleやalertを反映しない。

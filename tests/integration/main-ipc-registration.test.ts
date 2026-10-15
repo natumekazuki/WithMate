@@ -512,6 +512,7 @@ import {
   WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_STEER_SESSION_TURN_CHANNEL,
+  WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL,
@@ -676,6 +677,53 @@ test("steer IPCはMainとAuxiliaryのowner Windowを検証する", async () => {
   await assert.rejects(async () => main({}, "session-1", request), /Session window/);
   await assert.rejects(async () => auxiliary({}, "aux-1", request), /Session window/);
   assert.equal(sent.length, 2);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "質問回答IPCはMainまたはAuxiliaryのowner Windowだけを許し、回答配送の成否をrendererへ返す"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md GUI Turn Queue" }
+// fault = "別Windowから回答できるか、非同期配送の受付前にIPCが成功して送信失敗を隠す"
+// observable = "許可されたresolver呼出、配送保留中のIPC未完了、失敗時のrejectと別Window拒否"
+// observation_boundary = "public-boundary"
+// scope = "question answer IPC ownership and acknowledgment"
+// lifecycle = "permanent"
+// impact = "別会話への入力混入または未送信回答の喪失"
+// distinction = "serviceの単体testはElectronのsender認可とinvoke応答伝播を通らない"
+// @end-test-value
+test("質問回答IPCはownerを検証し配送の受付結果を待つ", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const other = createWindowStub("file:///session.html?sessionId=other");
+  let sender = owner;
+  let rejectDelivery!: (error: Error) => void;
+  let calls = 0;
+  let settled = false;
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    getAuxiliarySessionStatus: async (id: string) => id === "aux-1" ? { parentSessionId: "session-1" } : null,
+    resolveLiveElicitation: async () => {
+      calls += 1;
+      await new Promise<void>((_resolve, reject) => { rejectDelivery = reject; });
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL)!;
+  for (const sessionId of ["session-1", "aux-1"]) {
+    settled = false;
+    const pending = Promise.resolve(handler({}, sessionId, "question", { action: "accept", content: { q: "yes" } }));
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    const rejection = assert.rejects(pending, /delivery failed/);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+    rejectDelivery(new Error("delivery failed"));
+    await rejection;
+  }
+  assert.equal(calls, 2);
+  sender = other;
+  await assert.rejects(async () => handler({}, "aux-1", "question", { action: "accept" }), /Session window/);
+  assert.equal(calls, 2);
 });
 
 function createWindowStub(url: string) {

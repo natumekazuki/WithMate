@@ -610,7 +610,7 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
       sessionId: string,
       requestId: string,
       response: LiveElicitationResponse,
-    ): void;
+    ): Awaitable<void>;
     createSession(input: CreateSessionRequest): Awaitable<Session>;
     updateSession(session: Session): Awaitable<Session>;
     setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;

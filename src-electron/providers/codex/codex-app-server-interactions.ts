@@ -32,6 +32,30 @@ function strings(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+export function buildCodexAsyncQuestionRequest(
+  item: unknown,
+  turnId: string,
+  redact: (value: string) => string,
+): LiveElicitationRequest | null {
+  if (!record(item) || item.type !== "agentMessage" || item.delivery !== "async"
+    || !text(item.id) || !Array.isArray(item.questions) || item.questions.length === 0) return null;
+  const fields: LiveElicitationField[] = [];
+  for (const [index, question] of item.questions.entries()) {
+    if (!record(question) || typeof question.title !== "string"
+      || (question.options !== undefined && question.options !== null && !strings(question.options))) return null;
+    const base = { name: `question-${index + 1}`, title: redact(question.title), required: true };
+    const options = (question.options as string[] | null | undefined)?.map((option) => {
+      const value = redact(option);
+      return { value, label: value };
+    });
+    fields.push(options?.length
+      ? { ...base, type: "select", options, allowFreeText: true, defaultValue: options[0].value }
+      : { ...base, type: "text" });
+  }
+  return { requestId: `async:${turnId}:${item.id}`, provider: "codex", kind: "question", mode: "form",
+    message: "Codex has a question", blocking: false, delivery: "user-message", turnId, fields };
+}
+
 function abortRace<T>(value: Promise<T> | T, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(new Error("Interaction canceled"));
@@ -90,7 +114,7 @@ function questions(params: Record<string, unknown>, requestId: string): LiveElic
     if (options.length === 0 && !question.isOther) return null;
     fields.push(question.isSecret ? { ...base, type: "text", secret: true } : { ...base, type: "select", options, allowFreeText: question.isOther });
   }
-  return { requestId, provider: "codex", mode: "form", message: "Codex has a question", fields, blocking: params.isBlocking };
+  return { requestId, provider: "codex", kind: "question", mode: "form", message: "Codex has a question", fields, blocking: params.isBlocking };
 }
 
 // Projection is deliberately limited to constraints represented by the existing form UI.

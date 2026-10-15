@@ -2366,7 +2366,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       character: { getSettlementStorage: () => requireCharacterAffectTurnSettlementStorage() as CharacterAffectTurnSettlementStorage, requestAppraisal: () => requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true }) },
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },
-      interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId, decision) => { const requestId = getLiveSessionRun(sessionId)?.approvalRequest?.requestId; if (requestId) requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision); }, resolvePendingElicitationRequest: (sessionId, response) => { const requestId = getLiveSessionRun(sessionId)?.elicitationRequest?.requestId; if (requestId) requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response); }, invalidateProviderSessionThread },
+      interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId, decision) => { const requestId = getLiveSessionRun(sessionId)?.approvalRequest?.requestId; if (requestId) requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision); }, resolvePendingElicitationRequest: (sessionId) => requireSessionElicitationService().cancelSession(sessionId), invalidateProviderSessionThread },
       notification: {
         notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); },
         onSessionRunReleased: (sessionId) => sessionTurnQueueService?.wake(sessionId),
@@ -2503,7 +2503,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         waitForApprovalDecision: waitForLiveApprovalDecision,
         waitForElicitationResponse: waitForLiveElicitationResponse,
         resolveApproval: (sessionId, requestId, decision) => { requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision); },
-        resolveElicitation: (sessionId, requestId, response) => { requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response); },
+        cancelElicitations: (sessionId) => requireSessionElicitationService().cancelSession(sessionId),
         invalidateProviderSessionThread,
       },
       notification: async (notification, context) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification, context); },
@@ -2734,12 +2734,46 @@ function requireSessionApprovalService(): SessionApprovalService {
 function requireSessionElicitationService(): SessionElicitationService {
   if (!sessionElicitationService) {
     sessionElicitationService = new SessionElicitationService({
+      sendUserMessage: async (sessionId, turnId, message) => {
+        const runtime = await resolveQueueSessionRuntime(sessionId);
+        await runtime.steerSessionTurn(sessionId, { expectedTurnId: turnId, userMessage: message });
+      },
+      notifyQuestion: (sessionId, signal) => {
+        void notifyLiveCodexQuestion(sessionId, signal).catch((error: unknown) => {
+          writeAppLog({
+            level: "warn",
+            kind: "session.question-notification.failed",
+            process: "main",
+            message: "Session question notification failed",
+            data: { sessionId },
+            error: appLogService.errorToLogError(error),
+          });
+        });
+      },
       updateLiveSessionRun: (sessionId, recipe) =>
         requireSessionObservabilityService().updateLiveSessionRun(sessionId, recipe),
     });
   }
 
   return sessionElicitationService;
+}
+
+async function notifyLiveCodexQuestion(sessionId: string, signal: AbortSignal): Promise<void> {
+  const session = await getRuntimeSession(sessionId);
+  if (signal.aborted) return;
+  if (session) {
+    await requireSessionTurnNotificationService().notifyQuestion(session, signal);
+    return;
+  }
+  const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId);
+  if (signal.aborted || !auxiliary || !await getRuntimeSession(auxiliary.parentSessionId)) return;
+  const runtimeSession = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
+  if (signal.aborted || !runtimeSession) return;
+  await requireSessionTurnNotificationService().notifyQuestion(runtimeSession, signal, {
+    kind: "auxiliary",
+    parentSessionId: auxiliary.parentSessionId,
+    auxiliarySessionId: sessionId,
+  });
 }
 
 function requireSessionMemoryStorage(): SessionMemoryStorageAccess {
@@ -3196,8 +3230,8 @@ function resolveLiveElicitation(
   sessionId: string,
   requestId: string,
   response: LiveElicitationResponse,
-): void {
-  requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
+): void | Promise<void> {
+  return requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
 }
 
 function waitForLiveElicitationResponse(

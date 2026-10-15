@@ -160,12 +160,22 @@ export type LiveElicitationField =
 export type LiveElicitationRequest = {
   requestId: string;
   provider: string;
+  kind?: "question";
+  delivery?: "user-message";
+  turnId?: string;
   mode: "form" | "url";
   message: string;
   source?: string;
   fields: LiveElicitationField[];
   blocking?: boolean;
   url?: string;
+};
+
+export type ElicitationRecord = {
+  requestId: string;
+  message: string;
+  fields: Array<{ title: string; description?: string; options?: string[] }>;
+  status: "pending" | "answered" | "declined" | "canceled" | "expired";
 };
 
 export type LiveSessionRunState = {
@@ -183,6 +193,8 @@ export type LiveSessionRunState = {
   errorMessage: string;
   approvalRequest: LiveApprovalRequest | null;
   elicitationRequest: LiveElicitationRequest | null;
+  elicitationRequests?: LiveElicitationRequest[];
+  elicitationRecords?: ElicitationRecord[];
 };
 
 export type ProviderQuotaSnapshot = {

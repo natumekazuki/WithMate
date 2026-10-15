@@ -58,7 +58,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     waitForApprovalDecision(sessionId: string, request: LiveApprovalRequest, signal: AbortSignal): Promise<LiveApprovalDecision> | LiveApprovalDecision;
     waitForElicitationResponse(sessionId: string, request: LiveElicitationRequest, signal: AbortSignal): Promise<LiveElicitationResponse> | LiveElicitationResponse;
     resolveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
-    resolveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
+    cancelElicitations(sessionId: string): void;
     invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void>;
   };
   notification(notification: Parameters<NonNullable<SessionRuntimeServiceDeps["notifySessionTurnTerminal"]>>[0], target: SessionTurnNotificationTarget): void | Promise<void>;
@@ -122,7 +122,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     scheduleProviderQuotaTelemetryRefresh: (id, delays) => { assertOwner("provider quota schedule"); deps.live.scheduleProviderQuotaTelemetryRefresh(id, delays); },
     broadcastLiveSessionRun: (id) => { assertOwner("live session broadcast"); deps.live.broadcastLiveSessionRun(id); },
     resolvePendingApprovalRequest: (sessionId, decision) => { assertOwner("pending approval resolution"); const requestId = deps.live.getLiveSessionRun(sessionId)?.approvalRequest?.requestId; if (requestId) deps.interaction.resolveApproval(sessionId, requestId, decision); },
-    resolvePendingElicitationRequest: (sessionId, response) => { assertOwner("pending elicitation resolution"); const requestId = deps.live.getLiveSessionRun(sessionId)?.elicitationRequest?.requestId; if (requestId) deps.interaction.resolveElicitation(sessionId, requestId, response); },
+    resolvePendingElicitationRequest: (sessionId) => { assertOwner("pending elicitation resolution"); deps.interaction.cancelElicitations(sessionId); },
     notifySessionTurnTerminal: async (notification) => guarded("terminal notification", async () => {
       const auxiliary = await deps.auxiliary.getSession(notification.session.id);
       if (!auxiliary || !await deps.parent.getSession(auxiliary.parentSessionId)) return;

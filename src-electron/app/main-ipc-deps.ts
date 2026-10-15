@@ -355,7 +355,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
     kind: SessionBackgroundActivityKind,
   ): SessionBackgroundActivityState | null;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
-  resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
+  resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void | Promise<void>;
   createSession(input: CreateSessionRequest): Awaitable<Session>;
   updateSession(session: Session): Awaitable<Session>;
   setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;

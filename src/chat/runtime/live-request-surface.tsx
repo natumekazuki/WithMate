@@ -5,6 +5,7 @@ import type {
   LiveElicitationField,
   LiveElicitationRequest,
   LiveElicitationResponse,
+  ElicitationRecord,
 } from "../../../src-shared/session/runtime-state.js";
 
 function liveApprovalKindLabel(kind: string): string {
@@ -31,6 +32,10 @@ function liveElicitationModeLabel(mode: LiveElicitationRequest["mode"]): string 
 }
 
 type LiveElicitationFieldValue = string | number | boolean | string[];
+export type LiveElicitationDrafts = Map<string, {
+  fieldValues: Record<string, LiveElicitationFieldValue>;
+  freeTextValues: Record<string, string>;
+}>;
 type LiveElicitationContentEntry = readonly [string, LiveElicitationFieldValue];
 
 function createLiveElicitationFieldValue(field: LiveElicitationField): LiveElicitationFieldValue {
@@ -188,6 +193,8 @@ type LiveElicitationCardProps = {
   elicitationActionRequestId: string | null;
   onResolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => void;
   onOpenPath?: (target: string) => void;
+  inputAvailable?: boolean;
+  drafts?: LiveElicitationDrafts;
 };
 
 function LiveRequestBusyIndicator({ label }: { label: string }) {
@@ -204,23 +211,26 @@ function LiveElicitationCard({
   elicitationActionRequestId,
   onResolveLiveElicitation,
   onOpenPath,
+  inputAvailable = true,
+  drafts,
 }: LiveElicitationCardProps) {
   const [fieldValues, setFieldValues] = useState<Record<string, LiveElicitationFieldValue>>(
-    () => createLiveElicitationFormState(request),
+    () => drafts?.get(request.requestId)?.fieldValues ?? createLiveElicitationFormState(request),
   );
-  const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>({});
+  const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>(() => drafts?.get(request.requestId)?.freeTextValues ?? {});
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const fieldIdPrefix = useId();
 
   useEffect(() => {
-    setFieldValues(createLiveElicitationFormState(request));
-    setFreeTextValues({});
-    setValidationMessage(null);
-  }, [request.requestId]);
+    drafts?.set(request.requestId, { fieldValues, freeTextValues });
+  }, [drafts, request.requestId, fieldValues, freeTextValues]);
 
   const isSubmitting = elicitationActionRequestId === request.requestId;
+  const isActionPending = elicitationActionRequestId !== null;
+  const acceptDisabled = isActionPending || (request.delivery === "user-message" && !inputAvailable);
 
   const handleSubmit = (action: LiveElicitationResponse["action"]) => {
+    if (isActionPending || (action === "accept" && acceptDisabled)) return;
     if (action === "accept") {
       const answers = mergeFreeTextAnswers(request, fieldValues, freeTextValues);
       for (const field of request.fields) {
@@ -423,14 +433,14 @@ function LiveElicitationCard({
       {validationMessage ? <p className="live-approval-warning" role="alert">{validationMessage}</p> : null}
       <div className="live-approval-actions">
         {isSubmitting ? <LiveRequestBusyIndicator label="Processing input request" /> : null}
-        <button type="button" onClick={() => handleSubmit("accept")} disabled={isSubmitting}>
+        <button type="button" onClick={() => handleSubmit("accept")} disabled={acceptDisabled}>
           {request.mode === "url" ? "Complete" : "Submit"}
         </button>
         <button
           className="drawer-toggle secondary"
           type="button"
           onClick={() => handleSubmit("decline")}
-          disabled={isSubmitting}
+          disabled={isActionPending}
         >
           Reject
         </button>
@@ -438,7 +448,7 @@ function LiveElicitationCard({
           className="drawer-toggle secondary"
           type="button"
           onClick={() => handleSubmit("cancel")}
-          disabled={isSubmitting}
+          disabled={isActionPending}
         >
           Close
         </button>
@@ -447,10 +457,36 @@ function LiveElicitationCard({
   );
 }
 
+export function ElicitationRecords({ records }: { records?: readonly ElicitationRecord[] }) {
+  return records?.map((record) => (
+    <section className="live-elicitation-card" key={record.requestId} aria-label="Question record">
+      <div className="live-approval-head">
+        <div className="live-approval-copy">
+          <span className="live-approval-badge">{record.status === "answered" ? "Answer Submitted" : record.status === "pending" ? "Input Requested" : "No Form Response"}</span>
+          <p className="live-approval-title">{record.message}</p>
+        </div>
+      </div>
+      <div className="live-elicitation-form">
+        {record.fields.map((field, index) => (
+          <div className="live-elicitation-field" key={index}>
+            <span className="live-elicitation-label">{field.title}</span>
+            {field.description ? <span className="live-elicitation-description">{field.description}</span> : null}
+            {field.options?.length ? <ul className="elicitation-record-options">{field.options.map((option, optionIndex) => <li key={optionIndex}>{option}</li>)}</ul> : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  ));
+}
+
 export type LiveRequestSurfaceProps = {
   liveApprovalRequest: LiveApprovalRequest | null;
   approvalActionRequestId: string | null;
   liveElicitationRequest: LiveElicitationRequest | null;
+  liveElicitationRequests?: readonly LiveElicitationRequest[];
+  elicitationRecords?: readonly ElicitationRecord[];
+  inputAvailable?: boolean;
+  drafts?: LiveElicitationDrafts;
   elicitationActionRequestId: string | null;
   onResolveLiveApproval: (request: LiveApprovalRequest, decision: "approve" | "deny") => void;
   onResolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => void;
@@ -461,11 +497,17 @@ export function LiveRequestSurface({
   liveApprovalRequest,
   approvalActionRequestId,
   liveElicitationRequest,
+  liveElicitationRequests,
+  elicitationRecords,
+  inputAvailable,
+  drafts,
   elicitationActionRequestId,
   onResolveLiveApproval,
   onResolveLiveElicitation,
   onOpenPath,
 }: LiveRequestSurfaceProps) {
+  const requests = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
+  const visibleRecords = elicitationRecords?.filter((record) => !requests.some((request) => request.requestId === record.requestId));
   const isApprovalSubmitting = liveApprovalRequest
     ? approvalActionRequestId === liveApprovalRequest.requestId
     : false;
@@ -516,14 +558,18 @@ export function LiveRequestSurface({
           </div>
         </section>
       ) : null}
-      {liveElicitationRequest ? (
+      <ElicitationRecords records={visibleRecords} />
+      {requests.map((request) => (
         <LiveElicitationCard
-          request={liveElicitationRequest}
+          key={request.requestId}
+          request={request}
+          inputAvailable={inputAvailable}
+          drafts={drafts}
           elicitationActionRequestId={elicitationActionRequestId}
           onResolveLiveElicitation={onResolveLiveElicitation}
           onOpenPath={onOpenPath}
         />
-      ) : null}
+      ))}
     </>
   );
 }

@@ -6,7 +6,7 @@ import {
   CodexAppServerTransport,
   type CodexProtocolEvent,
 } from "./app-server-transport.js";
-import { CodexTurnInteractions } from "./codex-app-server-interactions.js";
+import { buildCodexAsyncQuestionRequest, CodexTurnInteractions } from "./codex-app-server-interactions.js";
 import { CodexProjectionClient } from "./codex-projection-client.js";
 import { CODEX_LIVE_PROGRESS_INTERVAL_MS, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionEvent } from "./codex-projection-protocol.js";
 
@@ -929,6 +929,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
       [args.apiKey],
     );
     let interactionError: unknown;
+    const asyncQuestions = new AbortController();
+    const asyncQuestionSignal = signal ? AbortSignal.any([signal, asyncQuestions.signal]) : asyncQuestions.signal;
+    const seenAsyncQuestions = new Set<string>();
     const interactions = sessionInput
       ? new CodexTurnInteractions(
           sessionInput,
@@ -1195,6 +1198,24 @@ export class CodexAdapter implements ProviderTurnAdapter {
         // Prior-turn token usage establishes the baseline; other foreign-turn data has no projection use.
         if (typeof params.threadId === "string" && params.threadId !== state.threadId
           || !inScope && event.method !== "thread/tokenUsage/updated") continue;
+        if ((event.method === "item/started" || event.method === "item/completed")
+          && inScope && state.turnId && sessionInput?.onElicitationRequest && !asyncQuestionSignal.aborted) {
+          const request = buildCodexAsyncQuestionRequest(params.item, state.turnId, redactor.sanitizeText);
+          if (request && !seenAsyncQuestions.has(request.requestId)) {
+            seenAsyncQuestions.add(request.requestId);
+            const failQuestion = (error: unknown) => {
+              if (asyncQuestionSignal.aborted) return;
+              interactionError = error instanceof Error ? error : new Error(String(error));
+              void transport.close().catch(() => undefined);
+            };
+            try {
+              // Async delivery answers are ordinary user messages, submitted by the session service.
+              void Promise.resolve(sessionInput.onElicitationRequest(request, asyncQuestionSignal)).catch(failQuestion);
+            } catch (error) {
+              failQuestion(error);
+            }
+          }
+        }
         eventBatch.push({ method: event.method, params: event.params });
         if (event.method === "turn/completed" && inScope && typeof turn.id === "string" && typeof turn.status === "string") {
           state.turnCompleted = true;
@@ -1204,6 +1225,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
               ? asRecord(turn.error).message as string : `Codex turn ${turn.status}`);
         }
         if (state.turnCompleted) {
+          asyncQuestions.abort();
           if (active) active.inputAvailable = false;
           interactions?.close();
           if (sessionInput) this.activeTurns.delete(sessionInput.session.id);
@@ -1230,6 +1252,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       turnCanceled = signal?.aborted === true && error === signal.reason;
       throw error;
     } finally {
+      asyncQuestions.abort();
       signal?.removeEventListener("abort", abort);
       interactions?.close();
       flushEvents();

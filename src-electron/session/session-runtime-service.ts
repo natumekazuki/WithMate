@@ -1165,6 +1165,7 @@ export class SessionRuntimeService {
     });
     const runProviderTurn = async (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
+      const elicitationResponses: Promise<LiveElicitationResponse>[] = [];
       const effectiveTurnSession = { ...await (this.deps.resolveProviderSession?.(turnSession) ?? turnSession),
         allowedAdditionalDirectories: [...capturedAdditionalDirectories] };
       const providerPromise = providerAdapter.runSessionTurn({
@@ -1192,6 +1193,7 @@ export class SessionRuntimeService {
           if (terminalSettled || progressGeneration !== liveProgressGeneration) return { action: "cancel" };
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
           const response = this.deps.waitForElicitationResponse(sessionId, elicitationRequest, signal);
+          if (elicitationRequest.delivery === "user-message") elicitationResponses.push(Promise.resolve(response));
           return response;
         },
         onProviderQuotaTelemetry: (telemetry) => {
@@ -1215,6 +1217,8 @@ export class SessionRuntimeService {
           reasoningText: state.reasoningText ?? currentLiveState?.reasoningText ?? "",
           approvalRequest: currentLiveState?.approvalRequest ?? null,
           elicitationRequest: currentLiveState?.elicitationRequest ?? null,
+          elicitationRequests: currentLiveState?.elicitationRequests,
+          elicitationRecords: currentLiveState?.elicitationRecords,
         };
         this.setRuntimeLiveState(sessionId, nextLiveState);
       });
@@ -1235,6 +1239,8 @@ export class SessionRuntimeService {
         }
         const pendingInput = this.pendingSessionInputs.get(sessionId);
         if (pendingInput && this.dispatchedSessionInputs.has(sessionId)) await pendingInput.catch(() => undefined);
+        this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
+        await Promise.all(elicitationResponses);
         if (queuedInputRecoveryError) throw queuedInputRecoveryError;
       }
     };
@@ -1325,6 +1331,7 @@ export class SessionRuntimeService {
             role: "assistant",
             text: result.assistantText,
             artifact: result.artifact,
+            ...this.terminalElicitationRecords(sessionId),
           },
         ],
       };
@@ -1443,6 +1450,7 @@ export class SessionRuntimeService {
             role: "assistant",
             text: assistantText,
             artifact: partialResult?.artifact,
+            ...this.terminalElicitationRecords(sessionId),
             accent: true,
           },
         ],
@@ -1520,4 +1528,13 @@ export class SessionRuntimeService {
     }
   }
 
+  private terminalElicitationRecords(sessionId: string): Pick<Session["messages"][number], "elicitationRecords"> {
+    const records = this.deps.getLiveSessionRun(sessionId)?.elicitationRecords;
+    return records?.length ? {
+      elicitationRecords: records.map((record) => ({
+        ...record,
+        status: record.status === "pending" ? "expired" : record.status,
+      })),
+    } : {};
+  }
 }
