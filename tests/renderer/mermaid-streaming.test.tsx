@@ -13,7 +13,7 @@ import { MarkdownRenderContext } from "../../src/ui/markdown/markdown-context.js
 // fault = "source更新で表示中SVGや画像を消す、stale計算で新図を上書きする、resourceを早期解放する、最終errorを古い図で隠す、またはrendererが本文外へerror SVGを残す"
 // observable = "SVGのDOM同一性・内容・IDと本文内の所有範囲、aria-busy、resolver signal、解放URI、最終errorと原文"
 // observation_boundary = "component-behavior"
-// scope = "MermaidDiagramと実Mermaid rendererのsource更新・画像・終了境界"
+// scope = "MermaidDiagramと実Mermaid rendererのsource更新・画像・未確定error後の追記と終了境界"
 // lifecycle = "permanent"
 // impact = "読み進めている図と画像を保持し、未完了と失敗を成功に見せず最新の図だけを表示する"
 // distinction = "viewport操作と画像変換単体の既存testでは通らない実componentの非同期再描画とresource所有を小さな図で確認する"
@@ -98,19 +98,39 @@ test("Mermaidは再計算中の図を保持しstale結果を捨て最終errorを
     assert.ok(secondSvg.textContent!.includes("Two"));
     assert.ok(revoked.includes("blob:first"));
 
-    const invalid = "flowchart LR\n A[broken";
-    await render(invalid, true);
+    const partial = second + "\n B --> C[partial";
+    await render(partial, true);
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 230)); });
     assert.equal(container.querySelector(".message-mermaid-canvas svg"), secondSvg);
     assert.equal(container.firstElementChild?.getAttribute("aria-busy"), "true");
     assert.equal(container.querySelector(".message-mermaid-error"), null);
     assert.ok([...dom.window.document.querySelectorAll("svg")].every((svg) => container.contains(svg)), "errorの仮描画を本文外へ残さない");
+    const finalSource = partial + "]";
+    await render(finalSource, true);
+    await render(finalSource, false);
+    await waitFor(() => pending.length === 3);
+    assert.equal(container.querySelector(".message-mermaid-canvas svg"), secondSvg);
+    assert.equal(secondSvg.isConnected, true);
+    assert.ok(!revoked.includes("blob:second"));
+    assert.equal(container.firstElementChild?.getAttribute("aria-busy"), "true");
+    assert.equal(container.querySelector(".message-mermaid-error"), null);
+    await act(async () => pending[2]!.resolve("blob:final"));
+    await waitFor(() => Boolean(container.querySelector('svg image[href="blob:final"]')));
+    const finalSvg = container.querySelector(".message-mermaid-canvas svg")!;
+    assert.ok(finalSvg && finalSvg !== secondSvg);
+    assert.ok(finalSvg.textContent!.includes("partial"));
+    assert.ok(revoked.includes("blob:second"));
+
+    const invalid = "flowchart LR\n A[broken";
+    await render(invalid, true);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 230)); });
+    assert.equal(container.querySelector(".message-mermaid-canvas svg"), finalSvg);
     await render(invalid, false);
     await waitFor(() => Boolean(container.querySelector(".message-mermaid-error")));
     assert.equal(container.querySelector(".message-mermaid-canvas svg"), null);
     assert.equal(container.querySelector("code")?.textContent, invalid);
     assert.equal(dom.window.document.querySelectorAll("svg").length, 0);
-    assert.ok(revoked.includes("blob:second"));
+    assert.ok(revoked.includes("blob:final"));
   } finally {
     await act(async () => root.unmount());
     URL.revokeObjectURL = revokeObjectURL;

@@ -164,7 +164,8 @@ export const MermaidDiagram = memo(function MermaidDiagram({
     status: "pending",
   });
   const displayed = renderState.status === "ready" ? renderState.result
-    : renderState.status === "pending" || isStreaming ? renderState.previous : undefined;
+    : renderState.status === "pending" || isStreaming || renderState.source !== diagramSource
+      ? renderState.previous : undefined;
 
   useEffect(() => {
     for (const controller of retainedControllers.current) {
