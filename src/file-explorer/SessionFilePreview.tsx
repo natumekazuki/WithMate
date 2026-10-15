@@ -1156,7 +1156,7 @@ export function SessionFilePreview({
 
   return (
     <section
-      className="session-file-preview"
+      className="session-file-preview session-file-preview-with-path"
       aria-label="File preview"
       aria-busy={contentLoading || reloadPending || Boolean(busyAction) || diffLoadingScope !== null || undefined}
     >
@@ -1171,15 +1171,6 @@ export function SessionFilePreview({
         <div className="session-file-preview-title">
           <strong>{descriptor?.name ?? getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}</strong>
           {isSessionFileGitCommitResource(request) ? <span>Commit {request.commitId.slice(0, 7)}</span> : null}
-          {descriptor ? (
-            <input
-              className="session-file-preview-path"
-              aria-label="Absolute file path"
-              readOnly
-              value={descriptor.absoluteFilePath}
-              title={descriptor.absoluteFilePath}
-            />
-          ) : null}
         </div>
         <div className="session-file-preview-actions">
           {descriptor && (previewKind === "text" || isRichPreview) ? (
@@ -1309,6 +1300,18 @@ export function SessionFilePreview({
           </div>
         ) : null}
       </header>
+
+      {descriptor ? (
+        <div className="session-file-preview-path-region">
+          <textarea
+            className="session-file-preview-path"
+            aria-label="Absolute file path"
+            readOnly
+            rows={1}
+            value={descriptor.absoluteFilePath}
+          />
+        </div>
+      ) : null}
 
       {findOpen && descriptor && (previewKind === "text" || isRichPreview) ? (
         <SessionContentFindBar

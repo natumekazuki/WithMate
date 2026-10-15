@@ -1527,6 +1527,16 @@
   background: transparent;
 }
 
+.session-file-preview-with-path {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "header"
+    "path"
+    "find"
+    "content"
+    "feedback";
+}
+
 .session-file-preview-header {
   grid-area: header;
   position: relative;
@@ -1569,9 +1579,18 @@
   font-size: 0.74rem;
 }
 
-.session-file-preview-title .session-file-preview-path {
+.session-file-preview-path-region {
+  grid-area: path;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.session-file-preview-path {
+  display: block;
   width: 100%;
   min-width: 0;
+  min-height: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -1579,6 +1598,11 @@
   color: var(--muted);
   font: inherit;
   font-size: 0.74rem;
+  line-height: 1.5;
+  field-sizing: content;
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   user-select: text;
 }
 

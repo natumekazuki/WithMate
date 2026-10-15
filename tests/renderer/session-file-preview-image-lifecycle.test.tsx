@@ -331,17 +331,17 @@ async function renderPreview(
 
 // @test-value v2
 // kind = "contract"
-// claim = "file preview headerはroot・absolute・commit resourceの絶対パスをread-onlyで確認でき、対象切替に追従する"
+// claim = "file previewはheaderと本文の間の専用領域にroot・absolute・commit resourceの絶対パスをread-onlyで表示し、対象切替に追従する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 中央 file preview" }
-// fault = "表示pathを相対pathへ置換する、編集可能にする、または別resourceへ旧pathを表示する"
-// observable = "Absolute file path欄のvalue・readOnly・titleとcommit表示"
+// fault = "表示pathを相対pathへ置換する、操作群と同じ領域へ戻す、編集可能にする、または別resourceへ旧pathを表示する"
+// observable = "Absolute file path欄のvalue・readOnly・全選択範囲、header/専用領域/本文のDOM順とcommit表示"
 // observation_boundary = "component-behavior"
-// scope = "SessionFilePreview header absolute file path"
+// scope = "SessionFilePreview absolute file path region"
 // lifecycle = "permanent"
 // impact = "利用者がプレビュー対象の実際の所在を取り違えず確認・copyできる"
-// distinction = "同じAPIでrequestだけを切り替え、Main側path解決と型検査だけでは検出できないheader投影と対象切替を確認する"
+// distinction = "同じAPIでrequestだけを切り替え、Main側path解決と型検査だけでは検出できない専用領域への投影と対象切替を確認する"
 // @end-test-value
-test("file preview は絶対パスをread-only表示し対象切替へ追従する", async () => {
+test("file preview は専用領域で絶対パスをread-only表示し対象切替へ追従する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true, url: "http://localhost/" });
   const restoreGlobals = installDomGlobals(dom);
   const container = dom.window.document.getElementById("root");
@@ -373,11 +373,16 @@ test("file preview は絶対パスをread-only表示し対象切替へ追従す�
       await act(async () => {
         root?.render(React.createElement(SessionFilePreview, { api, request, onCopyText() {} }));
       });
-      await waitFor(() => container.querySelector<HTMLInputElement>("input[aria-label='Absolute file path']")?.value === absoluteFilePath);
-      const input: HTMLInputElement | null = container.querySelector<HTMLInputElement>("input[aria-label='Absolute file path']");
+      await waitFor(() => container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Absolute file path']")?.value === absoluteFilePath);
+      const input: HTMLTextAreaElement | null = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Absolute file path']");
       assert.ok(input);
       assert.equal(input.readOnly, true);
-      assert.equal(input.title, absoluteFilePath);
+      input.select();
+      assert.equal(input.selectionStart, 0);
+      assert.equal(input.selectionEnd, absoluteFilePath.length);
+      const pathRegion: HTMLElement | null = input.parentElement;
+      assert.equal(pathRegion?.previousElementSibling, container.querySelector("header"));
+      assert.equal(pathRegion?.nextElementSibling, container.querySelector(".session-file-preview-metadata"));
       if ("resourceKind" in request) {
         assert.match(container.querySelector(".session-file-preview-title")?.textContent ?? "", /Commit aaaaaaa/);
       }
