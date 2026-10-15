@@ -14,13 +14,15 @@ Settingsの`Keyboard shortcuts`では、変更可能なcommandの現在値を確
 - messageの一括縮小と展開
 - file preview内の検索
 - MarkdownのPreviewとSourceの切り替え
-- Mainの最下部へ移動（`Scroll Main To Bottom`。既定はWindows／Linuxで`Ctrl+Shift+B`、macOSで`Cmd+Shift+B`）
-- 選択中Auxiliaryの最下部へ移動（`Scroll Auxiliary To Bottom`。既定はWindows／Linuxで`Ctrl+Shift+N`、macOSで`Cmd+Shift+N`）
+- Mainの最下部へ移動（`Scroll Main To Bottom`。初期は未割当）
+- 選択中Auxiliaryの最下部へ移動（`Scroll Auxiliary To Bottom`。初期は未割当）
 - 下部パネルのPromptとTerminalの切り替え（既定はWindows／Linuxで`Ctrl+Shift+T`、macOSで`Cmd+Shift+T`）
 - message送信（Windows／Linuxは`Ctrl+Enter`、macOSは`Cmd+Enter`。実行中は次Turnを予約）
 - Codexの実行中追加入力（Windows／Linuxは`Ctrl+Shift+Enter`、macOSは`Cmd+Shift+Enter`。現在のComposer下書きを現在Turnへ送信）
 
 固定操作やOSと衝突しやすい操作は変更対象にしません。
+
+末尾移動の2commandは既存割当を維持するため初期キーを持たず、`Not Assigned`と表示します。`Change`でそれぞれ登録したキーだけが有効になり、`Reset`で指定commandだけ未割当へ戻ります。未割当commandはキーを予約せず、他の有効な保存済み割当を変更しません。
 
 ## command scope
 

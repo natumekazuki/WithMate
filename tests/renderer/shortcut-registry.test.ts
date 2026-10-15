@@ -5,6 +5,7 @@ import { JSDOM } from "jsdom";
 import {
   captureShortcutAccelerator,
   DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+  getShortcutAccelerator,
   getShortcutHelpProjection,
   getShortcutEntry,
   getShortcutLabel,
@@ -625,7 +626,7 @@ describe("shortcut projection", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "MainとAuxiliaryの末尾移動はplatform別の既定キーとHelpを持ち、個別変更・復元が可能で同じキーの登録を拒否する"
+  // claim = "MainとAuxiliaryの末尾移動は全platformで初期未割当とHelpを持ち、個別登録・復元が可能で同じキーの登録を拒否し、Resetで未割当へ戻る"
   // oracle = { type = "contract", ref = "docs/features/keyboard-shortcuts.md: MainとAuxiliaryの末尾移動" }
   // fault = "片方のキー変更が他方に適用される、保存値を失う、Helpが実効値と食い違う、または同じキーを両方へ許す"
   // observable = "Helpのlabelとaccelerator、normalize後の個別設定、衝突例外、Reset後の実効値"
@@ -641,11 +642,13 @@ describe("shortcut projection", () => {
     for (const platform of ["windows", "linux", "macos"] as const) {
       const defaults = getShortcutHelpProjection(platform).flatMap((group) => group.items);
       assert.deepEqual(defaults.find((item) => item.id === main), {
-        id: main, label: "Scroll Main To Bottom", acceleratorLabel: platform === "macos" ? "⌘⇧B" : "Ctrl+Shift+B",
+        id: main, label: "Scroll Main To Bottom", acceleratorLabel: "Not Assigned",
       });
       assert.deepEqual(defaults.find((item) => item.id === auxiliary), {
-        id: auxiliary, label: "Scroll Auxiliary To Bottom", acceleratorLabel: platform === "macos" ? "⌘⇧N" : "Ctrl+Shift+N",
+        id: auxiliary, label: "Scroll Auxiliary To Bottom", acceleratorLabel: "Not Assigned",
       });
+      assert.equal(getShortcutAccelerator(main, platform), null);
+      assert.equal(getShortcutAccelerator(auxiliary, platform), null);
       const modifiers = platform === "macos" ? { metaKey: true, shiftKey: true } : { ctrlKey: true, shiftKey: true };
       let settings = updateShortcutBinding(DEFAULT_KEYBOARD_SHORTCUT_SETTINGS, main, platform, { key: "u", ...modifiers });
       settings = updateShortcutBinding(settings, auxiliary, platform, { key: "i", ...modifiers });
@@ -658,8 +661,78 @@ describe("shortcut projection", () => {
       assert.equal(help.find((item) => item.id === auxiliary)?.acceleratorLabel, `${prefix}I`);
       assert.throws(() => updateShortcutBinding(settings, auxiliary, platform, { key: "u", ...modifiers }), /collision/i);
       settings = updateShortcutBinding(settings, main, platform, null);
-      assert.equal(getShortcutLabel(main, platform, settings), `${prefix}B`);
+      assert.equal(getShortcutLabel(main, platform, settings), "Not Assigned");
       assert.equal(getShortcutLabel(auxiliary, platform, settings), `${prefix}I`);
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "未割当の末尾commandは既存の有効なB/N割当を保持し、登録されたキーだけが指定handlerへ配送され、Reset後は配送されない"
+  // oracle = { type = "contract", ref = "docs/features/keyboard-shortcuts.md: 初期未割当と既存割当の維持" }
+  // fault = "未割当commandが既存overrideを衝突扱いで削除する、キーを横取りする、またはReset後も発火する"
+  // observable = "正規化した保存値、実dispatcherのhandler呼出列、keydownのdefaultPrevented"
+  // observation_boundary = "consumer"
+  // scope = "unassigned-bottom-shortcuts"
+  // lifecycle = "permanent"
+  // impact = "既存利用者の操作が別commandへ置き換わり、設定の再保存で割当も失われる"
+  // distinction = "Help値だけでは未割当の衝突除外とruntime配送を保証できず、3platformの純粋設定と実dispatcherで小さく検証する"
+  // @end-test-value
+  it("未割当の末尾shortcutは既存割当を保持し登録・Resetに従って配送する", () => {
+    const dom = new JSDOM("<body></body>");
+    const restore = installDomGlobals(dom);
+    try {
+      for (const platform of ["windows", "linux", "macos"] as const) {
+        const modifiers = platform === "macos" ? { metaKey: true, shiftKey: true } : { ctrlKey: true, shiftKey: true };
+        const main = SHORTCUT_COMMAND_IDS.mainScrollToBottom;
+        const auxiliary = SHORTCUT_COMMAND_IDS.auxiliaryScrollToBottom;
+        const collapse = SHORTCUT_COMMAND_IDS.messageToggleCollapse;
+        const toggle = SHORTCUT_COMMAND_IDS.conversationToggleTarget;
+        const saved = { overrides: {
+          [collapse]: { [platform]: { key: "b", ...modifiers } },
+          [toggle]: { [platform]: { key: "n", ...modifiers } },
+        } };
+        let settings = normalizeKeyboardShortcutSettings(saved);
+        assert.deepEqual(settings, saved);
+        const calls: string[] = [];
+        const dispatcher = new ShortcutDispatcher({ eventTarget: dom.window, platform, settings });
+        try {
+          dispatcher.registerScope("session");
+          dispatcher.registerScope("message-list");
+          for (const id of [main, auxiliary, collapse, toggle]) {
+            dispatcher.registerHandler(id, () => { calls.push(id); });
+          }
+          const press = (key: string) => {
+            const event = createKeyboardEvent(dom, { key, ...modifiers });
+            dom.window.document.body.dispatchEvent(event);
+            return event.defaultPrevented;
+          };
+          assert.equal(press("b"), true);
+          assert.equal(press("n"), true);
+          assert.equal(press("u"), false);
+          assert.equal(press("i"), false);
+          assert.deepEqual(calls, [collapse, toggle]);
+          settings = updateShortcutBinding(settings, main, platform, { key: "u", ...modifiers });
+          settings = updateShortcutBinding(settings, auxiliary, platform, { key: "i", ...modifiers });
+          dispatcher.setSettings(settings);
+          assert.equal(press("u"), true);
+          assert.equal(press("i"), true);
+          settings = updateShortcutBinding(settings, main, platform, null);
+          dispatcher.setSettings(settings);
+          assert.equal(press("u"), false);
+          assert.equal(press("i"), true);
+          assert.equal(press("b"), true);
+          assert.equal(press("n"), true);
+          assert.deepEqual(calls, [collapse, toggle, main, auxiliary, auxiliary, collapse, toggle]);
+          assert.deepEqual(settings.overrides[collapse], saved.overrides[collapse]);
+          assert.deepEqual(settings.overrides[toggle], saved.overrides[toggle]);
+        } finally {
+          dispatcher.dispose();
+        }
+      }
+    } finally {
+      restore();
+      dom.window.close();
     }
   });
 

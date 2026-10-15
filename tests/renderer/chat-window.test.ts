@@ -27,6 +27,12 @@ import { SessionActionDockCompactRow } from "../../src/chat/approval/session-act
 import { SessionChatScreen } from "../../src/chat/shell/session-header.js";
 import { SessionSwitcher } from "../../src/chat/session-switcher.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
+import {
+  DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+  getShortcutDispatcher,
+  SHORTCUT_COMMAND_IDS,
+  updateShortcutBinding,
+} from "../../src/settings/shortcut-registry.js";
 
 const noop = () => {};
 
@@ -2035,6 +2041,12 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
     },
   });
   try {
+    const settings = updateShortcutBinding(
+      updateShortcutBinding(DEFAULT_KEYBOARD_SHORTCUT_SETTINGS, SHORTCUT_COMMAND_IDS.mainScrollToBottom,
+        "windows", { key: "b", ctrlKey: true, shiftKey: true }),
+      SHORTCUT_COMMAND_IDS.auxiliaryScrollToBottom, "windows", { key: "n", ctrlKey: true, shiftKey: true },
+    );
+    getShortcutDispatcher()!.setSettings(settings);
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(renderChatWindow());
