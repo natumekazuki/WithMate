@@ -325,11 +325,12 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Git rootがない、または変更が0件という正常状態はblankで表現する。Git repositoryのdiscovery・availability・rejectと、Changes / Historyの取得・diff操作の失敗は理由を持つ実エラーとして扱い、正常blankへ潰さない。File Explorerのroot読込失敗は`role="alert"`で示し、読込中はspinner/statusと区別する
 - 中央 file preview
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
+  - ファイル名・操作のheaderと本文の間に、絶対パス専用の全幅領域を置く。pathはread-onlyで、長い場合は折り返して全文を表示し、Tabでfocusして選択・copyできる。狭幅では操作群も折り返す。通常fileはMainが解決したcanonical path、commit snapshotは選択root内の対応pathを表示し、Commit表示で本文の版を区別する。resourceの識別・認可や読込先は表示pathから変更しない
   - Text、Markdown、Mermaid（`.mmd`）、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
   - Markdown は shared rich text renderer、Mermaid は shared Mermaid renderer の Preview を既定とし、Source へ切り替えられる
   - Mermaid内のlinkは通常のMarkdownと同じMainの解決・認可経路へ渡し、相対pathはpreview fileの親directoryを基準にする。diagramのanchorからWindow自体を遷移させず、無効・不存在・不許可の場合も図を保持してerrorを表示する。strictが除去したdestinationは復元しない。auxiliary clickとCtrl＋drag後のclickはopenしない
   - Mermaid flowchartの標準image nodeとnode・edge・subgraph見出し内のHTML `img`でlocal画像を図内表示する。`.mmd`、Markdown file内の図、会話内の図と通常Markdown画像に共通の画像resolverを使用し、登録root外も表示する。相対pathはfileでは元fileの親directory、会話ではWorkspace基準とする。画像ごとの読込失敗はplaceholderと対象・理由を示して図全体を保持する。記法、サイズ、安全境界は[Mermaid Images](message-rich-text.md#mermaid-images)を参照する
-  - `.mmd`のFile Previewは、header・Find・feedbackを除く残りの表示領域を図の枠に割り当て、中央paneと独立Windowのresizeに追従する。Markdown／会話内の図は本文の流れを保つ高さ上限を持つ
+  - `.mmd`のFile Previewは、header・path領域・Find・feedbackを除く残りの表示領域を図の枠に割り当て、中央paneと独立Windowのresizeに追従する。Markdown／会話内の図は本文の流れを保つ高さ上限を持つ
   - Mermaidは中央・独立File PreviewとMarkdown／会話で共通の図単位のZoom Out／Zoom In、現在倍率兼100%リセット、Fitを持つ。初期表示はFitで、buttonによる手動倍率は10%〜800%を10ポイント刻みで変更する。Fitは小さい図を拡大せず縦横を表示領域へ収め、領域のresizeへ追従する。拡大後は図内のnative scrollで移動し、toolbarはスクロール外へ置く。各buttonはTabとEnter／Spaceで操作し、図領域へのfocus後はkeyboardでもscrollできる。Ctrlなしの左drag文字選択、通常の右clickとCtrlなしのwheelによるnative scrollを維持する。検索中に拡縮しても現在の一致位置を保持する。倍率・位置を他の図やWindowへ共有・永続化しない
   - 共通の倍率操作を持つMermaid、中央・独立File Previewの画像／SVG、会話・Markdownの画像lightboxは、表示領域上のCtrl＋左dragでscroll位置を移動し、Ctrl＋上wheelで拡大、Ctrl＋下wheelで縮小する。wheelはSettingsの`Preview Wheel Zoom Step`で整数1〜100ポイントを選べ、既定は5ポイント刻み（100%→105%）。刻みはapp共通で保存し、保存後の次のwheel操作から適用するが、現在倍率・Fit状態・pan位置は変更しない。Zoom In／Out buttonは10ポイント刻みとし、上下限は共通の10%〜800%で、Fit中は現在の実効倍率を起点にする（10%未満のFitからwheelで拡大する際は10%へ移る）。Ctrlなしのwheelはnative scrollに任せ、Ctrl＋wheelは表示対象だけに作用させてWindow全体のzoomや親scroll操作へ渡さない
   - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。Markdown内画像とchat画像は対象外とする

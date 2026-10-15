@@ -903,6 +903,7 @@ export class SessionFileExplorerService {
         : detectSessionFileResourceKind(targetRealPath, inspectedBytes);
       return {
         ...request,
+        absoluteFilePath: targetRealPath,
         name: path.basename(targetRealPath),
         kind: resource.kind,
         byteLength: fileStats.size,

@@ -1527,6 +1527,16 @@
   background: transparent;
 }
 
+.session-file-preview-with-path {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "header"
+    "path"
+    "find"
+    "content"
+    "feedback";
+}
+
 .session-file-preview-header {
   grid-area: header;
   position: relative;
@@ -1545,6 +1555,18 @@
   min-width: 0;
 }
 
+.session-file-preview-file-header {
+  flex-wrap: wrap;
+}
+
+.session-file-preview-file-header .session-file-preview-title {
+  flex: 1 1 12rem;
+}
+
+.session-file-preview-file-header .session-file-preview-actions {
+  max-width: 100%;
+}
+
 .session-file-preview-title strong,
 .session-file-preview-title span {
   overflow: hidden;
@@ -1555,6 +1577,33 @@
 .session-file-preview-title span {
   color: var(--muted);
   font-size: 0.74rem;
+}
+
+.session-file-preview-path-region {
+  grid-area: path;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.session-file-preview-path {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  field-sizing: content;
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .session-file-preview-title .session-diff-preview-context {

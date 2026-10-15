@@ -59,6 +59,7 @@ test("FilePreviewApp は payload hydrate 後も document title を対象ファ�
   const resource = { sessionId: "session-1", absolutePath: "C:\\outside\\notes.md" };
   const descriptor: SessionFileDescriptor = {
     ...resource,
+    absoluteFilePath: resource.absolutePath,
     name: "notes.md",
     kind: "text",
     byteLength: 0,
@@ -175,6 +176,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
   };
   const descriptor: SessionFileDescriptor = {
     ...resource,
+    absoluteFilePath: "C:\\additional\\src\\notes.txt",
     name: "notes.txt",
     kind: "text",
     byteLength: 0,
@@ -333,6 +335,7 @@ test("FilePreviewAppの画像は設定Retryと通知で次のwheel刻みだけ�
   const resource = { sessionId: "session-1", absolutePath: "C:/outside/image.png" };
   const descriptor: SessionFileDescriptor = {
     ...resource,
+    absoluteFilePath: resource.absolutePath,
     name: "image.png",
     kind: "image",
     byteLength: 1,

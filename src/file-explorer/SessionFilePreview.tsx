@@ -1156,11 +1156,11 @@ export function SessionFilePreview({
 
   return (
     <section
-      className="session-file-preview"
+      className="session-file-preview session-file-preview-with-path"
       aria-label="File preview"
       aria-busy={contentLoading || reloadPending || Boolean(busyAction) || diffLoadingScope !== null || undefined}
     >
-      <header className="session-file-preview-header">
+      <header className="session-file-preview-header session-file-preview-file-header">
         {backNavigation ? (
           <BackNavigationButton
             label={backNavigation.label}
@@ -1300,6 +1300,18 @@ export function SessionFilePreview({
           </div>
         ) : null}
       </header>
+
+      {descriptor ? (
+        <div className="session-file-preview-path-region">
+          <textarea
+            className="session-file-preview-path"
+            aria-label="Absolute file path"
+            readOnly
+            rows={1}
+            value={descriptor.absoluteFilePath}
+          />
+        </div>
+      ) : null}
 
       {findOpen && descriptor && (previewKind === "text" || isRichPreview) ? (
         <SessionContentFindBar
