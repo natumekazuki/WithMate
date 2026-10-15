@@ -10,6 +10,7 @@ import {
   createDefaultAppSettings,
 } from "../../src-shared/settings/provider-settings-state.js";
 import { AppSettingsStorage } from "../../src-electron/app/app-settings-storage.js";
+import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 
 describe("AppSettingsStorage", () => {
   // @test-value v2
@@ -550,6 +551,73 @@ describe("AppSettingsStorage", () => {
 
       assert.deepEqual(loaded, updated);
     } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "保存済みの有効なB/N割当を読込・無関係設定更新・再openで維持し、末尾移動の個別割当も共存して保存できる"
+  // oracle = { type = "contract", ref = "docs/features/keyboard-shortcuts.md: 初期未割当と既存割当の維持; docs/releases/README.md: 保存データ継続性" }
+  // fault = "末尾command追加により既存割当を読込正規化で削除するか、再保存・再openで既存または新しい割当を失う"
+  // observable = "保存済みJSONを入力にしたgetSettings、updateSettings、再open後のkeyboardShortcuts"
+  // observation_boundary = "public-boundary"
+  // scope = "keyboard-shortcut-storage-continuity"
+  // lifecycle = "permanent"
+  // impact = "利用中のキー設定が永続値から失われ、再起動後も復元できない"
+  // distinction = "rendererの正規化testではDB読込・無関係設定保存・再openのconsumerを確認できない。使い捨てDB1個で3platformを検証する"
+  // @end-test-value
+  it("既存のB/N割当と末尾移動の個別割当を保存・再openで維持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-shortcut-continuity-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const oldSettings: KeyboardShortcutSettings = { overrides: {
+      "session.message.toggle-collapse": {
+        windows: { key: "b", ctrlKey: true, shiftKey: true },
+        linux: { key: "b", ctrlKey: true, shiftKey: true },
+        macos: { key: "b", metaKey: true, shiftKey: true },
+      },
+      "session.conversation.toggle-target": {
+        windows: { key: "n", ctrlKey: true, shiftKey: true },
+        linux: { key: "n", ctrlKey: true, shiftKey: true },
+        macos: { key: "n", metaKey: true, shiftKey: true },
+      },
+    } };
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      storage.close();
+      const database = new DatabaseSync(dbPath);
+      try {
+        database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+          .run(JSON.stringify(oldSettings), "keyboard_shortcuts_json");
+      } finally {
+        database.close();
+      }
+      storage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(storage.getSettings().keyboardShortcuts, oldSettings);
+      storage.updateSettings({ ...storage.getSettings(), launchAtLoginEnabled: true });
+      storage.close();
+      storage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(storage.getSettings().keyboardShortcuts, oldSettings);
+      const assigned: KeyboardShortcutSettings = { overrides: {
+        ...oldSettings.overrides,
+        "session.main.scroll-to-bottom": {
+          windows: { key: "u", ctrlKey: true, shiftKey: true },
+          linux: { key: "u", ctrlKey: true, shiftKey: true },
+          macos: { key: "u", metaKey: true, shiftKey: true },
+        },
+        "session.auxiliary.scroll-to-bottom": {
+          windows: { key: "i", ctrlKey: true, shiftKey: true },
+          linux: { key: "i", ctrlKey: true, shiftKey: true },
+          macos: { key: "i", metaKey: true, shiftKey: true },
+        },
+      } };
+      storage.updateSettings({ ...storage.getSettings(), keyboardShortcuts: assigned });
+      storage.close();
+      storage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(storage.getSettings().keyboardShortcuts, assigned);
+    } finally {
+      storage?.close();
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });

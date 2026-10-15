@@ -125,10 +125,10 @@ test("Keyboard shortcuts dialogはregistry projectionを表示し、Escapeで閉
 
 // @test-value v2
 // kind = "contract"
-// claim = "Keyboard shortcuts dialogのChange操作はTitle Case registry labelで対象rowを識別し、押下したacceleratorを設定へ反映する"
+// claim = "Keyboard shortcuts dialogのChangeは押下キーを反映し、初期未割当のMain/Auxiliaryを個別登録でき、Resetは指定rowだけ未割当へ戻す"
 // oracle = { type = "contract", ref = "src/settings/KeyboardShortcutsDialog.tsx#shortcut change" }
-// fault = "対象shortcut rowを見つけられないか、Change後のacceleratorをsettingsへ反映しない"
-// observable = "Toggle Message Collapse/Send Message/Find Messages row、Press Keys状態、更新後accelerator"
+// fault = "対象shortcut rowを見つけられない、登録値を反映しない、またはResetが他rowを変更する"
+// observable = "各shortcut row、Press Keys状態、更新後accelerator、Resetの有無と未割当表示"
 // observation_boundary = "component-behavior"
 // scope = "keyboard-shortcuts-dialog-change"
 // lifecycle = "permanent"
@@ -192,6 +192,25 @@ test("Keyboard shortcuts dialogはChangeで押下した組み合わせを設定�
       }));
     });
 
+    assert.match(row.textContent ?? "", /Ctrl\+Shift\+X/);
+    const bottomRows = ["Main", "Auxiliary"].map((name) =>
+      Array.from(container.querySelectorAll<HTMLElement>(".settings-keyboard-shortcut-row"))
+        .find((candidate) => candidate.querySelector("dt")?.textContent === `Scroll ${name} To Bottom`)!,
+    );
+    for (const [index, bottomRow] of bottomRows.entries()) {
+      assert.match(bottomRow.textContent ?? "", /Not Assigned/);
+      assert.equal(bottomRow.querySelectorAll("button").length, 1);
+      await act(async () => bottomRow.querySelector<HTMLButtonElement>("button")!.click());
+      await act(async () => dom.window.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+        key: index === 0 ? "b" : "n", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
+      })));
+      assert.match(bottomRow.textContent ?? "", index === 0 ? /Ctrl\+Shift\+B/ : /Ctrl\+Shift\+N/);
+    }
+    const reset = Array.from(bottomRows[0].querySelectorAll("button")).find((button) => button.textContent === "Reset")!;
+    await act(async () => reset.click());
+    assert.match(bottomRows[0].textContent ?? "", /Not Assigned/);
+    assert.equal(bottomRows[0].querySelectorAll("button").length, 1);
+    assert.match(bottomRows[1].textContent ?? "", /Ctrl\+Shift\+N/);
     assert.match(row.textContent ?? "", /Ctrl\+Shift\+X/);
   } finally {
     await act(async () => {

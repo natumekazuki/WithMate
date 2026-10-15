@@ -14,7 +14,7 @@ export type KeyboardShortcutPolicyEntry = Readonly<{
   id: string;
   scope: string;
   exclusiveScopeGroup?: string;
-  accelerators: Readonly<Record<ShortcutPlatform, ShortcutAccelerator>>;
+  accelerators: Readonly<Record<ShortcutPlatform, ShortcutAccelerator | null>>;
   customizable: boolean;
   bindingKind?: ShortcutBindingKind;
 }>;
@@ -118,6 +118,28 @@ export const DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES: readonly KeyboardShortcut
       windows: { key: "j", ctrlKey: true, shiftKey: true },
       linux: { key: "j", ctrlKey: true, shiftKey: true },
       macos: { key: "j", metaKey: true, shiftKey: true },
+    },
+    customizable: true,
+    bindingKind: "letter",
+  },
+  {
+    id: "session.main.scroll-to-bottom",
+    scope: "session",
+    accelerators: {
+      windows: null,
+      linux: null,
+      macos: null,
+    },
+    customizable: true,
+    bindingKind: "letter",
+  },
+  {
+    id: "session.auxiliary.scroll-to-bottom",
+    scope: "session",
+    accelerators: {
+      windows: null,
+      linux: null,
+      macos: null,
     },
     customizable: true,
     bindingKind: "letter",
@@ -384,6 +406,9 @@ function removeShortcutOverrideCollisions(
       for (let leftIndex = 0; leftIndex < policyEntries.length; leftIndex += 1) {
         const left = policyEntries[leftIndex];
         const leftAccelerator = overrides[left.id]?.[platform] ?? left.accelerators[platform];
+        if (!leftAccelerator) {
+          continue;
+        }
         for (let rightIndex = leftIndex + 1; rightIndex < policyEntries.length; rightIndex += 1) {
           const right = policyEntries[rightIndex];
           if (!canShortcutScopesBeActiveTogether(left, right)) {
@@ -391,7 +416,7 @@ function removeShortcutOverrideCollisions(
           }
 
           const rightAccelerator = overrides[right.id]?.[platform] ?? right.accelerators[platform];
-          if (shortcutAcceleratorSignature(leftAccelerator) !== shortcutAcceleratorSignature(rightAccelerator)) {
+          if (!rightAccelerator || shortcutAcceleratorSignature(leftAccelerator) !== shortcutAcceleratorSignature(rightAccelerator)) {
             continue;
           }
 

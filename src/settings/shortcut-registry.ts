@@ -31,6 +31,8 @@ export const SHORTCUT_COMMAND_IDS = {
   messageToggleCollapse: "session.message.toggle-collapse",
   messageToggleViewMode: "session.message.toggle-view-mode",
   conversationToggleTarget: "session.conversation.toggle-target",
+  mainScrollToBottom: "session.main.scroll-to-bottom",
+  auxiliaryScrollToBottom: "session.auxiliary.scroll-to-bottom",
   actionDockToggleMode: "session.action-dock.toggle-mode",
   filePreviewFind: "session.file-preview.find",
   filePreviewClose: "session.file-preview.close",
@@ -46,11 +48,7 @@ export type ShortcutEntry = Readonly<{
   label: string;
   kind: ShortcutCommandKind;
   scope: string;
-  accelerators: Readonly<{
-    windows: ShortcutAccelerator;
-    linux: ShortcutAccelerator;
-    macos: ShortcutAccelerator;
-  }>;
+  accelerators: KeyboardShortcutPolicyEntry["accelerators"];
   allowInEditingTarget: boolean;
   editingTargetScope?: string;
   allowRepeat: boolean;
@@ -170,6 +168,24 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     assignment: "new",
   },
   {
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.mainScrollToBottom),
+    label: "Scroll Main To Bottom",
+    kind: "withmate",
+    allowInEditingTarget: true,
+    allowRepeat: false,
+    showInHelp: true,
+    assignment: "new",
+  },
+  {
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.auxiliaryScrollToBottom),
+    label: "Scroll Auxiliary To Bottom",
+    kind: "withmate",
+    allowInEditingTarget: true,
+    allowRepeat: false,
+    showInHelp: true,
+    assignment: "new",
+  },
+  {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.actionDockToggleMode),
     label: "Toggle Prompt Terminal",
     kind: "withmate",
@@ -281,7 +297,8 @@ export function validateShortcutEntries(entries: readonly ShortcutEntry[]): void
         throw new ShortcutRegistryError(`Customizable shortcut is missing a binding policy: ${entry.id}`);
       }
       for (const platform of ["windows", "linux", "macos"] as const) {
-        if (!isAllowedShortcutAccelerator(entry.accelerators[platform], platform, entry.bindingKind)) {
+        const accelerator = entry.accelerators[platform];
+        if (accelerator && !isAllowedShortcutAccelerator(accelerator, platform, entry.bindingKind)) {
           throw new ShortcutRegistryError(
             `Shortcut accelerator is outside its platform policy: ${entry.id} (${platform})`,
           );
@@ -301,7 +318,10 @@ export function validateShortcutEntries(entries: readonly ShortcutEntry[]): void
         continue;
       }
       for (const platform of ["windows", "linux", "macos"] as const) {
-        if (acceleratorSignature(left.accelerators[platform]) !== acceleratorSignature(right.accelerators[platform])) {
+        const leftAccelerator = left.accelerators[platform];
+        const rightAccelerator = right.accelerators[platform];
+        if (!leftAccelerator || !rightAccelerator
+          || acceleratorSignature(leftAccelerator) !== acceleratorSignature(rightAccelerator)) {
           continue;
         }
         throw new ShortcutRegistryError(
@@ -320,7 +340,7 @@ function resolveShortcutAcceleratorForEntry(
   entry: ShortcutEntry,
   platform: ShortcutPlatform,
   settings: KeyboardShortcutSettings,
-): ShortcutAccelerator {
+): ShortcutAccelerator | null {
   return entry.customizable
     ? settings.overrides[entry.id]?.[platform] ?? entry.accelerators[platform]
     : entry.accelerators[platform];
@@ -345,7 +365,8 @@ export function validateShortcutSettings(
       for (const platform of ["windows", "linux", "macos"] as const) {
         const leftAccelerator = resolveShortcutAcceleratorForEntry(left, platform, normalized);
         const rightAccelerator = resolveShortcutAcceleratorForEntry(right, platform, normalized);
-        if (acceleratorSignature(leftAccelerator) !== acceleratorSignature(rightAccelerator)) {
+        if (!leftAccelerator || !rightAccelerator
+          || acceleratorSignature(leftAccelerator) !== acceleratorSignature(rightAccelerator)) {
           continue;
         }
         throw new ShortcutRegistryError(
@@ -397,7 +418,7 @@ export function getShortcutAccelerator(
   commandId: string,
   platform: ShortcutPlatform = detectShortcutPlatform(),
   settings: KeyboardShortcutSettings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
-): ShortcutAccelerator {
+): ShortcutAccelerator | null {
   const normalized = normalizeKeyboardShortcutSettings(
     settings,
     getKeyboardShortcutPolicyEntries(SHORTCUT_ENTRIES),
@@ -417,9 +438,12 @@ function formatKey(key: string): string {
 }
 
 export function formatShortcutAccelerator(
-  accelerator: ShortcutAccelerator,
+  accelerator: ShortcutAccelerator | null,
   platform: ShortcutPlatform,
 ): string {
+  if (!accelerator) {
+    return "Not Assigned";
+  }
   const normalized = normalizeAccelerator(accelerator);
   if (platform === "macos") {
     const modifiers = [
@@ -537,7 +561,10 @@ function getBlockedKeyboardEventReason(event: KeyboardEvent): string | null {
   return null;
 }
 
-function matchesAccelerator(event: KeyboardEvent, accelerator: ShortcutAccelerator): boolean {
+function matchesAccelerator(event: KeyboardEvent, accelerator: ShortcutAccelerator | null): boolean {
+  if (!accelerator) {
+    return false;
+  }
   const expected = normalizeAccelerator(accelerator);
   return normalizeKey(event.key) === expected.key
     && event.ctrlKey === expected.ctrlKey
@@ -705,10 +732,10 @@ export class ShortcutDispatcher {
         if (!right || left.scope === right.scope) {
           continue;
         }
-        if (
-          acceleratorSignature(resolveShortcutAcceleratorForEntry(left, this.platform, this.settings))
-          !== acceleratorSignature(resolveShortcutAcceleratorForEntry(right, this.platform, this.settings))
-        ) {
+        const leftAccelerator = resolveShortcutAcceleratorForEntry(left, this.platform, this.settings);
+        const rightAccelerator = resolveShortcutAcceleratorForEntry(right, this.platform, this.settings);
+        if (!leftAccelerator || !rightAccelerator
+          || acceleratorSignature(leftAccelerator) !== acceleratorSignature(rightAccelerator)) {
           continue;
         }
         throw new ShortcutRegistryError(

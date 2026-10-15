@@ -27,6 +27,12 @@ import { SessionActionDockCompactRow } from "../../src/chat/approval/session-act
 import { SessionChatScreen } from "../../src/chat/shell/session-header.js";
 import { SessionSwitcher } from "../../src/chat/session-switcher.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
+import {
+  DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+  getShortcutDispatcher,
+  SHORTCUT_COMMAND_IDS,
+  updateShortcutBinding,
+} from "../../src/settings/shortcut-registry.js";
 
 const noop = () => {};
 
@@ -1951,15 +1957,17 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
 
 // @test-value v2
 // kind = "contract"
-// claim = "ChatWindowはMain targetの末尾移動をメッセージ欄へ置き、Auxiliaryにも導線を表示して送信時追従を維持する"
-// oracle = { type = "contract", ref = "src/chat/chat-window.tsx; src/chat/shell/session-chat-layout-hooks.ts" }
-// fault = "末尾移動がActionDockに残る、Auxiliaryの導線が欠ける、または送信時にMain列が末尾へ戻らない"
-// observable = "Main/Auxiliary message listの末尾移動button、クリック後scrollTop、ActionDock全体、composer送信callback"
+// claim = "MainとAuxiliaryの末尾移動button・別々のshortcutは指定列だけ追従へ戻し、入力focusと送信対象を保ち、幅不足の片側表示を含む非表示・未取得列やPreview・Terminal・IME・repeatでは実行しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Auxiliary Session; docs/features/keyboard-shortcuts.md: command scope" }
+// fault = "末尾移動先を送信対象で決める、非表示列に配送する、またはfocus・送信対象・送信時追従を変更する"
+// observable = "両列のscrollTop、button clickとkeydownの結果、activeElement、target変更callback、composer送信callback"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
+// impact = "利用者が意図した列の最新messageへ戻れないか、別列の閲覧位置や入力先を失う"
+// distinction = "registryのキー設定testでは実ChatWindowの指定列routing・scroll owner・focusを検証できない。既存button/送信fixtureを共用する"
 // @end-test-value
-test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示し送信時追従を維持する", async () => {
+test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立して配送する", async () => {
   const props = createChatWindowProps({
     messages: [{ role: "assistant", text: "message" }],
   });
@@ -1971,7 +1979,14 @@ test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示�
   const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
   const previousResizeObserver = globalThis.ResizeObserver;
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
-  class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
+  const resizeCallbacks = new Map<Element, () => void>();
+  class TestResizeObserver {
+    constructor(private readonly callback: () => void) {}
+    observe(element: Element) { resizeCallbacks.set(element, this.callback); }
+    unobserve(element: Element) { resizeCallbacks.delete(element); }
+    disconnect() {}
+  }
+  Object.defineProperty(dom.window, "ResizeObserver", { configurable: true, value: TestResizeObserver });
   Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
   Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
   Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
@@ -1997,8 +2012,16 @@ test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示�
   let root: Root | null = null;
   let sendCount = 0;
   let target: "main" | "auxiliary" = "main";
+  let targetChangeCount = 0;
+  let widthRatio = 0.5;
+  let hasAuxiliary = true;
+  let auxiliaryLoading = false;
+  let auxiliaryError: string | null = null;
+  let mainContentReady = true;
+  let preview = false;
   const renderChatWindow = () => React.createElement(ChatWindow, {
     ...props,
+    mainContent: preview ? React.createElement("div", null, "Preview") : undefined,
     composerProps: {
       ...props.composerProps,
       draft: "send this",
@@ -2007,20 +2030,29 @@ test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示�
     },
     concurrentChats: {
       main: props.messageColumnProps,
-      auxiliary: props.messageColumnProps,
+      auxiliary: hasAuxiliary ? props.messageColumnProps : null,
+      mainContentReady,
+      loading: auxiliaryLoading,
+      error: auxiliaryError,
       mainSession: { id: "main", messages: props.messageColumnProps.messages },
       auxiliarySession: { id: "aux", messages: props.messageColumnProps.messages },
       selectedAuxiliaryId: "aux",
       auxiliaryItems: [{ id: "aux", label: "Auxiliary", preview: "Auxiliary" }],
       target,
-      widthRatio: 0.5,
+      widthRatio,
       scrollToLatestOnSend: true,
       onSelectAuxiliary() {},
-      onTargetChange() {},
+      onTargetChange() { targetChangeCount += 1; },
       onWidthRatioChange() {},
     },
   });
   try {
+    const settings = updateShortcutBinding(
+      updateShortcutBinding(DEFAULT_KEYBOARD_SHORTCUT_SETTINGS, SHORTCUT_COMMAND_IDS.mainScrollToBottom,
+        "windows", { key: "b", ctrlKey: true, shiftKey: true }),
+      SHORTCUT_COMMAND_IDS.auxiliaryScrollToBottom, "windows", { key: "n", ctrlKey: true, shiftKey: true },
+    );
+    getShortcutDispatcher()!.setSettings(settings);
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(renderChatWindow());
@@ -2069,6 +2101,129 @@ test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示�
     await act(async () => auxiliarySendButton.click());
     assert.equal(sendCount, 2);
     assert.equal(auxiliaryMessageList.scrollTop, 60);
+
+    const composer = dom.window.document.querySelector<HTMLTextAreaElement>(".session-action-dock-expanded-content textarea")!;
+    composer.focus();
+    const resetScroll = async () => {
+      messageList.scrollTop = 10;
+      auxiliaryMessageList.scrollTop = 10;
+      await act(async () => {
+        messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -1 }));
+        auxiliaryMessageList.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -1 }));
+        messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+        auxiliaryMessageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      });
+    };
+    const press = async (key: string, options: KeyboardEventInit = {}, element: HTMLElement = composer) => {
+      const event = new dom.window.KeyboardEvent("keydown", { key, ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true, ...options });
+      await act(async () => element.dispatchEvent(event));
+      return event.defaultPrevented;
+    };
+    await resetScroll();
+    assert.equal(await press("b"), true);
+    assert.equal(messageList.scrollTop, 60);
+    assert.equal(auxiliaryMessageList.scrollTop, 10);
+    target = "main";
+    await act(async () => root?.render(renderChatWindow()));
+    await resetScroll();
+    assert.equal(await press("n"), true);
+    assert.equal(messageList.scrollTop, 10);
+    assert.equal(auxiliaryMessageList.scrollTop, 60);
+    assert.equal(targetChangeCount, 0);
+    assert.equal(dom.window.document.activeElement, composer);
+    assert.equal(sendCount, 2);
+
+    const columns = dom.window.document.querySelector<HTMLElement>(".session-concurrent-chat-columns")!;
+    const mainColumn = columns.querySelector<HTMLElement>(".session-concurrent-chat-main")!;
+    const auxiliaryColumn = columns.querySelector<HTMLElement>(".session-concurrent-chat-auxiliary")!;
+    mainColumn.style.setProperty("--session-region-min-width", "360px");
+    auxiliaryColumn.style.setProperty("--session-region-min-width", "360px");
+    columns.style.setProperty("--session-dock-splitter-size", "8px");
+    let columnWidth = 700;
+    Object.defineProperty(columns, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ width: columnWidth, height: 300, top: 0, left: 0, right: columnWidth, bottom: 300 }),
+    });
+    await act(async () => resizeCallbacks.get(columns)?.());
+    assert.equal(columns.classList.contains("is-single-chat"), true);
+    for (const visibleTarget of ["main", "auxiliary"] as const) {
+      target = visibleTarget;
+      await act(async () => root?.render(renderChatWindow()));
+      await resetScroll();
+      const hiddenColumn = target === "main" ? auxiliaryColumn : mainColumn;
+      const visibleColumn = target === "main" ? mainColumn : auxiliaryColumn;
+      assert.equal(hiddenColumn.hasAttribute("inert"), true);
+      assert.equal(hiddenColumn.getAttribute("aria-hidden"), "true");
+      assert.equal(visibleColumn.hasAttribute("inert"), false);
+      assert.equal(visibleColumn.getAttribute("aria-hidden"), "false");
+      assert.equal(await press(target === "main" ? "n" : "b"), false);
+      assert.equal(messageList.scrollTop, 10);
+      assert.equal(auxiliaryMessageList.scrollTop, 10);
+      assert.equal(await press(target === "main" ? "b" : "n"), true);
+      assert.equal(messageList.scrollTop, target === "main" ? 60 : 10);
+      assert.equal(auxiliaryMessageList.scrollTop, target === "auxiliary" ? 60 : 10);
+    }
+    columnWidth = 800;
+    await act(async () => resizeCallbacks.get(columns)?.());
+    assert.equal(columns.classList.contains("is-single-chat"), false);
+    assert.equal(mainColumn.hasAttribute("inert"), false);
+    assert.equal(auxiliaryColumn.hasAttribute("inert"), false);
+    await resetScroll();
+    assert.equal(await press("b"), true);
+    assert.equal(await press("n"), true);
+    assert.equal(messageList.scrollTop, 60);
+    assert.equal(auxiliaryMessageList.scrollTop, 60);
+    assert.equal(dom.window.document.activeElement, composer);
+    assert.equal(targetChangeCount, 0);
+    assert.equal(sendCount, 2);
+
+    await resetScroll();
+    for (const key of ["b", "n"]) {
+      assert.equal(await press(key, { isComposing: true }), false);
+      assert.equal(await press(key, { repeat: true }), false);
+    }
+    const terminal = dom.window.document.createElement("textarea");
+    terminal.dataset.shortcutScope = "terminal";
+    dom.window.document.body.append(terminal);
+    for (const key of ["b", "n"]) assert.equal(await press(key, {}, terminal), false);
+    assert.equal(messageList.scrollTop, 10);
+    assert.equal(auxiliaryMessageList.scrollTop, 10);
+    terminal.remove();
+
+    preview = true;
+    await act(async () => root?.render(renderChatWindow()));
+    for (const key of ["b", "n"]) assert.equal(await press(key), false);
+    preview = false;
+    widthRatio = 0;
+    await act(async () => root?.render(renderChatWindow()));
+    assert.equal(await press("n"), false);
+    widthRatio = 1;
+    await act(async () => root?.render(renderChatWindow()));
+    assert.equal(await press("b"), false);
+    widthRatio = 0.5;
+    mainContentReady = false;
+    await act(async () => root?.render(renderChatWindow()));
+    assert.equal(await press("b"), false);
+    mainContentReady = true;
+    auxiliaryLoading = true;
+    await act(async () => root?.render(renderChatWindow()));
+    assert.equal(await press("n"), false);
+    auxiliaryLoading = false;
+    auxiliaryError = "Read failed";
+    await act(async () => root?.render(renderChatWindow()));
+    assert.equal(await press("n"), false);
+    auxiliaryError = null;
+    hasAuxiliary = false;
+    await act(async () => root?.render(renderChatWindow()));
+    assert.equal(await press("n"), false);
+    const currentMainList = dom.window.document.querySelector<HTMLDivElement>(".session-concurrent-chat-main .session-message-list")!;
+    Object.defineProperties(currentMainList, {
+      scrollHeight: { configurable: true, value: 100 },
+      clientHeight: { configurable: true, value: 40 },
+    });
+    currentMainList.scrollTop = 10;
+    assert.equal(await press("b"), true);
+    assert.equal(currentMainList.scrollTop, 60);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
