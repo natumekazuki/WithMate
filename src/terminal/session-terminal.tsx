@@ -8,9 +8,12 @@ import {
   type Ref,
 } from "react";
 import type { Terminal } from "@xterm/xterm";
-import type { WithMateWindowTerminalApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { WithMateWindowNavigationApi, WithMateWindowTerminalApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { TERMINAL_MAX_DIMENSION } from "../../src-shared/terminal/terminal-contract.js";
+import { resolveOpenPathFeedback } from "../file-explorer/open-path-result.js";
 import { detectShortcutPlatform, getShortcutDispatcher } from "../settings/shortcut-registry.js";
+
+type TerminalApi = WithMateWindowTerminalApi & Pick<WithMateWindowNavigationApi, "openPath">;
 
 type TerminalTab = {
   id: string;
@@ -25,7 +28,7 @@ export type SessionTerminalHandle = { focus(): void };
 
 /** Each mounted pane owns its xterm, subscriptions and PTY, including while hidden. */
 function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
-  api: WithMateWindowTerminalApi;
+  api: TerminalApi;
   tab: TerminalTab;
   active: boolean;
   onStatus(id: string, patch: Partial<TerminalTab>): void;
@@ -64,19 +67,28 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
     };
 
     void (async () => {
-      const [{ Terminal: Xterm }, { FitAddon }] = await Promise.all([
+      const [{ Terminal: Xterm }, { FitAddon }, { WebLinksAddon }] = await Promise.all([
         import("@xterm/xterm"),
         import("@xterm/addon-fit"),
+        import("@xterm/addon-web-links"),
       ]);
       if (disposed || !containerRef.current) return;
       const host = containerRef.current;
       const style = getComputedStyle(host);
+      const activateWebLink = (event: MouseEvent, uri: string) => {
+        if (disposed || !activeRef.current || !event.ctrlKey || event.button !== 0 || !/^https?:\/\//i.test(uri)) return;
+        setOperationError("");
+        void resolveOpenPathFeedback(() => api.openPath(uri), "The link could not be opened.").then((message) => {
+          if (!disposed && message) setOperationError(`Link could not be opened: ${message}`);
+        });
+      };
       terminal = new Xterm({
         fontFamily: 'Consolas, "Cascadia Mono", monospace',
         fontSize: 13,
         cursorBlink: true,
         screenReaderMode: true,
         disableStdin: true,
+        linkHandler: { activate: activateWebLink },
         theme: {
           background: style.backgroundColor,
           foreground: style.color,
@@ -88,6 +100,7 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
       terminalRef.current = instance;
       const fit = new FitAddon();
       instance.loadAddon(fit);
+      instance.loadAddon(new WebLinksAddon(activateWebLink));
       instance.open(host);
       const resize = () => {
         if (disposed || !activeRef.current || host.clientWidth <= 0 || host.clientHeight <= 0) return;
@@ -223,7 +236,7 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
 }
 
 export function SessionTerminal({ api, expanded, onCollapse, ref }: {
-  api: WithMateWindowTerminalApi;
+  api: TerminalApi;
   expanded: boolean;
   onCollapse(): void;
   ref?: Ref<SessionTerminalHandle>;

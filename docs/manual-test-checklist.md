@@ -32,6 +32,7 @@ Windowsでは同一TerminalのWSL起動前・WSL内・終了後で、無害な�
 
 | 操作 | 期待結果 |
 | --- | --- |
+| PowerShellとWSLそれぞれでHTTP／HTTPS URLを出力し、Ctrl＋左クリック。通常クリック、中／右クリック、文字選択・コピーも比較する。折り返したURLとOSC 8のWebリンク、リンクを開けない場合も確認する | Ctrl＋左クリックでだけ既定ブラウザーへリンク先を開く。折り返しとOSC 8でも同じ操作を使う。HTTP(S)以外は開かず、文字選択・コピー・端末入力を維持する。失敗は端末内に表示し、入力・出力は続けられる |
 | Windowsで7と5系の両方、PATH外の標準配置7、5系のみ、両方なし、検出済み7の起動失敗を用意して新しいTerminalを開く。PATH・ProgramFiles・SystemRootに`\tools`／`/tools`等の現在ドライブに依存する値を渡す場合も確認する。7／5系それぞれでcwd、通常の入力・出力、resize後の入力、自然終了と稼働状態判定を確認する | PATH順の`pwsh.exe`、`%ProgramFiles%/PowerShell/7/pwsh.exe`、`%SystemRoot%/System32/WindowsPowerShell/v1.0/powershell.exe`の順に選択する。完全修飾でない探索元を除外し、後続の有効な候補を使う。7／5系とも親Workspaceから起動して操作できる。未検出・探索異常・起動失敗は`Failed`と理由を表示し、検出済み7の起動失敗を5系へ切り替えない |
 | Workspaceの`Terminal`、Preview/Source右の`Prompt / Terminal`切替、Ctrl+Shift+T（macOSはCmd+Shift+T）をcomposerと端末本文から操作。Settingsでbindingも変更する | 共有下部パネルが選択modeへ切り替わり、展開してfocusする。初期Promptではshellを起動せず初回Terminal表示でだけ作成する。入力・selection・端末タブ・出力を保持し、切替shortcutをshellへ送らない。IME中とrepeatでは切り替えない。`Open External Terminal`とSession Folderの外部起動も利用できる |
 | 1520×940、1400px境界の前後、1100×720で共有splitterのdrag・上下キーresize、Prompt/Terminal切替、Window縮小。最大高から縮める途中でpointerを保持し、解除後と比較 | 切替で同じ高さと単一splitterを使う。drag保持中も中央の表示判定が追従し、解除でパネルやsplitterの位置・高さが変わらない。Window縮小では高さを補正し、中央を畳んでも共有splitterを操作できる。中央の復帰で会話・previewのstateとscroll位置を保持する |
