@@ -3504,12 +3504,89 @@
   min-width: 0;
 }
 
+.additional-directory-path-modal {
+  backdrop-filter: none;
+}
+
 .additional-directory-path-dialog {
-  width: min(560px, 100%);
+  width: min(500px, 100%);
+  padding: 16px;
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.additional-directory-path-dialog .launch-panel {
+  margin: -3px;
+  padding: 3px;
+  gap: 14px;
+}
+
+.additional-directory-path-dialog h2 {
+  margin: 0;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.additional-directory-path-dialog .launch-field-input {
+  height: 40px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--surface-deep);
+  color: var(--ink);
+  font: 14px/1.4 "Cascadia Code", "Consolas", monospace;
+}
+
+.additional-directory-path-dialog .launch-field-input[aria-invalid="true"] {
+  border-color: #fca5a5;
+}
+
+.additional-directory-path-dialog .launch-feedback {
+  margin-top: 9px;
+  color: #fca5a5;
+  overflow-wrap: anywhere;
 }
 
 .additional-directory-path-dialog .launch-dialog-foot {
   gap: 8px;
+  padding: 12px 0 0;
+}
+
+.additional-directory-path-dialog .launch-dialog-foot .drawer-toggle {
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  box-shadow: none;
+}
+
+.additional-directory-path-dialog .launch-dialog-foot .additional-directory-path-add {
+  background: var(--orange);
+  color: #10151d;
+}
+
+.additional-directory-path-dialog .additional-directory-path-add:hover:not(:disabled) {
+  background: var(--orange);
+  filter: brightness(1.12);
+}
+
+.additional-directory-path-dialog :is(input, button):focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+@media (pointer: coarse) {
+  .additional-directory-path-dialog .drawer-toggle {
+    min-height: 44px;
+  }
+
+  .additional-directory-path-dialog .launch-field-input {
+    height: 44px;
+    font-size: 16px;
+  }
 }
 
 .composer-toolbar-view-actions {

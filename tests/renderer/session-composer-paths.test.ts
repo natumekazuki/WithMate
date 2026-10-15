@@ -17,7 +17,7 @@ import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window
 // @test-value v2
 // kind = "contract"
 // claim = "Additional Directoryの選択は入力pathをMain APIで検証して返し、path未指定時だけ従来pickerの選択・取消を返す"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory / Add Path" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory / Add Directory By Path" }
 // fault = "入力pathでpickerを開く、検証を省く、空白を含むpathを破損する、pickerのbaseまたは取消を失う"
 // observable = "選択結果、検証APIへ渡すpath、pickerのbaseと呼出回数"
 // observation_boundary = "consumer"
@@ -53,7 +53,7 @@ test("Additional Directoryは入力pathを検証し、未指定時はpickerを�
 // @test-value v2
 // kind = "contract"
 // claim = "空入力、相対path、不存在、file、利用不可と検証API失敗はDirectory選択成功にならず、利用者向けの理由を伝播する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Path; src-shared/window/workspace-directory-validation.ts" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory By Path; src-shared/window/workspace-directory-validation.ts" }
 // fault = "無効な入力を返す、検証失敗をpicker選択へ救済する、検証理由またはtransport errorを消す"
 // observable = "選択Promiseのreject messageとpickerの呼出回数"
 // observation_boundary = "consumer"

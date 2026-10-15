@@ -54,7 +54,7 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd }: {
           setOpen(true);
         }}
       >
-        Add Path
+        Add Directory By Path
       </button>
       {open && !disabled ? (
         <LaunchDialogShell
@@ -62,6 +62,7 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd }: {
           dialogRef={dialogRef}
           onKeyDown={handleDialogKeyDown}
           ariaLabel="Add Directory By Path"
+          className="launch-modal additional-directory-path-modal"
           dialogClassName="additional-directory-path-dialog"
           showDismissControl={false}
           footer={
@@ -69,26 +70,27 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd }: {
               <button className="drawer-toggle compact secondary" type="button" disabled={busy} onClick={close}>
                 Cancel
               </button>
-              <button className="start-session-button" type="submit" form="additional-directory-path-form" disabled={busy || !directoryPath.trim()} aria-busy={busy || undefined}>
+              <button className="drawer-toggle compact additional-directory-path-add" type="submit" form="additional-directory-path-form" disabled={busy || !directoryPath.trim()} aria-busy={busy || undefined}>
                 Add
               </button>
             </>
           }
         >
+          <h2>Add Directory By Path</h2>
           <form id="additional-directory-path-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-            <div className="launch-field">
-              <label className="launch-field-label" htmlFor="additional-directory-path">Absolute Directory Path</label>
-              <input
-                id="additional-directory-path"
-                className="launch-field-input"
-                ref={inputRef}
-                value={directoryPath}
-                readOnly={busy}
-                aria-invalid={!!error}
-                aria-describedby={error ? "additional-directory-path-error" : undefined}
-                onChange={(event) => { setDirectoryPath(event.target.value); setError(""); }}
-              />
-            </div>
+            <input
+              id="additional-directory-path"
+              className="launch-field-input"
+              aria-label="Directory path"
+              autoComplete="off"
+              spellCheck={false}
+              ref={inputRef}
+              value={directoryPath}
+              readOnly={busy}
+              aria-invalid={!!error}
+              aria-describedby={error ? "additional-directory-path-error" : undefined}
+              onChange={(event) => { setDirectoryPath(event.target.value); setError(""); }}
+            />
             {error ? <p id="additional-directory-path-error" className="launch-feedback" role="alert">{error}</p> : null}
           </form>
         </LaunchDialogShell>
