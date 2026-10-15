@@ -476,12 +476,12 @@ export function SessionChatScreen({
               className={`session-concurrent-chat-columns${singleChat ? " is-single-chat" : ""}`}
               style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - effectiveRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0, effectiveRatio)}fr)` }}
             >
-              <div className={`session-concurrent-chat-column session-concurrent-chat-main${auxiliaryWidthRatio >= 1 ? " is-zero-width" : ""}`} inert={!singleChat && auxiliaryWidthRatio >= 1} aria-hidden={!singleChat && auxiliaryWidthRatio >= 1}>{messageColumn}</div>
+              <div className={`session-concurrent-chat-column session-concurrent-chat-main${auxiliaryWidthRatio >= 1 ? " is-zero-width" : ""}`} inert={singleChat ? concurrentTarget !== "main" : auxiliaryWidthRatio >= 1} aria-hidden={singleChat ? concurrentTarget !== "main" : auxiliaryWidthRatio >= 1}>{messageColumn}</div>
               {auxiliarySplitter}
               <div
                 className={`session-concurrent-chat-column session-concurrent-chat-auxiliary${auxiliaryWidthRatio <= 0 ? " is-zero-width" : ""}${hasAuxiliaryHeader ? " has-header" : ""}`}
-                inert={!singleChat && auxiliaryWidthRatio <= 0 && !hasAuxiliaryHeader}
-                aria-hidden={!singleChat && auxiliaryWidthRatio <= 0 && !hasAuxiliaryHeader}
+                inert={singleChat ? concurrentTarget !== "auxiliary" : auxiliaryWidthRatio <= 0 && !hasAuxiliaryHeader}
+                aria-hidden={singleChat ? concurrentTarget !== "auxiliary" : auxiliaryWidthRatio <= 0 && !hasAuxiliaryHeader}
               >
                 {auxiliaryHeader}
                 <div

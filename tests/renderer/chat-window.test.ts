@@ -1945,7 +1945,7 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainとAuxiliaryの末尾移動button・別々のshortcutは指定列だけ追従へ戻し、入力focusと送信対象を保ち、非表示・未取得列やPreview・Terminal・IME・repeatでは実行しない"
+// claim = "MainとAuxiliaryの末尾移動button・別々のshortcutは指定列だけ追従へ戻し、入力focusと送信対象を保ち、幅不足の片側表示を含む非表示・未取得列やPreview・Terminal・IME・repeatでは実行しない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Auxiliary Session; docs/features/keyboard-shortcuts.md: command scope" }
 // fault = "末尾移動先を送信対象で決める、非表示列に配送する、またはfocus・送信対象・送信時追従を変更する"
 // observable = "両列のscrollTop、button clickとkeydownの結果、activeElement、target変更callback、composer送信callback"
@@ -1967,7 +1967,14 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
   const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
   const previousResizeObserver = globalThis.ResizeObserver;
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
-  class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
+  const resizeCallbacks = new Map<Element, () => void>();
+  class TestResizeObserver {
+    constructor(private readonly callback: () => void) {}
+    observe(element: Element) { resizeCallbacks.set(element, this.callback); }
+    unobserve(element: Element) { resizeCallbacks.delete(element); }
+    disconnect() {}
+  }
+  Object.defineProperty(dom.window, "ResizeObserver", { configurable: true, value: TestResizeObserver });
   Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
   Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
   Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
@@ -2106,6 +2113,50 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
     assert.equal(auxiliaryMessageList.scrollTop, 60);
     assert.equal(targetChangeCount, 0);
     assert.equal(dom.window.document.activeElement, composer);
+    assert.equal(sendCount, 2);
+
+    const columns = dom.window.document.querySelector<HTMLElement>(".session-concurrent-chat-columns")!;
+    const mainColumn = columns.querySelector<HTMLElement>(".session-concurrent-chat-main")!;
+    const auxiliaryColumn = columns.querySelector<HTMLElement>(".session-concurrent-chat-auxiliary")!;
+    mainColumn.style.setProperty("--session-region-min-width", "360px");
+    auxiliaryColumn.style.setProperty("--session-region-min-width", "360px");
+    columns.style.setProperty("--session-dock-splitter-size", "8px");
+    let columnWidth = 700;
+    Object.defineProperty(columns, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ width: columnWidth, height: 300, top: 0, left: 0, right: columnWidth, bottom: 300 }),
+    });
+    await act(async () => resizeCallbacks.get(columns)?.());
+    assert.equal(columns.classList.contains("is-single-chat"), true);
+    for (const visibleTarget of ["main", "auxiliary"] as const) {
+      target = visibleTarget;
+      await act(async () => root?.render(renderChatWindow()));
+      await resetScroll();
+      const hiddenColumn = target === "main" ? auxiliaryColumn : mainColumn;
+      const visibleColumn = target === "main" ? mainColumn : auxiliaryColumn;
+      assert.equal(hiddenColumn.hasAttribute("inert"), true);
+      assert.equal(hiddenColumn.getAttribute("aria-hidden"), "true");
+      assert.equal(visibleColumn.hasAttribute("inert"), false);
+      assert.equal(visibleColumn.getAttribute("aria-hidden"), "false");
+      assert.equal(await press(target === "main" ? "n" : "b"), false);
+      assert.equal(messageList.scrollTop, 10);
+      assert.equal(auxiliaryMessageList.scrollTop, 10);
+      assert.equal(await press(target === "main" ? "b" : "n"), true);
+      assert.equal(messageList.scrollTop, target === "main" ? 60 : 10);
+      assert.equal(auxiliaryMessageList.scrollTop, target === "auxiliary" ? 60 : 10);
+    }
+    columnWidth = 800;
+    await act(async () => resizeCallbacks.get(columns)?.());
+    assert.equal(columns.classList.contains("is-single-chat"), false);
+    assert.equal(mainColumn.hasAttribute("inert"), false);
+    assert.equal(auxiliaryColumn.hasAttribute("inert"), false);
+    await resetScroll();
+    assert.equal(await press("b"), true);
+    assert.equal(await press("n"), true);
+    assert.equal(messageList.scrollTop, 60);
+    assert.equal(auxiliaryMessageList.scrollTop, 60);
+    assert.equal(dom.window.document.activeElement, composer);
+    assert.equal(targetChangeCount, 0);
     assert.equal(sendCount, 2);
 
     await resetScroll();
