@@ -23,7 +23,7 @@ import { SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA } from "../../src-electron/sess
 import { PROVIDER_RAW_ITEMS_JSON_LIMIT, PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
 import { buildCodexStableRawItems, toMessageOperations } from "../../src-electron/providers/codex/codex-event-projection.js";
 import { WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
-import type { LiveRunStep } from "../../src-shared/session/runtime-state.js";
+import type { LiveElicitationRequest, LiveRunStep } from "../../src-shared/session/runtime-state.js";
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
   label: "OpenAI Codex",
@@ -184,6 +184,152 @@ class FakeTransport {
   }
   whenClosed(): Promise<void> { return Promise.resolve(); }
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Codex async構造化質問はcurrent turnで一度ずつ独立表示され、選択肢と自由入力を秘匿化し、回答待ちでもturn終了で失効する"
+// oracle = { type = "contract", ref = "Issue #823; Codex 0.159.0 ThreadItem agentMessage delivery/questions" }
+// fault = "開始完了通知で質問を重複表示する、他turnや最終snapshotから質問を表示する、回答待ちで処理を停止する、または質問にAPI keyを漏らす"
+// observable = "CodexAdapterのelicitation callbackに渡るrequestとsignal、およびrunSessionTurnの完了"
+// observation_boundary = "public-boundary"
+// scope = "Codex foreground native通知から非同期質問callbackとturn終端まで"
+// lifecycle = "permanent"
+// impact = "ユーザーが質問を見落とす、重複回答する、実行が停止する、またはcredentialが画面へ漏れる"
+// distinction = "型検査ではnative通知のscope・重複・非blocking lifecycleとruntime秘匿化を確認できない。合成transportの短い1turnで検証する"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("Codex async質問を重複なく非blockingで配信しturn終了で失効する", async () => workspace(async (directory) => {
+  const secret = "synthetic-question-api-key";
+  const first = { ...message("ask-1", "ordinary text"), delivery: "async", questions: [
+    { title: "Which? " + secret, options: ["One " + secret, "Two"] },
+    { title: "Details?", options: [] }, { title: "Anything else?", options: null }, { title: "Final detail?" },
+  ] };
+  const second = { ...message("ask-2", ""), delivery: "async", questions: [{ title: "Independent?" }] };
+  const transport = new FakeTransport();
+  transport.events = [
+    notification("item/started", { item: first, threadId: "other-thread" }),
+    notification("item/completed", { item: first, turnId: "other-turn" }),
+    notification("item/started", { item: message("plain", "Should I proceed?") }),
+    notification("item/started", { item: { ...first, delivery: "sync" } }),
+    notification("item/started", { item: first }), notification("item/completed", { item: first }),
+    notification("item/completed", { item: second }),
+    completed([first, second, { ...second, id: "snapshot-only" }]),
+  ];
+  const input = createCodexRunSessionTurnInput(directory);
+  input.signal = AbortSignal.timeout(10_000);
+  input.appSettings.codingProviderSettings.codex.apiKey = secret;
+  const requests: LiveElicitationRequest[] = [];
+  const signals: AbortSignal[] = [];
+  input.onElicitationRequest = (request, signal) => {
+    assert.ok(signal);
+    requests.push(request); signals.push(signal);
+    if (request.requestId.endsWith(":ask-2")) return { action: "accept", content: { "question-1": "answer" } };
+    return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("expired")), { once: true }));
+  };
+  await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input);
+  assert.deepEqual(requests.map(request => request.requestId), ["async:turn-1:ask-1", "async:turn-1:ask-2"]);
+  assert.ok(signals.every(signal => signal.aborted));
+  const request = requests[0];
+  assert.equal(request.delivery, "user-message");
+  assert.equal(request.turnId, "turn-1");
+  assert.equal(request.kind, "question");
+  assert.equal(request.mode, "form");
+  assert.equal(request.blocking, false);
+  assert.equal(request.message, "Codex has a question");
+  assert.deepEqual(request.fields.map(field => [field.name, field.type]), [
+    ["question-1", "select"], ["question-2", "text"], ["question-3", "text"], ["question-4", "text"],
+  ]);
+  const choice = request.fields[0];
+  assert.equal(choice.type, "select");
+  if (choice.type !== "select") throw new Error("Expected select");
+  assert.equal(choice.allowFreeText, true);
+  assert.equal(choice.defaultValue, choice.options[0].value);
+  assert.equal(choice.options[1].value, "Two");
+  assert.equal(request.fields[1].title, "Details?");
+  assert.match(choice.title, /REDACTED/);
+  assert.match(choice.options[0].label, /REDACTED/);
+  assert.ok(!JSON.stringify(requests).includes(secret));
+  assert.equal(transport.calls.some(call => call.method === "turn/steer"), false);
+}));
+
+// @test-value v2
+// kind = "contract"
+// claim = "Codex async質問callbackの同期例外と非同期失敗はturn失敗として通知される"
+// oracle = { type = "contract", ref = "Issue #823; docs/design/provider-adapter.md: provider errors" }
+// fault = "非同期質問callbackの失敗を握り潰してturnを待ち続ける、または未処理Promise rejectionにする"
+// observable = "runSessionTurnのProviderTurnErrorとtransport終了状態"
+// observation_boundary = "public-boundary"
+// scope = "Codex非同期質問のcallback失敗処理"
+// lifecycle = "permanent"
+// impact = "質問表示の失敗が利用者へ伝わらずsessionが実行中のまま残る"
+// distinction = "既存のRPC interaction testは応答不要のasync質問callbackを通らない。同期とPromiseの2ケースで失敗伝播を確認する"
+// @end-test-value
+it("Codex async質問callbackの失敗をturnエラーとして伝える", async () => workspace(async (directory) => {
+  for (const synchronous of [true, false]) {
+    const transport = new FakeTransport();
+    transport.events = [notification("item/started", { item: { ...message("ask", ""), delivery: "async", questions: [{ title: "Question?" }] } })];
+    const input = createCodexRunSessionTurnInput(directory);
+    input.signal = AbortSignal.timeout(10_000);
+    input.onElicitationRequest = () => {
+      if (synchronous) throw new Error("question delivery failed");
+      return Promise.reject(new Error("question delivery failed"));
+    };
+    await assert.rejects(new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input),
+      (error: unknown) => error instanceof ProviderTurnError && /question delivery failed/.test(error.message));
+    assert.equal(transport.closed, true);
+  }
+}));
+
+// @test-value v2
+// kind = "contract"
+// claim = "Codex async質問は外部cancelと連動して回答待ちを失効しturn取消を完了する"
+// oracle = { type = "contract", ref = "Issue #823; docs/design/provider-adapter.md: Cancellation" }
+// fault = "質問待ちsignalをturn cancelに連動せず回答UIと処理を残す"
+// observable = "質問callbackのsignalとrunSessionTurnのcanceled ProviderTurnError"
+// observation_boundary = "public-boundary"
+// scope = "Codex非同期質問中の外部取消"
+// lifecycle = "permanent"
+// impact = "取消済みturnの質問を回答できる状態が残り誤った追加入力を誘発する"
+// distinction = "既存のturn cancel testには非同期質問のsignalがない。合成質問1件でcancelとの接続を検証する"
+// @end-test-value
+it("Codex async質問の待機を外部cancelと連動する", async () => workspace(async (directory) => {
+  const controller = new AbortController();
+  const transport = new FakeTransport();
+  transport.events = [notification("item/started", { item: { ...message("ask", ""), delivery: "async", questions: [{ title: "Question?" }] } })];
+  const input = createCodexRunSessionTurnInput(directory);
+  input.signal = controller.signal;
+  let questionSignal: AbortSignal | undefined;
+  input.onElicitationRequest = (_request, signal) => {
+    questionSignal = signal;
+    controller.abort();
+    return Promise.reject(new Error("canceled question"));
+  };
+  await assert.rejects(new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input),
+    (error: unknown) => error instanceof ProviderTurnError && error.canceled);
+  assert.equal(questionSignal?.aborted, true);
+}));
+
+// @test-value v2
+// kind = "contract"
+// claim = "構造化background実行ではasync質問通知を受信しても対話待ちを作らず出力を確定する"
+// oracle = { type = "contract", ref = "src-electron/providers/provider-runtime.ts: RunBackgroundStructuredPromptInput; Issue #823" }
+// fault = "async質問をforeground専用callbackへ送ろうとしてbackground実行を停止する"
+// observable = "runBackgroundStructuredPromptの構造化出力とtransport終了"
+// observation_boundary = "public-boundary"
+// scope = "Codex background構造化実行に届くasync質問通知"
+// lifecycle = "permanent"
+// impact = "Memory抽出などの非対話処理が質問待ちで停止する"
+// distinction = "foreground質問testはsessionInputを必ず持つ。実際のbackground入口でsessionInputなしの動作を短い合成turnで確認する"
+// @end-test-value
+it("Codex async質問はbackground構造化実行を停止しない", async () => {
+  const item = { ...message("ask", '{"answer":"done"}'), delivery: "async", questions: [{ title: "Question?" }] };
+  const transport = new FakeTransport();
+  transport.events = [notification("item/started", { item }), completed([item])];
+  const result = await new CodexAdapter(undefined, { createTransport: () => transport })
+    .runBackgroundStructuredPrompt(createCodexBackgroundPromptInput());
+  assert.deepEqual(result.output, { answer: "done" });
+  assert.equal(transport.closed, true);
+});
 
 // @test-value v2
 // kind = "contract"

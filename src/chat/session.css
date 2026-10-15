@@ -2178,6 +2178,12 @@
   gap: 12px;
 }
 
+.elicitation-record-options {
+  margin: 0;
+  padding-inline-start: 1.5em;
+  overflow-wrap: anywhere;
+}
+
 .live-elicitation-field {
   display: grid;
   gap: 8px;

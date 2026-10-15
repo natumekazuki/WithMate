@@ -3,7 +3,7 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { createPortal } from "react-dom";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 
-import type { ChangedFile, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse } from "../../../src-shared/session/runtime-state.js";
+import type { ChangedFile, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, ElicitationRecord } from "../../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
 import type { Message, MessageArtifact } from "../../../src-shared/session/session-state.js";
 import { getMessageHistoryIndex, type ConversationSearchMatch, type ConversationSearchRequest, type ConversationQueryOutcome, type ConversationQueryCancelRequest } from "../../../src-shared/session/conversation-page.js";
@@ -17,7 +17,7 @@ import type { GlossaryAnnotationMatcher } from "../../glossary/glossary-annotati
 import { approvalModeLabel, CharacterAvatar, liveRunStepStatusLabel, operationTypeLabel } from "../../ui/ui-utils.js";
 
 import { SessionContentFindBar } from "./session-content-find-bar.js";
-import { LiveRequestSurface } from "../runtime/live-request-surface.js";
+import { ElicitationRecords, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches, iterateTextMatches } from "../../../src-shared/text/find-text-matches.js";
@@ -104,6 +104,9 @@ export type SessionMessageColumnProps = {
   liveApprovalRequest: LiveApprovalRequest | null;
   approvalActionRequestId: string | null;
   liveElicitationRequest: LiveElicitationRequest | null;
+  liveElicitationRequests?: readonly LiveElicitationRequest[];
+  liveElicitationRecords?: readonly ElicitationRecord[];
+  elicitationInputAvailable?: boolean;
   elicitationActionRequestId: string | null;
   liveRunAssistantText: string;
   hasLiveRunAssistantText: boolean;
@@ -445,6 +448,9 @@ export function SessionMessageColumn({
   liveApprovalRequest,
   approvalActionRequestId,
   liveElicitationRequest,
+  liveElicitationRequests,
+  liveElicitationRecords,
+  elicitationInputAvailable,
   elicitationActionRequestId,
   hasLiveRunAssistantText,
   liveRunErrorMessage,
@@ -471,6 +477,13 @@ export function SessionMessageColumn({
   onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
   const selectionActionOverlay = useContext(SelectionActionOverlayContext);
+  const elicitationDrafts = useMemo<LiveElicitationDrafts>(() => new Map(), [sessionId]);
+  useEffect(() => {
+    const requests = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
+    for (const key of elicitationDrafts.keys()) {
+      if (!requests.some((request) => request.requestId === key)) elicitationDrafts.delete(key);
+    }
+  }, [elicitationDrafts, liveElicitationRequests, liveElicitationRequest]);
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
   const loadedArtifactDetails = useRef(new Map<string, MessageArtifact>());
   const [, refreshArtifactDetails] = useState(0);
@@ -557,7 +570,10 @@ export function SessionMessageColumn({
   const pendingResponseMessageIndex = isRunning && pendingResponseMessageKey !== null
     ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1
     : -1;
-  const elicitationMessageIndex = liveElicitationRequest !== null ? pendingResponseMessageIndex : -1;
+  const hasElicitationRequests = liveElicitationRequests ? liveElicitationRequests.length > 0 : liveElicitationRequest !== null;
+  const persistedQuestionIds = new Set(messages.flatMap((message) => message.elicitationRecords?.map((record) => record.requestId) ?? []));
+  const visibleLiveElicitationRecords = liveElicitationRecords?.filter((record) => !persistedQuestionIds.has(record.requestId));
+  const elicitationMessageIndex = hasElicitationRequests ? pendingResponseMessageIndex : -1;
   const extractMessageRange = useCallback((range: Range) => {
     const indexes = defaultRangeExtractor(range);
     // 未送信の回答を保持するため、入力待ちの応答行はviewport外でもunmountしない。
@@ -635,7 +651,7 @@ export function SessionMessageColumn({
     pendingResponseMessageIndex < 0 &&
     !hasLiveRunAssistantText &&
     liveApprovalRequest === null &&
-    liveElicitationRequest === null &&
+    !hasElicitationRequests &&
     !liveRunErrorMessage.trim() &&
     pendingMessageText.trim().length > 0;
   const canUsePendingMessageTextActions = !!(onCopyMessageText || onQuoteMessageText);
@@ -1067,6 +1083,10 @@ export function SessionMessageColumn({
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
         liveElicitationRequest={liveElicitationRequest}
+        liveElicitationRequests={liveElicitationRequests}
+        elicitationRecords={visibleLiveElicitationRecords}
+        inputAvailable={elicitationInputAvailable}
+        drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
         onResolveLiveApproval={onResolveLiveApproval}
         onResolveLiveElicitation={onResolveLiveElicitation}
@@ -1136,6 +1156,10 @@ export function SessionMessageColumn({
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
         liveElicitationRequest={liveElicitationRequest}
+        liveElicitationRequests={liveElicitationRequests}
+        elicitationRecords={visibleLiveElicitationRecords}
+        inputAvailable={elicitationInputAvailable}
+        drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
         onResolveLiveApproval={onResolveLiveApproval}
         onResolveLiveElicitation={onResolveLiveElicitation}
@@ -1333,6 +1357,7 @@ export function SessionMessageColumn({
                       </div>
                     </div>
 
+                    {shouldRenderFullMessage ? <ElicitationRecords records={message.elicitationRecords} /> : null}
                     {artifact ? (
                       <section className="artifact-shell">
                       {artifactExpanded ? (

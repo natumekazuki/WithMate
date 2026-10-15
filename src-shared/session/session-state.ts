@@ -32,6 +32,7 @@ import {
   type ChangedFile,
   type DiffRow,
   type RunCheck,
+  type ElicitationRecord,
 } from "./runtime-state.js";
 import { currentTimestampLabel } from "../time-state.js";
 
@@ -51,6 +52,7 @@ export type Message = {
   accent?: boolean;
   isBookmarked?: boolean;
   artifact?: MessageArtifact;
+  elicitationRecords?: ElicitationRecord[];
 };
 
 export type StreamEntry = {
@@ -363,6 +365,28 @@ function normalizeMessageArtifact(value: unknown): MessageArtifact | undefined {
   };
 }
 
+function normalizeElicitationRecords(value: unknown): ElicitationRecord[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const records: ElicitationRecord[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const record = raw as Partial<ElicitationRecord>;
+    if (typeof record.requestId !== "string" || typeof record.message !== "string" || !Array.isArray(record.fields)
+      || !["pending", "answered", "declined", "canceled", "expired"].includes(record.status ?? "")) continue;
+    records.push({
+      requestId: record.requestId,
+      message: record.message,
+      status: record.status === "pending" ? "expired" : record.status!,
+      fields: record.fields.filter((field) => field && typeof field.title === "string").map((field) => ({
+        title: field.title,
+        ...(typeof field.description === "string" ? { description: field.description } : {}),
+        ...(Array.isArray(field.options) ? { options: field.options.filter((option): option is string => typeof option === "string") } : {}),
+      })),
+    });
+  }
+  return records.length ? records : undefined;
+}
+
 export function normalizeMessage(value: unknown): Message | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -378,6 +402,7 @@ export function normalizeMessage(value: unknown): Message | null {
     text: typeof candidate.text === "string" ? candidate.text : "",
     accent: typeof candidate.accent === "boolean" ? candidate.accent : undefined,
     artifact: normalizeMessageArtifact(candidate.artifact),
+    ...(candidate.elicitationRecords ? { elicitationRecords: normalizeElicitationRecords(candidate.elicitationRecords) } : {}),
     ...(candidate.isBookmarked === true ? { isBookmarked: true } : {}),
   };
 }

@@ -23,12 +23,13 @@ type Ingress = {
 const ingresses = new WeakMap<SessionLiveIngressApi, Ingress>();
 
 export function projectSessionRunControls(state: LiveState) {
+  const elicitations = state?.elicitationRequests ?? (state?.elicitationRequest ? [state.elicitationRequest] : []);
   return {
     hasLiveRun: Boolean(state),
     hasAssistantText: Boolean(state?.assistantText),
     hasApprovalRequest: Boolean(state?.approvalRequest),
-    hasElicitationRequest: Boolean(state?.elicitationRequest),
-    hasBlockingElicitationRequest: Boolean(state?.elicitationRequest && state.elicitationRequest.blocking !== false),
+    hasElicitationRequest: elicitations.length > 0,
+    hasBlockingElicitationRequest: elicitations.some((request) => request.blocking !== false),
     hasInProgressStep: Boolean(state?.steps.some((step) => step.status === "in_progress")),
     errorMessage: state?.errorMessage ?? "",
     cancellationState: state?.cancellationState,

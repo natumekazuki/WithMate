@@ -185,13 +185,14 @@ export function registerSessionRuntimeHandlers(
   );
   ipcMain.handle(
     WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
-    (
-      _event,
+    async (
+      event,
       sessionId: string,
       requestId: string,
       response: LiveElicitationResponse,
     ) => {
-      deps.resolveLiveElicitation(sessionId, requestId, response);
+      await assertQueueSender(event, sessionId);
+      return deps.resolveLiveElicitation(sessionId, requestId, response);
     },
   );
   ipcMain.handle(

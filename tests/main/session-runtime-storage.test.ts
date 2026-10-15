@@ -5,6 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { it } from "node:test";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { ElicitationRecord } from "../../src-shared/session/runtime-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 
@@ -27,6 +28,37 @@ async function withStore(run: (storage: SessionStorageV6, db: DatabaseSync, inca
     db.close(); storage.close(); await rm(directory, { recursive: true, force: true });
   }
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "turn終端の質問記録はSQLiteの通常履歴と表示pageに残り、再読込で操作可能なpendingへ戻らない"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md#storage-overview" }
+// fault = "message保存またはpage投影で質問記録を落とすか、保存pendingを操作可能として復元する"
+// observable = "実DB terminal append後のfull readと表示pageの質問文・選択肢・status"
+// observation_boundary = "public-boundary"
+// scope = "SessionStorageV6 question record persistence"
+// lifecycle = "permanent"
+// impact = "会話再表示時に質問の存在が失われるか、古いフォームへ再送できるように見える"
+// distinction = "runtimeとReact単体testではSQLiteの正規化・軽量page経路を通らない"
+// @end-test-value
+it("質問記録はterminal保存と表示pageを通して保持される", async () => {
+  await withStore((storage, _db, incarnationId) => {
+    const records: ElicitationRecord[] = [
+      { requestId: "answered", message: "Question", fields: [{ title: "Scope", options: ["Small", "Full"] }], status: "answered" },
+      { requestId: "ended", message: "More", fields: [{ title: "Reason" }], status: "pending" },
+    ];
+    storage.appendSessionTerminal({
+      sessionId: "session", incarnationId, expectedMessageCount: 1,
+      assistantMessage: { role: "assistant", text: "done", elicitationRecords: records },
+      metadata: { status: "idle", runState: "idle", threadId: "thread", updatedAt: "terminal" },
+      terminalCommit: { turnId: 1, sessionId: "session", phase: "completed", assistantMessageSeq: 1,
+        threadId: "thread", errorMessage: "", completedAt: "terminal" },
+    });
+    const expected = [records[0], { ...records[1], status: "expired" }];
+    assert.deepEqual(storage.getSession("session")?.messages.at(-1)?.elicitationRecords, expected);
+    assert.deepEqual(storage.getSessionView("session")?.messages.at(-1)?.elicitationRecords, expected);
+  });
+});
 
 // @test-value v2
 // kind = "invariant"

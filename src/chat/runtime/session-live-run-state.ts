@@ -107,13 +107,14 @@ export function replaceLiveRunAfterResolvedRequest(
     latestLiveRun: LiveSessionRunState | null;
   },
 ): OwnedLiveSessionRunState {
-  const currentRequest = options.requestKind === "approval"
-    ? current.state?.approvalRequest
-    : current.state?.elicitationRequest;
+  const matchesRequest = options.requestKind === "approval"
+    ? current.state?.approvalRequest?.requestId === options.requestId
+    : (current.state?.elicitationRequests ?? (current.state?.elicitationRequest ? [current.state.elicitationRequest] : []))
+      .some((request) => request.requestId === options.requestId);
 
   if (
     current.ownerSessionId !== options.sessionId
-    || currentRequest?.requestId !== options.requestId
+    || !matchesRequest
   ) {
     return current;
   }
