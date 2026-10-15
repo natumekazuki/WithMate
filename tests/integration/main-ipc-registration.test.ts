@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { WorkspaceDirectoryValidationService } from "../../src-electron/files/workspace-directory-validation-service.js";
+import { createWithMateWindowApi } from "../../src-electron/preload/preload-api.js";
+import { selectAdditionalDirectoryPath } from "../../src/chat/composer/session-composer-paths.js";
 import { SessionTurnQueuePreflightRejectedError } from "../../src-electron/app/main-session-turn-queue-facade.js";
 
 // @test-value v2
@@ -500,6 +504,7 @@ import {
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
+  WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL,
   WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
@@ -992,6 +997,103 @@ test("Session summary IPC は bounded requestをparseしてpage / Character usag
     searchText: "task",
     sessionIds: undefined,
   }]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxiliary共用のパス入力は所有Session Windowからpreloadと登録済みIPCを通じて実在directoryを選択し、fileは拒否する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory By Path; docs/design/electron-window-runtime.md: MainIpcRegistration" }
+// fault = "Sessionのパス入力をHome専用IPCへ接続する、親Session IDを失う、またはfilesystem検証を迂回する"
+// observable = "選択Promiseのdirectory pathとfile入力のreject message"
+// observation_boundary = "consumer"
+// scope = "共用path adapterから本番preload・登録handler・filesystem validatorまで"
+// lifecycle = "permanent"
+// impact = "Main/Auxiliaryのパス入力追加が全件失敗する主要機能不成立とfileの登録を防ぐ"
+// distinction = "単体API mockと型検査では検出できないsender認可とIPC配線を、既存fileのread-only検証で低コストに確認する"
+// @end-test-value
+test("Additional Directoryのパス入力はSessionから実preloadと登録IPCで検証できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const service = new WorkspaceDirectoryValidationService();
+  const { deps } = createDeps({
+    resolveEventWindow: () => owner,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    validateWorkspaceDirectory: (targetPath: unknown) => service.validate(targetPath),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const api = createWithMateWindowApi({
+    async invoke(channel: string, ...args: unknown[]) {
+      const handler = handlers.get(channel);
+      assert.ok(handler, `Unregistered IPC: ${channel}`);
+      return handler({}, ...args);
+    },
+    on() {},
+    removeListener() {},
+    send() {},
+  } as never);
+  const directoryPath = fileURLToPath(new URL("./", import.meta.url));
+  assert.equal(await selectAdditionalDirectoryPath({
+    sessionId: "session-1", directoryPath: `  ${directoryPath}  `, initialPath: null, api,
+  }), directoryPath);
+  await assert.rejects(selectAdditionalDirectoryPath({
+    sessionId: "session-1", directoryPath: fileURLToPath(import.meta.url), initialPath: null, api,
+  }), { message: "Not a directory." });
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "追加directoryの検証は対象Sessionの所有Windowだけを許可し、非所有Window・不正Session IDはfilesystem検証前に拒否する"
+// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md: MainIpcRegistration" }
+// fault = "Home・Settings・別Session・不明senderを許可する、他Session IDで検証できる、またはHome専用APIの権限を広げる"
+// observable = "APIの返却値と拒否Error、validation serviceへ届いたpath集合"
+// observation_boundary = "public-boundary"
+// scope = "追加directory検証のpreloadから登録IPCのsender認可まで"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// impact = "他Windowから任意filesystem pathの存在・利用可能性を検証する権限逸脱を防ぐ"
+// distinction = "filesystem判定の単体testや型検査では表せない実行時sender境界を既存IPC fixtureで確認する"
+// @end-test-value
+test("Additional Directory検証IPCは所有Sessionだけを認可しHome専用APIを緩和しない", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const other = createWindowStub("file:///session.html?sessionId=session-2");
+  const home = createWindowStub("file:///home.html");
+  let sender: ReturnType<typeof createWindowStub> | null = owner;
+  const validated: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : id === "session-2" ? other : null,
+    resolveHomeWindow: () => home,
+    validateWorkspaceDirectory: async (targetPath: unknown) => {
+      validated.push(targetPath);
+      return { valid: true };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const ipcRenderer = {
+    async invoke(channel: string, ...args: unknown[]) {
+      const handler = handlers.get(channel);
+      assert.ok(handler, `Unregistered IPC: ${channel}`);
+      return handler({}, ...args);
+    },
+    on() {},
+    removeListener() {},
+    send() {},
+  };
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  assert.deepEqual(await api.validateSessionAdditionalDirectory("session-1", "/outside/shared"), { valid: true });
+  await assert.rejects(api.validateWorkspaceDirectory("/outside/private"), /only available from the Home window/);
+  for (const sessionId of ["session-2", "unknown"]) {
+    await assert.rejects(api.validateSessionAdditionalDirectory(sessionId, "/outside/private"), /only available from the target Session window/);
+  }
+  for (const sessionId of [null, undefined, 1, ""]) {
+    await assert.rejects(ipcRenderer.invoke(WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL, sessionId, "/outside/private"), /Session ID is invalid/);
+  }
+  for (const unauthorized of [home, other, createWindowStub("file:///settings.html"), null]) {
+    sender = unauthorized;
+    await assert.rejects(api.validateSessionAdditionalDirectory("session-1", "/outside/private"), /only available from the target Session window/);
+  }
+  assert.deepEqual(validated, ["/outside/shared"]);
 });
 
 test("workspace validation IPC は Home window だけから validation service を呼べる", async () => {

@@ -1784,8 +1784,8 @@ export default function AgentSessionWindowApp() {
         !!selectedSession &&
         !isSelectedSessionReadOnly,
       getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, selectedSession?.workspacePath),
-      pickDirectory: (initialPath) => withmateApi
-        ? selectAdditionalDirectoryPath({ directoryPath, initialPath, api: withmateApi })
+      pickDirectory: (initialPath) => withmateApi && selectedSession
+        ? selectAdditionalDirectoryPath({ sessionId: selectedSession.id, directoryPath, initialPath, api: withmateApi })
         : Promise.resolve(null),
       applyPickedDirectory: async (selectedPath) => {
         if (composerRegistry.isFrozen || !selectedSession) {
@@ -1827,11 +1827,11 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleAddAuxiliaryAdditionalDirectory = async (directoryPath?: string) => {
-    if (composerRegistry.isFrozen || !withmateApi) return;
+    if (composerRegistry.isFrozen || !withmateApi || !selectedSession) return;
     await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
       api: {
         pickDirectory: async (basePath) => {
-          const selectedPath = await selectAdditionalDirectoryPath({ directoryPath, initialPath: basePath, api: withmateApi });
+          const selectedPath = await selectAdditionalDirectoryPath({ sessionId: selectedSession.id, directoryPath, initialPath: basePath, api: withmateApi });
           return composerRegistry.isFrozen ? null : selectedPath;
         },
       },

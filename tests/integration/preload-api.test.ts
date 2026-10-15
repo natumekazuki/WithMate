@@ -761,6 +761,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openMemoryV6ReviewWindow",
     "openTerminalAtPath",
     "validateSessionWorkspace",
+    "validateSessionAdditionalDirectory",
     "validateWorkspaceDirectory",
     "pickDirectory",
     "pickFile",

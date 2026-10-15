@@ -118,6 +118,7 @@ Auxiliaryの配送用親関連は実行受付とruntimeの保存済みactive会�
 ### MainIpcRegistration
 
 - `window.withmate` に対応する IPC を domain ごとに登録する
+- Directory検証は用途ごとにsender境界を分ける。`validateWorkspaceDirectory` はHome専用、`validateSessionWorkspace` は所有Session Windowから保存済みworkspaceだけを検証する。`validateSessionAdditionalDirectory` は指定した親Sessionの所有Windowから入力pathを検証し、Main／Auxiliaryの `Add Directory By Path` が共用する。filesystemの絶対path・存在・directory・アクセス可能性の判定は同じvalidation serviceを使う
 - `src-electron/ipc/register-main-ipc.ts` は共通の error logging、renderer log、draft flush ACK と feature assembly の登録接続だけを担当する。各 IPC feature (`window`、`catalog`、`settings`、`session-query`、`session-runtime`、`auxiliary`、`mate`、`character`、`prompt-template`) が必要な sender identity、認可 resolver、サービス port を組み合わせた handler dependency を所有し、`src-electron/app/main-ipc-deps.ts` は Main service をその assembly へ接続する
 
 ## Preload Boundary

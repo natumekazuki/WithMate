@@ -16,10 +16,10 @@ import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window
 
 // @test-value v2
 // kind = "contract"
-// claim = "Additional Directoryの選択は入力pathをMain APIで検証して返し、path未指定時だけ従来pickerの選択・取消を返す"
+// claim = "Additional Directoryの選択は親Session IDと入力pathを検証APIへ渡して返し、path未指定時だけ従来pickerの選択・取消を返す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory / Add Directory By Path" }
-// fault = "入力pathでpickerを開く、検証を省く、空白を含むpathを破損する、pickerのbaseまたは取消を失う"
-// observable = "選択結果、検証APIへ渡すpath、pickerのbaseと呼出回数"
+// fault = "入力pathでpickerを開く、検証を省く、親Session IDや空白を含むpathを破損する、pickerのbaseまたは取消を失う"
+// observable = "選択結果、検証APIへ渡す親Session IDとpath、pickerのbaseと呼出回数"
 // observation_boundary = "consumer"
 // scope = "Main／Auxiliaryが共用するAdditional Directoryの選択"
 // lifecycle = "permanent"
@@ -27,12 +27,12 @@ import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window
 // distinction = "filesystem検証testと異なり、入力方式によるAPI選択とpath転送を軽量な純粋adapter testで検出する"
 // @end-test-value
 test("Additional Directoryは入力pathを検証し、未指定時はpickerを使う", async () => {
-  const validated: string[] = [];
+  const validated: Array<[string, string]> = [];
   const picked: Array<string | null> = [];
   let pickerResult: string | null = "C:/selected";
   const api = {
-    async validateWorkspaceDirectory(targetPath: string): Promise<WorkspaceDirectoryValidationResult> {
-      validated.push(targetPath);
+    async validateSessionAdditionalDirectory(sessionId: string, targetPath: string): Promise<WorkspaceDirectoryValidationResult> {
+      validated.push([sessionId, targetPath]);
       return { valid: true };
     },
     async pickDirectory(base: string | null) {
@@ -40,12 +40,12 @@ test("Additional Directoryは入力pathを検証し、未指定時はpickerを�
       return pickerResult;
     },
   };
-  assert.equal(await selectAdditionalDirectoryPath({ directoryPath: "  C:\\作業\\shared folder  ", initialPath: "C:/base", api }), "C:\\作業\\shared folder");
-  assert.deepEqual(validated, ["C:\\作業\\shared folder"]);
+  assert.equal(await selectAdditionalDirectoryPath({ sessionId: "parent-1", directoryPath: "  C:\\作業\\shared folder  ", initialPath: "C:/base", api }), "C:\\作業\\shared folder");
+  assert.deepEqual(validated, [["parent-1", "C:\\作業\\shared folder"]]);
   assert.deepEqual(picked, []);
-  assert.equal(await selectAdditionalDirectoryPath({ initialPath: "C:/base", api }), "C:/selected");
+  assert.equal(await selectAdditionalDirectoryPath({ sessionId: "parent-1", initialPath: "C:/base", api }), "C:/selected");
   pickerResult = null;
-  assert.equal(await selectAdditionalDirectoryPath({ initialPath: null, api }), null);
+  assert.equal(await selectAdditionalDirectoryPath({ sessionId: "parent-1", initialPath: null, api }), null);
   assert.deepEqual(picked, ["C:/base", null]);
   assert.equal(validated.length, 1);
 });
@@ -73,18 +73,19 @@ test("Additional Directoryは無効pathと検証API失敗を理由付きで拒�
   ] as const;
   for (const [reason, message] of cases) {
     await assert.rejects(selectAdditionalDirectoryPath({
+      sessionId: "parent-1",
       directoryPath: reason === "empty" ? " " : "invalid",
       initialPath: null,
       api: {
-        validateWorkspaceDirectory: async () => ({ valid: false, reason }),
+        validateSessionAdditionalDirectory: async () => ({ valid: false, reason }),
         pickDirectory: async () => { picked += 1; return "C:/unwanted"; },
       },
     }), { message });
   }
   await assert.rejects(selectAdditionalDirectoryPath({
-    directoryPath: "C:/valid", initialPath: null,
+    sessionId: "parent-1", directoryPath: "C:/valid", initialPath: null,
     api: {
-      validateWorkspaceDirectory: async () => { throw new Error("Validation unavailable"); },
+      validateSessionAdditionalDirectory: async () => { throw new Error("Validation unavailable"); },
       pickDirectory: async () => { picked += 1; return "C:/unwanted"; },
     },
   }), { message: "Validation unavailable" });
