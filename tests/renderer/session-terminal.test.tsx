@@ -81,7 +81,7 @@ it("端末のClipboard操作とシェルへの制御入力を分離する", asyn
       terminal = this;
       return open.apply(this, args);
     });
-    await act(async () => { root.render(createElement(SessionTerminal, { api, expanded: true, onCollapse() {} })); });
+    await act(async () => { root.render(createElement(SessionTerminal, { api, expanded: true, onEmpty() {} })); });
     for (let attempt = 0; attempt < 100 && !terminalId; attempt += 1) {
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     }
@@ -247,7 +247,7 @@ it("端末出力のWebリンクをCtrl＋左クリックで開き、失敗を表
       provider = value;
       return registerLinkProvider.call(this, value);
     });
-    await act(async () => { root.render(createElement(SessionTerminal, { api, expanded: true, onCollapse() {} })); });
+    await act(async () => { root.render(createElement(SessionTerminal, { api, expanded: true, onEmpty() {} })); });
     for (let attempt = 0; attempt < 100 && !terminalId; attempt += 1) {
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     }
@@ -304,6 +304,117 @@ it("端末出力のWebリンクをCtrl＋左クリックで開き、失敗を表
     }
   } finally {
     await act(async () => { root.unmount(); });
+    dom.window.close();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Terminalは初回表示で作成され、非表示・再表示では同じ端末を維持し、最後のタブの終了成功だけをonEmptyで通知する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Terminal; https://github.com/natumekazuki/WithMate/issues/818" }
+// fault = "非表示で端末を起動する、再表示で端末を増やす、終了取消・失敗や残りタブがある状態で0件通知する、または最後の終了成功を通知しない"
+// observable = "createTerminal/releaseTerminalの対象と件数、表示タブ、終了失敗alert、onEmptyの呼出回数"
+// observation_boundary = "component-behavior"
+// scope = "SessionTerminalの表示・複数タブ・非同期終了と0件通知"
+// lifecycle = "permanent"
+// impact = "Promptへの復帰が行われないか、作業中の端末を失う、不要なシェルが起動する"
+// distinction = "実componentとxtermのmountを通す有限の操作列で確認する。clipboard test、型検査、Main側の終了判定testはrendererのタブ保持と0件通知を検出しない"
+// @end-test-value
+it("端末の表示と終了結果に応じてタブを保持し、最後の終了成功を通知する", async () => {
+  const dom = new JSDOM('<!doctype html><body><div id="root"></div></body>', { pretendToBeVisual: true });
+  const globals: Record<string, unknown> = {
+    window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, self: dom.window,
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    ResizeObserver: class { observe() {} disconnect() {} }, IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  Object.defineProperty(dom.window, "matchMedia", { value: () => ({
+    matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {},
+  }) });
+  Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", { value: () => ({
+    measureText: () => ({ width: 8 }), createLinearGradient: () => ({ addColorStop() {} }),
+  }) });
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  const created: string[] = [];
+  const released: string[] = [];
+  let closeResult: boolean | Error = true;
+  let emptyCount = 0;
+  const api: WithMateWindowTerminalApi & Pick<WithMateWindowNavigationApi, "openPath"> = {
+    openPath: async (target) => ({ status: "opened", targetType: "external-url", target }),
+    createTerminal: async ({ terminalId }) => { created.push(terminalId); return { shellName: "PowerShell" }; },
+    writeTerminalInput() {}, resizeTerminal() {}, acknowledgeTerminalOutput() {},
+    closeTerminal: async () => { if (closeResult instanceof Error) throw closeResult; return closeResult; },
+    releaseTerminal: async (id) => { released.push(id); },
+    subscribeTerminalEvents: () => () => {},
+  };
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const render = async (expanded: boolean) => {
+    await act(async () => root.render(createElement(SessionTerminal, { api, expanded, onEmpty: () => { emptyCount++; } })));
+  };
+  const waitForCreated = async (count: number) => {
+    for (let attempt = 0; attempt < 100 && created.length < count; attempt++) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    }
+    assert.equal(created.length, count, "terminal creation must complete");
+  };
+  const close = async (number: number) => {
+    const button = dom.window.document.querySelector<HTMLButtonElement>(`[aria-label="Close Terminal ${number}"]`);
+    assert.ok(button);
+    await act(async () => button.click());
+  };
+  try {
+    await render(false);
+    assert.deepEqual(created, []);
+    await render(true);
+    await waitForCreated(1);
+    const firstTab = dom.window.document.querySelector('[role="tab"]');
+    await render(false);
+    await render(true);
+    assert.equal(dom.window.document.querySelector('[role="tab"]'), firstTab);
+    assert.equal(created.length, 1);
+    assert.deepEqual(released, []);
+
+    closeResult = false;
+    await close(1);
+    assert.equal(dom.window.document.querySelector('[role="tab"]'), firstTab);
+    assert.equal(emptyCount, 0);
+    closeResult = new Error("Close unavailable");
+    await close(1);
+    assert.match(dom.window.document.querySelector('[role="alert"]')?.textContent ?? "", /Close unavailable/);
+    assert.equal(dom.window.document.querySelector('[role="tab"]'), firstTab);
+    assert.equal(emptyCount, 0);
+
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="New Terminal"]')!.click());
+    await waitForCreated(2);
+    closeResult = true;
+    await close(1);
+    assert.equal(dom.window.document.querySelectorAll('[role="tab"]').length, 1);
+    assert.deepEqual(released, [created[0]]);
+    assert.equal(emptyCount, 0);
+    await close(2);
+    assert.equal(dom.window.document.querySelectorAll('[role="tab"]').length, 0);
+    assert.deepEqual(released, created);
+    assert.equal(emptyCount, 1);
+
+    // Prompt remains selected in the consumer, so dock expansion keeps Terminal hidden.
+    await render(false);
+    await render(false);
+    assert.equal(created.length, 2);
+    assert.equal(emptyCount, 1);
+    // Explicitly selecting Terminal again can start a new shell.
+    await render(true);
+    await waitForCreated(3);
+    assert.equal(dom.window.document.querySelectorAll('[role="tab"]').length, 1);
+  } finally {
+    await act(async () => root.unmount());
     dom.window.close();
     for (const [key, descriptor] of previous) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

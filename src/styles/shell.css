@@ -239,6 +239,7 @@
   grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
   height: 100%;
+  overflow: clip;
 }
 
 .session-action-dock:has(.session-action-dock-terminal-content) .session-action-dock-content {
