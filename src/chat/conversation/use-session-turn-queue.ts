@@ -5,6 +5,8 @@ import type { SessionTurnQueueReceipt } from "../../../src-shared/session/sessio
 export type SessionTurnQueueApi = Partial<Pick<WithMateWindowApi, "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput">>;
 const EMPTY_RECEIPTS: SessionTurnQueueReceipt[] = [];
 type QueueState = { owner: string; active: SessionTurnQueueReceipt[]; bridges: SessionTurnQueueReceipt[]; error: string; loading: boolean };
+export type SessionTurnQueueActionKind = "cancel" | "release" | "input";
+type QueueAction = { owner: string; id: string; kind: SessionTurnQueueActionKind };
 
 export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean, canonicalUserSeqs: readonly number[] = []) {
   const owner = `${sessionId}:${incarnationId}`;
@@ -15,14 +17,14 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   canonicalRef.current = new Set(canonicalUserSeqs);
   const canonicalSignature = canonicalUserSeqs.join(",");
   const [revision, setRevision] = useState(0);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<QueueAction | null>(null);
   const [actionError, setActionError] = useState<{ owner: string; message: string } | null>(null);
-  const actionRef = useRef<{ owner: string; id: string } | null>(null);
+  const actionRef = useRef<QueueAction | null>(null);
   const generation = useRef(0);
   const currentOwner = useRef(owner);
   currentOwner.current = owner;
   const reload = useCallback(() => setRevision((current) => current + 1), []);
-  useEffect(() => { setBusyId(null); }, [owner]);
+  useEffect(() => { setPendingAction(null); }, [owner]);
   useEffect(() => {
     setState((current) => {
       if (current.owner !== owner) return current;
@@ -58,12 +60,12 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     if (!enabled) return;
     return api?.onSessionTurnQueueChanged?.((changedId) => { if (changedId === sessionId) reload(); });
   }, [api, enabled, sessionId, reload]);
-  const act = useCallback(async (receipt: SessionTurnQueueReceipt, kind: "cancel" | "release" | "input", expectedTurnId?: string) => {
+  const act = useCallback(async (receipt: SessionTurnQueueReceipt, kind: SessionTurnQueueActionKind, expectedTurnId?: string) => {
     if (receipt.sessionId !== sessionId || receipt.incarnationId !== incarnationId) return;
     if (actionRef.current?.owner === owner) return;
-    const action = { owner, id: receipt.id };
+    const action = { owner, id: receipt.id, kind };
     actionRef.current = action;
-    setBusyId(receipt.id);
+    setPendingAction(action);
     setActionError(null);
     try {
       if (kind === "input") {
@@ -89,7 +91,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
       }
     } finally {
       if (actionRef.current === action) actionRef.current = null;
-      if (currentOwner.current === owner) setBusyId(null);
+      if (currentOwner.current === owner) setPendingAction(null);
     }
   }, [api, owner, sessionId, incarnationId, reload]);
   const retry = useCallback(() => { setActionError(null); reload(); }, [reload]);
@@ -99,6 +101,8 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const receipts = useMemo(() => enabled && state.owner === owner ? [...state.active, ...state.bridges] : EMPTY_RECEIPTS, [enabled, state.owner, owner, state.active, state.bridges]);
   return {
     receipts, error: enabled ? (actionError?.owner === owner ? actionError.message : state.owner === owner ? state.error : "") : "", loading: enabled && !!api?.listSessionTurnQueue && (state.owner !== owner || state.loading),
-    busyId, reload: retry, cancel, release, sendInput,
+    busyId: pendingAction?.owner === owner ? pendingAction.id : null,
+    busyKind: pendingAction?.owner === owner ? pendingAction.kind : null,
+    reload: retry, cancel, release, sendInput,
   };
 }

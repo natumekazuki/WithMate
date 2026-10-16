@@ -4,6 +4,7 @@ import { isReadOnlySession } from "../../src-shared/session/session-state.js";
 import type { HomeSessionSummary } from "../../src-shared/session/session-state.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
+import { ButtonContent } from "../ui/button-content.js";
 import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import type { HomeSessionState } from "./home-session-projection.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
@@ -46,11 +47,7 @@ export function formatHomeSessionUpdatedAt(value: string): string {
   return `${year}-${month}-${day}(${weekday}) ${hours}:${minutes}`;
 }
 
-function PinIcon({ active, pending }: { active: boolean; pending: boolean }) {
-  if (pending) {
-    return <span className="home-session-pin-icon pending" aria-hidden="true" />;
-  }
-
+function PinIcon({ active }: { active: boolean }) {
   return (
     <svg
       className={`home-session-pin-icon${active ? " active" : ""}`}
@@ -224,7 +221,7 @@ export function HomeRecentSessionsPanel({
                   <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
                 </div>
                 <button
-                  className={`home-session-pin-button${session.isPinned ? " is-active" : ""}${isPinPending ? " is-pending" : ""}`}
+                  className={`home-session-pin-button${session.isPinned ? " is-active" : ""}`}
                   type="button"
                   aria-pressed={session.isPinned}
                   aria-label={isPinPending
@@ -237,7 +234,9 @@ export function HomeRecentSessionsPanel({
                   disabled={isPinPending}
                   onClick={() => onSetSessionPinned(session.id, !session.isPinned)}
                 >
-                  <PinIcon active={session.isPinned} pending={isPinPending} />
+                  <ButtonContent busy={isPinPending}>
+                    <PinIcon active={session.isPinned} />
+                  </ButtonContent>
                 </button>
               </div>
             </div>

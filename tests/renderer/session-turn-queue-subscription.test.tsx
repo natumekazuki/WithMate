@@ -25,9 +25,9 @@ async function mount(api: SessionTurnQueueApi) {
       messages: seqs.map(() => ({ role: "user" as const, text: "saved prompt" })),
       keys: seqs.map((seq) => `saved-${seq}`), sources: seqs.map((seq) => ({ kind: "session" as const, messageIndex: seq })), groups: seqs.map(() => null),
     }, current.receipts, { sessionId: "session", incarnationId: "incarnation" });
-    const row = (item: SessionTurnQueueReceipt) => <SessionTurnQueueRow key={item.id} receipt={item} busy={current.busyId !== null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />;
+    const row = (item: SessionTurnQueueReceipt) => <SessionTurnQueueRow key={item.id} receipt={item} busy={current.busyId !== null} busyKind={current.busyId === item.id ? current.busyKind : null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />;
     return <>
-      {projection.messages.map((message, index) => <div key={projection.keys[index]}><p>{message.text}</p>{metadata.has(projection.keys[index]) ? <SessionTurnQueueStatus receipt={metadata.get(projection.keys[index])!} busy={current.busyId !== null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} /> : null}</div>)}
+      {projection.messages.map((message, index) => <div key={projection.keys[index]}><p>{message.text}</p>{metadata.has(projection.keys[index]) ? <SessionTurnQueueStatus receipt={metadata.get(projection.keys[index])!} busy={current.busyId !== null} busyKind={current.busyId === metadata.get(projection.keys[index])!.id ? current.busyKind : null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} /> : null}</div>)}
       {tail.map(row)}
       {current.error ? <div role="alert">{current.error}<button onClick={current.reload}>Retry Queue</button></div> : null}
     </>;
@@ -140,10 +140,10 @@ test("queued receipts bridge skipped starts and failed receipt reads until canon
 
 // @test-value v2
 // kind = "contract"
-// claim = "チャットの予約から現在turnへの入力を一度だけ要求し、成功receiptの本文をcanonical seq到着まで保持する"
+// claim = "チャットの予約から現在turnへの入力を一度だけ要求し、実行中のSteerだけをspinner表示にし、成功receiptの本文をcanonical seq到着まで保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 予約項目のSteer" }
 // fault = "現在turn IDを送らない、連打で重複操作する、または開始通知なしの完了で受付本文が消える"
-// observable = "button操作のAPI引数と回数、待機中のdisabled、完了後のbridgeとcanonical到着後の除去"
+// observable = "button操作のAPI引数と回数、待機中のdisabled・busy・spinnerの所属、完了後のbridgeとcanonical到着後の除去"
 // observation_boundary = "component-behavior"
 // scope = "queued-current-turn-input"
 // lifecycle = "permanent"
@@ -167,6 +167,12 @@ test("queued chat input captures the turn once and bridges a fast canonical acce
     await view.click("Steer");
     assert.deepEqual(calls, [["session", "item", "current-turn"]]);
     assert.equal([...view.document.querySelectorAll("button")].find((button) => button.textContent === "Steer")!.disabled, true);
+    const steer = [...view.document.querySelectorAll("button")].find((button) => button.textContent === "Steer")!;
+    const cancel = view.document.querySelector<HTMLButtonElement>('button[aria-label="Cancel queued turn"]')!;
+    assert.equal(steer.getAttribute("aria-busy"), "true");
+    assert.ok(steer.querySelector(".button-content-spinner"));
+    assert.equal(cancel.disabled, true);
+    assert.equal(cancel.querySelector(".button-content-spinner"), null);
     active = [];
     await act(async () => resolve(receipt({ state: "completed", inputTurnId: "current-turn" })));
     assert.equal(view.current.receipts[0]?.captured.request.userMessage, "original prompt");
@@ -259,6 +265,8 @@ test("queued bubble preserves input until its single cancellation settles", asyn
     assert.deepEqual(canceled, [["session", "item"]]);
     assert.match(view.document.querySelector(".message-card.user")!.textContent!, /original prompt/);
     assert.equal(view.document.querySelector<HTMLButtonElement>('button[aria-label="Cancel queued turn"]')!.disabled, true);
+    assert.ok(view.document.querySelector('button[aria-label="Cancel queued turn"] .button-content-spinner'));
+    assert.equal(view.current.busyKind, "cancel");
     await act(async () => completeCancel());
     assert.equal(view.current.receipts.length, 0);
     assert.equal(view.document.querySelectorAll("p").length, 0);

@@ -19,6 +19,7 @@ import { approvalModeLabel, CharacterAvatar, liveRunStepStatusLabel, operationTy
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { ElicitationRecords, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
+import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches, iterateTextMatches } from "../../../src-shared/text/find-text-matches.js";
 
@@ -73,6 +74,7 @@ export type SessionMessageColumnProps = {
   onCancelQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   onReleaseInterruptedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   queueBusyId?: string | null;
+  queueBusyKind?: SessionTurnQueueActionKind | null;
   queueTail?: ReactNode;
   sessionId: string;
   character: CharacterProfile;
@@ -103,11 +105,13 @@ export type SessionMessageColumnProps = {
   pendingRunIndicatorAnnouncement?: string;
   liveApprovalRequest: LiveApprovalRequest | null;
   approvalActionRequestId: string | null;
+  approvalActionDecision?: "approve" | "deny" | null;
   liveElicitationRequest: LiveElicitationRequest | null;
   liveElicitationRequests?: readonly LiveElicitationRequest[];
   liveElicitationRecords?: readonly ElicitationRecord[];
   elicitationInputAvailable?: boolean;
   elicitationActionRequestId: string | null;
+  elicitationAction?: LiveElicitationResponse["action"] | null;
   liveRunAssistantText: string;
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
@@ -423,6 +427,7 @@ export function SessionMessageColumn({
   onCancelQueuedTurn,
   onReleaseInterruptedTurn,
   queueBusyId,
+  queueBusyKind,
   queueTail,
   sessionId,
   character,
@@ -447,11 +452,13 @@ export function SessionMessageColumn({
   pendingRunIndicatorAnnouncement,
   liveApprovalRequest,
   approvalActionRequestId,
+  approvalActionDecision,
   liveElicitationRequest,
   liveElicitationRequests,
   liveElicitationRecords,
   elicitationInputAvailable,
   elicitationActionRequestId,
+  elicitationAction,
   hasLiveRunAssistantText,
   liveRunErrorMessage,
   pendingMessageText = "",
@@ -1082,12 +1089,14 @@ export function SessionMessageColumn({
       {!conversationPaging ? <LiveRequestSurface
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
+        approvalActionDecision={approvalActionDecision}
         liveElicitationRequest={liveElicitationRequest}
         liveElicitationRequests={liveElicitationRequests}
         elicitationRecords={visibleLiveElicitationRecords}
         inputAvailable={elicitationInputAvailable}
         drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
+        elicitationAction={elicitationAction}
         onResolveLiveApproval={onResolveLiveApproval}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
@@ -1154,12 +1163,14 @@ export function SessionMessageColumn({
       {conversationPaging ? <div className="conversation-live-request"><LiveRequestSurface
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
+        approvalActionDecision={approvalActionDecision}
         liveElicitationRequest={liveElicitationRequest}
         liveElicitationRequests={liveElicitationRequests}
         elicitationRecords={visibleLiveElicitationRecords}
         inputAvailable={elicitationInputAvailable}
         drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
+        elicitationAction={elicitationAction}
         onResolveLiveApproval={onResolveLiveApproval}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
@@ -1459,7 +1470,7 @@ export function SessionMessageColumn({
                       ) : null}
                       </section>
                     ) : null}
-                    {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} busy={queueBusyId === turnQueueMetadata.get(messageKey)!.id} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} /> : null}
+                    {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} busy={queueBusyId === turnQueueMetadata.get(messageKey)!.id} busyKind={queueBusyId === turnQueueMetadata.get(messageKey)!.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} /> : null}
                     {isRunning && absoluteIndex === pendingResponseMessageIndex ? renderPendingContent() : null}
                   </div>
                 </div>

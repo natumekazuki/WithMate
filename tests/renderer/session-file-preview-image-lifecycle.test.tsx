@@ -765,7 +765,7 @@ test("File Previewのtoolbar actionは実行中operationを直列化する", asy
     assert.ok(revealButton);
 
     await act(async () => openButton.click());
-    assert.ok(openButton.querySelector(".session-file-preview-action-spinner"));
+    assert.ok(openButton.querySelector(".button-content-spinner"));
     assert.equal(openButton.querySelector(".visually-hidden")?.textContent, "Opening file");
     assert.equal(openButton.disabled, true);
     assert.equal(revealButton.disabled, true);
@@ -788,7 +788,7 @@ test("File Previewのtoolbar actionは実行中operationを直列化する", asy
 
     await act(async () => revealButton.click());
     assert.equal(revealCalls, 1);
-    assert.ok(revealButton.querySelector(".session-file-preview-action-spinner"));
+    assert.ok(revealButton.querySelector(".button-content-spinner"));
     assert.equal(revealButton.querySelector(".visually-hidden")?.textContent, "Showing file in Explorer");
     await act(async () => {
       revealResult.resolve({
@@ -1721,7 +1721,7 @@ test("File PreviewのReload busyはrequest完了まで保持される", async ()
     assert.ok(reload);
 
     await act(async () => reload.click());
-    await waitFor(() => reload.querySelector(".session-file-preview-action-spinner") !== null);
+    await waitFor(() => reload.querySelector(".button-content-spinner") !== null);
     assert.equal(reload.querySelector(".visually-hidden")?.textContent, "Reloading");
     assert.equal(reload.disabled, true);
     assert.equal(preview.getAttribute("aria-busy"), "true");
@@ -2861,10 +2861,10 @@ test("Git Diffは新しい対象の初回取得だけ本文spinnerへ切り替�
       }));
     });
     assert.equal(preview.getAttribute("aria-busy"), "true");
-    assert.equal(preview.querySelector(".loading-indicator-spinner"), null);
+    assert.equal(preview.querySelector(".loading-indicator"), null);
     assert.ok(preview.querySelector(".session-live-diff-split"));
     const pendingReload = [...preview.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.querySelector(".session-file-preview-action-spinner") !== null);
+      .find((button) => button.querySelector(".button-content-spinner") !== null);
     assert.equal(pendingReload?.disabled, true);
   } finally {
     if (root) {

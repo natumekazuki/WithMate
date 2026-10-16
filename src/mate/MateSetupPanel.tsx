@@ -1,4 +1,5 @@
 import { CharacterAvatar } from "../ui/ui-utils.js";
+import { ButtonContent } from "../ui/button-content.js";
 
 export type HomeMateSetupPanelProps = {
   mode?: "create" | "edit" | "unavailable";
@@ -69,7 +70,7 @@ export function HomeMateSetupPanel({
                   aria-busy={avatarUpdating}
                   aria-label={avatarUpdating ? "Updating Avatar" : "Select Image"}
                 >
-                  {avatarUpdating ? <span className="home-mate-spinner" aria-hidden="true" /> : "Select Image"}
+                  <ButtonContent busy={avatarUpdating}>Select Image</ButtonContent>
                 </button>
                 {canClearAvatar ? (
                   <button className="launch-toggle" type="button" onClick={onClearAvatar} disabled={avatarBusy} aria-label="Clear Avatar">
@@ -106,7 +107,7 @@ export function HomeMateSetupPanel({
               aria-busy={creating}
               aria-label={creating ? (isEditMode ? "Saving" : "Creating Mate") : isEditMode ? "Save" : "Create Mate"}
             >
-              {creating ? <span className="home-mate-spinner" aria-hidden="true" /> : isEditMode ? "Save" : "Create Mate"}
+              <ButtonContent busy={creating}>{isEditMode ? "Save" : "Create Mate"}</ButtonContent>
             </button>
           )}
           {onCancel ? (

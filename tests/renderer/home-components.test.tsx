@@ -492,7 +492,7 @@ describe("HomeMateSetupPanel", () => {
     assert.ok(submitButton);
     assert.ok(settingsButton);
     assert.ok(input.props.value === "Your Mate");
-    assert.ok(submitButton.props.children === "Create Mate");
+    assert.equal(new JSDOM(html).window.document.querySelector("button[type='submit']")?.textContent, "Create Mate");
     assert.ok(html.includes("作成完了まで少し待ってね。"));
   });
 
@@ -579,7 +579,9 @@ describe("HomeMateSetupPanel", () => {
 
     assert.ok(input.props.disabled);
     assert.ok(submitButton.props.disabled);
-    assert.equal(collectElements(panel, (element) => element.type === "span" && element.props.className === "home-mate-spinner").length, 1);
+    const document = new JSDOM(renderToStaticMarkup(panel)).window.document;
+    assert.ok(document.querySelector("button[type='submit'] .button-content-spinner[aria-hidden='true']"));
+    assert.equal(document.querySelector("button[type='submit'] .button-content-label")?.textContent, "Create Mate");
   });
 
   // @test-value v2
@@ -610,7 +612,8 @@ describe("HomeMateSetupPanel", () => {
     )[0];
 
     assert.ok(html.includes("Mate Profile"));
-    assert.equal(submitButton?.props.children, "Save");
+    assert.ok(submitButton);
+    assert.equal(new JSDOM(html).window.document.querySelector("button[type='submit']")?.textContent, "Save");
     assert.ok(cancelButton);
     (cancelButton.props.onClick as () => void)();
     assert.equal(canceled, 1);
@@ -671,7 +674,7 @@ describe("HomeMateSetupPanel", () => {
     const html = renderToStaticMarkup(panel);
     const selectButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Select Image",
+      (element) => element.type === "button" && element.props["aria-label"] === "Select Image",
     )[0];
     const clearButton = collectElements(
       panel,
@@ -891,7 +894,7 @@ describe("HomeLaunchDialog", () => {
   it("新規作成導線は Session 専用である", () => {
     const html = renderHomeLaunchDialog();
 
-    assert.match(html, /<button class="start-session-button"[^>]*>Start<\/button>/);
+    assert.equal(new JSDOM(html).window.document.querySelector("button.start-session-button")?.textContent, "Start");
     assert.ok(html.includes('aria-label="New Session"'));
     assert.ok(html.includes("Coding Provider"));
     assert.ok(!html.includes("Agent Mode"));

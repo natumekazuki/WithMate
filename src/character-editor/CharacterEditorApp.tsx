@@ -33,6 +33,7 @@ import { getWithMateApi, isDesktopRuntime } from "../app/renderer-withmate-api.j
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ButtonContent } from "../ui/button-content.js";
 
 function getCharacterEditorCharacterIdFromLocation(): string | null {
   if (typeof window === "undefined") {
@@ -829,11 +830,9 @@ export default function CharacterEditorApp() {
             aria-busy={authoringStarting || undefined}
             aria-label={authoringStarting ? "Starting authoring session" : undefined}
           >
-            {authoringStarting ? (
-              <>
-                <span className="chat-skill-picker-spinner" aria-hidden="true" />
-              </>
-            ) : draft.mode === "edit" ? "Improve With Agent" : "Author With Agent"}
+            <ButtonContent busy={authoringStarting}>
+              {draft.mode === "edit" ? "Improve With Agent" : "Author With Agent"}
+            </ButtonContent>
           </button>
           <button
             className="launch-toggle start-session-button"
@@ -843,12 +842,7 @@ export default function CharacterEditorApp() {
             aria-busy={saving || undefined}
             aria-label={saving ? "Saving character" : "Save"}
           >
-            {saving ? (
-              <>
-                <span className="chat-skill-picker-spinner" aria-hidden="true" />
-                <span>Save</span>
-              </>
-            ) : "Save"}
+            <ButtonContent busy={saving}>Save</ButtonContent>
           </button>
         </footer>
       </section>

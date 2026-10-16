@@ -51,7 +51,9 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
   assert.match(html, /aria-haspopup="menu"/);
   assert.match(html, /aria-expanded="false"/);
   assert.match(html, /role="menu"/);
-  assert.match(html, /role="menuitem" aria-pressed="false" aria-label="Pin">Pin<\/button>/);
+  const pin = new JSDOM(html).window.document.querySelector("button[role='menuitem'][aria-label='Pin']");
+  assert.equal(pin?.getAttribute("aria-pressed"), "false");
+  assert.equal(pin?.textContent, "Pin");
   assert.match(html, /role="menuitem">Rename<\/button>/);
   assert.match(html, /role="menuitem">Delete<\/button>/);
 });
@@ -296,7 +298,7 @@ test("SessionHeader はpin stateとpending stateを操作ボタンへ投影す�
   assert.match(html, /disabled=""/);
   assert.match(html, /aria-busy="true"/);
   assert.match(html, /aria-label="Updating pin"/);
-  assert.match(html, /<span class="settings-action-spinner" aria-hidden="true"><\/span>/);
+  assert.ok(new JSDOM(html).window.document.querySelector("button[aria-busy='true'] .button-content-spinner[aria-hidden='true']"));
   assert.match(html, /<span class="visually-hidden">Updating pin\.<\/span>/);
   assert.doesNotMatch(html, />Updating\.\.\.<\/button>/);
 });
