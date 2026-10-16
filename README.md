@@ -251,6 +251,7 @@ Milestoneは予定であり、実装・レビュー・対象ブランチへの�
 - [Product Direction](docs/design/product-direction.md): プロダクトの優先順位と判断基準
 - [Documentation Map](docs/design/documentation-map.md): 現行設計文書の分類と入口
 - [Window Architecture](docs/design/window-architecture.md): Window間の責務とlifecycle
+- [UI Design Guidelines](docs/design/ui-design-guidelines.md): 画面横断のデザイン原則と共通パターン
 - [Desktop UI](docs/design/desktop-ui.md): 現在の画面構成と操作
 - [Settings UI](docs/design/settings-ui.md): Settings Windowの責務
 - [Coding Agent Capability Matrix](docs/design/coding-agent-capability-matrix.md): providerごとの対応機能

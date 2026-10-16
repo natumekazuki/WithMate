@@ -29,6 +29,7 @@
 | 文書 | 内容 |
 | --- | --- |
 | [Product Direction](product-direction.md) | 製品の目的と判断基準 |
+| [UI Design Guidelines](ui-design-guidelines.md) | 画面横断のデザイン原則と共通パターン |
 | [Window Architecture](window-architecture.md) | Windowの責務とmode |
 | [Desktop UI](desktop-ui.md) | 画面構成と操作 |
 | [Settings UI](settings-ui.md) | Settings Windowと設定の責務 |
