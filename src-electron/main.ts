@@ -975,6 +975,7 @@ async function listSessionSummaryPage(request?: SessionSummaryPageRequest | null
     entries: page.entries.map((summary) => ({
       ...summary,
       cancellationState: getLiveSessionRun(summary.id)?.cancellationState,
+      approvalPending: Boolean(getLiveSessionRun(summary.id)?.approvalRequest),
     })),
   };
 }
@@ -1427,6 +1428,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   return summaries.map((summary) => ({
                     ...summary,
                     cancellationState: getLiveSessionRun(summary.id)?.cancellationState,
+                    approvalPending: Boolean(getLiveSessionRun(summary.id)?.approvalRequest),
                   }));
                 },
                 getActiveAuxiliarySession: (parentSessionId) =>
@@ -2383,11 +2385,16 @@ function requireSessionTurnNotificationService(): SessionTurnNotificationService
       platform: process.platform,
       isNotificationSupported: () => Notification.isSupported(),
       isNotificationEnabled: async () => (await requireAppSettingsStorage().getSettings()).sessionTurnNotificationEnabled,
+      isApprovalNotificationEnabled: async () => (await requireAppSettingsStorage().getSettings()).sessionApprovalNotificationEnabled,
       isResponsePreviewEnabled: async () =>
         (await requireAppSettingsStorage().getSettings()).sessionTurnNotificationResponsePreviewEnabled,
       isSessionWindowFocused: (sessionId) => {
         const sessionWindow = requireSessionWindowBridge().getWindow(sessionId);
         return Boolean(sessionWindow && !sessionWindow.isDestroyed() && sessionWindow.isFocused());
+      },
+      isSessionWindowOpen: (sessionId) => {
+        const sessionWindow = requireSessionWindowBridge().getWindow(sessionId);
+        return Boolean(sessionWindow && !sessionWindow.isDestroyed());
       },
       loadCharacterIcon: (iconPath) => {
         if (!path.isAbsolute(iconPath)) {
@@ -2723,6 +2730,18 @@ function requireSessionObservabilityService(): SessionObservabilityService {
 function requireSessionApprovalService(): SessionApprovalService {
   if (!sessionApprovalService) {
     sessionApprovalService = new SessionApprovalService({
+      notifyApproval: (sessionId, requestId, signal) => {
+        void notifyLiveApproval(sessionId, requestId, signal).catch((error: unknown) => {
+          writeAppLog({
+            level: "warn",
+            kind: "session.approval-notification.failed",
+            process: "main",
+            message: "Session approval notification failed",
+            data: { sessionId },
+            error: appLogService.errorToLogError(error),
+          });
+        });
+      },
       updateLiveSessionRun: (sessionId, recipe) =>
         requireSessionObservabilityService().updateLiveSessionRun(sessionId, recipe),
     });
@@ -2770,6 +2789,24 @@ async function notifyLiveCodexQuestion(sessionId: string, signal: AbortSignal): 
   const runtimeSession = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
   if (signal.aborted || !runtimeSession) return;
   await requireSessionTurnNotificationService().notifyQuestion(runtimeSession, signal, {
+    kind: "auxiliary",
+    parentSessionId: auxiliary.parentSessionId,
+    auxiliarySessionId: sessionId,
+  });
+}
+
+async function notifyLiveApproval(sessionId: string, requestId: string, signal: AbortSignal): Promise<void> {
+  const session = await getRuntimeSession(sessionId);
+  if (signal.aborted) return;
+  if (session) {
+    await requireSessionTurnNotificationService().notifyApproval(session, requestId, signal);
+    return;
+  }
+  const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId);
+  if (signal.aborted || !auxiliary || !await getRuntimeSession(auxiliary.parentSessionId)) return;
+  const runtimeSession = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
+  if (signal.aborted || !runtimeSession) return;
+  await requireSessionTurnNotificationService().notifyApproval(runtimeSession, requestId, signal, {
     kind: "auxiliary",
     parentSessionId: auxiliary.parentSessionId,
     auxiliarySessionId: sessionId,

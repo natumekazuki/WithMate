@@ -14,6 +14,7 @@ import { LoadError } from "../ui/load-error.js";
 
 export type HomeRightPaneProps = {
   rightPaneView: "monitor" | "characters";
+  approvalMonitorEntries: HomeMonitorEntry[];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
@@ -49,6 +50,7 @@ export type HomeRightPaneProps = {
 
 export function HomeRightPane({
   rightPaneView,
+  approvalMonitorEntries,
   runningMonitorEntries,
   nonRunningMonitorEntries,
   auxiliaryDataState,
@@ -143,6 +145,7 @@ export function HomeRightPane({
       {rightPaneView === "monitor" ? (
         <section className="home-monitor-panel" role="tabpanel" aria-label="Session monitor">
           <HomeMonitorContent
+            approvalEntries={approvalMonitorEntries}
             runningEntries={runningMonitorEntries}
             nonRunningEntries={nonRunningMonitorEntries}
             auxiliaryDataState={auxiliaryDataState}

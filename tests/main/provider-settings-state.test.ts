@@ -202,6 +202,24 @@ describe("provider-settings-state", () => {
     assert.equal(normalizeAppSettings({ launchAtLoginEnabled: "true" }).launchAtLoginEnabled, false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "承認通知設定は既定有効でbooleanのみを保持しturn通知の設定値に依存しない"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#decision" }
+  // fault = "承認通知の欠落・不正値を無効化するかturn通知の値で承認通知を上書きする"
+  // observable = "createDefaultAppSettingsとnormalizeAppSettingsの承認通知boolean"
+  // observation_boundary = "public-boundary"
+  // scope = "approval-notification-settings-normalization"
+  // lifecycle = "permanent"
+  // distinction = "保存層ではなくIPC入力のboolean正規化を直接確認する"
+  // @end-test-value
+  it("承認通知設定は独立した既定trueのbooleanを保持する", () => {
+    assert.equal(createDefaultAppSettings().sessionApprovalNotificationEnabled, true);
+    assert.equal(normalizeAppSettings({ sessionApprovalNotificationEnabled: false }).sessionApprovalNotificationEnabled, false);
+    assert.equal(normalizeAppSettings({ sessionApprovalNotificationEnabled: "false" }).sessionApprovalNotificationEnabled, true);
+    assert.equal(normalizeAppSettings({ sessionTurnNotificationEnabled: false }).sessionApprovalNotificationEnabled, true);
+  });
+
   it("Session turn notification は default true で boolean を保持する", () => {
     assert.equal(createDefaultAppSettings().sessionTurnNotificationEnabled, true);
     assert.equal(normalizeAppSettings({ sessionTurnNotificationEnabled: false }).sessionTurnNotificationEnabled, false);

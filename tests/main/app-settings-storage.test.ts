@@ -15,6 +15,60 @@ import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboar
 describe("AppSettingsStorage", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "承認通知は既定有効で独立保存され、再openで値を保持し、欠落・不正値とresetでは有効へ戻る"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#decision" }
+  // fault = "承認通知の設定を保存しないかturn通知と混同するか欠落時に無効となる"
+  // observable = "保存、再open、欠落・不正値、reset後のgetSettingsとupdateSettingsの値"
+  // observation_boundary = "public-boundary"
+  // scope = "approval-notification-settings-persistence"
+  // lifecycle = "permanent"
+  // impact = "承認通知の選択が再起動で失われるか既存利用者に通知されない"
+  // distinction = "normalizerやUIだけではSQLiteへの独立key保存と再読込みを検証できない"
+  // @end-test-value
+  it("承認通知設定を独立して永続化し既定有効へ戻せる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      assert.equal(storage.getSettings().sessionApprovalNotificationEnabled, true);
+      const saved = storage.updateSettings({
+        ...storage.getSettings(), sessionApprovalNotificationEnabled: false, sessionTurnNotificationEnabled: true,
+      });
+      assert.equal(saved.sessionApprovalNotificationEnabled, false);
+      storage.close();
+      storage = new AppSettingsStorage(dbPath);
+      assert.equal(storage.getSettings().sessionApprovalNotificationEnabled, false);
+      assert.equal(storage.getSettings().sessionTurnNotificationEnabled, true);
+      assert.equal(storage.resetSettings().sessionApprovalNotificationEnabled, true);
+      storage.close();
+      storage = undefined;
+
+      for (const invalid of ["invalid", null]) {
+        const database = new DatabaseSync(dbPath);
+        try {
+          if (invalid === null) {
+            database.prepare("DELETE FROM app_settings WHERE setting_key = ?").run("session_approval_notification_enabled");
+          } else {
+            database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+              .run(invalid, "session_approval_notification_enabled");
+          }
+        } finally {
+          database.close();
+        }
+        storage = new AppSettingsStorage(dbPath);
+        assert.equal(storage.getSettings().sessionApprovalNotificationEnabled, true);
+        storage.close();
+        storage = undefined;
+      }
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "preview wheelの刻みは新規と既存DBの欠落時に5となり、保存した境界値1と100を再open後も保持する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
   // fault = "新しい設定keyの既定値補完やwrite/readが欠落し、再起動で選択した刻みか他の設定を失う"

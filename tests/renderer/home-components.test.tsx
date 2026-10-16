@@ -91,6 +91,7 @@ describe("HomeSettingsContent", () => {
       onChangePreviewWheelZoomStep={noOp}
       onChangeLaunchAtLoginEnabled={noOp}
       onChangeSessionTurnNotificationEnabled={noOp}
+      onChangeSessionApprovalNotificationEnabled={noOp}
       onChangeSessionTurnNotificationResponsePreviewEnabled={noOp}
       onChangeToolCallPresenceEnabled={noOp}
       onChangeKeyboardShortcuts={noOp}
@@ -209,10 +210,10 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "response preview checkboxはWindows通知が無効な間だけdisabledで、設定値のchecked stateは保持する"
+  // claim = "response previewはturn通知無効時だけdisabledで値を保持し、承認通知checkboxはturn通知と独立して有効な状態で値を表示する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
-  // fault = "通知が無効でもpreviewを編集できるか、disabled化の際に保存値をfalseへ書き換える"
-  // observable = "notification enabled/disabled両条件のpreview input disabledとchecked"
+  // fault = "turn通知無効でもpreviewを編集できるかpreviewの値を失うか承認通知がturn通知へ従属する"
+  // observable = "turn通知enabled/disabled両条件でのpreviewと承認通知inputのdisabledとchecked"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-notification-preview-dependency"
   // lifecycle = "permanent"
@@ -223,6 +224,7 @@ describe("HomeSettingsContent", () => {
         ...settingsDraft,
         sessionTurnNotificationEnabled: false,
         sessionTurnNotificationResponsePreviewEnabled: true,
+        sessionApprovalNotificationEnabled: true,
       },
     });
     const enabledHtml = renderSettings({
@@ -230,6 +232,7 @@ describe("HomeSettingsContent", () => {
         ...settingsDraft,
         sessionTurnNotificationEnabled: true,
         sessionTurnNotificationResponsePreviewEnabled: true,
+        sessionApprovalNotificationEnabled: false,
       },
     });
     const findPreviewToggle = (html: string) => {
@@ -243,6 +246,16 @@ describe("HomeSettingsContent", () => {
     assert.equal(findPreviewToggle(disabledHtml)?.checked, true);
     assert.equal(findPreviewToggle(enabledHtml)?.disabled, false);
     assert.equal(findPreviewToggle(enabledHtml)?.checked, true);
+    const findApprovalToggle = (html: string) => {
+      const document = new JSDOM(html).window.document;
+      const label = Array.from(document.querySelectorAll("label"))
+        .find((candidate) => candidate.textContent?.includes("Session Approval Notification"));
+      return label?.querySelector("input");
+    };
+    assert.equal(findApprovalToggle(disabledHtml)?.disabled, false);
+    assert.equal(findApprovalToggle(disabledHtml)?.checked, true);
+    assert.equal(findApprovalToggle(enabledHtml)?.disabled, false);
+    assert.equal(findApprovalToggle(enabledHtml)?.checked, false);
   });
 
   it("Mate Reset の危険操作は Settings に表示されない", () => {
@@ -1551,6 +1564,7 @@ describe("HomeMonitorContent", () => {
     ];
     const html = renderToStaticMarkup(
       <HomeMonitorContent
+        approvalEntries={[]}
         runningEntries={entries}
         nonRunningEntries={[]}
         onOpenSession={noOp}
@@ -1658,6 +1672,7 @@ describe("HomeMonitorContent", () => {
     try {
       await act(async () => root.render(
         <HomeMonitorContent
+          approvalEntries={[]}
           runningEntries={[]}
           nonRunningEntries={[entry]}
           onOpenSession={noOp}
@@ -1721,6 +1736,7 @@ describe("HomeMonitorContent", () => {
     };
     const html = renderToStaticMarkup(
       <HomeMonitorContent
+        approvalEntries={[]}
         runningEntries={[entry]}
         nonRunningEntries={[]}
         onOpenSession={noOp}
@@ -1765,6 +1781,7 @@ describe("HomeMonitorContent", () => {
     ] as const) {
       const html = renderToStaticMarkup(
         <HomeMonitorContent
+          approvalEntries={[]}
           runningEntries={[]}
           nonRunningEntries={entries}
           auxiliaryDataState={auxiliaryDataState}
@@ -1870,6 +1887,7 @@ describe("HomeMonitorContent", () => {
     try {
       await act(async () => root.render(
         <HomeMonitorContent
+          approvalEntries={[]}
           runningEntries={[]}
           nonRunningEntries={[entry, secondEntry]}
           onOpenSession={recordOpenedSession}
@@ -1906,6 +1924,7 @@ describe("HomeMonitorContent", () => {
 
       await act(async () => root.render(
         <HomeMonitorContent
+          approvalEntries={[]}
           runningEntries={[entry]}
           nonRunningEntries={[secondEntry]}
           onOpenSession={recordOpenedSession}
@@ -2000,6 +2019,7 @@ describe("HomeMonitorContent", () => {
     try {
       await act(async () => root.render(
         <HomeMonitorContent
+          approvalEntries={[]}
           runningEntries={[entry]}
           nonRunningEntries={[]}
           onOpenSession={noOp}
@@ -2069,6 +2089,7 @@ describe("HomeMonitorContent", () => {
   it("Monitor feedbackは失敗時だけpoliteなlive statusを表示する", () => {
     const emptyHtml = renderToStaticMarkup(
       <HomeMonitorContent
+        approvalEntries={[]}
         runningEntries={[]}
         nonRunningEntries={[]}
         onOpenSession={noOp}
@@ -2077,6 +2098,7 @@ describe("HomeMonitorContent", () => {
     );
     const failureHtml = renderToStaticMarkup(
       <HomeMonitorContent
+        approvalEntries={[]}
         runningEntries={[]}
         nonRunningEntries={[]}
         feedback="Could not copy session ID."
@@ -2116,6 +2138,7 @@ describe("HomeRightPane", () => {
   ) => renderToStaticMarkup(
     <HomeRightPane
       rightPaneView={rightPaneView}
+      approvalMonitorEntries={[]}
       runningMonitorEntries={[]}
       nonRunningMonitorEntries={[]}
       auxiliaryDataState="ready"

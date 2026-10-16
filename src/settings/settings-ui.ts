@@ -27,6 +27,7 @@ export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
   "Settings schema compatibility is not supported before the first release.";
 export const SETTINGS_LAUNCH_AT_LOGIN_LABEL = "Launch At Login";
 export const SETTINGS_SESSION_TURN_NOTIFICATION_LABEL = "Session Turn Notification";
+export const SETTINGS_SESSION_APPROVAL_NOTIFICATION_LABEL = "Session Approval Notification";
 export const SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL =
   "Notification Response Preview";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "Close Action Dock After Send";

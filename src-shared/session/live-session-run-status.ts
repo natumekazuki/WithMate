@@ -3,7 +3,7 @@ import type { LiveSessionRunState } from "./runtime-state.js";
 export type LiveSessionRunStatus = Pick<
   LiveSessionRunState,
   "runState" | "cancellationState"
->;
+> & { approvalPending?: boolean };
 
 export function projectLiveSessionRunStatus(
   state: LiveSessionRunState | null,
@@ -12,5 +12,6 @@ export function projectLiveSessionRunStatus(
   return {
     runState: state.runState,
     cancellationState: state.cancellationState,
+    ...(state.approvalRequest ? { approvalPending: true } : {}),
   };
 }

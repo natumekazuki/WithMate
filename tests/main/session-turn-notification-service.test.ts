@@ -91,7 +91,9 @@ function createHarness(overrides?: Partial<SessionTurnNotificationServiceDeps<Fa
     platform: "win32",
     isNotificationSupported: () => true,
     isNotificationEnabled: () => true,
+    isApprovalNotificationEnabled: () => true,
     isResponsePreviewEnabled: () => false,
+    isSessionWindowOpen: () => true,
     isSessionWindowFocused: () => false,
     loadCharacterIcon: (iconPath) => ({ path: iconPath }),
     createNotification: (nextOptions) => {
@@ -149,6 +151,131 @@ async function flushAsyncListeners(): Promise<void> {
 }
 
 describe("SessionTurnNotificationService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "承認通知は独立設定と開いた親Windowの非focus条件を使い、Session名と承認待ちだけを通知する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#windows-session-notifications" }
+  // fault = "完了通知の設定へ依存するか閉じたWindowへ通知するか会話の秘密を通知する"
+  // observable = "notifyApprovalの戻り値、通知数とtitle/body/icon"
+  // observation_boundary = "public-boundary"
+  // scope = "approval-notification-eligibility-and-privacy"
+  // lifecycle = "permanent"
+  // impact = "承認待ちを見落とすかOS通知に会話本文が漏れる"
+  // distinction = "完了と質問の通知では独立設定とopen Window要件を検証できない"
+  // @end-test-value
+  it("承認通知は独立設定とopen Window条件で固定文を表示する", async () => {
+    for (const condition of ["enabled", "disabled", "closed", "focused", "unsupported", "macOS"] as const) {
+      const harness = createHarness({
+        platform: condition === "macOS" ? "darwin" : "win32",
+        isNotificationEnabled: () => false,
+        isApprovalNotificationEnabled: async () => condition !== "disabled",
+        isSessionWindowOpen: () => condition !== "closed",
+        isSessionWindowFocused: () => condition === "focused",
+        isNotificationSupported: () => condition !== "unsupported",
+        isResponsePreviewEnabled: () => { throw new Error("Approval must not read preview setting"); },
+      });
+      const session = createSession({ messages: [{ role: "assistant", text: "secret command and path" }] });
+      assert.equal(await harness.terminalService.notifyApproval(session, "approval-1", new AbortController().signal), condition === "enabled");
+      assert.equal(harness.notifications.length, condition === "enabled" ? 1 : 0);
+      if (condition === "enabled") {
+        assert.equal(harness.notifications[0]?.shown, true);
+        assert.deepEqual(harness.options[0], {
+          id: harness.options[0]?.id, groupId: "WithMateSessions", title: "WithMate",
+          body: "通知テスト: approval required.", icon: { path: "C:/characters/a.png" },
+        });
+      }
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "同一承認要求は一度だけ通知し、重複呼出しを含むいずれかの解決は通知と遅延表示を撤去するが後続通知へ干渉しない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#windows-session-notifications" }
+  // fault = "並行する同一requestで二重通知するか解決済み通知を表示するか古いsignalで後続通知を閉じる"
+  // observable = "notifyApprovalの戻り値と通知instanceの数、shown、closed"
+  // observation_boundary = "public-boundary"
+  // scope = "approval-notification-request-lifetime"
+  // lifecycle = "permanent"
+  // impact = "承認済みの通知が残るか後続の承認待ち通知を失う"
+  // distinction = "非同期設定読込みとrequestの生存期間の競合は型検査では観測できない"
+  // @end-test-value
+  it("承認要求を重複通知せず、解決後の表示と後続通知への干渉を防ぐ", async () => {
+    let resolveEnabled!: (enabled: boolean) => void;
+    const delayed = createHarness({ isApprovalNotificationEnabled: () => new Promise((resolve) => { resolveEnabled = resolve; }) });
+    const controller = new AbortController();
+    const duplicate = new AbortController();
+    const pending = delayed.terminalService.notifyApproval(delayed.session, "request-1", controller.signal);
+    assert.equal(await delayed.terminalService.notifyApproval(delayed.session, "request-1", duplicate.signal), false);
+    duplicate.abort();
+    resolveEnabled(true);
+    assert.equal(await pending, false);
+    assert.equal(delayed.notifications.length, 0);
+
+    const harness = createHarness();
+    const first = new AbortController();
+    assert.equal(await harness.terminalService.notifyApproval(harness.session, "request-1", first.signal), true);
+    harness.notifications[0]?.closeWithoutReason();
+    assert.equal(await harness.terminalService.notifyApproval(harness.session, "request-1", first.signal), false);
+    first.abort();
+    const second = new AbortController();
+    assert.equal(await harness.terminalService.notifyApproval(harness.session, "request-1", second.signal), true);
+    const secondDuplicate = new AbortController();
+    assert.equal(await harness.terminalService.notifyApproval(harness.session, "request-1", secondDuplicate.signal), false);
+    harness.notifications[1]?.timeout();
+    secondDuplicate.abort();
+    assert.equal(harness.notifications[1]?.closed, true);
+    harness.notifications[1]?.click();
+    await flushAsyncListeners();
+    assert.deepEqual(harness.openedSessions, []);
+
+    const third = new AbortController();
+    await harness.terminalService.notifyApproval(harness.session, "request-2", third.signal);
+    assert.equal(harness.service.notifyTurnCompleted(harness.session), true);
+    assert.equal(harness.notifications[2]?.closed, true);
+    third.abort();
+    assert.equal(harness.notifications[3]?.closed, false);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary承認通知は親Windowを判定しclickで対象Auxiliaryへ戻り、通知の作成・配送失敗は呼出元へ伝播しない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#windows-session-notifications" }
+  // fault = "親ではなくAuxiliary IDでWindowを判定するか別会話を開くか通知失敗をthrowする"
+  // observable = "Window判定ID、openAuxiliarySessionWindow引数と失敗時戻り値"
+  // observation_boundary = "consumer"
+  // scope = "approval-notification-target-and-failure-isolation"
+  // lifecycle = "permanent"
+  // impact = "承認対象の会話へ戻れないか通知不能で承認処理が失敗する"
+  // distinction = "質問のtarget転送と共通通知testでは承認入口のtargetと失敗処理を通らない"
+  // @end-test-value
+  it("Auxiliaryの承認対象へ戻り通知失敗を隔離する", async () => {
+    const openIds: string[] = [];
+    const focusIds: string[] = [];
+    const harness = createHarness({
+      isSessionWindowOpen: (id) => { openIds.push(id); return true; },
+      isSessionWindowFocused: (id) => { focusIds.push(id); return false; },
+    });
+    const auxiliary = createSession({ id: "auxiliary-1" });
+    assert.equal(await harness.terminalService.notifyApproval(auxiliary, "request-1", new AbortController().signal, {
+      kind: "auxiliary", parentSessionId: harness.session.id, auxiliarySessionId: auxiliary.id,
+    }), true);
+    harness.notifications[0]?.click();
+    await flushAsyncListeners();
+    assert.deepEqual(openIds, [harness.session.id]);
+    assert.deepEqual(focusIds, [harness.session.id]);
+    assert.deepEqual(harness.openedAuxiliarySessions, [{ parentSessionId: harness.session.id, auxiliarySessionId: auxiliary.id }]);
+
+    for (const overrides of [
+      { isApprovalNotificationEnabled: async () => { throw new Error("settings failed"); } },
+      { createNotification: () => { throw new Error("create failed"); } },
+      { createNotification: () => Object.assign(new FakeNotification(), { show() { throw new Error("show failed"); } }) },
+    ]) {
+      const failed = createHarness(overrides);
+      assert.equal(await failed.terminalService.notifyApproval(failed.session, "request-1", new AbortController().signal), false);
+      assert.equal(failed.warnings.length, 1);
+    }
+  });
+
   // @test-value v2
   // kind = "contract"
   // claim = "Codex質問通知は既存のWindows・設定・対象Window非focus条件を使い、本文previewを読まず固定文とCharacter iconで通知する"

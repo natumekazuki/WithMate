@@ -6,6 +6,7 @@ type PendingApprovalRequest = {
 };
 
 type SessionApprovalServiceOptions = {
+  notifyApproval?: (sessionId: string, requestId: string, signal: AbortSignal) => void;
   updateLiveSessionRun: (
     sessionId: string,
     recipe: (current: LiveSessionRunState) => LiveSessionRunState,
@@ -43,11 +44,13 @@ export class SessionApprovalService {
     }
 
     return new Promise<LiveApprovalDecision>((resolve) => {
+      const notificationController = new AbortController();
       const handleAbort = () => {
         settle("deny");
       };
 
       const cleanup = () => {
+        notificationController.abort();
         signal.removeEventListener("abort", handleAbort);
         const currentPendingRequest = this.pendingRequests.get(sessionId);
         if (currentPendingRequest?.requestId === request.requestId) {
@@ -71,10 +74,17 @@ export class SessionApprovalService {
         requestId: request.requestId,
         resolve: settle,
       });
-      this.options.updateLiveSessionRun(sessionId, (current) => ({
+      const published = this.options.updateLiveSessionRun(sessionId, (current) => ({
         ...current,
         approvalRequest: request,
       }));
+      try {
+        if (published?.approvalRequest?.requestId === request.requestId) {
+          this.options.notifyApproval?.(sessionId, request.requestId, notificationController.signal);
+        }
+      } catch {
+        // Attention delivery must not interrupt the pending approval decision.
+      }
     });
   }
 }

@@ -16,6 +16,7 @@ import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
 import { ChatDockSplitter } from "../chat/chat-window.js";
 
 export type HomeMonitorContentProps = {
+  approvalEntries: HomeMonitorEntry[];
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
   auxiliaryDataState?: HomeMonitorAuxiliaryDataState;
@@ -34,10 +35,13 @@ export type HomeMonitorContentProps = {
 
 type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading" | "closed";
 
-function clampRunningRatio(ratio: number, height: number): number {
-  if (height <= 0) return ratio;
-  const minimumRatio = Math.min(0.5, 48 / height);
-  return Math.max(minimumRatio, Math.min(1 - minimumRatio, ratio));
+type SectionBoundaries = [number, number];
+
+function clampSectionBoundaries(boundaries: SectionBoundaries, height: number): SectionBoundaries {
+  if (height <= 0) return boundaries;
+  const minimum = Math.min(1 / 3, 48 / height);
+  const first = Math.max(minimum, Math.min(1 - minimum * 2, boundaries[0]));
+  return [first, Math.max(first + minimum, Math.min(1 - minimum, boundaries[1]))];
 }
 
 function getEntryKey(entry: HomeMonitorEntry): string {
@@ -68,6 +72,7 @@ function MonitorStatusIcon({
 function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
   const summaries = entry.auxiliarySessions;
   const groups = [
+    { kind: "approval" as const, label: "Approval Required" },
     { kind: "running" as const, label: "Running" },
     { kind: "running" as const, label: "Canceling" },
     { kind: "running" as const, label: "Waiting For Stop" },
@@ -95,6 +100,7 @@ function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
 }
 
 export function HomeMonitorContent({
+  approvalEntries,
   runningEntries,
   nonRunningEntries,
   auxiliaryDataState = "ready",
@@ -107,21 +113,27 @@ export function HomeMonitorContent({
   onShowContextMenu,
 }: HomeMonitorContentProps) {
   const [expandedEntryKeys, setExpandedEntryKeys] = useState<Set<string>>(() => new Set());
-  const [runningRatio, setRunningRatio] = useState(0.5);
+  const [sectionBoundaries, setSectionBoundaries] = useState<SectionBoundaries>([1 / 3, 2 / 3]);
   const resizeStartRef = useRef<{ ratio: number; height: number } | null>(null);
   const sectionsId = useId();
   const sectionsRef = useRef<HTMLDivElement>(null);
-  const [collapsedLists, setCollapsedLists] = useState<boolean[]>([false, false]);
+  const [collapsedLists, setCollapsedLists] = useState<boolean[]>([false, false, false]);
+
+  const getSectionsHeight = (container: HTMLElement) => container.getBoundingClientRect().height
+    - [...container.querySelectorAll<HTMLElement>(".home-monitor-splitter")]
+      .reduce((sum, splitter) => sum + splitter.getBoundingClientRect().height, 0);
 
   useLayoutEffect(() => {
     const container = sectionsRef.current;
     if (!container) return;
     const sections = [...container.querySelectorAll<HTMLElement>(":scope > section")];
     const updateLayout = () => {
-      const splitter = container.querySelector<HTMLElement>(".home-monitor-splitter");
-      const height = container.getBoundingClientRect().height - (splitter?.getBoundingClientRect().height ?? 0);
-      setRunningRatio((current) => clampRunningRatio(current, height));
-      const next = sections.map((section) => {
+      const height = getSectionsHeight(container);
+      setSectionBoundaries((current) => {
+        const next = clampSectionBoundaries(current, height);
+        return next.every((value, index) => value === current[index]) ? current : next;
+      });
+      const next = sections.map((section, index) => {
         const list = section.querySelector<HTMLElement>(".home-monitor-list");
         const card = list?.querySelector<HTMLElement>(".home-monitor-card");
         if (!list || !card) return false;
@@ -129,7 +141,7 @@ export function HomeMonitorContent({
         const minimumHeight = card.getBoundingClientRect().height - (auxiliaryList?.getBoundingClientRect().height ?? 0);
         const collapsed = list.getBoundingClientRect().height < minimumHeight;
         if (collapsed && list.contains(container.ownerDocument.activeElement)) {
-          container.querySelector<HTMLButtonElement>(".home-monitor-splitter")?.focus({ preventScroll: true });
+          container.querySelectorAll<HTMLButtonElement>(".home-monitor-splitter")[Math.min(index, 1)]?.focus({ preventScroll: true });
         }
         return collapsed;
       });
@@ -148,12 +160,56 @@ export function HomeMonitorContent({
       if (card) observer.observe(card);
     }
     return () => observer.disconnect();
-  }, [runningEntries, nonRunningEntries]);
+  }, [approvalEntries, runningEntries, nonRunningEntries]);
 
-  const resizeSections = (ratio: number, height: number) => {
+  const resizeSections = (index: 0 | 1, ratio: number, height: number) => {
     if (height <= 0) return;
-    setRunningRatio(clampRunningRatio(ratio, height));
+    const minimum = Math.min(1 / 3, 48 / height);
+    setSectionBoundaries((current) => {
+      const next = clampSectionBoundaries(current, height);
+      const lower = index === 0 ? minimum : next[0] + minimum;
+      const upper = index === 0 ? next[1] - minimum : 1 - minimum;
+      next[index] = Math.max(lower, Math.min(upper, ratio));
+      return next;
+    });
   };
+
+  const renderSplitter = (index: 0 | 1, label: string) => (
+    <ChatDockSplitter
+      edge="bottom"
+      className="home-monitor-splitter"
+      canCollapse={false}
+      ariaLabel={`Resize ${label}`}
+      ariaControls={sectionsId}
+      ariaOrientation="horizontal"
+      ariaValueNow={Math.round(sectionBoundaries[index] * 100)}
+      title={`Drag or use Up/Down arrows to resize ${label}`}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        const container = event.currentTarget.parentElement;
+        if (!container) return;
+        const height = getSectionsHeight(container);
+        const ratio = clampSectionBoundaries(sectionBoundaries, height)[index];
+        resizeSections(index, ratio, height);
+        resizeStartRef.current = { ratio, height };
+      }}
+      onDrag={(_event, delta) => {
+        const start = resizeStartRef.current;
+        if (start) resizeSections(index, start.ratio + delta.y / start.height, start.height);
+      }}
+      onPointerEnd={() => { resizeStartRef.current = null; }}
+      onKeyDown={(event) => {
+        if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const container = event.currentTarget.parentElement;
+        if (!container) return;
+        const height = getSectionsHeight(container);
+        const ratio = clampSectionBoundaries(sectionBoundaries, height)[index];
+        resizeSections(index, event.key === "Home" ? 0 : event.key === "End" ? 1
+          : ratio + (event.key === "ArrowDown" ? 24 : -24) / height, height);
+      }}
+    />
+  );
 
   const toggleEntry = (entry: HomeMonitorEntry) => {
     const key = getEntryKey(entry);
@@ -315,20 +371,33 @@ export function HomeMonitorContent({
           ) : null}
         </div>
       ) : null}
-      {!feedback && isLoading && (auxiliaryDataState === "loading" || (runningEntries.length === 0 && nonRunningEntries.length === 0)) ? (
+      {!feedback && isLoading && (auxiliaryDataState === "loading" || (approvalEntries.length === 0 && runningEntries.length === 0 && nonRunningEntries.length === 0)) ? (
         <LoadingIndicator label={loadingMessage.replace(/…$/, "")} className="home-session-list-load-status" />
       ) : null}
       <div
         ref={sectionsRef}
+        id={sectionsId}
         className="home-monitor-sections"
-        style={{ gridTemplateRows: `minmax(48px, ${runningRatio}fr) var(--session-dock-splitter-size) minmax(48px, ${1 - runningRatio}fr)` }}
+        style={{ gridTemplateRows: `minmax(48px, ${sectionBoundaries[0]}fr) var(--session-dock-splitter-size) minmax(48px, ${sectionBoundaries[1] - sectionBoundaries[0]}fr) var(--session-dock-splitter-size) minmax(48px, ${1 - sectionBoundaries[1]}fr)` }}
       >
-        <section id={sectionsId} className="home-monitor-section" aria-labelledby="home-monitor-running">
+        <section className="home-monitor-section" aria-labelledby="home-monitor-approval">
+          <div className="home-monitor-section-head">
+            <h3 id="home-monitor-approval">Approval</h3>
+            <span className="home-monitor-count">{approvalEntries.length}</span>
+          </div>
+          <div className={`home-monitor-list${collapsedLists[0] ? " is-collapsed" : ""}`} inert={collapsedLists[0]}>
+            {renderMonitorEntries(approvalEntries)}
+          </div>
+        </section>
+
+        {renderSplitter(0, "Approval and Running")}
+
+        <section className="home-monitor-section" aria-labelledby="home-monitor-running">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-running">Running</h3>
             <span className="home-monitor-count">{runningEntries.length}</span>
           </div>
-          <div className={`home-monitor-list${collapsedLists[0] ? " is-collapsed" : ""}`} inert={collapsedLists[0]}>
+          <div className={`home-monitor-list${collapsedLists[1] ? " is-collapsed" : ""}`} inert={collapsedLists[1]}>
             {runningEntries.length > 0
               ? renderMonitorEntries(runningEntries)
               : showEmptyState && runningEmptyMessage
@@ -337,48 +406,14 @@ export function HomeMonitorContent({
           </div>
         </section>
 
-        <ChatDockSplitter
-          edge="bottom"
-          className="home-monitor-splitter"
-          canCollapse={false}
-          ariaLabel="Resize Running and Stopped"
-          ariaControls={sectionsId}
-          ariaOrientation="horizontal"
-          ariaValueNow={Math.round(runningRatio * 100)}
-          title="Drag or use Up/Down arrows to resize Running and Stopped"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            const splitter = event.currentTarget;
-            const height = (splitter.parentElement?.getBoundingClientRect().height ?? 0) - splitter.getBoundingClientRect().height;
-            const ratio = clampRunningRatio(runningRatio, height);
-            resizeSections(ratio, height);
-            resizeStartRef.current = {
-              ratio,
-              height,
-            };
-          }}
-          onDrag={(_event, delta) => {
-            const start = resizeStartRef.current;
-            if (start) resizeSections(start.ratio + delta.y / start.height, start.height);
-          }}
-          onPointerEnd={() => { resizeStartRef.current = null; }}
-          onKeyDown={(event) => {
-            if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
-            event.preventDefault();
-            const splitter = event.currentTarget;
-            const height = (splitter.parentElement?.getBoundingClientRect().height ?? 0) - splitter.getBoundingClientRect().height;
-            const ratio = clampRunningRatio(runningRatio, height);
-            const nextRatio = event.key === "Home" ? 0 : event.key === "End" ? 1 : ratio + (event.key === "ArrowDown" ? 24 : -24) / height;
-            resizeSections(nextRatio, height);
-          }}
-        />
+        {renderSplitter(1, "Running and Stopped")}
 
         <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-inactive">Stopped</h3>
             <span className="home-monitor-count">{nonRunningEntries.length}</span>
           </div>
-          <div className={`home-monitor-list${collapsedLists[1] ? " is-collapsed" : ""}`} inert={collapsedLists[1]}>
+          <div className={`home-monitor-list${collapsedLists[2] ? " is-collapsed" : ""}`} inert={collapsedLists[2]}>
             {nonRunningEntries.length > 0
               ? renderMonitorEntries(nonRunningEntries)
               : showEmptyState && nonRunningEmptyMessage
