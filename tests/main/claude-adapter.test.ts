@@ -151,10 +151,11 @@ it("rejects unverified, managed or canceled Claude quota requests before query",
       query: (() => { calls++; throw new Error("Unexpected query"); }) as typeof import("@anthropic-ai/claude-agent-sdk").query,
       resolveSettings: async () => {
         if (outcome === "failure") throw new Error("Settings inspection failed");
-        return { sources: [{ source: "managed", settings: {} }], effective: {}, provenance: {} } as ResolvedSettings;
+        return { sources: outcome === "managed" ? [{ source: "managed", settings: {} }] : [], effective: {}, provenance: {} } as ResolvedSettings;
       },
     });
-    await assert.rejects(adapter.getProviderQuotaTelemetry({ providerId: "claude", appSettings: createDefaultAppSettings(), signal: controller.signal }));
+    const expectedError = outcome === "canceled" ? /Canceled/ : outcome === "failure" ? /Settings inspection failed/ : /managed settings/;
+    await assert.rejects(adapter.getProviderQuotaTelemetry({ providerId: "claude", appSettings: createDefaultAppSettings(), signal: controller.signal }), expectedError);
     assert.equal(calls, 0);
   }
 });
