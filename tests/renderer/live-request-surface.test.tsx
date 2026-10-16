@@ -126,8 +126,8 @@ const elicitationRequest: LiveElicitationRequest = {
 // kind = "contract"
 // claim = "Live approvalは実行したdecisionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求内容・操作識別を維持する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
-// fault = "非実行buttonもspinnerになるか、busy announcementまたは要求本文・操作labelを失う"
-// observable = "request領域と対象buttonのaria-busy、spinnerの所属、status数、要求本文、warning/details、操作label"
+// fault = "非実行buttonもspinnerまたはbusyになるか、busy announcementまたは要求本文・操作labelを失う"
+// observable = "request領域と各buttonのaria-busy、spinnerの所属、status数、要求本文、warning/details、操作label"
 // observation_boundary = "component-behavior"
 // scope = "live-request-resolution-feedback"
 // lifecycle = "permanent"
@@ -155,11 +155,13 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
     const active = buttons[decision === "approve" ? 0 : 1];
     assert.ok(active.querySelector(".button-content-spinner[aria-hidden='true']"));
     assert.equal(active.getAttribute("aria-busy"), "true");
+    assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-busy") === "true"), [active]);
     assert.equal(document.querySelectorAll(".button-content-spinner").length, 1);
     assert.ok(buttons.every((button) => button.disabled));
     assert.match(html, /Run a command/);
     assert.match(html, /npm test/);
     assert.match(html, /This command can change workspace state\./);
+    assert.match(html, /The command will inspect the workspace\./);
   }
 });
 
@@ -167,8 +169,8 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
 // kind = "contract"
 // claim = "Live input requestは実行したactionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求内容・操作識別を維持する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
-// fault = "非実行buttonもspinnerになるか、busy announcementまたはrequest本文・操作labelを失う"
-// observable = "input request領域と対象buttonのaria-busy、spinnerの所属、status数、request本文、操作label"
+// fault = "非実行buttonもspinnerまたはbusyになるか、busy announcementまたはrequest本文・操作labelを失う"
+// observable = "input request領域と各buttonのaria-busy、spinnerの所属、status数、request本文、操作label"
 // observation_boundary = "component-behavior"
 // scope = "live-input-request-resolution-feedback"
 // lifecycle = "permanent"
@@ -196,6 +198,7 @@ test("LiveRequestSurface はinput解決中のbusy announcementと操作labelを�
     const active = buttons[action === "accept" ? 0 : action === "decline" ? 1 : 2];
     assert.ok(active.querySelector(".button-content-spinner[aria-hidden='true']"));
     assert.equal(active.getAttribute("aria-busy"), "true");
+    assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-busy") === "true"), [active]);
     assert.equal(document.querySelectorAll(".button-content-spinner").length, 1);
     assert.ok(buttons.every((button) => button.disabled));
     assert.match(html, /Choose a branch/);
