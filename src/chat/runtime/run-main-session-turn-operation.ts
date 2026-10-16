@@ -23,6 +23,7 @@ export async function runMainSessionTurnOperation(input: {
   acceptance: SessionTurnAcceptance;
   auxiliaryDraftOwner?: AuxiliaryDraftPersistenceOwner;
   isCurrentSubmission?: () => boolean;
+  onAccepted?: () => void;
   queueTurn?: boolean;
   clearDraft: boolean;
   collapseActionDock: boolean;
@@ -85,6 +86,7 @@ export async function runMainSessionTurnOperation(input: {
     const receipt = await input.acceptance.submit(api, sessionId, {
       request, owner: composerOwner, revision: captured.revision, clearDraft: input.clearDraft,
       auxiliaryDraftOwner: input.auxiliaryDraftOwner,
+      onAccepted: input.onAccepted,
     }, composerRegistry);
     state.setForceComposerBlockedFeedback(false);
     input.log("renderer.queue.accepted", { sessionId, clientRequestId: receipt.requestId, state: receipt.state });

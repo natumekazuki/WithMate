@@ -1074,6 +1074,7 @@ export default function AgentSessionWindowApp() {
     setForceComposerBlockedFeedback(true);
   };
 
+  const captureMessageListSendRef = useRef<((sessionId: string) => (() => void)) | null>(null);
   const sendMessage = async (
     messageText: string,
     options?: { clearDraft?: boolean; collapseActionDock?: boolean; submitSource?: "composer" | "retry" },
@@ -1085,6 +1086,8 @@ export default function AgentSessionWindowApp() {
     const sessionId = sendSession.id;
     const selectionContext = dockContextRef.current;
     const collapseSentActionDock = captureSendDockCollapse();
+    const followAcceptedSend = options?.submitSource === "retry" ? undefined : captureMessageListSendRef.current?.(sessionId);
+    const isCurrentSubmission = () => dockContextRef.current === selectionContext && composerOwnerRef.current === sessionId;
     const clientRequestId = createSessionTurnClientRequestId();
     const request: RunSessionTurnRequest = {
       userMessage: messageText,
@@ -1099,13 +1102,14 @@ export default function AgentSessionWindowApp() {
       composerOwner,
       clearDraft: options?.clearDraft ?? true,
       queueTurn: true,
-      isCurrentSubmission: () => dockContextRef.current === selectionContext && composerOwnerRef.current === sessionId,
+      isCurrentSubmission,
       shouldCollapseActionDock: options?.collapseActionDock ?? false,
       selectedSessionRunState,
       blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly,
       validateWorkspace: () => validateSessionWorkspace(sendSession, true),
       collapseActionDock: collapseSentActionDock,
+      onAccepted: () => { if (isCurrentSubmission()) followAcceptedSend?.(); },
       log: logSessionRunStuckInvestigation,
     });
   };
@@ -1523,6 +1527,9 @@ export default function AgentSessionWindowApp() {
     if (!draftOwner) return Promise.resolve();
     const selectionContext = dockContextRef.current;
     const collapseSentActionDock = captureSendDockCollapse();
+    const followAcceptedSend = captureMessageListSendRef.current?.(selected.id);
+    const isCurrentSubmission = () => dockContextRef.current === selectionContext && composerOwnerRef.current === selected.id
+      && auxiliaryBinding.getSession()?.createdAt === selected.createdAt;
     const releaseDetail = auxiliaryBinding.retainDetail();
     return auxiliaryDraftPersistence.trackSend(runMainSessionTurnFromRuntime({
       sessionId: selected.id,
@@ -1536,8 +1543,7 @@ export default function AgentSessionWindowApp() {
       },
       composerOwner: owner,
       auxiliaryDraftOwner: draftOwner,
-      isCurrentSubmission: () => dockContextRef.current === selectionContext && composerOwnerRef.current === selected.id
-        && auxiliaryBinding.getSession()?.createdAt === selected.createdAt,
+      isCurrentSubmission,
       clearDraft: true,
       queueTurn: true,
       shouldCollapseActionDock: appSettings.autoCollapseActionDockOnSend,
@@ -1546,6 +1552,7 @@ export default function AgentSessionWindowApp() {
       isReadOnly: isSelectedSessionReadOnly,
       validateWorkspace: () => selectedSession ? validateSessionWorkspace(selectedSession, true) : Promise.resolve(false),
       collapseActionDock: collapseSentActionDock,
+      onAccepted: () => { if (isCurrentSubmission()) followAcceptedSend?.(); },
       log: logSessionRunStuckInvestigation,
     }).finally(releaseDetail));
   };
@@ -2302,6 +2309,7 @@ export default function AgentSessionWindowApp() {
     scrollToLatestOnSend: appSettings.scrollToLatestOnSend,
   });
   concurrentChats.mainContentReady = loadedSession !== null;
+  concurrentChats.captureMessageListSendRef = captureMessageListSendRef;
   concurrentChats.mainReadFeedback = mainSessionRuntime.readError
     ? <LoadError id="session-main-read-error" message={mainSessionRuntime.readError} onRetry={mainSessionRuntime.retryRead} />
     : !loadedSession ? <LoadingIndicator label="Loading conversation" /> : null;

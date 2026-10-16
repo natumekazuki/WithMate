@@ -374,10 +374,13 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす
   - user の scroll intent と末尾移動は一つの follow owner が決定し、virtual row の再計測は visible anchor の補正だけを担当する
-  - 上方向への wheel intent を scroll event より先に追従停止へ反映し、遅延描画や行高再計測による `scrollTop` 変化を追従再開として扱わない
-  - 追従停止後は、user が末尾方向へ戻すか実際の末尾へ到達するまで位置を維持する
-  - `selectedSession.id` 切替時は follow / unread state をリセットする
-  - `Jump to latest` で末尾へ移動して追従へ復帰できる
+  - 上方向のwheel・キー・touchとscrollbarによる読み返し、検索・一覧からの移動で追従を停止する。子のスクロール領域が消費する操作、入力欄操作、zoom、クリック・選択だけでは会話の追従意図を変えない
+  - 遅延描画・行高再計測・viewport resizeによる位置変化では追従意図を変更しない。追従中の末尾補正は同frameに集約し、既に末尾1px以内なら書き込まない
+  - 追従停止中は位置を維持し、userの下方向操作で末尾24px以内へ戻ると追従を再開する。layout変化だけで末尾へ近づいても再開しない
+  - 会話の初回表示は末尾へ追従する。切替・previewからの復帰では会話incarnation別cacheの追従状態と閲覧位置を復元し、読み返し位置はmessage keyとviewport内offsetを優先する
+  - 追従停止中だけ列内overlayの`Jump to latest`を表示する。停止中に本文・予約状態が更新された場合は同じボタンに`New activity`を表示し、末尾へ戻ると解除する。新着状態は会話cache内だけに保持し、token数を未読件数として扱わない
+  - `Jump to latest`は履歴pageを解除して末尾へ復帰し、ボタンが消えた後はmessage listにfocusを戻す
+  - 通常Send・送信shortcut・実行中の予約送信は、durable受付成功後にだけ`Scroll To Latest On Send`を対象Columnへ一度適用する。拒否・受付不明では移動せず、待機中の読み返しや会話・送信対象切替は遅い受付成功より優先する
 - pending 中の live activity / streaming response
 - Main／Auxiliaryはdurable受付後に予約行を表示し、実開始後は保存user seq／incarnationで通常messageへ対応付ける。遅い状態取得や会話切替で送信文を消したり、確定時に重複追加したりしない
 - streamingの`assistantText`は会話本文として表示する。run開始直後から応答用のassistant行にCharacter avatarとdot bubbleを置き、本文の到着後は同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない

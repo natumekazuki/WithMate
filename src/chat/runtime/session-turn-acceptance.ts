@@ -5,7 +5,7 @@ import type { ComposerControllerRegistry, ComposerOwner } from "../composer-cont
 import type { AuxiliaryDraftPersistenceOwner } from "../auxiliary-draft-persistence-owner.js";
 
 type AcceptanceApi = Pick<WithMateWindowApi, "enqueueSessionTurn" | "getSessionTurnQueueReceipt">;
-type Capture = { request: RunSessionTurnRequest & { incarnationId: string }; owner: ComposerOwner; revision: number; clearDraft: boolean; auxiliaryDraftOwner?: AuxiliaryDraftPersistenceOwner };
+type Capture = { request: RunSessionTurnRequest & { incarnationId: string }; owner: ComposerOwner; revision: number; clearDraft: boolean; auxiliaryDraftOwner?: AuxiliaryDraftPersistenceOwner; onAccepted?: () => void };
 
 /** Window-local uncertain requests are retained until the original identity is resolved. */
 export class SessionTurnAcceptance {
@@ -17,6 +17,9 @@ export class SessionTurnAcceptance {
     if (receipt.sessionId !== sessionId || receipt.requestId !== captured.request.clientRequestId || receipt.incarnationId !== captured.request.incarnationId) throw new Error("Queue receipt does not match the submitted request.");
     this.uncertain.delete(sessionId);
     if (captured.clearDraft) registry.clearIfRevision(captured.owner, captured.revision);
+    const onAccepted = captured.onAccepted;
+    captured.onAccepted = undefined;
+    onAccepted?.();
     return receipt;
   }
 

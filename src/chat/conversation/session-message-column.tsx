@@ -115,6 +115,8 @@ export type SessionMessageColumnProps = {
   pendingMessageTextVisible?: boolean;
   pendingMessageGroupId?: string | null;
   isMessageListFollowing: boolean;
+  hasNewActivity?: boolean;
+  onBrowseMessages?: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onJumpToBottom?: () => void;
   onToggleMessageCollapse?: (key: string) => void;
@@ -458,6 +460,8 @@ export function SessionMessageColumn({
   pendingMessageTextVisible = true,
   pendingMessageGroupId = null,
   isMessageListFollowing,
+  hasNewActivity = false,
+  onBrowseMessages,
   onMessageListScroll,
   onJumpToBottom,
   onToggleMessageCollapse,
@@ -584,6 +588,7 @@ export function SessionMessageColumn({
     return indexes;
   }, [elicitationMessageIndex]);
   const messageVirtualizer = useVirtualizer({
+    enabled: artifactDetailsEnabled,
     count: messages.length,
     getScrollElement: () => messageListRef.current,
     estimateSize: () => SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT,
@@ -624,11 +629,13 @@ export function SessionMessageColumn({
     handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
     messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
     if (messageJumpRequest.offset !== undefined) {
-      requestAnimationFrame(() => {
+      const ownerWindow = messageListRef.current?.ownerDocument.defaultView;
+      const frame = ownerWindow?.requestAnimationFrame(() => {
         const element = messageListRef.current;
         const row = element?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
         if (element && row) element.scrollTop += row.getBoundingClientRect().top - element.getBoundingClientRect().top - messageJumpRequest.offset!;
       });
+      return () => { if (frame !== undefined) ownerWindow?.cancelAnimationFrame(frame); };
     } else setMessageJumpHighlightKey(messageJumpRequest.key);
   }, [messageJumpRequest, messageKeys, messageVirtualizer, sessionId]);
 
@@ -906,14 +913,16 @@ export function SessionMessageColumn({
 
   useEffect(() => {
     if (firstFindScrollIndex !== null) {
+      onBrowseMessages?.();
       messageVirtualizer.scrollToIndex(firstFindScrollIndex, { align: "center" });
     }
-  }, [findQuery, firstFindScrollIndex, messageVirtualizer, sessionId]);
+  }, [findQuery, firstFindScrollIndex, messageVirtualizer, sessionId, onBrowseMessages]);
 
   const navigateFindMatch = useCallback((direction: 1 | -1) => {
     if (findMatchCount === 0 || conversationFind.error || conversationFindError) {
       return;
     }
+    onBrowseMessages?.();
     setCurrentFindMatch((current) => {
       const next = (
         clampFindMatchIndex(current, findMatchCount)
@@ -926,7 +935,7 @@ export function SessionMessageColumn({
       }
       return next;
     });
-  }, [getFindMatchScrollIndex, messageFindMatches, messageVirtualizer, findMatchCount, searchConversation, conversationFind.error, conversationFindError]);
+  }, [getFindMatchScrollIndex, messageFindMatches, messageVirtualizer, findMatchCount, searchConversation, conversationFind.error, conversationFindError, onBrowseMessages]);
 
   const visibleMessageSignature = virtualMessages.map((message) => {
     const key = getMessageKey(message.index);
@@ -1164,20 +1173,24 @@ export function SessionMessageColumn({
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
       /></div> : null}
-      {onJumpToBottom ? (
+      {onJumpToBottom && !isMessageListFollowing ? (
         <button
-          className="message-list-jump-bottom-button"
+          className={`message-list-jump-bottom-button${hasNewActivity ? " has-new-activity" : ""}`}
           type="button"
-          onClick={onJumpToBottom}
-          aria-label="Jump to latest"
+          onClick={() => {
+            messageListRef.current?.focus({ preventScroll: true });
+            onJumpToBottom();
+          }}
+          aria-label={hasNewActivity ? "New activity. Jump to latest" : "Jump to latest"}
           title="Jump to latest"
         >
           <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <path d="M8 2v9M3.5 7.5 8 12l4.5-4.5M3 14h10" />
           </svg>
+          {hasNewActivity ? <span>New activity</span> : null}
         </button>
       ) : null}
-      <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
+      <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll} tabIndex={0} role="region" aria-label="Conversation messages">
         {messages.length > 0 || isRunning || queueTail ? (
           <div className="session-message-list-window">
             <div
