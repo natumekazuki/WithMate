@@ -2368,7 +2368,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       character: { getSettlementStorage: () => requireCharacterAffectTurnSettlementStorage() as CharacterAffectTurnSettlementStorage, requestAppraisal: () => requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true }) },
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },
-      interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId, decision) => { const requestId = getLiveSessionRun(sessionId)?.approvalRequest?.requestId; if (requestId) requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision); }, resolvePendingElicitationRequest: (sessionId) => requireSessionElicitationService().cancelSession(sessionId), invalidateProviderSessionThread },
+      interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId) => requireSessionApprovalService().cancelSession(sessionId), resolvePendingElicitationRequest: (sessionId) => requireSessionElicitationService().cancelSession(sessionId), invalidateProviderSessionThread },
       notification: {
         notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); },
         onSessionRunReleased: (sessionId) => sessionTurnQueueService?.wake(sessionId),
@@ -2509,7 +2509,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       interaction: {
         waitForApprovalDecision: waitForLiveApprovalDecision,
         waitForElicitationResponse: waitForLiveElicitationResponse,
-        resolveApproval: (sessionId, requestId, decision) => { requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision); },
+        cancelApprovals: (sessionId) => requireSessionApprovalService().cancelSession(sessionId),
         cancelElicitations: (sessionId) => requireSessionElicitationService().cancelSession(sessionId),
         invalidateProviderSessionThread,
       },
