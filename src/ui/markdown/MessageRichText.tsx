@@ -52,7 +52,7 @@ function useStreamingMarkdownText(text: string, isStreaming: boolean, forceFullR
   const [snapshot, setSnapshot] = useState(text);
   const latestText = useRef(text);
   const timer = useRef<number | null>(null);
-  const immediate = !isStreaming || forceFullRender || !text.startsWith(snapshot) || typeof window === "undefined";
+  const immediate = !isStreaming || forceFullRender || !text.startsWith(latestText.current) || typeof window === "undefined";
 
   useEffect(() => {
     latestText.current = text;

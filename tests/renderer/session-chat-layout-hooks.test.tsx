@@ -348,9 +348,9 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
 
 // @test-value v2
 // kind = "contract"
-// claim = "利用者の読み返し意図を保護し、下向き操作で24px以内へ戻ると追尾し、layout更新は追尾意図を変更せずframe内で補正を集約する"
+// claim = "本文buttonやlinkのfocusからも上方向キーで読み返しを保持し、buttonのactivationキーは意図を変えず、下向き操作で24px以内へ戻ると追尾し、layout更新の補正をframe内で集約する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
-// fault = "layout変化や子領域操作で追尾が外れる、読み返し中に復帰する、または重複補正でscrollを繰り返す"
+// fault = "子button/linkからの閲覧キーをactivationと混同して末尾へ戻す、layoutや内部操作で追尾が外れる、読み返し中に復帰する、または重複補正を繰り返す"
 // observable = "following状態、scrollTop、同frame内の末尾補正回数"
 // observation_boundary = "component-behavior"
 // scope = "useSessionMessageListFollowing"
@@ -510,6 +510,38 @@ test("useSessionMessageListFollowing は操作意図とlayout補正を分離す�
       });
       assert.equal(following.textContent, "true", `${key} のフォーム操作では追従を止めない`);
     }
+
+    const bodyButton = dom.window.document.createElement("button");
+    bodyButton.textContent = "Message action";
+    const bodyLink = dom.window.document.createElement("a");
+    bodyLink.href = "#message";
+    bodyLink.textContent = "Message link";
+    messageList.append(bodyButton, bodyLink);
+    await act(async () => bodyButton.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key: " ", shiftKey: true })));
+    assert.equal(following.textContent, "true", "buttonのShift+Space操作で追尾を停止しない");
+    for (const target of [bodyButton, bodyLink]) {
+      for (const key of ["PageUp", "Home", "ArrowUp"]) {
+        await act(async () => dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click());
+        target.focus();
+        await act(async () => {
+          target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key }));
+          messageList.scrollTop -= 70;
+          messageList.dispatchEvent(new dom.window.Event("scroll"));
+          await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+        });
+        assert.equal(following.textContent, "false", `${target.tagName} focusの${key}でも読み返しを開始する`);
+        assert.equal(messageList.scrollTop, scrollHeight - clientHeight - 70, "子部品からの読み返しを末尾補正で戻さない");
+      }
+    }
+    for (const key of [" ", "Enter"]) {
+      await act(async () => {
+        bodyButton.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key }));
+        messageList.scrollTop = scrollHeight - clientHeight;
+        messageList.dispatchEvent(new dom.window.Event("scroll"));
+      });
+      assert.equal(following.textContent, "false", `buttonの${JSON.stringify(key)}操作だけでは追尾を再開しない`);
+    }
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click());
 
     await act(async () => {
       messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));

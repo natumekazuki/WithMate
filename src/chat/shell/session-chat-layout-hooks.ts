@@ -627,7 +627,8 @@ export function useSessionMessageListFollowing({
       const target = event.target;
       if (
         target instanceof ownerWindow.HTMLElement
-        && target.closest("input, textarea, select, button, a, [contenteditable]:not([contenteditable=\"false\"])")
+        && (target.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])")
+          || event.key === " " && target.closest("button"))
       ) {
         return;
       }
