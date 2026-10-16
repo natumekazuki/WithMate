@@ -35,6 +35,8 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## 表示言語・操作・状態
 
+- 状態表示は通常のlayoutと配色を既定とする。初期化・開始待ち・処理中・未取得だけを理由にerrorの枠・配色・文言・alertを出さず、必要な待機表示を保つ。対象処理の失敗が明示的に確定した場合だけerror表示へ切り替え、成功・完了の表示も成功が確定してから行う。「成功が未確認」を失敗の判定条件にしない。
+- 失敗の判定と表示は対象処理・request単位で行う。実行記録の取得失敗を実行そのものの失敗へ読み替えず、結果不明を成功・失敗へ寄せない。確定済みの失敗、入力不正、権限不足、安全・回復に必要な説明と操作は待機表示で隠さない。
 - データの読込中は共通の`LoadingIndicator`を使い、対象を示すaccessible statusと`aria-busy`を持たせる。reduced motionではspinnerを停止する。既存の専用skeletonや実行・保存操作のbusyとは区別する。
 - 読込状態はパーツ単位で持ち、必要なデータが揃ったパーツから表示・操作できるようにする。未取得を正常emptyとして描画せず、失敗時は対象パーツにerrorと再試行導線を置く。再取得中や失敗時も取得済みの内容を保持し、無関係なパーツを画面全体のgateで隠さない。
 - Sessionは基本情報からheaderとFilesを表示し、会話は独立して読み込む。会話取得が成功するまで会話全体を必要とする編集・送信を行わない。Homeの一覧はapp stateの取得を待たず、Settingsの設定draft、Model Catalog、Diagnosticsはそれぞれの取得状態を持つ。
@@ -45,7 +47,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - 対象が明確なtoolbar操作は既存iconを使い、英語の操作名・対象、focus、busy、toggle状態を残す。Save等の主CTA、Approve / Reject、Forget、GC、全削除、最終確認は必要な可視labelと影響説明を保つ。
 - 同一対象・同一requestの待機表現を集約する。未取得、pending、利用不可、正常0件、失敗を区別し、Mainと複数Auxiliary、一覧取得とrun、artifact detail取得の状態を混ぜない。承認・入力待ちは次の操作と要求本文を示す。
 - 正常0件、検索0件、情報のないpane/listの本文は空にする。既存shell、必要な見出し、create/restore等の操作、accessible nameは残し、未取得・読込中・取得失敗は正常0件と混同しない。読込中は対象領域のspinnerとaccessible status/busyへ集約し、取得失敗・validation・安全・回復に必要な説明と操作は残す。
-- 局所的なmotionを使い、reduced motionでは止まった形状とaccessible statusでも状態を識別できるようにする。spinnerのために処理完了を遅らせず、実際に成功した後だけ完了を示す。通知は意味のある遷移へ絞り、会話本文や全カードを重複して読み上げない。
+- 局所的なmotionを使い、reduced motionでは止まった形状とaccessible statusでも状態を識別できるようにする。spinnerのために処理完了を遅らせない。通知は意味のある遷移へ絞り、会話本文や全カードを重複して読み上げない。
 - 同じ事実を見出し、label、status、helper文で重ねない。正常状態や操作を言い換えただけの常設説明は省略する。未保存・保存中・失敗・回復は残し、新しい編集に古い保存成功を表示しない。`Stop`はrunの停止要求、`Cancel`は現在操作の取消、`Close`はWindow等を閉じる操作、`Quit`はアプリ終了と区別する。
 
 ## Windows Session Notifications
