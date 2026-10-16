@@ -2,6 +2,21 @@
 
 providerのquotaはapp全体、context usageはSessionごとの一時的な観測値として扱う。型の正本は`src-shared/session/runtime-state.ts`、Mainのcacheと通知は`src-electron/session/session-observability-service.ts`に置く。telemetry自体はSession DBへ保存しない。確定turnのtoken usageは通常履歴のartifactに保存する。
 
+## Codex・Claudeの取得と更新
+
+有効なCodex・Claudeについて、設定の初期化後に非同期で1回、以後5分ごとに取得する。Homeの起動完了は取得を待たない。Main・Auxiliaryのturn終端では同providerの3秒後の取得を予約し、短時間の終端はまとめる。Windowのsnapshot取得はcache参照のみで、Windowの開閉・focusは取得契機にしない。
+
+Mainはproviderごとの同時取得を重複抑止する。WithMateの認証設定変更・有効化では旧cacheと予約を破棄して取得し、無効化では停止する。clear・reset・disposeでは進行中取得のsignalをabortし、破棄前の応答とその完了処理が新しいcache・取得管理へ戻らないようにする。終了・DB再作成時は取得processのcleanupを待つ。
+
+未取得は`null`、取得中は`loading`、成功は`ready`、失敗は`error`、契約枠の適用外は`unsupported`とする。失敗時も最終成功値とその`updatedAt`を保持し、成功前の`updatedAt`は`null`にする。失敗直後のturn終端などでは再試行せず、当該取得開始から5分後以降に再試行する。取得不能を使用率0・残量100%・無制限へ変換しない。raw errorや認証情報はtelemetryへ載せない。
+
+Copilotの件数snapshotと、Codex・Claudeの`rateLimits`を分ける。後者は取得元の窓ID、0〜100の使用率、取得できる期間・reset時刻を持ち、総件数や未返却の窓・resetを補完しない。Codex・Claudeの表示UIは接続していない。
+
+- Codexは短命なApp Serverで`account/rateLimits/read`だけを呼び、thread・model turn・loginを作らない。複数bucketの応答を優先し、窓長は返却値を使う。WithMateまたは環境変数の`CODEX_API_KEY`が指定されている場合はChatGPT契約枠の適用外とし、既存ChatGPTログインへの切替取得をしない。[公式RPC仕様](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)に従う。
+- Claudeは固定SDKの`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`を空のstreaming inputで呼ぶ。モデルprompt、tools、MCP、hooks、session保存を使わず、managed設定がある場合は起動前に拒否する。5時間・週間・モデル別週間窓を投影し、`rate_limits_available: false`は適用外、有効な観測値のない不正応答は失敗とする。実験APIのため、固定SDK更新時には取得契約を再確認する。
+
+Codex・Claudeの実行中の部分通知はapp-wide cacheへ接続しない。workspaceごとに認証先が異なり得ることや、部分窓・単位を保証できないことから、独立取得の完全snapshotを正本とする。通知のためだけの常駐processは作らない。
+
 ## Copilotの取得と更新
 
 `CopilotAdapter`は`client.rpc.account.getQuota()`による初期取得と、実行中の`assistant.usage`に含まれるquota snapshotからprovider quotaを更新する。`session.usage_info`は対象Sessionのcontext telemetryとして受け取る。Mainはprovider単位のquota cacheとSession単位のcontext cacheを持ち、snapshot取得と購読をrendererへ公開する。quotaの更新をSessionごとのDB保存やartifact結果の更新と混同しない。
@@ -10,10 +25,10 @@ Session WindowはCopilotの`Premium Requests`残量をcompactに示し、詳細�
 
 ## Codex・Claudeと境界
 
-`CodexAdapter.getProviderQuotaTelemetry()`と`ClaudeAdapter.getProviderQuotaTelemetry()`は`null`を返す。quota残量やreset時刻をCopilotの値から推測せず、各providerのturn usageはprovider結果と通常artifactで扱う。Claude SDKのAPI換算額は本人契約の実請求額として表示しない。providerごとの取得・実行責務は[Provider Adapter](provider-adapter.md)を参照する。
+quota残量やreset時刻をCopilotの値から推測せず、各providerのturn usageはprovider結果と通常artifactで扱う。Claude SDKのAPI換算額は本人契約の実請求額として表示しない。providerごとの取得・実行責務は[Provider Adapter](provider-adapter.md)を参照する。
 
 Codex App Serverの`thread/tokenUsage/updated`は`total`がthread累計、`last`が最後のmodel responseの使用量である。現在turnのusageは累計から開始前のbaselineを各token項目ごとに差し引き、負値は0とする。現在turnのusageを受け取る前に同threadの過去turn累計を観測した場合はそれをbaselineに使い、なければ最初の現在turn通知の`total - last`を使う。以後は同じbaselineから差分を更新するため、複数responseを含め、重複通知は加算しない。異なるthreadの通知と、現在turnのusage取得後に届く別turnの通知はusageへ反映しない。Main・Auxiliary・Backgroundは同じ集計を使ってprovider結果へturn使用量を返し、Main・Auxiliaryでは通常artifactにも保存する。これは契約全体の消費量やquota残量ではない。
 
-ClaudeのMain・Auxiliaryはuser / project / local設定を読み込むが、Backgroundは副作用を隔離するため読み込まない。Backgroundの認証・接続先は親プロセスの環境変数とSDKが参照する既存CLIログインに依存する。Main・Auxiliaryも同じ経路で解決される場合は補助処理も同じ契約枠を消費するが、設定ファイルだけにある`apiKeyHelper`や認証・接続先の環境変数に依存する場合は、認証失敗や異なる利用先・消費枠となり得る。同一の認証・課金経路を無条件に保証せず、WithMateから認証情報をコピーしたり、失敗時に別の認証へ切り替えたりしない。
+ClaudeのMain・Auxiliaryはuser / project / local設定を読み込むが、Backgroundとquota取得は副作用を隔離するため読み込まない。Backgroundとquota取得の認証・接続先は親プロセスの環境変数とSDKが参照する既存CLIログインに依存する。Main・Auxiliaryも同じ経路で解決される場合は補助処理も同じ契約枠を消費するが、設定ファイルだけにある`apiKeyHelper`や認証・接続先の環境変数に依存する場合は、認証失敗や異なる利用先・消費枠となり得る。同一の認証・課金経路を無条件に保証せず、WithMateから認証情報をコピーしたり、失敗時に別の認証へ切り替えたりしない。
 
 Claudeの新規sessionはSDKのmodel別usageを合計する。resumeではmodel別usageが過去turnを含む累積になるため、当該turnのmain loopに限った`result.usage`を使い、subagentや内部補助処理の消費は含めない。いずれも契約全体の消費量や残量の計測ではない。

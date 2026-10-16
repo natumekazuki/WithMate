@@ -2039,6 +2039,7 @@ async function deletePromptTemplate(id: string): Promise<PromptTemplate[]> {
 
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
+  requireMainObservabilityFacade().configureProviderQuotaPolling(savedSettings);
   applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled, app.isPackaged);
   await syncManagedGlossarySkillBestEffort();
   return savedSettings;
@@ -2050,6 +2051,7 @@ async function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): P
 
 async function resetAppSettings(): Promise<AppSettings> {
   const settings = await requireAppSettingsStorage().resetSettings();
+  requireMainObservabilityFacade().configureProviderQuotaPolling(settings);
   applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled, app.isPackaged);
   return settings;
 }
@@ -2852,6 +2854,8 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 async function closePersistentStores(): Promise<void> {
   await sessionTurnQueueService?.close();
   await Promise.all([sessionRuntimeService?.waitForPendingRuns(), auxiliarySessionRuntimeService?.waitForPendingRuns()]);
+  sessionObservabilityService?.dispose();
+  await sessionObservabilityService?.waitForProviderQuotaRefreshes();
   sessionTurnQueueService = null;
   mainSessionTurnQueueFacade = null;
   await mainStoreContext.close((bundle, currentDbPath) =>
@@ -2890,6 +2894,8 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
 
   await sessionTurnQueueService?.close();
   await Promise.all([sessionRuntimeService?.waitForPendingRuns(), auxiliarySessionRuntimeService?.waitForPendingRuns()]);
+  sessionObservabilityService?.dispose();
+  await sessionObservabilityService?.waitForProviderQuotaRefreshes();
   sessionTurnQueueService = null;
   mainSessionTurnQueueFacade = null;
   mainStoreContext.setActivePersistentStoreOwner(null);
@@ -3099,7 +3105,9 @@ async function broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): Pr
 }
 
 async function broadcastAppSettings(settings?: AppSettings): Promise<void> {
-  await requireMainBroadcastFacade().broadcastAppSettings(settings);
+  const current = settings ?? await requireAppSettingsStorage().getSettings();
+  requireMainObservabilityFacade().configureProviderQuotaPolling(current);
+  await requireMainBroadcastFacade().broadcastAppSettings(current);
 }
 
 function getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null {
@@ -3509,6 +3517,7 @@ if (!hasSingleInstanceLock) {
         data: diagnostics,
       });
       await requireMainBootstrapService().handleReady();
+      requireMainObservabilityFacade().configureProviderQuotaPolling(await requireAppSettingsStorage().getSettings());
       await startMemoryV6RuntimeApiBestEffort();
       requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true });
       requireAppTrayService().initialize();
@@ -3587,6 +3596,7 @@ if (!hasSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
+    sessionObservabilityService?.dispose();
     terminalService?.releaseAll();
     writeAppLog({
       level: "info",

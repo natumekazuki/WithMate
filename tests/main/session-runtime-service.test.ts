@@ -212,6 +212,39 @@ function queueGate() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "CodexとClaudeの正常・失敗turn終端で3秒後のquota更新を依頼し、Copilotの既存周期を維持する"
+// oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
+// fault = "対象providerの終端で更新予約が欠けるかCopilotの予約周期を置き換える"
+// observable = "provider実行後にMainへ渡されるprovider IDとdelay配列"
+// observation_boundary = "consumer"
+// scope = "session runtime terminal quota refresh"
+// lifecycle = "permanent"
+// impact = "turnで消費した後の残量更新が周期取得まで遅れる"
+// distinction = "cache単体testはturn終端を通らず、この少数のfake turnでruntime接続を検査する"
+// @end-test-value
+it("turn終端でprovider別のquota更新を予約する", async () => {
+  for (const provider of ["codex", "claude", "copilot"]) {
+    for (const fails of [false, true]) {
+      const session = createSession({ provider, approvalMode: "on-request" });
+      const calls: Array<[string, number[]]> = [];
+      const catalog = createProviderCatalog(provider);
+      const runtime = createProgressRuntime(session, async () => {
+        if (fails) throw new ProviderTurnError("failed", createPartialResult(), false, "auth");
+        return createPartialResult({ assistantText: "done" });
+      }, {
+        getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { [provider]: { enabled: true } } }),
+        resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [catalog] }, provider: catalog }),
+        scheduleProviderQuotaTelemetryRefresh: (id, delays) => { calls.push([id, delays]); },
+      });
+      const result = await runtime.runSessionTurn(session.id, { userMessage: "run", executionOptions: captureSessionExecutionOptions(session) });
+      assert.equal(result.runState, fails ? "error" : "idle");
+      assert.deepEqual(calls, [[provider, provider === "copilot" ? [0, 3000, 10000] : [3000]]]);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "runtimeはsnapshotなしprogressの追加・同ID更新・削除を順序付き完全状態へ統合し、無変更controlで本文・usage・pending要求と操作を保持しsnapshot取得へ返す"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Streaming Policy / Codex projection owner" }
 // fault = "空の配送stateで既存操作を消す、更新を末尾へ移動する、removeを無視する、またはpending要求を上書きする"

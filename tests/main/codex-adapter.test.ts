@@ -187,6 +187,105 @@ class FakeTransport {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Codex quota取得はaccount RPCのみを使い成功失敗取消でもtransportを閉じ、API key指定時に別accountへfallbackしない"
+// oracle = { type = "contract", ref = "Issue #827; https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt" }
+// fault = "quota取得でturnやloginを開始する、失敗や取消で子processを残す、API key時にChatGPT quotaを取得する"
+// observable = "quota取得結果、RPC method列、signalとtransportのclose状態"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapterの独立quota取得lifecycle"
+// lifecycle = "permanent"
+// impact = "意図しない課金実行、認証先混同、子process残留が発生する"
+// distinction = "RPC列とabort時cleanupは型検査で保証できず、短いfake transportで検証する"
+// risk_tags = ["authentication", "billing"]
+// @end-test-value
+it("Codex quotaはread専用RPCとcleanupを守りAPI keyを別認証へfallbackしない", async () => {
+  const previousKey = process.env.CODEX_API_KEY;
+  delete process.env.CODEX_API_KEY;
+  try {
+    for (const mode of ["success", "failure", "cancel"] as const) {
+      const controller = new AbortController();
+      let requestSignal: AbortSignal | undefined;
+      const calls: string[] = [];
+      let closed = false;
+      const adapter = new CodexAdapter(undefined, { createTransport: () => ({
+        async start(signal) { assert.equal(signal?.aborted, false); },
+        async request<T>(method: string, _params?: unknown, options?: { signal?: AbortSignal }): Promise<T> {
+          calls.push(method);
+          requestSignal = options?.signal;
+          if (mode === "failure") throw new Error("private-token-in-error");
+          if (mode === "cancel") {
+            controller.abort();
+            options?.signal?.throwIfAborted();
+          }
+          return { rateLimits: { primary: { usedPercent: 25 } } } as T;
+        },
+        async nextEvent() { throw new Error("No event reader expected"); },
+        async close() { closed = true; },
+        async whenClosed() {},
+      }) });
+      const operation = adapter.getProviderQuotaTelemetry({ providerId: "codex", appSettings: createDefaultAppSettings(), signal: controller.signal });
+      if (mode === "success") assert.equal((await operation)?.rateLimits?.[0].usedPercentage, 25);
+      else await assert.rejects(operation, /^Error: Codex quota could not be retrieved$/);
+      assert.deepEqual(calls, ["account/rateLimits/read"]);
+      assert.equal(closed, true);
+      assert.ok(requestSignal);
+      if (mode === "cancel") assert.equal(requestSignal.aborted, true);
+    }
+    const adapter = new CodexAdapter(undefined, { createTransport: () => { throw new Error("Must not start another account"); } });
+    const settings = createDefaultAppSettings();
+    settings.codingProviderSettings.codex.apiKey = "settings-api-key";
+    assert.equal(await adapter.getProviderQuotaTelemetry({ providerId: "codex", appSettings: settings }), null);
+    settings.codingProviderSettings.codex.apiKey = "";
+    process.env.CODEX_API_KEY = "environment-api-key";
+    assert.equal(await adapter.getProviderQuotaTelemetry({ providerId: "codex", appSettings: settings }), null);
+  } finally {
+    if (previousKey === undefined) delete process.env.CODEX_API_KEY;
+    else process.env.CODEX_API_KEY = previousKey;
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Codex quotaのcleanup失敗は取得失敗となり、実終了まで同workspaceの再取得を拒否する"
+// oracle = { type = "contract", ref = "Issue #827; docs/design/provider-adapter.md Error Handling" }
+// fault = "cleanup失敗を正常取得と扱う、または未終了processがあるのに新processを起動する"
+// observable = "getProviderQuotaTelemetryのrejectと再取得時のfactory呼出回数"
+// observation_boundary = "public-boundary"
+// scope = "quota transportのcleanup所有権と再取得"
+// lifecycle = "permanent"
+// impact = "未終了processが孤立し、重複起動で資源と認証操作が累積する"
+// distinction = "非同期process終了と再取得間の所有権は型検査で保証されない"
+// @end-test-value
+it("Codex quotaはcleanup失敗後も実終了までprocess所有権を保持する", async () => {
+  const previousKey = process.env.CODEX_API_KEY;
+  delete process.env.CODEX_API_KEY;
+  let finishClose!: () => void;
+  const closed = new Promise<void>(resolve => { finishClose = resolve; });
+  let created = 0;
+  class QuotaCleanupFailure extends FakeTransport {
+    override async request<T>(): Promise<T> { return { rateLimits: { primary: { usedPercent: 25 } } } as T; }
+    override async close() { throw new Error("private-cleanup-details"); }
+    override whenClosed() { return closed; }
+  }
+  const adapter = new CodexAdapter(undefined, { createTransport: () => { created++; return new QuotaCleanupFailure(); } });
+  const input = { providerId: "codex", appSettings: createDefaultAppSettings() };
+  try {
+    await assert.rejects(adapter.getProviderQuotaTelemetry(input), /^Error: Codex quota process cleanup failed$/);
+    await assert.rejects(adapter.getProviderQuotaTelemetry(input), /cleanup is still pending/);
+    assert.equal(created, 1);
+    finishClose();
+    await closed;
+    await assert.rejects(adapter.getProviderQuotaTelemetry(input), /quota process cleanup failed/);
+    assert.equal(created, 2);
+  } finally {
+    finishClose();
+    if (previousKey === undefined) delete process.env.CODEX_API_KEY;
+    else process.env.CODEX_API_KEY = previousKey;
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Codex async構造化質問はcurrent turnで一度ずつ独立表示され、選択肢と自由入力を秘匿化し、回答待ちでもturn終了で失効する"
 // oracle = { type = "contract", ref = "Issue #823; Codex 0.159.0 ThreadItem agentMessage delivery/questions" }
 // fault = "開始完了通知で質問を重複表示する、他turnや最終snapshotから質問を表示する、回答待ちで処理を停止する、または質問にAPI keyを漏らす"

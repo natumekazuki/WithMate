@@ -12,6 +12,7 @@ import {
   resolveRunWorkspacePath,
   type ExtractSessionMemoryInput,
   type ExtractSessionMemoryResult,
+  type GetProviderQuotaTelemetryInput,
   type ProviderPromptComposition,
   type ProviderTurnAdapter,
   type RunBackgroundStructuredPromptInput,
@@ -30,6 +31,7 @@ import { captureWorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
 import { createDisabledWorkspaceSnapshotCapture, WORKSPACE_DIFF_CAPTURE_ENABLED } from "../../files/workspace-diff-policy.js";
 import { buildLiveElicitationFieldFromMcpSchema } from "../mcp-elicitation.js";
 import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
+import { projectClaudeQuotaTelemetry } from "./claude-quota-telemetry.js";
 
 const require = createRequire(import.meta.url);
 const CANCEL_GRACE_MS = 2_000;
@@ -230,7 +232,57 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     return composeProviderPrompt(input);
   }
 
-  async getProviderQuotaTelemetry(): Promise<null> { return null; }
+  async getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    input.signal?.addEventListener("abort", abort, { once: true });
+    if (input.signal?.aborted) controller.abort();
+    const timer = setTimeout(abort, 30_000);
+    let iterator: ReturnType<ClaudeQuery> | null = null;
+    let childExited: Promise<void> | null = null;
+    let closeInput!: () => void;
+    const inputClosed = new Promise<void>((resolve) => { closeInput = resolve; });
+    async function* emptyInput(): AsyncGenerator<SDKUserMessage> { await inputClosed; }
+    try {
+      if (controller.signal.aborted) throw new Error("Canceled");
+      // Managed policy can force hooks and MCP before any prompt is supplied.
+      const settings = await signalRace(this.inspectSettings({ cwd: process.cwd(), settingSources: [] }), controller.signal);
+      if (settings.sources.some((source) => source.source === "managed")) throw new Error("Claude quota retrieval is unavailable with managed settings");
+      if (controller.signal.aborted) throw new Error("Canceled");
+      iterator = this.runQuery({ prompt: emptyInput(), options: {
+        cwd: process.cwd(),
+        pathToClaudeCodeExecutable: resolveClaudeBinaryPath(),
+        env: mergeDefinedProviderEnv(process.env, {}),
+        tools: [], mcpServers: {}, strictMcpConfig: true,
+        settingSources: [], settings: { disableAllHooks: true }, persistSession: false,
+        abortController: controller,
+        spawnClaudeCodeProcess: (options) => {
+          const child = this.spawnProcess(options.command, options.args, {
+            cwd: options.cwd, env: options.env, signal: options.signal,
+            stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+          });
+          child.stderr?.on("error", () => undefined);
+          child.stderr?.resume();
+          childExited = new Promise<void>((resolve) => {
+            child.once("close", () => resolve());
+            child.once("error", () => { if (child.pid === undefined) resolve(); });
+          });
+          return child;
+        },
+      } });
+      await signalRace(iterator.initializationResult(), controller.signal);
+      return projectClaudeQuotaTelemetry(await signalRace(iterator.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }), controller.signal));
+    } finally {
+      clearTimeout(timer);
+      input.signal?.removeEventListener("abort", abort);
+      closeInput();
+      try { iterator?.close(); }
+      finally {
+        controller.abort();
+        if (childExited) await childExited;
+      }
+    }
+  }
   async invalidateSessionThread(): Promise<void> { /* One process per turn; no cached thread. */ }
   async invalidateAllSessionThreads(): Promise<void> { /* One process per turn; no cached thread. */ }
   getBackgroundStructuredPromptPolicy() { return PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY; }

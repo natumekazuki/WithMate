@@ -1,9 +1,9 @@
 import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
-import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { getProviderAppSettings, type AppSettings, type ProviderAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ProviderCodingAdapter } from "../providers/provider-runtime.js";
 import { fetchProviderQuotaTelemetry } from "../providers/provider-support.js";
-import { SessionObservabilityService } from "../session/session-observability-service.js";
+import { SessionObservabilityService, PROVIDER_QUOTA_REFRESH_INTERVAL_MS } from "../session/session-observability-service.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 
 type MainObservabilityFacadeDeps = {
@@ -14,13 +14,39 @@ type MainObservabilityFacadeDeps = {
 };
 
 export class MainObservabilityFacade {
+  private readonly quotaSettings = new Map<string, ProviderAppSettings>();
   constructor(private readonly deps: MainObservabilityFacadeDeps) {}
+
+  configureProviderQuotaPolling(settings: AppSettings): void {
+    const service = this.deps.getSessionObservabilityService();
+    for (const providerId of ["codex", "claude"]) {
+      const next = getProviderAppSettings(settings, providerId);
+      const previous = this.quotaSettings.get(providerId);
+      if (!previous || previous.enabled !== next.enabled || previous.apiKey !== next.apiKey) {
+        service.clearProviderQuotaTelemetry(providerId);
+      }
+      this.quotaSettings.set(providerId, { ...next });
+      if (next.enabled) {
+        service.startProviderQuotaPolling(providerId, PROVIDER_QUOTA_REFRESH_INTERVAL_MS,
+          (signal) => this.fetchQuota(providerId, signal));
+      }
+    }
+  }
+
+  private fetchQuota(providerId: string, signal: AbortSignal): Promise<ProviderQuotaTelemetry | null> {
+    return fetchProviderQuotaTelemetry({
+      providerId, signal,
+      getAppSettings: () => this.deps.getAppSettings(),
+      getProviderCodingAdapter: (nextProviderId) => this.deps.getProviderCodingAdapter(nextProviderId),
+    });
+  }
 
   getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null {
     return this.deps.getSessionObservabilityService().getProviderQuotaTelemetry(providerId);
   }
 
   setProviderQuotaTelemetry(providerId: string, telemetry: ProviderQuotaTelemetry | null): void {
+    if (this.quotaSettings.get(providerId)?.enabled === false) return;
     this.deps.getSessionObservabilityService().setProviderQuotaTelemetry(providerId, telemetry);
   }
 
@@ -41,36 +67,24 @@ export class MainObservabilityFacade {
   }
 
   async refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
-    return this.deps.getSessionObservabilityService().refreshProviderQuotaTelemetry(providerId, async () =>
-        fetchProviderQuotaTelemetry({
-        providerId,
-        getAppSettings: () => this.deps.getAppSettings(),
-        getProviderCodingAdapter: (nextProviderId) => this.deps.getProviderCodingAdapter(nextProviderId),
-      }),
-    );
+    if (this.quotaSettings.get(providerId)?.enabled === false) return null;
+    return this.deps.getSessionObservabilityService().refreshProviderQuotaTelemetry(providerId,
+      (signal) => this.fetchQuota(providerId, signal));
   }
 
   async getOrRefreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
+    if (providerId === "codex" || providerId === "claude") return this.getProviderQuotaTelemetry(providerId);
     return this.deps.getSessionObservabilityService().getOrRefreshProviderQuotaTelemetry(
       providerId,
       this.deps.providerQuotaStaleTtlMs,
-      async () =>
-        fetchProviderQuotaTelemetry({
-          providerId,
-          getAppSettings: () => this.deps.getAppSettings(),
-          getProviderCodingAdapter: (nextProviderId) => this.deps.getProviderCodingAdapter(nextProviderId),
-        }),
+      (signal) => this.fetchQuota(providerId, signal),
     );
   }
 
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void {
-    this.deps.getSessionObservabilityService().scheduleProviderQuotaTelemetryRefresh(providerId, delaysMs, async () =>
-      fetchProviderQuotaTelemetry({
-        providerId,
-        getAppSettings: () => this.deps.getAppSettings(),
-        getProviderCodingAdapter: (nextProviderId) => this.deps.getProviderCodingAdapter(nextProviderId),
-      }),
-    );
+    if (this.quotaSettings.get(providerId)?.enabled === false) return;
+    this.deps.getSessionObservabilityService().scheduleProviderQuotaTelemetryRefresh(providerId, delaysMs,
+      (signal) => this.fetchQuota(providerId, signal));
   }
 
   getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null {

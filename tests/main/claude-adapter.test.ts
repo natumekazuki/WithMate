@@ -82,6 +82,134 @@ function input(threadId = "", signal?: AbortSignal): RunSessionTurnInput {
 function sdkMessage(value: Record<string, unknown>): SDKMessage { return value as SDKMessage; }
 
 // @test-value v2
+// kind = "contract"
+// claim = "Claude quota取得は空streamのcontrol APIだけを使い、子processの終了後に値を返す"
+// oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
+// fault = "quota取得でmodel promptを送るか、子processが生きたまま取得完了する"
+// observable = "SDKへ渡すprompt、分離options、control引数、返却時のchild close状態"
+// observation_boundary = "public-boundary"
+// scope = "Claude quota control request lifecycle"
+// lifecycle = "permanent"
+// impact = "quota表示だけでmodel枠を消費しprocessを残すことを防ぐ"
+// distinction = "通常turn testはprompt無しcontrol APIのprocess lifecycleを通らない"
+// @end-test-value
+it("retrieves Claude quota without a prompt and waits for child close", async () => {
+  const child = Object.assign(new EventEmitter(), { pid: 123, stderr: { on() {}, resume() {} } });
+  let closed = false;
+  let promptResult: Promise<IteratorResult<unknown>> | undefined;
+  let initialized = false;
+  const adapter = new ClaudeAdapter({
+    resolveSettings: async () => ({ sources: [], effective: {}, provenance: {} } as ResolvedSettings),
+    spawnProcess: ((_command: string, _args: string[], options: { windowsHide?: boolean }) => {
+      assert.equal(options?.windowsHide, true);
+      return child;
+    }) as unknown as typeof spawn,
+    query: (({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Options }) => {
+      assert.deepEqual(options.tools, []);
+      assert.deepEqual(options.mcpServers, {});
+      assert.deepEqual(options.settingSources, []);
+      assert.deepEqual(options.settings, { disableAllHooks: true });
+      assert.equal(options.strictMcpConfig, true);
+      assert.equal(options.persistSession, false);
+      promptResult = prompt[Symbol.asyncIterator]().next();
+      options.spawnClaudeCodeProcess!({ command: "claude", args: [], cwd: process.cwd(), env: process.env, signal: options.abortController!.signal });
+      return {
+        initializationResult: async () => { initialized = true; },
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async (options: unknown) => {
+          assert.equal(initialized, true);
+          assert.deepEqual(options, { skipBehaviors: true });
+          return { rate_limits_available: true, rate_limits: { five_hour: { utilization: 42, resets_at: null } } };
+        },
+        close: () => { setImmediate(() => { closed = true; child.emit("close"); }); },
+      };
+    }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query,
+  });
+  const result = await adapter.getProviderQuotaTelemetry({ providerId: "claude", appSettings: createDefaultAppSettings() });
+  assert.equal(result?.rateLimits?.[0].usedPercentage, 42);
+  assert.equal(closed, true);
+  assert.deepEqual(await promptResult, { done: true, value: undefined });
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "Claude quotaはmanaged policyの存在と検証失敗、取消時にSDK queryを起動しない"
+// oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
+// fault = "強制hookやMCPの検証前または取消後にquota processを起動する"
+// observable = "getProviderQuotaTelemetryのrejectとquery起動回数"
+// observation_boundary = "public-boundary"
+// scope = "Claude quota background isolation gate"
+// lifecycle = "permanent"
+// risk_tags = ["privacy"]
+// distinction = "background prompt testは独立したquota取得入口を通らない"
+// @end-test-value
+it("rejects unverified, managed or canceled Claude quota requests before query", async () => {
+  for (const outcome of ["managed", "failure", "canceled"] as const) {
+    let calls = 0;
+    const controller = new AbortController();
+    if (outcome === "canceled") controller.abort();
+    const adapter = new ClaudeAdapter({
+      query: (() => { calls++; throw new Error("Unexpected query"); }) as typeof import("@anthropic-ai/claude-agent-sdk").query,
+      resolveSettings: async () => {
+        if (outcome === "failure") throw new Error("Settings inspection failed");
+        return { sources: [{ source: "managed", settings: {} }], effective: {}, provenance: {} } as ResolvedSettings;
+      },
+    });
+    await assert.rejects(adapter.getProviderQuotaTelemetry({ providerId: "claude", appSettings: createDefaultAppSettings(), signal: controller.signal }));
+    assert.equal(calls, 0);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claude quota取得は初期化中・control待機中の取消と30秒deadline、SDK失敗でcloseし実終了を待つ"
+// oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
+// fault = "control待機が取消・deadline後も続くか、失敗時に子processを残してrejectする"
+// observable = "取得promiseのreject、SDK close回数、reject時のchild終了状態"
+// observation_boundary = "public-boundary"
+// scope = "Claude quota cancellation deadline and failure cleanup"
+// lifecycle = "permanent"
+// distinction = "通常turnの取消testはquotaのinitializationResultとcontrol待機を通らない"
+// @end-test-value
+it("closes and awaits Claude quota child after cancellation, deadline or SDK failure", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const outcome of ["initialization-cancel", "control-cancel", "deadline", "failure"] as const) {
+    const controller = new AbortController();
+    const child = Object.assign(new EventEmitter(), { pid: 123, stderr: { on() {}, resume() {} } });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let closed = false;
+    let closeCalls = 0;
+    const pending = () => new Promise<never>(() => undefined);
+    const adapter = new ClaudeAdapter({
+      resolveSettings: async () => ({ sources: [], effective: {}, provenance: {} } as ResolvedSettings),
+      spawnProcess: (() => child) as unknown as typeof spawn,
+      query: (({ options }: { options: Options }) => {
+        options.spawnClaudeCodeProcess!({ command: "claude", args: [], cwd: process.cwd(), env: process.env, signal: options.abortController!.signal });
+        return {
+          initializationResult: async () => {
+            if (outcome === "initialization-cancel") { entered(); return pending(); }
+          },
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
+            entered();
+            if (outcome === "failure") throw new Error("SDK usage failed");
+            return pending();
+          },
+          close: () => { closeCalls++; setImmediate(() => { closed = true; child.emit("close"); }); },
+        };
+      }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query,
+    });
+    const request = adapter.getProviderQuotaTelemetry({ providerId: "claude", appSettings: createDefaultAppSettings(), signal: controller.signal });
+    const rejection = assert.rejects(request, outcome === "failure" ? /SDK usage failed/ : /Canceled/);
+    await started;
+    if (outcome === "deadline") context.mock.timers.tick(30_000);
+    else if (outcome !== "failure") controller.abort();
+    await rejection;
+    assert.equal(closeCalls, 1);
+    assert.equal(closed, true);
+  }
+});
+
+// @test-value v2
 // kind = "security"
 // claim = "Bash commandのpreview境界を跨ぐcapabilityはliveと正常・失敗・取消artifactのsummaryに断片を残さない"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Managed HTTP MCP / Streaming Policy" }

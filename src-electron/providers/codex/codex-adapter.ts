@@ -8,11 +8,13 @@ import {
 } from "./app-server-transport.js";
 import { buildCodexAsyncQuestionRequest, CodexTurnInteractions } from "./codex-app-server-interactions.js";
 import { CodexProjectionClient } from "./codex-projection-client.js";
+import { projectCodexQuotaTelemetry } from "./codex-quota-telemetry.js";
 import { CODEX_LIVE_PROGRESS_INTERVAL_MS, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionEvent } from "./codex-projection-protocol.js";
 
 import type { AppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import type {
   ProviderUsage,
+  ProviderQuotaTelemetry,
   ChangedFile,
   DiffRow,
   RunCheck,
@@ -69,6 +71,7 @@ import {
   resolveRunWorkspacePath,
   BACKGROUND_STRUCTURED_PROMPT_POLICY,
   type ExtractSessionMemoryResult,
+  type GetProviderQuotaTelemetryInput,
   type ExtractSessionMemoryInput,
   type ProviderErrorReason,
   type ProviderPromptComposition,
@@ -793,8 +796,30 @@ export class CodexAdapter implements ProviderTurnAdapter {
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
   }
-  async getProviderQuotaTelemetry(): Promise<null> {
-    return null;
+  async getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null> {
+    if (resolveCodexApiKey(input.providerId, input.appSettings)) return null;
+    const workspace = process.cwd();
+    this.assertCleanupComplete(workspace);
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)])
+      : AbortSignal.timeout(30_000);
+    signal.throwIfAborted();
+    const { transport } = this.createTransport(input.providerId, input.appSettings, workspace);
+    try {
+      await transport.start(signal);
+      const response = await transport.request<unknown>("account/rateLimits/read", undefined, { signal, timeoutMs: 30_000 });
+      return projectCodexQuotaTelemetry(response, input.providerId);
+    } catch {
+      throw new Error("Codex quota could not be retrieved");
+    } finally {
+      try {
+        await transport.close();
+      } catch {
+        this.pendingCleanups.set(transport, { workspace: workspaceKey(workspace), threadId: null });
+        void transport.whenClosed().then(() => { this.pendingCleanups.delete(transport); });
+        throw new Error("Codex quota process cleanup failed");
+      }
+    }
   }
   getBackgroundStructuredPromptPolicy() {
     return BACKGROUND_STRUCTURED_PROMPT_POLICY;
