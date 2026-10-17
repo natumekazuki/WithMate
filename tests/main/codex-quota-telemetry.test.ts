@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { projectCodexQuotaTelemetry } from "../../src-electron/providers/codex/codex-quota-telemetry.js";
+import { projectQuotaRemaining } from "../../src/provider-usage/provider-quota-projection.js";
 
 // @test-value v2
 // kind = "contract"
@@ -51,4 +52,37 @@ it("Codex quotaの不正な応答と数値を拒否する", () => {
     { rateLimits: { primary: { usedPercent: 20, resetsAt: Infinity } } },
     { rateLimitsByLimitId: { codex: { limitId: "other", primary: null } } },
   ]) assert.throws(() => projectCodexQuotaTelemetry(response, "codex"), /Invalid Codex rate limits/);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Codex追加bucketの表示は同名でも返却期間で窓を識別し、期間が未返却なら窓IDを保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md#共通の残量表示; docs/manual-test-checklist.md: MT-015G" }
+// fault = "bucket名だけを表示して期間または窓IDを落とし、異なる追加枠の残量を区別できなくする"
+// observable = "RPC応答からadapterと残率projectionを経た各窓のlabel・残率・summary・reset"
+// observation_boundary = "consumer"
+// scope = "Codex追加bucketの取得から詳細表示用projectionへの受け渡し"
+// lifecycle = "permanent"
+// impact = "利用者が短期枠と週間枠の残量を取り違える"
+// distinction = "adapterとrenderer間のlabel解釈の整合は各層の型検査では保証されず、純粋関数の接続で確認する"
+// @end-test-value
+it("Codex追加枠の名前・期間・未知期間の窓IDを詳細に残す", () => {
+  for (const limitName of ["Extra Model", undefined]) {
+    for (const knownPeriod of [true, false]) {
+      const telemetry = projectCodexQuotaTelemetry({ rateLimitsByLimitId: {
+        model_extra: { limitName,
+          primary: { usedPercent: 20, ...(knownPeriod ? { windowDurationMins: 300 } : {}) },
+          secondary: { usedPercent: 40, ...(knownPeriod ? { windowDurationMins: 10080 } : {}) },
+        },
+      } }, "codex");
+      assert.deepEqual(projectQuotaRemaining(telemetry), [
+        { key: "model_extra:primary", label: knownPeriod ? `${limitName ?? "model_extra:primary"} · 5h`
+          : limitName ? "Extra Model · model_extra:primary" : "model_extra:primary",
+          remaining: "80%", resetDate: undefined, summary: false },
+        { key: "model_extra:secondary", label: knownPeriod ? `${limitName ?? "model_extra:secondary"} · 7d`
+          : limitName ? "Extra Model · model_extra:secondary" : "model_extra:secondary",
+          remaining: "60%", resetDate: undefined, summary: false },
+      ]);
+    }
+  }
 });

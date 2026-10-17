@@ -34,7 +34,9 @@ export function projectQuotaRemaining(telemetry: ProviderQuotaTelemetry | null):
     return {
       key: window.quotaKey,
       label: summary ? period ?? window.label ?? window.quotaKey
-        : window.label ?? [window.quotaKey, period].filter(Boolean).join(" · "),
+        : telemetry.provider === "codex"
+          ? [window.label ?? window.quotaKey, period ?? (window.label ? window.quotaKey : null)].filter(Boolean).join(" · ")
+          : window.label ?? [window.quotaKey, period].filter(Boolean).join(" · "),
       remaining: percentage(100 - window.usedPercentage),
       resetDate: window.resetDate,
       summary,

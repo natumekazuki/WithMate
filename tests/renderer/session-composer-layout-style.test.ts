@@ -20,9 +20,9 @@ test("Session composer は設定群だけを折り返しSendの40px領域を保�
   assert.match(css, /\.composer-control-row\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto;/);
   const send = css.match(/\.composer-control-row > \.session-send-button\s*{([^}]*)}/)?.[1];
   assert.ok(send);
-  assert.match(send, /width:\s*40px;/);
-  assert.match(send, /min-width:\s*40px;/);
-  assert.match(send, /height:\s*40px;/);
+  assert.match(send, /(?:^|;)\s*width:\s*40px;/);
+  assert.match(send, /(?:^|;)\s*min-width:\s*40px;/);
+  assert.match(send, /(?:^|;)\s*height:\s*40px;/);
 });
 
 // @test-value v2
@@ -30,7 +30,7 @@ test("Session composer は設定群だけを折り返しSendの40px領域を保�
 // claim = "Cancelの40px領域は非実行中も不可視のまま予約される"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
 // fault = "Cancel予約幅を解除またはdisplay:noneへ変えて実行状態に応じて隣の操作が移動する"
-// observable = "合成stylesheetのCancel slotの固定flex幅・最小幅・visibility宣言"
+// observable = "合成stylesheetのCancel slotの固定flex幅・最小幅・visibilityと、layout boxを消すdisplay宣言の不在"
 // observation_boundary = "declaration"
 // scope = "Session composer Cancel slot"
 // lifecycle = "permanent"
@@ -41,7 +41,12 @@ test("Session composer の Cancel slot は40pxの不可視領域を予約する"
   const css = await readStylesheet();
   const slot = css.match(/\.session-action-dock-cancel-slot\s*{([^}]*)}/)?.[1];
   assert.ok(slot);
-  assert.match(slot, /flex:\s*0 0 40px;/);
-  assert.match(slot, /min-width:\s*40px;/);
-  assert.match(css, /\.session-action-dock-cancel-slot:not\(\.is-active\)\s*{\s*visibility:\s*hidden;/);
+  assert.match(slot, /(?:^|;)\s*flex:\s*0 0 40px;/);
+  assert.match(slot, /(?:^|;)\s*min-width:\s*40px;/);
+  const inactive = css.match(/\.session-action-dock-cancel-slot:not\(\.is-active\)\s*{([^}]*)}/)?.[1];
+  assert.ok(inactive);
+  assert.match(inactive, /(?:^|;)\s*visibility:\s*hidden;/);
+  for (const [, declarations] of css.matchAll(/\.session-action-dock-cancel-slot(?::not\(\.is-active\))?\s*{([^}]*)}/g)) {
+    assert.doesNotMatch(declarations, /(?:^|;)\s*display:\s*(?:none|contents)\b/);
+  }
 });
