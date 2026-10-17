@@ -217,7 +217,7 @@ test("session header owner は auxiliary の parent 操作を隠し action callb
     const workspaceButton = dom.window.document.querySelector<HTMLButtonElement>('section[aria-label="Workspace actions"] button');
     assert.ok(workspaceButton);
     await act(async () => workspaceButton.click());
-    for (const title of ["Open session files directory", "Open terminal in session files directory"]) {
+    for (const title of ["Open Session Folder In Explorer", "Open External Terminal In Session Folder"]) {
       const button = dom.window.document.querySelector<HTMLButtonElement>(`button[title="${title}"]`);
       assert.ok(button, title);
       await act(async () => button.click());

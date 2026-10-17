@@ -118,6 +118,8 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     getMateState: async () => "not_created",
     getAppSettings: async () => createDefaultAppSettings(),
     subscribeAppSettings: () => () => {},
+    getProviderQuotaTelemetry: async () => null,
+    subscribeProviderQuotaTelemetry: () => () => {},
     getModelCatalog: async () => ({
       revision: 1,
       providers: [{

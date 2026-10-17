@@ -170,7 +170,7 @@ const names = [
   "createAuxiliarySession", "cancelAuxiliaryCreation", "getAuxiliaryCreationContext", "getAuxiliaryCreation",
   "updateChatLayoutPreference",
   "subscribeOpenSessionWindowIds", "subscribeSessionWindowRestoreSet",
-  "subscribeProviderQuotaTelemetry", "subscribeSessionContextTelemetry", "subscribeSessionBackgroundActivity",
+  "getProviderQuotaTelemetry", "subscribeProviderQuotaTelemetry", "subscribeSessionContextTelemetry", "subscribeSessionBackgroundActivity",
   "listOpenSessionWindowIds", "getSessionWindowRestoreSet",
   "subscribeSessionDraftFlushRequest",
   "subscribeSessionDraftFlushRelease",

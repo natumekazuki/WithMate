@@ -59,6 +59,8 @@ test("閉じた開始試行の完了を次のNew Sessionから分離する", asy
     getMateState: async () => "not_created",
     getAppSettings: async () => createDefaultAppSettings(),
     subscribeAppSettings: () => () => {},
+    getProviderQuotaTelemetry: async () => null,
+    subscribeProviderQuotaTelemetry: () => () => {},
     getModelCatalog: async () => ({ revision: 1, providers: [{
       id: "codex", label: "Codex", defaultModelId: "gpt-5.4", defaultReasoningEffort: "high",
       models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],

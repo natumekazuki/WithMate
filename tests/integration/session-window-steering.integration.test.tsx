@@ -130,7 +130,10 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     await emit("benchmark-main", true, undefined, { assistantText: "Generating current response", elicitationRequest: {
       requestId: "nonblocking-question", provider: "codex", mode: "form", blocking: false, message: "Optional direction", fields: [],
     } });
-    assert.match(dom.window.document.body.textContent!, /Input Requested/);
+    const questionCard = dom.window.document.querySelector(".live-elicitation-card");
+    assert.ok(questionCard);
+    assert.match(questionCard.textContent!, /Optional direction/);
+    assert.ok(Array.from(questionCard.querySelectorAll("button")).some((item) => item.textContent?.trim() === "Submit"));
     assert.match(dom.window.document.body.textContent!, /Generating a response/);
     await emit("benchmark-main", true);
     await draft("first input");

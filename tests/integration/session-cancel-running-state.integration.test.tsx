@@ -10,10 +10,10 @@ import type { Session } from "../../src-shared/session/session-state.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Mainの取消受付と終了待ちは保存Sessionがidleでも、AuxiliaryからMainへ戻ってもCancelingへ投影される。通常Sendは次Turnを予約し、現在Turnへの追加入力は拒否する。後続runの通知後に旧取消ACKが届いても巻き戻さない"
+// claim = "Mainの取消受付と終了待ちは保存Sessionがidleでも、AuxiliaryからMainへ戻ってもCancelのtooltipとdisabled/busyへ投影される。通常Sendは次Turnを予約し、現在Turnへの追加入力は拒否する。後続runの通知後に旧取消ACKが届いても巻き戻さない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Mainの取消受付後; https://github.com/natumekazuki/WithMate/issues/773" }
 // fault = "live取消状態を切替で消去する、取消中の次Turn受付を拒否する、現在Turnへsteerや直接runを送る、または旧取消ACKで後続run表示を巻き戻す"
-// observable = "実SessionWindowAppのexpanded/compact Canceling、Send受付とdraft consume、preload enqueue/steer/run呼出数、後続run通知後のCancel表示"
+// observable = "実SessionWindowAppのexpanded/compact CancelのCanceling tooltipとdisabled/busy、Send受付とdraft consume、preload enqueue/steer/run呼出数、後続run通知後のCancel表示"
 // observation_boundary = "component-behavior"
 // scope = "Main cancellation live projection and composer actions"
 // lifecycle = "permanent"
@@ -93,6 +93,7 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
   const root = createRoot(dom.window.document.getElementById("root")!);
   const buttons = (label: string) => Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("button"))
     .filter((button) => button.textContent?.trim() === label);
+  const cancelingButtons = () => Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>('button[title="Canceling"]'));
   const send = () => {
     const button = buttons("Send")[0];
     assert.ok(button);
@@ -104,13 +105,13 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
     assert.ok(cancel);
     await act(async () => { cancel.click(); });
     assert.equal(cancelCalls, 1);
-    for (const button of buttons("Canceling")) {
+    for (const button of cancelingButtons()) {
       assert.equal(button.disabled, true);
       assert.equal(button.getAttribute("aria-busy"), "true");
       await act(async () => { button.click(); });
     }
     assert.equal(cancelCalls, 1);
-    assert.ok(buttons("Canceling").length >= 2, "expanded and compact docks must both reflect cancellation");
+    assert.ok(cancelingButtons().length >= 2, "expanded and compact docks must both reflect cancellation");
     assert.equal(send().disabled, true);
     await act(async () => {
       session = { ...session, runState: "idle", status: "idle" };
@@ -121,7 +122,7 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
     await act(async () => { buttons("Auxiliary")[0]!.click(); });
     await act(async () => { buttons("Main")[0]!.click(); });
     assert.equal(liveListeners.size, 1, "target switching must keep one Window ingress");
-    assert.ok(buttons("Canceling").length >= 2, "resubscription must preserve cancellation in both docks until authoritative state arrives");
+    assert.ok(cancelingButtons().length >= 2, "resubscription must preserve cancellation in both docks until authoritative state arrives");
     const textarea = dom.window.document.querySelector<HTMLTextAreaElement>('textarea[data-shortcut-scope="composer"]')!;
     assert.ok(textarea);
     await act(async () => {
@@ -141,7 +142,7 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
     assert.equal(queueCalls, 1, "shortcut and button must share one pending admission");
     assert.equal(textarea.value, "", "durable admission must consume only the submitted draft");
     await act(async () => { live = null; broadcastLive(); });
-    assert.equal(buttons("Canceling").length, 0);
+    assert.equal(cancelingButtons().length, 0);
     await act(async () => {
       session = { ...session, runState: "running", status: "running" };
       live = { sessionId: session.id, threadId: session.threadId, turnId: "next-turn", inputAvailable: true, assistantText: "next response",
@@ -151,7 +152,7 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
     });
     await act(async () => { finishCancel(); });
     assert.ok(buttons("Cancel").length >= 2, "old cancel acknowledgement must leave the next run active");
-    assert.equal(buttons("Canceling").length, 0);
+    assert.equal(cancelingButtons().length, 0);
     assert.equal(sendCalls, 0);
     assert.deepEqual(alerts, []);
   } finally {
