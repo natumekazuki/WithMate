@@ -4,6 +4,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
 import { useLatestSessionTurn, type LatestSessionTurnApi } from "../../src/chat/runtime/use-latest-session-turn.js";
 import { resolveRetryBannerSource } from "../../src/chat/retry-state.js";
 import { buildLiveSessionRecoveryActions } from "../../src/chat/live-session-projection.js";
@@ -21,17 +22,17 @@ function canceledTurn(sessionId: string): SessionTurnRecord {
 
 // @test-value v2
 // kind = "contract"
-// claim = "同ownerのturn再取得中・失敗時はCanceledの回復操作を保持し、初回失敗も明示Retryで回復でき、owner/incarnation切替には古いturnを適用しない"
+// claim = "正常なturn読込は枠のないbusy status、実際の取得失敗はalertとRetryで示し、既知のCanceled回復操作を保持しながらowner/incarnationを分離する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
-// fault = "再取得で既知turnを消す、読取errorや明示Retryを表示しない、または別owner/incarnationへ古いturn応答を反映する"
-// observable = "production hookのturn/loading/error、recovery consumerのCanceled・Resend・Edit・alert・Retry・busy DOM、API読取回数"
+// fault = "正常な読込を警告用の回復枠へ入れる、再取得で既知turnを消す、実際の取得失敗のRetryを失う、または別owner/incarnationへ古いturn応答を反映する"
+// observable = "production hookのturn/loading/error、通常loading statusのbusy属性と回復枠との分離、Canceled・Resend・Edit・alert・RetryのDOM、API読取回数"
 // observation_boundary = "consumer"
 // scope = "latest-session-turn-and-recovery-actions"
 // lifecycle = "permanent"
-// impact = "取消済み依頼の回復操作が消えたり、取得障害を理解・回復できず、別会話の取消状態を誤表示する"
-// distinction = "型checkと同期Retry投影testが扱わない通知・revision再取得・失敗・遅延owner切替をproduction hookからDOMまで観測する"
+// impact = "正常な送信や背景読込を失敗と誤認させず、取消済み依頼と実際の取得障害からの回復操作を維持する"
+// distinction = "既存の同期component testや型checkでは検出できない通知・revision再取得・開始と完了・失敗・遅延owner切替を一つのproduction hookとconsumerで確認する"
 // @end-test-value
-test("latest turn recovery retains known cancellation and isolates owner read failures", async () => {
+test("latest turn recovery separates normal loading, preserves recovery, and isolates owner reads", async () => {
   const dom = new JSDOM("<div id='root'></div>");
   const previous = { window: globalThis.window, document: globalThis.document };
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
@@ -50,11 +51,12 @@ test("latest turn recovery retains known cancellation and isolates owner read fa
   let sessionId = "main";
   let scope = "incarnation-1";
   let revision = "first";
+  let runState: Session["runState"] = "idle";
   let output: ReturnType<typeof useLatestSessionTurn> | undefined;
   const noop = () => {};
   function Harness() {
     output = useLatestSessionTurn(api, sessionId, scope, revision);
-    const source = resolveRetryBannerSource({ sessionId, messages: [{ role: "user", text: "Fix it" }], latestTurn: output.turn, runState: "idle" });
+    const source = resolveRetryBannerSource({ sessionId, messages: [{ role: "user", text: "Fix it" }], latestTurn: output.turn, runState });
     return buildLiveSessionRecoveryActions({
       retryBanner: source ? { kind: source.kind, badge: "Canceled", title: "This request was stopped", lastRequestText: source.lastRequestText } : null,
       latestTurnLoading: output.loading, latestTurnError: output.error, onRetryLatestTurn: output.retry,
@@ -66,6 +68,14 @@ test("latest turn recovery retains known cancellation and isolates owner read fa
   const render = async () => { await act(async () => root.render(<Harness />)); };
   const update = async () => { await act(async () => { for (const listener of listeners) listener(sessionId); }); };
   const button = (text: string) => [...host.querySelectorAll("button")].find((node) => node.textContent === text);
+  const assertNormalLoading = () => {
+    const status = host.querySelector('[role="status"][aria-label="Loading latest execution"]');
+    assert.ok(status);
+    assert.equal(status.getAttribute("aria-busy"), "true");
+    assert.equal(status.closest(".resume-banner") !== null, false, "Normal loading must not use a recovery frame.");
+    assert.equal(host.querySelector('[role="alert"]'), null);
+    assert.equal(button("Resend"), undefined);
+  };
   const assertCanceledActions = () => {
     assert.match(host.textContent ?? "", /Canceled/);
     assert.ok(button("Resend"));
@@ -75,7 +85,7 @@ test("latest turn recovery retains known cancellation and isolates owner read fa
   try {
     await render();
     assert.equal(state().loading, true);
-    assert.ok(host.querySelector('[role="status"][aria-label="Loading latest execution"]'));
+    assertNormalLoading();
     await act(async () => requests[0].result.reject(new Error("first read failed")));
     assert.match(host.querySelector('[role="alert"]')!.textContent ?? "", /latest execution: first read failed/);
     assert.ok(button("Retry"));
@@ -109,6 +119,7 @@ test("latest turn recovery retains known cancellation and isolates owner read fa
     sessionId = "other";
     await render();
     assert.equal(state().turn, null);
+    assertNormalLoading();
     await act(async () => requests[5].result.resolve(canceledTurn("main")));
     assert.equal(state().turn, null);
     await act(async () => requests[6].result.resolve(canceledTurn("other")));
@@ -129,6 +140,19 @@ test("latest turn recovery retains known cancellation and isolates owner read fa
     assert.equal(state().loading, false);
     assert.equal(state().error, null);
     assert.equal(host.textContent, "");
+
+    runState = "running";
+    revision = "started";
+    await render();
+    assertNormalLoading();
+    await act(async () => requests[10].result.resolve({ ...canceledTurn("other"), phase: "running" }));
+    assert.equal(host.childElementCount, 0);
+    runState = "idle";
+    revision = "completed";
+    await render();
+    assertNormalLoading();
+    await act(async () => requests[11].result.resolve({ ...canceledTurn("other"), phase: "completed" }));
+    assert.equal(host.childElementCount, 0);
   } finally {
     await act(async () => root.unmount());
     Object.assign(globalThis, previous);

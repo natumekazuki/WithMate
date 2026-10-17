@@ -478,6 +478,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Ctrl+Enter` / `Cmd+Enter` 送信
 - terminal state 後の再送導線
   - `runState === "running"` 中は recovery action surface を出さず、既存 pending / `Cancel` を維持する
+  - 最新turn記録の取得だけでは再送用の警告枠を生成しない。通常の読込中は枠のないspinnerとaccessible busy status、実際の取得失敗はerrorと`Retry`で示す。既知のterminal stateがある場合は、その回復操作を再取得中・取得失敗時にも保持する
   - `runState === "interrupted"` + `lastUserMessage` ありで interruption copy、`runState === "error"` + `lastUserMessage` ありで failed copy を出す
   - `runState === "idle"` でも最新turn記録 `phase === "canceled"` + `lastUserMessage` ありなら canceled copy を出す
   - `lastUserMessage` がない session では retry 不能のため surface を出さない

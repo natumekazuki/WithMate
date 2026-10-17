@@ -34,21 +34,25 @@ export function SessionRetryBanner({
   onRetryLatestTurn,
 }: SessionRetryBannerProps) {
   if (!retryBanner && !latestTurnLoading && !latestTurnError) return null;
+  const loading = latestTurnLoading ? <LoadingIndicator label="Loading latest execution" inline /> : null;
+  const loadError = latestTurnError ? <LoadError message={`Could not load the latest execution: ${latestTurnError}`} onRetry={onRetryLatestTurn} retryDisabled={latestTurnLoading} /> : null;
+  if (!retryBanner) return <>{loading}{loadError}</>;
+
   return (
-    <section className={`resume-banner retry-banner${retryBanner ? ` ${retryBanner.kind}` : ""}`} aria-label={retryBanner ? "Actions for an unfinished request" : "Request recovery"} aria-busy={latestTurnLoading}>
-      {retryBanner || latestTurnLoading ? <div className="resume-banner-head"><div className="resume-banner-copy">
-        {retryBanner ? <span className={`resume-banner-badge ${retryBanner.kind}`} title={retryBanner.title}>
+    <section className={`resume-banner retry-banner ${retryBanner.kind}`} aria-label="Actions for an unfinished request" aria-busy={latestTurnLoading}>
+      <div className="resume-banner-head"><div className="resume-banner-copy">
+        <span className={`resume-banner-badge ${retryBanner.kind}`} title={retryBanner.title}>
           {retryBanner.badge}
           <span className="sr-only">: {retryBanner.title}</span>
-        </span> : null}
-        {latestTurnLoading ? <LoadingIndicator label="Loading latest execution" inline /> : null}
-      </div></div> : null}
-      {retryBanner ? <div className="resume-banner-actions">
+        </span>
+        {loading}
+      </div></div>
+      <div className="resume-banner-actions">
         <button type="button" onClick={onResendLastMessage} disabled={isRetryActionDisabled}>Resend</button>
         <button className="drawer-toggle secondary" type="button" onClick={onEditLastMessage} disabled={isRetryEditDisabled}>Edit</button>
-      </div> : null}
-      {latestTurnError ? <LoadError message={`Could not load the latest execution: ${latestTurnError}`} onRetry={onRetryLatestTurn} retryDisabled={latestTurnLoading} /> : null}
-      {retryBanner && isRetryDraftReplacePending ? <div className="resume-banner-conflict">
+      </div>
+      {loadError}
+      {isRetryDraftReplacePending ? <div className="resume-banner-conflict">
         <p>Your current draft is preserved.</p>
         <div className="resume-banner-conflict-actions">
           <button type="button" onClick={onConfirmRetryDraftReplace} disabled={isRetryEditDisabled}>Replace Previous Request</button>
