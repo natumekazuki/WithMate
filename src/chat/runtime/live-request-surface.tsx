@@ -1,4 +1,6 @@
 import { Fragment, useEffect, useId, useState, type ReactNode } from "react";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
 
 import type {
   LiveApprovalRequest,
@@ -460,21 +462,39 @@ function LiveElicitationCard({
   );
 }
 
-export function ElicitationRecords({ records }: { records?: readonly ElicitationRecord[] }) {
-  return records?.map((record) => (
-    <div className="elicitation-record" key={record.requestId}>
-      {record.kind !== "question" ? <p>{record.message}</p> : null}
-      <div className="live-elicitation-form">
-        {record.fields.map((field, index) => (
-          <div className="live-elicitation-field" key={index}>
-            <p>{record.kind === "question" ? field.description || field.title : field.title}</p>
-            {field.description && record.kind !== "question" ? <p>{field.description}</p> : null}
-            {field.options?.length ? <ul className="elicitation-record-options">{field.options.map((option, optionIndex) => <li key={optionIndex}>{option}</li>)}</ul> : null}
-          </div>
-        ))}
-      </div>
-    </div>
+export function ElicitationRecords({ records, sourceText }: { records?: readonly ElicitationRecord[]; sourceText?: string }) {
+  const source = sourceText === undefined ? undefined : projectMessageRenderedSearchText(sourceText);
+  // A complete block/list item represents an existing choice; a substring does not.
+  const sourceChoices = new Set(sourceText === undefined ? [] : fromMarkdown(sourceText).children.flatMap((node) =>
+    (node.type === "list" ? node.children : [node]).map((block) =>
+      projectMessageRenderedSearchText(sourceText.slice(block.position?.start.offset, block.position?.end.offset)).trim(),
+    ),
   ));
+  return records?.map((record) => {
+    const fields = record.fields.map((field) => {
+      const question = record.kind === "question" ? field.description || field.title : field.title;
+      return {
+        question: source?.includes(question) ? undefined : question,
+        description: record.kind !== "question" ? field.description : undefined,
+        options: field.options?.filter((option) => !sourceChoices.has(option.trim())),
+      };
+    }).filter((field) => field.question || field.description || field.options?.length);
+    if (record.kind === "question" && fields.length === 0) return null;
+    return (
+      <div className="elicitation-record" key={record.requestId}>
+        {record.kind !== "question" ? <p>{record.message}</p> : null}
+        <div className="live-elicitation-form">
+          {fields.map((field, index) => (
+            <div className="live-elicitation-field" key={index}>
+              {field.question ? <p>{field.question}</p> : null}
+              {field.description ? <p>{field.description}</p> : null}
+              {field.options?.length ? <ul className="elicitation-record-options">{field.options.map((option, optionIndex) => <li key={optionIndex}>{option}</li>)}</ul> : null}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  });
 }
 
 export function InlineQuestionContent({ text, records = [], requests = [], renderText, ...cardProps }: {
@@ -494,14 +514,14 @@ export function InlineQuestionContent({ text, records = [], requests = [], rende
   for (const { record, request } of entries.sort((a, b) => (a.record.textRange?.start ?? text.length) - (b.record.textRange?.start ?? text.length))) {
     const range = record.textRange;
     const valid = range && range.start >= offset && range.end >= range.start && range.end <= text.length;
-    // Resolved questions with a source body are already part of the normal conversation.
-    if (!request && valid && range.end > range.start) continue;
-    const start = valid ? range.start : text.length;
+    // Keep the source body and supplement only question content absent from it.
+    const sourceText = !request && valid && range.end > range.start ? text.slice(range.start, range.end) : undefined;
+    const start = valid ? (sourceText !== undefined ? range.end : range.start) : text.length;
     const end = valid ? range.end : start;
-    if (start > offset) fragments.push(renderText(text.slice(offset, start), `text-${offset}-before-${record.requestId}`, offset));
+    if (start > offset) fragments.push(renderText(text.slice(offset, start), `text-${offset}-${start}-${record.requestId}`, offset));
     fragments.push(<Fragment key={record.requestId}>{request
       ? <LiveElicitationCard {...cardProps} request={request} />
-      : <ElicitationRecords records={[record]} />}</Fragment>);
+      : <ElicitationRecords records={[record]} sourceText={sourceText} />}</Fragment>);
     offset = end;
   }
   if (offset < text.length) fragments.push(renderText(text.slice(offset), `text-${offset}`, offset));

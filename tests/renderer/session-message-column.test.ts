@@ -22,7 +22,7 @@ import { buildContextPaneProjection } from "../../src/chat/runtime/session-ui-pr
 import { buildMessageCollapseTargets, type MessageCollapseTarget } from "../../src/chat/conversation/session-message-collapse.js";
 import { buildLiveAssistantProjectionKey, buildMessageListProjection, type MessageListSource } from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
-import type { LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
+import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
 import type { Message, MessageArtifact } from "../../src-shared/session/session-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
@@ -3061,10 +3061,10 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainとAuxiliaryの実会話投影で質問を応答本文の該当位置へ一度だけ表示し、回答後は元本文を復元する"
+// claim = "MainとAuxiliaryの実会話投影で質問を該当位置へ一度だけ表示し、回答後と保存履歴で元本文と構造化候補を保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
 // fault = "共通質問componentへの配線漏れにより末尾へ重複表示するか、後続本文や解決済みの質問を失う"
-// observable = "実ConversationMessageColumnの質問前後のDOM順序、フォーム数、解決後の本文"
+// observable = "実ConversationMessageColumnの質問前後のDOM順序、フォーム数、解決後および保存履歴の本文・候補"
 // observation_boundary = "component-behavior"
 // scope = "Main/Auxiliary inline question integration"
 // lifecycle = "permanent"
@@ -3073,24 +3073,32 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
 // @end-test-value
 test("Main/Auxiliaryの会話へ質問範囲を接続し回答後に本文へ戻す", async () => {
   for (const messageSourceKind of ["session", "auxiliary"] as const) {
-    const request: LiveElicitationRequest = { ...createLiveElicitationRequest(), kind: "question", fields: [{ type: "text", name: "branch", title: "Which branch?", required: true }] };
+    const request: LiveElicitationRequest = { ...createLiveElicitationRequest(), kind: "question", fields: [{ type: "select", name: "branch", title: "Which branch?", required: true, allowFreeText: true, options: [{ label: "Main", value: "Main" }, { label: "Feature", value: "Feature" }] }] };
+    const record: ElicitationRecord = { requestId: request.requestId, kind: "question", message: "Question", fields: [{ title: "Which branch?", options: ["Main", "Feature"] }], textRange: { start: 8, end: 21 }, status: "answered" };
     function Column(props: SessionMessageColumnProps) {
       return React.createElement(ConversationMessageColumn, {
         session: { id: messageSourceKind, messages: props.messages, runState: "running" }, messageSourceKind, enabled: true,
-        baseProps: { ...props, liveElicitationRecords: [{ requestId: request.requestId, kind: "question", message: "Question", fields: [{ title: "Which branch?" }], textRange: { start: 8, end: 21 }, status: props.liveElicitationRequest ? "pending" : "answered" }] },
+        baseProps: { ...props, liveElicitationRecords: props.isRunning ? [{ ...record, status: props.liveElicitationRequest ? "pending" : "answered" }] : [] },
       });
     }
     const mounted = await mountSessionMessageColumn({ component: Column, messages: [{ role: "user", text: "Start" }], isRunning: true, liveRunAssistantText: "Before\n\nWhich branch?\n\nAfter", liveElicitationRequest: request });
     try {
       const body = mounted.container.querySelector('.message-row.assistant [data-message-body]');
       assert.ok(body);
-      assert.deepEqual([...body.children].map(node => node.textContent?.trim()), ["Before", "Which branch?CloseSubmit", "After"]);
+      assert.deepEqual([...body.children].map(node => node.textContent?.trim()), ["Before", "Which branch?MainFeatureCustom AnswerCloseSubmit", "After"]);
       assert.equal(mounted.container.querySelectorAll('.live-elicitation-card').length, 1);
       await mounted.rerender({ liveElicitationRequest: null });
       const resolvedBody = mounted.container.querySelector('.message-row.assistant [data-message-body]');
       assert.ok(resolvedBody);
       assert.equal(resolvedBody.querySelectorAll('input,button').length, 0);
-      assert.match(resolvedBody.textContent ?? "", /Before\s*Which branch\?\s*After/);
+      assert.match(resolvedBody.textContent ?? "", /Before\s*Which branch\?\s*MainFeature\s*After/);
+      await mounted.rerender({ isRunning: false, liveRunAssistantText: "", liveElicitationRequest: null, messages: [{ role: "assistant", text: "Before\n\nWhich branch?\n\nAfter", elicitationRecords: [record] }] });
+      const history = mounted.container.querySelector('.message-row.assistant [data-message-body]');
+      assert.ok(history);
+      assert.match(history.textContent ?? "", /Before\s*Which branch\?\s*MainFeature\s*After/);
+      assert.equal(history.textContent?.split("Which branch?").length, 2);
+      assert.deepEqual([...history.querySelectorAll(".elicitation-record-options li")].map(node => node.textContent), ["Main", "Feature"]);
+      assert.equal(history.querySelectorAll("input,button,select,textarea").length, 0);
     } finally { await mounted.cleanup(); }
   }
 });

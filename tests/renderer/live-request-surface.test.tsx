@@ -5,7 +5,7 @@ import React from "react";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
+import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
 import { InlineQuestionContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -382,4 +382,51 @@ test("InlineQuestionContent replaces only the source range and fixes tool questi
   const resolved = render(false);
   assert.deepEqual([...resolved.body.children].map(node => node.textContent), ["Same? Before Same?", "Tool questionAB", " After"]);
   assert.equal(resolved.querySelectorAll('input,button').length, 0);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "source範囲を持つ質問は解決後も構造化選択肢を保持し、本文にある質問・候補を重複させず前後の本文順序を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "live request消失時に構造化候補を捨てるか、本文にもある質問・候補を二重に追加する"
+// observable = "通常本文の保持と順序、補完候補の値、質問の出現数、解決済みフォームのcontrol数"
+// observation_boundary = "component-behavior"
+// scope = "InlineQuestionContent resolved source records"
+// lifecycle = "permanent"
+// impact = "回答・Close・失効後に質問の選択条件を履歴から確認できなくなる"
+// distinction = "既存配置testのsource質問には候補がなく、型検査は解決後の表示欠落を検出しない。短い静的描画で既存本文との補完境界を継続検査する"
+// @end-test-value
+test("InlineQuestionContent retains structured choices when a source question resolves", () => {
+  for (const status of ["answered", "declined", "canceled", "expired", "pending"] as const) {
+    for (const [source, missing] of [
+      ["Which branch?", ["Main", "Feature"]],
+      ["Which branch? Mainland", ["Main", "Feature"]],
+      ["Which **branch**?\n\n- **Main**", ["Feature"]],
+      ["Which branch?\n\n- Main\n- Feature", []],
+    ] as const) {
+      const record: ElicitationRecord = {
+        requestId: "source", kind: "question", message: "Question", status,
+        textRange: { start: 7, end: 7 + source.length },
+        fields: [{ title: "Which branch?", options: ["Main", "Feature"] }],
+      };
+      const dom = new JSDOM(renderToStaticMarkup(React.createElement(InlineQuestionContent, {
+        text: `Before\n${source}\nAfter`, records: [record], requests: [],
+        elicitationActionRequestId: null, onResolveLiveElicitation() {},
+        renderText: (value, key) => React.createElement("p", { key, className: "body" }, value),
+      })));
+      try {
+        const body = dom.window.document.body;
+        assert.deepEqual([...body.querySelectorAll(".body")].map(node => node.textContent), [`Before\n${source}`, "\nAfter"]);
+        assert.deepEqual([...body.querySelectorAll(".elicitation-record-options li")].map(node => node.textContent), missing);
+        const visible = body.textContent!.replaceAll("**", "");
+        for (const text of ["Which branch?", "Main", "Feature"]) {
+          const sourceCount = source.replaceAll("**", "").split(text).length - 1;
+          assert.equal(visible.split(text).length - 1, sourceCount + (missing.some(option => option === text) ? 1 : 0));
+        }
+        assert.ok(visible.indexOf("Before") < visible.indexOf("Which branch?"));
+        assert.ok(visible.indexOf("Feature") < visible.indexOf("After"));
+        assert.equal(body.querySelectorAll("input,button,select,textarea").length, 0);
+      } finally { dom.window.close(); }
+    }
+  }
 });

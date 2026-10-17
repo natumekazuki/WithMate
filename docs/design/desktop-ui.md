@@ -426,7 +426,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Codexの現在Turnが入力受付可能な間はチャットの予約項目に `Steer` を表示する。捕捉した本文・添付を同じTurnへ一度だけ送り、開始準備中・取消中・終了後の操作を新Turnへ振り替えない。追加入力は実行中Turnの設定を維持する。独立した追加入力shortcutは現在のComposer下書きを直接送り、通常Sendとは混在させない
 - 予約は通常のuser bubbleとして現在Turnの応答より後へ受付順に置く。本文を主役にし、下部に右寄せの個別`Cancel`と、利用可能な時だけ`Steer`を添える。待機順や開始・実行中の状態文字は表示しない。空queueに専用sectionは出さず、通常履歴と別のreceipt一覧や重複本文も表示しない。狭幅では操作を折り返し、本文を縮小しない
 - 失敗・結果不明は対象bubbleに状態と理由を示し、必要な回復操作だけを近接表示する。結果不明の`Release Later Turns`は元要求を再実行しない。queue取得・操作の失敗は取得済み本文を保ち、理由と`Retry Queue`を表示する。受付応答が不明ならComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。受付ACKは一致するdraft revisionだけを消す
-- 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は既存のElicitation formで回答し、secret textはpassword inputで扱う。nonblockingの質問は `Input Requested` とし、必須待ちと区別して応答生成中のstatusを維持する
+- 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は会話内のQuestion Formsで回答し、secret textはpassword inputで扱う。nonblockingの質問も受付状態の見出しは置かず、必須待ちと区別して応答生成中のstatusを維持する
 - Mainの取消受付後は同じ位置をdisabledの`Canceling`とbusy stateにする。取消終了待ちでも予約受付は可能だが、現在Turnへの追加入力と新しい実行開始は許可しない。保存済みSessionがidleになってもlive取消状態を優先し、元処理と必要な終了処理の解放通知後に後続の実行を開始する。
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
