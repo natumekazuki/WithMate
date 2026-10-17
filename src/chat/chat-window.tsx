@@ -20,6 +20,7 @@ import type { MessageViewMode } from "../ui/markdown/MessageRichText.js";
 import type { AdditionalDirectoryItem } from "./composer/session-composer-paths.js";
 import { CloseButton } from "../ui/close-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ComposerIcon } from "./composer/composer-icon.js";
 
 import { SessionActionDockCompactRow, SessionActionDockModeSwitch, type SessionActionDockMode, type SessionActionDockCompactRowProps } from "./approval/session-action-dock.js";
 import { SESSION_ACTION_DOCK_ID, SESSION_HEADER_DOCK_ID, SESSION_RIGHT_PANE_ID, SESSION_LEFT_PANE_ID, SessionHeader, SessionHeaderHandle, type SessionHeaderProps } from "./shell/session-header.js";
@@ -81,6 +82,7 @@ export type ChatWindowProps = Omit<
   terminalContent?: ReactNode;
   actionDockModeControl?: { mode: SessionActionDockMode; onChange(mode: SessionActionDockMode): void };
   composerProps: SessionComposerExpandedProps;
+  providerQuota?: ReactNode;
   additionalDirectoryListProps?: ChatAdditionalDirectoryListProps;
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
@@ -215,9 +217,11 @@ function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps 
             type="button"
             className={isActive ? "is-active" : ""}
             aria-pressed={isActive}
+            title={target.label}
             onClick={() => chats.onTargetChange(target.id)}
           >
-            {target.label}
+            <ComposerIcon name={target.id} />
+            <span className="visually-hidden">{target.label}</span>
           </button>
         );
       })}
@@ -444,6 +448,7 @@ export function ChatWindow({
   terminalContent,
   actionDockModeControl,
   composerProps,
+  providerQuota,
   additionalDirectoryListProps,
   skillPickerProps,
   compactActionDockProps,
@@ -808,6 +813,7 @@ export function ChatWindow({
           >
             <SessionComposerExpanded
               {...composerProps}
+              providerQuota={isActionDockExpanded && !isTerminalMode ? providerQuota : null}
               externalErrorDescriptionIds={[composerProps.externalErrorDescriptionIds, composerErrorDescriptionIds].filter(Boolean).join(" ") || undefined}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
               onJumpToBottom={targetColumnControls?.followLatest ?? composerProps.onJumpToBottom}
@@ -829,6 +835,7 @@ export function ChatWindow({
           >
             <SessionActionDockCompactRow
               {...compactActionDockProps}
+              providerQuota={!isActionDockExpanded ? providerQuota : null}
               onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
               showMessageViewModeControls={showMessageViewModeControls}
@@ -843,6 +850,7 @@ export function ChatWindow({
               aria-hidden={!isActionDockExpanded || !isTerminalMode} inert={!isActionDockExpanded || !isTerminalMode}>
               <SessionActionDockCompactRow
                 {...compactActionDockProps}
+                providerQuota={isActionDockExpanded && isTerminalMode ? providerQuota : null}
                 showExpandControl={false}
                 showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
                 onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}

@@ -12,6 +12,28 @@ type Listener = (...args: unknown[]) => void;
 
 // @test-value v2
 // kind = "contract"
+// claim = "quota snapshotのcacheOnly指定とprovider IDをpreloadがMainへ伝達する"
+// oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md#共通の残量表示" }
+// fault = "optionsを落として新UIがCopilotのremote取得を発生させる"
+// observable = "公開APIがinvokeへ渡すchannel・provider ID・cacheOnly options"
+// observation_boundary = "public-boundary"
+// scope = "quota snapshot preload"
+// lifecycle = "permanent"
+// distinction = "型検査はoptional引数の伝達漏れを検出できない"
+// @end-test-value
+test("quota preloadはcacheOnlyを伝達する", async () => {
+  const { ipcRenderer } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  assert.deepEqual(await api.getProviderQuotaTelemetry("copilot", { cacheOnly: true }), {
+    channel: "withmate:get-provider-quota-telemetry", args: ["copilot", { cacheOnly: true }],
+  });
+  assert.deepEqual(await api.getProviderQuotaTelemetry("copilot"), {
+    channel: "withmate:get-provider-quota-telemetry", args: ["copilot", undefined],
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "会話queryはproducer/requestとpage stampを保持して専用channelへ送り、取消も同じidentityを伝える"
 // oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts WithMateWindowSessionApi" }
 // fault = "検索・navigator・取消を誤channelへ接続するかpage identityを落とす"

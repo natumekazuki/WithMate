@@ -249,9 +249,9 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
 
 // @test-value v2
 // kind = "invariant"
-// claim = "ActionDock compact heightは展開時の外枠ではなくcompact rowの実測値から算出する"
+// claim = "ActionDock compact heightは展開時の外枠ではなくcompact contentの実測値から算出する"
 // oracle = { type = "contract", ref = "ActionDock compact height layout contract" }
-// fault = "expanded outer heightをcompact heightとして採用し、レイアウト余白または表示位置を壊す"
+// fault = "expanded outer heightをcompact heightとして採用して縮小しても入力領域の高さが残る"
 // observable = "reported compact height"
 // observation_boundary = "component-behavior"
 // scope = "ActionDock compact height measurement"

@@ -77,6 +77,7 @@ import {
 } from "../settings/home-settings-content-props.js";
 import { buildSettingsDraftHandlers } from "../settings/settings-draft-handlers.js";
 import { buildSettingsCommandHandlers } from "../settings/settings-command-handlers.js";
+import { ProviderQuotaOverview } from "../provider-usage/provider-quota.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "../app/renderer-withmate-api.js";
 import {
   type MateProfile,
@@ -900,6 +901,7 @@ export default function HomeApp() {
     }),
     monitorContent: buildHomeMonitorContentProps({
       approvalEntries: approvalMonitorEntries,
+      providerQuota: <ProviderQuotaOverview api={getWithMateApi()} />,
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
       auxiliaryDataState,
@@ -941,6 +943,7 @@ export default function HomeApp() {
       ),
     }),
     rightPane: buildHomeRightPaneProps({
+      providerQuota: <ProviderQuotaOverview api={getWithMateApi()} />,
       rightPaneView,
       approvalMonitorEntries,
       runningMonitorEntries,

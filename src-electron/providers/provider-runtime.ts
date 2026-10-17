@@ -82,6 +82,7 @@ export type RunSessionTurnSessionContextTelemetryHandler = (
 export type GetProviderQuotaTelemetryInput = {
   providerId: string;
   appSettings: AppSettings;
+  signal?: AbortSignal;
 };
 
 export type ExtractSessionMemoryInput = {

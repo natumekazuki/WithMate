@@ -29,6 +29,7 @@ type ResolveProviderAdapterArgs = {
 
 type FetchProviderQuotaTelemetryArgs = {
   providerId: string;
+  signal?: AbortSignal;
   getAppSettings(): Awaitable<AppSettings>;
   getProviderCodingAdapter(providerId: string): ProviderCodingAdapter;
 };
@@ -92,6 +93,7 @@ export async function fetchProviderQuotaTelemetry(
   return args.getProviderCodingAdapter(args.providerId).getProviderQuotaTelemetry({
     providerId: args.providerId,
     appSettings: await args.getAppSettings(),
+    ...(args.signal ? { signal: args.signal } : {}),
   });
 }
 

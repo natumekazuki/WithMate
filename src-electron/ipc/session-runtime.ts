@@ -147,11 +147,11 @@ export function registerSessionRuntimeHandlers(
   );
   ipcMain.handle(
     WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
-    async (_event, providerId: string) => {
+    async (_event, providerId: string, options?: { cacheOnly?: boolean }) => {
       if (!providerId) {
         return null;
       }
-      return deps.getProviderQuotaTelemetry(providerId);
+      return deps.getProviderQuotaTelemetry(providerId, { cacheOnly: options?.cacheOnly === true });
     },
   );
   ipcMain.handle(

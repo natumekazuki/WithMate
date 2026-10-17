@@ -14,6 +14,7 @@ import { LoadError } from "../ui/load-error.js";
 import { ButtonContent } from "../ui/button-content.js";
 
 export type HomeRightPaneProps = {
+  providerQuota?: ReactNode;
   rightPaneView: "monitor" | "characters";
   approvalMonitorEntries: HomeMonitorEntry[];
   runningMonitorEntries: HomeMonitorEntry[];
@@ -50,6 +51,7 @@ export type HomeRightPaneProps = {
 };
 
 export function HomeRightPane({
+  providerQuota,
   rightPaneView,
   approvalMonitorEntries,
   runningMonitorEntries,
@@ -144,6 +146,7 @@ export function HomeRightPane({
         <section className="home-monitor-panel" role="tabpanel" aria-label="Session monitor">
           <HomeMonitorContent
             approvalEntries={approvalMonitorEntries}
+            providerQuota={providerQuota}
             runningEntries={runningMonitorEntries}
             nonRunningEntries={nonRunningMonitorEntries}
             auxiliaryDataState={auxiliaryDataState}

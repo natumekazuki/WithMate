@@ -212,12 +212,6 @@
     align-items: stretch;
   }
 
-  .session-action-dock-cancel-slot {
-    flex: 0 0 auto;
-    width: 100%;
-    min-width: 0;
-  }
-
   .session-action-dock-compact-row {
     grid-template-columns: minmax(0, 1fr) auto;
   }
@@ -225,12 +219,6 @@
   .session-page .session-action-dock-compact-row .session-action-dock-compact-actions {
     flex-direction: row;
     align-items: center;
-  }
-
-  .session-page .session-action-dock-compact-row .session-action-dock-cancel-slot {
-    flex: 1 1 114px;
-    width: auto;
-    min-width: 114px;
   }
 
   .session-action-dock-compact-meta {

@@ -69,6 +69,8 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
     getMateState: async () => "not_created",
     getAppSettings: async () => createDefaultAppSettings(),
     subscribeAppSettings: () => () => {},
+    getProviderQuotaTelemetry: async () => null,
+    subscribeProviderQuotaTelemetry: () => () => {},
     getModelCatalog: async () => ({
       revision: 1,
       providers: [{

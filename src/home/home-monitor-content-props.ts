@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { HomeMonitorContentProps } from "./HomeMonitorContent.js";
 import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
 import type {
@@ -7,6 +8,7 @@ import type {
 
 export type HomeMonitorContentInput = {
   approvalEntries: HomeMonitorEntry[];
+  providerQuota?: ReactNode;
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
@@ -25,6 +27,7 @@ export type HomeMonitorContentInput = {
 
 export function buildHomeMonitorContentProps({
   approvalEntries,
+  providerQuota,
   runningEntries,
   nonRunningEntries,
   auxiliaryDataState,
@@ -38,6 +41,7 @@ export function buildHomeMonitorContentProps({
 }: HomeMonitorContentInput): HomeMonitorContentProps {
   return {
     approvalEntries,
+    providerQuota,
     runningEntries,
     nonRunningEntries,
     auxiliaryDataState,

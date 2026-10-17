@@ -217,8 +217,20 @@ export type ProviderQuotaSnapshot = {
 
 export type ProviderQuotaTelemetry = {
   provider: string;
-  updatedAt: string;
+  /** Time of the last successful observation; null until one succeeds. */
+  updatedAt: string | null;
   snapshots: ProviderQuotaSnapshot[];
+  rateLimits?: ProviderRateLimitWindow[];
+  /** Omitted by request-count providers when the snapshot is ready. */
+  status?: "loading" | "ready" | "error" | "unsupported";
+};
+
+export type ProviderRateLimitWindow = {
+  quotaKey: string;
+  label?: string;
+  usedPercentage: number;
+  windowDurationMinutes?: number;
+  resetDate?: string;
 };
 
 export type SessionContextTelemetry = {

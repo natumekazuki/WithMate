@@ -87,6 +87,8 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
     getMateState: async () => "not_created",
     getAppSettings: async () => createDefaultAppSettings(),
     subscribeAppSettings: () => () => {},
+    getProviderQuotaTelemetry: async () => null,
+    subscribeProviderQuotaTelemetry: () => () => {},
     getModelCatalog: async () => ({
       revision: 1,
       providers: [{
@@ -456,10 +458,10 @@ test("Homeのmate status read中も既存Sessionを開ける", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Homeと独立Monitorはlive通知の実行・取消・承認状態の変化から最新summaryを再取得し、MainとAuxiliaryをリロードなしで表示する"
+// claim = "Homeと独立Monitorは同じquota cache表示とlive通知の実行・取消・承認状態の変化から最新summaryを再取得し、MainとAuxiliaryをリロードなしで表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window / 共通仕様のlive eventと軽量summary再読込" }
-// fault = "実行・承認状態だけの変化を捨てる、通知payloadをsnapshotの代わりに表示する、終了後のlive stateを見落とす、または本文更新ごとにsummaryを再取得する"
-// observable = "Approval/Running/Stopped sectionの親card、Main/Auxiliaryのaccessible状態、summary API取得回数、unmount後のlive購読数"
+// fault = "quotaの表示経路を接続し忘れる、実行・承認状態だけの変化を捨てる、通知payloadをsnapshotの代わりに表示する、終了後のlive stateを見落とす、または本文更新ごとにsummaryを再取得する"
+// observable = "provider残率とcacheOnly引数、Approval/Running/Stopped sectionの親card、Main/Auxiliaryのaccessible状態、summary API取得回数、unmount後のlive購読数"
 // observation_boundary = "component-behavior"
 // scope = "HomeAppのlive event購読とMonitor描画（home/monitor mode、Main/Auxiliary）"
 // lifecycle = "permanent"
@@ -494,10 +496,18 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
     const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
     let summaryReads = 0;
     let auxiliaryReads = 0;
+    const quotaReads: Parameters<WithMateWindowApi["getProviderQuotaTelemetry"]>[] = [];
     const api: Partial<WithMateWindowApi> = {
       getMateState: async () => "not_created",
       getAppSettings: async () => createDefaultAppSettings(),
       subscribeAppSettings: () => () => {},
+      getProviderQuotaTelemetry: async (...args) => {
+        quotaReads.push(args);
+        return { provider: "codex", updatedAt: null, snapshots: [], rateLimits: [
+          { quotaKey: "codex:primary", usedPercentage: 34, windowDurationMinutes: 10080 },
+        ] };
+      },
+      subscribeProviderQuotaTelemetry: () => () => {},
       getModelCatalog: async () => new Promise(() => {}),
       subscribeModelCatalog: () => () => {},
       listCharacters: async () => [],
@@ -555,6 +565,10 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       });
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
       assertMonitor("inactive", "Idle", "Idle");
+      const quotas = rootElement.querySelector('[aria-label="Provider Quotas"]');
+      assert.ok(quotas);
+      assert.match(quotas.textContent ?? "", /Codex7d 66%/);
+      assert.deepEqual(quotaReads, [["codex", { cacheOnly: true }]]);
       await emitLive(summary.id, null);
 
       summary = { ...summary, status: "running", runState: "running" };

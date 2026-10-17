@@ -73,7 +73,8 @@ test("ComposerAttachmentMenu は clipping 境界外の単一popoverで添付操�
   try {
     await act(async () => root.render(<Harness />));
     const attachButton = container.querySelector<HTMLButtonElement>("[aria-haspopup=\"menu\"]");
-    assert.equal(attachButton?.textContent?.trim(), "＋Attach");
+    assert.equal(attachButton?.textContent?.trim(), "Attach");
+    assert.ok(attachButton?.querySelector('svg[aria-hidden="true"]'));
     assert.equal(container.querySelectorAll("[aria-haspopup=\"menu\"]").length, 1);
 
     await act(async () => {

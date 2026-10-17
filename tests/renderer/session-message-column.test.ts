@@ -32,6 +32,83 @@ import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// @test-value v2
+// kind = "contract"
+// claim = "runtime設定は現在の選択値を正式名の文字で表し、供給された候補と変更通知を保つ"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: runtime設定の現在値表示とnative select" }
+// fault = "選択値の表示名やtitleが追従しない、候補へ未設定値を追加、またはselect変更が別設定へ通知される"
+// observable = "実composerの6selectのaccessible nameと現在値、5種類の変更callback・selected optionの文字・title、Modelの表示名"
+// observation_boundary = "component-behavior"
+// scope = "Session composer runtime settings"
+// lifecycle = "permanent"
+// impact = "操作前に現在設定を確認し、選んだ値を次送信用設定へ反映できる"
+// distinction = "options生成testや型検査では実composerの表示名・title・変更callbackの接続間違いを検出できない。文字の可視性と収容は実描画で確認する"
+// @end-test-value
+test("runtime設定は選択値の正式名に追従し、Model名と供給された候補を維持する", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  const changes: string[] = [];
+  const option = <T extends string>(value: T, label: string) => ({ value, label });
+  function Fixture() {
+    const [selection, setSelection] = useState<Partial<SessionComposerExpandedProps>>({});
+    const change = (key: keyof SessionComposerExpandedProps, value: string) => {
+      changes.push(key + ":" + value);
+      setSelection((current) => ({ ...current, [key]: value }));
+    };
+    return React.createElement(SessionComposerExpanded, createComposerTestProps({
+      approvalOptions: [option("untrusted", "Safety Focused"), option("on-request", "Provider Controlled")],
+      reviewerOptions: [option("user", "User"), option("auto-review", "Auto Review")],
+      sandboxOptions: [option("workspace-write", "Workspace Write"), option("read-only", "Read Only")],
+      reasoningOptions: [option("low", "Low"), option("high", "High")],
+      speedOptions: [option("standard", "Standard"), option("fast", "Fast")],
+      ...selection,
+      onChangeApprovalMode: (value) => change("selectedApprovalMode", value),
+      onChangeCodexReviewer: (value) => change("selectedCodexReviewer", value),
+      onChangeCodexSandboxMode: (value) => change("selectedCodexSandboxMode", value),
+      onChangeReasoningEffort: (value) => change("selectedReasoningEffort", value),
+      onChangeCodexSpeed: (value) => change("selectedCodexSpeed", value),
+    }));
+  }
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(React.createElement(Fixture)));
+    const document = dom.window.document;
+    assert.deepEqual([...document.querySelectorAll(".composer-settings select")].map((select) => select.getAttribute("aria-label")),
+      ["Approval", "Reviewer", "Sandbox", "Model", "Reasoning depth", "Speed"]);
+    const model = document.querySelector<HTMLSelectElement>('select[aria-label="Model"]')!;
+    assert.equal(model.selectedOptions[0].textContent, "GPT-5.4");
+    assert.equal(model.title, "Model: GPT-5.4");
+    const depth = document.querySelector<HTMLSelectElement>('select[aria-label="Reasoning depth"]')!;
+    assert.deepEqual([...depth.options].map((item) => item.value), ["low", "high"]);
+    for (const [label, value, title, key] of [
+      ["Approval", "on-request", "Provider Controlled", "selectedApprovalMode"],
+      ["Reviewer", "auto-review", "Auto Review", "selectedCodexReviewer"],
+      ["Sandbox", "read-only", "Read Only", "selectedCodexSandboxMode"],
+      ["Reasoning depth", "low", "Low", "selectedReasoningEffort"],
+      ["Speed", "fast", "Fast", "selectedCodexSpeed"],
+    ]) {
+      const select = document.querySelector<HTMLSelectElement>('select[aria-label="' + label + '"]')!;
+      await act(async () => {
+        select.value = value;
+        select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      });
+      assert.equal(changes.at(-1), key + ":" + value);
+      assert.equal(select.value, value);
+      assert.equal(select.title, label + ": " + title);
+      assert.equal(select.selectedOptions[0].textContent, title);
+    }
+    assert.equal(changes.length, 5);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+  }
+});
+
 function createComposerTestProps(
   overrides: Partial<SessionComposerExpandedProps> = {},
 ): SessionComposerExpandedProps {
@@ -160,6 +237,7 @@ test("Claudeの不正Approvalを明示表示し有効値への操作で復旧す
     assert.equal(select.selectedOptions[0]?.textContent, "Unsupported (untrusted)");
     assert.equal(select.selectedOptions[0]?.disabled, true);
     assert.equal(select.getAttribute("aria-invalid"), "true");
+    assert.equal(select.title, "Approval: Unsupported (untrusted)");
     assert.deepEqual(changes, []);
     await act(async () => {
       select.value = "on-request";
@@ -169,6 +247,7 @@ test("Claudeの不正Approvalを明示表示し有効値への操作で復旧す
     assert.equal(select.value, "on-request");
     assert.equal(select.selectedOptions[0]?.textContent, "Provider Controlled");
     assert.equal(select.getAttribute("aria-invalid"), null);
+    assert.equal(select.title, "Approval: Provider Controlled");
     assert.equal(select.options.length, 1);
   } finally {
     await act(async () => root?.unmount());
@@ -3561,9 +3640,10 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   const skillButton = Array.from(attachmentToolbar?.querySelectorAll("button") ?? [])
     .find((button) => button.textContent?.trim() === "Skill");
   const additionalDirectoryToolbar = attachmentToolbar?.querySelector(".composer-additional-directory-toolbar");
-  const addDirectoryButton = additionalDirectoryToolbar?.querySelector("button:nth-child(1)");
-  const addPathButton = additionalDirectoryToolbar?.querySelector("button:nth-child(2)");
-  const directoriesButton = additionalDirectoryToolbar?.querySelector("button:nth-child(3)");
+  const addGroup = additionalDirectoryToolbar?.querySelector('[role="group"][aria-label="Add directory"]');
+  const addDirectoryButton = addGroup?.querySelector("button:nth-child(1)");
+  const addPathButton = addGroup?.querySelector("button:nth-child(2)");
+  const directoriesButton = additionalDirectoryToolbar?.querySelector("button.composer-directory-list-button");
   const viewActions = renderedDocument.querySelector(".composer-toolbar-view-actions");
   const cancelSlot = viewActions?.querySelector(":scope > .session-action-dock-cancel-slot");
   const targetSlot = viewActions?.querySelector(":scope > .composer-target-dock-slot");
@@ -3604,7 +3684,9 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   assert.match(attachmentButton.textContent ?? "", /Attach/);
   assert.equal(addDirectoryButton.textContent, "Add Directory");
   assert.equal(addPathButton.textContent, "Add Directory By Path");
-  assert.equal(directoriesButton.textContent, "Dirs0");
+  assert.equal(directoriesButton.getAttribute("aria-label"), "Additional Directories: 0");
+  assert.equal(directoriesButton.textContent, "0");
+  assert.equal(addGroup?.nextElementSibling, directoriesButton);
   assert.ok((additionalDirectoryToolbar.compareDocumentPosition(viewActions) & 4) !== 0);
   assert.ok((attachmentMenu.compareDocumentPosition(viewActions) & 4) !== 0);
   assert.equal(viewActions.firstElementChild, cancelSlot);
@@ -3859,11 +3941,11 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
   );
 
   assert.match(html, /Jump To Latest/);
-  assert.match(html, />Preview<\/button>/);
-  assert.match(html, />Source<\/button>/);
+  const document = new JSDOM(html).window.document;
+  assert.deepEqual([...document.querySelectorAll('.composer-message-view-mode button')].map((button) => button.textContent), ["Preview", "Source"]);
   assert.match(html, /class="session-action-dock-compact-meta session-action-dock-compact-expand-button"/);
   assert.match(html, /aria-label="Expand action dock"/);
-  assert.doesNotMatch(html, />Send<\/button>/);
+  assert.equal(document.querySelector('.session-send-button'), null);
   assert.doesNotMatch(html, /Draft|下書きなし/);
 });
 
@@ -3955,8 +4037,8 @@ test("SessionActionDockCompactRow は実行中に jump button と Cancel を描�
   assert.match(html, /New messages/);
   assert.match(html, /session-action-dock-compact-actions/);
   assert.ok(html.indexOf("Cancel") < html.indexOf("Jump To Latest"));
-  assert.equal(new JSDOM(html).window.document.querySelector("button.danger.session-send-button")?.textContent, "Cancel");
   const renderedDocument = new JSDOM(html).window.document;
+  assert.equal(renderedDocument.querySelector('.session-send-button')?.textContent, "Cancel");
   const actions = renderedDocument.querySelector(".session-action-dock-compact-actions");
   assert.ok(actions);
   const cancelSlot = actions?.querySelector(":scope > .session-action-dock-cancel-slot");

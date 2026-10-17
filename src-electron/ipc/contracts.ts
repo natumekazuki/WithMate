@@ -595,6 +595,7 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
     getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
     getProviderQuotaTelemetry(
       providerId: string,
+      options?: { cacheOnly?: boolean },
     ): Promise<ProviderQuotaTelemetry | null>;
     getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null;
     getSessionBackgroundActivity(
