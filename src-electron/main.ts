@@ -1578,7 +1578,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 },
                 getAuxiliarySessionStatus: (sessionId) => requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId),
                 getLiveSessionRun: (sessionId) => getLiveSessionRun(sessionId),
-                getProviderQuotaTelemetry: getOrRefreshProviderQuotaTelemetry,
+                getProviderQuotaTelemetry: (providerId, options) => getOrRefreshProviderQuotaTelemetry(providerId, options),
                 getSessionContextTelemetry: (sessionId) => getSessionContextTelemetry(sessionId),
                 getSessionBackgroundActivity: (sessionId, kind) => getSessionBackgroundActivity(sessionId, kind),
                 resolveLiveApproval,
@@ -3134,8 +3134,8 @@ async function refreshProviderQuotaTelemetry(providerId: string): Promise<Provid
   return requireMainObservabilityFacade().refreshProviderQuotaTelemetry(providerId);
 }
 
-async function getOrRefreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
-  return requireMainObservabilityFacade().getOrRefreshProviderQuotaTelemetry(providerId);
+async function getOrRefreshProviderQuotaTelemetry(providerId: string, options?: { cacheOnly?: boolean }): Promise<ProviderQuotaTelemetry | null> {
+  return requireMainObservabilityFacade().getOrRefreshProviderQuotaTelemetry(providerId, options);
 }
 
 function scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void {

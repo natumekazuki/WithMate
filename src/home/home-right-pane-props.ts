@@ -25,6 +25,7 @@ type HomeRightPaneHandlers = {
 };
 
 export type HomeRightPanePropsInput = {
+  providerQuota?: ReactNode;
   rightPaneView: HomeRightPaneProps["rightPaneView"];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
@@ -49,6 +50,7 @@ export type HomeRightPanePropsInput = {
 };
 
 export function buildHomeRightPaneProps({
+  providerQuota,
   rightPaneView,
   runningMonitorEntries,
   nonRunningMonitorEntries,
@@ -72,6 +74,7 @@ export function buildHomeRightPaneProps({
   onRetryMateStatus,
 }: HomeRightPanePropsInput): HomeRightPaneProps {
   return {
+    providerQuota,
     rightPaneView,
     runningMonitorEntries,
     nonRunningMonitorEntries,

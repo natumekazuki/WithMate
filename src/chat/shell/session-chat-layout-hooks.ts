@@ -342,6 +342,7 @@ export function useSessionVerticalDockResize(input: {
     const syncCompactHeight = () => {
       const actionDockStyles = window.getComputedStyle(actionDock);
       const compactContentHeight = compactContent.scrollHeight
+        + (actionDock.querySelector<HTMLElement>(".session-provider-quota-strip")?.getBoundingClientRect().height ?? 0)
         + readCssPixelValue(actionDockStyles.borderTopWidth)
         + readCssPixelValue(actionDockStyles.borderBottomWidth);
       const nextHeight = Math.max(
@@ -357,6 +358,7 @@ export function useSessionVerticalDockResize(input: {
     }
     const observer = new ResizeObserver(syncCompactHeight);
     observer.observe(compactRow);
+    observer.observe(actionDock);
     return () => observer.disconnect();
   }, [input.isActionDockExpanded, input.ownerKey]);
 

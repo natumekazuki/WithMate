@@ -13,6 +13,7 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 
 export type HomeRightPaneProps = {
+  providerQuota?: ReactNode;
   rightPaneView: "monitor" | "characters";
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
@@ -48,6 +49,7 @@ export type HomeRightPaneProps = {
 };
 
 export function HomeRightPane({
+  providerQuota,
   rightPaneView,
   runningMonitorEntries,
   nonRunningMonitorEntries,
@@ -143,6 +145,7 @@ export function HomeRightPane({
       {rightPaneView === "monitor" ? (
         <section className="home-monitor-panel" role="tabpanel" aria-label="Session monitor">
           <HomeMonitorContent
+            providerQuota={providerQuota}
             runningEntries={runningMonitorEntries}
             nonRunningEntries={nonRunningMonitorEntries}
             auxiliaryDataState={auxiliaryDataState}

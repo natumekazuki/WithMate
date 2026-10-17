@@ -277,7 +277,7 @@ export type WithMateWindowAuxiliaryApi = {
 
 export type WithMateWindowObservabilityApi = {
   reportRendererLog(input: RendererLogInput): void;
-  getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
+  getProviderQuotaTelemetry(providerId: string, options?: { cacheOnly?: boolean }): Promise<ProviderQuotaTelemetry | null>;
   getSessionContextTelemetry(sessionId: string): Promise<SessionContextTelemetry | null>;
   getSessionBackgroundActivity(
     sessionId: string,

@@ -72,8 +72,8 @@ export class MainObservabilityFacade {
       (signal) => this.fetchQuota(providerId, signal));
   }
 
-  async getOrRefreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
-    if (providerId === "codex" || providerId === "claude") return this.getProviderQuotaTelemetry(providerId);
+  async getOrRefreshProviderQuotaTelemetry(providerId: string, options?: { cacheOnly?: boolean }): Promise<ProviderQuotaTelemetry | null> {
+    if (options?.cacheOnly || providerId === "codex" || providerId === "claude") return this.getProviderQuotaTelemetry(providerId);
     return this.deps.getSessionObservabilityService().getOrRefreshProviderQuotaTelemetry(
       providerId,
       this.deps.providerQuotaStaleTtlMs,

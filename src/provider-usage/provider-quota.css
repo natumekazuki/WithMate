@@ -1,0 +1,87 @@
+.session-action-dock.has-provider-quota {
+  grid-template-rows: 28px minmax(0, 1fr);
+  gap: 0;
+}
+
+.session-provider-quota-strip {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  padding: 0 6px 4px;
+  cursor: default;
+}
+
+.session-action-dock.has-provider-quota > .session-action-dock-content { grid-area: 2 / 1; }
+
+.provider-quota-overview {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.provider-quota {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.provider-quota-named {
+  display: grid;
+  grid-template-columns: 24px 64px auto min-content min-content;
+  justify-content: start;
+}
+
+.provider-quota-name { color: var(--muted); }
+.provider-quota-values { white-space: nowrap; }
+.provider-quota-error { color: var(--orange); font-weight: 800; }
+
+.provider-quota .provider-quota-details-button {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.provider-quota-details-button:hover { color: var(--ink); background: var(--surface); }
+.provider-quota-details-button:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+
+.provider-quota-popover {
+  white-space: normal;
+  position: fixed;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 12px;
+  max-width: calc(100vw - 24px);
+  max-height: min(480px, 70vh);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-deep);
+  color: var(--ink);
+  box-shadow: 0 8px 28px #0006;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.provider-quota-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.provider-quota-detail-head h3 { margin: 0; font-size: 14px; }
+.provider-quota-detail-list { display: grid; gap: 12px; }
+.provider-quota-detail-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
+.provider-quota-detail-list dt { color: var(--muted); overflow-wrap: anywhere; }
+.provider-quota-detail-list dd { margin: 0; text-align: right; }
+.provider-quota-note { color: var(--muted); font-size: 12px; margin-bottom: 0; }

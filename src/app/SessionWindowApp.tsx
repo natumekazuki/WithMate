@@ -137,6 +137,7 @@ import {
 import { useSessionChatConversationFeature } from "../chat/conversation/session-chat-conversation-feature.js";
 import { buildSessionChatRuntimeFeature } from "../chat/runtime/session-chat-runtime-feature.js";
 import { SessionContextFeature, type SessionContextFeatureHandle } from "../chat/runtime/session-context-feature.js";
+import { ProviderQuota } from "../provider-usage/provider-quota.js";
 import { composeAgentSessionChatWindow } from "../chat/session-chat-window-composition.js";
 import { useSessionChatShellFeature } from "../chat/shell/session-chat-shell-feature.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
@@ -2343,6 +2344,7 @@ export default function AgentSessionWindowApp() {
           showDeleteButton: true,
         }}
         concurrentChats={concurrentChats}
+        providerQuota={isAuxiliaryTargetUnavailable ? null : <ProviderQuota key={renderedSession.provider} api={withmateApi} providerId={renderedSession.provider} />}
       />
       <SessionFilesFeature
         ref={filesFeatureRef}

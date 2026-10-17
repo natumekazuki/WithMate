@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 
 import type {
   SessionMonitorContextMenuPoint,
@@ -16,6 +16,7 @@ import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
 import { ChatDockSplitter } from "../chat/chat-window.js";
 
 export type HomeMonitorContentProps = {
+  providerQuota?: ReactNode;
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
   auxiliaryDataState?: HomeMonitorAuxiliaryDataState;
@@ -95,6 +96,7 @@ function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
 }
 
 export function HomeMonitorContent({
+  providerQuota,
   runningEntries,
   nonRunningEntries,
   auxiliaryDataState = "ready",
@@ -303,6 +305,7 @@ export function HomeMonitorContent({
       className="home-monitor-body"
       aria-busy={isLoading}
     >
+      {providerQuota}
       {statusFeedback ? hasReadError ? (
         <LoadError message={statusFeedback} onRetry={onRetry} retryDisabled={isLoading} className="home-session-list-feedback" />
       ) : (

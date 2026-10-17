@@ -249,9 +249,9 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
 
 // @test-value v2
 // kind = "invariant"
-// claim = "ActionDock compact heightは展開時の外枠ではなくcompact rowの実測値から算出する"
+// claim = "ActionDock compact heightは展開時の外枠ではなくcompact rowと専用残量帯の実測値から算出する"
 // oracle = { type = "contract", ref = "ActionDock compact height layout contract" }
-// fault = "expanded outer heightをcompact heightとして採用し、レイアウト余白または表示位置を壊す"
+// fault = "expanded outer heightをcompact heightとして採用するか残量帯の高さを除外して操作列を切り落とす"
 // observable = "reported compact height"
 // observation_boundary = "component-behavior"
 // scope = "ActionDock compact height measurement"
@@ -285,7 +285,7 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
 
   let root: Root | null = null;
 
-  function Harness() {
+  function Harness({ withQuota = false }: { withQuota?: boolean }) {
     const {
       actionDockRef,
       sessionDockLayoutStyle,
@@ -306,6 +306,12 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
             className: "session-action-dock",
             style: { borderTop: "1px solid transparent", borderBottom: "1px solid transparent" },
           },
+          withQuota ? React.createElement("div", {
+            className: "session-provider-quota-strip",
+            ref: (node: HTMLDivElement | null) => {
+              if (node) node.getBoundingClientRect = () => ({ height: 28 } as DOMRect);
+            },
+          }) : null,
           React.createElement(
             "div",
             {
@@ -327,6 +333,8 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
     const layout = dom.window.document.querySelector<HTMLElement>("[data-testid=\"layout\"]");
     assert.ok(layout);
     assert.equal(layout.style.getPropertyValue("--session-action-dock-compact-height"), "48px");
+    await act(async () => root?.render(React.createElement(Harness, { key: "quota", withQuota: true })));
+    assert.equal(dom.window.document.querySelector<HTMLElement>('[data-testid="layout"]')?.style.getPropertyValue("--session-action-dock-compact-height"), "70px");
   } finally {
     if (root) {
       await act(async () => root?.unmount());

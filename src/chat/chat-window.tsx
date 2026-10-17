@@ -79,6 +79,7 @@ export type ChatWindowProps = Omit<
   terminalContent?: ReactNode;
   actionDockModeControl?: { mode: SessionActionDockMode; onChange(mode: SessionActionDockMode): void };
   composerProps: SessionComposerExpandedProps;
+  providerQuota?: ReactNode;
   additionalDirectoryListProps?: ChatAdditionalDirectoryListProps;
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
@@ -441,6 +442,7 @@ export function ChatWindow({
   terminalContent,
   actionDockModeControl,
   composerProps,
+  providerQuota,
   additionalDirectoryListProps,
   skillPickerProps,
   compactActionDockProps,
@@ -785,7 +787,7 @@ export function ChatWindow({
       concurrentTarget={concurrentChats?.target}
       actionDock={(
           <div
-            className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}
+            className={`session-action-dock${isActionDockExpanded ? "" : " compact"}${providerQuota ? " has-provider-quota" : ""}`}
             onClick={isActionDockExpanded ? undefined : (event) => {
               if (event.defaultPrevented || (event.target as Element).closest("button")) {
                 return;
@@ -794,6 +796,7 @@ export function ChatWindow({
               else compactActionDockProps.onExpand();
             }}
           >
+          {providerQuota ? <div className="session-provider-quota-strip" onClick={(event) => event.stopPropagation()}>{providerQuota}</div> : null}
           <div
             className={`session-action-dock-content session-action-dock-expanded-content${
               isActionDockExpanded && !isTerminalMode ? " is-active" : ""

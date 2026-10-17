@@ -17,6 +17,44 @@ function createService() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "共通残量UIのcacheOnly読取はCopilotもremote取得せず、既存の通常読取はstale時に更新できる"
+// oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md#共通の残量表示" }
+// fault = "cacheOnlyを無視してWindow追加でprovider取得を増やすか、通常のCopilot読取までcacheOnlyにする"
+// observable = "cache空時・stale時の返値とadapter呼出回数、通常読取後の返値"
+// observation_boundary = "public-boundary"
+// scope = "Main quota cacheOnly / Copilot refresh boundary"
+// lifecycle = "permanent"
+// impact = "Window数に比例したproviderアクセス、または既存Copilot残量更新の停止を招く"
+// distinction = "renderer mockではMainのremote取得抑止と通常経路の維持を観測できない"
+// @end-test-value
+test("quota cacheOnlyはCopilotのremote更新を増やさず通常readを維持する", async (t) => {
+  const service = createService();
+  t.after(() => service.dispose());
+  let calls = 0;
+  const fresh = { provider: "copilot", updatedAt: new Date().toISOString(), snapshots: [] };
+  const facade = new MainObservabilityFacade({
+    getSessionObservabilityService: () => service,
+    getAppSettings: () => createDefaultAppSettings(),
+    getProviderCodingAdapter: () => ({
+      composePrompt() { throw new Error("not used"); },
+      async invalidateSessionThread() {},
+      async invalidateAllSessionThreads() {},
+      async runSessionTurn() { throw new Error("not used"); },
+      getProviderQuotaTelemetry: async () => { calls++; return fresh; },
+    } satisfies ProviderCodingAdapter),
+    providerQuotaStaleTtlMs: 0,
+  });
+  assert.equal(await facade.getOrRefreshProviderQuotaTelemetry("copilot", { cacheOnly: true }), null);
+  const stale = { ...fresh, updatedAt: "2000-01-01T00:00:00Z" };
+  facade.setProviderQuotaTelemetry("copilot", stale);
+  assert.deepEqual(await facade.getOrRefreshProviderQuotaTelemetry("copilot", { cacheOnly: true }), stale);
+  assert.equal(calls, 0);
+  assert.deepEqual(await facade.getOrRefreshProviderQuotaTelemetry("copilot"), fresh);
+  assert.equal(calls, 1);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "有効providerだけを起動/設定変更時に取得し、無効化で停止し、Window取得はcache参照だけになる"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
 // fault = "無効providerを起動するか、認証変更で旧値を残すか、Window読取ごとに取得する"

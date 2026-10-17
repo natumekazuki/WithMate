@@ -50,10 +50,11 @@ export function createObservabilityApi(
     reportRendererLog(input) {
       reportRendererLog(ipcRenderer, input);
     },
-    getProviderQuotaTelemetry(providerId) {
+    getProviderQuotaTelemetry(providerId, options) {
       return ipcRenderer.invoke(
         channels.WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
         providerId,
+        options,
       );
     },
     getSessionContextTelemetry(sessionId) {

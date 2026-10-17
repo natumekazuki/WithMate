@@ -10,7 +10,17 @@ Mainはproviderごとの同時取得を重複抑止する。WithMateの認証設
 
 未取得は`null`、取得中は`loading`、成功は`ready`、失敗は`error`、契約枠の適用外は`unsupported`とする。失敗時も最終成功値とその`updatedAt`を保持し、成功前の`updatedAt`は`null`にする。失敗直後のturn終端などでは再試行せず、当該取得開始から5分後以降に再試行する。取得不能を使用率0・残量100%・無制限へ変換しない。raw errorや認証情報はtelemetryへ載せない。
 
-Copilotの件数snapshotと、Codex・Claudeの`rateLimits`を分ける。後者は取得元の窓ID、0〜100の使用率、取得できる期間・reset時刻を持ち、総件数や未返却の窓・resetを補完しない。Codex・Claudeの表示UIは接続していない。
+Copilotの件数snapshotと、Codex・Claudeの`rateLimits`を分ける。後者は取得元の窓ID、0〜100の使用率、取得できる期間・reset時刻を持ち、総件数や未返却の窓・resetを補完しない。
+
+## 共通の残量表示
+
+HomeのMonitorと独立Monitorは共通の`HomeMonitorContent`上部に、有効providerごとの詳細icon・名前・通常枠の残率を表示する。Running／Stoppedのscrollとは独立する。Session WindowはAction Dock上端の専用1行に、Main／Auxiliaryの現在の送信対象providerだけを表示する。Prompt／Terminal／compactで同じ場所を維持し、常時表示ではprovider名とRemaining labelを省く。詳細iconは先頭の固定幅領域に置き、割合と期間を折り返さない。
+
+`src/provider-usage/`がcache購読、残率projection、一覧と詳細popupを所有する。使用率は`100 - usedPercentage`へ変換し、既存の`remainingPercentage`はそのまま使う。不正値は`—`とし、0／100／無制限を推測しない。Codexの標準bucketとClaudeの5時間・週間を通常表示し、追加bucket・モデル別枠は詳細に分離する。CopilotはAI credits系を優先し、premium系等の主snapshotを通常表示する。返却されない期間を追加せず、別枠の合算をしない。
+
+詳細popupにはprovider、各枠の残率、取得できたreset、最終成功時刻を表示する。未取得・loading・適用外・失敗を識別し、失敗時に前回値があれば値と失敗indicatorを併記する。ClaudeはCLI側account枠で、Session認証と異なる可能性があることを明示する。詳細はkeyboardで開閉できる。
+
+新UIのsnapshotは`getProviderQuotaTelemetry(providerId, { cacheOnly: true })`で読み、購読通知を反映する。遅い初回snapshotで通知や送信先変更後の表示を巻き戻さない。Window追加・focus・詳細開閉に伴うremote取得やrendererの独自pollingは行わない。Copilotの既存Context表示向けsnapshot取得は従来のstale時refreshを維持する。
 
 - Codexは短命なApp Serverで`account/rateLimits/read`だけを呼び、thread・model turn・loginを作らない。複数bucketの応答を優先し、窓長は返却値を使う。WithMateまたは環境変数の`CODEX_API_KEY`が指定されている場合はChatGPT契約枠の適用外とし、既存ChatGPTログインへの切替取得をしない。[公式RPC仕様](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)に従う。
 - Claudeは固定SDKの`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`を空のstreaming inputで呼ぶ。モデルprompt、tools、MCP、hooks、session保存を使わず、managed設定がある場合は起動前に拒否する。5時間・週間・モデル別週間窓を投影し、`rate_limits_available: false`は適用外、有効な観測値のない不正応答は失敗とする。実験APIのため、固定SDK更新時には取得契約を再確認する。

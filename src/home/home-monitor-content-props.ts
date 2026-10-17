@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { HomeMonitorContentProps } from "./HomeMonitorContent.js";
 import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
 import type {
@@ -6,6 +7,7 @@ import type {
 } from "../../src-shared/window/withmate-window-types.js";
 
 export type HomeMonitorContentInput = {
+  providerQuota?: ReactNode;
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
@@ -23,6 +25,7 @@ export type HomeMonitorContentInput = {
 };
 
 export function buildHomeMonitorContentProps({
+  providerQuota,
   runningEntries,
   nonRunningEntries,
   auxiliaryDataState,
@@ -35,6 +38,7 @@ export function buildHomeMonitorContentProps({
   onShowContextMenu,
 }: HomeMonitorContentInput): HomeMonitorContentProps {
   return {
+    providerQuota,
     runningEntries,
     nonRunningEntries,
     auxiliaryDataState,
