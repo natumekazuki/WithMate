@@ -22,7 +22,7 @@ import { buildContextPaneProjection } from "../../src/chat/runtime/session-ui-pr
 import { buildMessageCollapseTargets, type MessageCollapseTarget } from "../../src/chat/conversation/session-message-collapse.js";
 import { buildLiveAssistantProjectionKey, buildMessageListProjection, type MessageListSource } from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
-import type { LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
+import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
 import type { Message, MessageArtifact } from "../../src-shared/session/session-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
@@ -1523,6 +1523,86 @@ test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移
     );
   } finally {
     await mounted.cleanup();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "質問で分割された本文のFindはsource/previewの一致番号を維持して前後の本文を強調・移動し、質問解決後も検索できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 全履歴Findのsource/preview検索意味とglobal ordinal" }
+// fault = "最初の本文断片しか検索しない、フォームの文字を数える、または置換中の質問分だけ後続本文の一致番号をずらす"
+// observable = "Find件数、CSS HighlightのRange内容と現在Rangeの所属本文、前後移動時のscrollIntoView対象"
+// observation_boundary = "component-behavior"
+// scope = "inline question message Find"
+// lifecycle = "permanent"
+// impact = "質問以降の検索結果に到達できず、会話の情報を見失う"
+// distinction = "既存Find testは質問による本文分割と質問原文の置換を通らない。2質問形式と2表示modeの短いDOM操作で公開検索契約を守る"
+// @end-test-value
+test("質問前後のFindは本文の一致番号で強調・移動し解決後も保持する", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+    add(range: Range) { this.ranges.push(range); return this; }
+  }
+  for (const kind of ["tool", "source"] as const) {
+    for (const messageViewMode of ["preview", "source"] as const) {
+      const before = "Before **needle**\n\n";
+      const question = kind === "source" ? "Which needle?\n\n" : "";
+      const text = `${before}${question}After **needle**`;
+      const request: LiveElicitationRequest = {
+        ...createLiveElicitationRequest(), kind: "question",
+        fields: [{ type: "text", name: "answer", title: "Which needle?", required: true }],
+      };
+      function Column(props: SessionMessageColumnProps) {
+        return React.createElement(SessionMessageColumn, {
+          ...props, messageKeys: ["body"], pendingResponseMessageKey: props.isRunning ? "body" : null,
+        });
+      }
+      const message: Message = { role: "assistant", text, elicitationRecords: [{
+        requestId: request.requestId, kind: "question", message: "needle",
+        fields: [{ title: "Which needle?", options: ["needle option"] }],
+        textRange: { start: before.length, end: before.length + question.length }, status: "pending",
+      }] };
+      const mounted = await mountSessionMessageColumn({
+        component: Column, messages: [message], isRunning: true,
+        liveElicitationRequest: request, messageViewMode,
+      });
+      try {
+        const highlights = new Map<string, TestHighlight>();
+        Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
+        Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+        let scrolledText = "";
+        mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () { scrolledText = this.closest(".rich-text")?.textContent ?? ""; };
+        await setMessageFindQuery(mounted, "needle");
+        const total = kind === "source" ? 3 : 2;
+        assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, `1/${total}`);
+        assert.deepEqual(highlights.get("withmate-find-match")?.ranges.map(range => range.toString()), ["needle", "needle"]);
+        assert.match(scrolledText, /Before/);
+        const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!;
+        const previous = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']")!;
+        for (let step = 1; step < total; step += 1) await act(async () => next.click());
+        const assertAfter = () => {
+          assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, `${total}/${total}`);
+          const range = highlights.get("withmate-find-current")?.ranges[0];
+          assert.equal(range?.toString(), "needle");
+          assert.ok(range);
+          const prefix = mounted.dom.window.document.createRange();
+          prefix.selectNodeContents(range.startContainer.parentElement!.closest(".rich-text")!);
+          prefix.setEnd(range.startContainer, range.startOffset);
+          assert.match(prefix.toString(), /After/);
+          assert.match(scrolledText, /After/);
+        };
+        assertAfter();
+        for (let step = 1; step < total; step += 1) await act(async () => previous.click());
+        assert.match(scrolledText, /Before/);
+        for (let step = 1; step < total; step += 1) await act(async () => next.click());
+        await mounted.rerender({
+          isRunning: false, liveElicitationRequest: null,
+          messages: [{ ...message, elicitationRecords: message.elicitationRecords!.map(record => ({ ...record, status: "answered" })) }],
+        });
+        assertAfter();
+        assert.equal(highlights.get("withmate-find-match")?.ranges.length, total);
+      } finally { await mounted.cleanup(); }
+    }
   }
 });
 
@@ -3056,10 +3136,10 @@ test("ConversationMessageColumn は履歴スクロールを挟んでも elicitat
 
 // @test-value v2
 // kind = "contract"
-// claim = "会話pageの移動は同じelicitation requestの未送信回答を保持して送信する"
+// claim = "質問の会話pageを離れて戻っても同じrequestの未送信回答を保持し、質問は元の会話位置で送信できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Elicitationの入力待ち" }
 // fault = "最新pageから過去pageへ移動した際に未送信回答を初期値へ戻す"
-// observable = "過去pageのDOM内select値とSubmit応答payload"
+// observable = "過去pageでのフォーム非表示と最新pageへ戻ったDOM内select値、Submit応答payload"
 // observation_boundary = "component-behavior"
 // scope = "conversation-paging-elicitation"
 // lifecycle = "permanent"
@@ -3082,6 +3162,8 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
     assert.ok(select);
     await act(async () => { select.value = "feature"; select.dispatchEvent(new mounted.dom.window.Event("change", { bubbles: true })); });
     await mounted.rerender({ messages: createMessages(60).map((message) => ({ ...message, text: `Earlier ${message.text}` })), isRunning: false });
+    assert.equal(mounted.container.querySelector(".live-elicitation-card"), null, "過去pageの先頭へ質問を移動しない");
+    await mounted.rerender({ messages: createMessages(60), isRunning: true });
     const after = mounted.container.querySelector<HTMLSelectElement>(".live-elicitation-card select");
     assert.ok(after);
     assert.equal(after.value, "feature");
@@ -3154,6 +3236,50 @@ test("ConversationMessageColumn は送信actionの待機表示を履歴往復と
     assert.equal(container.querySelectorAll(".live-elicitation-card .button-content-spinner").length, 0);
     assert.match(container.textContent ?? "", /Response was not accepted\./);
   } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryの実会話投影で質問を該当位置へ一度だけ表示し、回答後と保存履歴で元本文と構造化候補を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "共通質問componentへの配線漏れにより末尾へ重複表示するか、後続本文や解決済みの質問を失う"
+// observable = "実ConversationMessageColumnの質問前後のDOM順序、フォーム数、解決後および保存履歴の本文・候補"
+// observation_boundary = "component-behavior"
+// scope = "Main/Auxiliary inline question integration"
+// lifecycle = "permanent"
+// impact = "会話中の質問位置と文脈が変わり、質問に回答できない"
+// distinction = "InlineQuestionContent単体の描画はconversationのowner判定とlive recordの受け渡しを通らない"
+// @end-test-value
+test("Main/Auxiliaryの会話へ質問範囲を接続し回答後に本文へ戻す", async () => {
+  for (const messageSourceKind of ["session", "auxiliary"] as const) {
+    const request: LiveElicitationRequest = { ...createLiveElicitationRequest(), kind: "question", fields: [{ type: "select", name: "branch", title: "Which branch?", required: true, allowFreeText: true, options: [{ label: "Main", value: "Main" }, { label: "Feature", value: "Feature" }] }] };
+    const record: ElicitationRecord = { requestId: request.requestId, kind: "question", message: "Question", fields: [{ title: "Which branch?", options: ["Main", "Feature"] }], textRange: { start: 8, end: 21 }, status: "answered" };
+    function Column(props: SessionMessageColumnProps) {
+      return React.createElement(ConversationMessageColumn, {
+        session: { id: messageSourceKind, messages: props.messages, runState: "running" }, messageSourceKind, enabled: true,
+        baseProps: { ...props, liveElicitationRecords: props.isRunning ? [{ ...record, status: props.liveElicitationRequest ? "pending" : "answered" }] : [] },
+      });
+    }
+    const mounted = await mountSessionMessageColumn({ component: Column, messages: [{ role: "user", text: "Start" }], isRunning: true, liveRunAssistantText: "Before\n\nWhich branch?\n\nAfter", liveElicitationRequest: request });
+    try {
+      const body = mounted.container.querySelector('.message-row.assistant [data-message-body]');
+      assert.ok(body);
+      assert.deepEqual([...body.children].map(node => node.textContent?.trim()), ["Before", "Which branch?MainFeatureCustom AnswerCloseSubmit", "After"]);
+      assert.equal(mounted.container.querySelectorAll('.live-elicitation-card').length, 1);
+      await mounted.rerender({ liveElicitationRequest: null });
+      const resolvedBody = mounted.container.querySelector('.message-row.assistant [data-message-body]');
+      assert.ok(resolvedBody);
+      assert.equal(resolvedBody.querySelectorAll('input,button').length, 0);
+      assert.match(resolvedBody.textContent ?? "", /Before\s*Which branch\?\s*MainFeature\s*After/);
+      await mounted.rerender({ isRunning: false, liveRunAssistantText: "", liveElicitationRequest: null, messages: [{ role: "assistant", text: "Before\n\nWhich branch?\n\nAfter", elicitationRecords: [record] }] });
+      const history = mounted.container.querySelector('.message-row.assistant [data-message-body]');
+      assert.ok(history);
+      assert.match(history.textContent ?? "", /Before\s*Which branch\?\s*MainFeature\s*After/);
+      assert.equal(history.textContent?.split("Which branch?").length, 2);
+      assert.deepEqual([...history.querySelectorAll(".elicitation-record-options li")].map(node => node.textContent), ["Main", "Feature"]);
+      assert.equal(history.querySelectorAll("input,button,select,textarea").length, 0);
+    } finally { await mounted.cleanup(); }
+  }
 });
 
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {

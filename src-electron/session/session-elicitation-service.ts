@@ -11,19 +11,23 @@ type PendingElicitationRequest = {
 
 type SessionElicitationServiceOptions = {
   notifyQuestion?: (sessionId: string, signal: AbortSignal) => void;
-  sendUserMessage?: (sessionId: string, turnId: string, message: string) => Promise<void>;
+  sendUserMessage?: (sessionId: string, turnId: string, message: string, answer: string) => Promise<void>;
   updateLiveSessionRun: (
     sessionId: string,
     recipe: (current: LiveSessionRunState) => LiveSessionRunState,
   ) => LiveSessionRunState | null;
 };
 
-function questionAnswerMessage(request: LiveElicitationRequest, response: LiveElicitationResponse): string {
-  return request.fields.map((field) => {
+function questionAnswerMessage(request: LiveElicitationRequest, response: LiveElicitationResponse): { message: string; answer: string } {
+  const answers = request.fields.map((field) => {
     const value = response.content?.[field.name];
     if (typeof value !== "string" || !value.trim()) throw new Error("An answer is required for each question.");
-    return `${field.title}\n${value.trim()}`;
-  }).join("\n\n");
+    return { question: field.title, answer: value.trim() };
+  });
+  return {
+    message: answers.map(({ question, answer }) => `【質問】\n${question}\n【回答】\n${answer}`).join("\n\n"),
+    answer: answers.map(({ answer }) => answer).join("\n\n"),
+  };
 }
 
 export class SessionElicitationService {
@@ -49,12 +53,12 @@ export class SessionElicitationService {
     if (pending.request.delivery === "user-message" && response.action === "accept") {
       const { turnId } = pending.request;
       if (!turnId || !this.options.sendUserMessage) throw new Error("Question answering is unavailable.");
-      const message = questionAnswerMessage(pending.request, response);
+      const { message, answer } = questionAnswerMessage(pending.request, response);
       if (!message) throw new Error("The question has no answer fields.");
       pending.sending = true;
       return Promise.resolve().then(() => {
         if (pending.expired) throw new Error("The input request no longer exists.");
-        return this.options.sendUserMessage!(sessionId, turnId, message);
+        return this.options.sendUserMessage!(sessionId, turnId, message, answer);
       }).then(() => {
         pending.settle(response, "answered");
       }, (error: unknown) => {
@@ -115,24 +119,32 @@ export class SessionElicitationService {
     const pending: PendingElicitationRequest = { request, response, settle, expire, sending: false, expired: false };
     requests.set(request.requestId, pending);
     signal.addEventListener("abort", expire, { once: true });
-    this.options.updateLiveSessionRun(sessionId, (current) => ({
-      ...current,
-      elicitationRequest: [...requests.values()][0]?.request ?? null,
-      elicitationRequests: [...requests.values()].filter((item) => !item.expired).map((item) => item.request),
-      ...(request.mode === "form" ? {
-        elicitationRecords: [...current.elicitationRecords ?? [], {
-          requestId: request.requestId,
-          message: request.message,
-          fields: request.fields.map((field) => ({
-            title: field.title,
-            ...(field.description ? { description: field.description } : {}),
-            ...(field.type === "select" || field.type === "multi-select"
-              ? { options: field.options.map((option) => option.label) } : {}),
-          })),
-          status: "pending" as const,
-        }],
-      } : {}),
-    }));
+    this.options.updateLiveSessionRun(sessionId, (current) => {
+      const range = current.assistantQuestionRanges?.find((entry) => entry.itemId === request.sourceItemId);
+      const position = request.textPosition ?? current.assistantText.length;
+      return {
+        ...current,
+        elicitationRequest: [...requests.values()][0]?.request ?? null,
+        elicitationRequests: [...requests.values()].filter((item) => !item.expired).map((item) => item.request),
+        ...(request.mode === "form" ? {
+          elicitationRecords: [...current.elicitationRecords ?? [], {
+            requestId: request.requestId,
+            ...(request.kind ? { kind: request.kind } : {}),
+            ...(request.sourceItemId ? { sourceItemId: request.sourceItemId } : {}),
+            ...(range ? { textRange: { start: range.start, end: range.end } }
+              : request.sourceItemId ? {} : { textRange: { start: position, end: position } }),
+            message: request.message,
+            fields: request.fields.map((field) => ({
+              title: field.title,
+              ...(field.description ? { description: field.description } : {}),
+              ...(field.type === "select" || field.type === "multi-select"
+                ? { options: field.options.map((option) => option.label) } : {}),
+            })),
+            status: "pending" as const,
+          }],
+        } : {}),
+      };
+    });
     if (request.provider === "codex" && request.kind === "question") {
       this.options.notifyQuestion?.(sessionId, notificationController.signal);
     }

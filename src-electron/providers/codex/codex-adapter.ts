@@ -1179,7 +1179,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
             });
             continue;
           }
-          interactions.accept(event);
+          if (event.method === "item/tool/requestUserInput" || event.method === "mcpServer/elicitation/request") {
+            flushEvents();
+            await Promise.all(pendingEvents);
+            await progress(true);
+            const textPosition = await this.projection.call<number>(projectionId, { type: "question-position" });
+            interactions.accept({ ...event, textPosition });
+          } else {
+            interactions.accept(event);
+          }
           continue;
         }
         if (event.method === "serverRequest/resolved") {
@@ -1198,11 +1206,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
         // Prior-turn token usage establishes the baseline; other foreign-turn data has no projection use.
         if (typeof params.threadId === "string" && params.threadId !== state.threadId
           || !inScope && event.method !== "thread/tokenUsage/updated") continue;
+        eventBatch.push({ method: event.method, params: event.params });
         if ((event.method === "item/started" || event.method === "item/completed")
           && inScope && state.turnId && sessionInput?.onElicitationRequest && !asyncQuestionSignal.aborted) {
           const request = buildCodexAsyncQuestionRequest(params.item, state.turnId, redactor.sanitizeText);
           if (request && !seenAsyncQuestions.has(request.requestId)) {
             seenAsyncQuestions.add(request.requestId);
+            flushEvents();
+            await Promise.all(pendingEvents);
+            await progress(true);
             const failQuestion = (error: unknown) => {
               if (asyncQuestionSignal.aborted) return;
               interactionError = error instanceof Error ? error : new Error(String(error));
@@ -1216,7 +1228,6 @@ export class CodexAdapter implements ProviderTurnAdapter {
             }
           }
         }
-        eventBatch.push({ method: event.method, params: event.params });
         if (event.method === "turn/completed" && inScope && typeof turn.id === "string" && typeof turn.status === "string") {
           state.turnCompleted = true;
           state.terminalStatus = turn.status;
@@ -1524,6 +1535,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const {
       assistantText: itemAssistantText,
       lastNonEmptyAssistantMessageText: itemLastNonEmptyAssistantMessageText,
+      assistantQuestionRanges,
     } = diagnostics.projection ?? collectCodexAssistantResponseFromItems(finalItems);
     const finalAssistantText =
       itemAssistantText.trim().length > 0
@@ -1592,6 +1604,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     return {
       threadId,
       assistantText: redactor.sanitizeText(finalAssistantText),
+      assistantQuestionRanges,
       lastNonEmptyAssistantMessageText: redactor.sanitizeText(
         lastNonEmptyAssistantMessageText,
       ),

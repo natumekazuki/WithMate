@@ -8,6 +8,7 @@ export type CodexInteractionRequest = {
   id: string | number;
   method: string;
   params: unknown;
+  textPosition?: number;
   respond(result: unknown): Promise<void>;
   reject(error: { code: number; message: string; data?: unknown }): Promise<void>;
 };
@@ -53,7 +54,7 @@ export function buildCodexAsyncQuestionRequest(
       : { ...base, type: "text" });
   }
   return { requestId: `async:${turnId}:${item.id}`, provider: "codex", kind: "question", mode: "form",
-    message: "Codex has a question", blocking: false, delivery: "user-message", turnId, fields };
+    message: "Codex has a question", sourceItemId: text(item.id), blocking: false, delivery: "user-message", turnId, fields };
 }
 
 function abortRace<T>(value: Promise<T> | T, signal: AbortSignal): Promise<T> {
@@ -283,13 +284,16 @@ export class CodexTurnInteractions {
       await reply({ action: "decline", content: null });
       return;
     }
-    const display: LiveElicitationRequest = { ...projected, message: this.redact(projected.message), source: projected.source ? this.redact(projected.source) : undefined,
+    const display: LiveElicitationRequest = { ...projected, textPosition: request.textPosition, message: this.redact(projected.message), source: projected.source ? this.redact(projected.source) : undefined,
       fields: projected.fields.map((field) => ({ ...field, title: this.redact(field.title), description: field.description ? this.redact(field.description) : undefined,
         ...((field.type === "select" || field.type === "multi-select") ? { options: field.options.map((option) => ({ ...option, label: this.redact(option.label) })) } : {}) })) };
     const response = await abortRace(this.input.onElicitationRequest(display, signal), signal);
     if (!["accept", "decline", "cancel"].includes(response.action)) throw new Error("Invalid interaction action");
     if (native) {
-      if (response.action !== "accept") throw new Error("Question not answered");
+      if (response.action !== "accept") {
+        await reply({ answers: {} });
+        return;
+      }
       if (!validContent(projected.fields, response)) throw new Error("Invalid question answer");
       const answers: Record<string, { answers: string[] }> = Object.create(null);
       for (const question of params.questions as Record<string, unknown>[]) {

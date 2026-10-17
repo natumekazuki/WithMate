@@ -134,6 +134,7 @@ export type RunBackgroundStructuredPromptResult<TOutput = unknown> = {
 export type RunSessionTurnResult = {
   threadId: string | null;
   assistantText: string;
+  assistantQuestionRanges?: LiveSessionRunState["assistantQuestionRanges"];
   lastNonEmptyAssistantMessageText?: string;
   artifact?: MessageArtifact;
   providerMetadata?: ProviderDiagnosticMetadata[];

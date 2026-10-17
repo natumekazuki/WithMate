@@ -17,7 +17,7 @@ import type { GlossaryAnnotationMatcher } from "../../glossary/glossary-annotati
 import { approvalModeLabel, CharacterAvatar, liveRunStepStatusLabel, operationTypeLabel } from "../../ui/ui-utils.js";
 
 import { SessionContentFindBar } from "./session-content-find-bar.js";
-import { ElicitationRecords, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
+import { InlineQuestionContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
@@ -462,6 +462,7 @@ export function SessionMessageColumn({
   elicitationInputAvailable,
   elicitationActionRequestId,
   elicitationAction,
+  liveRunAssistantText,
   hasLiveRunAssistantText,
   liveRunErrorMessage,
   pendingMessageText = "",
@@ -587,6 +588,7 @@ export function SessionMessageColumn({
   const hasElicitationRequests = liveElicitationRequests ? liveElicitationRequests.length > 0 : liveElicitationRequest !== null;
   const persistedQuestionIds = new Set(messages.flatMap((message) => message.elicitationRecords?.map((record) => record.requestId) ?? []));
   const visibleLiveElicitationRecords = liveElicitationRecords?.filter((record) => !persistedQuestionIds.has(record.requestId));
+  const activeQuestions = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
   const elicitationMessageIndex = hasElicitationRequests ? pendingResponseMessageIndex : -1;
   const extractMessageRange = useCallback((range: Range) => {
     const indexes = defaultRangeExtractor(range);
@@ -996,15 +998,23 @@ export function SessionMessageColumn({
       let pendingHighlightsAppended = false;
       for (const row of messageListElement.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
         const messageIndex = Number(row.dataset.index);
-        const richText = row.querySelector<HTMLElement>("[data-message-body=\"true\"] > .rich-text");
-        if (!Number.isInteger(messageIndex) || !richText) {
+        const body = row.querySelector<HTMLElement>("[data-message-body=\"true\"]:not([data-pending-message-body])");
+        if (!Number.isInteger(messageIndex) || !body) {
           continue;
         }
-        const index = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
-        const matches = findRenderedTextMatchOffsets(index, findQuery);
-        appendRenderedTextMatches(resolvedMatches, index, matches);
-        if (current?.kind === "message" && current.messageIndex === messageIndex) {
-          resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, current.occurrenceIndex);
+        for (const richText of body.querySelectorAll<HTMLElement>(":scope > .rich-text")) {
+          const index = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+          const matches = findRenderedTextMatchOffsets(index, findQuery);
+          appendRenderedTextMatches(resolvedMatches, index, matches);
+          if (current?.kind === "message" && current.messageIndex === messageIndex) {
+            // Count the original prefix, including a question currently replaced by controls.
+            // Form labels and inserted tool-only questions do not belong to the message body.
+            const sourceStart = Number(richText.dataset.sourceStart ?? 0);
+            const prefix = sourceStart > 0 ? messages[messageIndex].text.slice(0, sourceStart) : "";
+            const prefixText = messageViewMode === "source" || !prefix ? prefix : projectMessageRenderedSearchText(prefix);
+            const precedingMatches = findTextMatches(prefixText, findQuery).length;
+            resolvedCurrentMatch ??= resolveRenderedTextMatch(index, matches, current.occurrenceIndex - precedingMatches);
+          }
         }
         if (messageIndex === pendingMessageGroupEndIndex) {
           pendingHighlightsAppended = appendPendingHighlights(row);
@@ -1030,6 +1040,8 @@ export function SessionMessageColumn({
     findQuery,
     isContentActive,
     messageFindMatches,
+    messages,
+    messageViewMode,
     selectedFindMatch?.kind,
     selectedFindMatch?.occurrenceIndex,
     selectedFindMatch?.kind === "message" ? selectedFindMatch.messageIndex : -1,
@@ -1116,9 +1128,7 @@ export function SessionMessageColumn({
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
         approvalActionDecision={approvalActionDecision}
-        liveElicitationRequest={liveElicitationRequest}
-        liveElicitationRequests={liveElicitationRequests}
-        elicitationRecords={visibleLiveElicitationRecords}
+        liveElicitationRequest={null}
         inputAvailable={elicitationInputAvailable}
         drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
@@ -1126,6 +1136,21 @@ export function SessionMessageColumn({
         onResolveLiveApproval={onResolveLiveApproval}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
+      /> : null}
+      {pendingResponseMessageIndex < 0 ? <InlineQuestionContent
+        text={liveRunAssistantText}
+        records={visibleLiveElicitationRecords}
+        requests={activeQuestions}
+        inputAvailable={elicitationInputAvailable}
+        drafts={elicitationDrafts}
+        elicitationActionRequestId={elicitationActionRequestId}
+        elicitationAction={elicitationAction}
+        onResolveLiveElicitation={onResolveLiveElicitation}
+        onOpenPath={onOpenPath}
+        renderText={(text, key, sourceStart) => <MessageRichText key={key} text={text} sourceStart={sourceStart} isStreaming={isRunning}
+          resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath}
+          markdownLinkFileContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+          glossaryAnnotationScopeKey={`${sessionId}:pending`} onActivateGlossaryEntry={onActivateGlossaryEntry} />}
       /> : null}
       {hasPendingMessageText ? (
         <div
@@ -1190,9 +1215,7 @@ export function SessionMessageColumn({
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
         approvalActionDecision={approvalActionDecision}
-        liveElicitationRequest={liveElicitationRequest}
-        liveElicitationRequests={liveElicitationRequests}
-        elicitationRecords={visibleLiveElicitationRecords}
+        liveElicitationRequest={null}
         inputAvailable={elicitationInputAvailable}
         drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
@@ -1264,7 +1287,8 @@ export function SessionMessageColumn({
             const messageCollapseTarget = messageCollapseTargetByKey.get(messageKey);
             const isMessageCollapsed = !!messageCollapseTarget && collapsedMessageKeys.has(messageKey);
             const isFindMatch = findMatchMessageIndexes.has(absoluteIndex);
-            const shouldRenderFullMessage = !isMessageCollapsed || (findOpen && hasFindQuery && isFindMatch);
+            const shouldRenderFullMessage = !isMessageCollapsed || (findOpen && hasFindQuery && isFindMatch)
+              || (hasElicitationRequests && absoluteIndex === pendingResponseMessageIndex);
             const messageBodyId = `message-body-${messageKey.replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
             const messageCollapseLabel = isMessageCollapsed ? "Expand message" : "Collapse message";
             const isMessageBookmarked = messageCollapseTarget?.isBookmarked === true;
@@ -1380,17 +1404,30 @@ export function SessionMessageColumn({
                         data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
                       >
                         {shouldRenderFullMessage ? (
-                          <MessageRichText
-                            resolveImageSource={resolveImageSource}
+                          <InlineQuestionContent
                             text={message.text}
-                            isStreaming={isRunning && absoluteIndex === pendingResponseMessageIndex}
-                            forceFullRender={findOpen && hasFindQuery}
-                            displayMode={messageViewMode}
+                            records={absoluteIndex === pendingResponseMessageIndex ? [...message.elicitationRecords ?? [], ...visibleLiveElicitationRecords ?? []] : message.elicitationRecords}
+                            requests={absoluteIndex === pendingResponseMessageIndex ? activeQuestions : []}
+                            inputAvailable={elicitationInputAvailable}
+                            drafts={elicitationDrafts}
+                            elicitationActionRequestId={elicitationActionRequestId}
+                            elicitationAction={elicitationAction}
+                            onResolveLiveElicitation={onResolveLiveElicitation}
                             onOpenPath={onOpenPath}
-                            markdownLinkFileContext={markdownLinkFileContext}
-                            glossaryAnnotationMatcher={glossaryAnnotationMatcher}
-                            glossaryAnnotationScopeKey={messageKey}
-                            onActivateGlossaryEntry={onActivateGlossaryEntry}
+                            renderText={(text, key, sourceStart) => <MessageRichText
+                              key={key}
+                              sourceStart={sourceStart}
+                              resolveImageSource={resolveImageSource}
+                              text={text}
+                              isStreaming={isRunning && absoluteIndex === pendingResponseMessageIndex}
+                              forceFullRender={findOpen && hasFindQuery}
+                              displayMode={messageViewMode}
+                              onOpenPath={onOpenPath}
+                              markdownLinkFileContext={markdownLinkFileContext}
+                              glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+                              glossaryAnnotationScopeKey={messageKey}
+                              onActivateGlossaryEntry={onActivateGlossaryEntry}
+                            />}
                           />
                         ) : (
                           <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
@@ -1398,7 +1435,6 @@ export function SessionMessageColumn({
                       </div>
                     </div>
 
-                    {shouldRenderFullMessage ? <ElicitationRecords records={message.elicitationRecords} /> : null}
                     {artifact ? (
                       <section className="artifact-shell">
                       {artifactExpanded ? (

@@ -53,10 +53,13 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## Question Forms
 
-- Main／Auxiliaryとも、有効な入力要求だけを既存formで操作できる。同じturnに複数届いた質問は個別のformとし、他の質問の受信や通常チャットの割り込みで未送信回答を消さない。
-- Codexの非同期質問は選択肢と自由入力を表示し、選択肢がない場合は自由入力だけにする。最初の候補は選択するが、自動送信はしない。`Submit`は質問と回答を現在turnへの通常追加入力として送る。入力を受け付けないturnでは送信できず、次turnへ自動振替しない。RPC質問の回答は元のrequestへの応答とする。
+- Main／Auxiliaryとも、有効な構造化入力要求を会話内で操作する。Codexの非同期質問はsource item IDに対応する本文範囲をformへ置き換え、通常本文から質問を推測しない。本文を持たない要求は受信時点の応答本文の後ろへ挿入し、後続本文より前の位置を保持する。
+- 通常の質問は質問文、選択肢、`Custom Answer`を直接表示し、受付状態の見出しは置かない。選択肢がない場合は自由入力だけにする。Codexの非同期質問は最初の候補を選択するが、自動送信はしない。nativeの回答制約とMCPの厳密schema・secret fieldは維持する。
+- 非同期質問の`Submit`は`【質問】`、質問原文、`【回答】`、回答をそれぞれ改行で区切って現在turnへ通常追加入力として送る。複数質問は質問・回答の組を空行で連結する。UI事情の説明は加えず、チャットのuser messageには回答だけを保存・表示する。入力を受け付けないturnでは送信できず、次turnへ自動振替しない。RPC質問の回答は元のrequestへの構造化応答とする。
+- 同じturnの複数質問は個別formとし、他の質問の受信、通常チャット割り込み、履歴スクロールで未送信回答を消さない。過去pageへ移動した間は質問を別の位置へ移さず、元のpageへ戻った時にdraftを復元する。
 - 送信中は重複操作を止め、受付失敗時は有効なformと入力値を保持してerrorを示す。通常チャットの本文からform回答を推測せず、通常割り込みだけでは回答済みにしない。
-- 回答・拒否・Close・要求失効・turn終了後は質問文と選択肢をチャットへ残し、操作を取り除く。formで回答を受け付けた記録は`Answer Submitted`、それ以外は`No Form Response`と表示する。通常チャットで回答したかどうかは判定しない。
+- 回答・拒否・Close・要求失効・turn終了後はformを閉じ、元の質問文と選択肢を通常の会話として残す。回答済み等の状態ラベルは表示しない。通常チャットで回答したかどうかは判定しない。
+- 通常質問の操作は`Close / Submit`とし、Closeは質問だけを終了する。Codex nativeでは空の`answers`を返し、Claudeでは質問toolを拒否してturn自体は中断しない。turn停止は既存のCancelから行う。MCP formは`Reject / Close / Submit`、URL要求は`Reject / Close / Complete`を維持する。
 - 終端時の記録は通常assistant messageへ保存し、次turnや会話再表示でも操作を復元しない。記録にはformの入力値・既定値を保存しない。非同期回答を受け付けた本文は通常user messageとして保存する。強制終了前のlive formや未送信回答の復元は行わない。
 
 ## UI Implementation Boundary
@@ -388,7 +391,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 処理中表示の所属は、投影が会話ID・thread・メッセージ位置から生成するmessage keyで識別する。保存済み本文とlive本文が異なる場合も対象の応答枠を使い、本文一致や最後のassistantから推測しない。Main／Auxiliaryで所属を分離し、完了・失敗・キャンセル後は本文を重複させず処理中表示を消す
 - pending bubble には provider-native pending item を差し込める
   - `approvalRequest`: `Allow Once / Reject`
-  - `elicitationRequest`: form の `Submit` または URL completion の `Complete` と、`Reject / Close`
+  - `elicitationRequest`: 会話内の[Question Forms](#question-forms)。通常質問は`Close / Submit`、MCPは`Reject / Close`とformの`Submit`またはURL completionの`Complete`
   - Elicitationの入力待ちでは、応答行が履歴の表示範囲外へ出ても同一requestの未送信回答を保持する。入力待ちの応答行だけを仮想化の描画対象に残し、requestの解決・run終了後は通常の描画範囲へ戻す。異なるrequestへ回答を持ち越さない
   - Approval / Elicitation の解決中は既存 pending item 内の spinner と `aria-busy` で待機を示し、同じ対象の状態文を重複表示しない
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
@@ -427,7 +430,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Codexの現在Turnが入力受付可能な間はチャットの予約項目に `Steer` を表示する。捕捉した本文・添付を同じTurnへ一度だけ送り、開始準備中・取消中・終了後の操作を新Turnへ振り替えない。追加入力は実行中Turnの設定を維持する。独立した追加入力shortcutは現在のComposer下書きを直接送り、通常Sendとは混在させない
 - 予約は通常のuser bubbleとして現在Turnの応答より後へ受付順に置く。本文を主役にし、下部に右寄せの個別`Cancel`と、利用可能な時だけ`Steer`を添える。待機順や開始・実行中の状態文字は表示しない。空queueに専用sectionは出さず、通常履歴と別のreceipt一覧や重複本文も表示しない。狭幅では操作を折り返し、本文を縮小しない
 - 失敗・結果不明は対象bubbleに状態と理由を示し、必要な回復操作だけを近接表示する。結果不明の`Release Later Turns`は元要求を再実行しない。queue取得・操作の失敗は取得済み本文を保ち、理由と`Retry Queue`を表示する。受付応答が不明ならComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。受付ACKは一致するdraft revisionだけを消す
-- 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は既存のElicitation formで回答し、secret textはpassword inputで扱う。nonblockingの質問は `Input Requested` とし、必須待ちと区別して応答生成中のstatusを維持する
+- 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は会話内のQuestion Formsで回答し、secret textはpassword inputで扱う。nonblockingの質問も受付状態の見出しは置かず、必須待ちと区別して応答生成中のstatusを維持する
 - Mainの取消受付後は同じ位置の`Cancel`をdisabledとbusy stateにし、共通ボタン規約に従ってspinnerだけを表示する。取消終了待ちでも予約受付は可能だが、現在Turnへの追加入力と新しい実行開始は許可しない。保存済みSessionがidleになってもlive取消状態を優先し、元処理と必要な終了処理の解放通知後に後続の実行を開始する。
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
