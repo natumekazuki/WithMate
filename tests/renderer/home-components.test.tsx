@@ -15,7 +15,7 @@ import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
 import type { HomeSessionSummary, SessionSummary } from "../../src-shared/session/session-state.js";
-import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
+import { HomeMateSetupPanel, type MateAvatarAction } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
@@ -444,7 +444,7 @@ describe("HomeMateSetupPanel", () => {
     displayName?: string;
     mateDisplayName?: string | null;
     mateAvatarFilePath?: string | null;
-    avatarUpdating?: boolean;
+    avatarAction?: MateAvatarAction;
     onSubmit?: () => void;
     onCancel?: () => void;
     onOpenSettings?: () => void;
@@ -455,7 +455,7 @@ describe("HomeMateSetupPanel", () => {
       mode: params?.mode,
       displayName: params?.displayName ?? "Your Mate",
       creating: params?.creating ?? false,
-      avatarUpdating: params?.avatarUpdating,
+      avatarAction: params?.avatarAction,
       feedback: params?.feedback ?? "",
       mateDisplayName: params?.mateDisplayName ?? null,
       mateAvatarFilePath: params?.mateAvatarFilePath,
@@ -649,7 +649,7 @@ describe("HomeMateSetupPanel", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Home Mate setup edit modeはiconの選択と解除操作をcallbackへ渡す"
-  // oracle = { type = "contract", ref = "HomeMateSetupPanel avatar controls contract" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Home Window" }
   // fault = "avatar選択または解除の操作がcallbackに届かない"
   // observable = "selected/cancelled counters"
   // observation_boundary = "component-behavior"
@@ -678,7 +678,7 @@ describe("HomeMateSetupPanel", () => {
     )[0];
     const clearButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Clear",
+      (element) => element.type === "button" && element.props["aria-label"] === "Clear Avatar",
     )[0];
 
     assert.ok(html.includes("Avatar"));

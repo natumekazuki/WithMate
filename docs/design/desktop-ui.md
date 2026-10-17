@@ -101,6 +101,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 2 カラムの外側とMonitorのRunning／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
 - `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
+- Mate ProfileのAvatar編集では、`Select Image`と`Clear`の実行した操作だけをbusy表示にし、処理中は両操作を無効化する。Mate保存中も両操作を無効化するが、Avatar更新中とは表示を区別する。Mate未作成・Profile利用不可ではAvatar編集を提供しない。画像選択のキャンセルと更新失敗では元のAvatarを保持して操作可能状態へ戻し、成功時は取得したProfileを反映する。Avatarがないときは`Clear`を表示しない。
 - `Monitor`
   - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
   - 初期表示は `Monitor`
