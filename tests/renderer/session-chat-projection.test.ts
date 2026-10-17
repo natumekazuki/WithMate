@@ -3,8 +3,17 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
+import { fileURLToPath } from "node:url";
+
+import { createWithMateWindowApi } from "../../src-electron/preload/preload-api.js";
+import { registerSessionQueryHandlers } from "../../src-electron/ipc/session-query.js";
+import { WorkspaceDirectoryValidationService } from "../../src-electron/files/workspace-directory-validation-service.js";
+import { WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
+import { selectAdditionalDirectoryPath } from "../../src/chat/composer/session-composer-paths.js";
+import { buildSessionWithAddedAdditionalDirectory } from "../../src-shared/settings/additional-directory-state.js";
+import { runAddAuxiliaryAdditionalDirectoryOperationWithApi } from "../../src/chat/auxiliary/auxiliary-additional-directory-operation.js";
 
 import {
   useSessionComposerFeature,
@@ -174,6 +183,7 @@ test("session header owner は auxiliary の parent 操作を隠し action callb
   }
 
   try {
+    const { createRoot } = await import("react-dom/client");
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement(Harness));
@@ -407,6 +417,7 @@ async function withReactDom<T>(callback: (root: Root) => Promise<T>): Promise<T>
     PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
   });
 
+  const { createRoot } = await import("react-dom/client");
   const root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
   try {
     return await callback(root);
@@ -653,6 +664,101 @@ test("context pane owner は runtime/composition 経由で ChatWindow の Latest
     assert.match(html, /session-context-pane/);
     assert.match(html, /Latest Command/);
     assert.match(html, /Get-ChildItem C:\/workspace/);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Mainと異なるIDのAuxiliaryでも実composerの事前検証と追加時再検証は親WindowのSession IDを使い、追加先の会話を混線させない。別Windowからの検証は拒否する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Add Directory By Path; docs/manual-test-checklist.md MT-023D4; docs/design/electron-window-runtime.md MainIpcRegistration" }
+// fault = "表示中のAuxiliary IDをWindow所有者IDとしてIPCへ渡して有効pathを拒否する、追加先を親へ置換する、または別Windowを許可する"
+// observable = "実composerの入力・Addから実preloadと登録IPCへ届くID/path、実在directoryの検証結果、Main/Auxiliaryの許可リストと別Windowの拒否"
+// observation_boundary = "public-boundary"
+// scope = "Session composer featureから共通入力・preload・検証IPCへの所有者ID結線と対象別追加"
+// lifecycle = "permanent"
+// impact = "Auxiliaryでdirectoryを追加できない不具合と、会話やWindowを越える権限の混線を防ぐ"
+// distinction = "共有入力へ成功callbackを注入するtestではなく実hook/adapter/component/preload/IPC認可とfilesystem検証を通す。型では区別できない2つのstring IDの結線を少数のDOM操作で継続確認する"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("session composerのMain/Auxiliaryパス検証は親Window IDを使い対象会話へ追加する", async () => {
+  await withReactDom(async (root) => {
+    const parentId = "main-session";
+    const auxiliaryId = "auxiliary-session";
+    const ownerWindow = {} as NonNullable<ReturnType<Parameters<typeof registerSessionQueryHandlers>[1]["resolveEventWindow"]>>;
+    let eventWindow = ownerWindow;
+    const service = new WorkspaceDirectoryValidationService();
+    const requests: Array<{ id: string; path: string }> = [];
+    const handlers = new Map<string, (...args: any[]) => any>();
+    registerSessionQueryHandlers({ handle: (channel, handler) => { handlers.set(channel, handler); } }, {
+      resolveEventWindow: () => eventWindow,
+      resolveSessionWindow: (id: string) => id === parentId ? ownerWindow : null,
+      validateWorkspaceDirectory: (path: unknown) => service.validate(path),
+    } as unknown as Parameters<typeof registerSessionQueryHandlers>[1]);
+    const api = createWithMateWindowApi({
+      async invoke(channel: string, ...args: unknown[]) {
+        assert.equal(channel, WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL);
+        requests.push({ id: args[0] as string, path: args[1] as string });
+        return handlers.get(channel)!({}, ...args);
+      },
+      on() {}, removeListener() {}, send() {},
+    } as unknown as Parameters<typeof createWithMateWindowApi>[0]);
+    const directoryPath = fileURLToPath(new URL("./", import.meta.url)).replace(/\\/g, "/").replace(/\/$/, "");
+    let main = { ...createComposerSession("codex"), id: parentId };
+    let auxiliary = createAuxiliaryRuntimeSession();
+    const log: ComposerOperationLog = {
+      mainDrafts: [], auxiliaryDrafts: [], mainSkills: [], auxiliarySkills: [],
+      mainSpeedChanges: [], auxiliarySpeedChanges: [], mainSends: 0, auxiliarySends: 0,
+    };
+    for (const target of ["main", "auxiliary"] as const) {
+      const owner: ComposerOwner = { kind: target, id: target === "main" ? parentId : auxiliaryId };
+      const input = { ...createComposerInput(new ComposerControllerRegistry(), owner),
+        api, activeRunSessionId: owner.id, selectedSessionId: parentId, sessionProvider: "codex" };
+      const bridge = createComposerBridge(log, target, false, { provider: "codex", auxiliarySession: auxiliary });
+      bridge.session = { ...main, id: owner.id };
+      const select = (directoryPath?: string) => selectAdditionalDirectoryPath({
+        sessionId: parentId, directoryPath, initialPath: null, api,
+      });
+      let addition: Promise<void> | undefined;
+      bridge.operations.layout.addAdditionalDirectory.main = (path) => addition = (async () => {
+        const selected = await select(path);
+        if (selected) main = buildSessionWithAddedAdditionalDirectory(main, selected);
+      })();
+      bridge.operations.layout.addAdditionalDirectory.auxiliary = (path) => addition = runAddAuxiliaryAdditionalDirectoryOperationWithApi({
+        api: { pickDirectory: () => select(path) }, hasParentSession: true,
+        activeAuxiliarySession: auxiliary, pickerBaseDirectory: "", setPickerBaseDirectory: noop,
+        updateActiveAuxiliarySession: async (recipe) => { auxiliary = recipe(auxiliary); },
+        createTimestampLabel: () => "2026-10-17T00:00:00.000Z",
+      });
+      const harness = await renderComposerHarness(root, input);
+      const feature = harness.getFeature();
+      assert.ok(feature);
+      const surface = feature.buildSurface(bridge);
+      await act(async () => root.render(React.createElement(SessionComposerExpanded, { ...surface.composer, key: target })));
+      const button = (name: string) => {
+        const found = Array.from(document.querySelectorAll("button")).find((item) => item.textContent?.trim() === name);
+        assert.ok(found, name);
+        return found;
+      };
+      await act(async () => button("Add Directory By Path").click());
+      const pathInput = document.querySelector<HTMLInputElement>('input[aria-label="Directory path"]')!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(pathInput, directoryPath);
+        pathInput.dispatchEvent(new window.Event("input", { bubbles: true }));
+      });
+      assert.equal(button("Add").disabled, true);
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+      assert.equal(pathInput.value, directoryPath);
+      assert.equal(button("Add").disabled, false);
+      assert.equal(document.querySelector('[role="alert"]'), null);
+      await act(async () => { button("Add").click(); await addition; });
+      assert.ok(!document.querySelector('[role="dialog"]'));
+      assert.deepEqual(main.allowedAdditionalDirectories, [directoryPath]);
+      assert.deepEqual(auxiliary.allowedAdditionalDirectories, target === "main" ? [] : [directoryPath]);
+    }
+    assert.deepEqual(requests, Array.from({ length: 4 }, () => ({ id: parentId, path: directoryPath })));
+    await assert.rejects(api.validateSessionAdditionalDirectory(auxiliaryId, directoryPath), /target Session window/);
+    eventWindow = Object.create(null) as typeof ownerWindow;
+    await assert.rejects(api.validateSessionAdditionalDirectory(parentId, directoryPath), /target Session window/);
   });
 });
 

@@ -559,6 +559,7 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     onToggleAgentPicker: chatWindowNoop,
     onToggleSkillPicker: chatWindowNoop,
     onAddAdditionalDirectory: chatWindowNoop,
+    onValidateAdditionalDirectory: async () => ({ valid: false, reason: "unavailable" }),
     onToggleAdditionalDirectoryList: chatWindowNoop,
     onJumpToBottom: chatWindowNoop,
     onSelectCustomAgent: chatWindowNoop,

@@ -168,6 +168,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `New Session` dialog
   - session title 入力
   - Agent Mode の workspace は既存 directory を選ぶ `Browse` と、WithMate 管理下の directory を開始時に作る `Session Folder` から選ぶ
+  - Workspaceのパス入力は`Add Directory By Path`と共通の入力部品・検証controllerを使う。入力停止から300ms後に検証し、検証待ち・確認中は入力内spinnerとaccessible status、無効理由はlabelの隣へ表示する。手入力のpathは検証成功まで開始条件を満たさず、古い応答や取消後の応答を現在の選択へ反映しない
   - enabled provider の選択
   - Home の `New Session`、Character authoring、Auxiliary の provider picker は同じ状態境界を使う。取得中は picker 内の spinner と busy / accessible statusだけを表示して開始buttonをdisabledにし、取得失敗はprovider errorだけをalertで示して開始不可にする。取得成功後の0件だけ作成不可の説明を表示し、loading / error / ready 0 件を混同しない。開始処理中は各確定button内のspinnerとbusyだけを示し、busyをalertへ変換しない
   - Home `New Session`、Character authoring、Auxiliary の launch-section は意味上のgroupとして維持するが、装飾用のnested cardを描画しない
@@ -448,7 +449,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 手入力または paste された `@path` は送信時に検証し、存在しない path は composer feedback として表示して送信しない
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
-- composer toolbar の `Add Directory` はフォルダーピッカーを開き、隣の `Add Directory By Path` は絶対パス入力dialogを開く。dialogの通常表示は操作名の見出し、可視label・placeholderのない入力欄、`Cancel`／`Add`のみとし、compactな角丸と余白を使い、背景をblurしない。入力欄のaccessible nameは維持する。Main／Auxiliaryとも、実在するアクセス可能なdirectoryを検証して既存の許可リストへ追加する。Windowsのパス入力はdrive付きまたはUNCの完全修飾pathを必要とする。drive未指定rooted path、相対path、不存在、file、利用不可、保存失敗では入力を保持してalertを表示し、再入力できる。空入力と追加処理中は `Add` を無効にし、dialog内のfocus移動、Enterで追加、Escape／Cancelで閉じた後のfocus復帰を維持する。追加処理中はdialogを閉じず、重複送信を防ぐ。横の `Dirs` toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
+- composer toolbar の `Add Directory` はフォルダーピッカーを開き、隣の `Add Directory By Path` は絶対パス入力dialogを開く。dialogの通常表示は操作名の見出し、可視label・placeholderのない入力欄、`Cancel`／`Add`のみとし、compactな角丸と余白を使い、背景をblurしない。dialogと入力欄は左右の余白を残してAction Dockの利用可能な横幅に追従し、狭幅ではみ出さない。入力幅を超える長いpathも値を省略・変形せず、選択・横スクロールで全体へ到達できる。入力欄のaccessible nameは維持する。パス入力はHomeのWorkspaceと共通部品・検証controllerを使い、入力停止から300ms後に検証する。検証待ち・確認中は入力内のspinnerとaccessible statusで示し、空欄・検証中・無効pathでは`Add`を無効にする。入力変更・閉鎖・対象切替後に古い検証結果を反映しない。Main／Auxiliaryとも、実在するアクセス可能なdirectoryを検証して既存の許可リストへ追加する。Windowsのパス入力はdrive付きまたはUNCの完全修飾pathを必要とする。drive未指定rooted path、相対path、不存在、file、利用不可、保存失敗では入力を保持してalertを表示し、再入力できる。追加時もパスを再検証し、追加処理中は `Add` を無効にして、dialog内のfocus移動、Enterで追加、Escape／Cancelで閉じた後のfocus復帰を維持する。追加処理中はdialogを閉じず、重複送信を防ぐ。横の `Dirs` toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
   - composer 下の runtime settings は shared chat composer を正本とし、`Approval / Sandbox / Model / Depth`を表示する。Codex providerでは`Approval`の直後にcompactな`Reviewer`選択、そのほかのruntime optionと同じ列に`Speed`選択を追加する。`Reviewer`は`User` / `Auto Review`、`Speed`は`Standard` / `Fast`をSession単位で保持する。Codex以外では両方を表示しない。`Reviewer`はread-only、blocked、入力凍結、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionもproviderの対応範囲と編集制約に従う
   - approval chip は `Auto Run / Provider Controlled / Safety Focused`
   - ClaudeのApprovalは`Provider Controlled`のみを選べる。保存値が非対応の場合は`Unsupported (保存値)`を選択表示し、invalid stateを保持する。ユーザーが`Provider Controlled`を選ぶことで有効値へ修正でき、黙って権限設定を置き換えない

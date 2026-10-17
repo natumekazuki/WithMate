@@ -30,9 +30,9 @@ import {
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
 import {
-  createHomeLaunchWorkspaceValidationController,
-  type HomeLaunchWorkspaceValidationController,
-} from "./home-launch-workspace-validation.js";
+  createDirectoryPathValidationController,
+  type DirectoryPathValidationController,
+} from "../launch/directory-path-validation.js";
 import { resolveSelectedLaunchProviderDraftId } from "../launch/launch-provider-selection.js";
 import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildHomeMateProfileHandlers } from "./home-mate-profile-handlers.js";
@@ -189,7 +189,7 @@ export default function HomeApp() {
   const settingsDirtyRef = useRef(false);
   const persistedSettingsDraftRef = useRef<AppSettings | null>(null);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
-  const workspaceValidationControllerRef = useRef<HomeLaunchWorkspaceValidationController | null>(null);
+  const workspaceValidationControllerRef = useRef<DirectoryPathValidationController | null>(null);
   const sessionQueryGenerationRef = useRef<HomeSessionQueryGeneration | null>(null);
   const pageRequestsRef = useRef(new Map<"recent" | "pinned", object>());
   if (sessionQueryGenerationRef.current === null) {
@@ -206,7 +206,7 @@ export default function HomeApp() {
     sessionQueryGeneration: sessionQueryGenerationRef.current,
   });
   if (workspaceValidationControllerRef.current === null) {
-    workspaceValidationControllerRef.current = createHomeLaunchWorkspaceValidationController({
+    workspaceValidationControllerRef.current = createDirectoryPathValidationController({
       validate: async (targetPath) => (
         await withWithMateApi((api) => api.validateWorkspaceDirectory(targetPath))
         ?? { valid: false, reason: "unavailable" }

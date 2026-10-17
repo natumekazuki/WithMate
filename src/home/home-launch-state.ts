@@ -13,6 +13,7 @@ import {
   type LaunchWorkspaceSelection,
 } from "./home-launch-workspace.js";
 import { LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
+import type { DirectoryPathValidationState } from "../launch/directory-path-validation.js";
 import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
 import {
   resolveWorkspaceDirectoryValidationMessage,
@@ -30,7 +31,6 @@ type LaunchCharacterSnapshot = {
 };
 
 export type LaunchCharacterSelectionMode = "specific" | "random";
-export type HomeLaunchWorkspaceValidationState = "idle" | "debouncing" | "pending" | "valid" | "invalid";
 export type HomeCharacterLoadStatus = "loading" | "loaded" | "error";
 
 export type HomeLaunchCharacterCatalog = {
@@ -42,7 +42,7 @@ export type HomeLaunchDraft = {
   open: boolean;
   title: string;
   workspacePathInput: string;
-  workspaceValidation: HomeLaunchWorkspaceValidationState;
+  workspaceValidation: DirectoryPathValidationState;
   workspaceValidationMessage: string;
   workspace: LaunchWorkspaceSelection | null;
   providerId: string;

@@ -3532,7 +3532,7 @@
 }
 
 .additional-directory-path-dialog {
-  width: min(500px, 100%);
+  width: 90%;
   padding: 16px;
   border-radius: 12px;
   box-shadow: none;
