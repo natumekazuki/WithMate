@@ -923,40 +923,72 @@ describe("HomeLaunchDialog", () => {
     assert.ok(html.indexOf("Browse") < html.indexOf("Session Folder"));
   });
 
-  it("Workspace input と invalid 理由を field 近傍へ表示する", () => {
-    const idle = renderHomeLaunchDialog();
-    const html = renderHomeLaunchDialog(characterOptions, true, false, "invalid");
-
-    assert.match(idle, /<span id="launch-workspace-path-error"[^>]*><\/span>/);
-    assert.ok(html.includes("launch-workspace-path"));
-    assert.ok(html.includes('value="C:'));
-    assert.ok(html.includes("work space"));
-    assert.ok(html.includes('aria-invalid="true"'));
-    assert.ok(html.includes("Path not found."));
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Homeの無効Workspace入力は値を保持し、labelと関連付いたinputから現在のerror statusを参照できる"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証; docs/manual-test-checklist.md MT-014" }
+  // fault = "無効理由がinputの説明から切り離される、invalid状態が公開されない、または入力値が失われる"
+  // observable = "生成DOMのlabel.control、input.value/aria-invalid/aria-describedbyと参照先statusの本文・aria-live"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeLaunchDialogの共有パス入力とerrorのDOM・accessibility関係"
+  // lifecycle = "permanent"
+  // distinction = "単なる文字列包含やCSS宣言と異なりinputとerrorの実DOM関係を検査する。検証controllerや型検査では失われたaccessible descriptionを検出できず、安価な静的renderで保持する価値がある。pixel配置は実描画確認の対象とする"
+  // @end-test-value
+  it("Workspace input は値とlabelを保ち、invalid理由のstatusを参照する", () => {
+    const idle = new JSDOM(renderHomeLaunchDialog());
+    const invalid = new JSDOM(renderHomeLaunchDialog(characterOptions, true, false, "invalid"));
+    try {
+      const idleInput = idle.window.document.getElementById("launch-workspace-path")!;
+      assert.equal(idleInput.getAttribute("aria-invalid"), "false");
+      assert.equal(idleInput.hasAttribute("aria-describedby"), false);
+      const document = invalid.window.document;
+      const input = document.getElementById("launch-workspace-path") as HTMLInputElement;
+      const label = Array.from(document.querySelectorAll("label")).find((candidate) => candidate.control === input);
+      assert.equal(label?.textContent, "Workspace");
+      assert.equal(input.value, "C:\\\\work space\\\\");
+      assert.equal(input.getAttribute("aria-invalid"), "true");
+      const error = document.getElementById(input.getAttribute("aria-describedby")!);
+      assert.ok(error);
+      assert.equal(error.textContent, "Path not found.");
+      assert.equal(error.getAttribute("role"), "status");
+      assert.equal(error.getAttribute("aria-live"), "polite");
+    } finally {
+      idle.window.close();
+      invalid.window.close();
+    }
   });
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Homeのworkspace validationはdebounce中とfilesystem確認中の両方をbusy状態として表示する"
-  // oracle = { type = "contract", ref = "Issue #731 Home/New session workspace validation" }
+  // claim = "Homeのworkspace validationはdebounce中とfilesystem確認中の両方で入力のbusy、decorative indicator、検証中statusをDOMへ公開する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証; docs/manual-test-checklist.md MT-014" }
   // fault = "debounceまたはfilesystem確認の片方でspinnerとaria-busyを失い、入力が検証中かどうかを識別できない"
-  // observable = "debouncing/pending各markupのdirectory-path-validation-spinner、aria-busy、Checking workspace path…"
+  // observable = "debouncing/pending/validのDOMでWorkspace入力のaria-busy所有領域、その中のaria-hidden indicator、Checking workspace path… statusの有無"
   // observation_boundary = "component-behavior"
   // scope = "HomeLaunchDialog workspace validation feedback"
   // lifecycle = "permanent"
   // impact = "検証待ちの入力を利用者が未検証または完了済みと誤認しにくくなる"
-  // distinction = "検証完了結果ではなく、debounceからpendingまで連続する局所busy表示を状態別に確認する"
+  // distinction = "CSS宣言やcontroller単体では観測しない入力とbusy/statusのDOM接続を確認する。animation名・時間は固定せず、可視性やpixel配置は実描画確認と区別する"
   // @end-test-value
-  it("Workspace validation は debounce 開始から filesystem 確認完了まで spinner を表示する", () => {
-    const debouncing = renderHomeLaunchDialog(characterOptions, true, false, "debouncing");
-    const pending = renderHomeLaunchDialog(characterOptions, true, false, "pending");
-
-    assert.ok(debouncing.includes("directory-path-validation-spinner"));
-    assert.ok(debouncing.includes('aria-busy="true"'));
-    assert.ok(debouncing.includes("Checking workspace path…"));
-    assert.ok(pending.includes("directory-path-validation-spinner"));
-    assert.ok(pending.includes('aria-busy="true"'));
-    assert.ok(pending.includes("Checking workspace path…"));
+  it("Workspace validation は検証中のbusyとstatusを公開し、完了後に解除する", () => {
+    for (const state of ["debouncing", "pending", "valid"] as const) {
+      const dom = new JSDOM(renderHomeLaunchDialog(characterOptions, true, false, state));
+      try {
+        const document = dom.window.document;
+        const input = document.getElementById("launch-workspace-path")!;
+        const region = input.closest("[aria-busy]");
+        assert.ok(region);
+        const checking = state !== "valid";
+        assert.equal(region.getAttribute("aria-busy"), String(checking));
+        assert.equal(!!region.querySelector('[aria-hidden="true"]'), checking);
+        const statuses = Array.from(document.querySelectorAll('[role="status"]'));
+        const checkingStatus = statuses.find((status) => status.textContent === "Checking workspace path…");
+        assert.equal(!!checkingStatus, checking);
+        if (checkingStatus) assert.equal(checkingStatus.getAttribute("aria-live"), "polite");
+      } finally {
+        dom.window.close();
+      }
+    }
   });
 
   // @test-value v2

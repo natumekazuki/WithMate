@@ -4,7 +4,16 @@ import { describe, it } from "node:test";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { buildHomeLaunchHandlers } from "../../src/home/home-launch-handlers.js";
 import { buildHomeLaunchProjection } from "../../src/home/home-launch-projection.js";
-import { createClosedLaunchDraft, type HomeLaunchCharacterCatalog, type HomeLaunchDraft } from "../../src/home/home-launch-state.js";
+import {
+  applyLaunchWorkspacePathValidation,
+  beginLaunchWorkspacePathValidation,
+  createClosedLaunchDraft,
+  markLaunchWorkspacePathValidationPending,
+  type HomeLaunchCharacterCatalog,
+  type HomeLaunchDraft,
+} from "../../src/home/home-launch-state.js";
+import { createDirectoryPathValidationController, type DirectoryPathValidationController } from "../../src/launch/directory-path-validation.js";
+import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window/workspace-directory-validation.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
@@ -42,7 +51,7 @@ function createDeferredCatalog() {
   return { promise, resolve, reject };
 }
 
-function createLaunchHarness() {
+function createLaunchHarness(workspaceValidation?: DirectoryPathValidationController) {
   const state = {
     draft: createClosedLaunchDraft(),
     catalog: { entries: [], status: "loading" } as HomeLaunchCharacterCatalog,
@@ -79,8 +88,8 @@ function createLaunchHarness() {
       state.draft = typeof updater === "function" ? updater(state.draft) : updater;
     },
     pickWorkspaceDirectory: () => null,
-    scheduleWorkspaceValidation: () => {},
-    cancelWorkspaceValidation: () => {},
+    scheduleWorkspaceValidation: (path) => workspaceValidation?.schedule(path),
+    cancelWorkspaceValidation: () => workspaceValidation?.cancel(),
     openSessionWindow: async () => {},
     createSession: async () => null,
     upsertSessionSummary: () => {},
@@ -89,6 +98,53 @@ function createLaunchHarness() {
 }
 
 describe("home-launch-handlers", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Homeの実handlerによるSession Folder選択は保留中のパス検証を取り消し、旧結果を通知せず選択と入力を保持する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証; docs/manual-test-checklist.md MT-014" }
+  // fault = "onSelectSessionFolderから検証取消が外れ、切替前の応答を現在のstateへ通知する"
+  // observable = "実onChangeWorkspacePath/onSelectSessionFolder経由の検証開始path、応答解決後のonResult通知配列とHome draft"
+  // observation_boundary = "consumer"
+  // scope = "Home launch handlerと共有パス検証controllerの取消接続"
+  // lifecycle = "permanent"
+  // impact = "Session Folder選択後に旧pathの結果を適用する危険を防ぐ"
+  // distinction = "controller単体のcancel試験と異なり実handlerの取消結線を通す。state側guardが旧結果を無視しても通知配列で取消欠落を検出する。型検査や通常速度のsmokeでは検出できない遅延応答を1つのPromiseで制御する"
+  // @end-test-value
+  it("Session Folder選択handlerは保留中のパス検証を取消し旧結果を通知しない", async () => {
+    let resolveValidation!: (value: WorkspaceDirectoryValidationResult) => void;
+    const validation = new Promise<WorkspaceDirectoryValidationResult>((resolve) => { resolveValidation = resolve; });
+    const requested: string[] = [];
+    const delivered: string[] = [];
+    const controller = createDirectoryPathValidationController({
+      delayMs: 0,
+      validate: (path) => { requested.push(path); return validation; },
+      onScheduled: (path) => { state.draft = beginLaunchWorkspacePathValidation(state.draft, path); },
+      onValidationStart: (path) => { state.draft = markLaunchWorkspacePathValidationPending(state.draft, path); },
+      onResult: (path, result) => {
+        delivered.push(path);
+        state.draft = applyLaunchWorkspacePathValidation(state.draft, path, result);
+      },
+    });
+    const { state, requests, renderHandlers } = createLaunchHarness(controller);
+    const handlers = renderHandlers();
+    const opening = handlers.onOpenLaunchDialog();
+    requests[0].resolve([]);
+    await opening;
+    handlers.onChangeWorkspacePath("C:\\old-workspace");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(requested, ["C:\\old-workspace"]);
+    assert.equal(state.draft.workspaceValidation, "pending");
+
+    handlers.onSelectSessionFolder();
+    resolveValidation({ valid: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(delivered, []);
+    assert.deepEqual(state.draft.workspace, { kind: "session-folder" });
+    assert.equal(state.draft.workspaceValidation, "idle");
+    assert.equal(state.draft.workspacePathInput, "");
+  });
+
   // @test-value v2
   // kind = "contract"
   // claim = "同じ表示試行の連続openは再描画をまたいでも単一取得となり、取得中の入力と取得後の選択を維持する"
