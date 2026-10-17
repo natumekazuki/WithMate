@@ -111,7 +111,6 @@ test("quota UIは通知と送信先を優先し、失敗時も値と状態を区
     await act(async () => root.render(<ProviderQuota api={api} providerId="claude" />));
     assert.ok(element.querySelector('[aria-label="Claude quota loading"]'));
     assert.doesNotMatch(element.textContent ?? "", /70%/);
-    await act(async () => oldListener("codex", quota("codex", 99)));
     await emit("claude", { provider: "claude", status: "unsupported", updatedAt: null, snapshots: [] });
     await act(async () => second.reject(new Error("late read")));
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "—");
@@ -120,6 +119,10 @@ test("quota UIは通知と送信先を優先し、失敗時も値と状態を区
     assert.deepEqual(reads, [["codex", { cacheOnly: true }], ["claude", { cacheOnly: true }]]);
     await emit("claude", quota("claude", 0));
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "5h 100%");
+    assert.equal(element.querySelector('[aria-label="Claude quota loading"]'), null);
+    await act(async () => oldListener("codex", quota("codex", 99)));
+    assert.equal(element.querySelector(".provider-quota-values")?.textContent, "5h 100%");
+    assert.equal(element.querySelector('[aria-label="Claude quota loading"]'), null);
     await emit("claude", null);
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "—");
   } finally {
