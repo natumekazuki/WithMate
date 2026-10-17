@@ -34,17 +34,17 @@ import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "icon化したruntime設定は選択値の正式名・候補・変更通知を保ち、選択変更に現在状態iconが追従する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: runtime settingsの状態iconとnative select" }
-// fault = "iconが初期値のまま、候補へ未設定値を追加、またはselect変更が別設定へ通知される"
-// observable = "実composerの6selectのaccessible nameと現在値、5種類の変更callback・title・状態glyph、Modelの表示名"
+// claim = "runtime設定は現在の選択値を正式名の文字で表し、供給された候補と変更通知を保つ"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: runtime設定の現在値表示とnative select" }
+// fault = "選択値の表示名やtitleが追従しない、候補へ未設定値を追加、またはselect変更が別設定へ通知される"
+// observable = "実composerの6selectのaccessible nameと現在値、5種類の変更callback・selected optionの文字・title、Modelの表示名"
 // observation_boundary = "component-behavior"
-// scope = "icon-first runtime settings"
+// scope = "Session composer runtime settings"
 // lifecycle = "permanent"
 // impact = "操作前に現在設定を確認し、選んだ値を次送信用設定へ反映できる"
-// distinction = "options生成testや型検査では描画glyphとselectの接続間違いを検出できない"
+// distinction = "options生成testや型検査では実composerの表示名・title・変更callbackの接続間違いを検出できない。文字の可視性と収容は実描画で確認する"
 // @end-test-value
-test("runtime設定のiconは選択値に追従し、Model名と供給された候補を維持する", async () => {
+test("runtime設定は選択値の正式名に追従し、Model名と供給された候補を維持する", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
@@ -91,9 +91,6 @@ test("runtime設定のiconは選択値に追従し、Model名と供給された�
       ["Speed", "fast", "Fast", "selectedCodexSpeed"],
     ]) {
       const select = document.querySelector<HTMLSelectElement>('select[aria-label="' + label + '"]')!;
-      const glyph = () => select.parentElement!.querySelector(".composer-icon-setting-display svg")!;
-      const before = glyph().innerHTML;
-      assert.equal(glyph().getAttribute("aria-hidden"), "true");
       await act(async () => {
         select.value = value;
         select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
@@ -101,7 +98,7 @@ test("runtime設定のiconは選択値に追従し、Model名と供給された�
       assert.equal(changes.at(-1), key + ":" + value);
       assert.equal(select.value, value);
       assert.equal(select.title, label + ": " + title);
-      assert.notEqual(glyph().innerHTML, before);
+      assert.equal(select.selectedOptions[0].textContent, title);
     }
     assert.equal(changes.length, 5);
   } finally {

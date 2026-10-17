@@ -1,6 +1,4 @@
-import { ComposerIcon, type ComposerIconName } from "./composer-icon.js";
-
-export function ComposerIconSelect({ className, label, value, options, onChange, disabled, invalid, icon }: {
+export function ComposerSettingSelect({ className, label, value, options, onChange, disabled, invalid }: {
   className?: string;
   label: string;
   value: string;
@@ -8,11 +6,10 @@ export function ComposerIconSelect({ className, label, value, options, onChange,
   onChange: (value: string) => void;
   disabled?: boolean;
   invalid?: boolean;
-  icon: ComposerIconName;
 }) {
   const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
   return (
-    <label className={`composer-setting-field composer-icon-setting${className ? ` ${className}` : ""}`}>
+    <label className={`composer-setting-field${className ? ` ${className}` : ""}`}>
       <select
         aria-label={label}
         title={`${label}: ${selectedLabel}`}
@@ -23,10 +20,6 @@ export function ComposerIconSelect({ className, label, value, options, onChange,
       >
         {options.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
       </select>
-      <span className="composer-icon-setting-display" aria-hidden="true">
-        <ComposerIcon name={icon} value={invalid ? undefined : value} />
-        <ComposerIcon name="chevron-down" />
-      </span>
     </label>
   );
 }

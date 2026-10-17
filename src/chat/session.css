@@ -4131,6 +4131,7 @@
   font: inherit;
   font-size: 0.84rem;
   line-height: 1.4;
+  cursor: pointer;
 }
 
 .composer-setting-field select::picker(select) {
@@ -4171,27 +4172,9 @@
   background: color-mix(in srgb, var(--character-main) 28%, var(--surface-deep));
 }
 
-.composer-icon-setting {
-  position: relative;
-  flex: 0 0 52px;
-  width: 52px;
-}
-
-.composer-icon-setting select,
-.session-page .composer-icon-setting select {
-  width: 100%;
-  padding: 0;
-  color: transparent;
-  font-size: 0;
-  cursor: pointer;
-}
-
-.composer-icon-setting select::picker-icon {
-  display: none;
-}
-
-.composer-icon-setting select:disabled {
+.composer-setting-field select:disabled {
   cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .composer-setting-field select:focus-visible {
@@ -4201,26 +4184,6 @@
 
 .composer-setting-field select[aria-invalid="true"] {
   border-color: #f87171;
-}
-
-.composer-icon-setting .composer-icon-setting-display {
-  position: absolute;
-  inset: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  color: var(--ink);
-  pointer-events: none;
-}
-
-.composer-icon-setting-display .composer-icon:last-child {
-  width: 10px;
-  height: 10px;
-}
-
-.composer-icon-setting select:disabled + .composer-icon-setting-display {
-  opacity: 0.45;
 }
 
 @media (forced-colors: active) {

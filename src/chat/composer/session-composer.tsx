@@ -15,7 +15,7 @@ import { useShortcutSettings } from "../../settings/shortcut-settings-context.js
 import { ComposerAttachmentMenu } from "../../chat/composer-attachment-menu.js";
 import { AdditionalDirectoryPathControl } from "./additional-directory-path-control.js";
 import { ComposerIcon } from "./composer-icon.js";
-import { ComposerIconSelect } from "./composer-icon-select.js";
+import { ComposerSettingSelect } from "./composer-setting-select.js";
 import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "../../chat/composer-controller.js";
 import {
   getComposerSendButtonTitle,
@@ -644,10 +644,9 @@ export function SessionComposerExpanded({
         <div className="composer-settings">
           {showExecutionModeControls ? (
             <>
-              <ComposerIconSelect
+              <ComposerSettingSelect
                 className="composer-setting-approval"
                 label="Approval"
-                icon="approval"
                 value={selectedApprovalMode}
                 options={approvalOptions}
                 onChange={(value) => onChangeApprovalMode(value as ApprovalMode)}
@@ -656,10 +655,9 @@ export function SessionComposerExpanded({
               />
 
               {reviewerOptions.length > 0 ? (
-                <ComposerIconSelect
+                <ComposerSettingSelect
                   className="composer-setting-reviewer"
                   label="Reviewer"
-                  icon="reviewer"
                   value={selectedCodexReviewer}
                   options={reviewerOptions}
                   onChange={(value) => onChangeCodexReviewer(value as CodexReviewer)}
@@ -672,10 +670,9 @@ export function SessionComposerExpanded({
               ) : null}
 
               {sandboxOptions.length > 0 ? (
-                <ComposerIconSelect
+                <ComposerSettingSelect
                   className="composer-setting-sandbox"
                   label="Sandbox"
-                  icon="sandbox"
                   value={selectedCodexSandboxMode}
                   options={sandboxOptions}
                   onChange={(value) => onChangeCodexSandboxMode(value as CodexSandboxMode)}
@@ -705,10 +702,9 @@ export function SessionComposerExpanded({
             </select>
           </div>
 
-          <ComposerIconSelect
+          <ComposerSettingSelect
             className="composer-setting-depth"
             label="Reasoning depth"
-            icon="depth"
             value={selectedReasoningEffort}
             options={reasoningOptions}
             onChange={onChangeReasoningEffort}
@@ -716,10 +712,9 @@ export function SessionComposerExpanded({
           />
 
           {speedOptions.length > 0 ? (
-            <ComposerIconSelect
+            <ComposerSettingSelect
               className="composer-setting-speed"
               label="Speed"
-              icon="speed"
               value={selectedCodexSpeed}
               options={speedOptions}
               onChange={(value) => onChangeCodexSpeed(value as CodexSpeed)}
