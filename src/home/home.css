@@ -281,7 +281,7 @@
   --session-dock-splitter-size: 20px;
   display: grid;
   flex: 1 1 auto;
-  grid-template-rows: minmax(48px, 1fr) var(--session-dock-splitter-size) minmax(48px, 1fr);
+  grid-template-rows: minmax(48px, 1fr) var(--session-dock-splitter-size) minmax(48px, 1fr) var(--session-dock-splitter-size) minmax(48px, 1fr);
   min-height: 0;
 }
 
@@ -605,6 +605,24 @@
 
 .home-page .home-monitor-status-icon.running {
   color: #79d4df;
+}
+
+.home-page .home-monitor-status-icon.approval {
+  color: #f5cf75;
+}
+
+.home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark {
+  display: inline-grid;
+  place-items: center;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark::before {
+  content: "!";
 }
 
 .home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark {

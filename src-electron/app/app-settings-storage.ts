@@ -14,6 +14,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
 const LAUNCH_AT_LOGIN_ENABLED_KEY = "launch_at_login_enabled";
 const SESSION_TURN_NOTIFICATION_ENABLED_KEY = "session_turn_notification_enabled";
+const SESSION_APPROVAL_NOTIFICATION_ENABLED_KEY = "session_approval_notification_enabled";
 const SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY =
   "session_turn_notification_response_preview_enabled";
 const CHARACTER_DEFINITION_ENABLED_KEY = "character_definition_enabled";
@@ -106,6 +107,17 @@ export class AppSettingsStorage {
       .run(
         SESSION_TURN_NOTIFICATION_ENABLED_KEY,
         String(DEFAULT_APP_SETTINGS.sessionTurnNotificationEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        SESSION_APPROVAL_NOTIFICATION_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.sessionApprovalNotificationEnabled),
         updatedAt,
       );
     this.db
@@ -305,6 +317,12 @@ export class AppSettingsStorage {
         }
         continue;
       }
+      if (row.setting_key === SESSION_APPROVAL_NOTIFICATION_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.sessionApprovalNotificationEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
       if (row.setting_key === CHARACTER_DEFINITION_ENABLED_KEY) {
         if (row.setting_value === "true" || row.setting_value === "false") {
           settings.characterDefinitionEnabled = row.setting_value === "true";
@@ -466,6 +484,19 @@ export class AppSettingsStorage {
         .run(
           SESSION_TURN_NOTIFICATION_ENABLED_KEY,
           String(normalized.sessionTurnNotificationEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          SESSION_APPROVAL_NOTIFICATION_ENABLED_KEY,
+          String(normalized.sessionApprovalNotificationEnabled),
           updatedAt,
         );
       this.db

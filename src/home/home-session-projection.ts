@@ -2,17 +2,18 @@ import type { HomeSessionSummary } from "../../src-shared/session/session-state.
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { sessionStateLabel } from "../ui/ui-utils.js";
 
-export type HomeSessionState = { kind: "running" | "interrupted" | "error" | "neutral"; label: string };
+export type HomeSessionState = { kind: "approval" | "running" | "interrupted" | "error" | "neutral"; label: string };
 export type HomeMonitorAuxiliaryDataState = "loading" | "ready" | "error";
 export type HomeAgentMonitorEntry = { kind: "agent"; session: HomeSessionSummary; state: HomeSessionState; mainState: HomeSessionState; auxiliarySessions: AuxiliarySessionSummary[] };
 export type HomeMonitorEntry = HomeAgentMonitorEntry;
-export type HomeSessionProjection = { filteredSessionEntries: HomeAgentMonitorEntry[]; normalizedSessionSearch: string; monitorEntries: HomeMonitorEntry[]; runningMonitorEntries: HomeMonitorEntry[]; nonRunningMonitorEntries: HomeMonitorEntry[]; monitorBaseEmptyMessage: string; monitorRunningEmptyMessage: string; monitorCompletedEmptyMessage: string };
+export type HomeSessionProjection = { filteredSessionEntries: HomeAgentMonitorEntry[]; normalizedSessionSearch: string; monitorEntries: HomeMonitorEntry[]; approvalMonitorEntries: HomeMonitorEntry[]; runningMonitorEntries: HomeMonitorEntry[]; nonRunningMonitorEntries: HomeMonitorEntry[]; monitorBaseEmptyMessage: string; monitorRunningEmptyMessage: string; monitorCompletedEmptyMessage: string };
 
 export function getHomeSessionKindSearchLabels(session: HomeSessionSummary): string[] {
   return session.sessionKind === "character-authoring" ? ["character", "character authoring", "authoring", "agent"] : ["agent", session.sessionKind];
 }
 export function getHomeSessionState(session: HomeSessionSummary, auxiliarySessions: readonly AuxiliarySessionSummary[] | AuxiliarySessionSummary | null = []): HomeSessionState {
   const auxiliaries = !auxiliarySessions ? [] : Array.isArray(auxiliarySessions) ? auxiliarySessions : [auxiliarySessions];
+  if ([session, ...auxiliaries].some((item) => item.approvalPending && !item.cancellationState)) return { kind: "approval", label: "Approval Required" };
   const cancellationStates = [session.cancellationState, ...auxiliaries.map((item) => item.cancellationState)];
   if (cancellationStates.includes("terminating")) return { kind: "running", label: "Waiting For Stop" };
   if (cancellationStates.includes("requested")) return { kind: "running", label: "Canceling" };
@@ -25,13 +26,15 @@ export function getHomeSessionState(session: HomeSessionSummary, auxiliarySessio
 export function getHomeAuxiliarySessionState(summary: AuxiliarySessionSummary): HomeSessionState | { kind: "closed"; label: string } {
   if (summary.cancellationState === "terminating") return { kind: "running", label: "Waiting For Stop" };
   if (summary.cancellationState === "requested") return { kind: "running", label: "Canceling" };
+  if (summary.approvalPending) return { kind: "approval", label: "Approval Required" };
   if (summary.runState === "running") return { kind: "running", label: "Running" };
   if (summary.runState === "error") return { kind: "error", label: "Error" };
   if (summary.status === "closed") return { kind: "closed", label: "Closed" };
   return { kind: "neutral", label: "Idle" };
 }
 function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
-  return [...sessions].sort((left, right) => Number(getHomeAuxiliarySessionState(right).kind === "running") - Number(getHomeAuxiliarySessionState(left).kind === "running") || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
+  const isActive = (session: AuxiliarySessionSummary) => ["running", "approval"].includes(getHomeAuxiliarySessionState(session).kind);
+  return [...sessions].sort((left, right) => Number(isActive(right)) - Number(isActive(left)) || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
 }
 export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary[], openSessionWindowIds: readonly string[], sessionSearchText: string, auxiliarySessionSummaries: readonly AuxiliarySessionSummary[] = []): HomeSessionProjection {
   const normalizedSessionSearch = sessionSearchText.trim().toLocaleLowerCase();
@@ -44,13 +47,15 @@ export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary
   }).map((session) => { const auxiliarySessions = [...(byParent.get(session.id) ?? [])]; return { kind: "agent" as const, session, state: getHomeSessionState(session, auxiliarySessions), mainState: getHomeSessionState(session), auxiliarySessions }; });
   const openIds = new Set(openSessionWindowIds);
   const monitorEntries = filteredSessionEntries.filter(({ session }) => openIds.has(session.id));
+  const approvalMonitorEntries = monitorEntries.filter(({ state }) => state.kind === "approval");
   const runningMonitorEntries = monitorEntries.filter(({ state }) => state.kind === "running");
-  const nonRunningMonitorEntries = monitorEntries.filter(({ state }) => state.kind !== "running");
+  const nonRunningMonitorEntries = monitorEntries.filter(({ state }) => state.kind !== "running" && state.kind !== "approval");
   const monitorBaseEmptyMessage = "";
   return {
     filteredSessionEntries,
     normalizedSessionSearch,
     monitorEntries,
+    approvalMonitorEntries,
     runningMonitorEntries,
     nonRunningMonitorEntries,
     monitorBaseEmptyMessage,

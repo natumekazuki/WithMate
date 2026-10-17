@@ -212,6 +212,54 @@ function queueGate() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "runtimeの取消・reset・turn終端はProviderが発行した全承認callbackをdenyで完了し後続を公開しない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#sessionapprovalservice" }
+// fault = "runtime cleanupが先頭だけを解決してProvider callbackを残すか終了時に後続を通知する"
+// observable = "Provider callback全件のdecision、通知要求列、turn完了とlive承認解除"
+// observation_boundary = "consumer"
+// scope = "SessionRuntimeServiceからSessionApprovalServiceへの全件取消接続"
+// lifecycle = "permanent"
+// impact = "取消受付後もturnが承認を待ち続けるか終了後の要求が操作可能になる"
+// distinction = "queue単体では保証しないrun lifecycleのcleanup呼出しを実行する"
+// @end-test-value
+it("runtimeは取消・reset・終端で全approval callbackを回収する", async () => {
+  for (const action of ["cancel", "reset", "terminal"] as const) {
+    const session = createSession();
+    let live: LiveSessionRunState | null = null;
+    const notifications: string[] = [];
+    const approvals = new SessionApprovalService({
+      updateLiveSessionRun: (_id, recipe) => live ? (live = recipe(live)) : null,
+      notifyApproval: (_id, requestId) => { notifications.push(requestId); },
+    });
+    const ready = queueGate();
+    let callbacks: Array<Promise<LiveApprovalDecision>> = [];
+    const runtime = createProgressRuntime(session, async (input) => {
+      callbacks = ["first", "second", "third"].map((requestId) => Promise.resolve(input.onApprovalRequest!({
+        requestId, provider: "codex", kind: "tool", title: "Permission", summary: requestId, decisionMode: "direct-decision",
+      })));
+      ready.resolve();
+      if (action !== "terminal") await Promise.all(callbacks);
+      return createPartialResult({ threadId: "thread-1", assistantText: "done" });
+    }, {
+      setLiveSessionRun: (_id, state) => { live = state; },
+      getLiveSessionRun: () => live,
+      waitForApprovalDecision: (id, request, signal) => approvals.waitForLiveApprovalDecision(id, request, signal),
+      resolvePendingApprovalRequest: (id) => approvals.cancelSession(id),
+    });
+    const completed = runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "test" });
+    await ready.promise;
+    if (action === "cancel") runtime.cancelRun(session.id);
+    else if (action === "reset") runtime.reset();
+    await completed;
+    assert.deepEqual(await Promise.all(callbacks), ["deny", "deny", "deny"]);
+    assert.deepEqual(notifications, ["first"]);
+    assert.equal((live as LiveSessionRunState | null)?.approvalRequest ?? null, null);
+    assert.throws(() => approvals.resolveLiveApproval(session.id, "first", "approve"), /no longer exists/);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "runtimeはsnapshotなしprogressの追加・同ID更新・削除を順序付き完全状態へ統合し、無変更controlで本文・usage・pending要求と操作を保持しsnapshot取得へ返す"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Streaming Policy / Codex projection owner" }
 // fault = "空の配送stateで既存操作を消す、更新を末尾へ移動する、removeを無視する、またはpending要求を上書きする"

@@ -43,37 +43,49 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは空・読込状態でもRunning／Stoppedを初期5:5で配置し、両一覧の間に操作可能な水平スプリッターを置く"
+// claim = "Monitorは空・読込状態でもApproval／Running／Stoppedを初期3等分で常時表示し、隣接一覧の間に2本の水平スプリッターを置く"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "初期比率を偏らせる、スプリッターを一覧内へ置く、またはloading indicatorで領域の高さを変える"
+// fault = "空の分類を隠す、初期比率を偏らせる、splitterを一覧内へ置く、境界%を誤ってARIAへ渡す、またはloadingで領域高を変える"
 // observable = "描画したsectionとseparatorの順序、初期grid rows、separatorのaccessible属性、section配置とloading overlayのCSS"
 // observation_boundary = "implementation"
 // scope = "HomeMonitorContentとhome.cssのMonitor専用layout"
 // lifecycle = "permanent"
-// impact = "空状態や読込時も両状態を同じ初期面積で確認でき、配分変更操作へ到達できる"
+// impact = "空状態や読込時も3状態を同じ初期面積で確認でき、隣接領域の配分変更操作へ到達できる"
 // distinction = "操作testと別に、初期のDOM・CSSとloading overlayを低コストで検証する。実寸法は実描画確認で扱う"
 // @end-test-value
 test("Monitorの初期表示は空状態と読込状態でもスプリッターを挟んで等分する", async () => {
   const stylesSource = await readStylesheet();
-  const html = renderToStaticMarkup(createElement(HomeMonitorContent, {
-    runningEntries: [],
-    nonRunningEntries: [],
-    auxiliaryDataState: "loading",
-    onOpenSession: () => {},
-    onShowContextMenu: () => {},
-  }));
-  const document = new JSDOM(html).window.document;
-  const sections = document.querySelector(".home-monitor-sections");
+  for (const auxiliaryDataState of ["loading", "ready"] as const) {
+    const html = renderToStaticMarkup(createElement(HomeMonitorContent, {
+      approvalEntries: [],
+      runningEntries: [],
+      nonRunningEntries: [],
+      auxiliaryDataState,
+      onOpenSession: () => {},
+      onShowContextMenu: () => {},
+    }));
+    const document = new JSDOM(html).window.document;
+    const sections = document.querySelector(".home-monitor-sections");
 
-  assert.deepEqual(
-    [...(sections?.children ?? [])].map((section) => section.getAttribute("aria-labelledby") ?? section.getAttribute("role")),
-    ["home-monitor-running", "separator", "home-monitor-inactive"],
-  );
-  assert.equal(sections?.getAttribute("style"), "grid-template-rows:minmax(48px, 0.5fr) var(--session-dock-splitter-size) minmax(48px, 0.5fr)");
-  const splitter = sections?.querySelector('[role="separator"]');
-  assert.equal(splitter?.getAttribute("aria-orientation"), "horizontal");
-  assert.equal(splitter?.getAttribute("aria-valuenow"), "50");
-  assert.equal(document.getElementById(splitter?.getAttribute("aria-controls") ?? "")?.getAttribute("aria-labelledby"), "home-monitor-running");
+    assert.deepEqual(
+      [...(sections?.children ?? [])].map((section) => section.getAttribute("aria-labelledby") ?? section.getAttribute("role")),
+      ["home-monitor-approval", "separator", "home-monitor-running", "separator", "home-monitor-inactive"],
+    );
+    const ratios = [...(sections?.getAttribute("style") ?? "").matchAll(/minmax\(48px, ([\d.]+)fr\)/g)].map((match) => Number(match[1]));
+    assert.equal(ratios.length, 3);
+    assert.ok(ratios.every((ratio) => Math.abs(ratio - 1 / 3) < 0.000001));
+    const splitters = [...(sections?.querySelectorAll('[role="separator"]') ?? [])];
+    assert.equal(splitters.length, 2);
+    assert.deepEqual(splitters.map((splitter) => splitter.getAttribute("aria-valuenow")), ["33", "67"]);
+    assert.deepEqual(splitters.map((splitter) => splitter.getAttribute("aria-label")), ["Resize Approval and Running", "Resize Running and Stopped"]);
+    for (const splitter of splitters) {
+      assert.equal(splitter.getAttribute("aria-orientation"), "horizontal");
+      assert.equal(document.getElementById(splitter.getAttribute("aria-controls") ?? ""), sections);
+    }
+    assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Approval", "Running", "Stopped"]);
+    assert.deepEqual([...document.querySelectorAll(".home-monitor-count")].map((count) => count.textContent), ["0", "0", "0"]);
+    assert.equal(document.querySelector(".home-monitor-body")?.getAttribute("aria-busy"), String(auxiliaryDataState === "loading"));
+  }
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-sections > .home-monitor-section"), /display:\s*flex;\s*flex-direction:\s*column;/);
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-body > .home-session-list-load-status"), /position:\s*absolute;/);
   assert.doesNotMatch(stylesSource, /\.home-monitor-section\.is-empty/);
@@ -81,14 +93,14 @@ test("Monitorの初期表示は空状態と読込状態でもスプリッター�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Home Monitorの状態アイコンは実行状態に応じた形を使い、待機と終了は円形で揃え、旧status selectorを残さずreduced motionにも従う"
+// claim = "Home Monitorの承認は静止した感嘆符、他の状態は固有形状で区別し、待機と終了は円形で揃えreduced motionにも従う"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
-// fault = "状態を色だけで表現する、終了状態を待機と異なる角形で表現する、状態ruleの確認が別blockへ跨る、旧home-monitor-status selectorを残す、またはreduced motion時も回転を続ける"
+// fault = "承認を回転spinnerや色だけで示す、他の状態の形を失う、旧status selectorを残す、またはreduced motion時も回転を続ける"
 // observable = "状態別status icon rule本体、旧selectorの不在、reduced motion時のanimation無効化CSS"
 // observation_boundary = "implementation"
 // scope = "Home Monitor and shared session status icon CSS"
 // lifecycle = "permanent"
-// impact = "実行中・失敗・中断・待機・終了・未確定を視認可能な形で区別し、動きが苦手な環境でも静止表示する"
+// impact = "承認待ちを実行中と混同せず、失敗・中断・待機・終了・未確定も静止形状で区別できる"
 // distinction = "Home Monitor専用iconのclosed形状と、共有status iconの既存形状・旧selector不在・reduced motionをまとめて検証する"
 // @end-test-value
 test("Home Monitor の status icon は状態ごとの形とmotion制御で styling される", async () => {
@@ -114,6 +126,11 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
   }
 
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.running"), "");
+  const approvalRule = readCssRule(stylesSource, ".home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark");
+  assert.match(approvalRule, /border: 1\.5px solid currentColor;/);
+  assert.match(approvalRule, /border-radius: 50%;/);
+  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark::before"), /content: "!";/);
+  assert.doesNotMatch(approvalRule, /animation:/);
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.error"), "");
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.interrupted"), "");
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral"), "");
@@ -179,6 +196,7 @@ test("Home Characters は一覧をscroll ownerにするDOMとCSSを適用する"
   const noOp = () => {};
   const html = renderToStaticMarkup(createElement(HomeRightPane, {
     rightPaneView: "characters",
+    approvalMonitorEntries: [],
     runningMonitorEntries: [],
     nonRunningMonitorEntries: [],
     auxiliaryDataState: "ready",

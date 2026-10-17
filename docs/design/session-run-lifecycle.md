@@ -94,9 +94,10 @@ atomic開始後に結果不明となった要求の明示解放は、実guard解
 
 ### SessionApprovalService
 
-- pending approval の待機
-- resolve / deny
-- abort cleanup
+- Main／各Auxiliaryの会話ごとに承認要求をFIFOで保持し、先頭1件だけをlive stateへ公開・通知する。表示前の要求もdecision Promiseを保持し、先頭以外へのユーザー判断は受け付けない
+- 同一request identityの重複callbackは待機Promiseと判断を共有する。異なる要求を内容・summary一致で集約しない。Copilotの公開PermissionHandlerにはpermission request IDが渡らないため、同一要求オブジェクトだけを重複とし、別オブジェクトは同じtoolCallIdや表示内容でも個別に扱う
+- approve／denyで先頭を解決し、次の要求を公開する。個別signalのabortは該当要求だけをdenyで解決する。同一要求の重複callbackに属するsignalのabortは共有要求を失効させ、既にabort済みのsignalで届いた重複も同じdeny判断を共有する
+- turn取消・終端cleanup・resetは対象会話の全要求をdenyで解決し、途中の後続要求を公開・通知しない。全体resetは全会話へ適用する。承認待機は永続化しない
 
 ### SessionObservabilityService
 

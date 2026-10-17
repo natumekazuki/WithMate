@@ -578,11 +578,12 @@ export default function HomeApp() {
 
     const monitorRunStates = new Map<string, LiveSessionRunStatus>();
     const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRunStatus((sessionId, status) => {
-      const nextState = { runState: status?.runState, cancellationState: status?.cancellationState };
+      const nextState = { runState: status?.runState, cancellationState: status?.cancellationState, approvalPending: status?.approvalPending };
       const previousState = monitorRunStates.get(sessionId);
       if (previousState
         && previousState.runState === nextState.runState
-        && previousState.cancellationState === nextState.cancellationState) return;
+        && previousState.cancellationState === nextState.cancellationState
+        && previousState.approvalPending === nextState.approvalPending) return;
       monitorRunStates.set(sessionId, nextState);
       // Notifications invalidate snapshots; only fresh Main queries supply the display state.
       void refreshSessionSummaries("preserve");
@@ -617,6 +618,7 @@ export default function HomeApp() {
   const {
     filteredSessionEntries,
     normalizedSessionSearch,
+    approvalMonitorEntries,
     runningMonitorEntries,
     nonRunningMonitorEntries,
     monitorRunningEmptyMessage,
@@ -897,6 +899,7 @@ export default function HomeApp() {
       onClearAvatar: mateProfileHandlers.onClearAvatar,
     }),
     monitorContent: buildHomeMonitorContentProps({
+      approvalEntries: approvalMonitorEntries,
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
       auxiliaryDataState,
@@ -939,6 +942,7 @@ export default function HomeApp() {
     }),
     rightPane: buildHomeRightPaneProps({
       rightPaneView,
+      approvalMonitorEntries,
       runningMonitorEntries,
       nonRunningMonitorEntries,
       auxiliaryDataState,

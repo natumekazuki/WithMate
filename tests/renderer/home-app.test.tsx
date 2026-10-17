@@ -11,6 +11,7 @@ import type { MateStorageState } from "../../src-shared/mate/mate-state.js";
 import { buildNewSession, projectHomeSessionSummary, type CreateSessionRequest } from "../../src-shared/session/session-state.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import { projectLiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -455,10 +456,10 @@ test("Homeのmate status read中も既存Sessionを開ける", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Homeと独立Monitorはlive通知の実行・取消状態の変化から最新summaryを再取得し、MainとAuxiliaryの開始・終了をリロードなしで表示する"
+// claim = "Homeと独立Monitorはlive通知の実行・取消・承認状態の変化から最新summaryを再取得し、MainとAuxiliaryをリロードなしで表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window / 共通仕様のlive eventと軽量summary再読込" }
-// fault = "取消状態だけの重複判定で通常の開始・終了を捨てる、終了後にlive stateが残る場合を見落とす、またはstream本文更新ごとにsummaryを再取得する"
-// observable = "Running/Stopped sectionの親card、Main/Auxiliaryのaccessible状態、summary API取得回数、unmount後のlive購読数"
+// fault = "実行・承認状態だけの変化を捨てる、通知payloadをsnapshotの代わりに表示する、終了後のlive stateを見落とす、または本文更新ごとにsummaryを再取得する"
+// observable = "Approval/Running/Stopped sectionの親card、Main/Auxiliaryのaccessible状態、summary API取得回数、unmount後のlive購読数"
 // observation_boundary = "component-behavior"
 // scope = "HomeAppのlive event購読とMonitor描画（home/monitor mode、Main/Auxiliary）"
 // lifecycle = "permanent"
@@ -532,11 +533,11 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
     });
     const emitLive = async (sessionId: string, state: LiveSessionRunState | null) => {
       await act(async () => {
-        const status = state === null ? null : { runState: state.runState, cancellationState: state.cancellationState };
+        const status = projectLiveSessionRunStatus(state);
         for (const listener of liveListeners) listener(sessionId, status);
       });
     };
-    const assertMonitor = (section: "running" | "inactive", mainLabel: string, auxiliaryLabel: string) => {
+    const assertMonitor = (section: "approval" | "running" | "inactive", mainLabel: string, auxiliaryLabel: string) => {
       const card = rootElement.querySelector(`[aria-labelledby="home-monitor-${section}"] .home-monitor-card`);
       assert.ok(card, `${mode}: parent card should be in ${section}`);
       assert.ok(card.querySelector(`[aria-label="Main ${mainLabel}"]`), `${mode}: Main ${mainLabel}`);
@@ -564,6 +565,21 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       await emitLive(summary.id, { ...createLiveState(summary.id, "running"), assistantText: "Streaming text" });
       assert.deepEqual([summaryReads, auxiliaryReads], readsBeforeStreaming);
 
+      const approvalRequest = { requestId: "approval-1", provider: "codex", kind: "command", title: "Command", summary: "Run command", decisionMode: "direct-decision" as const };
+      const pendingMain = { ...createLiveState(summary.id, "running"), approvalRequest };
+      await emitLive(summary.id, pendingMain);
+      assertMonitor("running", "Running", "Idle");
+      summary = { ...summary, approvalPending: true };
+      await emitLive(summary.id, createLiveState(summary.id, "running"));
+      await emitLive(summary.id, pendingMain);
+      assertMonitor("approval", "Approval Required", "Idle");
+      const readsBeforeApprovalText = [summaryReads, auxiliaryReads];
+      await emitLive(summary.id, { ...pendingMain, assistantText: "More text" });
+      assert.deepEqual([summaryReads, auxiliaryReads], readsBeforeApprovalText);
+      summary = { ...summary, approvalPending: false };
+      await emitLive(summary.id, createLiveState(summary.id, "running"));
+      assertMonitor("running", "Running", "Idle");
+
       summary = { ...summary, status: "idle", runState: "idle" };
       await emitLive(summary.id, null);
       assertMonitor("inactive", "Idle", "Idle");
@@ -582,6 +598,12 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
 
       await emitLive(auxiliary.id, null);
       auxiliary = { ...auxiliary, runState: "running" };
+      await emitLive(auxiliary.id, createLiveState(auxiliary.id, "running"));
+      assertMonitor("running", "Idle", "Running");
+      auxiliary = { ...auxiliary, approvalPending: true };
+      await emitLive(auxiliary.id, { ...createLiveState(auxiliary.id, "running"), approvalRequest });
+      assertMonitor("approval", "Idle", "Approval Required");
+      auxiliary = { ...auxiliary, approvalPending: false };
       await emitLive(auxiliary.id, createLiveState(auxiliary.id, "running"));
       assertMonitor("running", "Idle", "Running");
       auxiliary = { ...auxiliary, runState: "error" };

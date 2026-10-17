@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
 import {
@@ -899,6 +900,7 @@ function buildCopilotApprovalDetails(request: CopilotPermissionRequestLike, work
 
 function buildCopilotApprovalRequest(
   request: PermissionRequest,
+  requestId: string,
   providerId: string,
   workspacePath: string,
 ): LiveApprovalRequest {
@@ -909,7 +911,7 @@ function buildCopilotApprovalRequest(
     : undefined;
 
   return {
-    requestId: request.toolCallId?.trim() || `${request.kind}:${summary}`,
+    requestId,
     provider: providerId,
     kind: request.kind,
     title: buildCopilotApprovalTitle(request.kind),
@@ -1076,6 +1078,7 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
 
 function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
   const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+  const requestIds = new WeakMap<PermissionRequest, string>();
   switch (normalizeApprovalMode(input.executionOptions.approvalMode)) {
     case "never":
       return () => toPermissionDecision("approved");
@@ -1096,8 +1099,13 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
           return toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user");
         }
 
+        let requestId = requestIds.get(request);
+        if (!requestId) {
+          requestId = randomUUID();
+          requestIds.set(request, requestId);
+        }
         const decision = await input.onApprovalRequest(
-          redactor.sanitize(buildCopilotApprovalRequest(request, input.providerCatalog.id, resolveRunWorkspacePath(input))),
+          redactor.sanitize(buildCopilotApprovalRequest(request, requestId, input.providerCatalog.id, resolveRunWorkspacePath(input))),
         );
         return toPermissionDecision(decision === "approve" ? "approved" : "denied-interactively-by-user");
       };

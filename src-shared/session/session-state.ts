@@ -125,6 +125,7 @@ export type HomeSessionSummary = {
   characterThemeColors: CharacterThemeColors;
   runState: string;
   cancellationState?: "requested" | "terminating";
+  approvalPending?: boolean;
 };
 
 export const SESSION_SUMMARY_PAGE_SCOPES = ["recent", "pinned", "open"] as const;
@@ -569,6 +570,7 @@ function normalizeHomeSessionSummaryShape(value: unknown): HomeSessionSummary | 
     ...(candidate.cancellationState === "requested" || candidate.cancellationState === "terminating"
       ? { cancellationState: candidate.cancellationState }
       : {}),
+    ...(candidate.approvalPending === true ? { approvalPending: true } : {}),
   };
 }
 

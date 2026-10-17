@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { SessionSummaryPageRequest } from "../../src-shared/session/session-state.js";
 
 import type {
@@ -339,6 +341,10 @@ export function registerSessionQueryHandlers(
         throw new Error(
           "Additional directory validation IPC is only available from the target Session window.",
         );
+      }
+      // Windows rooted paths without a drive depend on the process's current drive.
+      if (process.platform === "win32" && typeof targetPath === "string" && path.parse(targetPath).root.length === 1) {
+        return { valid: false, reason: "not-absolute" };
       }
       return deps.validateWorkspaceDirectory(targetPath);
     },

@@ -9,14 +9,14 @@ import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorの比率はpointerと上下矢印キーで変更でき、drag終了・cancel・capture喪失後のmoveでは変わらず、再描画で初期値へ戻らない"
+// claim = "Monitorの2本の境界はpointerと上下矢印キーで隣接領域だけを変更し、drag終了・cancel・capture喪失後と再描画でも比率を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "ドラッグ差分を累積して過大に変更する、終了後もmoveを適用する、keyboardを無視する、または状態更新で比率を5:5へ戻す"
+// fault = "第三領域の境界も動かす、ドラッグ差分を累積する、終了後もmoveを適用する、keyboardを無視する、または再描画で3等分へ戻す"
 // observable = "イベント後のgridTemplateRows、separatorのaria-valuenowとfocus、境界で確保するsection高さ"
 // observation_boundary = "component-behavior"
 // scope = "HomeMonitorContentから共通ChatDockSplitterを通るresize操作"
 // lifecycle = "permanent"
-// impact = "Home／独立Monitorで比率を操作・保持でき、両見出しと一覧へ継続して到達できる"
+// impact = "Home／独立MonitorでApproval・Running・Stoppedの配分を操作・保持でき、3見出しと一覧へ継続して到達できる"
 // distinction = "初期DOMとCSSのtestでは検出できないpointer lifecycleとkeyboardによる状態遷移を、1つのJSDOMで検証する。実captureとscroll寸法は実描画で確認する"
 // @end-test-value
 test("Monitorはdragとkeyboardで比率を変更・保持し終了後のmoveを無視する", async () => {
@@ -31,7 +31,7 @@ test("Monitorはdragとkeyboardで比率を変更・保持し終了後のmoveを
   }
   const root = createRoot(dom.window.document.getElementById("root")!);
   const render = (key: string, feedback = "") => root.render(createElement(HomeMonitorContent, {
-    key, feedback, runningEntries: [], nonRunningEntries: [],
+    key, feedback, approvalEntries: [], runningEntries: [], nonRunningEntries: [],
     onOpenSession() {}, onShowContextMenu() {},
   }));
   const rectangle = (height: number): DOMRect => ({
@@ -39,45 +39,62 @@ test("Monitorはdragとkeyboardで比率を変更・保持し終了後のmoveを
     toJSON: () => ({}),
   });
   try {
-    for (const ending of ["pointerup", "pointercancel", "lostpointercapture"]) {
-      await act(async () => render(ending));
+    for (const index of [0, 1]) for (const ending of ["pointerup", "pointercancel", "lostpointercapture"]) {
+      const renderKey = `${index}-${ending}`;
+      await act(async () => render(renderKey));
       const sections = dom.window.document.querySelector<HTMLDivElement>(".home-monitor-sections")!;
-      const splitter = sections.querySelector<HTMLButtonElement>('[role="separator"]')!;
+      const splitters = [...sections.querySelectorAll<HTMLButtonElement>('[role="separator"]')];
+      assert.equal(splitters.length, 2);
+      const splitter = splitters[index]!;
+      const other = splitters[1 - index]!;
       sections.getBoundingClientRect = () => rectangle(1000);
-      splitter.getBoundingClientRect = () => rectangle(20);
+      for (const item of splitters) item.getBoundingClientRect = () => rectangle(20);
+      const availableHeight = 960;
+      const initialBoundary = (index + 1) * availableHeight / 3;
+      const unchangedBoundary = other.getAttribute("aria-valuenow");
+      const assertBoundary = (expected: number) => {
+        const ratios = [...sections.style.gridTemplateRows.matchAll(/minmax\(48px, ([\d.]+)fr\)/g)].map((match) => Number(match[1]));
+        const boundary = ratios.slice(0, index + 1).reduce((sum, ratio) => sum + ratio, 0) * availableHeight;
+        assert.ok(Math.abs(boundary - expected) < 0.000001, `${boundary} should equal ${expected}`);
+        assert.equal(splitter.getAttribute("aria-valuenow"), String(Math.round(expected / availableHeight * 100)));
+        assert.equal(other.getAttribute("aria-valuenow"), unchangedBoundary);
+        assert.ok(ratios.every((ratio) => ratio * availableHeight >= 48 - 0.000001));
+      };
       const pointer = async (type: string, y: number, pointerId = 1) => {
         const event = new dom.window.MouseEvent(type, { bubbles: true, button: 0, clientY: y });
         Object.defineProperty(event, "pointerId", { value: pointerId });
         await act(async () => { splitter.dispatchEvent(event); });
       };
-      assert.equal(splitter.getAttribute("aria-valuenow"), "50");
+      assertBoundary(initialBoundary);
       await pointer("pointerdown", 500);
       assert.equal(dom.window.document.activeElement, splitter);
-      await pointer("pointermove", 598);
-      assert.equal(splitter.getAttribute("aria-valuenow"), "60");
-      await pointer("pointermove", 696);
-      assert.equal(splitter.getAttribute("aria-valuenow"), "70");
-      await pointer(ending, 696);
-      await pointer("pointermove", 794);
-      assert.equal(splitter.getAttribute("aria-valuenow"), "70");
-      await act(async () => render(ending, "Updated status"));
-      assert.equal(splitter.getAttribute("aria-valuenow"), "70");
+      await pointer("pointermove", 596);
+      assertBoundary(initialBoundary + 96);
+      await pointer("pointermove", 692);
+      assertBoundary(initialBoundary + 192);
+      await pointer(ending, 692);
+      await pointer("pointermove", 788);
+      assertBoundary(initialBoundary + 192);
+      await act(async () => render(renderKey, "Updated status"));
+      assertBoundary(initialBoundary + 192);
       const key = async (value: string) => {
         await act(async () => { splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true })); });
       };
       await key("ArrowUp");
-      assert.equal(splitter.getAttribute("aria-valuenow"), "68");
+      assertBoundary(initialBoundary + 168);
       await key("ArrowDown");
-      assert.equal(splitter.getAttribute("aria-valuenow"), "70");
+      assertBoundary(initialBoundary + 192);
       await key("Home");
-      assert.match(sections.style.gridTemplateRows, /minmax\(48px, 0\.048979/);
+      const minimumBoundary = index === 0 ? 48 : 368;
+      const maximumBoundary = index === 0 ? 592 : 912;
+      assertBoundary(minimumBoundary);
       await key("End");
-      assert.match(sections.style.gridTemplateRows, /minmax\(48px, 0\.951020/);
+      assertBoundary(maximumBoundary);
       await pointer("pointerdown", 500);
       await pointer("pointermove", -5000);
-      assert.equal(splitter.getAttribute("aria-valuenow"), "5");
+      assertBoundary(minimumBoundary);
       await pointer("pointermove", 5000);
-      assert.equal(splitter.getAttribute("aria-valuenow"), "95");
+      assertBoundary(maximumBoundary);
       await pointer("pointerup", 5000);
     }
   } finally {
@@ -93,9 +110,9 @@ test("Monitorはdragとkeyboardで比率を変更・保持し終了後のmoveを
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは親cardの2行分が収まらない一覧をinertにしてfocusをdividerへ移し、広げると同じ一覧DOMとscroll位置を復帰する"
+// claim = "Monitorは3分類の小領域一覧をinertにし、Approvalは先頭、RunningとStoppedは末尾splitterへfocusを退避し、拡大時に同じDOMとscroll位置を復帰する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "小領域の一覧を操作可能なまま残す、非表示のbuttonへfocusを残す、または復帰時に一覧を再mountしてscroll位置を失う"
+// fault = "小領域の一覧を操作可能にする、非表示buttonへfocusを残す、隣接しないsplitterへ退避する、または再mountしてscroll位置を失う"
 // observable = "resize通知前後の一覧のinert属性・collapsed class・DOM同一性・scrollTopとdocument.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "HomeMonitorContentの領域寸法から一覧の表示・操作状態への投影"
@@ -133,37 +150,41 @@ test("Monitorは小領域の一覧を操作不可にしfocusとscrollを維持�
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
     await act(async () => root.render(createElement(HomeMonitorContent, {
-      runningEntries: [entry], nonRunningEntries: [], onOpenSession() {}, onShowContextMenu() {},
+      approvalEntries: [entry], runningEntries: [entry], nonRunningEntries: [entry], onOpenSession() {}, onShowContextMenu() {},
     })));
     const document = dom.window.document;
-    const list = document.querySelector<HTMLDivElement>(".home-monitor-list")!;
-    const card = list.querySelector<HTMLDivElement>(".home-monitor-card")!;
-    const splitter = document.querySelector<HTMLButtonElement>('[role="separator"]')!;
-    let availableHeight = 80;
-    const rectangle = (height: number): DOMRect => ({ x: 0, y: 0, top: 0, left: 0, right: 300, bottom: height, width: 300, height, toJSON: () => ({}) });
-    list.getBoundingClientRect = () => rectangle(availableHeight);
-    card.getBoundingClientRect = () => rectangle(70);
-    list.scrollTop = 42;
-    await act(async () => notifyResize());
-    assert.equal(list.hasAttribute("inert"), false);
-    availableHeight = 70;
-    await act(async () => notifyResize());
-    assert.equal(list.hasAttribute("inert"), false);
-    list.querySelector<HTMLButtonElement>(".home-monitor-parent-button")!.focus();
-    assert.ok(list.contains(document.activeElement));
-    availableHeight = 69;
-    await act(async () => notifyResize());
-    assert.equal(list.hasAttribute("inert"), true);
-    assert.equal(list.classList.contains("is-collapsed"), true);
-    assert.equal(document.activeElement, splitter);
-    assert.equal(list.isConnected, true);
-    availableHeight = 80;
-    await act(async () => notifyResize());
-    assert.equal(document.querySelector(".home-monitor-list"), list);
-    assert.equal(list.hasAttribute("inert"), false);
-    assert.equal(list.classList.contains("is-collapsed"), false);
-    assert.equal(list.scrollTop, 42);
-    assert.equal(document.activeElement, splitter);
+    const lists = [...document.querySelectorAll<HTMLDivElement>(".home-monitor-list")];
+    const splitters = [...document.querySelectorAll<HTMLButtonElement>('[role="separator"]')];
+    assert.equal(lists.length, 3);
+    for (const [index, list] of lists.entries()) {
+      const card = list.querySelector<HTMLDivElement>(".home-monitor-card")!;
+      const splitter = splitters[Math.min(index, 1)]!;
+      let availableHeight = 80;
+      const rectangle = (height: number): DOMRect => ({ x: 0, y: 0, top: 0, left: 0, right: 300, bottom: height, width: 300, height, toJSON: () => ({}) });
+      list.getBoundingClientRect = () => rectangle(availableHeight);
+      card.getBoundingClientRect = () => rectangle(70);
+      list.scrollTop = 42;
+      await act(async () => notifyResize());
+      assert.equal(list.hasAttribute("inert"), false);
+      availableHeight = 70;
+      await act(async () => notifyResize());
+      assert.equal(list.hasAttribute("inert"), false);
+      list.querySelector<HTMLButtonElement>(".home-monitor-parent-button")!.focus();
+      assert.ok(list.contains(document.activeElement));
+      availableHeight = 69;
+      await act(async () => notifyResize());
+      assert.equal(list.hasAttribute("inert"), true);
+      assert.equal(list.classList.contains("is-collapsed"), true);
+      assert.equal(document.activeElement, splitter);
+      assert.equal(list.isConnected, true);
+      availableHeight = 80;
+      await act(async () => notifyResize());
+      assert.equal(document.querySelectorAll(".home-monitor-list")[index], list);
+      assert.equal(list.hasAttribute("inert"), false);
+      assert.equal(list.classList.contains("is-collapsed"), false);
+      assert.equal(list.scrollTop, 42);
+      assert.equal(document.activeElement, splitter);
+    }
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
@@ -178,7 +199,7 @@ test("Monitorは小領域の一覧を操作不可にしfocusとscrollを維持�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorの領域高が縮むと上下48pxを維持した表示比率をARIAへ反映し、最初の矢印操作は24px、dragはpointer移動量だけ表示位置から動く"
+// claim = "Monitor縮小時は3領域各48pxを維持した2境界をARIAへ反映し、各境界の最初の矢印は24px、dragはpointer移動量だけ表示位置から動く"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
 // fault = "旧高さで保存した比率を縮小後も使い、ARIAの配分と最初のkeyboard／drag移動を表示位置からずらす"
 // observable = "領域高変更・resize通知・keyboard／pointerイベント後のgridTemplateRowsの比率とseparatorのaria-valuenow"
@@ -213,51 +234,55 @@ test("Monitorは領域縮小後の比率と最初のkeyboard／dragを現在の�
   };
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
-    await act(async () => root.render(createElement(HomeMonitorContent, {
-      runningEntries: [], nonRunningEntries: [], onOpenSession() {}, onShowContextMenu() {},
-    })));
-    const sections = dom.window.document.querySelector<HTMLDivElement>(".home-monitor-sections")!;
-    const splitter = sections.querySelector<HTMLButtonElement>('[role="separator"]')!;
-    const key = async (value: string) => {
-      await act(async () => { splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: value, bubbles: true })); });
-    };
-    const pointer = async (type: string, y: number) => {
-      const event = new dom.window.MouseEvent(type, { bubbles: true, button: 0, clientY: y });
-      Object.defineProperty(event, "pointerId", { value: 1 });
-      await act(async () => { splitter.dispatchEvent(event); });
-    };
-    const assertRunningHeight = (expected: number) => {
-      const ratio = Number(sections.style.gridTemplateRows.match(/minmax\(48px, ([\d.]+)fr\)/)?.[1]);
-      assert.ok(Math.abs(ratio * (containerHeight - 20) - expected) < 0.000001);
-      assert.equal(splitter.getAttribute("aria-valuenow"), String(Math.round(expected / (containerHeight - 20) * 100)));
-    };
-    for (const edge of ["Home", "End"]) {
+    for (const index of [0, 1]) for (const edge of ["Home", "End"]) for (const input of ["resize-first", "key-first", "pointer-first"]) {
       containerHeight = 790;
-      await act(async () => notifyResize());
+      await act(async () => root.render(createElement(HomeMonitorContent, {
+        key: `${index}-${edge}-${input}`,
+        approvalEntries: [], runningEntries: [], nonRunningEntries: [], onOpenSession() {}, onShowContextMenu() {},
+      })));
+      const sections = dom.window.document.querySelector<HTMLDivElement>(".home-monitor-sections")!;
+      const splitters = [...sections.querySelectorAll<HTMLButtonElement>('[role="separator"]')];
+      const splitter = splitters[index]!;
+      const key = async (value: string, target = splitter) => {
+        await act(async () => { target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: value, bubbles: true })); });
+      };
+      const pointer = async (type: string, y: number) => {
+        const event = new dom.window.MouseEvent(type, { bubbles: true, button: 0, clientY: y });
+        Object.defineProperty(event, "pointerId", { value: 1 });
+        await act(async () => { splitter.dispatchEvent(event); });
+      };
+      const boundaries = () => {
+        const ratios = [...sections.style.gridTemplateRows.matchAll(/minmax\(48px, ([\d.]+)fr\)/g)].map((match) => Number(match[1]));
+        const height = containerHeight - 40;
+        assert.ok(ratios.every((ratio) => ratio * height >= 48 - 0.000001));
+        return [ratios[0]! * height, (ratios[0]! + ratios[1]!) * height];
+      };
+      const assertBoundary = (expected: number) => {
+        assert.ok(Math.abs(boundaries()[index]! - expected) < 0.000001);
+        assert.equal(splitter.getAttribute("aria-valuenow"), String(Math.round(expected / (containerHeight - 40) * 100)));
+      };
+      if (index === 0 && edge === "End") await key("End", splitters[1]);
+      if (index === 1 && edge === "Home") await key("Home", splitters[0]);
       await key(edge);
       containerHeight = 470;
-      await act(async () => notifyResize());
-      assertRunningHeight(edge === "Home" ? 48 : 402);
-      await key(edge === "Home" ? "ArrowDown" : "ArrowUp");
-      assertRunningHeight(edge === "Home" ? 72 : 378);
-
-      // 入力がResizeObserver通知より先でも、表示中の限界位置から動く。
-      containerHeight = 790;
-      await act(async () => notifyResize());
-      await key(edge);
-      containerHeight = 470;
-      await key(edge === "Home" ? "ArrowDown" : "ArrowUp");
-      assertRunningHeight(edge === "Home" ? 72 : 378);
-
-      containerHeight = 790;
-      await act(async () => notifyResize());
-      await key(edge);
-      containerHeight = 470;
-      await pointer("pointerdown", 400);
-      assertRunningHeight(edge === "Home" ? 48 : 402);
-      await pointer("pointermove", edge === "Home" ? 430 : 370);
-      assertRunningHeight(edge === "Home" ? 78 : 372);
-      await pointer("pointerup", edge === "Home" ? 430 : 370);
+      const expected = index === 0 ? edge === "Home" ? 48 : 334 : edge === "Home" ? 96 : 382;
+      const direction = edge === "Home" ? 1 : -1;
+      if (input === "resize-first") {
+        await act(async () => notifyResize());
+        assertBoundary(expected);
+      }
+      if (input === "pointer-first") {
+        await pointer("pointerdown", 400);
+        assertBoundary(expected);
+        const other = boundaries()[1 - index];
+        await pointer("pointermove", 400 + direction * 30);
+        assertBoundary(expected + direction * 30);
+        assert.ok(Math.abs(boundaries()[1 - index]! - other!) < 0.000001);
+        await pointer("pointerup", 400 + direction * 30);
+      } else {
+        await key(direction === 1 ? "ArrowDown" : "ArrowUp");
+        assertBoundary(expected + direction * 24);
+      }
     }
   } finally {
     await act(async () => root.unmount());

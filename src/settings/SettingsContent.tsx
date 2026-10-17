@@ -38,6 +38,7 @@ import {
   SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL,
   SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER,
   SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
+  SETTINGS_SESSION_APPROVAL_NOTIFICATION_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
   SETTINGS_TOOL_CALL_PRESENCE_LABEL,
@@ -75,6 +76,7 @@ export type HomeSettingsContentProps = {
   onChangeKeyboardShortcuts: (settings: KeyboardShortcutSettings) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
+  onChangeSessionApprovalNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
   onChangeToolCallPresenceEnabled: (enabled: boolean) => void;
   onChangeMemoryFileQuotaMegabytes: (value: string) => void;
@@ -161,6 +163,7 @@ export function HomeSettingsContent({
   onChangeKeyboardShortcuts,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
+  onChangeSessionApprovalNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
   onChangeToolCallPresenceEnabled,
   onChangeMemoryFileQuotaMegabytes,
@@ -266,6 +269,14 @@ export function HomeSettingsContent({
                   checked={settingsDraft.sessionTurnNotificationResponsePreviewEnabled}
                   onChange={(event) =>
                     onChangeSessionTurnNotificationResponsePreviewEnabled(event.target.checked)}
+                />
+              </label>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_SESSION_APPROVAL_NOTIFICATION_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.sessionApprovalNotificationEnabled}
+                  onChange={(event) => onChangeSessionApprovalNotificationEnabled(event.target.checked)}
                 />
               </label>
               <label className="settings-provider-toggle-row settings-section-toggle">
