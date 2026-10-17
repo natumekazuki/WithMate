@@ -47,7 +47,7 @@ test("buildModelSelectOptions は catalog にない選択中 model を先頭に�
 // @test-value v2
 // kind = "invariant"
 // claim = "reasoning effort選択肢は保存用IDを保持してTitle Caseの表示名を返す"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#表示言語と文言" }
 // fault = "表示名の変換で選択valueも変わるか、未変換の表示名がselectに露出する"
 // observable = "buildReasoningEffortSelectOptionsが返すvalueとlabelの対応"
 // observation_boundary = "public-boundary"

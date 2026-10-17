@@ -1038,7 +1038,7 @@ describe("HomeLaunchDialog", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "New sessionのProvider catalogは取得中・取得失敗・正常な有効provider 0件を別状態として表示し、未確定中は開始を無効化する"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+  // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
   // fault = "Provider catalogの取得中または失敗をNo enabled coding providersへ投影し、開始条件と実エラーを混同する"
   // observable = "Provider pickerのspinner/aria-busy、実エラー、Start disabled、No enabled coding providers.の相互排他"
   // observation_boundary = "component-behavior"

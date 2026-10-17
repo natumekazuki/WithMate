@@ -16,7 +16,7 @@ function deferred<T>() {
 // @test-value v2
 // kind = "contract"
 // claim = "Sessionの設定とcatalogの初回取得失敗を個別に再試行でき、会話とdraftを保持し、両方の回復後にSendを有効化する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "設定取得失敗でSendが永久に無効になる、Retryが別のreadまで再実行する、または会話やdraftを初期化する"
 // observable = "実SessionWindowAppのRetry操作、取得回数、会話DOM identity、textarea値、Send disabled状態、関連errorのaria-describedby"
 // observation_boundary = "component-behavior"
