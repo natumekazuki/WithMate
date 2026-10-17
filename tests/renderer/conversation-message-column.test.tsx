@@ -18,12 +18,12 @@ import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-t
 
 // @test-value v2
 // kind = "contract"
-// claim = "閲覧中の同長本文更新と非表示中のcanonical更新を会話ownerごとに通知し、再表示では行keyとoffsetを復元し、末尾復帰で通知を消す"
+// claim = "追尾停止と同frameのanchor計測と仮想range確定後の再計測で最新位置を保存し、owner切替・再表示で復元し、会話別の新着を末尾復帰で消す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
-// fault = "更新で閲覧を奪う、別会話へ新着が漏れる、非表示中の更新を落とす、またはresize後に旧pixel位置だけを復元する"
+// fault = "render前の停止を見落とす、未commitのrangeのoverscan行を保存する、range確定後に保存しない、別会話へ新着が漏れる、または非表示中の更新を落とす"
 // observable = "column propsのhasNewActivity、isMessageListFollowing、messageJumpRequest、cacheのanchor"
 // observation_boundary = "component-behavior"
-// scope = "conversation reading position and transient activity across owner/visibility transitions"
+// scope = "実follow hookと列cacheの接合。制御RAFと行矩形で停止直後・range commit通知・owner/visibility遷移を確認し、実virtualizerとCSS折返しは別のcomponent testとbrowserで確認する"
 // lifecycle = "permanent"
 // impact = "MainとAuxiliaryの往復やPreview終了で読んでいた本文を見失わず、新着へ明示的に戻れる"
 // distinction = "hook単体ではownerごとのactivityと仮想行keyへの復元handoffを通らない。小さいhook fixtureで列の接合を確認する"
@@ -66,16 +66,25 @@ test("conversation column はownerと非表示期間を跨いで閲覧anchorと�
     Object.defineProperties(list, { scrollHeight: { configurable: true, value: 1_000 }, clientHeight: { configurable: true, value: 100 } });
     const row = list.firstElementChild as HTMLElement;
     row.getBoundingClientRect = () => { rowReads += 1; return new dom.window.DOMRect(0, rowTop, 400, rowHeight); };
-    await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -10, bubbles: true })));
-    list.scrollTop = 200;
     await act(async () => {
+      list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -10, bubbles: true }));
+      list.scrollTop = 200;
       list.dispatchEvent(new dom.window.Event("scroll"));
       list.dispatchEvent(new dom.window.Event("scroll"));
+      assert.equal(rowReads, 0, "scroll handlers defer anchor layout reads");
+      const pending = [...frames.values()]; frames.clear();
+      pending.forEach((callback) => callback(0));
+      assert.deepEqual(cache.get("main")?.anchor, { key: "session-main-0", offset: -12 }, "the frame sees a stop before React commits its following flag");
     });
-    assert.equal(rowReads, 0, "scroll handlers defer anchor layout reads");
-    await flushFrames();
     assert.equal(rowReads, 1, "repeated scrolls share one anchor measurement per frame");
-    assert.deepEqual(cache.get("main")?.anchor, { key: "session-main-0", offset: -12 });
+    rowTop = 150;
+    await act(async () => list.dispatchEvent(new dom.window.Event("scroll")));
+    await flushFrames();
+    assert.equal(cache.get("main")?.anchor?.offset, -12, "an overscan row below the viewport is not a visible anchor");
+    rowTop = -22;
+    await act(async () => current().onMessageListLayout?.());
+    await flushFrames();
+    assert.equal(cache.get("main")?.anchor?.offset, -22, "committed virtual range layout refreshes the reading position without another scroll event");
     text = "replaced";
     await render();
     assert.equal(current().hasNewActivity, true, "same-length visible text replacement is new activity even without a timestamp change");
@@ -88,7 +97,7 @@ test("conversation column はownerと非表示期間を跨いで閲覧anchorと�
     await render();
     assert.equal(current().hasNewActivity, true);
     assert.equal(current().messageJumpRequest?.key, "session-main-0");
-    assert.equal(current().messageJumpRequest?.offset, -12, "restore retains the reading offset after geometry changes");
+    assert.equal(current().messageJumpRequest?.offset, -22, "restore retains the latest reading offset after geometry changes");
     await act(async () => current().onJumpToBottom?.());
     assert.equal(current().hasNewActivity, false);
     await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -10, bubbles: true })));

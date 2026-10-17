@@ -373,7 +373,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 中央 live Git Diff は Split を既定表示とし、Inline へ切り替えられる。両表示は同じ unified patch と検索modelを投影し、Split でも表示rowをvirtualizeする
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす
-  - user の scroll intent と末尾移動は一つの follow owner が決定し、virtual row の再計測は visible anchor の補正だけを担当する
+  - user の scroll intent と末尾移動は一つの follow owner が決定し、virtual row の再計測は visible anchor の補正だけを担当する。viewportより完全に上側の行の高さ変更を補正し、読みかけの行自身の高さ変更では行先頭のviewport内offsetを変えない
   - 上方向のwheel・キー・touchとscrollbarによる読み返し、検索・一覧からの移動で追従を停止する。子のスクロール領域が消費する操作、入力欄操作、zoom、クリック・選択だけでは会話の追従意図を変えない
   - 遅延描画・行高再計測・viewport resizeによる位置変化では追従意図を変更しない。追従中の末尾補正は同frameに集約し、既に末尾1px以内なら書き込まない
   - 追従停止中は位置を維持し、userの下方向操作で末尾24px以内へ戻ると追従を再開する。layout変化だけで末尾へ近づいても再開しない

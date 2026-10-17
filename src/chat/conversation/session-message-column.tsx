@@ -60,8 +60,8 @@ const SESSION_MESSAGE_OVERSCAN = 6;
 const SESSION_MESSAGE_SCROLL_END_THRESHOLD = 80;
 const SESSION_ACTION_DOCK_ID = "session-action-dock";
 
-export function shouldAdjustSessionMessageScrollPosition(input: { itemStart: number; scrollOffset: number }): boolean {
-  return input.itemStart < input.scrollOffset;
+export function shouldAdjustSessionMessageScrollPosition(input: { itemEnd: number; scrollOffset: number }): boolean {
+  return input.itemEnd <= input.scrollOffset;
 }
 
 type MessageArtifactFoldSection = "operation" | "operations";
@@ -118,6 +118,7 @@ export type SessionMessageColumnProps = {
   hasNewActivity?: boolean;
   onBrowseMessages?: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
+  onMessageListLayout?: () => void;
   onJumpToBottom?: () => void;
   onToggleMessageCollapse?: (key: string) => void;
   onToggleAllMessageCollapse?: () => void;
@@ -463,6 +464,7 @@ export function SessionMessageColumn({
   hasNewActivity = false,
   onBrowseMessages,
   onMessageListScroll,
+  onMessageListLayout,
   onJumpToBottom,
   onToggleMessageCollapse,
   onToggleAllMessageCollapse,
@@ -505,6 +507,7 @@ export function SessionMessageColumn({
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
   const handledMessageJumpRequestIdRef = useRef<number | null>(null);
+  const requestedMessageJumpIdRef = useRef<number | null>(null);
   const markdownLinkFileContext = useMemo(() => ({ sessionId }), [sessionId]);
   const resolveImageSource = useMarkdownImageResolver(getWithMateApi(), markdownLinkFileContext, messageViewMode);
   const messageCollapseTargetByKey = useMemo(
@@ -609,12 +612,19 @@ export function SessionMessageColumn({
   });
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
     shouldAdjustSessionMessageScrollPosition({
-      itemStart: item.start,
+      itemEnd: item.end,
       scrollOffset: instance.scrollOffset ?? 0,
     })
   );
   const virtualMessages = messageVirtualizer.getVirtualItems();
+  useLayoutEffect(() => {
+    onMessageListLayout?.();
+  }, [virtualMessages, onMessageListLayout]);
   useEffect(() => {
+    if (!artifactDetailsEnabled) {
+      requestedMessageJumpIdRef.current = null;
+      return;
+    }
     if (!messageJumpRequest || messageJumpRequest.sessionId !== sessionId) {
       return;
     }
@@ -626,18 +636,24 @@ export function SessionMessageColumn({
       return;
     }
 
-    handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
-    messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
     if (messageJumpRequest.offset !== undefined) {
-      const ownerWindow = messageListRef.current?.ownerDocument.defaultView;
-      const frame = ownerWindow?.requestAnimationFrame(() => {
-        const element = messageListRef.current;
-        const row = element?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
-        if (element && row) element.scrollTop += row.getBoundingClientRect().top - element.getBoundingClientRect().top - messageJumpRequest.offset!;
-      });
-      return () => { if (frame !== undefined) ownerWindow?.cancelAnimationFrame(frame); };
-    } else setMessageJumpHighlightKey(messageJumpRequest.key);
-  }, [messageJumpRequest, messageKeys, messageVirtualizer, sessionId]);
+      const element = messageListRef.current;
+      const row = element?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
+      if (element && row) {
+        handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
+        // Replace the index target so a later reconciliation cannot undo the viewport offset.
+        messageVirtualizer.scrollToOffset(element.scrollTop + row.getBoundingClientRect().top - element.getBoundingClientRect().top - messageJumpRequest.offset);
+        return;
+      }
+    }
+    if (requestedMessageJumpIdRef.current === messageJumpRequest.requestId) return;
+    requestedMessageJumpIdRef.current = messageJumpRequest.requestId;
+    messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
+    if (messageJumpRequest.offset === undefined) {
+      handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
+      setMessageJumpHighlightKey(messageJumpRequest.key);
+    }
+  }, [artifactDetailsEnabled, messageJumpRequest, messageKeys, messageVirtualizer, sessionId, virtualMessages]);
 
   useEffect(() => {
     if (!messageJumpHighlightKey || typeof window === "undefined") {
@@ -652,6 +668,7 @@ export function SessionMessageColumn({
   useEffect(() => {
     setMessageJumpHighlightKey(null);
     handledMessageJumpRequestIdRef.current = null;
+    requestedMessageJumpIdRef.current = null;
   }, [sessionId]);
   const hasPendingMessageText =
     pendingMessageTextVisible &&

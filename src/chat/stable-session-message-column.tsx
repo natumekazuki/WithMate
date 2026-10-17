@@ -21,6 +21,7 @@ const MemoizedSessionMessageColumn = memo(SessionMessageColumn);
 
 export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const onMessageListScroll = useStableOptionalCallback(props.onMessageListScroll);
+  const onMessageListLayout = useStableOptionalCallback(props.onMessageListLayout);
   const onJumpToBottom = useStableOptionalCallback(props.onJumpToBottom);
   const onBrowseMessages = useStableOptionalCallback(props.onBrowseMessages);
   const onToggleMessageCollapse = useStableOptionalCallback(props.onToggleMessageCollapse);
@@ -45,6 +46,7 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
     <MemoizedSessionMessageColumn
       {...props}
       onMessageListScroll={onMessageListScroll!}
+      onMessageListLayout={onMessageListLayout}
       onJumpToBottom={onJumpToBottom}
       onBrowseMessages={onBrowseMessages}
       onToggleMessageCollapse={onToggleMessageCollapse}

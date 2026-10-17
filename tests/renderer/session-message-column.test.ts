@@ -570,7 +570,7 @@ type MountedSessionMessageColumn = {
     pendingMessageText?: string;
     messageViewMode?: SessionMessageColumnProps["messageViewMode"];
   }) => Promise<void>;
-  resizeMessageRow: (index: number, height: number, options?: { transient: boolean }) => Promise<void>;
+  resizeMessageRow: (index: number, height: number) => Promise<void>;
   cleanup: () => Promise<void>;
 };
 
@@ -836,8 +836,8 @@ async function mountSessionMessageColumn(options: {
     messageListRef,
     root,
     rerender: renderMessageColumn,
-    async resizeMessageRow(index, height, resizeOptions) {
-      if (!resizeOptions?.transient) messageRowHeights.set(index, height);
+    async resizeMessageRow(index, height) {
+      messageRowHeights.set(index, height);
       const row = container.querySelector(`.session-message-virtual-row[data-index="${index}"]`);
       assert.ok(row, `message row ${index} が描画されていない`);
       const entry = {
@@ -1862,15 +1862,28 @@ test("SessionMessageColumn は上側rowの可変高再計測後も表示位置�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "再計測のscroll補正判定は行末がviewport上端と一致する行を含み、上端を跨ぐ行と下側の行は対象にしない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
+// fault = "viewport先頭を跨ぐanchor行の増減を全量scrollTopへ加算して段落位置をずらす"
+// observable = "境界前後の行に対する補正可否"
+// observation_boundary = "implementation"
+// scope = "virtual message row measurement adjustment boundary"
+// lifecycle = "permanent"
+// impact = "読みかけの行の高さ増減を全量補正すると閲覧位置がずれる"
+// distinction = "DOM testでは到達しにくい行末とviewport上端の一致・1px差を小さい判定testで確認する"
+// @end-test-value
 test("SessionMessageColumn は上方向scroll中も上側rowのvisible anchorを補正する", () => {
   assert.equal(shouldAdjustSessionMessageScrollPosition({
-    itemStart: 1_000,
+    itemEnd: 4_000,
     scrollOffset: 4_000,
   }), true);
   assert.equal(shouldAdjustSessionMessageScrollPosition({
-    itemStart: 5_000,
+    itemEnd: 4_001,
     scrollOffset: 4_000,
   }), false);
+  assert.equal(shouldAdjustSessionMessageScrollPosition({ itemEnd: 5_000, scrollOffset: 4_000 }), false);
 });
 
 test("SessionMessageColumn はappend時の末尾移動をfollow ownerへ委ねる", async () => {
@@ -2116,12 +2129,12 @@ test("SessionMessageColumn は新着の末尾復帰buttonと会話へのfocusを
 
 // @test-value v2
 // kind = "contract"
-// claim = "overflowする仮想会話のanchor requestは行の実測位置からoffsetを復元し、非表示時の0px測定と再表示後の行高再計測で位置を失わない"
+// claim = "overflowする仮想会話の未mount行へのanchor requestは実測位置からoffsetを復元し、非表示からの復帰と上側行・anchor行自身の行高再計測で位置を失わない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
-// fault = "非表示時の0px測定で履歴の行高cacheが壊れるか、遅いjumpや再計測がanchor offsetを上書きする"
+// fault = "再表示時の遅いjumpや再計測がanchor offsetを上書きする"
 // observable = "rowのviewport offsetとlist.scrollTop"
 // observation_boundary = "component-behavior"
-// scope = "100行の仮想会話、clampしたscroll、非表示時0pxのDOM寸法、ResizeObserverとRAFを跨ぐanchor補正。Previewの配線と実CSS折返しはbrowser確認対象"
+// scope = "100行の仮想会話、clampしたscroll、disabledからの再表示、ResizeObserverとRAFを跨ぐanchor補正。非表示中の測定通知・cache保持自体は検証せず、Previewの配線と実CSS折返しはbrowser確認対象"
 // lifecycle = "permanent"
 // impact = "履歴の復帰先を行先頭へずらさず、再計測後も読んでいた段落を維持する"
 // distinction = "cache testのrequest handoffとは異なり、virtualizerがDOMへ投影する行位置、scroll上限と後続の測定通知を通す"
@@ -2162,6 +2175,7 @@ test("SessionMessageColumn は再計測した行へanchor offsetを復元する"
       for (let frame = 0; frame < 3; frame += 1) await new Promise((resolve) => mounted.dom.window.requestAnimationFrame(resolve));
     });
     assert.ok(list.scrollHeight > list.clientHeight + 6_000, "fixture has a reachable overflowing anchor");
+    assert.equal(mounted.container.querySelector(".session-message-virtual-row[data-index='31']"), null, "target starts outside the committed virtual range");
     await mounted.rerender({ messageKeys, messageJumpRequest: { sessionId: "session-1", key: "message-31", offset: -18, requestId: 1 } });
     await settle();
     const anchorOffset = () => {
@@ -2174,18 +2188,24 @@ test("SessionMessageColumn は再計測した行へanchor offsetを復元する"
     const visibleScrollHeight = list.scrollHeight;
     hidden = true;
     await mounted.rerender({ isContentActive: false, artifactDetailsEnabled: false });
-    for (const row of mounted.container.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
-      await mounted.resizeMessageRow(Number(row.dataset.index), 0, { transient: true });
-    }
     await settle();
     hidden = false;
     await mounted.rerender({ isContentActive: true, artifactDetailsEnabled: true, messageKeys, messageJumpRequest: { sessionId: "session-1", key: "message-31", offset: -18, requestId: 2 } });
     await settle();
-    assert.equal(anchorOffset(), -18, "hidden zero-height layout must not replace saved row measurements");
+    assert.equal(anchorOffset(), -18, "re-enabling the column restores its reading position after a hidden layout");
     assert.equal(list.scrollHeight, visibleScrollHeight);
     await mounted.resizeMessageRow(30, 300);
     await settle();
     assert.equal(anchorOffset(), -18, "late measurement must not replace the restored reading offset");
+    const readingScrollTop = list.scrollTop;
+    await mounted.resizeMessageRow(31, 268);
+    await settle();
+    assert.equal(anchorOffset(), -18, "the partially clipped anchor row can grow without moving its top offset");
+    assert.equal(list.scrollTop, readingScrollTop);
+    await mounted.resizeMessageRow(31, 120);
+    await settle();
+    assert.equal(anchorOffset(), -18, "the partially clipped anchor row can shrink without moving its top offset");
+    assert.equal(list.scrollTop, readingScrollTop);
   } finally {
     mounted.dom.window.HTMLElement.prototype.getBoundingClientRect = originalRect;
     Object.defineProperty(mounted.dom.window.HTMLElement.prototype, "offsetHeight", originalOffsetHeight);

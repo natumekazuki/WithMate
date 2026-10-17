@@ -327,8 +327,6 @@ export function useConversationMessageColumn({
     savedScrollState: isBrowsing ? { scrollTop: conversation.scrollState?.scrollTop ?? 0, isFollowing: false } : conversation.scrollState,
     onScrollStateChange: (state) => { conversation.scrollState = state; },
   });
-  const followingRef = useRef(following.isMessageListFollowing);
-  followingRef.current = following.isMessageListFollowing;
   const tailActivityTexts = useMemo(() => tailMessages.map((message) => message.text), [tailMessages]);
   const activitySignature = `${totalCount}:${session?.updatedAt ?? ""}:${tailActivityTexts.map((text) => text.length).join(",")}:${bridgeKey}:${bridge?.text.length ?? 0}:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`;
   const previousActivity = useRef<{ owner: string; texts: readonly string[]; liveText: string } | null>(null);
@@ -348,16 +346,25 @@ export function useConversationMessageColumn({
   const anchorFrame = useRef<number | null>(null);
   const captureAnchor = useCallback(() => {
     const element = following.messageListRef.current;
-    if (!enabled || !element || (!isBrowsing && followingRef.current)) return;
+    if (!enabled || !element || (!isBrowsing && conversation.scrollState?.isFollowing)) return;
     const listTop = element.getBoundingClientRect().top;
+    const listBottom = listTop + element.clientHeight;
     for (const row of element.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
       const rect = row.getBoundingClientRect();
-      if (rect.bottom <= listTop) continue;
+      if (rect.bottom <= listTop || rect.top >= listBottom) continue;
       const key = projection.keys[Number(row.dataset.index)];
       if (key) conversation.anchor = { key, offset: rect.top - listTop };
       break;
     }
   }, [conversation, enabled, isBrowsing, projection.keys]);
+  const scheduleAnchorCapture = useCallback(() => {
+    const element = following.messageListRef.current;
+    if (!enabled || !element || anchorFrame.current !== null || (!isBrowsing && conversation.scrollState?.isFollowing)) return;
+    anchorFrame.current = element.ownerDocument.defaultView!.requestAnimationFrame(() => {
+      anchorFrame.current = null;
+      captureAnchor();
+    });
+  }, [captureAnchor, conversation, enabled, isBrowsing]);
   useLayoutEffect(() => {
     const element = following.messageListRef.current;
     return () => {
@@ -377,14 +384,8 @@ export function useConversationMessageColumn({
   const onMessageListScroll = useCallback((_event: UIEvent<HTMLDivElement>) => {
     if (!enabled) return;
     following.handleMessageListScroll();
-    const element = following.messageListRef.current;
-    if (element && anchorFrame.current === null) {
-      anchorFrame.current = element.ownerDocument.defaultView!.requestAnimationFrame(() => {
-        anchorFrame.current = null;
-        captureAnchor();
-      });
-    }
-  }, [following.handleMessageListScroll, captureAnchor, enabled]);
+    scheduleAnchorCapture();
+  }, [following.handleMessageListScroll, scheduleAnchorCapture, enabled]);
   const followLatest = useCallback(() => {
     ++pageRevision.current;
     requestedPageStart.current = undefined;
@@ -619,6 +620,7 @@ export function useConversationMessageColumn({
     hasNewActivity: !!conversation.hasNewActivity,
     onBrowseMessages: following.pauseMessageListFollowing,
     onMessageListScroll,
+    onMessageListLayout: scheduleAnchorCapture,
     onJumpToBottom: followLatest,
     conversationPaging: session.messageCount !== undefined && api?.getConversationPage ? {
       loading: pageLoading, error: pageError,
