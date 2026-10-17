@@ -1,5 +1,6 @@
 import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { MateAvatarAction } from "../mate/MateSetupPanel.js";
 
 export type HomeMateProfileApi = Pick<
   WithMateWindowApi,
@@ -88,7 +89,7 @@ export type UpdateHomeMateAvatarInput = {
   setMateProfile: (profile: MateProfile) => void;
   setMateDisplayName: (displayName: string) => void;
   setMateCreationFeedback: (message: string) => void;
-  setMateAvatarUpdating: (updating: boolean) => void;
+  setMateAvatarAction: (action: MateAvatarAction) => void;
   setLaunchFeedback: (message: string) => void;
   refreshSessionSummaries: () => Promise<void>;
 };
@@ -103,7 +104,7 @@ export async function selectHomeMateAvatar(input: UpdateHomeMateAvatarInput): Pr
     return;
   }
 
-  input.setMateAvatarUpdating(true);
+  input.setMateAvatarAction("select");
   try {
     input.setMateCreationFeedback("");
     const selectedPath = await input.api.pickImageFile(input.currentAvatarFilePath);
@@ -116,7 +117,7 @@ export async function selectHomeMateAvatar(input: UpdateHomeMateAvatarInput): Pr
   } catch (error) {
     input.setMateCreationFeedback(error instanceof Error ? error.message : "Mate のアイコン更新に失敗したよ。");
   } finally {
-    input.setMateAvatarUpdating(false);
+    input.setMateAvatarAction(null);
   }
 }
 
@@ -130,14 +131,14 @@ export async function clearHomeMateAvatar(input: UpdateHomeMateAvatarInput): Pro
     return;
   }
 
-  input.setMateAvatarUpdating(true);
+  input.setMateAvatarAction("clear");
   input.setMateCreationFeedback("Mate のアイコンを解除中...");
   try {
     await applyHomeMateAvatarUpdate(input, null, "Mate のアイコンを解除したよ。");
   } catch (error) {
     input.setMateCreationFeedback(error instanceof Error ? error.message : "Mate のアイコン解除に失敗したよ。");
   } finally {
-    input.setMateAvatarUpdating(false);
+    input.setMateAvatarAction(null);
   }
 }
 

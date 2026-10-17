@@ -22,7 +22,7 @@ function canceledTurn(sessionId: string): SessionTurnRecord {
 // @test-value v2
 // kind = "contract"
 // claim = "同ownerのturn再取得中・失敗時はCanceledの回復操作を保持し、初回失敗も明示Retryで回復でき、owner/incarnation切替には古いturnを適用しない"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "再取得で既知turnを消す、読取errorや明示Retryを表示しない、または別owner/incarnationへ古いturn応答を反映する"
 // observable = "production hookのturn/loading/error、recovery consumerのCanceled・Resend・Edit・alert・Retry・busy DOM、API読取回数"
 // observation_boundary = "consumer"

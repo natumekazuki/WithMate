@@ -133,6 +133,16 @@ test("loadMateStatusSnapshot は profile 取得後に inactive なら stale と�
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Mateの状態取得後に対象がinactiveなら、Avatar処理状態を含むUI stateを更新しない"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md 読込・空・失敗" }
+// fault = "遅いMate取得結果が無効化後のUI状態を上書きする"
+// observable = "state更新callbackの呼出し一覧"
+// observation_boundary = "consumer"
+// scope = "Mate status refreshの有効期間"
+// lifecycle = "permanent"
+// @end-test-value
 test("refreshMateStatus は ready result 後に inactive なら UI state を更新しない", async () => {
   const profile = createMateProfile("アリス");
   const calls: string[] = [];
@@ -149,7 +159,7 @@ test("refreshMateStatus は ready result 後に inactive なら UI state を更�
     setMateState: () => calls.push("setMateState"),
     setMateProfile: () => calls.push("setMateProfile"),
     setMateDisplayName: () => calls.push("setMateDisplayName"),
-    setMateAvatarUpdating: () => calls.push("setMateAvatarUpdating"),
+    setMateAvatarAction: () => calls.push("setMateAvatarAction"),
   });
 
   const state = await refreshers.refreshMateStatus(api, { isActive });

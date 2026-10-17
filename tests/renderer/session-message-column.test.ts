@@ -3091,6 +3091,70 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
   } finally { await mounted.cleanup(); }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "canonical会話のelicitation送信中は履歴の往復でも実行buttonのspinnerを保持し、失敗後は同じ要求の操作へ戻る"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン; docs/design/desktop-ui.md: Elicitationの入力待ち" }
+// fault = "表示面の再描画で実行actionを失う、非実行buttonもspinnerになる、または送信失敗後にbusyが残る"
+// observable = "resolve APIのpayload、履歴scroll前後のspinner所属とdisabled、失敗後の操作可能性とerror"
+// observation_boundary = "consumer"
+// scope = "canonical-elicitation-action-feedback"
+// lifecycle = "permanent"
+// impact = "回答受付の完了を誤認した再操作や、失敗後に再送できない状態を防ぐ"
+// distinction = "request propsだけのcomponent testではconversationのaction保持と非同期失敗からの復帰を通らない。実hookと仮想化された表示を小さいfixtureで接続する"
+// @end-test-value
+test("ConversationMessageColumn は送信actionの待機表示を履歴往復と失敗まで維持する", async () => {
+  const request = { ...createLiveElicitationRequest(), fields: [] };
+  let rejectResponse!: (error: Error) => void;
+  const responses: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
+  const api = {
+    resolveLiveElicitation: async (...args: [string, string, Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>[1]]) => {
+      assert.equal(args[0], "session-feedback");
+      assert.equal(args[1], request.requestId);
+      responses.push([request, args[2]]);
+      await new Promise<void>((_resolve, reject) => { rejectResponse = reject; });
+    },
+  };
+  function Column(props: SessionMessageColumnProps) {
+    return React.createElement(ConversationMessageColumn, {
+      session: { id: "session-feedback", messages: props.messages, runState: "running" },
+      baseProps: props, enabled: true, api,
+      liveRun: {
+        sessionId: "session-feedback", threadId: "thread-feedback", assistantText: "Review the requested input.",
+        steps: [], backgroundTasks: [], usage: null, errorMessage: "",
+        approvalRequest: null, elicitationRequest: request,
+      },
+    });
+  }
+  const mounted = await mountSessionMessageColumn({
+    component: Column, messages: createMessages(100), isRunning: true,
+    liveRunAssistantText: "Review the requested input.", liveElicitationRequest: request,
+  });
+  try {
+    const { container, dom } = mounted;
+    const list = container.querySelector<HTMLDivElement>(".session-message-list")!;
+    const controls = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button"));
+    await act(async () => controls().find((button) => button.textContent === "Submit")!.click());
+    assert.deepEqual(responses, [[request, { action: "accept" }]]);
+    for (const top of [0, list.scrollHeight - list.clientHeight]) {
+      await act(async () => {
+        list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: top - list.scrollTop, bubbles: true }));
+        list.scrollTop = top;
+        list.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      });
+    }
+    const submit = controls().find((button) => button.textContent === "Submit")!;
+    assert.ok(submit.querySelector(".button-content-spinner"));
+    assert.equal(submit.getAttribute("aria-busy"), "true");
+    assert.equal(container.querySelectorAll(".live-elicitation-card .button-content-spinner").length, 1);
+    assert.ok(controls().every((button) => button.disabled));
+    await act(async () => rejectResponse(new Error("Response was not accepted.")));
+    assert.ok(controls().every((button) => !button.disabled));
+    assert.equal(container.querySelectorAll(".live-elicitation-card .button-content-spinner").length, 0);
+    assert.match(container.textContent ?? "", /Response was not accepted\./);
+  } finally { await mounted.cleanup(); }
+});
+
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(1),
@@ -3762,7 +3826,7 @@ test("SessionActionDockCompactRow は実行中に jump button と Cancel を描�
   assert.match(html, /New messages/);
   assert.match(html, /session-action-dock-compact-actions/);
   assert.ok(html.indexOf("Cancel") < html.indexOf("Jump To Latest"));
-  assert.match(html, />Cancel<\/button>/);
+  assert.equal(new JSDOM(html).window.document.querySelector("button.danger.session-send-button")?.textContent, "Cancel");
   const renderedDocument = new JSDOM(html).window.document;
   const actions = renderedDocument.querySelector(".session-action-dock-compact-actions");
   assert.ok(actions);

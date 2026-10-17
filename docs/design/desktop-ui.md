@@ -1,5 +1,7 @@
 # Desktop UI
 
+UIの設計・変更・reviewでは、画面横断の原則と共通パターンを定めた[UI Design Guidelines](ui-design-guidelines.md)を参照する。
+
 ## Auxiliary Session (Issue #710)
 Mainと選択中Auxiliaryの末尾移動は`Scroll Main To Bottom`／`Scroll Auxiliary To Bottom`としてSettingsから個別にキー登録できる。既存の有効な割当を維持するため、全platformで初期は`Not Assigned`とし、`Reset`も指定commandだけ未割当へ戻す。登録後はComposer入力中も使え、送信対象とfocusを変えず指定列だけ末尾追従へ戻す。未取得・折りたたみ中の列、Auxiliaryの読込中・取得失敗、中央Preview表示中は実行しない。Terminal本文、IME変換中、key repeatでは会話shortcutの既存抑止を維持する。
 
@@ -31,22 +33,12 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## UI Source Of Truth Boundary
 
-- current UI の正本はこの文書とする
+- 各Windowの画面構成・固有の操作条件と現行動作の正本はこの文書とする
 
-## 表示言語・操作・状態
+## 読込と表示言語の適用
 
-- データの読込中は共通の`LoadingIndicator`を使い、対象を示すaccessible statusと`aria-busy`を持たせる。reduced motionではspinnerを停止する。既存の専用skeletonや実行・保存操作のbusyとは区別する。
-- 読込状態はパーツ単位で持ち、必要なデータが揃ったパーツから表示・操作できるようにする。未取得を正常emptyとして描画せず、失敗時は対象パーツにerrorと再試行導線を置く。再取得中や失敗時も取得済みの内容を保持し、無関係なパーツを画面全体のgateで隠さない。
 - Sessionは基本情報からheaderとFilesを表示し、会話は独立して読み込む。会話取得が成功するまで会話全体を必要とする編集・送信を行わない。Homeの一覧はapp stateの取得を待たず、Settingsの設定draft、Model Catalog、Diagnosticsはそれぞれの取得状態を持つ。
-- アプリ内UIのユーザー向け表示文字列は英語を標準とする。Character定義、ユーザー入力・生成コンテンツ、provider向け指示、ログ、テストデータ、開発者向け文書は対象外とする。
-- アプリ所有の短い表示文、見出し、label、button、option、status名は単語間に空白を入れたTitle Caseを使う。長いerror・safety説明、screen reader向けの自然文、ユーザーが入力・生成する内容は読みやすい文章を維持する。検索inputのplaceholderは表示せず、accessible nameは残す。ブランドとAPI / CLI / JSON / MCP / URL / HEAD等の正式表記は維持する。
-- theme tokenと既存CSS variableを優先する。新しいsurface・badge・button等の色を追加する時は、その上のtext・icon・borderのcontrastを同時に確認する。disabled、muted、placeholder、secondary textと、hover、selected、active、focus、error、warning、successの状態も背景へ埋もれないようにする。
-- 現役6 HTML entryのshellは`lang="en"`とする。会話、ユーザーtitle、Character定義、テンプレート本文、ファイル内容・path、raw診断、Provider指示は原文と保存値を維持する。表示用の日時・件数には英語localeを明示し、ローカルtime zone、保存値、parse、sort、raw copyを変更しない。UI用の通常状態copyは各consumerが定義し、ユーザー設定として編集・保存しない。
-- 対象が明確なtoolbar操作は既存iconを使い、英語の操作名・対象、focus、busy、toggle状態を残す。Save等の主CTA、Approve / Reject、Forget、GC、全削除、最終確認は必要な可視labelと影響説明を保つ。
-- 同一対象・同一requestの待機表現を集約する。未取得、pending、利用不可、正常0件、失敗を区別し、Mainと複数Auxiliary、一覧取得とrun、artifact detail取得の状態を混ぜない。承認・入力待ちは次の操作と要求本文を示す。
-- 正常0件、検索0件、情報のないpane/listの本文は空にする。既存shell、必要な見出し、create/restore等の操作、accessible nameは残し、未取得・読込中・取得失敗は正常0件と混同しない。読込中は対象領域のspinnerとaccessible status/busyへ集約し、取得失敗・validation・安全・回復に必要な説明と操作は残す。
-- 局所的なmotionを使い、reduced motionでは止まった形状とaccessible statusでも状態を識別できるようにする。spinnerのために処理完了を遅らせず、実際に成功した後だけ完了を示す。通知は意味のある遷移へ絞り、会話本文や全カードを重複して読み上げない。
-- 同じ事実を見出し、label、status、helper文で重ねない。正常状態や操作を言い換えただけの常設説明は省略する。未保存・保存中・失敗・回復は残し、新しい編集に古い保存成功を表示しない。`Stop`はrunの停止要求、`Cancel`は現在操作の取消、`Close`はWindow等を閉じる操作、`Quit`はアプリ終了と区別する。
+- 現役6 HTML entryのshellは`lang="en"`とする。
 
 ## Windows Session Notifications
 
@@ -109,6 +101,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 2 カラムの外側とMonitorのRunning／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
 - `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
+- Mate ProfileのAvatar編集では、`Select Image`と`Clear`の実行した操作だけをbusy表示にし、処理中は両操作を無効化する。Mate保存中も両操作を無効化するが、Avatar更新中とは表示を区別する。Mate未作成・Profile利用不可ではAvatar編集を提供しない。画像選択のキャンセルと更新失敗では元のAvatarを保持して操作可能状態へ戻し、成功時は取得したProfileを反映する。Avatarがないときは`Clear`を表示しない。
 - `Monitor`
   - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
   - 初期表示は `Monitor`
@@ -318,7 +311,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Agent Sessionでは`Preview / Source`の右に同じ表示形式の`Prompt / Terminal`切替を置き、押したmodeを展開する。初期選択はPrompt。既定shortcutはWindows／Linuxの`Ctrl+Shift+T`、macOSの`Cmd+Shift+T`で、Settingsから変更できる。composerと端末本文のどちらにfocusがあっても切り替えられ、IME変換中とkey repeatでは発火しない
   - PromptとTerminalは同時表示せず、非表示側をinertにしてmountを維持する。Promptのdraft・selectionとTerminalのタブ・出力・PTYを保持し、Promptへ戻るとcomposerへ、Terminalを選ぶと選択端末へfocusする。splitterで再展開した時は選択modeを維持する。Quote／参照挿入などcomposerを開く操作はPromptへ戻す
   - compact では末尾移動とmessage表示切替を必要に応じて操作列に残す。draft入力と`Send`はPromptのexpandedで表示し、実行中indicatorはmessage listに置く
-  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` / `Canceling` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では114pxを使い、viewportが760px以下では操作列幅へ追従する。expanded の下段には単一の `Send` を置き、開閉や Main / Auxiliary 切替で主操作の位置を変えない
+  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の固定幅領域を常時予約し、非実行中は不可視にする。通常幅では114pxを使い、viewportが760px以下では操作列幅へ追従する。expanded の下段には単一の `Send` を置き、開閉や Main / Auxiliary 切替で主操作の位置を変えない
   - 開閉は下 splitter を主導線とし、compact では実行状態によらずdock全体の余白からも展開できる。非表示の `Cancel` 予約領域と操作間の隙間も対象とし、表示中の操作ボタンは自身の操作を優先してdockを展開しない。dock 内に `Hide` は置かない
   - Promptのexpandedでは上部操作列と下部設定・送信列の高さを固定し、dragで中央のtextarea領域を伸縮させる。Main／Auxiliaryの実行中も次の依頼を準備するため、Template・Skill・添付・Additional Directory・対応する実行設定を使える。実行中Turnの設定・認可済みdirectoryは捕捉値を維持し、編集値は次の送信から適用する。read-only、入力のblocked条件、quit／close凍結は維持する。Terminalでは切替操作列とタブバーを固定し、端末本文へ残りの高さを割り当てる
   - default では通常送信の直後に compact へ戻す
@@ -357,7 +350,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Copy成功はsuccess toneと`role="status"` / `aria-live="polite"`、Copy失敗はerror toneと`role="alert"` / `aria-live="assertive"`で表示する。下端の`session-file-preview-feedback`はpreview自体のエラー専用で、Copy成功通知には使わない。`AppNotification`の現在のconsumerはFile Previewだけとし、他画面への適用は各UIの意味と配置を確認してから行う
   - Ctrl+F は active な chat / Text / Markdown / Mermaid / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、Mermaid、live Git Diff の選択範囲には chat と同じ floating Copy / Quote を表示し、Quote は現在の writable composer へ挿入する。Preview 表示中の Ctrl+A は、Find input または Action Dock の入力中を除き、Window 全体ではなく表示中の document または diff の文字列だけを選択する。rich previewのCopy／Quoteはブラウザーが選択した本文を使い、倍率toolbarなど選択不可の操作表示を含めない
   - file、live Git Diff、Template workspace から chat へ戻る操作は、左向き icon-only control と具体的な accessible name を持つ同じ navigation primitive を使う。run、approval、elicitation の状態は preview 中も確認できる
-  - Template workspaceのSave / Deleteは可視labelと局所spinner、busy stateを使う。処理中は入力を固定し、成功・失敗後に操作を戻す。本文・template IDを表示文言の変更で書き換えない
+  - Template workspaceのSave / Delete処理中は入力を固定し、成功・失敗後に操作を戻す。本文・template IDを表示文言の変更で書き換えない
   - Skill 候補のような一時 surface は右上の × と具体的な accessible name を使い、`Escape` でも dismiss できる。view 間 navigation の Back とは表現を分ける
 - detached file preview
   - File Explorer は通常 click で中央 preview、Ctrl+click / Cmd+click で detached preview を開く。Changes は通常 click で中央 live Git Diff（untracked は中央 file preview）、Ctrl+click / Cmd+click で detached live Git Diff（untracked は detached file preview）を開く。Session message の local-file link は detached preview を開く
@@ -427,7 +420,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 予約は通常のuser bubbleとして現在Turnの応答より後へ受付順に置く。本文を主役にし、下部に右寄せの個別`Cancel`と、利用可能な時だけ`Steer`を添える。待機順や開始・実行中の状態文字は表示しない。空queueに専用sectionは出さず、通常履歴と別のreceipt一覧や重複本文も表示しない。狭幅では操作を折り返し、本文を縮小しない
 - 失敗・結果不明は対象bubbleに状態と理由を示し、必要な回復操作だけを近接表示する。結果不明の`Release Later Turns`は元要求を再実行しない。queue取得・操作の失敗は取得済み本文を保ち、理由と`Retry Queue`を表示する。受付応答が不明ならComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。受付ACKは一致するdraft revisionだけを消す
 - 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は既存のElicitation formで回答し、secret textはpassword inputで扱う。nonblockingの質問は `Input Requested` とし、必須待ちと区別して応答生成中のstatusを維持する
-- Mainの取消受付後は同じ位置をdisabledの`Canceling`とbusy stateにする。取消終了待ちでも予約受付は可能だが、現在Turnへの追加入力と新しい実行開始は許可しない。保存済みSessionがidleになってもlive取消状態を優先し、元処理と必要な終了処理の解放通知後に後続の実行を開始する。
+- Mainの取消受付後は同じ位置の`Cancel`をdisabledとbusy stateにし、共通ボタン規約に従ってspinnerだけを表示する。取消終了待ちでも予約受付は可能だが、現在Turnへの追加入力と新しい実行開始は許可しない。保存済みSessionがidleになってもlive取消状態を優先し、元処理と必要な終了処理の解放通知後に後続の実行を開始する。
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
   - 詳細が欠落・取得失敗した場合はDetails内に状態と再openによる再試行を示し、会話本文と保存済みsummaryを維持する。同じ展開・表示期間では本文更新による自動再取得を行わず、閉じて再open・非表示からの復帰・履歴page復帰で取得し直す

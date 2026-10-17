@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { LaunchDialogShell } from "../../launch/launch-dialog-shell.js";
 import { useDialogA11y } from "../../ui/a11y.js";
+import { ButtonContent } from "../../ui/button-content.js";
 
 export function AdditionalDirectoryPathControl({ disabled, onAdd }: {
   disabled: boolean;
@@ -71,7 +72,7 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd }: {
                 Cancel
               </button>
               <button className="drawer-toggle compact additional-directory-path-add" type="submit" form="additional-directory-path-form" disabled={busy || !directoryPath.trim()} aria-busy={busy || undefined}>
-                Add
+                <ButtonContent busy={busy}>Add</ButtonContent>
               </button>
             </>
           }

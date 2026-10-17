@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { focusRovingItemByKey } from "../ui/a11y.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
+import { ButtonContent } from "../ui/button-content.js";
 import { CloseButton } from "../ui/close-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { PromptTemplate } from "../../src-shared/prompt-template.js";
@@ -391,12 +392,7 @@ export function PromptTemplateWorkspace({
               aria-label={savingAction === "save" ? "Saving template" : "Save"}
               onClick={() => void save()}
             >
-              {savingAction === "save" ? (
-                <>
-                  <span className="chat-skill-picker-spinner" aria-hidden="true" />
-                  <span>Save Template</span>
-                </>
-              ) : "Save Template"}
+              <ButtonContent busy={savingAction === "save"}>Save Template</ButtonContent>
             </button>
             <button
               type="button"
@@ -406,12 +402,7 @@ export function PromptTemplateWorkspace({
               aria-label={savingAction === "delete" ? "Deleting template" : "Delete"}
               onClick={() => void remove()}
             >
-              {savingAction === "delete" ? (
-                <>
-                  <span className="chat-skill-picker-spinner" aria-hidden="true" />
-                  <span>Delete Template</span>
-                </>
-              ) : "Delete Template"}
+              <ButtonContent busy={savingAction === "delete"}>Delete Template</ButtonContent>
             </button>
           </div>
         </div>

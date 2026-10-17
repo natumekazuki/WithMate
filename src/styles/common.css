@@ -23,6 +23,34 @@
   animation: loading-indicator-spin 720ms linear infinite;
 }
 
+.button-content {
+  position: relative;
+  display: inline-grid;
+  vertical-align: middle;
+}
+
+.button-content-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: inherit;
+}
+
+.button-content[data-busy="true"] > .button-content-label {
+  opacity: 0;
+}
+
+.button-content > .button-content-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(1rem, 100%);
+  height: auto;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  pointer-events: none;
+}
+
 .load-error {
   display: flex;
   align-items: center;

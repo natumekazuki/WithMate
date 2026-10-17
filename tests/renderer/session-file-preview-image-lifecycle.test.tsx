@@ -765,7 +765,7 @@ test("File Previewのtoolbar actionは実行中operationを直列化する", asy
     assert.ok(revealButton);
 
     await act(async () => openButton.click());
-    assert.ok(openButton.querySelector(".session-file-preview-action-spinner"));
+    assert.ok(openButton.querySelector(".button-content-spinner"));
     assert.equal(openButton.querySelector(".visually-hidden")?.textContent, "Opening file");
     assert.equal(openButton.disabled, true);
     assert.equal(revealButton.disabled, true);
@@ -788,7 +788,7 @@ test("File Previewのtoolbar actionは実行中operationを直列化する", asy
 
     await act(async () => revealButton.click());
     assert.equal(revealCalls, 1);
-    assert.ok(revealButton.querySelector(".session-file-preview-action-spinner"));
+    assert.ok(revealButton.querySelector(".button-content-spinner"));
     assert.equal(revealButton.querySelector(".visually-hidden")?.textContent, "Showing file in Explorer");
     await act(async () => {
       revealResult.resolve({
@@ -1684,13 +1684,13 @@ test("Markdown File Preview のReloadは同一画像を現行generationへ再登
 // kind = "contract"
 // claim = "File PreviewのReload busyはready本文を一時表示していても実際のinspectとcontent読込完了まで保持される"
 // oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
-// fault = "Reload直後の旧ready stateを見てbusyを解除し、request完了前に再操作可能またはaria-busy解除になる"
-// observable = "Reloading label、reload button disabled、preview aria-busy、inspect gate解放後の解除"
+// fault = "Reload直後の旧ready stateまたはinspect完了だけでbusyを解除し、content読込完了前にspinnerまたはaria-busyを失う"
+// observable = "inspectとchunk readの各待機中のReloading label・spinner・button disabled・aria-busy、最終read完了後の解除"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview.reload-busy"
 // lifecycle = "permanent"
 // impact = "再読込中の対象を継続して示し、古い本文への操作と重複requestを防ぐ"
-// distinction = "ready本文を保持したまま二回目inspectを保留し、完了前後のDOM busy projectionを分けて確認する"
+// distinction = "二回目inspectとその後のchunk readを別々に保留して各境界のbusyを観測する。型・API単体testではrendererの早期解除を検出できない"
 // @end-test-value
 test("File PreviewのReload busyはrequest完了まで保持される", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
@@ -1707,6 +1707,16 @@ test("File PreviewのReload busyはrequest完了まで保持される", async ()
   const harness = createPreviewApi(async (callCount) => (
     callCount === 1 ? IMAGE_DESCRIPTOR : secondInspect.promise
   ));
+  const secondReadStarted = deferred<void>();
+  const secondRead = deferred<void>();
+  const readChunk = harness.api.readSessionFileChunk;
+  harness.api.readSessionFileChunk = async (request) => {
+    if (request.expectedRevision === "image-r2") {
+      secondReadStarted.resolve();
+      await secondRead.promise;
+    }
+    return readChunk(request);
+  };
   const container = dom.window.document.getElementById("root");
   let root: Root | null = null;
 
@@ -1721,9 +1731,10 @@ test("File PreviewのReload busyはrequest完了まで保持される", async ()
     assert.ok(reload);
 
     await act(async () => reload.click());
-    await waitFor(() => reload.querySelector(".session-file-preview-action-spinner") !== null);
+    await waitFor(() => reload.querySelector(".button-content-spinner") !== null);
     assert.equal(reload.querySelector(".visually-hidden")?.textContent, "Reloading");
     assert.equal(reload.disabled, true);
+    assert.equal(reload.getAttribute("aria-busy"), "true");
     assert.equal(preview.getAttribute("aria-busy"), "true");
 
     await act(async () => {
@@ -1731,10 +1742,18 @@ test("File PreviewのReload busyはrequest完了まで保持される", async ()
         ...IMAGE_DESCRIPTOR,
         revision: "image-r2",
       });
-      await secondInspect.promise;
+      await secondReadStarted.promise;
     });
+    assert.ok(reload.querySelector(".button-content-spinner"), "content読込の待機中もReloadのspinnerを保持する");
+    assert.equal(reload.querySelector(".visually-hidden")?.textContent, "Reloading");
+    assert.equal(reload.disabled, true);
+    assert.equal(reload.getAttribute("aria-busy"), "true");
+    assert.equal(preview.getAttribute("aria-busy"), "true");
+    await act(async () => secondRead.resolve());
     await waitFor(() => reload.textContent === "Reload");
     assert.equal(reload.disabled, false);
+    assert.equal(reload.getAttribute("aria-busy"), null);
+    assert.equal(reload.querySelector(".button-content-spinner"), null);
     assert.equal(preview.getAttribute("aria-busy"), null);
   } finally {
     if (root) {
@@ -2861,10 +2880,10 @@ test("Git Diffは新しい対象の初回取得だけ本文spinnerへ切り替�
       }));
     });
     assert.equal(preview.getAttribute("aria-busy"), "true");
-    assert.equal(preview.querySelector(".loading-indicator-spinner"), null);
+    assert.equal(preview.querySelector(".loading-indicator"), null);
     assert.ok(preview.querySelector(".session-live-diff-split"));
     const pendingReload = [...preview.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.querySelector(".session-file-preview-action-spinner") !== null);
+      .find((button) => button.querySelector(".button-content-spinner") !== null);
     assert.equal(pendingReload?.disabled, true);
   } finally {
     if (root) {

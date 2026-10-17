@@ -540,7 +540,7 @@ test("ChatWindow は Skill 候補を中央 work surface overlayとして描画�
 // @test-value v2
 // kind = "contract"
 // claim = "Skill pickerはloadingとerrorを別の状態表示として描画する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態: 読込spinner/status/busyと取得失敗を分離する" }
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗: 読込spinner/status/busyと取得失敗を分離する" }
 // fault = "読み込み中を空状態またはerrorと誤表示し、spinner・busy state・error labelを失う"
 // observable = "status aria-busy、spinner、error state classのDOM"
 // observation_boundary = "component-behavior"
@@ -1257,7 +1257,7 @@ test("SessionChatScreen は左ペインのCollapse後もchild stateを保持す�
 // @test-value v2
 // kind = "contract"
 // claim = "未選択Auxiliaryの通常空labelはblankを保ちつつ、switcherと作成入口のaccessible nameを維持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態: 正常0件の本文は空にし、操作とaccessible nameを残す" }
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗: 正常0件の本文は空にし、操作とaccessible nameを残す" }
 // fault = "Auxiliary未選択時に通常空の可視labelを表示するか、switcherまたはAdd Auxiliaryの識別名を失う"
 // observable = "未選択switcherの可視text、current buttonのaria-label、Add Auxiliary buttonのaria-labelと表示記号"
 // observation_boundary = "component-behavior"

@@ -931,19 +931,6 @@
   min-width: 14px;
 }
 
-.session-file-preview-action-busy {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-
-.session-file-preview-action-spinner {
-  width: 14px;
-  height: 14px;
-  border-width: 2px;
-}
-
 .file-history-pane {
   display: flex;
   flex-direction: column;

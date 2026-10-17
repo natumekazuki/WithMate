@@ -1,4 +1,5 @@
 import type { KeyboardEventHandler, ReactNode, RefObject } from "react";
+import { ButtonContent } from "../ui/button-content.js";
 
 type LaunchDialogShellProps = {
   onClose: () => void;
@@ -69,7 +70,7 @@ export function LaunchDialogFooter({
         aria-label={startButtonBusy ? (startButtonLoadingText || startButtonLabel) : undefined}
         onClick={onStart}
       >
-        {startButtonBusy ? <span className="chat-skill-picker-spinner" aria-hidden="true" /> : startButtonLabel}
+        <ButtonContent busy={startButtonBusy}>{startButtonLabel}</ButtonContent>
       </button>
     </>
   );

@@ -39,7 +39,9 @@ export type ConversationColumnCache = {
   liveRun: LiveSessionRunState | null;
   bridge: Omit<LiveAssistantProjection, "text"> | null;
   approvalRequestId: string | null;
+  approvalDecision?: "approve" | "deny" | null;
   elicitationRequestId: string | null;
+  elicitationAction?: SessionMessageColumnProps["elicitationAction"];
   error: string;
   messageJumpRequest: MessageJumpRequest | null;
   messageJumpRequestId: number;
@@ -539,6 +541,7 @@ export function useConversationMessageColumn({
     if (!api?.resolveLiveApproval) return baseProps.onResolveLiveApproval(request, decision);
     if (conversation.approvalRequestId === request.requestId) return;
     conversation.approvalRequestId = request.requestId;
+    conversation.approvalDecision = decision;
     conversation.error = "";
     refresh();
     const eventRevision = liveRunEventRevision.current;
@@ -549,6 +552,7 @@ export function useConversationMessageColumn({
       conversation.error = error instanceof Error ? error.message : String(error);
     } finally {
       conversation.approvalRequestId = null;
+      conversation.approvalDecision = null;
       refresh();
     }
   };
@@ -556,6 +560,7 @@ export function useConversationMessageColumn({
     if (!api?.resolveLiveElicitation) return baseProps.onResolveLiveElicitation(request, response);
     if (conversation.elicitationRequestId === request.requestId) return;
     conversation.elicitationRequestId = request.requestId;
+    conversation.elicitationAction = response.action;
     conversation.error = "";
     refresh();
     const eventRevision = liveRunEventRevision.current;
@@ -566,6 +571,7 @@ export function useConversationMessageColumn({
       conversation.error = error instanceof Error ? error.message : String(error);
     } finally {
       conversation.elicitationRequestId = null;
+      conversation.elicitationAction = null;
       refresh();
     }
   };
@@ -578,10 +584,10 @@ export function useConversationMessageColumn({
   const inputAction = canSendQueuedInput ? sendQueuedInput : undefined;
   const queueTail = useMemo(() => !isBrowsing && api?.listSessionTurnQueue
     && (queuedProjection.tail.length > 0 || queue.error || queue.loading && queue.receipts.length > 0) ? <>
-    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
+    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
     {queue.loading && queue.receipts.length > 0 ? <LoadingIndicator inline label="Loading queued turns" /> : null}
     {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
-  </> : undefined, [isBrowsing, api, queuedProjection.tail, queue.busyId, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction]);
+  </> : undefined, [isBrowsing, api, queuedProjection.tail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction]);
   if (!session) return null;
   return {
     ...baseProps,
@@ -594,6 +600,7 @@ export function useConversationMessageColumn({
     onCancelQueuedTurn: queue.cancel,
     onReleaseInterruptedTurn: queue.release,
     queueBusyId: queue.busyId,
+    queueBusyKind: queue.busyKind,
     queueTail,
     pendingResponseMessageKey,
     messageGroups: projection.groups,
@@ -612,7 +619,9 @@ export function useConversationMessageColumn({
     liveElicitationRecords: api ? liveRun?.elicitationRecords : baseProps.liveElicitationRecords,
     elicitationInputAvailable: api ? liveRun?.inputAvailable === true && !liveRun.cancellationState : baseProps.elicitationInputAvailable,
     approvalActionRequestId: conversation.approvalRequestId,
+    approvalActionDecision: conversation.approvalDecision,
     elicitationActionRequestId: conversation.elicitationRequestId,
+    elicitationAction: conversation.elicitationAction,
     liveRunErrorMessage: conversation.error || (api ? liveRun?.errorMessage ?? "" : baseProps.liveRunErrorMessage),
     pendingMessageGroupId: null,
     messageListRef: following.messageListRef,

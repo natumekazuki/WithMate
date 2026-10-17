@@ -15,7 +15,7 @@ import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
 import type { HomeSessionSummary, SessionSummary } from "../../src-shared/session/session-state.js";
-import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
+import { HomeMateSetupPanel, type MateAvatarAction } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
@@ -444,7 +444,7 @@ describe("HomeMateSetupPanel", () => {
     displayName?: string;
     mateDisplayName?: string | null;
     mateAvatarFilePath?: string | null;
-    avatarUpdating?: boolean;
+    avatarAction?: MateAvatarAction;
     onSubmit?: () => void;
     onCancel?: () => void;
     onOpenSettings?: () => void;
@@ -455,7 +455,7 @@ describe("HomeMateSetupPanel", () => {
       mode: params?.mode,
       displayName: params?.displayName ?? "Your Mate",
       creating: params?.creating ?? false,
-      avatarUpdating: params?.avatarUpdating,
+      avatarAction: params?.avatarAction,
       feedback: params?.feedback ?? "",
       mateDisplayName: params?.mateDisplayName ?? null,
       mateAvatarFilePath: params?.mateAvatarFilePath,
@@ -492,7 +492,7 @@ describe("HomeMateSetupPanel", () => {
     assert.ok(submitButton);
     assert.ok(settingsButton);
     assert.ok(input.props.value === "Your Mate");
-    assert.ok(submitButton.props.children === "Create Mate");
+    assert.equal(new JSDOM(html).window.document.querySelector("button[type='submit']")?.textContent, "Create Mate");
     assert.ok(html.includes("作成完了まで少し待ってね。"));
   });
 
@@ -579,7 +579,9 @@ describe("HomeMateSetupPanel", () => {
 
     assert.ok(input.props.disabled);
     assert.ok(submitButton.props.disabled);
-    assert.equal(collectElements(panel, (element) => element.type === "span" && element.props.className === "home-mate-spinner").length, 1);
+    const document = new JSDOM(renderToStaticMarkup(panel)).window.document;
+    assert.ok(document.querySelector("button[type='submit'] .button-content-spinner[aria-hidden='true']"));
+    assert.equal(document.querySelector("button[type='submit'] .button-content-label")?.textContent, "Create Mate");
   });
 
   // @test-value v2
@@ -610,7 +612,8 @@ describe("HomeMateSetupPanel", () => {
     )[0];
 
     assert.ok(html.includes("Mate Profile"));
-    assert.equal(submitButton?.props.children, "Save");
+    assert.ok(submitButton);
+    assert.equal(new JSDOM(html).window.document.querySelector("button[type='submit']")?.textContent, "Save");
     assert.ok(cancelButton);
     (cancelButton.props.onClick as () => void)();
     assert.equal(canceled, 1);
@@ -646,7 +649,7 @@ describe("HomeMateSetupPanel", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Home Mate setup edit modeはiconの選択と解除操作をcallbackへ渡す"
-  // oracle = { type = "contract", ref = "HomeMateSetupPanel avatar controls contract" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Home Window" }
   // fault = "avatar選択または解除の操作がcallbackに届かない"
   // observable = "selected/cancelled counters"
   // observation_boundary = "component-behavior"
@@ -671,11 +674,11 @@ describe("HomeMateSetupPanel", () => {
     const html = renderToStaticMarkup(panel);
     const selectButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Select Image",
+      (element) => element.type === "button" && element.props["aria-label"] === "Select Image",
     )[0];
     const clearButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Clear",
+      (element) => element.type === "button" && element.props["aria-label"] === "Clear Avatar",
     )[0];
 
     assert.ok(html.includes("Avatar"));
@@ -891,7 +894,7 @@ describe("HomeLaunchDialog", () => {
   it("新規作成導線は Session 専用である", () => {
     const html = renderHomeLaunchDialog();
 
-    assert.match(html, /<button class="start-session-button"[^>]*>Start<\/button>/);
+    assert.equal(new JSDOM(html).window.document.querySelector("button.start-session-button")?.textContent, "Start");
     assert.ok(html.includes('aria-label="New Session"'));
     assert.ok(html.includes("Coding Provider"));
     assert.ok(!html.includes("Agent Mode"));
@@ -1035,7 +1038,7 @@ describe("HomeLaunchDialog", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "New sessionのProvider catalogは取得中・取得失敗・正常な有効provider 0件を別状態として表示し、未確定中は開始を無効化する"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+  // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
   // fault = "Provider catalogの取得中または失敗をNo enabled coding providersへ投影し、開始条件と実エラーを混同する"
   // observable = "Provider pickerのspinner/aria-busy、実エラー、Start disabled、No enabled coding providers.の相互排他"
   // observation_boundary = "component-behavior"

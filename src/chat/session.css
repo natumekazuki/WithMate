@@ -4052,14 +4052,6 @@
   box-shadow: 0 10px 22px rgba(248, 113, 113, 0.24);
 }
 
-.composer-control-row > .session-send-button.loading {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-width: 82px;
-}
-
 .composer-settings {
   display: flex;
   flex-wrap: wrap;
@@ -4140,8 +4132,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .session-page .pending-run-indicator .typing-dots span,
-  .session-page .chat-skill-picker-spinner {
+  .session-page .pending-run-indicator .typing-dots span {
     animation: none;
   }
 }

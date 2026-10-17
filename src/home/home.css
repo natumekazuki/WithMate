@@ -214,17 +214,6 @@
   margin: 0;
 }
 
-.home-mate-spinner {
-  width: 1em;
-  height: 1em;
-  display: inline-block;
-  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: home-session-list-load-spin 760ms linear infinite;
-  vertical-align: -0.15em;
-}
-
 .home-page .home-pane-toggle {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -936,30 +925,10 @@
   height: 16px;
 }
 
-.home-page .home-session-pin-icon.pending {
-  width: 14px;
-  height: 14px;
-  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: home-session-pin-spin 760ms linear infinite;
-}
-
-@keyframes home-session-pin-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .home-page .home-session-pin-button:hover:not(:disabled),
 .home-page .home-session-pin-button.is-active {
   border-color: color-mix(in srgb, var(--card-ink, var(--ink)) 36%, transparent);
   background: color-mix(in srgb, var(--card-ink, var(--ink)) 16%, transparent);
-}
-
-.home-page .home-session-pin-button.is-pending {
-  cursor: wait;
-  opacity: 0.62;
 }
 
 .home-page .home-session-card-open strong,
@@ -1181,9 +1150,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .workspace-validation-spinner,
-  .home-mate-spinner,
   .home-page .home-session-list-load-spinner,
-  .home-page .home-session-pin-icon.pending,
   .home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark,
   .home-page .home-monitor-status-icon.loading .home-monitor-status-icon-mark {
     animation: none;
@@ -1733,15 +1700,6 @@
 .restore-session-windows-button:disabled {
   cursor: not-allowed;
   opacity: 0.58;
-}
-
-.restore-session-windows-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: home-session-list-load-spin 760ms linear infinite;
 }
 
 .session-window-restore-feedback {

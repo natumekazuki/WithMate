@@ -83,6 +83,7 @@ import {
   type MateStorageState,
 } from "../../src-shared/mate/mate-state.js";
 import { buildHomeMateSetupContentProps } from "../mate/home-mate-setup-props.js";
+import type { MateAvatarAction } from "../mate/MateSetupPanel.js";
 import { buildMateStatusRefreshers } from "../mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home-icons.js";
@@ -182,7 +183,7 @@ export default function HomeApp() {
   const [mateProfile, setMateProfile] = useState<MateProfile | null>(null);
   const [mateDisplayName, setMateDisplayName] = useState("");
   const [mateCreating, setMateCreating] = useState(false);
-  const [mateAvatarUpdating, setMateAvatarUpdating] = useState(false);
+  const [mateAvatarAction, setMateAvatarAction] = useState<MateAvatarAction>(null);
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
   const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
   const settingsDirtyRef = useRef(false);
@@ -240,7 +241,7 @@ export default function HomeApp() {
     setMateState,
     setMateProfile,
     setMateDisplayName,
-    setMateAvatarUpdating,
+    setMateAvatarAction,
   });
 
   const loadMoreSessionSummaryPage = async (scope: "recent" | "pinned", retry = false): Promise<void> => {
@@ -752,7 +753,7 @@ export default function HomeApp() {
     setMateCreationFeedback,
     setMateProfileEditorOpen,
     setMateCreating,
-    setMateAvatarUpdating,
+    setMateAvatarAction,
     setLaunchFeedback,
     refreshSessionSummaries: async () => {
       await refreshSessionSummaries("preserve");
@@ -886,7 +887,7 @@ export default function HomeApp() {
       mateProfile,
       mateDisplayName,
       mateCreating,
-      mateAvatarUpdating,
+      mateAvatarAction,
       mateCreationFeedback,
       onChangeDisplayName: mateProfileHandlers.onChangeDisplayName,
       onSubmit: mateProfileHandlers.onSubmit,

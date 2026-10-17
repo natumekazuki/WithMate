@@ -11,6 +11,7 @@ import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
+import { ButtonContent } from "../ui/button-content.js";
 
 export type HomeRightPaneProps = {
   rightPaneView: "monitor" | "characters";
@@ -95,10 +96,7 @@ export function HomeRightPane({
             }
             aria-busy={sessionWindowRestorePending}
           >
-            {sessionWindowRestorePending ? (
-              <span className="restore-session-windows-spinner" aria-hidden="true" />
-            ) : null}
-            <span>Restore Sessions</span>
+            <ButtonContent busy={sessionWindowRestorePending}>Restore Sessions</ButtonContent>
           </button>
           <button
             className="launch-toggle home-monitor-window-button"
