@@ -1762,7 +1762,7 @@ test("Auxiliary Reviewerは親から継承した後に独立して保存する",
 // @test-value v2
 // kind = "invariant"
 // claim = "Auxiliary Session更新は保存済みApprovalがneverの間、他項目を更新しても現在のReviewerを保持する"
-// oracle = { type = "contract", ref = "docs/manual-test-checklist.md:90" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Approvalがneverの間のReviewer保持" }
 // fault = "直接IPCまたはstale payloadがnever中のAuxiliary Reviewerを変更し、後のinteractive復帰で意図しない値が有効になる"
 // observable = "never設定で他項目を更新した後のAuxiliaryと親のReviewer"
 // observation_boundary = "public-boundary"
@@ -2610,7 +2610,7 @@ test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthread�
 // @test-value v2
 // kind = "invariant"
 // claim = "実行中の確定Auxiliary messageに対するbookmark追加と解除は、古いruntime snapshotの実行中・終端保存後も維持される"
-// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D9A 実行中確定messageのBookmark" }
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 実行結果保存時の最新Bookmark保持" }
 // fault = "runtimeの全文CASがbookmark操作を並行変更として拒否するか、古いsnapshotのbookmark値で保存済み状態を戻す"
 // observable = "updateAuxiliarySessionIfMatchesの結果と実DB再読込のmessage bookmark値"
 // observation_boundary = "public-boundary"

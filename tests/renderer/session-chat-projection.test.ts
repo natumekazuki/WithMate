@@ -61,7 +61,7 @@ function createSession(): Session {
 // @test-value v2
 // kind = "contract"
 // claim = "session runtime featureはcomposerのblocked feedbackとworkspace/path noticeを共通error surfaceへ投影する"
-// oracle = { type = "contract", ref = "docs/features/session-interface-refinements.md#blocked状態と送信エラー; docs/manual-test-checklist.md: MT-023D11; docs/design/desktop-ui.md: sendability" }
+// oracle = { type = "contract", ref = "docs/features/session-interface-refinements.md#blocked状態と送信エラー; docs/design/desktop-ui.md: sendability" }
 // fault = "workspaceまたはpathの失敗がerror surfaceから欠落する、またはcomposerのblocked feedbackが表示されない"
 // observable = "buildSessionChatRuntimeFeatureのerrorNoticesに含まれるnoticeの内容とcallback identity"
 // observation_boundary = "public-boundary"
@@ -126,7 +126,7 @@ test("session runtime feature は blocked feedback と workspace/path notice を
 // @test-value v2
 // kind = "contract"
 // claim = "session header ownerはauxiliary modeでparent sessionのrename/deleteを隠し、session action callbackを維持する"
-// oracle = { type = "characterization", ref = "99a1a9b09b23b54553790edeb63f390125d21ecb:src/chat/chat-header-visibility.ts resolveChatHeaderVisibility; docs/manual-test-checklist.md: MT-023D1, MT-023D2" }
+// oracle = { type = "characterization", ref = "99a1a9b09b23b54553790edeb63f390125d21ecb:src/chat/chat-header-visibility.ts resolveChatHeaderVisibility" }
 // fault = "auxiliary conversationで親sessionの操作が誤表示される、またはworkspace/session action callbackが別操作へ接続される"
 // observable = "useSessionHeaderOperationsが返すheader propsのvisibility flags、terminal/pin callback identity、描画したworkspace/session-file操作の呼出先"
 // observation_boundary = "public-boundary"
@@ -670,7 +670,7 @@ test("context pane owner は runtime/composition 経由で ChatWindow の Latest
 // @test-value v2
 // kind = "contract"
 // claim = "Mainと異なるIDのAuxiliaryでも実composerの事前検証と追加時再検証は親WindowのSession IDを使い、追加先の会話を混線させない。別Windowからの検証は拒否する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Add Directory By Path; docs/manual-test-checklist.md MT-023D4; docs/design/electron-window-runtime.md MainIpcRegistration" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Add Directory By Path; docs/design/electron-window-runtime.md MainIpcRegistration" }
 // fault = "表示中のAuxiliary IDをWindow所有者IDとしてIPCへ渡して有効pathを拒否する、追加先を親へ置換する、または別Windowを許可する"
 // observable = "実composerの入力・Addから実preloadと登録IPCへ届くID/path、実在directoryの検証結果、Main/Auxiliaryの許可リストと別Windowの拒否"
 // observation_boundary = "public-boundary"

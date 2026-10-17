@@ -1570,7 +1570,7 @@ describe("SessionStorageV6", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "実行中の確定Main messageのBookmark追加と解除は古いruntime snapshotの実行中・終端保存後も保持される"
-  // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D9A 実行中確定messageのBookmark" }
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 実行結果保存時の最新Bookmark保持" }
   // fault = "runtimeの古いmessage配列を再保存してbookmarkの追加または解除を巻き戻す"
   // observable = "upsertSessionとupsertTerminalSessionの返却値および実DB再読込のmessage bookmark値"
   // observation_boundary = "public-boundary"

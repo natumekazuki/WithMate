@@ -12,7 +12,7 @@ import { PreviewWheelZoomStepContext } from "../../src/settings/preview-zoom-set
 // @test-value v2
 // kind = "contract"
 // claim = "画像のCtrl＋wheelは既定5ポイントと設定変更後の刻みを使い、設定変更だけでは倍率を変えず、buttonの10ポイント刻みと10〜800%の限界、低倍率Fitを守る"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 共通previewのCtrl＋wheel操作、docs/manual-test-checklist.md: MT-023D7C" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 共通previewのCtrl＋wheel操作" }
 // fault = "連続wheelが古い倍率を使って取りこぼされる、限界を超える、低倍率Fitで縮小すると拡大へ反転する、または通常wheelもcancelする"
 // observable = "倍率buttonのtextとFit状態、画像のstyle.zoom、wheelのdefaultPrevented"
 // observation_boundary = "component-behavior"

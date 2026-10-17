@@ -98,4 +98,3 @@ flowchart LR
 ## Related Documents
 
 - `docs/design/desktop-ui.md`
-- `docs/manual-test-checklist.md`

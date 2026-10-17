@@ -108,7 +108,7 @@ test("Home summary background refresh はloaded page数ぶんcursor chainを再�
 // @test-value v2
 // kind = "contract"
 // claim = "保持済みPinned/Recentと同じIDのopen summary更新が表示内容とMonitor分類へ反映され、page順序とcursorは保持される"
-// oracle = { type = "contract", ref = "docs/manual-test-checklist.md MT-003J" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window: 同じSession IDのopen summaryとPinned／Recent pageの合成" }
 // fault = "先勝ちdedupeが古いidle rowを残し、成功したopen取得のtitleとrunning状態を捨てるか、保持pageの順序と内容を変える"
 // observable = "合成entryの順序・title、Running/StoppedのID、保持pageのcursorと内容"
 // observation_boundary = "public-boundary"

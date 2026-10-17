@@ -2682,7 +2682,7 @@ test("SessionMessageColumn は pending response text も response action 対象�
 // @test-value v2
 // kind = "contract"
 // claim = "選択範囲がassistant本文内にあるときresponse action toolbarを表示し、対象外本文では除去する。Source切替時は既存toolbarを除去し、Source本文を新たに選択した場合は再表示する"
-// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D9" }
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#rendering-policy: Source選択 / assistant responseの選択action" }
 // fault = "user message選択でtoolbarが残る、Source切替後の既存toolbarが残る、Source本文の新規選択でtoolbarが再表示されない、copy/quote actionが選択本文を受け取れない"
 // observable = "mounted SessionMessageColumn DOMとselectionchange・resize・scrollによるtoolbarの表示・除去、Source本文の再選択後のtoolbar、copy/quote callback"
 // observation_boundary = "component-behavior"
@@ -3131,7 +3131,7 @@ test("SessionMessageColumn は内容未到着でも末尾に処理中bubbleを�
 // @test-value v2
 // kind = "contract"
 // claim = "MainとAuxiliaryの実行中応答内のelicitationは、履歴スクロール後も同一requestの未送信回答を保持して送信し、新しいrequestには持ち越さない"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: pending中のlive activity / streaming response; docs/manual-test-checklist.md: MT-017D" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: pending中のlive activity / streaming response" }
 // fault = "仮想化で入力formが再mountされて選択が初期値へ戻り、意図しない回答を送信するか、request終了後も応答行を保持し続ける"
 // observable = "実projectionを通した履歴の往復scroll後のselect値と送信payload、次requestの初期値、request終了後の仮想rowの解放"
 // observation_boundary = "component-behavior"
@@ -3550,7 +3550,7 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
 // @test-value v2
 // kind = "contract"
 // claim = "SessionComposerExpandedのidle DOMはattachment/view操作、closedなattachment menu、Add Directory/Add Directory By Path/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
-// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023C, MT-023D4; docs/design/desktop-ui.md: Action Dock" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock / Add Directory By Path" }
 // fault = "idle表示でattachment/view action・closedなattachment menu・Add Directory/Add Directory By Path/Dirs・target dock・Cancel slot・SendのDOM配置が崩れる、Hide/reopen導線が混入する、Cancel slotがactiveまたはbuttonを持つ、Sendがsettings group内へ移動する"
 // observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAdd Directory/Add Directory By Path/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row直下のsettings groupとSend button"
 // observation_boundary = "component-behavior"

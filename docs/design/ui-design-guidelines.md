@@ -65,4 +65,4 @@ WithMateのUI設計・変更・reviewに適用する、画面横断のデザイ�
 
 変更した部品とその影響範囲について、通常・処理中・成功・失敗の必要な状態遷移、keyboard操作、accessible name・busy stateを確認する。狭幅、長いlabel、文字拡大、reduced motionは、その変更で影響を受ける条件を選ぶ。
 
-実質的なUI変更では、実描画と操作で外寸、周囲の配置、読む位置、focusと操作可能性を確認する。test/buildの成功だけで視覚品質を確認済みとせず、実施した確認と未確認を分けて報告する。実機確認項目の正本は[Manual Test Checklist](../manual-test-checklist.md)とする。
+実質的なUI変更では、実描画と操作で外寸、周囲の配置、読む位置、focusと操作可能性を確認する。test/buildの成功だけで視覚品質を確認済みとせず、実施した確認と未確認を分けて報告する。

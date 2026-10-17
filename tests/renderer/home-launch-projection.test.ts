@@ -258,7 +258,7 @@ describe("home-launch-projection", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "有効providerがあってもtitleが空かつworkspace未選択の通常Sessionは開始不可とする"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Session dialog / docs/manual-test-checklist.md MT-014" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Session dialog" }
   // fault = "titleが空かつworkspace未選択の入力を開始可能とする"
   // observable = "projected canStartSession, sessionFolderSelected, and selectedCharacter"
   // observation_boundary = "public-boundary"

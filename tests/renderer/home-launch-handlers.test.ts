@@ -101,7 +101,7 @@ describe("home-launch-handlers", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Homeの実handlerによるSession Folder選択は保留中のパス検証を取り消し、旧結果を通知せず選択と入力を保持する"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証; docs/manual-test-checklist.md MT-014" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証" }
   // fault = "onSelectSessionFolderから検証取消が外れ、切替前の応答を現在のstateへ通知する"
   // observable = "実onChangeWorkspacePath/onSelectSessionFolder経由の検証開始path、応答解決後のonResult通知配列とHome draft"
   // observation_boundary = "consumer"
@@ -274,7 +274,7 @@ describe("home-launch-handlers", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "launch dialog再表示はCharacter一覧を再取得して保持しrandom選択へ戻し、workspace入力は検証へ渡す"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Session dialog / docs/manual-test-checklist.md MT-013B" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Session dialog" }
   // fault = "再表示時にcatalogを再取得しないか古いCharacter選択を引き継ぐ、または手入力path・Browse結果をvalidation schedulerへ渡さない"
   // observable = "refresh回数、開閉時のcatalog、draftの選択状態とSessionFolder、feedback、検証に渡したraw path"
   // observation_boundary = "component-behavior"

@@ -497,7 +497,7 @@ test("terminal詳細取得中のBookmark変更は本文を落とさず保持す�
 // @test-value v2
 // kind = "contract"
 // claim = "Auxiliaryの状態ownerで反映したBookmarkの付与・解除は、再取得なしで選択会話と会話surfaceへ通知され、会話切替後も保持される"
-// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D9A" }
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: rendererのBookmark保持" }
 // fault = "Bookmark更新がrefだけに適用され、選択会話と詳細cacheへの反映が省略される"
 // observable = "selectedSessionとbuildConcurrentChatsのAuxiliary messageのBookmark、切替後のBookmark、詳細取得回数"
 // observation_boundary = "component-behavior"

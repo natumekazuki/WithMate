@@ -35,5 +35,3 @@ Sessionの実行状態はMainが所有する。Windowを閉じてもSession reco
 Homeはapp起動時の管理Windowとして扱う。Sessionは同じSession IDの二重Windowを作らない。SettingsとSession Monitor、Character Editorの同じ編集対象は既存Windowを再利用する。新規の補助WindowはcursorがあるdisplayのworkArea内へ配置し、既存Windowをfocusするときは位置を変えない。Session Monitorを閉じてもrunは止まらない。
 
 共有するSession metadata、Character catalogとWindow registryはMain側の正本から投影し、各Windowの入力途中状態はそのWindowが保持する。Character metadataと定義file、runtime snapshotの境界は[Character Storage](character-storage.md)を参照する。
-
-Windowの責務やlifecycleを変えるときは、同じ変更で[Manual Test Checklist](../manual-test-checklist.md)の関連項目も現行化する。

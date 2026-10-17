@@ -813,7 +813,7 @@ test("File Previewのtoolbar actionは実行中operationを直列化する", asy
 // @test-value v2
 // kind = "contract"
 // claim = "File Previewのcopy availability APIが有効な場合だけCopy Fileを表示し、結果を操作群と分離した共通通知overlayへ表示する"
-// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8A" }
+// oracle = { type = "contract", ref = "docs/features/windows-file-object-copy.md: 操作できる場所 / Copy結果の通知; docs/design/desktop-ui.md: Copy File / Copy Image結果通知" }
 // fault = "Copy Fileを利用可能時に表示しない、利用不可時に表示する、effect-unknownをsuccess toneまたはstatusとして表示する、copiedをerror toneまたはalertとして表示する、または操作群を構成する要素として表示する"
 // observable = "Copy Fileの表示可否、copied/effect-unknownのmessage、success/error class、role、aria-live、header notification layer包含関係、操作群からの分離、下部feedbackの不在"
 // observation_boundary = "component-behavior"
@@ -2203,7 +2203,7 @@ test("拡大画像をCtrl＋左ドラッグするとスクロール位置を移�
 // @test-value v2
 // kind = "contract"
 // claim = "単体画像previewのCopy Image操作（buttonと右クリック）の成功結果は操作群と分離した共通通知overlayでsuccess toneとstatus roleを持って表示される"
-// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Copy File / Copy Image結果通知" }
 // fault = "Copy Image操作の成功結果がsuccess tone・status role・polite announcementを持たない、下部のerror表示になる、または操作群を構成する要素として表示される"
 // observable = "Copy Image結果のmessage、success class、status role、aria-live、header notification layer包含関係、操作群からの分離、下部feedbackの不在"
 // observation_boundary = "component-behavior"
@@ -2346,7 +2346,7 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
 // @test-value v2
 // kind = "contract"
 // claim = "別窓File Previewのcopy通知に必要な暗色theme token、success/errorの文字・背景・border、headerを基準にした操作群外overlayのCSS宣言が定義されている"
-// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Copy File / Copy Image結果通知" }
 // fault = "別窓copy通知の暗色theme token、success/errorの背景またはborder、headerのrelative基準、または操作群外absolute overlayに必要なCSS宣言が欠けている"
 // observable = "file-preview-window-page、app-notificationのsuccess/error、session-file-preview-headerとsession-file-preview-notification-layerの各CSS declaration"
 // observation_boundary = "declaration"
@@ -2554,7 +2554,7 @@ test("file切替後に完了したOpenの結果を新しいpreviewへ表示し�
 // @test-value v2
 // kind = "invariant"
 // claim = "file切替後の旧Open Diff完了は現在fileの本文とfeedbackへ混入せず、現在のDiff操作中状態を解除しない"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/777#issuecomment-5971260656; docs/manual-test-checklist.md MT-001D" }
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/777#issuecomment-5971260656" }
 // fault = "旧Diffのmessageが新previewへ表示される、または旧Diffの完了で新Diffのbusyが解除される"
 // observable = "各fileに紐づくonOpenDiffのscopeと呼出し数、titleと本文、feedback、aria-busyとbutton disabled"
 // observation_boundary = "component-behavior"

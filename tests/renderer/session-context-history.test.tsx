@@ -21,7 +21,7 @@ function deferred<T>() {
 // @test-value v2
 // kind = "invariant"
 // claim = "Latest Commandは同ownerの再取得中・失敗時も取得済みcommandと詳細を保持し、errorとRetryを表示し、新turnでは旧commandを表示しない"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 表示言語・操作・状態 / Latest Command; docs/manual-test-checklist.md: MT-032" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 表示言語・操作・状態 / Latest Command" }
 // fault = "通知・Session revision・Retryで取得済みturnかartifactを消す、保持したcommandでerror/Retryを隠す、または新turnへ旧commandを持ち越す"
 // observable = "実ContextFeatureのcommand・Command Details・busy/status・alert・Retryと新turnへの表示切替"
 // observation_boundary = "consumer"

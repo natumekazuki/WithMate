@@ -31,14 +31,14 @@ function findButton(container: Element, text: string): HTMLButtonElement {
 // @test-value v2
 // kind = "contract"
 // claim = "New SessionのStartは取得状態とRandom/固定選択に追従し、title・開始中busyを反映する。JSDOMで明示設定したRandomのfocusは取得状態更新後も残り、Cancelで起点へ戻る"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog / docs/manual-test-checklist.md MT-014D" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog" }
 // fault = "取得状態の配線やmemo依存が欠落してStartが更新されないか、固定選択を妨げるか、取得状態更新で入力・設定済みfocusを失うか、Cancelでfocusが戻らない"
 // observable = "HomeAppのStart disabled/aria-disabled/busy、title値、明示focus後の取得状態更新とCancel後のdocument.activeElement、作成要求回数"
 // observation_boundary = "component-behavior"
 // scope = "HomeApp New Session prerequisite transitions"
 // lifecycle = "permanent"
 // impact = "取得待ちや失敗から回復した利用者がdialogを開き直さず正しい条件で開始・取消できる"
-// distinction = "実際の購読からmemo・dialog・buttonまでの更新を外部APIのstubで検証する。click自体のfocus保持・Tab移動・OS/browser挙動は観測せず、MT-014DとIssue #732の#755ブラウザー確認記録が別境界を担う"
+// distinction = "実際の購読からmemo・dialog・buttonまでの更新を外部APIのstubで検証する。click自体のfocus保持・Tab移動・OS/browser挙動は観測せず、Issue #732の#755ブラウザー確認記録が別境界を担う"
 // @end-test-value
 test("Startは取得状態と選択に追従し、取得状態更新は設定済みfocusを保つ", async () => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {

@@ -57,7 +57,7 @@ it("Codex quotaの不正な応答と数値を拒否する", () => {
 // @test-value v2
 // kind = "contract"
 // claim = "Codex追加bucketの表示は同名でも返却期間で窓を識別し、期間が未返却なら窓IDを保持する"
-// oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md#共通の残量表示; docs/manual-test-checklist.md: MT-015G" }
+// oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md#共通の残量表示" }
 // fault = "bucket名だけを表示して期間または窓IDを落とし、異なる追加枠の残量を区別できなくする"
 // observable = "RPC応答からadapterと残率projectionを経た各窓のlabel・残率・summary・reset"
 // observation_boundary = "consumer"

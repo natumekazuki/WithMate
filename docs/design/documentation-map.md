@@ -18,7 +18,6 @@
 | --- | --- |
 | [README](../../README.md) | 機能の入口、起動、開発・build手順 |
 | [Feature Guides](../features/README.md) | 利用者向けの機能別ガイド |
-| [Manual Test Checklist](../manual-test-checklist.md) | 現行機能の実機確認手順 |
 | [Memory / Affect MCP Runbook](../runbooks/memory-affect-mcp.md) | Memory / Affect MCPの運用・診断 |
 | [Repository Glossary Runbook](../runbooks/repository-glossary.md) | 用語集の運用・診断 |
 
@@ -66,7 +65,6 @@
 | --- | --- |
 | [Agent Guide](../../AGENTS.md) | 作業内容に応じた参照先と、課題管理・互換性の入口 |
 | [Development Workflow](../runbooks/development-workflow.md) | 回答・コード変更・検証・Git操作の規則 |
-| [Manual Test Checklist Policy](manual-test-checklist.md) | 実機確認項目の更新責務と運用 |
 | [Distribution Packaging](distribution-packaging.md) | installer、app bundle、配布build |
 
 ## 設計判断とリリースの履歴

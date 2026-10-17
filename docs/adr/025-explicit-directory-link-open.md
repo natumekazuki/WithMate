@@ -22,7 +22,7 @@
 - 汎用path openの制約を緩める案は、任意Renderer・fileのOS実行まで範囲を広げるため不採用。
 - root外専用の確認dialogは、クリック以外の新しい権限を与えない操作へ反復確認を追加するため不採用。
 
-永続化形式とProvider契約は変更しない。現行操作は[Message Rich Text](../design/message-rich-text.md#link-handling)、実機確認は[Manual Test Checklist](../manual-test-checklist.md)を参照する。
+永続化形式とProvider契約は変更しない。現行操作は[Message Rich Text](../design/message-rich-text.md#link-handling)、当時の実機確認は[Manual Test Checklist](https://github.com/natumekazuki/WithMate/blob/274af7da4d4259c517fc269a272796d7a28be5ba/docs/manual-test-checklist.md)を参照する。
 
 ## macOSのfile manager表示
 

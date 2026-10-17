@@ -5,7 +5,7 @@ import test from "node:test";
 // @test-value v2
 // kind = "contract"
 // claim = "設定群は折り返せるがSendは独立した列で40pxの操作領域を維持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock; docs/manual-test-checklist.md: MT-023C" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
 // fault = "設定群のwrapを外すかSendの列と操作寸法を変更し、狭幅やbusy時に送信位置が変わる"
 // observable = "合成stylesheetの設定群wrap・独立Send列・40px寸法宣言"
 // observation_boundary = "declaration"

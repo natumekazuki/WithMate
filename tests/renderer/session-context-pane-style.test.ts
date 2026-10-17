@@ -432,7 +432,7 @@ test("個別の file preview window は外周surfaceを保ちDiff本文だけを
 // observation_boundary = "declaration"
 // scope = "markdown-rich-text-style-css"
 // lifecycle = "permanent"
-// distinction = "renderer testの構文やtargetではなく、linkの非色依存の識別とpreviewのcontrastの宣言を検査する。実描画はMT-023D6Aで確認する"
+// distinction = "renderer testの構文やtargetではなく、linkの非色依存の識別とpreviewのcontrastの宣言を検査する。実描画での下線の識別やcontrastの確認とは観測境界が異なる"
 // @end-test-value
 test("Markdown link は強調内codeにも下線を指定し、previewのcodeとerrorのcontrastを保つ", async () => {
   const stylesSource = await readStylesheet();

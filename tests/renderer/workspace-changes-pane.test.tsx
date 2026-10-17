@@ -358,7 +358,7 @@ test("FileRootChangesPane はRefreshでrepository discovery失敗から復旧す
 // @test-value v2
 // kind = "regression"
 // claim = "repository別groupはnon-Git結果を除外し、失敗を局所表示しながら既存の変更導線と仮想化を維持する"
-// oracle = { type = "contract", ref = "MT-023D10 and MT-023D10A" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Files / Changes; docs/adr/015-file-root-scoped-git-changes.md: root別取得失敗と独立scope" }
 // fault = "手動Refresh化に伴ってnon-Git除外、repository別failure、directory collapse、diff/file previewまたは大量表示が壊れる"
 // observable = "repository group数、failure alert表示、directory操作、diff/file request、virtual row数"
 // observation_boundary = "component-behavior"

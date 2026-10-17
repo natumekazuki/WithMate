@@ -16,12 +16,6 @@ Auxiliary追加のprovider pickerはHome `New Session`、Character authoringと�
 
 Electronデスクトップアプリとして、各Windowの現行UIと操作の入口を把握できるようにする。Window間の責務は[Window Architecture](window-architecture.md)を参照する。
 
-## Manual Test Maintenance
-
-- 現行 UI に対する実機確認項目の正本は `docs/manual-test-checklist.md` とする
-- この文書に影響する UI 変更を入れた場合は、同じ論理変更単位で実機テスト項目表も更新する
-- 運用方針の詳細は `docs/design/manual-test-checklist.md` を参照する
-
 ## Scope
 
 - Home の session / Character catalog 管理 UI

@@ -731,7 +731,7 @@ test("通知集中と検索・open変更は最新1件へ収束して旧2page目�
 // @test-value v2
 // kind = "contract"
 // claim = "detailChanged:falseのID通知でもRecent/Pinnedの順序とmembershipを再取得し、openは該当IDだけを更新して部分失敗中もMonitorへ反映する"
-// oracle = { type = "contract", ref = "docs/features/home-session-pagination.md 再取得時の状態維持 / docs/manual-test-checklist.md MT-003J" }
+// oracle = { type = "contract", ref = "docs/features/home-session-pagination.md 再取得時の状態維持" }
 // fault = "detailChanged:falseを無視する、通知rowだけを差し替えてpinや検索membershipを失う、またはopenの対象を取り違える"
 // observable = "page request scope・open ID、一覧rowの順序とMonitorのRunning表示・一覧error"
 // observation_boundary = "component-behavior"

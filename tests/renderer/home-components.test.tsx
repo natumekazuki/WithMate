@@ -942,7 +942,7 @@ describe("HomeLaunchDialog", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Homeの無効Workspace入力は値を保持し、labelと関連付いたinputから現在のerror statusを参照できる"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証; docs/manual-test-checklist.md MT-014" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証" }
   // fault = "無効理由がinputの説明から切り離される、invalid状態が公開されない、または入力値が失われる"
   // observable = "生成DOMのlabel.control、input.value/aria-invalid/aria-describedbyと参照先statusの本文・aria-live"
   // observation_boundary = "component-behavior"
@@ -977,7 +977,7 @@ describe("HomeLaunchDialog", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Homeのworkspace validationはdebounce中とfilesystem確認中の両方で入力のbusy、decorative indicator、検証中statusをDOMへ公開する"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証; docs/manual-test-checklist.md MT-014" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証" }
   // fault = "debounceまたはfilesystem確認の片方でspinnerとaria-busyを失い、入力が検証中かどうかを識別できない"
   // observable = "debouncing/pending/validのDOMでWorkspace入力のaria-busy所有領域、その中のaria-hidden indicator、Checking workspace path… statusの有無"
   // observation_boundary = "component-behavior"

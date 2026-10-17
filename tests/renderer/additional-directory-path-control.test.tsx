@@ -12,7 +12,7 @@ import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window
 // @test-value v2
 // kind = "contract"
 // claim = "Add Directory By Pathは入力を事前検証し、空欄・検証待ち・無効pathを送信せず、検証失敗を入力保持とalertで示す。処理中の二重送信と閉鎖を止め、保存失敗から再試行できる。取消・成功時はfocusを戻し、閉鎖前の遅い検証結果やdisabled後のdialogを復活させない"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory By Path; docs/manual-test-checklist.md: MT-023D4" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory By Path" }
 // fault = "未検証・無効pathや二重送信を通す、検証/保存失敗で入力を消す、busy中に閉じる、focusを失う、閉じたdialogの検証結果が再open後の追加可否やerrorを上書きする"
 // observable = "描画dialogの見出し・inputのaria-labelと値・alert・Add disabled/busy・callback回数とpath・閉鎖後のdocument.activeElement"
 // observation_boundary = "component-behavior"

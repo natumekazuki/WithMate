@@ -302,7 +302,7 @@ test("Main runtimeの旧rejectは同じComposer ownerの新入力を上書きし
 // @test-value v2
 // kind = "contract"
 // claim = "Main/Auxiliary共通durable受付は旧rejectで新入力を上書きせず、受付後のcanonical失敗通知は送信済みuser・partial・失敗本文を保持する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信受付の共通反映 / docs/manual-test-checklist.md MT-030, MT-030A" }
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信受付の共通反映" }
 // fault = "Appが旧受付rejectで新入力を上書きする、またはcanonical失敗更新を未受付と混同して入力と本文を巻き戻す"
 // observable = "実SessionWindowAppのtextarea値、送信APIの対象IDと本文、要求待機中とsettle後の対象会話のuser/assistant本文、rejectのalert"
 // observation_boundary = "component-behavior"

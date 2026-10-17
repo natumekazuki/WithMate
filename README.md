@@ -258,7 +258,6 @@ Milestoneは予定であり、実装・レビュー・対象ブランチへの�
 - [Provider Adapter](docs/design/provider-adapter.md): coding agentのadapter境界
 - [Database Schema](docs/design/database-schema.md): SQLiteとfile storageの保存構造
 - [Session Local Files](docs/design/session-local-files.md): Session Folderと添付ファイル
-- [Manual Test Checklist](docs/manual-test-checklist.md): 実機確認項目
 
 ### 設計判断とリリースの履歴
 
