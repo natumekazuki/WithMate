@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { SessionHeaderIcon } from "./shell/session-header-icon.js";
 
 export type SessionFilesActionsInput = {
   onOpenExplorer: () => void;
@@ -12,20 +13,22 @@ export function createSessionFilesActions({
   return (
     <>
       <button
-        className="drawer-toggle compact secondary"
+        className="drawer-toggle compact secondary session-header-icon-button"
         type="button"
         onClick={onOpenExplorer}
-        title="Open session files directory"
+        aria-label="Open Session Folder In Explorer"
+        title="Open Session Folder In Explorer"
       >
-        Explorer
+        <SessionHeaderIcon name="folder" />
       </button>
       <button
-        className="drawer-toggle compact secondary"
+        className="drawer-toggle compact secondary session-header-icon-button"
         type="button"
         onClick={onOpenTerminal}
-        title="Open terminal in session files directory"
+        aria-label="Open External Terminal In Session Folder"
+        title="Open External Terminal In Session Folder"
       >
-        Terminal
+        <SessionHeaderIcon name="external-terminal" />
       </button>
     </>
   );

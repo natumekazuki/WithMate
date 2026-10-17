@@ -41,15 +41,26 @@ import { createSessionFilesActions } from "../../src/chat/session-files-actions.
 
 const noop = () => {};
 
+// @test-value v2
+// kind = "contract"
+// claim = "Session FolderのExplorerと外部Terminalを対象込みのaccessible nameとtooltipで識別できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "icon操作からSession Folderという対象や外部Terminalという操作種別を失う"
+// observable = "各buttonのaria-labelとtitle"
+// observation_boundary = "component-behavior"
+// scope = "Session Folder header actions"
+// lifecycle = "permanent"
+// impact = "Workspaceや内蔵Terminalと取り違えずに操作を選べる"
+// distinction = "型検査では検出できない対象込みの操作名を、builder組込みtestとは独立して確認する"
+// @end-test-value
 test("createSessionFilesActions は共通の session files action group を描画する", () => {
   const html = renderToStaticMarkup(createSessionFilesActions({
     onOpenExplorer: noop,
     onOpenTerminal: noop,
   }));
 
-  assert.match(html, /title="Open session files directory">Explorer<\/button>/);
-  assert.match(html, /title="Open terminal in session files directory">Terminal<\/button>/);
-  assert.match(html, /class="drawer-toggle compact secondary"/);
+  assert.match(html, /aria-label="Open Session Folder In Explorer" title="Open Session Folder In Explorer"/);
+  assert.match(html, /aria-label="Open External Terminal In Session Folder" title="Open External Terminal In Session Folder"/);
 });
 
 test("buildAuxiliaryAwareSendOrCancelHandler は auxiliary が running のときに優先 cancel する", () => {

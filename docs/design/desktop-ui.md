@@ -311,7 +311,8 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - default は hidden とする
   - 上 splitter を押すと Header の表示と `Rename / Terminal / Delete` を切り替える
   - Header は1行分の固定高とし、splitter の drag による高さ変更は行わない
-  - `More` と `Close` は使わない
+  - `Workspace` / `Session` のgroup名は文字で残し、各`Explorer`をfolder icon、Workspaceの内蔵`Terminal`を端末icon、WorkspaceとSession Folderの外部Terminalを端末＋外向き矢印iconで表示する。各操作には対象込みの英語tooltipとaccessible nameを付け、disabledとfocus表示を維持する
+  - title、`Collapse / Expand`、編集時の`Save / Cancel`は文字で表示する。低頻度の`Pin / Unpin / Rename / Delete`は`Session actions`の`⋯`menuに文字でまとめ、`More`の文字buttonと`Close`は置かない
   - title 編集中は effective state として表示を維持する
 - `Action Dock`
   - compact / expanded の 2 状態を持つ

@@ -4,6 +4,7 @@ import { createContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef
 import type { LiveBackgroundTask } from "../../../src-shared/session/runtime-state.js";
 
 import type { ChatWindowModeKind } from "../../chat/chat-window-mode.js";
+import { SessionHeaderIcon } from "./session-header-icon.js";
 
 export type SessionHeaderProps = {
   taskTitle: string;
@@ -115,22 +116,26 @@ export function SessionHeader({
                 {workspaceActions}
                 {showTerminalButton ? (
                   <button
-                    className="drawer-toggle compact secondary"
+                    className="drawer-toggle compact secondary session-header-icon-button"
                     type="button"
                     onClick={onOpenTerminal}
                     disabled={isTerminalDisabled}
+                    aria-label="Open Workspace Terminal"
+                    title="Open Workspace Terminal"
                   >
-                    Terminal
+                    <SessionHeaderIcon name="terminal" />
                   </button>
                 ) : null}
                 {showTerminalButton && onOpenExternalTerminal ? (
                   <button
-                    className="drawer-toggle compact secondary"
+                    className="drawer-toggle compact secondary session-header-icon-button"
                     type="button"
                     onClick={onOpenExternalTerminal}
                     disabled={isTerminalDisabled}
+                    aria-label="Open External Terminal In Workspace"
+                    title="Open External Terminal In Workspace"
                   >
-                    Open External Terminal
+                    <SessionHeaderIcon name="external-terminal" />
                   </button>
                 ) : null}
               </div>

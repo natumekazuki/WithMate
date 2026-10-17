@@ -1,6 +1,7 @@
 import type { KeyboardEventHandler, ReactNode } from "react";
 
 import type { SessionHeaderProps } from "./shell/session-header.js";
+import { SessionHeaderIcon } from "./shell/session-header-icon.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../settings/shortcut-registry.js";
 import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
@@ -45,12 +46,14 @@ export function createWorkspaceExplorerAction({
 }: WorkspaceExplorerActionOptions) {
   return (
     <button
-      className="drawer-toggle compact secondary"
+      className="drawer-toggle compact secondary session-header-icon-button"
       type="button"
       disabled={disabled}
       onClick={onOpenExplorer}
+      aria-label="Open Workspace In Explorer"
+      title="Open Workspace In Explorer"
     >
-      Explorer
+      <SessionHeaderIcon name="folder" />
     </button>
   );
 }

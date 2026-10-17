@@ -164,12 +164,25 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Workspace Explorerのicon操作は対象込みのaccessible nameとtooltipで識別できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "可視文字を省いたExplorerから操作名や対象を失い支援技術で識別できなくなる"
+// observable = "buttonのaria-labelとtitle、装飾SVGのaria-hiddenとfocusable、enabled状態"
+// observation_boundary = "component-behavior"
+// scope = "Workspace Explorer header action"
+// lifecycle = "permanent"
+// impact = "同じfolder図柄のSession操作とWorkspace操作を識別する"
+// distinction = "型検査では保証できないrender後のaccessible属性を小さなcomponent testで確認する"
+// @end-test-value
 test("createWorkspaceExplorerAction は共通の workspace Explorer action を描画する", () => {
   const html = renderToStaticMarkup(createWorkspaceExplorerAction({ onOpenExplorer: noop }));
 
-  assert.match(html, /class="drawer-toggle compact secondary"/);
   assert.match(html, /type="button"/);
-  assert.match(html, />Explorer<\/button>/);
+  assert.match(html, /aria-label="Open Workspace In Explorer"/);
+  assert.match(html, /title="Open Workspace In Explorer"/);
+  assert.match(html, /<svg[^>]+aria-hidden="true"[^>]+focusable="false"/);
   assert.doesNotMatch(html, /disabled/);
 });
 
@@ -218,7 +231,7 @@ test("createMessageCollapseHeaderAction は既存header button語彙とshortcut�
 // claim = "live headerはAuxiliaryの親rename/deleteを無効化しworkspaceとsession filesの操作を描画する"
 // oracle = { type = "contract", ref = "src/chat/chat-header-actions.tsx" }
 // fault = "親会話のrename/deleteをAuxiliaryへ許可するかExplorer/Terminal導線を失う"
-// observable = "header visibilityとWorkspace/Session FilesのHTML"
+// observable = "header visibilityとWorkspace/Session Folderの操作名"
 // observation_boundary = "consumer"
 // scope = "live-header-capabilities"
 // lifecycle = "permanent"
@@ -251,9 +264,9 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
   assert.equal(props.taskTitle, "Session");
   assert.equal(props.showRenameButton, false);
   assert.equal(props.showDeleteButton, false);
-  assert.match(workspaceHtml, />Explorer<\/button>/);
-  assert.match(sessionFilesHtml, />Explorer<\/button>/);
-  assert.match(sessionFilesHtml, />Terminal<\/button>/);
+  assert.match(workspaceHtml, /aria-label="Open Workspace In Explorer"/);
+  assert.match(sessionFilesHtml, /aria-label="Open Session Folder In Explorer"/);
+  assert.match(sessionFilesHtml, /aria-label="Open External Terminal In Session Folder"/);
 });
 
 // @test-value v2
