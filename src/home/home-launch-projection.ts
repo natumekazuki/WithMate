@@ -5,10 +5,10 @@ import type { OpenSessionWindowIdsLoadStatus } from "../app/open-session-window-
 import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
+import type { DirectoryPathValidationState } from "../launch/directory-path-validation.js";
 import {
   resolveLaunchCharacterId,
   type HomeCharacterLoadStatus,
-  type HomeLaunchWorkspaceValidationState,
   type LaunchCharacterSelectionMode,
 } from "./home-launch-state.js";
 import {
@@ -31,7 +31,7 @@ export type HomeLaunchProjection = {
   characterLoadStatus: HomeCharacterLoadStatus;
   launchWorkspacePathLabel: string;
   workspacePathInput: string;
-  workspaceValidation: HomeLaunchWorkspaceValidationState;
+  workspaceValidation: DirectoryPathValidationState;
   workspaceValidationMessage: string;
   sessionFolderSelected: boolean;
   workspaceSelected: boolean;
@@ -61,7 +61,7 @@ export function buildHomeLaunchProjection({
   launchTitle: string;
   launchWorkspace: LaunchWorkspaceSelection | null;
   workspacePathInput?: string;
-  workspaceValidation?: HomeLaunchWorkspaceValidationState;
+  workspaceValidation?: DirectoryPathValidationState;
   workspaceValidationMessage?: string;
   launchCharacterId?: string;
   launchCharacterSelectionMode?: LaunchCharacterSelectionMode;

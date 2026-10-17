@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { HomeLaunchDialog } from "../../src/home/HomeLaunchDialog.js";
-import type { HomeLaunchWorkspaceValidationState } from "../../src/home/home-launch-state.js";
+import type { DirectoryPathValidationState } from "../../src/launch/directory-path-validation.js";
 import type { ProviderLaunchLoadStatus } from "../../src/launch/provider-launch-picker.js";
 import { filterCharactersByName } from "../../src/home/HomeCharactersPanel.js";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
@@ -729,7 +729,7 @@ describe("HomeLaunchDialog", () => {
     options = characterOptions,
     charactersLoaded = true,
     randomCharacterSelected = false,
-    workspaceValidation: HomeLaunchWorkspaceValidationState = "idle",
+    workspaceValidation: DirectoryPathValidationState = "idle",
     characterLoadStatus?: "loading" | "loaded" | "error",
     providerLoadStatus?: ProviderLaunchLoadStatus,
     providerLoadError = "",
@@ -940,7 +940,7 @@ describe("HomeLaunchDialog", () => {
   // claim = "Homeのworkspace validationはdebounce中とfilesystem確認中の両方をbusy状態として表示する"
   // oracle = { type = "contract", ref = "Issue #731 Home/New session workspace validation" }
   // fault = "debounceまたはfilesystem確認の片方でspinnerとaria-busyを失い、入力が検証中かどうかを識別できない"
-  // observable = "debouncing/pending各markupのworkspace-validation-spinner、aria-busy、Checking workspace path…"
+  // observable = "debouncing/pending各markupのdirectory-path-validation-spinner、aria-busy、Checking workspace path…"
   // observation_boundary = "component-behavior"
   // scope = "HomeLaunchDialog workspace validation feedback"
   // lifecycle = "permanent"
@@ -951,10 +951,10 @@ describe("HomeLaunchDialog", () => {
     const debouncing = renderHomeLaunchDialog(characterOptions, true, false, "debouncing");
     const pending = renderHomeLaunchDialog(characterOptions, true, false, "pending");
 
-    assert.ok(debouncing.includes("workspace-validation-spinner"));
+    assert.ok(debouncing.includes("directory-path-validation-spinner"));
     assert.ok(debouncing.includes('aria-busy="true"'));
     assert.ok(debouncing.includes("Checking workspace path…"));
-    assert.ok(pending.includes("workspace-validation-spinner"));
+    assert.ok(pending.includes("directory-path-validation-spinner"));
     assert.ok(pending.includes('aria-busy="true"'));
     assert.ok(pending.includes("Checking workspace path…"));
   });

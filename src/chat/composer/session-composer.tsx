@@ -14,6 +14,7 @@ import { useShortcutSettings } from "../../settings/shortcut-settings-context.js
 
 import { ComposerAttachmentMenu } from "../../chat/composer-attachment-menu.js";
 import { AdditionalDirectoryPathControl } from "./additional-directory-path-control.js";
+import type { WorkspaceDirectoryValidationResult } from "../../../src-shared/window/workspace-directory-validation.js";
 import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "../../chat/composer-controller.js";
 import {
   getComposerSendButtonTitle,
@@ -125,6 +126,7 @@ export type SessionComposerExpandedProps = {
   onToggleSkillPicker: () => void;
   onOpenPromptTemplates?: () => void;
   onAddAdditionalDirectory: (directoryPath?: string) => void | Promise<void>;
+  onValidateAdditionalDirectory: (directoryPath: string) => Promise<WorkspaceDirectoryValidationResult>;
   onToggleAdditionalDirectoryList: () => void;
   onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
@@ -215,6 +217,7 @@ export function SessionComposerExpanded({
   onToggleSkillPicker,
   onOpenPromptTemplates = () => {},
   onAddAdditionalDirectory,
+  onValidateAdditionalDirectory,
   onToggleAdditionalDirectoryList,
   onJumpToBottom,
   onSelectCustomAgent,
@@ -436,6 +439,7 @@ export function SessionComposerExpanded({
                 key={`${controllerOwner.kind}:${controllerOwner.id}`}
                 disabled={composerControlsDisabled}
                 onAdd={onAddAdditionalDirectory}
+                onValidate={onValidateAdditionalDirectory}
               />
               <button
                 className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}

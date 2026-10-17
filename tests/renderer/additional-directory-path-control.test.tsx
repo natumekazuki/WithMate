@@ -5,14 +5,15 @@ import React, { act } from "react";
 import type { Root } from "react-dom/client";
 
 import { AdditionalDirectoryPathControl } from "../../src/chat/composer/additional-directory-path-control.js";
+import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window/workspace-directory-validation.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 // @test-value v2
 // kind = "contract"
-// claim = "Add Directory By Pathは操作名と入力のaccessible nameを提示し、空入力を送信せず、処理中の二重送信と閉鎖を止めてreadonly入力にfocusを保ち、失敗時に入力とalertを保持し、成功・Cancel・Escapeで閉じて起点へfocusを返す。disabled時は閉じて編集不可となり、再有効化で入力dialogを自動復活させない"
+// claim = "Add Directory By Pathは入力を事前検証し、空欄・検証待ち・無効pathを送信せず、検証失敗を入力保持とalertで示す。処理中の二重送信と閉鎖を止め、保存失敗から再試行できる。取消・成功時はfocusを戻し、閉鎖前の遅い検証結果やdisabled後のdialogを復活させない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory By Path; docs/manual-test-checklist.md: MT-023D4" }
-// fault = "操作名や入力のaccessible nameが欠落する、空入力・二重送信を通す、処理中に閉じるか入力focusを失う、保存失敗を成功扱いして入力を消す、取消後にfocusが失われる、disabled後に古いdialogが復活する"
+// fault = "未検証・無効pathや二重送信を通す、検証/保存失敗で入力を消す、busy中に閉じる、focusを失う、閉じたdialogの検証結果が再open後の追加可否やerrorを上書きする"
 // observable = "描画dialogの見出し・inputのaria-labelと値・alert・Add disabled/busy・callback回数とpath・閉鎖後のdocument.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "AdditionalDirectoryPathControlの入力・保存・失敗・取消・編集制約"
@@ -37,12 +38,19 @@ test("Add Directory By Pathは入力・busy・失敗からの再試行とfocus�
   const requests: string[] = [];
   let complete!: () => void;
   let fail!: (error: Error) => void;
+  let finishValidation!: (result: WorkspaceDirectoryValidationResult) => void;
+  const validationRequests: string[] = [];
+  const onValidate = async (directoryPath: string): Promise<WorkspaceDirectoryValidationResult> => {
+    validationRequests.push(directoryPath);
+    if (directoryPath === "C:/slow") return new Promise((resolve) => { finishValidation = resolve; });
+    return directoryPath === "C:/missing" ? { valid: false, reason: "missing" } : { valid: true };
+  };
   const onAdd = (directoryPath: string) => {
     requests.push(directoryPath);
     return new Promise<void>((resolve, reject) => { complete = resolve; fail = reject; });
   };
   const render = async (disabled = false) => {
-    await act(async () => root!.render(<AdditionalDirectoryPathControl disabled={disabled} onAdd={onAdd} />));
+    await act(async () => root!.render(<AdditionalDirectoryPathControl disabled={disabled} onAdd={onAdd} onValidate={onValidate} />));
   };
   const open = async () => {
     button("Add Directory By Path").focus();
@@ -55,6 +63,9 @@ test("Add Directory By Pathは入力・busy・失敗からの再試行とfocus�
       input().dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     });
   };
+  const settleValidation = async () => {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 340)); });
+  };
   try {
     const { createRoot } = await import("react-dom/client");
     root = createRoot(container);
@@ -66,7 +77,21 @@ test("Add Directory By Pathは入力・busy・失敗からの再試行とfocus�
     assert.equal(button("Add").disabled, true);
     await fill("  ");
     assert.equal(button("Add").disabled, true);
+    await fill("C:/missing");
+    assert.equal(button("Add").disabled, true);
+    assert.ok(container.querySelector('[aria-busy="true"]'));
+    await act(async () => container.querySelector("form")!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })));
+    assert.deepEqual(requests, []);
+    await settleValidation();
+    assert.equal(input().value, "C:/missing");
+    assert.equal(input().getAttribute("aria-invalid"), "true");
+    assert.equal(container.querySelector('[role="alert"]')?.textContent, "Path not found.");
+    assert.equal(button("Add").disabled, true);
     await fill("  C:/shared folder  ");
+    assert.equal(button("Add").disabled, true);
+    assert.equal(container.querySelector('[role="alert"]'), null);
+    await settleValidation();
+    assert.deepEqual(validationRequests, ["C:/missing", "C:/shared folder"]);
     assert.equal(button("Add").disabled, false);
     button("Add").focus();
     await act(async () => { button("Add").click(); button("Add").click(); });
@@ -85,15 +110,22 @@ test("Add Directory By Pathは入力・busy・失敗からの再試行とfocus�
     assert.equal(input().getAttribute("aria-invalid"), "true");
     await fill("C:/retry");
     assert.equal(container.querySelector('[role="alert"]'), null);
+    await settleValidation();
     await act(async () => container.querySelector("form")!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })));
     await act(async () => complete());
     assert.deepEqual(requests, ["C:/shared folder", "C:/retry"]);
     assert.equal(container.querySelector('[role="dialog"]'), null);
     assert.equal(dom.window.document.activeElement, button("Add Directory By Path"));
     await open();
+    await fill("C:/slow");
+    await settleValidation();
     await act(async () => button("Cancel").click());
     assert.equal(dom.window.document.activeElement, button("Add Directory By Path"));
     await open();
+    await act(async () => finishValidation({ valid: false, reason: "missing" }));
+    assert.equal(input().value, "");
+    assert.equal(button("Add").disabled, true);
+    assert.equal(container.querySelector('[role="alert"]'), null);
     await act(async () => input().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     assert.equal(container.querySelector('[role="dialog"]'), null);
     assert.equal(dom.window.document.activeElement, button("Add Directory By Path"));

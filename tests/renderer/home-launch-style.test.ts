@@ -16,14 +16,14 @@ import test from "node:test";
 // @end-test-value
 test("Workspace validation error は表示有無で field の高さを変えない", async () => {
   const [componentSource, stylesSource] = await Promise.all([
-    readFile("src/home/HomeLaunchDialog.tsx", "utf8"),
+    readFile("src/launch/directory-path-field.tsx", "utf8"),
     readStylesheet(),
   ]);
-  const errorRule = stylesSource.match(/\.home-page \.launch-field-error\s*{([^}]*)}/)?.[1];
+  const errorRule = stylesSource.match(/\.directory-path-field \.launch-field-error\s*{([^}]*)}/)?.[1];
 
   assert.match(
     componentSource,
-    /<div className="launch-field-heading">[\s\S]*?launch-workspace-path-error[\s\S]*?<\/div>\s*<div className="launch-field-input-shell/,
+    /<div className="launch-field-heading">[\s\S]*?\{feedback\}[\s\S]*?<div className="launch-field-input-shell/,
   );
   assert.ok(errorRule);
   assert.match(errorRule, /height:\s*1rem;/);
@@ -37,7 +37,7 @@ test("Workspace validation error は表示有無で field の高さを変えな�
 // claim = "Workspace validation spinnerはdebounce中も遅延なしで可視表示される"
 // oracle = { type = "contract", ref = "HomeLaunch workspace validation feedback" }
 // fault = "spinnerがopacity 0またはanimation delayで隠れ、検証中であることを即時に示せない"
-// observable = "workspace-validation-spinnerのanimation、opacity、animation-delay CSS宣言"
+// observable = "directory-path-validation-spinnerのanimation、opacity、animation-delay CSS宣言"
 // observation_boundary = "declaration"
 // scope = "home-launch-workspace-validation-spinner-css"
 // lifecycle = "permanent"
@@ -45,10 +45,10 @@ test("Workspace validation error は表示有無で field の高さを変えな�
 // @end-test-value
 test("Workspace validation spinner は debounce 中から遅延なく描画する", async () => {
   const stylesSource = await readStylesheet();
-  const spinnerRule = stylesSource.match(/\.workspace-validation-spinner\s*{([^}]*)}/)?.[1];
+  const spinnerRule = stylesSource.match(/\.directory-path-validation-spinner\s*{([^}]*)}/)?.[1];
 
   assert.ok(spinnerRule);
-  assert.match(spinnerRule, /animation:\s*workspace-validation-spin\s+0\.7s\s+linear\s+infinite;/);
+  assert.match(spinnerRule, /animation:\s*directory-path-validation-spin\s+0\.7s\s+linear\s+infinite;/);
   assert.doesNotMatch(spinnerRule, /opacity:\s*0;/);
   assert.doesNotMatch(spinnerRule, /animation-delay:/);
 });

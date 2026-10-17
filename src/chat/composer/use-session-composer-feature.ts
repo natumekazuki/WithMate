@@ -583,6 +583,10 @@ export function useSessionComposerFeature(input: {
         ? () => void bridge.operations.layout.openPromptTemplates?.()
         : undefined,
       onAddAdditionalDirectory,
+      onValidateAdditionalDirectory: async (directoryPath) => {
+        if (!input.api) throw new Error("Directory validation is unavailable.");
+        return input.api.validateSessionAdditionalDirectory(bridge.session.id, directoryPath);
+      },
       onToggleAdditionalDirectoryList: toggleAdditionalDirectoryList,
       onExpandActionDock: bridge.operations.layout.expandActionDock,
       onJumpToBottom: bridge.operations.layout.jumpToBottom,

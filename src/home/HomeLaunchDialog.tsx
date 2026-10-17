@@ -2,20 +2,22 @@ import { useRef } from "react";
 
 import { focusRovingItemByKey, useDialogA11y } from "../ui/a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
+import { DirectoryPathField } from "../launch/directory-path-field.js";
+import type { DirectoryPathValidationState } from "../launch/directory-path-validation.js";
 import { ProviderLaunchField, type ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
-import type { HomeCharacterLoadStatus, HomeLaunchWorkspaceValidationState } from "./home-launch-state.js";
+import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
   title: string;
   sessionFolderSelected: boolean;
   workspacePathInput: string;
-  workspaceValidation: HomeLaunchWorkspaceValidationState;
+  workspaceValidation: DirectoryPathValidationState;
   workspaceValidationMessage: string;
   enabledLaunchProviders: Array<{ id: string; label: string }>;
   providerLoadStatus?: ProviderLaunchLoadStatus;
@@ -81,7 +83,6 @@ export function HomeLaunchDialog({
     return null;
   }
 
-  const workspaceValidationActive = workspaceValidation === "debouncing" || workspaceValidation === "pending";
   const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
   const providerLoadReady = providerLoadStatus === "loaded";
 
@@ -125,43 +126,16 @@ export function HomeLaunchDialog({
       </section>
 
       <section className="launch-section workspace-picker minimal">
-        <div className="launch-field">
-          <div className="launch-field-heading">
-            <label className="launch-field-label" htmlFor="launch-workspace-path">
-              Workspace
-            </label>
-            <span
-              id="launch-workspace-path-error"
-              className="launch-field-error"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-              title={workspaceValidationMessage || undefined}
-            >
-              {workspaceValidationMessage}
-            </span>
-          </div>
-          <div className="launch-field-input-shell workspace-validation-input" aria-busy={workspaceValidationActive}>
-            <input
-              id="launch-workspace-path"
-              className="launch-field-input"
-              type="text"
-              value={workspacePathInput}
-              placeholder="C:\\path\\to\\workspace"
-              aria-invalid={workspaceValidation === "invalid"}
-              aria-describedby={workspaceValidationMessage ? "launch-workspace-path-error" : undefined}
-              onChange={(event) => onChangeWorkspacePath(event.target.value)}
-            />
-            {workspaceValidationActive ? (
-              <span className="workspace-validation-spinner" aria-hidden="true" />
-            ) : null}
-          </div>
-          {workspaceValidationActive ? (
-            <span className="visually-hidden" role="status" aria-live="polite">
-              Checking workspace path…
-            </span>
-          ) : null}
-        </div>
+        <DirectoryPathField
+          id="launch-workspace-path"
+          label="Workspace"
+          value={workspacePathInput}
+          validation={workspaceValidation}
+          errorMessage={workspaceValidationMessage}
+          checkingLabel="Checking workspace path…"
+          placeholder="C:\\path\\to\\workspace"
+          onChange={onChangeWorkspacePath}
+        />
         <div className="section-head compact-actions workspace-picker-actions">
           <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
             Browse
