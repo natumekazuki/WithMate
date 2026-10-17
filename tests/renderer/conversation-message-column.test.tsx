@@ -18,6 +18,109 @@ import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-t
 
 // @test-value v2
 // kind = "contract"
+// claim = "追尾停止と同frameのanchor計測と仮想range確定後の再計測で最新位置を保存し、owner切替・再表示で復元し、会話別の新着を末尾復帰で消す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
+// fault = "render前の停止を見落とす、未commitのrangeのoverscan行を保存する、range確定後に保存しない、別会話へ新着が漏れる、または非表示中の更新を落とす"
+// observable = "column propsのhasNewActivity、isMessageListFollowing、messageJumpRequest、cacheのanchor"
+// observation_boundary = "component-behavior"
+// scope = "実follow hookと列cacheの接合。制御RAFと行矩形で停止直後・range commit通知・owner/visibility遷移を確認し、実virtualizerとCSS折返しは別のcomponent testとbrowserで確認する"
+// lifecycle = "permanent"
+// impact = "MainとAuxiliaryの往復やPreview終了で読んでいた本文を見失わず、新着へ明示的に戻れる"
+// distinction = "hook単体ではownerごとのactivityと仮想行keyへの復元handoffを通らない。小さいhook fixtureで列の接合を確認する"
+// @end-test-value
+test("conversation column はownerと非表示期間を跨いで閲覧anchorと新着を保持する", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  const actEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  dom.window.requestAnimationFrame = (callback) => { frames.set(++frameId, callback); return frameId; };
+  dom.window.cancelAnimationFrame = (id) => { frames.delete(id); };
+  const flushFrames = async () => {
+    await act(async () => {
+      const pending = [...frames.values()]; frames.clear();
+      pending.forEach((callback) => callback(0));
+    });
+  };
+  const cache = new Map<string, ConversationColumnCache>();
+  let latest: ReturnType<typeof useConversationMessageColumn> = null;
+  let text = "response";
+  let updatedAt = "2026-10-17T01:00:00.000Z";
+  let rowTop = -12;
+  let rowHeight = 100;
+  let rowReads = 0;
+  function Probe({ id, enabled }: { id: string; enabled: boolean }) {
+    latest = useConversationMessageColumn({ session: { id, updatedAt, messages: [{ role: "assistant", text }] }, baseProps: createBaseProps(id), enabled, stateCache: cache, liveRun: null });
+    return React.createElement("div", { ref: latest?.messageListRef, onScroll: latest?.onMessageListScroll },
+      React.createElement("div", { className: "session-message-virtual-row", "data-index": 0 }));
+  }
+  const current = () => { assert.ok(latest); return latest; };
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const render = async (id = "main", enabled = true) => act(async () => root.render(React.createElement(Probe, { id, enabled })));
+  try {
+    await render();
+    const list = current().messageListRef.current!;
+    Object.defineProperties(list, { scrollHeight: { configurable: true, value: 1_000 }, clientHeight: { configurable: true, value: 100 } });
+    const row = list.firstElementChild as HTMLElement;
+    row.getBoundingClientRect = () => { rowReads += 1; return new dom.window.DOMRect(0, rowTop, 400, rowHeight); };
+    await act(async () => {
+      list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -10, bubbles: true }));
+      list.scrollTop = 200;
+      list.dispatchEvent(new dom.window.Event("scroll"));
+      list.dispatchEvent(new dom.window.Event("scroll"));
+      assert.equal(rowReads, 0, "scroll handlers defer anchor layout reads");
+      const pending = [...frames.values()]; frames.clear();
+      pending.forEach((callback) => callback(0));
+      assert.deepEqual(cache.get("main")?.anchor, { key: "session-main-0", offset: -12 }, "the frame sees a stop before React commits its following flag");
+    });
+    assert.equal(rowReads, 1, "repeated scrolls share one anchor measurement per frame");
+    rowTop = 150;
+    await act(async () => list.dispatchEvent(new dom.window.Event("scroll")));
+    await flushFrames();
+    assert.equal(cache.get("main")?.anchor?.offset, -12, "an overscan row below the viewport is not a visible anchor");
+    rowTop = -22;
+    await act(async () => current().onMessageListLayout?.());
+    await flushFrames();
+    assert.equal(cache.get("main")?.anchor?.offset, -22, "committed virtual range layout refreshes the reading position without another scroll event");
+    text = "replaced";
+    await render();
+    assert.equal(current().hasNewActivity, true, "same-length visible text replacement is new activity even without a timestamp change");
+    assert.equal(current().isMessageListFollowing, false);
+    assert.equal(list.scrollTop, 200);
+    await render("aux");
+    assert.equal(current().hasNewActivity, false, "new activity belongs to Main only");
+    rowTop = 80;
+    rowHeight = 200;
+    await render();
+    assert.equal(current().hasNewActivity, true);
+    assert.equal(current().messageJumpRequest?.key, "session-main-0");
+    assert.equal(current().messageJumpRequest?.offset, -22, "restore retains the latest reading offset after geometry changes");
+    await act(async () => current().onJumpToBottom?.());
+    assert.equal(current().hasNewActivity, false);
+    await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -10, bubbles: true })));
+    await render("main", false);
+    text = "modified";
+    updatedAt = "2026-10-17T01:00:01.000Z";
+    await render("main", false);
+    await render();
+    assert.equal(current().hasNewActivity, true, "same-length canonical update while hidden is identified by updatedAt");
+    assert.equal(current().isMessageListFollowing, false);
+    await act(async () => current().onJumpToBottom?.());
+    assert.equal(current().hasNewActivity, false);
+    assert.equal(current().isMessageListFollowing, true);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "有限FindはSteer受付済みuserのcanonical未着bridgeを正しい履歴seqで数え、保存到着後も1件を維持し、未開始予約と過去閲覧pageをtailへ混ぜない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 全履歴Findのglobal ordinalと未保存末尾の一意な合流" }
 // fault = "receipt bridgeを検索tailから落とす、列内indexで検索対象へ渡す、保存後に二重計上する、または予約本文やbrowse pageを未保存末尾へ加える"
@@ -130,6 +233,7 @@ test("finite Find counts accepted Steer bridge once before and after canonical a
 test("paged column applies all-fold intent across unloaded pages", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
   Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "cancelAnimationFrame", { configurable: true, value: (id: number) => dom.window.clearTimeout(id) });
   const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
   const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
   globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
@@ -402,6 +506,7 @@ test("conversation column は保存本文が遅れても次Turnの応答を所�
 test("conversation pages は過去閲覧と会話ownerを保持する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
   Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "cancelAnimationFrame", { configurable: true, value: (id: number) => dom.window.clearTimeout(id) });
   const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
   const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
   globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
@@ -463,6 +568,7 @@ test("conversation pages は過去閲覧と会話ownerを保持する", async ()
 test("conversation navigator は連続選択の最後の移動先を保持する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
   Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "cancelAnimationFrame", { configurable: true, value: (id: number) => dom.window.clearTimeout(id) });
   const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
   const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
@@ -546,6 +652,7 @@ test("conversation navigator は連続選択の最後の移動先を保持する
 test("conversation Find は連続選択の最後の読込済み本文を保持する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>");
   Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "cancelAnimationFrame", { configurable: true, value: (id: number) => dom.window.clearTimeout(id) });
   const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
   const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
@@ -805,6 +912,7 @@ test("conversation column cache は切替後のscroll位置を保持する", asy
   Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
   Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "cancelAnimationFrame", { configurable: true, value: (id: number) => dom.window.clearTimeout(id) });
   let root: Root | null = null;
   const cache = new Map<string, ConversationColumnCache>();
   let latest: ReturnType<typeof useConversationMessageColumn> = null;
@@ -824,6 +932,7 @@ test("conversation column cache は切替後のscroll位置を保持する", asy
       clientHeight: { configurable: true, value: 50 },
     });
     main.scrollTop = 37;
+    await act(async () => main.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -10, bubbles: true })));
     await act(async () => latest?.onMessageListScroll({ currentTarget: main } as UIEvent<HTMLDivElement>));
     assert.equal(cache.get("main")?.scrollState?.scrollTop, 37);
     await act(async () => root?.render(React.createElement(Probe, { id: "aux" })));
@@ -843,13 +952,15 @@ test("conversation column cache は切替後のscroll位置を保持する", asy
 
 // @test-value v2
 // kind = "contract"
-// claim = "conversation columnがscroll following状態と送信時追従操作をcontrolsへ公開する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "列の内部hookがscroll状態または送信時追従操作をcontrolsへ渡さない"
-// observable = "column controlsのisMessageListFollowingとhandleMessageListSend"
+// claim = "送信の受付確定まで閲覧位置を維持し、受付待ちの上方向入力は送信時の末尾復帰を取り消す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
+// fault = "送信captureだけで末尾へ移動する、設定OFFで復帰する、または受付待ちの閲覧操作を上書きする"
+// observable = "column controlsのisMessageListFollowingとlistのscrollTop"
 // observation_boundary = "component-behavior"
 // scope = "conversation-message-column"
 // lifecycle = "permanent"
+// impact = "送信失敗や受付待ちに履歴を読む利用者の位置を奪わず、設定ONの受付済み送信だけを末尾へ戻す"
+// distinction = "型検査ではcaptureと受付の時間差や、その間の閲覧入力による失効を確認できない"
 // @end-test-value
 test("conversation column controls はscroll状態と送信時追従操作を公開する", async () => {
   const previousWindow = globalThis.window;
@@ -865,11 +976,12 @@ test("conversation column controls はscroll状態と送信時追従操作を公
   Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
   Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "cancelAnimationFrame", { configurable: true, value: (id: number) => dom.window.clearTimeout(id) });
   let root: Root | null = null;
   let latest: ReturnType<typeof useConversationMessageColumn> = null;
   let controls = {
     isMessageListFollowing: false,
-    handleMessageListSend: (_scrollToLatestOnSend: boolean) => {},
+    captureMessageListSend: (_scrollToLatestOnSend: boolean) => () => {},
   };
   try {
     await act(async () => {
@@ -897,13 +1009,23 @@ test("conversation column controls はscroll状態と送信時追従操作を公
     });
     element.scrollTop = 10;
     await act(async () => latest?.onMessageListScroll({ currentTarget: element } as UIEvent<HTMLDivElement>));
+    assert.equal(controls.isMessageListFollowing, true, "geometry alone does not express reading intent");
+    await act(async () => element.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -10, bubbles: true })));
     assert.equal(controls?.isMessageListFollowing, false);
 
-    await act(async () => controls?.handleMessageListSend(false));
+    await act(async () => controls.captureMessageListSend(false)());
     assert.equal(controls?.isMessageListFollowing, false);
-    await act(async () => controls?.handleMessageListSend(true));
+    const accepted = controls.captureMessageListSend(true);
+    assert.equal(controls.isMessageListFollowing, false, "capture must wait for acceptance");
+    await act(async () => accepted());
     assert.equal(controls?.isMessageListFollowing, true);
     assert.equal(element.scrollTop, 60);
+    const superseded = controls.captureMessageListSend(true);
+    await act(async () => element.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -10, bubbles: true })));
+    element.scrollTop = 10;
+    await act(async () => superseded());
+    assert.equal(controls.isMessageListFollowing, false);
+    assert.equal(element.scrollTop, 10);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

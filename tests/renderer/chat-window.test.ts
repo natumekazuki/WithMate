@@ -1957,7 +1957,7 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainとAuxiliaryの末尾移動button・別々のshortcutは指定列だけ追従へ戻し、入力focusと送信対象を保ち、幅不足の片側表示を含む非表示・未取得列やPreview・Terminal・IME・repeatでは実行しない"
+// claim = "MainとAuxiliaryの末尾移動button・別々のshortcutは指定列だけ追従へ戻し、入力focusと送信対象を保ち、幅不足の片側表示を含む非表示・未取得列やPreview・Terminal・IME・repeatでは実行しない。送信は列ごとのcaptureから受付完了通知まで移動を待つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Auxiliary Session; docs/features/keyboard-shortcuts.md: command scope" }
 // fault = "末尾移動先を送信対象で決める、非表示列に配送する、またはfocus・送信対象・送信時追従を変更する"
 // observable = "両列のscrollTop、button clickとkeydownの結果、activeElement、target変更callback、composer送信callback"
@@ -2019,6 +2019,8 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
   let auxiliaryError: string | null = null;
   let mainContentReady = true;
   let preview = false;
+  const captureMessageListSendRef = React.createRef<((sessionId: string) => (() => void)) | null>();
+  let acceptSend: (() => void) | undefined;
   const renderChatWindow = () => React.createElement(ChatWindow, {
     ...props,
     mainContent: preview ? React.createElement("div", null, "Preview") : undefined,
@@ -2026,7 +2028,10 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
       ...props.composerProps,
       draft: "send this",
       isSendDisabled: false,
-      onSendOrCancel: () => { sendCount += 1; },
+      onSendOrCancel: () => {
+        sendCount += 1;
+        acceptSend = captureMessageListSendRef.current?.(target === "main" ? "main" : "aux");
+      },
     },
     concurrentChats: {
       main: props.messageColumnProps,
@@ -2041,6 +2046,7 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
       target,
       widthRatio,
       scrollToLatestOnSend: true,
+      captureMessageListSendRef,
       onSelectAuxiliary() {},
       onTargetChange() { targetChangeCount += 1; },
       onWidthRatioChange() {},
@@ -2063,6 +2069,11 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
       scrollHeight: { configurable: true, value: 100 },
       clientHeight: { configurable: true, value: 40 },
     });
+    await act(async () => {
+      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -1 }));
+      dom.window.document.querySelector<HTMLDivElement>(".session-concurrent-chat-auxiliary .session-message-list")!
+        .dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -1 }));
+    });
     messageList.scrollTop = 10;
     await act(async () => messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true })));
     const mainJumpButton = dom.window.document.querySelector<HTMLButtonElement>(".session-concurrent-chat-main .message-list-jump-bottom-button");
@@ -2083,6 +2094,7 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
 
     await act(async () => mainJumpButton.click());
     assert.equal(messageList.scrollTop, 60);
+    await act(async () => messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -1 })));
     messageList.scrollTop = 10;
     await act(async () => messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true })));
 
@@ -2090,16 +2102,21 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
     assert.ok(sendButton);
     await act(async () => sendButton.click());
     assert.equal(sendCount, 1);
+    assert.equal(messageList.scrollTop, 10);
+    await act(async () => acceptSend?.());
     assert.equal(messageList.scrollTop, 60);
 
     target = "auxiliary";
     await act(async () => root?.render(renderChatWindow()));
+    await act(async () => auxiliaryMessageList.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -1 })));
     auxiliaryMessageList.scrollTop = 10;
     await act(async () => auxiliaryMessageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true })));
     const auxiliarySendButton = dom.window.document.querySelector<HTMLButtonElement>(".session-action-dock-expanded-content .session-send-button");
     assert.ok(auxiliarySendButton);
     await act(async () => auxiliarySendButton.click());
     assert.equal(sendCount, 2);
+    assert.equal(auxiliaryMessageList.scrollTop, 10);
+    await act(async () => acceptSend?.());
     assert.equal(auxiliaryMessageList.scrollTop, 60);
 
     const composer = dom.window.document.querySelector<HTMLTextAreaElement>(".session-action-dock-expanded-content textarea")!;

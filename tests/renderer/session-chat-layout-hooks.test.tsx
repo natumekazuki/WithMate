@@ -346,7 +346,17 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
   }
 });
 
-test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ追従する", async () => {
+// @test-value v2
+// kind = "contract"
+// claim = "本文buttonやlinkのfocusからも上方向キーで読み返しを保持し、buttonのactivationキーは意図を変えず、下向き操作で24px以内へ戻ると追尾し、layout更新の補正をframe内で集約する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
+// fault = "子button/linkからの閲覧キーをactivationと混同して末尾へ戻す、layoutや内部操作で追尾が外れる、読み返し中に復帰する、または重複補正を繰り返す"
+// observable = "following状態、scrollTop、同frame内の末尾補正回数"
+// observation_boundary = "component-behavior"
+// scope = "useSessionMessageListFollowing"
+// lifecycle = "permanent"
+// @end-test-value
+test("useSessionMessageListFollowing は操作意図とlayout補正を分離する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -405,7 +415,7 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
       messageListRef,
       isMessageListFollowing,
       handleMessageListScroll,
-      handleMessageListSend,
+      captureMessageListSend,
       followMessageListLatest,
     } = useSessionMessageListFollowing({
       ownerKey: "session-1",
@@ -457,12 +467,12 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
       React.createElement("button", { type: "button", "data-testid": "outside-action" }),
       React.createElement("button", {
         type: "button",
-        onClick: () => handleMessageListSend(false),
+        onClick: () => captureMessageListSend(false)(),
         "data-testid": "send-with-scroll-disabled",
       }),
       React.createElement("button", {
         type: "button",
-        onClick: () => handleMessageListSend(true),
+        onClick: () => captureMessageListSend(true)(),
         "data-testid": "send-with-scroll-enabled",
       }),
     );
@@ -478,7 +488,7 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
     const following = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"following\"]");
     assert.ok(messageList);
     assert.ok(following);
-    assert.equal(scrollToBottomCount, 1);
+    assert.equal(scrollToBottomCount, 0, "既に末尾なら書き込まない");
 
     Object.defineProperty(messageList, "scrollHeight", { configurable: true, get: () => scrollHeight });
     Object.defineProperty(messageList, "clientHeight", { configurable: true, get: () => clientHeight });
@@ -500,6 +510,38 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
       });
       assert.equal(following.textContent, "true", `${key} のフォーム操作では追従を止めない`);
     }
+
+    const bodyButton = dom.window.document.createElement("button");
+    bodyButton.textContent = "Message action";
+    const bodyLink = dom.window.document.createElement("a");
+    bodyLink.href = "#message";
+    bodyLink.textContent = "Message link";
+    messageList.append(bodyButton, bodyLink);
+    await act(async () => bodyButton.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key: " ", shiftKey: true })));
+    assert.equal(following.textContent, "true", "buttonのShift+Space操作で追尾を停止しない");
+    for (const target of [bodyButton, bodyLink]) {
+      for (const key of ["PageUp", "Home", "ArrowUp"]) {
+        await act(async () => dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click());
+        target.focus();
+        await act(async () => {
+          target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key }));
+          messageList.scrollTop -= 70;
+          messageList.dispatchEvent(new dom.window.Event("scroll"));
+          await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+        });
+        assert.equal(following.textContent, "false", `${target.tagName} focusの${key}でも読み返しを開始する`);
+        assert.equal(messageList.scrollTop, scrollHeight - clientHeight - 70, "子部品からの読み返しを末尾補正で戻さない");
+      }
+    }
+    for (const key of [" ", "Enter"]) {
+      await act(async () => {
+        bodyButton.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key }));
+        messageList.scrollTop = scrollHeight - clientHeight;
+        messageList.dispatchEvent(new dom.window.Event("scroll"));
+      });
+      assert.equal(following.textContent, "false", `buttonの${JSON.stringify(key)}操作だけでは追尾を再開しない`);
+    }
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click());
 
     await act(async () => {
       messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
@@ -533,6 +575,7 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
       root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "pending-after-send" }));
     });
     assert.equal(following.textContent, "true", "送信後の待機表示が遅れて追加されても追随を維持する");
+    await act(async () => { await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve())); });
     assert.equal(messageList.scrollTop, scrollHeight - clientHeight, "送信後の待機表示を含む末尾へ移動する");
 
     await act(async () => {
@@ -579,7 +622,7 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
       dom.window.dispatchEvent(pointerUp);
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
     });
-    assert.equal(following.textContent, "true", "message list内で開始したpointer操作は追従を再開できる");
+    assert.equal(following.textContent, "false", "クリックだけでは追従再開を許可しない");
 
     await act(async () => {
       messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
@@ -590,23 +633,28 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
 
     await act(async () => {
       messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: 120 }));
-      messageList.scrollTop = scrollHeight - clientHeight - 1;
+      messageList.scrollTop = scrollHeight - clientHeight - 24;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
     });
-    assert.equal(following.textContent, "true", "1pxのlayout誤差は末尾として許容する");
+    assert.equal(following.textContent, "true", "下向き操作で24px以内へ戻れば追尾へ復帰する");
 
     scrollHeight = 1_120;
     await act(async () => {
       root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "stream-growing" }));
     });
+    await act(async () => { await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve())); });
     assert.equal(messageList.scrollTop, 920, "stream本文の伸長へ追従する");
 
     scrollHeight = 1_260;
+    const correctionsBeforeResize = scrollToBottomCount;
     await act(async () => {
-      for (const observer of resizeObservers) {
-        observer.callback([], observer as unknown as ResizeObserver);
+      for (let pass = 0; pass < 3; pass++) {
+        for (const observer of resizeObservers) observer.callback([], observer as unknown as ResizeObserver);
       }
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
     });
+    assert.equal(scrollToBottomCount - correctionsBeforeResize, 1, "resizeとscrollが同frameに重なっても補正は一度");
     assert.equal(messageList.scrollTop, 1_060, "message高さの非同期変化へ追従する");
 
     clientHeight = 140;
@@ -614,6 +662,7 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
       for (const observer of resizeObservers) {
         observer.callback([], observer as unknown as ResizeObserver);
       }
+      await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
     });
     assert.equal(messageList.scrollTop, 1_120, "ActionDock resize後のviewport末尾へ追従する");
 
@@ -621,13 +670,60 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
       messageList.scrollTop = scrollHeight - clientHeight - 2;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
     });
-    assert.equal(following.textContent, "false");
+    assert.equal(following.textContent, "true", "幾何変化だけでは追尾を停止しない");
+    await act(async () => { await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve())); });
+    assert.equal(messageList.scrollTop, scrollHeight - clientHeight);
 
+    const nested = dom.window.document.createElement("div");
+    nested.style.overflowY = "auto";
+    Object.defineProperties(nested, { scrollHeight: { value: 500 }, clientHeight: { value: 100 } });
+    nested.scrollTop = 200;
+    messageList.append(nested);
+    await act(async () => {
+      nested.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -80 }));
+      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -80, ctrlKey: true }));
+    });
+    assert.equal(following.textContent, "true", "子領域のscrollとzoomは会話追尾を変更しない");
+    nested.scrollTop = 0;
+    await act(async () => nested.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -80 })));
+    assert.equal(following.textContent, "false", "子領域の上端から会話へ伝播する操作は読み返しにする");
+    await act(async () => {
+      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: 80 }));
+      messageList.scrollTop = scrollHeight - clientHeight - 25;
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    assert.equal(following.textContent, "false", "復帰幅の外側では読み返しを維持する");
     await act(async () => {
       dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click();
     });
     assert.equal(following.textContent, "true");
     assert.equal(messageList.scrollTop, scrollHeight - clientHeight);
+
+    const pointer = (target: EventTarget, type: string, pointerType: string, x: number, y: number) => {
+      const event = new dom.window.MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y });
+      Object.defineProperties(event, { pointerId: { value: 9 }, pointerType: { value: pointerType } });
+      target.dispatchEvent(event);
+    };
+    messageList.getBoundingClientRect = () => new dom.window.DOMRect(0, 0, 400, clientHeight);
+    await act(async () => {
+      pointer(messageList, "pointerdown", "mouse", 399, 80);
+      messageList.scrollTop -= 100;
+      messageList.dispatchEvent(new dom.window.Event("scroll"));
+    });
+    assert.equal(following.textContent, "false", "scrollbarを上へ動かすと読み返しを優先する");
+    await act(async () => {
+      messageList.scrollTop = scrollHeight - clientHeight - 20;
+      messageList.dispatchEvent(new dom.window.Event("scroll"));
+      pointer(dom.window, "pointerup", "mouse", 399, 120);
+    });
+    assert.equal(following.textContent, "true", "scrollbarで末尾付近へ戻すと追尾を再開する");
+    await act(async () => {
+      pointer(messageList, "pointerdown", "touch", 200, 50);
+      pointer(dom.window, "pointermove", "touch", 200, 90);
+      pointer(dom.window, "pointerup", "touch", 200, 90);
+    });
+    assert.equal(following.textContent, "false", "touchの読み返しで予約済み補正を停止する");
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click());
 
     await act(async () => {
       root?.render(React.createElement(Harness, { enabled: false, scrollSignature: "preview-update" }));

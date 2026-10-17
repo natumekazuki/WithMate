@@ -270,6 +270,7 @@ export function useMainSessionRuntime({
       queueTurn?: boolean;
       auxiliaryDraftOwner?: AuxiliaryDraftPersistenceOwner;
       isCurrentSubmission?: () => boolean;
+      onAccepted?: () => void;
       shouldCollapseActionDock: boolean;
       selectedSessionRunState: Session["runState"] | null;
       blockedReason: string | null;
@@ -290,6 +291,7 @@ export function useMainSessionRuntime({
         queueTurn: input.queueTurn,
         auxiliaryDraftOwner: input.auxiliaryDraftOwner,
         isCurrentSubmission: input.isCurrentSubmission,
+        onAccepted: input.onAccepted,
         clearDraft: input.clearDraft,
         collapseActionDock: input.shouldCollapseActionDock,
         selectedSessionRunState: input.selectedSessionRunState,
