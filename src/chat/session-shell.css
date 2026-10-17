@@ -663,8 +663,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 1px;
+  gap: 4px;
+  padding: 4px;
   border: 1px solid rgba(203, 213, 225, 0.16);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);

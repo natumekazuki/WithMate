@@ -40,7 +40,7 @@
 .session-action-dock-compact-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
@@ -1052,8 +1052,10 @@
 
 .composer {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   min-height: 0;
+  padding: 6px;
+  scroll-padding: 6px;
   align-content: start;
 }
 
@@ -3357,7 +3359,7 @@
 
 .composer-attachments-toolbar {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
   flex-wrap: wrap;
 }
@@ -3535,15 +3537,15 @@
 .composer-additional-directory-toolbar {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
 }
 
 .composer-directory-add-group {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 1px;
+  gap: 4px;
+  padding: 4px;
   border: 1px solid rgba(203, 213, 225, 0.18);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
@@ -3646,14 +3648,15 @@
   flex: 0 0 auto;
   flex-wrap: wrap;
   max-width: 100%;
-  gap: 8px;
+  gap: 12px;
   margin-left: auto;
 }
 
 .composer-message-view-mode {
   display: inline-flex;
   flex: 0 0 auto;
-  padding: 1px;
+  gap: 4px;
+  padding: 4px;
   border: 1px solid rgba(203, 213, 225, 0.18);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
@@ -4073,7 +4076,7 @@
   display: flex;
   flex-wrap: wrap;
   min-width: 0;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
   justify-content: start;
 }
@@ -4113,6 +4116,7 @@
 }
 
 .composer-setting-field select {
+  appearance: base-select;
   flex: 1 1 max-content;
   width: max-content;
   min-width: 0;
@@ -4120,29 +4124,70 @@
   height: 40px;
   border: 1px solid rgba(32, 36, 55, 0.08);
   border-radius: 14px;
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 8px 12px;
   background: rgba(255, 255, 255, 0.88);
   color: var(--ink);
+  font: inherit;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.composer-setting-field select::picker(select) {
+  appearance: base-select;
+  min-width: max(180px, anchor-size(width));
+  max-width: calc(100vw - 24px);
+  max-height: min(360px, calc(100dvh - 24px));
+  margin-block: 6px;
+  padding: 6px;
+  border: 1px solid rgba(203, 213, 225, 0.24);
+  border-radius: 12px;
+  background: var(--surface-deep);
+  color: var(--ink);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+  overflow: auto;
+}
+
+.composer-setting-field select option {
+  min-height: 38px;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.composer-setting-field select option:checked {
+  background: color-mix(in srgb, var(--character-main) 18%, transparent);
+}
+
+.composer-setting-field select option:hover,
+.composer-setting-field select option:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--character-main) 28%, var(--surface-deep));
 }
 
 .composer-icon-setting {
   position: relative;
-  flex: 0 0 48px;
-  width: 48px;
+  flex: 0 0 52px;
+  width: 52px;
 }
 
 .composer-icon-setting select,
 .session-page .composer-icon-setting select {
-  appearance: none;
   width: 100%;
   padding: 0;
   color: transparent;
+  font-size: 0;
   cursor: pointer;
 }
 
-.composer-icon-setting select option {
-  color: var(--ink);
-  background: var(--surface-deep);
+.composer-icon-setting select::picker-icon {
+  display: none;
 }
 
 .composer-icon-setting select:disabled {
@@ -4164,7 +4209,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 4px;
   color: var(--ink);
   pointer-events: none;
 }
@@ -4179,9 +4224,18 @@
 }
 
 @media (forced-colors: active) {
-  .composer-icon-setting select option {
+  .composer-setting-field select::picker(select),
+  .composer-setting-field select option {
     color: CanvasText;
     background: Canvas;
+  }
+
+  .composer-setting-field select option:checked,
+  .composer-setting-field select option:hover,
+  .composer-setting-field select option:focus-visible {
+    color: HighlightText;
+    background: Highlight;
+    forced-color-adjust: none;
   }
 }
 

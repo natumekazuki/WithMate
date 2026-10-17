@@ -237,8 +237,9 @@
 .session-action-dock-terminal-content.is-active {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
+  gap: 12px;
   height: 100%;
+  padding: 8px 10px;
   overflow: clip;
 }
 

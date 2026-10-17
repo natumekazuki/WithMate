@@ -316,6 +316,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
   - 常に全幅の下dockとして置く
+  - 操作群の間隔は12px、対象・mode・directory追加groupの内側は4pxを確保する。Promptのscroll領域内側にも6pxの余白を置き、compact／Terminalを含めてfocus outlineを外枠で切り落とさない
   - Agent Sessionは最上段操作欄に送信対象providerの期間別残率を表示する。Promptでは添付操作群とCancel予約領域の間、Terminal／compactでは操作欄の先頭へ置き、専用段は増やさない。詳細iconは残量表示の左端に固定し、provider名とRemaining labelは常時表示しない。残量部分は1行を保ち、狭ければ横scrollする。操作欄全体が収まらない場合は既存操作の折り返しを許容する。Main／Auxiliary切替時は送信対象へ追従し、最小限の詳細と取得状態は[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
   - Agent Sessionでは`Preview / Source`の右に同じ表示形式の`Prompt / Terminal`切替を置き、押したmodeを展開する。初期選択はPrompt。既定shortcutはWindows／Linuxの`Ctrl+Shift+T`、macOSの`Cmd+Shift+T`で、Settingsから変更できる。composerと端末本文のどちらにfocusがあっても切り替えられ、IME変換中とkey repeatでは発火しない
   - PromptとTerminalは同時表示せず、非表示側をinertにしてmountを維持する。Promptのdraft・selectionとTerminalのタブ・出力・PTYを保持し、Promptへ戻るとcomposerへ、Terminalを選ぶと選択端末へfocusする。splitterで再展開した時は選択modeを維持する。Quote／参照挿入などcomposerを開く操作はPromptへ戻す
@@ -454,7 +455,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Approvalの選択肢は `Auto Run / Provider Controlled / Safety Focused`。選択値ごとの状態iconを表示する
   - ClaudeのApprovalは`Provider Controlled`のみを選べる。保存値が非対応の場合は`Unsupported (保存値)`を選択表示し、invalid stateを保持する。ユーザーが`Provider Controlled`を選ぶことで有効値へ修正でき、黙って権限設定を置き換えない
   - runtime設定のnative selectは、Main／Auxiliaryの次送信用の現在選択を表示する。runningや取消終了待ちでも選べるが、実行中Turnと受付済み予約の捕捉値は変えない。対象切替では各会話の選択値・provider能力・read-only／blocked／freeze条件に対応する
-  - runtime設定はnative single-select controlのkeyboard操作を維持し、menu内には正式な選択肢を表示する。常設の項目名は省略し、Modelは現在のmodel名、それ以外は選択値ごとの状態iconを表示する。tooltipとaccessible nameで項目と現在値を確認でき、disabled・invalid・focusの状態を維持する。候補はprovider・model設定に従い、icon定義から候補を追加しない
+  - runtime設定はnative single-select controlのkeyboard操作を維持し、menu内には正式な選択肢を表示する。Electronのcustomizable selectでmenuに6px、各選択肢に上下8px・左右12pxの余白を設け、viewport内へ収める。常設の項目名は省略し、Modelは現在のmodel名、それ以外は選択値ごとの状態iconを表示する。tooltipとaccessible nameで項目と現在値を確認でき、disabled・invalid・focusの状態を維持する。候補はprovider・model設定に従い、icon定義から候補を追加しない
 - session title は mate `main`
 - assistant本文はgradientを使わず、`main`の細い左線とavatarの縁、控えめな背景色で周囲から区別する。user本文は控えめなsurfaceで区別し、通常のassistantとuserの枠は同じ丸みを持つ。pendingとAuxiliary groupの状態表現は維持する
 - composer settings は独立したaccent背景を持たず、周囲のsurfaceと同じ背景を使う
