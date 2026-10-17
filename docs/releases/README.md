@@ -24,6 +24,7 @@ WithMateのrepository内リリースノートです。各リリースで利用�
 
 | Version | Release Notes |
 | --- | --- |
+| v6.3.29-preview.14 | [WithMate v6.3.29-preview.14](v6.3.29-preview.14.md) |
 | v6.3.29-preview.13 | [WithMate v6.3.29-preview.13](v6.3.29-preview.13.md) |
 | v6.3.29-preview.12 | [WithMate v6.3.29-preview.12](v6.3.29-preview.12.md) |
 | v6.3.29-preview.11 | [WithMate v6.3.29-preview.11](v6.3.29-preview.11.md) |
