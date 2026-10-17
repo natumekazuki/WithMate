@@ -230,7 +230,7 @@ test("MemoryV6ReviewScreen はfilter変更時に古いpagination busyを解除�
     });
     assert.equal(requests.at(-1)?.cursor, "cursor-1");
     assert.equal(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more")?.getAttribute("aria-busy"), "true");
-    assert.ok(rootElement.querySelector<HTMLButtonElement>("button.memory-review-load-more .settings-action-spinner"));
+    assert.ok(rootElement.querySelector("button.memory-review-load-more .button-content-spinner[aria-hidden='true']"));
 
     const kindSelect = rootElement.querySelector<HTMLSelectElement>("select");
     assert.ok(kindSelect);

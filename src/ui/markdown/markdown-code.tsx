@@ -11,6 +11,7 @@ import {
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from "react";
+import { ButtonContent } from "../button-content.js";
 
 import {
   MarkdownRenderContext,
@@ -114,10 +115,12 @@ function CodeBlockCopyButton({
       disabled={isCopying}
       onClick={() => void handleCopy()}
     >
-      <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-        <path d="M8.5 15.5H7A2.5 2.5 0 0 1 4.5 13V7A2.5 2.5 0 0 1 7 4.5h6A2.5 2.5 0 0 1 15.5 7v1.5" />
-        <rect x="8.5" y="8.5" width="11" height="11" rx="3" />
-      </svg>
+      <ButtonContent busy={isCopying}>
+        <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+          <path d="M8.5 15.5H7A2.5 2.5 0 0 1 4.5 13V7A2.5 2.5 0 0 1 7 4.5h6A2.5 2.5 0 0 1 15.5 7v1.5" />
+          <rect x="8.5" y="8.5" width="11" height="11" rx="3" />
+        </svg>
+      </ButtonContent>
     </button>
   );
 }

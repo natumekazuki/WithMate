@@ -108,6 +108,13 @@ export function updateSessionTurnNotificationEnabled(
   };
 }
 
+export function updateSessionApprovalNotificationEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return { ...draft, sessionApprovalNotificationEnabled: enabled };
+}
+
 export function updateSessionTurnNotificationResponsePreviewEnabled(
   draft: AppSettings,
   enabled: boolean,

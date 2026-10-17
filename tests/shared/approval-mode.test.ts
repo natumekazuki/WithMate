@@ -84,7 +84,7 @@ describe("approval mode helpers", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "default approval modeは保存enumを維持してprovider-neutralなTitle Caseの英語表示labelを返す"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+  // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#表示言語と文言" }
   // fault = "保存用approval enumやprovider固有literalをそのまま表示し、利用者向けlabelを提供しない"
   // observable = "approvalModeLabel(DEFAULT_APPROVAL_MODE)"
   // observation_boundary = "public-boundary"

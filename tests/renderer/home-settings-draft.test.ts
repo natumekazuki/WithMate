@@ -371,10 +371,10 @@ describe("home-settings-draft", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Settingsのaction dock、通知、response preview、Memory quotaのhandlerを順次操作しても、先行変更と対象外のdraftを保持する"
+  // claim = "Settingsのaction dock、turn通知、承認通知、response preview、Memory quotaのhandlerを順次操作しても、先行変更と対象外のdraftを保持する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#runtime-policy" }
   // fault = "handlerが別の設定を更新するか、後続操作が古いdraftを使って先行変更を巻き戻す"
-  // observable = "buildSettingsDraftHandlers経由の4操作後のAppSettings draft全体"
+  // observable = "buildSettingsDraftHandlers経由の5操作後のAppSettings draft全体"
   // observation_boundary = "component-behavior"
   // scope = "settings-current-draft-handler-composition"
   // lifecycle = "permanent"
@@ -388,6 +388,7 @@ describe("home-settings-draft", () => {
     handlers.onChangeAutoCollapseActionDockOnSend(false);
     handlers.onChangeSessionTurnNotificationEnabled(false);
     handlers.onChangeSessionTurnNotificationResponsePreviewEnabled(true);
+    handlers.onChangeSessionApprovalNotificationEnabled(false);
     handlers.onChangeMemoryFileQuotaMegabytes("2048");
 
     assert.deepEqual(state.draft, {
@@ -395,6 +396,7 @@ describe("home-settings-draft", () => {
       autoCollapseActionDockOnSend: false,
       sessionTurnNotificationEnabled: false,
       sessionTurnNotificationResponsePreviewEnabled: true,
+      sessionApprovalNotificationEnabled: false,
       memoryFileQuotaBytes: 2048 * 1024 * 1024,
     });
   });

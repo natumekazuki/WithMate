@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { ButtonContent } from "../../ui/button-content.js";
 
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 import { useShortcutSettings } from "../../settings/shortcut-settings-context.js";
@@ -98,7 +99,7 @@ export function SessionActionDockCompactRow({
               disabled={isCanceling}
               aria-busy={isCanceling || undefined}
             >
-              {isCanceling ? "Canceling" : "Cancel"}
+              <ButtonContent busy={isCanceling}>Cancel</ButtonContent>
             </button>
         ) : null}
         </div>

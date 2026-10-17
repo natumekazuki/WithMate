@@ -11,9 +11,11 @@ import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
+import { ButtonContent } from "../ui/button-content.js";
 
 export type HomeRightPaneProps = {
   rightPaneView: "monitor" | "characters";
+  approvalMonitorEntries: HomeMonitorEntry[];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
@@ -49,6 +51,7 @@ export type HomeRightPaneProps = {
 
 export function HomeRightPane({
   rightPaneView,
+  approvalMonitorEntries,
   runningMonitorEntries,
   nonRunningMonitorEntries,
   auxiliaryDataState,
@@ -95,10 +98,7 @@ export function HomeRightPane({
             }
             aria-busy={sessionWindowRestorePending}
           >
-            {sessionWindowRestorePending ? (
-              <span className="restore-session-windows-spinner" aria-hidden="true" />
-            ) : null}
-            <span>Restore Sessions</span>
+            <ButtonContent busy={sessionWindowRestorePending}>Restore Sessions</ButtonContent>
           </button>
           <button
             className="launch-toggle home-monitor-window-button"
@@ -143,6 +143,7 @@ export function HomeRightPane({
       {rightPaneView === "monitor" ? (
         <section className="home-monitor-panel" role="tabpanel" aria-label="Session monitor">
           <HomeMonitorContent
+            approvalEntries={approvalMonitorEntries}
             runningEntries={runningMonitorEntries}
             nonRunningEntries={nonRunningMonitorEntries}
             auxiliaryDataState={auxiliaryDataState}

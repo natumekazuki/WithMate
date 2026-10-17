@@ -39,12 +39,16 @@ export type ConversationColumnCache = {
   liveRun: LiveSessionRunState | null;
   bridge: Omit<LiveAssistantProjection, "text"> | null;
   approvalRequestId: string | null;
+  approvalDecision?: "approve" | "deny" | null;
   elicitationRequestId: string | null;
+  elicitationAction?: SessionMessageColumnProps["elicitationAction"];
   error: string;
   messageJumpRequest: MessageJumpRequest | null;
   messageJumpRequestId: number;
   pageStart?: number;
   anchor?: { key: string; offset: number };
+  activitySignature?: string;
+  hasNewActivity?: boolean;
 };
 
 export type UseConversationMessageColumnInput = {
@@ -66,7 +70,7 @@ export type ConversationColumnControls = {
   collapsedMessageKeys: ReadonlySet<string>;
   allMessagesCollapsed: boolean;
   isMessageListFollowing: boolean;
-  handleMessageListSend: (scrollToLatestOnSend: boolean) => void;
+  captureMessageListSend: (scrollToLatestOnSend: boolean) => (() => void);
   onToggleAllMessageCollapse: () => void;
   followLatest: () => void;
   messageNavigatorEntries: readonly MessageNavigatorEntry[];
@@ -321,42 +325,83 @@ export function useConversationMessageColumn({
   const following = useSessionMessageListFollowing({
     ownerKey: pageOwner,
     scrollSignature: messageScrollSignature,
-    enabled: enabled && session !== null && !isBrowsing,
-    savedScrollState: conversation.scrollState,
+    enabled: enabled && session !== null,
+    savedScrollState: isBrowsing ? { scrollTop: conversation.scrollState?.scrollTop ?? 0, isFollowing: false } : conversation.scrollState,
     onScrollStateChange: (state) => { conversation.scrollState = state; },
   });
-  const followingRef = useRef(following.isMessageListFollowing);
-  followingRef.current = following.isMessageListFollowing;
+  const tailActivityTexts = useMemo(() => tailMessages.map((message) => message.text), [tailMessages]);
+  const activitySignature = `${totalCount}:${session?.updatedAt ?? ""}:${tailActivityTexts.map((text) => text.length).join(",")}:${bridgeKey}:${bridge?.text.length ?? 0}:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`;
+  const previousActivity = useRef<{ owner: string; texts: readonly string[]; liveText: string } | null>(null);
+  useLayoutEffect(() => {
+    const previous = conversation.hasNewActivity;
+    const last = previousActivity.current;
+    const textChanged = last?.owner === pageOwner && (
+      last.liveText !== (bridge?.text ?? "") || last.texts.length !== tailActivityTexts.length
+      || last.texts.some((text, index) => text !== tailActivityTexts[index])
+    );
+    if (enabled && !isBrowsing && following.isMessageListFollowing) conversation.hasNewActivity = false;
+    else if (textChanged || conversation.activitySignature !== undefined && conversation.activitySignature !== activitySignature) conversation.hasNewActivity = true;
+    conversation.activitySignature = activitySignature;
+    previousActivity.current = enabled ? { owner: pageOwner, texts: tailActivityTexts, liveText: bridge?.text ?? "" } : null;
+    if (previous !== conversation.hasNewActivity) refresh();
+  }, [activitySignature, tailActivityTexts, bridge?.text, pageOwner, conversation, enabled, isBrowsing, following.isMessageListFollowing, refresh]);
+  const anchorFrame = useRef<number | null>(null);
+  const captureAnchor = useCallback(() => {
+    const element = following.messageListRef.current;
+    if (!enabled || !element || (!isBrowsing && conversation.scrollState?.isFollowing)) return;
+    const listTop = element.getBoundingClientRect().top;
+    const listBottom = listTop + element.clientHeight;
+    for (const row of element.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
+      const rect = row.getBoundingClientRect();
+      if (rect.bottom <= listTop || rect.top >= listBottom) continue;
+      const key = projection.keys[Number(row.dataset.index)];
+      if (key) conversation.anchor = { key, offset: rect.top - listTop };
+      break;
+    }
+  }, [conversation, enabled, isBrowsing, projection.keys]);
+  const scheduleAnchorCapture = useCallback(() => {
+    const element = following.messageListRef.current;
+    if (!enabled || !element || anchorFrame.current !== null || (!isBrowsing && conversation.scrollState?.isFollowing)) return;
+    anchorFrame.current = element.ownerDocument.defaultView!.requestAnimationFrame(() => {
+      anchorFrame.current = null;
+      captureAnchor();
+    });
+  }, [captureAnchor, conversation, enabled, isBrowsing]);
   useLayoutEffect(() => {
     const element = following.messageListRef.current;
     return () => {
-      if (element) conversation.scrollState = { scrollTop: element.scrollTop, isFollowing: followingRef.current };
+      if (anchorFrame.current !== null) {
+        element?.ownerDocument.defaultView?.cancelAnimationFrame(anchorFrame.current);
+        anchorFrame.current = null;
+        captureAnchor();
+      }
     };
-  }, [sessionId]);
-  const onMessageListScroll = useCallback((_event: UIEvent<HTMLDivElement>) => {
-    if (!isBrowsing) following.handleMessageListScroll();
-    const element = following.messageListRef.current;
-    const row = element ? Array.from(element.querySelectorAll<HTMLElement>(".session-message-virtual-row")).find((row) => row.getBoundingClientRect().bottom > element.getBoundingClientRect().top) : null;
-    if (element && row) {
-      const key = projection.keys[Number(row.dataset.index)];
-      if (key) conversation.anchor = { key, offset: row.getBoundingClientRect().top - element.getBoundingClientRect().top };
+  }, [captureAnchor]);
+  useLayoutEffect(() => {
+    if (enabled && conversation.anchor && !conversation.scrollState?.isFollowing) {
+      conversation.messageJumpRequest = { sessionId, ...conversation.anchor, requestId: ++conversation.messageJumpRequestId };
+      refresh();
     }
-  }, [conversation, following.handleMessageListScroll, isBrowsing, projection.keys]);
+  }, [enabled, pageOwner]);
+  const onMessageListScroll = useCallback((_event: UIEvent<HTMLDivElement>) => {
+    if (!enabled) return;
+    following.handleMessageListScroll();
+    scheduleAnchorCapture();
+  }, [following.handleMessageListScroll, scheduleAnchorCapture, enabled]);
   const followLatest = useCallback(() => {
     ++pageRevision.current;
     requestedPageStart.current = undefined;
     conversation.pageStart = undefined;
     conversation.anchor = undefined;
+    conversation.hasNewActivity = false;
     conversation.scrollState = { scrollTop: 0, isFollowing: true };
     setBrowsePage(null);
     setPageError("");
     setPageLoading(false);
     following.followMessageListLatest();
   }, [conversation, following.followMessageListLatest]);
-  const handleMessageListSend = useCallback((scrollToLatestOnSend: boolean) => {
-    if (scrollToLatestOnSend && isBrowsing) followLatest();
-    following.handleMessageListSend(scrollToLatestOnSend);
-  }, [isBrowsing, followLatest, following.handleMessageListSend]);
+  const captureMessageListSend = useCallback((scrollToLatestOnSend: boolean) =>
+    following.captureMessageListSend(scrollToLatestOnSend, followLatest), [followLatest, following.captureMessageListSend]);
   const onToggleMessageCollapse = (key: string) => {
     if (paged) {
       const target = collapseTargets.find((value) => value.key === key);
@@ -447,6 +492,7 @@ export function useConversationMessageColumn({
     onRequestRange: setNavigatorOffset, onRetry: navigator.retry,
   } : undefined;
   const onJumpToMessage = useCallback(async (key: string) => {
+    following.pauseMessageListFollowing();
     if (isBrowsing && tailNavigatorTargets.some((target) => target.key === key && target.source.messageIndex >= totalCount)) {
       followLatest();
     } else if (!projection.keys.includes(key)) {
@@ -463,7 +509,7 @@ export function useConversationMessageColumn({
     conversation.messageJumpRequestId += 1;
     conversation.messageJumpRequest = { sessionId, key, requestId: conversation.messageJumpRequestId };
     refresh();
-  }, [conversation, refresh, sessionId, projection.keys, loadPage, pageOwner, isBrowsing, tailNavigatorTargets, totalCount, followLatest]);
+  }, [conversation, refresh, sessionId, projection.keys, loadPage, pageOwner, isBrowsing, tailNavigatorTargets, totalCount, followLatest, following.pauseMessageListFollowing]);
   useEffect(() => {
     onColumnControls?.({
       sessionId,
@@ -471,14 +517,14 @@ export function useConversationMessageColumn({
       collapsedMessageKeys,
       allMessagesCollapsed,
       isMessageListFollowing: !isBrowsing && following.isMessageListFollowing,
-      handleMessageListSend,
+      captureMessageListSend,
       onToggleAllMessageCollapse,
       followLatest,
       messageNavigatorEntries,
       messageNavigatorPage,
       onJumpToMessage,
     });
-  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, handleMessageListSend, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, sessionId]);
+  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, captureMessageListSend, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, sessionId]);
   const reloadLiveRun = async (requestId: string, requestKind: "approval" | "elicitation", eventRevision: number) => {
     if (!api?.getLiveSessionRun) return;
     const latestLiveRun = await api.getLiveSessionRun(sessionId);
@@ -495,6 +541,7 @@ export function useConversationMessageColumn({
     if (!api?.resolveLiveApproval) return baseProps.onResolveLiveApproval(request, decision);
     if (conversation.approvalRequestId === request.requestId) return;
     conversation.approvalRequestId = request.requestId;
+    conversation.approvalDecision = decision;
     conversation.error = "";
     refresh();
     const eventRevision = liveRunEventRevision.current;
@@ -505,6 +552,7 @@ export function useConversationMessageColumn({
       conversation.error = error instanceof Error ? error.message : String(error);
     } finally {
       conversation.approvalRequestId = null;
+      conversation.approvalDecision = null;
       refresh();
     }
   };
@@ -512,6 +560,7 @@ export function useConversationMessageColumn({
     if (!api?.resolveLiveElicitation) return baseProps.onResolveLiveElicitation(request, response);
     if (conversation.elicitationRequestId === request.requestId) return;
     conversation.elicitationRequestId = request.requestId;
+    conversation.elicitationAction = response.action;
     conversation.error = "";
     refresh();
     const eventRevision = liveRunEventRevision.current;
@@ -522,6 +571,7 @@ export function useConversationMessageColumn({
       conversation.error = error instanceof Error ? error.message : String(error);
     } finally {
       conversation.elicitationRequestId = null;
+      conversation.elicitationAction = null;
       refresh();
     }
   };
@@ -534,10 +584,10 @@ export function useConversationMessageColumn({
   const inputAction = canSendQueuedInput ? sendQueuedInput : undefined;
   const queueTail = useMemo(() => !isBrowsing && api?.listSessionTurnQueue
     && (queuedProjection.tail.length > 0 || queue.error || queue.loading && queue.receipts.length > 0) ? <>
-    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
+    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
     {queue.loading && queue.receipts.length > 0 ? <LoadingIndicator inline label="Loading queued turns" /> : null}
     {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
-  </> : undefined, [isBrowsing, api, queuedProjection.tail, queue.busyId, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction]);
+  </> : undefined, [isBrowsing, api, queuedProjection.tail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction]);
   if (!session) return null;
   return {
     ...baseProps,
@@ -550,6 +600,7 @@ export function useConversationMessageColumn({
     onCancelQueuedTurn: queue.cancel,
     onReleaseInterruptedTurn: queue.release,
     queueBusyId: queue.busyId,
+    queueBusyKind: queue.busyKind,
     queueTail,
     pendingResponseMessageKey,
     messageGroups: projection.groups,
@@ -568,12 +619,17 @@ export function useConversationMessageColumn({
     liveElicitationRecords: api ? liveRun?.elicitationRecords : baseProps.liveElicitationRecords,
     elicitationInputAvailable: api ? liveRun?.inputAvailable === true && !liveRun.cancellationState : baseProps.elicitationInputAvailable,
     approvalActionRequestId: conversation.approvalRequestId,
+    approvalActionDecision: conversation.approvalDecision,
     elicitationActionRequestId: conversation.elicitationRequestId,
+    elicitationAction: conversation.elicitationAction,
     liveRunErrorMessage: conversation.error || (api ? liveRun?.errorMessage ?? "" : baseProps.liveRunErrorMessage),
     pendingMessageGroupId: null,
     messageListRef: following.messageListRef,
     isMessageListFollowing: !isBrowsing && following.isMessageListFollowing,
+    hasNewActivity: !!conversation.hasNewActivity,
+    onBrowseMessages: following.pauseMessageListFollowing,
     onMessageListScroll,
+    onMessageListLayout: scheduleAnchorCapture,
     onJumpToBottom: followLatest,
     conversationPaging: session.messageCount !== undefined && api?.getConversationPage ? {
       loading: pageLoading, error: pageError,
@@ -590,6 +646,7 @@ export function useConversationMessageColumn({
     searchMessageIndexes,
     onLoadMessagePage: async (messageIndex) => {
       if (messageIndex >= totalCount) { followLatest(); return; }
+      following.pauseMessageListFollowing();
       if (!messages.some((message, index) => getMessageHistoryIndex(message, index) === messageIndex)) {
         await loadPage(Math.max(0, messageIndex - 30));
       } else {

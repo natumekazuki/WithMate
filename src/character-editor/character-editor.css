@@ -1013,15 +1013,3 @@
   color: var(--character-main-ink);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
 }
-
-.character-editor-page .start-session-button,
-.character-editor-page .character-editor-window-footer .launch-toggle {
-  gap: 8px;
-}
-
-.character-editor-page .start-session-button .chat-skill-picker-spinner,
-.character-editor-page .character-editor-window-footer .chat-skill-picker-spinner {
-  width: 14px;
-  height: 14px;
-  border-width: 2px;
-}

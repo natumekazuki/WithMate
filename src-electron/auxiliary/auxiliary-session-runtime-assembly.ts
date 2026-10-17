@@ -57,7 +57,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
   interaction: {
     waitForApprovalDecision(sessionId: string, request: LiveApprovalRequest, signal: AbortSignal): Promise<LiveApprovalDecision> | LiveApprovalDecision;
     waitForElicitationResponse(sessionId: string, request: LiveElicitationRequest, signal: AbortSignal): Promise<LiveElicitationResponse> | LiveElicitationResponse;
-    resolveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
+    cancelApprovals(sessionId: string): void;
     cancelElicitations(sessionId: string): void;
     invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void>;
   };
@@ -121,7 +121,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     invalidateProviderSessionThread: (providerId, sessionId) => guarded("provider thread invalidation", () => deps.interaction.invalidateProviderSessionThread(providerId, sessionId)),
     scheduleProviderQuotaTelemetryRefresh: (id, delays) => { assertOwner("provider quota schedule"); deps.live.scheduleProviderQuotaTelemetryRefresh(id, delays); },
     broadcastLiveSessionRun: (id) => { assertOwner("live session broadcast"); deps.live.broadcastLiveSessionRun(id); },
-    resolvePendingApprovalRequest: (sessionId, decision) => { assertOwner("pending approval resolution"); const requestId = deps.live.getLiveSessionRun(sessionId)?.approvalRequest?.requestId; if (requestId) deps.interaction.resolveApproval(sessionId, requestId, decision); },
+    resolvePendingApprovalRequest: (sessionId) => { assertOwner("pending approval cancellation"); deps.interaction.cancelApprovals(sessionId); },
     resolvePendingElicitationRequest: (sessionId) => { assertOwner("pending elicitation resolution"); deps.interaction.cancelElicitations(sessionId); },
     notifySessionTurnTerminal: async (notification) => guarded("terminal notification", async () => {
       const auxiliary = await deps.auxiliary.getSession(notification.session.id);

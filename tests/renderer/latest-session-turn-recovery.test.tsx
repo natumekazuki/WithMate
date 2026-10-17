@@ -23,7 +23,7 @@ function canceledTurn(sessionId: string): SessionTurnRecord {
 // @test-value v2
 // kind = "contract"
 // claim = "正常なturn読込は枠のないbusy status、実際の取得失敗はalertとRetryで示し、既知のCanceled回復操作を保持しながらowner/incarnationを分離する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "正常な読込を警告用の回復枠へ入れる、再取得で既知turnを消す、実際の取得失敗のRetryを失う、または別owner/incarnationへ古いturn応答を反映する"
 // observable = "production hookのturn/loading/error、通常loading statusのbusy属性と回復枠との分離、Canceled・Resend・Edit・alert・RetryのDOM、API読取回数"
 // observation_boundary = "consumer"

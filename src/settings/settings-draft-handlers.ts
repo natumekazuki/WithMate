@@ -17,6 +17,7 @@ import {
   handleChangeProviderSkillRelativePath,
   handleChangeProviderSkillRootPath,
   handleChangeSessionTurnNotificationEnabled,
+  handleChangeSessionApprovalNotificationEnabled,
   handleChangeSessionTurnNotificationResponsePreviewEnabled,
   handleChangeToolCallPresenceEnabled,
 } from "./settings-draft-actions.js";
@@ -37,6 +38,7 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeKeyboardShortcuts"
   | "onChangeLaunchAtLoginEnabled"
   | "onChangeSessionTurnNotificationEnabled"
+  | "onChangeSessionApprovalNotificationEnabled"
   | "onChangeSessionTurnNotificationResponsePreviewEnabled"
   | "onChangeToolCallPresenceEnabled"
   | "onChangeMemoryFileQuotaMegabytes"
@@ -83,6 +85,9 @@ export function buildSettingsDraftHandlers({
     },
     onChangeSessionTurnNotificationEnabled: (enabled) => {
       handleChangeSessionTurnNotificationEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
+    },
+    onChangeSessionApprovalNotificationEnabled: (enabled) => {
+      handleChangeSessionApprovalNotificationEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
     },
     onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled) => {
       handleChangeSessionTurnNotificationResponsePreviewEnabled({ enabled, setSettingsDraft: updateSettingsDraft });

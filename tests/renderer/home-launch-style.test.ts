@@ -3,55 +3,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-// @test-value v2
-// kind = "invariant"
-// claim = "Workspace validation errorはfieldの固定高を保ち、表示時に後続入力を押し下げない"
-// oracle = { type = "contract", ref = "HomeLaunch workspace validation field layout" }
-// fault = "validation errorの表示でfield高が変動し、入力欄の位置または内容がずれる"
-// observable = "launch-field-errorのheight、line-height、overflow、white-spaceと見出し内error配置"
-// observation_boundary = "declaration"
-// scope = "home-launch-workspace-validation-error-css"
-// lifecycle = "permanent"
-// distinction = "validation結果の生成やdebounce動作ではなく、表示状態間で一定となるCSS境界を確認する"
-// @end-test-value
-test("Workspace validation error は表示有無で field の高さを変えない", async () => {
-  const [componentSource, stylesSource] = await Promise.all([
-    readFile("src/home/HomeLaunchDialog.tsx", "utf8"),
-    readStylesheet(),
-  ]);
-  const errorRule = stylesSource.match(/\.home-page \.launch-field-error\s*{([^}]*)}/)?.[1];
-
-  assert.match(
-    componentSource,
-    /<div className="launch-field-heading">[\s\S]*?launch-workspace-path-error[\s\S]*?<\/div>\s*<div className="launch-field-input-shell/,
-  );
-  assert.ok(errorRule);
-  assert.match(errorRule, /height:\s*1rem;/);
-  assert.match(errorRule, /line-height:\s*1rem;/);
-  assert.match(errorRule, /overflow:\s*hidden;/);
-  assert.match(errorRule, /white-space:\s*nowrap;/);
-});
-
-// @test-value v2
-// kind = "invariant"
-// claim = "Workspace validation spinnerはdebounce中も遅延なしで可視表示される"
-// oracle = { type = "contract", ref = "HomeLaunch workspace validation feedback" }
-// fault = "spinnerがopacity 0またはanimation delayで隠れ、検証中であることを即時に示せない"
-// observable = "workspace-validation-spinnerのanimation、opacity、animation-delay CSS宣言"
-// observation_boundary = "declaration"
-// scope = "home-launch-workspace-validation-spinner-css"
-// lifecycle = "permanent"
-// distinction = "debounce timerやvalidation serviceの結果ではなく、検証中feedbackの描画遅延をCSS宣言で確認する"
-// @end-test-value
-test("Workspace validation spinner は debounce 中から遅延なく描画する", async () => {
-  const stylesSource = await readStylesheet();
-  const spinnerRule = stylesSource.match(/\.workspace-validation-spinner\s*{([^}]*)}/)?.[1];
-
-  assert.ok(spinnerRule);
-  assert.match(spinnerRule, /animation:\s*workspace-validation-spin\s+0\.7s\s+linear\s+infinite;/);
-  assert.doesNotMatch(spinnerRule, /opacity:\s*0;/);
-  assert.doesNotMatch(spinnerRule, /animation-delay:/);
-});
 
 // @test-value v2
 // kind = "invariant"

@@ -7,7 +7,7 @@ import type { CopilotClient, CopilotSession, PermissionRequest, SessionEvent } f
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
-import type { ProviderDiagnosticMetadata, LiveRunStep } from "../../src-shared/session/runtime-state.js";
+import type { ProviderDiagnosticMetadata, LiveRunStep, LiveApprovalRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { LiveBackgroundTask, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
@@ -50,6 +50,7 @@ import {
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
 } from "../../src-electron/providers/provider-agent-runtime-binding.js";
 import { createDisabledWorkspaceSnapshotCapture } from "../../src-electron/files/workspace-diff-policy.js";
+import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
 import {
   ProviderTurnError,
   type RunBackgroundStructuredPromptInput,
@@ -2331,6 +2332,85 @@ describe("CopilotAdapter session settings", () => {
     const missingHandlerSettings = buildCopilotSessionSettings(missingHandlerInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const missingHandlerResult = await missingHandlerSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
     assert.deepEqual(missingHandlerResult, { kind: "user-not-available" });
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Copilotの同一request objectは判断を共有し、同じtoolCallIdやsummaryの別要求は会話内FIFOで個別判断する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: SessionApprovalService" }
+  // fault = "toolCallIdまたはsummaryの一致で別要求をまとめるか、後続要求が先頭表示を上書きしてcallbackを未解決にする"
+  // observable = "live approvalRequest、通知request ID、全permission callbackのapprove-once/reject結果"
+  // observation_boundary = "consumer"
+  // scope = "Copilot permission handlerと実SessionApprovalServiceの接続"
+  // lifecycle = "permanent"
+  // impact = "別の操作へ許可が流用される、または同時要求でprovider turnが承認待ちのまま停止する"
+  // distinction = "service単体testやcallback mockではredaction前のrequest同一性とprovider返却値までの接続を検出できず、外部SDK接続なしの短いtestで認可境界を保護する"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("Copilot permission は同一要求を共有し、別要求を FIFO で承認・拒否・resetする", async () => {
+    const input = createRunSessionInput();
+    input.session.approvalMode = "on-request";
+    input.executionOptions = captureSessionExecutionOptions(input.session);
+    let state: LiveSessionRunState = {
+      sessionId: input.session.id,
+      threadId: "thread-1",
+      assistantText: "",
+      steps: [],
+      backgroundTasks: [],
+      usage: null,
+      errorMessage: "",
+      approvalRequest: null,
+      elicitationRequest: null,
+    };
+    const notifications: string[] = [];
+    const requests: LiveApprovalRequest[] = [];
+    const controller = new AbortController();
+    const service = new SessionApprovalService({
+      updateLiveSessionRun: (_sessionId, recipe) => {
+        state = recipe(state);
+        return state;
+      },
+      notifyApproval: (_sessionId, requestId) => { notifications.push(requestId); },
+    });
+    input.onApprovalRequest = (request) => {
+      requests.push(request);
+      return service.waitForLiveApprovalDecision(input.session.id, request, controller.signal);
+    };
+    const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const handler = settings.config.onPermissionRequest;
+    assert.ok(handler);
+    const requestA = createWritePermissionRequest();
+    const requestB = { ...createWritePermissionRequest(), fileName: "F:/repo/other.txt" } as PermissionRequest;
+    const requestC = { ...requestA, toolCallId: undefined } as PermissionRequest;
+    const context = { sessionId: "session-1" };
+    const decisions = [
+      handler(requestA, context),
+      handler(requestA, context),
+      handler(requestB, context),
+      handler(requestC, context),
+    ];
+    const [approvalA, duplicateA, approvalB, approvalC] = requests;
+    assert.ok(approvalA && duplicateA && approvalB && approvalC);
+    assert.equal(approvalA.requestId, duplicateA.requestId);
+    assert.equal(new Set([approvalA.requestId, approvalB.requestId, approvalC.requestId]).size, 3);
+    assert.equal(approvalA.summary, approvalC.summary);
+    assert.equal(state.approvalRequest?.requestId, approvalA.requestId);
+    assert.deepEqual(notifications, [approvalA.requestId]);
+
+    service.resolveLiveApproval(input.session.id, approvalA.requestId, "approve");
+    assert.equal(state.approvalRequest?.requestId, approvalB.requestId);
+    assert.deepEqual(notifications, [approvalA.requestId, approvalB.requestId]);
+    service.resolveLiveApproval(input.session.id, approvalB.requestId, "deny");
+    assert.equal(state.approvalRequest?.requestId, approvalC.requestId);
+    assert.deepEqual(notifications, [approvalA.requestId, approvalB.requestId, approvalC.requestId]);
+    service.reset();
+    assert.equal(state.approvalRequest, null);
+    assert.deepEqual(await Promise.all(decisions), [
+      { kind: "approve-once" },
+      { kind: "approve-once" },
+      { kind: "reject" },
+      { kind: "reject" },
+    ]);
   });
 
   it("threadId がある custom agent 切り替え後は createSession ではなく resumeSession を使う", async () => {

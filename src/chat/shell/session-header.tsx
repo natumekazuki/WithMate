@@ -1,4 +1,5 @@
 import { SelectionActionOverlayBoundary } from "../conversation/selection-action-overlay-context.js";
+import { ButtonContent } from "../../ui/button-content.js";
 import { createContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
 
 import type { LiveBackgroundTask } from "../../../src-shared/session/runtime-state.js";
@@ -182,12 +183,7 @@ export function SessionHeader({
                       onClick={() => runSessionAction(onTogglePin)}
                       disabled={isPinPending}
                     >
-                      {isPinPending ? (
-                        <>
-                          <span className="settings-action-spinner" aria-hidden="true" />
-                          <span className="visually-hidden">Updating pin.</span>
-                        </>
-                      ) : isPinned ? "Unpin" : "Pin"}
+                      <ButtonContent busy={isPinPending} busyLabel="Updating pin.">{isPinned ? "Unpin" : "Pin"}</ButtonContent>
                     </button>
                   ) : null}
                   {showRenameButton ? (

@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { ButtonContent } from "../../ui/button-content.js";
 
 import type {
   LiveApprovalRequest,
@@ -191,24 +192,17 @@ function mergeFreeTextAnswers(
 type LiveElicitationCardProps = {
   request: LiveElicitationRequest;
   elicitationActionRequestId: string | null;
+  elicitationAction?: LiveElicitationResponse["action"] | null;
   onResolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => void;
   onOpenPath?: (target: string) => void;
   inputAvailable?: boolean;
   drafts?: LiveElicitationDrafts;
 };
 
-function LiveRequestBusyIndicator({ label }: { label: string }) {
-  return (
-    <span className="settings-loading-inline" role="status" aria-label={label}>
-      <span className="settings-action-spinner" aria-hidden="true" />
-      <span className="visually-hidden">{label}</span>
-    </span>
-  );
-}
-
 function LiveElicitationCard({
   request,
   elicitationActionRequestId,
+  elicitationAction,
   onResolveLiveElicitation,
   onOpenPath,
   inputAvailable = true,
@@ -226,6 +220,7 @@ function LiveElicitationCard({
   }, [drafts, request.requestId, fieldValues, freeTextValues]);
 
   const isSubmitting = elicitationActionRequestId === request.requestId;
+  const submittedAction = isSubmitting ? elicitationAction : null;
   const isActionPending = elicitationActionRequestId !== null;
   const acceptDisabled = isActionPending || (request.delivery === "user-message" && !inputAvailable);
 
@@ -432,25 +427,27 @@ function LiveElicitationCard({
       ) : null}
       {validationMessage ? <p className="live-approval-warning" role="alert">{validationMessage}</p> : null}
       <div className="live-approval-actions">
-        {isSubmitting ? <LiveRequestBusyIndicator label="Processing input request" /> : null}
-        <button type="button" onClick={() => handleSubmit("accept")} disabled={acceptDisabled}>
-          {request.mode === "url" ? "Complete" : "Submit"}
+        {isSubmitting ? <span className="visually-hidden" role="status">Processing input request</span> : null}
+        <button type="button" onClick={() => handleSubmit("accept")} disabled={acceptDisabled} aria-busy={(isSubmitting && submittedAction === "accept") || undefined}>
+          <ButtonContent busy={isSubmitting && submittedAction === "accept"}>{request.mode === "url" ? "Complete" : "Submit"}</ButtonContent>
         </button>
         <button
           className="drawer-toggle secondary"
           type="button"
           onClick={() => handleSubmit("decline")}
           disabled={isActionPending}
+          aria-busy={(isSubmitting && submittedAction === "decline") || undefined}
         >
-          Reject
+          <ButtonContent busy={isSubmitting && submittedAction === "decline"}>Reject</ButtonContent>
         </button>
         <button
           className="drawer-toggle secondary"
           type="button"
           onClick={() => handleSubmit("cancel")}
           disabled={isActionPending}
+          aria-busy={(isSubmitting && submittedAction === "cancel") || undefined}
         >
-          Close
+          <ButtonContent busy={isSubmitting && submittedAction === "cancel"}>Close</ButtonContent>
         </button>
       </div>
     </section>
@@ -482,12 +479,14 @@ export function ElicitationRecords({ records }: { records?: readonly Elicitation
 export type LiveRequestSurfaceProps = {
   liveApprovalRequest: LiveApprovalRequest | null;
   approvalActionRequestId: string | null;
+  approvalActionDecision?: "approve" | "deny" | null;
   liveElicitationRequest: LiveElicitationRequest | null;
   liveElicitationRequests?: readonly LiveElicitationRequest[];
   elicitationRecords?: readonly ElicitationRecord[];
   inputAvailable?: boolean;
   drafts?: LiveElicitationDrafts;
   elicitationActionRequestId: string | null;
+  elicitationAction?: LiveElicitationResponse["action"] | null;
   onResolveLiveApproval: (request: LiveApprovalRequest, decision: "approve" | "deny") => void;
   onResolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => void;
   onOpenPath?: (target: string) => void;
@@ -496,12 +495,14 @@ export type LiveRequestSurfaceProps = {
 export function LiveRequestSurface({
   liveApprovalRequest,
   approvalActionRequestId,
+  approvalActionDecision,
   liveElicitationRequest,
   liveElicitationRequests,
   elicitationRecords,
   inputAvailable,
   drafts,
   elicitationActionRequestId,
+  elicitationAction,
   onResolveLiveApproval,
   onResolveLiveElicitation,
   onOpenPath,
@@ -511,6 +512,11 @@ export function LiveRequestSurface({
   const isApprovalSubmitting = liveApprovalRequest
     ? approvalActionRequestId === liveApprovalRequest.requestId
     : false;
+  const approvalDecision = isApprovalSubmitting ? approvalActionDecision : null;
+  const resolveApproval = (decision: "approve" | "deny") => {
+    if (!liveApprovalRequest || isApprovalSubmitting) return;
+    onResolveLiveApproval(liveApprovalRequest, decision);
+  };
 
   return (
     <>
@@ -539,21 +545,23 @@ export function LiveRequestSurface({
             </details>
           ) : null}
           <div className="live-approval-actions">
-            {isApprovalSubmitting ? <LiveRequestBusyIndicator label="Processing approval request" /> : null}
+            {isApprovalSubmitting ? <span className="visually-hidden" role="status">Processing approval request</span> : null}
             <button
               type="button"
-              onClick={() => onResolveLiveApproval(liveApprovalRequest, "approve")}
+              onClick={() => resolveApproval("approve")}
               disabled={isApprovalSubmitting}
+              aria-busy={approvalDecision === "approve" || undefined}
             >
-              Allow Once
+              <ButtonContent busy={approvalDecision === "approve"}>Allow Once</ButtonContent>
             </button>
             <button
               className="drawer-toggle secondary"
               type="button"
-              onClick={() => onResolveLiveApproval(liveApprovalRequest, "deny")}
+              onClick={() => resolveApproval("deny")}
               disabled={isApprovalSubmitting}
+              aria-busy={approvalDecision === "deny" || undefined}
             >
-              Reject
+              <ButtonContent busy={approvalDecision === "deny"}>Reject</ButtonContent>
             </button>
           </div>
         </section>
@@ -566,6 +574,7 @@ export function LiveRequestSurface({
           inputAvailable={inputAvailable}
           drafts={drafts}
           elicitationActionRequestId={elicitationActionRequestId}
+          elicitationAction={elicitationAction}
           onResolveLiveElicitation={onResolveLiveElicitation}
           onOpenPath={onOpenPath}
         />

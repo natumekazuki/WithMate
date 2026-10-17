@@ -1,5 +1,7 @@
 # Settings UI
 
+画面横断の原則と操作部品の表現は[UI Design Guidelines](ui-design-guidelines.md)に従う。この文書はSettings Window固有の構成と操作条件を扱う。
+
 ## Goal
 
 設定系の要素を `Home Window` から分離し、独立した `Settings Window` に集約する。
@@ -14,6 +16,7 @@
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` はfieldsetの内外でsection間の余白を24pxに揃え、直前の入力欄やfocus枠と区切り線を離す。内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - `Session Turn Notification`はturn完了・失敗とCodexの構造化質問通知に共通で適用する。`Notification Response Preview`は成功したturnの完了通知だけを対象とし、質問文や入力値は表示しない。通知の条件と復帰先は[Desktop UI](desktop-ui.md#windows-session-notifications)を参照する
+- `Session Approval Notification`はMain／AuxiliaryのCodex・Copilot・Claudeの承認待ち通知を独立して切り替える。既定値は有効で、通知内容はSession名と承認待ちだけとし、承認内容やwarning、pathは表示しない
 - file picker / save dialog は Main Process 側で開く
 - current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
 
@@ -24,7 +27,7 @@
 3. App 表示設定、PromptContext の4項目、coding provider の enable / disable と provider file settings を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
 4. 結果は window 内の短いフィードバックで返す
 
-操作中の同一 action は重複実行せず、対象controlをdisabledにし、局所spinnerとbusy/accessibility statusで状態を示す。正常なbutton labelをloading文字列へ置き換えない。設定編集で保存中に新しい変更が入った場合、保存済みの値だけを同期し、新しいdraftはdirtyのまま保持する。失敗時はエラーをフィードバック領域に残す。
+設定編集で保存中に新しい変更が入った場合、保存済みの値だけを同期し、新しいdraftはdirtyのまま保持する。失敗時はエラーをフィードバック領域に残す。
 
 Memory Review は検索・pagination・detail取得の応答順を識別し、古い応答で現在の一覧やdetailを上書きしない。detail切替中は旧detailのForget / Export操作を表示せず、Forget / GCの対象と削除影響を確認できる表示を維持する。
 
@@ -39,6 +42,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
     - `Launch At Login`
     - `Session Turn Notification`
     - `Notification Response Preview`
+    - `Session Approval Notification`
     - `Close Action Dock After Send`
     - `Scroll To Latest On Send`
     - `Preview Wheel Zoom Step`

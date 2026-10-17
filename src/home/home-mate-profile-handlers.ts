@@ -1,5 +1,6 @@
 import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { MateAvatarAction } from "../mate/MateSetupPanel.js";
 import {
   clearHomeMateAvatar,
   saveHomeMateProfile,
@@ -17,7 +18,7 @@ type HomeMateProfileHandlersContext = {
   setMateCreationFeedback: (message: string) => void;
   setMateProfileEditorOpen: (open: boolean) => void;
   setMateCreating: (creating: boolean) => void;
-  setMateAvatarUpdating: (updating: boolean) => void;
+  setMateAvatarAction: (action: MateAvatarAction) => void;
   setLaunchFeedback: (message: string) => void;
   refreshSessionSummaries: () => Promise<void>;
 };
@@ -42,7 +43,7 @@ export function buildHomeMateProfileHandlers({
   setMateCreationFeedback,
   setMateProfileEditorOpen,
   setMateCreating,
-  setMateAvatarUpdating,
+  setMateAvatarAction,
   setLaunchFeedback,
   refreshSessionSummaries: refreshSessionSummariesBounded,
 }: HomeMateProfileHandlersContext): HomeMateProfileHandlers {
@@ -91,7 +92,7 @@ export function buildHomeMateProfileHandlers({
         setMateProfile,
         setMateDisplayName,
         setMateCreationFeedback,
-        setMateAvatarUpdating,
+        setMateAvatarAction,
         setLaunchFeedback,
         refreshSessionSummaries: async () => {
           await refreshSessionSummaries(api);
@@ -112,7 +113,7 @@ export function buildHomeMateProfileHandlers({
         setMateProfile,
         setMateDisplayName,
         setMateCreationFeedback,
-        setMateAvatarUpdating,
+        setMateAvatarAction,
         setLaunchFeedback,
         refreshSessionSummaries: async () => {
           await refreshSessionSummaries(api);

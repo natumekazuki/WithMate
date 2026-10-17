@@ -38,12 +38,14 @@ import {
   SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL,
   SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER,
   SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
+  SETTINGS_SESSION_APPROVAL_NOTIFICATION_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
   SETTINGS_TOOL_CALL_PRESENCE_LABEL,
 } from "./settings-ui.js";
 import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ButtonContent } from "../ui/button-content.js";
 import { LoadError } from "../ui/load-error.js";
 
 export type HomeSettingsContentProps = {
@@ -74,6 +76,7 @@ export type HomeSettingsContentProps = {
   onChangeKeyboardShortcuts: (settings: KeyboardShortcutSettings) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
+  onChangeSessionApprovalNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
   onChangeToolCallPresenceEnabled: (enabled: boolean) => void;
   onChangeMemoryFileQuotaMegabytes: (value: string) => void;
@@ -132,26 +135,6 @@ function PromptContextToggle({ id, label, checked, onChange }: PromptContextTogg
   );
 }
 
-type SettingsActionContentProps = {
-  busy: boolean;
-  label: string;
-  busyLabel: string;
-};
-
-function SettingsActionContent({ busy, label, busyLabel }: SettingsActionContentProps) {
-  if (!busy) {
-    return label;
-  }
-
-  return (
-    <>
-      <span className="settings-action-spinner" aria-hidden="true" />
-      <span>{label}</span>
-      <span className="visually-hidden">{busyLabel}</span>
-    </>
-  );
-}
-
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
@@ -180,6 +163,7 @@ export function HomeSettingsContent({
   onChangeKeyboardShortcuts,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
+  onChangeSessionApprovalNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
   onChangeToolCallPresenceEnabled,
   onChangeMemoryFileQuotaMegabytes,
@@ -285,6 +269,14 @@ export function HomeSettingsContent({
                   checked={settingsDraft.sessionTurnNotificationResponsePreviewEnabled}
                   onChange={(event) =>
                     onChangeSessionTurnNotificationResponsePreviewEnabled(event.target.checked)}
+                />
+              </label>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_SESSION_APPROVAL_NOTIFICATION_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.sessionApprovalNotificationEnabled}
+                  onChange={(event) => onChangeSessionApprovalNotificationEnabled(event.target.checked)}
                 />
               </label>
               <label className="settings-provider-toggle-row settings-section-toggle">
@@ -409,18 +401,19 @@ export function HomeSettingsContent({
                               spellCheck={false}
                             />
                             <button
-                              className={`launch-toggle ${actionIsBusy("browse-root") ? "settings-action-busy" : ""}`.trim()}
+                              className="launch-toggle"
                               type="button"
                               onClick={() => void runAction("browse-root", () => onBrowseProviderSkillRootPath(provider.id))}
                               disabled={isBusy}
                               aria-busy={actionIsBusy("browse-root")}
                               aria-label={actionIsBusy("browse-root") ? "Opening provider root directory" : "Browse"}
                             >
-                              <SettingsActionContent
+                              <ButtonContent
                                 busy={actionIsBusy("browse-root")}
-                                label="Browse"
                                 busyLabel="Opening provider root directory."
-                              />
+                              >
+                                Browse
+                              </ButtonContent>
                             </button>
                           </div>
                         </label>
@@ -436,18 +429,19 @@ export function HomeSettingsContent({
                               spellCheck={false}
                             />
                             <button
-                              className={`launch-toggle ${actionIsBusy("browse-skill") ? "settings-action-busy" : ""}`.trim()}
+                              className="launch-toggle"
                               type="button"
                               onClick={() => void runAction("browse-skill", () => onBrowseProviderSkillRelativePath(provider.id))}
                               disabled={isBusy}
                               aria-busy={actionIsBusy("browse-skill")}
                               aria-label={actionIsBusy("browse-skill") ? "Opening skill folder" : "Browse"}
                             >
-                              <SettingsActionContent
+                              <ButtonContent
                                 busy={actionIsBusy("browse-skill")}
-                                label="Browse"
                                 busyLabel="Opening skill folder."
-                              />
+                              >
+                                Browse
+                              </ButtonContent>
                             </button>
                           </div>
                         </label>
@@ -463,18 +457,19 @@ export function HomeSettingsContent({
                               spellCheck={false}
                             />
                             <button
-                              className={`launch-toggle ${actionIsBusy("browse-instruction") ? "settings-action-busy" : ""}`.trim()}
+                              className="launch-toggle"
                               type="button"
                               onClick={() => void runAction("browse-instruction", () => onBrowseProviderInstructionRelativePath(provider.id))}
                               disabled={isBusy}
                               aria-busy={actionIsBusy("browse-instruction")}
                               aria-label={actionIsBusy("browse-instruction") ? "Opening instruction file" : "Browse"}
                             >
-                              <SettingsActionContent
+                              <ButtonContent
                                 busy={actionIsBusy("browse-instruction")}
-                                label="Browse"
                                 busyLabel="Opening instruction file."
-                              />
+                              >
+                                Browse
+                              </ButtonContent>
                             </button>
                           </div>
                         </label>
@@ -536,74 +531,79 @@ export function HomeSettingsContent({
               )}
               <div className="settings-actions">
                 <button
-                  className={`launch-toggle ${actionIsBusy("review-memory") ? "settings-action-busy" : ""}`.trim()}
+                  className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("review-memory", onOpenMemoryV6Review)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("review-memory")}
                   aria-label={actionIsBusy("review-memory") ? "Opening Memory review" : "Review Memory"}
                 >
-                  <SettingsActionContent
+                  <ButtonContent
                     busy={actionIsBusy("review-memory")}
-                    label="Review Memory"
                     busyLabel="Opening Memory review."
-                  />
+                  >
+                    Review Memory
+                  </ButtonContent>
                 </button>
                 <button
-                  className={`launch-toggle ${actionIsBusy("install-cli-shim") ? "settings-action-busy" : ""}`.trim()}
+                  className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("install-cli-shim", onInstallMemoryV6CliShim)}
                   disabled={isBusy || !memoryV6Diagnostics?.cliShim.supported}
                   aria-busy={actionIsBusy("install-cli-shim")}
                   aria-label={actionIsBusy("install-cli-shim") ? "Installing CLI shim" : "Install CLI Shim"}
                 >
-                  <SettingsActionContent
+                  <ButtonContent
                     busy={actionIsBusy("install-cli-shim")}
-                    label="Install CLI Shim"
                     busyLabel="Installing CLI shim."
-                  />
+                  >
+                    Install CLI Shim
+                  </ButtonContent>
                 </button>
                 <button
-                  className={`launch-toggle ${actionIsBusy("uninstall-cli-shim") ? "settings-action-busy" : ""}`.trim()}
+                  className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("uninstall-cli-shim", onUninstallMemoryV6CliShim)}
                   disabled={isBusy || !canUninstallCliShim(memoryV6Diagnostics)}
                   aria-busy={actionIsBusy("uninstall-cli-shim")}
                   aria-label={actionIsBusy("uninstall-cli-shim") ? "Uninstalling CLI shim" : "Uninstall CLI Shim"}
                 >
-                  <SettingsActionContent
+                  <ButtonContent
                     busy={actionIsBusy("uninstall-cli-shim")}
-                    label="Uninstall CLI Shim"
                     busyLabel="Uninstalling CLI shim."
-                  />
+                  >
+                    Uninstall CLI Shim
+                  </ButtonContent>
                 </button>
                 <button
-                  className={`launch-toggle ${actionIsBusy("open-logs") ? "settings-action-busy" : ""}`.trim()}
+                  className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("open-logs", onOpenAppLogFolder)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("open-logs")}
                   aria-label={actionIsBusy("open-logs") ? "Opening application logs" : SETTINGS_OPEN_LOG_FOLDER_LABEL}
                 >
-                  <SettingsActionContent
+                  <ButtonContent
                     busy={actionIsBusy("open-logs")}
-                    label={SETTINGS_OPEN_LOG_FOLDER_LABEL}
                     busyLabel="Opening application logs."
-                  />
+                  >
+                    {SETTINGS_OPEN_LOG_FOLDER_LABEL}
+                  </ButtonContent>
                 </button>
                 <button
-                  className={`launch-toggle ${actionIsBusy("open-crash-dumps") ? "settings-action-busy" : ""}`.trim()}
+                  className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("open-crash-dumps", onOpenCrashDumpFolder)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("open-crash-dumps")}
                   aria-label={actionIsBusy("open-crash-dumps") ? "Opening crash dumps" : SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
                 >
-                  <SettingsActionContent
+                  <ButtonContent
                     busy={actionIsBusy("open-crash-dumps")}
-                    label={SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
                     busyLabel="Opening crash dumps."
-                  />
+                  >
+                    {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
+                  </ButtonContent>
                 </button>
               </div>
             </div>
@@ -615,32 +615,34 @@ export function HomeSettingsContent({
               <p className="settings-help">ActiveRevision: {modelCatalogRevisionLabel}</p>
               <div className="settings-actions">
                 <button
-                  className={`launch-toggle ${actionIsBusy("import-models") ? "settings-action-busy" : ""}`.trim()}
+                  className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("import-models", onImportModelCatalog)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("import-models")}
                   aria-label={actionIsBusy("import-models") ? "Importing models" : "Import Models"}
                 >
-                  <SettingsActionContent
+                  <ButtonContent
                     busy={actionIsBusy("import-models")}
-                    label="Import Models"
                     busyLabel="Importing models."
-                  />
+                  >
+                    Import Models
+                  </ButtonContent>
                 </button>
                 <button
-                  className={`launch-toggle ${actionIsBusy("export-models") ? "settings-action-busy" : ""}`.trim()}
+                  className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("export-models", onExportModelCatalog)}
                   disabled={isBusy}
                   aria-busy={actionIsBusy("export-models")}
                   aria-label={actionIsBusy("export-models") ? "Exporting models" : "Export Models"}
                 >
-                  <SettingsActionContent
+                  <ButtonContent
                     busy={actionIsBusy("export-models")}
-                    label="Export Models"
                     busyLabel="Exporting models."
-                  />
+                  >
+                    Export Models
+                  </ButtonContent>
                 </button>
               </div>
             </div>
@@ -703,11 +705,12 @@ export function HomeSettingsContent({
                     aria-busy={actionIsBusy("delete-sessions")}
                     aria-label={actionIsBusy("delete-sessions") ? "Deleting old sessions" : "Delete"}
                   >
-                    <SettingsActionContent
+                    <ButtonContent
                       busy={actionIsBusy("delete-sessions")}
-                      label="Delete"
                       busyLabel="Deleting old sessions."
-                    />
+                    >
+                      Delete
+                    </ButtonContent>
                   </button>
                 </div>
                 <p className="settings-help">{SETTINGS_DELETE_OLD_SESSIONS_HELP}</p>
@@ -730,18 +733,19 @@ export function HomeSettingsContent({
           {settingsFeedback ? <p className="settings-feedback settings-feedback-inline" role="status">{settingsFeedback}</p> : null}
         </div>
         <button
-          className={`launch-toggle ${actionIsBusy("save-settings") ? "settings-action-busy" : ""}`.trim()}
+          className="launch-toggle"
           type="button"
           onClick={() => void runAction("save-settings", onSaveSettings)}
           disabled={!settingsDirty || previewWheelZoomStepInvalid || isBusy || appSettingsLoadStatus !== "loaded"}
           aria-busy={actionIsBusy("save-settings")}
           aria-label={actionIsBusy("save-settings") ? "Saving settings" : "Save Settings"}
         >
-          <SettingsActionContent
+          <ButtonContent
             busy={actionIsBusy("save-settings")}
-            label="Save Settings"
             busyLabel="Saving settings."
-          />
+          >
+            Save Settings
+          </ButtonContent>
         </button>
       </div>
     </>

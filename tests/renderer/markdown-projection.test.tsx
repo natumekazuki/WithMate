@@ -64,7 +64,7 @@ test("Markdown projectionは各文字の追記と置換を全文parseと一致�
 
 // @test-value v2
 // kind = "contract"
-// claim = "受信中の追記を100ms単位でまとめても既存の表・数式・frontmatter・改行と選択を保持し、最終化・検索・置換・Sourceは最新本文を即時表示する"
+// claim = "受信中の追記を100ms単位でまとめても既存のrich DOMと選択を保持し、最終化・検索・未反映tail内を含む置換・Sourceは最新本文を即時表示する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Rendering Policy / Streaming projection" }
 // fault = "更新ごとに数式や表を未整形へ戻す、継続受信で表示が進まない、または最終本文・検索・Sourceへ未反映の内容を残す"
 // observable = "timer数と間隔、更新前後のDOM参照、セル内容、選択文字列、各即時経路の本文、unmount後のtimer数"
@@ -157,6 +157,20 @@ test("MessageRichTextは追記をまとめてrich DOMを保ち最終本文を即
     await render("別の応答");
     assert.equal(container.textContent, "別の応答");
     await render("別の応答の追記");
+    assert.equal(timers.size, 1);
+    assert.equal(container.textContent, "別の応答");
+    await render("別の応答の訂正");
+    assert.equal(container.textContent, "別の応答の訂正", "snapshot未反映のtail内訂正もその更新で表示する");
+    assert.equal(timers.size, 0, "訂正で古い追記用timerを取り消す");
+    await render("別の応答の訂正後の追記");
+    const appendTimer = [...timers.keys()][0];
+    assert.equal(timers.size, 1);
+    await render("別の応答の訂正後の追記を継続");
+    assert.equal(container.textContent, "別の応答の訂正");
+    assert.deepEqual([...timers.keys()], [appendTimer], "訂正後の純粋追記も同じ予定へ集約する");
+    await advance();
+    assert.equal(container.textContent, "別の応答の訂正後の追記を継続");
+    await render("別の応答の訂正後の追記を継続中");
     assert.equal(timers.size, 1);
   } finally {
     await act(async () => root.unmount());

@@ -26,9 +26,12 @@ const SESSION_ACTION_DOCK_DEFAULT_HEIGHT = 296;
 const SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT = 48;
 const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 40;
 const SESSION_MESSAGE_BOTTOM_EPSILON = 1;
+const SESSION_MESSAGE_RESUME_DISTANCE = 24;
 const SESSION_MESSAGE_SCROLL_INTENT_SETTLE_MS = 180;
 
 function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
+  const end = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight);
+  if (Math.abs(end - messageListElement.scrollTop) <= SESSION_MESSAGE_BOTTOM_EPSILON) return;
   const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
   if (bottomAnchor) {
     bottomAnchor.scrollIntoView({ block: "end" });
@@ -498,7 +501,7 @@ export function useSessionMessageListFollowing({
   ownerKey,
   scrollSignature,
   enabled = true,
-  bottomTolerance = SESSION_MESSAGE_BOTTOM_EPSILON,
+  bottomTolerance = SESSION_MESSAGE_RESUME_DISTANCE,
   savedScrollState,
   onScrollStateChange,
 }: UseSessionMessageListFollowingArgs) {
@@ -512,10 +515,28 @@ export function useSessionMessageListFollowing({
   const messageListEnabledRef = useRef(enabled);
   const isMessageListFollowingRef = useRef(true);
   const canResumeMessageListFollowingRef = useRef(false);
-  const shouldFollowMessageListAfterSendRef = useRef(false);
+  const intentRevisionRef = useRef(0);
+  const correctionFrameRef = useRef<number | null>(null);
   const messageListScrollIntentTimerRef = useRef<number | null>(null);
   const messageListPointerIdRef = useRef<number | null>(null);
+  const pointerScrollTopRef = useRef(0);
   const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
+  const displayedFollowing = (messageListOwnerKeyRef.current !== ownerKey || !messageListEnabledRef.current)
+    ? savedScrollState?.isFollowing ?? true : isMessageListFollowing;
+
+  const cancelCorrection = useCallback(() => {
+    if (correctionFrameRef.current !== null) {
+      messageListRef.current?.ownerDocument.defaultView?.cancelAnimationFrame(correctionFrameRef.current);
+      correctionFrameRef.current = null;
+    }
+  }, []);
+  const pauseMessageListFollowing = useCallback(() => {
+    ++intentRevisionRef.current;
+    canResumeMessageListFollowingRef.current = false;
+    isMessageListFollowingRef.current = false;
+    setIsMessageListFollowing(false);
+    cancelCorrection();
+  }, [cancelCorrection]);
 
   useLayoutEffect(() => {
     const messageListElement = messageListRef.current;
@@ -538,31 +559,62 @@ export function useSessionMessageListFollowing({
         messageListScrollIntentTimerRef.current = null;
       }, SESSION_MESSAGE_SCROLL_INTENT_SETTLE_MS);
     };
+    const isInternalScroll = (target: EventTarget | null, direction: number) => {
+      if (!(target instanceof ownerWindow.HTMLElement)) return false;
+      if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return true;
+      for (let child: HTMLElement | null = target; child && child !== messageListElement; child = child.parentElement) {
+        if (!/(auto|scroll)/.test(ownerWindow.getComputedStyle(child).overflowY)) continue;
+        const end = child.scrollHeight - child.clientHeight;
+        if (end > 0 && (direction < 0 ? child.scrollTop > 0 : child.scrollTop < end - SESSION_MESSAGE_BOTTOM_EPSILON)) return true;
+      }
+      return false;
+    };
     const handleWheel = (event: WheelEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.deltaY === 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY) || isInternalScroll(event.target, event.deltaY)) return;
       if (event.deltaY < 0) {
-        shouldFollowMessageListAfterSendRef.current = false;
-        canResumeMessageListFollowingRef.current = false;
-        isMessageListFollowingRef.current = false;
-        setIsMessageListFollowing(false);
+        pauseMessageListFollowing();
         return;
       }
       if (event.deltaY > 0) {
         keepResumeIntentUntilScrollSettles();
       }
     };
+    let touchY: number | null = null;
+    let touchTarget: EventTarget | null = null;
     const handlePointerDown = (event: PointerEvent) => {
-      shouldFollowMessageListAfterSendRef.current = false;
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.pointerType === "touch") {
+        touchY = event.clientY;
+        touchTarget = event.target;
+        return;
+      }
+      const rect = messageListElement.getBoundingClientRect();
+      const scrollbarWidth = Math.max(16, messageListElement.offsetWidth - messageListElement.clientWidth);
+      if (event.target !== messageListElement || event.clientX < rect.right - scrollbarWidth) return;
+      ++intentRevisionRef.current;
       messageListPointerIdRef.current = event.pointerId;
-      canResumeMessageListFollowingRef.current = true;
+      pointerScrollTopRef.current = messageListElement.scrollTop;
+    };
+    const handlePointerMove = (event: PointerEvent) => {
+      if (touchY === null || event.pointerType !== "touch") return;
+      const delta = touchY - event.clientY;
+      touchY = event.clientY;
+      if (Math.abs(delta) < 1 || isInternalScroll(touchTarget, delta)) return;
+      if (delta < 0) pauseMessageListFollowing();
+      else keepResumeIntentUntilScrollSettles();
     };
     const handlePointerEnd = (event: PointerEvent) => {
+      touchY = null;
+      touchTarget = null;
       if (messageListPointerIdRef.current !== event.pointerId) {
         return;
       }
       messageListPointerIdRef.current = null;
-      keepResumeIntentUntilScrollSettles();
+      if (canResumeMessageListFollowingRef.current) keepResumeIntentUntilScrollSettles();
     };
     const handlePointerCancel = (event: PointerEvent) => {
+      touchY = null;
+      touchTarget = null;
       if (messageListPointerIdRef.current !== event.pointerId) {
         return;
       }
@@ -571,21 +623,22 @@ export function useSessionMessageListFollowing({
       clearScrollIntentTimer();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target;
       if (
         target instanceof ownerWindow.HTMLElement
-        && target.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])")
+        && (target.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])")
+          || event.key === " " && target.closest("button"))
       ) {
         return;
       }
       if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) {
-        shouldFollowMessageListAfterSendRef.current = false;
-        canResumeMessageListFollowingRef.current = false;
-        isMessageListFollowingRef.current = false;
-        setIsMessageListFollowing(false);
+        if (isInternalScroll(target, -1)) return;
+        pauseMessageListFollowing();
         return;
       }
       if (["ArrowDown", "PageDown", "End"].includes(event.key) || event.key === " ") {
+        if (isInternalScroll(target, 1)) return;
         keepResumeIntentUntilScrollSettles();
       }
     };
@@ -593,20 +646,23 @@ export function useSessionMessageListFollowing({
     messageListElement.addEventListener("wheel", handleWheel, { passive: true });
     messageListElement.addEventListener("pointerdown", handlePointerDown, { passive: true });
     ownerWindow.addEventListener("pointerup", handlePointerEnd, { passive: true });
+    ownerWindow.addEventListener("pointermove", handlePointerMove, { passive: true });
     ownerWindow.addEventListener("pointercancel", handlePointerCancel, { passive: true });
     messageListElement.addEventListener("keydown", handleKeyDown);
     return () => {
       messageListElement.removeEventListener("wheel", handleWheel);
       messageListElement.removeEventListener("pointerdown", handlePointerDown);
       ownerWindow.removeEventListener("pointerup", handlePointerEnd);
+      ownerWindow.removeEventListener("pointermove", handlePointerMove);
       ownerWindow.removeEventListener("pointercancel", handlePointerCancel);
       messageListElement.removeEventListener("keydown", handleKeyDown);
       clearScrollIntentTimer();
-      shouldFollowMessageListAfterSendRef.current = false;
+      ++intentRevisionRef.current;
+      cancelCorrection();
       canResumeMessageListFollowingRef.current = false;
       messageListPointerIdRef.current = null;
     };
-  }, [enabled, ownerKey]);
+  }, [enabled, ownerKey, pauseMessageListFollowing, cancelCorrection]);
 
   const scrollMessageListToBottom = useCallback(() => {
     const messageListElement = messageListRef.current;
@@ -617,22 +673,23 @@ export function useSessionMessageListFollowing({
     scrollMessageListElementToBottom(messageListElement);
   }, []);
 
+  const scheduleCorrection = useCallback(() => {
+    const ownerWindow = messageListRef.current?.ownerDocument.defaultView;
+    if (!ownerWindow || correctionFrameRef.current !== null) return;
+    correctionFrameRef.current = ownerWindow.requestAnimationFrame(() => {
+      correctionFrameRef.current = null;
+      if (messageListEnabledRef.current && isMessageListFollowingRef.current) scrollMessageListToBottom();
+    });
+  }, [scrollMessageListToBottom]);
+
   const followMessageListLatest = useCallback(() => {
     canResumeMessageListFollowingRef.current = false;
     isMessageListFollowingRef.current = true;
     setIsMessageListFollowing(true);
     scrollMessageListToBottom();
 
-    const ownerWindow = messageListRef.current?.ownerDocument.defaultView;
-    if (!ownerWindow) {
-      return;
-    }
-    ownerWindow.requestAnimationFrame(() => {
-      if (isMessageListFollowingRef.current) {
-        scrollMessageListToBottom();
-      }
-    });
-  }, [scrollMessageListToBottom]);
+    scheduleCorrection();
+  }, [scrollMessageListToBottom, scheduleCorrection]);
 
   useLayoutEffect(() => {
     const currentSignature = scrollSignature;
@@ -642,7 +699,7 @@ export function useSessionMessageListFollowing({
     messageListEnabledRef.current = enabled;
 
     if (!enabled) {
-      shouldFollowMessageListAfterSendRef.current = false;
+      cancelCorrection();
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
       return;
@@ -657,7 +714,6 @@ export function useSessionMessageListFollowing({
 
     const restored = savedScrollStateRef.current;
     if ((!wasEnabled || !wasSameOwner) && restored) {
-      shouldFollowMessageListAfterSendRef.current = false;
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
       isMessageListFollowingRef.current = restored.isFollowing;
@@ -668,7 +724,6 @@ export function useSessionMessageListFollowing({
     }
 
     if (!wasEnabled) {
-      shouldFollowMessageListAfterSendRef.current = false;
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
       followMessageListLatest();
@@ -676,7 +731,6 @@ export function useSessionMessageListFollowing({
     }
 
     if (!wasSameOwner) {
-      shouldFollowMessageListAfterSendRef.current = false;
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
       followMessageListLatest();
@@ -689,16 +743,10 @@ export function useSessionMessageListFollowing({
 
     messageListSignatureRef.current = currentSignature;
 
-    if (shouldFollowMessageListAfterSendRef.current) {
-      shouldFollowMessageListAfterSendRef.current = false;
-      followMessageListLatest();
-      return;
-    }
-
     if (isMessageListFollowingRef.current) {
-      scrollMessageListToBottom();
+      scheduleCorrection();
     }
-  }, [enabled, followMessageListLatest, ownerKey, scrollMessageListToBottom, scrollSignature]);
+  }, [enabled, followMessageListLatest, ownerKey, scrollMessageListToBottom, scrollSignature, scheduleCorrection, cancelCorrection]);
 
   useLayoutEffect(() => {
     const messageListElement = messageListRef.current;
@@ -709,16 +757,23 @@ export function useSessionMessageListFollowing({
 
     const observer = new ownerWindow.ResizeObserver(() => {
       if (isMessageListFollowingRef.current) {
-        scrollMessageListToBottom();
+        scheduleCorrection();
       }
     });
     observer.observe(messageListElement);
-    const messageListContent = messageListElement.querySelector<HTMLElement>(".session-message-list-window");
-    if (messageListContent) {
-      observer.observe(messageListContent);
-    }
-    return () => observer.disconnect();
-  }, [enabled, ownerKey, scrollMessageListToBottom]);
+    let observedContent: HTMLElement | null = null;
+    const observeContent = () => {
+      const content = messageListElement.querySelector<HTMLElement>(".session-message-list-window");
+      if (content === observedContent) return;
+      if (observedContent) observer.unobserve(observedContent);
+      observedContent = content;
+      if (content) observer.observe(content);
+    };
+    observeContent();
+    const mutationObserver = new ownerWindow.MutationObserver(observeContent);
+    mutationObserver.observe(messageListElement, { childList: true });
+    return () => { observer.disconnect(); mutationObserver.disconnect(); };
+  }, [enabled, ownerKey, scheduleCorrection]);
 
   const handleMessageListScroll = useCallback(() => {
     const messageListElement = messageListRef.current;
@@ -730,14 +785,18 @@ export function useSessionMessageListFollowing({
     const maxScrollTop = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight);
     const bottomGap = Math.max(0, maxScrollTop - currentScrollTop);
     const isAtBottom = bottomGap <= bottomTolerance;
-    let nextFollowing = shouldFollowMessageListAfterSendRef.current;
-    if (!nextFollowing && isAtBottom) {
-      nextFollowing = isMessageListFollowingRef.current || canResumeMessageListFollowingRef.current;
+    if (messageListPointerIdRef.current !== null) {
+      const delta = currentScrollTop - pointerScrollTopRef.current;
+      pointerScrollTopRef.current = currentScrollTop;
+      if (delta < 0) pauseMessageListFollowing();
+      else if (delta > 0) canResumeMessageListFollowingRef.current = true;
     }
+    const nextFollowing = isMessageListFollowingRef.current || (isAtBottom && canResumeMessageListFollowingRef.current);
     isMessageListFollowingRef.current = nextFollowing;
     setIsMessageListFollowing((current) => current === nextFollowing ? current : nextFollowing);
     scrollStateChangeRef.current?.({ scrollTop: currentScrollTop, isFollowing: nextFollowing });
-  }, [bottomTolerance]);
+    if (nextFollowing) scheduleCorrection();
+  }, [bottomTolerance, pauseMessageListFollowing, scheduleCorrection]);
 
   useLayoutEffect(() => {
     const element = messageListRef.current;
@@ -747,19 +806,24 @@ export function useSessionMessageListFollowing({
   }, [enabled, ownerKey, isMessageListFollowing, scrollSignature]);
 
   const handleJumpToMessageListBottom = followMessageListLatest;
-  const handleMessageListSend = useCallback((scrollToLatestOnSend: boolean) => {
-    shouldFollowMessageListAfterSendRef.current = scrollToLatestOnSend;
-    if (scrollToLatestOnSend) {
-      followMessageListLatest();
-    }
+  const captureMessageListSend = useCallback((scrollToLatestOnSend: boolean, onAccepted = followMessageListLatest) => {
+    const revision = intentRevisionRef.current;
+    const owner = messageListOwnerKeyRef.current;
+    let consumed = false;
+    return () => {
+      if (consumed) return;
+      consumed = true;
+      if (scrollToLatestOnSend && revision === intentRevisionRef.current && owner === messageListOwnerKeyRef.current) onAccepted();
+    };
   }, [followMessageListLatest]);
 
   return {
     messageListRef,
-    isMessageListFollowing,
+    isMessageListFollowing: displayedFollowing,
     handleMessageListScroll,
     handleJumpToMessageListBottom,
-    handleMessageListSend,
+    captureMessageListSend,
+    pauseMessageListFollowing,
     followMessageListLatest,
   };
 }

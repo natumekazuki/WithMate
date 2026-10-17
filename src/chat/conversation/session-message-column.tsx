@@ -19,6 +19,7 @@ import { approvalModeLabel, CharacterAvatar, liveRunStepStatusLabel, operationTy
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { ElicitationRecords, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
+import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches, iterateTextMatches } from "../../../src-shared/text/find-text-matches.js";
 
@@ -60,8 +61,8 @@ const SESSION_MESSAGE_OVERSCAN = 6;
 const SESSION_MESSAGE_SCROLL_END_THRESHOLD = 80;
 const SESSION_ACTION_DOCK_ID = "session-action-dock";
 
-export function shouldAdjustSessionMessageScrollPosition(input: { itemStart: number; scrollOffset: number }): boolean {
-  return input.itemStart < input.scrollOffset;
+export function shouldAdjustSessionMessageScrollPosition(input: { itemEnd: number; scrollOffset: number }): boolean {
+  return input.itemEnd <= input.scrollOffset;
 }
 
 type MessageArtifactFoldSection = "operation" | "operations";
@@ -73,6 +74,7 @@ export type SessionMessageColumnProps = {
   onCancelQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   onReleaseInterruptedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   queueBusyId?: string | null;
+  queueBusyKind?: SessionTurnQueueActionKind | null;
   queueTail?: ReactNode;
   sessionId: string;
   character: CharacterProfile;
@@ -103,11 +105,13 @@ export type SessionMessageColumnProps = {
   pendingRunIndicatorAnnouncement?: string;
   liveApprovalRequest: LiveApprovalRequest | null;
   approvalActionRequestId: string | null;
+  approvalActionDecision?: "approve" | "deny" | null;
   liveElicitationRequest: LiveElicitationRequest | null;
   liveElicitationRequests?: readonly LiveElicitationRequest[];
   liveElicitationRecords?: readonly ElicitationRecord[];
   elicitationInputAvailable?: boolean;
   elicitationActionRequestId: string | null;
+  elicitationAction?: LiveElicitationResponse["action"] | null;
   liveRunAssistantText: string;
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
@@ -115,7 +119,10 @@ export type SessionMessageColumnProps = {
   pendingMessageTextVisible?: boolean;
   pendingMessageGroupId?: string | null;
   isMessageListFollowing: boolean;
+  hasNewActivity?: boolean;
+  onBrowseMessages?: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
+  onMessageListLayout?: () => void;
   onJumpToBottom?: () => void;
   onToggleMessageCollapse?: (key: string) => void;
   onToggleAllMessageCollapse?: () => void;
@@ -423,6 +430,7 @@ export function SessionMessageColumn({
   onCancelQueuedTurn,
   onReleaseInterruptedTurn,
   queueBusyId,
+  queueBusyKind,
   queueTail,
   sessionId,
   character,
@@ -447,18 +455,23 @@ export function SessionMessageColumn({
   pendingRunIndicatorAnnouncement,
   liveApprovalRequest,
   approvalActionRequestId,
+  approvalActionDecision,
   liveElicitationRequest,
   liveElicitationRequests,
   liveElicitationRecords,
   elicitationInputAvailable,
   elicitationActionRequestId,
+  elicitationAction,
   hasLiveRunAssistantText,
   liveRunErrorMessage,
   pendingMessageText = "",
   pendingMessageTextVisible = true,
   pendingMessageGroupId = null,
   isMessageListFollowing,
+  hasNewActivity = false,
+  onBrowseMessages,
   onMessageListScroll,
+  onMessageListLayout,
   onJumpToBottom,
   onToggleMessageCollapse,
   onToggleAllMessageCollapse,
@@ -501,6 +514,7 @@ export function SessionMessageColumn({
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
   const handledMessageJumpRequestIdRef = useRef<number | null>(null);
+  const requestedMessageJumpIdRef = useRef<number | null>(null);
   const markdownLinkFileContext = useMemo(() => ({ sessionId }), [sessionId]);
   const resolveImageSource = useMarkdownImageResolver(getWithMateApi(), markdownLinkFileContext, messageViewMode);
   const messageCollapseTargetByKey = useMemo(
@@ -584,6 +598,7 @@ export function SessionMessageColumn({
     return indexes;
   }, [elicitationMessageIndex]);
   const messageVirtualizer = useVirtualizer({
+    enabled: artifactDetailsEnabled,
     count: messages.length,
     getScrollElement: () => messageListRef.current,
     estimateSize: () => SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT,
@@ -604,12 +619,19 @@ export function SessionMessageColumn({
   });
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
     shouldAdjustSessionMessageScrollPosition({
-      itemStart: item.start,
+      itemEnd: item.end,
       scrollOffset: instance.scrollOffset ?? 0,
     })
   );
   const virtualMessages = messageVirtualizer.getVirtualItems();
+  useLayoutEffect(() => {
+    onMessageListLayout?.();
+  }, [virtualMessages, onMessageListLayout]);
   useEffect(() => {
+    if (!artifactDetailsEnabled) {
+      requestedMessageJumpIdRef.current = null;
+      return;
+    }
     if (!messageJumpRequest || messageJumpRequest.sessionId !== sessionId) {
       return;
     }
@@ -621,16 +643,24 @@ export function SessionMessageColumn({
       return;
     }
 
-    handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
-    messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
     if (messageJumpRequest.offset !== undefined) {
-      requestAnimationFrame(() => {
-        const element = messageListRef.current;
-        const row = element?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
-        if (element && row) element.scrollTop += row.getBoundingClientRect().top - element.getBoundingClientRect().top - messageJumpRequest.offset!;
-      });
-    } else setMessageJumpHighlightKey(messageJumpRequest.key);
-  }, [messageJumpRequest, messageKeys, messageVirtualizer, sessionId]);
+      const element = messageListRef.current;
+      const row = element?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
+      if (element && row) {
+        handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
+        // Replace the index target so a later reconciliation cannot undo the viewport offset.
+        messageVirtualizer.scrollToOffset(element.scrollTop + row.getBoundingClientRect().top - element.getBoundingClientRect().top - messageJumpRequest.offset);
+        return;
+      }
+    }
+    if (requestedMessageJumpIdRef.current === messageJumpRequest.requestId) return;
+    requestedMessageJumpIdRef.current = messageJumpRequest.requestId;
+    messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
+    if (messageJumpRequest.offset === undefined) {
+      handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
+      setMessageJumpHighlightKey(messageJumpRequest.key);
+    }
+  }, [artifactDetailsEnabled, messageJumpRequest, messageKeys, messageVirtualizer, sessionId, virtualMessages]);
 
   useEffect(() => {
     if (!messageJumpHighlightKey || typeof window === "undefined") {
@@ -645,6 +675,7 @@ export function SessionMessageColumn({
   useEffect(() => {
     setMessageJumpHighlightKey(null);
     handledMessageJumpRequestIdRef.current = null;
+    requestedMessageJumpIdRef.current = null;
   }, [sessionId]);
   const hasPendingMessageText =
     pendingMessageTextVisible &&
@@ -906,14 +937,16 @@ export function SessionMessageColumn({
 
   useEffect(() => {
     if (firstFindScrollIndex !== null) {
+      onBrowseMessages?.();
       messageVirtualizer.scrollToIndex(firstFindScrollIndex, { align: "center" });
     }
-  }, [findQuery, firstFindScrollIndex, messageVirtualizer, sessionId]);
+  }, [findQuery, firstFindScrollIndex, messageVirtualizer, sessionId, onBrowseMessages]);
 
   const navigateFindMatch = useCallback((direction: 1 | -1) => {
     if (findMatchCount === 0 || conversationFind.error || conversationFindError) {
       return;
     }
+    onBrowseMessages?.();
     setCurrentFindMatch((current) => {
       const next = (
         clampFindMatchIndex(current, findMatchCount)
@@ -926,7 +959,7 @@ export function SessionMessageColumn({
       }
       return next;
     });
-  }, [getFindMatchScrollIndex, messageFindMatches, messageVirtualizer, findMatchCount, searchConversation, conversationFind.error, conversationFindError]);
+  }, [getFindMatchScrollIndex, messageFindMatches, messageVirtualizer, findMatchCount, searchConversation, conversationFind.error, conversationFindError, onBrowseMessages]);
 
   const visibleMessageSignature = virtualMessages.map((message) => {
     const key = getMessageKey(message.index);
@@ -1082,12 +1115,14 @@ export function SessionMessageColumn({
       {!conversationPaging ? <LiveRequestSurface
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
+        approvalActionDecision={approvalActionDecision}
         liveElicitationRequest={liveElicitationRequest}
         liveElicitationRequests={liveElicitationRequests}
         elicitationRecords={visibleLiveElicitationRecords}
         inputAvailable={elicitationInputAvailable}
         drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
+        elicitationAction={elicitationAction}
         onResolveLiveApproval={onResolveLiveApproval}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
@@ -1154,30 +1189,36 @@ export function SessionMessageColumn({
       {conversationPaging ? <div className="conversation-live-request"><LiveRequestSurface
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
+        approvalActionDecision={approvalActionDecision}
         liveElicitationRequest={liveElicitationRequest}
         liveElicitationRequests={liveElicitationRequests}
         elicitationRecords={visibleLiveElicitationRecords}
         inputAvailable={elicitationInputAvailable}
         drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
+        elicitationAction={elicitationAction}
         onResolveLiveApproval={onResolveLiveApproval}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
       /></div> : null}
-      {onJumpToBottom ? (
+      {onJumpToBottom && !isMessageListFollowing ? (
         <button
-          className="message-list-jump-bottom-button"
+          className={`message-list-jump-bottom-button${hasNewActivity ? " has-new-activity" : ""}`}
           type="button"
-          onClick={onJumpToBottom}
-          aria-label="Jump to latest"
+          onClick={() => {
+            messageListRef.current?.focus({ preventScroll: true });
+            onJumpToBottom();
+          }}
+          aria-label={hasNewActivity ? "New activity. Jump to latest" : "Jump to latest"}
           title="Jump to latest"
         >
           <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <path d="M8 2v9M3.5 7.5 8 12l4.5-4.5M3 14h10" />
           </svg>
+          {hasNewActivity ? <span>New activity</span> : null}
         </button>
       ) : null}
-      <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
+      <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll} tabIndex={0} role="region" aria-label="Conversation messages">
         {messages.length > 0 || isRunning || queueTail ? (
           <div className="session-message-list-window">
             <div
@@ -1459,7 +1500,7 @@ export function SessionMessageColumn({
                       ) : null}
                       </section>
                     ) : null}
-                    {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} busy={queueBusyId === turnQueueMetadata.get(messageKey)!.id} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} /> : null}
+                    {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} busy={queueBusyId === turnQueueMetadata.get(messageKey)!.id} busyKind={queueBusyId === turnQueueMetadata.get(messageKey)!.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} /> : null}
                     {isRunning && absoluteIndex === pendingResponseMessageIndex ? renderPendingContent() : null}
                   </div>
                 </div>

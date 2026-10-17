@@ -6,6 +6,7 @@ import type {
 } from "../../src-shared/window/withmate-window-types.js";
 
 export type HomeMonitorContentInput = {
+  approvalEntries: HomeMonitorEntry[];
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
@@ -23,6 +24,7 @@ export type HomeMonitorContentInput = {
 };
 
 export function buildHomeMonitorContentProps({
+  approvalEntries,
   runningEntries,
   nonRunningEntries,
   auxiliaryDataState,
@@ -35,6 +37,7 @@ export function buildHomeMonitorContentProps({
   onShowContextMenu,
 }: HomeMonitorContentInput): HomeMonitorContentProps {
   return {
+    approvalEntries,
     runningEntries,
     nonRunningEntries,
     auxiliaryDataState,

@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { HomeLaunchDialog } from "../../src/home/HomeLaunchDialog.js";
-import type { HomeLaunchWorkspaceValidationState } from "../../src/home/home-launch-state.js";
+import type { DirectoryPathValidationState } from "../../src/launch/directory-path-validation.js";
 import type { ProviderLaunchLoadStatus } from "../../src/launch/provider-launch-picker.js";
 import { filterCharactersByName } from "../../src/home/HomeCharactersPanel.js";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
@@ -15,7 +15,7 @@ import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
 import type { HomeSessionSummary, SessionSummary } from "../../src-shared/session/session-state.js";
-import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
+import { HomeMateSetupPanel, type MateAvatarAction } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
@@ -91,6 +91,7 @@ describe("HomeSettingsContent", () => {
       onChangePreviewWheelZoomStep={noOp}
       onChangeLaunchAtLoginEnabled={noOp}
       onChangeSessionTurnNotificationEnabled={noOp}
+      onChangeSessionApprovalNotificationEnabled={noOp}
       onChangeSessionTurnNotificationResponsePreviewEnabled={noOp}
       onChangeToolCallPresenceEnabled={noOp}
       onChangeKeyboardShortcuts={noOp}
@@ -209,10 +210,10 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "response preview checkboxはWindows通知が無効な間だけdisabledで、設定値のchecked stateは保持する"
+  // claim = "response previewはturn通知無効時だけdisabledで値を保持し、承認通知checkboxはturn通知と独立して有効な状態で値を表示する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
-  // fault = "通知が無効でもpreviewを編集できるか、disabled化の際に保存値をfalseへ書き換える"
-  // observable = "notification enabled/disabled両条件のpreview input disabledとchecked"
+  // fault = "turn通知無効でもpreviewを編集できるかpreviewの値を失うか承認通知がturn通知へ従属する"
+  // observable = "turn通知enabled/disabled両条件でのpreviewと承認通知inputのdisabledとchecked"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-notification-preview-dependency"
   // lifecycle = "permanent"
@@ -223,6 +224,7 @@ describe("HomeSettingsContent", () => {
         ...settingsDraft,
         sessionTurnNotificationEnabled: false,
         sessionTurnNotificationResponsePreviewEnabled: true,
+        sessionApprovalNotificationEnabled: true,
       },
     });
     const enabledHtml = renderSettings({
@@ -230,6 +232,7 @@ describe("HomeSettingsContent", () => {
         ...settingsDraft,
         sessionTurnNotificationEnabled: true,
         sessionTurnNotificationResponsePreviewEnabled: true,
+        sessionApprovalNotificationEnabled: false,
       },
     });
     const findPreviewToggle = (html: string) => {
@@ -243,6 +246,16 @@ describe("HomeSettingsContent", () => {
     assert.equal(findPreviewToggle(disabledHtml)?.checked, true);
     assert.equal(findPreviewToggle(enabledHtml)?.disabled, false);
     assert.equal(findPreviewToggle(enabledHtml)?.checked, true);
+    const findApprovalToggle = (html: string) => {
+      const document = new JSDOM(html).window.document;
+      const label = Array.from(document.querySelectorAll("label"))
+        .find((candidate) => candidate.textContent?.includes("Session Approval Notification"));
+      return label?.querySelector("input");
+    };
+    assert.equal(findApprovalToggle(disabledHtml)?.disabled, false);
+    assert.equal(findApprovalToggle(disabledHtml)?.checked, true);
+    assert.equal(findApprovalToggle(enabledHtml)?.disabled, false);
+    assert.equal(findApprovalToggle(enabledHtml)?.checked, false);
   });
 
   it("Mate Reset の危険操作は Settings に表示されない", () => {
@@ -444,7 +457,7 @@ describe("HomeMateSetupPanel", () => {
     displayName?: string;
     mateDisplayName?: string | null;
     mateAvatarFilePath?: string | null;
-    avatarUpdating?: boolean;
+    avatarAction?: MateAvatarAction;
     onSubmit?: () => void;
     onCancel?: () => void;
     onOpenSettings?: () => void;
@@ -455,7 +468,7 @@ describe("HomeMateSetupPanel", () => {
       mode: params?.mode,
       displayName: params?.displayName ?? "Your Mate",
       creating: params?.creating ?? false,
-      avatarUpdating: params?.avatarUpdating,
+      avatarAction: params?.avatarAction,
       feedback: params?.feedback ?? "",
       mateDisplayName: params?.mateDisplayName ?? null,
       mateAvatarFilePath: params?.mateAvatarFilePath,
@@ -492,7 +505,7 @@ describe("HomeMateSetupPanel", () => {
     assert.ok(submitButton);
     assert.ok(settingsButton);
     assert.ok(input.props.value === "Your Mate");
-    assert.ok(submitButton.props.children === "Create Mate");
+    assert.equal(new JSDOM(html).window.document.querySelector("button[type='submit']")?.textContent, "Create Mate");
     assert.ok(html.includes("作成完了まで少し待ってね。"));
   });
 
@@ -579,7 +592,9 @@ describe("HomeMateSetupPanel", () => {
 
     assert.ok(input.props.disabled);
     assert.ok(submitButton.props.disabled);
-    assert.equal(collectElements(panel, (element) => element.type === "span" && element.props.className === "home-mate-spinner").length, 1);
+    const document = new JSDOM(renderToStaticMarkup(panel)).window.document;
+    assert.ok(document.querySelector("button[type='submit'] .button-content-spinner[aria-hidden='true']"));
+    assert.equal(document.querySelector("button[type='submit'] .button-content-label")?.textContent, "Create Mate");
   });
 
   // @test-value v2
@@ -610,7 +625,8 @@ describe("HomeMateSetupPanel", () => {
     )[0];
 
     assert.ok(html.includes("Mate Profile"));
-    assert.equal(submitButton?.props.children, "Save");
+    assert.ok(submitButton);
+    assert.equal(new JSDOM(html).window.document.querySelector("button[type='submit']")?.textContent, "Save");
     assert.ok(cancelButton);
     (cancelButton.props.onClick as () => void)();
     assert.equal(canceled, 1);
@@ -646,7 +662,7 @@ describe("HomeMateSetupPanel", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Home Mate setup edit modeはiconの選択と解除操作をcallbackへ渡す"
-  // oracle = { type = "contract", ref = "HomeMateSetupPanel avatar controls contract" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Home Window" }
   // fault = "avatar選択または解除の操作がcallbackに届かない"
   // observable = "selected/cancelled counters"
   // observation_boundary = "component-behavior"
@@ -671,11 +687,11 @@ describe("HomeMateSetupPanel", () => {
     const html = renderToStaticMarkup(panel);
     const selectButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Select Image",
+      (element) => element.type === "button" && element.props["aria-label"] === "Select Image",
     )[0];
     const clearButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Clear",
+      (element) => element.type === "button" && element.props["aria-label"] === "Clear Avatar",
     )[0];
 
     assert.ok(html.includes("Avatar"));
@@ -729,7 +745,7 @@ describe("HomeLaunchDialog", () => {
     options = characterOptions,
     charactersLoaded = true,
     randomCharacterSelected = false,
-    workspaceValidation: HomeLaunchWorkspaceValidationState = "idle",
+    workspaceValidation: DirectoryPathValidationState = "idle",
     characterLoadStatus?: "loading" | "loaded" | "error",
     providerLoadStatus?: ProviderLaunchLoadStatus,
     providerLoadError = "",
@@ -891,7 +907,7 @@ describe("HomeLaunchDialog", () => {
   it("新規作成導線は Session 専用である", () => {
     const html = renderHomeLaunchDialog();
 
-    assert.match(html, /<button class="start-session-button"[^>]*>Start<\/button>/);
+    assert.equal(new JSDOM(html).window.document.querySelector("button.start-session-button")?.textContent, "Start");
     assert.ok(html.includes('aria-label="New Session"'));
     assert.ok(html.includes("Coding Provider"));
     assert.ok(!html.includes("Agent Mode"));
@@ -923,40 +939,72 @@ describe("HomeLaunchDialog", () => {
     assert.ok(html.indexOf("Browse") < html.indexOf("Session Folder"));
   });
 
-  it("Workspace input と invalid 理由を field 近傍へ表示する", () => {
-    const idle = renderHomeLaunchDialog();
-    const html = renderHomeLaunchDialog(characterOptions, true, false, "invalid");
-
-    assert.match(idle, /<span id="launch-workspace-path-error"[^>]*><\/span>/);
-    assert.ok(html.includes("launch-workspace-path"));
-    assert.ok(html.includes('value="C:'));
-    assert.ok(html.includes("work space"));
-    assert.ok(html.includes('aria-invalid="true"'));
-    assert.ok(html.includes("Path not found."));
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Homeの無効Workspace入力は値を保持し、labelと関連付いたinputから現在のerror statusを参照できる"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証; docs/manual-test-checklist.md MT-014" }
+  // fault = "無効理由がinputの説明から切り離される、invalid状態が公開されない、または入力値が失われる"
+  // observable = "生成DOMのlabel.control、input.value/aria-invalid/aria-describedbyと参照先statusの本文・aria-live"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeLaunchDialogの共有パス入力とerrorのDOM・accessibility関係"
+  // lifecycle = "permanent"
+  // distinction = "単なる文字列包含やCSS宣言と異なりinputとerrorの実DOM関係を検査する。検証controllerや型検査では失われたaccessible descriptionを検出できず、安価な静的renderで保持する価値がある。pixel配置は実描画確認の対象とする"
+  // @end-test-value
+  it("Workspace input は値とlabelを保ち、invalid理由のstatusを参照する", () => {
+    const idle = new JSDOM(renderHomeLaunchDialog());
+    const invalid = new JSDOM(renderHomeLaunchDialog(characterOptions, true, false, "invalid"));
+    try {
+      const idleInput = idle.window.document.getElementById("launch-workspace-path")!;
+      assert.equal(idleInput.getAttribute("aria-invalid"), "false");
+      assert.equal(idleInput.hasAttribute("aria-describedby"), false);
+      const document = invalid.window.document;
+      const input = document.getElementById("launch-workspace-path") as HTMLInputElement;
+      const label = Array.from(document.querySelectorAll("label")).find((candidate) => candidate.control === input);
+      assert.equal(label?.textContent, "Workspace");
+      assert.equal(input.value, "C:\\\\work space\\\\");
+      assert.equal(input.getAttribute("aria-invalid"), "true");
+      const error = document.getElementById(input.getAttribute("aria-describedby")!);
+      assert.ok(error);
+      assert.equal(error.textContent, "Path not found.");
+      assert.equal(error.getAttribute("role"), "status");
+      assert.equal(error.getAttribute("aria-live"), "polite");
+    } finally {
+      idle.window.close();
+      invalid.window.close();
+    }
   });
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Homeのworkspace validationはdebounce中とfilesystem確認中の両方をbusy状態として表示する"
-  // oracle = { type = "contract", ref = "Issue #731 Home/New session workspace validation" }
+  // claim = "Homeのworkspace validationはdebounce中とfilesystem確認中の両方で入力のbusy、decorative indicator、検証中statusをDOMへ公開する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window New Sessionパス検証; docs/manual-test-checklist.md MT-014" }
   // fault = "debounceまたはfilesystem確認の片方でspinnerとaria-busyを失い、入力が検証中かどうかを識別できない"
-  // observable = "debouncing/pending各markupのworkspace-validation-spinner、aria-busy、Checking workspace path…"
+  // observable = "debouncing/pending/validのDOMでWorkspace入力のaria-busy所有領域、その中のaria-hidden indicator、Checking workspace path… statusの有無"
   // observation_boundary = "component-behavior"
   // scope = "HomeLaunchDialog workspace validation feedback"
   // lifecycle = "permanent"
   // impact = "検証待ちの入力を利用者が未検証または完了済みと誤認しにくくなる"
-  // distinction = "検証完了結果ではなく、debounceからpendingまで連続する局所busy表示を状態別に確認する"
+  // distinction = "CSS宣言やcontroller単体では観測しない入力とbusy/statusのDOM接続を確認する。animation名・時間は固定せず、可視性やpixel配置は実描画確認と区別する"
   // @end-test-value
-  it("Workspace validation は debounce 開始から filesystem 確認完了まで spinner を表示する", () => {
-    const debouncing = renderHomeLaunchDialog(characterOptions, true, false, "debouncing");
-    const pending = renderHomeLaunchDialog(characterOptions, true, false, "pending");
-
-    assert.ok(debouncing.includes("workspace-validation-spinner"));
-    assert.ok(debouncing.includes('aria-busy="true"'));
-    assert.ok(debouncing.includes("Checking workspace path…"));
-    assert.ok(pending.includes("workspace-validation-spinner"));
-    assert.ok(pending.includes('aria-busy="true"'));
-    assert.ok(pending.includes("Checking workspace path…"));
+  it("Workspace validation は検証中のbusyとstatusを公開し、完了後に解除する", () => {
+    for (const state of ["debouncing", "pending", "valid"] as const) {
+      const dom = new JSDOM(renderHomeLaunchDialog(characterOptions, true, false, state));
+      try {
+        const document = dom.window.document;
+        const input = document.getElementById("launch-workspace-path")!;
+        const region = input.closest("[aria-busy]");
+        assert.ok(region);
+        const checking = state !== "valid";
+        assert.equal(region.getAttribute("aria-busy"), String(checking));
+        assert.equal(!!region.querySelector('[aria-hidden="true"]'), checking);
+        const statuses = Array.from(document.querySelectorAll('[role="status"]'));
+        const checkingStatus = statuses.find((status) => status.textContent === "Checking workspace path…");
+        assert.equal(!!checkingStatus, checking);
+        if (checkingStatus) assert.equal(checkingStatus.getAttribute("aria-live"), "polite");
+      } finally {
+        dom.window.close();
+      }
+    }
   });
 
   // @test-value v2
@@ -1035,7 +1083,7 @@ describe("HomeLaunchDialog", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "New sessionのProvider catalogは取得中・取得失敗・正常な有効provider 0件を別状態として表示し、未確定中は開始を無効化する"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+  // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
   // fault = "Provider catalogの取得中または失敗をNo enabled coding providersへ投影し、開始条件と実エラーを混同する"
   // observable = "Provider pickerのspinner/aria-busy、実エラー、Start disabled、No enabled coding providers.の相互排他"
   // observation_boundary = "component-behavior"
@@ -1551,6 +1599,7 @@ describe("HomeMonitorContent", () => {
     ];
     const html = renderToStaticMarkup(
       <HomeMonitorContent
+        approvalEntries={[]}
         runningEntries={entries}
         nonRunningEntries={[]}
         onOpenSession={noOp}
@@ -1658,6 +1707,7 @@ describe("HomeMonitorContent", () => {
     try {
       await act(async () => root.render(
         <HomeMonitorContent
+          approvalEntries={[]}
           runningEntries={[]}
           nonRunningEntries={[entry]}
           onOpenSession={noOp}
@@ -1721,6 +1771,7 @@ describe("HomeMonitorContent", () => {
     };
     const html = renderToStaticMarkup(
       <HomeMonitorContent
+        approvalEntries={[]}
         runningEntries={[entry]}
         nonRunningEntries={[]}
         onOpenSession={noOp}
@@ -1765,6 +1816,7 @@ describe("HomeMonitorContent", () => {
     ] as const) {
       const html = renderToStaticMarkup(
         <HomeMonitorContent
+          approvalEntries={[]}
           runningEntries={[]}
           nonRunningEntries={entries}
           auxiliaryDataState={auxiliaryDataState}
@@ -1870,6 +1922,7 @@ describe("HomeMonitorContent", () => {
     try {
       await act(async () => root.render(
         <HomeMonitorContent
+          approvalEntries={[]}
           runningEntries={[]}
           nonRunningEntries={[entry, secondEntry]}
           onOpenSession={recordOpenedSession}
@@ -1906,6 +1959,7 @@ describe("HomeMonitorContent", () => {
 
       await act(async () => root.render(
         <HomeMonitorContent
+          approvalEntries={[]}
           runningEntries={[entry]}
           nonRunningEntries={[secondEntry]}
           onOpenSession={recordOpenedSession}
@@ -2000,6 +2054,7 @@ describe("HomeMonitorContent", () => {
     try {
       await act(async () => root.render(
         <HomeMonitorContent
+          approvalEntries={[]}
           runningEntries={[entry]}
           nonRunningEntries={[]}
           onOpenSession={noOp}
@@ -2069,6 +2124,7 @@ describe("HomeMonitorContent", () => {
   it("Monitor feedbackは失敗時だけpoliteなlive statusを表示する", () => {
     const emptyHtml = renderToStaticMarkup(
       <HomeMonitorContent
+        approvalEntries={[]}
         runningEntries={[]}
         nonRunningEntries={[]}
         onOpenSession={noOp}
@@ -2077,6 +2133,7 @@ describe("HomeMonitorContent", () => {
     );
     const failureHtml = renderToStaticMarkup(
       <HomeMonitorContent
+        approvalEntries={[]}
         runningEntries={[]}
         nonRunningEntries={[]}
         feedback="Could not copy session ID."
@@ -2116,6 +2173,7 @@ describe("HomeRightPane", () => {
   ) => renderToStaticMarkup(
     <HomeRightPane
       rightPaneView={rightPaneView}
+      approvalMonitorEntries={[]}
       runningMonitorEntries={[]}
       nonRunningMonitorEntries={[]}
       auxiliaryDataState="ready"

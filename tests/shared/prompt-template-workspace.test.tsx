@@ -435,7 +435,7 @@ test("Template保存は短いCTAと局所spinnerを表示する", async () => {
     assert.equal(saveButton.getAttribute("aria-label"), "Saving template");
     assert.equal(saveButton.textContent?.trim(), "Save Template");
     assert.equal(saveButton.getAttribute("aria-busy"), "true");
-    assert.ok(saveButton.querySelector(".chat-skill-picker-spinner"));
+    assert.ok(saveButton.querySelector(".button-content-spinner[aria-hidden='true']"));
     assert.equal(prompt.disabled, true);
     assert.equal(templateName.disabled, true);
 

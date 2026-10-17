@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useDialogA11y } from "../ui/a11y.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ButtonContent } from "../ui/button-content.js";
 import type { MemoryEntryKind, MemoryForgetReason } from "../../src-shared/memory/memory-contract.js";
 import type {
   MemoryV6ReviewApi,
@@ -350,13 +351,9 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               aria-busy={refreshing}
               aria-label={refreshing ? "Refreshing Memory review" : "Refresh Memory review"}
             >
-              {refreshing ? (
-                <>
-                  <span className="settings-action-spinner" aria-hidden="true" />
-                  <span>Refresh</span>
-                  <span className="visually-hidden">Refreshing Memory review.</span>
-                </>
-              ) : "Refresh"}
+              <ButtonContent busy={refreshing} busyLabel="Refreshing Memory review.">
+                Refresh
+              </ButtonContent>
             </button>
           </header>
 
@@ -420,13 +417,9 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   aria-busy={runningGc === "dry-run"}
                   aria-label={runningGc === "dry-run" ? "Running Memory file GC dry run" : "Run Memory file GC dry run"}
                 >
-                  {runningGc === "dry-run" ? (
-                    <>
-                      <span className="settings-action-spinner" aria-hidden="true" />
-                      <span>GC Dry Run</span>
-                      <span className="visually-hidden">Running Memory file GC dry run.</span>
-                    </>
-                  ) : "GC Dry Run"}
+                  <ButtonContent busy={runningGc === "dry-run"} busyLabel="Running Memory file GC dry run.">
+                    GC Dry Run
+                  </ButtonContent>
                 </button>
                 <button
                   type="button"
@@ -435,13 +428,9 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   aria-busy={runningGc === "cleanup"}
                   aria-label={runningGc === "cleanup" ? "Running Memory file GC cleanup" : "Run Memory file GC cleanup"}
                 >
-                  {runningGc === "cleanup" ? (
-                    <>
-                      <span className="settings-action-spinner" aria-hidden="true" />
-                      <span>Run GC Cleanup</span>
-                      <span className="visually-hidden">Running Memory file GC cleanup.</span>
-                    </>
-                  ) : "Run GC Cleanup"}
+                  <ButtonContent busy={runningGc === "cleanup"} busyLabel="Running Memory file GC cleanup.">
+                    Run GC Cleanup
+                  </ButtonContent>
                 </button>
               </div>
               {gcReport ? (
@@ -490,13 +479,9 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   aria-busy={loadingMore || undefined}
                   aria-label={loadingMore ? "Loading more Memory entries" : "Load more Memory entries"}
                 >
-                  {loadingMore ? (
-                    <>
-                      <span className="settings-action-spinner" aria-hidden="true" />
-                      <span>Load More</span>
-                      <span className="visually-hidden">Loading more Memory entries.</span>
-                    </>
-                  ) : "Load More"}
+                  <ButtonContent busy={loadingMore} busyLabel="Loading more Memory entries.">
+                    Load More
+                  </ButtonContent>
                 </button>
               ) : null}
             </section>
@@ -534,13 +519,9 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                           aria-busy={exporting || undefined}
                           aria-label={exporting ? "Exporting Memory files" : "Export Memory files"}
                         >
-                          {exporting ? (
-                            <>
-                              <span className="settings-action-spinner" aria-hidden="true" />
-                              <span>Export Files</span>
-                              <span className="visually-hidden">Exporting Memory files.</span>
-                            </>
-                          ) : "Export Files"}
+                          <ButtonContent busy={exporting} busyLabel="Exporting Memory files.">
+                            Export Files
+                          </ButtonContent>
                         </button>
                       </div>
                       <ul>
@@ -574,13 +555,9 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                       aria-busy={forgetting || undefined}
                       aria-label={forgetting ? "Forgetting Memory entry" : "Forget Memory entry"}
                     >
-                      {forgetting ? (
-                        <>
-                          <span className="settings-action-spinner" aria-hidden="true" />
-                          <span>Forget Entry</span>
-                          <span className="visually-hidden">Forgetting Memory entry.</span>
-                        </>
-                      ) : "Forget Entry"}
+                      <ButtonContent busy={forgetting} busyLabel="Forgetting Memory entry.">
+                        Forget Entry
+                      </ButtonContent>
                     </button>
                   </div>
                 </>
@@ -641,13 +618,9 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                 aria-busy={forgetting || undefined}
                 aria-label={forgetting ? "Forgetting Memory entry" : "Forget Memory entry"}
               >
-                {forgetting ? (
-                  <>
-                    <span className="settings-action-spinner" aria-hidden="true" />
-                    <span>Forget Entry</span>
-                    <span className="visually-hidden">Forgetting Memory entry.</span>
-                  </>
-                ) : "Forget Entry"}
+                <ButtonContent busy={forgetting} busyLabel="Forgetting Memory entry.">
+                  Forget Entry
+                </ButtonContent>
               </button>
             </footer>
           </section>

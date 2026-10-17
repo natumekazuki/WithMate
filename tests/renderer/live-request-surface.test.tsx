@@ -124,10 +124,10 @@ const elicitationRequest: LiveElicitationRequest = {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Live approvalとinput requestは解決中に対象領域のbusy stateと既存spinnerを示し、要求内容と操作識別を維持する"
-// oracle = { type = "contract", ref = "src/chat/runtime/live-request-surface.tsx" }
-// fault = "解決中のrequestがdisabled操作だけになり、処理中であることを支援技術へ伝えられないか、request本文・操作labelを失う"
-// observable = "request領域のaria-busy、settings-action-spinnerのstatus、request本文、warning/details、approval/input操作label"
+// claim = "Live approvalは実行したdecisionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求内容・操作識別を維持する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
+// fault = "非実行buttonもspinnerまたはbusyになるか、busy announcementまたは要求本文・操作labelを失う"
+// observable = "request領域と各buttonのaria-busy、spinnerの所属、status数、要求本文、warning/details、操作label"
 // observation_boundary = "component-behavior"
 // scope = "live-request-resolution-feedback"
 // lifecycle = "permanent"
@@ -135,31 +135,42 @@ const elicitationRequest: LiveElicitationRequest = {
 // distinction = "disabled属性の有無だけでなく、busy announcementが一つだけ存在し、要求内容と操作識別が同時に残ることを確認する"
 // @end-test-value
 test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容を保つ", () => {
-  const html = renderToStaticMarkup(React.createElement(LiveRequestSurface, {
-    liveApprovalRequest: approvalRequest,
-    approvalActionRequestId: approvalRequest.requestId,
-    liveElicitationRequest: null,
-    elicitationActionRequestId: null,
-    onResolveLiveApproval() {},
-    onResolveLiveElicitation() {},
-  }));
+  for (const decision of ["approve", "deny"] as const) {
+    const html = renderToStaticMarkup(React.createElement(LiveRequestSurface, {
+      liveApprovalRequest: approvalRequest,
+      approvalActionRequestId: approvalRequest.requestId,
+      approvalActionDecision: decision,
+      liveElicitationRequest: null,
+      elicitationActionRequestId: null,
+      onResolveLiveApproval() {},
+      onResolveLiveElicitation() {},
+    }));
 
-  assert.match(html, /class="live-approval-card"[^>]*aria-busy="true"/);
-  assert.match(html, /role="status" aria-label="Processing approval request"/);
-  assert.equal((html.match(/class="settings-action-spinner"/g) ?? []).length, 1);
-  assert.match(html, /Run a command/);
-  assert.match(html, /npm test/);
-  assert.match(html, /This command can change workspace state\./);
-  assert.match(html, />Allow Once<\/button>/);
-  assert.match(html, />Reject<\/button>/);
+    assert.match(html, /class="live-approval-card"[^>]*aria-busy="true"/);
+    const document = new JSDOM(html).window.document;
+    assert.equal(document.querySelectorAll('[role="status"]').length, 1);
+    assert.equal(document.querySelector('[role="status"]')?.textContent, "Processing approval request");
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
+    assert.deepEqual(buttons.map((button) => button.textContent), ["Allow Once", "Reject"]);
+    const active = buttons[decision === "approve" ? 0 : 1];
+    assert.ok(active.querySelector(".button-content-spinner[aria-hidden='true']"));
+    assert.equal(active.getAttribute("aria-busy"), "true");
+    assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-busy") === "true"), [active]);
+    assert.equal(document.querySelectorAll(".button-content-spinner").length, 1);
+    assert.ok(buttons.every((button) => button.disabled));
+    assert.match(html, /Run a command/);
+    assert.match(html, /npm test/);
+    assert.match(html, /This command can change workspace state\./);
+    assert.match(html, /The command will inspect the workspace\./);
+  }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "Live input requestは解決中に対象領域のbusy stateと既存spinnerを示し、要求内容と操作識別を維持する"
-// oracle = { type = "contract", ref = "src/chat/runtime/live-request-surface.tsx" }
-// fault = "解決中のinput requestがdisabled操作だけになり、処理中であることを支援技術へ伝えられないか、request本文・操作labelを失う"
-// observable = "input request領域のaria-busy、settings-action-spinnerのstatus、request本文、input操作label"
+// claim = "Live input requestは実行したactionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求内容・操作識別を維持する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
+// fault = "非実行buttonもspinnerまたはbusyになるか、busy announcementまたはrequest本文・操作labelを失う"
+// observable = "input request領域と各buttonのaria-busy、spinnerの所属、status数、request本文、操作label"
 // observation_boundary = "component-behavior"
 // scope = "live-input-request-resolution-feedback"
 // lifecycle = "permanent"
@@ -167,22 +178,31 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
 // distinction = "disabled属性の有無だけでなく、busy announcementが一つだけ存在し、要求内容と操作識別が同時に残ることを確認する"
 // @end-test-value
 test("LiveRequestSurface はinput解決中のbusy announcementと操作labelを保つ", () => {
-  const html = renderToStaticMarkup(React.createElement(LiveRequestSurface, {
-    liveApprovalRequest: null,
-    approvalActionRequestId: null,
-    liveElicitationRequest: elicitationRequest,
-    elicitationActionRequestId: elicitationRequest.requestId,
-    onResolveLiveApproval() {},
-    onResolveLiveElicitation() {},
-  }));
+  for (const action of ["accept", "decline", "cancel"] as const) {
+    const html = renderToStaticMarkup(React.createElement(LiveRequestSurface, {
+      liveApprovalRequest: null,
+      approvalActionRequestId: null,
+      liveElicitationRequest: elicitationRequest,
+      elicitationActionRequestId: elicitationRequest.requestId,
+      elicitationAction: action,
+      onResolveLiveApproval() {},
+      onResolveLiveElicitation() {},
+    }));
 
-  assert.match(html, /class="live-elicitation-card"[^>]*aria-busy="true"/);
-  assert.match(html, /role="status" aria-label="Processing input request"/);
-  assert.equal((html.match(/class="settings-action-spinner"/g) ?? []).length, 1);
-  assert.match(html, /Choose a branch/);
-  assert.match(html, />Submit<\/button>/);
-  assert.match(html, />Reject<\/button>/);
-  assert.match(html, />Close<\/button>/);
+    assert.match(html, /class="live-elicitation-card"[^>]*aria-busy="true"/);
+    const document = new JSDOM(html).window.document;
+    assert.equal(document.querySelectorAll('[role="status"]').length, 1);
+    assert.equal(document.querySelector('[role="status"]')?.textContent, "Processing input request");
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
+    assert.deepEqual(buttons.map((button) => button.textContent), ["Submit", "Reject", "Close"]);
+    const active = buttons[action === "accept" ? 0 : action === "decline" ? 1 : 2];
+    assert.ok(active.querySelector(".button-content-spinner[aria-hidden='true']"));
+    assert.equal(active.getAttribute("aria-busy"), "true");
+    assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-busy") === "true"), [active]);
+    assert.equal(document.querySelectorAll(".button-content-spinner").length, 1);
+    assert.ok(buttons.every((button) => button.disabled));
+    assert.match(html, /Choose a branch/);
+  }
 });
 
 // @test-value v2

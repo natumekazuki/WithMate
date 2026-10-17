@@ -69,7 +69,7 @@ describe("reasoning effort catalog contract", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "catalogのxhigh/max/ultraは保存値のまま受理し、selectorには別の表示labelを提供する"
-  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#表示言語・操作・状態" }
+  // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#表示言語と文言" }
   // fault = "表示名の変更でcatalogの有効なreasoning値を拒否するかselectorの保存idを変更する"
   // observable = "parse結果のreasoningEffortsとselector optionのid/label"
   // observation_boundary = "public-boundary"

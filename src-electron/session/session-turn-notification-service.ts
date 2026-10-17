@@ -144,7 +144,9 @@ export type SessionTurnNotificationServiceDeps<TIcon> = {
   platform: NodeJS.Platform;
   isNotificationSupported(): boolean;
   isNotificationEnabled(): Awaitable<boolean>;
+  isApprovalNotificationEnabled(): Awaitable<boolean>;
   isResponsePreviewEnabled(): Awaitable<boolean>;
+  isSessionWindowOpen(sessionId: string): boolean;
   isSessionWindowFocused(sessionId: string): boolean;
   loadCharacterIcon(iconPath: string): TIcon | null;
   createNotification(options: SessionTurnNotificationOptions<TIcon>): SessionTurnNotificationHandle;
@@ -155,11 +157,69 @@ export type SessionTurnNotificationServiceDeps<TIcon> = {
   logWarning(event: string, sessionId: string, error?: unknown): void;
 };
 
+type ApprovalNotificationRequest = {
+  controller: AbortController;
+  signals: Set<AbortSignal>;
+  resolve(): void;
+};
+
 export class SessionTurnNotificationService<TIcon> {
   private static readonly notificationGroupId = "WithMateSessions";
   private readonly trackedNotifications = new Map<string, SessionTurnNotificationHandle>();
+  private readonly approvalRequests = new Map<string, Map<string, ApprovalNotificationRequest>>();
 
   constructor(private readonly deps: SessionTurnNotificationServiceDeps<TIcon>) {}
+
+  async notifyApproval(
+    session: Session,
+    requestId: string,
+    signal: AbortSignal,
+    target: SessionTurnNotificationTarget = { kind: "session", sessionId: session.id },
+  ): Promise<boolean> {
+    const notificationKey = this.getNotificationKey(target);
+    if (signal.aborted) return false;
+    const requests = this.approvalRequests.get(notificationKey) ?? new Map<string, ApprovalNotificationRequest>();
+    const existing = requests.get(requestId);
+    if (existing) {
+      existing.signals.add(signal);
+      signal.addEventListener("abort", existing.resolve, { once: true });
+      return false;
+    }
+    const request: ApprovalNotificationRequest = {
+      controller: new AbortController(),
+      signals: new Set([signal]),
+      resolve: () => {
+        request.controller.abort();
+        for (const trackedSignal of request.signals) {
+          trackedSignal.removeEventListener("abort", request.resolve);
+        }
+        requests.delete(requestId);
+        if (requests.size === 0 && this.approvalRequests.get(notificationKey) === requests) {
+          this.approvalRequests.delete(notificationKey);
+        }
+      },
+    };
+    requests.set(requestId, request);
+    this.approvalRequests.set(notificationKey, requests);
+    signal.addEventListener("abort", request.resolve, { once: true });
+
+    try {
+      const enabled = await this.deps.isApprovalNotificationEnabled();
+      const focusSessionId = this.getFocusSessionId(target);
+      if (request.controller.signal.aborted
+        || !this.deps.isSessionWindowOpen(focusSessionId)
+        || !this.isEligibleSync(focusSessionId, notificationKey, enabled)) {
+        return false;
+      }
+      return this.showNotification({ session }, target, notificationKey, {
+        title: "WithMate",
+        body: `${session.taskTitle.trim() || "Session"}: approval required.`,
+      }, request.controller.signal);
+    } catch (error) {
+      this.deps.logWarning("approval-notification-failed", notificationKey, error);
+      return false;
+    }
+  }
 
   async notifyQuestion(
     session: Session,

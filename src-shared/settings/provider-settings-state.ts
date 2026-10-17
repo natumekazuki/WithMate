@@ -21,6 +21,7 @@ export type AppSettings = {
   memoryGenerationEnabled: boolean;
   launchAtLoginEnabled: boolean;
   sessionTurnNotificationEnabled: boolean;
+  sessionApprovalNotificationEnabled: boolean;
   sessionTurnNotificationResponsePreviewEnabled: boolean;
   characterDefinitionEnabled: boolean;
   characterAffectContextEnabled: boolean;
@@ -122,6 +123,7 @@ export function createDefaultAppSettings(): AppSettings {
     memoryGenerationEnabled: true,
     launchAtLoginEnabled: false,
     sessionTurnNotificationEnabled: true,
+    sessionApprovalNotificationEnabled: true,
     sessionTurnNotificationResponsePreviewEnabled: false,
     characterDefinitionEnabled: true,
     characterAffectContextEnabled: true,
@@ -366,6 +368,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       typeof candidate.launchAtLoginEnabled === "boolean" ? candidate.launchAtLoginEnabled : false,
     sessionTurnNotificationEnabled:
       typeof candidate.sessionTurnNotificationEnabled === "boolean" ? candidate.sessionTurnNotificationEnabled : true,
+    sessionApprovalNotificationEnabled:
+      typeof candidate.sessionApprovalNotificationEnabled === "boolean" ? candidate.sessionApprovalNotificationEnabled : true,
     sessionTurnNotificationResponsePreviewEnabled:
       typeof candidate.sessionTurnNotificationResponsePreviewEnabled === "boolean"
         ? candidate.sessionTurnNotificationResponsePreviewEnabled

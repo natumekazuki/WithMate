@@ -98,6 +98,7 @@ function createComposerTestProps(
     onToggleSkillPicker() {},
     onOpenPromptTemplates() {},
     onAddAdditionalDirectory() {},
+    onValidateAdditionalDirectory: async () => ({ valid: true as const }),
     onToggleAdditionalDirectoryList() {},
     onJumpToBottom() {},
     onSelectCustomAgent() {},
@@ -1862,15 +1863,28 @@ test("SessionMessageColumn は上側rowの可変高再計測後も表示位置�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "再計測のscroll補正判定は行末がviewport上端と一致する行を含み、上端を跨ぐ行と下側の行は対象にしない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
+// fault = "viewport先頭を跨ぐanchor行の増減を全量scrollTopへ加算して段落位置をずらす"
+// observable = "境界前後の行に対する補正可否"
+// observation_boundary = "implementation"
+// scope = "virtual message row measurement adjustment boundary"
+// lifecycle = "permanent"
+// impact = "読みかけの行の高さ増減を全量補正すると閲覧位置がずれる"
+// distinction = "DOM testでは到達しにくい行末とviewport上端の一致・1px差を小さい判定testで確認する"
+// @end-test-value
 test("SessionMessageColumn は上方向scroll中も上側rowのvisible anchorを補正する", () => {
   assert.equal(shouldAdjustSessionMessageScrollPosition({
-    itemStart: 1_000,
+    itemEnd: 4_000,
     scrollOffset: 4_000,
   }), true);
   assert.equal(shouldAdjustSessionMessageScrollPosition({
-    itemStart: 5_000,
+    itemEnd: 4_001,
     scrollOffset: 4_000,
   }), false);
+  assert.equal(shouldAdjustSessionMessageScrollPosition({ itemEnd: 5_000, scrollOffset: 4_000 }), false);
 });
 
 test("SessionMessageColumn はappend時の末尾移動をfollow ownerへ委ねる", async () => {
@@ -2079,24 +2093,125 @@ test("ConversationMessageColumn は callback 再生成だけでは既存 message
 
 // @test-value v2
 // kind = "contract"
-// claim = "message listが最新追従していない状態ではjump UIをmessage list内へ重複描画しない"
-// oracle = { type = "contract", ref = "src/chat/conversation/session-message-column.tsx" }
-// fault = "非追従状態でもjump bannerを表示し、ActionDock側のjump affordanceと重複する"
-// observable = "message-follow-bannerとJump to latestの不在"
+// claim = "閲覧中は単一の末尾復帰buttonで新着を知らせ、操作後に会話listへfocusを戻し、追従中はbuttonを隠す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
+// fault = "新着buttonが操作できない、accessible nameに新着がない、復帰後のfocusがlistに戻らない、または追従中も表示する"
+// observable = "button数・accessible name・callback回数・document.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "session-message-following"
 // lifecycle = "permanent"
-// impact = "同一対象へのjump操作が重複し会話領域を圧迫する"
-// distinction = "非追従stateでの重複抑止だけを検証し、ActionDockの通常表示とは分離する"
+// impact = "履歴を読みながら新着へ戻る経路とkeyboardでの閲覧継続を保証する"
+// distinction = "hookの追従状態testでは検証できない実buttonとfocusを既存DOM fixtureで確認する"
 // @end-test-value
-test("SessionMessageColumn は未追従時に message list 内の jump UI を描画しない", () => {
-  const html = renderSessionMessageColumn({
-    messages: createMessages(2),
-    isMessageListFollowing: false,
+test("SessionMessageColumn は新着の末尾復帰buttonと会話へのfocusを提供する", async () => {
+  let jumps = 0;
+  const mounted = await mountSessionMessageColumn({
+    messages: createMessages(3),
+    component: (props) => React.createElement(SessionMessageColumn, { ...props, hasNewActivity: true, onJumpToBottom: () => { jumps += 1; } }),
   });
+  try {
+    const buttons = mounted.container.querySelectorAll<HTMLButtonElement>(".message-list-jump-bottom-button");
+    assert.equal(buttons.length, 1);
+    const button = buttons[0]!;
+    assert.equal(button.type, "button");
+    assert.equal(button.tabIndex, 0);
+    assert.equal(button.getAttribute("aria-label"), "New activity. Jump to latest");
+    assert.equal(button.textContent, "New activity");
+    button.focus();
+    await act(async () => button.click());
+    assert.equal(jumps, 1);
+    assert.equal(mounted.dom.window.document.activeElement, mounted.messageListRef.current);
+    await mounted.rerender({ isMessageListFollowing: true });
+    assert.equal(mounted.container.querySelector(".message-list-jump-bottom-button"), null);
+  } finally {
+    await mounted.cleanup();
+  }
+});
 
-  assert.doesNotMatch(html, /message-follow-banner/);
-  assert.doesNotMatch(html, /Jump to latest/);
+// @test-value v2
+// kind = "contract"
+// claim = "overflowする仮想会話の未mount行へのanchor requestは実測位置からoffsetを復元し、非表示からの復帰と上側行・anchor行自身の行高再計測で位置を失わない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
+// fault = "再表示時の遅いjumpや再計測がanchor offsetを上書きする"
+// observable = "rowのviewport offsetとlist.scrollTop"
+// observation_boundary = "component-behavior"
+// scope = "100行の仮想会話、clampしたscroll、disabledからの再表示、ResizeObserverとRAFを跨ぐanchor補正。非表示中の測定通知・cache保持自体は検証せず、Previewの配線と実CSS折返しはbrowser確認対象"
+// lifecycle = "permanent"
+// impact = "履歴の復帰先を行先頭へずらさず、再計測後も読んでいた段落を維持する"
+// distinction = "cache testのrequest handoffとは異なり、virtualizerがDOMへ投影する行位置、scroll上限と後続の測定通知を通す"
+// @end-test-value
+test("SessionMessageColumn は再計測した行へanchor offsetを復元する", async () => {
+  const messageKeys = Array.from({ length: 100 }, (_, index) => `message-${index}`);
+  const mounted = await mountSessionMessageColumn({ messages: createMessages(100), messageKeys });
+  const originalRect = mounted.dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const originalOffsetHeight = Object.getOwnPropertyDescriptor(mounted.dom.window.HTMLElement.prototype, "offsetHeight")!;
+  let hidden = false;
+  try {
+    const list = mounted.messageListRef.current!;
+    let scrollTop = list.scrollTop;
+    Object.defineProperty(list, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        const next = Math.max(0, Math.min(value, Math.max(0, list.scrollHeight - list.clientHeight)));
+        if (next === scrollTop) return;
+        scrollTop = next;
+        queueMicrotask(() => list.dispatchEvent(new mounted.dom.window.Event("scroll")));
+      },
+    });
+    mounted.dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.classList.contains("session-message-virtual-row")) {
+        if (hidden) return createRect({ left: 0, top: 0, width: 0, height: 0 });
+        const start = Number.parseFloat(this.style.top || this.style.transform.match(/translate3d\(0,\s*([^p]+)px/)?.[1] || this.style.transform.match(/translateY\(([^p]+)px\)/)?.[1] || "0");
+        return createRect({ left: 0, top: start - list.scrollTop, width: 960, height: this.offsetHeight });
+      }
+      return originalRect.call(this);
+    };
+    Object.defineProperty(mounted.dom.window.HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get() { return hidden && this.classList.contains("session-message-virtual-row") ? 0 : originalOffsetHeight.get!.call(this); },
+    });
+    const settle = async () => act(async () => {
+      await new Promise((resolve) => mounted.dom.window.setTimeout(resolve, 180));
+      for (let frame = 0; frame < 3; frame += 1) await new Promise((resolve) => mounted.dom.window.requestAnimationFrame(resolve));
+    });
+    assert.ok(list.scrollHeight > list.clientHeight + 6_000, "fixture has a reachable overflowing anchor");
+    assert.equal(mounted.container.querySelector(".session-message-virtual-row[data-index='31']"), null, "target starts outside the committed virtual range");
+    await mounted.rerender({ messageKeys, messageJumpRequest: { sessionId: "session-1", key: "message-31", offset: -18, requestId: 1 } });
+    await settle();
+    const anchorOffset = () => {
+      const row = mounted.container.querySelector<HTMLElement>(".session-message-virtual-row[data-index='31']");
+      assert.ok(row, "anchor is mounted after the virtualizer jump");
+      return row.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    };
+    assert.equal(anchorOffset(), -18);
+    assert.ok(list.scrollTop <= list.scrollHeight - list.clientHeight);
+    const visibleScrollHeight = list.scrollHeight;
+    hidden = true;
+    await mounted.rerender({ isContentActive: false, artifactDetailsEnabled: false });
+    await settle();
+    hidden = false;
+    await mounted.rerender({ isContentActive: true, artifactDetailsEnabled: true, messageKeys, messageJumpRequest: { sessionId: "session-1", key: "message-31", offset: -18, requestId: 2 } });
+    await settle();
+    assert.equal(anchorOffset(), -18, "re-enabling the column restores its reading position after a hidden layout");
+    assert.equal(list.scrollHeight, visibleScrollHeight);
+    await mounted.resizeMessageRow(30, 300);
+    await settle();
+    assert.equal(anchorOffset(), -18, "late measurement must not replace the restored reading offset");
+    const readingScrollTop = list.scrollTop;
+    await mounted.resizeMessageRow(31, 268);
+    await settle();
+    assert.equal(anchorOffset(), -18, "the partially clipped anchor row can grow without moving its top offset");
+    assert.equal(list.scrollTop, readingScrollTop);
+    await mounted.resizeMessageRow(31, 120);
+    await settle();
+    assert.equal(anchorOffset(), -18, "the partially clipped anchor row can shrink without moving its top offset");
+    assert.equal(list.scrollTop, readingScrollTop);
+  } finally {
+    mounted.dom.window.HTMLElement.prototype.getBoundingClientRect = originalRect;
+    Object.defineProperty(mounted.dom.window.HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
+    await mounted.cleanup();
+  }
 });
 
 // @test-value v2
@@ -2977,6 +3092,70 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
   } finally { await mounted.cleanup(); }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "canonical会話のelicitation送信中は履歴の往復でも実行buttonのspinnerを保持し、失敗後は同じ要求の操作へ戻る"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン; docs/design/desktop-ui.md: Elicitationの入力待ち" }
+// fault = "表示面の再描画で実行actionを失う、非実行buttonもspinnerになる、または送信失敗後にbusyが残る"
+// observable = "resolve APIのpayload、履歴scroll前後のspinner所属とdisabled、失敗後の操作可能性とerror"
+// observation_boundary = "consumer"
+// scope = "canonical-elicitation-action-feedback"
+// lifecycle = "permanent"
+// impact = "回答受付の完了を誤認した再操作や、失敗後に再送できない状態を防ぐ"
+// distinction = "request propsだけのcomponent testではconversationのaction保持と非同期失敗からの復帰を通らない。実hookと仮想化された表示を小さいfixtureで接続する"
+// @end-test-value
+test("ConversationMessageColumn は送信actionの待機表示を履歴往復と失敗まで維持する", async () => {
+  const request = { ...createLiveElicitationRequest(), fields: [] };
+  let rejectResponse!: (error: Error) => void;
+  const responses: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
+  const api = {
+    resolveLiveElicitation: async (...args: [string, string, Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>[1]]) => {
+      assert.equal(args[0], "session-feedback");
+      assert.equal(args[1], request.requestId);
+      responses.push([request, args[2]]);
+      await new Promise<void>((_resolve, reject) => { rejectResponse = reject; });
+    },
+  };
+  function Column(props: SessionMessageColumnProps) {
+    return React.createElement(ConversationMessageColumn, {
+      session: { id: "session-feedback", messages: props.messages, runState: "running" },
+      baseProps: props, enabled: true, api,
+      liveRun: {
+        sessionId: "session-feedback", threadId: "thread-feedback", assistantText: "Review the requested input.",
+        steps: [], backgroundTasks: [], usage: null, errorMessage: "",
+        approvalRequest: null, elicitationRequest: request,
+      },
+    });
+  }
+  const mounted = await mountSessionMessageColumn({
+    component: Column, messages: createMessages(100), isRunning: true,
+    liveRunAssistantText: "Review the requested input.", liveElicitationRequest: request,
+  });
+  try {
+    const { container, dom } = mounted;
+    const list = container.querySelector<HTMLDivElement>(".session-message-list")!;
+    const controls = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button"));
+    await act(async () => controls().find((button) => button.textContent === "Submit")!.click());
+    assert.deepEqual(responses, [[request, { action: "accept" }]]);
+    for (const top of [0, list.scrollHeight - list.clientHeight]) {
+      await act(async () => {
+        list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: top - list.scrollTop, bubbles: true }));
+        list.scrollTop = top;
+        list.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      });
+    }
+    const submit = controls().find((button) => button.textContent === "Submit")!;
+    assert.ok(submit.querySelector(".button-content-spinner"));
+    assert.equal(submit.getAttribute("aria-busy"), "true");
+    assert.equal(container.querySelectorAll(".live-elicitation-card .button-content-spinner").length, 1);
+    assert.ok(controls().every((button) => button.disabled));
+    await act(async () => rejectResponse(new Error("Response was not accepted.")));
+    assert.ok(controls().every((button) => !button.disabled));
+    assert.equal(container.querySelectorAll(".live-elicitation-card .button-content-spinner").length, 0);
+    assert.match(container.textContent ?? "", /Response was not accepted\./);
+  } finally { await mounted.cleanup(); }
+});
+
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(1),
@@ -3226,6 +3405,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       onToggleAgentPicker() {},
       onToggleSkillPicker() {},
       onAddAdditionalDirectory() {},
+      onValidateAdditionalDirectory: async () => ({ valid: true as const }),
       onToggleAdditionalDirectoryList() {},
       onJumpToBottom() {},
       onSelectCustomAgent() {},
@@ -3392,6 +3572,7 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       onToggleAgentPicker() {},
       onToggleSkillPicker() {},
       onAddAdditionalDirectory() {},
+      onValidateAdditionalDirectory: async () => ({ valid: true as const }),
       onToggleAdditionalDirectoryList() {},
       onJumpToBottom() {},
       onSelectCustomAgent() {},
@@ -3648,7 +3829,7 @@ test("SessionActionDockCompactRow は実行中に jump button と Cancel を描�
   assert.match(html, /New messages/);
   assert.match(html, /session-action-dock-compact-actions/);
   assert.ok(html.indexOf("Cancel") < html.indexOf("Jump To Latest"));
-  assert.match(html, />Cancel<\/button>/);
+  assert.equal(new JSDOM(html).window.document.querySelector("button.danger.session-send-button")?.textContent, "Cancel");
   const renderedDocument = new JSDOM(html).window.document;
   const actions = renderedDocument.querySelector(".session-action-dock-compact-actions");
   assert.ok(actions);

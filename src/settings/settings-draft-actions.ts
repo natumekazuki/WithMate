@@ -29,6 +29,7 @@ import {
   updateScrollToLatestOnSend,
   updatePreviewWheelZoomStep,
   updateSessionTurnNotificationEnabled,
+  updateSessionApprovalNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
   updateToolCallPresenceEnabled,
 } from "./settings-draft.js";
@@ -139,6 +140,12 @@ export function handleChangeSessionTurnNotificationEnabled(input: SettingsDraftA
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateSessionTurnNotificationEnabled(current, input.enabled));
+}
+
+export function handleChangeSessionApprovalNotificationEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateSessionApprovalNotificationEnabled(current, input.enabled));
 }
 
 export function handleChangeSessionTurnNotificationResponsePreviewEnabled(input: SettingsDraftActionInput & {

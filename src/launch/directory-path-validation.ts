@@ -1,10 +1,12 @@
 import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window/workspace-directory-validation.js";
 
-export const HOME_LAUNCH_WORKSPACE_VALIDATION_DEBOUNCE_MS = 300;
+export const DIRECTORY_PATH_VALIDATION_DEBOUNCE_MS = 300;
+
+export type DirectoryPathValidationState = "idle" | "debouncing" | "pending" | "valid" | "invalid";
 
 type TimeoutHandle = ReturnType<typeof setTimeout>;
 
-type HomeLaunchWorkspaceValidationControllerOptions = {
+type DirectoryPathValidationControllerOptions = {
   validate: (targetPath: string) => Promise<WorkspaceDirectoryValidationResult>;
   onScheduled: (targetPath: string) => void;
   onValidationStart: (targetPath: string) => void;
@@ -14,20 +16,20 @@ type HomeLaunchWorkspaceValidationControllerOptions = {
   clearTimer?: (handle: TimeoutHandle) => void;
 };
 
-export type HomeLaunchWorkspaceValidationController = {
+export type DirectoryPathValidationController = {
   schedule(targetPath: string): void;
   cancel(): void;
 };
 
-export function createHomeLaunchWorkspaceValidationController({
+export function createDirectoryPathValidationController({
   validate,
   onScheduled,
   onValidationStart,
   onResult,
-  delayMs = HOME_LAUNCH_WORKSPACE_VALIDATION_DEBOUNCE_MS,
+  delayMs = DIRECTORY_PATH_VALIDATION_DEBOUNCE_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
-}: HomeLaunchWorkspaceValidationControllerOptions): HomeLaunchWorkspaceValidationController {
+}: DirectoryPathValidationControllerOptions): DirectoryPathValidationController {
   let generation = 0;
   let timeout: TimeoutHandle | null = null;
 

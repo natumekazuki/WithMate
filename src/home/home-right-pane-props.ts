@@ -26,6 +26,7 @@ type HomeRightPaneHandlers = {
 
 export type HomeRightPanePropsInput = {
   rightPaneView: HomeRightPaneProps["rightPaneView"];
+  approvalMonitorEntries: HomeMonitorEntry[];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
@@ -50,6 +51,7 @@ export type HomeRightPanePropsInput = {
 
 export function buildHomeRightPaneProps({
   rightPaneView,
+  approvalMonitorEntries,
   runningMonitorEntries,
   nonRunningMonitorEntries,
   auxiliaryDataState,
@@ -73,6 +75,7 @@ export function buildHomeRightPaneProps({
 }: HomeRightPanePropsInput): HomeRightPaneProps {
   return {
     rightPaneView,
+    approvalMonitorEntries,
     runningMonitorEntries,
     nonRunningMonitorEntries,
     auxiliaryDataState,

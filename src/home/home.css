@@ -214,17 +214,6 @@
   margin: 0;
 }
 
-.home-mate-spinner {
-  width: 1em;
-  height: 1em;
-  display: inline-block;
-  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: home-session-list-load-spin 760ms linear infinite;
-  vertical-align: -0.15em;
-}
-
 .home-page .home-pane-toggle {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -292,7 +281,7 @@
   --session-dock-splitter-size: 20px;
   display: grid;
   flex: 1 1 auto;
-  grid-template-rows: minmax(48px, 1fr) var(--session-dock-splitter-size) minmax(48px, 1fr);
+  grid-template-rows: minmax(48px, 1fr) var(--session-dock-splitter-size) minmax(48px, 1fr) var(--session-dock-splitter-size) minmax(48px, 1fr);
   min-height: 0;
 }
 
@@ -618,6 +607,24 @@
   color: #79d4df;
 }
 
+.home-page .home-monitor-status-icon.approval {
+  color: #f5cf75;
+}
+
+.home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark {
+  display: inline-grid;
+  place-items: center;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark::before {
+  content: "!";
+}
+
 .home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark {
   border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
   border-top-color: currentColor;
@@ -936,30 +943,10 @@
   height: 16px;
 }
 
-.home-page .home-session-pin-icon.pending {
-  width: 14px;
-  height: 14px;
-  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: home-session-pin-spin 760ms linear infinite;
-}
-
-@keyframes home-session-pin-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .home-page .home-session-pin-button:hover:not(:disabled),
 .home-page .home-session-pin-button.is-active {
   border-color: color-mix(in srgb, var(--card-ink, var(--ink)) 36%, transparent);
   background: color-mix(in srgb, var(--card-ink, var(--ink)) 16%, transparent);
-}
-
-.home-page .home-session-pin-button.is-pending {
-  cursor: wait;
-  opacity: 0.62;
 }
 
 .home-page .home-session-card-open strong,
@@ -1126,64 +1113,8 @@
   border-color: rgba(248, 113, 113, 0.62);
 }
 
-.launch-field-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-}
-
-.home-page .launch-field-error {
-  display: block;
-  min-width: 0;
-  max-width: 72%;
-  height: 1rem;
-  color: #fca5a5;
-  font-size: 0.78rem;
-  line-height: 1rem;
-  overflow: hidden;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.launch-field-input-shell {
-  position: relative;
-}
-
-.workspace-validation-input .launch-field-input {
-  padding-right: 44px;
-}
-
-.workspace-validation-spinner {
-  position: absolute;
-  top: 50%;
-  right: 16px;
-  width: 15px;
-  height: 15px;
-  margin-top: -8px;
-  border: 2px solid rgba(203, 213, 225, 0.28);
-  border-top-color: #cbd5e1;
-  border-radius: 50%;
-  pointer-events: none;
-  animation: workspace-validation-spin 0.7s linear infinite;
-}
-
-@keyframes workspace-validation-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .workspace-validation-spinner,
-  .home-mate-spinner,
   .home-page .home-session-list-load-spinner,
-  .home-page .home-session-pin-icon.pending,
   .home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark,
   .home-page .home-monitor-status-icon.loading .home-monitor-status-icon-mark {
     animation: none;
@@ -1733,15 +1664,6 @@
 .restore-session-windows-button:disabled {
   cursor: not-allowed;
   opacity: 0.58;
-}
-
-.restore-session-windows-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: home-session-list-load-spin 760ms linear infinite;
 }
 
 .session-window-restore-feedback {

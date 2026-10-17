@@ -1049,14 +1049,14 @@ test("Session summary IPC は bounded requestをparseしてpage / Character usag
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxiliary共用のパス入力は所有Session Windowからpreloadと登録済みIPCを通じて実在directoryを選択し、fileは拒否する"
+// claim = "Main/Auxiliary共用のパス入力は所有Session Windowからpreloadと登録済みIPCを通じて実在directoryを選択し、fileとWindowsのdrive未指定rooted pathは拒否する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory By Path; docs/design/electron-window-runtime.md: MainIpcRegistration" }
-// fault = "Sessionのパス入力をHome専用IPCへ接続する、親Session IDを失う、またはfilesystem検証を迂回する"
-// observable = "選択Promiseのdirectory pathとfile入力のreject message"
+// fault = "Sessionのパス入力をHome専用IPCへ接続する、親Session IDを失う、filesystem検証を迂回する、またはdrive未指定入力を許可する"
+// observable = "選択Promiseのdirectory pathとfile・Windows rooted入力のreject message"
 // observation_boundary = "consumer"
 // scope = "共用path adapterから本番preload・登録handler・filesystem validatorまで"
 // lifecycle = "permanent"
-// impact = "Main/Auxiliaryのパス入力追加が全件失敗する主要機能不成立とfileの登録を防ぐ"
+// impact = "パス入力追加の主要機能不成立、fileの登録、検証時とconsumer利用時で許可driveが変わる登録を防ぐ"
 // distinction = "単体API mockと型検査では検出できないsender認可とIPC配線を、既存fileのread-only検証で低コストに確認する"
 // @end-test-value
 test("Additional Directoryのパス入力はSessionから実preloadと登録IPCで検証できる", async () => {
@@ -1086,6 +1086,15 @@ test("Additional Directoryのパス入力はSessionから実preloadと登録IPC�
   await assert.rejects(selectAdditionalDirectoryPath({
     sessionId: "session-1", directoryPath: fileURLToPath(import.meta.url), initialPath: null, api,
   }), { message: "Not a directory." });
+  if (process.platform === "win32") {
+    const rootedPath = directoryPath.slice(2);
+    assert.deepEqual(await service.validate(rootedPath), { valid: true });
+    for (const input of [rootedPath, rootedPath.replaceAll("\\", "/")]) {
+      await assert.rejects(selectAdditionalDirectoryPath({
+        sessionId: "session-1", directoryPath: input, initialPath: null, api,
+      }), { message: "Enter an absolute path." });
+    }
+  }
 });
 
 // @test-value v2
@@ -1129,7 +1138,8 @@ test("Additional Directory検証IPCは所有Sessionだけを認可しHome専用A
     send() {},
   };
   const api = createWithMateWindowApi(ipcRenderer as never);
-  assert.deepEqual(await api.validateSessionAdditionalDirectory("session-1", "/outside/shared"), { valid: true });
+  const directoryPath = fileURLToPath(new URL("./", import.meta.url));
+  assert.deepEqual(await api.validateSessionAdditionalDirectory("session-1", directoryPath), { valid: true });
   await assert.rejects(api.validateWorkspaceDirectory("/outside/private"), /only available from the Home window/);
   for (const sessionId of ["session-2", "unknown"]) {
     await assert.rejects(api.validateSessionAdditionalDirectory(sessionId, "/outside/private"), /only available from the target Session window/);
@@ -1141,7 +1151,45 @@ test("Additional Directory検証IPCは所有Sessionだけを認可しHome専用A
     sender = unauthorized;
     await assert.rejects(api.validateSessionAdditionalDirectory("session-1", "/outside/private"), /only available from the target Session window/);
   }
-  assert.deepEqual(validated, ["/outside/shared"]);
+  assert.deepEqual(validated, [directoryPath]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "WindowsのAdditional Directory入力はdrive未指定rooted pathをfilesystem検証前に拒否し、drive付き・UNC入力は既存validatorへ渡す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory By Path" }
+// fault = "rooted pathを許可directoryとして登録する、またはdrive付き・UNCの完全修飾pathまで拒否する"
+// observable = "登録IPCのvalidation結果とfilesystem validatorが受け取ったpath集合"
+// observation_boundary = "public-boundary"
+// scope = "WindowsのAdditional Directory検証IPCのpath形式境界。実在性判定は既存validatorに委譲する"
+// lifecycle = "permanent"
+// impact = "検証時とconsumer利用時で許可driveが変わる登録と、通常の完全修飾入力の利用不能を防ぐ"
+// distinction = "型やbuildでは検出できないWindows pathの形式とvalidator委譲を、network share接続なしの軽量fixtureで継続確認する"
+// @end-test-value
+test("WindowsのAdditional Directory入力はdrive付きとUNCだけをfilesystem検証へ渡す", { skip: process.platform !== "win32" }, async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const validated: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => owner,
+    resolveSessionWindow: () => owner,
+    validateWorkspaceDirectory: async (targetPath: unknown) => {
+      validated.push(targetPath);
+      return { valid: true };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL);
+  assert.ok(handler);
+  for (const targetPath of ["\\Windows", "/Windows", "\\", "/", "\\\\server"]) {
+    assert.deepEqual(await handler({}, "session-1", targetPath), { valid: false, reason: "not-absolute" });
+  }
+  assert.deepEqual(validated, []);
+  const qualifiedPaths = ["C:\\作業\\shared folder", "D:/shared", "\\\\server\\share", "//server/share/folder"];
+  for (const targetPath of qualifiedPaths) {
+    assert.deepEqual(await handler({}, "session-1", targetPath), { valid: true });
+  }
+  assert.deepEqual(validated, qualifiedPaths);
 });
 
 test("workspace validation IPC は Home window だけから validation service を呼べる", async () => {

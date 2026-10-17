@@ -30,9 +30,9 @@ import {
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
 import {
-  createHomeLaunchWorkspaceValidationController,
-  type HomeLaunchWorkspaceValidationController,
-} from "./home-launch-workspace-validation.js";
+  createDirectoryPathValidationController,
+  type DirectoryPathValidationController,
+} from "../launch/directory-path-validation.js";
 import { resolveSelectedLaunchProviderDraftId } from "../launch/launch-provider-selection.js";
 import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildHomeMateProfileHandlers } from "./home-mate-profile-handlers.js";
@@ -83,6 +83,7 @@ import {
   type MateStorageState,
 } from "../../src-shared/mate/mate-state.js";
 import { buildHomeMateSetupContentProps } from "../mate/home-mate-setup-props.js";
+import type { MateAvatarAction } from "../mate/MateSetupPanel.js";
 import { buildMateStatusRefreshers } from "../mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home-icons.js";
@@ -182,13 +183,13 @@ export default function HomeApp() {
   const [mateProfile, setMateProfile] = useState<MateProfile | null>(null);
   const [mateDisplayName, setMateDisplayName] = useState("");
   const [mateCreating, setMateCreating] = useState(false);
-  const [mateAvatarUpdating, setMateAvatarUpdating] = useState(false);
+  const [mateAvatarAction, setMateAvatarAction] = useState<MateAvatarAction>(null);
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
   const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
   const settingsDirtyRef = useRef(false);
   const persistedSettingsDraftRef = useRef<AppSettings | null>(null);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
-  const workspaceValidationControllerRef = useRef<HomeLaunchWorkspaceValidationController | null>(null);
+  const workspaceValidationControllerRef = useRef<DirectoryPathValidationController | null>(null);
   const sessionQueryGenerationRef = useRef<HomeSessionQueryGeneration | null>(null);
   const pageRequestsRef = useRef(new Map<"recent" | "pinned", object>());
   if (sessionQueryGenerationRef.current === null) {
@@ -205,7 +206,7 @@ export default function HomeApp() {
     sessionQueryGeneration: sessionQueryGenerationRef.current,
   });
   if (workspaceValidationControllerRef.current === null) {
-    workspaceValidationControllerRef.current = createHomeLaunchWorkspaceValidationController({
+    workspaceValidationControllerRef.current = createDirectoryPathValidationController({
       validate: async (targetPath) => (
         await withWithMateApi((api) => api.validateWorkspaceDirectory(targetPath))
         ?? { valid: false, reason: "unavailable" }
@@ -240,7 +241,7 @@ export default function HomeApp() {
     setMateState,
     setMateProfile,
     setMateDisplayName,
-    setMateAvatarUpdating,
+    setMateAvatarAction,
   });
 
   const loadMoreSessionSummaryPage = async (scope: "recent" | "pinned", retry = false): Promise<void> => {
@@ -577,11 +578,12 @@ export default function HomeApp() {
 
     const monitorRunStates = new Map<string, LiveSessionRunStatus>();
     const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRunStatus((sessionId, status) => {
-      const nextState = { runState: status?.runState, cancellationState: status?.cancellationState };
+      const nextState = { runState: status?.runState, cancellationState: status?.cancellationState, approvalPending: status?.approvalPending };
       const previousState = monitorRunStates.get(sessionId);
       if (previousState
         && previousState.runState === nextState.runState
-        && previousState.cancellationState === nextState.cancellationState) return;
+        && previousState.cancellationState === nextState.cancellationState
+        && previousState.approvalPending === nextState.approvalPending) return;
       monitorRunStates.set(sessionId, nextState);
       // Notifications invalidate snapshots; only fresh Main queries supply the display state.
       void refreshSessionSummaries("preserve");
@@ -616,6 +618,7 @@ export default function HomeApp() {
   const {
     filteredSessionEntries,
     normalizedSessionSearch,
+    approvalMonitorEntries,
     runningMonitorEntries,
     nonRunningMonitorEntries,
     monitorRunningEmptyMessage,
@@ -752,7 +755,7 @@ export default function HomeApp() {
     setMateCreationFeedback,
     setMateProfileEditorOpen,
     setMateCreating,
-    setMateAvatarUpdating,
+    setMateAvatarAction,
     setLaunchFeedback,
     refreshSessionSummaries: async () => {
       await refreshSessionSummaries("preserve");
@@ -886,7 +889,7 @@ export default function HomeApp() {
       mateProfile,
       mateDisplayName,
       mateCreating,
-      mateAvatarUpdating,
+      mateAvatarAction,
       mateCreationFeedback,
       onChangeDisplayName: mateProfileHandlers.onChangeDisplayName,
       onSubmit: mateProfileHandlers.onSubmit,
@@ -896,6 +899,7 @@ export default function HomeApp() {
       onClearAvatar: mateProfileHandlers.onClearAvatar,
     }),
     monitorContent: buildHomeMonitorContentProps({
+      approvalEntries: approvalMonitorEntries,
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
       auxiliaryDataState,
@@ -938,6 +942,7 @@ export default function HomeApp() {
     }),
     rightPane: buildHomeRightPaneProps({
       rightPaneView,
+      approvalMonitorEntries,
       runningMonitorEntries,
       nonRunningMonitorEntries,
       auxiliaryDataState,

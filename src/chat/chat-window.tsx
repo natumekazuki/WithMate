@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentProps,
@@ -9,6 +10,7 @@ import {
   type MouseEventHandler,
   type PointerEventHandler,
   type ReactNode,
+  type RefObject,
   type SetStateAction,
 } from "react";
 
@@ -103,6 +105,7 @@ export type ConcurrentChatWindowProps = {
   target: "main" | "auxiliary";
   widthRatio: number;
   scrollToLatestOnSend?: boolean;
+  captureMessageListSendRef?: RefObject<((sessionId: string) => (() => void)) | null>;
   onSelectAuxiliary: (id: string) => void;
   onAddAuxiliary?: () => void;
   isAddAuxiliaryDisabled?: boolean;
@@ -576,14 +579,16 @@ export function ChatWindow({
   const targetColumnControls = rawTargetColumnControls?.sessionId === targetSessionId
     ? rawTargetColumnControls
     : null;
-  const targetComposerSend = concurrentChats && targetColumnControls
-    ? () => {
-      if (!composerProps.isRunning && !composerProps.isSendDisabled) {
-        targetColumnControls.handleMessageListSend(concurrentChats.scrollToLatestOnSend ?? true);
-      }
-      composerProps.onSendOrCancel();
-    }
-    : composerProps.onSendOrCancel;
+  const captureMessageListSendRef = concurrentChats?.captureMessageListSendRef;
+  useLayoutEffect(() => {
+    if (!captureMessageListSendRef) return;
+    captureMessageListSendRef.current = (sessionId) => {
+      const controls = [mainColumnControlsRef.current, auxiliaryColumnControlsRef.current]
+        .find((candidate) => candidate?.sessionId === sessionId);
+      return controls?.captureMessageListSend(concurrentChats?.scrollToLatestOnSend ?? true) ?? (() => {});
+    };
+    return () => { captureMessageListSendRef.current = null; };
+  }, [captureMessageListSendRef, concurrentChats?.scrollToLatestOnSend]);
   const resolvedHeaderProps = concurrentChats
     ? {
       ...headerProps,
@@ -806,7 +811,7 @@ export function ChatWindow({
               externalErrorDescriptionIds={[composerProps.externalErrorDescriptionIds, composerErrorDescriptionIds].filter(Boolean).join(" ") || undefined}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
               onJumpToBottom={targetColumnControls?.followLatest ?? composerProps.onJumpToBottom}
-              onSendOrCancel={targetComposerSend}
+              onSendOrCancel={composerProps.onSendOrCancel}
               skillButtonRef={skillButtonRef}
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}
