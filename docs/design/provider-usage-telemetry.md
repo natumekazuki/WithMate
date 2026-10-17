@@ -14,11 +14,11 @@ Copilotの件数snapshotと、Codex・Claudeの`rateLimits`を分ける。後者
 
 ## 共通の残量表示
 
-HomeのMonitorと独立Monitorは共通の`HomeMonitorContent`上部に、有効providerごとの詳細icon・名前・通常枠の残率を表示する。Running／Stoppedのscrollとは独立する。Session WindowはAction Dock上端の専用1行に、Main／Auxiliaryの現在の送信対象providerだけを表示する。Prompt／Terminal／compactで同じ場所を維持し、常時表示ではprovider名とRemaining labelを省く。詳細iconは先頭の固定幅領域に置き、割合と期間を折り返さない。
+HomeのMonitorと独立Monitorは共通の`HomeMonitorContent`上部に、有効providerごとの詳細icon・名前・通常枠の残率を表示する。Running／Stoppedのscrollとは独立する。Session WindowはAction Dockの最上段操作欄に、Main／Auxiliaryの現在の送信対象providerだけを表示する。Promptでは添付操作群とCancel予約領域の間、Terminal／compactでは操作欄の先頭に置き、専用段は追加しない。常時表示ではprovider名とRemaining labelを省く。詳細iconは先頭の固定幅領域に置き、割合と期間を折り返さない。残量部分の幅が足りない場合はその部分だけ横scrollでき、keyboardからも到達できる。操作欄全体が収まらない狭幅では既存操作の折り返しを許容する。
 
 `src/provider-usage/`がcache購読、残率projection、一覧と詳細popupを所有する。使用率は`100 - usedPercentage`へ変換し、既存の`remainingPercentage`はそのまま使う。不正値は`—`とし、0／100／無制限を推測しない。Codexの標準bucketとClaudeの5時間・週間を通常表示し、追加bucket・モデル別枠は詳細に分離する。CopilotはAI credits系を優先し、premium系等の主snapshotを通常表示する。返却されない期間を追加せず、別枠の合算をしない。
 
-詳細popupにはprovider、各枠の残率、取得できたreset、最終成功時刻を表示する。未取得・loading・適用外・失敗を識別し、失敗時に前回値があれば値と失敗indicatorを併記する。ClaudeはCLI側account枠で、Session認証と異なる可能性があることを明示する。詳細はkeyboardで開閉できる。
+詳細popupの通常表示はprovider、各枠の残率、有効なreset時刻に絞る。未取得のreset欄、繰り返しのRemaining label、取得経路の説明、通常時の更新日時は表示しない。未取得・loading・適用外・失敗は短い状態表示で識別し、失敗時に前回値があれば値・失敗indicator・前回値であること・最終成功時刻を併記する。cache read失敗時はRetryを維持する。詳細はkeyboardで開閉できる。
 
 新UIのsnapshotは`getProviderQuotaTelemetry(providerId, { cacheOnly: true })`で読み、購読通知を反映する。遅い初回snapshotで通知や送信先変更後の表示を巻き戻さない。Window追加・focus・詳細開閉に伴うremote取得やrendererの独自pollingは行わない。Copilotの既存Context表示向けsnapshot取得は従来のstale時refreshを維持する。
 

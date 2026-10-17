@@ -110,10 +110,10 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
 
 // @test-value v2
 // kind = "contract"
-// claim = "Prompt/Terminal切替はPreview/Sourceの右に置かれ、非表示入力をinertにしてdraft・selection・Terminal subtreeを保持し、compactから同じPromptを選んでもfocusする"
+// claim = "Prompt/Terminal切替はPreview/Sourceの右に置かれ、非表示入力をinertにしてdraft・selection・Terminal subtreeを保持し、compactから同じPromptを選んでもfocusし、quota入口を表示中の操作列へ1件だけ配置する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock Prompt / Terminal切替" }
-// fault = "mode切替で入力やTerminal subtreeを再mountする、非表示入力を操作可能に残す、またはPrompt復帰時にfocus・selectionを失う"
-// observable = "switchのDOM順序・aria-pressed、入力surfaceのinert、textarea同一性・値・selection・focus、Terminal subtreeの同一性"
+// fault = "mode切替で入力やTerminal subtreeを再mountする、非表示入力を操作可能に残す、Prompt復帰時にfocus・selectionを失う、quota入口を非表示面へ置くか複数mountする"
+// observable = "switchのDOM順序・aria-pressed、入力surfaceのinert、textarea同一性・値・selection・focus、Terminal subtreeの同一性、quota入口の所属surfaceと件数"
 // observation_boundary = "component-behavior"
 // scope = "chat-window-action-dock-mode"
 // lifecycle = "permanent"
@@ -141,6 +141,7 @@ test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", 
         isActionDockExpanded: expanded,
         actionDockModeControl: { mode, onChange: (value) => { setMode(value); setExpanded(true); } },
         terminalContent: React.createElement("div", { "data-terminal-subtree": true }, "Terminal"),
+        providerQuota: React.createElement("button", { "aria-label": "Quota details" }, "i"),
       }),
     );
   }
@@ -154,6 +155,13 @@ test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", 
     const terminalSurface = document.querySelector<HTMLElement>(".session-action-dock-terminal-content")!;
     const terminal = document.querySelector("[data-terminal-subtree]")!;
     const textarea = promptSurface.querySelector("textarea")!;
+    const assertQuotaSurface = (surface: Element) => {
+      const buttons = document.querySelectorAll('[aria-label="Quota details"]');
+      assert.equal(buttons.length, 1);
+      assert.ok(surface.contains(buttons[0]));
+      assert.equal(buttons[0].closest("[inert]"), null);
+    };
+    assertQuotaSurface(promptSurface.querySelector(".composer-attachments-toolbar")!);
     textarea.focus();
     textarea.setSelectionRange(2, 7);
     const switchGroup = promptSurface.querySelector('[aria-label="Action dock mode"]')!;
@@ -164,9 +172,11 @@ test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", 
     await act(async () => buttons[1].click());
     assert.equal(promptSurface.hasAttribute("inert"), true);
     assert.equal(terminalSurface.hasAttribute("inert"), false);
+    assertQuotaSurface(terminalSurface.querySelector(".session-action-dock-compact-row")!);
     assert.equal(document.querySelector("[data-terminal-subtree]"), terminal);
     assert.equal(terminalSurface.querySelectorAll('[aria-label="Action dock mode"] button')[1].getAttribute("aria-pressed"), "true");
     await act(async () => document.querySelector<HTMLButtonElement>("[data-collapse-dock]")!.click());
+    assertQuotaSurface(document.querySelector(".session-action-dock-compact-content")!);
     const compactTerminal = document.querySelector<HTMLButtonElement>('.session-action-dock-compact-content [aria-label="Action dock mode"] button:last-child')!;
     await act(async () => compactTerminal.click());
     assert.equal(terminalSurface.hasAttribute("inert"), false);
@@ -174,6 +184,7 @@ test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", 
     assert.equal(document.querySelector("[data-terminal-subtree]"), terminal);
     await act(async () => terminalSurface.querySelector<HTMLButtonElement>('[aria-label="Action dock mode"] button')!.click());
     assert.equal(promptSurface.hasAttribute("inert"), false);
+    assertQuotaSurface(promptSurface.querySelector(".composer-attachments-toolbar")!);
     assert.equal(terminalSurface.hasAttribute("inert"), true);
     assert.equal(promptSurface.querySelector("textarea"), textarea);
     assert.equal(textarea.value, "draft to retain");

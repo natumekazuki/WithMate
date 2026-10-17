@@ -29,13 +29,13 @@ export function ProviderQuota({ api, providerId, showProviderName = false }: {
         onClick={(event) => {
           event.stopPropagation();
           const rect = event.currentTarget.getBoundingClientRect();
-          const width = Math.min(360, window.innerWidth - 24);
+          const width = Math.min(300, window.innerWidth - 24);
           setPosition({ width, left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
             ...(rect.top > window.innerHeight / 2 ? { bottom: window.innerHeight - rect.top + 8, top: "auto" }
               : { top: rect.bottom + 8, bottom: "auto" }) });
         }}><span aria-hidden="true">i</span></button>
       {showProviderName ? <span className="provider-quota-name">{name}</span> : null}
-      <span className="provider-quota-values" aria-label={`${name} remaining quota`}>
+      <span className="provider-quota-values" aria-label={`${name} remaining quota`} tabIndex={showProviderName ? undefined : 0}>
         {summary.length ? summary.map((window, index) => (
           <span key={window.key}>{index ? <span aria-hidden="true"> · </span> : null}{window.label} {window.remaining}</span>
         )) : <span title={status || "See Details"}>{loading ? null : windows.length ? "See Details" : "—"}</span>}
@@ -46,19 +46,19 @@ export function ProviderQuota({ api, providerId, showProviderName = false }: {
           <div className="provider-quota-detail-head"><h3>{name}</h3>
             <CloseButton ariaLabel="Close Quota Details" onClose={() => document.getElementById(id)?.hidePopover()} />
           </div>
-          {failed ? <p role="status">{windows.length ? "Update failed. Showing the last successful values." : "Quota could not be loaded."}</p> : null}
+          {failed ? <p role="status">{windows.length ? "Update Failed · Previous Values" : "Update Failed"}</p> : null}
           {readStatus === "error" ? <button type="button" className="drawer-toggle compact secondary" onClick={retry}>Retry</button> : null}
-          {telemetry?.status === "error" ? <p className="provider-quota-note">Automatic refresh will retry.</p> : null}
           {loading ? <LoadingIndicator label={`${name} quota loading`} inline /> : null}
           {!loading && !failed && status ? <p>{status}</p> : null}
-          <dl className="provider-quota-detail-list">
+          <dl className="provider-quota-detail-list" aria-label={`${name} remaining quota details`}>
             {windows.map((window) => <div key={window.key}>
-              <dt>{window.label}</dt><dd>{window.remaining} Remaining</dd>
-              <dt>Resets</dt><dd>{formatQuotaTimestamp(window.resetDate)}</dd>
+              <dt>{window.label}</dt><dd>{window.remaining}</dd>
+              {window.resetDate && Number.isFinite(Date.parse(window.resetDate)) ? <>
+                <dt>Resets</dt><dd>{formatQuotaTimestamp(window.resetDate)}</dd>
+              </> : null}
             </div>)}
           </dl>
-          <p className="provider-quota-note">Updated {formatQuotaTimestamp(telemetry?.updatedAt)}</p>
-          {providerId === "claude" ? <p className="provider-quota-note">CLI account quota; session authentication may differ.</p> : null}
+          {failed && windows.length && telemetry?.updatedAt ? <p className="provider-quota-note">Updated {formatQuotaTimestamp(telemetry.updatedAt)}</p> : null}
       </section>
     </div>
   );

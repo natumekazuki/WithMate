@@ -787,7 +787,7 @@ export function ChatWindow({
       concurrentTarget={concurrentChats?.target}
       actionDock={(
           <div
-            className={`session-action-dock${isActionDockExpanded ? "" : " compact"}${providerQuota ? " has-provider-quota" : ""}`}
+            className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}
             onClick={isActionDockExpanded ? undefined : (event) => {
               if (event.defaultPrevented || (event.target as Element).closest("button")) {
                 return;
@@ -796,7 +796,6 @@ export function ChatWindow({
               else compactActionDockProps.onExpand();
             }}
           >
-          {providerQuota ? <div className="session-provider-quota-strip" onClick={(event) => event.stopPropagation()}>{providerQuota}</div> : null}
           <div
             className={`session-action-dock-content session-action-dock-expanded-content${
               isActionDockExpanded && !isTerminalMode ? " is-active" : ""
@@ -806,6 +805,7 @@ export function ChatWindow({
           >
             <SessionComposerExpanded
               {...composerProps}
+              providerQuota={isActionDockExpanded && !isTerminalMode ? providerQuota : null}
               externalErrorDescriptionIds={[composerProps.externalErrorDescriptionIds, composerErrorDescriptionIds].filter(Boolean).join(" ") || undefined}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
               onJumpToBottom={targetColumnControls?.followLatest ?? composerProps.onJumpToBottom}
@@ -827,6 +827,7 @@ export function ChatWindow({
           >
             <SessionActionDockCompactRow
               {...compactActionDockProps}
+              providerQuota={!isActionDockExpanded ? providerQuota : null}
               onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
               showMessageViewModeControls={showMessageViewModeControls}
@@ -841,6 +842,7 @@ export function ChatWindow({
               aria-hidden={!isActionDockExpanded || !isTerminalMode} inert={!isActionDockExpanded || !isTerminalMode}>
               <SessionActionDockCompactRow
                 {...compactActionDockProps}
+                providerQuota={isActionDockExpanded && isTerminalMode ? providerQuota : null}
                 showExpandControl={false}
                 showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
                 onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}

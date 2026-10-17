@@ -65,7 +65,7 @@ test("quotaは残率に統一し未知値と追加枠を分離する", () => {
 // claim = "quota UIはcacheだけを購読し、通知優先とprovider切替の失効を守り、前回値・失敗・適用外を区別する"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md#共通の残量表示" }
 // fault = "遅い初回readや旧provider通知が現在値を巻き戻す、Window表示やfocusでremote取得を要求する、失敗や適用外を100%と表示する"
-// observable = "表示残率・popupの前回値説明と時刻・不明表示・error indicator・cacheOnly引数・購読解除"
+// observable = "表示残率・popupの期間別残率/reset/前回値状態と時刻・不明表示・error indicator・cacheOnly引数・購読解除"
 // observation_boundary = "component-behavior"
 // scope = "ProviderQuotaのsnapshot/通知/切替/unmount lifecycle"
 // lifecycle = "permanent"
@@ -100,7 +100,7 @@ test("quota UIは通知と送信先を優先し、失敗時も値と状態を区
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "5h 70%");
     assert.ok(element.querySelector('[aria-label="Codex quota update failed"]'));
     const detail = dom.window.document.querySelector("[popover]")!;
-    assert.match(detail.textContent ?? "", /Showing the last successful values/);
+    assert.match(detail.textContent ?? "", /Update Failed · Previous Values/);
     assert.match(detail.textContent ?? "", /Updated Oct 17, 2026/);
     const button = element.querySelector("button")!;
     assert.equal(button.getAttribute("popovertarget"), detail.id);
@@ -115,7 +115,7 @@ test("quota UIは通知と送信先を優先し、失敗時も値と状態を区
     await act(async () => second.reject(new Error("late read")));
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "—");
     assert.equal(element.querySelector(".provider-quota-values span")?.getAttribute("title"), "Not Supported");
-    assert.match(dom.window.document.querySelector("[popover]")?.textContent ?? "", /CLI account quota/);
+    assert.match(dom.window.document.querySelector("[popover]")?.textContent ?? "", /Not Supported/);
     assert.deepEqual(reads, [["codex", { cacheOnly: true }], ["claude", { cacheOnly: true }]]);
     await emit("claude", quota("claude", 0));
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "5h 100%");
@@ -123,6 +123,13 @@ test("quota UIは通知と送信先を優先し、失敗時も値と状態を区
     await act(async () => oldListener("codex", quota("codex", 99)));
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "5h 100%");
     assert.equal(element.querySelector('[aria-label="Claude quota loading"]'), null);
+    const withReset = quota("claude", 0);
+    withReset.rateLimits!.push({ quotaKey: "seven_day", usedPercentage: 25, windowDurationMinutes: 10080, resetDate: "2026-10-20T05:00:00Z" });
+    await emit("claude", withReset);
+    const rows = Array.from(element.querySelectorAll(".provider-quota-detail-list > div"));
+    assert.deepEqual(rows.map((row) => [row.querySelector("dt")?.textContent, row.querySelector("dd")?.textContent]), [["5h", "100%"], ["7d", "75%"]]);
+    assert.match(rows[1]?.textContent ?? "", /ResetsOct 20, 2026/);
+    assert.equal(element.querySelector(".provider-quota-values")?.getAttribute("tabindex"), "0");
     await emit("claude", null);
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "—");
   } finally {

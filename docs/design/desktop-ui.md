@@ -316,7 +316,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
   - 常に全幅の下dockとして置く
-  - Agent Sessionはdock上端の専用1行に送信対象providerの期間別残率を表示する。詳細iconは左端固定で、provider名とRemaining labelは常時表示せず詳細へ置く。Prompt／Terminal／compactを切り替えても同じ位置を維持し、既存操作列へ押し込んで折り返さない。Main／Auxiliary切替時は送信対象へ追従し、詳細と取得状態は[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
+  - Agent Sessionは最上段操作欄に送信対象providerの期間別残率を表示する。Promptでは添付操作群とCancel予約領域の間、Terminal／compactでは操作欄の先頭へ置き、専用段は増やさない。詳細iconは残量表示の左端に固定し、provider名とRemaining labelは常時表示しない。残量部分は1行を保ち、狭ければ横scrollする。操作欄全体が収まらない場合は既存操作の折り返しを許容する。Main／Auxiliary切替時は送信対象へ追従し、最小限の詳細と取得状態は[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
   - Agent Sessionでは`Preview / Source`の右に同じ表示形式の`Prompt / Terminal`切替を置き、押したmodeを展開する。初期選択はPrompt。既定shortcutはWindows／Linuxの`Ctrl+Shift+T`、macOSの`Cmd+Shift+T`で、Settingsから変更できる。composerと端末本文のどちらにfocusがあっても切り替えられ、IME変換中とkey repeatでは発火しない
   - PromptとTerminalは同時表示せず、非表示側をinertにしてmountを維持する。Promptのdraft・selectionとTerminalのタブ・出力・PTYを保持し、Promptへ戻るとcomposerへ、Terminalを選ぶと選択端末へfocusする。splitterで再展開した時は選択modeを維持する。Quote／参照挿入などcomposerを開く操作はPromptへ戻す
   - compact では末尾移動とmessage表示切替を必要に応じて操作列に残す。draft入力と`Send`はPromptのexpandedで表示し、実行中indicatorはmessage listに置く

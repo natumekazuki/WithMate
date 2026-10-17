@@ -1,17 +1,34 @@
-.session-action-dock.has-provider-quota {
-  grid-template-rows: 28px minmax(0, 1fr);
-  gap: 0;
-}
-
-.session-provider-quota-strip {
-  grid-area: 1 / 1;
+.session-provider-quota-slot {
   display: flex;
   align-items: center;
-  padding: 0 6px 4px;
+  min-width: 104px;
   cursor: default;
 }
 
-.session-action-dock.has-provider-quota > .session-action-dock-content { grid-area: 2 / 1; }
+.composer-attachments-toolbar > .session-provider-quota-slot { flex: 1 1 104px; }
+
+.session-action-dock-compact-row.has-provider-quota {
+  grid-template-columns: minmax(104px, max-content) minmax(0, 1fr) auto;
+}
+
+.session-provider-quota-slot .provider-quota {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.session-provider-quota-slot .provider-quota-values {
+  min-width: 0;
+  overflow-x: auto;
+  line-height: 18px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--muted) transparent;
+}
+
+.session-provider-quota-slot .provider-quota-values:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: -2px;
+}
 
 .provider-quota-overview {
   display: grid;
@@ -80,7 +97,7 @@
 
 .provider-quota-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .provider-quota-detail-head h3 { margin: 0; font-size: 14px; }
-.provider-quota-detail-list { display: grid; gap: 12px; }
+.provider-quota-detail-list { display: grid; gap: 12px; margin-bottom: 0; }
 .provider-quota-detail-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
 .provider-quota-detail-list dt { color: var(--muted); overflow-wrap: anywhere; }
 .provider-quota-detail-list dd { margin: 0; text-align: right; }

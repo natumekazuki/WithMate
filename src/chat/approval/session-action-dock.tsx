@@ -43,6 +43,7 @@ export type SessionActionDockCompactRowProps = {
   isCanceling?: boolean;
   targetDock?: ReactNode;
   dockModeSwitch?: ReactNode;
+  providerQuota?: ReactNode;
   showExpandControl?: boolean;
   chatNotice?: string;
   showJumpToBottom: boolean;
@@ -60,6 +61,7 @@ export function SessionActionDockCompactRow({
   isCanceling = false,
   targetDock = null,
   dockModeSwitch = null,
+  providerQuota = null,
   showExpandControl = true,
   chatNotice,
   showJumpToBottom,
@@ -72,7 +74,8 @@ export function SessionActionDockCompactRow({
   onMessageViewModeChange = () => {},
 }: SessionActionDockCompactRowProps) {
   return (
-    <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}`}>
+    <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}${providerQuota ? " has-provider-quota" : ""}`}>
+      {providerQuota ? <div className="session-provider-quota-slot" onClick={(event) => event.stopPropagation()}>{providerQuota}</div> : null}
       {showExpandControl ? <button
         className="session-action-dock-compact-meta session-action-dock-compact-expand-button"
         type="button"

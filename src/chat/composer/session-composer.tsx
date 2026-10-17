@@ -69,6 +69,7 @@ export type SessionComposerExpandedProps = {
   submissionError?: string;
   targetDock?: ReactNode;
   dockModeSwitch?: ReactNode;
+  providerQuota?: ReactNode;
   chatNotice?: string;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
@@ -159,6 +160,7 @@ export function SessionComposerExpanded({
   submissionError,
   targetDock = null,
   dockModeSwitch = null,
+  providerQuota = null,
   chatNotice,
   composerBlocked,
   canSelectCustomAgent,
@@ -307,6 +309,7 @@ export function SessionComposerExpanded({
     showMessageViewModeControls ||
     showJumpToBottom ||
     !!targetDock ||
+    !!providerQuota ||
     !!chatNotice ||
     isRunning;
 
@@ -457,6 +460,7 @@ export function SessionComposerExpanded({
               </button>
             </div>
           ) : null}
+          {providerQuota ? <div className="session-provider-quota-slot">{providerQuota}</div> : null}
           {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock || dockModeSwitch ? (
             <div className="composer-toolbar-view-actions">
               <div
