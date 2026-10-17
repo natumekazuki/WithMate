@@ -481,7 +481,7 @@ export function InlineQuestionContent({ text, records = [], requests = [], rende
   text: string;
   records?: readonly ElicitationRecord[];
   requests?: readonly LiveElicitationRequest[];
-  renderText: (text: string, key: string) => ReactNode;
+  renderText: (text: string, key: string, sourceStart: number) => ReactNode;
 } & Omit<LiveElicitationCardProps, "request">) {
   const entries = records.map((record) => ({ record, request: requests.find((request) => request.requestId === record.requestId) }));
   for (const request of requests) {
@@ -498,13 +498,13 @@ export function InlineQuestionContent({ text, records = [], requests = [], rende
     if (!request && valid && range.end > range.start) continue;
     const start = valid ? range.start : text.length;
     const end = valid ? range.end : start;
-    if (start > offset) fragments.push(renderText(text.slice(offset, start), `text-${offset}-before-${record.requestId}`));
+    if (start > offset) fragments.push(renderText(text.slice(offset, start), `text-${offset}-before-${record.requestId}`, offset));
     fragments.push(<Fragment key={record.requestId}>{request
       ? <LiveElicitationCard {...cardProps} request={request} />
       : <ElicitationRecords records={[record]} />}</Fragment>);
     offset = end;
   }
-  if (offset < text.length) fragments.push(renderText(text.slice(offset), `text-${offset}`));
+  if (offset < text.length) fragments.push(renderText(text.slice(offset), `text-${offset}`, offset));
   return <>{fragments}</>;
 }
 

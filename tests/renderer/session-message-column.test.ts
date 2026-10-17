@@ -1525,6 +1525,86 @@ test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "質問で分割された本文のFindはsource/previewの一致番号を維持して前後の本文を強調・移動し、質問解決後も検索できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 全履歴Findのsource/preview検索意味とglobal ordinal" }
+// fault = "最初の本文断片しか検索しない、フォームの文字を数える、または置換中の質問分だけ後続本文の一致番号をずらす"
+// observable = "Find件数、CSS HighlightのRange内容と現在Rangeの所属本文、前後移動時のscrollIntoView対象"
+// observation_boundary = "component-behavior"
+// scope = "inline question message Find"
+// lifecycle = "permanent"
+// impact = "質問以降の検索結果に到達できず、会話の情報を見失う"
+// distinction = "既存Find testは質問による本文分割と質問原文の置換を通らない。2質問形式と2表示modeの短いDOM操作で公開検索契約を守る"
+// @end-test-value
+test("質問前後のFindは本文の一致番号で強調・移動し解決後も保持する", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+    add(range: Range) { this.ranges.push(range); return this; }
+  }
+  for (const kind of ["tool", "source"] as const) {
+    for (const messageViewMode of ["preview", "source"] as const) {
+      const before = "Before **needle**\n\n";
+      const question = kind === "source" ? "Which needle?\n\n" : "";
+      const text = `${before}${question}After **needle**`;
+      const request: LiveElicitationRequest = {
+        ...createLiveElicitationRequest(), kind: "question",
+        fields: [{ type: "text", name: "answer", title: "Which needle?", required: true }],
+      };
+      function Column(props: SessionMessageColumnProps) {
+        return React.createElement(SessionMessageColumn, {
+          ...props, messageKeys: ["body"], pendingResponseMessageKey: props.isRunning ? "body" : null,
+        });
+      }
+      const message: Message = { role: "assistant", text, elicitationRecords: [{
+        requestId: request.requestId, kind: "question", message: "needle",
+        fields: [{ title: "Which needle?", options: ["needle option"] }],
+        textRange: { start: before.length, end: before.length + question.length }, status: "pending",
+      }] };
+      const mounted = await mountSessionMessageColumn({
+        component: Column, messages: [message], isRunning: true,
+        liveElicitationRequest: request, messageViewMode,
+      });
+      try {
+        const highlights = new Map<string, TestHighlight>();
+        Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
+        Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+        let scrolledText = "";
+        mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () { scrolledText = this.closest(".rich-text")?.textContent ?? ""; };
+        await setMessageFindQuery(mounted, "needle");
+        const total = kind === "source" ? 3 : 2;
+        assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, `1/${total}`);
+        assert.deepEqual(highlights.get("withmate-find-match")?.ranges.map(range => range.toString()), ["needle", "needle"]);
+        assert.match(scrolledText, /Before/);
+        const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!;
+        const previous = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']")!;
+        for (let step = 1; step < total; step += 1) await act(async () => next.click());
+        const assertAfter = () => {
+          assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, `${total}/${total}`);
+          const range = highlights.get("withmate-find-current")?.ranges[0];
+          assert.equal(range?.toString(), "needle");
+          assert.ok(range);
+          const prefix = mounted.dom.window.document.createRange();
+          prefix.selectNodeContents(range.startContainer.parentElement!.closest(".rich-text")!);
+          prefix.setEnd(range.startContainer, range.startOffset);
+          assert.match(prefix.toString(), /After/);
+          assert.match(scrolledText, /After/);
+        };
+        assertAfter();
+        for (let step = 1; step < total; step += 1) await act(async () => previous.click());
+        assert.match(scrolledText, /Before/);
+        for (let step = 1; step < total; step += 1) await act(async () => next.click());
+        await mounted.rerender({
+          isRunning: false, liveElicitationRequest: null,
+          messages: [{ ...message, elicitationRecords: message.elicitationRecords!.map(record => ({ ...record, status: "answered" })) }],
+        });
+        assertAfter();
+        assert.equal(highlights.get("withmate-find-match")?.ranges.length, total);
+      } finally { await mounted.cleanup(); }
+    }
+  }
+});
+
 test("SessionMessageColumn の検索は表示文字列とpendingを同じ順序で数え現在位置をclampする", async () => {
   class TestHighlight {
     readonly ranges: Range[] = [];

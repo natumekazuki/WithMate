@@ -965,15 +965,23 @@ export function SessionMessageColumn({
       let pendingHighlightsAppended = false;
       for (const row of messageListElement.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
         const messageIndex = Number(row.dataset.index);
-        const richText = row.querySelector<HTMLElement>("[data-message-body=\"true\"] > .rich-text");
-        if (!Number.isInteger(messageIndex) || !richText) {
+        const body = row.querySelector<HTMLElement>("[data-message-body=\"true\"]:not([data-pending-message-body])");
+        if (!Number.isInteger(messageIndex) || !body) {
           continue;
         }
-        const index = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
-        const matches = findRenderedTextMatchOffsets(index, findQuery);
-        appendRenderedTextMatches(resolvedMatches, index, matches);
-        if (current?.kind === "message" && current.messageIndex === messageIndex) {
-          resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, current.occurrenceIndex);
+        for (const richText of body.querySelectorAll<HTMLElement>(":scope > .rich-text")) {
+          const index = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+          const matches = findRenderedTextMatchOffsets(index, findQuery);
+          appendRenderedTextMatches(resolvedMatches, index, matches);
+          if (current?.kind === "message" && current.messageIndex === messageIndex) {
+            // Count the original prefix, including a question currently replaced by controls.
+            // Form labels and inserted tool-only questions do not belong to the message body.
+            const sourceStart = Number(richText.dataset.sourceStart ?? 0);
+            const prefix = sourceStart > 0 ? messages[messageIndex].text.slice(0, sourceStart) : "";
+            const prefixText = messageViewMode === "source" || !prefix ? prefix : projectMessageRenderedSearchText(prefix);
+            const precedingMatches = findTextMatches(prefixText, findQuery).length;
+            resolvedCurrentMatch ??= resolveRenderedTextMatch(index, matches, current.occurrenceIndex - precedingMatches);
+          }
         }
         if (messageIndex === pendingMessageGroupEndIndex) {
           pendingHighlightsAppended = appendPendingHighlights(row);
@@ -999,6 +1007,8 @@ export function SessionMessageColumn({
     findQuery,
     isContentActive,
     messageFindMatches,
+    messages,
+    messageViewMode,
     selectedFindMatch?.kind,
     selectedFindMatch?.occurrenceIndex,
     selectedFindMatch?.kind === "message" ? selectedFindMatch.messageIndex : -1,
@@ -1101,7 +1111,7 @@ export function SessionMessageColumn({
         elicitationActionRequestId={elicitationActionRequestId}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
-        renderText={(text, key) => <MessageRichText key={key} text={text} isStreaming={isRunning}
+        renderText={(text, key, sourceStart) => <MessageRichText key={key} text={text} sourceStart={sourceStart} isStreaming={isRunning}
           resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath}
           markdownLinkFileContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
           glossaryAnnotationScopeKey={`${sessionId}:pending`} onActivateGlossaryEntry={onActivateGlossaryEntry} />}
@@ -1361,8 +1371,9 @@ export function SessionMessageColumn({
                             elicitationActionRequestId={elicitationActionRequestId}
                             onResolveLiveElicitation={onResolveLiveElicitation}
                             onOpenPath={onOpenPath}
-                            renderText={(text, key) => <MessageRichText
+                            renderText={(text, key, sourceStart) => <MessageRichText
                               key={key}
+                              sourceStart={sourceStart}
                               resolveImageSource={resolveImageSource}
                               text={text}
                               isStreaming={isRunning && absoluteIndex === pendingResponseMessageIndex}

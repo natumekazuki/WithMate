@@ -36,6 +36,7 @@ export type MessageViewMode = "preview" | "source";
 
 type MessageRichTextProps = {
   text: string;
+  sourceStart?: number;
   className?: string;
   forceFullRender?: boolean;
   isStreaming?: boolean;
@@ -78,6 +79,7 @@ function useStreamingMarkdownText(text: string, isStreaming: boolean, forceFullR
 
 function MessageMarkdownPreview({
   text,
+  sourceStart,
   className = "message-body",
   forceFullRender = false,
   isStreaming = false,
@@ -198,6 +200,7 @@ function MessageMarkdownPreview({
     <div
       className={`${className} rich-text`.trim()}
       data-markdown-render-mode="full"
+      data-source-start={sourceStart}
     >
       <MessageGlossaryAnnotationProvider
         controller={glossaryAnnotations.controller}
@@ -227,7 +230,7 @@ function MessageRichTextComponent({
   if (displayMode === "source") {
     const className = props.className ?? "message-body";
     return (
-      <pre className={`${className} rich-text message-source-text`.trim()}>
+      <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={props.sourceStart}>
         {props.text}
       </pre>
     );
