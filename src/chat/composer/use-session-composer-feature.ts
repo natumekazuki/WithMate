@@ -584,8 +584,9 @@ export function useSessionComposerFeature(input: {
         : undefined,
       onAddAdditionalDirectory,
       onValidateAdditionalDirectory: async (directoryPath) => {
-        if (!input.api) throw new Error("Directory validation is unavailable.");
-        return input.api.validateSessionAdditionalDirectory(bridge.session.id, directoryPath);
+        const windowSessionId = input.selectedSessionId;
+        if (!input.api || !windowSessionId) throw new Error("Directory validation is unavailable.");
+        return input.api.validateSessionAdditionalDirectory(windowSessionId, directoryPath);
       },
       onToggleAdditionalDirectoryList: toggleAdditionalDirectoryList,
       onExpandActionDock: bridge.operations.layout.expandActionDock,
