@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import type { ProviderQuotaTelemetry } from "../../src-shared/session/runtime-state.js";
 import { ProviderQuota, ProviderQuotaOverview } from "../../src/provider-usage/provider-quota.js";
+import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { projectQuotaRemaining } from "../../src/provider-usage/provider-quota-projection.js";
@@ -190,6 +191,77 @@ test("quota一覧は有効provider集合へ追従する", async () => {
     await act(async () => root.unmount());
     assert.equal(settingsListeners.size, 0);
     assert.equal(quotaListeners.size, 0);
+    dom.window.close();
+    keys.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Monitorの残量欄は初期表示で開き、共通splitterで閉じても一覧を保ち、再描画で開かず、再展開時には最新cacheの残率を表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "開閉操作を無視する、状態更新で閉じた欄を開く、一覧を再mountする、または再展開時に古い残率やremote取得を使う"
+// observable = "splitterのaria-expanded・aria-controls、残量領域のhidden属性、再表示した残率、一覧DOM同一性とscrollTop、cacheOnly引数"
+// observation_boundary = "component-behavior"
+// scope = "Homeと独立Monitorの共通HomeMonitorContentからProviderQuotaOverviewへの開閉とcache再購読"
+// lifecycle = "permanent"
+// impact = "複数Sessionを監視する一覧の場所を失わず、残量を必要時に再確認できる"
+// distinction = "既存quota購読testとRunning/Stopped配分testでは残量欄の開閉を通らない。1つのDOM testで復帰を確認し、実高さとkeyboard操作は実描画で確認する"
+// @end-test-value
+test("Monitorの残量欄は開閉状態と一覧を維持し、再展開で最新cacheを表示する", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "https://withmate.local" });
+  const keys = ["window", "document", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const previous = keys.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  [dom.window, dom.window.document, dom.window.HTMLElement, true].forEach((value, index) => Object.defineProperty(globalThis, keys[index], { configurable: true, value }));
+  let currentQuota = quota("codex", 20);
+  const reads: Parameters<ProviderQuotaApi["getProviderQuotaTelemetry"]>[] = [];
+  const api = {
+    getAppSettings: async () => createDefaultAppSettings(),
+    subscribeAppSettings: () => () => {},
+    getProviderQuotaTelemetry: async (...args: Parameters<ProviderQuotaApi["getProviderQuotaTelemetry"]>) => {
+      reads.push(args);
+      return currentQuota;
+    },
+    subscribeProviderQuotaTelemetry: () => () => {},
+  };
+  const element = dom.window.document.getElementById("root")!;
+  const root = createRoot(element);
+  const render = (feedback = "") => root.render(<HomeMonitorContent
+    providerQuota={<ProviderQuotaOverview api={api} />}
+    runningEntries={[]} nonRunningEntries={[]} feedback={feedback}
+    onOpenSession={() => {}} onShowContextMenu={() => {}}
+  />);
+  try {
+    await act(async () => render());
+    const splitter = element.querySelector<HTMLButtonElement>('[aria-label="Collapse Provider Quotas"]')!;
+    assert.ok(splitter);
+    assert.equal(splitter.getAttribute("aria-expanded"), "true");
+    const region = dom.window.document.getElementById(splitter.getAttribute("aria-controls")!)!;
+    assert.equal(region.hidden, false);
+    assert.equal(region.querySelector(".provider-quota-values")?.textContent, "5h 80%");
+    const list = element.querySelector<HTMLDivElement>(".home-monitor-list")!;
+    list.scrollTop = 42;
+
+    await act(async () => splitter.click());
+    assert.equal(splitter.getAttribute("aria-expanded"), "false");
+    assert.equal(splitter.getAttribute("aria-label"), "Expand Provider Quotas");
+    assert.equal(region.hidden, true);
+    assert.equal(element.querySelector(".home-monitor-list"), list);
+    assert.equal(list.scrollTop, 42);
+    await act(async () => render("Updated status"));
+    assert.equal(splitter.getAttribute("aria-expanded"), "false");
+    assert.equal(region.hidden, true);
+
+    currentQuota = quota("codex", 45);
+    await act(async () => splitter.click());
+    assert.equal(splitter.getAttribute("aria-expanded"), "true");
+    assert.equal(region.hidden, false);
+    assert.equal(region.querySelector(".provider-quota-values")?.textContent, "5h 55%");
+    assert.equal(element.querySelector(".home-monitor-list"), list);
+    assert.equal(list.scrollTop, 42);
+    assert.deepEqual(reads, [["codex", { cacheOnly: true }], ["codex", { cacheOnly: true }]]);
+  } finally {
+    await act(async () => root.unmount());
     dom.window.close();
     keys.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
   }

@@ -112,7 +112,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Monitor`
   - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
   - 初期表示は `Monitor`
-  - 共通`HomeMonitorContent`の先頭に有効providerの残量一覧を置く。詳細icon・provider名・期間別残率の順で1行ずつ表示し、詳細iconは左端固定とする。Running／Stoppedの一覧scrollとは独立し、独立Monitorにも同じ構成を適用する。詳細と取得状態は[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
+  - 共通`HomeMonitorContent`の先頭に有効providerの残量一覧を置く。詳細icon・provider名・期間別残率の順で1行ずつ表示し、詳細iconは左端固定とする。Running／Stoppedの一覧scrollとは独立し、独立Monitorにも同じ構成を適用する。残量一覧の直下にはSession Headerと同じclick開閉のみの細いsplitterを置き、dragによる高さ変更は行わない。初期状態は開き、閉じるとsplitterのみを残して一覧へ高さを戻す。開閉状態は表示中のMonitor内だけで保持する。詳細と取得状態は[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
   - 意味のある親Session cardを2行まとまりで表示する。1行目はdisclosure、avatar、親title、2行目は`Main`と、Auxiliaryが存在する場合だけ`Aux`の状態アイコンを表示し、装飾目的の入れ子cardは作らない
   - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`RecentSessions` と同じ filtered session list の交差集合を使う
   - section

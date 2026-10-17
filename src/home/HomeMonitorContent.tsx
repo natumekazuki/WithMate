@@ -110,6 +110,8 @@ export function HomeMonitorContent({
 }: HomeMonitorContentProps) {
   const [expandedEntryKeys, setExpandedEntryKeys] = useState<Set<string>>(() => new Set());
   const [runningRatio, setRunningRatio] = useState(0.5);
+  const [isQuotaExpanded, setIsQuotaExpanded] = useState(true);
+  const quotaId = useId();
   const resizeStartRef = useRef<{ ratio: number; height: number } | null>(null);
   const sectionsId = useId();
   const sectionsRef = useRef<HTMLDivElement>(null);
@@ -305,7 +307,22 @@ export function HomeMonitorContent({
       className="home-monitor-body"
       aria-busy={isLoading}
     >
-      {providerQuota}
+      {providerQuota ? (
+        <div className="home-monitor-quota">
+          <div id={quotaId} hidden={!isQuotaExpanded}>
+            {isQuotaExpanded ? providerQuota : null}
+          </div>
+          <ChatDockSplitter
+            edge="top"
+            className="home-monitor-quota-splitter"
+            isPanelExpanded={isQuotaExpanded}
+            ariaControls={quotaId}
+            ariaLabel={isQuotaExpanded ? "Collapse Provider Quotas" : "Expand Provider Quotas"}
+            title={isQuotaExpanded ? "Click to collapse Provider Quotas" : "Click to expand Provider Quotas"}
+            onTogglePanel={() => setIsQuotaExpanded((current) => !current)}
+          />
+        </div>
+      ) : null}
       {statusFeedback ? hasReadError ? (
         <LoadError message={statusFeedback} onRetry={onRetry} retryDisabled={isLoading} className="home-session-list-feedback" />
       ) : (

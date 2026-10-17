@@ -34,8 +34,6 @@
   display: grid;
   flex: 0 0 auto;
   gap: 4px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--line);
 }
 
 .provider-quota {

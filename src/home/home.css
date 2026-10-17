@@ -282,10 +282,20 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 14px;
+  gap: 0;
   min-height: 0;
   overflow: hidden;
   position: relative;
+}
+
+.home-page .home-monitor-quota {
+  --session-dock-splitter-size: 20px;
+  display: grid;
+  flex: 0 0 auto;
+}
+
+.home-page .home-monitor-body > .home-session-list-feedback {
+  margin-bottom: 14px;
 }
 
 .home-page .home-monitor-sections {
@@ -302,6 +312,8 @@
   overflow: hidden;
 }
 
+.home-page .home-monitor-quota-splitter:hover::before,
+.home-page .home-monitor-quota-splitter:focus-visible::before,
 .home-page .home-monitor-splitter:hover::before,
 .home-page .home-monitor-splitter:focus-visible::before {
   background: rgba(111, 140, 255, 0.6);
