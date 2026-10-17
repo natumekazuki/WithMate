@@ -165,7 +165,7 @@ function claudeQuestionRequest(requestId: string, input: Record<string, unknown>
       : { type: "select", name: String(index), title, required: true, options: choices, allowFreeText: true };
     return [selection];
   });
-  return { requestId, provider: "claude", mode: "form", message: "Claude has a question", fields };
+  return { requestId, provider: "claude", kind: "question", mode: "form", message: "Claude has a question", fields };
 }
 
 function mcpElicitationRequest(requestId: string, request: ElicitationRequest): LiveElicitationRequest | null {
@@ -438,9 +438,10 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         if (toolName === "AskUserQuestion") {
           if (!input.onElicitationRequest) return { behavior: "deny", message: "Question UI is unavailable" };
           try {
+            const textPosition = redactor.sanitizeText(liveText(trace)).length;
             const answer = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async (signal) => {
-              elicitationRequest = redactor.sanitize(claudeQuestionRequest(requestId, toolInput));
-              void progress().catch(() => undefined);
+              elicitationRequest = { ...redactor.sanitize(claudeQuestionRequest(requestId, toolInput)), textPosition };
+              await progress();
               try { return await input.onElicitationRequest!(elicitationRequest, signal); }
               finally { elicitationRequest = null; void progress().catch(() => undefined); }
             });
@@ -474,10 +475,11 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         if (!input.onElicitationRequest || controller.signal.aborted) return { action: "decline" };
         const projected = redactor.sanitize(mcpElicitationRequest(context.requestId, request));
         if (!projected) return { action: "decline" };
+        projected.textPosition = redactor.sanitizeText(liveText(trace)).length;
         try {
           const answer = await enqueueInteraction(AbortSignal.any([controller.signal, context.signal]), async (signal) => {
             elicitationRequest = projected;
-            void progress().catch(() => undefined);
+            await progress();
             try { return await input.onElicitationRequest!(projected, signal); }
             finally { elicitationRequest = null; void progress().catch(() => undefined); }
           });

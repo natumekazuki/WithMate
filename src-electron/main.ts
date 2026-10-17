@@ -2734,9 +2734,9 @@ function requireSessionApprovalService(): SessionApprovalService {
 function requireSessionElicitationService(): SessionElicitationService {
   if (!sessionElicitationService) {
     sessionElicitationService = new SessionElicitationService({
-      sendUserMessage: async (sessionId, turnId, message) => {
+      sendUserMessage: async (sessionId, turnId, message, answer) => {
         const runtime = await resolveQueueSessionRuntime(sessionId);
-        await runtime.steerSessionTurn(sessionId, { expectedTurnId: turnId, userMessage: message });
+        await runtime.answerSessionQuestion(sessionId, turnId, message, answer);
       },
       notifyQuestion: (sessionId, signal) => {
         void notifyLiveCodexQuestion(sessionId, signal).catch((error: unknown) => {

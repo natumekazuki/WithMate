@@ -21,6 +21,42 @@ const mcpMethod = "mcpServer/elicitation/request";
 
 // @test-value v2
 // kind = "contract"
+// claim = "native質問を閉じると正規の空回答を返し、blockingの有無によらず受信位置を保持した後続要求を処理できる"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
+// fault = "Closeをprotocol errorへ変換してturnを終了させるか、後続要求を処理しない"
+// observable = "元RPCへの空answers応答、後続RPCへの回答と表示位置、fatal error callback"
+// observation_boundary = "consumer"
+// scope = "Codex native question-only dismissal"
+// lifecycle = "permanent"
+// impact = "質問を閉じただけで実行中turnが失敗する"
+// distinction = "turn abortのtestではユーザーのClose後に同じturnが継続できることを確認できない"
+// @end-test-value
+test("native Close returns empty answers and continues serving requests", async () => {
+  for (const blocking of [true, false]) {
+    let count = 0;
+    const failures: unknown[] = [];
+    const positions: Array<number | undefined> = [];
+    const helper = new CodexTurnInteractions({ onElicitationRequest: (ui) => {
+      positions.push(ui.textPosition);
+      return ++count === 1 ? { action: "cancel" } : { action: "accept", content: { q: "continue" } };
+    } }, undefined, error => failures.push(error));
+    const closed = request(1, inputMethod, { isBlocking: blocking, questions: [question("q")] });
+    const next = request(2, inputMethod, { isBlocking: blocking, questions: [question("q")] });
+    closed.wire.textPosition = 12;
+    next.wire.textPosition = 80_000;
+    try {
+      helper.accept(closed.wire); helper.accept(next.wire);
+      await setImmediate();
+      assert.deepEqual(closed.results, [{ answers: {} }]);
+      assert.deepEqual(JSON.parse(JSON.stringify(next.results)), [{ answers: { q: { answers: ["continue"] } } }]);
+      assert.deepEqual([...closed.errors, ...next.errors, ...failures], []);
+      assert.deepEqual(positions, [12, 80_000]);
+    } finally { helper.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "native Codex質問だけがquestion種別を持ち、blocking/nonblocking両方を通知対象として識別できる"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
 // fault = "native質問の種別を落とすかMCP入力要求もquestionとして投影する"

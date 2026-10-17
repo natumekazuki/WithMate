@@ -159,6 +159,8 @@ export type LiveElicitationField =
 
 export type LiveElicitationRequest = {
   requestId: string;
+  sourceItemId?: string;
+  textPosition?: number;
   provider: string;
   kind?: "question";
   delivery?: "user-message";
@@ -173,6 +175,9 @@ export type LiveElicitationRequest = {
 
 export type ElicitationRecord = {
   requestId: string;
+  kind?: "question";
+  sourceItemId?: string;
+  textRange?: { start: number; end: number };
   message: string;
   fields: Array<{ title: string; description?: string; options?: string[] }>;
   status: "pending" | "answered" | "declined" | "canceled" | "expired";
@@ -186,6 +191,7 @@ export type LiveSessionRunState = {
   inputAvailable?: boolean;
   cancellationState?: "requested" | "terminating";
   assistantText: string;
+  assistantQuestionRanges?: AssistantQuestionRange[];
   reasoningText?: string;
   steps: LiveRunStep[];
   backgroundTasks: LiveBackgroundTask[];
@@ -196,6 +202,8 @@ export type LiveSessionRunState = {
   elicitationRequests?: LiveElicitationRequest[];
   elicitationRecords?: ElicitationRecord[];
 };
+
+export type AssistantQuestionRange = { itemId: string; start: number; end: number };
 
 export type ProviderQuotaSnapshot = {
   quotaKey: string;

@@ -2941,10 +2941,10 @@ test("ConversationMessageColumn は履歴スクロールを挟んでも elicitat
 
 // @test-value v2
 // kind = "contract"
-// claim = "会話pageの移動は同じelicitation requestの未送信回答を保持して送信する"
+// claim = "質問の会話pageを離れて戻っても同じrequestの未送信回答を保持し、質問は元の会話位置で送信できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Elicitationの入力待ち" }
 // fault = "最新pageから過去pageへ移動した際に未送信回答を初期値へ戻す"
-// observable = "過去pageのDOM内select値とSubmit応答payload"
+// observable = "過去pageでのフォーム非表示と最新pageへ戻ったDOM内select値、Submit応答payload"
 // observation_boundary = "component-behavior"
 // scope = "conversation-paging-elicitation"
 // lifecycle = "permanent"
@@ -2967,6 +2967,8 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
     assert.ok(select);
     await act(async () => { select.value = "feature"; select.dispatchEvent(new mounted.dom.window.Event("change", { bubbles: true })); });
     await mounted.rerender({ messages: createMessages(60).map((message) => ({ ...message, text: `Earlier ${message.text}` })), isRunning: false });
+    assert.equal(mounted.container.querySelector(".live-elicitation-card"), null, "過去pageの先頭へ質問を移動しない");
+    await mounted.rerender({ messages: createMessages(60), isRunning: true });
     const after = mounted.container.querySelector<HTMLSelectElement>(".live-elicitation-card select");
     assert.ok(after);
     assert.equal(after.value, "feature");
@@ -2975,6 +2977,42 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
     await act(async () => submit.click());
     assert.deepEqual(responses, [[request, { action: "accept", content: { branch: "feature" } }]]);
   } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryの実会話投影で質問を応答本文の該当位置へ一度だけ表示し、回答後は元本文を復元する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "共通質問componentへの配線漏れにより末尾へ重複表示するか、後続本文や解決済みの質問を失う"
+// observable = "実ConversationMessageColumnの質問前後のDOM順序、フォーム数、解決後の本文"
+// observation_boundary = "component-behavior"
+// scope = "Main/Auxiliary inline question integration"
+// lifecycle = "permanent"
+// impact = "会話中の質問位置と文脈が変わり、質問に回答できない"
+// distinction = "InlineQuestionContent単体の描画はconversationのowner判定とlive recordの受け渡しを通らない"
+// @end-test-value
+test("Main/Auxiliaryの会話へ質問範囲を接続し回答後に本文へ戻す", async () => {
+  for (const messageSourceKind of ["session", "auxiliary"] as const) {
+    const request: LiveElicitationRequest = { ...createLiveElicitationRequest(), kind: "question", fields: [{ type: "text", name: "branch", title: "Which branch?", required: true }] };
+    function Column(props: SessionMessageColumnProps) {
+      return React.createElement(ConversationMessageColumn, {
+        session: { id: messageSourceKind, messages: props.messages, runState: "running" }, messageSourceKind, enabled: true,
+        baseProps: { ...props, liveElicitationRecords: [{ requestId: request.requestId, kind: "question", message: "Question", fields: [{ title: "Which branch?" }], textRange: { start: 8, end: 21 }, status: props.liveElicitationRequest ? "pending" : "answered" }] },
+      });
+    }
+    const mounted = await mountSessionMessageColumn({ component: Column, messages: [{ role: "user", text: "Start" }], isRunning: true, liveRunAssistantText: "Before\n\nWhich branch?\n\nAfter", liveElicitationRequest: request });
+    try {
+      const body = mounted.container.querySelector('.message-row.assistant [data-message-body]');
+      assert.ok(body);
+      assert.deepEqual([...body.children].map(node => node.textContent?.trim()), ["Before", "Which branch?CloseSubmit", "After"]);
+      assert.equal(mounted.container.querySelectorAll('.live-elicitation-card').length, 1);
+      await mounted.rerender({ liveElicitationRequest: null });
+      const resolvedBody = mounted.container.querySelector('.message-row.assistant [data-message-body]');
+      assert.ok(resolvedBody);
+      assert.equal(resolvedBody.querySelectorAll('input,button').length, 0);
+      assert.match(resolvedBody.textContent ?? "", /Before\s*Which branch\?\s*After/);
+    } finally { await mounted.cleanup(); }
+  }
 });
 
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {

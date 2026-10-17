@@ -24,6 +24,7 @@ export type CodexProjectionEvent = { changed: boolean; errorMessage?: string };
 export type CodexProjectionFinal = {
   items: CodexTurnItem[];
   assistantText: string;
+  assistantQuestionRanges?: LiveSessionRunState["assistantQuestionRanges"];
   lastNonEmptyAssistantMessageText: string;
   rawItemsJson?: string;
   providerMetadata: ProviderDiagnosticMetadata[];
@@ -36,6 +37,7 @@ export type CodexProjectionCommand =
   | { type: "event"; event: CodexNativeNotification }
   | { type: "events"; events: CodexNativeNotification[] }
   | { type: "live"; inputAvailable: boolean; force?: boolean }
+  | { type: "question-position" }
   | { type: "finish"; diagnostics: BoundedProviderRawItem[] }
   | { type: "release" };
 export type CodexProjectionRequest = { id: number; runId: string; command: CodexProjectionCommand };

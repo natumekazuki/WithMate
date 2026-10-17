@@ -1,7 +1,7 @@
 import { createProviderAgentRuntimeBindingRedactor, type ProviderAgentRuntimeBindingRedactor } from "../provider-agent-runtime-binding.js";
-import { stringifyBoundedProviderRawItems } from "../../session/provider-payload-limits.js";
+import { PROVIDER_TEXT_PREVIEW_LIMIT, stringifyBoundedProviderRawItems } from "../../session/provider-payload-limits.js";
 import { buildCodexStableRawItems, buildCodexProviderMetadata } from "./codex-event-projection.js";
-import { applyCodexTurnEvent, collectCodexAssistantResponseFromItems, createCodexTurnStreamState, getLiveCodexAssistantPreview, getLiveCodexReasoningPreview, type CodexNativeNotification } from "./codex-turn-events.js";
+import { applyCodexTurnEvent, collectCodexAssistantResponseFromItems, collectCodexQuestionRanges, createCodexTurnStreamState, getLiveCodexAssistantPreview, getLiveCodexReasoningPreview, type CodexNativeNotification } from "./codex-turn-events.js";
 import type { CodexProjectionStart, CodexProjectionProgress, CodexProjectionFinal, CodexProjectionEvent } from "./codex-projection-protocol.js";
 import type { BoundedProviderRawItem } from "../../session/provider-payload-limits.js";
 
@@ -40,6 +40,7 @@ export class CodexProjectionOwner {
     return {
       sessionId: this.input.sessionId, threadId: this.input.threadId, turnId: this.input.turnId,
       assistantText, reasoningText: this.reasoningText, steps,
+      assistantQuestionRanges: collectCodexQuestionRanges(this.state.items.values(), this.assistantSource, this.redactor.sanitizeText, PROVIDER_TEXT_PREVIEW_LIMIT),
       backgroundTasks: [], usage: this.state.usage,
       errorMessage: this.redactor.sanitizeText(this.state.streamErrorMessage),
       approvalRequest: null, elicitationRequest: null,
@@ -82,6 +83,11 @@ export class CodexProjectionOwner {
       state: { ...this.frame(steps.snapshot), inputAvailable },
       changes: { snapshot: false, steps: steps.changes, backgroundTasks: { upserts: [], removes: [] } },
     };
+  }
+
+  questionPosition(): number {
+    const { assistantText } = collectCodexAssistantResponseFromItems(this.state.items.values());
+    return this.redactor.sanitizeText(assistantText).length;
   }
 
   finish(diagnostics: BoundedProviderRawItem[]): CodexProjectionFinal {

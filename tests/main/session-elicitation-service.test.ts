@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { SessionElicitationService } from "../../src-electron/session/session-elicitation-service.js";
 import { normalizeMessage } from "../../src-shared/session/session-state.js";
+import { placeElicitationRecords } from "../../src-shared/session/question-placement.js";
 import type { LiveElicitationRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 
 function createLiveRunState(): LiveSessionRunState {
@@ -18,6 +19,35 @@ function createLiveRunState(): LiveSessionRunState {
     elicitationRequest: null,
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "本文質問の範囲消失時は古い位置を破棄し、tool受信位置と確定範囲を保存用message正規化で保持する"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md: elicitationRecords" }
+// fault = "本文質問を末尾に重複追加する、別IDの補正を適用する、または保存時に質問位置を失う"
+// observable = "live recordの位置、final範囲適用後にnormalizeした永続record"
+// observation_boundary = "consumer"
+// scope = "question placement persistence"
+// lifecycle = "permanent"
+// impact = "終了後・再読込後に質問履歴の順序が変わる"
+// distinction = "provider rangeとrendererの単体検査ではserviceのrecord生成、範囲補正helper、保存用正規化それぞれの位置契約を確認できない"
+// @end-test-value
+test("質問のsource範囲とtool受信位置を永続recordへ保持する", async () => {
+  let state = { ...createLiveRunState(), assistantText: "before\n\nQuestion", assistantQuestionRanges: [{ itemId: "item", start: 8, end: 16 }] };
+  const service = new SessionElicitationService({ updateLiveSessionRun: (_id, recipe) => { state = recipe(state) as typeof state; return state; }, sendUserMessage: async () => {} });
+  const request: LiveElicitationRequest = { requestId: "source", sourceItemId: "item", kind: "question", provider: "codex", mode: "form", message: "Question", fields: [{ type: "text", name: "q", title: "Question", required: true }] };
+  const controller = new AbortController();
+  const waits = [service.waitForLiveElicitationResponse("s", request, controller.signal), service.waitForLiveElicitationResponse("s", { ...request, requestId: "tool", sourceItemId: undefined, textPosition: 27 }, controller.signal)];
+  assert.deepEqual(state.elicitationRecords?.map(record => record.textRange), [{ start: 8, end: 16 }, { start: 27, end: 27 }]);
+  controller.abort(); await Promise.all(waits);
+  const previewRecords = placeElicitationRecords(state.elicitationRecords, []);
+  assert.deepEqual(previewRecords?.map(record => record.textRange), [undefined, { start: 27, end: 27 }]);
+  const records = placeElicitationRecords(previewRecords, [{ itemId: "item", start: 20, end: 28 }]);
+  const stored = normalizeMessage(JSON.parse(JSON.stringify({ role: "assistant", text: "longer source text\n\nQuestion", elicitationRecords: records })));
+  assert.deepEqual(stored?.elicitationRecords?.map(record => [record.kind, record.textRange, record.status]), [
+    ["question", { start: 20, end: 28 }, "expired"], ["question", { start: 27, end: 27 }, "expired"],
+  ]);
+});
 
 // @test-value v2
 // kind = "contract"
@@ -81,13 +111,13 @@ test("非同期回答は受付後に確定し失敗時はフォームを維持�
   let state = createLiveRunState();
   let release!: () => void;
   let fail!: (reason: Error) => void;
-  let sent: { sessionId: string; turnId: string; message: string } | undefined;
+  let sent: { sessionId: string; turnId: string; message: string; answer: string } | undefined;
   let notification!: AbortSignal;
   const service = new SessionElicitationService({
     updateLiveSessionRun: (_id, recipe) => { state = recipe(state); return state; },
     notifyQuestion: (_id, signal) => { notification = signal; },
-    sendUserMessage: async (sessionId, turnId, message) => {
-      sent = { sessionId, turnId, message };
+    sendUserMessage: async (sessionId, turnId, message, answer) => {
+      sent = { sessionId, turnId, message, answer };
       await new Promise<void>((resolve, reject) => { release = resolve; fail = reject; });
     },
   });
@@ -101,7 +131,7 @@ test("非同期回答は受付後に確定し失敗時はフォームを維持�
   const rejected = assert.rejects(Promise.resolve(first), /not accepted/);
   assert.throws(() => service.resolveLiveElicitation("session-1", request.requestId, { action: "accept" }), /already being sent/);
   await Promise.resolve();
-  assert.deepEqual(sent, { sessionId: "session-1", turnId: "turn-one", message: "Which scope?\nFocused" });
+  assert.deepEqual(sent, { sessionId: "session-1", turnId: "turn-one", message: "【質問】\nWhich scope?\n【回答】\nFocused", answer: "Focused" });
   assert.equal(state.elicitationRecords?.[0]?.status, "pending");
   assert.equal(notification.aborted, false);
   fail(new Error("not accepted"));

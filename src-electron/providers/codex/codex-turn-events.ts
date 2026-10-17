@@ -1,6 +1,7 @@
 import type {
   ProviderUsage,
   LiveRunStep,
+  AssistantQuestionRange,
 } from "../../../src-shared/session/runtime-state.js";
 import {
   PROVIDER_TEXT_PREVIEW_LIMIT,
@@ -135,17 +136,41 @@ const textCaches = new WeakMap<CodexTurnStreamState, {
 
 export function collectCodexAssistantResponseFromItems(
   items: Iterable<CodexTurnItem>,
-): { assistantText: string; lastNonEmptyAssistantMessageText: string } {
-  const parts = Array.from(items)
+): { assistantText: string; lastNonEmptyAssistantMessageText: string; assistantQuestionRanges: AssistantQuestionRange[] } {
+  const entries = Array.from(items);
+  const parts = entries
     .filter(
       (item): item is Extract<CodexTurnItem, { type: "agentMessage" }> =>
         item.type === "agentMessage" && item.text.trim().length > 0,
     )
     .map((item) => item.text);
+  const assistantText = parts.join("\n\n");
   return {
-    assistantText: parts.join("\n\n"),
+    assistantText,
+    assistantQuestionRanges: collectCodexQuestionRanges(entries, assistantText),
     lastNonEmptyAssistantMessageText: parts.at(-1) ?? "",
   };
+}
+
+export function collectCodexQuestionRanges(
+  items: Iterable<CodexTurnItem>,
+  text: string,
+  sanitize: (value: string) => string = (value) => value,
+  limit = text.length,
+): AssistantQuestionRange[] {
+  const ranges: AssistantQuestionRange[] = [];
+  let offset = 0;
+  for (const item of items) {
+    if (item.type !== "agentMessage" || !item.text.trim()) continue;
+    const start = offset;
+    const end = start + item.text.length;
+    if (item.delivery === "async" && item.questions?.length && end <= limit) {
+      ranges.push({ itemId: item.id, start: sanitize(text.slice(0, start)).length, end: sanitize(text.slice(0, end)).length });
+    }
+    offset = end + 2;
+    if (offset > limit) break;
+  }
+  return ranges;
 }
 export function createCodexTurnStreamState(
   threadId: string | null,
@@ -329,6 +354,7 @@ function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput =
         : item.aggregatedOutput,
     };
   }
+  const previousItem = state.items.get(item.id);
   state.items.set(item.id, item);
   const cache = textCaches.get(state)!;
   let order = cache.order.get(item.id);
@@ -338,6 +364,8 @@ function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput =
   }
   let changed = cache.assistant.set(item.id, order,
     item.type === "agentMessage" && item.text.trim().length > 0 ? item.text : "");
+  if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length
+    && (previousItem?.type !== "agentMessage" || previousItem.delivery !== "async" || !previousItem.questions?.length)) changed = true;
   changed = cache.reasoning.set(item.id, order,
     item.type === "reasoning" ? [...item.summary, ...item.content].join("\n") : "") || changed;
   const step = liveStep(item);

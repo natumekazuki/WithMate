@@ -376,6 +376,10 @@ function normalizeElicitationRecords(value: unknown): ElicitationRecord[] | unde
     records.push({
       requestId: record.requestId,
       message: record.message,
+      ...(record.kind === "question" ? { kind: record.kind } : {}),
+      ...(record.textRange && Number.isSafeInteger(record.textRange.start) && Number.isSafeInteger(record.textRange.end)
+        && record.textRange.start >= 0 && record.textRange.end >= record.textRange.start
+        ? { textRange: { start: record.textRange.start, end: record.textRange.end } } : {}),
       status: record.status === "pending" ? "expired" : record.status!,
       fields: record.fields.filter((field) => field && typeof field.title === "string").map((field) => ({
         title: field.title,

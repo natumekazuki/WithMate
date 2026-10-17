@@ -6,7 +6,7 @@ import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
-import { LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
+import { InlineQuestionContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -55,9 +55,10 @@ async function mountElicitation(request: LiveElicitationRequest) {
   };
 }
 
-async function enterText(dom: JSDOM, input: HTMLInputElement, value: string) {
+async function enterText(dom: JSDOM, input: HTMLInputElement | HTMLTextAreaElement, value: string) {
   await act(async () => {
-    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    const prototype = input.tagName === "TEXTAREA" ? dom.window.HTMLTextAreaElement.prototype : dom.window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(input, value);
     input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
   });
@@ -83,17 +84,17 @@ const approvalRequest: LiveApprovalRequest = {
 
 // @test-value v2
 // kind = "contract"
-// claim = "secret指定の入力質問は長文でもpassword inputにし、回答内容を既存formで送信する。nonblocking質問を必須待ちと表示しない"
+// claim = "secret指定の入力質問は長文でもpassword inputにし、回答内容を既存formで送信する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Provider入力質問のsecret textとpassword input" }
-// fault = "secretをtextareaや平文inputで表示する、回答payloadを変える、またはnonblocking質問をInput Requiredと表示する"
-// observable = "password inputのtype、質問badge、Submit後の回答payload"
+// fault = "secretをtextareaや平文inputで表示する、または回答payloadを変える"
+// observable = "password inputのtype、Submit後の回答payload"
 // observation_boundary = "component-behavior"
 // scope = "live-elicitation-secret-text"
 // lifecycle = "permanent"
-// impact = "画面上に秘匿回答が露出し、実行が止まっていない質問を必須待ちと誤認する"
+// impact = "画面上に秘匿回答が露出するか、入力した回答が送信されない"
 // distinction = "schemaと型はDOM入力typeと長文分岐のマスクや実Submit payloadを保証できない"
 // @end-test-value
-test("LiveRequestSurfaceはsecret回答をmaskしnonblocking質問を区別する", async () => {
+test("LiveRequestSurfaceはsecret回答をmaskして送信する", async () => {
   const mounted = await mountElicitation({
     requestId: "secret-question", provider: "codex", mode: "form", blocking: false, message: "Enter private answer",
     fields: [{ type: "text", name: "answer", title: "Private answer", required: true, secret: true, maxLength: 500 }],
@@ -102,7 +103,6 @@ test("LiveRequestSurfaceはsecret回答をmaskしnonblocking質問を区別す�
     const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Private answer"]');
     assert.ok(input);
     assert.equal(input.type, "password");
-    assert.match(mounted.container.textContent ?? "", /Input Requested/);
     await enterText(mounted.dom, input, "private-answer");
     await submit(mounted.container);
     assert.deepEqual(mounted.responses, [{ action: "accept", content: { answer: "private-answer" } }]);
@@ -205,10 +205,13 @@ test("LiveRequestSurface は自由入力の単一選択を候補付きで回答�
   };
   const mounted = await mountElicitation(request);
   try {
-    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Direction"]');
+    const input = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Direction Custom Answer"]');
     assert.ok(input);
     assert.equal(input.value, "");
-    assert.equal(mounted.container.querySelector('datalist option[value="north"]')?.getAttribute("label"), "North");
+    const north = mounted.container.querySelector<HTMLInputElement>('input[type="radio"]');
+    assert.ok(north);
+    assert.equal(north.parentElement?.textContent, "North");
+    assert.equal(north.checked, false);
     await submit(mounted.container);
     assert.deepEqual(mounted.responses, []);
     assert.match(mounted.container.textContent ?? "", /Enter Direction\./);
@@ -216,6 +219,12 @@ test("LiveRequestSurface は自由入力の単一選択を候補付きで回答�
     await submit(mounted.container);
     assert.deepEqual(mounted.responses, []);
     await enterText(mounted.dom, input, "northeast");
+    await act(async () => north.click());
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses.pop(), { action: "accept", content: { direction: "north" } });
+    const custom = mounted.container.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1];
+    await act(async () => custom.click());
+    assert.equal(input.value, "northeast");
     await submit(mounted.container);
     assert.deepEqual(mounted.responses, [{ action: "accept", content: { direction: "northeast" } }]);
   } finally {
@@ -228,7 +237,7 @@ test("LiveRequestSurface は自由入力の単一選択を候補付きで回答�
 // claim = "自由入力を許す複数選択は選択肢だけ・自由入力だけ・双方を同じstring[] payloadで回答でき、空の必須回答を拒否する"
 // oracle = { type = "contract", ref = "Claude AskUserQuestion required free-text answer contract" }
 // fault = "自由入力のために既存選択肢を選ぶ必要がある、選択した候補を失う、または空回答を送る"
-// observable = "checkboxとOther入力のDOM操作、validation、送信payload"
+// observable = "checkboxとCustom Answer入力のDOM操作、validation、送信payload"
 // observation_boundary = "component-behavior"
 // scope = "live-elicitation-free-text-multi-select"
 // lifecycle = "permanent"
@@ -245,7 +254,7 @@ test("LiveRequestSurface は自由入力の複数選択を候補と併用でき�
   try {
     await submit(mounted.container);
     assert.deepEqual(mounted.responses, []);
-    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Tools Other"]');
+    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Tools Custom Answer"]');
     assert.ok(input);
     await enterText(mounted.dom, input, "terminal");
     await submit(mounted.container);
@@ -256,7 +265,7 @@ test("LiveRequestSurface は自由入力の複数選択を候補と併用でき�
     await submit(mounted.container);
     assert.deepEqual(mounted.responses[1], { action: "accept", content: { tools: ["editor", "terminal"] } });
     await mounted.render({ ...request, requestId: "multi-free-next" });
-    const nextInput = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Tools Other"]');
+    const nextInput = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Tools Custom Answer"]');
     const nextCheckbox = mounted.container.querySelector<HTMLInputElement>('.live-elicitation-option input[type="checkbox"]');
     assert.ok(nextInput);
     assert.ok(nextCheckbox);
@@ -314,14 +323,14 @@ test("LiveRequestSurface preserves concurrent question drafts across availabilit
 
 // @test-value v2
 // kind = "contract"
-// claim = "質問記録は本文と選択肢とフォーム処理結果を読み取り専用で示し、有効なフォームと同じ質問を重複表示しない"
-// oracle = { type = "contract", ref = "Issue #823 accepted question lifecycle: read-only question records after resolution" }
+// claim = "質問記録は質問本文と選択肢だけを読み取り専用で示し、有効なフォームと同じ質問を重複表示しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
 // fault = "完了済み質問から操作可能なフォームを作るか、フォームと記録の重複で質問状態を誤認させる"
-// observable = "質問本文の出現数、記録の選択肢と状態ラベル、フォームcontrol数"
+// observable = "質問本文の出現数、記録の本文・選択肢、フォームcontrol数"
 // observation_boundary = "component-behavior"
 // scope = "live-elicitation-records"
 // lifecycle = "permanent"
-// impact = "解決済み質問に再回答できるように見え、通常チャット回答とフォーム未送信の違いが失われる"
+// impact = "解決済み質問に再回答できるように見えるか、会話に余分な処理状態が表示される"
 // distinction = "backendのrecord生成検査と型検査は利用者へ提示される状態・操作境界を検査しない。小さな静的描画で継続検査する"
 // @end-test-value
 test("LiveRequestSurface renders question records and active forms without duplicate questions", () => {
@@ -336,9 +345,41 @@ test("LiveRequestSurface renders question records and active forms without dupli
     ],
   }));
   assert.equal((html.match(/Active question/g) ?? []).length, 1);
-  assert.match(html, /Answer Submitted/);
-  assert.match(html, /No Form Response/);
+  const document = new JSDOM(html).window.document;
+  assert.deepEqual([...document.querySelectorAll('.elicitation-record')].map(record => record.textContent), ["Resolved questionBranchMainFeature", "Ended question"]);
   assert.match(html, /<li>Main<\/li><li>Feature<\/li>/);
   assert.equal((html.match(/<button/g) ?? []).length, 3);
-  assert.equal((html.match(/aria-label="Question record"/g) ?? []).length, 2);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "有効な質問だけを指定本文範囲へ差し替え、本文のない質問は受信位置へ挿入し、回答後は元の会話を復元する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "同じ文言の別箇所を置換する、後続本文より後ろへ質問が移動する、または終了時に質問本文を失う"
+// observable = "質問前後の本文・候補・フォームのDOM順序と終了後の本文"
+// observation_boundary = "component-behavior"
+// scope = "InlineQuestionContent source ranges and receipt anchors"
+// lifecycle = "permanent"
+// impact = "質問と回答の文脈を読み違えるか、履歴から質問が消える"
+// distinction = "providerのID検査だけでは会話への差し替え位置と復元を保証できない"
+// @end-test-value
+test("InlineQuestionContent replaces only the source range and fixes tool questions at receipt", () => {
+  const text = "Same? Before Same? After";
+  const request: LiveElicitationRequest = { requestId: "async", provider: "codex", kind: "question", mode: "form", message: "Question", fields: [{ type: "text", name: "q", title: "Same?", required: true }] };
+  const tool: LiveElicitationRequest = { ...request, requestId: "tool", fields: [{ type: "text", name: "q", title: "Tool question", required: true }] };
+  const render = (active: boolean) => new JSDOM(renderToStaticMarkup(React.createElement(InlineQuestionContent, {
+    text,
+    records: [
+      { requestId: "async", kind: "question", textRange: { start: 13, end: 18 }, message: "Question", fields: [{ title: "Same?" }], status: active ? "pending" : "answered" },
+      { requestId: "tool", kind: "question", textRange: { start: 18, end: 18 }, message: "Question", fields: [{ title: "Tool question", options: ["A", "B"] }], status: active ? "pending" : "canceled" },
+    ], requests: active ? [request, tool] : [], elicitationActionRequestId: null, onResolveLiveElicitation() {},
+    renderText: (value, key) => React.createElement("p", { key, className: "body" }, value),
+  }))).window.document;
+  const pending = render(true);
+  assert.deepEqual([...pending.body.children].map(node => node.className), ["body", "live-elicitation-card", "live-elicitation-card", "body"]);
+  assert.deepEqual([...pending.querySelectorAll('.body')].map(node => node.textContent), ["Same? Before ", " After"]);
+  assert.equal(pending.querySelectorAll('input').length, 2);
+  const resolved = render(false);
+  assert.deepEqual([...resolved.body.children].map(node => node.textContent), ["Same? Before Same?", "Tool questionAB", " After"]);
+  assert.equal(resolved.querySelectorAll('input,button').length, 0);
 });

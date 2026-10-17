@@ -621,7 +621,7 @@ describe("SessionRuntimeService", () => {
       let service!: SessionRuntimeService;
       const questions = new SessionElicitationService({
         updateLiveSessionRun: (_id, recipe) => { live = recipe(currentLive()); return live; },
-        sendUserMessage: async (id, turnId, userMessage) => { await service.steerSessionTurn(id, { expectedTurnId: turnId, userMessage }); },
+        sendUserMessage: async (id, turnId, message, answer) => { await service.answerSessionQuestion(id, turnId, message, answer); },
       });
       const adapter: ProviderCodingAdapter = {
         composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
@@ -682,8 +682,8 @@ describe("SessionRuntimeService", () => {
         acknowledgeAnswer();
         await answer;
         await turn;
-        assert.deepEqual(sent, ["ordinary steer", "Choose a direction\nTake option A"]);
-        assert.deepEqual(stored.messages.filter(message => message.role === "user").map(message => message.text), ["start", "ordinary steer", "Choose a direction\nTake option A"]);
+        assert.deepEqual(sent, ["ordinary steer", "【質問】\nChoose a direction\n【回答】\nTake option A"]);
+        assert.deepEqual(stored.messages.filter(message => message.role === "user").map(message => message.text), ["start", "ordinary steer", "Take option A"]);
         assert.deepEqual(stored.messages.at(-1)?.elicitationRecords?.map(record => [record.requestId, record.status]), [["answer-me", "answered"], ["unanswered", "expired"]]);
         assert.equal(phases.at(-1), outcome);
         assert.throws(() => questions.resolveLiveElicitation(stored.id, "answer-me", { action: "accept", content: { answer: "duplicate" } }), /no longer exists/);

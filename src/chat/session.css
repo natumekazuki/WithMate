@@ -2140,16 +2140,24 @@
 
 .live-elicitation-card {
   display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid rgba(59, 130, 246, 0.18);
-  border-radius: 16px;
-  background: rgba(240, 247, 255, 0.96);
+  gap: 12px;
+  margin-block: 12px;
+  min-width: 0;
 }
 
-.session-page .live-elicitation-card {
-  border-color: rgba(125, 211, 252, 0.18);
-  background: rgba(20, 39, 68, 0.56);
+.live-elicitation-message,
+.elicitation-record p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.elicitation-record {
+  margin-block: 12px;
+}
+
+.live-elicitation-card .live-approval-actions {
+  justify-content: flex-end;
 }
 
 .live-elicitation-source {
@@ -2190,7 +2198,8 @@
 }
 
 .live-elicitation-label {
-  font-weight: 600;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .live-elicitation-description {
@@ -2234,7 +2243,8 @@
   gap: 8px;
 }
 
-.live-elicitation-options .live-elicitation-option input[type="checkbox"] {
+.live-elicitation-options .live-elicitation-option input[type="checkbox"],
+.live-elicitation-options .live-elicitation-option input[type="radio"] {
   width: 16px;
   height: 16px;
   margin: 0;

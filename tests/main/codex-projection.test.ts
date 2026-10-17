@@ -15,6 +15,46 @@ function input(name: string): CodexProjectionStart {
 
 // @test-value v2
 // kind = "contract"
+// claim = "非同期質問は秘匿化後の本文範囲へ対応し、tool質問の挿入位置と確定範囲はpreview上限によらず全文を基準にする"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
+// fault = "同じ質問文を誤って対応づける、秘匿化による長さ変更で位置がずれる、またはlive上限で確定位置を失う"
+// observable = "実Workerが返すlive/finalのitem ID・start/end、質問受信時の挿入位置と対応本文"
+// observation_boundary = "public-boundary"
+// scope = "Codex question source positions across projection boundary"
+// lifecycle = "permanent"
+// impact = "質問UIが別の文章を上書きするか履歴に質問を重複表示する"
+// distinction = "rendererの固定range fixtureではWorkerの順序・秘匿化・previewとの整合を検証できない"
+// @end-test-value
+test("question ranges track redaction, item identity and complete final text", async () => {
+  const client = new CodexProjectionClient();
+  const run = await client.begin(input("questions"));
+  const apply = async (item: unknown) => client.call(run, { type: "event", event: { method: "item/completed", params: { item } } });
+  const question = (id: string) => ({ id, type: "agentMessage", text: "Same?", delivery: "async", questions: [{ title: "Same?", options: ["A", "B"] }] });
+  try {
+    await apply({ id: "before", type: "agentMessage", text: "api-questions Same?" });
+    await apply(question("first"));
+    await apply(question("second"));
+    let live = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: true });
+    assert.ok(!live.state.assistantText.includes("api-questions"));
+    const start = live.state.assistantText.indexOf("\n\n") + 2;
+    assert.deepEqual(live.state.assistantQuestionRanges, [{ itemId: "first", start, end: start + 5 }, { itemId: "second", start: start + 7, end: start + 12 }]);
+    assert.equal(await client.call(run, { type: "question-position" }), live.state.assistantText.length);
+    const longText = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 10);
+    await apply({ id: "before", type: "agentMessage", text: longText });
+    live = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: true });
+    assert.deepEqual(live.state.assistantQuestionRanges, []);
+    const final = await client.call<CodexProjectionFinal>(run, { type: "finish", diagnostics: [] });
+    assert.deepEqual(final.assistantQuestionRanges, [
+      { itemId: "first", start: longText.length + 2, end: longText.length + 7 },
+      { itemId: "second", start: longText.length + 9, end: longText.length + 14 },
+    ]);
+    assert.equal(final.assistantText.slice(final.assistantQuestionRanges![1].start, final.assistantQuestionRanges![1].end), "Same?");
+    assert.equal(await client.call(run, { type: "question-position" }), final.assistantText.length);
+  } finally { await client.release(run); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Workerのlive配送は変更operationだけを秘匿化して渡し、同ID補正・無変更flush後もfinishには取得済み全本文と全operationが残る"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Codex projection owner" }
 // fault = "無変更Detailsを再送する、同ID補正を落とす、または変更配送でfinalの取得済みoperationを失う"

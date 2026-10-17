@@ -3,6 +3,7 @@ import type { ComposerAttachment, ComposerPreview, LiveApprovalDecision, LiveApp
 import type { MessageArtifact } from "../../src-shared/session/session-state.js";
 import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { normalizeSessionTurnCorrelation } from "../../src-shared/session/runtime-state.js";
+import { placeElicitationRecords } from "../../src-shared/session/question-placement.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { type CharacterProfile } from "../../src-shared/character/character-state.js";
 import { buildLiveRunMessageOperations } from "../../src-shared/session/live-run-message-operations.js";
@@ -245,6 +246,7 @@ function buildCanceledPartialResult(
   return {
     threadId: liveState?.threadId || null,
     assistantText: liveState?.assistantText ?? "",
+    assistantQuestionRanges: liveState?.assistantQuestionRanges,
     artifact: liveState ? {
       title: "", changedFiles: [], activitySummary: [], runChecks: [],
       operationTimeline: buildLiveRunMessageOperations(liveState),
@@ -718,11 +720,15 @@ export class SessionRuntimeService {
     return this.sendSessionInput(sessionId, request);
   }
 
+  answerSessionQuestion(sessionId: string, turnId: string, message: string, answer: string): Promise<SteerSessionTurnResult> {
+    return this.sendSessionInput(sessionId, { expectedTurnId: turnId, userMessage: answer }, undefined, message);
+  }
+
   steerQueuedSessionTurn(receipt: SessionTurnQueueReceipt, expectedTurnId: string): Promise<SteerSessionTurnResult> {
     return this.sendSessionInput(receipt.sessionId, { expectedTurnId, userMessage: receipt.captured.request.userMessage }, receipt);
   }
 
-  private sendSessionInput(sessionId: string, request: SteerSessionTurnRequest, queued?: SessionTurnQueueReceipt): Promise<SteerSessionTurnResult> {
+  private sendSessionInput(sessionId: string, request: SteerSessionTurnRequest, queued?: SessionTurnQueueReceipt, providerMessage?: string): Promise<SteerSessionTurnResult> {
     const preflightError = (message: string) => queued ? new QueuedInputPreDispatchError(message) : new Error(message);
     if (!request || typeof request.expectedTurnId !== "string" || !request.expectedTurnId.trim()
       || typeof request.userMessage !== "string" || !request.userMessage.trim()) {
@@ -769,7 +775,7 @@ export class SessionRuntimeService {
       this.dispatchedSessionInputs.add(sessionId);
       dispatched = true;
       try {
-        const result = await adapter.steerSessionTurn({ sessionId, expectedTurnId: request.expectedTurnId, userMessage: request.userMessage.trim(), attachments: preview.attachments });
+        const result = await adapter.steerSessionTurn({ sessionId, expectedTurnId: request.expectedTurnId, userMessage: providerMessage ?? request.userMessage.trim(), attachments: preview.attachments });
         if (result.turnId !== request.expectedTurnId) throw new Error("The provider did not confirm input for the selected turn.");
         if (!appendInput || this.appendSessionInput.get(sessionId) !== appendInput) throw new Error("The selected turn ended before input could be saved.");
         await appendInput(request.userMessage.trim(), queued, request.expectedTurnId);
@@ -1218,7 +1224,7 @@ export class SessionRuntimeService {
           approvalRequest: currentLiveState?.approvalRequest ?? null,
           elicitationRequest: currentLiveState?.elicitationRequest ?? null,
           elicitationRequests: currentLiveState?.elicitationRequests,
-          elicitationRecords: currentLiveState?.elicitationRecords,
+          elicitationRecords: placeElicitationRecords(currentLiveState?.elicitationRecords, state.assistantQuestionRanges),
         };
         this.setRuntimeLiveState(sessionId, nextLiveState);
       });
@@ -1331,7 +1337,7 @@ export class SessionRuntimeService {
             role: "assistant",
             text: result.assistantText,
             artifact: result.artifact,
-            ...this.terminalElicitationRecords(sessionId),
+            ...this.terminalElicitationRecords(sessionId, result),
           },
         ],
       };
@@ -1450,7 +1456,7 @@ export class SessionRuntimeService {
             role: "assistant",
             text: assistantText,
             artifact: partialResult?.artifact,
-            ...this.terminalElicitationRecords(sessionId),
+            ...this.terminalElicitationRecords(sessionId, partialResult),
             accent: true,
           },
         ],
@@ -1528,8 +1534,8 @@ export class SessionRuntimeService {
     }
   }
 
-  private terminalElicitationRecords(sessionId: string): Pick<Session["messages"][number], "elicitationRecords"> {
-    const records = this.deps.getLiveSessionRun(sessionId)?.elicitationRecords;
+  private terminalElicitationRecords(sessionId: string, result?: RunSessionTurnResult | null): Pick<Session["messages"][number], "elicitationRecords"> {
+    const records = placeElicitationRecords(this.deps.getLiveSessionRun(sessionId)?.elicitationRecords, result?.assistantQuestionRanges);
     return records?.length ? {
       elicitationRecords: records.map((record) => ({
         ...record,

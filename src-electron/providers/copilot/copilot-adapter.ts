@@ -2242,9 +2242,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         const redactedRequest = {
           ...redactor.sanitize(request),
           requestId: request.requestId,
+          textPosition: redactor.sanitizeText(streamState.assistantText).length,
         };
-        void Promise.resolve(input.onElicitationRequest(redactedRequest))
-          .then((response) => observingTurn ? respondToCopilotElicitation(session, request.requestId, response) : undefined)
+        void scheduleLiveState()
+          .then(() => observingTurn ? input.onElicitationRequest!(redactedRequest) : undefined)
+          .then((response) => observingTurn && response ? respondToCopilotElicitation(session, request.requestId, response) : undefined)
           .catch((error: unknown) => {
             logCopilotRuntime("elicitation handling failed", {
               provider: input.providerCatalog.id,
