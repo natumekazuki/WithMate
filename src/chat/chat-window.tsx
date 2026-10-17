@@ -18,6 +18,7 @@ import type { MessageViewMode } from "../ui/markdown/MessageRichText.js";
 import type { AdditionalDirectoryItem } from "./composer/session-composer-paths.js";
 import { CloseButton } from "../ui/close-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ComposerIcon } from "./composer/composer-icon.js";
 
 import { SessionActionDockCompactRow, SessionActionDockModeSwitch, type SessionActionDockMode, type SessionActionDockCompactRowProps } from "./approval/session-action-dock.js";
 import { SESSION_ACTION_DOCK_ID, SESSION_HEADER_DOCK_ID, SESSION_RIGHT_PANE_ID, SESSION_LEFT_PANE_ID, SessionHeader, SessionHeaderHandle, type SessionHeaderProps } from "./shell/session-header.js";
@@ -213,9 +214,11 @@ function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps 
             type="button"
             className={isActive ? "is-active" : ""}
             aria-pressed={isActive}
+            title={target.label}
             onClick={() => chats.onTargetChange(target.id)}
           >
-            {target.label}
+            <ComposerIcon name={target.id} />
+            <span className="visually-hidden">{target.label}</span>
           </button>
         );
       })}

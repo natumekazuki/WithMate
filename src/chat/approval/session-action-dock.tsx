@@ -3,6 +3,7 @@ import { type ReactNode } from "react";
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 import { useShortcutSettings } from "../../settings/shortcut-settings-context.js";
 import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../../settings/shortcut-registry.js";
+import { ComposerIcon } from "../composer/composer-icon.js";
 
 export type SessionActionDockMode = "prompt" | "terminal";
 
@@ -22,17 +23,21 @@ export function SessionActionDockModeSwitch({ mode, onChange }: {
         className="composer-message-view-mode-button"
         type="button"
         aria-pressed={mode === "prompt"}
+        title="Prompt"
         onClick={() => onChange("prompt")}
       >
-        Prompt
+        <ComposerIcon name="prompt" />
+        <span className="visually-hidden">Prompt</span>
       </button>
       <button
         className="composer-message-view-mode-button"
         type="button"
         aria-pressed={mode === "terminal"}
+        title="Terminal"
         onClick={() => onChange("terminal")}
       >
-        Terminal
+        <ComposerIcon name="terminal" />
+        <span className="visually-hidden">Terminal</span>
       </button>
     </div>
   );
@@ -94,14 +99,15 @@ export function SessionActionDockCompactRow({
         >
           {isRunning ? (
             <button
-              className="danger session-send-button"
+              className="danger session-send-button composer-icon-button"
               type="button"
               onClick={onCancel}
-              title={cancelButtonTitle}
+              title={isCanceling ? "Canceling" : cancelButtonTitle || "Cancel"}
               disabled={isCanceling}
               aria-busy={isCanceling || undefined}
             >
-              {isCanceling ? "Canceling" : "Cancel"}
+              {isCanceling ? <span className="loading-indicator-spinner" aria-hidden="true" /> : <ComposerIcon name="stop" />}
+              <span className="visually-hidden">{isCanceling ? "Canceling" : "Cancel"}</span>
             </button>
         ) : null}
         </div>
@@ -111,11 +117,13 @@ export function SessionActionDockCompactRow({
         ) : null}
         {showJumpToBottom ? (
           <button
-            className="drawer-toggle compact secondary message-jump-bottom-button"
+            className="drawer-toggle compact secondary message-jump-bottom-button composer-icon-button"
             type="button"
+            title="Jump To Latest"
             onClick={onJumpToBottom}
           >
-            Jump To Latest
+            <ComposerIcon name="jump-bottom" />
+            <span className="visually-hidden">Jump To Latest</span>
           </button>
         ) : null}
         {showMessageViewModeControls ? (
@@ -124,17 +132,21 @@ export function SessionActionDockCompactRow({
               className="composer-message-view-mode-button"
               type="button"
               aria-pressed={messageViewMode === "preview"}
+              title="Preview"
               onClick={() => onMessageViewModeChange("preview")}
             >
-              Preview
+              <ComposerIcon name="preview" />
+              <span className="visually-hidden">Preview</span>
             </button>
             <button
               className="composer-message-view-mode-button"
               type="button"
               aria-pressed={messageViewMode === "source"}
+              title="Source"
               onClick={() => onMessageViewModeChange("source")}
             >
-              Source
+              <ComposerIcon name="source" />
+              <span className="visually-hidden">Source</span>
             </button>
           </div>
           ) : null}

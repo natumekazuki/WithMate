@@ -14,6 +14,8 @@ import { useShortcutSettings } from "../../settings/shortcut-settings-context.js
 
 import { ComposerAttachmentMenu } from "../../chat/composer-attachment-menu.js";
 import { AdditionalDirectoryPathControl } from "./additional-directory-path-control.js";
+import { ComposerIcon } from "./composer-icon.js";
+import { ComposerIconSelect } from "./composer-icon-select.js";
 import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "../../chat/composer-controller.js";
 import {
   getComposerSendButtonTitle,
@@ -349,8 +351,9 @@ export function SessionComposerExpanded({
           ) : null}
           {showPromptTemplateButton ? (
             <button
-              className={`drawer-toggle compact secondary composer-skill-button${isPromptTemplateWorkspaceOpen ? " is-open" : ""}`}
+              className={`drawer-toggle compact secondary composer-skill-button composer-icon-button${isPromptTemplateWorkspaceOpen ? " is-open" : ""}`}
               type="button"
+              title="Template"
               onClick={() => {
                 setIsAttachmentMenuOpen(false);
                 if (isAgentPickerOpen) {
@@ -367,13 +370,14 @@ export function SessionComposerExpanded({
               aria-pressed={isPromptTemplateWorkspaceOpen}
               disabled={composerControlsDisabled}
             >
-              Template
+              <ComposerIcon name="template" />
+              <span className="visually-hidden">Template</span>
             </button>
           ) : null}
           {showCustomAgentPicker ? (
             <div className="composer-agent-toolbar">
               <button
-                className={`drawer-toggle compact secondary composer-skill-button${isAgentPickerOpen ? " is-open" : ""}`}
+                className={`drawer-toggle compact secondary composer-skill-button composer-icon-button${isAgentPickerOpen ? " is-open" : ""}`}
                 type="button"
                 onClick={() => {
                   setIsAttachmentMenuOpen(false);
@@ -389,15 +393,17 @@ export function SessionComposerExpanded({
                 aria-label="Select a Copilot custom agent"
                 title={selectedCustomAgentTitle}
               >
-                {selectedCustomAgentLabel}
+                <ComposerIcon name="agent" />
+                <span className="visually-hidden">{selectedCustomAgentLabel}</span>
               </button>
             </div>
           ) : null}
           {showSkillPicker ? (
             <button
               ref={skillButtonRef}
-              className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
+              className={`drawer-toggle compact secondary composer-skill-button composer-icon-button${isSkillPickerOpen ? " is-open" : ""}`}
               type="button"
+              title="Skill"
               onClick={() => {
                 setIsAttachmentMenuOpen(false);
                 if (isAdditionalDirectoryListOpen) {
@@ -410,39 +416,46 @@ export function SessionComposerExpanded({
               aria-haspopup="listbox"
               aria-controls={isSkillPickerOpen ? "composer-skill-picker-list" : undefined}
             >
-              Skill
+              <ComposerIcon name="skill" />
+              <span className="visually-hidden">Skill</span>
             </button>
           ) : null}
           {showAdditionalDirectoryControls ? (
             <div className="composer-additional-directory-toolbar">
+              <div className="composer-directory-add-group" role="group" aria-label="Add directory">
+                <button
+                  className="drawer-toggle compact secondary composer-skill-button composer-icon-button"
+                  type="button"
+                  title="Add Directory"
+                  onClick={() => {
+                    setIsAttachmentMenuOpen(false);
+                    if (isAgentPickerOpen) {
+                      onToggleAgentPicker();
+                    }
+                    if (isSkillPickerOpen) {
+                      onToggleSkillPicker();
+                    }
+                    if (isAdditionalDirectoryListOpen) {
+                      onToggleAdditionalDirectoryList();
+                    }
+                    onAddAdditionalDirectory();
+                  }}
+                  disabled={composerControlsDisabled}
+                >
+                  <ComposerIcon name="folder-add" />
+                  <span className="visually-hidden">Add Directory</span>
+                </button>
+                <AdditionalDirectoryPathControl
+                  key={`${controllerOwner.kind}:${controllerOwner.id}`}
+                  disabled={composerControlsDisabled}
+                  onAdd={onAddAdditionalDirectory}
+                />
+              </div>
               <button
-                className="drawer-toggle compact secondary composer-skill-button"
+                className={`drawer-toggle compact secondary composer-skill-button composer-icon-button composer-directory-list-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
                 type="button"
-                onClick={() => {
-                  setIsAttachmentMenuOpen(false);
-                  if (isAgentPickerOpen) {
-                    onToggleAgentPicker();
-                  }
-                  if (isSkillPickerOpen) {
-                    onToggleSkillPicker();
-                  }
-                  if (isAdditionalDirectoryListOpen) {
-                    onToggleAdditionalDirectoryList();
-                  }
-                  onAddAdditionalDirectory();
-                }}
-                disabled={composerControlsDisabled}
-              >
-                Add Directory
-              </button>
-              <AdditionalDirectoryPathControl
-                key={`${controllerOwner.kind}:${controllerOwner.id}`}
-                disabled={composerControlsDisabled}
-                onAdd={onAddAdditionalDirectory}
-              />
-              <button
-                className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
-                type="button"
+                title={`Additional Directories: ${additionalDirectoryCount}`}
+                aria-label={`Additional Directories: ${additionalDirectoryCount}`}
                 onClick={() => {
                   setIsAttachmentMenuOpen(false);
                   if (isAgentPickerOpen) {
@@ -456,7 +469,8 @@ export function SessionComposerExpanded({
                 disabled={additionalDirectoryCount === 0 || composerFrozen}
                 aria-expanded={isAdditionalDirectoryListOpen}
               >
-                {`Dirs${additionalDirectoryCount}`}
+                <ComposerIcon name="folders" />
+                <span className="composer-directory-count" aria-hidden="true">{additionalDirectoryCount}</span>
               </button>
             </div>
           ) : null}
@@ -469,25 +483,28 @@ export function SessionComposerExpanded({
               >
                 {isRunning ? (
                   <button
-                    className="danger session-send-button"
+                    className="danger session-send-button composer-icon-button"
                     type="button"
                     onClick={onSendOrCancel}
-                    title={canSendInput ? "Cancel run" : sendButtonTitle}
+                    title={isCanceling ? "Canceling" : canSendInput ? "Cancel run" : sendButtonTitle || "Cancel"}
                     disabled={isCanceling}
                     aria-busy={isCanceling || undefined}
                   >
-                    {isCanceling ? "Canceling" : "Cancel"}
+                    {isCanceling ? <span className="loading-indicator-spinner" aria-hidden="true" /> : <ComposerIcon name="stop" />}
+                    <span className="visually-hidden">{isCanceling ? "Canceling" : "Cancel"}</span>
                   </button>
                 ) : null}
               </div>
               {targetDock ? <div className="composer-target-dock-slot">{targetDock}</div> : null}
               {showJumpToBottom ? (
                 <button
-                  className="drawer-toggle compact secondary message-jump-bottom-button"
+                  className="drawer-toggle compact secondary message-jump-bottom-button composer-icon-button"
                   type="button"
+                  title="Jump To Latest"
                   onClick={onJumpToBottom}
                 >
-                  Jump To Latest
+                  <ComposerIcon name="jump-bottom" />
+                  <span className="visually-hidden">Jump To Latest</span>
                 </button>
               ) : null}
               {showMessageViewModeControls ? (
@@ -496,17 +513,21 @@ export function SessionComposerExpanded({
                     className="composer-message-view-mode-button"
                     type="button"
                     aria-pressed={messageViewMode === "preview"}
+                    title="Preview"
                     onClick={() => onMessageViewModeChange("preview")}
                   >
-                    Preview
+                    <ComposerIcon name="preview" />
+                    <span className="visually-hidden">Preview</span>
                   </button>
                   <button
                     className="composer-message-view-mode-button"
                     type="button"
                     aria-pressed={messageViewMode === "source"}
+                    title="Source"
                     onClick={() => onMessageViewModeChange("source")}
                   >
-                    Source
+                    <ComposerIcon name="source" />
+                    <span className="visually-hidden">Source</span>
                   </button>
                 </div>
               ) : null}
@@ -623,68 +644,51 @@ export function SessionComposerExpanded({
         <div className="composer-settings">
           {showExecutionModeControls ? (
             <>
-              <div className="composer-setting-field composer-setting-approval">
-                <span>Approval</span>
-                <select
-                  value={selectedApprovalMode}
-                  onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
-                  disabled={composerControlsDisabled}
-                  aria-label="Approval"
-                  aria-invalid={approvalOptions.some((option) => option.value === selectedApprovalMode && option.disabled) || undefined}
-                >
-                  {approvalOptions.map((option) => (
-                    <option key={option.value} value={option.value} disabled={option.disabled}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <ComposerIconSelect
+                className="composer-setting-approval"
+                label="Approval"
+                icon="approval"
+                value={selectedApprovalMode}
+                options={approvalOptions}
+                onChange={(value) => onChangeApprovalMode(value as ApprovalMode)}
+                disabled={composerControlsDisabled}
+                invalid={approvalOptions.some((option) => option.value === selectedApprovalMode && option.disabled)}
+              />
 
               {reviewerOptions.length > 0 ? (
-                <div className="composer-setting-field composer-setting-reviewer">
-                  <span>Reviewer</span>
-                  <select
-                    value={selectedCodexReviewer}
-                    onChange={(event) => onChangeCodexReviewer(event.target.value as CodexReviewer)}
-                    disabled={isCodexReviewerControlDisabled({
-                      approvalMode: selectedApprovalMode,
-                      isRunning: isRunning && !canQueueTurn,
-                      composerBlocked: composerBlocked || composerFrozen,
-                    })}
-                    aria-label="Reviewer"
-                  >
-                    {reviewerOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <ComposerIconSelect
+                  className="composer-setting-reviewer"
+                  label="Reviewer"
+                  icon="reviewer"
+                  value={selectedCodexReviewer}
+                  options={reviewerOptions}
+                  onChange={(value) => onChangeCodexReviewer(value as CodexReviewer)}
+                  disabled={isCodexReviewerControlDisabled({
+                    approvalMode: selectedApprovalMode,
+                    isRunning: isRunning && !canQueueTurn,
+                    composerBlocked: composerBlocked || composerFrozen,
+                  })}
+                />
               ) : null}
 
               {sandboxOptions.length > 0 ? (
-                <div className="composer-setting-field composer-setting-sandbox">
-                  <span>Sandbox</span>
-                  <select
-                    value={selectedCodexSandboxMode}
-                    onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
-                    disabled={composerControlsDisabled}
-                    aria-label="Sandbox"
-                  >
-                    {sandboxOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <ComposerIconSelect
+                  className="composer-setting-sandbox"
+                  label="Sandbox"
+                  icon="sandbox"
+                  value={selectedCodexSandboxMode}
+                  options={sandboxOptions}
+                  onChange={(value) => onChangeCodexSandboxMode(value as CodexSandboxMode)}
+                  disabled={composerControlsDisabled}
+                />
               ) : null}
             </>
           ) : null}
 
           <div className="composer-setting-field composer-setting-model">
-            <span>Model</span>
             <select
+              aria-label="Model"
+              title={`Model: ${modelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModelFallbackLabel}`}
               value={selectedModel}
               onChange={(event) => onChangeModel(event.target.value)}
               disabled={composerControlsDisabled}
@@ -701,43 +705,31 @@ export function SessionComposerExpanded({
             </select>
           </div>
 
-          <div className="composer-setting-field composer-setting-depth">
-            <span>Depth</span>
-            <select
-              value={selectedReasoningEffort}
-              onChange={(event) => onChangeReasoningEffort(event.target.value)}
-              disabled={composerControlsDisabled}
-              aria-label="Reasoning depth"
-            >
-              {reasoningOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <ComposerIconSelect
+            className="composer-setting-depth"
+            label="Reasoning depth"
+            icon="depth"
+            value={selectedReasoningEffort}
+            options={reasoningOptions}
+            onChange={onChangeReasoningEffort}
+            disabled={composerControlsDisabled}
+          />
 
           {speedOptions.length > 0 ? (
-            <div className="composer-setting-field composer-setting-speed">
-              <span>Speed</span>
-              <select
-                value={selectedCodexSpeed}
-                onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
-                disabled={composerControlsDisabled}
-                aria-label="Speed"
-              >
-                {speedOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <ComposerIconSelect
+              className="composer-setting-speed"
+              label="Speed"
+              icon="speed"
+              value={selectedCodexSpeed}
+              options={speedOptions}
+              onChange={(value) => onChangeCodexSpeed(value as CodexSpeed)}
+              disabled={composerControlsDisabled}
+            />
           ) : null}
         </div>
 
         <button
-          className={`session-send-button${showBusySendState ? " loading" : ""}`}
+          className={`session-send-button composer-icon-button${showBusySendState ? " loading" : ""}`}
           type="button"
           onClick={canQueueTurn ? onQueueTurn : canSendInput ? onSendInput : onSendOrCancel}
           disabled={(isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn) || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy}
@@ -748,15 +740,15 @@ export function SessionComposerExpanded({
               : isRunning && !canSendInput && !canQueueTurn
               ? "Cannot send while a run is active"
               : appendShortcutLabel(
-                  displayedSendButtonTitle,
+                  displayedSendButtonTitle || "Send",
                   SHORTCUT_COMMAND_IDS.composerSubmit,
                   undefined,
                   keyboardShortcuts,
                 )
           }
         >
-          {showBusySendState ? <span className="loading-indicator-spinner" aria-hidden="true" /> : null}
-          <span>Send</span>
+          {showBusySendState ? <span className="loading-indicator-spinner" aria-hidden="true" /> : <ComposerIcon name="send" />}
+          <span className="visually-hidden">Send</span>
         </button>
       </div>
     </div>

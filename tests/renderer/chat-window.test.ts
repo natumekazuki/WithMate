@@ -76,7 +76,7 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
   const root = createRoot(dom.window.document.getElementById("root")!);
   const controls = () => [...dom.window.document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(
     ".composer-attachments-toolbar button:not(.composer-message-view-mode-button), .composer-settings select",
-  )].filter((element) => element.textContent !== "Dirs0" && !element.closest(".session-action-dock-cancel-slot"));
+  )].filter((element) => element.getAttribute("aria-label") !== "Additional Directories: 0" && !element.closest(".session-action-dock-cancel-slot"));
   try {
     await act(async () => root.render(React.createElement(ChatWindow, props)));
     assert.ok(controls().length >= 11);
@@ -1601,8 +1601,9 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
     const container = dom.window.document.getElementById("root") as HTMLElement;
     const html = container.innerHTML;
     assert.match(html, /Chat target/);
-    assert.match(html, />Main<\/button>/);
-    assert.match(html, />Auxiliary<\/button>/);
+    const targetButtons = [...container.querySelectorAll('.composer-target-dock-slot .concurrent-chat-target-dock button')];
+    assert.deepEqual(targetButtons.map((button) => button.textContent), ["Main", "Auxiliary"]);
+    assert.ok(targetButtons.every((button) => button.querySelector('svg[aria-hidden="true"]')));
     assert.doesNotMatch(html, /action-dock-mode-badge/);
     assert.match(html, /concurrent-chat-target-overlay/);
     assert.equal((html.match(/concurrent-chat-target-overlay/g) ?? []).length, 1);

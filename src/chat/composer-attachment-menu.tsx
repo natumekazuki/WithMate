@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { createPortal } from "react-dom";
 
 import { focusRovingItemByKey } from "../ui/a11y.js";
+import { ComposerIcon } from "./composer/composer-icon.js";
 
 type ComposerAttachmentMenuProps = {
   disabled: boolean;
@@ -242,7 +243,7 @@ export function ComposerAttachmentMenu({
     <div ref={rootRef} className="composer-attachment-menu-shell">
       <button
         ref={triggerRef}
-        className={`drawer-toggle compact secondary composer-attachment-trigger${isOpen ? " is-open" : ""}`}
+        className={`drawer-toggle compact secondary composer-attachment-trigger composer-icon-button${isOpen ? " is-open" : ""}`}
         type="button"
         disabled={disabled}
         aria-expanded={isOpen}
@@ -258,8 +259,8 @@ export function ComposerAttachmentMenu({
           }
         }}
       >
-        <span className="composer-attachment-trigger-plus" aria-hidden="true">＋</span>
-        Attach
+        <ComposerIcon name="attach" />
+        <span className="visually-hidden">Attach</span>
       </button>
       {menu}
     </div>

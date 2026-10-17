@@ -67,13 +67,13 @@
 .session-action-dock-cancel-slot > .session-send-button,
 .session-action-dock-compact-actions .session-send-button {
   min-height: 40px;
-  padding: 10px 14px;
+  padding: 0;
 }
 
 .session-action-dock-cancel-slot {
-  flex: 0 0 114px;
-  width: 114px;
-  min-width: 114px;
+  flex: 0 0 40px;
+  width: 40px;
+  min-width: 40px;
 }
 
 .session-action-dock-cancel-slot:not(.is-active) {
@@ -110,7 +110,7 @@
   background: var(--character-main);
   color: var(--character-main-ink);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
-  padding: 9px 12px;
+  padding: 0;
 }
 
 .session-page .session-action-dock-cancel-slot > .session-send-button.danger,
@@ -3407,11 +3407,6 @@
   margin-left: 0;
 }
 
-.session-action-dock-target-slot .concurrent-chat-target-dock {
-  transform: scale(0.9);
-  transform-origin: right center;
-}
-
 .composer-attachment-menu-shell {
   position: relative;
   display: inline-flex;
@@ -3423,10 +3418,44 @@
   gap: 5px;
 }
 
-.composer-attachment-trigger-plus {
-  font-size: 1rem;
-  font-weight: 500;
-  line-height: 1;
+.composer-icon {
+  display: block;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+}
+
+.composer .composer-icon-button,
+.session-action-dock-compact-actions .composer-icon-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+}
+
+.composer .drawer-toggle.composer-icon-button,
+.session-action-dock-compact-actions .drawer-toggle.composer-icon-button {
+  border-radius: 10px;
+}
+
+.composer-icon-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 70%, white 30%);
+  outline-offset: 2px;
+}
+
+.composer .composer-directory-list-button {
+  width: auto;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.composer-directory-count {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .composer-attachment-menu {
@@ -3508,6 +3537,22 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.composer-directory-add-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px;
+  border: 1px solid rgba(203, 213, 225, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.composer-directory-add-group .composer-icon-button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
 }
 
 .additional-directory-path-modal {
@@ -3599,6 +3644,8 @@
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  max-width: 100%;
   gap: 8px;
   margin-left: auto;
 }
@@ -3606,14 +3653,19 @@
 .composer-message-view-mode {
   display: inline-flex;
   flex: 0 0 auto;
-  padding: 2px;
+  padding: 1px;
   border: 1px solid rgba(203, 213, 225, 0.18);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
 }
 
 .composer-message-view-mode-button {
-  padding: 5px 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -3995,32 +4047,14 @@
   align-items: end;
 }
 
-@container session-action-dock (max-width: 960px) {
-  .composer-settings > .composer-setting-field {
-    flex-basis: calc(50% - 7px);
-  }
-}
-
-@container session-action-dock (max-width: 850px) {
-  .composer-control-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .composer-control-row > .session-send-button {
-    width: 100%;
-  }
-}
-
 .composer-control-row > .session-send-button {
   align-self: center;
-  min-width: 86px;
-  padding: 12px 22px;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
   background: rgba(255, 255, 255, 0.16);
   color: var(--ink);
-}
-
-.session-page .composer-control-row > .session-send-button {
-  padding: 10px 18px;
 }
 
 .session-page .composer-control-row > .session-send-button {
@@ -4035,19 +4069,12 @@
   box-shadow: 0 10px 22px rgba(248, 113, 113, 0.24);
 }
 
-.composer-control-row > .session-send-button.loading {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-width: 82px;
-}
-
 .composer-settings {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px 14px;
-  align-items: end;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
   justify-content: start;
 }
 
@@ -4055,20 +4082,15 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1 1 max-content;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
 }
 
-.composer-setting-field span,
 .composer-setting-note {
   color: var(--muted);
   font-size: 0.78rem;
   letter-spacing: 0.02em;
-}
-
-.composer-setting-field span {
-  flex: 0 0 auto;
-  white-space: nowrap;
 }
 
 .session-approval-list {
@@ -4094,12 +4116,73 @@
   flex: 1 1 max-content;
   width: max-content;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
+  height: 40px;
   border: 1px solid rgba(32, 36, 55, 0.08);
   border-radius: 14px;
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.88);
   color: var(--ink);
+}
+
+.composer-icon-setting {
+  position: relative;
+  flex: 0 0 48px;
+  width: 48px;
+}
+
+.composer-icon-setting select,
+.session-page .composer-icon-setting select {
+  appearance: none;
+  width: 100%;
+  padding: 0;
+  color: transparent;
+  cursor: pointer;
+}
+
+.composer-icon-setting select option {
+  color: var(--ink);
+  background: var(--surface-deep);
+}
+
+.composer-icon-setting select:disabled {
+  cursor: not-allowed;
+}
+
+.composer-setting-field select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 70%, white 30%);
+  outline-offset: 2px;
+}
+
+.composer-setting-field select[aria-invalid="true"] {
+  border-color: #f87171;
+}
+
+.composer-icon-setting .composer-icon-setting-display {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--ink);
+  pointer-events: none;
+}
+
+.composer-icon-setting-display .composer-icon:last-child {
+  width: 10px;
+  height: 10px;
+}
+
+.composer-icon-setting select:disabled + .composer-icon-setting-display {
+  opacity: 0.45;
+}
+
+@media (forced-colors: active) {
+  .composer-icon-setting select option {
+    color: CanvasText;
+    background: Canvas;
+  }
 }
 
 .composer-depth-list {

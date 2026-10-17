@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { LaunchDialogShell } from "../../launch/launch-dialog-shell.js";
 import { useDialogA11y } from "../../ui/a11y.js";
+import { ComposerIcon } from "./composer-icon.js";
 
 export function AdditionalDirectoryPathControl({ disabled, onAdd }: {
   disabled: boolean;
@@ -44,8 +45,9 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd }: {
   return (
     <>
       <button
-        className="drawer-toggle compact secondary composer-skill-button"
+        className="drawer-toggle compact secondary composer-skill-button composer-icon-button"
         type="button"
+        title="Add Directory By Path"
         disabled={disabled || busy}
         aria-haspopup="dialog"
         onClick={() => {
@@ -54,7 +56,8 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd }: {
           setOpen(true);
         }}
       >
-        Add Directory By Path
+        <ComposerIcon name="path" />
+        <span className="visually-hidden">Add Directory By Path</span>
       </button>
       {open && !disabled ? (
         <LaunchDialogShell

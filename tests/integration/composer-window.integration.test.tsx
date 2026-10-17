@@ -49,6 +49,8 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     Buffer,
   });
   let summaryReads = 0;
+  api.getProviderQuotaTelemetry = async () => null;
+  api.subscribeProviderQuotaTelemetry = () => () => {};
   let notifyAppSettings: Parameters<WithMateWindowApi["subscribeAppSettings"]>[0] | undefined;
   api.subscribeAppSettings = (listener) => { notifyAppSettings = listener; return () => { notifyAppSettings = undefined; }; };
   const initialSettings = await api.getAppSettings();
