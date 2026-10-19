@@ -73,7 +73,7 @@ function MonitorStatusIcon({
 function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
   const summaries = entry.auxiliarySessions;
   const groups = [
-    { kind: "approval" as const, label: "Approval Required" },
+    { kind: "approval" as const, label: "Attention" },
     { kind: "running" as const, label: "Running" },
     { kind: "running" as const, label: "Canceling" },
     { kind: "running" as const, label: "Waiting For Stop" },
@@ -402,7 +402,7 @@ export function HomeMonitorContent({
       >
         <section className="home-monitor-section" aria-labelledby="home-monitor-approval">
           <div className="home-monitor-section-head">
-            <h3 id="home-monitor-approval">Approval</h3>
+            <h3 id="home-monitor-approval">Attention</h3>
             <span className="home-monitor-count">{approvalEntries.length}</span>
           </div>
           <div className={`home-monitor-list${collapsedLists[0] ? " is-collapsed" : ""}`} inert={collapsedLists[0]}>
@@ -410,7 +410,7 @@ export function HomeMonitorContent({
           </div>
         </section>
 
-        {renderSplitter(0, "Approval and Running")}
+        {renderSplitter(0, "Attention and Running")}
 
         <section className="home-monitor-section" aria-labelledby="home-monitor-running">
           <div className="home-monitor-section-head">

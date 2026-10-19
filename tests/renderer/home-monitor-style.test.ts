@@ -43,7 +43,7 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは空・読込状態でもApproval／Running／Stoppedを初期3等分で常時表示し、隣接一覧の間に2本の水平スプリッターを置く"
+// claim = "Monitorは空・読込状態でもAttention／Running／Stoppedを初期3等分で常時表示し、隣接一覧の間に2本の水平スプリッターを置く"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
 // fault = "空の分類を隠す、初期比率を偏らせる、splitterを一覧内へ置く、境界%を誤ってARIAへ渡す、またはloadingで領域高を変える"
 // observable = "描画したsectionとseparatorの順序、初期grid rows、separatorのaccessible属性、section配置とloading overlayのCSS"
@@ -77,12 +77,12 @@ test("Monitorの初期表示は空状態と読込状態でもスプリッター�
     const splitters = [...(sections?.querySelectorAll('[role="separator"]') ?? [])];
     assert.equal(splitters.length, 2);
     assert.deepEqual(splitters.map((splitter) => splitter.getAttribute("aria-valuenow")), ["33", "67"]);
-    assert.deepEqual(splitters.map((splitter) => splitter.getAttribute("aria-label")), ["Resize Approval and Running", "Resize Running and Stopped"]);
+    assert.deepEqual(splitters.map((splitter) => splitter.getAttribute("aria-label")), ["Resize Attention and Running", "Resize Running and Stopped"]);
     for (const splitter of splitters) {
       assert.equal(splitter.getAttribute("aria-orientation"), "horizontal");
       assert.equal(document.getElementById(splitter.getAttribute("aria-controls") ?? ""), sections);
     }
-    assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Approval", "Running", "Stopped"]);
+    assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Attention", "Running", "Stopped"]);
     assert.deepEqual([...document.querySelectorAll(".home-monitor-count")].map((count) => count.textContent), ["0", "0", "0"]);
     assert.equal(document.querySelector(".home-monitor-body")?.getAttribute("aria-busy"), String(auxiliaryDataState === "loading"));
   }

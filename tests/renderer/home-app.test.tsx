@@ -461,7 +461,7 @@ test("Homeのmate status read中も既存Sessionを開ける", async () => {
 // claim = "Homeと独立Monitorは同じquota cache表示とlive通知の実行・取消・承認・入力待ち状態の変化から最新summaryを再取得し、MainとAuxiliaryをリロードなしで表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window / 共通仕様のlive eventと軽量summary再読込" }
 // fault = "quotaの表示経路を接続し忘れる、実行・承認・入力待ち状態だけの変化を捨てる、通知payloadをsnapshotの代わりに表示する、終了後のlive stateを見落とす、または本文更新ごとにsummaryを再取得する"
-// observable = "provider残率とcacheOnly引数、Approval/Running/Stopped sectionの親card、Main/Auxiliaryのaccessible状態、summary API取得回数、unmount後のlive購読数"
+// observable = "provider残率とcacheOnly引数、Attention/Running/Stopped sectionの親card、Main/Auxiliaryのaccessible状態、summary API取得回数、unmount後のlive購読数"
 // observation_boundary = "component-behavior"
 // scope = "HomeAppのlive event購読とMonitor描画（home/monitor mode、Main/Auxiliary）"
 // lifecycle = "permanent"
@@ -586,7 +586,7 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       summary = { ...summary, approvalPending: true };
       await emitLive(summary.id, createLiveState(summary.id, "running"));
       await emitLive(summary.id, pendingMain);
-      assertMonitor("approval", "Approval Required", "Idle");
+      assertMonitor("approval", "Attention", "Idle");
       const readsBeforeApprovalText = [summaryReads, auxiliaryReads];
       await emitLive(summary.id, { ...pendingMain, assistantText: "More text" });
       assert.deepEqual([summaryReads, auxiliaryReads], readsBeforeApprovalText);
@@ -603,7 +603,7 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       for (const elicitationRequest of questions) {
         summary = { ...summary, approvalPending: true };
         await emitLive(summary.id, { ...createLiveState(summary.id, "running"), elicitationRequest });
-        assertMonitor("approval", "Approval Required", "Idle");
+        assertMonitor("approval", "Attention", "Idle");
         summary = { ...summary, approvalPending: false };
         await emitLive(summary.id, createLiveState(summary.id, "running"));
         assertMonitor("running", "Running", "Idle");
@@ -631,14 +631,14 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       assertMonitor("running", "Idle", "Running");
       auxiliary = { ...auxiliary, approvalPending: true };
       await emitLive(auxiliary.id, { ...createLiveState(auxiliary.id, "running"), approvalRequest });
-      assertMonitor("approval", "Idle", "Approval Required");
+      assertMonitor("approval", "Idle", "Attention");
       auxiliary = { ...auxiliary, approvalPending: false };
       await emitLive(auxiliary.id, createLiveState(auxiliary.id, "running"));
       assertMonitor("running", "Idle", "Running");
       for (const elicitationRequest of questions) {
         auxiliary = { ...auxiliary, approvalPending: true };
         await emitLive(auxiliary.id, { ...createLiveState(auxiliary.id, "running"), elicitationRequests: [elicitationRequest] });
-        assertMonitor("approval", "Idle", "Approval Required");
+        assertMonitor("approval", "Idle", "Attention");
         auxiliary = { ...auxiliary, approvalPending: false };
         await emitLive(auxiliary.id, createLiveState(auxiliary.id, "running"));
         assertMonitor("running", "Idle", "Running");
