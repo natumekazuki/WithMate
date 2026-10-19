@@ -18,17 +18,17 @@ import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-t
 
 // @test-value v2
 // kind = "contract"
-// claim = "追尾停止と同frameのanchor計測と仮想range確定後の再計測で最新位置を保存し、owner切替・再表示で復元し、会話別の新着を末尾復帰で消す"
+// claim = "追尾停止と同frameのanchor計測と仮想range確定後の再計測で最新位置を保存し、owner切替・非表示中の本文更新を跨いで閲覧位置と追従状態を保持し、末尾操作で追従を再開する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
-// fault = "render前の停止を見落とす、未commitのrangeのoverscan行を保存する、range確定後に保存しない、別会話へ新着が漏れる、または非表示中の更新を落とす"
-// observable = "column propsのhasNewActivity、isMessageListFollowing、messageJumpRequest、cacheのanchor"
+// fault = "render前の停止を見落とす、未commitのrangeのoverscan行を保存する、range確定後に保存しない、または会話切替や非表示中の本文更新で追従状態と閲覧位置が失われる"
+// observable = "column propsのisMessageListFollowing、messageJumpRequest、list.scrollTop、cacheのanchor"
 // observation_boundary = "component-behavior"
 // scope = "実follow hookと列cacheの接合。制御RAFと行矩形で停止直後・range commit通知・owner/visibility遷移を確認し、実virtualizerとCSS折返しは別のcomponent testとbrowserで確認する"
 // lifecycle = "permanent"
 // impact = "MainとAuxiliaryの往復やPreview終了で読んでいた本文を見失わず、新着へ明示的に戻れる"
-// distinction = "hook単体ではownerごとのactivityと仮想行keyへの復元handoffを通らない。小さいhook fixtureで列の接合を確認する"
+// distinction = "hook単体ではownerごとのcacheと仮想行keyへの復元handoffを通らない。小さいhook fixtureで列の接合を確認する"
 // @end-test-value
-test("conversation column はownerと非表示期間を跨いで閲覧anchorと新着を保持する", async () => {
+test("conversation column はownerと非表示期間を跨いで閲覧anchorと追従状態を保持する", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
   const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
   const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
@@ -87,29 +87,26 @@ test("conversation column はownerと非表示期間を跨いで閲覧anchorと�
     assert.equal(cache.get("main")?.anchor?.offset, -22, "committed virtual range layout refreshes the reading position without another scroll event");
     text = "replaced";
     await render();
-    assert.equal(current().hasNewActivity, true, "same-length visible text replacement is new activity even without a timestamp change");
     assert.equal(current().isMessageListFollowing, false);
     assert.equal(list.scrollTop, 200);
     await render("aux");
-    assert.equal(current().hasNewActivity, false, "new activity belongs to Main only");
+    assert.equal(current().isMessageListFollowing, true, "Auxiliary has its own following state");
     rowTop = 80;
     rowHeight = 200;
     await render();
-    assert.equal(current().hasNewActivity, true);
+    assert.equal(current().isMessageListFollowing, false);
     assert.equal(current().messageJumpRequest?.key, "session-main-0");
     assert.equal(current().messageJumpRequest?.offset, -22, "restore retains the latest reading offset after geometry changes");
     await act(async () => current().onJumpToBottom?.());
-    assert.equal(current().hasNewActivity, false);
+    assert.equal(current().isMessageListFollowing, true);
     await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -10, bubbles: true })));
     await render("main", false);
     text = "modified";
     updatedAt = "2026-10-17T01:00:01.000Z";
     await render("main", false);
     await render();
-    assert.equal(current().hasNewActivity, true, "same-length canonical update while hidden is identified by updatedAt");
     assert.equal(current().isMessageListFollowing, false);
     await act(async () => current().onJumpToBottom?.());
-    assert.equal(current().hasNewActivity, false);
     assert.equal(current().isMessageListFollowing, true);
   } finally {
     await act(async () => root.unmount());

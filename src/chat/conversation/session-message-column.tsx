@@ -119,7 +119,6 @@ export type SessionMessageColumnProps = {
   pendingMessageTextVisible?: boolean;
   pendingMessageGroupId?: string | null;
   isMessageListFollowing: boolean;
-  hasNewActivity?: boolean;
   onBrowseMessages?: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onMessageListLayout?: () => void;
@@ -469,7 +468,6 @@ export function SessionMessageColumn({
   pendingMessageTextVisible = true,
   pendingMessageGroupId = null,
   isMessageListFollowing,
-  hasNewActivity = false,
   onBrowseMessages,
   onMessageListScroll,
   onMessageListLayout,
@@ -1226,19 +1224,18 @@ export function SessionMessageColumn({
       /></div> : null}
       {onJumpToBottom && !isMessageListFollowing ? (
         <button
-          className={`message-list-jump-bottom-button${hasNewActivity ? " has-new-activity" : ""}`}
+          className="message-list-jump-bottom-button"
           type="button"
           onClick={() => {
             messageListRef.current?.focus({ preventScroll: true });
             onJumpToBottom();
           }}
-          aria-label={hasNewActivity ? "New activity. Jump to latest" : "Jump to latest"}
+          aria-label="Jump to latest"
           title="Jump to latest"
         >
           <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <path d="M8 2v9M3.5 7.5 8 12l4.5-4.5M3 14h10" />
           </svg>
-          {hasNewActivity ? <span>New activity</span> : null}
         </button>
       ) : null}
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll} tabIndex={0} role="region" aria-label="Conversation messages">

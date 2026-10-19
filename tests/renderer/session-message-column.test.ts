@@ -2252,21 +2252,21 @@ test("ConversationMessageColumn は callback 再生成だけでは既存 message
 
 // @test-value v2
 // kind = "contract"
-// claim = "閲覧中は単一の末尾復帰buttonで新着を知らせ、操作後に会話listへfocusを戻し、追従中はbuttonを隠す"
+// claim = "閲覧中は本文更新の前後で同じ末尾復帰buttonを提供し、操作後に会話listへfocusを戻し、追従中はbuttonを隠す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
-// fault = "新着buttonが操作できない、accessible nameに新着がない、復帰後のfocusがlistに戻らない、または追従中も表示する"
-// observable = "button数・accessible name・callback回数・document.activeElement"
+// fault = "本文更新で末尾復帰buttonの操作名や内容が変わる、操作callbackが動かない、復帰後のfocusがlistに戻らない、または追従中も表示する"
+// observable = "本文更新前後のbutton数・accessible name・textContent・icon数・callback回数・document.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "session-message-following"
 // lifecycle = "permanent"
 // impact = "履歴を読みながら新着へ戻る経路とkeyboardでの閲覧継続を保証する"
 // distinction = "hookの追従状態testでは検証できない実buttonとfocusを既存DOM fixtureで確認する"
 // @end-test-value
-test("SessionMessageColumn は新着の末尾復帰buttonと会話へのfocusを提供する", async () => {
+test("SessionMessageColumn は本文更新前後で同じ末尾復帰buttonと会話へのfocusを提供する", async () => {
   let jumps = 0;
   const mounted = await mountSessionMessageColumn({
     messages: createMessages(3),
-    component: (props) => React.createElement(SessionMessageColumn, { ...props, hasNewActivity: true, onJumpToBottom: () => { jumps += 1; } }),
+    component: (props) => React.createElement(SessionMessageColumn, { ...props, onJumpToBottom: () => { jumps += 1; } }),
   });
   try {
     const buttons = mounted.container.querySelectorAll<HTMLButtonElement>(".message-list-jump-bottom-button");
@@ -2274,8 +2274,15 @@ test("SessionMessageColumn は新着の末尾復帰buttonと会話へのfocusを
     const button = buttons[0]!;
     assert.equal(button.type, "button");
     assert.equal(button.tabIndex, 0);
-    assert.equal(button.getAttribute("aria-label"), "New activity. Jump to latest");
-    assert.equal(button.textContent, "New activity");
+    assert.equal(button.getAttribute("aria-label"), "Jump to latest");
+    assert.equal(button.textContent, "");
+    assert.equal(button.querySelectorAll("svg").length, 1);
+    await mounted.rerender({ messages: createMessages(4) });
+    assert.equal(mounted.container.querySelectorAll(".message-list-jump-bottom-button").length, 1);
+    assert.equal(mounted.container.querySelector(".message-list-jump-bottom-button"), button);
+    assert.equal(button.getAttribute("aria-label"), "Jump to latest");
+    assert.equal(button.textContent, "");
+    assert.equal(button.querySelectorAll("svg").length, 1);
     button.focus();
     await act(async () => button.click());
     assert.equal(jumps, 1);
