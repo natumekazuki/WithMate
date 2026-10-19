@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { JSDOM } from "jsdom";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
 import { SessionTurnAcceptance } from "../../src/chat/runtime/session-turn-acceptance.js";
 import { projectSessionTurnQueue } from "../../src/chat/conversation/session-turn-queue-projection.js";
@@ -9,6 +12,9 @@ import { runMainSessionTurnOperation } from "../../src/chat/runtime/run-main-ses
 import { SessionSubmitCoordinator } from "../../src/chat/runtime/session-submit-coordinator.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { AuxiliaryDraftPersistenceOwner } from "../../src/chat/auxiliary-draft-persistence-owner.js";
+import { useSessionWorkspaceAvailability } from "../../src/chat/runtime/session-window-workspace-hooks.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window/workspace-directory-validation.js";
 
 const owner = { kind: "main" as const, id: "session" };
 const request = {
@@ -261,6 +267,93 @@ test("send presents before asynchronous preparation and recovers without replayi
         assert.equal(acceptance.submissions.getSnapshot()[0]?.error, "");
         assert.equal(registry.get(owner).draft, "");
       }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "workspace検証中にMain送信の対象が失効した場合は未受付表示だけ取り消し、共有workspaceの後続検証が成功したら障害と扱わない。対象が有効な実検証失敗は入力を残して表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 送信直後の先行表示; docs/design/ui-design-guidelines.md: 正常進行と明示失敗の表示" }
+// fault = "共有workspace検証の旧世代falseを対象失効より先にerror化し、正常な取り消しへ障害表示を残す、または有効な送信の実workspace障害を隠す"
+// observable = "実workspace hookと送信operationの返却結果、submission表示状態、workspace状態、draft、enqueue/preview件数と送信lease"
+// observation_boundary = "consumer"
+// scope = "shared workspace validation and optimistic submission cancellation"
+// lifecycle = "permanent"
+// impact = "対象切替で不要なWorkspace障害が残ることと、実際の送信不能を通知しないことを防ぎ、未受付の入力を保持する"
+// distinction = "workspace状態のpure testやoperationのboolean mockでは、正常なAPI結果が共有hookで世代失効falseへ変わる境界を通らない"
+// @end-test-value
+test("workspace validation distinguishes invalidated submissions from real failures", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>");
+  const globals = { window: dom.window, document: dom.window.document, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const scenario of ["superseded", "unavailable"] as const) {
+      const parent = session();
+      let deferValidation = false;
+      const resolutions: ((result: WorkspaceDirectoryValidationResult) => void)[] = [];
+      const api = { validateSessionWorkspace: async (id: string) => {
+        assert.equal(id, parent.id);
+        if (!deferValidation) return { valid: true };
+        return new Promise<WorkspaceDirectoryValidationResult>((resolve) => resolutions.push(resolve));
+      } } as WithMateWindowApi;
+      let current: ReturnType<typeof useSessionWorkspaceAvailability> | undefined;
+      function View() { current = useSessionWorkspaceAvailability(api, parent); return null; }
+      const workspace = () => { assert.ok(current); return current; };
+      await act(async () => { root.render(React.createElement(View, { key: scenario })); });
+      assert.equal(workspace().workspaceAvailability.status, "available");
+      deferValidation = true;
+      const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
+      const acceptance = new SessionTurnAcceptance();
+      const coordinator = new SessionSubmitCoordinator();
+      let target = owner.id;
+      let previewCount = 0;
+      let enqueueCount = 0;
+      const operation = runMainSessionTurnOperation({
+        api: { previewComposerInput: async () => { previewCount += 1; return { attachments: [], errors: [] }; },
+          enqueueSessionTurn: async () => { enqueueCount += 1; return receipt(); }, getSessionTurnQueueReceipt: async () => null },
+        sessionId: owner.id, selectedSession: parent, request, composerRegistry: registry, composerOwner: owner,
+        submitCoordinator: coordinator, acceptance, clearDraft: true, collapseActionDock: false,
+        selectedSessionRunState: "idle", blockedReason: null, isReadOnly: false,
+        isCurrentSubmission: () => target === owner.id,
+        validateWorkspace: () => workspace().validateSessionWorkspace(parent, true),
+        state: { setComposerPreview() {}, setPendingSubmitSessionId() {}, setForceComposerBlockedFeedback() {}, collapseActionDock() {} }, log() {},
+      });
+      assert.equal(acceptance.submissions.getSnapshot()[0]?.error, "");
+      assert.equal(resolutions.length, 1);
+      if (scenario === "superseded") {
+        target = "aux";
+        const auxiliaryValidation = workspace().validateSessionWorkspace(parent, true);
+        assert.equal(resolutions.length, 2);
+        await act(async () => {
+          resolutions[0]({ valid: true });
+          resolutions[1]({ valid: true });
+          assert.equal(await operation, null);
+          assert.equal(await auxiliaryValidation, true);
+        });
+        assert.deepEqual(acceptance.submissions.getSnapshot(), []);
+        assert.equal(workspace().workspaceAvailability.status, "available");
+      } else {
+        await act(async () => {
+          const rejected = assert.rejects(operation, /Workspace is not available/);
+          resolutions[0]({ valid: false, reason: "unavailable" });
+          await rejected;
+        });
+        assert.match(acceptance.submissions.getSnapshot()[0]!.error, /Workspace is not available/);
+        assert.equal(workspace().workspaceAvailability.status, "unavailable");
+      }
+      assert.equal(registry.get(owner).draft, "A");
+      assert.equal(previewCount, 0);
+      assert.equal(enqueueCount, 0);
+      assert.equal(coordinator.isClaimed(owner.id), false);
+    }
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
     }
   }
 });

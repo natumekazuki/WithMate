@@ -9,11 +9,11 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
   const projection: MessageListProjection = { messages: [...history.messages], keys: [...history.keys], sources: [...history.sources], groups: [...history.groups] };
   const tail: SessionTurnQueueReceipt[] = [];
   const activeReceipt = options ? owned.find((receipt) => !receipt.inputTurnId && (receipt.state === "starting" || receipt.state === "running"))
-    ?? (!options.hasActiveRun ? owned.find((receipt) => receipt.state === "queued")
-      ?? owned.find((receipt) => receipt.state === "completed" && receipt.userMessageSeq !== null
+    ?? (!options.hasActiveRun ? owned.find((receipt) => receipt.state === "completed" && receipt.userMessageSeq !== null
         && options.submissions.some((submission) => submission.requestId === receipt.requestId)
         && !history.sources.some((source, index) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId)
-          && source.messageIndex > receipt.userMessageSeq! && history.messages[index].role === "assistant")) : undefined) : undefined;
+          && source.messageIndex > receipt.userMessageSeq! && history.messages[index].role === "assistant"))
+      ?? owned.find((receipt) => receipt.state === "queued") : undefined) : undefined;
   for (const receipt of owned) {
     const savedIndex = receipt.userMessageSeq === null ? -1 : projection.sources.findIndex((source) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId) && source.messageIndex === receipt.userMessageSeq);
     if (savedIndex >= 0) {

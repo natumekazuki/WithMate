@@ -774,10 +774,10 @@ test("conversation columns はlive eventとapprovalをsession IDごとに分離�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/AuxのSendはreceipt未取得からpromptと通常待機枠を描画し、ACK・開始・終端先着・追加入力userを含むcanonical到着を同じrequestで橋渡しする。明示失敗は対象表示をerrorへ変え、別ownerや旧incarnationへ漏らさない"
+// claim = "Main/AuxのSendはreceipt未取得からpromptと通常待機枠を描画し、ACK・開始・終端先着・追加入力userを含むcanonical到着を同じrequestで橋渡しする。次の予約は前応答の後ろを維持し、明示失敗は対象表示へ反映し、別ownerや旧incarnationへ漏らさない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 送信直後の先行表示; docs/design/auxiliary-session.md: 送信受付の共通反映" }
-// fault = "ACKまで枠を出さない、ACK/保存到着でpromptや枠を消す・二重化する、先行表示で実runを偽造する、または失敗をspinnerのまま隠す"
-// observable = "実Column DOMのprompt件数・pending枠・alert・応答本文、ColumnのisRunning/responsePending、storeの所有request"
+// fault = "ACKまで枠を出さない、ACK/保存到着でpromptや枠を消す・二重化する、次予約を前応答より先に表示する、先行表示で実runを偽造する、または失敗をspinnerのまま隠す"
+// observable = "実Column DOMのprompt件数・pending枠・alert・応答本文・予約の表示順、ColumnのisRunning/responsePending、storeの所有request"
 // observation_boundary = "component-behavior"
 // scope = "optimistic conversation submission handoff"
 // lifecycle = "permanent"
@@ -805,7 +805,7 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       let changed: ((id: string) => void) | undefined;
       const api: ConversationMessageColumnApi = {
         listSessionTurnQueue: () => holdQueue ? new Promise(() => {}) : Promise.resolve(active),
-        getSessionTurnQueueReceipt: async () => resolved,
+        getSessionTurnQueueReceipt: async (_id, requestId) => resolved?.requestId === requestId ? resolved : active.find((item) => item.requestId === requestId) ?? null,
         onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
       };
       let latest: SessionMessageColumnProps | null = null;
@@ -873,18 +873,36 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       assert.equal(pendingCount(), 0, "the streamed response keeps its surface while canonical saving catches up");
       assert.equal(dom.window.document.querySelectorAll(".pending-response-content").length, 1);
       assert.match(dom.window.document.body.textContent!, /streamed answer/);
+      const nextReceipt = { ...receipt, id: "next-receipt", requestId: "next-request", sequence: 2,
+        captured: { ...receipt.captured, request: { ...receipt.captured.request, clientRequestId: "next-request", userMessage: "next reserved prompt" } } };
+      active = [nextReceipt];
+      await act(async () => {
+        store.start({ sessionId: kind, incarnationId: "inc", requestId: "next-request", userMessage: "next reserved prompt", historyMessageCount: 2, queuedBehindRun: true, error: "" });
+        store.accept(nextReceipt);
+        changed?.(kind);
+      });
+      assert.deepEqual(column().messages.map((message) => message.text), ["captured prompt", "additional input in this turn", "streamed answer"]);
+      const textWhileSaving = dom.window.document.body.textContent!;
+      assert.ok(textWhileSaving.indexOf("streamed answer") < textWhileSaving.indexOf("next reserved prompt"), "the next reserved prompt stays after the prior response");
+      assert.equal(pendingCount(), 0);
+      assert.equal(dom.window.document.querySelectorAll(".pending-response-content").length, 1);
       saved = [...saved, { role: "assistant", text: "final answer" }];
       await render();
       assert.equal(promptCount(), 1);
-      assert.equal(pendingCount(), 0);
+      assert.equal(pendingCount(), 1, "the next turn gets its own response surface only after the prior canonical response arrives");
       assert.equal(column().isRunning, false);
-      assert.match(dom.window.document.body.textContent!, /final answer/);
+      assert.deepEqual(column().messages.map((message) => message.text), ["captured prompt", "additional input in this turn", "final answer", "next reserved prompt"]);
+      assert.deepEqual(store.getSnapshot().map((submission) => submission.requestId), ["next-request"]);
+      resolved = { ...nextReceipt, state: "canceled" };
+      active = [];
+      await act(async () => { store.accept(resolved!); changed?.(kind); });
+      assert.equal(pendingCount(), 0);
       assert.equal(store.getSnapshot().length, 0);
 
       // A turn can reach terminal before this column has ever observed an active receipt.
       holdQueue = true;
       await render();
-      const fastReceipt = { ...receipt, id: "fast-receipt", requestId: "fast-request", sequence: 2 };
+      const fastReceipt = { ...receipt, id: "fast-receipt", requestId: "fast-request", sequence: 3 };
       await act(async () => {
         store.start({ sessionId: kind, incarnationId: "inc", requestId: "fast-request", userMessage: "captured prompt", historyMessageCount: 3, queuedBehindRun: false, error: "" });
         store.accept({ ...fastReceipt, state: "starting" });

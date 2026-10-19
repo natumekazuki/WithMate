@@ -65,7 +65,12 @@ export async function runMainSessionTurnOperation(input: {
     state.setForceComposerBlockedFeedback(false);
     if (input.collapseActionDock) state.collapseActionDock();
     input.onSubmitted?.();
-    if (!(await input.validateWorkspace())) throw new Error("Workspace is not available. Your draft is preserved.");
+    const workspaceAvailable = await input.validateWorkspace();
+    if (composerRegistry.isFrozen || composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false) {
+      input.acceptance.submissions.forget([request.clientRequestId!]);
+      return null;
+    }
+    if (!workspaceAvailable) throw new Error("Workspace is not available. Your draft is preserved.");
     if (input.auxiliaryDraftOwner) {
       try {
         await input.auxiliaryDraftOwner.flush();
