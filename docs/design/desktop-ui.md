@@ -37,7 +37,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 ## Windows Session Notifications
 
 - `Session Turn Notification`は既存のturn完了・失敗通知とCodexの構造化質問通知を有効／無効にする。Windowsの通常Session、Character作成Session、Auxiliary Sessionが対象で、対象Session Windowがfocus中なら通知しない。Auxiliaryでは親Windowのfocusを使う。
-- 質問は`item/tool/requestUserInput`のblocking／nonblocking両方と、`agentMessage`の`delivery = async`かつ`questions`を持つ通知を対象とし、質問フォームを表示する時点で通知する。同一itemの開始・完了で二重通知しない。通常の会話本文を質問と推測せず、MCP elicitation・承認待ち・他providerの質問はこの通知に含めない。Monitorのstatusは変更しない。
+- 質問は`item/tool/requestUserInput`のblocking／nonblocking両方と、`agentMessage`の`delivery = async`かつ`questions`を持つ通知を対象とし、質問フォームを表示する時点で通知する。同一itemの開始・完了で二重通知しない。通常の会話本文を質問と推測せず、MCP elicitation・承認待ち・他providerの質問はこの通知に含めない。Monitorの分類は通知設定とは独立して入力待ちを反映する。
 - 質問通知はtitleを`WithMate`、bodyを`<Session名>: Codex has a question.`とし、Character icon、通知の識別・置換、クリック時の会話復帰は既存のturn通知を共有する。質問文・選択肢・入力値・会話本文はOS通知へ出さず、`Notification Response Preview`は成功したturnの完了通知だけに適用する。
 - 回答、取消、server側解決、runtime resetで質問通知を撤去する。解決後に設定読込みが完了しても古い通知を表示せず、同じ会話の後続通知を古い質問の解決で撤去しない。通知の作成・配送・撤去失敗は診断として扱い、質問への回答やprovider実行を失敗させない。
 - `Session Approval Notification`は承認待ち専用の設定で、既定は有効。Codex／Copilot／Claudeの共通承認要求を対象とし、Main／Auxiliaryとも親Session Windowが開いていて非focusの場合に通知する。閉じたWindowは対象外とし、Auxiliaryでは親Windowのfocusを使う。
@@ -100,7 +100,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - ドラッグまたは左右矢印キーで幅を変え、端へ寄せると片側を全幅表示する。クリックは右側を閉じ、どちらかが閉じているときはクリックで1:1へ戻す。閉じた状態からのドラッグ・矢印キーでは再展開しない
   - 閉じたpaneは非表示・操作不可にし、検索入力や一覧のDOMを保持する。左右の最小幅はそれぞれ300px／320pxとする
   - Monitor／Characters切替とSettings／Restore Sessions／独立Monitorの操作はHome共通headerに置く。headerは左右分割の外に常設し、paneの幅調整・開閉で操作ボタンを移動・非表示にしない。開閉対象名は現在表示中のMonitor／Charactersへ合わせる
-- 2 カラムの外側とMonitorのApproval／Running／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
+- 2 カラムの外側とMonitorのAttention／Running／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
 - `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
 - Mate ProfileのAvatar編集では、`Select Image`と`Clear`の実行した操作だけをbusy表示にし、処理中は両操作を無効化する。Mate保存中も両操作を無効化するが、Avatar更新中とは表示を区別する。Mate未作成・Profile利用不可ではAvatar編集を提供しない。画像選択のキャンセルと更新失敗では元のAvatarを保持して操作可能状態へ戻し、成功時は取得したProfileを反映する。Avatarがないときは`Clear`を表示しない。
@@ -111,19 +111,19 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 親Sessionはdisclosure、avatar、親title、`Main`状態、`Aux`状態集約を1行にまとめる。各分類の列見出しでMain／Auxを区別し、Auxiliaryがない場合は`—`を表示する。Auxの複数状態は必要に応じて折り返し、承認・error・実行有無を落とさない
   - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`RecentSessions` と同じ filtered session list の交差集合を使う
   - section
-    - `Approval`: Main／Auxiliaryのいずれかに有効な承認待ちがある親Session。会話単位では取消状態を承認待ちより優先するが、別の会話が承認待ちなら親はこの枠へ入る
-    - `Running`: Approvalに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
+    - `Attention`: Main／Auxiliaryのいずれかに有効な承認待ち、質問・MCP form／URLの入力待ちがある親Session。Codexのblocking／nonblocking／async質問を含む。会話単位では取消状態を承認・入力待ちより優先するが、別の会話が承認・入力待ちなら親はこの枠へ入る
+    - `Running`: Attentionに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
     - `Stopped`: 他の2枠に該当しない`interrupted` / `error` / `neutral`を含むnon-running
-  - 3枠は常に`Approval`、`Running`、`Stopped`の順に表示し、親Sessionを重複表示しない。最後の承認待ちが解消すると現在の実行状態で再分類する。承認待ちは表示用のlive状態であり、内部の`runState`を変更しない
+  - 3枠は常に`Attention`、`Running`、`Stopped`の順に表示し、親Sessionを重複表示しない。最後の承認・入力待ちが回答・拒否・Close・要求失効・turn終了で解消すると現在の実行状態で再分類する。承認・入力待ちは表示用のlive状態であり、内部の`runState`を変更しない
   - 3分類は初期1:1:1の縦分割とし、各分類の一覧を独立してscrollする。隣接分類間の共通splitterをdragまたは上下キーで調整し、Home／Endは境界の限界へ動かす。開いている分類は48pxの最小領域へ補正する。Monitor本文幅が740px以上なら各分類の親行を2列、それ未満は1列にする。Window全体ではなくHomeの分割後の幅で判定する
-  - 分類splitterのclickは隣接2分類の親Session件数が少ない側の一覧を閉じる。同数ではStopped、Running、Approvalの順で閉じる。Auxiliary数は比較へ足さない。片側が閉じている場合はその側を開き、両側が閉じている場合は優先度の高い側（Approval、Running、Stoppedの順）を開く。件数変化だけで自動開閉しない。矢印とaccessible nameは操作対象を示す
+  - 分類splitterのclickは隣接2分類の親Session件数が少ない側の一覧を閉じる。同数ではStopped、Running、Attentionの順で閉じる。Auxiliary数は比較へ足さない。片側が閉じている場合はその側を開き、両側が閉じている場合は優先度の高い側（Attention、Running、Stoppedの順）を開く。件数変化だけで自動開閉しない。矢印とaccessible nameは操作対象を示す
   - 閉じた分類は見出しと件数を残し、一覧のDOM・展開・scrollを保持したまま非表示・操作不可にする。領域が狭く親行と列見出しを表示できない場合も一覧だけを非表示にし、広げると戻す。隠れる一覧内にfocusがある場合は隣接splitterへ移す。開閉は表示領域だけでありSessionを終了・停止しない
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
-  - 承認待ちは静止した黄色系の丸囲み`!`アイコンで示し、常設の状態文字は追加しない。Main／Auxiliaryの個別行・Aux状態集約で同じ表現を使い、tooltipとaccessible nameは`Approval Required`とする。Auxの件数は会話数であり要求数ではない。承認詳細と判断操作はSession画面で扱う
+  - 承認・入力待ちは静止した黄色系の丸囲み`!`アイコンで示し、常設の状態文字は追加しない。Main／Auxiliaryの個別行・Aux状態集約で同じ表現を使い、tooltipとaccessible nameは`Attention`とする。Auxの件数は会話数であり要求数ではない。要求の詳細と回答・判断操作はSession画面で扱う
   - 取消要求中は`Canceling`、実終了待ちは`Waiting For Stop`をMain／Auxiliaryごとのtooltipとaccessible statusへ反映し、Auxiliaryの件数も状態別に集約する。保存済みidleより取消待ちを優先し、最後の実終了で解除する
-  - 取消・承認待ち状態はMainが既存の軽量summary応答へ現在のlive状態から付与し、永続化しない。Home／Monitorは初回・再表示時にsummaryを取得し、本文を含まないlive状態通知による取消・承認待ち状態の変化を再取得契機とする。通知payloadを直接投影せず、無効化前の遅い取得結果は適用しない
+  - 取消・承認・入力待ち状態はMainが既存の軽量summary応答へ現在のlive状態から付与し、永続化しない。summaryと本文を含まないlive状態通知は共通の投影を使い、`approvalPending`に承認・入力待ちを集約する。Home／Monitorは初回・再表示時にsummaryを取得し、取消・承認・入力待ち状態の変化を再取得契機とする。通知payloadを直接投影せず、無効化前の遅い取得結果は適用しない
   - Auxiliary一覧の取得状態はMonitor領域のstatus feedbackで示す。未取得の親cardに架空のAuxiliary集約を作らず、既に取得したsummaryがある場合は既知のrun状態を保持して取得errorと区別する
   - open Session summaryの取得失敗もMonitor領域へ表示し、`Retry`で再取得できる。取得済みのcardは再取得中も保持する
   - open な SessionWindow がないときは、正常なempty本文を出さず、Monitorのshellと必要なstatus/accessibilityだけを保つ
@@ -248,13 +248,13 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - renderer は `HomeApp` の compact monitor mode を再利用する
   - 表示内容は Home 右ペインの `Monitor` と同じ truth source を使う
   - open な `Session Window` のみ表示する
-  - `Approval` / `Running` / `Stopped` の3枠を、0件でも常に表示する
+  - `Attention` / `Running` / `Stopped` の3枠を、0件でも常に表示する
   - 親Sessionをavatar・title・Main状態・Aux状態集約のcompactな行で表示する。3分類はHomeと共通の高さ調整・件数/優先順位によるclick開閉・個別scrollを使い、本文幅740px以上では各分類を2列にする。Main／Auxの列見出しを維持し、文字の縮小だけで件数を詰め込まない
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
-  - `running`はaccent色のspinner、承認待ちは静止した黄色系の丸囲み`!`、待機と終了はsubduedな中空円、errorはwarning triangleで表す。状態はアイコンのみとし、cardの点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
+  - `running`はaccent色のspinner、承認・入力待ちは静止した黄色系の丸囲み`!`、待機と終了はsubduedな中空円、errorはwarning triangleで表す。状態はアイコンのみとし、cardの点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
   - Auxiliaryが存在する親だけdisclosureと状態集約を表示し、存在しない親はAux列を`—`にする。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
-  - Auxiliaryの状態集約では`Approval Required`、`Running`、取消状態、`Error`、`Idle`、`Closed`を別々に数え、closed Auxiliaryをidleへ変換しない。idleとclosedは同じ円形だが、状態ラベルと集約を分ける。interruptedとerrorも別の形状で表示する
-  - section countは親card group数とし、Auxiliaryをtop-level rowとして重複表示しない。Main／Auxiliaryの有効な承認待ちを優先して親card groupを`Approval`へ分類し、それ以外は実行・取消待ちがあれば`Running`、残りは`Stopped`へ分類する。個々のMain／Auxiliaryの状態は分離して保持する
+  - Auxiliaryの状態集約では`Attention`、`Running`、取消状態、`Error`、`Idle`、`Closed`を別々に数え、closed Auxiliaryをidleへ変換しない。idleとclosedは同じ円形だが、状態ラベルと集約を分ける。interruptedとerrorも別の形状で表示する
+  - section countは親card group数とし、Auxiliaryをtop-level rowとして重複表示しない。Main／Auxiliaryの有効な承認・入力待ちを優先して親card groupを`Attention`へ分類し、それ以外は実行・取消待ちがあれば`Running`、残りは`Stopped`へ分類する。個々のMain／Auxiliaryの状態は分離して保持する
   - 親titleは既存の親Windowを開き、Auxiliary rowは同じ親Windowを指定したstable Auxiliary IDで開いて選択する。対象が消えた、親が一致しない、Windowを開けない場合はfallbackせずMonitor内へ失敗を返す
   - 展開状態は親kindとstable IDごとのWindow local stateとし、複数親を同時に展開できる。再描画、状態更新、section移動で失わず、Homeと独立Monitor Windowの間で永続化・同期しない
 - window 内の `Home` button から通常の `Home Window` を前面へ戻せる
@@ -326,7 +326,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の40px固定幅領域を常時予約し、非実行中は不可視にする。Sendは下段右端の40×40pxの円形buttonと約20pxの紙飛行機iconで表示し、busy中は同寸法のspinnerへ切り替える。設定群が狭幅で折り返してもSendを独立した右列に保ち、開閉やMain / Auxiliary切替で主操作の位置を変えない
   - 開閉は下 splitter を主導線とし、compact では実行状態によらずdock全体の余白からも展開できる。非表示の `Cancel` 予約領域と操作間の隙間も対象とし、表示中の操作ボタンは自身の操作を優先してdockを展開しない。dock 内に `Hide` は置かない
   - Promptのexpandedでは上部操作列と下部設定・送信列の高さを固定し、dragで中央のtextarea領域を伸縮させる。Main／Auxiliaryの実行中も次の依頼を準備するため、Template・Skill・添付・Additional Directory・対応する実行設定を使える。実行中Turnの設定・認可済みdirectoryは捕捉値を維持し、編集値は次の送信から適用する。read-only、入力のblocked条件、quit／close凍結は維持する。Terminalでは切替操作列とタブバーを固定し、端末本文へ残りの高さを割り当てる
-  - default では通常送信の直後に compact へ戻す
+  - 通常送信はworkspace確認・preview・受付ACKを待たず、対象Columnへ送信文と通常の応答待機枠をDOM反映してから、設定に従ってcompactへ戻し、`Scroll To Latest On Send`を一度適用する。既に実行中なら次Turnの予約本文を現在の応答より後へ置く。内部の準備・受付・実行は表示から独立して進め、固定delayやdockのtransition完了待ちは追加しない。受付再照会・元要求の再試行によってdock開閉や末尾追従を繰り返さず、後続の手動操作を上書きしない
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - Promptではskill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。Terminalへ切り替えるとpickerを閉じ、非表示Promptの候補やfeedbackは共有パネルの折りたたみを妨げない。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
 - Agent の `File Explorer`
@@ -355,7 +355,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - `.mmd`のFile Previewは、header・path領域・Find・feedbackを除く残りの表示領域を図の枠に割り当て、中央paneと独立Windowのresizeに追従する。Markdown／会話内の図は本文の流れを保つ高さ上限を持つ
   - Mermaidは中央・独立File PreviewとMarkdown／会話で共通の図単位のZoom Out／Zoom In、現在倍率兼100%リセット、Fitを持つ。初期表示はFitで、buttonによる手動倍率は10%〜800%を10ポイント刻みで変更する。Fitは小さい図を拡大せず縦横を表示領域へ収め、領域のresizeへ追従する。拡大後は図内のnative scrollで移動し、toolbarはスクロール外へ置く。各buttonはTabとEnter／Spaceで操作し、図領域へのfocus後はkeyboardでもscrollできる。Ctrlなしの左drag文字選択、通常の右clickとCtrlなしのwheelによるnative scrollを維持する。検索中に拡縮しても現在の一致位置を保持する。倍率・位置を他の図やWindowへ共有・永続化しない
   - 共通の倍率操作を持つMermaid、中央・独立File Previewの画像／SVG、会話・Markdownの画像lightboxは、表示領域上のCtrl＋左dragでscroll位置を移動し、Ctrl＋上wheelで拡大、Ctrl＋下wheelで縮小する。wheelはSettingsの`Preview Wheel Zoom Step`で整数1〜100ポイントを選べ、既定は5ポイント刻み（100%→105%）。刻みはapp共通で保存し、保存後の次のwheel操作から適用するが、現在倍率・Fit状態・pan位置は変更しない。Zoom In／Out buttonは10ポイント刻みとし、上下限は共通の10%〜800%で、Fit中は現在の実効倍率を起点にする（10%未満のFitからwheelで拡大する際は10%へ移る）。Ctrlなしのwheelはnative scrollに任せ、Ctrl＋wheelは表示対象だけに作用させてWindow全体のzoomや親scroll操作へ渡さない
-  - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。Markdown内画像とchat画像は対象外とする
+  - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。通常Markdown画像とchat画像は本文内・拡大表示のnative context menuに`Copy Image`を持ち、local画像には元fileの絶対pathをcopyする`Copy Path`も表示する。focusした画像previewからShift+F10／Context Menu keyでも操作できる
   - File Explorerのroot、directory、regular file rowはnative context menuに`Copy path`と`Insert path`を表示する。pathはMain processが現在のSession rootから再解決し、copyはlexical absolute pathをclipboardへ書く。insertはworkspace内をworkspace相対、workspace外をslash正規化したabsolute pathとして、既存の`@path`挿入処理へ渡す。menu表示後にactive ownerまたはcomposerの書き込み可否が変わった場合は挿入しない。symbolic linkとother rowは対象外とする
   - Windowsでは、File Explorerのregular file rowでpath操作の後ろをseparatorで区切り、file preview header、root-scopedなMarkdown local-file linkと同じく、既存regular file一件をExplorer互換のfile objectとしてclipboardへcopyできる。directoryとroot外Markdown linkは対象外とし、Copy Imageやpath文字列のcopyとは別操作にする
   - File PreviewのCopy File / Copy Image結果は、共有`AppNotification` primitiveを使ったheader内のoverlayとして表示する。通知は操作列のflex配置に参加せず、操作列の直下・右寄せに重なるため、既存の操作ボタンを移動・折り返しさせない
@@ -383,12 +383,12 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 遅延描画・行高再計測・viewport resizeによる位置変化では追従意図を変更しない。追従中の末尾補正は同frameに集約し、既に末尾1px以内なら書き込まない
   - 追従停止中は位置を維持し、userの下方向操作で末尾24px以内へ戻ると追従を再開する。layout変化だけで末尾へ近づいても再開しない
   - 会話の初回表示は末尾へ追従する。切替・previewからの復帰では会話incarnation別cacheの追従状態と閲覧位置を復元し、読み返し位置はmessage keyとviewport内offsetを優先する
-  - 追従停止中だけ列内overlayの`Jump to latest`を表示する。停止中に本文・予約状態が更新された場合は同じボタンに`New activity`を表示し、末尾へ戻ると解除する。新着状態は会話cache内だけに保持し、token数を未読件数として扱わない
+  - 追従停止中だけ列内overlayの`Jump to latest`を表示する。本文・予約状態の更新有無によらず、通常の下矢印icon-only buttonの外観と操作名を維持する
   - `Jump to latest`は履歴pageを解除して末尾へ復帰し、ボタンが消えた後はmessage listにfocusを戻す
-  - 通常Send・送信shortcut・実行中の予約送信は、durable受付成功後にだけ`Scroll To Latest On Send`を対象Columnへ一度適用する。拒否・受付不明では移動せず、待機中の読み返しや会話・送信対象切替は遅い受付成功より優先する
+  - 通常Send・送信shortcut・実行中の予約送信は、先行表示を反映した送信時に`Scroll To Latest On Send`を対象Columnへ一度適用する。受付ACK・再照会・元要求の再試行は新たな移動を起こさず、送信後の読み返しや会話・送信対象切替を維持する
 - pending 中の live activity / streaming response
-- Main／Auxiliaryはdurable受付後に予約行を表示し、実開始後は保存user seq／incarnationで通常messageへ対応付ける。遅い状態取得や会話切替で送信文を消したり、確定時に重複追加したりしない
-- streamingの`assistantText`は会話本文として表示する。run開始直後から応答用のassistant行にCharacter avatarとdot bubbleを置き、本文の到着後は同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
+- Main／Auxiliaryは送信直後に会話ID・incarnation・request IDと捕捉本文のWindow内表示を作る。準備・受付待ちは正常な待機枠または予約本文を保ち、明示的な処理エラー・timeoutだけを対象送信のerror表示へ切り替える。受付後は同じrequest IDのreceiptへ、実開始後は保存user seqへ接続する。ACKや高速な終端が会話取得より先でも送信文と応答面を保持し、確定時に重複追加しない。先行表示から保存済み本文・実行状態を生成しない
+- streamingの`assistantText`は会話本文として表示する。送信時から応答用のassistant行にCharacter avatarとdot bubbleを置き、準備・受付・実行開始を待たず通常の応答面を確保する。本文の到着後も同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
 - 処理中表示の所属は、投影が会話ID・thread・メッセージ位置から生成するmessage keyで識別する。保存済み本文とlive本文が異なる場合も対象の応答枠を使い、本文一致や最後のassistantから推測しない。Main／Auxiliaryで所属を分離し、完了・失敗・キャンセル後は本文を重複させず処理中表示を消す
 - pending bubble には provider-native pending item を差し込める
   - `approvalRequest`: `Allow Once / Reject`
@@ -416,9 +416,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Copilot Usage` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
-- 応答内のdot bubbleは `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後もrun中は維持する
+- 応答内のdot bubbleは準備・受付・応答の待機を示し、`assistantText`の出力開始後もrun中は維持する。保存上の`running`やCancel可否は実run状態から判断し、先行表示で有効化しない
 - Main / Auxiliaryのtarget切替buttonは左右paneのiconと選択状態で送信・操作対象を表し、実行状態によらずtooltipとaccessible nameを維持する。実行状態は主にHomeのMonitorで確認し、会話内の処理中表示、Auxiliary一覧のprocessing indicator、選択対象のCancelは維持する。片側の会話欄が非表示の場合やPreview表示中も、target切替内に実行状態の表示や通知を追加しない
-- 実行中bubbleは `runState !== "running"` になった時点で消し、success固定の完了表現にはしない
+- 実run終了後も確定応答の取得待ちなら同じ応答面と取得済み本文を保つ。確定本文への接続または明示失敗で待機表示を終え、success固定の完了表現にはしない
 - `assistantText`未着でもright paneの `Latest Command` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、末尾のdot bubbleとaccessible statusで待機を示す
 - screen readerには会話本文全体でなく末尾行の状態変化を通知する。Action Dockから重複して通知しない
 - retry draft conflictとcomposer feedbackはvisible textを正本にして常時live通知しない

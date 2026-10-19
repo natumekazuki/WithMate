@@ -9,6 +9,7 @@ import React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { MarkdownLinkContextMenuResult } from "../../src-shared/window/markdown-link-context-menu.js";
 
 import {
   MessageRichText,
@@ -832,14 +833,14 @@ test("MessageRichText のcode block copyは本文だけをclipboardへ渡してf
 
     assert.equal(button.disabled, false);
     assert.equal(
-      container?.querySelector(".message-copy-toast")?.textContent,
+      dom.window.document.querySelector(".message-copy-toast")?.textContent,
       "Code copied.",
     );
     assert.equal(
-      container?.querySelector(".message-copy-toast")?.getAttribute("role"),
+      dom.window.document.querySelector(".message-copy-toast")?.getAttribute("role"),
       "status",
     );
-    assert.ok(container?.querySelector(".message-copy-toast")?.classList.contains("success"));
+    assert.ok(dom.window.document.querySelector(".message-copy-toast")?.classList.contains("success"));
   } finally {
     await act(async () => {
       root?.unmount();
@@ -896,7 +897,7 @@ test("MessageRichText のcode block copy失敗はerror feedbackを表示する",
       await Promise.resolve();
     });
 
-    const feedback = container?.querySelector(".message-copy-toast");
+    const feedback = dom.window.document.querySelector(".message-copy-toast");
     assert.equal(feedback?.textContent, "Could not copy code.");
     assert.ok(feedback?.classList.contains("error"));
     assert.equal(feedback?.getAttribute("role"), "status");
@@ -1060,22 +1061,24 @@ test("handleMarkdownLinkContextMenu はkeyboard起点のmenu位置をanchorか�
 
 // @test-value v2
 // kind = "contract"
-// claim = "MessageRichText はrender済みlinkの右clickでtargetをcopy menuへ渡しfeedbackを表示する"
+// claim = "MessageRichText はlinkの右clickでtargetをcopy menuへ渡し、link・fileのcopy結果を会話列外のstatus通知で表示する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "render済みlinkのcontext menuがtargetやcopy resultをfeedbackへ伝えない"
-// observable = "show menu requestのtarget/point、preventDefault、copy feedback status/text"
+// fault = "context menuがtargetやcopy結果を伝えない、または通知が会話列内に残ってAuxiliaryの裏へ隠れる"
+// observable = "show menu requestのtarget/point、preventDefault、会話列外のfeedback text/toneとlive status属性、unmount後の通知除去"
 // observation_boundary = "component-behavior"
-// scope = "MarkdownLink context menu integration"
+// scope = "MarkdownLink context menu integrationとcopy feedbackの列外描画・lifecycle"
 // lifecycle = "permanent"
-// distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
+// impact = "copy結果が隠れると利用者は成功と失敗を判断できない。link・fileで共通の通知経路を確認する"
+// distinction = "型検査やbuildでは確認できない通知の描画先・結果文言・読み上げ属性とunmount時の除去を既存の操作testで観測する。実際の重なり順は描画確認で補う"
 // @end-test-value
-test("MessageRichText はrender済みlinkの右clickでtargetをcopy menuへ渡しfeedbackを表示する", async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+test("MessageRichText はlink・fileのcopy結果を会話列外のstatus通知で表示する", async () => {
+  const dom = new JSDOM('<!doctype html><div class="session-concurrent-chat-column" style="isolation:isolate"><div id="root"></div></div>', {
     pretendToBeVisual: true,
     url: "http://localhost/",
   });
   const requests: Array<{ target: string; point: { x: number; y: number } }> =
     [];
+  let menuResult: MarkdownLinkContextMenuResult = { status: "link-copied" };
   Object.defineProperty(dom.window, "withmate", {
     configurable: true,
     value: {
@@ -1084,7 +1087,7 @@ test("MessageRichText はrender済みlinkの右clickでtargetをcopy menuへ渡�
         point: { x: number; y: number };
       }) {
         requests.push(request);
-        return { status: "link-copied" } as const;
+        return menuResult;
       },
     },
   });
@@ -1126,10 +1129,32 @@ test("MessageRichText はrender済みlinkの右clickでtargetをcopy menuへ渡�
       },
     ]);
     assert.equal(contextMenuEvent.defaultPrevented, true);
-    assert.equal(
-      container.querySelector(".message-link-copy-toast")?.textContent,
-      "Link copied.",
-    );
+    const assertFeedback = (message: string, tone: "success" | "error") => {
+      const feedback = dom.window.document.querySelector(".message-link-copy-toast");
+      assert.ok(feedback);
+      assert.equal(feedback.textContent, message);
+      assert.ok(feedback.classList.contains(tone));
+      assert.equal(feedback.getAttribute("role"), "status");
+      assert.equal(feedback.getAttribute("aria-live"), "polite");
+      assert.equal(feedback.getAttribute("aria-atomic"), "true");
+      assert.equal(feedback.closest(".session-concurrent-chat-column"), null);
+    };
+    assertFeedback("Link copied.", "success");
+
+    for (const scenario of [
+      { result: { status: "file-copy", result: { status: "copied", message: "File copied." } }, message: "File copied.", tone: "success" },
+      { result: { status: "failed", message: "Link could not be copied." }, message: "Link could not be copied.", tone: "error" },
+    ] as const) {
+      menuResult = scenario.result;
+      await act(async () => {
+        anchor.dispatchEvent(new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      });
+      assertFeedback(scenario.message, scenario.tone);
+    }
+
+    await act(async () => root?.unmount());
+    root = null;
+    assert.equal(dom.window.document.querySelector(".message-link-copy-toast"), null);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

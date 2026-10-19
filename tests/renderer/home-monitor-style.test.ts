@@ -71,7 +71,7 @@ test("Monitorは3分類の境界と分類内scrollと内容幅に応じた列数
       [...(sections?.children ?? [])].map((section) => section.getAttribute("aria-labelledby") ?? section.getAttribute("role")),
       ["home-monitor-approval", "separator", "home-monitor-running", "separator", "home-monitor-inactive"],
     );
-    assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Approval", "Running", "Stopped"]);
+    assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Attention", "Running", "Stopped"]);
     assert.deepEqual([...document.querySelectorAll(".home-monitor-count")].map((count) => count.textContent), ["0", "0", "0"]);
     assert.equal(document.querySelector(".home-monitor-body")?.getAttribute("aria-busy"), String(auxiliaryDataState === "loading"));
   }

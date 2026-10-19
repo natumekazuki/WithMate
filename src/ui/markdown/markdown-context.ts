@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import type { MarkdownImageResolver } from "./image-resource-loader.js";
+import type { MarkdownImageContext, MarkdownImageResolver } from "./image-resource-loader.js";
 
 import type {
   MarkdownLinkContextMenuRequest,
@@ -17,6 +17,7 @@ export type MarkdownRenderContextValue = {
   onCodeBlockCopyResult?: (feedback: MessageCopyFeedback) => void;
   onLinkContextMenuResult?: (result: MarkdownLinkContextMenuResult) => void;
   linkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
+  imageContext?: MarkdownImageContext;
   onOpenPath?: (target: string) => void;
   resolveImageSource?: MarkdownImageResolver;
 };

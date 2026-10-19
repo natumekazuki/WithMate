@@ -10,7 +10,7 @@ import { getMessageHistoryIndex, type ConversationSearchMatch, type Conversation
 import { useConversationQueryPages } from "./use-conversation-query-pages.js";
 
 import { MessageRichText, type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
-import { useMarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
+import { useMarkdownImageResolver, type MarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { GlossaryAnnotationMatcher } from "../../glossary/glossary-annotation-projection.js";
@@ -70,12 +70,15 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
 }
 export type SessionMessageColumnProps = {
+  turnSubmissions?: import("../runtime/session-turn-submissions.js").SessionTurnSubmissions;
+  responsePending?: boolean;
+  submissionError?: string;
   turnQueueMetadata?: ReadonlyMap<string, import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt>;
   onCancelQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   onReleaseInterruptedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   queueBusyId?: string | null;
   queueBusyKind?: SessionTurnQueueActionKind | null;
-  queueTail?: ReactNode;
+  renderQueueTail?: (resolveImageSource: MarkdownImageResolver) => ReactNode;
   sessionId: string;
   character: CharacterProfile;
   messages: Message[];
@@ -119,7 +122,6 @@ export type SessionMessageColumnProps = {
   pendingMessageTextVisible?: boolean;
   pendingMessageGroupId?: string | null;
   isMessageListFollowing: boolean;
-  hasNewActivity?: boolean;
   onBrowseMessages?: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onMessageListLayout?: () => void;
@@ -431,7 +433,9 @@ export function SessionMessageColumn({
   onReleaseInterruptedTurn,
   queueBusyId,
   queueBusyKind,
-  queueTail,
+  renderQueueTail,
+  responsePending = false,
+  submissionError = "",
   sessionId,
   character,
   messages,
@@ -469,7 +473,6 @@ export function SessionMessageColumn({
   pendingMessageTextVisible = true,
   pendingMessageGroupId = null,
   isMessageListFollowing,
-  hasNewActivity = false,
   onBrowseMessages,
   onMessageListScroll,
   onMessageListLayout,
@@ -582,7 +585,7 @@ export function SessionMessageColumn({
       ? Object.fromEntries(Object.entries(current).filter(([key]) => keys.has(key))) : current);
   }, [artifactDetailsEnabled, expandedArtifacts, messageKeys, messages]);
   useEffect(() => () => { artifactAttempts.current.clear(); loadedArtifactDetails.current.clear(); }, []);
-  const pendingResponseMessageIndex = isRunning && pendingResponseMessageKey !== null
+  const pendingResponseMessageIndex = (isRunning || responsePending || !!submissionError) && pendingResponseMessageKey !== null
     ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1
     : -1;
   const hasElicitationRequests = liveElicitationRequests ? liveElicitationRequests.length > 0 : liveElicitationRequest !== null;
@@ -1149,7 +1152,7 @@ export function SessionMessageColumn({
         onOpenPath={onOpenPath}
         renderText={(text, key, sourceStart) => <MessageRichText key={key} text={text} sourceStart={sourceStart} isStreaming={isRunning}
           resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath}
-          markdownLinkFileContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+          markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
           glossaryAnnotationScopeKey={`${sessionId}:pending`} onActivateGlossaryEntry={onActivateGlossaryEntry} />}
       /> : null}
       {hasPendingMessageText ? (
@@ -1166,6 +1169,7 @@ export function SessionMessageColumn({
             displayMode={messageViewMode}
             onOpenPath={onOpenPath}
             markdownLinkFileContext={markdownLinkFileContext}
+            markdownImageContext={markdownLinkFileContext}
             glossaryAnnotationMatcher={glossaryAnnotationMatcher}
             glossaryAnnotationScopeKey={`${sessionId}:pending:${pendingMessageGroupId ?? "main"}`}
             onActivateGlossaryEntry={onActivateGlossaryEntry}
@@ -1179,13 +1183,17 @@ export function SessionMessageColumn({
     </div>
   );
 
+  const renderResponseStatus = () => isRunning ? renderPendingContent() : <div className="pending-response-content">
+    {submissionError ? <p className="pending-run-error-note" role="alert">{submissionError}</p>
+      : <PendingRunIndicator announcement="Waiting for response" />}
+  </div>;
   const renderPendingResponse = (className = "") => (
     <article className={`message-row assistant pending-row${className ? ` ${className}` : ""}`}>
       <div className="message-avatar-stack">
         <CharacterAvatar character={character} size="small" className="message-avatar" />
       </div>
       <div className="message-card assistant pending-message-card">
-        {renderPendingContent()}
+        {renderResponseStatus()}
       </div>
     </article>
   );
@@ -1226,23 +1234,22 @@ export function SessionMessageColumn({
       /></div> : null}
       {onJumpToBottom && !isMessageListFollowing ? (
         <button
-          className={`message-list-jump-bottom-button${hasNewActivity ? " has-new-activity" : ""}`}
+          className="message-list-jump-bottom-button"
           type="button"
           onClick={() => {
             messageListRef.current?.focus({ preventScroll: true });
             onJumpToBottom();
           }}
-          aria-label={hasNewActivity ? "New activity. Jump to latest" : "Jump to latest"}
+          aria-label="Jump to latest"
           title="Jump to latest"
         >
           <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <path d="M8 2v9M3.5 7.5 8 12l4.5-4.5M3 14h10" />
           </svg>
-          {hasNewActivity ? <span>New activity</span> : null}
         </button>
       ) : null}
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll} tabIndex={0} role="region" aria-label="Conversation messages">
-        {messages.length > 0 || isRunning || queueTail ? (
+        {messages.length > 0 || isRunning || responsePending || submissionError || renderQueueTail ? (
           <div className="session-message-list-window">
             <div
               ref={messageVirtualizer.containerRef}
@@ -1424,6 +1431,7 @@ export function SessionMessageColumn({
                               displayMode={messageViewMode}
                               onOpenPath={onOpenPath}
                               markdownLinkFileContext={markdownLinkFileContext}
+                              markdownImageContext={markdownLinkFileContext}
                               glossaryAnnotationMatcher={glossaryAnnotationMatcher}
                               glossaryAnnotationScopeKey={messageKey}
                               onActivateGlossaryEntry={onActivateGlossaryEntry}
@@ -1513,6 +1521,7 @@ export function SessionMessageColumn({
                                                   text={operation.summary}
                                                   onOpenPath={onOpenPath}
                                                   markdownLinkFileContext={markdownLinkFileContext}
+                                                  markdownImageContext={markdownLinkFileContext}
                                                 />
                                               </div>
                                             ) : (
@@ -1537,7 +1546,7 @@ export function SessionMessageColumn({
                       </section>
                     ) : null}
                     {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} busy={queueBusyId === turnQueueMetadata.get(messageKey)!.id} busyKind={queueBusyId === turnQueueMetadata.get(messageKey)!.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} /> : null}
-                    {isRunning && absoluteIndex === pendingResponseMessageIndex ? renderPendingContent() : null}
+                    {(isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
                   </div>
                 </div>
                 </article>
@@ -1546,8 +1555,8 @@ export function SessionMessageColumn({
             );
           })}
             </div>
-            {isRunning && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
-            {queueTail}
+            {(isRunning || responsePending || submissionError) && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
+            {renderQueueTail?.(resolveImageSource)}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}

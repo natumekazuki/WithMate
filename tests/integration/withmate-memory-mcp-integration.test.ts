@@ -239,11 +239,71 @@ function actorProjectTarget(ref: { type: "id"; id: string } | { type: "path"; pa
 }
 
 describe("general Memory MCP runtime integration", () => {
-  // @test-value v1
+  // @test-value v2
+  // kind = "contract"
+  // claim = "tags省略の短いnoteをMCPで保存・検索・一覧・本文取得でき、空tagsの再送は同じentryへ収束する"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memoryappend" }
+  // fault = "省略tagsがMCPまたはruntimeで拒否される、検索/一覧/取得で記録を失う、または空配列付き再送で別entryやconflictになる"
+  // observable = "bound MCPの保存entry、検索/一覧のID、本文、tags、replayedとforget後の取得結果"
+  // observation_boundary = "public-boundary"
+  // scope = "untagged-note-mcp-round-trip"
+  // lifecycle = "permanent"
+  // distinction = "schema宣言やvalidator単体でなく、runtime HTTPと実SQLiteまで通した省略入力と再送を確認する"
+  // @end-test-value
+  it("tags省略の短いnoteを保存して検索・一覧から本文を読み戻せる", async () => {
+    const fixture = await createRuntimeFixture();
+    const target = { kind: "character" as const };
+    const note = {
+      target,
+      kind: "note",
+      title: "今日の飲み物",
+      body: "今日はコーヒーを選んだと話した。",
+      preview: "今日はコーヒーを選んだ。",
+      idempotencyKey: "small-note-without-tags",
+    };
+    try {
+      const before = await fixture.client.callTool({ name: "memory.search", arguments: { targets: [target], query: "コーヒー" } });
+      assert.deepEqual((before.structuredContent as any).items, []);
+      const saved = await fixture.client.callTool({ name: "memory.append", arguments: note });
+      assert.equal(saved.isError, undefined, JSON.stringify(saved));
+      const entry = (saved.structuredContent as any).entry;
+      assert.deepEqual(entry.tags, []);
+
+      const replay = await fixture.client.callTool({ name: "memory.append", arguments: { ...note, tags: [] } });
+      assert.equal(replay.isError, undefined, JSON.stringify(replay));
+      assert.equal((replay.structuredContent as any).replayed, true);
+      assert.equal((replay.structuredContent as any).entry.id, entry.id);
+
+      const search = await fixture.client.callTool({ name: "memory.search", arguments: { targets: [target], query: "コーヒー" } });
+      assert.deepEqual((search.structuredContent as any).items.map((item: any) => item.id), [entry.id]);
+      const list = await fixture.client.callTool({ name: "memory.list_entries", arguments: { target, states: ["active"], limit: 5 } });
+      assert.deepEqual((list.structuredContent as any).items.map((item: any) => item.id), [entry.id]);
+      assert.equal((list.structuredContent as any).items[0].body, undefined);
+      const read = await fixture.client.callTool({ name: "memory.get_entry", arguments: { target, entryId: entry.id } });
+      assert.equal((read.structuredContent as any).entry.body, note.body);
+
+      const changed = await fixture.client.callTool({ name: "memory.append", arguments: { ...note, tags: [{ type: "topic", value: "coffee" }] } });
+      assert.equal(changed.isError, true);
+      assert.equal((changed.structuredContent as any).error.code, "MEMORY_IDEMPOTENCY_CONFLICT");
+      const forgotten = await fixture.client.callTool({ name: "memory.forget", arguments: {
+        target, entryIds: [entry.id], reason: "other", idempotencyKey: "forget-small-note",
+      } });
+      assert.equal(forgotten.isError, undefined, JSON.stringify(forgotten));
+      const after = await fixture.client.callTool({ name: "memory.get_entry", arguments: { target, entryId: entry.id } });
+      assert.equal(after.isError, true);
+      assert.equal((after.structuredContent as any).error.code, "MEMORY_ENTRY_NOT_FOUND");
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  // @test-value v2
   // kind = "security"
   // claim = "tools/list後のtransport failureはMCPへ渡した公開tool引数を変更しない同一binding・turnのCLI fallbackだけを許可する"
   // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-  // failure_mode = "MCP内部fieldと公開CLI bodyの差で正当なfallbackを拒否する、またはadmissionを変更bodyへ横流ししてMemoryを更新する"
+  // fault = "tags省略やMCP内部fieldと公開CLI bodyの差で正当なfallbackを拒否する、またはadmissionを変更bodyへ横流ししてMemoryを更新する"
+  // observable = "MCPのfallbackEligible、同一入力CLIの保存結果、変更入力CLIの拒否code"
+  // observation_boundary = "public-boundary"
   // scope = "general-memory-mcp-cli-fallback-integration"
   // lifecycle = "permanent"
   // @end-test-value
@@ -266,7 +326,6 @@ describe("general Memory MCP runtime integration", () => {
       title: "Fallback admission",
       body: "Only the failed MCP operation may use CLI fallback.",
       preview: "Fallback admission is operation-bound.",
-      tags: [],
       idempotencyKey: "fallback-admission-integration",
     };
     try {

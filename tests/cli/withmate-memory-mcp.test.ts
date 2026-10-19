@@ -153,11 +153,13 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "tools/listは17 toolsのstrict actor-relative schema、identity-free Character context projection、effect contractを正本として公開する"
   // oracle = { type = "adr", ref = "ADR-024 tools/list operation contract" }
-  // failure_mode = "caller identityやowner/scope schemaが再公開される、context private fieldが露出する、またはerror/effect annotationが欠落する"
+  // fault = "caller identityやowner/scope schemaが再公開される、context private fieldが露出する、error/effect annotationが欠落する、またはappendの必須入力が誤る"
+  // observable = "MCP clientが取得するtools/listのschema、annotationと操作説明"
+  // observation_boundary = "public-boundary"
   // scope = "withmate-memory-mcp-tools-list"
   // lifecycle = "permanent"
   // @end-test-value
@@ -342,10 +344,10 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       const listEntriesSchema = result.tools.find((tool) => tool.name === "memory.list_entries")?.inputSchema;
       assert.equal((listEntriesSchema?.properties?.states as { minItems?: number })?.minItems, 1);
       const listTagsSchema = result.tools.find((tool) => tool.name === "memory.list_tags")?.inputSchema;
-      assert.equal(
-        result.tools.find((tool) => tool.name === "memory.list_tags")?.description,
-        "List tags for one explicit Memory target, optionally with bounded counts and samples.",
-      );
+      assert.match(result.tools.find((tool) => tool.name === "memory.list_tags")?.description ?? "", /one explicit Memory target/);
+      const appendSchema = result.tools.find((tool) => tool.name === "memory.append")?.inputSchema;
+      assert.deepEqual(appendSchema?.required?.slice().sort(), ["target", "kind", "title", "body", "preview", "idempotencyKey"].sort());
+      assert.equal((appendSchema?.properties?.tags as { maxItems?: number })?.maxItems, 20);
       assert.equal((listTagsSchema?.properties?.targets as { minItems?: number; maxItems?: number })?.minItems, 1);
       assert.equal((listTagsSchema?.properties?.targets as { minItems?: number; maxItems?: number })?.maxItems, 1);
       assert.equal((listTagsSchema?.properties?.sampleLimit as { maximum?: number })?.maximum, 50);

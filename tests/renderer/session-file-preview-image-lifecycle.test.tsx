@@ -331,6 +331,76 @@ async function renderPreview(
 
 // @test-value v2
 // kind = "contract"
+// claim = "通常とGit履歴のMarkdown previewは許可された外部・絶対local画像の本文とlightboxから元resourceのcontextでcopy menuを開く"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
+// fault = "Git履歴でlink操作の抑止と共に画像menuを止める、画像のbaseからcommit識別を落とす、または表示blobを元pathとして渡す"
+// observable = "本文・lightboxのmouse/keyboard eventのdefaultPreventedとnative menu APIのrequest"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreviewから共有Markdown画像copyへのconsumer接続"
+// lifecycle = "permanent"
+// impact = "履歴内で表示を認められた画像からもbitmapと元pathをcopyできる"
+// distinction = "MarkdownImage単体testではconsumerが画像contextを欠落させる不具合を検出できず、通常とcommitの実previewを同じ入力で比較する"
+// @end-test-value
+test("通常とGit履歴のMarkdown画像は本文とlightboxのcopy menuへcontextを渡す", async () => {
+  for (const isCommit of [false, true]) {
+    for (const source of ["data:image/png;base64,iVBORw0KGgo=", "/outside/image.png"]) {
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
+      const restoreGlobals = installDomGlobals(dom);
+      const request = isCommit ? {
+        ...MARKDOWN_REQUEST, resourceKind: "git-commit-file" as const,
+        repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa", commitId: "a".repeat(40),
+      } : MARKDOWN_REQUEST;
+      const menuRequests: Parameters<PreviewApi["showSessionFilePreviewImageContextMenu"]>[0][] = [];
+      const baseApi = createTextPreviewApi(request, "readme.md", `![sample](${source})`, "markdown-r1");
+      const api: PreviewApi = {
+        ...baseApi,
+        async inspectSessionFile(input) {
+          return { ...await baseApi.inspectSessionFile(input), kind: "markdown" };
+        },
+        async showSessionFilePreviewImageContextMenu(input) {
+          menuRequests.push(input);
+          return { status: "dismissed" };
+        },
+      };
+      Object.defineProperty(dom.window, "withmate", { configurable: true, value: api });
+      const container = dom.window.document.getElementById("root")!;
+      let root: Root | null = null;
+      try {
+        root = await renderPreview(api, container, request);
+        await waitFor(() => container.querySelector(".message-image") !== null);
+        const image = container.querySelector<HTMLImageElement>(".message-image")!;
+        const trigger = image.closest("button")!;
+        image.getBoundingClientRect = trigger.getBoundingClientRect = () => createRect({ left: 10, top: 20, width: 120, height: 80 });
+        await act(async () => image.dispatchEvent(new dom.window.Event("load")));
+        const mouse = new dom.window.MouseEvent("contextmenu", { clientX: 40, clientY: 50, bubbles: true, cancelable: true });
+        await act(async () => image.dispatchEvent(mouse));
+        const keyboard = new dom.window.KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true });
+        await act(async () => trigger.dispatchEvent(keyboard));
+        await act(async () => trigger.click());
+        const dialog = dom.window.document.querySelector<HTMLElement>('[role="dialog"]')!;
+        const largeImage = dialog.querySelector("img")!;
+        largeImage.getBoundingClientRect = () => createRect({ left: 30, top: 40, width: 200, height: 100 });
+        dialog.querySelector<HTMLElement>(".image-viewport")!.getBoundingClientRect = largeImage.getBoundingClientRect;
+        const largeMouse = new dom.window.MouseEvent("contextmenu", { clientX: 80, clientY: 90, bubbles: true, cancelable: true });
+        await act(async () => largeImage.dispatchEvent(largeMouse));
+        const largeKeyboard = new dom.window.KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true });
+        await act(async () => dialog.dispatchEvent(largeKeyboard));
+        assert.deepEqual([mouse, keyboard, largeMouse, largeKeyboard].map((event) => event.defaultPrevented), [true, true, true, true]);
+        assert.deepEqual(menuRequests, [{ x: 40, y: 50 }, { x: 70, y: 60 }, { x: 80, y: 90 }, { x: 130, y: 90 }].map((point) => ({
+          sessionId: "session-1", point,
+          ...(source.startsWith("/") ? { image: { target: source, baseResource: request } } : {}),
+        })));
+      } finally {
+        if (root) await act(async () => root!.unmount());
+        restoreGlobals();
+        dom.window.close();
+      }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "file previewはheaderと本文の間の専用領域にroot・absolute・commit resourceの絶対パスをread-onlyで表示し、対象切替に追従する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 中央 file preview" }
 // fault = "表示pathを相対pathへ置換する、操作群と同じ領域へ戻す、編集可能にする、または別resourceへ旧pathを表示する"
@@ -2344,18 +2414,19 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
 });
 
 // @test-value v2
-// kind = "contract"
-// claim = "別窓File Previewのcopy通知に必要な暗色theme token、success/errorの文字・背景・border、headerを基準にした操作群外overlayのCSS宣言が定義されている"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Copy File / Copy Image結果通知" }
-// fault = "別窓copy通知の暗色theme token、success/errorの背景またはborder、headerのrelative基準、または操作群外absolute overlayに必要なCSS宣言が欠けている"
+// kind = "regression"
+// claim = "現行のcopy通知CSSは別窓のtheme tokenを参照し、success/error別の背景・borderとheader基準の操作群外overlayを宣言する"
+// oracle = { type = "characterization", ref = "src/file-explorer/files.css: file-preview-window-page; src/chat/session-shell.css: app-notification / session-file-preview-notification-layer" }
+// fault = "別窓の通知用theme tokenやtone別の色参照（未定義のdanger tokenのfallbackを含む）が欠ける、overlayが通常flowへ戻る、header直下・右寄せのanchorや前面配置を失う、またはpointer操作を遮る"
 // observable = "file-preview-window-page、app-notificationのsuccess/error、session-file-preview-headerとsession-file-preview-notification-layerの各CSS declaration"
 // observation_boundary = "declaration"
 // scope = "File Preview detached notification stylesheet"
-// lifecycle = "permanent"
-// impact = "別窓のcopy通知表示に必要なCSS契約を維持し、実画面で確認すべき視認性とlayout条件を明確にする"
-// distinction = "JSDOMでは算出できない宣言の存在を確認し、DOMの通知内容・ARIA・親境界の検証と分担する"
+// lifecycle = "characterization"
+// review_when = "通知のtheme token接続またはoverlayの配置方式を変更するとき"
+// impact = "通知の配色接続や操作群外配置を失うCSS欠落を検出する。色・余白の具体値や実描画でのcontrast・座標は保証しない"
+// distinction = "Desktop UIのCopy結果表示・tone・ARIA・親境界は既存component testが検証する。本testはその表示を支える現行CSS宣言だけを補完する"
 // @end-test-value
-test("別窓File Previewのcopy通知CSSは暗色themeと操作群外overlayを定義する", async () => {
+test("別窓File Previewのcopy通知CSSはtheme接続と操作群外overlayを定義する", async () => {
   const styles = await readStylesheet();
   const pageRule = styles.match(/\.file-preview-window-page\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const notificationRule = styles.match(/\.app-notification\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
@@ -2364,23 +2435,21 @@ test("別窓File Previewのcopy通知CSSは暗色themeと操作群外overlayを�
   const headerRule = styles.match(/\.session-file-preview-header\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const layerRule = styles.match(/\.session-file-preview-notification-layer\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
 
-  assert.match(pageRule, /--surface-strong:\s*rgba\(28,\s*33,\s*43,\s*0\.98\);/);
-  assert.match(pageRule, /--line:\s*rgba\(203,\s*213,\s*225,\s*0\.12\);/);
-  assert.match(pageRule, /--ink:\s*#e5edf8;/);
-  assert.match(pageRule, /--teal:\s*#6fb8c7;/);
-  assert.match(pageRule, /--teal-soft:\s*rgba\(111,\s*184,\s*199,\s*0\.14\);/);
-  assert.match(notificationRule, /border:\s*1px solid var\(--line\);/);
+  for (const token of ["surface-strong", "line", "ink", "teal", "teal-soft"]) {
+    assert.match(pageRule, new RegExp(`--${token}:\\s*[^;\\s][^;]*;`));
+  }
+  assert.match(notificationRule, /border:\s*[^;]+\s+solid\s+var\(--line\);/);
   assert.match(notificationRule, /background:\s*var\(--surface-strong\);/);
   assert.match(notificationRule, /color:\s*var\(--ink\);/);
   assert.match(successRule, /border-color:\s*var\(--teal\);/);
-  assert.match(successRule, /background:\s*color-mix\(in srgb,\s*var\(--teal-soft\)\s*72%,\s*var\(--surface-strong\)\);/);
-  assert.match(errorRule, /border-color:\s*var\(--danger,\s*#fca5a5\);/);
-  assert.match(errorRule, /background:\s*color-mix\(in srgb,\s*var\(--danger,\s*#fca5a5\)\s*14%,\s*var\(--surface-strong\)\);/);
+  assert.match(successRule, /background:\s*[^;]*var\(--teal-soft\)[^;]*;/);
+  assert.match(errorRule, /border-color:\s*var\(--danger,\s*[^;)\s][^;]*\);/);
+  assert.match(errorRule, /background:\s*[^;]*var\(--danger,\s*[^;)\s][^;]*\)[^;]*;/);
   assert.match(headerRule, /position:\s*relative;/);
   assert.match(layerRule, /position:\s*absolute;/);
-  assert.match(layerRule, /top:\s*calc\(100%\s*\+\s*8px\);/);
-  assert.match(layerRule, /right:\s*10px;/);
-  assert.match(layerRule, /z-index:\s*2;/);
+  assert.match(layerRule, /top:\s*(?:100%|calc\(100%\s*\+\s*[^;]+\));/);
+  assert.match(layerRule, /right:\s*(?!auto\b)[^;\s][^;]*;/);
+  assert.match(layerRule, /z-index:\s*[1-9]\d*;/);
   assert.match(layerRule, /pointer-events:\s*none;/);
 });
 

@@ -1,7 +1,20 @@
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
 import { MessageRichText } from "../../ui/markdown/MessageRichText.js";
+import type { MarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
 import { ButtonContent } from "../../ui/button-content.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
+import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
+import { LoadingIndicator } from "../../ui/loading-indicator.js";
+
+export function SessionTurnSubmissionRow({ submission, resolveImageSource }: { submission: SessionTurnSubmission; resolveImageSource?: MarkdownImageResolver }) {
+  return <article className="message-row user" data-message-source="turn-submission">
+    <div className="message-card user"><div className="message-card-content">
+      <MessageRichText text={submission.userMessage} resolveImageSource={resolveImageSource} />
+      {submission.error ? <p className="pending-run-error-note" role="alert">{submission.error}</p>
+        : <LoadingIndicator inline label="Queued turn" />}
+    </div></div>
+  </article>;
+}
 
 export function SessionTurnQueueStatus({ receipt, position, busy, busyKind, onCancel, onRelease, onSendInput }: {
   receipt: SessionTurnQueueReceipt; position?: number; busy: boolean;
@@ -21,10 +34,10 @@ export function SessionTurnQueueStatus({ receipt, position, busy, busyKind, onCa
   </div>;
 }
 
-export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0]) {
+export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { resolveImageSource?: MarkdownImageResolver }) {
   return <article className="message-row user" data-message-source="turn-queue">
     <div className="message-card user"><div className="message-card-content">
-      <MessageRichText text={props.receipt.captured.request.userMessage} />
+      <MessageRichText text={props.receipt.captured.request.userMessage} resolveImageSource={props.resolveImageSource} />
       <SessionTurnQueueStatus {...props} />
     </div></div>
   </article>;

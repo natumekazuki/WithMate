@@ -487,11 +487,8 @@ function normalizeTargets(value: unknown): MemoryValidationResult<MemoryTargetSe
   return { ok: true, value: normalized };
 }
 
-function normalizeTags(value: unknown, field = "tags", options: { required?: boolean } = {}): MemoryValidationResult<NormalizedMemoryTag[]> {
+function normalizeTags(value: unknown, field = "tags"): MemoryValidationResult<NormalizedMemoryTag[]> {
   if (value === undefined) {
-    if (options.required) {
-      return error("MEMORY_INVALID_FIELD", `${field} is required.`, field);
-    }
     return { ok: true, value: [] };
   }
   if (!Array.isArray(value)) {
@@ -978,7 +975,7 @@ export function validateMemoryAppendRequest(value: unknown): MemoryValidationRes
   if (!preview.ok) {
     return preview;
   }
-  const tags = normalizeTags(value.tags, "tags", { required: true });
+  const tags = normalizeTags(value.tags);
   if (!tags.ok) {
     return tags;
   }

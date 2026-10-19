@@ -22,6 +22,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - render 済み link の context menu は`Copy link`を提供する。protocol-relativeを含む外部 URL は表示 label ではなく `href` target を保ち、local / `file:` / Windows absolute path は通常の Open と同じ Main process の path 解決境界で decode・filesystem path 変換して clipboard へ渡す。最終的な copy target に制御文字を含む場合は clipboard を更新せず失敗として通知する
 - HTTP / HTTPS、`mailto:`、workspace 相対 path、`file:`、Windows absolute pathをcopy対象とし、unsafe schemeで除去されたlinkと同一pageの`#` anchorは対象にしない
 - context menuはmouseの右clickに加え、focusしたlinkからShift+F10またはContext Menu keyで到達できるnative menuとする。dismissはcopy成功として通知しない
+- link・file・codeのcopy feedbackは画面右下の通知として本文DOM外へportalし、Main／Auxiliary列の重なりやclipに隠さない。成功／失敗の文言・toneと`role="status"`の読み上げを維持し、2.4秒で消す
 - detached previewのnavigationとroot authorizationの判断は[ADR 020](../adr/020-file-preview-window-navigation.md)、明示directory openの判断は[ADR 025](../adr/025-explicit-directory-link-open.md)を参照する
 
 ## Image Handling
@@ -29,6 +30,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - chatと中央／独立File Previewは、通常Markdown画像とMermaid画像に同じ画像resolverを使用する。local画像は登録root内外とも既定表示し、相対pathはchatではWorkspace、file previewでは元fileの親directory基準とする。絶対path、file URL、UNCを扱い、Additional DirectoriesやProvider権限を変更しない。Git commit previewの相対local画像は解決せず、絶対pathと外部画像のみを扱う
 - HTTP、HTTPS、data image、blobを許可し、protocol-relative URLはHTTPSへ正規化する。他のURL schemeは拒否する。外部通信の判断は[ADR 012](../adr/012-markdown-resource-loading-policy.md)、local画像の共通認可境界は[ADR 026](../adr/026-shared-image-resource-loading.md)を正本とする
 - SVG は `<img>` の resource として描画し、inline DOM へ挿入しない
+- 通常Markdown画像は本文内とlightboxのnative context menuから`Copy Image`で表示中のbitmapをcopyできる。local画像では`Copy Path`も提供し、表示用blob URLではなくMainの画像専用解決経路で再確認した元fileのcanonical absolute pathをcopyする。相対pathの基準とSession／preview baseの認可は画像読込と同じとし、menu選択後の解決前後にもsenderを再確認する。HTTP／HTTPS・data・blob画像にはpath操作を表示しない。mouse右clickとfocusしたpreviewのShift+F10／Context Menu keyに対応し、成功・失敗は操作中の本文またはlightboxへ通知する。dismissは成功として通知しない
 - local画像はchat column／file previewごとに4並列、1MiB chunkで読み込む。通常Markdownのlocal画像は画像領域がviewportへ入った時にinspect／bytes取得を開始し、画面外の未表示resourceでは取得もloading表示のタイマーも開始しない。sourceまたはresolver世代が変われば新しいresourceの表示タイミングを確認し直す。取得開始後は画面外へ移動しても表示resourceをmount中は保持する。Mermaid画像は図のlayoutに必要な寸法を得る時に取得する。file、reload、mode、encoding、画像sourceの切替またはunmountで待機中の旧処理を破棄し、実行中のstale readを次のchunkへ進めない。表示継続時もresolverを更新して再解決する。容量・画素・総枚数・timeoutの上限は設けず、全量保持のメモリー負荷は残る。画像表示による通信・私的画像の表示は自動的に起こり得る。
 - 画像専用loaderはIPCのexact ArrayBuffer chunkを順序どおりBlobへ渡し、全サイズの連結bufferを作らない。Blobがbytesをsnapshotした後、完了／error／取消／世代無効化時にはloaderが保持するchunk参照を解放する。decodeとBlob内部の割当は別であり、同時数とコピー削減は総メモリー容量の保証ではない。
 - local画像はMainの画像専用inspect/chunk APIでSessionとbase resourceの所有関係、通常file、実path・identity・revision、画像headerを確認する。拡張子だけで認定せず、ブラウザーがdecodeできる画像を表示する。汎用file read・directory列挙のroot認可は維持する
@@ -63,7 +65,7 @@ flowchart LR
 
 - message と file preview は同じ component mapping を使う
 - PreviewはGFM・KaTeX・footnoteを含む完全Markdown描画を常に使用し、本文更新で未整形表示へ巻き戻さない。受信中の追記だけを100ms単位のsnapshotへまとめ、継続受信でも予定を延期せず最新本文を反映する。初回、追記以外の置換、受信終了（成功・失敗・取消）、検索中の`forceFullRender`指定は即時反映し、Sourceは常に最新の原文を表示する。会話の実行状態はMain／Auxiliaryの対象応答とpending本文のownerから渡す。
-- 呼び出し元は path open と local image resolution の context だけを注入する
+- 呼び出し元はpath openと画像読込・画像操作のcontextを注入する。画像操作のcontextはlink操作の可否から独立させ、Git previewでも画像読込と同じSession/base resourceを使う
 - Quote を提供する共通 chat window は Preview を既定とし、ActionDock の表示切替で message column 全体を Source にできる。Source は元 Markdown を plain text として表示し、選択、Quote、検索は表示中の source text を対象にする
 - assistant response の選択 action は Session chat root が overlay と stacking context を所有し、message surface や ActionDock の局所 stacking context から分離する。位置と lifecycle の executable contract は `src/chat/selection-action-overlay.ts` と `tests/renderer/session-message-column.test.ts` を正本とする
 - message の表示 mode は window mount 中だけ保持し、永続化しない。切替時は既存の selection を解除する

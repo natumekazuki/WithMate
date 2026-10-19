@@ -3,12 +3,14 @@ import type { RunSessionTurnRequest } from "../../../src-shared/session/runtime-
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
 import type { ComposerControllerRegistry, ComposerOwner } from "../composer-controller.js";
 import type { AuxiliaryDraftPersistenceOwner } from "../auxiliary-draft-persistence-owner.js";
+import { SessionTurnSubmissions } from "./session-turn-submissions.js";
 
 type AcceptanceApi = Pick<WithMateWindowApi, "enqueueSessionTurn" | "getSessionTurnQueueReceipt">;
-type Capture = { request: RunSessionTurnRequest & { incarnationId: string }; owner: ComposerOwner; revision: number; clearDraft: boolean; auxiliaryDraftOwner?: AuxiliaryDraftPersistenceOwner; onAccepted?: () => void };
+type Capture = { request: RunSessionTurnRequest & { incarnationId: string }; owner: ComposerOwner; revision: number; clearDraft: boolean; auxiliaryDraftOwner?: AuxiliaryDraftPersistenceOwner };
 
 /** Window-local uncertain requests are retained until the original identity is resolved. */
 export class SessionTurnAcceptance {
+  readonly submissions = new SessionTurnSubmissions();
   private readonly uncertain = new Map<string, Capture>();
 
   hasUncertain(sessionId: string): boolean { return this.uncertain.has(sessionId); }
@@ -16,10 +18,8 @@ export class SessionTurnAcceptance {
   private acknowledge(sessionId: string, captured: Capture, registry: ComposerControllerRegistry, receipt: SessionTurnQueueReceipt) {
     if (receipt.sessionId !== sessionId || receipt.requestId !== captured.request.clientRequestId || receipt.incarnationId !== captured.request.incarnationId) throw new Error("Queue receipt does not match the submitted request.");
     this.uncertain.delete(sessionId);
+    this.submissions.accept(receipt);
     if (captured.clearDraft) registry.clearIfRevision(captured.owner, captured.revision);
-    const onAccepted = captured.onAccepted;
-    captured.onAccepted = undefined;
-    onAccepted?.();
     return receipt;
   }
 
@@ -41,6 +41,7 @@ export class SessionTurnAcceptance {
     }
     if (result.state === "rejected") {
       this.uncertain.delete(sessionId);
+      this.submissions.fail(captured.request.clientRequestId!, result.reason);
       throw new Error(result.reason);
     }
     return this.acknowledge(sessionId, captured, registry, result);
@@ -61,6 +62,7 @@ export class SessionTurnAcceptance {
     const result = await this.enqueue(api, sessionId, captured);
     if (result.state === "rejected") {
       this.uncertain.delete(sessionId);
+      this.submissions.fail(captured.request.clientRequestId!, result.reason);
       throw new Error(result.reason);
     }
     return this.acknowledge(sessionId, captured, registry, result);

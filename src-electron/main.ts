@@ -20,6 +20,7 @@ import {
 } from "electron";
 
 import type { DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import { projectLiveSessionRunStatus } from "../src-shared/session/live-session-run-status.js";
 import { currentTimestampLabel } from "../src-shared/time-state.js";
 import { createDefaultSessionMemory } from "../src-shared/memory/session-memory-state.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
@@ -313,6 +314,8 @@ const bundledGlossarySkillPath = app.isPackaged
 const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
 const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
+  inspectImage: (request) => createSessionFileExplorerService().inspectImage(request),
+  writeText: (targetPath) => clipboard.writeText(targetPath),
 });
 const windowsFileDropClipboardWriter = new WindowsFileDropClipboardWriter({ platform: process.platform });
 const sessionFileObjectCopyService = new SessionFileObjectCopyService({
@@ -972,11 +975,14 @@ async function listSessionSummaryPage(request?: SessionSummaryPageRequest | null
   const page = await requireMainQueryService().listSessionSummaryPage(request);
   return {
     ...page,
-    entries: page.entries.map((summary) => ({
-      ...summary,
-      cancellationState: getLiveSessionRun(summary.id)?.cancellationState,
-      approvalPending: Boolean(getLiveSessionRun(summary.id)?.approvalRequest),
-    })),
+    entries: page.entries.map((summary) => {
+      const status = projectLiveSessionRunStatus(getLiveSessionRun(summary.id));
+      return {
+        ...summary,
+        cancellationState: status?.cancellationState,
+        approvalPending: status?.approvalPending ?? false,
+      };
+    }),
   };
 }
 
@@ -1262,11 +1268,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openSessionFilesTerminal,
                 copySessionFilePreviewImage: (event, request) =>
                   sessionFilePreviewImageCopyService.copyImage(event.sender, request.point),
-                showSessionFilePreviewImageContextMenu: (event, request) =>
+                showSessionFilePreviewImageContextMenu: (event, request, assertSender) =>
                   sessionFilePreviewImageCopyService.showContextMenu(
                     BrowserWindow.fromWebContents(event.sender) ?? null,
                     event.sender,
                     request.point,
+                    request.image ? {
+                      request: { ...request.image, sessionId: request.sessionId },
+                      assertSender,
+                    } : undefined,
                   ),
                 copySessionFileObject: (_event, request) =>
                   sessionFileObjectCopyService.copyResource(request.resource),
@@ -1425,11 +1435,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     ...listOpenSessionWindowIds(),
                   ]));
                   const summaries = await requireAuxiliarySessionService().listAuxiliarySessionSummaries(parentSessionIds);
-                  return summaries.map((summary) => ({
-                    ...summary,
-                    cancellationState: getLiveSessionRun(summary.id)?.cancellationState,
-                    approvalPending: Boolean(getLiveSessionRun(summary.id)?.approvalRequest),
-                  }));
+                  return summaries.map((summary) => {
+                    const status = projectLiveSessionRunStatus(getLiveSessionRun(summary.id));
+                    return {
+                      ...summary,
+                      cancellationState: status?.cancellationState,
+                      approvalPending: status?.approvalPending ?? false,
+                    };
+                  });
                 },
                 getActiveAuxiliarySession: (parentSessionId) =>
                   requireAuxiliarySessionService().getActiveAuxiliarySessionView(parentSessionId),

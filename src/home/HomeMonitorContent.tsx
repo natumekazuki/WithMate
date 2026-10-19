@@ -93,7 +93,7 @@ function MonitorStatusIcon({
 function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
   const summaries = entry.auxiliarySessions;
   const groups = [
-    { kind: "approval" as const, label: "Approval Required" },
+    { kind: "approval" as const, label: "Attention" },
     { kind: "running" as const, label: "Running" },
     { kind: "running" as const, label: "Canceling" },
     { kind: "running" as const, label: "Waiting For Stop" },
@@ -141,7 +141,7 @@ export function HomeMonitorContent({
   const sectionsRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<number[] | null>(null);
   const id = useId();
-  const sectionLabels = ["Approval", "Running", "Stopped"];
+  const sectionLabels = ["Attention", "Running", "Stopped"];
   const sectionCounts = [approvalEntries.length, runningEntries.length, nonRunningEntries.length];
 
   const getAvailableHeight = () => {
@@ -404,7 +404,7 @@ export function HomeMonitorContent({
       >
         <section className={`home-monitor-section${closedSections[0] ? " is-closed" : ""}`} aria-labelledby="home-monitor-approval">
           <div className="home-monitor-section-head">
-            <h3 id="home-monitor-approval">Approval</h3>
+            <h3 id="home-monitor-approval">Attention</h3>
             <span className="home-monitor-count">{approvalEntries.length}</span>
           </div>
           <div id={`${id}-content-0`} className={`home-monitor-section-content${closedSections[0] || smallSections[0] ? " is-hidden" : ""}`} inert={closedSections[0] || smallSections[0]} aria-hidden={closedSections[0] || smallSections[0]}>

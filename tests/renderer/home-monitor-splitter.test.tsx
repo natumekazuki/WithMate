@@ -38,9 +38,9 @@ async function withMonitor(run: (context: { dom: JSDOM; root: ReturnType<typeof 
 
 // @test-value v2
 // kind = "contract"
-// claim = "分類境界は隣接親件数が少ない側を閉じ、同数はApproval優先で残し、閉じた側の復帰を優先する。件数更新だけでは開閉しない"
+// claim = "分類境界は隣接親件数が少ない側を閉じ、同数はAttention優先で残し、閉じた側の復帰を優先する。件数更新だけでは開閉しない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "多い側を閉じる、同数でApprovalを閉じる、Runningを閉じられない、両側closedから低優先を開く、または更新で自動開閉する"
+// fault = "多い側を閉じる、同数でAttentionを閉じる、Runningを閉じられない、両側closedから低優先を開く、または更新で自動開閉する"
 // observable = "境界click前後と件数更新後のcontentのinert/aria-hidden、closed行指定、DOM同一性、scrollTop、focus"
 // observation_boundary = "component-behavior"
 // scope = "HomeMonitorContentの分類境界clickと保持する一覧状態"
@@ -80,10 +80,10 @@ test("Monitor分類のclickは件数と優先度に従いDOMを保持して開�
       assert.equal(content.hasAttribute("inert"), false);
     }
     await act(async () => render([1, 2, 3], "both-closed"));
-    await click(0); // Approval closes (fewer than Running).
+    await click(0); // Attention closes (fewer than Running).
     await click(1); // Running closes (fewer than Stopped).
     assert.deepEqual(closed(), [true, true, false]);
-    await click(0); // Both closed: restore Approval first.
+    await click(0); // Both closed: restore Attention first.
     assert.deepEqual(closed(), [false, true, false]);
     await click(0); // One closed: restore Running irrespective of count.
     assert.deepEqual(closed(), [false, false, false]);

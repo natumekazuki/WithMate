@@ -5,6 +5,7 @@ import {
   useState,
   type SetStateAction,
 } from "react";
+import { flushSync } from "react-dom";
 import type { RunSessionTurnRequest } from "../../../src-shared/session/runtime-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
@@ -270,7 +271,7 @@ export function useMainSessionRuntime({
       queueTurn?: boolean;
       auxiliaryDraftOwner?: AuxiliaryDraftPersistenceOwner;
       isCurrentSubmission?: () => boolean;
-      onAccepted?: () => void;
+      onSubmitted?: () => void;
       shouldCollapseActionDock: boolean;
       selectedSessionRunState: Session["runState"] | null;
       blockedReason: string | null;
@@ -291,7 +292,7 @@ export function useMainSessionRuntime({
         queueTurn: input.queueTurn,
         auxiliaryDraftOwner: input.auxiliaryDraftOwner,
         isCurrentSubmission: input.isCurrentSubmission,
-        onAccepted: input.onAccepted,
+        onSubmitted: input.onSubmitted,
         clearDraft: input.clearDraft,
         collapseActionDock: input.shouldCollapseActionDock,
         selectedSessionRunState: input.selectedSessionRunState,
@@ -304,6 +305,7 @@ export function useMainSessionRuntime({
           setPendingSubmitSessionId,
           setForceComposerBlockedFeedback,
           collapseActionDock: input.collapseActionDock,
+          commitSubmission: (publish) => flushSync(publish),
         },
         log: input.log,
       }),
@@ -348,6 +350,7 @@ export function useMainSessionRuntime({
     toggleSessionPin,
     isSessionPinPending,
     runMainSessionTurn,
+    turnSubmissions: acceptanceRef.current.submissions,
     hasUncertainTurn: selectedId ? acceptanceRef.current.hasUncertain(selectedId) : false,
     hasUncertainTurnFor: (sessionId: string | null) => sessionId ? acceptanceRef.current.hasUncertain(sessionId) : false,
     checkTurnReceipt: (sessionId: string | null = selectedId) => resolveUncertainTurn(false, sessionId),
