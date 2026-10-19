@@ -86,11 +86,13 @@ export async function runMainSessionTurnOperation(input: {
     const receipt = await input.acceptance.submit(api, sessionId, {
       request, owner: composerOwner, revision: captured.revision, clearDraft: input.clearDraft,
       auxiliaryDraftOwner: input.auxiliaryDraftOwner,
-      onAccepted: input.onAccepted,
+      onAccepted: () => {
+        state.setForceComposerBlockedFeedback(false);
+        if (input.collapseActionDock) state.collapseActionDock();
+        input.onAccepted?.();
+      },
     }, composerRegistry);
-    state.setForceComposerBlockedFeedback(false);
     input.log("renderer.queue.accepted", { sessionId, clientRequestId: receipt.requestId, state: receipt.state });
-    if (input.collapseActionDock) state.collapseActionDock();
     // Queue acceptance is not a saved message or an optimistic running Session.
     return receipt;
   } finally {

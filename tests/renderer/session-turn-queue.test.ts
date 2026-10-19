@@ -192,6 +192,66 @@ test("Main Queue Turn admits captured settings after preview and clears after AC
 
 // @test-value v2
 // kind = "contract"
+// claim = "送信のdock折りたたみはdurable受付確認後の末尾追従より先に一度だけ行い、設定OFF・拒否・結果不明では閉じず、受付再確認も同じ順序を使う"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dockのdurable受付後の表示更新順序" }
+// fault = "ACK前や拒否でdockを閉じる、末尾追従後に閉じる、または結果不明の回復で折りたたみを省略・重複する"
+// observable = "ACK前後と再照会・再試行後のdock折りたたみと末尾追従callbackの順序・回数、追従時のdraft"
+// observation_boundary = "consumer"
+// scope = "accepted send presentation ordering"
+// lifecycle = "permanent"
+// impact = "入力失敗時の作業面を失い、成功時の末尾移動が古いdock状態を参照する"
+// distinction = "既存の受付通知回数testはruntime operationのdock設定と回復callbackの接続を通らず、型検査では非同期の表示更新順序を保証できない"
+// @end-test-value
+test("accepted send collapses before following, including receipt recovery", async () => {
+  for (const outcome of ["accepted", "rejected", "unknown", "check", "retry"] as const) {
+    for (const autoCollapse of [false, true]) {
+      const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
+      const acceptance = new SessionTurnAcceptance();
+      const events: string[] = [];
+      let acknowledge!: () => void;
+      let recover = false;
+      const api = {
+        previewComposerInput: async () => ({ attachments: [], errors: [] }),
+        enqueueSessionTurn: async () => {
+          if (!recover) await new Promise<void>((resolve) => { acknowledge = resolve; });
+          if (outcome === "rejected") return { state: "rejected" as const, reason: "Workspace is unavailable." };
+          if (outcome !== "accepted" && !recover) throw new Error("disconnected");
+          return receipt();
+        },
+        getSessionTurnQueueReceipt: async () => recover ? receipt() : null,
+      };
+      const operation = runMainSessionTurnOperation({
+        api, sessionId: owner.id, selectedSession: session(), request,
+        composerRegistry: registry, composerOwner: owner, submitCoordinator: new SessionSubmitCoordinator(), acceptance,
+        queueTurn: true, clearDraft: true, collapseActionDock: autoCollapse,
+        selectedSessionRunState: "running", blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
+        state: { setComposerPreview() {}, setPendingSubmitSessionId() {}, setForceComposerBlockedFeedback() {}, collapseActionDock: () => { events.push("collapse"); } },
+        onAccepted: () => { assert.equal(registry.get(owner).draft, ""); events.push("follow"); }, log() {},
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(registry.get(owner).draft, "A");
+      assert.deepEqual(events, []);
+      acknowledge();
+      if (outcome === "accepted") await operation;
+      else {
+        await assert.rejects(operation, outcome === "rejected" ? /Workspace is unavailable/ : /acceptance could not be confirmed/);
+        assert.equal(registry.get(owner).draft, "A");
+        assert.deepEqual(events, []);
+        if (outcome === "check" || outcome === "retry") {
+          recover = true;
+          if (outcome === "check") await Promise.all([acceptance.check(api, owner.id, registry), acceptance.check(api, owner.id, registry)]);
+          else await acceptance.retry(api, owner.id, registry);
+        }
+      }
+      await acceptance.check(api, owner.id, registry);
+      assert.deepEqual(events, outcome === "accepted" || outcome === "check" || outcome === "retry"
+        ? autoCollapse ? ["collapse", "follow"] : ["follow"] : []);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "送信完了通知はdurable受付を確認したときだけ一度行い、未受付・結果不明では行わず、元要求の再照会・再試行でも同じ通知を消費する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信時の末尾追従を対象Columnへ一度だけ通知する; Issue #822 UX-02" }
 // fault = "受付失敗で追尾を再開する、結果不明の回復時に通知しない、または同時再照会で二重通知する"

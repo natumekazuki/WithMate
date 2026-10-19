@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -1053,7 +1054,7 @@ export default function AgentSessionWindowApp() {
     const autoCollapse = appSettings.autoCollapseActionDockOnSend;
     return () => {
       if (autoCollapse && autoCollapseRef.current && context === dockContextRef.current && isCurrentIntent()) {
-        setIsActionDockPinnedExpanded(false);
+        flushSync(() => setIsActionDockPinnedExpanded(false));
       }
     };
   };

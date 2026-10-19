@@ -323,7 +323,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の40px固定幅領域を常時予約し、非実行中は不可視にする。Sendは下段右端の40×40pxの円形buttonと約20pxの紙飛行機iconで表示し、busy中は同寸法のspinnerへ切り替える。設定群が狭幅で折り返してもSendを独立した右列に保ち、開閉やMain / Auxiliary切替で主操作の位置を変えない
   - 開閉は下 splitter を主導線とし、compact では実行状態によらずdock全体の余白からも展開できる。非表示の `Cancel` 予約領域と操作間の隙間も対象とし、表示中の操作ボタンは自身の操作を優先してdockを展開しない。dock 内に `Hide` は置かない
   - Promptのexpandedでは上部操作列と下部設定・送信列の高さを固定し、dragで中央のtextarea領域を伸縮させる。Main／Auxiliaryの実行中も次の依頼を準備するため、Template・Skill・添付・Additional Directory・対応する実行設定を使える。実行中Turnの設定・認可済みdirectoryは捕捉値を維持し、編集値は次の送信から適用する。read-only、入力のblocked条件、quit／close凍結は維持する。Terminalでは切替操作列とタブバーを固定し、端末本文へ残りの高さを割り当てる
-  - default では通常送信の直後に compact へ戻す
+  - default では通常送信のdurable受付成功後にcompactへ戻し、その開閉状態をDOMへ反映してから`Scroll To Latest On Send`を適用する。受付拒否・結果不明では閉じず、`Check Receipt`／元要求の再試行で受付を確認した場合も同じ表示更新を一度だけ行う。実行開始や応答枠の表示をdockのtransition完了まで待たせない
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - Promptではskill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。Terminalへ切り替えるとpickerを閉じ、非表示Promptの候補やfeedbackは共有パネルの折りたたみを妨げない。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
 - Agent の `File Explorer`
