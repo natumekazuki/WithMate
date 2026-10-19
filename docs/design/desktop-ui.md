@@ -37,7 +37,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 ## Windows Session Notifications
 
 - `Session Turn Notification`は既存のturn完了・失敗通知とCodexの構造化質問通知を有効／無効にする。Windowsの通常Session、Character作成Session、Auxiliary Sessionが対象で、対象Session Windowがfocus中なら通知しない。Auxiliaryでは親Windowのfocusを使う。
-- 質問は`item/tool/requestUserInput`のblocking／nonblocking両方と、`agentMessage`の`delivery = async`かつ`questions`を持つ通知を対象とし、質問フォームを表示する時点で通知する。同一itemの開始・完了で二重通知しない。通常の会話本文を質問と推測せず、MCP elicitation・承認待ち・他providerの質問はこの通知に含めない。Monitorのstatusは変更しない。
+- 質問は`item/tool/requestUserInput`のblocking／nonblocking両方と、`agentMessage`の`delivery = async`かつ`questions`を持つ通知を対象とし、質問フォームを表示する時点で通知する。同一itemの開始・完了で二重通知しない。通常の会話本文を質問と推測せず、MCP elicitation・承認待ち・他providerの質問はこの通知に含めない。Monitorの分類は通知設定とは独立して入力待ちを反映する。
 - 質問通知はtitleを`WithMate`、bodyを`<Session名>: Codex has a question.`とし、Character icon、通知の識別・置換、クリック時の会話復帰は既存のturn通知を共有する。質問文・選択肢・入力値・会話本文はOS通知へ出さず、`Notification Response Preview`は成功したturnの完了通知だけに適用する。
 - 回答、取消、server側解決、runtime resetで質問通知を撤去する。解決後に設定読込みが完了しても古い通知を表示せず、同じ会話の後続通知を古い質問の解決で撤去しない。通知の作成・配送・撤去失敗は診断として扱い、質問への回答やprovider実行を失敗させない。
 - `Session Approval Notification`は承認待ち専用の設定で、既定は有効。Codex／Copilot／Claudeの共通承認要求を対象とし、Main／Auxiliaryとも親Session Windowが開いていて非focusの場合に通知する。閉じたWindowは対象外とし、Auxiliaryでは親Windowのfocusを使う。
@@ -99,7 +99,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 2 カラム構成
   - 左: `RecentSessions`
   - 右: `Memory / Settings` rail + `Monitor` または `Characters`
-- 2 カラムの外側とMonitorのApproval／Running／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
+- 2 カラムの外側とMonitorのAttention／Running／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
 - `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
 - Mate ProfileのAvatar編集では、`Select Image`と`Clear`の実行した操作だけをbusy表示にし、処理中は両操作を無効化する。Mate保存中も両操作を無効化するが、Avatar更新中とは表示を区別する。Mate未作成・Profile利用不可ではAvatar編集を提供しない。画像選択のキャンセルと更新失敗では元のAvatarを保持して操作可能状態へ戻し、成功時は取得したProfileを反映する。Avatarがないときは`Clear`を表示しない。
@@ -110,18 +110,18 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 意味のある親Session cardを2行まとまりで表示する。1行目はdisclosure、avatar、親title、2行目は`Main`と、Auxiliaryが存在する場合だけ`Aux`の状態アイコンを表示し、装飾目的の入れ子cardは作らない
   - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`RecentSessions` と同じ filtered session list の交差集合を使う
   - section
-    - `Approval`: Main／Auxiliaryのいずれかに有効な承認待ちがある親Session。会話単位では取消状態を承認待ちより優先するが、別の会話が承認待ちなら親はこの枠へ入る
-    - `Running`: Approvalに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
+    - `Attention`: Main／Auxiliaryのいずれかに有効な承認待ち、質問・MCP form／URLの入力待ちがある親Session。Codexのblocking／nonblocking／async質問を含む。会話単位では取消状態を承認・入力待ちより優先するが、別の会話が承認・入力待ちなら親はこの枠へ入る
+    - `Running`: Attentionに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
     - `Stopped`: 他の2枠に該当しない`interrupted` / `error` / `neutral`を含むnon-running
-  - 3枠は常に`Approval`、`Running`、`Stopped`の順に表示し、親Sessionを重複表示しない。最後の承認待ちが解消すると現在の実行状態で再分類する。承認待ちは表示用のlive状態であり、内部の`runState`を変更しない
+  - 3枠は常に`Attention`、`Running`、`Stopped`の順に表示し、親Sessionを重複表示しない。最後の承認・入力待ちが回答・拒否・Close・要求失効・turn終了で解消すると現在の実行状態で再分類する。承認・入力待ちは表示用のlive状態であり、内部の`runState`を変更しない
   - 3枠の一覧はそれぞれ独立してスクロールし、件数や空状態にかかわらず初期表示領域を1:1:1にする。隣接する枠の間にSession Windowと共通のスプリッターを置き、ドラッグまたは上下矢印キーで配分を変更でき、Home／Endでその境界の限界へ移動する。3枠の見出しを維持し、比率は表示中のMonitor内だけで保持する。領域の高さが変わった場合も各48pxの最小領域に合わせて比率とaccessible valueを更新し、矢印キーは24pxずつ、ドラッグはpointer移動量だけ表示位置から動かす（限界では止まる）
   - 一覧に親Session cardのタイトル・状態2行分が収まらない高さでは、一覧を非表示・操作不可にして見出しと件数だけ残す。領域を広げると展開・スクロール状態を保った一覧へ戻る。非表示になる一覧内にfocusがある場合はスプリッターへ移す
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
-  - 承認待ちは静止した黄色系の丸囲み`!`アイコンで示し、常設の状態文字は追加しない。Main／Auxiliaryの個別行・Aux状態集約で同じ表現を使い、tooltipとaccessible nameは`Approval Required`とする。Auxの件数は会話数であり要求数ではない。承認詳細と判断操作はSession画面で扱う
+  - 承認・入力待ちは静止した黄色系の丸囲み`!`アイコンで示し、常設の状態文字は追加しない。Main／Auxiliaryの個別行・Aux状態集約で同じ表現を使い、tooltipとaccessible nameは`Attention`とする。Auxの件数は会話数であり要求数ではない。要求の詳細と回答・判断操作はSession画面で扱う
   - 取消要求中は`Canceling`、実終了待ちは`Waiting For Stop`をMain／Auxiliaryごとのtooltipとaccessible statusへ反映し、Auxiliaryの件数も状態別に集約する。保存済みidleより取消待ちを優先し、最後の実終了で解除する
-  - 取消・承認待ち状態はMainが既存の軽量summary応答へ現在のlive状態から付与し、永続化しない。Home／Monitorは初回・再表示時にsummaryを取得し、本文を含まないlive状態通知による取消・承認待ち状態の変化を再取得契機とする。通知payloadを直接投影せず、無効化前の遅い取得結果は適用しない
+  - 取消・承認・入力待ち状態はMainが既存の軽量summary応答へ現在のlive状態から付与し、永続化しない。summaryと本文を含まないlive状態通知は共通の投影を使い、`approvalPending`に承認・入力待ちを集約する。Home／Monitorは初回・再表示時にsummaryを取得し、取消・承認・入力待ち状態の変化を再取得契機とする。通知payloadを直接投影せず、無効化前の遅い取得結果は適用しない
   - Auxiliary一覧の取得状態はMonitor領域のstatus feedbackで示す。未取得の親cardに架空のAuxiliary集約を作らず、既に取得したsummaryがある場合は既知のrun状態を保持して取得errorと区別する
   - open Session summaryの取得失敗もMonitor領域へ表示し、`Retry`で再取得できる。取得済みのcardは再取得中も保持する
   - open な SessionWindow がないときは、正常なempty本文を出さず、Monitorのshellと必要なstatus/accessibilityだけを保つ
@@ -245,13 +245,13 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - renderer は `HomeApp` の compact monitor mode を再利用する
   - 表示内容は Home 右ペインの `Monitor` と同じ truth source を使う
   - open な `Session Window` のみ表示する
-  - `Approval` / `Running` / `Stopped` の3枠を、0件でも常に表示する
+  - `Attention` / `Running` / `Stopped` の3枠を、0件でも常に表示する
   - 表示単位は意味のある親Session cardの2行まとまりとし、親cardを2行で固定する。1行目はdisclosure、avatar、親title、2行目は`Main`と`Aux`の状態アイコンを表示する。装飾目的の入れ子cardは作らない
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
   - `running`はaccent色のspinner、承認待ちは静止した黄色系の丸囲み`!`、待機と終了はsubduedな中空円、errorはwarning triangleで表す。状態はアイコンのみとし、cardの点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
   - Auxiliaryが存在する親だけdisclosureと`Aux`集約を表示し、Auxiliaryがない場合もMainだけの2行を維持する。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
-  - Auxiliaryの状態集約では`Approval Required`、`Running`、取消状態、`Error`、`Idle`、`Closed`を別々に数え、closed Auxiliaryをidleへ変換しない。idleとclosedは同じ円形だが、状態ラベルと集約を分ける。interruptedとerrorも別の形状で表示する
-  - section countは親card group数とし、Auxiliaryをtop-level rowとして重複表示しない。Main／Auxiliaryの有効な承認待ちを優先して親card groupを`Approval`へ分類し、それ以外は実行・取消待ちがあれば`Running`、残りは`Stopped`へ分類する。個々のMain／Auxiliaryの状態は分離して保持する
+  - Auxiliaryの状態集約では`Attention`、`Running`、取消状態、`Error`、`Idle`、`Closed`を別々に数え、closed Auxiliaryをidleへ変換しない。idleとclosedは同じ円形だが、状態ラベルと集約を分ける。interruptedとerrorも別の形状で表示する
+  - section countは親card group数とし、Auxiliaryをtop-level rowとして重複表示しない。Main／Auxiliaryの有効な承認・入力待ちを優先して親card groupを`Attention`へ分類し、それ以外は実行・取消待ちがあれば`Running`、残りは`Stopped`へ分類する。個々のMain／Auxiliaryの状態は分離して保持する
   - 親titleは既存の親Windowを開き、Auxiliary rowは同じ親Windowを指定したstable Auxiliary IDで開いて選択する。対象が消えた、親が一致しない、Windowを開けない場合はfallbackせずMonitor内へ失敗を返す
   - 展開状態は親kindとstable IDごとのWindow local stateとし、複数親を同時に展開できる。再描画、状態更新、section移動で失わず、Homeと独立Monitor Windowの間で永続化・同期しない
 - window 内の `Home` button から通常の `Home Window` を前面へ戻せる

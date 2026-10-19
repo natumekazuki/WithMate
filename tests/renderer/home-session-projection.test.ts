@@ -74,17 +74,17 @@ function createAuxiliarySession(partial: Partial<AuxiliarySessionSummary> & Pick
 describe("home-session-projection", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "Monitorは有効なMainまたはAuxiliary承認待ちをApprovalへ一度だけ分類し、同じ会話の取消を優先しつつ別Auxiliaryの承認を保持する"
+  // claim = "Monitorは有効なMainまたはAuxiliary承認待ちをAttentionへ一度だけ分類し、同じ会話の取消を優先しつつ別Auxiliaryの承認を保持する"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window / Issue #483" }
   // fault = "承認待ちをRunningへ混ぜる、閉じたSessionを表示する、取消中の承認を表示する、または別Auxiliaryの承認まで隠す"
-  // observable = "Approval/Running/Stopped配列のsession ID、MainとAuxiliaryのkindとlabel、承認解除後の所属"
+  // observable = "Attention/Running/Stopped分類のsession ID、MainとAuxiliaryのkindとlabel、承認解除後の所属"
   // observation_boundary = "public-boundary"
   // scope = "Home summary正規化とMain/Auxiliary承認状態のMonitor投影"
   // lifecycle = "permanent"
   // impact = "ユーザー操作が必要な会話を見落とさず、取消済み要求への誤誘導を防ぐ"
   // distinction = "型検査では検出できない複数会話の状態優先順位と排他的分類をpure projectionで確認する"
   // @end-test-value
-  it("有効な承認待ちを会話別に判定しApprovalへ排他的に分類する", () => {
+  it("有効な承認待ちを会話別に判定しAttentionへ排他的に分類する", () => {
     const main = projectHomeSessionSummary({ ...createSession({ id: "main", taskTitle: "Main", runState: "running" }), approvalPending: true });
     const parent = { ...createSession({ id: "parent", taskTitle: "Parent", runState: "running" }), approvalPending: true, cancellationState: "requested" as const };
     const auxiliary = createAuxiliarySession({ id: "approval", parentSessionId: "parent", runState: "running", approvalPending: true });
@@ -94,8 +94,8 @@ describe("home-session-projection", () => {
     assert.deepEqual(projection.approvalMonitorEntries.map((entry) => entry.session.id), ["main", "parent"]);
     assert.deepEqual(projection.runningMonitorEntries, []);
     assert.deepEqual(projection.nonRunningMonitorEntries, []);
-    assert.deepEqual(projection.approvalMonitorEntries.map((entry) => entry.mainState.label), ["Approval Required", "Canceling"]);
-    assert.deepEqual(getHomeAuxiliarySessionState(auxiliary), { kind: "approval", label: "Approval Required" });
+    assert.deepEqual(projection.approvalMonitorEntries.map((entry) => entry.mainState.label), ["Attention", "Canceling"]);
+    assert.deepEqual(getHomeAuxiliarySessionState(auxiliary), { kind: "approval", label: "Attention" });
     assert.deepEqual(getHomeAuxiliarySessionState(canceling), { kind: "running", label: "Waiting For Stop" });
     const resolved = buildHomeSessionProjection([{ ...main, approvalPending: false }, parent], ["main", "parent"], "", [{ ...auxiliary, approvalPending: false }, canceling]);
     assert.deepEqual(resolved.approvalMonitorEntries, []);

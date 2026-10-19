@@ -13,7 +13,7 @@ export function getHomeSessionKindSearchLabels(session: HomeSessionSummary): str
 }
 export function getHomeSessionState(session: HomeSessionSummary, auxiliarySessions: readonly AuxiliarySessionSummary[] | AuxiliarySessionSummary | null = []): HomeSessionState {
   const auxiliaries = !auxiliarySessions ? [] : Array.isArray(auxiliarySessions) ? auxiliarySessions : [auxiliarySessions];
-  if ([session, ...auxiliaries].some((item) => item.approvalPending && !item.cancellationState)) return { kind: "approval", label: "Approval Required" };
+  if ([session, ...auxiliaries].some((item) => item.approvalPending && !item.cancellationState)) return { kind: "approval", label: "Attention" };
   const cancellationStates = [session.cancellationState, ...auxiliaries.map((item) => item.cancellationState)];
   if (cancellationStates.includes("terminating")) return { kind: "running", label: "Waiting For Stop" };
   if (cancellationStates.includes("requested")) return { kind: "running", label: "Canceling" };
@@ -26,7 +26,7 @@ export function getHomeSessionState(session: HomeSessionSummary, auxiliarySessio
 export function getHomeAuxiliarySessionState(summary: AuxiliarySessionSummary): HomeSessionState | { kind: "closed"; label: string } {
   if (summary.cancellationState === "terminating") return { kind: "running", label: "Waiting For Stop" };
   if (summary.cancellationState === "requested") return { kind: "running", label: "Canceling" };
-  if (summary.approvalPending) return { kind: "approval", label: "Approval Required" };
+  if (summary.approvalPending) return { kind: "approval", label: "Attention" };
   if (summary.runState === "running") return { kind: "running", label: "Running" };
   if (summary.runState === "error") return { kind: "error", label: "Error" };
   if (summary.status === "closed") return { kind: "closed", label: "Closed" };
