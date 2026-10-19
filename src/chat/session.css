@@ -3402,18 +3402,6 @@
   stroke-width: 1.7;
 }
 
-.message-list-jump-bottom-button.has-new-activity {
-  width: auto;
-  max-width: calc(100% - 64px);
-  gap: 6px;
-  padding: 0 10px;
-  background: var(--surface-strong);
-  color: var(--ink);
-  border-color: var(--character-main);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
 .session-message-list:focus-visible {
   outline: 2px solid var(--character-main);
   outline-offset: -2px;

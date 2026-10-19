@@ -47,8 +47,6 @@ export type ConversationColumnCache = {
   messageJumpRequestId: number;
   pageStart?: number;
   anchor?: { key: string; offset: number };
-  activitySignature?: string;
-  hasNewActivity?: boolean;
 };
 
 export type UseConversationMessageColumnInput = {
@@ -329,22 +327,6 @@ export function useConversationMessageColumn({
     savedScrollState: isBrowsing ? { scrollTop: conversation.scrollState?.scrollTop ?? 0, isFollowing: false } : conversation.scrollState,
     onScrollStateChange: (state) => { conversation.scrollState = state; },
   });
-  const tailActivityTexts = useMemo(() => tailMessages.map((message) => message.text), [tailMessages]);
-  const activitySignature = `${totalCount}:${session?.updatedAt ?? ""}:${tailActivityTexts.map((text) => text.length).join(",")}:${bridgeKey}:${bridge?.text.length ?? 0}:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`;
-  const previousActivity = useRef<{ owner: string; texts: readonly string[]; liveText: string } | null>(null);
-  useLayoutEffect(() => {
-    const previous = conversation.hasNewActivity;
-    const last = previousActivity.current;
-    const textChanged = last?.owner === pageOwner && (
-      last.liveText !== (bridge?.text ?? "") || last.texts.length !== tailActivityTexts.length
-      || last.texts.some((text, index) => text !== tailActivityTexts[index])
-    );
-    if (enabled && !isBrowsing && following.isMessageListFollowing) conversation.hasNewActivity = false;
-    else if (textChanged || conversation.activitySignature !== undefined && conversation.activitySignature !== activitySignature) conversation.hasNewActivity = true;
-    conversation.activitySignature = activitySignature;
-    previousActivity.current = enabled ? { owner: pageOwner, texts: tailActivityTexts, liveText: bridge?.text ?? "" } : null;
-    if (previous !== conversation.hasNewActivity) refresh();
-  }, [activitySignature, tailActivityTexts, bridge?.text, pageOwner, conversation, enabled, isBrowsing, following.isMessageListFollowing, refresh]);
   const anchorFrame = useRef<number | null>(null);
   const captureAnchor = useCallback(() => {
     const element = following.messageListRef.current;
@@ -393,7 +375,6 @@ export function useConversationMessageColumn({
     requestedPageStart.current = undefined;
     conversation.pageStart = undefined;
     conversation.anchor = undefined;
-    conversation.hasNewActivity = false;
     conversation.scrollState = { scrollTop: 0, isFollowing: true };
     setBrowsePage(null);
     setPageError("");
@@ -626,7 +607,6 @@ export function useConversationMessageColumn({
     pendingMessageGroupId: null,
     messageListRef: following.messageListRef,
     isMessageListFollowing: !isBrowsing && following.isMessageListFollowing,
-    hasNewActivity: !!conversation.hasNewActivity,
     onBrowseMessages: following.pauseMessageListFollowing,
     onMessageListScroll,
     onMessageListLayout: scheduleAnchorCapture,
