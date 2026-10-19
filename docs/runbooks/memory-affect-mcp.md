@@ -52,6 +52,42 @@ Character系の`get`と`search`、一般Memoryのsearch/get/list/usageはread-on
 
 `memory.list_tags`は`targets`へ明示targetを1件だけ指定する。`limit`で1 pageのtag総数を制限し、`nextCursor`が返る間は同じtargetとcount条件で継続する。cursorはruntime発行値だけを使う。`sampleLimit`は`withCounts: true`時の各tagのsample数だけを制限し、tag総数の上限には使わない。
 
+## 会話・作業でのMemory利用
+
+Agentへの利用契機と操作契約はMCP initialize instructionsと各toolのdescription/schemaで配布する。利用先のAgent guideは承認・保存範囲などの共通方針を担い、MCPの利用例がその権限を上書きするものではない。WithMateは個人環境のguideを配布物へ取り込まない。
+
+Memoryは重要な決定や長期的な選好だけでなく、小さな好み、雑談の話題、実際に共有したやり取りも短く残せる。明示的な「覚えて」、大きな成果、強い感情、将来の有用性の確信をすべての保存の前提にはしない。毎turnの検索・保存ノルマや全会話の無条件保存は行わない。
+
+| 内容 | 保存先・利用判断 |
+| --- | --- |
+| 「今日はコーヒーを選んだ」などの小さな事実・好み | 許可されたtargetの一般Memoryへ短い`note`や`preference`。一度の選択を恒久的な好みへ一般化しない |
+| Characterと共有した雑談・小さな出来事 | 単独の`character_memory.append_episode`。同じ出来事を一般Memoryにも重複保存しない |
+| Character自身の具体的なAffect eventと一体の出来事 | `character_affect.appraise.memoryEpisode`だけへ送り、単独episodeとして再送しない |
+| 話題の開始・切替・再開で過去の文脈が役立ちそう | 対象を絞って検索し、必要な本文を読んで今回利用するか判断する |
+| 同じ記憶がすでに現在のcontextにある | 不要な再取得をせず利用する |
+| 推測、機密情報、private path、raw log | 事実として保存しない。repositoryの契約・実装状態の正本もMemoryへ移さない |
+
+現在のユーザー発言とCharacter Definitionは過去のMemoryより優先する。一般Memory追加前は同じ正確なtargetを検索し、activeな意味的重複を作らず、矛盾する置換には訂正権限を確認する。episodeは同じmotifの別eventと同一eventの再送を区別する。
+
+### 検索語が分かる時・浮かばない時
+
+話題が分かる場合は`memory.search({targets:[target], query:"コーヒー", limit:5})`等で検索する。Character episodeには明示scope付きの`character_memory.search`を使う。既存のMemoryの内容や検索語が分からない場合は、次の既存toolを組み合わせる。
+
+1. 必要な許可targetが分からなければ`memory.list_targets`をfilterと小さなlimitで確認する。
+2. `memory.list_entries({target, states:["active"], limit:5})`で少量の要約を確認する。タグなしの記録も含まれる。
+3. 分類が手掛かりになる場合は`memory.list_tags({targets:[target], limit:5})`を使い、関連tagで検索・一覧を絞る。タグなしの記録はtag一覧には出ない。
+4. 回答や判断に関係する項目だけ`memory.get_entry({target, entryId})`で本文を読む。検索・一覧のpreviewだけで詳細を断定しない。
+
+検索0件は、許可target内にMemoryが一切ないことの証明ではない。全件取得や同じ記憶の反復取得へ広げず、今回の話題に必要な範囲で読む。自動想起・自動prompt注入は追加しない。
+
+### 軽い記録の入力
+
+`memory.append`では`target`、`kind`、`title`、`body`、`preview`、`idempotencyKey`を明示する。`tags`は省略でき、省略時は`[]`と同じ値へ正規化する。必要な分類がある場合は明示tagを付ける。タグの自動生成は行わない。
+
+title/previewは検索・一覧で本文取得前にも表示されるため、表示してよい短い値をAgentが指定する。短い本文をそのままpreviewにする場合も表示範囲を確認し、previewの280 UTF-16 code units上限を守る。本文の自動切り出しでは要点・分類語が失われ、本文限定の内容を検索結果へ出す可能性があるため、自動補完はしない。
+
+タグなしでも本文検索、通常一覧、ID指定の本文取得は使えるが、tag一覧やtag filterの対象にはならない。既存の全項目明示入力、target authority、入力検証、idempotency、訂正・忘却の境界は維持する。応答喪失時は入力とkeyを変えず再照合する。
+
 ## CLI commandとMCP公開範囲
 
 「公開」は同名のruntime routeを一般またはCharacter MCP toolから呼び出せることを表す。「MCPで代替済み」は専用toolを増やさず、MCP protocolまたは別の公開toolで同じ利用目的を満たすことを表す。

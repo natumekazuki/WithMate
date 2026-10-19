@@ -183,29 +183,46 @@ describe("memory-v6 contract validation", () => {
     assert.equal(unknownKey.error.field, "files[0].objectId");
   });
 
-  it("appendでtags省略を拒否し、空tagsは許可する", () => {
-    const missingTags = validateMemoryAppendRequest({
+  // @test-value v2
+  // kind = "contract"
+  // claim = "appendは省略tagsを空配列へ正規化し、明示tagsの検証とtitle/previewの必須入力を維持する"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memoryappend" }
+  // fault = "省略tagsを拒否する、未定義のまま渡す、または不正tagsや欠落title/previewを受け付ける"
+  // observable = "validatorの正規化値と入力エラーfield"
+  // observation_boundary = "public-boundary"
+  // scope = "general-memory-append-input"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("appendでtags省略を空配列へ正規化し、他の入力検証は維持する", () => {
+    const request = {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       target: projectTarget,
       kind: "decision",
       title: "title",
       body: "body",
       preview: "preview",
-    });
-    assert.equal(missingTags.ok, false);
-    assert.equal(missingTags.error.field, "tags");
+    };
+    const missingTags = validateMemoryAppendRequest(request);
+    assert.equal(missingTags.ok, true);
+    assert.deepEqual(missingTags.value.tags, []);
 
     const emptyTags = validateMemoryAppendRequest({
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      target: projectTarget,
-      kind: "decision",
-      title: "title",
-      body: "body",
-      preview: "preview",
+      ...request,
       tags: [],
     });
     assert.equal(emptyTags.ok, true);
-    assert.deepEqual(emptyTags.value.tags, []);
+    assert.deepEqual(emptyTags.value, missingTags.value);
+
+    for (const tags of [null, "topic", [{ type: "topic", value: "" }], Array.from({ length: 21 }, () => ({ type: "topic", value: "coffee" }))]) {
+      const invalid = validateMemoryAppendRequest({ ...request, tags });
+      assert.equal(invalid.ok, false);
+      assert.ok(invalid.error.field?.startsWith("tags"));
+    }
+    for (const field of ["title", "preview"]) {
+      const missing = validateMemoryAppendRequest({ ...request, [field]: undefined });
+      assert.equal(missing.ok, false);
+      assert.equal(missing.error.field, field);
+    }
   });
 
   it("valid forget request を正規化できる", () => {
