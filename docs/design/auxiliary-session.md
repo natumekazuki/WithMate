@@ -64,7 +64,7 @@ Windowsの通常Session Windowがfocus中でない間にAuxiliaryのturnが完�
 
 ### メッセージの投影とWindow内live受信
 
-メッセージの投影、折りたたみ状態、一覧からの移動要求、スクロール位置は各会話Columnが所有する。通常Send・送信shortcut・実行中の予約送信の末尾追従は、durable受付成功後に既存の設定に従って対象Columnへ一度だけ通知する。拒否・受付不明では移動せず、待機中の読み返しや会話・送信対象切替を優先する。個別の折りたたみ状態はメッセージ一覧にも反映し、一覧選択は同じ会話の対象メッセージへ移動する。ContextPaneの一覧選択callbackも共通画面へ渡し、選択した内容を表示へ反映する。
+メッセージの投影、折りたたみ状態、一覧からの移動要求、スクロール位置は各会話Columnが所有する。通常Send・送信shortcut・実行中の予約送信の末尾追従は、送信直後の先行表示をDOMへ反映してから既存の設定に従って対象Columnへ一度だけ通知する。遅い受付ACK・再照会・元要求の再試行では通知せず、後続の読み返しや会話・送信対象切替を維持する。個別の折りたたみ状態はメッセージ一覧にも反映し、一覧選択は同じ会話の対象メッセージへ移動する。ContextPaneの一覧選択callbackも共通画面へ渡し、選択した内容を表示へ反映する。
 
 Window内live受信はrendererの`session-window-live-ingress.ts`が公開APIのcallbackを1本に集約し、ownerごとの初回取得を共有する。表示Column、表示中Contextは同じfull snapshotを参照する。shellはMainと操作対象のcompact controlsだけを保持し、selector結果が変わらない本文deltaでは更新しない。非表示Contextの詳細購読を止め、最後の表示consumerが消えたownerのfull snapshotと、全consumerが消えたownerを解放する。再openは必要なdetailを再取得し、先行event・終端nullを遅い初回取得で巻き戻さない。取消・承認・入力制御は表示lifecycleから独立する。公開APIの認可とcontextIsolationは維持する。
 
@@ -72,13 +72,13 @@ Window内live受信はrendererの`session-window-live-ingress.ts`が公開APIの
 
 ### 送信受付の共通反映
 
-Main／Auxiliaryの`Send`は同じdurable queue受付を使う。受付ACK後に対象Columnへ予約本文を表示し、実開始で保存されたuser seqへ対応付ける。受付だけで`running` Sessionを楽観生成せず、保存結果とlive ingressから実行状態を反映する。
+Main／Auxiliaryの`Send`は同じdurable queue受付を使う。workspace確認・preview・受付ACKを待たず、対象Columnへ捕捉本文と通常の応答待機枠を先行表示する。実行中の次Turnは現在応答より後の予約本文とする。表示用のWindow内状態は会話ID・incarnation・request IDで所有し、同じrequestのreceiptと保存user seqへ接続する。受付・終端先着でも本文と応答面を落とさず、同文の別要求を本文一致で結合しない。先行表示から保存済み本文や`running` Sessionを生成せず、保存結果とlive ingressから実行状態を反映する。
 
 Auxiliaryの状態更新はworkspaceのbinding setterを入口とし、ref、詳細cache、選択中のReact state、一覧summary、詳細取得の更新世代をまとめて更新する。古い詳細取得や状態取得で本文を巻き戻さず、会話切替後も予約と保存本文を保持する。canonical user seqの到着前にreceipt完了が通知された場合は小さい表示bridgeを保持し、確定結果を二重追加しない。
 
 MainのローカルdraftとAuxiliaryの永続draftはそれぞれのownerが保持する。Auxiliaryは保存済みdraftのincarnation／durable revisionを指定し、queue受付とconsumeを同一transactionで保存する。受付ACKは捕捉した編集revisionだけを消し、待機中の後続編集を上書きしない。
 
-- 受付拒否ではdraftを保持し、会話本文を楽観生成・巻き戻ししない。受付結果不明では同じrequest IDの照会／明示再試行だけを許可し、異なるIDを発行して自動再送しない。
+- 正常な準備・受付待ちはerrorにせず、明示的な拒否・処理エラー・timeoutを対象送信の先行表示へ反映し、draftを保持する。準備中の編集・対象変更・freezeでcaptureが失効した場合は未受付の先行表示だけを取り消す。保存済み会話は生成・巻き戻ししない。受付結果不明では同じrequest IDの照会／明示再試行だけを許可し、timeoutやreceiptの一時的不在から未受付と推定して異なるIDで自動再送しない。
 - Providerの実行失敗が保存された場合は、送信済みuser message、途中応答、失敗表示を確定結果として保持する。受付前のdraftを復元しない。実行結果の保持は[Provider Adapter](provider-adapter.md#error-handling)に従う。
 
 ## Context boundary

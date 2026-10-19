@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 
 export type SessionTurnQueueApi = Partial<Pick<WithMateWindowApi, "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput">>;
 const EMPTY_RECEIPTS: SessionTurnQueueReceipt[] = [];
@@ -8,7 +9,7 @@ type QueueState = { owner: string; active: SessionTurnQueueReceipt[]; bridges: S
 export type SessionTurnQueueActionKind = "cancel" | "release" | "input";
 type QueueAction = { owner: string; id: string; kind: SessionTurnQueueActionKind };
 
-export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean, canonicalUserSeqs: readonly number[] = []) {
+export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean, canonicalUserSeqs: readonly number[] = [], submissions: readonly SessionTurnSubmission[] = []) {
   const owner = `${sessionId}:${incarnationId}`;
   const [state, setState] = useState<QueueState>({ owner, active: [], bridges: [], error: "", loading: true });
   const stateRef = useRef(state);
@@ -16,6 +17,9 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const canonicalRef = useRef(new Set(canonicalUserSeqs));
   canonicalRef.current = new Set(canonicalUserSeqs);
   const canonicalSignature = canonicalUserSeqs.join(",");
+  const submissionsRef = useRef(submissions);
+  submissionsRef.current = submissions;
+  const submissionSignature = submissions.map((submission) => `${submission.requestId}:${submission.receipt?.updatedAt ?? ""}`).join(",");
   const [revision, setRevision] = useState(0);
   const [pendingAction, setPendingAction] = useState<QueueAction | null>(null);
   const [actionError, setActionError] = useState<{ owner: string; message: string } | null>(null);
@@ -28,10 +32,11 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   useEffect(() => {
     setState((current) => {
       if (current.owner !== owner) return current;
-      const bridges = current.bridges.filter((receipt) => receipt.userMessageSeq === null || !canonicalRef.current.has(receipt.userMessageSeq));
+      const bridges = current.bridges.filter((receipt) => submissionsRef.current.some((submission) => submission.requestId === receipt.requestId)
+        || receipt.userMessageSeq === null || !canonicalRef.current.has(receipt.userMessageSeq));
       return bridges.length === current.bridges.length ? current : { ...current, bridges };
     });
-  }, [owner, canonicalSignature]);
+  }, [owner, canonicalSignature, submissionSignature]);
   useEffect(() => {
     if (!enabled || !api?.listSessionTurnQueue) return;
     const request = ++generation.current;
@@ -40,6 +45,14 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     void (async () => {
       const active = (await api.listSessionTurnQueue!(sessionId)).filter((receipt) => receipt.sessionId === sessionId && receipt.incarnationId === incarnationId);
       const bridges = [...(previous?.bridges ?? [])];
+      // Local sends may finish before the first active-queue snapshot reaches this column.
+      for (const submission of submissionsRef.current) {
+        if (active.some((receipt) => receipt.requestId === submission.requestId) || !api.getSessionTurnQueueReceipt) continue;
+        const receipt = await api.getSessionTurnQueueReceipt(sessionId, submission.requestId);
+        if (!receipt || receipt.sessionId !== sessionId || receipt.incarnationId !== incarnationId) continue;
+        if (receipt.state === "queued" || receipt.state === "starting" || receipt.state === "running") active.push(receipt);
+        else bridges.push(receipt);
+      }
       const missingTurns = (previous?.active ?? []).filter((receipt) => (receipt.state === "queued" || receipt.state === "starting" || receipt.state === "running") && !active.some((candidate) => candidate.id === receipt.id));
       for (const missing of missingTurns) {
         if (!api.getSessionTurnQueueReceipt) throw new Error("Could not resolve the finished turn's receipt.");
@@ -49,13 +62,14 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
       }
       if (generation.current !== request) return;
       const retained = bridges.filter((receipt) => !active.some((candidate) => candidate.id === receipt.id)
-        && (receipt.userMessageSeq === null || !canonicalRef.current.has(receipt.userMessageSeq)));
+        && (submissionsRef.current.some((submission) => submission.requestId === receipt.requestId)
+          || receipt.userMessageSeq === null || !canonicalRef.current.has(receipt.userMessageSeq)));
       setState({ owner, active, bridges: [...new Map(retained.map((receipt) => [receipt.id, receipt])).values()], error: "", loading: false });
     })().catch((error) => {
       if (generation.current === request) setState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error), loading: false }));
     });
     return () => { ++generation.current; };
-  }, [api, owner, enabled, revision]);
+  }, [api, owner, enabled, revision, submissionSignature, canonicalSignature]);
   useEffect(() => {
     if (!enabled) return;
     return api?.onSessionTurnQueueChanged?.((changedId) => { if (changedId === sessionId) reload(); });
@@ -98,7 +112,11 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const cancel = useCallback((receipt: SessionTurnQueueReceipt) => void act(receipt, "cancel"), [act]);
   const release = useCallback((receipt: SessionTurnQueueReceipt) => void act(receipt, "release"), [act]);
   const sendInput = useCallback((receipt: SessionTurnQueueReceipt, expectedTurnId: string) => void act(receipt, "input", expectedTurnId), [act]);
-  const receipts = useMemo(() => enabled && state.owner === owner ? [...state.active, ...state.bridges] : EMPTY_RECEIPTS, [enabled, state.owner, owner, state.active, state.bridges]);
+  const receipts = useMemo(() => {
+    if (!enabled) return EMPTY_RECEIPTS;
+    const known = state.owner === owner ? [...state.active, ...state.bridges] : [];
+    return [...known, ...submissions.flatMap((submission) => submission.receipt && !known.some((receipt) => receipt.requestId === submission.requestId) ? [submission.receipt] : [])];
+  }, [enabled, state.owner, owner, state.active, state.bridges, submissions]);
   return {
     receipts, error: enabled ? (actionError?.owner === owner ? actionError.message : state.owner === owner ? state.error : "") : "", loading: enabled && !!api?.listSessionTurnQueue && (state.owner !== owner || state.loading),
     busyId: pendingAction?.owner === owner ? pendingAction.id : null,

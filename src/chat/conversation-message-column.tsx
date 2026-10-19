@@ -17,7 +17,8 @@ import { useConversationQueryPages } from "./conversation/use-conversation-query
 import type { MessageNavigatorPage } from "./shell/session-context-pane.js";
 import { useSessionTurnQueue } from "./conversation/use-session-turn-queue.js";
 import { projectSessionTurnQueue } from "./conversation/session-turn-queue-projection.js";
-import { SessionTurnQueueRow } from "./conversation/session-turn-queue-row.js";
+import { SessionTurnQueueRow, SessionTurnSubmissionRow } from "./conversation/session-turn-queue-row.js";
+import { SessionTurnSubmissions } from "./runtime/session-turn-submissions.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { MarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
 import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
@@ -44,6 +45,7 @@ export type ConversationColumnCache = {
   elicitationRequestId: string | null;
   elicitationAction?: SessionMessageColumnProps["elicitationAction"];
   error: string;
+  liveReadError?: string;
   messageJumpRequest: MessageJumpRequest | null;
   messageJumpRequestId: number;
   pageStart?: number;
@@ -90,6 +92,7 @@ export function useConversationMessageColumn({
   }
   const conversation = cache;
   const liveRunEventRevision = useRef(0);
+  const [liveReadRevision, setLiveReadRevision] = useState(0);
   const [, rerender] = useState(0);
   const displayedId = useRef(sessionId);
   displayedId.current = sessionId;
@@ -110,11 +113,39 @@ export function useConversationMessageColumn({
   activePageOwner.current = pageOwner;
   const displayEnabled = useRef(enabled);
   displayEnabled.current = enabled;
-  const tailMessages = session?.messages ?? baseProps.messages;
-  const totalCount = session?.messageCount ?? tailMessages.length;
+  const incomingTailMessages = session?.messages ?? baseProps.messages;
+  const totalCount = session?.messageCount ?? incomingTailMessages.length;
   const queueIncarnationId = session ? getSessionIncarnationId(session) : "";
-  const canonicalUserSeqs = useMemo(() => tailMessages.flatMap((message, index) => message.role === "user" ? [getMessageHistoryIndex(message, index)] : []), [tailMessages]);
-  const queue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs);
+  const canonicalUserSeqs = useMemo(() => incomingTailMessages.flatMap((message, index) => message.role === "user" ? [getMessageHistoryIndex(message, index)] : []), [incomingTailMessages]);
+  const emptySubmissions = useRef(new SessionTurnSubmissions());
+  const submissionStore = baseProps.turnSubmissions ?? emptySubmissions.current;
+  const submissionSnapshot = useSyncExternalStore(submissionStore.subscribe, submissionStore.getSnapshot, submissionStore.getSnapshot);
+  const submissions = useMemo(() => submissionSnapshot.filter((submission) => submission.sessionId === sessionId && submission.incarnationId === queueIncarnationId), [submissionSnapshot, sessionId, queueIncarnationId]);
+  const queue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions);
+  const presentedHistory = useRef<{ owner: string; messages: typeof incomingTailMessages }>({ owner: "", messages: [] });
+  const unboundBoundary = submissions.reduce((boundary, submission) => {
+    const receipt = queue.receipts.find((receipt) => receipt.requestId === submission.requestId);
+    return (!submission.error || submission.uncertain) && receipt?.userMessageSeq == null
+      ? Math.min(boundary, submission.historyMessageCount) : boundary;
+  }, Infinity);
+  const unjoinedUser = canonicalUserSeqs.find((seq) => seq >= unboundBoundary && !queue.receipts.some((receipt) => receipt.userMessageSeq === seq));
+  // Canonical history and its receipt are one display handoff, not two independent inserts.
+  const isHistoryHandoffPending = unjoinedUser !== undefined;
+  const tailMessages = isHistoryHandoffPending
+    ? presentedHistory.current.owner === pageOwner ? presentedHistory.current.messages
+      : incomingTailMessages.filter((message, index) => getMessageHistoryIndex(message, index) < unjoinedUser)
+    : incomingTailMessages;
+  presentedHistory.current = { owner: pageOwner, messages: tailMessages };
+  useEffect(() => {
+    const consumed = submissions.filter((submission) => {
+      const receipt = queue.receipts.find((receipt) => receipt.requestId === submission.requestId);
+      const terminal = receipt && receipt.state !== "queued" && receipt.state !== "starting" && receipt.state !== "running";
+      const hasResponse = receipt?.state !== "completed" || tailMessages.some((message, index) => message.role === "assistant" && getMessageHistoryIndex(message, index) > receipt.userMessageSeq!);
+      return terminal && (hasResponse && receipt.userMessageSeq !== null && canonicalUserSeqs.includes(receipt.userMessageSeq)
+        || receipt.state === "canceled" && receipt.userMessageSeq === null);
+    });
+    if (consumed.length) submissionStore.forget(consumed.map((submission) => submission.requestId));
+  }, [submissions, queue.receipts, canonicalUserSeqs, tailMessages, submissionStore]);
   const queueComposerOwner = useMemo(() => ({ kind: messageSourceKind === "auxiliary" ? "auxiliary" as const : "main" as const, id: sessionId }), [messageSourceKind, sessionId]);
   const subscribeFreeze = useCallback((listener: () => void) => composerRegistry.subscribe(queueComposerOwner, listener), [composerRegistry, queueComposerOwner]);
   const readFreeze = useCallback(() => composerRegistry.isFrozen, [composerRegistry]);
@@ -194,16 +225,18 @@ export function useConversationMessageColumn({
       onChange: (state) => {
         liveRunEventRevision.current += 1;
         conversation.liveRun = state;
+        conversation.liveReadError = "";
         refresh();
       },
       onError: (error) => {
-        conversation.error = error instanceof Error ? error.message : String(error);
+        conversation.liveReadError = `Live updates could not be loaded: ${error instanceof Error ? error.message : String(error)}`;
         refresh();
       },
     });
-  }, [api, enabled, liveRunOverride, pageOwner, sessionId, refresh]);
+  }, [api, enabled, liveRunOverride, pageOwner, sessionId, refresh, liveReadRevision]);
 
   const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
+  const hasActiveRun = liveRun?.runState !== undefined ? liveRun.runState === "running" : session?.runState === "running" || !!liveRun;
   const assistantText = api ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
   const queuedResponseIndex = queue.receipts.reduce((index, receipt) => {
     const ownsRun = receipt.state === "running" && !receipt.inputTurnId
@@ -244,8 +277,10 @@ export function useConversationMessageColumn({
   const cachedBridge = displayedBridge.current?.owner === pageOwner ? displayedBridge.current.projection
     : conversation.bridge && cachedMessage ? { ...conversation.bridge, text: cachedMessage.text } : null;
   const hasSavedBridge = hasPersistedLiveAssistantMessage(messages, [], cachedBridge, sessionId);
+  const hasSubmissionBridge = cachedBridge && queue.receipts.some((receipt) => receipt.userMessageSeq !== null
+    && receipt.userMessageSeq < cachedBridge.messageIndex && submissions.some((submission) => submission.requestId === receipt.requestId));
   const bridge = currentBridge ?? (
-    cachedBridge && (hasSavedBridge || session?.runState === "running")
+    cachedBridge && (hasSavedBridge || hasSubmissionBridge || isHistoryHandoffPending && cachedBridge.messageIndex > unboundBoundary || session?.runState === "running")
       ? cachedBridge : null
   );
   const historyProjection = useMemo(() => buildMessageListProjection(messages, [], sessionId, {
@@ -264,7 +299,7 @@ export function useConversationMessageColumn({
   [historyProjection, keyedHistory, messages, sessionId, hasSavedBridge, bridgeKey, bridge?.text, isBrowsing]);
   const queuedProjection = useMemo(() => projectSessionTurnQueue(liveProjection, isBrowsing ? [] : queue.receipts, {
     sessionId, incarnationId: queueIncarnationId,
-  }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId]);
+  }, { submissions: isBrowsing ? [] : submissions, hasActiveRun }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId, submissions, hasActiveRun]);
   const projection = queuedProjection.projection;
   const searchTailMessages = useMemo(() => {
     const searchTail = bridge && !hasPersistedLiveAssistantMessage(tailMessages, [], bridge, sessionId)
@@ -295,7 +330,8 @@ export function useConversationMessageColumn({
   const messageScrollSignature = (projection.messages.length === keyedHistory.messages.length
     ? historyScrollSignature
     : `${historyScrollSignature}\u001f${bridgeKey}:${bridge?.text.length ?? 0}`)
-    + `:queue:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`;
+    + `:queue:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`
+    + `:submissions:${submissions.map((submission) => `${submission.requestId}:${submission.error}`).join(",")}`;
   const previousTargets = useRef<SessionMessageColumnProps["messageCollapseTargets"]>([]);
   const collapseTargets = useMemo(() => buildMessageCollapseTargets(keyedHistory.messages, keyedHistory.sources, keyedHistory.keys, previousTargets.current),
     [keyedHistory]);
@@ -564,12 +600,14 @@ export function useConversationMessageColumn({
     if (canSendQueuedInput && !composerRegistry.isFrozen && currentInputTurnId) queue.sendInput(receipt, currentInputTurnId);
   }, [canSendQueuedInput, composerRegistry, currentInputTurnId, queue.sendInput]);
   const inputAction = canSendQueuedInput ? sendQueuedInput : undefined;
-  const renderQueueTail = useMemo(() => !isBrowsing && api?.listSessionTurnQueue
-    && (queuedProjection.tail.length > 0 || queue.error || queue.loading && queue.receipts.length > 0) ? (resolveImageSource: MarkdownImageResolver) => <>
+  const renderQueueTail = useMemo(() => !isBrowsing
+    && (queuedProjection.tail.length > 0 || queuedProjection.localTail.length > 0 || conversation.liveReadError || queue.error || queue.loading && queue.receipts.length > 0) ? (resolveImageSource: MarkdownImageResolver) => <>
     {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} resolveImageSource={resolveImageSource} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
+    {queuedProjection.localTail.map((submission) => <SessionTurnSubmissionRow key={submission.requestId} submission={submission} resolveImageSource={resolveImageSource} />)}
     {queue.loading && queue.receipts.length > 0 ? <LoadingIndicator inline label="Loading queued turns" /> : null}
     {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
-  </> : undefined, [isBrowsing, api, queuedProjection.tail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction]);
+    {conversation.liveReadError ? <div className="pending-run-error-note" role="alert">{conversation.liveReadError}<button type="button" className="drawer-toggle compact secondary" onClick={() => setLiveReadRevision((revision) => revision + 1)}>Retry Live Updates</button></div> : null}
+  </> : undefined, [isBrowsing, api, queuedProjection.tail, queuedProjection.localTail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction, conversation.liveReadError]);
   if (!session) return null;
   return {
     ...baseProps,
@@ -589,7 +627,9 @@ export function useConversationMessageColumn({
     messageCollapseTargets: collapseTargets,
     collapsedMessageKeys,
     messageJumpRequest: conversation.messageJumpRequest,
-    isRunning: !isBrowsing && (liveRun?.runState !== undefined ? liveRun.runState === "running" : session.runState === "running" || !!liveRun),
+    isRunning: !isBrowsing && hasActiveRun,
+    responsePending: !isBrowsing && !hasActiveRun && (!!queuedProjection.activeReceipt || !!queuedProjection.pendingSubmission && !queuedProjection.pendingSubmission.error),
+    submissionError: queuedProjection.pendingSubmission?.error ?? "",
     pendingRunIndicatorAnnouncement: messageSourceKind === "session"
       ? baseProps.pendingRunIndicatorAnnouncement
       : "Running",

@@ -19,6 +19,7 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - Rendererの承認・質問への応答、処理中request ID、取消操作は `src/chat/runtime/session-run-actions.ts` が所有し、Session Windowは対象会話とlive run投影を接続する。実行の正本はMainに置く。
 - Main Sessionの新Turn送信（preview、preflight、永続受付、Composer revisionに対応するclear、受付結果の照合、submit leaseの解放）は `src/chat/runtime/run-main-session-turn-operation.ts` と `session-turn-acceptance.ts` が所有する。未受付のMain下書きは永続保存・自動復元・自動再送しない。Auxiliaryの下書き保存契約は独立して維持する。
 - Mainの受付応答が不明なら、元のrequest IDと捕捉値を保持して正本receiptを照会する。取得失敗やreceiptの一時的不在を未受付と推定して新しいIDで再送しない。明示再試行も同じIDを使う。mutation前の明確な受付拒否では入力を保持する。durable ACK後は送信時のComposer revisionが一致する場合だけ入力を消し、ACK待ちの編集を消さない。Sessionの楽観的なrunning更新・失敗rollbackは行わない。
+- 送信直後の表示はWindow内の`session-turn-submissions.ts`で会話ID・incarnation・request IDに所属させ、準備・受付ACKを待たず正常な送信文と応答待機枠を描画する。表示のDOM反映、dock折りたたみ、末尾追従の順を守り、実runの開始・成功は推定しない。処理エラー・timeoutが明確になった場合だけ対象のerrorを表示する。receiptは同じrequest IDで接続し、確定本文に到達するまで小さい表示bridgeを保つ。取得失敗とprovider実行失敗は別のUIとして扱う。
 - Sessionのsnapshot/subscription、authoritative/projection mutation revision、submit pending/blocked state、submit coordinatorのlifetimeは `src/chat/runtime/use-main-session-runtime.ts` が所有する。Session Windowはselected ID、layout、feature hookの接続と、既存Composer Registryのshell lifetimeを保持する。
 
 ## Decision

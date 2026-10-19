@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -1053,7 +1054,7 @@ export default function AgentSessionWindowApp() {
     const autoCollapse = appSettings.autoCollapseActionDockOnSend;
     return () => {
       if (autoCollapse && autoCollapseRef.current && context === dockContextRef.current && isCurrentIntent()) {
-        setIsActionDockPinnedExpanded(false);
+        flushSync(() => setIsActionDockPinnedExpanded(false));
       }
     };
   };
@@ -1110,7 +1111,7 @@ export default function AgentSessionWindowApp() {
       isReadOnly: isSelectedSessionReadOnly,
       validateWorkspace: () => validateSessionWorkspace(sendSession, true),
       collapseActionDock: collapseSentActionDock,
-      onAccepted: () => { if (isCurrentSubmission()) followAcceptedSend?.(); },
+      onSubmitted: () => { if (isCurrentSubmission()) followAcceptedSend?.(); },
       log: logSessionRunStuckInvestigation,
     });
   };
@@ -1138,7 +1139,9 @@ export default function AgentSessionWindowApp() {
         setForceComposerBlockedFeedback(false);
         await sendAuxiliaryMessage();
       } catch (error) {
-        window.alert(resolveSessionRunErrorMessage(error, "Could not send the message."));
+        if (!mainSessionRuntime.turnSubmissions.getSnapshot().some((submission) => submission.sessionId === activeAuxiliarySession.id && submission.error)) {
+          window.alert(resolveSessionRunErrorMessage(error, "Could not send the message."));
+        }
       }
       return;
     }
@@ -1158,7 +1161,9 @@ export default function AgentSessionWindowApp() {
         submitSource: "composer",
       });
     } catch (error) {
-      window.alert(resolveSessionRunErrorMessage(error, "Could not send the message."));
+      if (!mainSessionRuntime.turnSubmissions.getSnapshot().some((submission) => submission.sessionId === selectedId && submission.error)) {
+        window.alert(resolveSessionRunErrorMessage(error, "Could not send the message."));
+      }
     }
   };
 
@@ -1553,7 +1558,7 @@ export default function AgentSessionWindowApp() {
       isReadOnly: isSelectedSessionReadOnly,
       validateWorkspace: () => selectedSession ? validateSessionWorkspace(selectedSession, true) : Promise.resolve(false),
       collapseActionDock: collapseSentActionDock,
-      onAccepted: () => { if (isCurrentSubmission()) followAcceptedSend?.(); },
+      onSubmitted: () => { if (isCurrentSubmission()) followAcceptedSend?.(); },
       log: logSessionRunStuckInvestigation,
     }).finally(releaseDetail));
   };
@@ -2292,7 +2297,7 @@ export default function AgentSessionWindowApp() {
     mainSession: selectedSession,
     auxiliarySession: auxiliaryWorkspace.selectedSession ? selectedAuxiliaryRuntimeSession : null,
     api: withmateApi ?? undefined,
-    messageColumn: chatWindowProps.messageColumnProps,
+    messageColumn: { ...chatWindowProps.messageColumnProps, turnSubmissions: mainSessionRuntime.turnSubmissions },
     onToggleMessageBookmark: handleToggleMessageBookmark,
     mainOnLoadArtifactDetail: (index) => withmateApi?.getSessionMessageArtifact(selectedSession.id, index) ?? Promise.resolve(null),
     mainOnOpenPath: (target) => handleOpenInlinePath(target, selectedSession.id),
