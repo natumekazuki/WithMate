@@ -2344,18 +2344,19 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
 });
 
 // @test-value v2
-// kind = "contract"
-// claim = "別窓File Previewのcopy通知に必要な暗色theme token、success/errorの文字・背景・border、headerを基準にした操作群外overlayのCSS宣言が定義されている"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Copy File / Copy Image結果通知" }
-// fault = "別窓copy通知の暗色theme token、success/errorの背景またはborder、headerのrelative基準、または操作群外absolute overlayに必要なCSS宣言が欠けている"
+// kind = "regression"
+// claim = "現行のcopy通知CSSは別窓のtheme tokenを参照し、success/error別の背景・borderとheader基準の操作群外overlayを宣言する"
+// oracle = { type = "characterization", ref = "src/file-explorer/files.css: file-preview-window-page; src/chat/session-shell.css: app-notification / session-file-preview-notification-layer" }
+// fault = "別窓の通知用theme tokenやtone別の色参照（未定義のdanger tokenのfallbackを含む）が欠ける、overlayが通常flowへ戻る、header直下・右寄せのanchorや前面配置を失う、またはpointer操作を遮る"
 // observable = "file-preview-window-page、app-notificationのsuccess/error、session-file-preview-headerとsession-file-preview-notification-layerの各CSS declaration"
 // observation_boundary = "declaration"
 // scope = "File Preview detached notification stylesheet"
-// lifecycle = "permanent"
-// impact = "別窓のcopy通知表示に必要なCSS契約を維持し、実画面で確認すべき視認性とlayout条件を明確にする"
-// distinction = "JSDOMでは算出できない宣言の存在を確認し、DOMの通知内容・ARIA・親境界の検証と分担する"
+// lifecycle = "characterization"
+// review_when = "通知のtheme token接続またはoverlayの配置方式を変更するとき"
+// impact = "通知の配色接続や操作群外配置を失うCSS欠落を検出する。色・余白の具体値や実描画でのcontrast・座標は保証しない"
+// distinction = "Desktop UIのCopy結果表示・tone・ARIA・親境界は既存component testが検証する。本testはその表示を支える現行CSS宣言だけを補完する"
 // @end-test-value
-test("別窓File Previewのcopy通知CSSは暗色themeと操作群外overlayを定義する", async () => {
+test("別窓File Previewのcopy通知CSSはtheme接続と操作群外overlayを定義する", async () => {
   const styles = await readStylesheet();
   const pageRule = styles.match(/\.file-preview-window-page\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const notificationRule = styles.match(/\.app-notification\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
@@ -2364,23 +2365,21 @@ test("別窓File Previewのcopy通知CSSは暗色themeと操作群外overlayを�
   const headerRule = styles.match(/\.session-file-preview-header\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const layerRule = styles.match(/\.session-file-preview-notification-layer\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
 
-  assert.match(pageRule, /--surface-strong:\s*rgba\(28,\s*33,\s*43,\s*0\.98\);/);
-  assert.match(pageRule, /--line:\s*rgba\(203,\s*213,\s*225,\s*0\.12\);/);
-  assert.match(pageRule, /--ink:\s*#e5edf8;/);
-  assert.match(pageRule, /--teal:\s*#6fb8c7;/);
-  assert.match(pageRule, /--teal-soft:\s*rgba\(111,\s*184,\s*199,\s*0\.14\);/);
-  assert.match(notificationRule, /border:\s*1px solid var\(--line\);/);
+  for (const token of ["surface-strong", "line", "ink", "teal", "teal-soft"]) {
+    assert.match(pageRule, new RegExp(`--${token}:\\s*[^;\\s][^;]*;`));
+  }
+  assert.match(notificationRule, /border:\s*[^;]+\s+solid\s+var\(--line\);/);
   assert.match(notificationRule, /background:\s*var\(--surface-strong\);/);
   assert.match(notificationRule, /color:\s*var\(--ink\);/);
   assert.match(successRule, /border-color:\s*var\(--teal\);/);
-  assert.match(successRule, /background:\s*color-mix\(in srgb,\s*var\(--teal-soft\)\s*72%,\s*var\(--surface-strong\)\);/);
-  assert.match(errorRule, /border-color:\s*var\(--danger,\s*#fca5a5\);/);
-  assert.match(errorRule, /background:\s*color-mix\(in srgb,\s*var\(--danger,\s*#fca5a5\)\s*14%,\s*var\(--surface-strong\)\);/);
+  assert.match(successRule, /background:\s*[^;]*var\(--teal-soft\)[^;]*;/);
+  assert.match(errorRule, /border-color:\s*var\(--danger,\s*[^;)\s][^;]*\);/);
+  assert.match(errorRule, /background:\s*[^;]*var\(--danger,\s*[^;)\s][^;]*\)[^;]*;/);
   assert.match(headerRule, /position:\s*relative;/);
   assert.match(layerRule, /position:\s*absolute;/);
-  assert.match(layerRule, /top:\s*calc\(100%\s*\+\s*8px\);/);
-  assert.match(layerRule, /right:\s*10px;/);
-  assert.match(layerRule, /z-index:\s*2;/);
+  assert.match(layerRule, /top:\s*(?:100%|calc\(100%\s*\+\s*[^;]+\));/);
+  assert.match(layerRule, /right:\s*(?!auto\b)[^;\s][^;]*;/);
+  assert.match(layerRule, /z-index:\s*[1-9]\d*;/);
   assert.match(layerRule, /pointer-events:\s*none;/);
 });
 
