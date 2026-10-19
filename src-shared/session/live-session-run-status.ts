@@ -12,6 +12,7 @@ export function projectLiveSessionRunStatus(
   return {
     runState: state.runState,
     cancellationState: state.cancellationState,
-    ...(state.approvalRequest ? { approvalPending: true } : {}),
+    ...(state.approvalRequest || state.elicitationRequest || state.elicitationRequests?.length
+      ? { approvalPending: true } : {}),
   };
 }

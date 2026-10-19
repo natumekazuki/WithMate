@@ -20,6 +20,7 @@ import {
 } from "electron";
 
 import type { DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import { projectLiveSessionRunStatus } from "../src-shared/session/live-session-run-status.js";
 import { currentTimestampLabel } from "../src-shared/time-state.js";
 import { createDefaultSessionMemory } from "../src-shared/memory/session-memory-state.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
@@ -972,11 +973,14 @@ async function listSessionSummaryPage(request?: SessionSummaryPageRequest | null
   const page = await requireMainQueryService().listSessionSummaryPage(request);
   return {
     ...page,
-    entries: page.entries.map((summary) => ({
-      ...summary,
-      cancellationState: getLiveSessionRun(summary.id)?.cancellationState,
-      approvalPending: Boolean(getLiveSessionRun(summary.id)?.approvalRequest),
-    })),
+    entries: page.entries.map((summary) => {
+      const status = projectLiveSessionRunStatus(getLiveSessionRun(summary.id));
+      return {
+        ...summary,
+        cancellationState: status?.cancellationState,
+        approvalPending: status?.approvalPending ?? false,
+      };
+    }),
   };
 }
 
@@ -1425,11 +1429,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     ...listOpenSessionWindowIds(),
                   ]));
                   const summaries = await requireAuxiliarySessionService().listAuxiliarySessionSummaries(parentSessionIds);
-                  return summaries.map((summary) => ({
-                    ...summary,
-                    cancellationState: getLiveSessionRun(summary.id)?.cancellationState,
-                    approvalPending: Boolean(getLiveSessionRun(summary.id)?.approvalRequest),
-                  }));
+                  return summaries.map((summary) => {
+                    const status = projectLiveSessionRunStatus(getLiveSessionRun(summary.id));
+                    return {
+                      ...summary,
+                      cancellationState: status?.cancellationState,
+                      approvalPending: status?.approvalPending ?? false,
+                    };
+                  });
                 },
                 getActiveAuxiliarySession: (parentSessionId) =>
                   requireAuxiliarySessionService().getActiveAuxiliarySessionView(parentSessionId),
