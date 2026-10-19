@@ -8,7 +8,7 @@ V6 foundationは次を成立させる。
 
 - agent-facing requestをactor SessionのCharacter、user、許可Projectへ安全に解決できる。
 - agentがprovider共通MCP経由でMemoryを検索できる。
-- agentがユーザーの明示依頼や作業中に得たdurable knowledgeをappendできる。
+- agentが日常の小さな好み・話題・共有した出来事も短いnoteやepisodeとしてappendできる。
 - agentまたはユーザー意図に基づき、entryを検索対象からforgetできる。
 - parallel sessionでtarget推定に依存しない。
 - app側Memory serviceは生成LLMを呼ばない。
@@ -419,7 +419,7 @@ type MemoryAppendRequest = {
   title: string;
   body: string;
   preview: string;
-  tags: MemoryTag[];
+  tags?: MemoryTag[];
   supersedes?: string[];
   mutationReason?: string;
   files?: MemoryAppendFileInput[];
@@ -438,6 +438,7 @@ type MemoryAppendResponse = {
 ```
 
 `created`は元のidempotent append operationが新entryを作成したかを表す。
+入力の`tags`省略は空配列と同じ正規化値になり、タグを自動生成しない。`title`と`preview`は検索・一覧用の明示入力を必須とし、本文から自動補完しない。正規化後の`MemoryAppendRequest`と保存entryには常に`tags`配列がある。省略と明示的な空配列は同じidempotency keyで再送しても同一requestとして扱う。既存の全項目明示入力と保存形式は維持する。
 idempotent replayでは現在のpermission、entry state、owner / scope accessを再検証し、現在のentryからsummaryを再構築する。
 idempotency storageには旧title / preview / tagsを含むresponse JSONを保存しない。
 

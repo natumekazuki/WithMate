@@ -689,12 +689,16 @@ const mutationToolOutputSchema = createToolOutputSchema(
 
 export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
   "Use character_context.get only when injected turn context is missing, stale, too small for the current topic, or when the client cannot inject context.",
+  "At a topic start, switch, or resumption, consider focused recall when past context could help. Reuse memories already in context; there is no per-turn search or save quota.",
+  "For a known topic, search the relevant authorized target. Without a useful query, try memory.list_entries with {target, states:[\"active\"], limit:5} or memory.list_tags with {targets:[target], limit:5}, then memory.get_entry for relevant IDs. No search hits does not mean that no memories exist.",
   "Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
   "character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
   "Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
   "Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
   "Do not expose internal audit data or tool state in the user-facing response. Use returned source version and update result without guessing missing values.",
   "Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
+  "Brief everyday topics, small preferences, and actually shared exchanges can be notes or episodes: an explicit remember request, a major achievement, strong affect, or certainty of future usefulness is not a prerequisite for every save. Use general Memory for semantic facts/preferences, standalone Character episodes for shared events, and character_affect.appraise.memoryEpisode only for an episode linked to that affect event; do not duplicate the same record across routes.",
+  "Current user input and Character Definition take precedence over past Memory. Do not store speculation as fact, secrets, private paths, raw logs, or repository contracts/implementation state as a replacement for their source of truth. Follow the host agent's permission rules; these usage examples do not grant authority.",
   "Agent CLI fallback is available only when this MCP initialize and tools/list succeeded and a later transport error returns details.fallbackEligible=true. Then invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON; the runtime consumes the matching short-lived admission. Initialization, tools/list, domain, authority, version, idempotency, migration, and storage failures do not permit fallback.",
 ].join("\n");
 
@@ -711,12 +715,12 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "character_memory.search",
-    description: "Search one explicit Character Memory scope for a focused current-task or conversation query.",
+    description: "Search one explicit Character Memory scope for a focused current-task or conversation query, including when resuming a shared topic. Reuse matching memories already in context rather than fetching them again.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "character_memory.append_episode",
-    description: "Append one standalone shared Character episode only; episodes linked to an affect event belong exclusively to character_affect.appraise.memoryEpisode. Motif recurrence is allowed and only unchanged same-event retries reuse an idempotency key.",
+    description: "Append one standalone shared Character episode, including a small everyday exchange or shared event; a major achievement or strong affect is not required. Episodes linked to an affect event belong exclusively to character_affect.appraise.memoryEpisode. Do not also save the same episode through general Memory. Motif recurrence is allowed and only unchanged same-event retries reuse an idempotency key.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
