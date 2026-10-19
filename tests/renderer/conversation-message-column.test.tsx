@@ -774,15 +774,15 @@ test("conversation columns はlive eventとapprovalをsession IDごとに分離�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/AuxのSendはreceipt未取得からpromptと通常待機枠を描画し、ACK・開始・終端先着・追加入力userを含むcanonical到着を同じrequestで橋渡しする。次の予約は前応答の後ろを維持し、明示失敗は対象表示へ反映し、別ownerや旧incarnationへ漏らさない"
+// claim = "Main/AuxのSendはreceipt未取得からpromptと通常待機枠を描画し、ACK・開始・終端先着・追加入力userを含むcanonical到着を同じrequestで橋渡しする。次の予約は前応答・未解放の中断予約より後ろを維持し、取消と明示解放で対象予約だけを更新する。失敗とownerを分離する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 送信直後の先行表示; docs/design/auxiliary-session.md: 送信受付の共通反映" }
-// fault = "ACKまで枠を出さない、ACK/保存到着でpromptや枠を消す・二重化する、次予約を前応答より先に表示する、先行表示で実runを偽造する、または失敗をspinnerのまま隠す"
-// observable = "実Column DOMのprompt件数・pending枠・alert・応答本文・予約の表示順、ColumnのisRunning/responsePending、storeの所有request"
+// fault = "ACKまで枠を出さない、ACK/保存到着でpromptや枠を消す・二重化する、次予約を前応答や未解放中断より先に表示する、保留中に応答枠を出す、取消/解放の対象を誤る、先行表示で実runを偽造する、または失敗をspinnerのまま隠す"
+// observable = "実Column DOMのprompt件数・pending枠・alert・応答本文・予約の表示順、Cancel/Release操作の宛先、ColumnのisRunning/responsePending、storeの所有request"
 // observation_boundary = "component-behavior"
 // scope = "optimistic conversation submission handoff"
 // lifecycle = "permanent"
-// impact = "送信直後とデータ到着順により会話が飛び、失敗した要求を待ち続けたり別会話に誤表示したりする"
-// distinction = "operation通知testはColumnの実購読とreceipt/canonical結合を通らない。小さいJSDOM遷移で正常・失敗・高速終端の継続契約を確認する"
+// impact = "送信直後とデータ到着順により会話が飛び、失敗した要求を待ち続けたり別会話に誤表示したりする。中断後に保留された後続を実行待機と誤認させない"
+// distinction = "operation通知testはColumnの実購読とreceipt/canonical結合、保留中のCancel/Releaseを通らない。小さいJSDOM遷移で正常・失敗・高速終端・中断保留の継続契約を確認する"
 // @end-test-value
 test("conversation column bridges optimistic sends to receipts and canonical responses", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
@@ -803,10 +803,24 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       let resolved: SessionTurnQueueReceipt | null = null;
       let holdQueue = true;
       let changed: ((id: string) => void) | undefined;
+      const canceled: string[] = [];
+      const released: string[] = [];
       const api: ConversationMessageColumnApi = {
         listSessionTurnQueue: () => holdQueue ? new Promise(() => {}) : Promise.resolve(active),
         getSessionTurnQueueReceipt: async (_id, requestId) => resolved?.requestId === requestId ? resolved : active.find((item) => item.requestId === requestId) ?? null,
         onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
+        cancelQueuedSessionTurn: async (_id, receiptId) => {
+          canceled.push(receiptId);
+          resolved = { ...active.find((item) => item.id === receiptId)!, state: "canceled" };
+          active = active.filter((item) => item.id !== receiptId);
+          return resolved;
+        },
+        releaseInterruptedSessionTurn: async (_id, receiptId) => {
+          released.push(receiptId);
+          const updated = { ...active.find((item) => item.id === receiptId)!, releasedAt: "released" };
+          active = active.map((item) => item.id === receiptId ? updated : item);
+          return updated;
+        },
       };
       let latest: SessionMessageColumnProps | null = null;
       let saved: SessionMessageColumnProps["messages"] = [];
@@ -918,6 +932,43 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       assert.equal(pendingCount(), 0);
       assert.match(dom.window.document.body.textContent!, /fast answer/);
       assert.equal(store.getSnapshot().length, 0);
+
+      const interrupted = { ...receipt, id: "interrupted", requestId: "interrupted-request", sequence: 4, state: "interrupted" as const,
+        captured: { ...receipt.captured, request: { ...receipt.captured.request, clientRequestId: "interrupted-request", userMessage: "first interrupted prompt" } } };
+      const held = { ...nextReceipt, id: "held", requestId: "held-request", sequence: 5,
+        captured: { ...nextReceipt.captured, request: { ...nextReceipt.captured.request, clientRequestId: "held-request", userMessage: "second held prompt" } } };
+      saved = [];
+      active = [held, interrupted];
+      resolved = null;
+      await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
+      const queueOrder = () => [...dom.window.document.querySelectorAll(".message-row.user")].map((row) => row.querySelector(".message-card-content")?.firstElementChild?.textContent);
+      assert.deepEqual(column().messages, [], "unreleased interruption holds later turns outside the normal response surface");
+      assert.deepEqual(queueOrder(), ["first interrupted prompt", "second held prompt"]);
+      assert.equal(pendingCount(), 0);
+      assert.equal(column().responsePending, false);
+      const local = { sessionId: kind, incarnationId: "inc", requestId: "local-held-request", userMessage: "third held prompt", historyMessageCount: 0, queuedBehindRun: false, error: "" };
+      await act(async () => { store.start(local); });
+      assert.deepEqual(column().messages, [], "an ACK-waiting local send respects the same interruption barrier");
+      assert.deepEqual(queueOrder(), ["first interrupted prompt", "second held prompt", "third held prompt"]);
+      assert.equal(pendingCount(), 0);
+      const third = { ...held, id: "third", requestId: local.requestId, sequence: 6,
+        captured: { ...held.captured, request: { ...held.captured.request, clientRequestId: local.requestId, userMessage: local.userMessage } } };
+      active = [interrupted, held, third];
+      await act(async () => { store.accept(third); changed?.(kind); });
+      assert.deepEqual(queueOrder(), ["first interrupted prompt", "second held prompt", "third held prompt"]);
+      const cancel = dom.window.document.querySelector<HTMLButtonElement>("[aria-label='Cancel queued turn 1']");
+      assert.ok(cancel);
+      await act(async () => { cancel.click(); });
+      assert.deepEqual(canceled, ["held"]);
+      assert.deepEqual(queueOrder(), ["first interrupted prompt", "third held prompt"]);
+      assert.equal(pendingCount(), 0);
+      const release = [...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "Release Later Turns");
+      assert.ok(release);
+      await act(async () => { release.click(); });
+      assert.deepEqual(released, ["interrupted"]);
+      assert.deepEqual(column().messages.map((message) => message.text), ["third held prompt"]);
+      assert.equal(pendingCount(), 1);
+      assert.equal(column().isRunning, false);
       await act(async () => {
         store.start({ sessionId: "different", incarnationId: "inc", requestId: "other", userMessage: "wrong owner", historyMessageCount: 0, queuedBehindRun: false, error: "" });
         store.start({ sessionId: kind, incarnationId: "old", requestId: "old", userMessage: "old incarnation", historyMessageCount: 0, queuedBehindRun: false, error: "" });

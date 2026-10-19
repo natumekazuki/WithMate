@@ -8,12 +8,13 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
   const metadata = new Map<string, SessionTurnQueueReceipt>();
   const projection: MessageListProjection = { messages: [...history.messages], keys: [...history.keys], sources: [...history.sources], groups: [...history.groups] };
   const tail: SessionTurnQueueReceipt[] = [];
+  const hasUnreleasedInterruption = owned.some((receipt) => receipt.state === "interrupted" && receipt.releasedAt === null);
   const activeReceipt = options ? owned.find((receipt) => !receipt.inputTurnId && (receipt.state === "starting" || receipt.state === "running"))
     ?? (!options.hasActiveRun ? owned.find((receipt) => receipt.state === "completed" && receipt.userMessageSeq !== null
         && options.submissions.some((submission) => submission.requestId === receipt.requestId)
         && !history.sources.some((source, index) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId)
           && source.messageIndex > receipt.userMessageSeq! && history.messages[index].role === "assistant"))
-      ?? owned.find((receipt) => receipt.state === "queued") : undefined) : undefined;
+      ?? (!hasUnreleasedInterruption ? owned.find((receipt) => receipt.state === "queued") : undefined) : undefined) : undefined;
   for (const receipt of owned) {
     const savedIndex = receipt.userMessageSeq === null ? -1 : projection.sources.findIndex((source) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId) && source.messageIndex === receipt.userMessageSeq);
     if (savedIndex >= 0) {
@@ -42,7 +43,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
   for (const submission of options?.submissions ?? []) {
     if (submission.sessionId !== owner.sessionId || submission.incarnationId !== owner.incarnationId
       || owned.some((receipt) => receipt.requestId === submission.requestId)) continue;
-    if (submission.queuedBehindRun || activeReceipt || pendingSubmission) {
+    if (submission.queuedBehindRun || hasUnreleasedInterruption || activeReceipt || pendingSubmission) {
       localTail.push(submission);
       continue;
     }
