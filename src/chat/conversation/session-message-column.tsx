@@ -10,7 +10,7 @@ import { getMessageHistoryIndex, type ConversationSearchMatch, type Conversation
 import { useConversationQueryPages } from "./use-conversation-query-pages.js";
 
 import { MessageRichText, type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
-import { useMarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
+import { useMarkdownImageResolver, type MarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { GlossaryAnnotationMatcher } from "../../glossary/glossary-annotation-projection.js";
@@ -75,7 +75,7 @@ export type SessionMessageColumnProps = {
   onReleaseInterruptedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   queueBusyId?: string | null;
   queueBusyKind?: SessionTurnQueueActionKind | null;
-  queueTail?: ReactNode;
+  renderQueueTail?: (resolveImageSource: MarkdownImageResolver) => ReactNode;
   sessionId: string;
   character: CharacterProfile;
   messages: Message[];
@@ -431,7 +431,7 @@ export function SessionMessageColumn({
   onReleaseInterruptedTurn,
   queueBusyId,
   queueBusyKind,
-  queueTail,
+  renderQueueTail,
   sessionId,
   character,
   messages,
@@ -1242,7 +1242,7 @@ export function SessionMessageColumn({
         </button>
       ) : null}
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll} tabIndex={0} role="region" aria-label="Conversation messages">
-        {messages.length > 0 || isRunning || queueTail ? (
+        {messages.length > 0 || isRunning || renderQueueTail ? (
           <div className="session-message-list-window">
             <div
               ref={messageVirtualizer.containerRef}
@@ -1547,7 +1547,7 @@ export function SessionMessageColumn({
           })}
             </div>
             {isRunning && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
-            {queueTail}
+            {renderQueueTail?.(resolveImageSource)}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}
