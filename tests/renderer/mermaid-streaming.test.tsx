@@ -11,7 +11,7 @@ import { MarkdownRenderContext } from "../../src/ui/markdown/markdown-context.js
 // claim = "Mermaidの再計算中は前のSVGと画像resourceを保持し、取消した計算を採用せず最終errorを本文内だけで明示する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Streaming projection" }
 // fault = "source更新で表示中SVGや画像を消す、stale計算で新図を上書きする、resourceを早期解放する、最終errorを古い図で隠す、またはrendererが本文外へerror SVGを残す"
-// observable = "SVGのDOM同一性・内容・IDと本文内の所有範囲、aria-busy、resolver signal、解放URI、最終errorと原文"
+// observable = "実parserのreject完了後のSVGのDOM同一性・内容・IDと本文内の所有範囲、aria-busy、resolver signal、解放URI、最終errorと原文"
 // observation_boundary = "component-behavior"
 // scope = "MermaidDiagramと実Mermaid rendererのsource更新・画像・未確定error後の追記と終了境界"
 // lifecycle = "permanent"
@@ -69,7 +69,31 @@ test("Mermaidは再計算中の図を保持しstale結果を捨て最終errorを
     }
     assert.ok(condition(), "非同期描画が期待する状態に到達する");
   };
+  const mermaid = (await import("mermaid")).default;
+  const originalMermaidAPI = mermaid.mermaidAPI;
+  const originalRender = mermaid.render;
+  const calculations = new Map<string, Promise<unknown>>();
+  const waitForParseError = async (source: string) => {
+    await waitFor(() => calculations.has(source));
+    await act(async () => {
+      await assert.rejects(calculations.get(source)!, /Parse error/);
+    });
+  };
   try {
+    // Observe the real promises on both image pre-parsing and plain rendering paths.
+    mermaid.mermaidAPI = {
+      ...originalMermaidAPI,
+      getDiagramFromText: (...args) => {
+        const result = originalMermaidAPI.getDiagramFromText(...args);
+        calculations.set(args[0], result);
+        return result;
+      },
+    };
+    mermaid.render = (...args) => {
+      const result = originalRender(...args);
+      calculations.set(args[1], result);
+      return result;
+    };
     await render(first);
     await waitFor(() => Boolean(container.querySelector("svg image")));
     const firstSvg = container.querySelector(".message-mermaid-canvas svg")!;
@@ -100,8 +124,10 @@ test("Mermaidは再計算中の図を保持しstale結果を捨て最終errorを
 
     const partial = second + "\n B --> C[partial";
     await render(partial, true);
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 230)); });
+    await waitForParseError(partial);
     assert.equal(container.querySelector(".message-mermaid-canvas svg"), secondSvg);
+    assert.equal(secondSvg.isConnected, true);
+    assert.ok(!revoked.includes("blob:second"));
     assert.equal(container.firstElementChild?.getAttribute("aria-busy"), "true");
     assert.equal(container.querySelector(".message-mermaid-error"), null);
     assert.ok([...dom.window.document.querySelectorAll("svg")].every((svg) => container.contains(svg)), "errorの仮描画を本文外へ残さない");
@@ -123,8 +149,13 @@ test("Mermaidは再計算中の図を保持しstale結果を捨て最終errorを
 
     const invalid = "flowchart LR\n A[broken";
     await render(invalid, true);
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 230)); });
+    await waitForParseError(invalid);
     assert.equal(container.querySelector(".message-mermaid-canvas svg"), finalSvg);
+    assert.equal(finalSvg.isConnected, true);
+    assert.ok(!revoked.includes("blob:final"));
+    assert.equal(container.firstElementChild?.getAttribute("aria-busy"), "true");
+    assert.equal(container.querySelector(".message-mermaid-error"), null);
+    assert.ok([...dom.window.document.querySelectorAll("svg")].every((svg) => container.contains(svg)), "errorの仮描画を本文外へ残さない");
     await render(invalid, false);
     await waitFor(() => Boolean(container.querySelector(".message-mermaid-error")));
     assert.equal(container.querySelector(".message-mermaid-canvas svg"), null);
@@ -133,6 +164,8 @@ test("Mermaidは再計算中の図を保持しstale結果を捨て最終errorを
     assert.ok(revoked.includes("blob:final"));
   } finally {
     await act(async () => root.unmount());
+    mermaid.mermaidAPI = originalMermaidAPI;
+    mermaid.render = originalRender;
     URL.revokeObjectURL = revokeObjectURL;
     for (const [key, descriptor] of previous) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
