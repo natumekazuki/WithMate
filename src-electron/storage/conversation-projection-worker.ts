@@ -51,7 +51,7 @@ export function projectConversationBatch(input: ConversationProjectionInput): Co
     if (!message) throw new Error(`Invalid conversation message: ${row.seq}`);
     if (input.query.kind === "search") {
       const text = input.query.mode === "source" ? message.text
-        : projection(`${input.cacheScope}:${row.seq}:rendered`, () => projectMessageRenderedSearchText(message.text));
+        : projection(`${input.cacheScope}:${row.seq}:rendered`, () => projectMessageRenderedSearchText(message.text, message.role === "assistant"));
       let occurrenceIndex = 0;
       for (const _match of iterateTextMatches(text, input.query.query)) {
         const occurrence = occurrenceIndex++;
@@ -61,7 +61,7 @@ export function projectConversationBatch(input: ConversationProjectionInput): Co
       if (message.role !== "user" && message.role !== "assistant") continue;
       if (input.query.filter === "bookmarks" && message.isBookmarked !== true) continue;
       retain(() => ({ messageIndex: row.seq, role: message.role,
-        preview: projection(`${input.cacheScope}:${row.seq}:plain`, () => projectMessagePlainText(message.text)),
+        preview: projection(`${input.cacheScope}:${row.seq}:plain`, () => projectMessagePlainText(message.text, message.role === "assistant")),
         accent: message.accent === true, isBookmarked: message.isBookmarked === true }));
     }
   }

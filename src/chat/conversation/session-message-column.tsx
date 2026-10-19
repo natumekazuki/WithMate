@@ -704,7 +704,7 @@ export function SessionMessageColumn({
     () => (hasFindQuery && isRunning && hasPendingMessageText
       ? messageViewMode === "source"
         ? pendingMessageText
-        : projectMessageRenderedSearchText(pendingMessageText)
+        : projectMessageRenderedSearchText(pendingMessageText, true)
       : ""),
     [hasFindQuery, hasPendingMessageText, isRunning, messageViewMode, pendingMessageText],
   );
@@ -1009,7 +1009,7 @@ export function SessionMessageColumn({
             // Form labels and inserted tool-only questions do not belong to the message body.
             const sourceStart = Number(richText.dataset.sourceStart ?? 0);
             const prefix = sourceStart > 0 ? messages[messageIndex].text.slice(0, sourceStart) : "";
-            const prefixText = messageViewMode === "source" || !prefix ? prefix : projectMessageRenderedSearchText(prefix);
+            const prefixText = messageViewMode === "source" || !prefix ? prefix : projectMessageRenderedSearchText(prefix, messages[messageIndex].role === "assistant");
             const precedingMatches = findTextMatches(prefixText, findQuery).length;
             resolvedCurrentMatch ??= resolveRenderedTextMatch(index, matches, current.occurrenceIndex - precedingMatches);
           }
@@ -1145,7 +1145,7 @@ export function SessionMessageColumn({
         elicitationAction={elicitationAction}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
-        renderText={(text, key, sourceStart) => <MessageRichText key={key} text={text} sourceStart={sourceStart} isStreaming={isRunning}
+        renderText={(text, key, sourceStart) => <MessageRichText key={key} text={text} sourceStart={sourceStart} isStreaming={isRunning} fileReferences
           resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath}
           markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
           glossaryAnnotationScopeKey={`${sessionId}:pending`} onActivateGlossaryEntry={onActivateGlossaryEntry} />}
@@ -1159,6 +1159,7 @@ export function SessionMessageColumn({
           <MessageRichText
             resolveImageSource={resolveImageSource}
             text={pendingMessageText}
+            fileReferences
             isStreaming={isRunning}
             forceFullRender={findOpen && hasFindQuery}
             displayMode={messageViewMode}
@@ -1417,6 +1418,7 @@ export function SessionMessageColumn({
                               sourceStart={sourceStart}
                               resolveImageSource={resolveImageSource}
                               text={text}
+                              fileReferences={message.role === "assistant"}
                               isStreaming={isRunning && absoluteIndex === pendingResponseMessageIndex}
                               forceFullRender={findOpen && hasFindQuery}
                               displayMode={messageViewMode}
@@ -1510,6 +1512,7 @@ export function SessionMessageColumn({
                                                 <MessageRichText
                                                   resolveImageSource={resolveImageSource}
                                                   text={operation.summary}
+                                                  fileReferences
                                                   onOpenPath={onOpenPath}
                                                   markdownLinkFileContext={markdownLinkFileContext}
                                                   markdownImageContext={markdownLinkFileContext}

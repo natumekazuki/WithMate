@@ -1,9 +1,9 @@
 import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
 
 export function createMessageRenderedSearchTextProjection() {
-  let entries = new Map<string, { text: string; renderedText: string }>();
+  let entries = new Map<string, { text: string; fileReferences: boolean; renderedText: string }>();
   return (
-    messages: readonly { text: string }[],
+    messages: readonly { text: string; role?: string }[],
     messageKeys: readonly string[] | undefined,
     mode: "preview" | "source",
     enabled: boolean,
@@ -13,17 +13,18 @@ export function createMessageRenderedSearchTextProjection() {
       return [];
     }
     // 現在の会話投影に含まれる本文だけを保持し、履歴の置換・追加取得で蓄積しない。
-    const nextEntries = new Map<string, { text: string; renderedText: string }>();
+    const nextEntries = new Map<string, { text: string; fileReferences: boolean; renderedText: string }>();
     const texts = messages.map((message, index) => {
       const key = messageKeys?.[index] ?? String(index);
       const text = message.text;
+      const fileReferences = message.role === "assistant";
       const previous = entries.get(key);
-      const entry = previous?.text === text ? previous : undefined;
+      const entry = previous?.text === text && previous.fileReferences === fileReferences ? previous : undefined;
       if (mode === "source") {
         if (entry) nextEntries.set(key, entry);
         return text;
       }
-      const next = entry ?? { text, renderedText: projectMessageRenderedSearchText(text) };
+      const next = entry ?? { text, fileReferences, renderedText: projectMessageRenderedSearchText(text, fileReferences) };
       nextEntries.set(key, next);
       return next.renderedText;
     });

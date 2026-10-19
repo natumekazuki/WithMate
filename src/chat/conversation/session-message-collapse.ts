@@ -104,7 +104,7 @@ export function buildMessageCollapseTargets(
         && previousTarget.role === message.role
         && previousTarget.text === message.text
         ? previousTarget.preview
-        : projectMessagePlainText(message.text),
+        : projectMessagePlainText(message.text, message.role === "assistant"),
       accent: message.accent === true,
       isBookmarked: isMessageBookmarked(message),
     });

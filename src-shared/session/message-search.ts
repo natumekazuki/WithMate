@@ -7,6 +7,7 @@ import { math } from "micromark-extension-math";
 import { frontmatterFromMarkdown } from "mdast-util-frontmatter";
 
 import { projectMarkdownFrontmatterText } from "../text/markdown-frontmatter.js";
+import { fileReferencesSyntax, fileReferencesFromMarkdown } from "../text/markdown-file-references.js";
 
 type MarkdownSearchNode = {
   type: string;
@@ -88,10 +89,10 @@ function hasSearchableFootnoteBackreferenceGap(definition: MarkdownSearchNode): 
   return tail?.type === "paragraph" && tail.children?.at(-1)?.type === "text";
 }
 
-export function projectMessageRenderedSearchText(markdown: string): string {
+export function projectMessageRenderedSearchText(markdown: string, fileReferences = false): string {
   const tree = fromMarkdown(markdown, {
-    extensions: [frontmatter(), gfm(), math()],
-    mdastExtensions: [frontmatterFromMarkdown(), gfmFromMarkdown(), mathFromMarkdown()],
+    extensions: [frontmatter(), gfm(), math(), ...(fileReferences ? [fileReferencesSyntax()] : [])],
+    mdastExtensions: [frontmatterFromMarkdown(), gfmFromMarkdown(), mathFromMarkdown(), ...(fileReferences ? [fileReferencesFromMarkdown()] : [])],
   });
   const root = tree as MarkdownSearchNode;
   const definitions = new Map<string, MarkdownSearchNode>();
@@ -150,6 +151,6 @@ function normalizeMessagePlainText(text: string): string {
   return `${codePoints.slice(0, MESSAGE_COLLAPSE_PREVIEW_MAX_LENGTH - 1).join("")}…`;
 }
 
-export function projectMessagePlainText(markdown: string): string {
-  return normalizeMessagePlainText(projectMessageRenderedSearchText(markdown.replace(/\r\n?|\n/gu, " ")));
+export function projectMessagePlainText(markdown: string, fileReferences = false): string {
+  return normalizeMessagePlainText(projectMessageRenderedSearchText(markdown.replace(/\r\n?|\n/gu, " "), fileReferences));
 }

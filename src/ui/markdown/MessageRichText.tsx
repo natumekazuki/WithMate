@@ -5,6 +5,7 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import type { PluggableList } from "unified";
+import { remarkFileReferences } from "../../../src-shared/text/markdown-file-references.js";
 
 import type {
   MarkdownLinkContextMenuRequest,
@@ -42,6 +43,7 @@ type MessageRichTextProps = {
   forceFullRender?: boolean;
   isStreaming?: boolean;
   displayMode?: MessageViewMode;
+  fileReferences?: boolean;
   onOpenPath?: (target: string) => void;
   resolveImageSource?: MarkdownImageResolver;
   markdownLinkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
@@ -85,6 +87,7 @@ function MessageMarkdownPreview({
   className = "message-body",
   forceFullRender = false,
   isStreaming = false,
+  fileReferences = false,
   onOpenPath,
   resolveImageSource,
   markdownLinkFileContext,
@@ -109,7 +112,7 @@ function MessageMarkdownPreview({
     text: renderText,
     onActivate: onActivateGlossaryEntry,
   });
-  const parseProjection = useMemo(() => createMarkdownParseProjectionPlugin(), []);
+  const parseProjection = useMemo(() => createMarkdownParseProjectionPlugin(), [fileReferences]);
   const katexProjection = useMemo(() => createKatexProjectionPlugin(), []);
   const handleLinkContextMenuResult = useCallback(
     (result: MarkdownLinkContextMenuResult) => {
@@ -173,10 +176,11 @@ function MessageMarkdownPreview({
       remarkFrontmatter,
       remarkGfm,
       [remarkMath, { singleDollarTextMath: false }],
+      ...(fileReferences ? [remarkFileReferences] : []),
       parseProjection,
       sharedRemarkHtmlLineBreaks,
     ],
-    [parseProjection],
+    [fileReferences, parseProjection],
   );
   const markdownContent = useMemo(() => (
     <ReactMarkdown

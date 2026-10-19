@@ -460,11 +460,11 @@ function LiveElicitationCard({
 }
 
 export function ElicitationRecords({ records, sourceText }: { records?: readonly ElicitationRecord[]; sourceText?: string }) {
-  const source = sourceText === undefined ? undefined : projectMessageRenderedSearchText(sourceText);
+  const source = sourceText === undefined ? undefined : projectMessageRenderedSearchText(sourceText, true);
   // A complete block/list item represents an existing choice; a substring does not.
   const sourceChoices = new Set(sourceText === undefined ? [] : fromMarkdown(sourceText).children.flatMap((node) =>
     (node.type === "list" ? node.children : [node]).map((block) =>
-      projectMessageRenderedSearchText(sourceText.slice(block.position?.start.offset, block.position?.end.offset)).trim(),
+      projectMessageRenderedSearchText(sourceText.slice(block.position?.start.offset, block.position?.end.offset), true).trim(),
     ),
   ));
   return records?.map((record) => {
