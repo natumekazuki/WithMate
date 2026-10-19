@@ -106,7 +106,7 @@ export const MarkdownImage = memo(function MarkdownImage({
   title,
   resolveImageSource,
 }: MarkdownImageProps) {
-  const { linkFileContext } = useContext(MarkdownRenderContext);
+  const { imageContext } = useContext(MarkdownRenderContext);
   const canLoadDirectly =
     !resolveImageSource && isDirectMarkdownImageSource(source);
   const shouldLoadEagerly = shouldLoadMarkdownImageEagerly(source);
@@ -214,7 +214,7 @@ export const MarkdownImage = memo(function MarkdownImage({
   const showContextMenu: ImageContextMenuHandler = (event, image, viewport) => {
     if ("key" in event && event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return false;
     const api = getWithMateApi();
-    if (!api || !linkFileContext || !image || !viewport || loadStatus !== "ready") return false;
+    if (!api || !imageContext || !image || !viewport || loadStatus !== "ready") return false;
     event.preventDefault();
     event.stopPropagation();
     const point = "key" in event || (event.clientX === 0 && event.clientY === 0)
@@ -227,11 +227,11 @@ export const MarkdownImage = memo(function MarkdownImage({
     const revision = ++copyRevisionRef.current;
     setCopyFeedback(null);
     void api.showSessionFilePreviewImageContextMenu({
-      sessionId: linkFileContext.sessionId,
+      sessionId: imageContext.sessionId,
       point,
       ...(resolveMarkdownImageTarget(source).kind === "local" ? { image: {
         target: source,
-        ...(linkFileContext.baseResource ? { baseResource: linkFileContext.baseResource } : {}),
+        ...(imageContext.baseResource ? { baseResource: imageContext.baseResource } : {}),
       } } : {}),
     }).then((result) => {
       if (revision !== copyRevisionRef.current || result.status === "dismissed") return;

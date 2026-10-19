@@ -106,11 +106,18 @@ test("画像menuは元sourceを再解決してpathを一度copyし、選択中�
   await Promise.resolve();
   assert.deepEqual(inspected, [request]);
   assert.deepEqual(copiedPaths, []);
+  harness.getTemplate()[1].click?.({} as never, {} as never, {} as never);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(senderChecks, 1, "selection in progress must not start a second path copy");
+  assert.deepEqual(inspected, [request]);
   finishInspection();
   assert.deepEqual(await result, { status: "copied-path" });
   assert.equal(senderChecks, 2);
   assert.deepEqual(copiedPaths, ["C:\\images\\sample.png"]);
   harness.getTemplate()[1].click?.({} as never, {} as never, {} as never);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(senderChecks, 2, "settled selection must not start a second path copy");
+  assert.deepEqual(inspected, [request]);
   assert.deepEqual(copiedPaths, ["C:\\images\\sample.png"]);
 });
 

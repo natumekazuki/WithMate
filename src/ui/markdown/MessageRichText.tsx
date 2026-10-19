@@ -20,7 +20,7 @@ import {
   type MessageCopyFeedback,
 } from "./markdown-context.js";
 import { markdownUrlTransform } from "./markdown-links.js";
-import type { MarkdownImageResolver } from "./image-resource-loader.js";
+import type { MarkdownImageContext, MarkdownImageResolver } from "./image-resource-loader.js";
 import {
   markdownComponents,
   renderMarkdownFrontmatter,
@@ -44,6 +44,7 @@ type MessageRichTextProps = {
   onOpenPath?: (target: string) => void;
   resolveImageSource?: MarkdownImageResolver;
   markdownLinkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
+  markdownImageContext?: MarkdownImageContext;
   glossaryAnnotationMatcher?: GlossaryAnnotationMatcher;
   glossaryAnnotationScopeKey?: string;
   onActivateGlossaryEntry?: (canonicalTerm: string) => void;
@@ -86,6 +87,7 @@ function MessageMarkdownPreview({
   onOpenPath,
   resolveImageSource,
   markdownLinkFileContext,
+  markdownImageContext,
   glossaryAnnotationMatcher,
   glossaryAnnotationScopeKey = "",
   onActivateGlossaryEntry,
@@ -140,6 +142,7 @@ function MessageMarkdownPreview({
       onCodeBlockCopyResult: handleCodeBlockCopyResult,
       onLinkContextMenuResult: handleLinkContextMenuResult,
       linkFileContext: markdownLinkFileContext,
+      imageContext: markdownImageContext,
       onOpenPath,
       resolveImageSource,
     }),
@@ -148,6 +151,7 @@ function MessageMarkdownPreview({
       handleLinkContextMenuResult,
       isStreaming,
       markdownLinkFileContext,
+      markdownImageContext,
       onOpenPath,
       resolveImageSource,
       renderText,

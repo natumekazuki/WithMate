@@ -70,7 +70,7 @@ test("画像menuは通常表示と拡大表示のmouse・keyboardで元sourceを
     } });
     const resolver: MarkdownImageResolver = async () => "blob:display-only";
     await act(async () => root.render(
-      <MarkdownRenderContext.Provider value={{ markdown: "", linkFileContext: fileContext }}>
+      <MarkdownRenderContext.Provider value={{ markdown: "", imageContext: fileContext }}>
         <MarkdownImage source="../images/sample.png" resolveImageSource={resolver} />
       </MarkdownRenderContext.Provider>,
     ));
@@ -110,7 +110,7 @@ test("画像menuは通常表示と拡大表示のmouse・keyboardで元sourceを
     assert.equal(dom.window.document.querySelector('[role="dialog"]'), null);
     assert.equal(dom.window.document.activeElement, trigger);
     await act(async () => root.render(
-      <MarkdownRenderContext.Provider value={{ markdown: "", linkFileContext: fileContext }}>
+      <MarkdownRenderContext.Provider value={{ markdown: "", imageContext: fileContext }}>
         <MarkdownImage key="external" source="https://example.test/image.png" />
       </MarkdownRenderContext.Provider>,
     ));
@@ -142,7 +142,7 @@ test("画像menuは失敗を通知しdismissと旧resourceの遅延成功は通�
       showSessionFilePreviewImageContextMenu: () => response(),
     } });
     const render = (source: string) => root.render(
-      <MarkdownRenderContext.Provider value={{ markdown: "", linkFileContext: { sessionId: "session-1" } }}>
+      <MarkdownRenderContext.Provider value={{ markdown: "", imageContext: { sessionId: "session-1" } }}>
         <MarkdownImage key={source} source={source} />
       </MarkdownRenderContext.Provider>,
     );

@@ -64,7 +64,7 @@ flowchart LR
 
 - message と file preview は同じ component mapping を使う
 - PreviewはGFM・KaTeX・footnoteを含む完全Markdown描画を常に使用し、本文更新で未整形表示へ巻き戻さない。受信中の追記だけを100ms単位のsnapshotへまとめ、継続受信でも予定を延期せず最新本文を反映する。初回、追記以外の置換、受信終了（成功・失敗・取消）、検索中の`forceFullRender`指定は即時反映し、Sourceは常に最新の原文を表示する。会話の実行状態はMain／Auxiliaryの対象応答とpending本文のownerから渡す。
-- 呼び出し元は path open と local image resolution の context だけを注入する
+- 呼び出し元はpath openと画像読込・画像操作のcontextを注入する。画像操作のcontextはlink操作の可否から独立させ、Git previewでも画像読込と同じSession/base resourceを使う
 - Quote を提供する共通 chat window は Preview を既定とし、ActionDock の表示切替で message column 全体を Source にできる。Source は元 Markdown を plain text として表示し、選択、Quote、検索は表示中の source text を対象にする
 - assistant response の選択 action は Session chat root が overlay と stacking context を所有し、message surface や ActionDock の局所 stacking context から分離する。位置と lifecycle の executable contract は `src/chat/selection-action-overlay.ts` と `tests/renderer/session-message-column.test.ts` を正本とする
 - message の表示 mode は window mount 中だけ保持し、永続化しない。切替時は既存の selection を解除する

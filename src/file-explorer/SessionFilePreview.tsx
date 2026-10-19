@@ -1391,6 +1391,7 @@ export function SessionFilePreview({
                 onOpenPath={handleOpenMarkdownPath}
                 resolveImageSource={resolveMarkdownImageSource}
                 markdownLinkFileContext={markdownLinkFileContext}
+                markdownImageContext={imageContext}
               />
             )}
           </SelectionTextActionSurface>
