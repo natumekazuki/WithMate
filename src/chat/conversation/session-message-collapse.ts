@@ -10,6 +10,7 @@ export type MessageCollapseTarget = Readonly<{
   role: Message["role"];
   text: string;
   preview: string;
+  responseProvider?: string;
   accent: boolean;
   isBookmarked: boolean;
 }>;
@@ -66,6 +67,7 @@ export function buildMessageCollapseTargets(
   sources: readonly MessageListSource[],
   keys: readonly string[],
   previousTargets: readonly MessageCollapseTarget[] = [],
+  provider?: string,
 ): MessageCollapseTarget[] {
   const previousTargetsBySourceIdentity = new Map(
     previousTargets.map((target) => [target.sourceIdentity, target]),
@@ -80,11 +82,13 @@ export function buildMessageCollapseTargets(
     }
 
     const sourceIdentity = messageSourceIdentity(source);
+    const responseProvider = message.role === "assistant" ? provider : undefined;
     const previousTarget = previousTargetsBySourceIdentity.get(sourceIdentity);
     if (
       previousTarget?.key === key
       && previousTarget.role === message.role
       && previousTarget.text === message.text
+      && previousTarget.responseProvider === responseProvider
       && previousTarget.sourceKind === source.kind
       && previousTarget.accent === (message.accent === true)
       && previousTarget.isBookmarked === isMessageBookmarked(message)
@@ -100,11 +104,13 @@ export function buildMessageCollapseTargets(
       source,
       role: message.role,
       text: message.text,
+      responseProvider,
       preview: previousTarget?.sourceKind === source.kind
         && previousTarget.role === message.role
         && previousTarget.text === message.text
+        && previousTarget.responseProvider === responseProvider
         ? previousTarget.preview
-        : projectMessagePlainText(message.text, message.role === "assistant"),
+        : projectMessagePlainText(message.text, responseProvider),
       accent: message.accent === true,
       isBookmarked: isMessageBookmarked(message),
     });

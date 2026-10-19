@@ -29,6 +29,39 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "全履歴検索とnavigatorはMain／Auxiliary各ownerのproviderに従いCodex固有参照を投影し、Sourceを保持する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
+// fault = "workerへproviderが届かないか親のproviderをAuxiliaryへ流用し、非表示属性が検索されるか他providerの本文を失う"
+// observable = "実storage Workerから取得するpreview／Sourceの検索件数とnavigatorのpreview"
+// observation_boundary = "public-boundary"
+// scope = "Main／Auxiliary query ownerのprovider伝播"
+// lifecycle = "permanent"
+// impact = "表示と全履歴検索の一致が崩れ、誤った検索結果や要約を返す"
+// distinction = "共有parser testと型検査ではDB ownerからCPU Workerまでの伝播を通らない。小さい2ownerのSQLite fixtureで確認する"
+// @end-test-value
+test("全履歴投影は会話ownerごとのproviderを使う", async () => {
+  const f = await fixture();
+  const text = 'visualize{"path":"/work/chart.html","title":"Hidden Title"}';
+  try {
+    await f.bundle.stores.session.upsertSession({ ...f.session, provider: "codex", messages: [{ role: "assistant", text }] });
+    await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.auxiliary, provider: "claude", messages: [{ role: "assistant", text }] });
+    for (const [store, id, isCodex] of [[f.bundle.stores.session, f.session.id, true], [f.bundle.stores.auxiliary, f.auxiliary.id, false]] as const) {
+      for (const mode of ["preview", "source"] as const) {
+        const result = await store.searchConversation(id, { producerId: id, requestId: `${id}-${mode}`, query: "Hidden Title", mode });
+        assert.equal(result.status, "complete");
+        if (result.status !== "complete") throw new Error("missing provider search result");
+        assert.equal(result.totalCount, isCodex && mode === "preview" ? 0 : 1);
+      }
+      const navigator = await store.listConversationNavigator(id, { producerId: id, requestId: `${id}-navigator`, filter: "all" });
+      assert.equal(navigator.status, "complete");
+      if (navigator.status !== "complete") throw new Error("missing provider navigator result");
+      assert.equal(navigator.items[0]?.preview, isCodex ? "/work/chart.html" : text);
+    }
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Worker検索はMain/Auxiliary全履歴のsourceとpreview意味・seq・occurrenceを維持し、任意offsetを同じstampで64件以内に返す"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md#storage-overview" }
 // fault = "末尾会話だけを検索するか全matchを一度に返すかMarkdown非表示要素をpreview matchへ含める"
@@ -278,7 +311,7 @@ test("runtime appendはqueryを失効させcheckpointは維持する", async () 
 // distinction = "通常の高速Markdown fixtureではhard-stop期限とlatest集約の欠陥を検出できない。専用CPU-only fixtureを実Workerとして使用する"
 // @end-test-value
 test("latestとcancelはobsolete CPU Workerを停止して後継を進める", { timeout: 10000 }, async () => {
-  const snapshot: ConversationQuerySnapshot = { ownerIdentity: "test-owner", incarnationId: "test-incarnation", messageCount: 1 };
+  const snapshot: ConversationQuerySnapshot = { ownerIdentity: "test-owner", provider: "codex", incarnationId: "test-incarnation", messageCount: 1 };
   const reader = { getConversationQuerySnapshot: () => snapshot,
     readConversationQueryBatch: (_id: string, after: number) => after < 0 ? [{ seq: 0, role: "user", body: JSON.stringify({ text: "needle" }) }] : [] };
   const coordinator = new ConversationQueryCoordinator("test-generation", { session_messages_v6: reader, auxiliary_session_messages: reader },

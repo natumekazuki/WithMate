@@ -1,8 +1,5 @@
 import type { Extension as FromMarkdownExtension } from "mdast-util-from-markdown";
 import type { Code, Extension, State, Tokenizer } from "micromark-util-types";
-import type { Root } from "mdast";
-import type { Plugin } from "unified";
-import type {} from "remark-parse";
 
 declare module "micromark-util-types" {
   interface TokenTypeMap {
@@ -121,11 +118,11 @@ const tokenizeReference: Tokenizer = function (effects, ok, nok) {
   }
 };
 
-export function fileReferencesSyntax(): Extension {
+export function codexFileReferencesSyntax(): Extension {
   return { text: { 58: { tokenize: tokenizeReference }, 0xe200: { tokenize: tokenizeReference } } };
 }
 
-export function fileReferencesFromMarkdown(): FromMarkdownExtension {
+export function codexFileReferencesFromMarkdown(): FromMarkdownExtension {
   return {
     enter: {
       fileReference(token) {
@@ -143,9 +140,3 @@ export function fileReferencesFromMarkdown(): FromMarkdownExtension {
     },
   };
 }
-
-export const remarkFileReferences: Plugin<[], Root> = function () {
-  const data = this.data();
-  (data.micromarkExtensions ??= []).push(fileReferencesSyntax());
-  (data.fromMarkdownExtensions ??= []).push(fileReferencesFromMarkdown());
-};

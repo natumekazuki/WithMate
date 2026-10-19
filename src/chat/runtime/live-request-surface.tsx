@@ -459,12 +459,12 @@ function LiveElicitationCard({
   );
 }
 
-export function ElicitationRecords({ records, sourceText }: { records?: readonly ElicitationRecord[]; sourceText?: string }) {
-  const source = sourceText === undefined ? undefined : projectMessageRenderedSearchText(sourceText, true);
+export function ElicitationRecords({ records, sourceText, responseProvider }: { records?: readonly ElicitationRecord[]; sourceText?: string; responseProvider?: string }) {
+  const source = sourceText === undefined ? undefined : projectMessageRenderedSearchText(sourceText, responseProvider);
   // A complete block/list item represents an existing choice; a substring does not.
   const sourceChoices = new Set(sourceText === undefined ? [] : fromMarkdown(sourceText).children.flatMap((node) =>
     (node.type === "list" ? node.children : [node]).map((block) =>
-      projectMessageRenderedSearchText(sourceText.slice(block.position?.start.offset, block.position?.end.offset), true).trim(),
+      projectMessageRenderedSearchText(sourceText.slice(block.position?.start.offset, block.position?.end.offset), responseProvider).trim(),
     ),
   ));
   return records?.map((record) => {
@@ -494,8 +494,9 @@ export function ElicitationRecords({ records, sourceText }: { records?: readonly
   });
 }
 
-export function InlineQuestionContent({ text, records = [], requests = [], renderText, ...cardProps }: {
+export function InlineQuestionContent({ text, records = [], requests = [], renderText, responseProvider, ...cardProps }: {
   text: string;
+  responseProvider?: string;
   records?: readonly ElicitationRecord[];
   requests?: readonly LiveElicitationRequest[];
   renderText: (text: string, key: string, sourceStart: number) => ReactNode;
@@ -518,7 +519,7 @@ export function InlineQuestionContent({ text, records = [], requests = [], rende
     if (start > offset) fragments.push(renderText(text.slice(offset, start), `text-${offset}-${start}-${record.requestId}`, offset));
     fragments.push(<Fragment key={record.requestId}>{request
       ? <LiveElicitationCard {...cardProps} request={request} />
-      : <ElicitationRecords records={[record]} sourceText={sourceText} />}</Fragment>);
+      : <ElicitationRecords records={[record]} sourceText={sourceText} responseProvider={responseProvider} />}</Fragment>);
     offset = end;
   }
   if (offset < text.length) fragments.push(renderText(text.slice(offset), `text-${offset}`, offset));

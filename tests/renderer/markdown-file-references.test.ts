@@ -5,15 +5,15 @@ import type { Link, Root, RootContent } from "mdast";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import {
-  fileReferencesFromMarkdown,
-  fileReferencesSyntax,
-  remarkFileReferences,
-} from "../../src-shared/text/markdown-file-references.js";
+  codexFileReferencesFromMarkdown,
+  codexFileReferencesSyntax,
+} from "../../src-shared/text/codex-file-references.js";
+import { remarkProviderResponse } from "../../src-shared/text/provider-response-markdown.js";
 
 function parse(source: string): Root {
   return fromMarkdown(source, {
-    extensions: [fileReferencesSyntax()],
-    mdastExtensions: [fileReferencesFromMarkdown()],
+    extensions: [codexFileReferencesSyntax()],
+    mdastExtensions: [codexFileReferencesFromMarkdown()],
   });
 }
 
@@ -54,7 +54,7 @@ test("file references produce ordinary links with exact source offsets across pa
     assert.equal(decodeURIComponent(references[0].url), path);
     assert.deepEqual(references[0].children, [{ type: "text", value: path }]);
     assert.equal(body.slice(references[0].position?.start.offset, references[0].position?.end.offset), source);
-    assert.deepEqual(unified().use(remarkParse).use(remarkFileReferences).parse(body), tree);
+    assert.deepEqual(unified().use(remarkParse).use(remarkProviderResponse, "codex").parse(body), tree);
   }
 });
 
@@ -149,6 +149,6 @@ test("invalid nonlocal live and incomplete references never become file links", 
     }
     const completed = `前 ${reference} 後 **完了**`;
     assert.equal(links(parse(completed)).length, 1);
-    assert.deepEqual(unified().use(remarkParse).use(remarkFileReferences).parse(completed), parse(completed));
+    assert.deepEqual(unified().use(remarkParse).use(remarkProviderResponse, "codex").parse(completed), parse(completed));
   }
 });

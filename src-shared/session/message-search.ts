@@ -7,7 +7,7 @@ import { math } from "micromark-extension-math";
 import { frontmatterFromMarkdown } from "mdast-util-frontmatter";
 
 import { projectMarkdownFrontmatterText } from "../text/markdown-frontmatter.js";
-import { fileReferencesSyntax, fileReferencesFromMarkdown } from "../text/markdown-file-references.js";
+import { providerResponseMarkdownExtensions } from "../text/provider-response-markdown.js";
 
 type MarkdownSearchNode = {
   type: string;
@@ -89,10 +89,11 @@ function hasSearchableFootnoteBackreferenceGap(definition: MarkdownSearchNode): 
   return tail?.type === "paragraph" && tail.children?.at(-1)?.type === "text";
 }
 
-export function projectMessageRenderedSearchText(markdown: string, fileReferences = false): string {
+export function projectMessageRenderedSearchText(markdown: string, responseProvider?: string): string {
+  const providerExtensions = providerResponseMarkdownExtensions(responseProvider);
   const tree = fromMarkdown(markdown, {
-    extensions: [frontmatter(), gfm(), math(), ...(fileReferences ? [fileReferencesSyntax()] : [])],
-    mdastExtensions: [frontmatterFromMarkdown(), gfmFromMarkdown(), mathFromMarkdown(), ...(fileReferences ? [fileReferencesFromMarkdown()] : [])],
+    extensions: [frontmatter(), gfm(), math(), ...providerExtensions.extensions],
+    mdastExtensions: [frontmatterFromMarkdown(), gfmFromMarkdown(), mathFromMarkdown(), ...providerExtensions.mdastExtensions],
   });
   const root = tree as MarkdownSearchNode;
   const definitions = new Map<string, MarkdownSearchNode>();
@@ -151,6 +152,6 @@ function normalizeMessagePlainText(text: string): string {
   return `${codePoints.slice(0, MESSAGE_COLLAPSE_PREVIEW_MAX_LENGTH - 1).join("")}…`;
 }
 
-export function projectMessagePlainText(markdown: string, fileReferences = false): string {
-  return normalizeMessagePlainText(projectMessageRenderedSearchText(markdown.replace(/\r\n?|\n/gu, " "), fileReferences));
+export function projectMessagePlainText(markdown: string, responseProvider?: string): string {
+  return normalizeMessagePlainText(projectMessageRenderedSearchText(markdown.replace(/\r\n?|\n/gu, " "), responseProvider));
 }
