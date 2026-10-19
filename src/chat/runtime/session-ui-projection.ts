@@ -263,7 +263,9 @@ export function buildCopilotQuotaProjection(telemetry: ProviderQuotaTelemetry | 
   const unitLabel = formatCopilotQuotaUnitLabel(snapshot.quotaKey);
   return {
     snapshot,
-    remainingPercentLabel: `${Math.max(0, Math.round(snapshot.remainingPercentage))}% left`,
+    remainingPercentLabel: Number.isFinite(snapshot.remainingPercentage)
+      ? `${Math.max(0, Math.round(snapshot.remainingPercentage))}% left`
+      : "unavailable",
     remainingRequestsLabel: `${remainingRequests} / ${snapshot.entitlementRequests} ${unitLabel} left`,
     resetLabel: formatQuotaResetLabel(snapshot.resetDate),
   };
