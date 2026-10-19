@@ -535,6 +535,7 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
     showSessionFilePreviewImageContextMenu(
       event: IpcSenderEvent,
       request: SessionFilePreviewImageActionRequest,
+      assertSender: () => Promise<void>,
     ): Awaitable<SessionFilePreviewImageContextMenuResult>;
     copySessionFileObject(
       event: IpcSenderEvent,

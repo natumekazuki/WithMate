@@ -17,6 +17,32 @@ export const IMAGE_ZOOM_MIN = 10;
 export const IMAGE_ZOOM_MAX = 800;
 export const IMAGE_ZOOM_STEP = 10;
 
+export function resolveVisibleImageCopyPoint(
+  image: HTMLImageElement,
+  scrollport: HTMLElement,
+): { x: number; y: number } | null {
+  const rect = image.getBoundingClientRect();
+  const scrollportRect = scrollport.getBoundingClientRect();
+  const left = Math.max(0, rect.left, scrollportRect.left);
+  const top = Math.max(0, rect.top, scrollportRect.top);
+  const right = Math.min(window.innerWidth, rect.right, scrollportRect.right);
+  const bottom = Math.min(window.innerHeight, rect.bottom, scrollportRect.bottom);
+  if (
+    !Number.isFinite(left) ||
+    !Number.isFinite(top) ||
+    !Number.isFinite(right) ||
+    !Number.isFinite(bottom) ||
+    right <= left ||
+    bottom <= top
+  ) {
+    return null;
+  }
+  return {
+    x: Math.floor((left + right) / 2),
+    y: Math.floor((top + bottom) / 2),
+  };
+}
+
 function stepImageZoom(zoom: number, direction: -1 | 1, step = IMAGE_ZOOM_STEP): number {
   if (direction < 0) return zoom <= IMAGE_ZOOM_MIN ? zoom : Math.max(IMAGE_ZOOM_MIN, zoom - step);
   return zoom >= IMAGE_ZOOM_MAX ? zoom : Math.min(IMAGE_ZOOM_MAX, Math.max(IMAGE_ZOOM_MIN, zoom + step));

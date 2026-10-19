@@ -6,16 +6,21 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 
 import {
   ImageViewport,
   ImageZoomControls,
+  resolveVisibleImageCopyPoint,
   useImageViewport,
 } from "../image-viewport.js";
 import { useDialogA11y } from "../a11y.js";
-import { MarkdownRenderContext } from "./markdown-context.js";
+import { getWithMateApi } from "../../app/renderer-withmate-api.js";
+import { MarkdownRenderContext, type MessageCopyFeedback } from "./markdown-context.js";
 import type { MarkdownImageResolver } from "./image-resource-loader.js";
 import { resolveMarkdownImageTarget } from "./image-resource-source.js";
 import {
@@ -30,14 +35,24 @@ type MarkdownImageProps = {
   title?: string;
   resolveImageSource?: MarkdownImageResolver;
 };
+type ImageContextMenuHandler = (
+  event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>,
+  image: HTMLImageElement | null,
+  viewport: HTMLElement | null,
+) => boolean;
+
 function MessageImageLightbox({
   source,
   alt,
   onClose,
+  onContextMenu,
+  feedback,
 }: {
   source: string;
   alt: string;
   onClose: () => void;
+  onContextMenu: ImageContextMenuHandler;
+  feedback: ReactNode;
 }) {
   const initialFocusRef = useRef<HTMLElement | null>(null);
   const imageViewport = useImageViewport(source);
@@ -60,7 +75,11 @@ function MessageImageLightbox({
         aria-label={alt ? `Image preview: ${alt}` : "Image preview"}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
-        onKeyDown={handleDialogKeyDown}
+        onKeyDown={(event) => {
+          if (!onContextMenu(event, imageViewport.imageRef.current, imageViewport.viewportRef.current)) {
+            handleDialogKeyDown(event);
+          }
+        }}
       >
         <ImageZoomControls
           controller={imageViewport}
@@ -73,7 +92,9 @@ function MessageImageLightbox({
           viewportClassName="message-image-lightbox-viewport"
           canvasClassName="message-image-lightbox-canvas"
           imageClassName="message-image-lightbox-image"
+          onImageContextMenu={(event) => onContextMenu(event, event.currentTarget, imageViewport.viewportRef.current)}
         />
+        {feedback}
       </section>
     </div>,
     document.body,
@@ -85,6 +106,7 @@ export const MarkdownImage = memo(function MarkdownImage({
   title,
   resolveImageSource,
 }: MarkdownImageProps) {
+  const { linkFileContext } = useContext(MarkdownRenderContext);
   const canLoadDirectly =
     !resolveImageSource && isDirectMarkdownImageSource(source);
   const shouldLoadEagerly = shouldLoadMarkdownImageEagerly(source);
@@ -102,6 +124,17 @@ export const MarkdownImage = memo(function MarkdownImage({
   const [isLoadingIndicatorVisible, setIsLoadingIndicatorVisible] =
     useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<MessageCopyFeedback | null>(null);
+  const copyRevisionRef = useRef(0);
+  useEffect(() => {
+    setCopyFeedback(null);
+    return () => { copyRevisionRef.current += 1; };
+  }, [resource]);
+  useEffect(() => {
+    if (!copyFeedback) return;
+    const timeout = window.setTimeout(() => setCopyFeedback(null), 2_400);
+    return () => window.clearTimeout(timeout);
+  }, [copyFeedback]);
   const loadingIndicatorTimeoutRef = useRef<number | null>(null);
   const clearLoadingIndicatorTimer = useCallback(() => {
     if (loadingIndicatorTimeoutRef.current !== null) {
@@ -178,6 +211,52 @@ export const MarkdownImage = memo(function MarkdownImage({
   const showLoadingIndicator = isLoading && isLoadingIndicatorVisible;
   const isResolvingWithoutSource =
     (loadStatus === "deferred" || loadStatus === "resolving") && !resolvedSource;
+  const showContextMenu: ImageContextMenuHandler = (event, image, viewport) => {
+    if ("key" in event && event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return false;
+    const api = getWithMateApi();
+    if (!api || !linkFileContext || !image || !viewport || loadStatus !== "ready") return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const point = "key" in event || (event.clientX === 0 && event.clientY === 0)
+      ? resolveVisibleImageCopyPoint(image, viewport)
+      : { x: Math.max(0, Math.round(event.clientX)), y: Math.max(0, Math.round(event.clientY)) };
+    if (!point) {
+      setCopyFeedback({ message: "The image is not currently visible.", tone: "error" });
+      return true;
+    }
+    const revision = ++copyRevisionRef.current;
+    setCopyFeedback(null);
+    void api.showSessionFilePreviewImageContextMenu({
+      sessionId: linkFileContext.sessionId,
+      point,
+      ...(resolveMarkdownImageTarget(source).kind === "local" ? { image: {
+        target: source,
+        ...(linkFileContext.baseResource ? { baseResource: linkFileContext.baseResource } : {}),
+      } } : {}),
+    }).then((result) => {
+      if (revision !== copyRevisionRef.current || result.status === "dismissed") return;
+      setCopyFeedback({
+        message: result.status === "copied" ? "Image copied."
+          : result.status === "copied-path" ? "Path copied." : result.message,
+        tone: result.status === "failed" ? "error" : "success",
+      });
+    }).catch(() => {
+      if (revision === copyRevisionRef.current) {
+        setCopyFeedback({ message: "Image context menu could not be opened.", tone: "error" });
+      }
+    });
+    return true;
+  };
+  const feedback = copyFeedback ? (
+    <span
+      className={`message-copy-toast ${copyFeedback.tone}`}
+      role={copyFeedback.tone === "error" ? "alert" : "status"}
+      aria-live={copyFeedback.tone === "error" ? "assertive" : "polite"}
+      aria-atomic="true"
+    >
+      {copyFeedback.message}
+    </span>
+  ) : null;
   return (
     <span
       ref={shellRef}
@@ -202,6 +281,8 @@ export const MarkdownImage = memo(function MarkdownImage({
           aria-label={alt ? `Open image preview: ${alt}` : "Open image preview"}
           disabled={loadStatus !== "ready"}
           onClick={() => setLightboxOpen(true)}
+          onContextMenu={(event) => showContextMenu(event, event.currentTarget.querySelector("img"), event.currentTarget)}
+          onKeyDown={(event) => showContextMenu(event, event.currentTarget.querySelector("img"), event.currentTarget)}
         >
           <img
             className="message-image"
@@ -226,8 +307,11 @@ export const MarkdownImage = memo(function MarkdownImage({
           source={resolvedSource}
           alt={alt ?? ""}
           onClose={() => setLightboxOpen(false)}
+          onContextMenu={showContextMenu}
+          feedback={feedback}
         />
       ) : null}
+      {!lightboxOpen ? feedback : null}
     </span>
   );
 });

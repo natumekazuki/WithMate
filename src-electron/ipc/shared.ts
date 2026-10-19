@@ -516,9 +516,22 @@ export function parseSessionFilePreviewImageActionRequest(
   ) {
     throw new TypeError("Image copy request is invalid.");
   }
+  const image = candidate.image;
+  if (image !== undefined) {
+    if (!image || typeof image !== "object" || typeof image.target !== "string" || !image.target.trim()) {
+      throw new TypeError("Image copy source is invalid.");
+    }
+    if (image.baseResource !== undefined) {
+      assertValidSessionFilePreviewResourceRequest(image.baseResource, candidate.sessionId);
+    }
+  }
   return {
     sessionId: candidate.sessionId,
     point: { x: point.x, y: point.y },
+    ...(image ? { image: {
+      target: image.target,
+      ...(image.baseResource ? { baseResource: image.baseResource } : {}),
+    } } : {}),
   };
 }
 

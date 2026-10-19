@@ -16,7 +16,7 @@ import { MermaidDiagram } from "../ui/markdown/markdown-code.js";
 import { useMarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
 import { AppNotification, type AppNotificationState } from "../ui/app-notification.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
-import { ImageViewport, ImageZoomControls, useImageViewport } from "../ui/image-viewport.js";
+import { ImageViewport, ImageZoomControls, resolveVisibleImageCopyPoint, useImageViewport } from "../ui/image-viewport.js";
 import { SelectionTextActionSurface } from "../chat/conversation/session-message-column.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
@@ -155,32 +155,6 @@ function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   return copy.buffer;
-}
-
-function resolveVisibleImageCopyPoint(
-  image: HTMLImageElement,
-  scrollport: HTMLElement,
-): { x: number; y: number } | null {
-  const rect = image.getBoundingClientRect();
-  const scrollportRect = scrollport.getBoundingClientRect();
-  const left = Math.max(0, rect.left, scrollportRect.left);
-  const top = Math.max(0, rect.top, scrollportRect.top);
-  const right = Math.min(window.innerWidth, rect.right, scrollportRect.right);
-  const bottom = Math.min(window.innerHeight, rect.bottom, scrollportRect.bottom);
-  if (
-    !Number.isFinite(left) ||
-    !Number.isFinite(top) ||
-    !Number.isFinite(right) ||
-    !Number.isFinite(bottom) ||
-    right <= left ||
-    bottom <= top
-  ) {
-    return null;
-  }
-  return {
-    x: Math.floor((left + right) / 2),
-    y: Math.floor((top + bottom) / 2),
-  };
 }
 
 async function readWholeResource(
@@ -1068,8 +1042,9 @@ export function SessionFilePreview({
       });
       if (loadRevisionRef.current === revision && result.status !== "dismissed") {
         setCopyFeedback({
-          message: result.status === "copied" ? "Image copied." : result.message,
-          tone: result.status === "copied" ? "success" : "error",
+          message: result.status === "copied" ? "Image copied."
+            : result.status === "copied-path" ? "Path copied." : result.message,
+          tone: result.status === "failed" ? "error" : "success",
         });
       }
     } catch {

@@ -6,6 +6,8 @@ import { JSDOM } from "jsdom";
 
 import { MarkdownImage } from "../../src/ui/markdown/markdown-images.js";
 import type { MarkdownImageResolver } from "../../src/ui/markdown/image-resource-loader.js";
+import { MarkdownRenderContext } from "../../src/ui/markdown/markdown-context.js";
+import type { SessionFilePreviewImageActionRequest, SessionFilePreviewImageContextMenuResult } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { installIntersectionObserver } from "../support/intersection-observer.js";
 
 async function withImageDom(run: (fixture: {
@@ -42,6 +44,130 @@ async function withImageDom(run: (fixture: {
     dom.window.close();
   }
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "本文とlightboxの画像menuはmouseとkeyboardから表示座標と元source・baseを渡し、external画像にはlocal path情報を渡さない"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
+// fault = "blob URLを元pathとして渡す、lightboxやkeyboardからmenuに到達できない、外部画像をlocal pathと誤認する、または拡大中の通知が隠れる"
+// observable = "native menu APIのrequest、contextmenuのdefaultPrevented、lightbox内の通知とEscape後のfocus"
+// observation_boundary = "component-behavior"
+// scope = "MarkdownImageの通常表示・拡大表示からnative menuへの操作境界"
+// lifecycle = "permanent"
+// distinction = "Main service testはrender済みblobと元sourceの対応やkeyboard座標・portal内の通知を観測できない"
+// @end-test-value
+test("画像menuは通常表示と拡大表示のmouse・keyboardで元sourceを保持する", async () => {
+  await withImageDom(async ({ container, dom, root, intersection }) => {
+    const requests: SessionFilePreviewImageActionRequest[] = [];
+    const fileContext = { sessionId: "aux-1", baseResource: {
+      sessionId: "aux-1", absolutePath: "C:\\docs\\message.md",
+    } };
+    Object.defineProperty(dom.window, "withmate", { value: {
+      showSessionFilePreviewImageContextMenu: async (request: SessionFilePreviewImageActionRequest) => {
+        requests.push(request);
+        return { status: request.image ? "copied-path" : "copied" };
+      },
+    } });
+    const resolver: MarkdownImageResolver = async () => "blob:display-only";
+    await act(async () => root.render(
+      <MarkdownRenderContext.Provider value={{ markdown: "", linkFileContext: fileContext }}>
+        <MarkdownImage source="../images/sample.png" resolveImageSource={resolver} />
+      </MarkdownRenderContext.Provider>,
+    ));
+    await act(async () => intersection.observers[0].intersect(true));
+    const image = container.querySelector("img")!;
+    const trigger = container.querySelector("button")!;
+    const rect = new dom.window.DOMRect(10, 20, 120, 80);
+    image.getBoundingClientRect = trigger.getBoundingClientRect = () => rect;
+    await act(async () => image.dispatchEvent(new dom.window.Event("load")));
+    const rightClick = new dom.window.MouseEvent("contextmenu", { clientX: 42, clientY: 62, bubbles: true, cancelable: true });
+    await act(async () => image.dispatchEvent(rightClick));
+    assert.equal(rightClick.defaultPrevented, true);
+    assert.deepEqual(requests[0], { sessionId: "aux-1", point: { x: 42, y: 62 }, image: {
+      target: "../images/sample.png", baseResource: fileContext.baseResource,
+    } });
+    assert.equal(container.querySelector('[role="status"]')?.textContent, "Path copied.");
+    await act(async () => trigger.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+      key: "F10", shiftKey: true, bubbles: true, cancelable: true,
+    })));
+    assert.deepEqual(requests[1].point, { x: 70, y: 60 });
+    trigger.focus();
+    await act(async () => trigger.click());
+    const dialog = dom.window.document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const lightboxImage = dialog.querySelector("img")!;
+    lightboxImage.getBoundingClientRect = () => new dom.window.DOMRect(-20, 0, 500, 400);
+    dialog.querySelector<HTMLElement>(".image-viewport")!.getBoundingClientRect = () => new dom.window.DOMRect(30, 40, 200, 100);
+    await act(async () => lightboxImage.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+      clientX: 80, clientY: 90, bubbles: true, cancelable: true,
+    })));
+    assert.deepEqual(requests[2], { ...requests[0], point: { x: 80, y: 90 } });
+    await act(async () => dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+      key: "ContextMenu", bubbles: true, cancelable: true,
+    })));
+    assert.deepEqual(requests[3], { ...requests[0], point: { x: 130, y: 90 } });
+    assert.equal(dialog.querySelector('[role="status"]')?.textContent, "Path copied.");
+    await act(async () => dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    assert.equal(dom.window.document.querySelector('[role="dialog"]'), null);
+    assert.equal(dom.window.document.activeElement, trigger);
+    await act(async () => root.render(
+      <MarkdownRenderContext.Provider value={{ markdown: "", linkFileContext: fileContext }}>
+        <MarkdownImage key="external" source="https://example.test/image.png" />
+      </MarkdownRenderContext.Provider>,
+    ));
+    const externalImage = container.querySelector("img")!;
+    await act(async () => externalImage.dispatchEvent(new dom.window.Event("load")));
+    await act(async () => externalImage.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+      clientX: 40, clientY: 50, bubbles: true, cancelable: true,
+    })));
+    assert.deepEqual(requests[4], { sessionId: "aux-1", point: { x: 40, y: 50 } });
+    assert.equal(container.querySelector('[role="status"]')?.textContent, "Image copied.");
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "画像menuは失敗をalertへ返しdismissと破棄済み画像への遅延成功を成功通知に変換しない"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
+// fault = "IPC失敗やdismissをcopy成功として表示する、または旧画像の遅延結果を別画像へ表示する"
+// observable = "status/alertの有無と通知text"
+// observation_boundary = "component-behavior"
+// scope = "MarkdownImageのmenu結果とresource寿命"
+// lifecycle = "permanent"
+// distinction = "native menu service testはrendererの非同期結果とsource変更後の通知寿命を観測できない"
+// @end-test-value
+test("画像menuは失敗を通知しdismissと旧resourceの遅延成功は通知しない", async () => {
+  await withImageDom(async ({ container, dom, root }) => {
+    let response: () => Promise<SessionFilePreviewImageContextMenuResult> = async () => ({ status: "dismissed" });
+    Object.defineProperty(dom.window, "withmate", { value: {
+      showSessionFilePreviewImageContextMenu: () => response(),
+    } });
+    const render = (source: string) => root.render(
+      <MarkdownRenderContext.Provider value={{ markdown: "", linkFileContext: { sessionId: "session-1" } }}>
+        <MarkdownImage key={source} source={source} />
+      </MarkdownRenderContext.Provider>,
+    );
+    await act(async () => render("https://example.test/first.png"));
+    const image = container.querySelector("img")!;
+    await act(async () => image.dispatchEvent(new dom.window.Event("load")));
+    const openMenu = () => image.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+      clientX: 20, clientY: 30, bubbles: true, cancelable: true,
+    }));
+    await act(async () => openMenu());
+    assert.equal(container.querySelector('[role="status"], [role="alert"]'), null);
+    response = async () => ({ status: "failed", message: "Clipboard write failed." });
+    await act(async () => openMenu());
+    assert.equal(container.querySelector('[role="alert"]')?.textContent, "Clipboard write failed.");
+    response = async () => { throw new Error("IPC closed"); };
+    await act(async () => openMenu());
+    assert.equal(container.querySelector('[role="alert"]')?.textContent, "Image context menu could not be opened.");
+    let finish!: (result: SessionFilePreviewImageContextMenuResult) => void;
+    response = () => new Promise((resolve) => { finish = resolve; });
+    await act(async () => openMenu());
+    await act(async () => render("https://example.test/second.png"));
+    await act(async () => finish({ status: "copied" }));
+    assert.equal(container.querySelector('[role="status"], [role="alert"]'), null);
+  });
+});
 
 // @test-value v2
 // kind = "contract"

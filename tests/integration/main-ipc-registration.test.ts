@@ -2235,6 +2235,64 @@ test("commit file preview IPC はseparator表記が変わるinspect / chunk遷�
   );
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "画像path menu IPCは元sourceと同一Sessionのbaseを保持しowner/current previewを認可して選択時の再確認も失効させる"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
+// fault = "不正sourceや別Sessionのbaseをmenuへ渡す、任意windowへ認可する、またはmenu表示後のowner/base変更を無視する"
+// observable = "menu依存へ渡るrequestと再確認callbackの拒否、拒否時のmenu呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "画像native path menuのIPC入力とsender認可"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "service testはElectron senderとSession/previewの所有関係を知らず、画像read IPC testはmenu選択時の再認可callbackを通らない"
+// @end-test-value
+test("画像path menu IPCはsource/baseを保持し表示後のowner/base変更を再認可で拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  let currentBase = { sessionId: "aux-1", absolutePath: "/outside/message.md" };
+  let ownerId: string | null = "session-1";
+  let assertSender!: () => Promise<void>;
+  const menuRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (id: string) => id === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (id: string) => id === "aux-1" ? ownerId : null,
+    getFilePreviewWindowResource: (window: unknown, id: string) => window === previewWindow && id === "aux-1" ? currentBase : null,
+    showSessionFilePreviewImageContextMenu: async (_event: unknown, request: unknown, reauthorize: () => Promise<void>) => {
+      menuRequests.push(request);
+      assertSender = reauthorize;
+      return { status: "dismissed" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { sessionId: "aux-1", point: { x: 10, y: 20 }, image: { target: "../image.png", baseResource: currentBase } };
+  const invoke = (input: unknown = request) => handlers.get(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL)?.({}, input) as Promise<unknown>;
+  assert.deepEqual(await invoke(), { status: "dismissed" });
+  assert.deepEqual(menuRequests, [request]);
+  await assertSender();
+  ownerId = null;
+  await assert.rejects(() => assertSender(), /current Preview resource as its base/);
+  ownerId = "session-1";
+  currentWindow = otherWindow;
+  await assert.rejects(() => invoke(), /current Preview resource as its base/);
+  currentWindow = previewWindow;
+  await invoke();
+  await assertSender();
+  currentBase = { ...currentBase, absolutePath: "/outside/other.md" };
+  await assert.rejects(() => assertSender(), /current Preview resource as its base/);
+  currentWindow = ownerWindow;
+  for (const image of [null, { target: "" }, { target: 42 }, {
+    target: "image.png", baseResource: { ...currentBase, sessionId: "other" },
+  }]) {
+    await assert.rejects(() => invoke({ ...request, image }), /invalid/);
+  }
+  assert.equal(menuRequests.length, 2);
+});
+
 test("画像copy IPCはowning Session windowと非負の整数座標だけを受け付ける", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
