@@ -33,7 +33,6 @@ export function readCopilotQuotaSnapshots(value: unknown): Record<string, Copilo
 }
 
 function normalizeQuotaRemainingPercentage(value: number): number {
-  if (Number.isNaN(value) || !Number.isFinite(value)) return 0;
   return value >= 0 && value <= 1 ? value * 100 : value;
 }
 
