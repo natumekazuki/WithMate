@@ -1,5 +1,6 @@
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
 import { MessageRichText } from "../../ui/markdown/MessageRichText.js";
+import type { MarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
 import { ButtonContent } from "../../ui/button-content.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 
@@ -21,10 +22,10 @@ export function SessionTurnQueueStatus({ receipt, position, busy, busyKind, onCa
   </div>;
 }
 
-export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0]) {
+export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { resolveImageSource?: MarkdownImageResolver }) {
   return <article className="message-row user" data-message-source="turn-queue">
     <div className="message-card user"><div className="message-card-content">
-      <MessageRichText text={props.receipt.captured.request.userMessage} />
+      <MessageRichText text={props.receipt.captured.request.userMessage} resolveImageSource={props.resolveImageSource} />
       <SessionTurnQueueStatus {...props} />
     </div></div>
   </article>;

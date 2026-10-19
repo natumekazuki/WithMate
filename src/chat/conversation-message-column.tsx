@@ -19,6 +19,7 @@ import { useSessionTurnQueue } from "./conversation/use-session-turn-queue.js";
 import { projectSessionTurnQueue } from "./conversation/session-turn-queue-projection.js";
 import { SessionTurnQueueRow } from "./conversation/session-turn-queue-row.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import type { MarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
 import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
@@ -563,9 +564,9 @@ export function useConversationMessageColumn({
     if (canSendQueuedInput && !composerRegistry.isFrozen && currentInputTurnId) queue.sendInput(receipt, currentInputTurnId);
   }, [canSendQueuedInput, composerRegistry, currentInputTurnId, queue.sendInput]);
   const inputAction = canSendQueuedInput ? sendQueuedInput : undefined;
-  const queueTail = useMemo(() => !isBrowsing && api?.listSessionTurnQueue
-    && (queuedProjection.tail.length > 0 || queue.error || queue.loading && queue.receipts.length > 0) ? <>
-    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
+  const renderQueueTail = useMemo(() => !isBrowsing && api?.listSessionTurnQueue
+    && (queuedProjection.tail.length > 0 || queue.error || queue.loading && queue.receipts.length > 0) ? (resolveImageSource: MarkdownImageResolver) => <>
+    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} resolveImageSource={resolveImageSource} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
     {queue.loading && queue.receipts.length > 0 ? <LoadingIndicator inline label="Loading queued turns" /> : null}
     {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
   </> : undefined, [isBrowsing, api, queuedProjection.tail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction]);
@@ -582,7 +583,7 @@ export function useConversationMessageColumn({
     onReleaseInterruptedTurn: queue.release,
     queueBusyId: queue.busyId,
     queueBusyKind: queue.busyKind,
-    queueTail,
+    renderQueueTail,
     pendingResponseMessageKey,
     messageGroups: projection.groups,
     messageCollapseTargets: collapseTargets,
