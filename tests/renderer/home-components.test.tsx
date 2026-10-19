@@ -1564,10 +1564,10 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorの親カードはavatarとtitleを1行目、Mainを独立した状態iconとして2行目へ表示し、Auxiliaryが存在する親だけ状態集約と1件からの件数を追加する"
+  // claim = "Home Monitorの親行はavatar/titleと独立したMain/Aux状態を表示し、Auxiliaryが存在する親だけ状態集約と1件からの件数を追加する"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
   // fault = "workspaceを常設する、Main/Auxiliaryの状態表示を混同する、Auxiliaryなしの親へ集約を出す、状態別件数を1件だけ省略する、またはavatar/titleが欠落する"
-  // observable = "親cardごとの2行構造、Main/Auxiliary status cluster、状態iconと件数aria-label、avatar、title、未展開時のAuxiliary detail rowの不在"
+  // observable = "親行のMain/Auxiliary status cluster、状態iconと件数aria-label、avatar、title、未展開時のAuxiliary detail rowの不在"
   // observation_boundary = "component-behavior"
   // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
@@ -1616,20 +1616,15 @@ describe("HomeMonitorContent", () => {
     assert.equal(cards.length, 2);
     for (const [index, card] of cards.entries()) {
       const parentRow = card.querySelector(".home-monitor-parent-row");
-      const summaryRow = card.querySelector(".home-monitor-summary-row");
       assert.equal(card.querySelectorAll(".home-monitor-parent-row").length, 1);
-      assert.equal(card.querySelectorAll(".home-monitor-summary-row").length, 1);
       assert.equal(card.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
       assert.equal(card.querySelectorAll(".home-monitor-parent-title").length, 1);
       assert.equal(card.querySelectorAll(".home-monitor-avatar").length, 1);
       assert.equal(parentRow?.querySelector(".home-monitor-avatar")?.classList.contains("home-monitor-avatar"), true);
       assert.equal(parentRow?.querySelector(".home-monitor-parent-title")?.textContent, entries[index]?.session.taskTitle);
-      assert.equal(parentRow?.querySelector(".home-monitor-status-cluster"), null);
-      assert.equal(summaryRow?.querySelector(".home-monitor-avatar"), null);
-      assert.equal(summaryRow?.querySelector(".home-monitor-parent-title"), null);
-      assert.equal(summaryRow?.querySelectorAll(".home-monitor-status-cluster").length, index === 0 ? 2 : 1);
+      assert.equal(parentRow?.querySelectorAll(".home-monitor-status-cluster").length, index === 0 ? 2 : 1);
       assert.equal(
-        summaryRow?.querySelectorAll(`.home-monitor-status-icon.${expectedMainStates[index]}`).length,
+        parentRow?.querySelectorAll(`.home-monitor-status-icon.${expectedMainStates[index]}`).length,
         1,
       );
     }
@@ -1640,8 +1635,6 @@ describe("HomeMonitorContent", () => {
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.closed").length, 1);
     assert.equal(cards[1]?.querySelectorAll(".home-monitor-status-cluster").length, 1);
     assert.equal(cards[1]?.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
-    assert.equal(html.match(/>Main<\/span>/g)?.length, 2);
-    assert.equal(html.match(/>Aux<\/span>/g)?.length, 1);
     assert.equal(html.match(/class="home-monitor-status-icon running"/g)?.length, 1);
     assert.equal(html.match(/class="home-monitor-status-icon neutral"/g)?.length, 1);
     assert.equal(html.match(/class="home-monitor-status-icon error"/g)?.length, 1);

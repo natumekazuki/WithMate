@@ -96,9 +96,10 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 
 - 黒基調の管理ハブとして表示する
 - `Settings` は別 window で開く前提のため、Home は session / Character catalog 管理ハブを優先する
-- 2 カラム構成
-  - 左: `RecentSessions`
-  - 右: `Memory / Settings` rail + `Monitor` または `Characters`
+- 左の`RecentSessions`と右の`Monitor`または`Characters`を、Session WindowのMain／Auxiliaryと共通のスプリッターで分割する。初期は左右1:1で、比率は表示中のHome内だけで保持する
+  - ドラッグまたは左右矢印キーで幅を変え、端へ寄せると片側を全幅表示する。クリックは右側を閉じ、どちらかが閉じているときはクリックで1:1へ戻す。閉じた状態からのドラッグ・矢印キーでは再展開しない
+  - 閉じたpaneは非表示・操作不可にし、検索入力や一覧のDOMを保持する。左右の最小幅はそれぞれ300px／320pxとする
+  - 右上の切替とSettings／Restore Sessions／独立Monitorの操作は同じtoolbar内に置き、幅が足りない場合だけ折り返す
 - 2 カラムの外側とMonitorのApproval／Running／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
 - `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
@@ -106,16 +107,15 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Monitor`
   - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
   - 初期表示は `Monitor`
-  - 共通`HomeMonitorContent`の先頭に有効providerの残量一覧を置く。詳細icon・provider名・期間別残率の順で1行ずつ表示し、詳細iconは左端固定とする。Running／Stoppedの一覧scrollとは独立し、独立Monitorにも同じ構成を適用する。残量一覧の直下にはSession Headerと同じclick開閉のみの細いsplitterを置き、dragによる高さ変更は行わない。初期状態は開き、閉じるとsplitterのみを残して一覧へ高さを戻す。開閉状態は表示中のMonitor内だけで保持する。詳細と取得状態は[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
-  - 意味のある親Session cardを2行まとまりで表示する。1行目はdisclosure、avatar、親title、2行目は`Main`と、Auxiliaryが存在する場合だけ`Aux`の状態アイコンを表示し、装飾目的の入れ子cardは作らない
+  - 共通`HomeMonitorContent`の先頭に有効providerの詳細icon・名前・期間別残率をcompactな横並びで常設し、幅に応じて折り返す。監視一覧のscrollとは独立し、独立Monitorにも同じ構成を適用する。詳細は既存のprovider別popupで開き、loading・取得失敗・前回値を要約から隠さない。[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
+  - 親Sessionはdisclosure、avatar、親title、`Main`状態、`Aux`状態集約を1行にまとめる。各分類の列見出しでMain／Auxを区別し、Auxiliaryがない場合は`—`を表示する。Auxの複数状態は必要に応じて折り返し、承認・error・実行有無を落とさない
   - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`RecentSessions` と同じ filtered session list の交差集合を使う
   - section
     - `Approval`: Main／Auxiliaryのいずれかに有効な承認待ちがある親Session。会話単位では取消状態を承認待ちより優先するが、別の会話が承認待ちなら親はこの枠へ入る
     - `Running`: Approvalに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
     - `Stopped`: 他の2枠に該当しない`interrupted` / `error` / `neutral`を含むnon-running
   - 3枠は常に`Approval`、`Running`、`Stopped`の順に表示し、親Sessionを重複表示しない。最後の承認待ちが解消すると現在の実行状態で再分類する。承認待ちは表示用のlive状態であり、内部の`runState`を変更しない
-  - 3枠の一覧はそれぞれ独立してスクロールし、件数や空状態にかかわらず初期表示領域を1:1:1にする。隣接する枠の間にSession Windowと共通のスプリッターを置き、ドラッグまたは上下矢印キーで配分を変更でき、Home／Endでその境界の限界へ移動する。3枠の見出しを維持し、比率は表示中のMonitor内だけで保持する。領域の高さが変わった場合も各48pxの最小領域に合わせて比率とaccessible valueを更新し、矢印キーは24pxずつ、ドラッグはpointer移動量だけ表示位置から動かす（限界では止まる）
-  - 一覧に親Session cardのタイトル・状態2行分が収まらない高さでは、一覧を非表示・操作不可にして見出しと件数だけ残す。領域を広げると展開・スクロール状態を保った一覧へ戻る。非表示になる一覧内にfocusがある場合はスプリッターへ移す
+  - 3分類は見出しと件数を残し、1つの縦scroll領域に内容量どおり並べる。Monitorの一覧本文幅が740px以上なら各分類の親行を2列、それ未満は1列にする。Window全体の幅ではなく、Homeの分割後に使える幅で判定する
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
@@ -241,15 +241,16 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 
 - `Home` とは別の独立 window として開く
 - 既定サイズは細く縦長の compact window とする
+- 幅上限を設けず手動で拡大できる。Session件数の変化でWindowを自動resizeしない
 - `always on top` を初期 slice から有効にする
 - renderer は `HomeApp` の compact monitor mode を再利用する
   - 表示内容は Home 右ペインの `Monitor` と同じ truth source を使う
   - open な `Session Window` のみ表示する
   - `Approval` / `Running` / `Stopped` の3枠を、0件でも常に表示する
-  - 表示単位は意味のある親Session cardの2行まとまりとし、親cardを2行で固定する。1行目はdisclosure、avatar、親title、2行目は`Main`と`Aux`の状態アイコンを表示する。装飾目的の入れ子cardは作らない
+  - 親Sessionをavatar・title・Main状態・Aux状態集約のcompactな行で表示する。3分類は共用scroll内に置き、本文幅740px以上では各分類を2列にする。Main／Auxの列見出しを維持し、文字の縮小だけで件数を詰め込まない
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
   - `running`はaccent色のspinner、承認待ちは静止した黄色系の丸囲み`!`、待機と終了はsubduedな中空円、errorはwarning triangleで表す。状態はアイコンのみとし、cardの点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
-  - Auxiliaryが存在する親だけdisclosureと`Aux`集約を表示し、Auxiliaryがない場合もMainだけの2行を維持する。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
+  - Auxiliaryが存在する親だけdisclosureと状態集約を表示し、存在しない親はAux列を`—`にする。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
   - Auxiliaryの状態集約では`Approval Required`、`Running`、取消状態、`Error`、`Idle`、`Closed`を別々に数え、closed Auxiliaryをidleへ変換しない。idleとclosedは同じ円形だが、状態ラベルと集約を分ける。interruptedとerrorも別の形状で表示する
   - section countは親card group数とし、Auxiliaryをtop-level rowとして重複表示しない。Main／Auxiliaryの有効な承認待ちを優先して親card groupを`Approval`へ分類し、それ以外は実行・取消待ちがあれば`Running`、残りは`Stopped`へ分類する。個々のMain／Auxiliaryの状態は分離して保持する
   - 親titleは既存の親Windowを開き、Auxiliary rowは同じ親Windowを指定したstable Auxiliary IDで開いて選択する。対象が消えた、親が一致しない、Windowを開けない場合はfallbackせずMonitor内へ失敗を返す

@@ -43,17 +43,17 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは空・読込状態でもApproval／Running／Stoppedを初期3等分で常時表示し、隣接一覧の間に2本の水平スプリッターを置く"
+// claim = "Monitorは空・読込状態でもApproval／Running／Stoppedを共用scroll一覧に表示し、内容幅740pxで1列から2列へ切り替える"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "空の分類を隠す、初期比率を偏らせる、splitterを一覧内へ置く、境界%を誤ってARIAへ渡す、またはloadingで領域高を変える"
-// observable = "描画したsectionとseparatorの順序、初期grid rows、separatorのaccessible属性、section配置とloading overlayのCSS"
+// fault = "分類の順序を変える、一覧別scrollで面積を分断する、またはviewport幅で列数を決めてHome分割幅へ追従しない"
+// observable = "描画したsection順序と件数、busy属性、共用scroll ownerとcontainer queryのCSS"
 // observation_boundary = "implementation"
 // scope = "HomeMonitorContentとhome.cssのMonitor専用layout"
 // lifecycle = "permanent"
-// impact = "空状態や読込時も3状態を同じ初期面積で確認でき、隣接領域の配分変更操作へ到達できる"
-// distinction = "操作testと別に、初期のDOM・CSSとloading overlayを低コストで検証する。実寸法は実描画確認で扱う"
+// impact = "10〜20親の状態を件数の偏りに応じて連続して確認でき、Homeでも実際のMonitor幅に合う密度を使える"
+// distinction = "component描画とCSSのscroll責務・container境界を確認する。実寸法と列の整列はbrowserで確認する"
 // @end-test-value
-test("Monitorの初期表示は空状態と読込状態でもスプリッターを挟んで等分する", async () => {
+test("Monitorは3分類の共用scrollと内容幅に応じた列数を宣言する", async () => {
   const stylesSource = await readStylesheet();
   for (const auxiliaryDataState of ["loading", "ready"] as const) {
     const html = renderToStaticMarkup(createElement(HomeMonitorContent, {
@@ -69,26 +69,20 @@ test("Monitorの初期表示は空状態と読込状態でもスプリッター�
 
     assert.deepEqual(
       [...(sections?.children ?? [])].map((section) => section.getAttribute("aria-labelledby") ?? section.getAttribute("role")),
-      ["home-monitor-approval", "separator", "home-monitor-running", "separator", "home-monitor-inactive"],
+      ["home-monitor-approval", "home-monitor-running", "home-monitor-inactive"],
     );
-    const ratios = [...(sections?.getAttribute("style") ?? "").matchAll(/minmax\(48px, ([\d.]+)fr\)/g)].map((match) => Number(match[1]));
-    assert.equal(ratios.length, 3);
-    assert.ok(ratios.every((ratio) => Math.abs(ratio - 1 / 3) < 0.000001));
-    const splitters = [...(sections?.querySelectorAll('[role="separator"]') ?? [])];
-    assert.equal(splitters.length, 2);
-    assert.deepEqual(splitters.map((splitter) => splitter.getAttribute("aria-valuenow")), ["33", "67"]);
-    assert.deepEqual(splitters.map((splitter) => splitter.getAttribute("aria-label")), ["Resize Approval and Running", "Resize Running and Stopped"]);
-    for (const splitter of splitters) {
-      assert.equal(splitter.getAttribute("aria-orientation"), "horizontal");
-      assert.equal(document.getElementById(splitter.getAttribute("aria-controls") ?? ""), sections);
-    }
     assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Approval", "Running", "Stopped"]);
     assert.deepEqual([...document.querySelectorAll(".home-monitor-count")].map((count) => count.textContent), ["0", "0", "0"]);
     assert.equal(document.querySelector(".home-monitor-body")?.getAttribute("aria-busy"), String(auxiliaryDataState === "loading"));
   }
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-sections > .home-monitor-section"), /display:\s*flex;\s*flex-direction:\s*column;/);
+  const sectionsRule = readCssRule(stylesSource, ".home-page .home-monitor-sections");
+  assert.match(sectionsRule, /overflow-y:\s*auto;/);
+  assert.match(sectionsRule, /container:\s*monitor-content \/ inline-size;/);
+  const columns = readCssAtRuleBlocks(stylesSource, "@container monitor-content (min-width: 740px)")[0];
+  assert.ok(columns);
+  assert.match(columns, /grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-body > .home-session-list-load-status"), /position:\s*absolute;/);
-  assert.doesNotMatch(stylesSource, /\.home-monitor-section\.is-empty/);
 });
 
 // @test-value v2

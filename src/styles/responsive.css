@@ -42,10 +42,6 @@
     grid-template-columns: 1fr;
   }
 
-  .home-page .home-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .sidebar {
     grid-template-rows: auto auto minmax(220px, 1fr) auto;
   }
