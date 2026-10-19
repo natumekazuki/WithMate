@@ -54,7 +54,7 @@ test("軽量live状態は承認と入力待ちを集約し実行・取消状態�
 // kind = "contract"
 // claim = "共通質問serviceの入力待ちは回答・Close・拒否・失効・終了で解除され、複数要求では最後の解決までMonitor用待機を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Question Forms / Home Window Monitor" }
-// fault = "履歴のpending recordを待機へ混入するか、最初の解決で全待機を落とすか、解決後の入力要求を待機として残す"
+// fault = "最初の解決で全待機を落とすか、解決後の入力要求を待機として残す"
 // observable = "実SessionElicitationServiceの公開操作後にprojectLiveSessionRunStatusが返すapprovalPendingと待機Promiseの解決"
 // observation_boundary = "consumer"
 // scope = "共通入力要求のlifecycleからMonitor状態への投影"
