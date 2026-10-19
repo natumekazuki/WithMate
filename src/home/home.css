@@ -31,7 +31,7 @@
 }
 
 .home-page .home-settings-rail .home-pane-toggle {
-  justify-self: start;
+  justify-self: end;
   width: fit-content;
 }
 
