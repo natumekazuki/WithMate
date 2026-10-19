@@ -43,17 +43,17 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは空・読込状態でもApproval／Running／Stoppedを共用scroll一覧に表示し、内容幅740pxで1列から2列へ切り替える"
+// claim = "Monitorは3分類の見出しと水平境界を表示し、分類内一覧をscrollし内容幅740pxで1列から2列へ切り替える"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "分類の順序を変える、一覧別scrollで面積を分断する、またはviewport幅で列数を決めてHome分割幅へ追従しない"
-// observable = "描画したsection順序と件数、busy属性、共用scroll ownerとcontainer queryのCSS"
+// fault = "分類境界や見出しを欠落させる、一覧が割当高さ内でscrollできない、またはviewport幅で列数を決める"
+// observable = "描画したsectionとseparatorの順序と件数、busy属性、一覧scrollとcontainer queryのCSS"
 // observation_boundary = "implementation"
 // scope = "HomeMonitorContentとhome.cssのMonitor専用layout"
 // lifecycle = "permanent"
 // impact = "10〜20親の状態を件数の偏りに応じて連続して確認でき、Homeでも実際のMonitor幅に合う密度を使える"
-// distinction = "component描画とCSSのscroll責務・container境界を確認する。実寸法と列の整列はbrowserで確認する"
+// distinction = "component描画とCSSのscroll責務・container境界を確認する。境界操作は別component test、実寸法と列の整列はbrowserで確認する"
 // @end-test-value
-test("Monitorは3分類の共用scrollと内容幅に応じた列数を宣言する", async () => {
+test("Monitorは3分類の境界と分類内scrollと内容幅に応じた列数を宣言する", async () => {
   const stylesSource = await readStylesheet();
   for (const auxiliaryDataState of ["loading", "ready"] as const) {
     const html = renderToStaticMarkup(createElement(HomeMonitorContent, {
@@ -69,7 +69,7 @@ test("Monitorは3分類の共用scrollと内容幅に応じた列数を宣言す
 
     assert.deepEqual(
       [...(sections?.children ?? [])].map((section) => section.getAttribute("aria-labelledby") ?? section.getAttribute("role")),
-      ["home-monitor-approval", "home-monitor-running", "home-monitor-inactive"],
+      ["home-monitor-approval", "separator", "home-monitor-running", "separator", "home-monitor-inactive"],
     );
     assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Approval", "Running", "Stopped"]);
     assert.deepEqual([...document.querySelectorAll(".home-monitor-count")].map((count) => count.textContent), ["0", "0", "0"]);
@@ -77,7 +77,8 @@ test("Monitorは3分類の共用scrollと内容幅に応じた列数を宣言す
   }
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-sections > .home-monitor-section"), /display:\s*flex;\s*flex-direction:\s*column;/);
   const sectionsRule = readCssRule(stylesSource, ".home-page .home-monitor-sections");
-  assert.match(sectionsRule, /overflow-y:\s*auto;/);
+  assert.match(sectionsRule, /overflow:\s*hidden;/);
+  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-list"), /overflow-y:\s*auto;/);
   assert.match(sectionsRule, /container:\s*monitor-content \/ inline-size;/);
   const columns = readCssAtRuleBlocks(stylesSource, "@container monitor-content (min-width: 740px)")[0];
   assert.ok(columns);
@@ -194,16 +195,11 @@ test("Home Characters は一覧をscroll ownerにするDOMとCSSを適用する"
     runningMonitorEntries: [],
     nonRunningMonitorEntries: [],
     auxiliaryDataState: "ready",
-    monitorWindowIcon: null,
     characterEntries: [{
       id: "character-1", name: "Mia", description: "", iconFilePath: "",
       theme: { main: "#3b82f6", sub: "#1d4ed8" }, state: "active",
       createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", archivedAt: null,
     }],
-    onChangeRightPaneView: noOp,
-    onOpenSessionMonitorWindow: noOp,
-    onOpenSettingsWindow: noOp,
-    onRestoreSessionWindows: noOp,
     onCreateCharacter: noOp,
     onEditCharacter: noOp,
     onOpenSession: noOp,

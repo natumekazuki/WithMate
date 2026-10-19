@@ -99,15 +99,15 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 左の`RecentSessions`と右の`Monitor`または`Characters`を、Session WindowのMain／Auxiliaryと共通のスプリッターで分割する。初期は左右1:1で、比率は表示中のHome内だけで保持する
   - ドラッグまたは左右矢印キーで幅を変え、端へ寄せると片側を全幅表示する。クリックは右側を閉じ、どちらかが閉じているときはクリックで1:1へ戻す。閉じた状態からのドラッグ・矢印キーでは再展開しない
   - 閉じたpaneは非表示・操作不可にし、検索入力や一覧のDOMを保持する。左右の最小幅はそれぞれ300px／320pxとする
-  - 右上の切替とSettings／Restore Sessions／独立Monitorの操作は同じtoolbar内に置き、幅が足りない場合だけ折り返す
+  - Monitor／Characters切替とSettings／Restore Sessions／独立Monitorの操作はHome共通headerに置く。headerは左右分割の外に常設し、paneの幅調整・開閉で操作ボタンを移動・非表示にしない。開閉対象名は現在表示中のMonitor／Charactersへ合わせる
 - 2 カラムの外側とMonitorのApproval／Running／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
 - `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
 - Mate ProfileのAvatar編集では、`Select Image`と`Clear`の実行した操作だけをbusy表示にし、処理中は両操作を無効化する。Mate保存中も両操作を無効化するが、Avatar更新中とは表示を区別する。Mate未作成・Profile利用不可ではAvatar編集を提供しない。画像選択のキャンセルと更新失敗では元のAvatarを保持して操作可能状態へ戻し、成功時は取得したProfileを反映する。Avatarがないときは`Clear`を表示しない。
 - `Monitor`
-  - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
+  - Home共通headerのsegmented toggleで `Characters` と排他的に切り替える
   - 初期表示は `Monitor`
-  - 共通`HomeMonitorContent`の先頭に有効providerの詳細icon・名前・期間別残率をcompactな横並びで常設し、幅に応じて折り返す。監視一覧のscrollとは独立し、独立Monitorにも同じ構成を適用する。詳細は既存のprovider別popupで開き、loading・取得失敗・前回値を要約から隠さない。[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
+  - 共通`HomeMonitorContent`の先頭に有効providerの詳細icon・名前・期間別残率をcompactな横並びで表示し、幅に応じて折り返す。直下のclick専用splitterで残量一覧だけを開閉し、閉じてもcomponentとcache購読を維持する。監視一覧のscrollとは独立し、独立Monitorにも同じ構成を適用する。詳細は既存のprovider別popupで開き、表示中のloading・取得失敗・前回値を区別する。[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
   - 親Sessionはdisclosure、avatar、親title、`Main`状態、`Aux`状態集約を1行にまとめる。各分類の列見出しでMain／Auxを区別し、Auxiliaryがない場合は`—`を表示する。Auxの複数状態は必要に応じて折り返し、承認・error・実行有無を落とさない
   - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`RecentSessions` と同じ filtered session list の交差集合を使う
   - section
@@ -115,7 +115,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
     - `Running`: Approvalに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
     - `Stopped`: 他の2枠に該当しない`interrupted` / `error` / `neutral`を含むnon-running
   - 3枠は常に`Approval`、`Running`、`Stopped`の順に表示し、親Sessionを重複表示しない。最後の承認待ちが解消すると現在の実行状態で再分類する。承認待ちは表示用のlive状態であり、内部の`runState`を変更しない
-  - 3分類は見出しと件数を残し、1つの縦scroll領域に内容量どおり並べる。Monitorの一覧本文幅が740px以上なら各分類の親行を2列、それ未満は1列にする。Window全体の幅ではなく、Homeの分割後に使える幅で判定する
+  - 3分類は初期1:1:1の縦分割とし、各分類の一覧を独立してscrollする。隣接分類間の共通splitterをdragまたは上下キーで調整し、Home／Endは境界の限界へ動かす。開いている分類は48pxの最小領域へ補正する。Monitor本文幅が740px以上なら各分類の親行を2列、それ未満は1列にする。Window全体ではなくHomeの分割後の幅で判定する
+  - 分類splitterのclickは隣接2分類の親Session件数が少ない側の一覧を閉じる。同数ではStopped、Running、Approvalの順で閉じる。Auxiliary数は比較へ足さない。片側が閉じている場合はその側を開き、両側が閉じている場合は優先度の高い側（Approval、Running、Stoppedの順）を開く。件数変化だけで自動開閉しない。矢印とaccessible nameは操作対象を示す
+  - 閉じた分類は見出しと件数を残し、一覧のDOM・展開・scrollを保持したまま非表示・操作不可にする。領域が狭く親行と列見出しを表示できない場合も一覧だけを非表示にし、広げると戻す。隠れる一覧内にfocusがある場合は隣接splitterへ移す。開閉は表示領域だけでありSessionを終了・停止しない
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
@@ -247,7 +249,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 表示内容は Home 右ペインの `Monitor` と同じ truth source を使う
   - open な `Session Window` のみ表示する
   - `Approval` / `Running` / `Stopped` の3枠を、0件でも常に表示する
-  - 親Sessionをavatar・title・Main状態・Aux状態集約のcompactな行で表示する。3分類は共用scroll内に置き、本文幅740px以上では各分類を2列にする。Main／Auxの列見出しを維持し、文字の縮小だけで件数を詰め込まない
+  - 親Sessionをavatar・title・Main状態・Aux状態集約のcompactな行で表示する。3分類はHomeと共通の高さ調整・件数/優先順位によるclick開閉・個別scrollを使い、本文幅740px以上では各分類を2列にする。Main／Auxの列見出しを維持し、文字の縮小だけで件数を詰め込まない
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
   - `running`はaccent色のspinner、承認待ちは静止した黄色系の丸囲み`!`、待機と終了はsubduedな中空円、errorはwarning triangleで表す。状態はアイコンのみとし、cardの点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
   - Auxiliaryが存在する親だけdisclosureと状態集約を表示し、存在しない親はAux列を`—`にする。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる

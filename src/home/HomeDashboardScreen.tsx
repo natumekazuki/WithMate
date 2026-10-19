@@ -4,6 +4,8 @@ import { ConcurrentChatSplitter } from "../chat/chat-window.js";
 
 type HomeDashboardScreenProps = {
   homePageClassName: string;
+  header: ReactNode;
+  rightPaneLabel: "Monitor" | "Characters";
   recentSessionsPanel: ReactNode;
   rightPane: ReactNode;
   launchDialog: ReactNode;
@@ -11,6 +13,8 @@ type HomeDashboardScreenProps = {
 
 export function HomeDashboardScreen({
   homePageClassName,
+  header,
+  rightPaneLabel,
   recentSessionsPanel,
   rightPane,
   launchDialog,
@@ -20,7 +24,8 @@ export function HomeDashboardScreen({
   const monitorId = useId();
 
   return (
-    <div className={homePageClassName}>
+    <div className={`${homePageClassName} home-page-dashboard`}>
+      {header}
       <main
         className="home-layout home-dashboard-layout rise-2"
         style={{ gridTemplateColumns: `minmax(0, ${1 - monitorWidthRatio}fr) var(--session-dock-splitter-size) minmax(0, ${monitorWidthRatio}fr)` }}
@@ -37,7 +42,7 @@ export function HomeDashboardScreen({
           widthRatio={monitorWidthRatio}
           onWidthRatioChange={setMonitorWidthRatio}
           mainPane={{ selector: ".home-sessions-pane", id: sessionsId, label: "Sessions" }}
-          auxiliaryPane={{ selector: ".home-monitor-pane", id: monitorId, label: "Monitor" }}
+          auxiliaryPane={{ selector: ".home-monitor-pane", id: monitorId, label: rightPaneLabel }}
         />
         <div
           id={monitorId}

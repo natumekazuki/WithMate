@@ -12,6 +12,7 @@ import { filterCharactersByName } from "../../src/home/HomeCharactersPanel.js";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { formatHomeSessionUpdatedAt, HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
+import { HomeHeader } from "../../src/home/HomeHeader.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
 import type { HomeSessionSummary, SessionSummary } from "../../src-shared/session/session-state.js";
@@ -2163,7 +2164,18 @@ describe("HomeRightPane", () => {
     sessionWindowRestoreFeedback = "",
     sessionMonitorFeedback = "",
     characterLoadStatus: "loading" | "loaded" | "error" = "loaded",
-  ) => renderToStaticMarkup(
+  ) => renderToStaticMarkup(<>
+    <HomeHeader
+      rightPaneView={rightPaneView}
+      monitorWindowIcon={<span>Monitor</span>}
+      onChangeRightPaneView={noOp}
+      onOpenSessionMonitorWindow={noOp}
+      onOpenSettingsWindow={noOp}
+      onRestoreSessionWindows={noOp}
+      sessionWindowRestoreIds={sessionWindowRestoreIds}
+      sessionWindowRestorePending={sessionWindowRestorePending}
+      sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
+    />
     <HomeRightPane
       rightPaneView={rightPaneView}
       approvalMonitorEntries={[]}
@@ -2173,21 +2185,13 @@ describe("HomeRightPane", () => {
       characterEntries={characters}
       characterLoadStatus={characterLoadStatus}
       characterListFeedback={characterListFeedback}
-      monitorWindowIcon={<span>Monitor</span>}
-      onChangeRightPaneView={noOp}
-      onOpenSessionMonitorWindow={noOp}
-      onOpenSettingsWindow={noOp}
-      onRestoreSessionWindows={noOp}
       onCreateCharacter={noOp}
       onEditCharacter={noOp}
       onOpenSession={noOp}
       onShowSessionMonitorContextMenu={noOp}
-      sessionWindowRestoreIds={sessionWindowRestoreIds}
-      sessionWindowRestorePending={sessionWindowRestorePending}
-      sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
       sessionMonitorFeedback={sessionMonitorFeedback}
-    />,
-  );
+    />
+  </>);
 
   const assertNoMateTalkChatSurface = (html: string) => {
     assert.ok(!html.includes('data-session-mode="mate-talk"'));
@@ -2341,12 +2345,12 @@ describe("HomeRightPane", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "HomeRightPaneのRestore Sessions操作は復元対象の有無と処理中状態をdisabledおよびaria-busyへ投影する"
+  // claim = "HomeHeaderのRestore Sessions操作は復元対象の有無と処理中状態をdisabledおよびaria-busyへ投影する"
   // oracle = { type = "contract", ref = "Issue #731 Home restore sessions action state" }
   // fault = "対象がない状態または復元処理中に操作できて重複要求が発生するか、対象があるのにdisabledのままになる"
   // observable = "Restore Sessions buttonのdisabled属性とaria-busy属性"
   // observation_boundary = "component-behavior"
-  // scope = "HomeRightPane Restore sessions control"
+  // scope = "HomeHeader Restore sessions control"
   // lifecycle = "permanent"
   // impact = "復元操作の対象有無と処理中状態を識別し、重複要求を防ぐ"
   // distinction = "restore helperの入力選択ではなく、利用者が押すbuttonのdisabled/busy公開状態を確認する"
@@ -2371,12 +2375,12 @@ describe("HomeRightPane", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "HomeRightPaneのrestore feedbackは成功・対象なしではstatusを描画せず、失敗時だけ対象と理由をpolite live statusへ表示する"
+  // claim = "HomeHeaderのrestore feedbackは成功・対象なしではstatusを描画せず、失敗時だけ対象と理由をpolite live statusへ表示する"
   // oracle = { type = "contract", ref = "Issue #731 Home restore feedback accessibility" }
   // fault = "正常終了後も空statusを残すか、復元失敗時に対象と理由を支援技術へ通知できない"
   // observable = "success/failure HTMLのfeedback要素、role=status、aria-live=polite、失敗対象と理由"
   // observation_boundary = "component-behavior"
-  // scope = "HomeRightPane session restore feedback rendering"
+  // scope = "HomeHeader session restore feedback rendering"
   // lifecycle = "permanent"
   // impact = "復元結果を重複通知せず、失敗時だけ利用者へ識別可能に伝える"
   // distinction = "builderの文字列だけでなく、空文字によるDOM非表示と失敗文字列のlive status描画を確認する"

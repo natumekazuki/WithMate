@@ -11,24 +11,33 @@
 }
 
 .home-settings-rail {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0;
+  gap: 8px 16px;
+  padding: 0 8px;
 }
 
 .home-settings-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
 }
 
-.home-settings-rail .home-pane-toggle {
-  order: -1;
+.home-header-feedback {
+  grid-column: 1 / -1;
+}
+
+.home-page .home-settings-rail .home-pane-toggle {
+  justify-self: start;
+  width: fit-content;
+}
+
+.home-page.home-page-dashboard {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
 }
 
 .home-monitor-window-button {
@@ -311,8 +320,9 @@
 }
 
 .home-page .home-monitor-quota {
+  --session-dock-splitter-size: 20px;
+  display: grid;
   flex: 0 0 auto;
-  padding-bottom: 10px;
 }
 
 .home-page .home-monitor-quota .provider-quota-overview {
@@ -343,14 +353,12 @@
 }
 
 .home-page .home-monitor-sections {
+  --session-dock-splitter-size: 20px;
   container: monitor-content / inline-size;
   display: grid;
-  grid-auto-rows: max-content;
   flex: 1 1 auto;
-  align-content: start;
-  gap: 16px;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   padding-right: 6px;
 }
 
@@ -358,6 +366,36 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  overflow: hidden;
+}
+
+.home-page .home-monitor-sections > .home-monitor-section.is-closed {
+  gap: 0;
+}
+
+.home-page .home-monitor-section-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.home-page .home-monitor-section-content.is-hidden {
+  visibility: hidden;
+}
+
+.home-page .home-monitor-section.is-closed > .home-monitor-section-content {
+  height: 0;
+  flex: 0 0 0;
+}
+
+.home-page .home-monitor-quota-splitter:hover::before,
+.home-page .home-monitor-quota-splitter:focus-visible::before,
+.home-page .home-monitor-splitter:hover::before,
+.home-page .home-monitor-splitter:focus-visible::before {
+  background: rgba(111, 140, 255, 0.6);
 }
 
 .home-page .home-monitor-body > .home-session-list-load-status {
@@ -517,10 +555,12 @@
 
 .home-page .home-monitor-list {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: minmax(0, 1fr);
   gap: 4px 12px;
   grid-auto-rows: max-content;
   min-height: 0;
+  overflow-y: auto;
   align-content: start;
   align-items: start;
 }
@@ -621,6 +661,7 @@
 
 .home-page .home-monitor-column-headers {
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }

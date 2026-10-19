@@ -5,13 +5,14 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import { HomeDashboardScreen } from "../../src/home/HomeDashboardScreen.js";
+import { HomeHeader } from "../../src/home/HomeHeader.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "HomeのSessionsとMonitorはSessionのMain/Auxiliaryと同じ境界で片側全幅と分割へ切り替わり、非表示paneの入力とDOMを保持する"
+// claim = "Homeは分割外のheader操作を維持し、表示中の右pane名で開閉しながら非表示paneの入力とDOMを保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "境界操作が逆のpaneを閉じる、端へのdragを確定しない、閉じたpaneを操作可能にする、または分割復帰で入力を破棄する"
-// observable = "境界buttonの対象ID・label、両paneのinert/aria-hidden、drag後の全幅状態、再表示した入力値とDOM identity"
+// fault = "paneを閉じるとheader操作も無効になる、右pane名を誤る、境界操作が逆のpaneを閉じる、または復帰で入力を破棄する"
+// observable = "header Settings callbackとinert祖先の不在、境界の対象ID・表示名、両paneのinert/aria-hidden、復帰した入力値とDOM identity"
 // observation_boundary = "component-behavior"
 // scope = "HomeDashboardScreenと共通ConcurrentChatSplitterの結線"
 // lifecycle = "permanent"
@@ -27,13 +28,24 @@ test("Homeは共通splitterで左右を全幅にし、分割復帰でpaneを保�
   });
   const element = dom.window.document.getElementById("root")!;
   const root = createRoot(element);
+  let settingsCalls = 0;
+  const renderScreen = (view: "monitor" | "characters" = "monitor") => root.render(<HomeDashboardScreen
+    homePageClassName="home-page"
+    header={<HomeHeader
+      rightPaneView={view}
+      onChangeRightPaneView={(next) => renderScreen(next)}
+      monitorWindowIcon={null}
+      onOpenSessionMonitorWindow={() => {}}
+      onOpenSettingsWindow={() => { settingsCalls += 1; }}
+      onRestoreSessionWindows={() => {}}
+    />}
+    rightPaneLabel={view === "monitor" ? "Monitor" : "Characters"}
+    recentSessionsPanel={<input aria-label="Search sessions" defaultValue="in progress" />}
+    rightPane={<button type="button">Open Session</button>}
+    launchDialog={null}
+  />);
   try {
-    await act(async () => root.render(<HomeDashboardScreen
-      homePageClassName="home-page"
-      recentSessionsPanel={<input aria-label="Search sessions" defaultValue="in progress" />}
-      rightPane={<button type="button">Open Session</button>}
-      launchDialog={null}
-    />));
+    await act(async () => renderScreen());
     const splitter = element.querySelector<HTMLButtonElement>(".concurrent-chat-splitter")!;
     const sessions = element.querySelector<HTMLElement>(".home-sessions-pane")!;
     const monitor = element.querySelector<HTMLElement>(".home-monitor-pane")!;
@@ -48,6 +60,10 @@ test("Homeは共通splitterで左右を全幅にし、分割復帰でpaneを保�
     assert.equal(sessions.getAttribute("aria-hidden"), "false");
     assert.equal(splitter.getAttribute("aria-label"), "Open Monitor");
     assert.equal(dom.window.document.activeElement, splitter);
+    const settings = element.querySelector<HTMLButtonElement>(".home-settings-button")!;
+    assert.equal(settings.closest("[inert]"), null);
+    await act(async () => settings.click());
+    assert.equal(settingsCalls, 1);
     await act(async () => splitter.click());
     assert.equal(monitor.hasAttribute("inert"), false);
 
@@ -81,6 +97,11 @@ test("Homeは共通splitterで左右を全幅にし、分割復帰でpaneを保�
     assert.equal(input.value, "keep this search");
     await act(async () => splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true })));
     assert.match(splitter.parentElement?.style.gridTemplateColumns ?? "", /0\.52fr/);
+    await act(async () => element.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="false"]')!.click());
+    assert.equal(splitter.getAttribute("aria-label"), "Collapse Characters");
+    await act(async () => splitter.click());
+    assert.equal(splitter.getAttribute("aria-label"), "Open Characters");
+    assert.equal(settings.closest("[inert]"), null);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

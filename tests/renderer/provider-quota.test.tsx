@@ -198,9 +198,9 @@ test("quota一覧は有効provider集合へ追従する", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorの残量要約はcache購読更新と取得失敗を表示し、Session一覧のDOMとscroll位置を保持する"
+// claim = "Monitorの残量要約は閉じても購読とDOMを保持し、再展開で最新の残率と取得失敗を表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "要約を購読から切り離す、telemetry失敗を隠す、残量更新で一覧を再mountする、または表示時にremote取得する"
+// fault = "閉じた要約をunmountして購読を失う、再展開で古い値を表示する、残量更新で一覧を再mountする、またはremote取得する"
 // observable = "要約の残率と失敗indicator、一覧DOM同一性とscrollTop、cacheOnly引数"
 // observation_boundary = "component-behavior"
 // scope = "共通HomeMonitorContentとProviderQuotaOverviewの表示・購読"
@@ -208,7 +208,7 @@ test("quota一覧は有効provider集合へ追従する", async () => {
 // impact = "複数Sessionを監視する一覧の場所を失わず、残量を必要時に再確認できる"
 // distinction = "ProviderQuota単体testではMonitorの状態更新とSession一覧のDOM保持を同時に確認できない"
 // @end-test-value
-test("Monitorの残量要約は購読更新と失敗を表示し、一覧を維持する", async () => {
+test("Monitorの残量要約は開閉中も購読と一覧を維持する", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "https://withmate.local" });
   const keys = ["window", "document", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const previous = keys.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
@@ -240,15 +240,27 @@ test("Monitorの残量要約は購読更新と失敗を表示し、一覧を維�
     const region = element.querySelector<HTMLElement>('[aria-label="Provider Quotas"]')!;
     assert.ok(region);
     assert.equal(region.querySelector(".provider-quota-values")?.textContent, "5h 80%");
-    const list = element.querySelector<HTMLDivElement>(".home-monitor-sections")!;
+    const list = element.querySelector<HTMLDivElement>(".home-monitor-list")!;
     list.scrollTop = 42;
+    const quotaPanel = region.parentElement!;
+    const toggle = element.querySelector<HTMLButtonElement>(".home-monitor-quota-splitter")!;
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    await act(async () => toggle.click());
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(quotaPanel.hidden, true);
+    assert.equal(listeners.size, 1);
     await act(async () => render("Updated status"));
     await act(async () => { for (const listener of listeners) listener("codex", quota("codex", 45)); });
     assert.equal(region.querySelector(".provider-quota-values")?.textContent, "5h 55%");
     await act(async () => { for (const listener of listeners) listener("codex", { ...quota("codex", 45), status: "error" }); });
     assert.ok(region.querySelector('[aria-label="Codex quota update failed"]'));
     assert.equal(region.querySelector(".provider-quota-values")?.textContent, "5h 55%");
-    assert.equal(element.querySelector(".home-monitor-sections"), list);
+    await act(async () => toggle.click());
+    assert.equal(quotaPanel.hidden, false);
+    assert.equal(element.querySelector('[aria-label="Provider Quotas"]'), region);
+    assert.equal(region.querySelector(".provider-quota-values")?.textContent, "5h 55%");
+    assert.ok(region.querySelector('[aria-label="Codex quota update failed"]'));
+    assert.equal(element.querySelector(".home-monitor-list"), list);
     assert.equal(list.scrollTop, 42);
     assert.deepEqual(reads, [["codex", { cacheOnly: true }]]);
   } finally {

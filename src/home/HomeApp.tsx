@@ -915,7 +915,7 @@ export default function HomeApp() {
     }),
   });
 
-  const { recentSessionsPanel, rightPane, launchDialog } = buildHomeDashboardSlots({
+  const { header, recentSessionsPanel, rightPane, launchDialog } = buildHomeDashboardSlots({
     recentSessionsPanel: buildHomeRecentSessionsPanelProps({
       filteredSessionEntries,
       normalizedSessionSearch,
@@ -1006,6 +1006,8 @@ export default function HomeApp() {
       mateSetupContent={mateSetupContent}
       isMonitorWindowMode={isMonitorWindowMode}
       monitorContent={monitorContent}
+      header={header}
+      rightPaneLabel={rightPaneView === "monitor" ? "Monitor" : "Characters"}
       recentSessionsPanel={recentSessionsPanel}
       rightPane={rightPane}
       launchDialog={launchDialog}
