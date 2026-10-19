@@ -314,6 +314,8 @@ const bundledGlossarySkillPath = app.isPackaged
 const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
 const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
+  inspectImage: (request) => createSessionFileExplorerService().inspectImage(request),
+  writeText: (targetPath) => clipboard.writeText(targetPath),
 });
 const windowsFileDropClipboardWriter = new WindowsFileDropClipboardWriter({ platform: process.platform });
 const sessionFileObjectCopyService = new SessionFileObjectCopyService({
@@ -1266,11 +1268,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openSessionFilesTerminal,
                 copySessionFilePreviewImage: (event, request) =>
                   sessionFilePreviewImageCopyService.copyImage(event.sender, request.point),
-                showSessionFilePreviewImageContextMenu: (event, request) =>
+                showSessionFilePreviewImageContextMenu: (event, request, assertSender) =>
                   sessionFilePreviewImageCopyService.showContextMenu(
                     BrowserWindow.fromWebContents(event.sender) ?? null,
                     event.sender,
                     request.point,
+                    request.image ? {
+                      request: { ...request.image, sessionId: request.sessionId },
+                      assertSender,
+                    } : undefined,
                   ),
                 copySessionFileObject: (_event, request) =>
                   sessionFileObjectCopyService.copyResource(request.resource),

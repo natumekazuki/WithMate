@@ -1147,7 +1147,7 @@ export function SessionMessageColumn({
         onOpenPath={onOpenPath}
         renderText={(text, key, sourceStart) => <MessageRichText key={key} text={text} sourceStart={sourceStart} isStreaming={isRunning}
           resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath}
-          markdownLinkFileContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+          markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
           glossaryAnnotationScopeKey={`${sessionId}:pending`} onActivateGlossaryEntry={onActivateGlossaryEntry} />}
       /> : null}
       {hasPendingMessageText ? (
@@ -1164,6 +1164,7 @@ export function SessionMessageColumn({
             displayMode={messageViewMode}
             onOpenPath={onOpenPath}
             markdownLinkFileContext={markdownLinkFileContext}
+            markdownImageContext={markdownLinkFileContext}
             glossaryAnnotationMatcher={glossaryAnnotationMatcher}
             glossaryAnnotationScopeKey={`${sessionId}:pending:${pendingMessageGroupId ?? "main"}`}
             onActivateGlossaryEntry={onActivateGlossaryEntry}
@@ -1421,6 +1422,7 @@ export function SessionMessageColumn({
                               displayMode={messageViewMode}
                               onOpenPath={onOpenPath}
                               markdownLinkFileContext={markdownLinkFileContext}
+                              markdownImageContext={markdownLinkFileContext}
                               glossaryAnnotationMatcher={glossaryAnnotationMatcher}
                               glossaryAnnotationScopeKey={messageKey}
                               onActivateGlossaryEntry={onActivateGlossaryEntry}
@@ -1510,6 +1512,7 @@ export function SessionMessageColumn({
                                                   text={operation.summary}
                                                   onOpenPath={onOpenPath}
                                                   markdownLinkFileContext={markdownLinkFileContext}
+                                                  markdownImageContext={markdownLinkFileContext}
                                                 />
                                               </div>
                                             ) : (

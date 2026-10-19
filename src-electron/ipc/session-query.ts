@@ -560,8 +560,19 @@ export function registerSessionQueryHandlers(
     WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
     async (event, input: unknown) => {
       const request = parseSessionFilePreviewImageActionRequest(input);
-      await assertSessionFileExplorerSender(event, request.sessionId, deps);
-      return deps.showSessionFilePreviewImageContextMenu(event, request);
+      const window = deps.resolveEventWindow(event);
+      const assertSender = async () => {
+        if (request.image) {
+          await assertImageSender(event, { ...request.image, sessionId: request.sessionId });
+        } else {
+          await assertSessionFileExplorerSender(event, request.sessionId, deps);
+        }
+        if (deps.resolveEventWindow(event) !== window) {
+          throw new Error("Image context menu sender changed.");
+        }
+      };
+      await assertSender();
+      return deps.showSessionFilePreviewImageContextMenu(event, request, assertSender);
     },
   );
   ipcMain.handle(

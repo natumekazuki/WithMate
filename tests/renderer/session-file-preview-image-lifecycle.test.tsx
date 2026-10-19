@@ -331,6 +331,76 @@ async function renderPreview(
 
 // @test-value v2
 // kind = "contract"
+// claim = "通常とGit履歴のMarkdown previewは許可された外部・絶対local画像の本文とlightboxから元resourceのcontextでcopy menuを開く"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
+// fault = "Git履歴でlink操作の抑止と共に画像menuを止める、画像のbaseからcommit識別を落とす、または表示blobを元pathとして渡す"
+// observable = "本文・lightboxのmouse/keyboard eventのdefaultPreventedとnative menu APIのrequest"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreviewから共有Markdown画像copyへのconsumer接続"
+// lifecycle = "permanent"
+// impact = "履歴内で表示を認められた画像からもbitmapと元pathをcopyできる"
+// distinction = "MarkdownImage単体testではconsumerが画像contextを欠落させる不具合を検出できず、通常とcommitの実previewを同じ入力で比較する"
+// @end-test-value
+test("通常とGit履歴のMarkdown画像は本文とlightboxのcopy menuへcontextを渡す", async () => {
+  for (const isCommit of [false, true]) {
+    for (const source of ["data:image/png;base64,iVBORw0KGgo=", "/outside/image.png"]) {
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
+      const restoreGlobals = installDomGlobals(dom);
+      const request = isCommit ? {
+        ...MARKDOWN_REQUEST, resourceKind: "git-commit-file" as const,
+        repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa", commitId: "a".repeat(40),
+      } : MARKDOWN_REQUEST;
+      const menuRequests: Parameters<PreviewApi["showSessionFilePreviewImageContextMenu"]>[0][] = [];
+      const baseApi = createTextPreviewApi(request, "readme.md", `![sample](${source})`, "markdown-r1");
+      const api: PreviewApi = {
+        ...baseApi,
+        async inspectSessionFile(input) {
+          return { ...await baseApi.inspectSessionFile(input), kind: "markdown" };
+        },
+        async showSessionFilePreviewImageContextMenu(input) {
+          menuRequests.push(input);
+          return { status: "dismissed" };
+        },
+      };
+      Object.defineProperty(dom.window, "withmate", { configurable: true, value: api });
+      const container = dom.window.document.getElementById("root")!;
+      let root: Root | null = null;
+      try {
+        root = await renderPreview(api, container, request);
+        await waitFor(() => container.querySelector(".message-image") !== null);
+        const image = container.querySelector<HTMLImageElement>(".message-image")!;
+        const trigger = image.closest("button")!;
+        image.getBoundingClientRect = trigger.getBoundingClientRect = () => createRect({ left: 10, top: 20, width: 120, height: 80 });
+        await act(async () => image.dispatchEvent(new dom.window.Event("load")));
+        const mouse = new dom.window.MouseEvent("contextmenu", { clientX: 40, clientY: 50, bubbles: true, cancelable: true });
+        await act(async () => image.dispatchEvent(mouse));
+        const keyboard = new dom.window.KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true });
+        await act(async () => trigger.dispatchEvent(keyboard));
+        await act(async () => trigger.click());
+        const dialog = dom.window.document.querySelector<HTMLElement>('[role="dialog"]')!;
+        const largeImage = dialog.querySelector("img")!;
+        largeImage.getBoundingClientRect = () => createRect({ left: 30, top: 40, width: 200, height: 100 });
+        dialog.querySelector<HTMLElement>(".image-viewport")!.getBoundingClientRect = largeImage.getBoundingClientRect;
+        const largeMouse = new dom.window.MouseEvent("contextmenu", { clientX: 80, clientY: 90, bubbles: true, cancelable: true });
+        await act(async () => largeImage.dispatchEvent(largeMouse));
+        const largeKeyboard = new dom.window.KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true });
+        await act(async () => dialog.dispatchEvent(largeKeyboard));
+        assert.deepEqual([mouse, keyboard, largeMouse, largeKeyboard].map((event) => event.defaultPrevented), [true, true, true, true]);
+        assert.deepEqual(menuRequests, [{ x: 40, y: 50 }, { x: 70, y: 60 }, { x: 80, y: 90 }, { x: 130, y: 90 }].map((point) => ({
+          sessionId: "session-1", point,
+          ...(source.startsWith("/") ? { image: { target: source, baseResource: request } } : {}),
+        })));
+      } finally {
+        if (root) await act(async () => root!.unmount());
+        restoreGlobals();
+        dom.window.close();
+      }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "file previewはheaderと本文の間の専用領域にroot・absolute・commit resourceの絶対パスをread-onlyで表示し、対象切替に追従する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 中央 file preview" }
 // fault = "表示pathを相対pathへ置換する、操作群と同じ領域へ戻す、編集可能にする、または別resourceへ旧pathを表示する"

@@ -258,6 +258,7 @@ export type SessionFilePreviewImagePoint = {
 export type SessionFilePreviewImageActionRequest = {
   sessionId: string;
   point: SessionFilePreviewImagePoint;
+  image?: Omit<SessionImageResourceRequest, "sessionId">;
 };
 
 export type SessionFilePreviewImageCopyResult =
@@ -266,6 +267,7 @@ export type SessionFilePreviewImageCopyResult =
 
 export type SessionFilePreviewImageContextMenuResult =
   | SessionFilePreviewImageCopyResult
+  | { status: "copied-path" }
   | { status: "dismissed" };
 
 export type SessionDirectoryRequest = SessionFileRootResourceRequest;

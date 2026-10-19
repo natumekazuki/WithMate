@@ -199,6 +199,7 @@ export type MainIpcWindowDepsArgs = {
   showSessionFilePreviewImageContextMenu(
     event: IpcMainInvokeEvent,
     request: SessionFilePreviewImageActionRequest,
+    assertSender: () => Promise<void>,
   ): Awaitable<SessionFilePreviewImageContextMenuResult>;
   copySessionFileObject(
     event: IpcMainInvokeEvent,
