@@ -323,7 +323,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の40px固定幅領域を常時予約し、非実行中は不可視にする。Sendは下段右端の40×40pxの円形buttonと約20pxの紙飛行機iconで表示し、busy中は同寸法のspinnerへ切り替える。設定群が狭幅で折り返してもSendを独立した右列に保ち、開閉やMain / Auxiliary切替で主操作の位置を変えない
   - 開閉は下 splitter を主導線とし、compact では実行状態によらずdock全体の余白からも展開できる。非表示の `Cancel` 予約領域と操作間の隙間も対象とし、表示中の操作ボタンは自身の操作を優先してdockを展開しない。dock 内に `Hide` は置かない
   - Promptのexpandedでは上部操作列と下部設定・送信列の高さを固定し、dragで中央のtextarea領域を伸縮させる。Main／Auxiliaryの実行中も次の依頼を準備するため、Template・Skill・添付・Additional Directory・対応する実行設定を使える。実行中Turnの設定・認可済みdirectoryは捕捉値を維持し、編集値は次の送信から適用する。read-only、入力のblocked条件、quit／close凍結は維持する。Terminalでは切替操作列とタブバーを固定し、端末本文へ残りの高さを割り当てる
-  - default では通常送信のdurable受付成功後にcompactへ戻し、その開閉状態をDOMへ反映してから`Scroll To Latest On Send`を適用する。受付拒否・結果不明では閉じず、`Check Receipt`／元要求の再試行で受付を確認した場合も同じ表示更新を一度だけ行う。実行開始や応答枠の表示をdockのtransition完了まで待たせない
+  - 通常送信はworkspace確認・preview・受付ACKを待たず、対象Columnへ送信文と通常の応答待機枠をDOM反映してから、設定に従ってcompactへ戻し、`Scroll To Latest On Send`を一度適用する。既に実行中なら次Turnの予約本文を現在の応答より後へ置く。内部の準備・受付・実行は表示から独立して進め、固定delayやdockのtransition完了待ちは追加しない。受付再照会・元要求の再試行によってdock開閉や末尾追従を繰り返さず、後続の手動操作を上書きしない
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - Promptではskill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。Terminalへ切り替えるとpickerを閉じ、非表示Promptの候補やfeedbackは共有パネルの折りたたみを妨げない。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
 - Agent の `File Explorer`
@@ -382,10 +382,10 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 会話の初回表示は末尾へ追従する。切替・previewからの復帰では会話incarnation別cacheの追従状態と閲覧位置を復元し、読み返し位置はmessage keyとviewport内offsetを優先する
   - 追従停止中だけ列内overlayの`Jump to latest`を表示する。停止中に本文・予約状態が更新された場合は同じボタンに`New activity`を表示し、末尾へ戻ると解除する。新着状態は会話cache内だけに保持し、token数を未読件数として扱わない
   - `Jump to latest`は履歴pageを解除して末尾へ復帰し、ボタンが消えた後はmessage listにfocusを戻す
-  - 通常Send・送信shortcut・実行中の予約送信は、durable受付成功後にだけ`Scroll To Latest On Send`を対象Columnへ一度適用する。拒否・受付不明では移動せず、待機中の読み返しや会話・送信対象切替は遅い受付成功より優先する
+  - 通常Send・送信shortcut・実行中の予約送信は、先行表示を反映した送信時に`Scroll To Latest On Send`を対象Columnへ一度適用する。受付ACK・再照会・元要求の再試行は新たな移動を起こさず、送信後の読み返しや会話・送信対象切替を維持する
 - pending 中の live activity / streaming response
-- Main／Auxiliaryはdurable受付後に予約行を表示し、実開始後は保存user seq／incarnationで通常messageへ対応付ける。遅い状態取得や会話切替で送信文を消したり、確定時に重複追加したりしない
-- streamingの`assistantText`は会話本文として表示する。run開始直後から応答用のassistant行にCharacter avatarとdot bubbleを置き、本文の到着後は同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
+- Main／Auxiliaryは送信直後に会話ID・incarnation・request IDと捕捉本文のWindow内表示を作る。準備・受付待ちは正常な待機枠または予約本文を保ち、明示的な処理エラー・timeoutだけを対象送信のerror表示へ切り替える。受付後は同じrequest IDのreceiptへ、実開始後は保存user seqへ接続する。ACKや高速な終端が会話取得より先でも送信文と応答面を保持し、確定時に重複追加しない。先行表示から保存済み本文・実行状態を生成しない
+- streamingの`assistantText`は会話本文として表示する。送信時から応答用のassistant行にCharacter avatarとdot bubbleを置き、準備・受付・実行開始を待たず通常の応答面を確保する。本文の到着後も同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
 - 処理中表示の所属は、投影が会話ID・thread・メッセージ位置から生成するmessage keyで識別する。保存済み本文とlive本文が異なる場合も対象の応答枠を使い、本文一致や最後のassistantから推測しない。Main／Auxiliaryで所属を分離し、完了・失敗・キャンセル後は本文を重複させず処理中表示を消す
 - pending bubble には provider-native pending item を差し込める
   - `approvalRequest`: `Allow Once / Reject`
@@ -413,9 +413,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Copilot Usage` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
-- 応答内のdot bubbleは `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後もrun中は維持する
+- 応答内のdot bubbleは準備・受付・応答の待機を示し、`assistantText`の出力開始後もrun中は維持する。保存上の`running`やCancel可否は実run状態から判断し、先行表示で有効化しない
 - Main / Auxiliaryのtarget切替buttonは左右paneのiconと選択状態で送信・操作対象を表し、実行状態によらずtooltipとaccessible nameを維持する。実行状態は主にHomeのMonitorで確認し、会話内の処理中表示、Auxiliary一覧のprocessing indicator、選択対象のCancelは維持する。片側の会話欄が非表示の場合やPreview表示中も、target切替内に実行状態の表示や通知を追加しない
-- 実行中bubbleは `runState !== "running"` になった時点で消し、success固定の完了表現にはしない
+- 実run終了後も確定応答の取得待ちなら同じ応答面と取得済み本文を保つ。確定本文への接続または明示失敗で待機表示を終え、success固定の完了表現にはしない
 - `assistantText`未着でもright paneの `Latest Command` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、末尾のdot bubbleとaccessible statusで待機を示す
 - screen readerには会話本文全体でなく末尾行の状態変化を通知する。Action Dockから重複して通知しない
 - retry draft conflictとcomposer feedbackはvisible textを正本にして常時live通知しない

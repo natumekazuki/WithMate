@@ -2,6 +2,18 @@ import type { SessionTurnQueueReceipt } from "../../../src-shared/session/sessio
 import { MessageRichText } from "../../ui/markdown/MessageRichText.js";
 import { ButtonContent } from "../../ui/button-content.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
+import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
+import { LoadingIndicator } from "../../ui/loading-indicator.js";
+
+export function SessionTurnSubmissionRow({ submission }: { submission: SessionTurnSubmission }) {
+  return <article className="message-row user" data-message-source="turn-submission">
+    <div className="message-card user"><div className="message-card-content">
+      <MessageRichText text={submission.userMessage} />
+      {submission.error ? <p className="pending-run-error-note" role="alert">{submission.error}</p>
+        : <LoadingIndicator inline label="Queued turn" />}
+    </div></div>
+  </article>;
+}
 
 export function SessionTurnQueueStatus({ receipt, position, busy, busyKind, onCancel, onRelease, onSendInput }: {
   receipt: SessionTurnQueueReceipt; position?: number; busy: boolean;

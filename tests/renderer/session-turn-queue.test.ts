@@ -30,10 +30,10 @@ function session(): Session {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryのrunning Sendは保存済draftのincarnation/revisionと設定を共通queue受付へ渡し、受付中の後続編集はACK後のdurable版へ保存し、受付成功通知をACK後に一度だけ行う"
+// claim = "Auxiliaryのrunning Sendは保存済draftのincarnation/revisionと設定を共通queue受付へ渡し、受付中の後続編集はACK後のdurable版へ保存し、先行表示の通知を送信時に一度だけ行う"
 // oracle = { type = "contract", ref = "Issue #801: Main/Auxiliary共通durable受付とAuxiliary draft atomic consume" }
 // fault = "Auxiliaryが直接runへ流れる、古いdraft版で受付する、またはACK待ちの新編集を消す・consume前の版へ保存する"
-// observable = "enqueue要求、ACK前後のlocal/durable draft、後続保存のdurable revision、受付成功通知回数"
+// observable = "enqueue要求、ACK前後のlocal/durable draft、後続保存のdurable revision、送信時UI通知回数"
 // observation_boundary = "consumer"
 // scope = "auxiliary composer durable queue admission"
 // lifecycle = "permanent"
@@ -59,7 +59,7 @@ test("Auxiliary running Send consumes only its durable capture and preserves ACK
   const acceptance = new SessionTurnAcceptance();
   let acknowledge!: (value: SessionTurnQueueReceipt) => void;
   let submitted: typeof request | undefined;
-  let acceptedCount = 0;
+  let submittedCount = 0;
   const accepted = receipt({ sessionId: "aux", incarnationId: incarnation });
   const operation = runMainSessionTurnOperation({
     api: {
@@ -75,21 +75,21 @@ test("Auxiliary running Send consumes only its durable capture and preserves ACK
     request: { ...request, displayAnchorParentMessageCount: 9 },
     composerRegistry: registry, composerOwner: auxiliaryOwner, submitCoordinator: new SessionSubmitCoordinator(),
     acceptance, auxiliaryDraftOwner: draftOwner, queueTurn: true, clearDraft: true, collapseActionDock: false,
-    onAccepted: () => { acceptedCount += 1; },
+    onSubmitted: () => { submittedCount += 1; },
     selectedSessionRunState: "running", blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
     state: { setComposerPreview: (preview) => registry.setPreview(auxiliaryOwner, preview), setPendingSubmitSessionId() {}, setForceComposerBlockedFeedback() {}, collapseActionDock() {} }, log() {},
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(submitted, { ...request, incarnationId: incarnation, displayAnchorParentMessageCount: 9, auxiliaryDraftIncarnation: draftIncarnation, auxiliaryDraftDurableRevision: 3 });
   assert.equal(registry.get(auxiliaryOwner).draft, "A");
-  assert.equal(acceptedCount, 0);
+  assert.equal(submittedCount, 1);
   registry.setDraft(auxiliaryOwner, "B");
   const saving = draftOwner.enqueue("B");
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.deepEqual(saves, []);
   acknowledge(accepted);
   assert.equal(await operation, accepted);
-  assert.equal(acceptedCount, 1);
+  assert.equal(submittedCount, 1);
   await saving;
   assert.equal(registry.get(auxiliaryOwner).draft, "B");
   assert.equal(durable.text, "B");
@@ -145,10 +145,10 @@ test("Auxiliary uncertainty releases draft saving and retries the original targe
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainのSendはpreview待機前に捕捉した本文・設定・incarnationをdurable受付へ渡し、ACK後に該当draftだけ消して受付成功通知を一度だけ行う"
+// claim = "MainのSendはpreview待機前に捕捉した本文・設定・incarnationをdurable受付へ渡し、ACK後に該当draftだけ消し、表示通知は送信時に一度だけ行う"
 // oracle = { type = "contract", ref = "Issue #801: Main Send durable admission" }
 // fault = "running preflightで予約受付を拒否する、preview後の設定へ置換する、またはdurable受付前にdraftを消す"
-// observable = "enqueueへ渡したrequest、ACK前後のdraft、leaseとpending状態、返却receiptと既存Sessionの履歴・Bookmark、受付成功通知回数"
+// observable = "enqueueへ渡したrequest、ACK前後のdraft、leaseとpending状態、返却receiptと既存Sessionの履歴・Bookmark、送信時UI通知回数"
 // observation_boundary = "consumer"
 // scope = "main-queue-operation"
 // lifecycle = "permanent"
@@ -163,13 +163,13 @@ test("Main Queue Turn admits captured settings after preview and clears after AC
   let acknowledge!: (value: SessionTurnQueueReceipt) => void;
   let submitted: unknown;
   let pending: string | null = null;
-  let acceptedCount = 0;
+  let submittedCount = 0;
   const operation = runMainSessionTurnOperation({
     api: { previewComposerInput: async () => new Promise((resolve) => { previewDone = resolve; }),
       enqueueSessionTurn: async (_id, input) => { submitted = input; return new Promise((resolve) => { acknowledge = resolve; }); }, getSessionTurnQueueReceipt: async () => null },
     sessionId: owner.id, selectedSession: selected, request, composerRegistry: registry, composerOwner: owner, submitCoordinator: coordinator,
     acceptance: new SessionTurnAcceptance(), queueTurn: true, clearDraft: true, collapseActionDock: false,
-    onAccepted: () => { acceptedCount += 1; },
+    onSubmitted: () => { submittedCount += 1; },
     selectedSessionRunState: "running", blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
     state: { setComposerPreview: (preview) => registry.setPreview(owner, preview), setPendingSubmitSessionId: (value) => { pending = typeof value === "function" ? value(pending) : value; }, setForceComposerBlockedFeedback() {}, collapseActionDock() {} }, log() {},
   });
@@ -180,9 +180,9 @@ test("Main Queue Turn admits captured settings after preview and clears after AC
   assert.deepEqual(submitted, request);
   assert.equal(registry.get(owner).draft, "A");
   assert.equal(pending, owner.id);
-  assert.equal(acceptedCount, 0);
+  assert.equal(submittedCount, 1);
   const accepted = receipt(); acknowledge(accepted); assert.equal(await operation, accepted);
-  assert.equal(acceptedCount, 1);
+  assert.equal(submittedCount, 1);
   assert.equal(registry.get(owner).draft, "");
   assert.equal(pending, null);
   assert.equal(coordinator.isClaimed(owner.id), false);
@@ -192,26 +192,29 @@ test("Main Queue Turn admits captured settings after preview and clears after AC
 
 // @test-value v2
 // kind = "contract"
-// claim = "送信のdock折りたたみはdurable受付確認後の末尾追従より先に一度だけ行い、設定OFF・拒否・結果不明では閉じず、受付再確認も同じ順序を使う"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dockのdurable受付後の表示更新順序" }
-// fault = "ACK前や拒否でdockを閉じる、末尾追従後に閉じる、または結果不明の回復で折りたたみを省略・重複する"
-// observable = "ACK前後と再照会・再試行後のdock折りたたみと末尾追従callbackの順序・回数、追従時のdraft"
+// claim = "Sendはworkspace・preview・ACKを待たず送信文の表示を通知してから設定に従いdockを閉じ、末尾追従は一度だけ行う。明示失敗は先行表示へ反映し、受付復旧でUI動作を繰り返さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 送信直後の先行表示とAction Dock; docs/design/session-run-lifecycle.md: 受付結果不明の同一identity照合" }
+// fault = "準備/ACKが遅いと待機枠より先にdockが閉じる、失敗が通常待機のままになる、または受付再照会でdock/追従を繰り返す"
+// observable = "非同期準備前のsurface→collapse→followの通知順と回数、拒否/結果不明の表示error、復旧後のreceiptとdraft"
 // observation_boundary = "consumer"
-// scope = "accepted send presentation ordering"
+// scope = "optimistic send presentation ordering"
 // lifecycle = "permanent"
-// impact = "入力失敗時の作業面を失い、成功時の末尾移動が古いdock状態を参照する"
-// distinction = "既存の受付通知回数testはruntime operationのdock設定と回復callbackの接続を通らず、型検査では非同期の表示更新順序を保証できない"
+// impact = "通信/準備の速度で表示順序が逆転し、失敗時に送信文を見失ったり、復旧時に読取位置を奪ったりする"
+// distinction = "型検査や受付class単体はworkspace/preview待ちと送信時UI callbackの境界を通らない。小さいdeferred Promiseで継続契約を確認する"
 // @end-test-value
-test("accepted send collapses before following, including receipt recovery", async () => {
+test("send presents before asynchronous preparation and recovers without replaying UI actions", async () => {
   for (const outcome of ["accepted", "rejected", "unknown", "check", "retry"] as const) {
     for (const autoCollapse of [false, true]) {
       const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
       const acceptance = new SessionTurnAcceptance();
       const events: string[] = [];
+      acceptance.submissions.subscribe(() => { if (!events.length) events.push("surface"); });
+      let validate!: (value: boolean) => void;
+      let preview!: (value: { attachments: []; errors: [] }) => void;
       let acknowledge!: () => void;
       let recover = false;
       const api = {
-        previewComposerInput: async () => ({ attachments: [], errors: [] }),
+        previewComposerInput: async () => new Promise<{ attachments: []; errors: [] }>((resolve) => { preview = resolve; }),
         enqueueSessionTurn: async () => {
           if (!recover) await new Promise<void>((resolve) => { acknowledge = resolve; });
           if (outcome === "rejected") return { state: "rejected" as const, reason: "Workspace is unavailable." };
@@ -224,19 +227,27 @@ test("accepted send collapses before following, including receipt recovery", asy
         api, sessionId: owner.id, selectedSession: session(), request,
         composerRegistry: registry, composerOwner: owner, submitCoordinator: new SessionSubmitCoordinator(), acceptance,
         queueTurn: true, clearDraft: true, collapseActionDock: autoCollapse,
-        selectedSessionRunState: "running", blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
+        selectedSessionRunState: "idle", blockedReason: null, isReadOnly: false,
+        validateWorkspace: () => new Promise<boolean>((resolve) => { validate = resolve; }),
         state: { setComposerPreview() {}, setPendingSubmitSessionId() {}, setForceComposerBlockedFeedback() {}, collapseActionDock: () => { events.push("collapse"); } },
-        onAccepted: () => { assert.equal(registry.get(owner).draft, ""); events.push("follow"); }, log() {},
+        onSubmitted: () => { events.push("follow"); }, log() {},
       });
-      await new Promise((resolve) => setImmediate(resolve));
+      const expected = autoCollapse ? ["surface", "collapse", "follow"] : ["surface", "follow"];
+      assert.deepEqual(events, expected);
+      assert.equal(acceptance.submissions.getSnapshot()[0]?.userMessage, "A");
+      assert.equal(acceptance.submissions.getSnapshot()[0]?.error, "");
       assert.equal(registry.get(owner).draft, "A");
-      assert.deepEqual(events, []);
+      validate(true);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(events, expected);
+      preview({ attachments: [], errors: [] });
+      await new Promise((resolve) => setImmediate(resolve));
       acknowledge();
       if (outcome === "accepted") await operation;
       else {
         await assert.rejects(operation, outcome === "rejected" ? /Workspace is unavailable/ : /acceptance could not be confirmed/);
         assert.equal(registry.get(owner).draft, "A");
-        assert.deepEqual(events, []);
+        assert.match(acceptance.submissions.getSnapshot()[0]!.error, outcome === "rejected" ? /Workspace is unavailable/ : /acceptance could not be confirmed/);
         if (outcome === "check" || outcome === "retry") {
           recover = true;
           if (outcome === "check") await Promise.all([acceptance.check(api, owner.id, registry), acceptance.check(api, owner.id, registry)]);
@@ -244,56 +255,13 @@ test("accepted send collapses before following, including receipt recovery", asy
         }
       }
       await acceptance.check(api, owner.id, registry);
-      assert.deepEqual(events, outcome === "accepted" || outcome === "check" || outcome === "retry"
-        ? autoCollapse ? ["collapse", "follow"] : ["follow"] : []);
-    }
-  }
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "送信完了通知はdurable受付を確認したときだけ一度行い、未受付・結果不明では行わず、元要求の再照会・再試行でも同じ通知を消費する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信時の末尾追従を対象Columnへ一度だけ通知する; Issue #822 UX-02" }
-// fault = "受付失敗で追尾を再開する、結果不明の回復時に通知しない、または同時再照会で二重通知する"
-// observable = "ACK前後・拒否後・同時再照会後・再試行後のonAccepted呼出回数"
-// observation_boundary = "consumer"
-// scope = "durable queue acceptance completion"
-// lifecycle = "permanent"
-// impact = "送信失敗で履歴位置を失い、受付成功後の最新本文へ戻れないことを防ぐ"
-// distinction = "型検査では非同期受付と回復の通知回数を保証できず、Column単体ではdurable結果を通らない"
-// @end-test-value
-test("acceptance completion runs once only after confirmed durable admission", async () => {
-  for (const outcome of ["accepted", "rejected", "check", "retry"] as const) {
-    const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
-    const acceptance = new SessionTurnAcceptance();
-    let completed = 0;
-    let recover = false;
-    const api = {
-      enqueueSessionTurn: async () => {
-        if (outcome === "rejected") return { state: "rejected" as const, reason: "rejected" };
-        if (outcome !== "accepted" && !recover) throw new Error("disconnected");
-        return receipt();
-      },
-      getSessionTurnQueueReceipt: async () => recover ? receipt() : null,
-    };
-    const capture = { request, owner, revision: registry.capture(owner).revision, clearDraft: true, onAccepted: () => { completed += 1; } };
-    const operation = acceptance.submit(api, owner.id, capture, registry);
-    assert.equal(completed, 0);
-    if (outcome === "accepted") await operation;
-    else {
-      await assert.rejects(operation, outcome === "rejected" ? /rejected/ : /acceptance could not be confirmed/);
-      assert.equal(completed, 0);
-      if (outcome === "check") {
-        recover = true;
-        await Promise.all([acceptance.check(api, owner.id, registry), acceptance.check(api, owner.id, registry)]);
-      } else if (outcome === "retry") {
-        recover = true;
-        await acceptance.retry(api, owner.id, registry);
+      assert.deepEqual(events, expected);
+      if (outcome === "accepted" || outcome === "check" || outcome === "retry") {
+        assert.equal(acceptance.submissions.getSnapshot()[0]?.receipt?.requestId, request.clientRequestId);
+        assert.equal(acceptance.submissions.getSnapshot()[0]?.error, "");
+        assert.equal(registry.get(owner).draft, "");
       }
     }
-    assert.equal(completed, outcome === "rejected" ? 0 : 1);
-    await acceptance.check(api, owner.id, registry);
-    assert.equal(completed, outcome === "rejected" ? 0 : 1);
   }
 });
 
