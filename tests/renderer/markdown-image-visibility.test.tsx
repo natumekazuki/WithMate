@@ -15,7 +15,7 @@ async function withImageDom(run: (fixture: {
   dom: JSDOM;
   root: ReturnType<typeof createRoot>;
   intersection: ReturnType<typeof installIntersectionObserver>;
-  timers: Map<number, TimerHandler>;
+  timers: Map<number, { handler: TimerHandler; delay: number | undefined }>;
 }) => Promise<void>) {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
   const values = {
@@ -27,9 +27,9 @@ async function withImageDom(run: (fixture: {
     Object.defineProperty(globalThis, key, { configurable: true, value });
   }
   const intersection = installIntersectionObserver(false);
-  const timers = new Map<number, TimerHandler>();
+  const timers = new Map<number, { handler: TimerHandler; delay: number | undefined }>();
   let timerId = 0;
-  dom.window.setTimeout = (handler) => { timers.set(++timerId, handler); return timerId; };
+  dom.window.setTimeout = (handler, delay) => { timers.set(++timerId, { handler, delay }); return timerId; };
   dom.window.clearTimeout = (id) => { if (id !== undefined) timers.delete(id); };
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
@@ -47,17 +47,17 @@ async function withImageDom(run: (fixture: {
 
 // @test-value v2
 // kind = "contract"
-// claim = "本文とlightboxの画像menuはmouseとkeyboardから表示座標と元source・baseを渡し、external画像にはlocal path情報を渡さない"
+// claim = "本文とlightboxの画像menuはmouse・keyboardで元sourceと表示座標を渡し、lightboxへfocusを移して閉じると起点へ戻し、external画像にはlocal path情報を渡さない"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
-// fault = "blob URLを元pathとして渡す、lightboxやkeyboardからmenuに到達できない、外部画像をlocal pathと誤認する、または拡大中の通知が隠れる"
-// observable = "native menu APIのrequest、contextmenuのdefaultPrevented、lightbox内の通知とEscape後のfocus"
+// fault = "blob URLを元pathとして渡す、lightboxやkeyboardからmenuに到達できない、外部画像をlocal pathと誤認する、拡大中の通知が隠れる、またはdialogへのfocus移動・復帰を失う"
+// observable = "native menu APIのrequest、contextmenuのdefaultPrevented、lightbox内の通知、dialog表示時とEscape後のactiveElement"
 // observation_boundary = "component-behavior"
 // scope = "MarkdownImageの通常表示・拡大表示からnative menuへの操作境界"
 // lifecycle = "permanent"
 // distinction = "Main service testはrender済みblobと元sourceの対応やkeyboard座標・portal内の通知を観測できない"
 // @end-test-value
 test("画像menuは通常表示と拡大表示のmouse・keyboardで元sourceを保持する", async () => {
-  await withImageDom(async ({ container, dom, root, intersection }) => {
+  await withImageDom(async ({ container, dom, root, intersection, timers }) => {
     const requests: SessionFilePreviewImageActionRequest[] = [];
     const fileContext = { sessionId: "aux-1", baseResource: {
       sessionId: "aux-1", absolutePath: "C:\\docs\\message.md",
@@ -92,8 +92,15 @@ test("画像menuは通常表示と拡大表示のmouse・keyboardで元sourceを
     })));
     assert.deepEqual(requests[1].point, { x: 70, y: 60 });
     trigger.focus();
+    assert.equal(dom.window.document.activeElement, trigger);
     await act(async () => trigger.click());
     const dialog = dom.window.document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const focusTimers = [...timers].filter(([, timer]) => timer.delay === 0);
+    assert.equal(focusTimers.length, 1);
+    const [focusTimerId, { handler: focusHandler }] = focusTimers[0];
+    assert.ok(typeof focusHandler === "function");
+    await act(async () => { timers.delete(focusTimerId); focusHandler(); });
+    assert.equal(dom.window.document.activeElement, dialog);
     const lightboxImage = dialog.querySelector("img")!;
     lightboxImage.getBoundingClientRect = () => new dom.window.DOMRect(-20, 0, 500, 400);
     dialog.querySelector<HTMLElement>(".image-viewport")!.getBoundingClientRect = () => new dom.window.DOMRect(30, 40, 200, 100);
@@ -126,27 +133,29 @@ test("画像menuは通常表示と拡大表示のmouse・keyboardで元sourceを
 
 // @test-value v2
 // kind = "contract"
-// claim = "画像menuは失敗をalertへ返しdismissと破棄済み画像への遅延成功を成功通知に変換しない"
+// claim = "画像menuは失敗をalertへ返し、dismissと同一componentの旧resolver世代への遅延成功を通知しない"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
-// fault = "IPC失敗やdismissをcopy成功として表示する、または旧画像の遅延結果を別画像へ表示する"
+// fault = "IPC失敗やdismissをcopy成功として表示する、または同一sourceのresolver変更後に旧menuの遅延結果を表示する"
 // observable = "status/alertの有無と通知text"
 // observation_boundary = "component-behavior"
 // scope = "MarkdownImageのmenu結果とresource寿命"
 // lifecycle = "permanent"
-// distinction = "native menu service testはrendererの非同期結果とsource変更後の通知寿命を観測できない"
+// distinction = "native menu service testやunmountで分離したcomponentでは、同一componentのresolver世代変更後の通知寿命を観測できない"
 // @end-test-value
 test("画像menuは失敗を通知しdismissと旧resourceの遅延成功は通知しない", async () => {
-  await withImageDom(async ({ container, dom, root }) => {
+  await withImageDom(async ({ container, dom, root, intersection }) => {
     let response: () => Promise<SessionFilePreviewImageContextMenuResult> = async () => ({ status: "dismissed" });
     Object.defineProperty(dom.window, "withmate", { value: {
       showSessionFilePreviewImageContextMenu: () => response(),
     } });
-    const render = (source: string) => root.render(
+    const render = (resolver: MarkdownImageResolver) => root.render(
       <MarkdownRenderContext.Provider value={{ markdown: "", imageContext: { sessionId: "session-1" } }}>
-        <MarkdownImage key={source} source={source} />
+        <MarkdownImage source="image.png" resolveImageSource={resolver} />
       </MarkdownRenderContext.Provider>,
     );
-    await act(async () => render("https://example.test/first.png"));
+    await act(async () => render(async () => "data:image/png;base64,AAAA"));
+    await act(async () => intersection.observers[0].intersect(true));
+    const shell = container.querySelector(".message-image-shell")!;
     const image = container.querySelector("img")!;
     await act(async () => image.dispatchEvent(new dom.window.Event("load")));
     const openMenu = () => image.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
@@ -163,7 +172,12 @@ test("画像menuは失敗を通知しdismissと旧resourceの遅延成功は通�
     let finish!: (result: SessionFilePreviewImageContextMenuResult) => void;
     response = () => new Promise((resolve) => { finish = resolve; });
     await act(async () => openMenu());
-    await act(async () => render("https://example.test/second.png"));
+    await act(async () => render(async () => "data:image/png;base64,BBBB"));
+    assert.equal(container.querySelector(".message-image-shell"), shell);
+    await act(async () => intersection.observers.at(-1)!.intersect(true));
+    const currentImage = container.querySelector("img")!;
+    assert.equal(currentImage.getAttribute("src"), "data:image/png;base64,BBBB");
+    await act(async () => currentImage.dispatchEvent(new dom.window.Event("load")));
     await act(async () => finish({ status: "copied" }));
     assert.equal(container.querySelector('[role="status"], [role="alert"]'), null);
   });
