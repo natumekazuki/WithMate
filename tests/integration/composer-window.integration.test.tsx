@@ -10,10 +10,10 @@ import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-t
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryのdurable受付を相互にbusy扱いせず、同一Auxiliaryの未確定受付中の重複送信を抑止する。送信時のActionDockはMain/Auxiliaryとも設定を守り、保存待機中の手動開閉を遅い送信で巻き戻さない。受付ACKはcaptured revisionだけを消し、拒否・不明では入力を保持する。不明結果の正本照会で再送せず後続編集を守る。quitでは未確定受付と後続編集の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは受付完了を待たず、凍結後の送信前保存からの受付と添付を止める。Main/AuxiliaryのSendと送信shortcutは設定有効時だけ受付成功後に対象列を追従へ戻し、待機中の上スクロールや対象切替は古い送信の追従より優先する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
-// fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの未確定受付中に重複要求を発行する、設定無効でもActionDockを縮小する、保存待機後に新しい手動開閉を上書きする、ACKで後続編集を消す、拒否でdraftをconsumeする、不明結果から新規要求を自動再送する、後続編集を未保存のままflush成功にする、凍結後にpicker結果からコピーする、または送信受付前・設定無効時・待機中の上スクロールや対象切替後に末尾へ移動する"
-// observable = "textarea/feedback/SendとActionDock expanded classの状態、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数、Main/Auxiliaryの送信受付前後のscrollTop"
+// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryのdurable受付を相互にbusy扱いせず、同一Auxiliaryの未確定受付中の重複送信を抑止する。送信時のActionDockはMain/Auxiliaryとも設定を守り、保存待機中の手動開閉を遅い送信で巻き戻さない。受付ACKはcaptured revisionだけを消し、拒否・不明では入力を保持する。不明結果の正本照会で再送せず後続編集を守る。quitでは未確定受付と後続編集の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは受付完了を待たず、凍結後の送信前保存からの受付と添付を止める。Main/AuxiliaryのSendと送信shortcutは設定有効時だけ初回送信時に対象列を追従へ戻し、後続の閲覧や対象切替をACK・受付照会で巻き戻さない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界; docs/design/desktop-ui.md: 送信時の先行表示とScroll To Latest On Send" }
+// fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの未確定受付中に重複要求を発行する、設定無効でもActionDockを縮小する、保存待機後に新しい手動開閉を上書きする、ACKで後続編集を消す、拒否でdraftをconsumeする、不明結果から新規要求を自動再送する、後続編集を未保存のままflush成功にする、凍結後にpicker結果からコピーする、設定無効時に末尾へ移動する、初回送信の追従をACKまで遅延する、または後続の閲覧や対象切替をACK・受付照会で巻き戻す"
+// observable = "textarea/feedback/SendとActionDock expanded classの状態、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数、Main/Auxiliaryの初回送信・受付ACK・受付照会前後のscrollTop"
 // observation_boundary = "component-behavior"
 // scope = "composer-window-input-wiring"
 // lifecycle = "permanent"
@@ -338,7 +338,8 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     });
     assert.equal(sent.length, duplicateSentStart + 1, "the same Auxiliary ID must admit one in-flight send");
     assert.equal(sent.at(-1)?.id, duplicateAuxiliaryId);
-    await act(async () => { scrolledDuringSend.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -1, bubbles: true })); });
+    assert.equal(scrolledDuringSend.scrollTop, 800, "initial submission follows before admission completes");
+    await readHistory("auxiliary");
     await act(async () => {
       releaseDuplicate();
       await duplicateCompleted;
@@ -356,7 +357,8 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       await admissionStarted;
     });
     assert.equal(textarea().value, "switch during send", "an unacknowledged admission must preserve the captured draft");
-    assert.equal(switchedScroll.scrollTop, 100, "pending admission must not leave history");
+    assert.equal(switchedScroll.scrollTop, 800, "initial submission follows while admission is pending");
+    await readHistory("auxiliary");
     await target("Main");
     await input("Main while Auxiliary sends");
     const runningCloseAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
@@ -445,7 +447,8 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(textarea().value, "another Auxiliary draft", "a rejected old admission must not alter the selected owner");
     await act(async () => { navigateAuxiliary?.({ parentSessionId: "benchmark-main", auxiliarySessionId: previousAuxiliaryId }); });
     assert.equal(textarea().value, "rejected admission draft", "the rejected admission preserves only its captured owner");
-    assert.deepEqual(alerts, ["Auxiliary admission failed"]);
+    assert.equal(dom.window.document.querySelector("#session-auxiliary-chat-pane .pending-run-error-note")?.textContent, "Auxiliary admission failed");
+    assert.deepEqual(alerts, []);
     alerts.length = 0;
 
     loseAdmissionReply = true;
@@ -456,11 +459,13 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
     });
     assert.equal(textarea().value, "unknown admission draft", "a missing ACK must not clear the captured draft");
-    assert.equal(uncertainScroll.scrollTop, 100, "unknown admission must preserve history position");
+    assert.equal(uncertainScroll.scrollTop, 800, "initial submission follows even when the ACK is lost");
+    await readHistory("auxiliary");
     assert.equal(drafts.get(previousAuxiliaryId)?.text, "");
     const sentBeforeCheck = sent.length;
     assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.disabled, true);
-    assert.match(alerts.at(-1)!, /acceptance could not be confirmed/);
+    assert.match(dom.window.document.querySelector("#session-auxiliary-chat-pane .pending-run-error-note")?.textContent ?? "", /acceptance could not be confirmed/);
+    assert.deepEqual(alerts, []);
     await input("new draft after unknown admission");
     receiptVisible = true;
     await act(async () => {
@@ -469,7 +474,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       check.click();
     });
     assert.equal(sent.length, sentBeforeCheck, "receipt recovery must not enqueue a new request");
-    assert.equal(uncertainScroll.scrollTop, 800, "confirmed receipt completes the original send following once");
+    assert.equal(uncertainScroll.scrollTop, 100, "receipt recovery must preserve later browsing without repeating send following");
     assert.equal(textarea().value, "new draft after unknown admission", "recovered ACK must preserve the newer edit");
     assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.disabled, false);
     const unknownDraftSaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "new draft after unknown admission") resolve(); }; });
@@ -563,7 +568,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
       await dockSaveStarted;
     });
-    await toggleDock();
+    assert.equal(dockExpanded(), false, "initial submission collapses the dock before draft persistence completes");
     await toggleDock();
     assert.equal(dockExpanded(), true);
     const dockAdmissionCompleted = new Promise<void>((resolve) => { notifyAdmissionCompleted = () => resolve(); });

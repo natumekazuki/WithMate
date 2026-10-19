@@ -301,10 +301,10 @@ test("Main runtimeの旧rejectは同じComposer ownerの新入力を上書きし
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxiliary共通durable受付は旧rejectで新入力を上書きせず、受付後のcanonical失敗通知は送信済みuser・partial・失敗本文を保持する"
+// claim = "Main/Auxiliary共通durable受付は旧rejectで新入力を上書きせず、Auxiliaryの未確定受付では送信本文を先行表示し、不明・拒否では本文と理由を保持する。受付後のcanonical失敗通知は送信済みuser・partial・失敗本文を保持する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信受付の共通反映" }
-// fault = "Appが旧受付rejectで新入力を上書きする、またはcanonical失敗更新を未受付と混同して入力と本文を巻き戻す"
-// observable = "実SessionWindowAppのtextarea値、送信APIの対象IDと本文、要求待機中とsettle後の対象会話のuser/assistant本文、rejectのalert"
+// fault = "Appが旧受付rejectで新入力を上書きする、先行表示した送信本文を不明・拒否で消すか理由を示さない、またはcanonical失敗更新を未受付と混同して入力と本文を巻き戻す"
+// observable = "実SessionWindowAppのtextarea値、送信APIの対象IDと本文、要求待機中とsettle後の対象会話のuser/assistant本文数、送信bubbleのエラー理由、rejectのalert"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp common durable admission and canonical Provider failure"
 // lifecycle = "permanent"
@@ -453,16 +453,13 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
         assert.deepEqual(requests, [{ id, text: prompt }]);
         if (outcome === "reject") {
           assert.equal(textarea().value, prompt, "unacknowledged input remains in the composer");
-          assert.equal(messageTexts(pane, "user").includes(prompt), false);
+          assert.equal(messageTexts(pane, "user").filter((text) => text === prompt).length, 1, "unacknowledged submission is shown once before admission completes");
           await input(newInput);
-          reportedError = deferred<string>();
           const error = new Error(`${target} request rejected`);
-          await act(async () => {
-            result.reject(error);
-            assert.match(await reportedError.promise, /acceptance could not be confirmed/);
-          });
+          await act(async () => { result.reject(error); });
           assert.equal(textarea().value, newInput, `${target}: old rejection must not restore over a later edit`);
-          assert.equal(messageTexts(pane, "user").includes(prompt), false, "rejected request converges to the pre-send session");
+          assert.equal(messageTexts(pane, "user").filter((text) => text === prompt).length, 1, "uncertain admission retains the submitted bubble");
+          assert.match(dom.window.document.querySelector(`${pane} .pending-run-error-note`)?.textContent ?? "", /acceptance could not be confirmed/);
           api.enqueueSessionTurn = async () => ({ state: "rejected", reason: "Original turn was not accepted." });
           reportedError = deferred<string>();
           await act(async () => {
@@ -470,6 +467,8 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
             assert.ok(retry); retry.click(); await reportedError.promise;
           });
           assert.equal(textarea().value, newInput);
+          assert.equal(messageTexts(pane, "user").filter((text) => text === prompt).length, 1, "explicit rejection retains the submitted bubble without duplication");
+          assert.equal(dom.window.document.querySelector(`${pane} .pending-run-error-note`)?.textContent, "Original turn was not accepted.");
         } else {
           assert.equal(textarea().value, "");
           assert.equal(messageTexts(pane, "user").filter((text) => text === prompt).length, 1);
@@ -500,9 +499,7 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
         }
       }
     }
-    assert.equal(alerts.length, 2);
-    assert.match(alerts[0], /acceptance could not be confirmed/);
-    assert.equal(alerts[1], "Original turn was not accepted.");
+    assert.deepEqual(alerts, ["Original turn was not accepted."]);
   } finally {
     await act(async () => { root.unmount(); });
     dom.window.close();
