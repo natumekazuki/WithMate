@@ -22,6 +22,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - render 済み link の context menu は`Copy link`を提供する。protocol-relativeを含む外部 URL は表示 label ではなく `href` target を保ち、local / `file:` / Windows absolute path は通常の Open と同じ Main process の path 解決境界で decode・filesystem path 変換して clipboard へ渡す。最終的な copy target に制御文字を含む場合は clipboard を更新せず失敗として通知する
 - HTTP / HTTPS、`mailto:`、workspace 相対 path、`file:`、Windows absolute pathをcopy対象とし、unsafe schemeで除去されたlinkと同一pageの`#` anchorは対象にしない
 - context menuはmouseの右clickに加え、focusしたlinkからShift+F10またはContext Menu keyで到達できるnative menuとする。dismissはcopy成功として通知しない
+- link・file・codeのcopy feedbackは画面右下の通知として本文DOM外へportalし、Main／Auxiliary列の重なりやclipに隠さない。成功／失敗の文言・toneと`role="status"`の読み上げを維持し、2.4秒で消す
 - detached previewのnavigationとroot authorizationの判断は[ADR 020](../adr/020-file-preview-window-navigation.md)、明示directory openの判断は[ADR 025](../adr/025-explicit-directory-link-open.md)を参照する
 
 ## Image Handling

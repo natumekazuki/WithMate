@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
@@ -209,7 +210,7 @@ function MessageMarkdownPreview({
           {markdownContent}
         </MarkdownRenderContext.Provider>
       </MessageGlossaryAnnotationProvider>
-      {copyFeedback ? (
+      {copyFeedback ? createPortal(
         <span
           className={`message-copy-toast message-link-copy-toast ${copyFeedback.tone}`}
           role="status"
@@ -217,7 +218,8 @@ function MessageMarkdownPreview({
           aria-atomic="true"
         >
           {copyFeedback.message}
-        </span>
+        </span>,
+        document.body,
       ) : null}
     </div>
   );

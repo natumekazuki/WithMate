@@ -26,7 +26,8 @@
 }
 
 .session-page,
-.message-image-lightbox {
+.message-image-lightbox,
+.message-copy-toast {
   --surface: rgba(25, 29, 38, 0.94);
   --surface-strong: rgba(28, 33, 43, 0.98);
   --surface-deep: rgba(18, 22, 30, 0.98);
