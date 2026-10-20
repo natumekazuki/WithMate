@@ -130,6 +130,7 @@ export function HomeMonitorContent({
   const [closedSections, setClosedSections] = useState([false, false, false]);
   const [smallSections, setSmallSections] = useState([false, false, false]);
   const [sectionWeights, setSectionWeights] = useState([1, 1, 1]);
+  const [availableHeight, setAvailableHeight] = useState(0);
   const [isQuotaExpanded, setIsQuotaExpanded] = useState(true);
   const sectionsRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<number[] | null>(null);
@@ -150,10 +151,7 @@ export function HomeMonitorContent({
     if (!container) return;
     const sections = [...container.querySelectorAll<HTMLElement>(":scope > section")];
     const update = () => {
-      setSectionWeights((weights) => {
-        const next = fitSectionWeights(weights, closedSections, getAvailableHeight());
-        return next.every((value, index) => Math.abs(value - weights[index]!) < 0.001) ? weights : next;
-      });
+      setAvailableHeight(getAvailableHeight());
       const small = sections.map((section, index) => {
         if (closedSections[index]) return false;
         const content = section.querySelector<HTMLElement>(".home-monitor-section-content");
@@ -184,10 +182,16 @@ export function HomeMonitorContent({
     const total = start[index]! + start[index + 1]!;
     const minimum = Math.min(48, total / 2);
     const first = Math.max(minimum, Math.min(total - minimum, start[index]! + delta));
-    const next = [...start];
-    next[index] = first;
-    next[index + 1] = total - first;
-    setSectionWeights(next);
+    setAvailableHeight(getAvailableHeight());
+    setSectionWeights((weights) => {
+      const activeWeight = weights.reduce((sum, value, i) => sum + (closedSections[i] ? 0 : value), 0);
+      const activeHeight = start.reduce((sum, value, i) => sum + (closedSections[i] ? 0 : value), 0);
+      if (activeHeight <= 0) return weights;
+      const next = start.map((value, i) => closedSections[i] ? weights[i]! : value * activeWeight / activeHeight);
+      next[index] = first * activeWeight / activeHeight;
+      next[index + 1] = (total - first) * activeWeight / activeHeight;
+      return next;
+    });
   };
 
   const renderSplitter = (index: number) => {
@@ -358,6 +362,15 @@ export function HomeMonitorContent({
   );
   const hasReadError = sessionWindowsDataState === "error" || auxiliaryDataState === "error";
   const showEmptyState = sessionWindowsDataState !== "loading" && sessionWindowsDataState !== "error";
+  const renderMonitorList = (entries: HomeMonitorEntry[], emptyMessage = "") => {
+    const midpoint = Math.ceil(entries.length / 2);
+    return <div className="home-monitor-list">
+      {entries.length > 0 ? [entries.slice(0, midpoint), entries.slice(midpoint)].map((column, index) => (
+        <div key={index} className="home-monitor-column">{renderMonitorEntries(column)}</div>
+      )) : showEmptyState && emptyMessage ? <p className="home-monitor-empty">{emptyMessage}</p> : null}
+    </div>;
+  };
+  const fittedWeights = fitSectionWeights(sectionWeights, closedSections, availableHeight);
 
   return (
     <div
@@ -391,7 +404,7 @@ export function HomeMonitorContent({
       <div
         ref={sectionsRef}
         className="home-monitor-sections"
-        style={{ gridTemplateRows: sectionWeights.map((weight, index) => closedSections[index] ? "max-content" : `minmax(48px, ${weight}fr)`).join(" var(--session-dock-splitter-size) ") }}
+        style={{ gridTemplateRows: fittedWeights.map((weight, index) => closedSections[index] ? "max-content" : `minmax(48px, ${weight}fr)`).join(" var(--session-dock-splitter-size) ") }}
       >
         <section className={`home-monitor-section${closedSections[0] ? " is-closed" : ""}`} aria-labelledby="home-monitor-approval">
           <div className="home-monitor-section-head">
@@ -399,9 +412,7 @@ export function HomeMonitorContent({
             <span className="home-monitor-count">{approvalEntries.length}</span>
           </div>
           <div id={`${id}-content-0`} className={`home-monitor-section-content${closedSections[0] || smallSections[0] ? " is-hidden" : ""}`} inert={closedSections[0] || smallSections[0]} aria-hidden={closedSections[0] || smallSections[0]}>
-            <div className="home-monitor-list">
-              {renderMonitorEntries(approvalEntries)}
-            </div>
+            {renderMonitorList(approvalEntries)}
           </div>
         </section>
 
@@ -413,13 +424,7 @@ export function HomeMonitorContent({
             <span className="home-monitor-count">{runningEntries.length}</span>
           </div>
           <div id={`${id}-content-1`} className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`} inert={closedSections[1] || smallSections[1]} aria-hidden={closedSections[1] || smallSections[1]}>
-            <div className="home-monitor-list">
-              {runningEntries.length > 0
-                ? renderMonitorEntries(runningEntries)
-                : showEmptyState && runningEmptyMessage
-                  ? <p className="home-monitor-empty">{runningEmptyMessage}</p>
-                  : null}
-            </div>
+            {renderMonitorList(runningEntries, runningEmptyMessage)}
           </div>
         </section>
 
@@ -431,13 +436,7 @@ export function HomeMonitorContent({
             <span className="home-monitor-count">{nonRunningEntries.length}</span>
           </div>
           <div id={`${id}-content-2`} className={`home-monitor-section-content${closedSections[2] || smallSections[2] ? " is-hidden" : ""}`} inert={closedSections[2] || smallSections[2]} aria-hidden={closedSections[2] || smallSections[2]}>
-            <div className="home-monitor-list">
-              {nonRunningEntries.length > 0
-                ? renderMonitorEntries(nonRunningEntries)
-                : showEmptyState && nonRunningEmptyMessage
-                  ? <p className="home-monitor-empty">{nonRunningEmptyMessage}</p>
-                  : null}
-            </div>
+            {renderMonitorList(nonRunningEntries, nonRunningEmptyMessage)}
           </div>
         </section>
       </div>

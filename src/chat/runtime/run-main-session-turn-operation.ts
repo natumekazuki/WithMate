@@ -48,6 +48,7 @@ export async function runMainSessionTurnOperation(input: {
   const request = { ...input.request, userMessage: messageText, incarnationId: getSessionIncarnationId(input.selectedSession) };
   const lease = input.submitCoordinator.tryAcquire(sessionId);
   if (!lease) return null;
+  let acceptanceStarted = false;
   state.setPendingSubmitSessionId(sessionId);
   try {
     if (composerRegistry.isFrozen || input.blockedReason || input.isReadOnly || !messageText.trim()) {
@@ -107,6 +108,7 @@ export async function runMainSessionTurnOperation(input: {
       state.setForceComposerBlockedFeedback(true);
       throw new Error(preflight.blockedMessage);
     }
+    acceptanceStarted = true;
     const receipt = await input.acceptance.submit(api, sessionId, {
       request, owner: composerOwner, revision: captured.revision, clearDraft: input.clearDraft,
       auxiliaryDraftOwner: input.auxiliaryDraftOwner,
@@ -114,6 +116,10 @@ export async function runMainSessionTurnOperation(input: {
     input.log("renderer.queue.accepted", { sessionId, clientRequestId: receipt.requestId, state: receipt.state });
     return receipt;
   } catch (error) {
+    if (!acceptanceStarted && (composerRegistry.isFrozen || composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false)) {
+      input.acceptance.submissions.forget([request.clientRequestId!]);
+      return null;
+    }
     input.acceptance.submissions.fail(request.clientRequestId!, error instanceof Error ? error.message : String(error), input.acceptance.hasUncertain(sessionId));
     throw error;
   } finally {

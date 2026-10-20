@@ -9,17 +9,17 @@ import { HomeHeader } from "../../src/home/HomeHeader.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Homeは分割外のheader操作を維持し、表示中の右pane名で開閉しながら非表示paneの入力とDOMを保持する"
+// claim = "Homeは分割外headerとpaneのDOMを保持し、表示中の右pane名で開閉する。両側表示中の縮小ではCSS最小幅へ補正し、閉じたpaneは開かない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
 // fault = "paneを閉じるとheader操作も無効になる、右pane名を誤る、境界操作が逆のpaneを閉じる、または復帰で入力を破棄する"
-// observable = "header Settings callbackとinert祖先の不在、境界の対象ID・表示名、両paneのinert/aria-hidden、復帰した入力値とDOM identity"
+// observable = "header callbackとinert祖先、境界の対象ID・表示名、両paneのinert/aria-hidden、復帰した入力値とDOM identity、ResizeObserver後のgrid比率とpane幅"
 // observation_boundary = "component-behavior"
-// scope = "HomeDashboardScreenと共通ConcurrentChatSplitterの結線"
+// scope = "HomeDashboardScreenの外側resize補正と共通ConcurrentChatSplitterの結線"
 // lifecycle = "permanent"
 // impact = "多セッション監視の面積切替で検索中の入力や操作対象を失う"
 // distinction = "Session splitter単体testではHomeのpane対応・非表示制御・入力保持の結線を検出できない"
 // @end-test-value
-test("Homeは共通splitterで左右を全幅にし、分割復帰でpaneを保持する", async () => {
+test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持する", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "https://withmate.local/" });
   const keys = ["window", "document", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const previous = keys.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
@@ -28,6 +28,13 @@ test("Homeは共通splitterで左右を全幅にし、分割復帰でpaneを保�
   });
   const element = dom.window.document.getElementById("root")!;
   const root = createRoot(element);
+  let notifyResize = () => {};
+  class Observer implements ResizeObserver {
+    constructor(callback: ResizeObserverCallback) { notifyResize = () => callback([], this); }
+    observe() {} unobserve() {} disconnect() {}
+  }
+  dom.window.ResizeObserver = Observer;
+  let containerWidth = 1000;
   let settingsCalls = 0;
   const renderScreen = (view: "monitor" | "characters" = "monitor") => root.render(<HomeDashboardScreen
     homePageClassName="home-page"
@@ -70,7 +77,7 @@ test("Homeは共通splitterで左右を全幅にし、分割復帰でpaneを保�
     sessions.style.setProperty("--session-region-min-width", "300px");
     monitor.style.setProperty("--session-region-min-width", "320px");
     Object.defineProperty(splitter.parentElement, "getBoundingClientRect", {
-      value: () => ({ width: 1000 }), configurable: true,
+      value: () => ({ width: containerWidth }), configurable: true,
     });
     Object.defineProperty(splitter, "getBoundingClientRect", {
       value: () => ({ width: 20 }), configurable: true,
@@ -102,6 +109,31 @@ test("Homeは共通splitterで左右を全幅にし、分割復帰でpaneを保�
     await act(async () => splitter.click());
     assert.equal(splitter.getAttribute("aria-label"), "Open Characters");
     assert.equal(settings.closest("[inert]"), null);
+    containerWidth = 900;
+    await act(async () => notifyResize());
+    assert.equal(monitor.getAttribute("aria-hidden"), "true");
+    containerWidth = 1000;
+    await act(async () => splitter.click());
+    const key = async (key: string) => { await act(async () => splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true }))); };
+    const monitorRatio = () => Number([...splitter.parentElement!.style.gridTemplateColumns.matchAll(/([\d.]+)fr/g)][1]![1]);
+    for (let i = 0; i < 8; i++) await key("ArrowRight");
+    containerWidth = 900;
+    await act(async () => notifyResize());
+    assert.ok(Math.abs(monitorRatio() * 880 - 320) < 0.001);
+    await act(async () => splitter.click());
+    containerWidth = 1000;
+    await act(async () => splitter.click());
+    for (let i = 0; i < 8; i++) await key("ArrowLeft");
+    containerWidth = 900;
+    await act(async () => notifyResize());
+    assert.ok(Math.abs((1 - monitorRatio()) * 880 - 300) < 0.001);
+    await key("ArrowLeft");
+    assert.equal(sessions.hasAttribute("inert"), true);
+    containerWidth = 800;
+    await act(async () => notifyResize());
+    assert.equal(sessions.hasAttribute("inert"), true);
+    assert.equal(element.querySelector("input"), input);
+    assert.equal(input.value, "keep this search");
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

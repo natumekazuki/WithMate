@@ -205,6 +205,63 @@ test("Monitorは外側resizeで最小高と小領域一覧のfocusを保つ", as
 
 // @test-value v2
 // kind = "contract"
+// claim = "Monitorの分類開閉とWindow resizeは保存した分類比率を変えず、閉じた分類を除いた高さ調整でも復帰後に各分類の配分を保つ"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "閉じた分類の比率が開閉ごとに減衰する、resizeによる最小高補正を保存比率へ混入する、または閉じた分類の比率をdragで変える"
+// observable = "反復開閉・縮小拡大・閉じた状態でのキー調整後のgrid row配分とcontentのaria-hidden"
+// observation_boundary = "component-behavior"
+// scope = "HomeMonitorContentの比率保持と一時的な高さ配分"
+// lifecycle = "permanent"
+// impact = "監視領域を繰り返し開閉しても一覧が意図せず縮小・非表示にならず、調整した配分へ復帰できる"
+// distinction = "既存の単発clickと固定寸法dragでは、開閉・resizeを跨いだ比率の累積変化を検出できない"
+// @end-test-value
+test("Monitorは反復開閉と縮小拡大で分類比率を失わない", async () => {
+  await withMonitor(async ({ dom, root }) => {
+    let height = 1000;
+    let notifyResize = () => {};
+    class Observer implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) { notifyResize = () => callback([], this); }
+      observe() {} unobserve() {} disconnect() {}
+    }
+    dom.window.ResizeObserver = Observer;
+    dom.window.HTMLElement.prototype.getBoundingClientRect = function (): DOMRect {
+      const h = this.classList.contains("home-monitor-sections") ? height
+        : this.classList.contains("home-monitor-splitter") ? 20 : this.classList.contains("is-closed") ? 28 : 0;
+      return { x: 0, y: 0, top: 0, left: 0, right: 300, bottom: h, width: 300, height: h, toJSON: () => ({}) };
+    };
+    await act(async () => root.render(createElement(HomeMonitorContent, {
+      approvalEntries: [entry("a")], runningEntries: [entry("b")], nonRunningEntries: [entry("c")], onOpenSession() {}, onShowContextMenu() {},
+    })));
+    const doc = dom.window.document;
+    const splitters = [...doc.querySelectorAll<HTMLButtonElement>(".home-monitor-splitter")];
+    const heights = () => [...doc.querySelector<HTMLElement>(".home-monitor-sections")!.style.gridTemplateRows.matchAll(/minmax\(48px, ([\d.]+)fr\)/g)].map((match) => Number(match[1]));
+    const click = async (index: number) => { await act(async () => splitters[index]!.click()); };
+    const key = async (index: number, key: string) => { await act(async () => splitters[index]!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true }))); };
+    await key(0, "ArrowDown");
+    const expected = heights();
+    const assertHeights = (values: number[]) => heights().forEach((value, index) => assert.ok(Math.abs(value - values[index]!) < 0.001));
+    for (let i = 0; i < 12; i++) for (const boundary of [0, 1]) {
+      await click(boundary);
+      await act(async () => notifyResize());
+      await click(boundary);
+      assertHeights(expected);
+      assert.ok([...doc.querySelectorAll(".home-monitor-section-content")].every((content) => content.getAttribute("aria-hidden") === "false"));
+    }
+    height = 210;
+    await act(async () => notifyResize());
+    assert.ok(heights().every((value) => value >= 48));
+    height = 1000;
+    await act(async () => notifyResize());
+    assertHeights(expected);
+    await click(1);
+    await key(0, "ArrowDown");
+    await click(1);
+    assertHeights([expected[0]! + 24 * 640 / 932, expected[1]! - 24 * 640 / 932, expected[2]!]);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Monitorは分類更新後もAuxiliary展開を維持し、親focus操作・stable child IDでの移動・keyboard context menuを区別する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
 // fault = "分類移動で展開を失う、Auxiliary選択を親だけの移動へ変える、またはkeyboard menuで別親IDを渡す"

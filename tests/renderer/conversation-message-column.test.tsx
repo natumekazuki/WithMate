@@ -16,7 +16,7 @@ import type { LiveSessionRunState } from "../../src-shared/session/runtime-state
 import type { ConversationPage } from "../../src-shared/session/conversation-page.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import type { MarkdownImageApi } from "../../src/ui/markdown/image-resource-loader.js";
-import type { SessionImageResourceRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import type { SessionFilePreviewImageActionRequest, SessionImageResourceRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { installIntersectionObserver } from "../support/intersection-observer.js";
 import { SessionTurnSubmissions } from "../../src/chat/runtime/session-turn-submissions.js";
 
@@ -294,18 +294,19 @@ test("paged column applies all-fold intent across unloaded pages", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainとAuxiliaryの予約本文は対象会話の画像APIでlocal画像を読み込み、画像previewと取消操作を保持する"
+// claim = "MainとAuxiliaryの予約・先行本文は対象会話の画像APIでlocal画像を読み込み、同じ文脈で画像copy menuへ到達し、previewと予約取消操作を保持する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling; docs/design/desktop-ui.md: 予約は通常のuser bubbleとして表示" }
-// fault = "予約行へ画像resolverを渡さない、別会話のcontextで読む、または取得した画像をpreview可能な状態にしない"
-// observable = "画像APIのsessionIdとtarget、表示画像のaltとblob内容、load後のpreview button、予約取消button"
+// fault = "予約・先行行へ画像resolverまたは操作文脈を渡さない、別会話のcontextで読む・copyする、または取得した画像をpreview可能な状態にしない"
+// observable = "画像APIとnative menu requestのsessionId・target、表示画像のaltとblob内容、load後のpreview button、予約取消button"
 // observation_boundary = "component-behavior"
-// scope = "useConversationMessageColumnからSessionMessageColumnと予約本文の画像読込までの接合"
+// scope = "useConversationMessageColumnからSessionMessageColumnと予約・先行本文の画像読込・copy menuまでの接合"
 // lifecycle = "permanent"
-// impact = "実行中に送信した画像付き予約本文を待機中に確認できなくなる"
-// distinction = "画像loader単体とqueue購読単体は会話列から予約行へのresolver接続を通らず、型検査では任意propの渡し漏れを検知できない。小さい画像1枚を両ownerで確認する"
+// impact = "実行中に送信した画像付き本文を待機中に確認・copyできなくなる"
+// distinction = "画像loader単体とqueue購読単体は会話列から予約・先行行へのresolverとmenu文脈の接続を通らず、型検査では任意propの渡し漏れを検知できない。小さい画像1枚を両ownerと両表示経路で確認する"
 // @end-test-value
 test("queued images load through their Main or Auxiliary conversation context", async () => {
-  for (const sessionId of ["main", "aux"]) {
+  for (const { sessionId, source } of ["main", "aux"].flatMap((sessionId) =>
+    ["turn-queue", "turn-submission"].map((source) => ({ sessionId, source })))) {
     const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
     const values = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
       Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
@@ -315,6 +316,7 @@ test("queued images load through their Main or Auxiliary conversation context", 
     const intersection = installIntersectionObserver();
     const bytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>');
     const inspected: SessionImageResourceRequest[] = [];
+    const menuRequests: SessionFilePreviewImageActionRequest[] = [];
     const imageApi: MarkdownImageApi = {
       async inspectSessionImage(request) {
         inspected.push(request);
@@ -327,7 +329,13 @@ test("queued images load through their Main or Auxiliary conversation context", 
         return { data: bytes.buffer, offset: 0, nextOffset: bytes.byteLength, totalBytes: bytes.byteLength, done: true, revision: request.expectedRevision };
       },
     };
-    Object.defineProperty(dom.window, "withmate", { configurable: true, value: imageApi });
+    Object.defineProperty(dom.window, "withmate", { configurable: true, value: {
+      ...imageApi,
+      async showSessionFilePreviewImageContextMenu(request: SessionFilePreviewImageActionRequest) {
+        menuRequests.push(request);
+        return { status: "copied-path" };
+      },
+    } });
     const queued: SessionTurnQueueReceipt = {
       sessionId, incarnationId: "inc", id: "queued", requestId: "request", sequence: 1, state: "queued", turnId: null, userMessageSeq: null,
       captured: { request: { userMessage: "![queued image](./queued.svg)\n\nnext request", clientRequestId: "request", executionOptions: {
@@ -335,24 +343,32 @@ test("queued images load through their Main or Auxiliary conversation context", 
       } }, attachments: [], provider: "codex", workspacePath: "C:/workspace" },
       reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
     };
-    const api: ConversationMessageColumnApi = { listSessionTurnQueue: async () => [queued] };
+    const submissions = new SessionTurnSubmissions();
+    if (source === "turn-submission") submissions.start({ sessionId, incarnationId: "inc", requestId: "request",
+      userMessage: queued.captured.request.userMessage, historyMessageCount: 0, queuedBehindRun: true, error: "" });
+    const api: ConversationMessageColumnApi = { listSessionTurnQueue: async () => source === "turn-queue" ? [queued] : [] };
     function View() {
       const props = useConversationMessageColumn({ session: { id: sessionId, incarnationId: "inc", messages: [], runState: "running" },
-        baseProps: createBaseProps(sessionId), messageSourceKind: sessionId === "main" ? "session" : "auxiliary", enabled: true, api, liveRun: null });
+        baseProps: { ...createBaseProps(sessionId), turnSubmissions: submissions }, messageSourceKind: sessionId === "main" ? "session" : "auxiliary", enabled: true, api, liveRun: null });
       return props ? <SessionMessageColumn {...props} /> : null;
     }
     const root = createRoot(dom.window.document.getElementById("root")!);
     try {
       await act(async () => root.render(<View />));
       assert.deepEqual(inspected, [{ sessionId, target: "./queued.svg" }]);
-      const image = dom.window.document.querySelector<HTMLImageElement>('[data-message-source="turn-queue"] img');
+      const image = dom.window.document.querySelector<HTMLImageElement>(`[data-message-source="${source}"] img`);
       assert.ok(image);
       assert.equal(image.alt, "queued image");
       assert.match(image.src, /^blob:/);
       assert.equal(await (await fetch(image.src)).text(), new TextDecoder().decode(bytes));
       await act(async () => image.dispatchEvent(new dom.window.Event("load")));
       assert.equal(dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Open image preview: queued image"]')?.disabled, false);
-      assert.ok(dom.window.document.querySelector('button[aria-label="Cancel queued turn 1"]'));
+      const rightClick = new dom.window.MouseEvent("contextmenu", { clientX: 42, clientY: 62, bubbles: true, cancelable: true });
+      await act(async () => image.dispatchEvent(rightClick));
+      assert.equal(rightClick.defaultPrevented, true);
+      assert.deepEqual(menuRequests, [{ sessionId, point: { x: 42, y: 62 }, image: { target: "./queued.svg" } }]);
+      assert.equal(dom.window.document.querySelector(".message-copy-toast")?.textContent, "Path copied.");
+      if (source === "turn-queue") assert.ok(dom.window.document.querySelector('button[aria-label="Cancel queued turn 1"]'));
     } finally {
       await act(async () => root.unmount());
       intersection.restore();

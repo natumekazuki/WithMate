@@ -565,6 +565,17 @@
   align-items: start;
 }
 
+.home-page .home-monitor-column {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.home-page .home-monitor-column:empty {
+  display: none;
+}
+
 .home-page .home-monitor-card {
   display: grid;
   gap: 0;
