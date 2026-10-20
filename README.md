@@ -160,9 +160,27 @@ Windowsで作業branchのsmoke / 目視確認を行う場合は、対象Worktree
 
 ```powershell
 & .\scripts\start-withmate-visual-check.ps1
+
+# 初回にデータを持ち込まず、初期状態で起動
+& .\scripts\start-withmate-visual-check.ps1 -DataMode Fresh
+
+# インストール版のデータから検証用データを再作成して起動
+& .\scripts\start-withmate-visual-check.ps1 -DataMode Copy
 ```
 
-このスクリプトは`%APPDATA%\WithMate-visual-check`を使用します。安全に識別できる既存のvisual check processがある場合は差し替えますが、インストール版WithMateは停止しません。検証用user dataは、起動のたびに`%APPDATA%\WithMate`からコピーし直します。既存の検証用データは置き換わるため、残す必要があるデータは実行前に退避してください。agentが実行する場合も、プロセスの差し替えと検証用データの再作成を事前に明示します。
+このスクリプトは`%APPDATA%\WithMate-visual-check`を使用します。安全に識別できる既存のvisual check processがある場合は差し替えますが、インストール版WithMateは停止しません。データの扱いは`-DataMode`で選択します。
+
+| モード | データの扱い |
+| --- | --- |
+| `Reuse`（既定） | 検証用ディレクトリを再コピーせず、そのデータで起動します。対象ディレクトリがなければ停止し、`Fresh`または`Copy`を案内します。必要なマイグレーション・初期化は通常のアプリ起動処理が行います |
+| `Fresh` | 検証用ディレクトリが不存在または空の場合だけ、コピー元のデータを持ち込まず初期状態で起動します。隠しファイルを含めて何か残っている場合は、削除・上書きせず停止します |
+| `Copy` | `%APPDATA%\WithMate`をコピー元として、検証用データを再作成します。通常ファイルをコピーし、SQLiteはbackup APIで整合したsnapshotを作成します。コピー元は変更しません |
+
+`Fresh`と`Reuse`にはコピー元の`%APPDATA%\WithMate`は不要です。`Fresh`で既存データがある場合や、`Copy`で検証用データを残したい場合は、必要なデータを事前に退避してください。自動退避や強制削除のオプションはありません。`Reuse`でもマイグレーション等による検証用データの更新は発生します。
+
+全モードで現在のWorktreeをbuildします。`-ValidateOnly`は選択モードの条件確認とbuildまでを行い、検証用プロセスの停止、データの準備、Electron起動は行いません。依存関係が不足する場合は準備します。`Get-Help .\scripts\start-withmate-visual-check.ps1 -Detailed`でも選択方法を確認できます。
+
+agentが実行する場合は、選択モード、プロセスの差し替え、`Copy`では検証用データの置き換えを事前に明示します。
 
 起動・終了時は次のルールを守ってください。
 
