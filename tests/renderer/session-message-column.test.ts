@@ -438,8 +438,42 @@ function createLiveElicitationRequest(): LiveElicitationRequest {
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "会話列は応答元providerで固有解析を選び、Codexの保存済み・live・pending応答を通常file linkで表示する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
+// fault = "MessageRichTextへproviderを渡さずCodex応答のpathが操作できない、または他providerとuserへCodex解析を適用する"
+// observable = "実SessionMessageColumnの通常Markdown linkとfile reference linkのhref・textContent"
+// observation_boundary = "component-behavior"
+// scope = "会話列のprovider別response Markdown接続"
+// lifecycle = "permanent"
+// impact = "生成成果物への導線が欠けるか、別providerの本文を誤解釈する"
+// distinction = "parser単体と型検査では会話列の保存済み・live・pending各callerの適用を観測できない。短いSSR入力だけで接続を維持する"
+// @end-test-value
+test("会話列は応答元providerの構文を保存済み・live・pendingに適用する", () => {
+  const text = 'visualize{"path":"/work/view.html"} [ordinary](/work/plain.md)';
+  for (const provider of ["codex", "claude", "copilot", undefined]) {
+    for (const state of ["saved", "live", "pending"] as const) {
+      const html = renderSessionMessageColumn({
+        provider,
+        messages: state === "saved" ? [{ role: "user", text }, { role: "assistant", text }] : [],
+        isRunning: state !== "saved",
+        liveRunAssistantText: state === "live" ? text : undefined,
+        pendingMessageText: state === "pending" ? text : undefined,
+      });
+      const dom = new JSDOM(html);
+      try {
+        const links = [...dom.window.document.querySelectorAll('a[href="/work/view.html"]')];
+        assert.deepEqual(links.map((link) => link.textContent), provider === "codex" ? ["/work/view.html"] : []);
+        assert.equal(dom.window.document.querySelectorAll('a[href="/work/plain.md"]').length, state === "saved" ? 2 : 1);
+      } finally { dom.window.close(); }
+    }
+  }
+});
+
 function renderSessionMessageColumn(options: {
   messages: Message[];
+  provider?: string;
   pendingResponseMessageKey?: string | null;
   expandedArtifacts?: Record<string, boolean>;
   isRunning?: boolean;
@@ -468,6 +502,7 @@ function renderSessionMessageColumn(options: {
   return renderToStaticMarkup(
     React.createElement(SessionMessageColumn, {
       sessionId: "session-1",
+      provider: options.provider,
       character: createCharacterProfile(),
       messages: options.messages,
       messageKeys: options.messageKeys,

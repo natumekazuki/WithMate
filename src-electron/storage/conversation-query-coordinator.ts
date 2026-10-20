@@ -189,7 +189,7 @@ export class ConversationQueryCoordinator {
       if (job.stopped) return { status: job.stopped };
       if (!rows.length) break;
       const result = await this.project({ cacheScope: `${snapshot.ownerIdentity}:${producer.stamp.contentRevision}`,
-        rows, query: producer.query, offset: job.offset, countBefore: totalCount });
+        provider: snapshot.provider, rows, query: producer.query, offset: job.offset, countBefore: totalCount });
       if (job.stopped) return { status: job.stopped };
       totalCount += result.count;
       items.push(...result.items);

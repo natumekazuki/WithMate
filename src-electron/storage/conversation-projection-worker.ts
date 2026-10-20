@@ -7,6 +7,7 @@ import type { ConversationQueryRow } from "./conversation-query.js";
 
 export type ConversationProjectionInput = {
   cacheScope: string;
+  provider: string;
   rows: ConversationQueryRow[];
   query: { kind: "search"; query: string; mode: "source" | "preview" } | { kind: "navigator"; filter: "all" | "bookmarks" };
   offset: number;
@@ -49,9 +50,10 @@ export function projectConversationBatch(input: ConversationProjectionInput): Co
   for (const row of input.rows) {
     const message = normalizeMessage({ ...JSON.parse(row.body), role: row.role });
     if (!message) throw new Error(`Invalid conversation message: ${row.seq}`);
+    const responseProvider = message.role === "assistant" ? input.provider : undefined;
     if (input.query.kind === "search") {
       const text = input.query.mode === "source" ? message.text
-        : projection(`${input.cacheScope}:${row.seq}:rendered`, () => projectMessageRenderedSearchText(message.text));
+        : projection(`${input.cacheScope}:${input.provider}:${row.seq}:rendered`, () => projectMessageRenderedSearchText(message.text, responseProvider));
       let occurrenceIndex = 0;
       for (const _match of iterateTextMatches(text, input.query.query)) {
         const occurrence = occurrenceIndex++;
@@ -61,7 +63,7 @@ export function projectConversationBatch(input: ConversationProjectionInput): Co
       if (message.role !== "user" && message.role !== "assistant") continue;
       if (input.query.filter === "bookmarks" && message.isBookmarked !== true) continue;
       retain(() => ({ messageIndex: row.seq, role: message.role,
-        preview: projection(`${input.cacheScope}:${row.seq}:plain`, () => projectMessagePlainText(message.text)),
+        preview: projection(`${input.cacheScope}:${input.provider}:${row.seq}:plain`, () => projectMessagePlainText(message.text, responseProvider)),
         accent: message.accent === true, isBookmarked: message.isBookmarked === true }));
     }
   }

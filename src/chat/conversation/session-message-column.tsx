@@ -80,6 +80,7 @@ export type SessionMessageColumnProps = {
   queueBusyKind?: SessionTurnQueueActionKind | null;
   renderQueueTail?: (resolveImageSource: MarkdownImageResolver) => ReactNode;
   sessionId: string;
+  provider?: string;
   character: CharacterProfile;
   messages: Message[];
   messageKeys?: string[];
@@ -437,6 +438,7 @@ export function SessionMessageColumn({
   responsePending = false,
   submissionError = "",
   sessionId,
+  provider,
   character,
   messages,
   messageKeys,
@@ -692,7 +694,7 @@ export function SessionMessageColumn({
     pendingMessageText.trim().length > 0;
   const canUsePendingMessageTextActions = !!(onCopyMessageText || onQuoteMessageText);
   const hasFindQuery = findQuery.trim().length > 0;
-  const projectMessageSearchTexts = useMemo(() => createMessageRenderedSearchTextProjection(), [sessionId]);
+  const projectMessageSearchTexts = useMemo(() => createMessageRenderedSearchTextProjection(provider), [sessionId, provider]);
   const conversationFind = useConversationQueryPages({
     identity: `${conversationQueryOwner}:${conversationQueryRevision}:${messageViewMode}:${findQuery}`,
     enabled: isContentActive && artifactDetailsEnabled && findOpen && hasFindQuery,
@@ -709,9 +711,9 @@ export function SessionMessageColumn({
     () => (hasFindQuery && isRunning && hasPendingMessageText
       ? messageViewMode === "source"
         ? pendingMessageText
-        : projectMessageRenderedSearchText(pendingMessageText)
+        : projectMessageRenderedSearchText(pendingMessageText, provider)
       : ""),
-    [hasFindQuery, hasPendingMessageText, isRunning, messageViewMode, pendingMessageText],
+    [hasFindQuery, hasPendingMessageText, isRunning, messageViewMode, pendingMessageText, provider],
   );
   const pendingMessageGroupEndIndex = useMemo(
     () => {
@@ -751,7 +753,7 @@ export function SessionMessageColumn({
     }
     return matches;
   }, [searchConversation, findQuery, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
-  const tailSearchProjection = useMemo(() => createMessageRenderedSearchTextProjection(), [conversationQueryOwner]);
+  const tailSearchProjection = useMemo(() => createMessageRenderedSearchTextProjection(provider), [conversationQueryOwner, provider]);
   const tailFind = useMemo(() => {
     type TailMatch = { kind: "message"; messageIndex: number; historyIndex: number; occurrenceIndex: number } | { kind: "pending"; occurrenceIndex: number };
     let totalCount = 0;
@@ -1014,7 +1016,7 @@ export function SessionMessageColumn({
             // Form labels and inserted tool-only questions do not belong to the message body.
             const sourceStart = Number(richText.dataset.sourceStart ?? 0);
             const prefix = sourceStart > 0 ? messages[messageIndex].text.slice(0, sourceStart) : "";
-            const prefixText = messageViewMode === "source" || !prefix ? prefix : projectMessageRenderedSearchText(prefix);
+            const prefixText = messageViewMode === "source" || !prefix ? prefix : projectMessageRenderedSearchText(prefix, messages[messageIndex].role === "assistant" ? provider : undefined);
             const precedingMatches = findTextMatches(prefixText, findQuery).length;
             resolvedCurrentMatch ??= resolveRenderedTextMatch(index, matches, current.occurrenceIndex - precedingMatches);
           }
@@ -1045,6 +1047,7 @@ export function SessionMessageColumn({
     messageFindMatches,
     messages,
     messageViewMode,
+    provider,
     selectedFindMatch?.kind,
     selectedFindMatch?.occurrenceIndex,
     selectedFindMatch?.kind === "message" ? selectedFindMatch.messageIndex : -1,
@@ -1142,6 +1145,7 @@ export function SessionMessageColumn({
       /> : null}
       {pendingResponseMessageIndex < 0 ? <InlineQuestionContent
         text={liveRunAssistantText}
+        responseProvider={provider}
         records={visibleLiveElicitationRecords}
         requests={activeQuestions}
         inputAvailable={elicitationInputAvailable}
@@ -1150,7 +1154,7 @@ export function SessionMessageColumn({
         elicitationAction={elicitationAction}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
-        renderText={(text, key, sourceStart) => <MessageRichText key={key} text={text} sourceStart={sourceStart} isStreaming={isRunning}
+        renderText={(text, key, sourceStart) => <MessageRichText key={key} text={text} sourceStart={sourceStart} isStreaming={isRunning} responseProvider={provider}
           resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath}
           markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
           glossaryAnnotationScopeKey={`${sessionId}:pending`} onActivateGlossaryEntry={onActivateGlossaryEntry} />}
@@ -1164,6 +1168,7 @@ export function SessionMessageColumn({
           <MessageRichText
             resolveImageSource={resolveImageSource}
             text={pendingMessageText}
+            responseProvider={provider}
             isStreaming={isRunning}
             forceFullRender={findOpen && hasFindQuery}
             displayMode={messageViewMode}
@@ -1413,6 +1418,7 @@ export function SessionMessageColumn({
                         {shouldRenderFullMessage ? (
                           <InlineQuestionContent
                             text={message.text}
+                            responseProvider={message.role === "assistant" ? provider : undefined}
                             records={absoluteIndex === pendingResponseMessageIndex ? [...message.elicitationRecords ?? [], ...visibleLiveElicitationRecords ?? []] : message.elicitationRecords}
                             requests={absoluteIndex === pendingResponseMessageIndex ? activeQuestions : []}
                             inputAvailable={elicitationInputAvailable}
@@ -1426,6 +1432,7 @@ export function SessionMessageColumn({
                               sourceStart={sourceStart}
                               resolveImageSource={resolveImageSource}
                               text={text}
+                              responseProvider={message.role === "assistant" ? provider : undefined}
                               isStreaming={isRunning && absoluteIndex === pendingResponseMessageIndex}
                               forceFullRender={findOpen && hasFindQuery}
                               displayMode={messageViewMode}
@@ -1519,6 +1526,7 @@ export function SessionMessageColumn({
                                                 <MessageRichText
                                                   resolveImageSource={resolveImageSource}
                                                   text={operation.summary}
+                                                  responseProvider={provider}
                                                   onOpenPath={onOpenPath}
                                                   markdownLinkFileContext={markdownLinkFileContext}
                                                   markdownImageContext={markdownLinkFileContext}

@@ -13,6 +13,7 @@ export type MessageTable = "session_messages_v6" | "auxiliary_session_messages";
 export type ConversationMutationSink = (table: MessageTable, id?: string) => void;
 export type ConversationQuerySnapshot = {
   ownerIdentity: string;
+  provider: string;
   incarnationId: string;
   messageCount: number;
 };
@@ -36,21 +37,21 @@ export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable
 
 export function readConversationQuerySnapshot(db: DatabaseSync, table: MessageTable, id: string): ConversationQuerySnapshot | null {
   if (table === "session_messages_v6") {
-    const row = db.prepare(`SELECT incarnation_id FROM sessions_v6 WHERE id = ?`).get(id) as { incarnation_id: string } | undefined;
+    const row = db.prepare(`SELECT incarnation_id, provider_id FROM sessions_v6 WHERE id = ?`).get(id) as { incarnation_id: string; provider_id: string } | undefined;
     if (!row) return null;
     const incarnationId = row.incarnation_id?.trim() || `legacy:${id}`;
     const count = db.prepare(`SELECT COUNT(*) AS count FROM session_messages_v6 WHERE session_id = ?`).get(id) as { count: number };
-    return { ownerIdentity: JSON.stringify(["main", id, incarnationId]), incarnationId, messageCount: count.count };
+    return { ownerIdentity: JSON.stringify(["main", id, incarnationId]), provider: row.provider_id, incarnationId, messageCount: count.count };
   }
-  const row = db.prepare(`SELECT a.created_at, d.incarnation, a.parent_session_id, p.incarnation_id AS parent_incarnation
+  const row = db.prepare(`SELECT a.created_at, a.provider_id, d.incarnation, a.parent_session_id, p.incarnation_id AS parent_incarnation
     FROM auxiliary_sessions a JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
     JOIN sessions_v6 p ON p.id = a.parent_session_id WHERE a.id = ?`).get(id) as {
-      created_at: string; incarnation: string; parent_session_id: string; parent_incarnation: string;
+      created_at: string; provider_id: string; incarnation: string; parent_session_id: string; parent_incarnation: string;
     } | undefined;
   if (!row) return null;
   const count = db.prepare(`SELECT COUNT(*) AS count FROM auxiliary_session_messages WHERE auxiliary_session_id = ?`).get(id) as { count: number };
   return { ownerIdentity: JSON.stringify(["auxiliary", id, row.incarnation, row.parent_session_id, row.parent_incarnation, row.created_at]),
-    incarnationId: row.created_at, messageCount: count.count };
+    provider: row.provider_id, incarnationId: row.created_at, messageCount: count.count };
 }
 export function toConversationView<
   T extends { messages: Message[]; messageCount?: number },

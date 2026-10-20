@@ -333,8 +333,8 @@ export function useConversationMessageColumn({
     + `:queue:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`
     + `:submissions:${submissions.map((submission) => `${submission.requestId}:${submission.error}`).join(",")}`;
   const previousTargets = useRef<SessionMessageColumnProps["messageCollapseTargets"]>([]);
-  const collapseTargets = useMemo(() => buildMessageCollapseTargets(keyedHistory.messages, keyedHistory.sources, keyedHistory.keys, previousTargets.current),
-    [keyedHistory]);
+  const collapseTargets = useMemo(() => buildMessageCollapseTargets(keyedHistory.messages, keyedHistory.sources, keyedHistory.keys, previousTargets.current, session?.provider),
+    [keyedHistory, session?.provider]);
   const columnCharacter = useMemo(() => session?.characterId ? {
     id: session.characterId,
     name: session.character ?? "",
@@ -475,8 +475,8 @@ export function useConversationMessageColumn({
     const history = buildMessageListProjection(unsaved, [], sessionId, { primaryMessageSourceKind: messageSourceKind });
     const keyed = projectLiveAssistantOnSessionHistory(history, unsaved, sessionId,
       hasPersistedLiveAssistantMessage(unsaved, [], bridge, sessionId) ? bridge : null);
-    return buildMessageCollapseTargets(keyed.messages, keyed.sources, keyed.keys);
-  }, [paged, api?.listConversationNavigator, tailMessages, totalCount, navigator.messageCount, sessionId, messageSourceKind, bridgeKey]);
+    return buildMessageCollapseTargets(keyed.messages, keyed.sources, keyed.keys, [], session?.provider);
+  }, [paged, api?.listConversationNavigator, tailMessages, totalCount, navigator.messageCount, sessionId, messageSourceKind, bridgeKey, session?.provider]);
   const unsavedNavigatorTargets = tailNavigatorTargets.filter((target) =>
     target.source.messageIndex >= Math.max(totalCount, navigator.messageCount ?? totalCount)
     && (navigatorFilter === "all" || target.isBookmarked));
@@ -612,6 +612,7 @@ export function useConversationMessageColumn({
   return {
     ...baseProps,
     sessionId,
+    provider: session.provider,
     artifactDetailsEnabled: enabled,
     character: columnCharacter,
     messages: projection.messages,
