@@ -66,7 +66,8 @@ export class SessionTurnQueueService {
     if (this.lastClaim.get(receipt.sessionId)?.id === receipt.id && isConfirmedTerminal(receipt)) {
       this.blocked.delete(receipt.sessionId);
     }
-    this.notify(receipt);
+    // Receipt reads can wake recovered work, but must not invalidate the read
+    // itself through another queue-change notification.
     this.wake(receipt.sessionId);
   }
 
@@ -130,6 +131,7 @@ export class SessionTurnQueueService {
         const canonical = await this.deps.store.getReceipt(owner, receipt.requestId);
         if (!canonical || canonical.state !== "completed") throw new Error("The queued input commit could not be confirmed.");
         this.reconcileKnownReceipt(canonical);
+        this.notify(owner);
         return canonical;
       } catch (error) {
         return this.withLock(owner.sessionId, async () => {
@@ -141,6 +143,7 @@ export class SessionTurnQueueService {
               throw error;
             }
             this.reconcileKnownReceipt(canonical);
+            this.notify(owner);
             return canonical;
           }
           if (error instanceof QueuedInputPreDispatchError) {
