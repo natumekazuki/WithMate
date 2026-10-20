@@ -1348,6 +1348,14 @@
   box-shadow: none;
 }
 
+.session-page .message-row .message-card.assistant:has(.session-run-failure) {
+  border-color: transparent;
+  border-left: 3px solid #ffd7bc;
+  border-radius: 8px;
+  background: color-mix(in srgb, #ffd7bc 8%, rgba(20, 25, 34, 0.96));
+  box-shadow: none;
+}
+
 .session-page .message-row:not(.auxiliary-message-group-item).assistant .message-avatar {
   border-color: var(--character-main);
 }
@@ -1986,9 +1994,6 @@
   display: grid;
   gap: 4px;
   margin-top: 8px;
-  padding: 10px 12px;
-  border-left: 3px solid #ffd7bc;
-  background: rgba(255, 215, 188, 0.08);
   font-size: 0.85rem;
   line-height: 1.6;
   overflow-wrap: anywhere;
