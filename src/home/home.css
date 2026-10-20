@@ -554,26 +554,21 @@
 }
 
 .home-page .home-monitor-list {
-  display: grid;
   flex: 1 1 auto;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 4px 12px;
-  grid-auto-rows: max-content;
   min-height: 0;
   overflow-y: auto;
-  align-content: start;
-  align-items: start;
 }
 
-.home-page .home-monitor-column {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+.home-page .home-monitor-list-items {
+  --home-monitor-columns: 1;
+  --home-monitor-column-gap: 12px;
+  position: relative;
+  row-gap: 4px;
 }
 
-.home-page .home-monitor-column:empty {
-  display: none;
+.home-page .home-monitor-list-items > .home-monitor-card {
+  position: absolute;
+  width: calc((100% - (var(--home-monitor-columns) - 1) * var(--home-monitor-column-gap)) / var(--home-monitor-columns));
 }
 
 .home-page .home-monitor-card {
@@ -701,8 +696,8 @@
 }
 
 @container monitor-content (min-width: 740px) {
-  .home-page .home-monitor-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .home-page .home-monitor-list-items {
+    --home-monitor-columns: 2;
   }
 }
 

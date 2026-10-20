@@ -61,6 +61,22 @@ function getEntryKey(entry: HomeMonitorEntry): string {
   return `${entry.kind}:${entry.session.id}`;
 }
 
+function layoutMonitorCards(list: HTMLElement) {
+  const cards = [...list.querySelectorAll<HTMLElement>(":scope > .home-monitor-card")];
+  const styles = list.ownerDocument.defaultView!.getComputedStyle(list);
+  const columns = Number(styles.getPropertyValue("--home-monitor-columns")) || 1;
+  const gap = parseFloat(styles.rowGap) || 0;
+  const midpoint = Math.ceil(cards.length / columns);
+  const heights = [0, 0];
+  cards.forEach((card, index) => {
+    const column = index < midpoint ? 0 : 1;
+    card.style.left = column === 0 ? "0px" : "calc((100% + var(--home-monitor-column-gap)) / 2)";
+    card.style.top = `${heights[column]}px`;
+    heights[column]! += card.getBoundingClientRect().height + gap;
+  });
+  list.style.height = `${Math.max(0, ...heights) - (cards.length ? gap : 0)}px`;
+}
+
 function MonitorStatusIcon({
   kind,
   label,
@@ -151,6 +167,7 @@ export function HomeMonitorContent({
     if (!container) return;
     const sections = [...container.querySelectorAll<HTMLElement>(":scope > section")];
     const update = () => {
+      for (const list of container.querySelectorAll<HTMLElement>(".home-monitor-list-items")) layoutMonitorCards(list);
       setAvailableHeight(getAvailableHeight());
       const small = sections.map((section, index) => {
         if (closedSections[index]) return false;
@@ -172,10 +189,10 @@ export function HomeMonitorContent({
     observer.observe(container);
     for (const section of sections) {
       observer.observe(section);
-      for (const item of section.querySelectorAll(".home-monitor-section-head, .home-monitor-parent-row")) observer.observe(item);
+      for (const item of section.querySelectorAll(".home-monitor-section-head, .home-monitor-parent-row, .home-monitor-card, .home-monitor-list-items")) observer.observe(item);
     }
     return () => observer.disconnect();
-  }, [closedSections, approvalEntries, runningEntries, nonRunningEntries]);
+  }, [closedSections, approvalEntries, runningEntries, nonRunningEntries, expandedEntryKeys]);
 
   const resizePair = (index: number, start: number[], delta: number) => {
     if (closedSections[index] || closedSections[index + 1]) return;
@@ -363,11 +380,10 @@ export function HomeMonitorContent({
   const hasReadError = sessionWindowsDataState === "error" || auxiliaryDataState === "error";
   const showEmptyState = sessionWindowsDataState !== "loading" && sessionWindowsDataState !== "error";
   const renderMonitorList = (entries: HomeMonitorEntry[], emptyMessage = "") => {
-    const midpoint = Math.ceil(entries.length / 2);
     return <div className="home-monitor-list">
-      {entries.length > 0 ? [entries.slice(0, midpoint), entries.slice(midpoint)].map((column, index) => (
-        <div key={index} className="home-monitor-column">{renderMonitorEntries(column)}</div>
-      )) : showEmptyState && emptyMessage ? <p className="home-monitor-empty">{emptyMessage}</p> : null}
+      {entries.length > 0 ? (
+        <div className="home-monitor-list-items">{renderMonitorEntries(entries)}</div>
+      ) : showEmptyState && emptyMessage ? <p className="home-monitor-empty">{emptyMessage}</p> : null}
     </div>;
   };
   const fittedWeights = fitSectionWeights(sectionWeights, closedSections, availableHeight);

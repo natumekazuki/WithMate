@@ -262,6 +262,60 @@ test("Monitorは反復開閉と縮小拡大で分類比率を失わない", asyn
 
 // @test-value v2
 // kind = "contract"
+// claim = "同じ分類に残るSessionは、他Sessionの追加・除去・再分類で列境界を跨いでもDOM・操作focus・Auxiliary scrollと展開を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "件数による列再配置で操作中の行を再mountし、disclosureやAuxiliaryのfocusと一覧scrollを失う"
+// observable = "他Session更新前後の親行・Auxiliary一覧のDOM identity、activeElement、scrollTop、aria-expanded、親と子のopen引数"
+// observation_boundary = "component-behavior"
+// scope = "HomeMonitorContentの同分類更新と列再配置時の操作状態"
+// lifecycle = "permanent"
+// impact = "他Sessionの実行状態が変わっても操作中の会話と閲覧位置を見失わず、対象Auxiliaryを開ける"
+// distinction = "分類移動時の展開保持testは同分類の列境界変化を通らない。DOM所有関係とfocus・scrollは型検査や静的CSSだけでは検知できない"
+// @end-test-value
+test("Monitorは他Sessionの更新で操作中の行を再mountしない", async () => {
+  await withMonitor(async ({ dom, root }) => {
+    const a = entry("A"), b = entry("B"), d = entry("D"), e = entry("E");
+    const c: HomeMonitorEntry = { ...entry("C"), auxiliarySessions: Array.from({ length: 12 }, (_, index) => ({
+      id: `aux-C-${index}`, parentSessionId: "C", status: "active", runState: "idle", preview: `Child ${index}`,
+      title: "", provider: "codex", catalogRevision: 1, model: "gpt-6.1-sol", reasoningEffort: "medium",
+      approvalMode: "never", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user",
+      customAgentName: "", allowedAdditionalDirectories: [], threadId: "", displayAfterMessageIndex: null,
+      createdAt: "2026-10-12T00:00:00.000Z", updatedAt: "2026-10-12T00:00:00.000Z", closedAt: "",
+    })) };
+    const opened: unknown[][] = [];
+    const render = (running: HomeMonitorEntry[], stopped: HomeMonitorEntry[], key: string) => root.render(createElement(HomeMonitorContent, {
+      key, approvalEntries: [], runningEntries: running, nonRunningEntries: stopped,
+      onOpenSession: (...args) => opened.push(args), onShowContextMenu() {},
+    }));
+    for (const focusTarget of ["disclosure", "auxiliary"]) {
+      await act(async () => render([a, b, c, d], [], focusTarget));
+      const doc = dom.window.document;
+      const parent = doc.querySelector<HTMLButtonElement>('[aria-label="Open session: C"]')!;
+      const card = parent.closest<HTMLElement>(".home-monitor-card")!;
+      const disclosure = card.querySelector<HTMLButtonElement>(".home-monitor-disclosure")!;
+      await act(async () => disclosure.click());
+      const list = card.querySelector<HTMLElement>(".home-monitor-auxiliary-list")!;
+      const child = list.querySelectorAll<HTMLButtonElement>("button")[11]!;
+      const focused = focusTarget === "disclosure" ? disclosure : child;
+      list.scrollTop = 80;
+      focused.focus();
+      for (const [running, stopped] of [ [[b, c, d], [a]], [[e, b, c, d], [a]], [[c, d], [a]], [[a, b, c, d], []] ]) {
+        await act(async () => render(running!, stopped!, focusTarget));
+        assert.ok(doc.querySelector('[aria-label="Open session: C"]')?.closest(".home-monitor-card") === card, "same session card DOM");
+        assert.ok(card.querySelector(".home-monitor-auxiliary-list") === list, "same auxiliary list DOM");
+        assert.ok(doc.activeElement === focused, "active control retains focus");
+        assert.equal(list.scrollTop, 80);
+        assert.equal(disclosure.getAttribute("aria-expanded"), "true");
+      }
+      await act(async () => parent.click());
+      await act(async () => child.click());
+    }
+    assert.deepEqual(opened, [["C"], ["C", "aux-C-11"], ["C"], ["C", "aux-C-11"]]);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Monitorは分類更新後もAuxiliary展開を維持し、親focus操作・stable child IDでの移動・keyboard context menuを区別する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
 // fault = "分類移動で展開を失う、Auxiliary選択を親だけの移動へ変える、またはkeyboard menuで別親IDを渡す"

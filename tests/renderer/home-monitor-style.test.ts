@@ -82,8 +82,8 @@ test("Monitorは3分類の境界と分類内scrollと内容幅に応じた列数
   assert.match(sectionsRule, /container:\s*monitor-content \/ inline-size;/);
   const columns = readCssAtRuleBlocks(stylesSource, "@container monitor-content (min-width: 740px)")[0];
   assert.ok(columns);
-  assert.match(columns, /grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
-  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-column"), /display:\s*flex;\s*flex-direction:\s*column;/);
+  assert.match(columns, /--home-monitor-columns:\s*2;/);
+  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-list-items"), /--home-monitor-columns:\s*1;/);
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-body > .home-session-list-load-status"), /position:\s*absolute;/);
 });
 
