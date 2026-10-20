@@ -133,6 +133,7 @@ type ExistingMessageArtifactRow = {
   role: Message["role"];
   body: string;
   artifact_body: string | null;
+  runFailure?: string | null;
 };
 
 type SessionIdRow = {
@@ -1382,7 +1383,7 @@ export class SessionStorageV6 {
 
     const existingArtifactBodies = new Map(
       (this.db.prepare(`
-        SELECT seq, role, body, artifact_body
+        SELECT ${conversationMessageColumns("session_messages_v6", this.db)}, artifact_body
         FROM session_messages_v6
         WHERE session_id = ?
       `).all(session.id) as ExistingMessageArtifactRow[])
