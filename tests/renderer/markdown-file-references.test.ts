@@ -90,14 +90,14 @@ test("literal and escaped local paths preserve their exact file targets", () => 
 
 // @test-value v2
 // kind = "invariant"
-// claim = "コード例と通常link内ではfile参照記法を新しいlinkとして解釈しない"
+// claim = "コード例と成立したMarkdown link／image内ではfile参照記法を新しいlinkとして解釈しない"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "literalコードが操作可能になる、または既存link内に入れ子linkが生成される"
-// observable = "public Markdown parser出力のcode/inlineCode値とlink targets"
+// fault = "literalコードが操作可能になる、既存link内に入れ子linkが生成される、またはimageのaltを変形する"
+// observable = "public Markdown parser出力のcode/inlineCode値とlink／image・参照形式のAST"
 // observation_boundary = "consumer"
 // scope = "file-reference Markdown contexts"
 // lifecycle = "permanent"
-// impact = "コード例を成果物と誤認し、元のMarkdown linkの操作先が変わる"
+// impact = "コード例を成果物と誤認し、元のMarkdown linkの操作先や画像代替textが変わる"
 // distinction = "buildと型はMarkdown文脈による解析分岐を検査しない。標準parserのconsumer境界で短い文脈例を検証する"
 // @end-test-value
 test("code and existing Markdown link contexts retain literal references", () => {
@@ -113,8 +113,48 @@ test("code and existing Markdown link contexts retain literal references", () =>
         assert.equal(first.children[0].value, source);
       }
     }
-    const tree = parse(`[${source}](https://example.com)`);
-    assert.deepEqual(links(tree).map((link) => link.url), ["https://example.com"]);
+    for (const wrapped of [
+      `[${source}](https://example.com)`,
+      `[${source}][result]\n\n[result]: https://example.com`,
+      `[${source}]\n\n[${source}]: https://example.com`,
+    ]) {
+      assert.deepEqual(parse(wrapped), fromMarkdown(wrapped));
+    }
+    for (const wrapped of [
+      `![${source}](image.png)`,
+      `![${source}][image]\n\n[image]: image.png`,
+    ]) {
+      assert.deepEqual(parse(wrapped), fromMarkdown(wrapped));
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常textの角括弧や未閉じlabel内でも完成したCodex file参照を正確なpathへのlinkとして解釈する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
+// fault = "成立しないMarkdown labelまで既存linkと判定し、完成した成果物参照を操作不能なraw記法として残す"
+// observable = "public Markdown parserとremark consumerのlink target・label・source offset"
+// observation_boundary = "consumer"
+// scope = "Codex file referenceの通常角括弧文脈"
+// lifecycle = "permanent"
+// impact = "通常の補足表現に含まれる生成成果物を開けず、表示と検索に内部属性が露出する"
+// distinction = "型検査や既存link除外testでは、未成立labelと完成した参照の組合せを判定できない。短い固定文字列で両parser consumerを検証する"
+// @end-test-value
+test("ordinary brackets and unresolved labels allow completed file references", () => {
+  for (const { path, source } of [
+    { path: "/work/a.html", source: visualize("/work/a.html") },
+    { path: "/work/a.xlsx", source: ':codex-file-citation{path="/work/a.xlsx"}' },
+  ]) {
+    for (const wrapped of [`[${source}]`, `参考 [${source}]`, `未閉じ [ ${source}`, `[[${source}]]`, `![${source}]`, `[${source}][undefined]`]) {
+      const tree = parse(wrapped);
+      const references = links(tree);
+      assert.equal(references.length, 1, wrapped);
+      assert.equal(references[0].url, path);
+      assert.deepEqual(references[0].children, [{ type: "text", value: path }]);
+      assert.equal(wrapped.slice(references[0].position?.start.offset, references[0].position?.end.offset), source);
+      assert.deepEqual(unified().use(remarkParse).use(remarkProviderResponse, "codex").parse(wrapped), tree);
+    }
   }
 });
 

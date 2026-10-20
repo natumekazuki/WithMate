@@ -86,9 +86,6 @@ const tokenizeReference: Tokenizer = function (effects, ok, nok) {
   return start;
 
   function start(code: Code): ReturnType<State> {
-    if (context.events.some(([, event]) => (
-      (event.type === "labelLink" || event.type === "labelImage") && !event._balanced
-    ))) return nok(code);
     prefix = code === 58 ? citationPrefix : visualizePrefix;
     token = effects.enter("fileReference");
     return opening(code);
@@ -126,6 +123,13 @@ export function codexFileReferencesFromMarkdown(): FromMarkdownExtension {
   return {
     enter: {
       fileReference(token) {
+        if (this.stack.some((node) => (
+          node.type === "link" || node.type === "linkReference"
+          || node.type === "image" || node.type === "imageReference"
+        ))) {
+          this.enter({ type: "text", value: this.sliceSerialize(token) }, token);
+          return;
+        }
         const path = referencePath(this.sliceSerialize(token));
         if (path !== null) {
           const url = /^file:/iu.test(path) ? path : encodeURI(path).replace(/#/gu, "%23").replace(/\?/gu, "%3F");

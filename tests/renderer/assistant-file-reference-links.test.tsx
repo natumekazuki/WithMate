@@ -66,14 +66,14 @@ test("assistant file references use the existing explicit link action", async ()
 // distinction = "型検査はprovider値による動的な解析選択を検証できない。短い入力で表示・検索・Sourceの公開consumerを比較するため継続負担が小さい"
 // @end-test-value
 test("assistant reference search matches preview while source and ordinary Markdown retain the notation", () => {
-  const text = 'Start visualize{"path":"/work/chart.html","title":"Hidden Title"} end';
+  const text = 'Start [visualize{"path":"/work/chart.html","title":"Hidden Title"}] end';
   const preview = new JSDOM(renderToStaticMarkup(<MessageRichText text={text} responseProvider="codex" />));
   const source = new JSDOM(renderToStaticMarkup(<MessageRichText text={text} responseProvider="codex" displayMode="source" />));
   const ordinary = new JSDOM(renderToStaticMarkup(<MessageRichText text={text} />));
   try {
     const projected = projectMessageRenderedSearchText(text, "codex");
     const index = createRenderedTextSearchIndex(preview.window.document.querySelector<HTMLElement>(".rich-text")!, isMessageRenderedSearchTextNode);
-    assert.equal(projected, "Start /work/chart.html end");
+    assert.equal(projected, "Start [/work/chart.html] end");
     assert.equal(index.normalizedText, projected.toLocaleLowerCase());
     assert.equal(source.window.document.querySelector("pre")?.textContent, text);
     assert.equal(source.window.document.querySelector("a"), null);
