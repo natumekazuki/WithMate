@@ -1565,13 +1565,15 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorの親行はavatar/titleと独立したMain/Aux状態を表示し、Auxiliaryが存在する親だけ状態集約と1件からの件数を追加する"
+  // claim = "Home Monitorの親行はMain状態をavatar/titleと同じまとまりに表示し、Auxiliaryの状態別件数を配下一覧の展開操作へまとめる"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
-  // fault = "workspaceを常設する、Main/Auxiliaryの状態表示を混同する、Auxiliaryなしの親へ集約を出す、状態別件数を1件だけ省略する、またはavatar/titleが欠落する"
-  // observable = "親行のMain/Auxiliary status cluster、状態iconと件数aria-label、avatar、title、未展開時のAuxiliary detail rowの不在"
+  // fault = "Main状態を親名と分離する、Auxiliaryの集約と展開操作を分離する、Main/Aux状態を混同する、状態別件数を1件だけ省略する、またはavatar/titleが欠落する"
+  // observable = "Main session group内の状態と親を開くbutton、Auxiliary展開button内の状態別件数とicon、aria-expanded、avatarとtitle"
   // observation_boundary = "component-behavior"
   // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
+  // impact = "列名を読まずに親の状態と配下の状態・展開先を区別し、誤った対象を開くことを防ぐ"
+  // distinction = "projectionや型検査では確認できない最終DOMの意味的なまとまりと操作対象を既存の表示testで検証し、新しいtest環境は増やさない"
   // @end-test-value
   it("Monitor カードはキャラアイコン付きでセッション情報を表示する", () => {
     const entries: HomeMonitorEntry[] = [
@@ -1617,6 +1619,10 @@ describe("HomeMonitorContent", () => {
     assert.equal(cards.length, 2);
     for (const [index, card] of cards.entries()) {
       const parentRow = card.querySelector(".home-monitor-parent-row");
+      const mainGroup = parentRow?.querySelector(`[role="group"][aria-label="Main session: ${entries[index]?.session.taskTitle}"]`);
+      assert.ok(mainGroup);
+      assert.ok(mainGroup.querySelector(`button[aria-label="Open session: ${entries[index]?.session.taskTitle}"]`));
+      assert.ok(mainGroup.querySelector(`.home-monitor-status-icon.${expectedMainStates[index]}`));
       assert.equal(card.querySelectorAll(".home-monitor-parent-row").length, 1);
       assert.equal(card.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
       assert.equal(card.querySelectorAll(".home-monitor-parent-title").length, 1);
@@ -1631,6 +1637,12 @@ describe("HomeMonitorContent", () => {
     }
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-cluster").length, 2);
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-auxiliary-status").length, 1);
+    const auxiliaryDisclosure = cards[0]?.querySelector('button[aria-label="Show Auxiliary sessions for Agent task"]');
+    assert.ok(auxiliaryDisclosure);
+    assert.equal(auxiliaryDisclosure.getAttribute("aria-expanded"), "false");
+    assert.ok(auxiliaryDisclosure.querySelector('svg[aria-hidden="true"]'));
+    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Error: 1"]'));
+    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Closed: 1"]'));
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length, 1);
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.error").length, 1);
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.closed").length, 1);

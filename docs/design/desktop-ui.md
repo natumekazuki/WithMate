@@ -108,7 +108,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Home共通headerのsegmented toggleで `Characters` と排他的に切り替える
   - 初期表示は `Monitor`
   - 共通`HomeMonitorContent`の先頭に有効providerの詳細icon・名前・期間別残率をcompactな横並びで表示し、幅に応じて折り返す。直下のclick専用splitterで残量一覧だけを開閉し、閉じてもcomponentとcache購読を維持する。監視一覧のscrollとは独立し、独立Monitorにも同じ構成を適用する。詳細は既存のprovider別popupで開き、表示中のloading・取得失敗・前回値を区別する。[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
-  - 親Sessionはdisclosure、avatar、親title、`Main`状態、`Aux`状態集約を1行にまとめる。各分類の列見出しでMain／Auxを区別し、Auxiliaryがない場合は`—`を表示する。Auxの複数状態は必要に応じて折り返し、承認・error・実行有無を落とさない
+  - 親Sessionは1行にまとめ、左側で`Main`状態をavatarと親titleへ近接させる。右端はSession Windowと共通のAuxiliary icon・状態別件数・展開矢印を一つのbuttonへまとめ、配下の一覧との関係を示す。列見出しは置かず、Auxiliaryがない親には右端のbuttonを表示しない。Auxの複数状態は必要に応じて折り返し、承認・error・実行有無を落とさない。状態と操作のaccessible name・tooltipは維持する
   - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`RecentSessions` と同じ filtered session list の交差集合を使う
   - section
     - `Attention`: Main／Auxiliaryのいずれかに有効な承認待ち、質問・MCP form／URLの入力待ちがある親Session。Codexのblocking／nonblocking／async質問を含む。会話単位では取消状態を承認・入力待ちより優先するが、別の会話が承認・入力待ちなら親はこの枠へ入る
@@ -117,7 +117,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 3枠は常に`Attention`、`Running`、`Stopped`の順に表示し、親Sessionを重複表示しない。最後の承認・入力待ちが回答・拒否・Close・要求失効・turn終了で解消すると現在の実行状態で再分類する。承認・入力待ちは表示用のlive状態であり、内部の`runState`を変更しない
   - 3分類は初期1:1:1の縦分割とし、各分類の一覧を独立してscrollする。隣接分類間の共通splitterをdragまたは上下キーで調整し、Home／Endは境界の限界へ動かす。開いている分類は48pxの最小領域へ補正する。Monitor本文幅が740px以上なら各分類の親行を2列、それ未満は1列にする。Window全体ではなくHomeの分割後の幅で判定する
   - 分類splitterのclickは隣接2分類の親Session件数が少ない側の一覧を閉じる。同数ではStopped、Running、Attentionの順で閉じる。Auxiliary数は比較へ足さない。片側が閉じている場合はその側を開き、両側が閉じている場合は優先度の高い側（Attention、Running、Stoppedの順）を開く。件数変化だけで自動開閉しない。矢印とaccessible nameは操作対象を示す
-  - 閉じた分類は見出しと件数を残し、一覧のDOM・展開・scrollを保持したまま非表示・操作不可にする。領域が狭く親行と列見出しを表示できない場合も一覧だけを非表示にし、広げると戻す。隠れる一覧内にfocusがある場合は隣接splitterへ移す。開閉は表示領域だけでありSessionを終了・停止しない
+  - 閉じた分類は見出しと件数を残し、一覧のDOM・展開・scrollを保持したまま非表示・操作不可にする。領域が狭く親行を表示できない場合も一覧だけを非表示にし、広げると戻す。隠れる一覧内にfocusがある場合は隣接splitterへ移す。開閉は表示領域だけでありSessionを終了・停止しない
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
@@ -249,10 +249,10 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 表示内容は Home 右ペインの `Monitor` と同じ truth source を使う
   - open な `Session Window` のみ表示する
   - `Attention` / `Running` / `Stopped` の3枠を、0件でも常に表示する
-  - 親Sessionをavatar・title・Main状態・Aux状態集約のcompactな行で表示する。3分類はHomeと共通の高さ調整・件数/優先順位によるclick開閉・個別scrollを使い、本文幅740px以上では各分類を2列にする。Main／Auxの列見出しを維持し、文字の縮小だけで件数を詰め込まない
+  - 親SessionはHomeと共通のcompactな行で表示し、Main状態を親名の側、Aux状態集約と展開操作を右端へ分ける。3分類はHomeと共通の高さ調整・件数/優先順位によるclick開閉・個別scrollを使い、本文幅740px以上では各分類を2列にする。文字の縮小だけで件数を詰め込まない
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
   - `running`はaccent色のspinner、承認・入力待ちは静止した黄色系の丸囲み`!`、待機と終了はsubduedな中空円、errorはwarning triangleで表す。状態はアイコンのみとし、cardの点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
-  - Auxiliaryが存在する親だけdisclosureと状態集約を表示し、存在しない親はAux列を`—`にする。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
+  - Auxiliaryが存在する親だけ、右端に状態集約を含むdisclosureを表示する。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
   - Auxiliaryの状態集約では`Attention`、`Running`、取消状態、`Error`、`Idle`、`Closed`を別々に数え、closed Auxiliaryをidleへ変換しない。idleとclosedは同じ円形だが、状態ラベルと集約を分ける。interruptedとerrorも別の形状で表示する
   - section countは親card group数とし、Auxiliaryをtop-level rowとして重複表示しない。Main／Auxiliaryの有効な承認・入力待ちを優先して親card groupを`Attention`へ分類し、それ以外は実行・取消待ちがあれば`Running`、残りは`Stopped`へ分類する。個々のMain／Auxiliaryの状態は分離して保持する
   - 親titleは既存の親Windowを開き、Auxiliary rowは同じ親Windowを指定したstable Auxiliary IDで開いて選択する。対象が消えた、親が一致しない、Windowを開けない場合はfallbackせずMonitor内へ失敗を返す

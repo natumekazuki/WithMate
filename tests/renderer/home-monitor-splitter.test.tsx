@@ -172,8 +172,7 @@ test("Monitorは外側resizeで最小高と小領域一覧のfocusを保つ", as
       const height = this.classList.contains("home-monitor-sections") ? containerHeight
         : this.classList.contains("home-monitor-splitter") ? 20
         : this.classList.contains("home-monitor-section-content") ? contentHeight
-        : this.classList.contains("home-monitor-parent-row") ? 36
-        : this.classList.contains("home-monitor-column-headers") ? 14 : 0;
+        : this.classList.contains("home-monitor-parent-row") ? 36 : 0;
       return { x: 0, y: 0, top: 0, left: 0, right: 300, bottom: height, width: 300, height, toJSON: () => ({}) };
     };
     await act(async () => root.render(createElement(HomeMonitorContent, {
@@ -187,7 +186,7 @@ test("Monitorは外側resizeで最小高と小領域一覧のfocusを保つ", as
     const list = content.querySelector<HTMLElement>(".home-monitor-list")!;
     list.scrollTop = 42;
     list.querySelector<HTMLButtonElement>(".home-monitor-parent-button")!.focus();
-    contentHeight = 49;
+    contentHeight = 35;
     await act(async () => notifyResize());
     const heights = [...doc.querySelector<HTMLElement>(".home-monitor-sections")!.style.gridTemplateRows.matchAll(/minmax\(48px, ([\d.]+)fr\)/g)].map((match) => Number(match[1]));
     assert.ok(heights.every((height) => height >= 48));

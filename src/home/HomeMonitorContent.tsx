@@ -14,6 +14,7 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
 import { ChatDockSplitter } from "../chat/chat-window.js";
+import { ComposerIcon } from "../chat/composer/composer-icon.js";
 
 export type HomeMonitorContentProps = {
   approvalEntries: HomeMonitorEntry[];
@@ -60,14 +61,6 @@ function getEntryKey(entry: HomeMonitorEntry): string {
   return `${entry.kind}:${entry.session.id}`;
 }
 
-function renderColumnHeaders(hasEntries: boolean) {
-  if (!hasEntries) return null;
-  return <div className="home-monitor-column-headers" aria-hidden="true">
-    {[0, 1].map((column) => <div className="home-monitor-column-header" key={column}>
-      <span>Session</span><span>Main</span><span>Aux</span>
-    </div>)}
-  </div>;
-}
 function MonitorStatusIcon({
   kind,
   label,
@@ -165,9 +158,7 @@ export function HomeMonitorContent({
         if (closedSections[index]) return false;
         const content = section.querySelector<HTMLElement>(".home-monitor-section-content");
         const card = content?.querySelector<HTMLElement>(".home-monitor-parent-row");
-        const headers = content?.querySelector<HTMLElement>(".home-monitor-column-headers");
-        const gap = content ? Number.parseFloat(container.ownerDocument.defaultView?.getComputedStyle(content).rowGap ?? "0") || 0 : 0;
-        return Boolean(content && card && content.getBoundingClientRect().height < card.getBoundingClientRect().height + (headers?.getBoundingClientRect().height ?? 0) + (headers ? gap : 0));
+        return Boolean(content && card && content.getBoundingClientRect().height < card.getBoundingClientRect().height);
       });
       sections.forEach((section, index) => {
         if ((closedSections[index] || small[index]) && section.querySelector(".home-monitor-section-content")?.contains(container.ownerDocument.activeElement)) {
@@ -183,7 +174,7 @@ export function HomeMonitorContent({
     observer.observe(container);
     for (const section of sections) {
       observer.observe(section);
-      for (const item of section.querySelectorAll(".home-monitor-section-head, .home-monitor-parent-row, .home-monitor-column-headers")) observer.observe(item);
+      for (const item of section.querySelectorAll(".home-monitor-section-head, .home-monitor-parent-row")) observer.observe(item);
     }
     return () => observer.disconnect();
   }, [closedSections, approvalEntries, runningEntries, nonRunningEntries]);
@@ -286,41 +277,41 @@ export function HomeMonitorContent({
         onContextMenu={(event) => showEntryContextMenu(event, entry)}
       >
         <div className="home-monitor-parent-row">
+          <div className="home-monitor-parent-identity" role="group" aria-label={`Main session: ${title}`}>
+            <span className="home-monitor-status-cluster" aria-label={`Main status: ${entry.mainState.label}`}>
+              <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
+            </span>
+            <button
+              className="home-monitor-parent-button"
+              type="button"
+              onClick={openParent}
+              onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
+              aria-haspopup="menu"
+              aria-label={`Open session: ${title}`}
+              title={title}
+            >
+              <CharacterAvatar
+                character={{ name: entry.session.character, iconPath: entry.session.characterIconPath }}
+                size="tiny"
+                className="home-monitor-avatar"
+              />
+              <strong className="home-monitor-parent-title">{title}</strong>
+            </button>
+          </div>
           {canExpand ? (
             <button
               className="home-monitor-disclosure"
               type="button"
               aria-label={`${isExpanded ? "Hide" : "Show"} Auxiliary sessions for ${title}`}
+              title={`${isExpanded ? "Hide" : "Show"} Auxiliary sessions for ${title}`}
               aria-expanded={isExpanded}
               onClick={() => toggleEntry(entry)}
             >
+              <ComposerIcon name="auxiliary" />
+              {renderAuxiliaryStatusIcons(entry)}
               <span aria-hidden="true">{isExpanded ? "▾" : "▸"}</span>
             </button>
-          ) : (
-            <span className="home-monitor-disclosure-placeholder" aria-hidden="true" />
-          )}
-          <button
-            className="home-monitor-parent-button"
-            type="button"
-            onClick={openParent}
-            onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
-            aria-haspopup="menu"
-            aria-label={`Open session: ${title}`}
-            title={title}
-          >
-            <CharacterAvatar
-              character={{ name: entry.session.character, iconPath: entry.session.characterIconPath }}
-              size="tiny"
-              className="home-monitor-avatar"
-            />
-            <strong className="home-monitor-parent-title">{title}</strong>
-          </button>
-          <span className="home-monitor-status-cluster" aria-label={`Main status: ${entry.mainState.label}`}>
-            <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
-          </span>
-          {auxiliarySessions.length > 0 ? (
-            renderAuxiliaryStatusIcons(entry)
-          ) : <span className="home-monitor-auxiliary-empty" aria-hidden="true">—</span>}
+          ) : null}
         </div>
         {isExpanded ? (
           <div className="home-monitor-auxiliary-list" aria-label={`Auxiliary sessions for ${title}`}>
@@ -408,7 +399,6 @@ export function HomeMonitorContent({
             <span className="home-monitor-count">{approvalEntries.length}</span>
           </div>
           <div id={`${id}-content-0`} className={`home-monitor-section-content${closedSections[0] || smallSections[0] ? " is-hidden" : ""}`} inert={closedSections[0] || smallSections[0]} aria-hidden={closedSections[0] || smallSections[0]}>
-            {renderColumnHeaders(approvalEntries.length > 0)}
             <div className="home-monitor-list">
               {renderMonitorEntries(approvalEntries)}
             </div>
@@ -423,7 +413,6 @@ export function HomeMonitorContent({
             <span className="home-monitor-count">{runningEntries.length}</span>
           </div>
           <div id={`${id}-content-1`} className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`} inert={closedSections[1] || smallSections[1]} aria-hidden={closedSections[1] || smallSections[1]}>
-            {renderColumnHeaders(runningEntries.length > 0)}
             <div className="home-monitor-list">
               {runningEntries.length > 0
                 ? renderMonitorEntries(runningEntries)
@@ -442,7 +431,6 @@ export function HomeMonitorContent({
             <span className="home-monitor-count">{nonRunningEntries.length}</span>
           </div>
           <div id={`${id}-content-2`} className={`home-monitor-section-content${closedSections[2] || smallSections[2] ? " is-hidden" : ""}`} inert={closedSections[2] || smallSections[2]} aria-hidden={closedSections[2] || smallSections[2]}>
-            {renderColumnHeaders(nonRunningEntries.length > 0)}
             <div className="home-monitor-list">
               {nonRunningEntries.length > 0
                 ? renderMonitorEntries(nonRunningEntries)

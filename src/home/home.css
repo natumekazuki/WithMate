@@ -584,28 +584,44 @@
 }
 
 .home-page .home-monitor-parent-row {
-  --monitor-state-columns: 34px 86px;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) var(--monitor-state-columns);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   min-width: 0;
 }
 
-.home-page .home-monitor-disclosure,
-.home-page .home-monitor-disclosure-placeholder {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 36px;
+.home-page .home-monitor-parent-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 8px;
 }
 
 .home-page .home-monitor-disclosure {
-  padding: 0;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 8px;
+  align-items: center;
+  gap: 6px;
+  width: 120px;
+  min-height: 36px;
+  padding: 4px 6px;
   border: 0;
-  background: transparent;
+  border-left: 1px solid rgba(203, 213, 225, 0.1);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.025);
   color: var(--muted);
   box-shadow: none;
   font-size: 0.9rem;
+}
+
+.home-page .home-monitor-disclosure .composer-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.home-page .home-monitor-disclosure .home-monitor-status-cluster {
+  padding: 0;
 }
 
 .home-page .home-monitor-disclosure:hover {
@@ -614,6 +630,7 @@
 
 .home-page .home-monitor-parent-button {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 7px;
@@ -659,26 +676,6 @@
   font-size: 0.82rem;
 }
 
-.home-page .home-monitor-column-headers {
-  display: grid;
-  flex: 0 0 auto;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-}
-
-.home-page .home-monitor-column-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px 86px;
-  padding-left: 25px;
-  padding-right: 1px;
-  color: var(--muted);
-  font-size: 0.68rem;
-}
-
-.home-page .home-monitor-column-header + .home-monitor-column-header {
-  display: none;
-}
-
 .home-page .home-monitor-status-cluster {
   display: inline-flex;
   flex-wrap: wrap;
@@ -688,19 +685,13 @@
   padding: 4px 0;
 }
 
-.home-page .home-monitor-auxiliary-empty {
-  color: var(--muted);
-  font-size: 0.75rem;
+.home-page .home-monitor-parent-identity > .home-monitor-status-cluster {
+  flex: 0 0 auto;
 }
 
 @container monitor-content (min-width: 740px) {
-  .home-page .home-monitor-list,
-  .home-page .home-monitor-column-headers {
+  .home-page .home-monitor-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .home-page .home-monitor-column-header + .home-monitor-column-header {
-    display: grid;
   }
 }
 
