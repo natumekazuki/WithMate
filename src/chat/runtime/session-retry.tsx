@@ -41,10 +41,10 @@ export function SessionRetryBanner({
   return (
     <section className={`resume-banner retry-banner ${retryBanner.kind}`} aria-label="Actions for an unfinished request" aria-busy={latestTurnLoading}>
       <div className="resume-banner-head"><div className="resume-banner-copy">
-        <span className={`resume-banner-badge ${retryBanner.kind}`} title={retryBanner.title}>
+        {retryBanner.kind !== "failed" ? <span className={`resume-banner-badge ${retryBanner.kind}`} title={retryBanner.title}>
           {retryBanner.badge}
           <span className="sr-only">: {retryBanner.title}</span>
-        </span>
+        </span> : null}
         {loading}
       </div></div>
       <div className="resume-banner-actions">

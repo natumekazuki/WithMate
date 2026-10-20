@@ -19,6 +19,7 @@ import { approvalModeLabel, CharacterAvatar, liveRunStepStatusLabel, operationTy
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { InlineQuestionContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
+import { SessionRunFailure } from "./session-run-failure.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches, iterateTextMatches } from "../../../src-shared/text/find-text-matches.js";
@@ -73,6 +74,7 @@ export type SessionMessageColumnProps = {
   turnSubmissions?: import("../runtime/session-turn-submissions.js").SessionTurnSubmissions;
   responsePending?: boolean;
   submissionError?: string;
+  submissionUncertain?: boolean;
   turnQueueMetadata?: ReadonlyMap<string, import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt>;
   onCancelQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   onReleaseInterruptedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
@@ -436,6 +438,7 @@ export function SessionMessageColumn({
   renderQueueTail,
   responsePending = false,
   submissionError = "",
+  submissionUncertain = false,
   sessionId,
   character,
   messages,
@@ -1184,7 +1187,7 @@ export function SessionMessageColumn({
   );
 
   const renderResponseStatus = () => isRunning ? renderPendingContent() : <div className="pending-response-content">
-    {submissionError ? <p className="pending-run-error-note" role="alert">{submissionError}</p>
+    {submissionError ? submissionUncertain ? <p className="pending-run-error-note" role="alert">{submissionError}</p> : <SessionRunFailure reason={submissionError} />
       : <PendingRunIndicator announcement="Waiting for response" />}
   </div>;
   const renderPendingResponse = (className = "") => (
@@ -1443,6 +1446,7 @@ export function SessionMessageColumn({
                       </div>
                     </div>
 
+                    {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}
                     {artifact ? (
                       <section className="artifact-shell">
                       {artifactExpanded ? (
@@ -1546,7 +1550,7 @@ export function SessionMessageColumn({
                       </section>
                     ) : null}
                     {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} busy={queueBusyId === turnQueueMetadata.get(messageKey)!.id} busyKind={queueBusyId === turnQueueMetadata.get(messageKey)!.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} /> : null}
-                    {(isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
+                    {message.runFailure === undefined && (isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
                   </div>
                 </div>
                 </article>

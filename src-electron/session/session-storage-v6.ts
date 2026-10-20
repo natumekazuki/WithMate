@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
-import { assertFullConversation, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink } from "../storage/conversation-query.js";
+import { assertFullConversation, conversationMessageColumns, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink } from "../storage/conversation-query.js";
+import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
 import type { ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
 import type { SessionFilePinOwner, SessionFilePinReference, StoredSessionFilePin } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { randomUUID } from "node:crypto";
@@ -124,6 +125,7 @@ type MessageV6Row = {
   role: "user" | "assistant" | "tool" | "system";
   body: string;
   artifact_body?: string | null;
+  runFailure?: string | null;
 };
 
 type ExistingMessageArtifactRow = {
@@ -368,7 +370,7 @@ function decodeMessageArtifact(value: string | null | undefined): MessageArtifac
 function decodeMessage(row: MessageV6Row): Message | null {
   const parsed = normalizeMessage(parseJsonObject(row.body));
   if (parsed) {
-    return parsed;
+    return withMessageRunFailure(parsed, row.runFailure);
   }
   if (row.role === "user" || row.role === "assistant") {
     return { role: row.role, text: row.body };
@@ -1506,7 +1508,7 @@ export class SessionStorageV6 {
     const decoded = decodeSessionV6RuntimeState(row);
     const summary = this.rowToSessionSummary(row, decoded);
     const messageRows = this.db.prepare(`
-      SELECT role, body
+      SELECT ${conversationMessageColumns("session_messages_v6", this.db)}
       FROM session_messages_v6
       WHERE session_id = ?
       ORDER BY seq ASC

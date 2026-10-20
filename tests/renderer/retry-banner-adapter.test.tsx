@@ -8,15 +8,15 @@ const noop = () => {};
 
 // @test-value v2
 // kind = "contract"
-// claim = "retry banner adapterはretry状態、固定説明、resend/edit actionをmode-neutralなUIへ投影する"
+// claim = "retry banner adapterは未完了requestのresend/edit actionとdraft保護をmode-neutralなUIへ投影する"
 // oracle = { type = "contract", ref = "docs/design/session-character-copy.md#rendering-policy" }
-// fault = "retry説明、action label、accessible label、draft conflict actionsのいずれかを失う"
-// observable = "retry class、aria label、固定説明、resend/edit buttons、draft conflict actionsのrender結果"
+// fault = "action label、accessible label、draft conflict actionsのいずれかを失う"
+// observable = "retry class、aria label、resend/edit buttons、draft conflict actionsのrender結果"
 // observation_boundary = "component-behavior"
 // scope = "session-retry-banner"
 // lifecycle = "permanent"
-// impact = "中断・失敗したrequestを再送または編集できず、状態説明も利用者へ届かなくなる"
-// distinction = "固定説明をbadgeのaccessible nameへ保持し、操作とdraft保護を同時に確認する"
+// impact = "中断・失敗したrequestの回復操作とdraft保護を利用できなくなる"
+// distinction = "command単体ではadapterを経由した操作とdraft保護の同時表示を確認できない"
 // @end-test-value
 test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み立てる", () => {
   const html = renderToStaticMarkup(buildLiveSessionRetryBanner({
@@ -39,8 +39,6 @@ test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み
   assert.match(html, /aria-label="Actions for an unfinished request"/);
   assert.match(html, />Resend<\/button>/);
   assert.match(html, />Edit<\/button>/);
-  assert.match(html, /title="前回の依頼は完了できませんでした"/);
-  assert.match(html, /class="sr-only">: 前回の依頼は完了できませんでした<\/span>/);
   assert.match(html, /Your current draft is preserved\.<\/p>/);
   assert.match(html, />Replace Previous Request<\/button>/);
   assert.match(html, />Keep Current Draft<\/button>/);
@@ -49,21 +47,22 @@ test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み
 
 // @test-value v2
 // kind = "contract"
-// claim = "既定のretry説明を短縮しても失敗状態のaccessible説明と再送・編集操作を保持する"
+// claim = "失敗の回復操作は応答側のFailedを重ねずResend/Editを提供し、中断・取消には固有の状態説明を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
-// fault = "既定文の表示整理で失敗理由のaccessible説明または回復操作を失う"
-// observable = "Failed badge、sr-only説明、ResendとEditの有効なbutton"
+// fault = "失敗badgeを重ねる、再送・編集操作を失う、または中断・取消を判別できなくする"
+// observable = "状態別のbadge・sr-only説明、ResendとEditの有効なbutton"
 // observation_boundary = "component-behavior"
 // scope = "session-retry-banner"
 // lifecycle = "permanent"
 // impact = "失敗状態の理解と再送・編集による回復が難しくなる"
-// distinction = "custom可視testと異なり既定説明を短縮した分岐のaccessible内容と回復操作を観測する"
+// distinction = "draft保護testと異なりfailed/interrupted/canceledの状態分岐と回復操作の維持を小さい描画fixtureで確認する"
 // @end-test-value
-test("SessionRetryBanner は既定説明を短縮しても状態と回復操作を保つ", () => {
+test("SessionRetryBanner は状態に応じた表示と回復操作を保つ", () => {
+  for (const kind of ["failed", "interrupted", "canceled"] as const) {
   const html = renderToStaticMarkup(buildLiveSessionRetryBanner({
     retryBanner: {
-      kind: "failed",
-      badge: "Failed",
+      kind,
+      badge: kind,
       title: "The previous request could not be completed",
       lastRequestText: "Fix it",
     },
@@ -77,11 +76,15 @@ test("SessionRetryBanner は既定説明を短縮しても状態と回復操作�
   }));
 
   assert.doesNotMatch(html, /class="resume-banner-title"/);
-  assert.match(html, /class="sr-only">: The previous request could not be completed<\/span>/);
-  assert.match(html, />Failed<span/);
+  if (kind === "failed") assert.doesNotMatch(html, /resume-banner-badge/);
+  else {
+    assert.match(html, /class="sr-only">: The previous request could not be completed<\/span>/);
+    assert.match(html, new RegExp(`>${kind}<span`));
+  }
   assert.match(html, />Resend<\/button>/);
   assert.match(html, />Edit<\/button>/);
   assert.doesNotMatch(html, /disabled=""/);
+  }
 });
 
 test("buildLiveSessionRetryBanner は banner がない場合 null を描画する", () => {

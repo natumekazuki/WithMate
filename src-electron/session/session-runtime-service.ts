@@ -500,23 +500,6 @@ function formatProviderFailureMessage(params: {
   return params.message;
 }
 
-function formatProviderFailureNotice(params: {
-  providerId: Session["provider"];
-  reason: ProviderTurnError["reason"] | null;
-  message: string;
-  canceled: boolean;
-}): string {
-  if (params.canceled) {
-    return "Run canceled.";
-  }
-
-  if (params.reason === "usage_limit") {
-    return formatProviderUsageLimitMessage(params.providerId, params.message);
-  }
-
-  return `The run failed.\n${params.message}`;
-}
-
 function pickPreferredThreadId(...candidates: Array<string | null | undefined>): string {
   for (const candidate of candidates) {
     const normalized = candidate?.trim() ?? "";
@@ -1434,15 +1417,9 @@ export class SessionRuntimeService {
         : shouldResetFailedThread ? "" : failedTurnThreadId;
       const completedAt = new Date().toISOString();
       terminalSettled = true;
-      const fallbackNotice = formatProviderFailureNotice({
-        providerId: activeRunningSession.provider,
-        reason: providerErrorReason,
-        message,
-        canceled,
-      });
-      const assistantText = partialResult?.assistantText.trim()
-        ? `${partialResult.assistantText}\n\n${fallbackNotice}`
-        : fallbackNotice;
+      const assistantText = canceled
+        ? partialResult?.assistantText.trim() ? `${partialResult.assistantText}\n\nRun canceled.` : "Run canceled."
+        : partialResult?.assistantText ?? "";
       const failedSession: Session = {
         ...activeRunningSession,
         updatedAt: currentTimestampLabel(),
@@ -1455,6 +1432,7 @@ export class SessionRuntimeService {
           {
             role: "assistant",
             text: assistantText,
+            ...(!canceled ? { runFailure: failureMessage } : {}),
             artifact: partialResult?.artifact,
             ...this.terminalElicitationRecords(sessionId, partialResult),
             accent: true,

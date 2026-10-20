@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
-import { assertFullConversation, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink } from "../storage/conversation-query.js";
+import { assertFullConversation, conversationMessageColumns, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink, type ConversationQueryRow } from "../storage/conversation-query.js";
+import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
 import type { ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
 import { randomUUID } from "node:crypto";
 
@@ -1031,12 +1032,12 @@ function parseAuxiliarySessionRow(row: AuxiliarySessionRow): AuxiliarySession | 
 function readAuxiliarySession(db: DatabaseSync, row: AuxiliarySessionRow): AuxiliarySession | null {
   const session = parseAuxiliarySessionRow(row);
   if (!session) return null;
-  const messages = db.prepare(`SELECT role, body FROM auxiliary_session_messages
-    WHERE auxiliary_session_id = ? ORDER BY seq ASC`).all(row.id) as Array<{ role: string; body: string }>;
-  return { ...session, messages: messages.map(({ body }) => {
+  const messages = db.prepare(`SELECT ${conversationMessageColumns("auxiliary_session_messages", db)} FROM auxiliary_session_messages
+    WHERE auxiliary_session_id = ? ORDER BY seq ASC`).all(row.id) as ConversationQueryRow[];
+  return { ...session, messages: messages.map(({ body, runFailure }) => {
     const message = normalizeMessage(JSON.parse(body));
     if (!message) throw new Error(`Invalid Auxiliary message: ${row.id}`);
-    return message;
+    return withMessageRunFailure(message, runFailure);
   }) };
 }
 

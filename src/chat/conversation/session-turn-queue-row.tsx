@@ -5,15 +5,19 @@ import { ButtonContent } from "../../ui/button-content.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
+import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
+import { SessionRunFailureRow } from "./session-run-failure.js";
 
-export function SessionTurnSubmissionRow({ submission, resolveImageSource }: { submission: SessionTurnSubmission; resolveImageSource?: MarkdownImageResolver }) {
-  return <article className="message-row user" data-message-source="turn-submission">
+export function SessionTurnSubmissionRow({ submission, resolveImageSource, character }: { submission: SessionTurnSubmission; character: CharacterVisual; resolveImageSource?: MarkdownImageResolver }) {
+  return <><article className="message-row user" data-message-source="turn-submission">
     <div className="message-card user"><div className="message-card-content">
       <MessageRichText text={submission.userMessage} resolveImageSource={resolveImageSource} />
-      {submission.error ? <p className="pending-run-error-note" role="alert">{submission.error}</p>
+      {submission.error ? submission.uncertain ? <p className="pending-run-error-note" role="alert">{submission.error}</p> : null
         : <LoadingIndicator inline label="Queued turn" />}
     </div></div>
-  </article>;
+  </article>
+    {submission.error && !submission.uncertain ? <SessionRunFailureRow reason={submission.error} character={character} /> : null}
+  </>;
 }
 
 export function SessionTurnQueueStatus({ receipt, position, busy, busyKind, onCancel, onRelease, onSendInput }: {
@@ -22,8 +26,8 @@ export function SessionTurnQueueStatus({ receipt, position, busy, busyKind, onCa
   onCancel: (receipt: SessionTurnQueueReceipt) => void; onRelease: (receipt: SessionTurnQueueReceipt) => void;
   onSendInput?: (receipt: SessionTurnQueueReceipt) => void;
 }) {
-  if (receipt.state !== "queued" && receipt.state !== "failed" && receipt.state !== "interrupted") return null;
-  const label = receipt.state === "failed" ? "Failed" : receipt.state === "interrupted" ? "Interrupted" : undefined;
+  if (receipt.state !== "queued" && receipt.state !== "interrupted") return null;
+  const label = receipt.state === "interrupted" ? "Interrupted" : undefined;
   return <div className="session-turn-queue-status" role={label ? "status" : undefined} aria-label={label}>
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <span className="session-turn-queue-reason">Execution outcome is unknown. Later turns are held.</span> : null}
@@ -34,11 +38,13 @@ export function SessionTurnQueueStatus({ receipt, position, busy, busyKind, onCa
   </div>;
 }
 
-export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { resolveImageSource?: MarkdownImageResolver }) {
-  return <article className="message-row user" data-message-source="turn-queue">
+export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { character: CharacterVisual; resolveImageSource?: MarkdownImageResolver }) {
+  return <><article className="message-row user" data-message-source="turn-queue">
     <div className="message-card user"><div className="message-card-content">
       <MessageRichText text={props.receipt.captured.request.userMessage} resolveImageSource={props.resolveImageSource} />
       <SessionTurnQueueStatus {...props} />
     </div></div>
-  </article>;
+  </article>
+    {props.receipt.state === "failed" ? <SessionRunFailureRow reason={props.receipt.reason ?? ""} character={props.character} /> : null}
+  </>;
 }

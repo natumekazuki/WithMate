@@ -1982,6 +1982,31 @@
   line-height: 1.6;
 }
 
+.session-run-failure {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-left: 3px solid #ffd7bc;
+  background: rgba(255, 215, 188, 0.08);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.session-run-failure:first-child {
+  margin-top: 0;
+}
+
+.session-run-failure strong {
+  color: #ffd7bc;
+}
+
+.session-run-failure p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 .pending-run-error-note {
   color: #ffd7bc;
 }
@@ -3273,11 +3298,6 @@
   color: #9a5d11;
 }
 
-.resume-banner-badge.failed {
-  background: rgba(255, 124, 124, 0.16);
-  color: #a83d3d;
-}
-
 .resume-banner-badge.canceled {
   background: rgba(148, 163, 184, 0.2);
   color: #475569;
@@ -3286,11 +3306,6 @@
 .session-page .resume-banner-badge.interrupted {
   background: rgba(255, 196, 107, 0.16);
   color: #ffd6aa;
-}
-
-.session-page .resume-banner-badge.failed {
-  background: rgba(248, 113, 113, 0.2);
-  color: #fecaca;
 }
 
 .session-page .resume-banner-badge.canceled {

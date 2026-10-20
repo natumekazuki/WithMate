@@ -38,6 +38,24 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     projection.groups.splice(index, 0, null);
     metadata.set(key, receipt);
   }
+  // Keep the terminal notification visible while its canonical response is being loaded.
+  for (const [key, receipt] of metadata) {
+    if (receipt.state !== "failed") continue;
+    const userIndex = projection.keys.indexOf(key);
+    const responseIndex = projection.sources.findIndex((source, index) => index > userIndex
+      && projection.messages[index].role === "assistant"
+      && (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId));
+    if (responseIndex >= 0) continue; // The stored response owns the terminal reason.
+    const liveIndex = projection.sources.findIndex((source, index) => index > userIndex && source.kind === "live-assistant");
+    if (liveIndex >= 0) {
+      projection.messages[liveIndex] = { ...projection.messages[liveIndex], runFailure: receipt.reason ?? "" };
+      continue;
+    }
+    projection.messages.splice(userIndex + 1, 0, { role: "assistant", text: "", runFailure: receipt.reason ?? "" });
+    projection.keys.splice(userIndex + 1, 0, `${key}-failure`);
+    projection.sources.splice(userIndex + 1, 0, { kind: "turn-queue", receipt });
+    projection.groups.splice(userIndex + 1, 0, projection.groups[userIndex]);
+  }
   const localTail: SessionTurnSubmission[] = [];
   let pendingSubmission: SessionTurnSubmission | undefined;
   for (const submission of options?.submissions ?? []) {

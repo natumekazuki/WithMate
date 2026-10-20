@@ -440,6 +440,8 @@ function createLiveElicitationRequest(): LiveElicitationRequest {
 
 function renderSessionMessageColumn(options: {
   messages: Message[];
+  submissionError?: string;
+  submissionUncertain?: boolean;
   pendingResponseMessageKey?: string | null;
   expandedArtifacts?: Record<string, boolean>;
   isRunning?: boolean;
@@ -470,6 +472,8 @@ function renderSessionMessageColumn(options: {
       sessionId: "session-1",
       character: createCharacterProfile(),
       messages: options.messages,
+      submissionError: options.submissionError,
+      submissionUncertain: options.submissionUncertain,
       messageKeys: options.messageKeys,
       pendingResponseMessageKey: options.pendingResponseMessageKey,
       messageGroups: options.messageGroups,
@@ -503,6 +507,42 @@ function renderSessionMessageColumn(options: {
     }),
   );
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "開始前・空応答・部分応答の確定失敗は応答側の同じ欄に理由を一度表示し、生成本文とDetailsを保持する。受付結果不明はFailedにしない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 確定した送信・実行失敗" }
+// fault = "応答前の失敗欄が異なる、本文に理由が混入する、部分本文・Detailsを失う、または結果不明をFailedにする"
+// observable = "実Columnのassistant行内のalert、本文領域、Show details操作、Failedの有無"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumn failure presentation"
+// lifecycle = "permanent"
+// impact = "失敗箇所の探索負担と理由の二重表示、生成内容の誤認を防ぐ"
+// distinction = "runtime/storage testでは共通欄への描画と本文操作の境界を検証できない。小さいSSR fixtureで表示契約を維持する"
+// @end-test-value
+test("確定失敗は応答側の共通欄で生成本文と分離する", () => {
+  const reason = "Selected model is at capacity.\nTry a different model.";
+  for (const text of [null, "", "途中までの返答"]) {
+    const document = new JSDOM(renderSessionMessageColumn({
+      messages: [{ role: "user", text: "request" }, ...(text === null ? [] : [{ ...createArtifactMessage(), text, runFailure: reason }])],
+      submissionError: text === null ? reason : undefined,
+      withResponseActions: true,
+    })).window.document;
+    assert.equal(document.querySelectorAll(".session-run-failure").length, 1);
+    assert.equal(document.querySelector(".message-row.assistant [role=alert]")?.textContent, `Failed${reason}`);
+    assert.equal(document.body.textContent?.split(reason).length, 2);
+    assert.equal(document.querySelector(".message-row.user")?.textContent, "request");
+    if (text !== null) {
+      assert.equal(document.querySelector(".message-row.assistant [data-message-body]")?.textContent, text);
+      assert.ok(document.querySelector('button[aria-label="Show details"]'));
+    }
+  }
+  const uncertain = new JSDOM(renderSessionMessageColumn({
+    messages: [{ role: "user", text: "request" }], submissionError: "Acceptance outcome unknown.", submissionUncertain: true,
+  })).window.document;
+  assert.equal(uncertain.querySelector("[role=alert]")?.textContent, "Acceptance outcome unknown.");
+  assert.equal(uncertain.querySelector(".session-run-failure"), null);
+});
 
 // @test-value v2
 // kind = "contract"

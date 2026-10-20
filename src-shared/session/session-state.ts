@@ -46,6 +46,7 @@ export type MessageArtifact = {
 };
 
 export type Message = {
+  runFailure?: string;
   historyIndex?: number;
   role: "user" | "assistant";
   text: string;
@@ -405,6 +406,7 @@ export function normalizeMessage(value: unknown): Message | null {
   return {
     role: candidate.role,
     text: typeof candidate.text === "string" ? candidate.text : "",
+    ...(candidate.role === "assistant" && typeof candidate.runFailure === "string" ? { runFailure: candidate.runFailure } : {}),
     accent: typeof candidate.accent === "boolean" ? candidate.accent : undefined,
     artifact: normalizeMessageArtifact(candidate.artifact),
     ...(candidate.elicitationRecords ? { elicitationRecords: normalizeElicitationRecords(candidate.elicitationRecords) } : {}),
