@@ -26,6 +26,8 @@ Mainの`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を�
 
 turnはMainまたはAuxiliaryの一方だけをownerとし、phase、実行設定、message位置、thread、時刻、error summaryを`session_turns_v6`へ保存する。会話本文と操作結果の正本は通常履歴と`MessageArtifact.operationTimeline`であり、軽量messageと重いartifact detailを分け、detailは対象を開いたときに取得する。開始と終端の最小turn保存、取消・失敗判定、Timing・Affectとの関連付けは[Session Run Lifecycle](session-run-lifecycle.md)を参照する。
 
+失敗したassistant messageは生成本文`text`と失敗理由`runFailure`を分けてJSONへ保存する。本文に通知を含む既存の保存データは、同ownerのfailed turnとassistant message位置・error summaryが一致する通知末尾だけを読取時に分離する。生成本文に似た文字列があるだけでは失敗と判定せず、保存済みの本文・artifact・bookmarkは破壊しない。全件・page・会話queryで同じ本文投影を使用する。
+
 質問formの記録は通常assistant messageの`elicitationRecords`へ保存し、Main／Auxiliaryの表示pageにも含める。質問文・選択肢・form回答状態に加え、質問種別と本文内の位置`textRange`を保持する。範囲を持つ質問は元の本文に含まれ、長さ0の範囲は本文を持たない質問の挿入位置を表す。位置のない既存記録は本文の後ろに表示する。入力値や既定値、再操作用のlive requestは保存しない。保存されたpending状態は失効済みとして読み、古い要求を復元しない。既存message JSONの任意fieldを使い、別tableや質問専用の永続queueは持たない。
 
 Turn Queueは親Session ID、任意のAuxiliary ID、対象incarnation、GUI request ID、受付順、捕捉値、状態、最小turn ID／user seq、追加入力先Turn ID、結果不明後の明示解放時刻を保持する。Main／Auxiliaryの対象owner・request IDをそれぞれ一意にし、親または対象Auxiliary削除でreceiptも削除する。receiptは通常messageとは別の受付・実行状態であり、会話本文やturnの正本を置換しない。受付・開始・終端のtransaction境界は[Electron Session Store](electron-session-store.md#turn-queue)を参照する。

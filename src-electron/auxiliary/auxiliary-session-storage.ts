@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
-import { assertFullConversation, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink } from "../storage/conversation-query.js";
+import { assertFullConversation, conversationMessageColumns, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink, type ConversationQueryRow } from "../storage/conversation-query.js";
+import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
 import type { ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
 import { randomUUID } from "node:crypto";
 
@@ -1031,12 +1032,12 @@ function parseAuxiliarySessionRow(row: AuxiliarySessionRow): AuxiliarySession | 
 function readAuxiliarySession(db: DatabaseSync, row: AuxiliarySessionRow): AuxiliarySession | null {
   const session = parseAuxiliarySessionRow(row);
   if (!session) return null;
-  const messages = db.prepare(`SELECT role, body FROM auxiliary_session_messages
-    WHERE auxiliary_session_id = ? ORDER BY seq ASC`).all(row.id) as Array<{ role: string; body: string }>;
-  return { ...session, messages: messages.map(({ body }) => {
+  const messages = db.prepare(`SELECT ${conversationMessageColumns("auxiliary_session_messages", db)} FROM auxiliary_session_messages
+    WHERE auxiliary_session_id = ? ORDER BY seq ASC`).all(row.id) as ConversationQueryRow[];
+  return { ...session, messages: messages.map(({ body, runFailure }) => {
     const message = normalizeMessage(JSON.parse(body));
     if (!message) throw new Error(`Invalid Auxiliary message: ${row.id}`);
-    return message;
+    return withMessageRunFailure(message, runFailure);
   }) };
 }
 
@@ -1083,9 +1084,9 @@ function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession): vo
 
 function writeAuxiliaryMessages(db: DatabaseSync, session: AuxiliarySession): boolean {
   assertFullConversation(session);
-  const existing = new Map((db.prepare(`SELECT seq, role, body, artifact_body FROM auxiliary_session_messages
+  const existing = new Map((db.prepare(`SELECT ${conversationMessageColumns("auxiliary_session_messages", db)}, artifact_body FROM auxiliary_session_messages
     WHERE auxiliary_session_id = ?`).all(session.id) as Array<{
-      seq: number; role: string; body: string; artifact_body: string | null;
+      seq: number; role: string; body: string; artifact_body: string | null; runFailure?: string | null;
     }>).map((row) => [row.seq, row] as const));
   const insert = db.prepare(`INSERT INTO auxiliary_session_messages
     (auxiliary_session_id, seq, role, body, artifact_body, created_at) VALUES (?, ?, ?, ?, ?, ?)`);
@@ -1096,7 +1097,8 @@ function writeAuxiliaryMessages(db: DatabaseSync, session: AuxiliarySession): bo
     const summary = message.artifact ? summarizeMessageArtifact(message.artifact) : undefined;
     let artifactBody = message.artifact ? JSON.stringify(message.artifact) : null;
     const oldRow = existing.get(seq);
-    const oldMessage = oldRow ? normalizeMessage(JSON.parse(oldRow.body)) : null;
+    const parsed = oldRow ? normalizeMessage(JSON.parse(oldRow.body)) : null;
+    const oldMessage = parsed ? withMessageRunFailure(parsed, oldRow?.runFailure) : null;
     if (oldRow && !oldMessage) throw new Error("Invalid Auxiliary message.");
     const preservedBookmark = oldMessage?.role === message.role && oldMessage.text === message.text
       ? oldMessage.isBookmarked === true : message.isBookmarked === true;

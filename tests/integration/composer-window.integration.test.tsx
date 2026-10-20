@@ -447,7 +447,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(textarea().value, "another Auxiliary draft", "a rejected old admission must not alter the selected owner");
     await act(async () => { navigateAuxiliary?.({ parentSessionId: "benchmark-main", auxiliarySessionId: previousAuxiliaryId }); });
     assert.equal(textarea().value, "rejected admission draft", "the rejected admission preserves only its captured owner");
-    assert.equal(dom.window.document.querySelector("#session-auxiliary-chat-pane .pending-run-error-note")?.textContent, "Auxiliary admission failed");
+    assert.equal(dom.window.document.querySelector("#session-auxiliary-chat-pane .message-row.assistant .session-run-failure p")?.textContent, "Auxiliary admission failed");
     assert.deepEqual(alerts, []);
     alerts.length = 0;
 

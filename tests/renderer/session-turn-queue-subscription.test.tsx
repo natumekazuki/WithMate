@@ -25,7 +25,7 @@ async function mount(api: SessionTurnQueueApi) {
       messages: seqs.map(() => ({ role: "user" as const, text: "saved prompt" })),
       keys: seqs.map((seq) => `saved-${seq}`), sources: seqs.map((seq) => ({ kind: "session" as const, messageIndex: seq })), groups: seqs.map(() => null),
     }, current.receipts, { sessionId: "session", incarnationId: "incarnation" });
-    const row = (item: SessionTurnQueueReceipt) => <SessionTurnQueueRow key={item.id} receipt={item} busy={current.busyId !== null} busyKind={current.busyId === item.id ? current.busyKind : null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />;
+    const row = (item: SessionTurnQueueReceipt) => <SessionTurnQueueRow key={item.id} character={{ name: "Mate", iconPath: "" }} receipt={item} busy={current.busyId !== null} busyKind={current.busyId === item.id ? current.busyKind : null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />;
     return <>
       {projection.messages.map((message, index) => <div key={projection.keys[index]}><p>{message.text}</p>{metadata.has(projection.keys[index]) ? <SessionTurnQueueStatus receipt={metadata.get(projection.keys[index])!} busy={current.busyId !== null} busyKind={current.busyId === metadata.get(projection.keys[index])!.id ? current.busyKind : null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} /> : null}</div>)}
       {tail.map(row)}
@@ -127,7 +127,7 @@ test("queued receipts bridge skipped starts and failed receipt reads until canon
       await view.click("Retry Queue");
       assert.equal(view.current.receipts[0]?.state, terminalState);
       assert.equal(view.current.error, "");
-      assert.equal(view.document.querySelectorAll("p").length, 1);
+      assert.equal([...view.document.querySelectorAll("p")].filter((item) => item.textContent === "original prompt").length, 1);
       assert.match(view.document.body.textContent!, /original prompt/);
       await view.canonical([42]);
       assert.equal(view.current.receipts.length, 0);

@@ -602,12 +602,12 @@ export function useConversationMessageColumn({
   const inputAction = canSendQueuedInput ? sendQueuedInput : undefined;
   const renderQueueTail = useMemo(() => !isBrowsing
     && (queuedProjection.tail.length > 0 || queuedProjection.localTail.length > 0 || conversation.liveReadError || queue.error || queue.loading && queue.receipts.length > 0) ? (resolveImageSource: MarkdownImageResolver) => <>
-    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} receipt={receipt} resolveImageSource={resolveImageSource} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
-    {queuedProjection.localTail.map((submission) => <SessionTurnSubmissionRow key={submission.requestId} submission={submission} resolveImageSource={resolveImageSource} />)}
+    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} character={columnCharacter} receipt={receipt} resolveImageSource={resolveImageSource} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
+    {queuedProjection.localTail.map((submission) => <SessionTurnSubmissionRow key={submission.requestId} character={columnCharacter} submission={submission} resolveImageSource={resolveImageSource} />)}
     {queue.loading && queue.receipts.length > 0 ? <LoadingIndicator inline label="Loading queued turns" /> : null}
     {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
     {conversation.liveReadError ? <div className="pending-run-error-note" role="alert">{conversation.liveReadError}<button type="button" className="drawer-toggle compact secondary" onClick={() => setLiveReadRevision((revision) => revision + 1)}>Retry Live Updates</button></div> : null}
-  </> : undefined, [isBrowsing, api, queuedProjection.tail, queuedProjection.localTail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction, conversation.liveReadError]);
+  </> : undefined, [isBrowsing, api, columnCharacter, queuedProjection.tail, queuedProjection.localTail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction, conversation.liveReadError]);
   if (!session) return null;
   return {
     ...baseProps,
@@ -631,6 +631,7 @@ export function useConversationMessageColumn({
     isRunning: !isBrowsing && hasActiveRun,
     responsePending: !isBrowsing && !hasActiveRun && (!!queuedProjection.activeReceipt || !!queuedProjection.pendingSubmission && !queuedProjection.pendingSubmission.error),
     submissionError: queuedProjection.pendingSubmission?.error ?? "",
+    submissionUncertain: queuedProjection.pendingSubmission?.uncertain ?? false,
     pendingRunIndicatorAnnouncement: messageSourceKind === "session"
       ? baseProps.pendingRunIndicatorAnnouncement
       : "Running",

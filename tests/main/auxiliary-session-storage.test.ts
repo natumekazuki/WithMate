@@ -5,7 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../../src-shared/settings/approval-mode.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
@@ -30,6 +30,158 @@ import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.
 import { SessionTurnStorageV6 } from "../../src-electron/session/session-turn-storage-v6.js";
 import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
 import { AuxiliaryDraftPersistenceOwner } from "../../src/chat/auxiliary-draft-persistence-owner.js";
+import { projectConversationBatch } from "../../src-electron/storage/conversation-projection-worker.js";
+import type { Message } from "../../src-shared/session/session-state.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxiliaryの履歴は本文と失敗理由を保存・再読し、通知入り保存データも同ownerのfailed turnに結び付く末尾だけを全件・page・queryで分離する"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md: assistant messageのtextとrunFailure" }
+// fault = "理由が再読で消える、別ownerや成功本文から通知風の文を削る、page/queryと全件で本文が異なる、またはbookmarkを失う"
+// observable = "再open後のmessages、page、query previewと元body・bookmark"
+// observation_boundary = "public-boundary"
+// scope = "Main and Auxiliary persisted run failures"
+// lifecycle = "permanent"
+// impact = "リリース済み会話と新しい失敗履歴の本文・理由・Bookmarkを保持する"
+// distinction = "normalizerやUIのmockでは実SQLiteのowner/seq結合・全件/page/query経路を保証できない。共通fixtureで両ownerを確認する"
+// @end-test-value
+test("MainとAuxiliaryは失敗理由を本文と分離して再読する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-failure-history-"));
+  const dbPath = path.join(directory, "app.db");
+  let main = new SessionStorageV6(dbPath);
+  const auxiliary = new AuxiliarySessionStorage(dbPath);
+  const reason = "Model capacity reached.";
+  const notice = `The run failed.\n${reason}`;
+  const messages: Message[] = [
+    { role: "user", text: "request" },
+    { role: "assistant", text: `partial\n\n${notice}`, isBookmarked: true },
+    { role: "assistant", text: notice },
+    { role: "assistant", text: reason },
+    { role: "assistant", text: notice, runFailure: reason },
+    { role: "assistant", text: notice },
+    { role: "assistant", text: notice },
+  ];
+  try {
+    main.insertSession({ ...buildNewSession({
+      id: "session-1", taskTitle: "failure", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
+      characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: DEFAULT_APPROVAL_MODE,
+    }), messages });
+    auxiliary.upsertAuxiliarySession(buildAuxiliarySession({ messages }));
+    const db = new DatabaseSync(dbPath);
+    try {
+      for (const owner of ["session_id", "auxiliary_session_id"]) {
+        const id = owner === "session_id" ? "session-1" : "auxiliary-session-1";
+        for (const seq of [1, 2, 3, 5]) {
+          // seq 5 belongs to a completed turn; seq 6 has no terminal evidence.
+          db.prepare(`INSERT INTO session_turns_v6 (${owner}, phase, assistant_message_seq, error_summary, started_at, updated_at)
+            VALUES (?, ?, ?, ?, 'now', 'now')`).run(id, seq === 5 ? "completed" : "failed", seq, reason);
+        }
+      }
+      db.prepare(`INSERT INTO session_turns_v6 (session_id, phase, assistant_message_seq, error_summary, started_at, updated_at)
+        VALUES ('session-1', 'failed', 6, ?, 'now', 'now')`).run(reason);
+      main.close();
+      main = new SessionStorageV6(dbPath);
+      for (const [id, store, full] of [
+        ["session-1", main, main.getSession("session-1")!],
+        ["auxiliary-session-1", auxiliary, auxiliary.getAuxiliarySession("auxiliary-session-1")!],
+      ] as const) {
+        for (const loaded of [full.messages, store.getConversationPage(id)!.messages]) {
+          assert.deepEqual(loaded.map(({ text, runFailure }) => ({ text, runFailure })), [
+            { text: "request", runFailure: undefined }, { text: "partial", runFailure: reason },
+            { text: "", runFailure: reason }, { text: "", runFailure: reason },
+            { text: notice, runFailure: reason }, { text: notice, runFailure: undefined },
+            id === "session-1" ? { text: "", runFailure: reason } : { text: notice, runFailure: undefined },
+          ]);
+          assert.equal(loaded[1].isBookmarked, true);
+        }
+        const result = projectConversationBatch({ cacheScope: id, provider: full.provider, rows: store.readConversationQueryBatch(id, -1), query: { kind: "navigator", filter: "bookmarks" }, offset: 0, countBefore: 0 });
+        assert.equal(result.count, 1);
+        assert.equal((result.items[0] as { preview: string }).preview, "partial");
+      }
+      const stored = db.prepare("SELECT body FROM session_messages_v6 WHERE session_id = 'session-1' AND seq = 1").get() as { body: string };
+      assert.equal(JSON.parse(stored.body).text, messages[1].text);
+    } finally { db.close(); }
+  } finally {
+    auxiliary.close();
+    main.close();
+    await removeDirectoryWithRetry(directory);
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "旧通知付き失敗履歴の全文読取後に変更されたMain/AuxiliaryのBookmarkは、古いsnapshotの全文保存後も付与・解除の両方向で保持される"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 実行結果保存時の最新Bookmark保持" }
+// fault = "保存側が旧通知付きDB本文と通知分離後のsnapshotを異なるmessageと判定し、古いBookmarkを採用する"
+// observable = "MainのupsertSessionとAuxiliaryのupdateAuxiliarySessionIfMatchesの返却値・再読込のBookmark、本文、失敗理由"
+// observation_boundary = "public-boundary"
+// scope = "Main/Auxiliary legacy failed message full-save bookmark preservation"
+// lifecycle = "permanent"
+// impact = "失敗履歴のBookmark付与が消える、または解除したBookmarkが復活してnavigatorの絞り込みを誤る"
+// distinction = "既存の単独再読込や通常本文の競合testでは、failed turnによる旧本文投影と全文保存の組合せを通らない。使い捨てDBで両ownerを共有検証する"
+// @end-test-value
+test("旧形式の失敗履歴は全文保存で最新Bookmarkを巻き戻さない", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-failure-bookmark-"));
+  const dbPath = path.join(directory, "app.db");
+  const main = new SessionStorageV6(dbPath);
+  const auxiliary = new AuxiliarySessionStorage(dbPath);
+  const db = new DatabaseSync(dbPath);
+  const reason = "Model capacity reached.";
+  const observed: unknown[] = [];
+  const expected: unknown[] = [];
+  try {
+    for (const initialBookmark of [false, true]) {
+      const messages: Message[] = [{
+        role: "assistant", text: `partial\n\nThe run failed.\n${reason}`,
+        isBookmarked: initialBookmark ? true : undefined,
+      }];
+      const parent = main.insertSession({ ...buildNewSession({
+        id: `bookmark-main-${initialBookmark}`, taskTitle: "failure", workspaceLabel: "workspace",
+        workspacePath: "C:/workspace", branch: "main", characterId: "mate", character: "Mate",
+        characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      }), messages });
+      const child = buildAuxiliarySession({
+        id: `bookmark-auxiliary-${initialBookmark}`, parentSessionId: parent.id, messages,
+      });
+      auxiliary.upsertAuxiliarySession(child);
+      for (const [owner, id] of [["session_id", parent.id], ["auxiliary_session_id", child.id]]) {
+        db.prepare(`INSERT INTO session_turns_v6 (${owner}, phase, assistant_message_seq,
+          error_summary, started_at, updated_at) VALUES (?, 'failed', 0, ?, 'now', 'now')`).run(id, reason);
+      }
+      const mainSnapshot = main.getSession(parent.id)!;
+      const auxiliarySnapshot = auxiliary.getAuxiliarySession(child.id)!;
+      for (const snapshot of [mainSnapshot, auxiliarySnapshot]) {
+        assert.equal(snapshot.messages[0].text, "partial");
+        assert.equal(snapshot.messages[0].runFailure, reason);
+        assert.equal(snapshot.messages[0].isBookmarked === true, initialBookmark);
+      }
+
+      main.setSessionMessageBookmark(parent.id, getSessionIncarnationId(parent), 0, !initialBookmark);
+      assert.equal(auxiliary.updateAuxiliaryMessageBookmarkIfMatches({
+        auxiliarySessionId: child.id, parentSessionId: parent.id, createdAt: child.createdAt,
+        messageIndex: 0, isBookmarked: !initialBookmark, updatedAt: "2026-07-30T00:01:00.000Z",
+      }), true);
+      const savedMain = main.upsertSession({ ...mainSnapshot, taskTitle: "updated title" });
+      const savedAuxiliary = auxiliary.updateAuxiliarySessionIfMatches({
+        expectedSession: auxiliarySnapshot,
+        session: { ...auxiliarySnapshot, title: "updated title", updatedAt: "2026-07-30T00:02:00.000Z" },
+      });
+      assert.ok(savedAuxiliary, "Bookmark-only changes must not reject the full-save CAS");
+      for (const session of [savedMain, savedAuxiliary, main.getSession(parent.id)!, auxiliary.getAuxiliarySession(child.id)!]) {
+        const message = session.messages[0];
+        observed.push({ id: session.id, bookmark: message.isBookmarked === true, text: message.text, runFailure: message.runFailure });
+        expected.push({ id: session.id, bookmark: !initialBookmark, text: "partial", runFailure: reason });
+      }
+    }
+    assert.deepEqual(observed, expected);
+  } finally {
+    db.close();
+    auxiliary.close();
+    main.close();
+    await removeDirectoryWithRetry(directory);
+  }
+});
 
 type AuxiliarySessionServiceDeps = ConstructorParameters<typeof AuxiliarySessionServiceImpl>[0];
 
@@ -2451,6 +2603,7 @@ test("Auxiliary draft migration はactive/closedを移行しmalformed payloadを
     )`);
     raw.exec(`CREATE TABLE session_turns_v6 (
       id INTEGER PRIMARY KEY, auxiliary_session_id TEXT,
+      phase TEXT NOT NULL DEFAULT 'completed', assistant_message_seq INTEGER, error_summary TEXT NOT NULL DEFAULT '',
       FOREIGN KEY (auxiliary_session_id) REFERENCES auxiliary_sessions(id) ON DELETE CASCADE
     )`);
     const insert = raw.prepare(`INSERT INTO auxiliary_sessions

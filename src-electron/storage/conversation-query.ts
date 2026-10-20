@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
 import {
   normalizeMessage,
   type Message,
@@ -17,14 +18,26 @@ export type ConversationQuerySnapshot = {
   incarnationId: string;
   messageCount: number;
 };
-export type ConversationQueryRow = { seq: number; role: string; body: string };
+export type ConversationQueryRow = { seq: number; role: string; body: string; runFailure?: string | null };
+
+export function conversationMessageColumns(table: MessageTable, db: DatabaseSync): string {
+  // Auxiliary transcripts are also read during schema initialization, before minimal turns exist.
+  if (table === "auxiliary_session_messages" && !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_turns_v6'").get()) {
+    return "seq, role, body";
+  }
+  const owner = table === "session_messages_v6" ? "session_id" : "auxiliary_session_id";
+  return `seq, role, body, (SELECT error_summary FROM session_turns_v6 t
+    WHERE t.${owner} = ${table}.${owner} AND t.phase = 'failed'
+      AND t.assistant_message_seq = ${table}.seq
+    ORDER BY t.id DESC LIMIT 1) AS runFailure`;
+}
 
 /** A cursor read ends synchronously; neither its statement nor a transaction crosses an await. */
 export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable, id: string, afterSeq: number): ConversationQueryRow[] {
   const owner = table === "session_messages_v6" ? "session_id" : "auxiliary_session_id";
   const rows: ConversationQueryRow[] = [];
   let bytes = 0;
-  for (const raw of db.prepare(`SELECT seq, role, body FROM ${table} WHERE ${owner} = ? AND seq > ? ORDER BY seq ASC LIMIT 32`).iterate(id, afterSeq)) {
+  for (const raw of db.prepare(`SELECT ${conversationMessageColumns(table, db)} FROM ${table} WHERE ${owner} = ? AND seq > ? ORDER BY seq ASC LIMIT 32`).iterate(id, afterSeq)) {
     const row = raw as ConversationQueryRow;
     const size = Buffer.byteLength(row.body, "utf8");
     if (rows.length && bytes + size > 256 * 1024) break;
@@ -105,13 +118,9 @@ export function readConversationPage(
   );
   const rows = db
     .prepare(
-      `SELECT seq, role, body FROM ${table} WHERE ${owner} = ? AND seq >= ? ORDER BY seq ASC LIMIT ?`,
+      `SELECT ${conversationMessageColumns(table, db)} FROM ${table} WHERE ${owner} = ? AND seq >= ? ORDER BY seq ASC LIMIT ?`,
     )
-    .all(sessionId, startIndex, CONVERSATION_PAGE_SIZE) as Array<{
-    seq: number;
-    role: string;
-    body: string;
-  }>;
+    .all(sessionId, startIndex, CONVERSATION_PAGE_SIZE) as ConversationQueryRow[];
   const messages = rows.map((row) => {
     const message = normalizeMessage({
       ...JSON.parse(row.body),
@@ -119,7 +128,7 @@ export function readConversationPage(
     });
     if (!message)
       throw new Error(`Invalid conversation message: ${sessionId}:${row.seq}`);
-    return { ...message, historyIndex: row.seq };
+    return { ...withMessageRunFailure(message, row.runFailure), historyIndex: row.seq };
   });
   return { sessionId, incarnationId, messages, startIndex, totalCount };
 }

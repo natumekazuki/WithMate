@@ -598,27 +598,30 @@ it("queued runtimeは開始とterminal保存の不明結果を救済しない", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued provider失敗/取消のterminal保存phaseと返却stateがそれぞれfailed/canceledに対応する"
-// oracle = { type = "contract", ref = "src-electron/session/session-turn-terminal-commit.ts SessionTurnTerminalCommit" }
-// fault = "provider取消をfailedとして保存または返却し、terminal phaseとdispatch stateの対応を失う"
-// observable = "appendTerminal phaseとdispatch返却state、onStarted minimum turn ID"
+// claim = "queued失敗は空または部分本文をそのまま保持して失敗理由を分離し、取消はfailedと区別する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Error Handling; docs/design/desktop-ui.md: 確定した送信・実行失敗" }
+// fault = "本文へ通知を追記する、空本文の理由を落とす、または取消をfailedとして保存・返却する"
+// observable = "appendTerminalのphaseとassistant text/runFailure、dispatch返却state、onStarted minimum turn ID"
 // observation_boundary = "public-boundary"
 // scope = "queued runtime confirmed failure and cancellation"
 // lifecycle = "permanent"
 // distinction = "serviceのfake dispatch resultではruntimeの実terminal phaseとの対応を保証できない"
 // @end-test-value
 it("queued runtimeは保存済みfailedとcanceledを区別する", async () => {
-  for (const canceled of [false, true]) {
+  for (const [canceled, partial] of [[false, ""], [false, "  部分本文\n"], [true, "部分本文"]] as const) {
     const session = createSession({ incarnationId: "owner" });
     const phases: string[] = [];
-    const runtime = createProgressRuntime(session, async () => { throw new ProviderTurnError("stopped", createPartialResult(), canceled); }, {
+    const responses: Session["messages"] = [];
+    const runtime = createProgressRuntime(session, async () => { throw new ProviderTurnError("stopped", createPartialResult({ assistantText: partial }), canceled); }, {
       assertCapturedComposerAttachmentsAvailable: async () => {},
       persistQueuedTurnStart: (next, _, __, turn) => ({ session: next, turn: { id: 41, ...turn } }),
-      appendTerminalSession: (next, terminal) => { phases.push(terminal.phase); return next; },
+      appendTerminalSession: (next, terminal) => { phases.push(terminal.phase); responses.push(next.messages.at(-1)!); return next; },
     });
     const result = await runtime.runQueuedSessionTurn(queuedReceipt(session), async (started) => { assert.equal(started.turnId, "41"); });
     assert.equal(result.state, canceled ? "canceled" : "failed");
     assert.deepEqual(phases, [canceled ? "canceled" : "failed"]);
+    assert.equal(responses[0].text, canceled ? `${partial}\n\nRun canceled.` : partial);
+    assert.equal(responses[0].runFailure, canceled ? undefined : "stopped");
   }
 });
 
@@ -1306,7 +1309,7 @@ describe("SessionRuntimeService", () => {
   // claim = "Codexのthread復帰失敗は同じ保存threadを保持して一度の失敗として返し、自動新規threadへ切り替えない"
   // oracle = { type = "contract", ref = "Issue #780 no silent session replacement" }
   // fault = "stale errorでthreadを消すか、新規threadを作るため再試行する"
-  // observable = "provider呼出回数、thread reset回数、失敗Sessionのthreadと本文"
+  // observable = "provider呼出回数、thread reset回数、失敗SessionのthreadとrunFailure"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService Codex resume failure"
   // lifecycle = "permanent"
@@ -1336,7 +1339,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(resets, 0);
     assert.equal(result.threadId, "thread-existing");
     assert.equal(result.runState, "error");
-    assert.match(result.messages.at(-1)?.text ?? "", /thread not found/);
+    assert.equal(result.messages.at(-1)?.runFailure, "thread not found");
   });
   // @test-value v2
   // kind = "contract"
@@ -4008,15 +4011,15 @@ releaseSecondAttempt!();
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "usage_limit reasonは最小turnとassistant fallbackで通常失敗文言に変換しない"
-  // oracle = { type = "contract", ref = "Session runtime usage limit error contract" }
+  // claim = "usage_limit reasonは最小turnと応答の失敗理由へ利用制限と再開可能時刻を保存し、生成本文を保持する"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Error Handling" }
   // fault = "usage limitを通常provider failureとして表示し、利用者の制限理由を隠す"
-  // observable = "turn error fieldsとassistant fallback text"
+  // observable = "turn error fieldsとassistant runFailure、取得済みtext"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService usage limit failure mapping"
   // lifecycle = "permanent"
   // @end-test-value
-  it("usage_limit reason は 最小turn と assistant fallback で通常失敗文言にしない", async () => {
+  it("usage_limit reason は最小turnと応答の失敗理由に保存する", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-before-limit" });
     const storedSessions: Session[] = [];
     const turnUpdates: UpdateSessionTurnInput[] = [];
@@ -4110,8 +4113,8 @@ releaseSecondAttempt!();
     assert.equal(result.runState, "error");
     assert.equal(turnUpdates.at(-1)?.phase, "failed");
     assert.equal(turnUpdates.at(-1)?.errorMessage, expectedMessage);
-    assert.equal(storedSessions.at(-1)?.messages.at(-1)?.text, expectedMessage);
-    assert.doesNotMatch(storedSessions.at(-1)?.messages.at(-1)?.text ?? "", /実行に失敗したよ。/);
+    assert.equal(storedSessions.at(-1)?.messages.at(-1)?.runFailure, expectedMessage);
+    assert.equal(storedSessions.at(-1)?.messages.at(-1)?.text, createPartialResult().assistantText);
   });
 
   // @test-value v2
@@ -4210,7 +4213,8 @@ releaseSecondAttempt!();
 
     assert.equal(attempt, 1);
     assert.equal(result.runState, "error");
-    assert.match(result.messages.at(-1)?.text ?? "", /途中まで出たよ。/);
+    assert.equal(result.messages.at(-1)?.text, "途中まで出たよ。");
+    assert.equal(result.messages.at(-1)?.runFailure, "thread not found");
     assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 2);
   });
@@ -4220,7 +4224,7 @@ releaseSecondAttempt!();
   // claim = "not_foundを返したCodex turnは一回のerror Sessionとして返り、thread invalidationを一回依頼する"
   // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal catch / invalidateProviderSessionThreadBestEffort; docs/design/provider-adapter.md: Error Handling" }
   // fault = "Codexの汎用not_found errorを自動再実行する、error Sessionを保存しない、またはthread invalidationを省く"
-  // observable = "Codex adapter呼出数、返却SessionのrunState/最終error本文、Session保存数とinvalidation対象"
+  // observable = "Codex adapter呼出数、返却SessionのrunState/runFailure、Session保存数とinvalidation対象"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService provider error classification"
   // lifecycle = "permanent"
@@ -4313,7 +4317,7 @@ releaseSecondAttempt!();
 
     assert.equal(attempt, 1);
     assert.equal(result.runState, "error");
-    assert.match(result.messages.at(-1)?.text ?? "", /resource not found/);
+    assert.equal(result.messages.at(-1)?.runFailure, "resource not found");
     assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 2);
   });

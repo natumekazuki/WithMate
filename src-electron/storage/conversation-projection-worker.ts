@@ -1,5 +1,6 @@
 import { parentPort } from "node:worker_threads";
 import { normalizeMessage } from "../../src-shared/session/session-state.js";
+import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
 import { projectMessagePlainText, projectMessageRenderedSearchText } from "../../src-shared/session/message-search.js";
 import { iterateTextMatches } from "../../src-shared/text/find-text-matches.js";
 import { CONVERSATION_QUERY_PAGE_SIZE, type ConversationNavigatorEntry, type ConversationSearchMatch } from "../../src-shared/session/conversation-page.js";
@@ -48,8 +49,9 @@ export function projectConversationBatch(input: ConversationProjectionInput): Co
     count += 1;
   };
   for (const row of input.rows) {
-    const message = normalizeMessage({ ...JSON.parse(row.body), role: row.role });
-    if (!message) throw new Error(`Invalid conversation message: ${row.seq}`);
+    const normalized = normalizeMessage({ ...JSON.parse(row.body), role: row.role });
+    if (!normalized) throw new Error(`Invalid conversation message: ${row.seq}`);
+    const message = withMessageRunFailure(normalized, row.runFailure);
     const responseProvider = message.role === "assistant" ? input.provider : undefined;
     if (input.query.kind === "search") {
       const text = input.query.mode === "source" ? message.text

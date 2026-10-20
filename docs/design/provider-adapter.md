@@ -34,7 +34,7 @@ runtimeはshared contractの上に次の3 adapterを持つ。
 
 Provider 実行が失敗した場合、adapter は `ProviderTurnError` を投げる。`canceled` は既存の session phase / retry / invalidation 判定のため boolean として維持し、失敗分類は `reason` で渡す。
 
-Provider 固有の error message 判定は adapter 側に閉じる。`SessionRuntimeService` は `reason` を見て最小turnのerrorとassistant fallback messageを分け、provider 固有の英語 message を再 parse しない。
+Provider 固有の error message 判定は adapter 側に閉じる。`SessionRuntimeService` は `reason` から失敗理由を生成し、最小turnのerrorとassistant messageの`runFailure`へ保存する。受信済み`text`は変更せず、失敗通知を本文へ追記しない。本文未取得でも空の`text`と失敗理由を保存する。provider 固有の英語 message を再 parse しない。
 
 provider実行結果から取得済みassistant本文とartifactをMainへ返し、正常・失敗・取消の通常履歴へ保存する。操作の正本は`MessageArtifact.operationTimeline`とし、live stepと共通の操作型で実取得したID、status、exitCode、構造化error、truncationを保持する。未取得の値は省略し、turn全体のphaseや自由文から個別操作の成功・失敗を推定しない。
 Main Processでは`MainProviderFacade`がcoding planeとbackground planeの入口を分ける。`SessionRuntimeService`はcoding plane、completed turn後のCharacter Affect評価はbackground planeを使う。
