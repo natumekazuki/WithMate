@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import type { HomeRightPaneProps } from "./HomeRightPane.js";
+import type { HomeHeaderProps } from "./HomeHeader.js";
 import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
 import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import type {
@@ -45,7 +46,7 @@ export type HomeRightPanePropsInput = {
   sessionWindowRestoreIds?: readonly string[];
   sessionWindowRestorePending?: boolean;
   sessionWindowRestoreFeedback?: string;
-  mateLoadStatus?: HomeRightPaneProps["mateLoadStatus"];
+  mateLoadStatus?: HomeHeaderProps["mateLoadStatus"];
   mateLoadError?: string;
   onRetryMateStatus?: () => void;
 };
@@ -74,7 +75,7 @@ export function buildHomeRightPaneProps({
   mateLoadStatus,
   mateLoadError,
   onRetryMateStatus,
-}: HomeRightPanePropsInput): HomeRightPaneProps {
+}: HomeRightPanePropsInput): HomeRightPaneProps & HomeHeaderProps {
   return {
     providerQuota,
     rightPaneView,

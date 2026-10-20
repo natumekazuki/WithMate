@@ -122,7 +122,12 @@ export function ConcurrentChatSplitter({
   widthRatio,
   onWidthRatioChange,
   onWidthRatioCommit,
-}: Pick<ConcurrentChatWindowProps, "widthRatio" | "onWidthRatioChange" | "onWidthRatioCommit">) {
+  mainPane = { selector: ".session-concurrent-chat-main", id: "session-main-chat-pane", label: "Main" },
+  auxiliaryPane = { selector: ".session-concurrent-chat-auxiliary", id: "session-auxiliary-chat-pane", label: "Auxiliary" },
+}: Pick<ConcurrentChatWindowProps, "widthRatio" | "onWidthRatioChange" | "onWidthRatioCommit"> & {
+  mainPane?: { selector: string; id: string; label: string };
+  auxiliaryPane?: { selector: string; id: string; label: string };
+}) {
   const dragRef = useRef<{ width: number; minRatio: number; maxRatio: number; startingRatio: number } | null>(null);
   const pendingRatioRef = useRef<number | null>(null);
   const getRatioBounds = (splitter: HTMLButtonElement) => {
@@ -130,8 +135,8 @@ export function ConcurrentChatSplitter({
     if (!parent) return null;
     const width = parent.getBoundingClientRect().width - splitter.getBoundingClientRect().width;
     if (width <= 0) return null;
-    const main = parent.querySelector<HTMLElement>(".session-concurrent-chat-main");
-    const auxiliary = parent.querySelector<HTMLElement>(".session-concurrent-chat-auxiliary");
+    const main = parent.querySelector<HTMLElement>(mainPane.selector);
+    const auxiliary = parent.querySelector<HTMLElement>(auxiliaryPane.selector);
     const readMinimum = (element: HTMLElement | null) => {
       const value = element ? Number.parseFloat(window.getComputedStyle(element).getPropertyValue("--session-region-min-width")) : Number.NaN;
       return Number.isFinite(value) ? Math.max(0, value) : 0;
@@ -188,8 +193,8 @@ export function ConcurrentChatSplitter({
         onWidthRatioChange(next < bounds.minRatio ? 0 : next > bounds.maxRatio ? 1 : next);
         onWidthRatioCommit?.();
       }}
-      ariaLabel={widthRatio >= 1 ? "Open Main" : widthRatio > 0 ? "Collapse Auxiliary" : "Open Auxiliary"}
-      ariaControls={widthRatio >= 1 ? "session-main-chat-pane" : "session-auxiliary-chat-pane"}
+      ariaLabel={widthRatio >= 1 ? `Open ${mainPane.label}` : widthRatio > 0 ? `Collapse ${auxiliaryPane.label}` : `Open ${auxiliaryPane.label}`}
+      ariaControls={widthRatio >= 1 ? mainPane.id : auxiliaryPane.id}
       title="Click to toggle. Drag or use arrow keys to resize. Move to an edge to show one side at full width."
     />
   );

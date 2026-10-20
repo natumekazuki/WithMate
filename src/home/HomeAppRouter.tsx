@@ -18,6 +18,8 @@ type HomeAppRouterProps = {
   mateSetupContent: ReactNode;
   isMonitorWindowMode: boolean;
   monitorContent: ReactNode;
+  header: ReactNode;
+  rightPaneLabel: "Monitor" | "Characters";
   recentSessionsPanel: ReactNode;
   rightPane: ReactNode;
   launchDialog: ReactNode;
@@ -34,6 +36,8 @@ export function HomeAppRouter({
   mateSetupContent,
   isMonitorWindowMode,
   monitorContent,
+  header,
+  rightPaneLabel,
   recentSessionsPanel,
   rightPane,
   launchDialog,
@@ -66,6 +70,8 @@ export function HomeAppRouter({
   return (
     <HomeDashboardScreen
       homePageClassName={homePageClassName}
+      header={header}
+      rightPaneLabel={rightPaneLabel}
       recentSessionsPanel={recentSessionsPanel}
       rightPane={rightPane}
       launchDialog={launchDialog}

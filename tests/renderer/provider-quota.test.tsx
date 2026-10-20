@@ -198,31 +198,34 @@ test("quota一覧は有効provider集合へ追従する", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorの残量欄は初期表示で開き、共通splitterで閉じても一覧を保ち、再描画で開かず、再展開時には最新cacheの残率を表示する"
+// claim = "Monitorの残量要約は閉じても購読とDOMを保持し、再展開で最新の残率と取得失敗を表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "開閉操作を無視する、状態更新で閉じた欄を開く、一覧を再mountする、または再展開時に古い残率やremote取得を使う"
-// observable = "splitterのaria-expanded・aria-controls、残量領域のhidden属性、再表示した残率、一覧DOM同一性とscrollTop、cacheOnly引数"
+// fault = "閉じた要約をunmountして購読を失う、再展開で古い値を表示する、残量更新で一覧を再mountする、またはremote取得する"
+// observable = "要約の残率と失敗indicator、一覧DOM同一性とscrollTop、cacheOnly引数"
 // observation_boundary = "component-behavior"
-// scope = "Homeと独立Monitorの共通HomeMonitorContentからProviderQuotaOverviewへの開閉とcache再購読"
+// scope = "共通HomeMonitorContentとProviderQuotaOverviewの表示・購読"
 // lifecycle = "permanent"
 // impact = "複数Sessionを監視する一覧の場所を失わず、残量を必要時に再確認できる"
-// distinction = "既存quota購読testとRunning/Stopped配分testでは残量欄の開閉を通らない。1つのDOM testで復帰を確認し、実高さとkeyboard操作は実描画で確認する"
+// distinction = "ProviderQuota単体testではMonitorの状態更新とSession一覧のDOM保持を同時に確認できない"
 // @end-test-value
-test("Monitorの残量欄は開閉状態と一覧を維持し、再展開で最新cacheを表示する", async () => {
+test("Monitorの残量要約は開閉中も購読と一覧を維持する", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "https://withmate.local" });
   const keys = ["window", "document", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const previous = keys.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
   [dom.window, dom.window.document, dom.window.HTMLElement, true].forEach((value, index) => Object.defineProperty(globalThis, keys[index], { configurable: true, value }));
-  let currentQuota = quota("codex", 20);
+  const listeners = new Set<Parameters<ProviderQuotaApi["subscribeProviderQuotaTelemetry"]>[0]>();
   const reads: Parameters<ProviderQuotaApi["getProviderQuotaTelemetry"]>[] = [];
   const api = {
     getAppSettings: async () => createDefaultAppSettings(),
     subscribeAppSettings: () => () => {},
     getProviderQuotaTelemetry: async (...args: Parameters<ProviderQuotaApi["getProviderQuotaTelemetry"]>) => {
       reads.push(args);
-      return currentQuota;
+      return quota("codex", 20);
     },
-    subscribeProviderQuotaTelemetry: () => () => {},
+    subscribeProviderQuotaTelemetry: (listener: Parameters<ProviderQuotaApi["subscribeProviderQuotaTelemetry"]>[0]) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
   };
   const element = dom.window.document.getElementById("root")!;
   const root = createRoot(element);
@@ -234,33 +237,32 @@ test("Monitorの残量欄は開閉状態と一覧を維持し、再展開で最�
   />);
   try {
     await act(async () => render());
-    const splitter = element.querySelector<HTMLButtonElement>('[aria-label="Collapse Provider Quotas"]')!;
-    assert.ok(splitter);
-    assert.equal(splitter.getAttribute("aria-expanded"), "true");
-    const region = dom.window.document.getElementById(splitter.getAttribute("aria-controls")!)!;
-    assert.equal(region.hidden, false);
+    const region = element.querySelector<HTMLElement>('[aria-label="Provider Quotas"]')!;
+    assert.ok(region);
     assert.equal(region.querySelector(".provider-quota-values")?.textContent, "5h 80%");
     const list = element.querySelector<HTMLDivElement>(".home-monitor-list")!;
     list.scrollTop = 42;
-
-    await act(async () => splitter.click());
-    assert.equal(splitter.getAttribute("aria-expanded"), "false");
-    assert.equal(splitter.getAttribute("aria-label"), "Expand Provider Quotas");
-    assert.equal(region.hidden, true);
-    assert.equal(element.querySelector(".home-monitor-list"), list);
-    assert.equal(list.scrollTop, 42);
+    const quotaPanel = region.parentElement!;
+    const toggle = element.querySelector<HTMLButtonElement>(".home-monitor-quota-splitter")!;
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    await act(async () => toggle.click());
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(quotaPanel.hidden, true);
+    assert.equal(listeners.size, 1);
     await act(async () => render("Updated status"));
-    assert.equal(splitter.getAttribute("aria-expanded"), "false");
-    assert.equal(region.hidden, true);
-
-    currentQuota = quota("codex", 45);
-    await act(async () => splitter.click());
-    assert.equal(splitter.getAttribute("aria-expanded"), "true");
-    assert.equal(region.hidden, false);
+    await act(async () => { for (const listener of listeners) listener("codex", quota("codex", 45)); });
     assert.equal(region.querySelector(".provider-quota-values")?.textContent, "5h 55%");
+    await act(async () => { for (const listener of listeners) listener("codex", { ...quota("codex", 45), status: "error" }); });
+    assert.ok(region.querySelector('[aria-label="Codex quota update failed"]'));
+    assert.equal(region.querySelector(".provider-quota-values")?.textContent, "5h 55%");
+    await act(async () => toggle.click());
+    assert.equal(quotaPanel.hidden, false);
+    assert.equal(element.querySelector('[aria-label="Provider Quotas"]'), region);
+    assert.equal(region.querySelector(".provider-quota-values")?.textContent, "5h 55%");
+    assert.ok(region.querySelector('[aria-label="Codex quota update failed"]'));
     assert.equal(element.querySelector(".home-monitor-list"), list);
     assert.equal(list.scrollTop, 42);
-    assert.deepEqual(reads, [["codex", { cacheOnly: true }], ["codex", { cacheOnly: true }]]);
+    assert.deepEqual(reads, [["codex", { cacheOnly: true }]]);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

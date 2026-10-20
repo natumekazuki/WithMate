@@ -216,7 +216,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       height: 840,
       minWidth: 300,
       minHeight: 520,
-      maxWidth: 460,
       title: "Session Monitor",
       alwaysOnTop: true,
     });

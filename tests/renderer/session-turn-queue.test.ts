@@ -319,6 +319,74 @@ test("send presents before asynchronous preparation and recovers without replayi
 
 // @test-value v2
 // kind = "contract"
+// claim = "準備失敗時は編集・対象変更・freezeで失効した未受付表示だけ取り消し、有効な準備失敗とenqueue後の受付結果不明は捕捉本文とerrorを保持する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#送信受付の共通反映: 未受付capture失効・受付結果不明の契約" }
+// fault = "失効後のpreview rejectを送信errorとして残す、またはenqueue後のcapture失効を未受付と誤認して結果不明の送信表示を消す"
+// observable = "operationの返却/例外、submission本文・error・uncertain、受付registry、draft、enqueue回数、pending状態と送信lease"
+// observation_boundary = "consumer"
+// scope = "composer capture invalidation across preparation and queue acceptance"
+// lifecycle = "permanent"
+// impact = "未送信の古いpromptを送信失敗と誤表示せず、受付結果不明の要求を見失わずに新draftを保持する"
+// distinction = "既存workspace世代失効testはresolve経路のみ、受付単体testはoperationのcatchを通らない。deferred失敗で受付段階とcaptureの3失効条件を直接検証する"
+// @end-test-value
+test("failed preparation cancels only invalidated unaccepted captures", async () => {
+  for (const stage of ["preview", "enqueue"] as const) {
+    for (const invalidation of ["none", "edit", "target", "freeze"] as const) {
+      const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
+      const acceptance = new SessionTurnAcceptance();
+      const coordinator = new SessionSubmitCoordinator();
+      let fail!: (error: Error) => void;
+      const delayedFailure = () => new Promise<never>((_resolve, reject) => { fail = reject; });
+      let currentTarget = true;
+      let enqueueCount = 0;
+      let pending: string | null = null;
+      const operation = runMainSessionTurnOperation({
+        api: {
+          previewComposerInput: async () => stage === "preview" ? delayedFailure() : { attachments: [], errors: [] },
+          enqueueSessionTurn: async () => { enqueueCount += 1; return delayedFailure(); },
+          getSessionTurnQueueReceipt: async () => null,
+        },
+        sessionId: owner.id, selectedSession: session(), request, composerRegistry: registry, composerOwner: owner,
+        submitCoordinator: coordinator, acceptance, clearDraft: true, collapseActionDock: false,
+        selectedSessionRunState: "idle", blockedReason: null, isReadOnly: false,
+        isCurrentSubmission: () => currentTarget, validateWorkspace: async () => true,
+        state: {
+          setComposerPreview() {},
+          setPendingSubmitSessionId: (value) => { pending = typeof value === "function" ? value(pending) : value; },
+          setForceComposerBlockedFeedback() {}, collapseActionDock() {},
+        }, log() {},
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(acceptance.submissions.getSnapshot()[0]?.userMessage, "A");
+      assert.equal(pending, owner.id);
+      if (invalidation === "edit") registry.setDraft(owner, "B");
+      if (invalidation === "target") currentTarget = false;
+      if (invalidation === "freeze") registry.freeze();
+      const cancelled = stage === "preview" && invalidation !== "none";
+      const error = stage === "preview" ? /late preview failure/ : /acceptance could not be confirmed/;
+      const result = cancelled ? operation : assert.rejects(operation, error);
+      fail(new Error(`late ${stage} failure`));
+      if (cancelled) assert.equal(await result, null);
+      else await result;
+      const submissions = acceptance.submissions.getSnapshot();
+      if (cancelled) assert.deepEqual(submissions, []);
+      else {
+        assert.equal(submissions.length, 1);
+        assert.equal(submissions[0].userMessage, "A");
+        assert.match(submissions[0].error, error);
+        assert.equal(submissions[0].uncertain, stage === "enqueue");
+      }
+      assert.equal(acceptance.hasUncertain(owner.id), stage === "enqueue");
+      assert.equal(enqueueCount, stage === "enqueue" ? 1 : 0);
+      assert.equal(registry.get(owner).draft, invalidation === "edit" ? "B" : "A");
+      assert.equal(pending, null);
+      assert.equal(coordinator.isClaimed(owner.id), false);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "workspace検証中にMain送信の対象が失効した場合は未受付表示だけ取り消し、共有workspaceの後続検証が成功したら障害と扱わない。対象が有効な実検証失敗は入力を残して表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 送信直後の先行表示; docs/design/ui-design-guidelines.md: 正常進行と明示失敗の表示" }
 // fault = "共有workspace検証の旧世代falseを対象失効より先にerror化し、正常な取り消しへ障害表示を残す、または有効な送信の実workspace障害を隠す"

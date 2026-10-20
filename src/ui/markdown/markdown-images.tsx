@@ -311,7 +311,7 @@ export const MarkdownImage = memo(function MarkdownImage({
           feedback={feedback}
         />
       ) : null}
-      {!lightboxOpen ? feedback : null}
+      {!lightboxOpen && feedback ? createPortal(feedback, document.body) : null}
     </span>
   );
 });

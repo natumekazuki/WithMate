@@ -14,6 +14,7 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
 import { ChatDockSplitter } from "../chat/chat-window.js";
+import { ComposerIcon } from "../chat/composer/composer-icon.js";
 
 export type HomeMonitorContentProps = {
   approvalEntries: HomeMonitorEntry[];
@@ -36,18 +37,46 @@ export type HomeMonitorContentProps = {
 
 type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading" | "closed";
 
-type SectionBoundaries = [number, number];
-
-function clampSectionBoundaries(boundaries: SectionBoundaries, height: number): SectionBoundaries {
-  if (height <= 0) return boundaries;
-  const minimum = Math.min(1 / 3, 48 / height);
-  const first = Math.max(minimum, Math.min(1 - minimum * 2, boundaries[0]));
-  return [first, Math.max(first + minimum, Math.min(1 - minimum, boundaries[1]))];
+function fitSectionWeights(weights: number[], closed: boolean[], height: number): number[] {
+  if (height <= 0) return weights;
+  const active = weights.map((_, index) => index).filter((index) => !closed[index]);
+  const minimum = Math.min(48, height / active.length);
+  const next = [...weights];
+  let remaining = height;
+  let pending = active;
+  while (pending.length) {
+    const total = pending.reduce((sum, index) => sum + weights[index]!, 0);
+    const small = pending.filter((index) => remaining * weights[index]! / total < minimum);
+    if (!small.length) {
+      for (const index of pending) next[index] = remaining * weights[index]! / total;
+      break;
+    }
+    for (const index of small) { next[index] = minimum; remaining -= minimum; }
+    pending = pending.filter((index) => !small.includes(index));
+  }
+  return next;
 }
 
 function getEntryKey(entry: HomeMonitorEntry): string {
   return `${entry.kind}:${entry.session.id}`;
 }
+
+function layoutMonitorCards(list: HTMLElement) {
+  const cards = [...list.querySelectorAll<HTMLElement>(":scope > .home-monitor-card")];
+  const styles = list.ownerDocument.defaultView!.getComputedStyle(list);
+  const columns = Number(styles.getPropertyValue("--home-monitor-columns")) || 1;
+  const gap = parseFloat(styles.rowGap) || 0;
+  const midpoint = Math.ceil(cards.length / columns);
+  const heights = [0, 0];
+  cards.forEach((card, index) => {
+    const column = index < midpoint ? 0 : 1;
+    card.style.left = column === 0 ? "0px" : "calc((100% + var(--home-monitor-column-gap)) / 2)";
+    card.style.top = `${heights[column]}px`;
+    heights[column]! += card.getBoundingClientRect().height + gap;
+  });
+  list.style.height = `${Math.max(0, ...heights) - (cards.length ? gap : 0)}px`;
+}
+
 function MonitorStatusIcon({
   kind,
   label,
@@ -87,7 +116,6 @@ function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
 
   return (
     <span className="home-monitor-status-cluster home-monitor-auxiliary-status" aria-label="Auxiliary status">
-      <span className="home-monitor-status-label">Aux</span>
       {groups.map((group) => (
         <MonitorStatusIcon
           key={group.label}
@@ -115,105 +143,104 @@ export function HomeMonitorContent({
   onShowContextMenu,
 }: HomeMonitorContentProps) {
   const [expandedEntryKeys, setExpandedEntryKeys] = useState<Set<string>>(() => new Set());
-  const [sectionBoundaries, setSectionBoundaries] = useState<SectionBoundaries>([1 / 3, 2 / 3]);
+  const [closedSections, setClosedSections] = useState([false, false, false]);
+  const [smallSections, setSmallSections] = useState([false, false, false]);
+  const [sectionWeights, setSectionWeights] = useState([1, 1, 1]);
+  const [availableHeight, setAvailableHeight] = useState(0);
   const [isQuotaExpanded, setIsQuotaExpanded] = useState(true);
-  const quotaId = useId();
-  const resizeStartRef = useRef<{ ratio: number; height: number } | null>(null);
-  const sectionsId = useId();
   const sectionsRef = useRef<HTMLDivElement>(null);
-  const [collapsedLists, setCollapsedLists] = useState<boolean[]>([false, false, false]);
+  const dragStartRef = useRef<number[] | null>(null);
+  const id = useId();
+  const sectionLabels = ["Attention", "Running", "Stopped"];
+  const sectionCounts = [approvalEntries.length, runningEntries.length, nonRunningEntries.length];
 
-  const getSectionsHeight = (container: HTMLElement) => container.getBoundingClientRect().height
-    - [...container.querySelectorAll<HTMLElement>(".home-monitor-splitter")]
-      .reduce((sum, splitter) => sum + splitter.getBoundingClientRect().height, 0);
+  const getAvailableHeight = () => {
+    const container = sectionsRef.current;
+    if (!container) return 0;
+    return container.getBoundingClientRect().height
+      - [...container.querySelectorAll<HTMLElement>(":scope > .home-monitor-splitter")].reduce((sum, item) => sum + item.getBoundingClientRect().height, 0)
+      - [...container.querySelectorAll<HTMLElement>(":scope > section")].reduce((sum, item, index) => sum + (closedSections[index] ? item.getBoundingClientRect().height : 0), 0);
+  };
 
   useLayoutEffect(() => {
     const container = sectionsRef.current;
     if (!container) return;
     const sections = [...container.querySelectorAll<HTMLElement>(":scope > section")];
-    const updateLayout = () => {
-      const height = getSectionsHeight(container);
-      setSectionBoundaries((current) => {
-        const next = clampSectionBoundaries(current, height);
-        return next.every((value, index) => value === current[index]) ? current : next;
+    const update = () => {
+      for (const list of container.querySelectorAll<HTMLElement>(".home-monitor-list-items")) layoutMonitorCards(list);
+      setAvailableHeight(getAvailableHeight());
+      const small = sections.map((section, index) => {
+        if (closedSections[index]) return false;
+        const content = section.querySelector<HTMLElement>(".home-monitor-section-content");
+        const card = content?.querySelector<HTMLElement>(".home-monitor-parent-row");
+        return Boolean(content && card && content.getBoundingClientRect().height < card.getBoundingClientRect().height);
       });
-      const next = sections.map((section, index) => {
-        const list = section.querySelector<HTMLElement>(".home-monitor-list");
-        const card = list?.querySelector<HTMLElement>(".home-monitor-card");
-        if (!list || !card) return false;
-        const auxiliaryList = card.querySelector<HTMLElement>(".home-monitor-auxiliary-list");
-        const minimumHeight = card.getBoundingClientRect().height - (auxiliaryList?.getBoundingClientRect().height ?? 0);
-        const collapsed = list.getBoundingClientRect().height < minimumHeight;
-        if (collapsed && list.contains(container.ownerDocument.activeElement)) {
-          container.querySelectorAll<HTMLButtonElement>(".home-monitor-splitter")[Math.min(index, 1)]?.focus({ preventScroll: true });
+      sections.forEach((section, index) => {
+        if ((closedSections[index] || small[index]) && section.querySelector(".home-monitor-section-content")?.contains(container.ownerDocument.activeElement)) {
+          container.querySelectorAll<HTMLButtonElement>(":scope > .home-monitor-splitter")[Math.min(index, 1)]?.focus({ preventScroll: true });
         }
-        return collapsed;
       });
-      setCollapsedLists((current) => current.every((value, index) => value === next[index]) ? current : next);
+      setSmallSections((current) => current.every((value, index) => value === small[index]) ? current : small);
     };
-    updateLayout();
+    update();
     const Observer = container.ownerDocument.defaultView?.ResizeObserver;
     if (!Observer) return;
-    const observer = new Observer(updateLayout);
+    const observer = new Observer(update);
     observer.observe(container);
     for (const section of sections) {
       observer.observe(section);
-      const head = section.querySelector(".home-monitor-section-head");
-      const card = section.querySelector(".home-monitor-card");
-      if (head) observer.observe(head);
-      if (card) observer.observe(card);
+      for (const item of section.querySelectorAll(".home-monitor-section-head, .home-monitor-parent-row, .home-monitor-card, .home-monitor-list-items")) observer.observe(item);
     }
     return () => observer.disconnect();
-  }, [approvalEntries, runningEntries, nonRunningEntries]);
+  }, [closedSections, approvalEntries, runningEntries, nonRunningEntries, expandedEntryKeys]);
 
-  const resizeSections = (index: 0 | 1, ratio: number, height: number) => {
-    if (height <= 0) return;
-    const minimum = Math.min(1 / 3, 48 / height);
-    setSectionBoundaries((current) => {
-      const next = clampSectionBoundaries(current, height);
-      const lower = index === 0 ? minimum : next[0] + minimum;
-      const upper = index === 0 ? next[1] - minimum : 1 - minimum;
-      next[index] = Math.max(lower, Math.min(upper, ratio));
+  const resizePair = (index: number, start: number[], delta: number) => {
+    if (closedSections[index] || closedSections[index + 1]) return;
+    const total = start[index]! + start[index + 1]!;
+    const minimum = Math.min(48, total / 2);
+    const first = Math.max(minimum, Math.min(total - minimum, start[index]! + delta));
+    setAvailableHeight(getAvailableHeight());
+    setSectionWeights((weights) => {
+      const activeWeight = weights.reduce((sum, value, i) => sum + (closedSections[i] ? 0 : value), 0);
+      const activeHeight = start.reduce((sum, value, i) => sum + (closedSections[i] ? 0 : value), 0);
+      if (activeHeight <= 0) return weights;
+      const next = start.map((value, i) => closedSections[i] ? weights[i]! : value * activeWeight / activeHeight);
+      next[index] = first * activeWeight / activeHeight;
+      next[index + 1] = (total - first) * activeWeight / activeHeight;
       return next;
     });
   };
 
-  const renderSplitter = (index: 0 | 1, label: string) => (
-    <ChatDockSplitter
-      edge="bottom"
-      className="home-monitor-splitter"
-      canCollapse={false}
-      ariaLabel={`Resize ${label}`}
-      ariaControls={sectionsId}
-      ariaOrientation="horizontal"
-      ariaValueNow={Math.round(sectionBoundaries[index] * 100)}
-      title={`Drag or use Up/Down arrows to resize ${label}`}
+  const renderSplitter = (index: number) => {
+    const nextIndex = index + 1;
+    const restore = closedSections[index] || closedSections[nextIndex];
+    const target = closedSections[index] ? index : closedSections[nextIndex] ? nextIndex
+      : sectionCounts[index]! < sectionCounts[nextIndex]! ? index : nextIndex;
+    const action = `${restore ? "Expand" : "Collapse"} ${sectionLabels[target]}`;
+    const weights = fitSectionWeights(sectionWeights, closedSections, getAvailableHeight());
+    const sectionElements = sectionsRef.current?.querySelectorAll<HTMLElement>(":scope > section");
+    const heights = weights.map((value, i) => closedSections[i] ? sectionElements?.[i]?.getBoundingClientRect().height ?? 0 : value);
+    const total = heights.reduce((sum, value) => sum + value, 0);
+    return <ChatDockSplitter edge={target === index ? "top" : "bottom"} className="home-monitor-splitter"
+      ariaLabel={`${action}; resize ${sectionLabels[index]} and ${sectionLabels[nextIndex]}`}
+      ariaControls={`${id}-content-${target}`}
+      ariaOrientation="horizontal" ariaValueNow={Math.round(heights.slice(0, nextIndex).reduce((sum, value) => sum + value, 0) / total * 100)}
+      isPanelExpanded={!restore} title={`${action}; drag or use Up/Down arrows to resize`}
+      onTogglePanel={() => setClosedSections((current) => current.map((value, i) => i === target ? !restore : value))}
       onPointerDown={(event) => {
         event.preventDefault();
-        const container = event.currentTarget.parentElement;
-        if (!container) return;
-        const height = getSectionsHeight(container);
-        const ratio = clampSectionBoundaries(sectionBoundaries, height)[index];
-        resizeSections(index, ratio, height);
-        resizeStartRef.current = { ratio, height };
+        dragStartRef.current = fitSectionWeights(sectionWeights, closedSections, getAvailableHeight());
       }}
-      onDrag={(_event, delta) => {
-        const start = resizeStartRef.current;
-        if (start) resizeSections(index, start.ratio + delta.y / start.height, start.height);
-      }}
-      onPointerEnd={() => { resizeStartRef.current = null; }}
+      onDrag={(_event, delta) => { if (dragStartRef.current) resizePair(index, dragStartRef.current, delta.y); }}
+      onPointerEnd={() => { dragStartRef.current = null; }}
       onKeyDown={(event) => {
         if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
-        const container = event.currentTarget.parentElement;
-        if (!container) return;
-        const height = getSectionsHeight(container);
-        const ratio = clampSectionBoundaries(sectionBoundaries, height)[index];
-        resizeSections(index, event.key === "Home" ? 0 : event.key === "End" ? 1
-          : ratio + (event.key === "ArrowDown" ? 24 : -24) / height, height);
+        const start = fitSectionWeights(sectionWeights, closedSections, getAvailableHeight());
+        resizePair(index, start, event.key === "Home" ? -Infinity : event.key === "End" ? Infinity : event.key === "ArrowDown" ? 24 : -24);
       }}
-    />
-  );
+    />;
+  };
 
   const toggleEntry = (entry: HomeMonitorEntry) => {
     const key = getEntryKey(entry);
@@ -271,45 +298,40 @@ export function HomeMonitorContent({
         onContextMenu={(event) => showEntryContextMenu(event, entry)}
       >
         <div className="home-monitor-parent-row">
+          <div className="home-monitor-parent-identity" role="group" aria-label={`Main session: ${title}`}>
+            <span className="home-monitor-status-cluster" aria-label={`Main status: ${entry.mainState.label}`}>
+              <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
+            </span>
+            <button
+              className="home-monitor-parent-button"
+              type="button"
+              onClick={openParent}
+              onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
+              aria-haspopup="menu"
+              aria-label={`Open session: ${title}`}
+              title={title}
+            >
+              <CharacterAvatar
+                character={{ name: entry.session.character, iconPath: entry.session.characterIconPath }}
+                size="tiny"
+                className="home-monitor-avatar"
+              />
+              <strong className="home-monitor-parent-title">{title}</strong>
+            </button>
+          </div>
           {canExpand ? (
             <button
               className="home-monitor-disclosure"
               type="button"
               aria-label={`${isExpanded ? "Hide" : "Show"} Auxiliary sessions for ${title}`}
+              title={`${isExpanded ? "Hide" : "Show"} Auxiliary sessions for ${title}`}
               aria-expanded={isExpanded}
               onClick={() => toggleEntry(entry)}
             >
+              <ComposerIcon name="auxiliary" />
+              {renderAuxiliaryStatusIcons(entry)}
               <span aria-hidden="true">{isExpanded ? "▾" : "▸"}</span>
             </button>
-          ) : (
-            <span className="home-monitor-disclosure-placeholder" aria-hidden="true" />
-          )}
-          <button
-            className="home-monitor-parent-button"
-            type="button"
-            onClick={openParent}
-            onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
-            aria-haspopup="menu"
-            aria-label={`Open session: ${title}`}
-          >
-            <CharacterAvatar
-              character={{ name: entry.session.character, iconPath: entry.session.characterIconPath }}
-              size="tiny"
-              className="home-monitor-avatar"
-            />
-            <strong className="home-monitor-parent-title">{title}</strong>
-          </button>
-        </div>
-        <div className="home-monitor-summary-row">
-          <span className="home-monitor-status-cluster" aria-label={`Main status: ${entry.mainState.label}`}>
-            <span className="home-monitor-status-label">Main</span>
-            <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
-          </span>
-          {auxiliarySessions.length > 0 ? (
-            <>
-              <span className="home-monitor-summary-separator" aria-hidden="true" />
-              {renderAuxiliaryStatusIcons(entry)}
-            </>
           ) : null}
         </div>
         {isExpanded ? (
@@ -357,6 +379,14 @@ export function HomeMonitorContent({
   );
   const hasReadError = sessionWindowsDataState === "error" || auxiliaryDataState === "error";
   const showEmptyState = sessionWindowsDataState !== "loading" && sessionWindowsDataState !== "error";
+  const renderMonitorList = (entries: HomeMonitorEntry[], emptyMessage = "") => {
+    return <div className="home-monitor-list">
+      {entries.length > 0 ? (
+        <div className="home-monitor-list-items">{renderMonitorEntries(entries)}</div>
+      ) : showEmptyState && emptyMessage ? <p className="home-monitor-empty">{emptyMessage}</p> : null}
+    </div>;
+  };
+  const fittedWeights = fitSectionWeights(sectionWeights, closedSections, availableHeight);
 
   return (
     <div
@@ -365,18 +395,11 @@ export function HomeMonitorContent({
     >
       {providerQuota ? (
         <div className="home-monitor-quota">
-          <div id={quotaId} hidden={!isQuotaExpanded}>
-            {isQuotaExpanded ? providerQuota : null}
-          </div>
-          <ChatDockSplitter
-            edge="top"
-            className="home-monitor-quota-splitter"
-            isPanelExpanded={isQuotaExpanded}
-            ariaControls={quotaId}
+          <div id={`${id}-quota`} hidden={!isQuotaExpanded}>{providerQuota}</div>
+          <ChatDockSplitter edge="top" className="home-monitor-quota-splitter"
+            isPanelExpanded={isQuotaExpanded} ariaControls={`${id}-quota`}
             ariaLabel={isQuotaExpanded ? "Collapse Provider Quotas" : "Expand Provider Quotas"}
-            title={isQuotaExpanded ? "Click to collapse Provider Quotas" : "Click to expand Provider Quotas"}
-            onTogglePanel={() => setIsQuotaExpanded((current) => !current)}
-          />
+            onTogglePanel={() => setIsQuotaExpanded((current) => !current)} />
         </div>
       ) : null}
       {statusFeedback ? hasReadError ? (
@@ -396,49 +419,40 @@ export function HomeMonitorContent({
       ) : null}
       <div
         ref={sectionsRef}
-        id={sectionsId}
         className="home-monitor-sections"
-        style={{ gridTemplateRows: `minmax(48px, ${sectionBoundaries[0]}fr) var(--session-dock-splitter-size) minmax(48px, ${sectionBoundaries[1] - sectionBoundaries[0]}fr) var(--session-dock-splitter-size) minmax(48px, ${1 - sectionBoundaries[1]}fr)` }}
+        style={{ gridTemplateRows: fittedWeights.map((weight, index) => closedSections[index] ? "max-content" : `minmax(48px, ${weight}fr)`).join(" var(--session-dock-splitter-size) ") }}
       >
-        <section className="home-monitor-section" aria-labelledby="home-monitor-approval">
+        <section className={`home-monitor-section${closedSections[0] ? " is-closed" : ""}`} aria-labelledby="home-monitor-approval">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-approval">Attention</h3>
             <span className="home-monitor-count">{approvalEntries.length}</span>
           </div>
-          <div className={`home-monitor-list${collapsedLists[0] ? " is-collapsed" : ""}`} inert={collapsedLists[0]}>
-            {renderMonitorEntries(approvalEntries)}
+          <div id={`${id}-content-0`} className={`home-monitor-section-content${closedSections[0] || smallSections[0] ? " is-hidden" : ""}`} inert={closedSections[0] || smallSections[0]} aria-hidden={closedSections[0] || smallSections[0]}>
+            {renderMonitorList(approvalEntries)}
           </div>
         </section>
 
-        {renderSplitter(0, "Attention and Running")}
+        {renderSplitter(0)}
 
-        <section className="home-monitor-section" aria-labelledby="home-monitor-running">
+        <section className={`home-monitor-section${closedSections[1] ? " is-closed" : ""}`} aria-labelledby="home-monitor-running">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-running">Running</h3>
             <span className="home-monitor-count">{runningEntries.length}</span>
           </div>
-          <div className={`home-monitor-list${collapsedLists[1] ? " is-collapsed" : ""}`} inert={collapsedLists[1]}>
-            {runningEntries.length > 0
-              ? renderMonitorEntries(runningEntries)
-              : showEmptyState && runningEmptyMessage
-                ? <p className="home-monitor-empty">{runningEmptyMessage}</p>
-                : null}
+          <div id={`${id}-content-1`} className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`} inert={closedSections[1] || smallSections[1]} aria-hidden={closedSections[1] || smallSections[1]}>
+            {renderMonitorList(runningEntries, runningEmptyMessage)}
           </div>
         </section>
 
-        {renderSplitter(1, "Running and Stopped")}
+        {renderSplitter(1)}
 
-        <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
+        <section className={`home-monitor-section${closedSections[2] ? " is-closed" : ""}`} aria-labelledby="home-monitor-inactive">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-inactive">Stopped</h3>
             <span className="home-monitor-count">{nonRunningEntries.length}</span>
           </div>
-          <div className={`home-monitor-list${collapsedLists[2] ? " is-collapsed" : ""}`} inert={collapsedLists[2]}>
-            {nonRunningEntries.length > 0
-              ? renderMonitorEntries(nonRunningEntries)
-              : showEmptyState && nonRunningEmptyMessage
-                ? <p className="home-monitor-empty">{nonRunningEmptyMessage}</p>
-                : null}
+          <div id={`${id}-content-2`} className={`home-monitor-section-content${closedSections[2] || smallSections[2] ? " is-hidden" : ""}`} inert={closedSections[2] || smallSections[2]} aria-hidden={closedSections[2] || smallSections[2]}>
+            {renderMonitorList(nonRunningEntries, nonRunningEmptyMessage)}
           </div>
         </section>
       </div>
