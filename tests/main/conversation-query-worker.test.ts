@@ -29,7 +29,7 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "全履歴検索とnavigatorはMain／Auxiliary各ownerのproviderに従いCodex固有参照を投影し、Sourceを保持する"
+// claim = "Main／AuxiliaryのどちらがCodexでも全履歴検索とnavigatorは各ownerのproviderで固有参照を投影し、Sourceを保持する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
 // fault = "workerへproviderが届かないか親のproviderをAuxiliaryへ流用し、非表示属性が検索されるか他providerの本文を失う"
 // observable = "実storage Workerから取得するpreview／Sourceの検索件数とnavigatorのpreview"
@@ -37,27 +37,32 @@ async function fixture() {
 // scope = "Main／Auxiliary query ownerのprovider伝播"
 // lifecycle = "permanent"
 // impact = "表示と全履歴検索の一致が崩れ、誤った検索結果や要約を返す"
-// distinction = "共有parser testと型検査ではDB ownerからCPU Workerまでの伝播を通らない。小さい2ownerのSQLite fixtureで確認する"
+// distinction = "共有parser testと型検査ではDB ownerからCPU Workerまでの伝播を通らない。小さい2ownerのSQLite fixtureでCodex／非Codexの配置を入れ替えて確認する"
 // @end-test-value
 test("全履歴投影は会話ownerごとのproviderを使う", async () => {
-  const f = await fixture();
   const text = 'visualize{"path":"/work/chart.html","title":"Hidden Title"}';
-  try {
-    await f.bundle.stores.session.upsertSession({ ...f.session, provider: "codex", messages: [{ role: "assistant", text }] });
-    await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.auxiliary, provider: "claude", messages: [{ role: "assistant", text }] });
-    for (const [store, id, isCodex] of [[f.bundle.stores.session, f.session.id, true], [f.bundle.stores.auxiliary, f.auxiliary.id, false]] as const) {
-      for (const mode of ["preview", "source"] as const) {
-        const result = await store.searchConversation(id, { producerId: id, requestId: `${id}-${mode}`, query: "Hidden Title", mode });
-        assert.equal(result.status, "complete");
-        if (result.status !== "complete") throw new Error("missing provider search result");
-        assert.equal(result.totalCount, isCodex && mode === "preview" ? 0 : 1);
+  for (const [mainProvider, auxiliaryProvider] of [["codex", "claude"], ["claude", "codex"]] as const) {
+    const f = await fixture();
+    try {
+      await f.bundle.stores.session.upsertSession({ ...f.session, provider: mainProvider, messages: [{ role: "assistant", text }] });
+      await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.auxiliary, provider: auxiliaryProvider, messages: [{ role: "assistant", text }] });
+      for (const [store, id, isCodex] of [
+        [f.bundle.stores.session, f.session.id, mainProvider === "codex"],
+        [f.bundle.stores.auxiliary, f.auxiliary.id, auxiliaryProvider === "codex"],
+      ] as const) {
+        for (const mode of ["preview", "source"] as const) {
+          const result = await store.searchConversation(id, { producerId: id, requestId: `${id}-${mode}`, query: "Hidden Title", mode });
+          assert.equal(result.status, "complete");
+          if (result.status !== "complete") throw new Error("missing provider search result");
+          assert.equal(result.totalCount, isCodex && mode === "preview" ? 0 : 1);
+        }
+        const navigator = await store.listConversationNavigator(id, { producerId: id, requestId: `${id}-navigator`, filter: "all" });
+        assert.equal(navigator.status, "complete");
+        if (navigator.status !== "complete") throw new Error("missing provider navigator result");
+        assert.equal(navigator.items[0]?.preview, isCodex ? "/work/chart.html" : text);
       }
-      const navigator = await store.listConversationNavigator(id, { producerId: id, requestId: `${id}-navigator`, filter: "all" });
-      assert.equal(navigator.status, "complete");
-      if (navigator.status !== "complete") throw new Error("missing provider navigator result");
-      assert.equal(navigator.items[0]?.preview, isCodex ? "/work/chart.html" : text);
-    }
-  } finally { await f.close(); }
+    } finally { await f.close(); }
+  }
 });
 
 // @test-value v2
