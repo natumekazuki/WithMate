@@ -84,35 +84,40 @@ function boundary() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued入力は未dispatch証明時だけqueuedへ戻り、dispatch結果不明は後続を保留し、commit返信喪失はcompletedへ収束する"
-// oracle = { type = "contract", ref = "GitHub Issue #801: queued item current-turn input and unknown no replay" }
-// fault = "結果不明入力をqueuedへ戻し重複送信するか、後続を自動開始する"
-// observable = "receipt stateとprovider入力回数、後続dispatch回数"
+// claim = "queued入力は未dispatch証明時だけqueuedへ戻り、dispatch結果不明は後続を保留し、成功とcommit返信喪失はcompletedへ収束して購読者へ通知する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: GUI Turn QueueのSteerと不明結果の非再実行; docs/design/desktop-ui.md: terminal時の処理中表示終了" }
+// fault = "結果不明入力をqueuedへ戻し重複送信する、後続を自動開始する、または完了を通知せず他の購読画面を待機させ続ける"
+// observable = "receipt stateとprovider入力回数、後続dispatch回数、購読者が通知時に取得できるcompleted state"
 // observation_boundary = "public-boundary"
 // scope = "SessionTurnQueueService.sendQueuedInput"
 // lifecycle = "permanent"
-// impact = "外部操作の重複実行と未送信指示の消失を防ぐ"
-// distinction = "storage遷移testではprovider失敗分類と自動drainの接続を確認できない"
+// impact = "外部操作の重複実行、未送信指示の消失、完了後の待機表示残留を防ぐ"
+// distinction = "storage遷移testではprovider失敗分類、自動drain、購読者への通知の接続を確認できない"
 // @end-test-value
 test("queued inputはdispatch境界を区別し正本completedを優先する", async () => {
-  for (const mode of ["preflight", "unknown", "committed"] as const) {
+  for (const mode of ["preflight", "unknown", "committed", "success"] as const) {
     const { store, rows } = boundary();
     let guarded = true;
     let dispatched = 0;
     let inputs = 0;
+    const observed: Array<SessionTurnQueueReceipt["state"]> = [];
     const service = new SessionTurnQueueService({ store, isRunInFlight: async () => guarded,
+      onChanged: () => { if (rows[0]) observed.push(rows[0].state); },
       dispatch: async () => { dispatched += 1; return { state: "completed" }; },
       sendInput: async (receipt) => {
         inputs += 1;
         if (mode === "preflight") throw new QueuedInputPreDispatchError("not dispatched");
-        if (mode === "committed") await store.settle(receipt, receipt.id, "completed");
+        if (mode === "committed" || mode === "success") await store.settle(receipt, receipt.id, "completed");
+        if (mode === "success") return;
         throw new Error("reply lost");
       },
     });
     await service.enqueue(owner, captured("input"));
     await service.enqueue(owner, captured("follower"));
-    if (mode === "committed") assert.equal((await service.sendQueuedInput(owner, "input", "provider-turn")).state, "completed");
-    else await assert.rejects(service.sendQueuedInput(owner, "input", "provider-turn"), mode === "preflight" ? /not dispatched/ : /reply lost/);
+    if (mode === "committed" || mode === "success") {
+      assert.equal((await service.sendQueuedInput(owner, "input", "provider-turn")).state, "completed");
+      assert.equal(observed.at(-1), "completed");
+    } else await assert.rejects(service.sendQueuedInput(owner, "input", "provider-turn"), mode === "preflight" ? /not dispatched/ : /reply lost/);
     assert.equal(rows[0]!.state, mode === "preflight" ? "queued" : mode === "unknown" ? "interrupted" : "completed");
     assert.equal(inputs, 1);
     if (mode === "unknown") {
@@ -412,23 +417,29 @@ test("startは未claimを再開しclaim済みは再実行しない", async () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "terminal保存返信が不明で正本照会も失敗したとき同process内のwakeや追加受付で後続を実行しない"
+// claim = "terminal保存返信と正本照会が不明な間は後続を保留し、後の正本確認で元要求を再実行せず実guard解放後に後続を進める"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Decision" }
-// fault = "terminal保存返信喪失後、正本照会も失敗したのに確認済み終端と推定して次要求を実行する"
-// observable = "保存返信失敗後のdispatch ID列と追加受付のqueued state"
+// fault = "結果不明で後続を開始する、正本確認後も保留し続ける、確認済み要求を再実行する、または実guardを無視する"
+// observable = "保存返信失敗中・正本確認後・guard解放後のdispatch ID列とreceipt state"
 // observation_boundary = "component-behavior"
 // scope = "Main durable queue unknown terminal commit"
 // lifecycle = "permanent"
 // impact = "保存結果不明を成功扱いして次の外部操作を開始する"
 // distinction = "SQLite testでは非同期Worker返信喪失後のservice保留を再現できない"
 // @end-test-value
-test("terminal保存返信が不明なら追加受付も後続dispatchしない", async () => {
+test("terminal保存返信が不明なら後続を保留し後の正本確認で回復する", async () => {
   const { store, rows } = boundary();
   const settle = store.settle;
   store.settle = async (...args) => { await settle(...args); throw new Error("commit reply lost"); };
-  store.getReceipt = async () => { throw new Error("canonical read unavailable"); };
+  const getReceipt = store.getReceipt;
+  let readFails = true;
+  store.getReceipt = async (...args) => {
+    if (readFails) throw new Error("canonical read unavailable");
+    return getReceipt(...args);
+  };
   const ids: string[] = [];
-  const service = new SessionTurnQueueService({ store, isRunInFlight: () => false, dispatch: async (receipt) => {
+  let guarded = false;
+  const service = new SessionTurnQueueService({ store, isRunInFlight: () => guarded, dispatch: async (receipt) => {
     ids.push(receipt.id); return { state: "completed" };
   } });
   await service.enqueue(owner, captured("first"));
@@ -438,6 +449,19 @@ test("terminal保存返信が不明なら追加受付も後続dispatchしない"
   await flush();
   assert.deepEqual(ids, ["first"]);
   assert.equal(rows[1]!.state, "queued");
+  readFails = false;
+  guarded = true;
+  const terminal = await store.getReceipt(owner, "first");
+  assert.equal(terminal?.state, "completed");
+  service.reconcileKnownReceipt(terminal!);
+  service.reconcileKnownReceipt(terminal!);
+  await service.waitForPending();
+  assert.deepEqual(ids, ["first"], "canonical completion does not release the runtime guard");
+  guarded = false;
+  service.wake(owner.sessionId);
+  await service.waitForPending();
+  assert.deepEqual(ids, ["first", "second"]);
+  assert.deepEqual(rows.map((row) => row.state), ["completed", "completed"]);
   await service.close();
 });
 

@@ -14,7 +14,11 @@ import type { SessionMessageColumnProps } from "../../src/chat/conversation/sess
 import { SessionMessageColumn } from "../../src/chat/conversation/session-message-column.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { ConversationPage } from "../../src-shared/session/conversation-page.js";
-import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { MainSessionTurnQueueFacade } from "../../src-electron/app/main-session-turn-queue-facade.js";
+import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 import type { MarkdownImageApi } from "../../src/ui/markdown/image-resource-loader.js";
 import type { SessionImageResourceRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { installIntersectionObserver } from "../support/intersection-observer.js";
@@ -860,6 +864,100 @@ test("conversation columns はlive eventとapprovalをsession IDごとに分離�
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
     Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "完了receiptの照会と更新通知が応答より先に届く配送順でも、受付済み送信はcanonical応答に合流し待機表示を終了する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 送信直後の先行表示とcompleted時の処理中表示終了" }
+// fault = "照会自身の通知で取得結果が失効し続け、完了済み応答を表示できず待機表示が残る"
+// observable = "実Main facade/serviceからcolumnへの購読、responsePending、canonical本文、消費後のsubmission store"
+// observation_boundary = "consumer"
+// scope = "Main receipt reconciliation and conversation subscription"
+// lifecycle = "permanent"
+// impact = "保存済み応答への移行が止まりユーザーが会話を継続できないと認識する"
+// distinction = "既存column testのfake receipt APIはMainの変更通知を通らない。実facade/serviceと小さいhook fixtureで配送順の結合を検証する"
+// @end-test-value
+test("completed receipt reads converge even when queue notifications arrive before replies", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const session = {
+    ...buildNewSession({ taskTitle: "Queue", workspaceLabel: "workspace", workspacePath: "C:/workspace",
+      branch: "main", characterId: "character", character: "Character", characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request" }),
+    incarnationId: "inc",
+  };
+  const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
+  const terminal: SessionTurnQueueReceipt = {
+    sessionId: session.id, incarnationId: session.incarnationId, id: "receipt", requestId, sequence: 1,
+    state: "completed", turnId: "turn", userMessageSeq: 0, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+    captured: { request: { clientRequestId: requestId, userMessage: "prompt", executionOptions: captureSessionExecutionOptions(session) },
+      attachments: [], provider: session.provider, workspacePath: session.workspacePath },
+  };
+  const submissions = new SessionTurnSubmissions();
+  submissions.start({ sessionId: session.id, incarnationId: session.incarnationId, requestId, userMessage: "prompt",
+    historyMessageCount: 0, queuedBehindRun: false, error: "" });
+  submissions.accept({ ...terminal, state: "queued", turnId: null, userMessageSeq: null });
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected queue operation"); };
+  const store: SessionTurnQueueStore = {
+    getReceipt: async () => terminal, listActive: async () => [], claimNext: async () => null,
+    enqueue: unexpected, listReceipts: unexpected, listPendingOwners: unexpected, markStarted: unexpected,
+    settle: unexpected, cancelQueued: unexpected, recoverInterrupted: unexpected, releaseInterrupted: unexpected,
+    claimForInput: unexpected, restoreQueuedInput: unexpected,
+  };
+  let listener: ((id: string) => void) | undefined;
+  const notifications: Array<() => void> = [];
+  const replies: Array<() => void> = [];
+  const service = new SessionTurnQueueService({ store, isRunInFlight: () => false, dispatch: unexpected,
+    onChanged: (owner) => { notifications.push(() => listener?.(owner.sessionId)); } });
+  const facade = new MainSessionTurnQueueFacade({
+    assertActive() {}, assertAccepting() {}, getSession: async () => session,
+    validateWorkspace: unexpected, validateProvider: unexpected, preview: unexpected, store, service,
+  });
+  const api: ConversationMessageColumnApi = {
+    listSessionTurnQueue: (id) => facade.listSessionTurnQueue(id),
+    getSessionTurnQueueReceipt: async (id, request) => {
+      const result = await facade.getSessionTurnQueueReceipt(id, request);
+      return new Promise((resolve) => { replies.push(() => resolve(result)); });
+    },
+    onSessionTurnQueueChanged: (next) => { listener = next; return () => { listener = undefined; }; },
+  };
+  let latest: SessionMessageColumnProps | null = null;
+  function View() {
+    latest = useConversationMessageColumn({
+      session: { ...session, messages: [{ role: "user", text: "prompt" }, { role: "assistant", text: "answer" }] },
+      baseProps: { ...createBaseProps(session.id), turnSubmissions: submissions }, enabled: true, api, liveRun: null,
+    });
+    return null;
+  }
+  const column = () => { assert.ok(latest); return latest; };
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => { root.render(<View />); });
+    assert.equal(column().responsePending, true);
+    assert.equal(replies.length, 1);
+    // Model independent IPC event/reply delivery without allowing an unbounded loop.
+    for (let batch = 0; batch < 4 && (replies.length || notifications.length); batch += 1) {
+      const pendingReplies = replies.splice(0);
+      await act(async () => { notifications.splice(0).forEach((notify) => notify()); });
+      await act(async () => { pendingReplies.forEach((reply) => reply()); });
+    }
+    assert.equal(column().responsePending, false);
+    assert.deepEqual(column().messages.map((message) => message.text), ["prompt", "answer"]);
+    assert.equal(submissions.getSnapshot().length, 0);
+    assert.equal(replies.length, 0);
+    assert.equal(notifications.length, 0);
+  } finally {
+    await act(async () => root.unmount());
+    await service.close();
+    dom.window.close();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
   }
 });
 
