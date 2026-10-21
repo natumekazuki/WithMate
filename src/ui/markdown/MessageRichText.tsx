@@ -42,6 +42,7 @@ type MessageRichTextProps = {
   className?: string;
   forceFullRender?: boolean;
   isStreaming?: boolean;
+  streamingTextPresented?: boolean;
   displayMode?: MessageViewMode;
   responseProvider?: string;
   onOpenPath?: (target: string) => void;
@@ -87,6 +88,7 @@ function MessageMarkdownPreview({
   className = "message-body",
   forceFullRender = false,
   isStreaming = false,
+  streamingTextPresented = false,
   responseProvider,
   onOpenPath,
   resolveImageSource,
@@ -102,7 +104,7 @@ function MessageMarkdownPreview({
     [reactId],
   );
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
-  const renderText = useStreamingMarkdownText(text, isStreaming, forceFullRender);
+  const renderText = useStreamingMarkdownText(text, isStreaming, forceFullRender || streamingTextPresented);
   const [copyFeedback, setCopyFeedback] = useState<MessageCopyFeedback | null>(
     null,
   );

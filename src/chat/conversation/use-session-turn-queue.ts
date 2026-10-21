@@ -5,13 +5,13 @@ import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.
 
 export type SessionTurnQueueApi = Partial<Pick<WithMateWindowApi, "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput">>;
 const EMPTY_RECEIPTS: SessionTurnQueueReceipt[] = [];
-type QueueState = { owner: string; active: SessionTurnQueueReceipt[]; bridges: SessionTurnQueueReceipt[]; error: string; loading: boolean };
+type QueueState = { owner: string; active: SessionTurnQueueReceipt[]; bridges: SessionTurnQueueReceipt[]; error: string; loading: boolean; ready: boolean };
 export type SessionTurnQueueActionKind = "cancel" | "release" | "input";
 type QueueAction = { owner: string; id: string; kind: SessionTurnQueueActionKind };
 
 export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean, canonicalUserSeqs: readonly number[] = [], submissions: readonly SessionTurnSubmission[] = []) {
   const owner = `${sessionId}:${incarnationId}`;
-  const [state, setState] = useState<QueueState>({ owner, active: [], bridges: [], error: "", loading: true });
+  const [state, setState] = useState<QueueState>({ owner, active: [], bridges: [], error: "", loading: true, ready: false });
   const stateRef = useRef(state);
   stateRef.current = state;
   const canonicalRef = useRef(new Set(canonicalUserSeqs));
@@ -28,7 +28,17 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const currentOwner = useRef(owner);
   currentOwner.current = owner;
   const reload = useCallback(() => setRevision((current) => current + 1), []);
+  const observedCanonical = useRef({ owner, signature: canonicalSignature });
   useEffect(() => { setPendingAction(null); }, [owner]);
+  useEffect(() => {
+    const previous = observedCanonical.current;
+    observedCanonical.current = { owner, signature: canonicalSignature };
+    if (!enabled || previous.owner !== owner || previous.signature === canonicalSignature) return;
+    const known = stateRef.current.owner === owner ? [...stateRef.current.active, ...stateRef.current.bridges] : [];
+    // Canonical-first delivery must still resolve a local request whose receipt has not bound its user seq.
+    if (submissionsRef.current.some((submission) => canonicalUserSeqs.some((seq) => seq >= submission.historyMessageCount)
+      && submission.receipt?.userMessageSeq == null && !known.some((receipt) => receipt.requestId === submission.requestId && receipt.userMessageSeq !== null))) reload();
+  }, [owner, enabled, canonicalSignature, reload]);
   useEffect(() => {
     setState((current) => {
       if (current.owner !== owner) return current;
@@ -41,7 +51,8 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     if (!enabled || !api?.listSessionTurnQueue) return;
     const request = ++generation.current;
     const previous = stateRef.current.owner === owner ? stateRef.current : null;
-    setState((current) => ({ owner, active: current.owner === owner ? current.active : [], bridges: current.owner === owner ? current.bridges : [], error: "", loading: true }));
+    setState((current) => current.owner === owner ? { ...current, error: "", loading: !current.ready }
+      : { owner, active: [], bridges: [], error: "", loading: true, ready: false });
     void (async () => {
       const active = (await api.listSessionTurnQueue!(sessionId)).filter((receipt) => receipt.sessionId === sessionId && receipt.incarnationId === incarnationId);
       const bridges = [...(previous?.bridges ?? [])];
@@ -64,12 +75,12 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
       const retained = bridges.filter((receipt) => !active.some((candidate) => candidate.id === receipt.id)
         && (submissionsRef.current.some((submission) => submission.requestId === receipt.requestId)
           || receipt.userMessageSeq === null || !canonicalRef.current.has(receipt.userMessageSeq)));
-      setState({ owner, active, bridges: [...new Map(retained.map((receipt) => [receipt.id, receipt])).values()], error: "", loading: false });
+      setState({ owner, active, bridges: [...new Map(retained.map((receipt) => [receipt.id, receipt])).values()], error: "", loading: false, ready: true });
     })().catch((error) => {
       if (generation.current === request) setState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error), loading: false }));
     });
     return () => { ++generation.current; };
-  }, [api, owner, enabled, revision, submissionSignature, canonicalSignature]);
+  }, [api, owner, enabled, revision, submissionSignature]);
   useEffect(() => {
     if (!enabled) return;
     return api?.onSessionTurnQueueChanged?.((changedId) => { if (changedId === sessionId) reload(); });

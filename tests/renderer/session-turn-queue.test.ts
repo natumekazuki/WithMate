@@ -563,7 +563,7 @@ test("known rejection preserves draft and releases uncertainty without receipt l
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxiliaryの同文queue turnは対象ownerと保存seqとincarnationで接続し、terminal先着でもcanonical user到着まで本文を保持し、queued tailは受付順に並ぶ"
+// claim = "Main/Auxiliaryの同文queue turnは対象ownerと保存seqとincarnationで接続し、terminal先着でもcanonical user到着まで本文と同じ表示keyを保持し、queued tailは受付順に並ぶ"
 // oracle = { type = "contract", ref = "Issue #801: queue projection canonical barrier" }
 // fault = "本文一致で別turnを結合し、terminal通知で未接続promptを落とすか旧incarnationを表示する、またはqueued tailの受付順を逆転する"
 // observable = "queue source・key・本文の投影、canonical到着後の重複なし接続、FIFO tail順序"
@@ -591,7 +591,8 @@ test("queue projection uses canonical sequence and preserves terminal barrier", 
     const canonical = buildMessageListProjection([{ role: "user", text: "A", historyIndex: 40 }, { role: "user", text: "A", historyIndex: 42 }], [], owner.id, { primaryMessageSourceKind });
     const connected = projectSessionTurnQueue(canonical, [started, queued], context);
     assert.equal(connected.projection.messages.length, 2);
-    assert.equal(connected.metadata.get("session-session-42")?.id, started.id);
+    assert.equal(connected.metadata.get(connected.projection.keys[1])?.id, started.id);
+    assert.equal(connected.projection.keys[1], projected.projection.keys[1], "the accepted prompt keeps its key at the canonical handoff");
     if (primaryMessageSourceKind === "auxiliary") {
       const otherOwner = buildMessageListProjection([{ role: "user", text: "A", historyIndex: 42 }], [], "other-aux", { primaryMessageSourceKind });
       assert.equal(projectSessionTurnQueue(otherOwner, [started], context).projection.sources[1].kind, "turn-queue");

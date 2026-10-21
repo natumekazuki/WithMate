@@ -8,6 +8,7 @@ import type { CharacterProfile } from "../../../src-shared/character/character-s
 import type { Message, MessageArtifact } from "../../../src-shared/session/session-state.js";
 import { getMessageHistoryIndex, type ConversationSearchMatch, type ConversationSearchRequest, type ConversationQueryOutcome, type ConversationQueryCancelRequest } from "../../../src-shared/session/conversation-page.js";
 import { useConversationQueryPages } from "./use-conversation-query-pages.js";
+import { useStreamedResponseText } from "./use-streamed-response-text.js";
 
 import { MessageRichText, type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 import { useMarkdownImageResolver, type MarkdownImageContext, type MarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
@@ -87,6 +88,8 @@ export type SessionMessageColumnProps = {
   messages: Message[];
   messageKeys?: string[];
   pendingResponseMessageKey?: string | null;
+  responsePresentationKey?: string;
+  streamingResponseMessageKey?: string | null;
   messageCollapseTargets?: readonly MessageCollapseTarget[];
   collapsedMessageKeys?: ReadonlySet<string>;
   messageJumpRequest?: MessageJumpRequest | null;
@@ -443,9 +446,11 @@ export function SessionMessageColumn({
   sessionId,
   provider,
   character,
-  messages,
-  messageKeys,
-  pendingResponseMessageKey = null,
+  messages: suppliedMessages,
+  messageKeys: suppliedMessageKeys,
+  pendingResponseMessageKey: suppliedPendingResponseKey = null,
+  responsePresentationKey,
+  streamingResponseMessageKey,
   messageCollapseTargets = [],
   collapsedMessageKeys = new Set(),
   messageJumpRequest = null,
@@ -498,6 +503,18 @@ export function SessionMessageColumn({
   glossaryAnnotationMatcher,
   onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
+  const hasResponseStatus = isRunning || responsePending || !!submissionError;
+  const sharedPending = !!responsePresentationKey && hasResponseStatus && (suppliedPendingResponseKey === null || !suppliedMessageKeys?.includes(suppliedPendingResponseKey));
+  const rawMessages = useMemo(() => sharedPending ? [...suppliedMessages, { role: "assistant" as const, text: "" }] : suppliedMessages, [suppliedMessages, sharedPending]);
+  const messageKeys = useMemo(() => sharedPending ? [...suppliedMessages.map((_, index) => suppliedMessageKeys?.[index] ?? `${sessionId}-${index}`), responsePresentationKey!] : suppliedMessageKeys, [suppliedMessages, suppliedMessageKeys, sharedPending, responsePresentationKey, sessionId]);
+  const pendingResponseMessageKey = sharedPending ? responsePresentationKey! : suppliedPendingResponseKey;
+  const responseRowKeys = useRef({ owner: conversationQueryOwner, keys: new Map<string, string>() });
+  if (responseRowKeys.current.owner !== conversationQueryOwner) responseRowKeys.current = { owner: conversationQueryOwner, keys: new Map() };
+  const rowKeys = responseRowKeys.current.keys;
+  for (const key of rowKeys.keys()) if (!messageKeys?.includes(key)) rowKeys.delete(key);
+  if (responsePresentationKey && pendingResponseMessageKey && !rowKeys.has(pendingResponseMessageKey)) rowKeys.set(pendingResponseMessageKey, responsePresentationKey);
+  const streamingIndex = streamingResponseMessageKey ? suppliedMessageKeys?.indexOf(streamingResponseMessageKey) ?? -1 : -1;
+  const responseTextIndex = pendingResponseMessageKey ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1 : -1;
   const selectionActionOverlay = useContext(SelectionActionOverlayContext);
   const elicitationDrafts = useMemo<LiveElicitationDrafts>(() => new Map(), [sessionId]);
   useEffect(() => {
@@ -517,6 +534,10 @@ export function SessionMessageColumn({
   const [selectionActive, setSelectionActive] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
+  const presentedText = useStreamedResponseText(conversationQueryOwner, pendingResponseMessageKey,
+    responseTextIndex >= 0 ? rawMessages[responseTextIndex].text : "", streamingIndex >= 0 && !(findOpen && findQuery.trim()), artifactDetailsEnabled);
+  const messages = useMemo(() => streamingIndex < 0 || rawMessages[streamingIndex].text === presentedText ? rawMessages
+    : rawMessages.map((message, index) => index === streamingIndex ? { ...message, text: presentedText } : message), [rawMessages, streamingIndex, presentedText]);
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const [conversationFindError, setConversationFindError] = useState("");
   const [messageJumpHighlightKey, setMessageJumpHighlightKey] = useState<string | null>(null);
@@ -570,6 +591,7 @@ export function SessionMessageColumn({
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
   );
+  const getRowKey = useCallback((index: number) => rowKeys.get(getMessageKey(index)) ?? getMessageKey(index), [getMessageKey, rowKeys]);
   const artifactPageKeys = useRef<Set<string> | null>(null);
   artifactPageKeys.current = new Set(messages.map((_, index) => getMessageKey(index)));
   activeArtifactKeys.current = new Set(artifactDetailsEnabled
@@ -612,7 +634,7 @@ export function SessionMessageColumn({
     count: messages.length,
     getScrollElement: () => messageListRef.current,
     estimateSize: () => SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT,
-    getItemKey: getMessageKey,
+    getItemKey: getRowKey,
     rangeExtractor: extractMessageRange,
     overscan: SESSION_MESSAGE_OVERSCAN,
     anchorTo: isMessageListFollowing ? "end" : "start",
@@ -626,6 +648,7 @@ export function SessionMessageColumn({
     directDomUpdates: true,
     directDomUpdatesMode: "position",
     useFlushSync: false,
+    useAnimationFrameWithResizeObserver: true,
   });
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
     shouldAdjustSessionMessageScrollPosition({
@@ -1313,7 +1336,7 @@ export function SessionMessageColumn({
 
             return (
               <div
-                key={`${message.role}-${messageKey}`}
+                key={`${message.role}-${getRowKey(absoluteIndex)}`}
                 ref={messageVirtualizer.measureElement}
                 className={`session-message-virtual-row${
                   doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
@@ -1332,7 +1355,7 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
               <article
-                className={`message-row ${message.role}${message.accent ? " accent" : ""}${
+                className={`message-row ${message.role}${sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
                   messageGroup ? " auxiliary-message-group-item" : ""
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
                   shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
@@ -1439,6 +1462,7 @@ export function SessionMessageColumn({
                               text={text}
                               responseProvider={message.role === "assistant" ? provider : undefined}
                               isStreaming={isRunning && absoluteIndex === pendingResponseMessageIndex}
+                              streamingTextPresented={responsePresentationKey !== undefined}
                               forceFullRender={findOpen && hasFindQuery}
                               displayMode={messageViewMode}
                               onOpenPath={onOpenPath}

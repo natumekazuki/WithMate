@@ -1573,9 +1573,9 @@ test("同順位のrecencyとno-opは一覧を通知せず、本当の順位とpr
 
 // @test-value v2
 // kind = "contract"
-// claim = "terminal詳細取得中の保持live通知は最終本文を捨てず、新しい実行が確認された場合だけ古いterminalを適用しない"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
-// fault = "非null liveだけでterminal読取りを無効化し最終応答を失う、または新runを古いterminalでidleへ戻す"
+// claim = "terminal詳細取得中に保持liveや次runが通知されても完了履歴を取り込み、確認済みの次run状態を古い詳細でidleへ戻さない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#送信受付の共通反映" }
+// fault = "次runの開始で詳細読取りを破棄して直前の完了応答を失う、または新runを古いterminalでidleへ戻す"
 // observable = "実hookのselectedSession.messagesとrunState、詳細API呼出数"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-terminal-retained-live-race"
@@ -1583,16 +1583,17 @@ test("同順位のrecencyとno-opは一覧を通知せず、本当の順位とpr
 // impact = "background taskを保持する会話の完了本文と、再実行中の送信制限を保つ"
 // distinction = "同期したterminal/statusテストでは生じない応答順逆転をdeferredで検証する"
 // @end-test-value
-test("terminal取得中の保持liveは本文を保持し、新runだけ古いterminalを無効化する", async () => {
+test("terminal取得中の保持liveと次runは完了履歴と最新の実行状態を両立する", async () => {
   const initial = session("a", "2026-01-01", { runState: "running" });
   let status: "running" | "idle" = "idle";
+  let delayedStatus: Promise<Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "runState">> | undefined;
   let terminal = deferred<AuxiliarySession>();
   let reads = 0;
   let listener: ((id: string, state: object | null) => void) | undefined;
   const view = setup({
     listAuxiliarySessions: async () => [initial],
     getAuxiliarySession: async () => { reads += 1; return reads === 1 ? initial : terminal.promise; },
-    getAuxiliarySessionStatus: async () => ({ id: initial.id, parentSessionId: initial.parentSessionId, createdAt: initial.createdAt, runState: status }),
+    getAuxiliarySessionStatus: async () => delayedStatus ?? ({ id: initial.id, parentSessionId: initial.parentSessionId, createdAt: initial.createdAt, runState: status }),
     subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
   });
   try {
@@ -1609,10 +1610,31 @@ test("terminal取得中の保持liveは本文を保持し、新runだけ古いte
     await act(async () => { listener?.(initial.id, null); });
     status = "running";
     await act(async () => { listener?.(initial.id, { assistantText: "new run" }); });
-    await act(async () => { terminal.resolve({ ...completed, messages: [{ role: "assistant", text: "obsolete terminal response" }] }); });
+    await act(async () => { terminal.resolve({ ...completed, messages: [
+      ...completed.messages,
+      { role: "user", text: "second request" },
+      { role: "assistant", text: "second completed response" },
+    ] }); });
     assert.equal(view.current.selectedSession?.runState, "running");
-    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "final response");
+    assert.deepEqual(view.current.selectedSession?.messages.map((message) => message.text), [
+      "final response", "second request", "second completed response",
+    ]);
     assert.equal(reads, 3);
+
+    terminal = deferred<AuxiliarySession>();
+    const nextStatus = deferred<Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "runState">>();
+    delayedStatus = nextStatus.promise;
+    await act(async () => { listener?.(initial.id, null); });
+    await act(async () => { listener?.(initial.id, { assistantText: "following run" }); });
+    await act(async () => { terminal.resolve({ ...completed, messages: [
+      ...view.current.selectedSession!.messages,
+      { role: "user", text: "third request" },
+      { role: "assistant", text: "third completed response" },
+    ] }); });
+    await act(async () => { nextStatus.resolve({ id: initial.id, parentSessionId: initial.parentSessionId, createdAt: initial.createdAt, runState: "running" }); });
+    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "third completed response");
+    assert.equal(view.current.selectedSession?.runState, "running", "a newer status also applies when the body resolves first");
+    assert.equal(reads, 4);
   } finally {
     await view.unmount();
   }

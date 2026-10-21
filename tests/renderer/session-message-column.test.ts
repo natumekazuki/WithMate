@@ -765,6 +765,7 @@ async function mountSessionMessageColumn(options: {
   const previousEvent = globalThis.Event;
   const previousMouseEvent = globalThis.MouseEvent;
   const previousNavigator = globalThis.navigator;
+  const previousRequestAnimationFrame = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const messageListRef = createRef<HTMLDivElement>();
@@ -895,6 +896,8 @@ async function mountSessionMessageColumn(options: {
   Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: dom.window.MouseEvent });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
 
+  Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: dom.window.requestAnimationFrame.bind(dom.window) });
+
   const MessageColumn = options.component ?? SessionMessageColumn;
   const character = createCharacterProfile();
   const expandedArtifacts = options.expandedArtifacts ?? {};
@@ -1006,6 +1009,7 @@ async function mountSessionMessageColumn(options: {
             observer.callback([entry], observer as unknown as ResizeObserver);
           }
         }
+        await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
       });
     },
     async cleanup() {
@@ -1065,6 +1069,8 @@ async function mountSessionMessageColumn(options: {
       Object.defineProperty(globalThis, "Event", { configurable: true, value: previousEvent });
       Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: previousMouseEvent });
       Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+      if (previousRequestAnimationFrame) Object.defineProperty(globalThis, "requestAnimationFrame", previousRequestAnimationFrame);
+      else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
     },
   };
 }

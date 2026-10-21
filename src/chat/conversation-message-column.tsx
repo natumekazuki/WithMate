@@ -101,8 +101,11 @@ export function useConversationMessageColumn({
   const displayedId = useRef(sessionId);
   displayedId.current = sessionId;
   const mounted = useRef(true);
-  const displayedBridge = useRef<{ owner: string; projection: LiveAssistantProjection } | null>(null);
+  const displayedBridge = useRef<{ owner: string; projection: LiveAssistantProjection; turnId?: string } | null>(null);
+  const retainedBridges = useRef<{ owner: string; projections: LiveAssistantProjection[] }>({ owner: "", projections: [] });
+  const stableMessageKeys = useRef<{ owner: string; keys: Map<number, { role: "user" | "assistant"; key: string }> }>({ owner: "", keys: new Map() });
   const liveResponseOwner = useRef<{ owner: string; turnId?: string; messageIndex: number } | null>(null);
+  const responsePresentation = useRef<{ owner: string; requestId?: string; turnId?: string; key: string } | null>(null);
   const [browsePage, setBrowsePage] = useState<ConversationPage | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
   const [pageError, setPageError] = useState("");
@@ -244,6 +247,7 @@ export function useConversationMessageColumn({
     const releaseLiveText = () => {
       conversation.liveRun = null;
       if (displayedBridge.current?.owner === pageOwner) displayedBridge.current = null;
+      if (retainedBridges.current.owner === pageOwner) retainedBridges.current.projections = [];
     };
     if (!enabled) releaseLiveText();
     return releaseLiveText;
@@ -286,7 +290,10 @@ export function useConversationMessageColumn({
       // 新runは保存済み応答を再利用しない。user未着なら次のuserと応答の位置を開始時に確保する。
       liveResponseOwner.current = {
         owner: pageOwner, turnId: liveRun.turnId,
-        messageIndex: tail ? getMessageHistoryIndex(tail, tailMessages.length - 1) + (tail.role === "assistant" ? 2 : 1) : 1,
+        messageIndex: Math.max(
+          tail ? getMessageHistoryIndex(tail, tailMessages.length - 1) + (tail.role === "assistant" ? 2 : 1) : 1,
+          displayedBridge.current?.owner === pageOwner ? displayedBridge.current.projection.messageIndex + 2 : 0,
+        ),
       };
     }
     liveResponseOwner.current.messageIndex = Math.max(
@@ -305,8 +312,19 @@ export function useConversationMessageColumn({
     ),
     text: assistantText,
   } : null;
+  if (retainedBridges.current.owner !== pageOwner) retainedBridges.current = { owner: pageOwner, projections: [] };
+  if (currentBridge && displayedBridge.current?.owner === pageOwner && displayedBridge.current.turnId !== liveRun?.turnId
+    && displayedBridge.current.projection.messageIndex !== currentBridge.messageIndex) {
+    const previous = displayedBridge.current.projection;
+    if (!retainedBridges.current.projections.some((candidate) => candidate.messageIndex === previous.messageIndex)) retainedBridges.current.projections.push(previous);
+  }
+  retainedBridges.current.projections = retainedBridges.current.projections.filter((candidate) => enabled
+    && !hasPersistedLiveAssistantMessage(tailMessages, [], candidate, sessionId)
+    && candidate.messageIndex >= (tailMessages.length ? getMessageHistoryIndex(tailMessages[0], 0) : 0));
+  if (!currentBridge && displayedBridge.current?.owner === pageOwner
+    && hasPersistedLiveAssistantMessage(tailMessages, [], displayedBridge.current.projection, sessionId)) displayedBridge.current = null;
   if (currentBridge && enabled) {
-    displayedBridge.current = { owner: pageOwner, projection: currentBridge };
+    displayedBridge.current = { owner: pageOwner, projection: currentBridge, turnId: liveRun?.turnId };
     conversation.bridge = { sessionId: currentBridge.sessionId, threadId: currentBridge.threadId, messageIndex: currentBridge.messageIndex };
   }
   const cachedMessage = conversation.bridge ? messages.find((message, index) => message.role === "assistant" && getMessageHistoryIndex(message, index) === conversation.bridge!.messageIndex) : undefined;
@@ -315,32 +333,60 @@ export function useConversationMessageColumn({
   const hasSavedBridge = hasPersistedLiveAssistantMessage(messages, [], cachedBridge, sessionId);
   const hasSubmissionBridge = cachedBridge && queue.receipts.some((receipt) => receipt.userMessageSeq !== null
     && receipt.userMessageSeq < cachedBridge.messageIndex && submissions.some((submission) => submission.requestId === receipt.requestId));
+  const hasDisplayedBridge = enabled && displayedBridge.current?.owner === pageOwner && cachedBridge
+    && cachedBridge.messageIndex >= (tailMessages.length ? getMessageHistoryIndex(tailMessages[0], 0) : 0);
   const bridge = currentBridge ?? (
-    cachedBridge && (hasSavedBridge || hasSubmissionBridge || isHistoryHandoffPending && cachedBridge.messageIndex > unboundBoundary || session?.runState === "running")
+    cachedBridge && (hasSavedBridge || hasDisplayedBridge || hasSubmissionBridge || isHistoryHandoffPending && cachedBridge.messageIndex > unboundBoundary || session?.runState === "running")
       ? cachedBridge : null
   );
-  const historyProjection = useMemo(() => buildMessageListProjection(messages, [], sessionId, {
-    primaryMessageSourceKind: messageSourceKind,
-  }), [messages, sessionId, messageSourceKind]);
   const bridgeKey = bridge
     ? buildLiveAssistantProjectionKey(bridge.sessionId, bridge.threadId, bridge.messageIndex)
     : null;
+  if (stableMessageKeys.current.owner !== pageOwner) stableMessageKeys.current = { owner: pageOwner, keys: new Map() };
+  const stableKeys = stableMessageKeys.current.keys;
+  for (const receipt of queue.receipts) if (receipt.userMessageSeq !== null) stableKeys.set(receipt.userMessageSeq, { role: "user", key: `turn-submission-${receipt.incarnationId}-${receipt.requestId}` });
+  if (bridge && enabled) stableKeys.set(bridge.messageIndex, { role: "assistant", key: bridgeKey! });
+  const loadedIndexes = new Set(messages.map((message, index) => getMessageHistoryIndex(message, index)));
+  for (const index of stableKeys.keys()) if (!loadedIndexes.has(index) && !queue.receipts.some((receipt) => receipt.userMessageSeq === index)
+    && index !== bridge?.messageIndex && !retainedBridges.current.projections.some((candidate) => candidate.messageIndex === index)) stableKeys.delete(index);
+  const stableKeySignature = [...stableKeys].map(([index, value]) => `${index}:${value.role}:${value.key}`).join(",");
+  const historyProjection = useMemo(() => {
+    const history = buildMessageListProjection(messages, [], sessionId, { primaryMessageSourceKind: messageSourceKind });
+    return { ...history, keys: history.keys.map((key, index) => {
+      const stable = stableKeys.get(getMessageHistoryIndex(messages[index], index));
+      return stable?.role === messages[index].role ? stable.key : key;
+    }) };
+  }, [messages, sessionId, messageSourceKind, stableKeySignature]);
   const keyedHistory = useMemo(() => projectLiveAssistantOnSessionHistory(
     historyProjection, messages, sessionId,
     hasSavedBridge ? bridge : null,
   ), [historyProjection, messages, sessionId, hasSavedBridge, bridgeKey]);
-  const liveProjection = useMemo(() => hasSavedBridge
+  const currentLiveProjection = useMemo(() => hasSavedBridge
     ? keyedHistory
     : projectLiveAssistantOnSessionHistory(historyProjection, messages, sessionId, isBrowsing ? null : bridge),
   [historyProjection, keyedHistory, messages, sessionId, hasSavedBridge, bridgeKey, bridge?.text, isBrowsing]);
+  const retainedSignature = retainedBridges.current.projections.map((candidate) => `${candidate.messageIndex}:${candidate.text.length}`).join(",");
+  const liveProjection = useMemo(() => {
+    const candidates = isBrowsing ? [] : retainedBridges.current.projections;
+    if (!candidates.length && !bridge) return currentLiveProjection;
+    const allBridges = [...candidates, ...(bridge ? [bridge] : [])];
+    const expanded = candidates.reduce((projection, candidate) => projectLiveAssistantOnSessionHistory(projection, messages, sessionId, candidate), currentLiveProjection);
+    const rows = expanded.messages.map((message, index) => {
+      const source = expanded.sources[index];
+      const live = source.kind === "live-assistant" ? allBridges.find((candidate) => buildLiveAssistantProjectionKey(candidate.sessionId, candidate.threadId, candidate.messageIndex) === expanded.keys[index]) : undefined;
+      return { message: live ? { ...message, historyIndex: live.messageIndex } : message, source, key: expanded.keys[index], group: expanded.groups[index], index: live?.messageIndex ?? (source.kind === "session" || source.kind === "auxiliary" ? source.messageIndex : index) };
+    }).sort((left, right) => left.index - right.index);
+    return { messages: rows.map((row) => row.message), sources: rows.map((row) => row.source), keys: rows.map((row) => row.key), groups: rows.map((row) => row.group) };
+  }, [currentLiveProjection, retainedSignature, messages, sessionId, bridgeKey, bridge?.text, isBrowsing]);
   const queuedProjection = useMemo(() => projectSessionTurnQueue(liveProjection, isBrowsing ? [] : queue.receipts, {
     sessionId, incarnationId: queueIncarnationId,
   }, { submissions: isBrowsing ? [] : submissions, hasActiveRun }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId, submissions, hasActiveRun]);
   const projection = queuedProjection.projection;
   const searchTailMessages = useMemo(() => {
-    const searchTail = bridge && !hasPersistedLiveAssistantMessage(tailMessages, [], bridge, sessionId)
-      ? [...tailMessages, { role: "assistant" as const, text: bridge.text, historyIndex: bridge.messageIndex }]
-      : tailMessages;
+    const missingBridges = [...retainedBridges.current.projections, ...(bridge ? [bridge] : [])]
+      .filter((candidate) => !hasPersistedLiveAssistantMessage(tailMessages, [], candidate, sessionId));
+    const searchTail = missingBridges.length ? [...tailMessages.map((message, index) => ({ ...message, historyIndex: getMessageHistoryIndex(message, index) })), ...missingBridges.map((candidate) => ({ role: "assistant" as const, text: candidate.text, historyIndex: candidate.messageIndex }))]
+      .sort((left, right) => left.historyIndex - right.historyIndex) : tailMessages;
     const searchProjection = projectSessionTurnQueue(buildMessageListProjection(searchTail, [], sessionId, {
       primaryMessageSourceKind: messageSourceKind,
     }), queue.receipts, { sessionId, incarnationId: queueIncarnationId }).projection;
@@ -349,9 +395,9 @@ export function useConversationMessageColumn({
       if (source.kind !== "turn-queue") return [message];
       return source.receipt.userMessageSeq === null ? [] : [{ ...message, historyIndex: source.receipt.userMessageSeq }];
     });
-  }, [tailMessages, bridgeKey, bridge?.text, sessionId, messageSourceKind, queue.receipts, queueIncarnationId]);
+  }, [tailMessages, bridgeKey, bridge?.text, retainedSignature, sessionId, messageSourceKind, queue.receipts, queueIncarnationId]);
   const searchMessageIndexes = useMemo(() => projection.sources.map((source, index) => source.kind === "live-assistant" && bridge
-    ? bridge.messageIndex : source.kind === "turn-queue" && source.receipt.userMessageSeq !== null
+    ? projection.messages[index].historyIndex ?? bridge.messageIndex : source.kind === "turn-queue" && source.receipt.userMessageSeq !== null
     ? source.receipt.userMessageSeq : getMessageHistoryIndex(projection.messages[index], index)), [projection, bridgeKey]);
   // 受付済みuserも含めた表示順で、現在のprompt後の応答だけを待機表示の所有先にする。
   const responseIndex = bridgeKey ? projection.keys.indexOf(bridgeKey) : -1;
@@ -359,6 +405,27 @@ export function useConversationMessageColumn({
     && (liveResponseOwner.current?.owner !== pageOwner || bridge?.messageIndex === liveResponseOwner.current.messageIndex)
     && !projection.messages.slice(responseIndex + 1).some((message) => message.role === "user")
     ? bridgeKey : null;
+  const responseTurnId = hasActiveRun ? liveRun?.turnId : undefined;
+  const responseReceipt = queuedProjection.activeReceipt;
+  const previous = responsePresentation.current;
+  const receiptTurnId = responseReceipt?.turnId
+    ?? (responseReceipt && previous?.owner === pageOwner && previous.requestId === responseReceipt.requestId ? previous.turnId : undefined);
+  const responseRequestId = responseTurnId && receiptTurnId && receiptTurnId !== responseTurnId
+    ? undefined : responseReceipt?.requestId ?? queuedProjection.pendingSubmission?.requestId;
+  if (responseRequestId || responseTurnId) {
+    const sameResponse = previous?.owner === pageOwner && (responseTurnId && previous.turnId
+      ? previous.turnId === responseTurnId : responseRequestId && previous.requestId === responseRequestId);
+    responsePresentation.current = { owner: pageOwner, requestId: responseRequestId ?? (sameResponse ? previous.requestId : undefined), turnId: responseTurnId ?? (sameResponse ? previous.turnId : undefined),
+      key: sameResponse ? previous.key : `response-${pageOwner}-${responseRequestId ?? responseTurnId}` };
+  }
+  const responsePresentationKey = !isBrowsing && responsePresentation.current?.owner === pageOwner
+    ? responsePresentation.current.key : !isBrowsing && hasActiveRun
+      ? `response-${pageOwner}-${pendingResponseMessageKey && bridge ? bridge.messageIndex : tail ? getMessageHistoryIndex(tail, tailMessages.length - 1) + (tail.role === "assistant" ? 2 : 1) : 1}` : undefined;
+  const presentationReceipt = queue.receipts.find((receipt) => receipt.requestId === responsePresentation.current?.requestId);
+  const presentationResponseIndex = pendingResponseMessageKey ? responseIndex : projection.sources.findIndex((source, index) => projection.messages[index].role === "assistant"
+    && (source.kind === "turn-queue" && source.receipt.requestId === responsePresentation.current?.requestId
+      || presentationReceipt?.userMessageSeq != null && (source.kind === "session" || source.kind === "auxiliary") && source.messageIndex > presentationReceipt.userMessageSeq));
+  const presentationResponseKey = presentationResponseIndex >= 0 ? projection.keys[presentationResponseIndex] : null;
   const historyScrollSignature = useMemo(
     () => `${keyedHistory.keys.join("\u001f")}:${keyedHistory.messages.map((message) => message.text.length).join(",")}`,
     [keyedHistory],
@@ -689,7 +756,11 @@ export function useConversationMessageColumn({
     queueBusyId: queue.busyId,
     queueBusyKind: queue.busyKind,
     renderQueueTail,
-    pendingResponseMessageKey,
+    pendingResponseMessageKey: pendingResponseMessageKey ?? presentationResponseKey,
+    responsePresentationKey,
+    streamingResponseMessageKey: hasActiveRun && !hasSavedBridge && !liveRun?.cancellationState && !liveRun?.errorMessage
+      && !liveRun?.approvalRequest && !liveRun?.elicitationRequest && !liveRun?.elicitationRequests?.length
+      && (api || !baseProps.liveRunErrorMessage && !baseProps.liveApprovalRequest && !baseProps.liveElicitationRequest && !baseProps.liveElicitationRequests?.length) ? pendingResponseMessageKey : null,
     messageGroups: projection.groups,
     messageCollapseTargets: collapseTargets,
     collapsedMessageKeys,

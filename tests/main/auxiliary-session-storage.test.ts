@@ -660,6 +660,72 @@ test("Auxiliary turn draft operation は失敗時復元と後続save保全を行
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryの開始・追加入力・終端の確定本文は保存後に親Sessionへ一度通知され、通知失敗でも保存済み結果を返す"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#送信受付の共通反映" }
+// fault = "本文保存を通知せず履歴再取得が起きない、別ownerへ通知する、保存前に通知する、または通知例外を保存失敗として返す"
+// observable = "通知時に再取得した親IDと保存本文、通知回数、serviceの成功結果と失敗保存後の通知回数"
+// observation_boundary = "public-boundary"
+// scope = "AuxiliarySessionService incremental runtime message commits"
+// lifecycle = "permanent"
+// impact = "連続turn中の確定本文が表示から失われることと、保存済み入力の誤再送を防ぐ"
+// distinction = "storage testはrenderer通知を通らず、runtime mockは実SQLite保存前後と通知例外の境界を検証しない"
+// @end-test-value
+test("Auxiliaryの確定本文は保存後に親へ通知し通知失敗でも保存結果を保持する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-runtime-notify-"));
+  const dbPath = path.join(directory, "app.db");
+  const parentStorage = new SessionStorageV6(dbPath);
+  const storage = new AuxiliarySessionStorage(dbPath);
+  const turns = new SessionTurnStorageV6(dbPath);
+  const parent = buildNewSession({
+    id: "session-1", taskTitle: "parent", workspaceLabel: "workspace", workspacePath: "C:/workspace",
+    branch: "main", characterId: "mate", character: "Mate", characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: DEFAULT_APPROVAL_MODE,
+  });
+  const notifications: { parentId: string; texts: string[] }[] = [];
+  let failNotification = false;
+  const service = new AuxiliarySessionService({
+    getParentSession: (id) => parentStorage.getSession(id), getStorage: () => storage,
+    onRuntimeMessagesCommitted: (parentId) => {
+      notifications.push({ parentId, texts: storage.getAuxiliarySession("auxiliary-session-1")!.messages.map((message) => message.text) });
+      if (failNotification) throw new Error("injected notification failure");
+    },
+  });
+  try {
+    parentStorage.upsertSession(parent);
+    const auxiliary = storage.upsertAuxiliarySession(buildAuxiliarySession());
+    const runtime = await service.getAuxiliaryRuntimeSession(auxiliary.id);
+    assert.ok(runtime);
+    const running = await service.persistRunningTurnStart({
+      ...runtime, status: "running", runState: "running", messages: [{ role: "user", text: "first" }],
+    }, 0);
+    const turn = turns.createSessionTurn({ sessionId: auxiliary.id, phase: "running", createdAt: auxiliary.createdAt,
+      provider: auxiliary.provider, model: auxiliary.model, reasoningEffort: auxiliary.reasoningEffort,
+      approvalMode: auxiliary.approvalMode, userMessageSeq: 0, threadId: "", errorMessage: "" });
+    const steered = await service.appendRunningInput(running, "second", turn.id);
+    const terminal = { ...steered, status: "saved" as const, runState: "idle" as const,
+      messages: [...steered.messages, { role: "assistant" as const, text: "answer" }] };
+    const commit = { sessionId: auxiliary.id, turnId: turn.id, phase: "completed" as const,
+      assistantMessageSeq: 2, threadId: "", errorMessage: "", completedAt: auxiliary.updatedAt };
+    await assert.rejects(service.appendTerminalSession(terminal, { ...commit, turnId: turn.id + 1 }), /target mismatch/);
+    assert.equal(notifications.length, 2);
+    failNotification = true;
+    const completed = await service.appendTerminalSession(terminal, commit);
+    assert.equal(completed.runState, "idle");
+    assert.equal(completed.messageCount, 3);
+    assert.equal(turns.getLatestSessionTurn(auxiliary.id)?.phase, "completed");
+    assert.deepEqual(notifications, [
+      { parentId: parent.id, texts: ["first"] },
+      { parentId: parent.id, texts: ["first", "second"] },
+      { parentId: parent.id, texts: ["first", "second", "answer"] },
+    ]);
+  } finally {
+    turns.close(); storage.close(); parentStorage.close();
+    await removeDirectoryWithRetry(directory);
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Auxiliary terminal markerのSQLite更新失敗では本文とartifactもrollbackされ、送信draftは復元される。成功時は同じownerのmarkerと本文を確定しdraftをconsumeする"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }

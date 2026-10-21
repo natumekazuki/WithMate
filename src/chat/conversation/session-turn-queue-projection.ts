@@ -16,8 +16,10 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
           && source.messageIndex > receipt.userMessageSeq! && history.messages[index].role === "assistant"))
       ?? (!hasUnreleasedInterruption ? owned.find((receipt) => receipt.state === "queued") : undefined) : undefined) : undefined;
   for (const receipt of owned) {
+    const key = `turn-submission-${receipt.incarnationId}-${receipt.requestId}`;
     const savedIndex = receipt.userMessageSeq === null ? -1 : projection.sources.findIndex((source) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId) && source.messageIndex === receipt.userMessageSeq);
     if (savedIndex >= 0) {
+      projection.keys[savedIndex] = key;
       if (receipt.state !== "completed" && receipt.state !== "canceled") metadata.set(projection.keys[savedIndex], receipt);
       continue;
     }
@@ -29,9 +31,9 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     }
     if (receipt.state === "canceled" && receipt.userMessageSeq === null) continue;
     // A terminal notification must not drop the accepted prompt before its saved row arrives.
-    const liveIndex = projection.sources.findIndex((source) => source.kind === "live-assistant");
+    const liveIndex = projection.sources.findIndex((source, index) => source.kind === "live-assistant"
+      && (receipt.userMessageSeq === null || projection.messages[index].historyIndex === undefined || projection.messages[index].historyIndex! > receipt.userMessageSeq));
     const index = liveIndex < 0 ? projection.messages.length : liveIndex;
-    const key = `turn-queue-${receipt.incarnationId}-${receipt.id}`;
     projection.messages.splice(index, 0, { role: "user", text: receipt.captured.request.userMessage });
     projection.keys.splice(index, 0, key);
     projection.sources.splice(index, 0, { kind: "turn-queue", receipt });

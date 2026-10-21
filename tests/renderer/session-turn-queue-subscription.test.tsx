@@ -50,10 +50,10 @@ async function mount(api: SessionTurnQueueApi) {
 
 // @test-value v2
 // kind = "contract"
-// claim = "通常購読はactiveのみ取得し、消えた実行のterminal receiptだけ照会してcanonical seq到着まで橋渡しする。取得失敗は表示を保持する"
+// claim = "通常購読はactiveのみ取得し、消えた実行のterminal receiptだけ照会してcanonical seq到着まで橋渡しする。初回失敗後の再試行は読込待ちを示し、取得済みの背景更新と失敗は表示を保持する。canonical到着は追加取得なしでbridgeを解消する"
 // oracle = { type = "contract", ref = "Issue #801: active subscription and canonical bridge" }
 // fault = "通知ごとに全receipt履歴を取得する、terminal先着で本文を落とす、または取得失敗を空queueへ置換する"
-// observable = "購読APIの呼出し、hookのreceiptとerror、canonical seq到着後のbridge除去"
+// observable = "購読APIの呼出し、hookのreceipt・error・初回loading、canonical seq到着後のbridge除去"
 // observation_boundary = "consumer"
 // scope = "queue-active-subscription"
 // lifecycle = "permanent"
@@ -61,27 +61,49 @@ async function mount(api: SessionTurnQueueApi) {
 // distinction = "純粋projection testは実購読通知・API失敗・terminal照会の境界を通らない"
 // @end-test-value
 test("active subscription bridges only disappeared runs and retains failures", async () => {
-  let active = [receipt()]; let fail = false; let historyCalls = 0;
+  let active = [receipt()]; let fail = true; let historyCalls = 0;
+  let activeCalls = 0;
+  let resumeRefresh: (() => void) | undefined;
+  let holdRefresh = false;
   let listener!: (id: string) => void;
   const lookups: string[] = [];
   const view = await mount({
-    listSessionTurnQueue: async () => { if (fail) throw new Error("active unavailable"); return active; },
+    listSessionTurnQueue: async () => {
+      ++activeCalls;
+      if (holdRefresh) await new Promise<void>((resolve) => { resumeRefresh = resolve; });
+      if (fail) throw new Error("active unavailable"); return active;
+    },
     getSessionTurnQueueReceipt: async (_session, id) => { lookups.push(id); return receipt({ state: "completed" }); },
     listSessionTurnQueueReceipts: async () => { ++historyCalls; return { receipts: [], nextCursor: null }; },
     onSessionTurnQueueChanged: (next) => { listener = next; return () => {}; },
   });
   try {
+    assert.equal(view.current.receipts.length, 0);
+    assert.match(view.current.error, /active unavailable/);
+    fail = false; holdRefresh = true;
+    await act(async () => view.current.reload());
+    assert.equal(view.current.loading, true, "an initial failure has not established a ready queue");
+    await act(async () => resumeRefresh?.());
+    holdRefresh = false;
+    assert.equal(view.current.loading, false);
     assert.equal(view.current.receipts[0]?.state, "running");
-    fail = true; await act(async () => listener("session"));
+    holdRefresh = true;
+    await act(async () => listener("session"));
+    assert.equal(view.current.loading, false, "refresh preserves the ready conversation instead of restoring initial loading");
+    assert.equal(view.current.receipts[0]?.state, "running");
+    holdRefresh = false; fail = true;
+    await act(async () => resumeRefresh?.());
     assert.equal(view.current.receipts[0]?.state, "running");
     assert.match(view.current.error, /active unavailable/);
     fail = false; active = []; await act(async () => view.current.reload());
     assert.deepEqual(lookups, ["request"]);
     assert.equal(view.current.receipts[0]?.state, "completed");
+    const callsBeforeCanonical = activeCalls;
     await view.canonical([40]);
     assert.equal(view.current.receipts.length, 1);
     await view.canonical([40, 42]);
     assert.equal(view.current.receipts.length, 0);
+    assert.equal(activeCalls, callsBeforeCanonical, "canonical arrival only retires the resolved bridge");
     assert.equal(historyCalls, 0);
     await act(async () => listener("session"));
     assert.equal(lookups.length, 1);

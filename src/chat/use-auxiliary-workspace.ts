@@ -404,7 +404,11 @@ export function useAuxiliaryWorkspace(input: {
     const subscriptionGeneration = workspaceGenerationRef.current;
     const statusRequests = new Map<string, { pending: boolean }>();
     const liveStatusKeys = new Map<string, { key: string }>();
-    const detailLoads = new Map<string, { revision: number; terminal: boolean }>();
+    const detailLoads = new Map<string, {
+      revision: number;
+      status?: NonNullable<Awaited<ReturnType<AuxiliaryWorkspaceApi["getAuxiliarySessionStatus"]>>>;
+      resolvedEpoch?: number;
+    }>();
     const applySession = (id: string, session: AuxiliarySession, readRevision: number, readEpoch: number, bookmarkRevision: number) => {
       if (!active || !mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
         || readRevision !== detailReadRevisionRef.current.get(id)
@@ -439,17 +443,18 @@ export function useAuxiliaryWorkspace(input: {
       const liveStatusKey = liveStatusKeys.get(id);
       const revision = detailReadRevisionRef.current.get(id);
       const epoch = detailMutationEpochRef.current.get(id) ?? 0;
+      const pendingDetail = detailLoads.get(id);
       void api.getAuxiliarySessionStatus(id).then((status) => {
+        const currentEpoch = detailMutationEpochRef.current.get(id) ?? 0;
         if (!active || !mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
           || revision !== detailReadRevisionRef.current.get(id)
-          || epoch !== (detailMutationEpochRef.current.get(id) ?? 0) || !status) return;
+          || (epoch !== currentEpoch && pendingDetail?.resolvedEpoch !== currentEpoch) || !status) return;
         const summary = summariesRef.current.find((item) => item.id === id);
         if (!summary || summary.parentSessionId !== status.parentSessionId || summary.createdAt !== status.createdAt) return;
-        if (status.runState === "running" && detailLoads.get(id)?.terminal) {
-          // A confirmed new run supersedes an earlier terminal read. Retained live
-          // state with an idle status must not discard that read's final messages.
-          detailMutationEpochRef.current.set(id, epoch + 1);
-        }
+        // A newer run state must not discard the completed messages in an
+        // in-flight detail read. Merge that confirmed state when the body arrives.
+        const detailLoad = detailLoads.get(id);
+        if (detailLoad) detailLoad.status = status;
         const nextSummaries = replaceSummary(summariesRef.current, id, { ...summary, runState: status.runState }, recencyRef.current);
         if (nextSummaries !== summariesRef.current) {
           summariesRef.current = nextSummaries;
@@ -481,7 +486,7 @@ export function useAuxiliaryWorkspace(input: {
       if (terminal) liveStatusKeys.delete(id);
       const readRevision = (detailReadRevisionRef.current.get(id) ?? 0) + 1;
       detailReadRevisionRef.current.set(id, readRevision);
-      detailLoads.set(id, { revision: readRevision, terminal });
+      detailLoads.set(id, { revision: readRevision });
       detailLoadingIdsRef.current.add(id);
       const pendingStatus = statusRequests.get(id);
       if (terminal && pendingStatus) pendingStatus.pending = false;
@@ -496,6 +501,12 @@ export function useAuxiliaryWorkspace(input: {
         const resolvedEpoch = readStartEpoch + 1;
         detailMutationEpochRef.current.set(id, resolvedEpoch);
         if (session) {
+          const detailLoad = detailLoads.get(id)!;
+          detailLoad.resolvedEpoch = resolvedEpoch;
+          const status = detailLoad.status;
+          if (status && status.createdAt === session.createdAt && status.parentSessionId === session.parentSessionId) {
+            session = { ...session, runState: status.runState };
+          }
           applySession(id, session, readRevision, resolvedEpoch, readBookmarkRevision);
           return;
         }

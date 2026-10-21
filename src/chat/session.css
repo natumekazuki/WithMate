@@ -1046,10 +1046,6 @@
   overflow-anchor: auto;
 }
 
-.session-message-list-window:has(.session-turn-queue-status) .message-list-bottom-anchor {
-  min-height: 40px;
-}
-
 .composer {
   display: grid;
   gap: 12px;

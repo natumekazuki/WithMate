@@ -68,6 +68,7 @@ type AuxiliarySessionServiceDeps = {
   randomCharacter?: () => number;
   runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
   onCreationStateChanged?(result: AuxiliaryCreationStateChange): void;
+  onRuntimeMessagesCommitted?(parentSessionId: string): void;
   captureStorageIdentity?(): unknown;
   isStorageIdentityCurrent?(identity: unknown): boolean;
   isAuxiliaryRunInFlight?(auxiliarySessionId: string): boolean;
@@ -1173,6 +1174,7 @@ export class AuxiliarySessionService {
       queuedTurn,
     });
     if (!stored) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+    this.notifyRuntimeMessagesCommitted(stored.parentSessionId);
     return { session: { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: runtimeSession.messages }, turn: stored.queuedTurn };
   }
 
@@ -1193,6 +1195,7 @@ export class AuxiliarySessionService {
       queuedInput,
     });
     if (!stored) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+    this.notifyRuntimeMessagesCommitted(stored.parentSessionId);
     return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: [...runtimeSession.messages, userMessage] };
   }
 
@@ -1215,7 +1218,16 @@ export class AuxiliarySessionService {
       updatedAt: runtimeSession.updatedAt, terminalCommit,
     });
     if (!stored) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+    this.notifyRuntimeMessagesCommitted(stored.parentSessionId);
     return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: runtimeSession.messages };
+  }
+
+  private notifyRuntimeMessagesCommitted(parentSessionId: string): void {
+    try {
+      this.deps.onRuntimeMessagesCommitted?.(parentSessionId);
+    } catch (error) {
+      console.warn("Committed Auxiliary runtime Session broadcast failed", error);
+    }
   }
 
   async checkpointRuntimeMetadata(runtimeSession: Session, expected: Session): Promise<Session> {
