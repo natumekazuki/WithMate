@@ -7,9 +7,9 @@ import { useStreamedResponseText } from "../../src/chat/conversation/use-streame
 
 // @test-value v2
 // kind = "contract"
-// claim = "stream表示は連続受信と同長置換を100ms周期で最新値へ集約し、terminalや入力待ちの即時表示、次run・owner切替・非表示後のtimer失効を維持する"
+// claim = "stream表示はStrictModeで受信済み本文からmountしても更新を継続し、連続受信と同長置換を100ms周期で最新値へ集約し、terminalや入力待ちの即時表示、次run・owner切替・非表示後のtimer失効を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: pending中のlive activity / streaming response" }
-// fault = "入力ごとに表示やdeadlineを更新する、強い状態変化を待たせる、または旧owner/runのtimerが新しい表示を上書きする"
+// fault = "effect再実行後にtimerを再開できない、入力ごとに表示やdeadlineを更新する、強い状態変化を待たせる、または旧owner/runのtimerが新しい表示を上書きする"
 // observable = "hook consumerの表示本文と制御clockの各時点、timer進行後のowner/run別本文"
 // observation_boundary = "consumer"
 // scope = "stream response presentation cadence and lifetime"
@@ -24,13 +24,19 @@ test("stream presentation keeps a bounded cadence and flushes lifecycle changes"
   const originals = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
   const root = createRoot(dom.window.document.getElementById("root")!);
-  let owner = "main:inc"; let key = "response-1"; let text = ""; let streaming = true; let enabled = true;
+  let owner = "main:inc"; let key = "response-initial"; let text = "already streaming"; let streaming = true; let enabled = true;
   let presented = "";
   function View() { presented = useStreamedResponseText(owner, key, text, streaming, enabled); return <output>{presented}</output>; }
-  const render = () => act(async () => root.render(<View />));
+  const render = () => act(async () => root.render(<React.StrictMode><View /></React.StrictMode>));
   const tick = (milliseconds: number) => act(async () => context.mock.timers.tick(milliseconds));
   try {
     await render();
+    await tick(99); assert.equal(presented, "");
+    await tick(1); assert.equal(presented, "already streaming", "StrictMode effect replay restarts the initial publication");
+    text = "next delta"; await render();
+    await tick(99); assert.equal(presented, "already streaming");
+    await tick(1); assert.equal(presented, "next delta", "publication continues after the initial mount");
+    key = "response-1"; text = ""; await render();
     for (const delta of ["first", "other", "third", "four!", "fifth"]) {
       text = delta; await render();
       assert.equal(presented, ""); await tick(20);

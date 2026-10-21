@@ -26,7 +26,7 @@ export function useStreamedResponseText(owner: string, key: string | null, text:
       timer.current = setTimeout(() => { timer.current = null; publish(latest.current); }, STREAM_PRESENTATION_INTERVAL_MS);
     }
   }, [owner, key, text, streaming, enabled]);
-  useLayoutEffect(() => () => { if (timer.current !== null) clearTimeout(timer.current); }, []);
+  useLayoutEffect(() => () => { if (timer.current !== null) clearTimeout(timer.current); timer.current = null; }, []);
   if (!enabled) return "";
   if (!streaming) return text;
   return presented.owner === owner && presented.key === key ? presented.text : "";

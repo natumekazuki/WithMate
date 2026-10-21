@@ -371,13 +371,15 @@ export function useConversationMessageColumn({
     ? bridgeKey : null;
   const responseTurnId = hasActiveRun ? liveRun?.turnId : undefined;
   const responseReceipt = queuedProjection.activeReceipt;
-  const responseRequestId = responseTurnId && responseReceipt?.turnId && responseReceipt.turnId !== responseTurnId
+  const previous = responsePresentation.current;
+  const receiptTurnId = responseReceipt?.turnId
+    ?? (responseReceipt && previous?.owner === pageOwner && previous.requestId === responseReceipt.requestId ? previous.turnId : undefined);
+  const responseRequestId = responseTurnId && receiptTurnId && receiptTurnId !== responseTurnId
     ? undefined : responseReceipt?.requestId ?? queuedProjection.pendingSubmission?.requestId;
   if (responseRequestId || responseTurnId) {
-    const previous = responsePresentation.current;
     const sameResponse = previous?.owner === pageOwner && (responseTurnId && previous.turnId
       ? previous.turnId === responseTurnId : responseRequestId && previous.requestId === responseRequestId);
-    responsePresentation.current = { owner: pageOwner, requestId: responseRequestId ?? (sameResponse ? previous.requestId : undefined), turnId: responseTurnId,
+    responsePresentation.current = { owner: pageOwner, requestId: responseRequestId ?? (sameResponse ? previous.requestId : undefined), turnId: responseTurnId ?? (sameResponse ? previous.turnId : undefined),
       key: sameResponse ? previous.key : `response-${pageOwner}-${responseRequestId ?? responseTurnId}` };
   }
   const responsePresentationKey = !isBrowsing && responsePresentation.current?.owner === pageOwner

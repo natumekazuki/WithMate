@@ -386,7 +386,7 @@ test("queued images load through their Main or Auxiliary conversation context", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxの連続queueはlocal submissionの有無によらず前turnのcanonical未到着中に次turn本文が届いても各応答を保持し、queue receiptが旧turnのまま次liveが先着しても異なる表示identityを確保してreceipt追従後まで維持する。requestのuser keyと各応答keyはcanonical合流・submission消費後まで維持し、seq未確認のrequestはcanonical先着でも再照会で接続する"
+// claim = "Main/Auxの連続queueはlocal submissionの有無によらず前turnのcanonical未到着中に次turn本文が届いても各応答を保持し、queue receiptが旧turnのrunningまたはturnId未確定のstartingのまま次liveが先着しても異なる表示identityを確保してreceipt追従・canonical合流後まで維持する。startingの旧receiptではterminal nullを挟んでも前turnのidentityを次turnへ流用しない。requestのuser keyと各応答keyはcanonical合流・submission消費後まで維持し、seq未確認のrequestはcanonical先着でも再照会で接続する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信受付の共通反映; docs/design/desktop-ui.md: 確定応答の取得待ち" }
 // fault = "次runのlive本文が前応答を置換する、旧receiptと異なるlive turnへ同じ表示keyを割り当てる、user/assistantの順序を崩す、canonical到着で二重化する、またはreceipt解放後に同じ表示行のkeyを差し替える"
 // observable = "共有Column propsの本文順序・messageKeys・responsePresentationKey、canonical到着後のsubmission消費、非表示中のpropsからのlive本文除外"
@@ -394,7 +394,7 @@ test("queued images load through their Main or Auxiliary conversation context", 
 // scope = "consecutive queued conversation handoff"
 // lifecycle = "permanent"
 // impact = "連続送信で既読応答を見失い、確定履歴との接続で本文や閲覧位置が揺れる"
-// distinction = "既存handoff testは前canonical到着後に次runへ進む。小さい共有hook fixtureで保存通知より次liveが先着する配送順と非表示時の投影を確認する。内部refの解放は観測しない"
+// distinction = "既存handoff testは前canonical到着後に次runへ進む。小さい共有hook fixtureでrunningとstarting/nullの旧receiptから次liveが直結またはterminal nullを挟んで先着する配送順と非表示時の投影を確認する。内部refの解放は観測しない"
 // @end-test-value
 test("conversation column は連続queueの各応答とcanonical行identityを保持する", async () => {
   const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
@@ -403,7 +403,11 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
-    for (const kind of ["session", "auxiliary"] as const) {
+    for (const [kind, firstReceiptState, terminalFirst] of [
+      ["session", "running", false], ["session", "starting", false],
+      ["auxiliary", "running", false], ["auxiliary", "starting", false],
+      ["session", "starting", true], ["auxiliary", "starting", true],
+    ] as const) {
       const store = new SessionTurnSubmissions();
       let active: SessionTurnQueueReceipt[] = [];
       const terminals = new Map<string, SessionTurnQueueReceipt>();
@@ -432,16 +436,23 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
       await render();
       await act(async () => { store.start({ sessionId: kind, incarnationId: "inc", requestId: "request-1", userMessage: "prompt-1", historyMessageCount: 0, queuedBehindRun: false, error: "" }); });
       const firstUserKey = column().messageKeys?.[0];
-      active = [receipt(1)]; live = run(1);
+      active = [{ ...receipt(1), state: firstReceiptState,
+        turnId: firstReceiptState === "starting" ? null : "turn-1", userMessageSeq: firstReceiptState === "starting" ? null : 0 }]; live = run(1);
       await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
       const firstResponseKey = column().messageKeys?.[1];
       const firstPresentationKey = column().responsePresentationKey;
       assert.equal(column().messageKeys?.[0], firstUserKey);
       await act(async () => { store.start({ sessionId: kind, incarnationId: "inc", requestId: "request-2", userMessage: "prompt-2", historyMessageCount: 0, queuedBehindRun: true, error: "" }); });
+      if (terminalFirst) {
+        live = null;
+        await render();
+        assert.equal(column().responsePresentationKey, firstPresentationKey);
+        assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "response-1"]);
+      }
       live = run(2);
       await render(); // The live ingress advances before the queue snapshot.
       const earlySecondPresentationKey = column().responsePresentationKey;
-      assert.notEqual(earlySecondPresentationKey, firstPresentationKey, "a conflicting live turn cannot inherit the old receipt's response identity");
+      assert.notEqual(earlySecondPresentationKey, firstPresentationKey, `${kind}/${firstReceiptState}/terminalFirst=${terminalFirst}: a conflicting live turn cannot inherit the old receipt's response identity`);
       assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "response-1", "response-2"]);
       terminals.set("request-1", { ...receipt(1), state: "completed" });
       active = [receipt(2)]; live = run(2);
@@ -456,6 +467,7 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
       saved = [{ role: "user", text: "prompt-1" }, { role: "assistant", text: "final-1" }];
       await render();
       assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "final-1", "prompt-2", "response-2"]);
+      assert.equal(column().responsePresentationKey, earlySecondPresentationKey, "the prior canonical response cannot change the new turn's presentation identity");
       assert.equal(column().messageKeys?.[0], firstUserKey);
       assert.equal(column().messageKeys?.[1], firstResponseKey);
       assert.deepEqual(store.getSnapshot().map((submission) => submission.requestId), ["request-2"]);
@@ -466,6 +478,7 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
       assert.equal(column().messageKeys?.[0], firstUserKey);
       assert.equal(column().messageKeys?.[1], firstResponseKey);
       assert.equal(column().messageKeys?.[3], secondResponseKey);
+      assert.equal(column().responsePresentationKey, earlySecondPresentationKey, "the current canonical response keeps the live turn's presentation identity");
       assert.equal(store.getSnapshot().length, 0);
       const startingThird = { ...receipt(3), state: "starting" as const, userMessageSeq: null };
       active = [startingThird];
