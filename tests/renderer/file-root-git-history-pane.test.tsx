@@ -253,7 +253,7 @@ test("History pagination は Load more buttonを出さず sentinel と専用scro
       return new Promise<FileRootGitHistoryCommitsResult>((resolve) => pendingPages.push(resolve));
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: first, entries: [] }),
-    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, relativePath: null, patch: "", previewResource: null }),
+    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, displayPath: "C:/repo", relativePath: null, patch: "", previewResource: null }),
     getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
@@ -350,7 +350,7 @@ test("History 追加pageの失敗は既存一覧を維持し、sentinelから再
       return { status: "ok" as const, page: { entries: [first], nextCursor: "100", hasMore: true } };
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: first, entries: [] }),
-    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, relativePath: null, patch: "", previewResource: null }),
+    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, displayPath: "C:/repo", relativePath: null, patch: "", previewResource: null }),
     getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
@@ -422,7 +422,7 @@ test("History repository切り替えは古いpageを捨てて新repositoryの先
       return new Promise<FileRootGitHistoryCommitsResult>((resolve) => pendingPages.push(resolve));
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: commit("d", "detail"), entries: [] }),
-    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: commit("d", "detail").id, relativePath: null, patch: "", previewResource: null }),
+    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: commit("d", "detail").id, displayPath: "C:/repo", relativePath: null, patch: "", previewResource: null }),
     getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
@@ -823,6 +823,7 @@ test("History detail はref種別、commit metadata、changed file tree、file d
         return {
           status: "ok" as const,
           comparison: request.comparison,
+          displayPath: `C:/repo${request.relativePath ? `/${request.relativePath}` : ""}`,
           relativePath: request.relativePath ?? null,
           patch: "diff --git",
           previewBeforeResource: null,
@@ -832,6 +833,7 @@ test("History detail はref種別、commit metadata、changed file tree、file d
       return {
         status: "ok" as const,
         commitId: request.commitId,
+        displayPath: `C:/repo${request.relativePath ? `/${request.relativePath}` : ""}`,
         relativePath: request.relativePath ?? null,
         patch: "diff --git",
         previewResource: null,
@@ -1162,7 +1164,7 @@ test("History は古いcommit detail結果を現在のcommitへ混入させな�
       pendingDetails.push((result) => resolve(result));
       assert.ok(request.commitId === firstCommit.id || request.commitId === secondCommit.id);
     }),
-    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, relativePath: null, patch: "", previewResource: null }),
+    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, displayPath: "C:/repo", relativePath: null, patch: "", previewResource: null }),
     getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
@@ -1245,7 +1247,7 @@ test("History は古いfile Diff結果をBack後のcommitへ混入させない",
       commit: request.commitId === firstCommit.id ? firstCommit : secondCommit,
       entries: [changedEntry(request.commitId === firstCommit.id ? "first.ts" : "second.ts")],
     }),
-    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, relativePath: null, patch: "", previewResource: null }),
+    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, displayPath: "C:/repo", relativePath: null, patch: "", previewResource: null }),
     getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;

@@ -11,8 +11,9 @@
 }
 
 .home-settings-rail {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px 16px;
   padding: 0 8px;
@@ -20,14 +21,14 @@
 
 .home-settings-actions {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
 }
 
 .home-header-feedback {
-  grid-column: 1 / -1;
+  flex-basis: 100%;
 }
 
 .home-page .home-settings-rail .home-pane-toggle {
@@ -258,7 +259,7 @@
 
 .home-page .home-pane-toggle {
   display: inline-grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border-radius: 999px;
@@ -587,6 +588,47 @@
 .home-page .home-monitor-card:hover {
   border-color: rgba(111, 140, 255, 0.24);
   background: rgba(255, 255, 255, 0.07);
+}
+
+.home-page .home-previews-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.home-page .home-previews-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.home-page .home-monitor-parent-button.home-previews-session {
+  display: block;
+}
+
+.home-page .home-previews-session .button-content,
+.home-page .home-previews-file .button-content {
+  width: 100%;
+  min-width: 0;
+}
+
+.home-page .home-previews-session .button-content-label,
+.home-page .home-previews-file .button-content-label {
+  min-width: 0;
+  max-width: 100%;
+  justify-content: flex-start;
+  gap: 7px;
+}
+
+.home-page .home-monitor-auxiliary-list.home-previews-children[hidden] {
+  display: none;
+}
+
+.home-page .home-monitor-auxiliary-row.home-previews-file {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 36px;
 }
 
 .home-page .home-monitor-parent-row {

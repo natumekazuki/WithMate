@@ -99,6 +99,9 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
   SessionFilePreviewWindowPayload,
+  SessionFilePreviewWindowGroup,
+  SessionFilePreviewContextMenuRequest,
+  SessionFilePreviewContextMenuResult,
   SessionFilePreviewResourceRequest,
   SessionFileRoot,
   SessionFilePin,
@@ -243,6 +246,11 @@ export type MainIpcWindowDeps = MainIpcEventWindowDeps &
     openMemoryV6ReviewWindow(): Promise<void>;
     openCharacterEditorWindow(characterId?: string | null): Promise<void>;
     openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
+    listSessionFilePreviewWindows(): Promise<SessionFilePreviewWindowGroup[]>;
+    showSessionFilePreviewContextMenu(event: IpcSenderEvent, request: SessionFilePreviewContextMenuRequest): Promise<SessionFilePreviewContextMenuResult>;
+    focusSessionFilePreviewWindow(token: string): void;
+    closeSessionFilePreviewWindow(token: string): void;
+    closeSessionFilePreviewWindows(ownerSessionId: string): void;
     pickDirectory(
       targetWindow: MaybeWindow,
       initialPath: string | null,

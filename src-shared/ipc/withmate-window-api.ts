@@ -88,6 +88,9 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
   SessionFilePreviewWindowPayload,
+  SessionFilePreviewWindowGroup,
+  SessionFilePreviewContextMenuRequest,
+  SessionFilePreviewContextMenuResult,
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
@@ -128,6 +131,11 @@ import type {
 import type { SessionWindowRestoreResult } from "../window/session-window-restore.js";
 
 export type WithMateWindowNavigationApi = {
+  showSessionFilePreviewContextMenu(request: SessionFilePreviewContextMenuRequest): Promise<SessionFilePreviewContextMenuResult>;
+  listSessionFilePreviewWindows(): Promise<SessionFilePreviewWindowGroup[]>;
+  focusSessionFilePreviewWindow(token: string): Promise<void>;
+  closeSessionFilePreviewWindow(token: string): Promise<void>;
+  closeSessionFilePreviewWindows(ownerSessionId: string): Promise<void>;
   openSession(sessionId: string, auxiliarySessionId?: string): Promise<void>;
   showSessionMonitorContextMenu(
     request: SessionMonitorContextMenuRequest,
@@ -335,6 +343,7 @@ export type WithMateWindowSubscriptionApi = {
   subscribeSessionFilePreviewNavigation(
     listener: (payload: SessionFilePreviewWindowPayload) => void,
   ): () => void;
+  subscribeSessionFilePreviewWindowsChanged(listener: () => void): () => void;
   subscribeSessionInvalidation(listener: (payload: SessionSummaryInvalidation) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;

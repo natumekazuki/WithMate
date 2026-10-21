@@ -2171,7 +2171,7 @@ export class FileRootGitChangesService {
   async #resolveHistoryFilePreviewRequest(
     request: SessionFileGitCommitResourceRequest,
     signal: AbortSignal,
-  ): Promise<{ name: string }> {
+  ): Promise<{ name: string; absoluteFilePath: string }> {
     const pendingCleanupError = await this.#cleanupPendingResources();
     if (pendingCleanupError) {
       throw pendingCleanupError;
@@ -2183,7 +2183,7 @@ export class FileRootGitChangesService {
     try {
       const workspacePrefix = await this.#readWorkspacePrefix(operation);
       const { relativePath } = await this.#resolveHistoryFile(operation, request, workspacePrefix);
-      return { name: path.posix.basename(relativePath) };
+      return { name: path.posix.basename(relativePath), absoluteFilePath: path.resolve(operation.workspacePath, relativePath) };
     } finally {
       const cleanupError = await this.#closeOperation(operation);
       if (cleanupError) {
@@ -2194,7 +2194,7 @@ export class FileRootGitChangesService {
 
   async resolveHistoryFilePreview(
     request: SessionFileGitCommitResourceRequest,
-  ): Promise<{ name: string }> {
+  ): Promise<{ name: string; absoluteFilePath: string }> {
     normalizeHistoryObjectIdParser(request.commitId);
     normalizeGitRelativePathParser(request.relativePath);
     return runWorkspaceGitOperationWithAdmission(
@@ -2806,6 +2806,7 @@ export class FileRootGitChangesService {
               response = {
                 status: "ok",
                 comparison: resolvedComparison,
+                displayPath: path.resolve(operation.workspacePath, relativePath ?? "."),
                 relativePath,
                 patch,
                 previewBeforeResource: beforeRelativePath && beforeEntry
@@ -2836,6 +2837,7 @@ export class FileRootGitChangesService {
               response = {
                 status: "ok",
                 commitId: commit!.id,
+                displayPath: path.resolve(operation.workspacePath, relativePath ?? "."),
                 relativePath,
                 patch,
                 previewResource: relativePath && previewEntry

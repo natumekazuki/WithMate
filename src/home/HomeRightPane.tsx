@@ -9,10 +9,11 @@ import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-ses
 import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
+import { HomePreviewsPanel } from "./HomePreviewsPanel.js";
 
 export type HomeRightPaneProps = {
   providerQuota?: ReactNode;
-  rightPaneView: "monitor" | "characters";
+  rightPaneView: "monitor" | "characters" | "previews";
   approvalMonitorEntries: HomeMonitorEntry[];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
@@ -75,6 +76,10 @@ export function HomeRightPane({
             onOpenSession={onOpenSession}
             onShowContextMenu={onShowSessionMonitorContextMenu}
           />
+        </section>
+      ) : rightPaneView === "previews" ? (
+        <section className="home-monitor-panel" role="tabpanel" aria-label="Previews">
+          <HomePreviewsPanel />
         </section>
       ) : (
         <section className="home-monitor-panel home-characters-panel" role="tabpanel" aria-label="Characters">

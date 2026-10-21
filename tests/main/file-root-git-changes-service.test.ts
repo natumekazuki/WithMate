@@ -463,7 +463,7 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
       });
       assert.deepEqual(
         await metadataOnlyService.resolveHistoryFilePreview(binaryDiff.previewResource),
-        { name: "binary.bin" },
+        { name: "binary.bin", absoluteFilePath: path.join(repositoryPath, "binary.bin") },
       );
       assert.equal(blobReadAttempts, 0);
       await writeFile(path.join(repositoryPath, "binary.bin"), Buffer.from([9, 9, 9]));

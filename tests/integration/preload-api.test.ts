@@ -12,6 +12,56 @@ type Listener = (...args: unknown[]) => void;
 
 // @test-value v2
 // kind = "contract"
+// claim = "Preview menu preloadはscopeと座標を専用IPCへ渡しclose選択・取消結果を返す"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts showSessionFilePreviewContextMenu" }
+// fault = "別channelへ送る、scopeや座標を落とす、menu選択を実close成功へ変換する"
+// observable = "invoke channelとrequest、renderer APIの返却値"
+// observation_boundary = "public-boundary"
+// scope = "Preview context menu preload"
+// lifecycle = "permanent"
+// distinction = "公開keyと型検査はruntime channel・payload・選択結果の伝達を保証しない"
+// @end-test-value
+test("Preview menu preloadはscopeと座標と選択結果を伝達する", async () => {
+  const { ipcRenderer } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  const request = { scope: "preview" as const, point: { x: 12, y: 34 } };
+  assert.deepEqual(await api.showSessionFilePreviewContextMenu(request), {
+    channel: "withmate:show-session-file-preview-context-menu", args: [request],
+  });
+  for (const result of ["close", "dismissed"] as const) {
+    const resultApi = createWithMateWindowApi({ ...ipcRenderer, invoke: async () => result } as never);
+    assert.equal(await resultApi.showSessionFilePreviewContextMenu({ ...request, scope: "session" }), result);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Preview管理APIは一覧とtoken・owner操作を専用IPCへ渡しchanged購読を解除できる"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts Preview management API" }
+// fault = "tokenとownerを取り違える、別channelへ送る、changed listenerを解除できない"
+// observable = "invoke channel・引数、changed callback回数、unsubscribe後のlistener登録"
+// observation_boundary = "public-boundary"
+// scope = "Preview management preload"
+// lifecycle = "permanent"
+// distinction = "key集合と型検査はchannelと引数のruntime接続や購読解除を保証しない"
+// @end-test-value
+test("Preview管理preloadは操作IDとchanged購読を接続する", async () => {
+  const { ipcRenderer, listeners } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  assert.deepEqual(await api.listSessionFilePreviewWindows(), { channel: "withmate:list-session-file-preview-windows", args: [] });
+  assert.deepEqual(await api.focusSessionFilePreviewWindow("token"), { channel: "withmate:focus-session-file-preview-window", args: ["token"] });
+  assert.deepEqual(await api.closeSessionFilePreviewWindow("token"), { channel: "withmate:close-session-file-preview-window", args: ["token"] });
+  assert.deepEqual(await api.closeSessionFilePreviewWindows("owner"), { channel: "withmate:close-session-file-preview-windows", args: ["owner"] });
+  let changes = 0;
+  const dispose = api.subscribeSessionFilePreviewWindowsChanged(() => { changes++; });
+  listeners.get("withmate:session-file-preview-windows-changed")?.({});
+  assert.equal(changes, 1);
+  dispose();
+  assert.equal(listeners.has("withmate:session-file-preview-windows-changed"), false);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "quota snapshotのcacheOnly指定とprovider IDをpreloadがMainへ伝達する"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md#共通の残量表示" }
 // fault = "optionsを落として新UIがCopilotのremote取得を発生させる"
@@ -679,6 +729,12 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
 
   const keys = Object.keys(api).sort();
   const expectedKeys = [
+    "showSessionFilePreviewContextMenu",
+    "listSessionFilePreviewWindows",
+    "focusSessionFilePreviewWindow",
+    "closeSessionFilePreviewWindow",
+    "closeSessionFilePreviewWindows",
+    "subscribeSessionFilePreviewWindowsChanged",
     "enqueueSessionTurn",
     "getSessionTurnQueueReceipt",
     "listSessionTurnQueue",
@@ -959,7 +1015,7 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   listeners.get("withmate:session-file-preview-navigation")?.({}, {
     resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/app/SessionWindowApp.tsx" },
     ownerSessionId: "session-1",
-    windowTitle: "App.tsx",
+    displayPath: "C:/workspace/file", windowTitle: "App.tsx",
     view: { kind: "diff", scope: "working-tree" },
   });
   listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
@@ -978,7 +1034,7 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
       payload: {
         resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/app/SessionWindowApp.tsx" },
         ownerSessionId: "session-1",
-        windowTitle: "App.tsx",
+        displayPath: "C:/workspace/file", windowTitle: "App.tsx",
         view: { kind: "diff", scope: "working-tree" },
       },
     },

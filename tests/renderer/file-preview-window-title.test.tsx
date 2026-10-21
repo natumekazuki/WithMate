@@ -76,7 +76,7 @@ test("FilePreviewApp は payload hydrate 後も document title を対象ファ�
       return () => {};
     },
     async getSessionFilePreviewWindowPayload() {
-      return { resource, ownerSessionId: "session-1", windowTitle: "notes.md" };
+      return { resource, ownerSessionId: "session-1", windowTitle: "notes.md", displayPath: "C:/work/notes.md" };
     },
     subscribeSessionFilePreviewNavigation() {
       return () => {};
@@ -203,6 +203,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
         resource,
         ownerSessionId: "session-1",
         windowTitle: "notes.txt",
+        displayPath: "C:/repo/notes.txt",
         view: { kind: "diff" as const, scope: "working-tree" as const },
       };
     },
@@ -359,7 +360,7 @@ test("FilePreviewAppの画像は設定Retryと通知で次のwheel刻みだけ�
       return () => { settingsListener = undefined; };
     },
     async getSessionFilePreviewWindowPayload() {
-      return { resource, ownerSessionId: "session-1", windowTitle: "image.png" };
+      return { resource, ownerSessionId: "session-1", windowTitle: "image.png", displayPath: "C:/work/image.png" };
     },
     subscribeSessionFilePreviewNavigation() { return () => {}; },
     async inspectSessionFile() { return descriptor; },

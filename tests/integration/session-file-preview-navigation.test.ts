@@ -144,7 +144,7 @@ test("Files preview操作はIPCからroot認可・owner・Window再利用・失�
     });
     assert.equal(h.created.length, 1);
     assert.deepEqual(h.windows.getFilePreviewPayload("token-1"), {
-      resource, ownerSessionId: "parent", windowTitle: "guide.md", view,
+      resource, ownerSessionId: "parent", displayPath: path.join(h.workspacePath, "docs", "guide.md"), windowTitle: "guide.md", view,
     });
     h.state.sender = createWindow("file:///session.html?sessionId=other");
     await assert.rejects(() => h.open({ kind: "resource", resource }), /owning Session window/);
@@ -304,7 +304,7 @@ test("Files preview操作は実Gitのcommit previewと履歴diff payloadを維�
       status: "opened", targetType: "preview-window", disposition: "created", resource,
     });
     assert.deepEqual(h.windows.getFilePreviewPayload("token-1"), {
-      resource, ownerSessionId: "parent", windowTitle: `guide.md · ${commitId.slice(0, 7)}`, view: { kind: "preview" },
+      resource, ownerSessionId: "parent", displayPath: path.join(h.workspacePath, "docs", "guide.md"), windowTitle: `guide.md · ${commitId.slice(0, 7)}`, view: { kind: "preview" },
     });
     const request = { sessionId: "aux", rootId: "workspace", repositoryId, commitId, relativePath: "docs/guide.md" };
     assert.deepEqual(await h.open({ kind: "history-diff", request }), {

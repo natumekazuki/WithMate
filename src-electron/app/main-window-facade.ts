@@ -4,6 +4,7 @@ import type { DiffPreviewPayload } from "../../src-shared/session/session-state.
 import type {
   SessionFilePreviewWindowPayload,
   SessionFilePreviewResourceRequest,
+  SessionFilePreviewWindowSummary,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import type { AuxWindowService } from "../auxiliary/aux-window-service.js";
 import type { SessionWindowBridge } from "../windows/session-window-bridge.js";
@@ -72,6 +73,29 @@ export class MainWindowFacade {
 
   getFilePreviewPayload(token: string): SessionFilePreviewWindowPayload | null {
     return this.deps.getAuxWindowService().getFilePreviewPayload(token);
+  }
+
+  listFilePreviewWindows() {
+    const groups = new Map<string, { ownerSessionId: string; previews: SessionFilePreviewWindowSummary[] }>();
+    for (const ownerSessionId of this.listOpenSessionWindowIds()) {
+      groups.set(ownerSessionId, { ownerSessionId, previews: [] });
+    }
+    for (const group of this.deps.getAuxWindowService().listFilePreviewWindows()) {
+      groups.set(group.ownerSessionId, group);
+    }
+    return [...groups.values()];
+  }
+
+  focusFilePreviewWindow(token: string): void {
+    this.deps.getAuxWindowService().focusFilePreviewWindow(token);
+  }
+
+  closeFilePreviewWindow(token: string): void {
+    this.deps.getAuxWindowService().closeFilePreviewWindow(token);
+  }
+
+  closeFilePreviewWindowsForOwner(ownerSessionId: string): void {
+    this.deps.getAuxWindowService().closeFilePreviewWindowsForOwner(ownerSessionId);
   }
 
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean {

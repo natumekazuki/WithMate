@@ -5,6 +5,7 @@ import type { Session } from "../../src-shared/session/session-state.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import type { DraftFlushResult } from "../platform/draft-flush-coordinator.js";
 import type { SessionFilePreviewWindowPayload } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import { WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import { WITHMATE_OPEN_AUXILIARY_SESSION_EVENT, WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT, WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT, WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import type { MainWindowComposition } from "./main-window-composition.js";
 import { WindowBroadcastService } from "./window-broadcast-service.js";
@@ -109,6 +110,12 @@ export class MainWindowRuntime {
       loadCharacterEditorEntry: (window, characterId) =>
         this.windowEntryLoader.loadCharacterEditorEntry(window, characterId),
       generateDiffToken: () => crypto.randomUUID(),
+      onFilePreviewWindowsChanged: () => {
+        const home = this.auxWindowService.getHomeWindow();
+        if (home && !home.webContents.isDestroyed() && !home.webContents.isCrashed()) {
+          home.webContents.send(WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT);
+        }
+      },
     });
     this.sessionWindowBridge = new SessionWindowBridge({
       createWindow: (sessionId) => deps.composition.createCursorPlacedWindow({

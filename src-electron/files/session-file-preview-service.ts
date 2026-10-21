@@ -66,6 +66,7 @@ export class SessionFilePreviewService {
           previewAfterResource: "previewAfterResource" in result ? result.previewAfterResource : null,
         },
         ownerSessionId,
+        displayPath: result.displayPath,
         windowTitle: resolveSessionFilePreviewWindowTitle(request.relativePath ?? "Git Diff"),
       });
       return { status: "opened", targetType: "preview-window", disposition, historyDiff: request };
@@ -123,13 +124,15 @@ export class SessionFilePreviewService {
       };
     }
     try {
-      const fileName = isSessionFileGitCommitResource(resource)
-        ? (await this.deps.gitChanges.resolveHistoryFilePreview(resource)).name
-        : (await this.deps.explorer.inspectFile(resource)).name;
+      const descriptor = isSessionFileGitCommitResource(resource)
+        ? await this.deps.gitChanges.resolveHistoryFilePreview(resource)
+        : await this.deps.explorer.inspectFile(resource);
+      const fileName = descriptor.name;
       const ownerSessionId = await this.requireOwnerSessionId(resource.sessionId);
       const { disposition } = await this.deps.openPreviewWindow({
         resource,
         ownerSessionId,
+        displayPath: descriptor.absoluteFilePath,
         windowTitle: isSessionFileGitCommitResource(resource)
           ? resolveSessionFileGitCommitPreviewWindowTitle(fileName, resource.commitId)
           : resolveSessionFilePreviewWindowTitle(fileName),

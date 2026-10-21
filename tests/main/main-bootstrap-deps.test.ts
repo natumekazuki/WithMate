@@ -49,6 +49,11 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     },
     ipcRegistration: {
       window: {
+        async showSessionFilePreviewContextMenu() { return "dismissed"; },
+        async listSessionFilePreviewWindows() { return []; },
+        focusSessionFilePreviewWindow() {},
+        closeSessionFilePreviewWindow() {},
+        closeSessionFilePreviewWindows() {},
         acknowledgeSessionDraftFlush: () => {
           throw new Error("unused window fixture method");
         },

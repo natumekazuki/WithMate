@@ -36,7 +36,7 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
   dom.window.ResizeObserver = Observer;
   let containerWidth = 1000;
   let settingsCalls = 0;
-  const renderScreen = (view: "monitor" | "characters" = "monitor") => root.render(<HomeDashboardScreen
+  const renderScreen = (view: "monitor" | "characters" | "previews" = "monitor") => root.render(<HomeDashboardScreen
     homePageClassName="home-page"
     header={<HomeHeader
       rightPaneView={view}
@@ -46,7 +46,7 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
       onOpenSettingsWindow={() => { settingsCalls += 1; }}
       onRestoreSessionWindows={() => {}}
     />}
-    rightPaneLabel={view === "monitor" ? "Monitor" : "Characters"}
+    rightPaneLabel={view === "monitor" ? "Monitor" : view === "previews" ? "Previews" : "Characters"}
     recentSessionsPanel={<input aria-label="Search sessions" defaultValue="in progress" />}
     rightPane={<button type="button">Open Session</button>}
     launchDialog={null}

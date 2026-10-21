@@ -96,16 +96,16 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 
 - 黒基調の管理ハブとして表示する
 - `Settings` は別 window で開く前提のため、Home は session / Character catalog 管理ハブを優先する
-- 左の`RecentSessions`と右の`Monitor`または`Characters`を、Session WindowのMain／Auxiliaryと共通のスプリッターで分割する。初期は左右1:1で、比率は表示中のHome内だけで保持する
+- 左の`RecentSessions`と右の`Monitor`／`Characters`／`Previews`を、Session WindowのMain／Auxiliaryと共通のスプリッターで分割する。初期は左右1:1で、比率は表示中のHome内だけで保持する
   - ドラッグまたは左右矢印キーで幅を変え、端へ寄せると片側を全幅表示する。クリックは右側を閉じ、どちらかが閉じているときはクリックで1:1へ戻す。閉じた状態からのドラッグ・矢印キーでは再展開しない
   - 閉じたpaneは非表示・操作不可にし、検索入力や一覧のDOMを保持する。左右の最小幅はそれぞれ300px／320pxとし、両側を表示できる幅があるときはWindow縮小後も比率を補正して最小幅を維持する。縮小だけで閉じたpaneを開かない
-  - Monitor／Characters切替とSettings／Restore Sessions／独立Monitorの操作はHome共通headerに置く。切替は右寄せし、共通操作ボタン群の直前に置く。headerは左右分割の外に常設し、paneの幅調整・開閉で操作ボタンを移動・非表示にしない。開閉対象名は現在表示中のMonitor／Charactersへ合わせる
+  - Monitor／Characters／Previews切替とSettings／Restore Sessions／独立Monitorの操作はHome共通headerに置く。切替は右寄せし、共通操作ボタン群の直前に置く。headerは左右分割の外に常設し、paneの幅調整・開閉で操作ボタンを移動・非表示にしない。開閉対象名は現在表示中のpaneへ合わせる
 - 2 カラムの外側とMonitorのAttention／Running／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
 - `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
 - Mate ProfileのAvatar編集では、`Select Image`と`Clear`の実行した操作だけをbusy表示にし、処理中は両操作を無効化する。Mate保存中も両操作を無効化するが、Avatar更新中とは表示を区別する。Mate未作成・Profile利用不可ではAvatar編集を提供しない。画像選択のキャンセルと更新失敗では元のAvatarを保持して操作可能状態へ戻し、成功時は取得したProfileを反映する。Avatarがないときは`Clear`を表示しない。
 - `Monitor`
-  - Home共通headerのsegmented toggleで `Characters` と排他的に切り替える
+  - Home共通headerのsegmented toggleで `Characters`／`Previews` と排他的に切り替える
   - 初期表示は `Monitor`
   - 共通`HomeMonitorContent`の先頭に有効providerの詳細icon・名前・期間別残率をcompactな横並びで表示し、幅に応じて折り返す。直下のclick専用splitterで残量一覧だけを開閉し、閉じてもcomponentとcache購読を維持する。監視一覧のscrollとは独立し、独立Monitorにも同じ構成を適用する。詳細は既存のprovider別popupで開き、表示中のloading・取得失敗・前回値を区別する。[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
   - 親Sessionは1行にまとめ、左側で`Main`状態をavatarと親titleへ近接させる。右端はSession Windowと共通のAuxiliary icon・状態別件数・展開矢印を一つのbuttonへまとめ、配下の一覧との関係を示す。列見出しは置かず、Auxiliaryがない親には右端のbuttonを表示しない。Auxの複数状態は必要に応じて折り返し、承認・error・実行有無を落とさない。状態と操作のaccessible name・tooltipは維持する
@@ -154,8 +154,18 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
     - background = mate `main`
     - left accent bar = mate `sub`
     - text color = themeのcontrast helperで決めたdark / light palette
+- `Previews`
+  - Home共通headerのsegmented toggleで`Monitor`／`Characters`と排他的に切り替える。既存MonitorのAuxiliary欄は変更しない
+  - 開いているSession Windowをpreviewの有無にかかわらずすべて一覧化し、Main／Auxiliary由来のFile Preview Windowを親Sessionへ集約する。Session Windowを閉じても残っているpreviewを含め、Recent Sessionsの検索・取得範囲や実行状態では絞り込まない
+  - Monitorと共通の親行にCharacter avatarとSession titleを置き、titleのclickでそのSession Windowを開く。右側のPreview icon・件数・展開buttonからfile一覧を開閉する。Attention／Running／Stoppedの分類は設けない
+  - 開いているSessionはClose All後も同じ位置に残し、previewが0件なら件数のみ表示して展開とClose Allを無効にする。Session Windowが閉じていてpreviewも0件になった親は一覧から除く
+  - 子一覧はMonitorのAuxiliaryと同じ高さ上限と枠内scroll、1行省略表示の密度を使い、件数が増えてもcardを無制限に伸ばさない。開いているpreviewの総数や取得件数は制限しない
+  - 子行はfile名だけを常設表示し、識別pathはtooltipとaccessible nameに残す。clickは既存previewを前面化し、表示内容を再navigateしない
+  - 個別Closeは子行、Close Allは親行のnative context menuから実行する。常設のClose buttonは置かず、右クリックに加えてContext Menuキー／Shift+F10でも操作できる。親単位CloseはそのSession配下のpreviewだけを閉じ、Session本体や他Sessionへ影響させない
+  - 通常file、live Git Diff、commit file、Git履歴diffを対象とし、chat artifactのsnapshot Diffは含めない。Window数は制限せず、Close後も同じresourceを再度開ける
+  - 開閉・再利用による一覧の変化を反映し、読込中・取得失敗・正常な0件を区別する。取得失敗には再試行を提供し、操作失敗を正常なCloseとして表示しない
 - `Characters`
-  - right pane 上部の segmented toggle で `Monitor` と排他的に切り替える
+  - Home共通headerのsegmented toggleで `Monitor`／`Previews` と排他的に切り替える
   - Character catalog の active Character は意味のある card item として表示する。必要な識別情報と操作をまとめるが、入れ子の装飾cardは作らない
   - 検索欄とheaderの＋icon `Create Character`は固定し、Character listだけをスクロールする
   - card には avatar / name / description（空なら Character ID）を表示する
@@ -369,7 +379,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - File Explorer は通常 click で中央 preview、Ctrl+click / Cmd+click で detached preview を開く。Changes は通常 click で中央 live Git Diff（untracked は中央 file preview）、Ctrl+click / Cmd+click で detached live Git Diff（untracked は detached file preview）を開く。Session message の local-file link は detached preview を開く
   - Session messageとMarkdown previewのdirectory linkは、登録root内外とも明示clickでOSのfile managerを開く。macOSは通常folderとapp bundle／packageを区別せずFinderで対象を選択表示し、アプリの起動は行わない。追加dialogやAdditional Directoryの自動登録は行わず、アプリ内列挙とProvider権限は変えない。成功時は操作元の既存errorを消し、失敗時は同じfeedbackへ理由を表示する。対象検証は[Message Rich Text](message-rich-text.md#link-handling)を参照する
   - 中央 preview と同じ `SessionFilePreview` / `SessionDiffPreview` を使用し、Quote と Action Dock は表示しない
-  - live Git Diff の `Open preview` は対象 file を通常 preview として開く。detached file preview から開いた live Git Diff と Changes から直接開いた detached live Git Diff は、左向き icon または `Open preview` で同じ Window の preview へ戻る。独立 File Preview、snapshot Diff、Character Editor の Window 自体は native window chrome で閉じ、重複する app 内 Close 操作を置かない
+  - live Git Diff の `Open preview` は対象 file を通常 preview として開く。detached file preview から開いた live Git Diff と Changes から直接開いた detached live Git Diff は、左向き icon または `Open preview` で同じ Window の preview へ戻る。独立 File Preview、snapshot Diff、Character Editor の Window 自体は native window chrome で閉じ、各Window内に重複するClose操作を置かない。File PreviewはHomeのPreviews一覧からも個別・Session単位で閉じられる
   - Character Editor が dirty な状態で native window chrome から閉じようとした場合は、編集内容を保持したまま in-app の破棄確認を表示する。キャンセルでは編集へ戻り、明示的に破棄した場合だけ Window を閉じる
   - `New Session` dialog はfooter左端の`Cancel`で閉じ、右端の`Start`で開始する。開始前の`Cancel`では作成せず、開始後は送信済みの作成を取り消さない。`Start`がdisabledでも`Cancel`は使用でき、重複する常設 Close control は置かない
   - Auxiliary 起動 dialog も backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
