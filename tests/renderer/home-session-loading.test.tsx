@@ -79,11 +79,12 @@ type Harness = {
   setAuxiliaryQuery: (handler: () => Promise<AuxiliarySessionSummary[]>) => void;
   emitLive: (sessionId: string, cancellationState?: LiveSessionRunStatus["cancellationState"] | null) => Promise<void>;
   liveSubscriptionCount: () => number;
+  characterQueryCount: () => number;
   emitInvalidation: (payload: SessionSummaryInvalidation) => Promise<void>;
   emitOpenIds: (ids: string[]) => Promise<void>;
   opened: Array<[string, string | undefined]>;
   focus: () => Promise<void>;
-  settle: () => Promise<void>;
+  settle: (ms?: number) => Promise<void>;
   launch: () => Promise<HTMLElement>;
   close: () => Promise<void>;
 };
@@ -113,8 +114,9 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     workspacePath: "C:\\sessions\\created-session", branch: "", approvalMode: "on-request",
   });
   const requests: CreateSessionRequest[] = [];
+  let characterQueries = 0;
   const api: Partial<WithMateWindowApi> = {
-    listCharacters: async () => [character("used"), character("unused")],
+    listCharacters: async () => { characterQueries += 1; return [character("used"), character("unused")]; },
     getMateState: async () => "not_created",
     getAppSettings: async () => createDefaultAppSettings(),
     subscribeAppSettings: () => () => {},
@@ -167,8 +169,8 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
   const element = dom.window.document.getElementById("root");
   assert.ok(element);
   let root: Root | null = null;
-  const settle = async () => {
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 160)); });
+  const settle = async (ms = 160) => {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
   };
   const focus = async () => {
     await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
@@ -220,6 +222,7 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
       });
     },
     liveSubscriptionCount: () => liveListeners.size,
+    characterQueryCount: () => characterQueries,
     emitInvalidation: async (payload) => {
       await act(async () => { for (const listener of invalidationListeners) listener(payload); });
     },
@@ -627,13 +630,13 @@ test("検索後の最新取得待機中に旧一覧・履歴の失敗を適用�
     home.setListPage((request) => request.scope === "recent" ? freshRecent.promise
       : Promise.resolve(page(request.scope === "open" ? [session("open")] : [])));
     home.setUsage(() => freshUsage.promise);
-    const search = home.element.querySelector<HTMLInputElement>('[aria-label="Search sessions"] input');
+    const search = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
     assert.ok(search);
     await act(async () => {
       Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, "fresh");
       search.dispatchEvent(new home.dom.window.Event("input", { bubbles: true }));
     });
-    await home.settle();
+    await home.settle(320);
     await act(async () => {
       oldRecent.reject(new Error("Obsolete recent failure"));
       oldUsage.reject(new Error("Obsolete history failure"));
@@ -706,14 +709,14 @@ test("通知集中と検索・open変更は最新1件へ収束して旧2page目�
       await home.emitInvalidation({ scope: "ids", sessionIds: [String(index)], detailChanged: false });
     }
     await home.focus();
-    const search = home.element.querySelector<HTMLInputElement>('[aria-label="Search sessions"] input');
+    const search = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
     assert.ok(search);
     await act(async () => {
       Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, "fresh");
       search.dispatchEvent(new home.dom.window.Event("input", { bubbles: true }));
     });
     await home.emitOpenIds(["fresh-open"]);
-    await home.settle();
+    await home.settle(320);
     assert.equal(requests.length, 3);
     await act(async () => oldPage.resolve(page([session("obsolete")], "old-next")));
     assert.equal(requests.length, 6);
@@ -728,6 +731,139 @@ test("通知集中と検索・open変更は最新1件へ収束して旧2page目�
     await home.close();
     Object.defineProperty(globalThis, "IntersectionObserver", { value: previousObserver, configurable: true });
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Home headerの共通検索はSessionとMonitorのMain Character名とcatalog名へ届き、タブ往復で値を保持してClear Searchで両一覧へ復帰する"
+// oracle = { type = "contract", ref = "GitHub Issue #860 / docs/design/desktop-ui.md Home Window" }
+// fault = "検索stateが一覧の一方へ渡らない、タブ切替で入力を失う、clearが一方へ届かない、または入力ごとにcatalogを再取得する"
+// observable = "header入力値、Session/Monitor cardとCharacter名一覧、listCharacters呼出し回数、clear後のfocus"
+// observation_boundary = "component-behavior"
+// scope = "HomeAppのheader検索・Session取得・Monitor投影・Character catalog結線"
+// lifecycle = "permanent"
+// impact = "同じ検索語なのに表示面ごとに別の対象を示し、paneを往復するたびに検索をやり直す"
+// distinction = "pure filterやbackend検索testでは検出できない共有stateと実React入力・タブ・clearの結線を既存Home harnessで確認する"
+// @end-test-value
+test("header検索をSessions・Monitor・Charactersで共有し、タブ往復とclearで保持・復帰する", async () => {
+  const home = await mountHome({ openIds: ["open", "other-open"] });
+  try {
+    home.setListPage(async (request) => {
+      if (request.scope === "open") return page((request.sessionIds ?? []).map((id) => session(id, id === "open" ? "used" : "other")));
+      if (request.scope === "pinned") return page([]);
+      const query = request.searchText?.trim().toLocaleLowerCase() ?? "";
+      return page([session("used-session", "used"), session("other-session", "other")]
+        .filter((entry) => [entry.taskTitle, entry.character].some((value) => value.toLocaleLowerCase().includes(query))));
+    });
+    await home.settle();
+    const charactersQueries = home.characterQueryCount();
+    const input = () => {
+      const found = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
+      assert.ok(found);
+      return found;
+    };
+    const changeSearch = async (value: string) => {
+      await act(async () => {
+        const search = input();
+        Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, value);
+        search.dispatchEvent(new home.dom.window.Event("input", { bubbles: true }));
+      });
+      await home.settle(320);
+    };
+    const monitorTitles = () => Array.from(home.element.querySelectorAll(".home-monitor-card .home-monitor-parent-title")).map((entry) => entry.textContent);
+    await changeSearch("used");
+    const sessionsText = home.element.querySelector(".home-session-card-list")?.textContent ?? "";
+    assert.match(sessionsText, /used-session/);
+    assert.doesNotMatch(sessionsText, /other-session/);
+    assert.deepEqual(monitorTitles(), ["open"]);
+
+    await act(async () => button(home.element, "Characters").click());
+    assert.equal(input().value, "used");
+    await changeSearch("UNUSED");
+    const characterNames = () => Array.from(home.element.querySelectorAll(".home-character-card-title")).map((entry) => entry.textContent);
+    assert.deepEqual(characterNames(), ["unused"]);
+    await act(async () => button(home.element, "Monitor").click());
+    assert.equal(input().value, "UNUSED");
+    assert.deepEqual(monitorTitles(), []);
+    await act(async () => button(home.element, "Characters").click());
+    assert.equal(input().value, "UNUSED");
+    assert.deepEqual(characterNames(), ["unused"]);
+
+    const clear = home.element.querySelector<HTMLButtonElement>('[aria-label="Clear Search"]');
+    assert.ok(clear);
+    await act(async () => clear.click());
+    await home.settle();
+    assert.equal(input().value, "");
+    assert.equal(home.dom.window.document.activeElement, input());
+    assert.deepEqual(characterNames(), ["used", "unused"]);
+    const restoredSessions = home.element.querySelector(".home-session-card-list")?.textContent ?? "";
+    assert.match(restoredSessions, /used-session/);
+    assert.match(restoredSessions, /other-session/);
+    await act(async () => button(home.element, "Monitor").click());
+    assert.deepEqual(monitorTitles().sort(), ["open", "other-open"]);
+    assert.equal(home.characterQueryCount(), charactersQueries);
+  } finally { await home.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "共通検索の適用待ちでは一覧を変えず、適用後もRecent/Pinnedの旧rowを独立した成功まで保持し、失敗したscopeはRetryで置換する。Monitorは新しい検索語で絞り込む"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Home Window / docs/features/home-session-pagination.md 再取得時の状態維持" }
+// fault = "入力直後または新queryの取得開始時に旧rowを除去する、片方の成功で他方を消す、失敗を正常emptyにする、またはMonitorへ旧queryのrowを混入する"
+// observable = "入力直後と検索適用後のAPI要求、Recent/PinnedのDOM row保持・交換、Monitor title、取得失敗feedbackとRetry後の一覧"
+// observation_boundary = "component-behavior"
+// scope = "HomeAppの共有入力debounceからSession page取得・部分成功/失敗・Monitor投影への接続"
+// lifecycle = "permanent"
+// impact = "検索中の一覧消失と再出現を避け、遅延や部分失敗でも既存Sessionへの到達性を保つ"
+// distinction = "hook timerやpure filterだけでは見えない、実入力から遅延APIとDOM更新までの表示保持を既存Home harnessで確認する"
+// @end-test-value
+test("検索の取得待ちと部分失敗で旧rowを保持し、成功したscopeだけ交換する", async () => {
+  const home = await mountHome({ openIds: ["old-open", "fresh-open"] });
+  const recent = deferred<HomeSessionSummaryPageResult>();
+  const pinned = deferred<HomeSessionSummaryPageResult>();
+  try {
+    home.setListPage(async (request) => page(request.scope === "open"
+      ? (request.sessionIds ?? []).map((id) => session(id))
+      : [session(request.scope === "pinned" ? "old-pinned" : "old-recent", "used", request.scope === "pinned")]));
+    await home.settle();
+    const list = () => home.element.querySelector(".home-session-card-list")!;
+    const oldRecent = Array.from(list().querySelectorAll(".session-card"))
+      .find((entry) => entry.textContent?.includes("old-recent"));
+    assert.ok(oldRecent);
+    const calls: SessionSummaryPageRequest[] = [];
+    home.setListPage((request) => {
+      calls.push(request);
+      return request.scope === "recent" ? recent.promise : pinned.promise;
+    });
+    const search = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
+    assert.ok(search);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, "fresh");
+      search.dispatchEvent(new home.dom.window.Event("input", { bubbles: true }));
+    });
+    assert.equal(search.value, "fresh");
+    assert.equal(calls.length, 0);
+    assert.match(list().textContent ?? "", /old-recent/);
+    assert.equal(home.element.querySelectorAll(".home-monitor-card").length, 2);
+    await home.settle(320);
+    assert.deepEqual(calls.map(({ scope, searchText }) => [scope, searchText]), [["recent", "fresh"], ["pinned", "fresh"]]);
+    assert.equal(oldRecent.isConnected, true);
+    assert.match(list().textContent ?? "", /old-pinned/);
+    assert.equal(home.element.querySelector('[aria-label="Loading sessions"]'), null);
+    assert.deepEqual(Array.from(home.element.querySelectorAll(".home-monitor-parent-title")).map((entry) => entry.textContent), ["fresh-open"]);
+    await act(async () => pinned.resolve(page([session("fresh-pinned", "used", true)])));
+    assert.match(list().textContent ?? "", /fresh-pinned/);
+    assert.doesNotMatch(list().textContent ?? "", /old-pinned/);
+    assert.equal(oldRecent.isConnected, true);
+    await act(async () => recent.reject(new Error("Search unavailable")));
+    assert.match(home.element.textContent ?? "", /Search unavailable/);
+    assert.equal(oldRecent.isConnected, true);
+    home.setListPage(async (request) => page([session(request.scope === "pinned" ? "fresh-pinned" : "fresh-recent", "used", request.scope === "pinned")]));
+    await act(async () => button(home.element, "Retry").click());
+    assert.match(list().textContent ?? "", /fresh-recent/);
+    assert.doesNotMatch(list().textContent ?? "", /old-recent/);
+    assert.doesNotMatch(home.element.textContent ?? "", /Search unavailable/);
+  } finally { await home.close(); }
 });
 
 // @test-value v2

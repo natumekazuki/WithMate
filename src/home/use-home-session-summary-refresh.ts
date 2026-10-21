@@ -36,23 +36,30 @@ export function useHomeSessionSummaryRefresh({
   const openSummaryQueryKey = JSON.stringify(openSessionWindowIds);
   const previousOpenSummaryQueryKeyRef = useRef(openSummaryQueryKey);
   const previousSessionSearchTextRef = useRef(sessionSearchText);
+  const previousEnabledRef = useRef(enabled);
   const sessionRefreshModeRef = useRef<HomeSessionSummaryRefreshMode>("replace");
+  const sessionRefreshInvalidationRef = useRef<SessionSummaryInvalidation | null>({ scope: "all" });
 
   useLayoutEffect(() => {
     const searchChanged = previousSessionSearchTextRef.current !== sessionSearchText;
     const openIdsChanged = previousOpenSummaryQueryKeyRef.current !== openSummaryQueryKey;
     sessionQueryGeneration.syncQueryKey(sessionQueryKey);
-    if (searchChanged || openIdsChanged) sessionSummaryRefresherRef.current?.invalidate();
+    if (searchChanged || openIdsChanged) {
+      sessionSummaryRefresherRef.current?.invalidate(searchChanged ? "replace" : "preserve");
+    }
+    if (openIdsChanged || previousEnabledRef.current !== enabled) {
+      sessionRefreshInvalidationRef.current = { scope: "all" };
+    }
     sessionRefreshModeRef.current = searchChanged ? "replace" : "preserve";
     previousSessionSearchTextRef.current = sessionSearchText;
     previousOpenSummaryQueryKeyRef.current = openSummaryQueryKey;
+    previousEnabledRef.current = enabled;
     if (!enabled || !getWithMateApi()) {
       return;
     }
     if (searchChanged) {
       setSessionSummariesState((current) => ({
         ...current,
-        ...applyHomeSessionSummaryPages(current, { recent: [], pinned: [], open: current.openSummaries }),
         recentStatus: "loading",
         pinnedStatus: "loading",
         recentError: "",
@@ -78,19 +85,18 @@ export function useHomeSessionSummaryRefresh({
     }
 
     const searchText = sessionSearchText;
-    const refreshAllOpen = invalidation.scope === "all" || sessionSummariesState.openStatus !== "loaded";
+    const refreshAllOpen = invalidation !== null
+      && (invalidation.scope === "all" || sessionSummariesState.openStatus !== "loaded");
     const currentOpenSessionIds = refreshAllOpen
       ? openSessionWindowIds
-      : openSessionWindowIds.filter((id) => invalidation.sessionIds.includes(id));
+      : openSessionWindowIds.filter((id) => invalidation?.scope === "ids" && invalidation.sessionIds.includes(id));
     const refreshOpen = refreshAllOpen || currentOpenSessionIds.length > 0;
     setSessionSummariesState((current) => ({
-      ...(mode === "replace"
-        ? applyHomeSessionSummaryPages(current, { recent: [], pinned: [], open: current.openSummaries })
-        : current),
+      ...current,
       recentStatus: "loading",
       pinnedStatus: "loading",
       ...(refreshOpen ? { openStatus: "loading" as const } : {}),
-      characterUsageStatus: "loading",
+      ...(invalidation ? { characterUsageStatus: "loading" as const } : {}),
       loadingRecentPage: false,
       loadingPinnedPage: false,
     }));
@@ -151,6 +157,7 @@ export function useHomeSessionSummaryRefresh({
       }
     };
     const refreshCharacterUsage = async () => {
+      if (!invalidation) return;
       try {
         const characterUsage = await api.listSessionCharacterUsage();
         if (!isCurrent()) return;
@@ -177,7 +184,7 @@ export function useHomeSessionSummaryRefresh({
   }, [sessionQueryGeneration]);
   const refreshSessionSummaries = useCallback((
     mode: HomeSessionSummaryRefreshMode = "preserve",
-    invalidation: SessionSummaryInvalidation = { scope: "all" },
+    invalidation: SessionSummaryInvalidation | null = { scope: "all" },
   ): Promise<void> => {
     sessionQueryGeneration.beginRequest();
     return sessionSummaryRefresherRef.current?.refresh({ mode, invalidation }) ?? Promise.resolve();
@@ -188,9 +195,16 @@ export function useHomeSessionSummaryRefresh({
       return;
     }
 
-    const timer = window.setTimeout(() => {
-      void refreshSessionSummaries(sessionRefreshModeRef.current);
-    }, 120);
+    const refresh = () => {
+      const invalidation = sessionRefreshInvalidationRef.current;
+      sessionRefreshInvalidationRef.current = null;
+      void refreshSessionSummaries(sessionRefreshModeRef.current, invalidation);
+    };
+    if (sessionRefreshModeRef.current === "replace") {
+      refresh();
+      return;
+    }
+    const timer = window.setTimeout(refresh, 120);
     return () => window.clearTimeout(timer);
   }, [enabled, openSessionWindowIds, refreshSessionSummaries, sessionSearchText]);
 

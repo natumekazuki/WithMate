@@ -9,10 +9,10 @@ import { HomeHeader } from "../../src/home/HomeHeader.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Homeは分割外headerとpaneのDOMを保持し、表示中の右pane名で開閉する。両側表示中の縮小ではCSS最小幅へ補正し、閉じたpaneは開かない"
+// claim = "Homeは分割外headerの検索とNew Session操作を両paneの開閉にかかわらず維持し、表示中の右pane名と最小幅に従って分割する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
 // fault = "paneを閉じるとheader操作も無効になる、右pane名を誤る、境界操作が逆のpaneを閉じる、または復帰で入力を破棄する"
-// observable = "header callbackとinert祖先、境界の対象ID・表示名、両paneのinert/aria-hidden、復帰した入力値とDOM identity、ResizeObserver後のgrid比率とpane幅"
+// observable = "検索inputとNew Sessionのinert祖先、作成callback回数、境界の対象ID・表示名、両paneのinert/aria-hidden、検索値とDOM identity、ResizeObserver後のgrid比率とpane幅"
 // observation_boundary = "component-behavior"
 // scope = "HomeDashboardScreenの外側resize補正と共通ConcurrentChatSplitterの結線"
 // lifecycle = "permanent"
@@ -36,9 +36,14 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
   dom.window.ResizeObserver = Observer;
   let containerWidth = 1000;
   let settingsCalls = 0;
+  let launchCalls = 0;
   const renderScreen = (view: "monitor" | "characters" | "previews" = "monitor") => root.render(<HomeDashboardScreen
     homePageClassName="home-page"
     header={<HomeHeader
+      searchInputText="keep this search"
+      onChangeSearchText={() => {}}
+      onOpenLaunchDialog={() => { launchCalls += 1; }}
+      canCreateSession
       rightPaneView={view}
       onChangeRightPaneView={(next) => renderScreen(next)}
       monitorWindowIcon={null}
@@ -47,7 +52,7 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
       onRestoreSessionWindows={() => {}}
     />}
     rightPaneLabel={view === "monitor" ? "Monitor" : view === "previews" ? "Previews" : "Characters"}
-    recentSessionsPanel={<input aria-label="Search sessions" defaultValue="in progress" />}
+    recentSessionsPanel={<div>Recent Sessions</div>}
     rightPane={<button type="button">Open Session</button>}
     launchDialog={null}
   />);
@@ -57,7 +62,7 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
     const sessions = element.querySelector<HTMLElement>(".home-sessions-pane")!;
     const monitor = element.querySelector<HTMLElement>(".home-monitor-pane")!;
     const input = element.querySelector<HTMLInputElement>("input")!;
-    input.value = "keep this search";
+    const newSession = element.querySelector<HTMLButtonElement>('[aria-label="New session"]')!;
     assert.equal(splitter.getAttribute("aria-label"), "Collapse Monitor");
     assert.equal(splitter.getAttribute("aria-controls"), monitor.id);
     splitter.focus();
@@ -71,6 +76,10 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
     assert.equal(settings.closest("[inert]"), null);
     await act(async () => settings.click());
     assert.equal(settingsCalls, 1);
+    assert.equal(input.closest("[inert]"), null);
+    assert.equal(newSession.closest("[inert]"), null);
+    await act(async () => newSession.click());
+    assert.equal(launchCalls, 1);
     await act(async () => splitter.click());
     assert.equal(monitor.hasAttribute("inert"), false);
 
@@ -98,6 +107,10 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
     assert.equal(monitor.hasAttribute("inert"), false);
     assert.equal(splitter.getAttribute("aria-label"), "Open Sessions");
     assert.equal(splitter.getAttribute("aria-controls"), sessions.id);
+    assert.equal(input.closest("[inert]"), null);
+    assert.equal(newSession.closest("[inert]"), null);
+    await act(async () => newSession.click());
+    assert.equal(launchCalls, 2);
     await act(async () => splitter.click());
     assert.equal(sessions.hasAttribute("inert"), false);
     assert.equal(element.querySelector("input"), input);

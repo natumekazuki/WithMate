@@ -177,14 +177,14 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
 
 // @test-value v2
 // kind = "contract"
-// claim = "Home Charactersは検索欄と作成ボタンを一覧の外に描画し、一覧DOMへoverflow-y:auto、bodyへoverflow:hiddenを適用する"
+// claim = "Home Charactersは作成ボタンを一覧の外に描画し、一覧DOMへoverflow-y:auto、bodyへoverflow:hiddenを適用する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
 // fault = "toolbarを一覧のscroll owner内へ移すか、描画DOMにbodyのoverflow:hidden・一覧のoverflow-y:auto・縮小可能なmin-heightを適用しない"
 // observable = "HomeRightPaneのCharacters panel内のtoolbar/list親子関係と、JSDOM computed styleのoverflow・min-height・flex"
 // observation_boundary = "implementation"
 // scope = "Home Characters panelのスクロール境界"
 // lifecycle = "permanent"
-// impact = "長いCharacter一覧でも検索と作成へ到達でき、下端の項目も操作できる"
+// impact = "長いCharacter一覧でも作成へ到達でき、下端の項目も操作できる"
 // distinction = "source文字列の存在ではなく描画DOMへのselector適用を確認する。実レイアウトのscroll寸法や操作はJSDOMでは測定しない"
 // @end-test-value
 test("Home Characters は一覧をscroll ownerにするDOMとCSSを適用する", async () => {
@@ -192,6 +192,7 @@ test("Home Characters は一覧をscroll ownerにするDOMとCSSを適用する"
   const noOp = () => {};
   const html = renderToStaticMarkup(createElement(HomeRightPane, {
     rightPaneView: "characters",
+    searchText: "",
     approvalMonitorEntries: [],
     runningMonitorEntries: [],
     nonRunningMonitorEntries: [],
@@ -221,7 +222,6 @@ test("Home Characters は一覧をscroll ownerにするDOMとCSSを適用する"
   assert.equal(head.parentElement, section);
   assert.equal(list.parentElement, section);
   assert.equal(list.contains(toolbar), false);
-  assert.ok(toolbar.querySelector('input[type="search"]'));
   assert.ok(toolbar.querySelector('button[aria-label="Create character"]'));
   assert.equal(list.querySelectorAll(".home-character-card").length, 1);
   assert.equal(dom.window.getComputedStyle(body).overflow, "hidden");

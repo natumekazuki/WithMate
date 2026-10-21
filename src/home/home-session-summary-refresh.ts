@@ -3,12 +3,13 @@ import { HOME_SESSION_SUMMARY_OPEN_ID_CHUNK_SIZE } from "./home-session-summary-
 
 export type HomeSessionSummaryRefreshRequest = {
   mode: "replace" | "preserve";
-  invalidation: SessionSummaryInvalidation;
+  // 検索だけの変更では、検索に依存するRecent/Pinnedのみを更新する。
+  invalidation: SessionSummaryInvalidation | null;
 };
 
 export type HomeSessionSummaryRefresher = {
   refresh(request: HomeSessionSummaryRefreshRequest): Promise<void>;
-  invalidate(): void;
+  invalidate(mode?: HomeSessionSummaryRefreshRequest["mode"]): void;
   dispose(): void;
 };
 
@@ -17,6 +18,8 @@ function mergeRequests(
   next: HomeSessionSummaryRefreshRequest,
 ): HomeSessionSummaryRefreshRequest {
   const mode = pending?.mode === "replace" || next.mode === "replace" ? "replace" : "preserve";
+  if (!pending?.invalidation) return { mode, invalidation: next.invalidation };
+  if (!next.invalidation) return { mode, invalidation: pending.invalidation };
   if (pending?.invalidation.scope === "all" || next.invalidation.scope === "all") {
     return { mode, invalidation: { scope: "all" } };
   }
@@ -68,8 +71,10 @@ export function createHomeSessionSummaryRefresher(
       pending = mergeRequests(pending ?? running, request);
       return inFlight ?? drain();
     },
-    invalidate() {
+    invalidate(mode = "preserve") {
       generation += 1;
+      if (running) pending = mergeRequests(pending, running);
+      if (pending && mode === "replace") pending = { ...pending, mode };
     },
     dispose() {
       active = false;

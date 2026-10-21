@@ -1,14 +1,13 @@
-import { useState } from "react";
-
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
-import { renderHomePlusIcon, renderHomeSearchIcon } from "./home-icons.js";
+import { renderHomePlusIcon } from "./home-icons.js";
 import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 
 export type HomeCharactersPanelProps = {
   characters: readonly CharacterCatalogEntry[];
+  searchText: string;
   characterLoadStatus?: HomeCharacterLoadStatus;
   feedback?: string;
   onRetry?: () => void;
@@ -28,13 +27,13 @@ export function filterCharactersByName(
 
 export function HomeCharactersPanel({
   characters,
+  searchText,
   characterLoadStatus = "loaded",
   feedback = "",
   onRetry,
   onCreateCharacter,
   onEditCharacter,
 }: HomeCharactersPanelProps) {
-  const [searchText, setSearchText] = useState("");
   const visibleCharacters = filterCharactersByName(characters, searchText);
 
   return (
@@ -42,18 +41,6 @@ export function HomeCharactersPanel({
       <section className="home-monitor-section">
         <div className="home-monitor-section-head">
           <div className="home-character-toolbar">
-            <label className="toolbar-search-field" aria-label="Search characters by name">
-              <span className="toolbar-search-icon" aria-hidden="true">
-                {renderHomeSearchIcon()}
-              </span>
-              <input
-                className="toolbar-search-input"
-                type="search"
-                aria-label="Search characters by name"
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-              />
-            </label>
             <button
               className="launch-toggle compact home-create-button"
               type="button"

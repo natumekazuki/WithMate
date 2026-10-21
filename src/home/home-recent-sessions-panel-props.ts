@@ -6,19 +6,13 @@ import type { HomeSessionState } from "./home-session-projection.js";
 import type { HomeSessionSummary } from "../../src-shared/session/session-state.js";
 
 type HomeRecentSessionsPanelHandlers = {
-  onChangeSearchText: (value: string) => void;
-  onOpenLaunchDialog: () => void;
   onOpenSession: (sessionId: string) => void;
   onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
 };
 
 export type HomeRecentSessionsPanelPropsInput = {
   filteredSessionEntries: Array<{ session: HomeSessionSummary; state: HomeSessionState }>;
-  normalizedSessionSearch: string;
-  searchText: string;
-  searchIcon: ReactNode;
   handlers: HomeRecentSessionsPanelHandlers;
-  canCreateSession?: boolean;
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
@@ -31,11 +25,7 @@ export type HomeRecentSessionsPanelPropsInput = {
 
 export function buildHomeRecentSessionsPanelProps({
   filteredSessionEntries,
-  normalizedSessionSearch,
-  searchText,
-  searchIcon,
   handlers,
-  canCreateSession,
   hasMore,
   loadingMore,
   onLoadMore,
@@ -47,14 +37,8 @@ export function buildHomeRecentSessionsPanelProps({
 }: HomeRecentSessionsPanelPropsInput): HomeRecentSessionsPanelProps {
   return {
     filteredSessionEntries,
-    normalizedSessionSearch,
-    searchText,
-    searchIcon,
-    onChangeSearchText: handlers.onChangeSearchText,
-    onOpenLaunchDialog: handlers.onOpenLaunchDialog,
     onOpenSession: handlers.onOpenSession,
     onSetSessionPinned: handlers.onSetSessionPinned,
-    canCreateSession,
     hasMore,
     loadingMore,
     onLoadMore,

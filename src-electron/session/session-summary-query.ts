@@ -220,7 +220,7 @@ export function decodeSessionSummaryCursor(
   return { lastActiveAt: payload.last_active_at, id: payload.id };
 }
 
-export function buildSessionSummarySearchClause(alias: string, normalizedQuery: string): {
+export function buildSessionSummarySearchClause(alias: string, normalizedQuery: string, characterName: string): {
   sql: string;
   params: string[];
 } {
@@ -229,6 +229,7 @@ export function buildSessionSummarySearchClause(alias: string, normalizedQuery: 
     workspacePath: `${alias}.workspace_path`,
     workspaceLabel: `CASE WHEN json_valid(${alias}.runtime_policy_json) THEN json_extract(${alias}.runtime_policy_json, '$.workspaceLabel') ELSE '' END`,
     sessionKind: `${alias}.session_kind`,
+    characterName,
   });
 }
 
@@ -240,6 +241,7 @@ export function buildSessionSummarySearchClauseForColumns(
     workspacePath: string;
     workspaceLabel: string;
     sessionKind: string;
+    characterName?: string;
   },
 ): {
   sql: string;
@@ -261,8 +263,9 @@ export function buildSessionSummarySearchClauseForColumns(
         THEN 'character character authoring authoring agent'
         ELSE 'agent ' || COALESCE(${columns.sessionKind}, '')
       END) LIKE ? ESCAPE '\\'
+      ${columns.characterName ? `OR LOWER(COALESCE(${columns.characterName}, '')) LIKE ? ESCAPE '\\'` : ""}
     )`,
-    params: [pattern, pattern, pattern, pattern],
+    params: [pattern, pattern, pattern, pattern, ...(columns.characterName ? [pattern] : [])],
   };
 }
 

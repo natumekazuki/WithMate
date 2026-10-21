@@ -322,8 +322,7 @@ describe("SettingsCatalogService", () => {
           auxiliarySummaries: auxiliaries.listAuxiliarySessionSummaries([older.id, newer.id])
             .map(({ id, updatedAt }) => ({ id, updatedAt })),
           home: renderToStaticMarkup(createElement(HomeRecentSessionsPanel, {
-            filteredSessionEntries: projection.filteredSessionEntries, normalizedSessionSearch: "",
-            searchText: "", searchIcon: null, onChangeSearchText() {}, onOpenLaunchDialog() {},
+            filteredSessionEntries: projection.filteredSessionEntries,
             onOpenSession() {}, onSetSessionPinned() {},
           })).match(/<strong>[^<]*<\/strong>|Updated [^<]*/g),
         };

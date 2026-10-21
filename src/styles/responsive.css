@@ -170,18 +170,6 @@
     position: static;
   }
 
-  .home-settings-rail {
-    align-items: stretch;
-  }
-
-  .home-page .home-pane-toggle {
-    width: 100%;
-  }
-
-  .home-page .home-settings-button {
-    width: 100%;
-  }
-
   .settings-dialog-foot {
     flex-direction: column;
     align-items: stretch;
@@ -281,7 +269,6 @@
   .summary-grid,
   .profile-grid,
   .catalog-grid,
-  .toolbar-search-row,
   .choice-card-list,
   .character-form-grid,
   .theme-color-grid,

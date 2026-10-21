@@ -8,22 +8,15 @@ import { ButtonContent } from "../ui/button-content.js";
 import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import type { HomeSessionState } from "./home-session-projection.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
-import { renderHomePlusIcon } from "./home-icons.js";
 
 export type HomeRecentSessionsPanelProps = {
   filteredSessionEntries: Array<{ session: HomeSessionSummary; state: HomeSessionState }>;
-  normalizedSessionSearch: string;
-  searchText: string;
-  searchIcon: ReactNode;
-  onChangeSearchText: (value: string) => void;
-  onOpenLaunchDialog: () => void;
   onOpenSession: (sessionId: string) => void;
   onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
   pendingSessionPinIds?: readonly string[];
-  canCreateSession?: boolean;
   sessionSummaryLoadStatus?: SessionSummariesLoadStatus;
   feedback?: string;
   onRetry?: () => void;
@@ -82,18 +75,12 @@ function getAgentSessionModeBadge(session: HomeSessionSummary): { className: str
 
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
-  normalizedSessionSearch,
-  searchText,
-  searchIcon,
-  onChangeSearchText,
-  onOpenLaunchDialog,
   onOpenSession,
   onSetSessionPinned,
   hasMore = false,
   loadingMore = false,
   onLoadMore,
   pendingSessionPinIds = [],
-  canCreateSession = true,
   sessionSummaryLoadStatus = "loaded",
   feedback = "",
   onRetry,
@@ -120,12 +107,6 @@ export function HomeRecentSessionsPanel({
     return () => observer.disconnect();
   }, [hasMore, onLoadMore]);
 
-  const openLaunchDialog = () => {
-    if (!canCreateSession) {
-      return;
-    }
-    onOpenLaunchDialog();
-  };
   const openSession = (sessionId: string) => {
     onOpenSession(sessionId);
   };
@@ -150,33 +131,6 @@ export function HomeRecentSessionsPanel({
 
   return (
     <section className="panel session-list-panel home-session-list-panel rise-3">
-      <div className="toolbar-search-row">
-        <label className="toolbar-search-field" aria-label="Search sessions">
-          <span className="toolbar-search-icon" aria-hidden="true">
-            {searchIcon}
-          </span>
-          <input
-            className="toolbar-search-input"
-            type="text"
-            aria-label="Search sessions"
-            value={searchText}
-            onChange={(event) => onChangeSearchText(event.target.value)}
-          />
-        </label>
-        <button
-          className="start-session-button"
-          type="button"
-          onClick={openLaunchDialog}
-          aria-disabled={!canCreateSession}
-          disabled={!canCreateSession}
-          aria-label="New session"
-          title="New session"
-        >
-          <span className="home-create-icon">{renderHomePlusIcon()}</span>
-          <span className="sr-only">New session</span>
-        </button>
-      </div>
-
       {loadErrorMessage ? (
         <LoadError message={loadErrorMessage} onRetry={onRetry} retryDisabled={isLoading || loadingMore} className="home-session-list-feedback" />
       ) : null}
