@@ -5,7 +5,7 @@ import { ConcurrentChatSplitter } from "../chat/chat-window.js";
 type HomeDashboardScreenProps = {
   homePageClassName: string;
   header: ReactNode;
-  rightPaneLabel: "Monitor" | "Characters";
+  rightPaneLabel: "Monitor" | "Characters" | "Previews";
   recentSessionsPanel: ReactNode;
   rightPane: ReactNode;
   launchDialog: ReactNode;

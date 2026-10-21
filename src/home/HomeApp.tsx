@@ -103,7 +103,7 @@ import {
 } from "./home-active-auxiliary-refresh.js";
 import { resolveRandomHomeLaunchFeedback, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
 
-type HomeRightPaneView = "monitor" | "characters";
+type HomeRightPaneView = "monitor" | "characters" | "previews";
 
 export default function HomeApp() {
   const desktopRuntime = isDesktopRuntime();
@@ -1007,7 +1007,7 @@ export default function HomeApp() {
       isMonitorWindowMode={isMonitorWindowMode}
       monitorContent={monitorContent}
       header={header}
-      rightPaneLabel={rightPaneView === "monitor" ? "Monitor" : "Characters"}
+      rightPaneLabel={rightPaneView === "monitor" ? "Monitor" : rightPaneView === "previews" ? "Previews" : "Characters"}
       recentSessionsPanel={recentSessionsPanel}
       rightPane={rightPane}
       launchDialog={launchDialog}

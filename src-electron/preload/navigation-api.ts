@@ -13,6 +13,18 @@ export function createWindowApi(
   ipcRenderer: IpcRendererLike,
 ): WithMateWindowNavigationApi {
   return {
+    listSessionFilePreviewWindows() {
+      return ipcRenderer.invoke(channels.WITHMATE_LIST_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL);
+    },
+    focusSessionFilePreviewWindow(token) {
+      return ipcRenderer.invoke(channels.WITHMATE_FOCUS_SESSION_FILE_PREVIEW_WINDOW_CHANNEL, token);
+    },
+    closeSessionFilePreviewWindow(token) {
+      return ipcRenderer.invoke(channels.WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOW_CHANNEL, token);
+    },
+    closeSessionFilePreviewWindows(ownerSessionId) {
+      return ipcRenderer.invoke(channels.WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL, ownerSessionId);
+    },
     openSession(sessionId, auxiliarySessionId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_OPEN_SESSION_CHANNEL,

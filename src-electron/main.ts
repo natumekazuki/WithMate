@@ -1243,6 +1243,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
                 openCharacterEditorWindow,
                 openDiffWindow,
+                listSessionFilePreviewWindows: async () => Promise.all(
+                  requireMainWindowFacade().listFilePreviewWindows().map(async (group) => ({
+                    ...group,
+                    session: await getDisplaySessionSummary(group.ownerSessionId),
+                  })),
+                ),
+                focusSessionFilePreviewWindow: (token) => requireMainWindowFacade().focusFilePreviewWindow(token),
+                closeSessionFilePreviewWindow: (token) => requireMainWindowFacade().closeFilePreviewWindow(token),
+                closeSessionFilePreviewWindows: (ownerSessionId) => requireMainWindowFacade().closeFilePreviewWindowsForOwner(ownerSessionId),
                 isFilePreviewWindow: (window, sessionId) =>
                   requireMainWindowFacade().isFilePreviewWindow(window, sessionId),
                 getFilePreviewWindowResource: (window, sessionId) =>

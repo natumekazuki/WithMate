@@ -2,6 +2,10 @@ import type { BrowserWindow } from "electron";
 import type { DiffPreviewPayload } from "../../src-shared/session/session-state.js";
 
 import {
+  WITHMATE_LIST_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL,
+  WITHMATE_FOCUS_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+  WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+  WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
@@ -63,6 +67,10 @@ export type MainIpcWindowAssemblyContext = MainIpcEventWindowDeps &
 
 /** Main-process window service ports owned by the window feature. */
 export type MainIpcWindowServiceDeps = {
+  listSessionFilePreviewWindows: MainIpcWindowDeps["listSessionFilePreviewWindows"];
+  focusSessionFilePreviewWindow: MainIpcWindowDeps["focusSessionFilePreviewWindow"];
+  closeSessionFilePreviewWindow: MainIpcWindowDeps["closeSessionFilePreviewWindow"];
+  closeSessionFilePreviewWindows: MainIpcWindowDeps["closeSessionFilePreviewWindows"];
   openSessionWindow(
     sessionId: string,
     auxiliarySessionId?: string,
@@ -131,6 +139,21 @@ export function registerWindowHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcWindowDeps,
 ): void {
+  ipcMain.handle(WITHMATE_LIST_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL, (event) => {
+    assertHomeWindowSender(event, deps);
+    return deps.listSessionFilePreviewWindows();
+  });
+  for (const [channel, action] of [
+    [WITHMATE_FOCUS_SESSION_FILE_PREVIEW_WINDOW_CHANNEL, deps.focusSessionFilePreviewWindow],
+    [WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOW_CHANNEL, deps.closeSessionFilePreviewWindow],
+    [WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL, deps.closeSessionFilePreviewWindows],
+  ] as const) {
+    ipcMain.handle(channel, (event, value: unknown) => {
+      assertHomeWindowSender(event, deps);
+      if (typeof value !== "string" || !value.trim()) throw new Error("Invalid preview window identifier.");
+      action(value);
+    });
+  }
   ipcMain.handle(
     WITHMATE_OPEN_SESSION_CHANNEL,
     async (_event, sessionId: string, auxiliarySessionId?: string | null) => {

@@ -1,3 +1,17 @@
+import type { SessionSummary } from "../session/session-state.js";
+
+export type SessionFilePreviewWindowSummary = {
+  token: string;
+  title: string;
+  path: string;
+};
+
+export type SessionFilePreviewWindowGroup = {
+  ownerSessionId: string;
+  session: SessionSummary | null;
+  previews: SessionFilePreviewWindowSummary[];
+};
+
 export type SessionFileRootKind = "workspace" | "session-folder" | "additional";
 
 export type SessionFilePin = {
@@ -174,6 +188,7 @@ export type SessionFilePreviewWindowView =
 type SessionFilePreviewWindowPayloadBase = {
   ownerSessionId: string;
   windowTitle: string;
+  displayPath: string;
 };
 
 export type SessionFilePreviewWindowPayload = SessionFilePreviewWindowPayloadBase & (
@@ -517,6 +532,7 @@ export type FileRootGitHistoryDiffResult =
   | {
       status: "ok";
       commitId: string;
+      displayPath: string;
       relativePath: string | null;
       patch: string;
       previewResource: SessionFileGitCommitResourceRequest | null;
@@ -524,6 +540,7 @@ export type FileRootGitHistoryDiffResult =
   | {
       status: "ok";
       comparison: FileRootGitHistoryComparison;
+      displayPath: string;
       relativePath: string | null;
       patch: string;
       previewBeforeResource: SessionFileGitCommitResourceRequest | null;

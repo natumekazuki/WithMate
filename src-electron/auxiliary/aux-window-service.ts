@@ -3,6 +3,7 @@ import type {
   FileRootGitHistoryDiffRequest,
   SessionFilePreviewWindowPayload,
   SessionFilePreviewResourceRequest,
+  SessionFilePreviewWindowSummary,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileAbsoluteResource,
@@ -66,6 +67,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
   loadCharacterEditorEntry(window: TWindow, characterId?: string | null): Promise<void>;
   generateDiffToken(): string;
+  onFilePreviewWindowsChanged?(): void;
 };
 
 export class AuxWindowService<TWindow extends BaseWindowLike> {
@@ -120,6 +122,47 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
 
   getFilePreviewPayload(token: string): SessionFilePreviewWindowPayload | null {
     return this.filePreviewStore.get(token) ?? null;
+  }
+
+  listFilePreviewWindows(): Array<{ ownerSessionId: string; previews: SessionFilePreviewWindowSummary[] }> {
+    const groups = new Map<string, SessionFilePreviewWindowSummary[]>();
+    for (const [token, window] of this.filePreviewWindows) {
+      const payload = this.filePreviewStore.get(token);
+      if (!payload || window.isDestroyed()) continue;
+      let previewPath: string;
+      if ("historyDiff" in payload) {
+        const request = payload.historyDiff.request;
+        const revision = "comparison" in request
+          ? `${request.comparison.baseCommitId} → ${request.comparison.targetCommitId}`
+          : request.commitId;
+        previewPath = `${payload.displayPath} @ ${revision}`;
+      } else {
+        const resource = payload.resource;
+        previewPath = payload.displayPath;
+        if (isSessionFileGitCommitResource(resource)) {
+          previewPath = `${payload.displayPath} @ ${resource.commitId}`;
+        }
+      }
+      const previews = groups.get(payload.ownerSessionId) ?? [];
+      previews.push({ token, title: payload.windowTitle, path: previewPath });
+      groups.set(payload.ownerSessionId, previews);
+    }
+    return [...groups].map(([ownerSessionId, previews]) => ({ ownerSessionId, previews }));
+  }
+
+  focusFilePreviewWindow(token: string): void {
+    this.reuseWindow(this.filePreviewWindows.get(token) ?? null);
+  }
+
+  closeFilePreviewWindow(token: string): void {
+    const window = this.filePreviewWindows.get(token);
+    if (window && !window.isDestroyed()) window.close();
+  }
+
+  closeFilePreviewWindowsForOwner(ownerSessionId: string): void {
+    for (const [token, payload] of this.filePreviewStore) {
+      if (payload.ownerSessionId === ownerSessionId) this.closeFilePreviewWindow(token);
+    }
   }
 
   isFilePreviewWindow(window: TWindow, sessionId: string): boolean {
@@ -336,6 +379,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.assertFilePreviewWindowActive(resourceKey, existingToken, existing, storedPayload);
       this.deps.navigateFilePreviewWindow?.(existing, storedPayload);
       this.filePreviewStore.set(existingToken, storedPayload);
+      this.deps.onFilePreviewWindowsChanged?.();
       return { window: existing, disposition: "focused" };
     }
     if (existingToken) {
@@ -353,12 +397,14 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     this.filePreviewResourceTokens.set(resourceKey, token);
     this.filePreviewWindows.set(token, window);
     this.filePreviewStore.set(token, storedPayload);
+    this.deps.onFilePreviewWindowsChanged?.();
     window.once("ready-to-show", () => window.show());
     window.on("closed", () => {
       this.filePreviewResourceTokens.delete(resourceKey);
       this.filePreviewWindows.delete(token);
       this.filePreviewStore.delete(token);
       this.filePreviewLoads.delete(token);
+      this.deps.onFilePreviewWindowsChanged?.();
     });
     const load = this.deps.loadFilePreviewEntry(window, token);
     this.filePreviewLoads.set(token, load);

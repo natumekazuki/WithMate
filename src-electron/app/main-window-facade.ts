@@ -74,6 +74,22 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().getFilePreviewPayload(token);
   }
 
+  listFilePreviewWindows() {
+    return this.deps.getAuxWindowService().listFilePreviewWindows();
+  }
+
+  focusFilePreviewWindow(token: string): void {
+    this.deps.getAuxWindowService().focusFilePreviewWindow(token);
+  }
+
+  closeFilePreviewWindow(token: string): void {
+    this.deps.getAuxWindowService().closeFilePreviewWindow(token);
+  }
+
+  closeFilePreviewWindowsForOwner(ownerSessionId: string): void {
+    this.deps.getAuxWindowService().closeFilePreviewWindowsForOwner(ownerSessionId);
+  }
+
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean {
     return this.deps.getAuxWindowService().isFilePreviewWindow(window, sessionId);
   }

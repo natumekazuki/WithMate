@@ -19,7 +19,7 @@ type HomeAppRouterProps = {
   isMonitorWindowMode: boolean;
   monitorContent: ReactNode;
   header: ReactNode;
-  rightPaneLabel: "Monitor" | "Characters";
+  rightPaneLabel: "Monitor" | "Characters" | "Previews";
   recentSessionsPanel: ReactNode;
   rightPane: ReactNode;
   launchDialog: ReactNode;

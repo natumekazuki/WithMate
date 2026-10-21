@@ -50,6 +50,9 @@ export function createSubscriptionApi(
   ipcRenderer: IpcRendererLike,
 ): WithMateWindowSubscriptionApi {
   return {
+    subscribeSessionFilePreviewWindowsChanged(listener) {
+      return subscribe(ipcRenderer, channels.WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT, () => listener());
+    },
     onSessionTurnQueueChanged(listener) {
       return subscribe(ipcRenderer, channels.WITHMATE_SESSION_TURN_QUEUE_CHANGED_EVENT, (payload: unknown) => {
         if (typeof payload === "string" && payload) listener(payload);

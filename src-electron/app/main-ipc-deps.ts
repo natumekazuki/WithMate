@@ -141,6 +141,7 @@ import type {
 import type {
   LogIpcErrorInput,
   MainIpcRegistrationDeps,
+  MainIpcWindowDeps,
 } from "../ipc/contracts.js";
 import { createAuxiliaryIpcDeps } from "../ipc/auxiliary.js";
 import { createCatalogIpcDeps } from "../ipc/catalog.js";
@@ -153,6 +154,10 @@ import type { SessionWindowRestoreResult } from "../../src-shared/window/session
 type MaybeWindow = BrowserWindow | null | undefined;
 
 export type MainIpcWindowDepsArgs = {
+  listSessionFilePreviewWindows: MainIpcWindowDeps["listSessionFilePreviewWindows"];
+  focusSessionFilePreviewWindow: MainIpcWindowDeps["focusSessionFilePreviewWindow"];
+  closeSessionFilePreviewWindow: MainIpcWindowDeps["closeSessionFilePreviewWindow"];
+  closeSessionFilePreviewWindows: MainIpcWindowDeps["closeSessionFilePreviewWindows"];
   acknowledgeSessionDraftFlush(event: Pick<IpcMainInvokeEvent, "sender">, payload: { requestId: string; success: boolean }): void;
   resolveEventWindow(event: IpcMainInvokeEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;

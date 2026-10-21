@@ -5,8 +5,8 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 
 export type HomeHeaderProps = {
-  rightPaneView: "monitor" | "characters";
-  onChangeRightPaneView: (view: "monitor" | "characters") => void;
+  rightPaneView: "monitor" | "characters" | "previews";
+  onChangeRightPaneView: (view: "monitor" | "characters" | "previews") => void;
   monitorWindowIcon: ReactNode;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
@@ -53,6 +53,15 @@ export function HomeHeader({
           onClick={() => onChangeRightPaneView("characters")}
         >
           Characters
+        </button>
+        <button
+          className={`home-pane-toggle-button ${rightPaneView === "previews" ? "active" : ""}`.trim()}
+          type="button"
+          role="tab"
+          aria-selected={rightPaneView === "previews"}
+          onClick={() => onChangeRightPaneView("previews")}
+        >
+          Previews
         </button>
       </div>
       <div className="home-settings-actions">

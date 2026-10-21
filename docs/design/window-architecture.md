@@ -4,7 +4,7 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 
 | Window | 責務 |
 | --- | --- |
-| Home | Sessionの検索・再開・新規作成、Character catalog、SettingsとSession Monitorへの入口 |
+| Home | Sessionの検索・再開・新規作成、Character catalog、Session別File Preview一覧とWindow操作、SettingsとSession Monitorへの入口 |
 | Session | Main／Auxiliaryの共通chat shell、承認・実行設定、file／Git preview、artifact Details、会話操作、Window所有の組み込みTerminal |
 | Character Editor | Character profile、icon、theme、`character.md`、`character-notes.md`の編集 |
 | Settings | app共通設定、provider設定、model catalog、診断 |
@@ -35,3 +35,5 @@ Sessionの実行状態はMainが所有する。Windowを閉じてもSession reco
 Homeはapp起動時の管理Windowとして扱う。Sessionは同じSession IDの二重Windowを作らない。SettingsとSession Monitor、Character Editorの同じ編集対象は既存Windowを再利用する。新規の補助WindowはcursorがあるdisplayのworkArea内へ配置し、既存Windowをfocusするときは位置を変えない。Session Monitorを閉じてもrunは止まらない。
 
 共有するSession metadata、Character catalogとWindow registryはMain側の正本から投影し、各Windowの入力途中状態はそのWindowが保持する。Character metadataと定義file、runtime snapshotの境界は[Character Storage](character-storage.md)を参照する。
+
+HomeのPreviewsはMainのFile Preview Window registryを親Session単位に投影し、Main／Auxiliaryから開いたpreviewを同じ親へまとめる。Session Windowの開閉やRecent Sessionsの取得範囲では一覧を制限しない。Homeからの前面化は既存Windowの表示内容を変更せず、個別Closeと親単位Closeはpreviewだけを閉じる。通常のCloseでSessionを終了済みにせず、後から同じresourceを再度開ける。Session削除等によるpreviewの終了・再open拒否とは区別する。
