@@ -14,7 +14,7 @@ import type { LiveSessionRunState } from "../../src-shared/session/runtime-state
 // fault = "rootが全文live snapshotやFiles tab/Glossary検索で一覧summaryを全件評価する、会話のlive購読が失われる、terminal後にliveと保存本文が二重表示される、または補助機能の操作でAuxiliary draftが消える"
 // observable = "実AppのMain/Auxiliary会話本文、Glossary検索owner、Auxiliary composer draft、summary characterIconPath getter読取回数"
 // observation_boundary = "component-behavior"
-// scope = "SessionWindowApp conversation update boundaries"
+// scope = "SessionWindowApp conversation update boundaries。live本文は非同期の表示反映を待ち、terminal本文は直ちに確認する"
 // lifecycle = "permanent"
 // impact = "長い会話・多数Auxiliaryの実行中に無関係な一覧処理が波及し、応答の消失や重複で会話を読めなくなる"
 // distinction = "hook単体や型検査ではroot→ChatWindow→会話列の購読・表示とAuxiliary一覧への伝播を同時に検証できない。壁時計性能値をCI合否に使わない"
@@ -122,6 +122,13 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
     await act(async () => { liveListeners.forEach((listener) => listener(sessionId, state)); });
   };
   const columnText = (selector: string) => dom.window.document.querySelector(selector)?.textContent ?? "";
+  const waitForColumnText = async (selector: string, text: string) => {
+    const deadline = Date.now() + 2_000;
+    while (!columnText(selector).includes(text) && Date.now() < deadline) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    }
+    assert.ok(columnText(selector).includes(text), `Expected conversation text: ${text}`);
+  };
   const jumpLatest = async (selector: string) => {
     const button = dom.window.document.querySelector<HTMLButtonElement>(`${selector} button[aria-label='Jump to latest']`);
     if (button) await act(async () => { button.click(); });
@@ -132,6 +139,7 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
     await emit("benchmark-main", run("benchmark-main", "main live first"));
     await emit("benchmark-main", run("benchmark-main", "main live latest"));
     await jumpLatest("#session-main-chat-pane");
+    await waitForColumnText("#session-main-chat-pane", "main live latest");
     assert.match(columnText("#session-main-chat-pane"), /main live latest/);
     assert.doesNotMatch(columnText("#session-main-chat-pane"), /main live first/);
     assert.equal(summaryReads, initialReads, "main live text must not reproject every Auxiliary summary");
@@ -149,6 +157,7 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
     const auxiliaryReads = summaryReads;
     await emit(terminalTargetId, run(terminalTargetId, "aux live latest"));
     await jumpLatest("#session-auxiliary-chat-pane");
+    await waitForColumnText("#session-auxiliary-chat-pane", "aux live latest");
     assert.match(columnText("#session-auxiliary-chat-pane"), /aux live latest/);
     assert.doesNotMatch(columnText("#session-auxiliary-chat-pane"), /aux live first/);
     assert.equal(summaryReads, auxiliaryReads, "auxiliary live text must not reproject every summary");
