@@ -384,6 +384,115 @@ test("queued images load through their Main or Auxiliary conversation context", 
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxの連続queueはlocal submissionの有無によらず前turnのcanonical未到着中に次turn本文が届いても各応答を保持し、requestのuser keyと各応答keyをcanonical合流・submission消費後まで維持する。seq未確認のrequestはcanonical先着でも再照会で接続する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信受付の共通反映; docs/design/desktop-ui.md: 確定応答の取得待ち" }
+// fault = "次runのlive本文が前応答を置換する、user/assistantの順序を崩す、canonical到着で二重化する、またはreceipt解放後に同じ表示行のkeyを差し替える"
+// observable = "共有Column propsの本文順序・messageKeys、canonical到着後のsubmission消費、非表示中のpropsからのlive本文除外"
+// observation_boundary = "component-behavior"
+// scope = "consecutive queued conversation handoff"
+// lifecycle = "permanent"
+// impact = "連続送信で既読応答を見失い、確定履歴との接続で本文や閲覧位置が揺れる"
+// distinction = "既存handoff testは前canonical到着後に次runへ進む。小さい共有hook fixtureで保存通知より次liveが先着する配送順と非表示時の投影を確認する。内部refの解放は観測しない"
+// @end-test-value
+test("conversation column は連続queueの各応答とcanonical行identityを保持する", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const kind of ["session", "auxiliary"] as const) {
+      const store = new SessionTurnSubmissions();
+      let active: SessionTurnQueueReceipt[] = [];
+      const terminals = new Map<string, SessionTurnQueueReceipt>();
+      let changed: ((id: string) => void) | undefined;
+      const api: ConversationMessageColumnApi = {
+        listSessionTurnQueue: async () => active,
+        getSessionTurnQueueReceipt: async (_id, requestId) => terminals.get(requestId) ?? active.find((receipt) => receipt.requestId === requestId) ?? null,
+        onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
+      };
+      const receipt = (sequence: number): SessionTurnQueueReceipt => ({
+        sessionId: kind, incarnationId: "inc", id: `receipt-${sequence}`, requestId: `request-${sequence}`, sequence, state: "running", turnId: `turn-${sequence}`, userMessageSeq: (sequence - 1) * 2,
+        captured: { request: { clientRequestId: `request-${sequence}`, userMessage: `prompt-${sequence}`, executionOptions: { catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+        reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+      });
+      let saved: SessionMessageColumnProps["messages"] = [];
+      let live: LiveSessionRunState | null = null;
+      let enabled = true;
+      let latest: SessionMessageColumnProps | null = null;
+      const column = () => { assert.ok(latest); return latest; };
+      const run = (sequence: number): LiveSessionRunState => ({ sessionId: kind, threadId: "thread", turnId: `turn-${sequence}`, runState: "running", assistantText: `response-${sequence}`, steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null });
+      function View() {
+        latest = useConversationMessageColumn({ session: { id: kind, incarnationId: "inc", messages: saved, runState: live?.runState ?? "idle" }, baseProps: { ...createBaseProps(kind), turnSubmissions: store }, messageSourceKind: kind, enabled, api, liveRun: live });
+        return null;
+      }
+      const render = () => act(async () => root.render(<View key={kind} />));
+      await render();
+      await act(async () => { store.start({ sessionId: kind, incarnationId: "inc", requestId: "request-1", userMessage: "prompt-1", historyMessageCount: 0, queuedBehindRun: false, error: "" }); });
+      const firstUserKey = column().messageKeys?.[0];
+      active = [receipt(1)]; live = run(1);
+      await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
+      const firstResponseKey = column().messageKeys?.[1];
+      assert.equal(column().messageKeys?.[0], firstUserKey);
+      terminals.set("request-1", { ...receipt(1), state: "completed" });
+      active = [receipt(2)]; live = run(2);
+      await act(async () => {
+        store.start({ sessionId: kind, incarnationId: "inc", requestId: "request-2", userMessage: "prompt-2", historyMessageCount: 0, queuedBehindRun: true, error: "" });
+        changed?.(kind); root.render(<View key={kind} />);
+      });
+      assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "response-1", "prompt-2", "response-2"]);
+      const secondResponseKey = column().messageKeys?.[3];
+      assert.equal(column().messageKeys?.[1], firstResponseKey);
+      assert.equal(column().pendingResponseMessageKey, secondResponseKey);
+      saved = [{ role: "user", text: "prompt-1" }, { role: "assistant", text: "final-1" }];
+      await render();
+      assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "final-1", "prompt-2", "response-2"]);
+      assert.equal(column().messageKeys?.[0], firstUserKey);
+      assert.equal(column().messageKeys?.[1], firstResponseKey);
+      assert.deepEqual(store.getSnapshot().map((submission) => submission.requestId), ["request-2"]);
+      saved = [...saved, { role: "user", text: "prompt-2" }, { role: "assistant", text: "final-2" }];
+      terminals.set("request-2", { ...receipt(2), state: "completed" }); active = []; live = null;
+      await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
+      assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "final-1", "prompt-2", "final-2"]);
+      assert.equal(column().messageKeys?.[0], firstUserKey);
+      assert.equal(column().messageKeys?.[1], firstResponseKey);
+      assert.equal(column().messageKeys?.[3], secondResponseKey);
+      assert.equal(store.getSnapshot().length, 0);
+      const startingThird = { ...receipt(3), state: "starting" as const, userMessageSeq: null };
+      active = [startingThird];
+      await act(async () => {
+        store.start({ sessionId: kind, incarnationId: "inc", requestId: "request-3", userMessage: "prompt-3", historyMessageCount: 4, queuedBehindRun: false, error: "" });
+        store.accept(startingThird); changed?.(kind);
+      });
+      terminals.set("request-3", { ...receipt(3), state: "completed" }); active = [];
+      saved = [...saved, { role: "user", text: "prompt-3" }, { role: "assistant", text: "final-3" }];
+      await render(); // No queue notification accompanies this canonical-first delivery.
+      assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "final-1", "prompt-2", "final-2", "prompt-3", "final-3"]);
+      assert.equal(store.getSnapshot().length, 0);
+      active = [receipt(4)]; live = run(4);
+      await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
+      const fourthResponseKey = column().messageKeys?.at(-1);
+      terminals.set("request-4", { ...receipt(4), state: "completed" });
+      active = [receipt(5)]; live = run(5);
+      await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
+      assert.deepEqual(column().messages.slice(-4).map((message) => message.text), ["prompt-4", "response-4", "prompt-5", "response-5"], "existing queue turns have no local submission after reopening");
+      assert.equal(column().messageKeys?.at(-3), fourthResponseKey);
+      saved = [...saved, { role: "user", text: "prompt-4" }, { role: "assistant", text: "final-4" }];
+      await render();
+      assert.deepEqual(column().messages.slice(-4).map((message) => message.text), ["prompt-4", "final-4", "prompt-5", "response-5"]);
+      assert.equal(column().messageKeys?.at(-3), fourthResponseKey);
+      enabled = false; saved = []; live = null;
+      await render();
+      assert.deepEqual(column().messages, [], "hidden columns release unsaved live bodies");
+    }
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {
     sessionId: id,

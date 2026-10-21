@@ -1909,6 +1909,10 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
       canAcceptAuxiliaryInput: (id) => auxiliarySessionRuntimeService?.canAcceptSessionInput(id) === true,
       captureStorageIdentity: () => owner,
       isStorageIdentityCurrent: (captured) => mainStoreContext.activePersistentStoreOwner === captured,
+      onRuntimeMessagesCommitted: (parentSessionId) => {
+        assertPersistentStoreOwnerIsActive(owner, "Auxiliary runtime Session broadcast");
+        broadcastSessions([parentSessionId]);
+      },
       overlayCurrentExecutionOptions: (session) => mainStoreContext.executionSelections.apply(session),
       rememberExecutionOptions: (session, options) => {
         assertPersistentStoreOwnerIsActive(owner, "Auxiliary current execution selection");
