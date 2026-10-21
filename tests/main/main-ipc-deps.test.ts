@@ -38,6 +38,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
 
   const deps = createMainIpcRegistrationDeps({
     window: {
+      async showSessionFilePreviewContextMenu() { return "dismissed"; },
       async listSessionFilePreviewWindows() { return []; },
       focusSessionFilePreviewWindow() {},
       closeSessionFilePreviewWindow() {},

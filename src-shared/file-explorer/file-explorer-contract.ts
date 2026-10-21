@@ -1,5 +1,30 @@
 import type { SessionSummary } from "../session/session-state.js";
 
+export type SessionFilePreviewContextMenuRequest = {
+  scope: "preview" | "session";
+  point: { x: number; y: number };
+};
+
+export type SessionFilePreviewContextMenuResult = "close" | "dismissed";
+
+export function parseSessionFilePreviewContextMenuRequest(value: unknown): SessionFilePreviewContextMenuRequest {
+  const invalid = () => new TypeError("File Preview context menu request is invalid.");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const candidate = value as Record<string, unknown>;
+  if (
+    !Object.keys(candidate).every((key) => ["scope", "point"].includes(key))
+    || (candidate.scope !== "preview" && candidate.scope !== "session")
+    || !candidate.point || typeof candidate.point !== "object" || Array.isArray(candidate.point)
+  ) throw invalid();
+  const point = candidate.point as Record<string, unknown>;
+  if (
+    !Object.keys(point).every((key) => ["x", "y"].includes(key))
+    || !Number.isSafeInteger(point.x) || (point.x as number) < 0
+    || !Number.isSafeInteger(point.y) || (point.y as number) < 0
+  ) throw invalid();
+  return { scope: candidate.scope, point: { x: point.x as number, y: point.y as number } };
+}
+
 export type SessionFilePreviewWindowSummary = {
   token: string;
   title: string;

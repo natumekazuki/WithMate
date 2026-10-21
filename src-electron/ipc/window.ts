@@ -1,8 +1,10 @@
 import type { BrowserWindow } from "electron";
 import type { DiffPreviewPayload } from "../../src-shared/session/session-state.js";
+import { parseSessionFilePreviewContextMenuRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 import {
   WITHMATE_LIST_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_PREVIEW_CONTEXT_MENU_CHANNEL,
   WITHMATE_FOCUS_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
   WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
   WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL,
@@ -67,6 +69,7 @@ export type MainIpcWindowAssemblyContext = MainIpcEventWindowDeps &
 
 /** Main-process window service ports owned by the window feature. */
 export type MainIpcWindowServiceDeps = {
+  showSessionFilePreviewContextMenu: MainIpcWindowDeps["showSessionFilePreviewContextMenu"];
   listSessionFilePreviewWindows: MainIpcWindowDeps["listSessionFilePreviewWindows"];
   focusSessionFilePreviewWindow: MainIpcWindowDeps["focusSessionFilePreviewWindow"];
   closeSessionFilePreviewWindow: MainIpcWindowDeps["closeSessionFilePreviewWindow"];
@@ -139,6 +142,10 @@ export function registerWindowHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcWindowDeps,
 ): void {
+  ipcMain.handle(WITHMATE_SHOW_SESSION_FILE_PREVIEW_CONTEXT_MENU_CHANNEL, (event, input: unknown) => {
+    assertHomeWindowSender(event, deps);
+    return deps.showSessionFilePreviewContextMenu(event, parseSessionFilePreviewContextMenuRequest(input));
+  });
   ipcMain.handle(WITHMATE_LIST_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL, (event) => {
     assertHomeWindowSender(event, deps);
     return deps.listSessionFilePreviewWindows();

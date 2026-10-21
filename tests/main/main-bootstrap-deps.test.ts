@@ -49,6 +49,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     },
     ipcRegistration: {
       window: {
+        async showSessionFilePreviewContextMenu() { return "dismissed"; },
         async listSessionFilePreviewWindows() { return []; },
         focusSessionFilePreviewWindow() {},
         closeSessionFilePreviewWindow() {},

@@ -198,6 +198,7 @@ export const WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT = "withmate:session-draf
 export const WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL = "withmate:session-draft-flush-ack";
 export const WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT = "withmate:session-draft-flush-release";
 export const WITHMATE_LIST_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL = "withmate:list-session-file-preview-windows";
+export const WITHMATE_SHOW_SESSION_FILE_PREVIEW_CONTEXT_MENU_CHANNEL = "withmate:show-session-file-preview-context-menu";
 export const WITHMATE_FOCUS_SESSION_FILE_PREVIEW_WINDOW_CHANNEL = "withmate:focus-session-file-preview-window";
 export const WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOW_CHANNEL = "withmate:close-session-file-preview-window";
 export const WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL = "withmate:close-session-file-preview-windows";

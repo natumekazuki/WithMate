@@ -100,6 +100,8 @@ import type {
   SessionFilePreviewWindowOpenResult,
   SessionFilePreviewWindowPayload,
   SessionFilePreviewWindowGroup,
+  SessionFilePreviewContextMenuRequest,
+  SessionFilePreviewContextMenuResult,
   SessionFilePreviewResourceRequest,
   SessionFileRoot,
   SessionFilePin,
@@ -245,6 +247,7 @@ export type MainIpcWindowDeps = MainIpcEventWindowDeps &
     openCharacterEditorWindow(characterId?: string | null): Promise<void>;
     openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
     listSessionFilePreviewWindows(): Promise<SessionFilePreviewWindowGroup[]>;
+    showSessionFilePreviewContextMenu(event: IpcSenderEvent, request: SessionFilePreviewContextMenuRequest): Promise<SessionFilePreviewContextMenuResult>;
     focusSessionFilePreviewWindow(token: string): void;
     closeSessionFilePreviewWindow(token: string): void;
     closeSessionFilePreviewWindows(ownerSessionId: string): void;

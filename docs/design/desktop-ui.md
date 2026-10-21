@@ -157,8 +157,10 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Previews`
   - Home共通headerのsegmented toggleで`Monitor`／`Characters`と排他的に切り替える。既存MonitorのAuxiliary欄は変更しない
   - 開いているFile Preview Windowを親Session別に一覧化し、Main／Auxiliary由来のpreviewを集約する。Session Windowを閉じても残っているpreviewを含め、Recent Sessionsの検索・取得範囲や実行状態では絞り込まない
-  - Monitorを参照した親行にCharacter avatarとSession titleを置き、右側のPreview件数・展開buttonからfile一覧を開閉する。Attention／Running／Stoppedの分類は設けない
-  - 子行はfile名と識別pathを表示し、既存previewの前面化と個別Closeを提供する。前面化では表示内容を再navigateしない。親行のClose操作はそのSession配下のpreviewだけを閉じ、Session本体や他Sessionへ影響させない
+  - Monitorと共通の親行にCharacter avatarとSession titleを置き、titleのclickでそのSession Windowを開く。右側のPreview icon・件数・展開buttonからfile一覧を開閉する。Attention／Running／Stoppedの分類は設けない
+  - 子一覧はMonitorのAuxiliaryと同じ高さ上限と枠内scroll、1行省略表示の密度を使い、件数が増えてもcardを無制限に伸ばさない。開いているpreviewの総数や取得件数は制限しない
+  - 子行はfile名だけを常設表示し、識別pathはtooltipとaccessible nameに残す。clickは既存previewを前面化し、表示内容を再navigateしない
+  - 個別Closeは子行、Close Allは親行のnative context menuから実行する。常設のClose buttonは置かず、右クリックに加えてContext Menuキー／Shift+F10でも操作できる。親単位CloseはそのSession配下のpreviewだけを閉じ、Session本体や他Sessionへ影響させない
   - 通常file、live Git Diff、commit file、Git履歴diffを対象とし、chat artifactのsnapshot Diffは含めない。Window数は制限せず、Close後も同じresourceを再度開ける
   - 開閉・再利用による一覧の変化を反映し、読込中・取得失敗・正常な0件を区別する。取得失敗には再試行を提供し、操作失敗を正常なCloseとして表示しない
 - `Characters`

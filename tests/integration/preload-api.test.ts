@@ -12,6 +12,30 @@ type Listener = (...args: unknown[]) => void;
 
 // @test-value v2
 // kind = "contract"
+// claim = "Preview menu preloadはscopeと座標を専用IPCへ渡しclose選択・取消結果を返す"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts showSessionFilePreviewContextMenu" }
+// fault = "別channelへ送る、scopeや座標を落とす、menu選択を実close成功へ変換する"
+// observable = "invoke channelとrequest、renderer APIの返却値"
+// observation_boundary = "public-boundary"
+// scope = "Preview context menu preload"
+// lifecycle = "permanent"
+// distinction = "公開keyと型検査はruntime channel・payload・選択結果の伝達を保証しない"
+// @end-test-value
+test("Preview menu preloadはscopeと座標と選択結果を伝達する", async () => {
+  const { ipcRenderer } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  const request = { scope: "preview" as const, point: { x: 12, y: 34 } };
+  assert.deepEqual(await api.showSessionFilePreviewContextMenu(request), {
+    channel: "withmate:show-session-file-preview-context-menu", args: [request],
+  });
+  for (const result of ["close", "dismissed"] as const) {
+    const resultApi = createWithMateWindowApi({ ...ipcRenderer, invoke: async () => result } as never);
+    assert.equal(await resultApi.showSessionFilePreviewContextMenu({ ...request, scope: "session" }), result);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Preview管理APIは一覧とtoken・owner操作を専用IPCへ渡しchanged購読を解除できる"
 // oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts Preview management API" }
 // fault = "tokenとownerを取り違える、別channelへ送る、changed listenerを解除できない"
@@ -705,6 +729,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
 
   const keys = Object.keys(api).sort();
   const expectedKeys = [
+    "showSessionFilePreviewContextMenu",
     "listSessionFilePreviewWindows",
     "focusSessionFilePreviewWindow",
     "closeSessionFilePreviewWindow",

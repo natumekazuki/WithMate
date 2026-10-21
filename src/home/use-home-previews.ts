@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { SessionFilePreviewWindowGroup } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import type { SessionFilePreviewContextMenuRequest, SessionFilePreviewWindowGroup } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 export type HomePreviewsApi = Pick<WithMateWindowApi,
   "listSessionFilePreviewWindows" | "subscribeSessionFilePreviewWindowsChanged" |
-  "focusSessionFilePreviewWindow" | "closeSessionFilePreviewWindow" | "closeSessionFilePreviewWindows">;
+  "focusSessionFilePreviewWindow" | "closeSessionFilePreviewWindow" | "closeSessionFilePreviewWindows" |
+  "showSessionFilePreviewContextMenu" | "openSession">;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -66,8 +67,19 @@ export function useHomePreviews(api: HomePreviewsApi) {
   return {
     groups, status, readError, actionError, pending,
     retry: () => void refresh(),
+    openSession: (ownerSessionId: string) => void act(`session:${ownerSessionId}`, () => api.openSession(ownerSessionId), "Could not open session"),
     focus: (token: string) => void act(`focus:${token}`, () => api.focusSessionFilePreviewWindow(token), "Could not focus preview"),
-    close: (token: string) => void act(`close:${token}`, () => api.closeSessionFilePreviewWindow(token), "Could not close preview"),
-    closeGroup: (ownerSessionId: string) => void act(`group:${ownerSessionId}`, () => api.closeSessionFilePreviewWindows(ownerSessionId), "Could not close previews"),
+    showPreviewMenu: (token: string, point: SessionFilePreviewContextMenuRequest["point"]) => void act(`menu:preview:${token}`, async () => {
+      const result = await api.showSessionFilePreviewContextMenu({ scope: "preview", point });
+      if (result === "close" && mounted.current) {
+        await act(`close:${token}`, () => api.closeSessionFilePreviewWindow(token), "Could not close preview");
+      }
+    }, "Could not open preview menu"),
+    showGroupMenu: (ownerSessionId: string, point: SessionFilePreviewContextMenuRequest["point"]) => void act(`menu:session:${ownerSessionId}`, async () => {
+      const result = await api.showSessionFilePreviewContextMenu({ scope: "session", point });
+      if (result === "close" && mounted.current) {
+        await act(`group:${ownerSessionId}`, () => api.closeSessionFilePreviewWindows(ownerSessionId), "Could not close previews");
+      }
+    }, "Could not open preview menu"),
   };
 }

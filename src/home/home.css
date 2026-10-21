@@ -604,81 +604,31 @@
   min-width: 0;
 }
 
-.home-page .home-monitor-parent-row.home-previews-parent-row {
-  grid-template-columns: minmax(0, 1fr) auto auto;
+.home-page .home-monitor-parent-button.home-previews-session {
+  display: block;
 }
 
-.home-page .home-previews-parent-row .home-monitor-parent-identity {
-  padding: 6px 8px;
-}
-
-.home-page .home-monitor-disclosure.home-previews-disclosure {
-  grid-template-columns: minmax(0, 1fr) 8px;
-  width: auto;
-  font-size: 0.78rem;
-}
-
-.home-page .home-previews-children {
-  border-top: 1px solid var(--line);
-}
-
-.home-page .home-previews-file-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  min-width: 0;
-}
-
-.home-page .home-previews-file,
-.home-page .home-previews-close {
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-  color: var(--ink);
-  min-width: 0;
-  min-height: 36px;
-  padding: 8px;
-}
-
-.home-page .home-previews-file {
-  text-align: left;
-  justify-content: flex-start;
+.home-page .home-previews-session .button-content,
+.home-page .home-previews-file .button-content {
   width: 100%;
+  min-width: 0;
 }
 
-.home-page .home-previews-file .button-content,
+.home-page .home-previews-session .button-content-label,
 .home-page .home-previews-file .button-content-label {
   min-width: 0;
   max-width: 100%;
+  justify-content: flex-start;
+  gap: 7px;
 }
 
-.home-page .home-previews-file-copy {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  overflow-wrap: anywhere;
+.home-page .home-monitor-auxiliary-list.home-previews-children[hidden] {
+  display: none;
 }
 
-.home-page .home-previews-file-copy > span {
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-.home-page .home-previews-close {
-  font-size: 0.75rem;
-  white-space: nowrap;
-}
-
-.home-page .home-previews-file:hover:not(:disabled),
-.home-page .home-previews-close:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.home-page .home-previews-file:focus-visible,
-.home-page .home-previews-close:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: -2px;
+.home-page .home-monitor-auxiliary-row.home-previews-file {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 36px;
 }
 
 .home-page .home-monitor-parent-row {

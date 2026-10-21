@@ -13,6 +13,9 @@ export function createWindowApi(
   ipcRenderer: IpcRendererLike,
 ): WithMateWindowNavigationApi {
   return {
+    showSessionFilePreviewContextMenu(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_SHOW_SESSION_FILE_PREVIEW_CONTEXT_MENU_CHANNEL, request);
+    },
     listSessionFilePreviewWindows() {
       return ipcRenderer.invoke(channels.WITHMATE_LIST_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL);
     },

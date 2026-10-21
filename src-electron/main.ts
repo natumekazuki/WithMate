@@ -129,6 +129,7 @@ import { SessionFilePreviewImageCopyService } from "./files/session-file-preview
 import { SessionFileObjectCopyService } from "./files/session-file-object-copy-service.js";
 import { SessionFileTreeContextMenuService } from "./files/session-file-tree-context-menu-service.js";
 import { SessionMonitorContextMenuService } from "./session/session-monitor-context-menu-service.js";
+import { SessionFilePreviewContextMenuService } from "./files/session-file-preview-context-menu-service.js";
 import { MarkdownLinkContextMenuService } from "./windows/markdown-link-context-menu-service.js";
 import { WindowsFileDropClipboardWriter } from "./files/windows-file-drop-clipboard-writer.js";
 import { FileRootGitChangesService } from "./files/file-root-git-changes-service.js";
@@ -334,6 +335,9 @@ const sessionFileTreeContextMenuService = new SessionFileTreeContextMenuService(
 const sessionMonitorContextMenuService = new SessionMonitorContextMenuService({
   requestCloseSessionWindow: (sessionId) => requireMainWindowFacade().requestCloseSessionWindow(sessionId),
   writeText: (value) => clipboard.writeText(value),
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+});
+const sessionFilePreviewContextMenuService = new SessionFilePreviewContextMenuService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
 const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({
@@ -1248,6 +1252,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     ...group,
                     session: await getDisplaySessionSummary(group.ownerSessionId),
                   })),
+                ),
+                showSessionFilePreviewContextMenu: (event, request) => sessionFilePreviewContextMenuService.showContextMenu(
+                  BrowserWindow.fromWebContents(event.sender) ?? null,
+                  request,
                 ),
                 focusSessionFilePreviewWindow: (token) => requireMainWindowFacade().focusFilePreviewWindow(token),
                 closeSessionFilePreviewWindow: (token) => requireMainWindowFacade().closeFilePreviewWindow(token),

@@ -89,6 +89,8 @@ import type {
   SessionFilePreviewWindowOpenResult,
   SessionFilePreviewWindowPayload,
   SessionFilePreviewWindowGroup,
+  SessionFilePreviewContextMenuRequest,
+  SessionFilePreviewContextMenuResult,
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
@@ -129,6 +131,7 @@ import type {
 import type { SessionWindowRestoreResult } from "../window/session-window-restore.js";
 
 export type WithMateWindowNavigationApi = {
+  showSessionFilePreviewContextMenu(request: SessionFilePreviewContextMenuRequest): Promise<SessionFilePreviewContextMenuResult>;
   listSessionFilePreviewWindows(): Promise<SessionFilePreviewWindowGroup[]>;
   focusSessionFilePreviewWindow(token: string): Promise<void>;
   closeSessionFilePreviewWindow(token: string): Promise<void>;

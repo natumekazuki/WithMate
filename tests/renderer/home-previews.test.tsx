@@ -4,12 +4,13 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
-import type { SessionFilePreviewWindowGroup } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import type { SessionFilePreviewContextMenuRequest, SessionFilePreviewWindowGroup } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import { normalizeSessionSummary } from "../../src-shared/session/session-state.js";
 import { HomePreviewsPanel } from "../../src/home/HomePreviewsPanel.js";
 import type { HomePreviewsApi } from "../../src/home/use-home-previews.js";
 
 function group(ownerSessionId: string, token = ownerSessionId): SessionFilePreviewWindowGroup {
-  return { ownerSessionId, session: null, previews: [{ token, title: "report.md", path: `C:/work/${ownerSessionId}/report.md` }] };
+  return { ownerSessionId, session: normalizeSessionSummary({ id: ownerSessionId, taskTitle: ownerSessionId }), previews: [{ token, title: "report.md", path: `C:/work/${ownerSessionId}/report.md` }] };
 }
 
 function deferred<T>() {
@@ -43,24 +44,30 @@ async function withPreviews(api: HomePreviewsApi, run: (doc: Document) => Promis
 
 // @test-value v2
 // kind = "contract"
-// claim = "Previewsの開閉とfocusは選択したtokenまたは親ownerだけを操作し、失敗したcloseを表示して再操作できる"
+// claim = "Previewsは選択したtoken/ownerだけを操作し、menu取消では閉じず、右クリックとkeyboardでCloseでき、失敗後も再操作できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "別groupのownerや同名fileのtokenをdispatchする、またはclose失敗を隠して操作不能にする"
-// observable = "展開後の識別path、APIに渡るtokenとowner、close失敗alertと再操作可能なbutton"
+// fault = "別groupや同名fileを操作する、menuをキャンセルしても閉じる、親Windowを開けない、または操作失敗を隠す"
+// observable = "tooltipのpath、menu requestとClose/Focus/Open API引数、取消後の呼出し不在、失敗alertと再操作可能なbutton"
 // observation_boundary = "component-behavior"
-// scope = "Home Previews panelの親展開・子focus・個別close・親close-all"
+// scope = "Home Previews panelの親展開・親Session open・子focus・右クリックとkeyboard menuによる個別/親close"
 // lifecycle = "permanent"
 // impact = "同名fileでも意図したWindowだけへ復帰し、他Sessionのpreviewを閉じない"
 // distinction = "DOM操作から実際のAPI境界への対象選択と非同期失敗の回復は型checkでは確認できない"
 // @end-test-value
 test("Previews dispatches the selected preview token and owning group independently", async () => {
   const calls: string[][] = [];
+  const menus: SessionFilePreviewContextMenuRequest[] = [];
+  let selection: "close" | "dismissed" = "dismissed";
+  let closeFailure = true;
+  let sessionFailure = false;
   const api: HomePreviewsApi = {
     listSessionFilePreviewWindows: async () => [group("parent-a", "main-preview"), group("parent-b", "aux-preview")],
     subscribeSessionFilePreviewWindowsChanged: () => () => {},
     focusSessionFilePreviewWindow: async (token) => { calls.push(["focus", token]); },
-    closeSessionFilePreviewWindow: async (token) => { calls.push(["close", token]); throw new Error("Window close failed"); },
+    closeSessionFilePreviewWindow: async (token) => { calls.push(["close", token]); if (closeFailure) throw new Error("Window close failed"); },
     closeSessionFilePreviewWindows: async (owner) => { calls.push(["group", owner]); },
+    showSessionFilePreviewContextMenu: async (request) => { menus.push(request); return selection; },
+    openSession: async (owner) => { calls.push(["session", owner]); if (sessionFailure) throw new Error("Session open failed"); },
   };
   await withPreviews(api, async (doc) => {
     const cards = [...doc.querySelectorAll(".home-monitor-card")];
@@ -69,14 +76,38 @@ test("Previews dispatches the selected preview token and owning group independen
     await act(async () => cards[1]!.querySelector<HTMLButtonElement>(".home-previews-disclosure")!.click());
     assert.equal(cards[1]!.querySelector(".home-previews-disclosure")!.getAttribute("aria-expanded"), "true");
     assert.equal(cards[1]!.querySelector(".home-previews-children")!.hasAttribute("hidden"), false);
-    assert.match(cards[1]!.textContent!, /C:\/work\/parent-b\/report.md/);
-    await act(async () => cards[1]!.querySelector<HTMLButtonElement>(".home-previews-file")!.click());
-    const close = cards[1]!.querySelector<HTMLButtonElement>(".home-previews-file-row .home-previews-close")!;
-    await act(async () => close.click());
+    const file = cards[1]!.querySelector<HTMLButtonElement>(".home-previews-file")!;
+    assert.equal(file.title, "C:/work/parent-b/report.md");
+    await act(async () => file.click());
+    const parent = cards[0]!.querySelector<HTMLButtonElement>(".home-previews-session")!;
+    await act(async () => parent.click());
+    const rightClick = async (element: HTMLElement) => {
+      const event = new doc.defaultView!.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 12, clientY: 34 });
+      await act(async () => { element.dispatchEvent(event); });
+      assert.equal(event.defaultPrevented, true);
+    };
+    await rightClick(file);
+    assert.deepEqual(calls, [["focus", "aux-preview"], ["session", "parent-a"]]);
+    selection = "close";
+    await rightClick(file);
     assert.match(doc.querySelector('[role="alert"]')!.textContent!, /Could not close preview: Window close failed/);
-    assert.equal(close.disabled, false);
-    await act(async () => cards[0]!.querySelector<HTMLButtonElement>(".home-previews-parent-row .home-previews-close")!.click());
-    assert.deepEqual(calls, [["focus", "aux-preview"], ["close", "aux-preview"], ["group", "parent-a"]]);
+    assert.equal(file.disabled, false);
+    closeFailure = false;
+    await act(async () => { file.dispatchEvent(new doc.defaultView!.KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true })); });
+    assert.equal(doc.querySelector('[role="alert"]'), null);
+    await act(async () => { parent.dispatchEvent(new doc.defaultView!.KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true })); });
+    assert.deepEqual(menus, [
+      { scope: "preview", point: { x: 12, y: 34 } }, { scope: "preview", point: { x: 12, y: 34 } },
+      { scope: "preview", point: { x: 0, y: 0 } }, { scope: "session", point: { x: 0, y: 0 } },
+    ]);
+    assert.deepEqual(calls, [["focus", "aux-preview"], ["session", "parent-a"], ["close", "aux-preview"], ["close", "aux-preview"], ["group", "parent-a"]]);
+    sessionFailure = true;
+    await act(async () => parent.click());
+    assert.match(doc.querySelector('[role="alert"]')!.textContent!, /Could not open session: Session open failed/);
+    assert.equal(parent.disabled, false);
+    sessionFailure = false;
+    await act(async () => parent.click());
+    assert.equal(doc.querySelector('[role="alert"]'), null);
   });
 });
 
@@ -100,6 +131,7 @@ test("Previews keeps the latest refresh and recovers a failed refresh without di
     listSessionFilePreviewWindows: () => { const request = deferred<SessionFilePreviewWindowGroup[]>(); requests.push(request); return request.promise; },
     subscribeSessionFilePreviewWindowsChanged: (listener) => { emit = listener; return () => { unsubscribed = true; }; },
     focusSessionFilePreviewWindow: async () => {}, closeSessionFilePreviewWindow: async () => {}, closeSessionFilePreviewWindows: async () => {},
+    showSessionFilePreviewContextMenu: async () => "dismissed", openSession: async () => {},
   };
   await withPreviews(api, async (doc) => {
     assert.equal(doc.querySelector(".home-previews-body")!.getAttribute("aria-busy"), "true");
