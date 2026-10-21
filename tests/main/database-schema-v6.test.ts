@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
+import { conversationMessageColumns } from "../../src-electron/storage/conversation-query.js";
 
 import {
   APP_DATABASE_V6_FILENAME,
@@ -111,6 +112,72 @@ function createV6DatabaseWithEmptyRequiredTables(dbPath: string): void {
 }
 
 describe("database-schema-v6", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "新規DBと既存DBのschema ensure後は、履歴の失敗情報をownerとmessage seqで索引検索し、追加sortなしで最新failed turnを取得する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/857: A 履歴取得の性能回帰と既存データ保持" }
+  // fault = "schema適用後も失敗情報をphaseやownerだけで走査する、sortを要する、または既存turnとmessageを変更する"
+  // observable = "productionの履歴列SQLのquery plan、取得した失敗理由、ensure前後のturnとmessage行"
+  // observation_boundary = "component-behavior"
+  // scope = "Main/Auxiliary failure lookup schema initialization"
+  // lifecycle = "permanent"
+  // impact = "履歴が長い場合に全turn群の反復検索で会話の読込・保存が長時間占有されることを防ぐ"
+  // distinction = "既存の本文・Bookmark・page testは同じ結果を返す低速なplanを検出できない。小さいSQLite fixtureで時間閾値や索引名を固定せず検索範囲を確認する"
+  // @end-test-value
+  it("履歴の失敗情報は新規DBと既存DBのensure後にownerとseqで索引検索する", () => {
+    const db = createV6Schema();
+    try {
+      for (const id of ["target", "other"]) {
+        db.prepare(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision,
+          model_id, approval_mode, created_at, updated_at, last_active_at)
+          VALUES (?, '', 'active', 'codex', 1, '', 'never', 'now', 'now', 'now')`).run(id);
+        db.prepare(`INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at)
+          VALUES (?, 'target', 'active', 'now', 'now')`).run(id);
+      }
+      const owners = [
+        ["session_messages_v6", "session_id"],
+        ["auxiliary_session_messages", "auxiliary_session_id"],
+      ] as const;
+      for (const [table, owner] of owners) {
+        for (const seq of [0, 1]) {
+          db.prepare(`INSERT INTO ${table} (${owner}, seq, role, body, created_at)
+            VALUES ('target', ?, 'assistant', ?, 'now')`).run(seq, JSON.stringify({ text: `message ${seq}`, isBookmarked: true }));
+        }
+        const turn = db.prepare(`INSERT INTO session_turns_v6 (${owner}, phase,
+          assistant_message_seq, error_summary, started_at, updated_at) VALUES (?, ?, ?, ?, 'now', 'now')`);
+        turn.run("target", "failed", 1, "old");
+        turn.run("target", "failed", 1, `latest ${owner}`);
+        turn.run("target", "completed", 1, "not failed");
+        turn.run("other", "failed", 1, "other owner");
+        turn.run("target", "failed", null, "no message");
+      }
+      const turnsBefore = db.prepare("SELECT * FROM session_turns_v6 ORDER BY id").all();
+      const messagesBefore = owners.map(([table]) => db.prepare(`SELECT * FROM ${table} ORDER BY seq`).all());
+      for (const existing of [false, true]) {
+        if (existing) {
+          db.exec(`DROP INDEX idx_v6_session_turns_session_failed_message;
+            DROP INDEX idx_v6_session_turns_auxiliary_failed_message;`);
+          ensureV6Schema(db);
+          ensureV6Schema(db);
+        }
+        for (const [table, owner] of owners) {
+          const sql = `SELECT ${conversationMessageColumns(table, db)} FROM ${table}
+            WHERE ${owner} = ? ORDER BY seq ASC`;
+          const plan = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("target") as Array<{ detail: string }>)
+            .map(({ detail }) => detail).join("\n");
+          assert.match(plan, new RegExp(`SEARCH t USING (?:COVERING )?INDEX .*\\(${owner}=\\? AND assistant_message_seq=\\?\\)`));
+          assert.doesNotMatch(plan, /TEMP B-TREE/);
+          const rows = db.prepare(sql).all("target");
+          assert.deepEqual(rows.map((row) => row.runFailure), [null, `latest ${owner}`]);
+        }
+        assert.deepEqual(db.prepare("SELECT * FROM session_turns_v6 ORDER BY id").all(), turnsBefore);
+        assert.deepEqual(owners.map(([table]) => db.prepare(`SELECT * FROM ${table} ORDER BY seq`).all()), messagesBefore);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
   it("ensureV6Schemaは既存sessionを保持してis_pinnedを既定falseで追加する", () => {
     const db = new DatabaseSync(":memory:");
     try {
