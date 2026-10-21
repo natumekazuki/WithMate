@@ -63,7 +63,13 @@ function MessageImageLightbox({
   });
   if (typeof document === "undefined") return null;
   return createPortal(
-    <div className="message-image-lightbox" onClick={onClose}>
+    <div
+      className="message-image-lightbox"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClose();
+      }}
+    >
       <section
         ref={(element) => {
           dialogRef.current = element;
@@ -280,7 +286,11 @@ export const MarkdownImage = memo(function MarkdownImage({
           type="button"
           aria-label={alt ? `Open image preview: ${alt}` : "Open image preview"}
           disabled={loadStatus !== "ready"}
-          onClick={() => setLightboxOpen(true)}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setLightboxOpen(true);
+          }}
           onContextMenu={(event) => showContextMenu(event, event.currentTarget.querySelector("img"), event.currentTarget)}
           onKeyDown={(event) => showContextMenu(event, event.currentTarget.querySelector("img"), event.currentTarget)}
         >

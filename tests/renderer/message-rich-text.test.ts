@@ -3109,6 +3109,84 @@ test("MessageRichText の画像はlightboxで拡大操作でき、Escapeと背�
 
 // @test-value v2
 // kind = "contract"
+// claim = "リンク付き画像は親リンクを開かず拡大・終了でき、同じリンクの明示操作は維持される"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling・Issue #859の拡大優先方針" }
+// fault = "画像clickまたはportal背景closeが親リンクを開く、既定navigationを許す、または明示link操作まで無効にする"
+// observable = "dialogの表示と終了、clickのdefaultPrevented、onOpenPathの受信値、close後のfocus"
+// observation_boundary = "component-behavior"
+// scope = "MessageRichTextのリンク付き画像とportalの操作境界"
+// lifecycle = "permanent"
+// impact = "画像確認の一操作で別Windowや外部ページが開かれず、終了時に元の画像へ戻れる"
+// distinction = "単体画像testには親anchorがなくReact portal経由の伝播を検出できない。localとexternalの二入力を既存DOM環境で確認する小さな契約testとして保持する"
+// @end-test-value
+test("MessageRichText のリンク付き画像は拡大と終了を親リンクから分離する", async () => {
+  for (const target of ["images/image.png", "https://example.com/image.png"]) {
+    const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+      pretendToBeVisual: true,
+      url: "http://localhost/",
+    });
+    const restoreGlobals = installDomGlobals(dom);
+    const container = dom.window.document.getElementById("root")!;
+    const root = createRoot(container);
+    const opened: string[] = [];
+
+    try {
+      await act(async () => {
+        root.render(React.createElement(MessageRichText, {
+          text: `[![linked](data:image/png;base64,AAAA) destination](${target})`,
+          onOpenPath: (path) => opened.push(path),
+        }));
+      });
+      const image = container.querySelector<HTMLImageElement>(".message-image")!;
+      const trigger = image.closest<HTMLButtonElement>("button")!;
+      const link = trigger.closest<HTMLAnchorElement>("a")!;
+      assert.ok(link);
+      await act(async () => image.dispatchEvent(new dom.window.Event("load")));
+      trigger.focus();
+
+      const click = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+      await act(async () => image.dispatchEvent(click));
+      assert.ok(dom.window.document.querySelector('[role="dialog"]'));
+      assert.equal(click.defaultPrevented, true);
+      assert.deepEqual(opened, []);
+
+      await act(async () => {
+        dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Zoom image in"]')!.click();
+      });
+      assert.ok(dom.window.document.querySelector('[role="dialog"]'));
+      assert.deepEqual(opened, []);
+
+      await act(async () => {
+        dom.window.document.querySelector<HTMLElement>(".message-image-lightbox")!.click();
+      });
+      assert.equal(dom.window.document.querySelector('[role="dialog"]'), null);
+      assert.equal(dom.window.document.activeElement, trigger);
+      assert.deepEqual(opened, []);
+
+      await act(async () => trigger.click());
+      const dialog = dom.window.document.querySelector<HTMLElement>('[role="dialog"]')!;
+      assert.ok(dialog);
+      await act(async () => dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        key: "Escape",
+      })));
+      assert.equal(dom.window.document.querySelector('[role="dialog"]'), null);
+      assert.equal(dom.window.document.activeElement, trigger);
+      assert.deepEqual(opened, []);
+
+      await act(async () => link.click());
+      assert.deepEqual(opened, [target]);
+      assert.equal(dom.window.document.querySelector('[role="dialog"]'), null);
+    } finally {
+      await act(async () => root.unmount());
+      restoreGlobals();
+      dom.window.close();
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "MessageRichText は chat context の相対 Markdown image を環境依存URLとして読み込まない"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
 // fault = "chat contextの相対imageを環境依存URLへ変換してimgを作る"
