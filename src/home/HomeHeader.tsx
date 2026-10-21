@@ -1,10 +1,15 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 import { ButtonContent } from "../ui/button-content.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
+import { renderHomePlusIcon, renderHomeSearchIcon } from "./home-icons.js";
 
 export type HomeHeaderProps = {
+  searchText: string;
+  onChangeSearchText: (value: string) => void;
+  onOpenLaunchDialog: () => void;
+  canCreateSession: boolean;
   rightPaneView: "monitor" | "characters";
   onChangeRightPaneView: (view: "monitor" | "characters") => void;
   monitorWindowIcon: ReactNode;
@@ -20,6 +25,10 @@ export type HomeHeaderProps = {
 };
 
 export function HomeHeader({
+  searchText,
+  onChangeSearchText,
+  onOpenLaunchDialog,
+  canCreateSession,
   rightPaneView,
   onChangeRightPaneView,
   monitorWindowIcon,
@@ -33,8 +42,48 @@ export function HomeHeader({
   mateLoadError = "",
   onRetryMateStatus,
 }: HomeHeaderProps) {
+  const searchInputRef = useRef<HTMLInputElement>(null);
   return (
     <header className="home-settings-rail">
+      <div className="home-header-search">
+        <div className="toolbar-search-field home-header-search-field">
+          <span className="toolbar-search-icon" aria-hidden="true">{renderHomeSearchIcon()}</span>
+          <input
+            ref={searchInputRef}
+            className="toolbar-search-input"
+            type="search"
+            aria-label="Search Sessions And Characters"
+            value={searchText}
+            onChange={(event) => onChangeSearchText(event.target.value)}
+          />
+          {searchText ? (
+            <button
+              className="home-search-clear"
+              type="button"
+              aria-label="Clear Search"
+              title="Clear Search"
+              onClick={() => {
+                onChangeSearchText("");
+                searchInputRef.current?.focus();
+              }}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                <path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </button>
+          ) : null}
+        </div>
+        <button
+          className="start-session-button"
+          type="button"
+          onClick={onOpenLaunchDialog}
+          disabled={!canCreateSession}
+          aria-label="New session"
+          title="New Session"
+        >
+          <span className="home-create-icon">{renderHomePlusIcon()}</span>
+        </button>
+      </div>
       <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">
         <button
           className={`home-pane-toggle-button ${rightPaneView === "monitor" ? "active" : ""}`.trim()}

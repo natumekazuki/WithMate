@@ -569,6 +569,77 @@ describe("SessionStorageV6", () => {
 
   // @test-value v2
   // kind = "contract"
+  // claim = "Homeの検索は保存済みMain Character表示名をmetadataとOR検索し、表示と同じsnapshot優先・owner検証を守ってpage化する"
+  // oracle = { type = "issue", ref = "GitHub Issue #860: 保存済みMain Character名の部分一致検索" }
+  // fault = "Character名の検索がcatalogや不一致snapshotを参照する、runtime名を優先する、または検索結果のcursor境界を誤る"
+  // observable = "実V6 DBに対するsummary pageのID・character・hasMore・nextCursor"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-saved-character-search"
+  // lifecycle = "permanent"
+  // impact = "利用者が一覧に表示されているCharacter名で過去Sessionを発見できない、または表示と一致しないSessionを開く"
+  // distinction = "既存のtitle検索とparser確認では検出できないsnapshot・runtime・catalogの境界と検索後pagingを実DBで確認する"
+  // @end-test-value
+  it("summary検索は保存済みMain Characterの表示名で部分一致し、catalog名に追従しない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-character-search-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    const storage = new SessionStorageV6(dbPath);
+    try {
+      insertCharacterRows(dbPath, ["muse"]);
+      for (const [id, character, snapshot, updatedAt] of [
+        ["snapshot", "Runtime Shadow", createCharacterRuntimeSnapshot("muse", "Saved Muse%_\\"), "2026-08-03T00:00:00.000Z"],
+        ["runtime", "Saved Muse%_\\", null, "2026-08-02T00:00:00.000Z"],
+        ["mismatch", "Effective Fallback", null, "2026-08-01T00:00:00.000Z"],
+        ["wildcard-decoy", "Saved Muse12\\", null, "2026-08-04T00:00:00.000Z"],
+      ] as const) {
+        storage.insertSession({
+          ...buildNewSession({
+            id,
+            taskTitle: "Unrelated task",
+            workspaceLabel: "Workspace",
+            workspacePath: "C:/workspace",
+            branch: "main",
+            characterId: "muse",
+            character,
+            characterRuntimeSnapshot: snapshot,
+            characterIconPath: "",
+            characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+            approvalMode: DEFAULT_APPROVAL_MODE,
+          }),
+          updatedAt,
+        });
+      }
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE characters SET name = 'Catalog Rename' WHERE id = 'muse'").run();
+        db.prepare("UPDATE sessions_v6 SET character_snapshot_json = ? WHERE id = 'mismatch'")
+          .run(JSON.stringify(createCharacterRuntimeSnapshot("other", "Saved Muse%_\\")));
+      } finally {
+        db.close();
+      }
+      storage.setSessionPinned("snapshot", true);
+
+      const first = storage.listSessionSummaryPage({ searchText: "  MUSE%_\\ ", limit: 1 });
+      assert.deepEqual(first.entries.map(({ id, character }) => ({ id, character })), [
+        { id: "snapshot", character: "Saved Muse%_\\" },
+      ]);
+      assert.equal(first.hasMore, true);
+      assert.ok(first.nextCursor);
+      const second = storage.listSessionSummaryPage({ searchText: "muse%_\\", limit: 1, cursor: first.nextCursor });
+      assert.deepEqual(second.entries.map((entry) => entry.id), ["runtime"]);
+      assert.equal(second.hasMore, false);
+      assert.equal(second.nextCursor, null);
+      assert.deepEqual(storage.listSessionSummaryPage({ scope: "pinned", searchText: "muse" }).entries.map((entry) => entry.id), ["snapshot"]);
+      assert.deepEqual(storage.listSessionSummaryPage({ searchText: "effective" }).entries.map((entry) => entry.id), ["mismatch"]);
+      assert.deepEqual(storage.listSessionSummaryPage({ searchText: "Catalog Rename" }).entries, []);
+      assert.deepEqual(storage.listSessionSummaryPage({ searchText: "Runtime Shadow" }).entries, []);
+    } finally {
+      storage.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "Character authoring Sessionのruntime snapshot修復は非同期resolverの解決済みSessionを返す"
   // oracle = { type = "contract", ref = "src-electron/character-authoring-service.ts#resolveCharacterAuthoringRuntimeSessionForTurn" }
   // fault = "非同期Character resolverを待たずPromise由来の未解決値をruntime Sessionへ設定する"

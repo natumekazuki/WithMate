@@ -1155,32 +1155,20 @@ describe("HomeRecentSessionsPanel", () => {
     codexReviewer: partial.codexReviewer ?? "auto-review",
   });
   const renderHomeRecentSessions = ({
-    canCreateSession = true,
     filteredSessionEntries = [],
-    normalizedSessionSearch = "",
-    searchText = "",
     hasMore = false,
     loadingMore = false,
     onLoadMore = noOp,
   }: {
-    canCreateSession?: boolean;
     filteredSessionEntries?: React.ComponentProps<typeof HomeRecentSessionsPanel>["filteredSessionEntries"];
-    normalizedSessionSearch?: string;
-    searchText?: string;
     hasMore?: boolean;
     loadingMore?: boolean;
     onLoadMore?: () => void;
   } = {}) => renderToStaticMarkup(
     <HomeRecentSessionsPanel
       filteredSessionEntries={filteredSessionEntries}
-      normalizedSessionSearch={normalizedSessionSearch}
-      searchText={searchText}
-      searchIcon={<span />}
-      onChangeSearchText={noOp}
-      onOpenLaunchDialog={noOp}
       onOpenSession={noOp}
       onSetSessionPinned={noOp}
-      canCreateSession={canCreateSession}
       hasMore={hasMore}
       loadingMore={loadingMore}
       onLoadMore={onLoadMore}
@@ -1270,27 +1258,24 @@ describe("HomeRecentSessionsPanel", () => {
   // fault = "Session作成に必要な状態を取得する前に作成操作を許可する"
   // observable = "New Session buttonのdisabled属性"
   // observation_boundary = "component-behavior"
-  // scope = "HomeRecentSessionsPanel creation readiness"
+  // scope = "HomeHeader creation readiness"
   // lifecycle = "permanent"
   // @end-test-value
   it("Session作成の準備が未完了の時は New Session が無効化される", () => {
-    const html = renderHomeRecentSessions({ canCreateSession: false });
+    const html = renderToStaticMarkup(<HomeHeader
+      searchText=""
+      onChangeSearchText={noOp}
+      onOpenLaunchDialog={noOp}
+      canCreateSession={false}
+      rightPaneView="monitor"
+      onChangeRightPaneView={noOp}
+      monitorWindowIcon={null}
+      onOpenSessionMonitorWindow={noOp}
+      onOpenSettingsWindow={noOp}
+      onRestoreSessionWindows={noOp}
+    />);
     const disabledButtons = html.match(/<button class="start-session-button"[^>]*disabled=""/g);
     assert.equal(disabledButtons?.length, 1);
-  });
-
-  it("セッションが空でも New Session は常設ボタンだけ表示される", () => {
-    const html = renderHomeRecentSessions();
-    const newSessionButtons = html.match(/<button class="start-session-button"/g);
-    assert.equal(newSessionButtons?.length, 1);
-  });
-
-  it("検索行には検索欄とNew Sessionだけを表示する", () => {
-    const html = renderHomeRecentSessions();
-
-    assert.match(html, /class="toolbar-search-field"/);
-    assert.match(html, /class="start-session-button"/);
-    assert.doesNotMatch(html, /Restore Sessions|restore-session-windows-button/);
   });
 
   it("追加読み込みは一覧末尾のsentinelだけを使い、追加ボタンを表示しない", () => {
@@ -1353,11 +1338,6 @@ describe("HomeRecentSessionsPanel", () => {
         root.render(
           <HomeRecentSessionsPanel
             filteredSessionEntries={[]}
-            normalizedSessionSearch=""
-            searchText=""
-            searchIcon={<span />}
-            onChangeSearchText={noOp}
-            onOpenLaunchDialog={noOp}
             onOpenSession={noOp}
             onSetSessionPinned={noOp}
             hasMore
@@ -2178,6 +2158,10 @@ describe("HomeRightPane", () => {
     characterLoadStatus: "loading" | "loaded" | "error" = "loaded",
   ) => renderToStaticMarkup(<>
     <HomeHeader
+      searchText=""
+      onChangeSearchText={noOp}
+      onOpenLaunchDialog={noOp}
+      canCreateSession
       rightPaneView={rightPaneView}
       monitorWindowIcon={<span>Monitor</span>}
       onChangeRightPaneView={noOp}
@@ -2189,6 +2173,7 @@ describe("HomeRightPane", () => {
       sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
     />
     <HomeRightPane
+      searchText=""
       rightPaneView={rightPaneView}
       approvalMonitorEntries={[]}
       runningMonitorEntries={[]}
@@ -2222,8 +2207,8 @@ describe("HomeRightPane", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Home Characters tabはcharacter情報・検索・Create導線を表示し、旧Mate talkや既定カードを表示しない"
-  // oracle = { type = "contract", ref = "Issue #731 Home Characters tab surface" }
+  // claim = "Home Characters tabはcharacter情報・共通header検索・Create導線を表示し、旧Mate talkや既定カードを表示しない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Home Window" }
   // fault = "Character tabが旧default/Mate talk surfaceへ戻るか、検索またはCreate導線を失う"
   // observable = "Characters見出し、Mia、説明文、検索label、Create icon、旧surfaceの不在"
   // observation_boundary = "component-behavior"
@@ -2240,7 +2225,7 @@ describe("HomeRightPane", () => {
     assert.ok(html.includes("説明文"));
     assert.ok(html.includes("home-create-icon"));
     assert.ok(!html.includes("<h3>Characters</h3>"));
-    assert.ok(html.includes('aria-label="Search characters by name"'));
+    assert.ok(html.includes('aria-label="Search Sessions And Characters"'));
     assert.ok(!html.includes(">Default</span>"));
     assert.match(html, /<button class="home-character-card"/);
     assert.ok(!html.includes("home-character-card-edit"));

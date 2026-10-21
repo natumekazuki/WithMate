@@ -43,7 +43,7 @@ export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary
   for (const [id, auxiliaries] of byParent) byParent.set(id, sortAuxiliarySessions(auxiliaries));
   const filteredSessionEntries = sessions.filter((session) => {
     if (!normalizedSessionSearch) return true;
-    return [session.taskTitle, session.workspacePath, session.workspaceLabel, ...getHomeSessionKindSearchLabels(session)].map((value) => value.toLocaleLowerCase()).some((value) => value.includes(normalizedSessionSearch));
+    return [session.taskTitle, session.workspacePath, session.workspaceLabel, session.character, ...getHomeSessionKindSearchLabels(session)].map((value) => value.toLocaleLowerCase()).some((value) => value.includes(normalizedSessionSearch));
   }).map((session) => { const auxiliarySessions = [...(byParent.get(session.id) ?? [])]; return { kind: "agent" as const, session, state: getHomeSessionState(session, auxiliarySessions), mainState: getHomeSessionState(session), auxiliarySessions }; });
   const openIds = new Set(openSessionWindowIds);
   const monitorEntries = filteredSessionEntries.filter(({ session }) => openIds.has(session.id));

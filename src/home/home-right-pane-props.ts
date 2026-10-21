@@ -11,6 +11,8 @@ import type {
 } from "../../src-shared/window/withmate-window-types.js";
 
 type HomeRightPaneHandlers = {
+  onChangeSearchText: (value: string) => void;
+  onOpenLaunchDialog: () => void;
   onChangeRightPaneView: (view: HomeRightPaneProps["rightPaneView"]) => void;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
@@ -26,6 +28,8 @@ type HomeRightPaneHandlers = {
 };
 
 export type HomeRightPanePropsInput = {
+  searchText: string;
+  canCreateSession: boolean;
   providerQuota?: ReactNode;
   rightPaneView: HomeRightPaneProps["rightPaneView"];
   approvalMonitorEntries: HomeMonitorEntry[];
@@ -52,6 +56,8 @@ export type HomeRightPanePropsInput = {
 };
 
 export function buildHomeRightPaneProps({
+  searchText,
+  canCreateSession,
   providerQuota,
   rightPaneView,
   approvalMonitorEntries,
@@ -77,6 +83,10 @@ export function buildHomeRightPaneProps({
   onRetryMateStatus,
 }: HomeRightPanePropsInput): HomeRightPaneProps & HomeHeaderProps {
   return {
+    searchText,
+    canCreateSession,
+    onChangeSearchText: handlers.onChangeSearchText,
+    onOpenLaunchDialog: handlers.onOpenLaunchDialog,
     providerQuota,
     rightPaneView,
     approvalMonitorEntries,

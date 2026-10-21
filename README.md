@@ -24,7 +24,7 @@ Claude Agent は公式 Claude Agent SDK に付属する未改変の実行物を�
 
 セッションとCharacterを管理する入口です。
 
-- `RecentSessions`から既存セッションを検索、再開
+- 共通ヘッダーからSessionとCharacterを検索し、`RecentSessions`から既存セッションを再開
 - `NewSession`でtitle、workspace、provider、Characterを選択
 - `SessionMonitor`で開いているセッションの状態を確認
 - `Characters`からCharacterの作成、編集を開始

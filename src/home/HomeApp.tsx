@@ -87,7 +87,7 @@ import { buildHomeMateSetupContentProps } from "../mate/home-mate-setup-props.js
 import type { MateAvatarAction } from "../mate/MateSetupPanel.js";
 import { buildMateStatusRefreshers } from "../mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home-monitor-content-props.js";
-import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home-icons.js";
+import { renderHomeMonitorWindowIcon } from "./home-icons.js";
 import {
   buildSessionWindowRestoreFeedback,
   selectPendingSessionWindowRestoreIds,
@@ -618,7 +618,6 @@ export default function HomeApp() {
   );
   const {
     filteredSessionEntries,
-    normalizedSessionSearch,
     approvalMonitorEntries,
     runningMonitorEntries,
     nonRunningMonitorEntries,
@@ -918,16 +917,10 @@ export default function HomeApp() {
   const { header, recentSessionsPanel, rightPane, launchDialog } = buildHomeDashboardSlots({
     recentSessionsPanel: buildHomeRecentSessionsPanelProps({
       filteredSessionEntries,
-      normalizedSessionSearch,
-      searchText: sessionSearchText,
-      searchIcon: renderHomeSearchIcon(),
       handlers: {
-        onChangeSearchText: setSessionSearchText,
-        onOpenLaunchDialog: homeLaunchHandlers.onOpenLaunchDialog,
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onSetSessionPinned: (sessionId, isPinned) => void setSessionPinned(sessionId, isPinned),
       },
-      canCreateSession: canUsePrimaryFeatures,
       hasMore: sessionSummariesState.hasMoreRecent || sessionSummariesState.hasMorePinned,
       loadingMore: sessionSummariesState.loadingRecentPage || sessionSummariesState.loadingPinnedPage,
       onLoadMore: loadNextSessionSummaryPage,
@@ -943,6 +936,8 @@ export default function HomeApp() {
       ),
     }),
     rightPane: buildHomeRightPaneProps({
+      searchText: sessionSearchText,
+      canCreateSession: canUsePrimaryFeatures,
       providerQuota: <ProviderQuotaOverview api={getWithMateApi()} />,
       rightPaneView,
       approvalMonitorEntries,
@@ -959,6 +954,8 @@ export default function HomeApp() {
       characterListFeedback,
       monitorWindowIcon: renderHomeMonitorWindowIcon(),
       handlers: {
+        onChangeSearchText: setSessionSearchText,
+        onOpenLaunchDialog: homeLaunchHandlers.onOpenLaunchDialog,
         onChangeRightPaneView: setRightPaneView,
         onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
         onOpenSettingsWindow: () => void openSettingsWindow(),

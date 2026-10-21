@@ -100,6 +100,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - ドラッグまたは左右矢印キーで幅を変え、端へ寄せると片側を全幅表示する。クリックは右側を閉じ、どちらかが閉じているときはクリックで1:1へ戻す。閉じた状態からのドラッグ・矢印キーでは再展開しない
   - 閉じたpaneは非表示・操作不可にし、検索入力や一覧のDOMを保持する。左右の最小幅はそれぞれ300px／320pxとし、両側を表示できる幅があるときはWindow縮小後も比率を補正して最小幅を維持する。縮小だけで閉じたpaneを開かない
   - Monitor／Characters切替とSettings／Restore Sessions／独立Monitorの操作はHome共通headerに置く。切替は右寄せし、共通操作ボタン群の直前に置く。headerは左右分割の外に常設し、paneの幅調整・開閉で操作ボタンを移動・非表示にしない。開閉対象名は現在表示中のMonitor／Charactersへ合わせる
+  - header左側には共通検索と＋iconの`New Session`を置く。検索は1つの語でRecentSessions、Home内Monitor、Charactersを絞り込み、対象切替は設けない。検索語はMonitor／Characters切替とpane開閉で保持し、`Clear Search`で全一覧の絞り込みを解除して検索inputへfocusを戻す。独立Monitor Windowへは共有しない
+  - Session検索は`taskTitle / workspacePath / workspaceLabel / kind label / Mainの保存済みCharacter表示名`のいずれかへの部分一致とする。Charactersはcatalogの名前のみを対象とする。前後の空白とASCIIの大文字小文字を無視し、AuxiliaryのCharacter名、会話本文、Character説明文は検索しない。通常SessionのCharacter名はcatalogの改名へ追従しない
+  - 検索inputのplaceholderは表示せず、accessible nameは`Search Sessions And Characters`とする。`New Session`は表示中のpaneにかかわらず同じdialogを開き、初期データの準備状態によるdisabled条件は維持する。狭幅ではheaderの操作群を折り返し、検索・作成・共通操作へ到達可能にする
 - 2 カラムの外側とMonitorのAttention／Running／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
 - `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
@@ -130,12 +133,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - open な SessionWindow がないときは、正常なempty本文を出さず、Monitorのshellと必要なstatus/accessibilityだけを保つ
   - `MonitorWindow` button から独立した monitor window を開ける
 - `RecentSessions`
-  - section action として＋iconの`New Session`を置く。保存済みWindowの復元操作は`Restore Sessions`とする
+  - 作成は共通headerの`New Session`から行う。保存済みWindowの復元操作は`Restore Sessions`とする
   - resume picker
-  - session search input（placeholderは表示しない。accessible nameは残す）
-    - `taskTitle / workspace / kind label`
-    - 部分一致
-  - 検索欄と`New Session`は固定し、上下に余白を持たせたsession listだけをスクロールする
+  - 検索は共通headerの入力を使い、上下に余白を持たせたsession listだけをスクロールする
   - Recent、Pinned、open Session summary、Random用のCharacter利用履歴は取得結果と失敗を分離する。Recent／Pinnedの取得・追加page取得の失敗は既存rowの有無によらず一覧のfeedbackと`Retry`へ表示し、New Sessionの開始エラーには混入させない。追加pageの失敗は自動再試行を続けず、`Retry`で続きの取得を再試行する
   - 同じSession IDがopen summaryとPinned／Recentのpageにある場合は、page順序を維持してopen summaryの内容を一覧とMonitorへ反映する。pageの再取得失敗で保持したrowが、成功したopen取得の状態・titleを隠さない
   - session list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない。検索0件でも本文を埋める説明文は出さない
@@ -155,12 +155,12 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
     - left accent bar = mate `sub`
     - text color = themeのcontrast helperで決めたdark / light palette
 - `Characters`
-  - right pane 上部の segmented toggle で `Monitor` と排他的に切り替える
+  - Home共通headerのsegmented toggleで `Monitor` と排他的に切り替える
   - Character catalog の active Character は意味のある card item として表示する。必要な識別情報と操作をまとめるが、入れ子の装飾cardは作らない
-  - 検索欄とheaderの＋icon `Create Character`は固定し、Character listだけをスクロールする
+  - 共通headerの検索語で絞り込み、Characters内上部の＋icon `Create Character`は固定してCharacter listだけをスクロールする
   - card には avatar / name / description（空なら Character ID）を表示する
   - card click で `Character Editor Window` を開く
-  - Character 0 件または検索0件時は本文を空にし、headerの`Create Character`と検索inputのaccessible nameを残す
+  - Character 0 件または検索0件時は本文を空にし、`Create Character`と共通検索を利用可能に保つ
   - Home には archive / delete を置かない
   - card theme
     - background = Character `main`

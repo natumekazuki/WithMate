@@ -11,6 +11,7 @@ import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
 
 export type HomeRightPaneProps = {
+  searchText: string;
   providerQuota?: ReactNode;
   rightPaneView: "monitor" | "characters";
   approvalMonitorEntries: HomeMonitorEntry[];
@@ -37,6 +38,7 @@ export type HomeRightPaneProps = {
 };
 
 export function HomeRightPane({
+  searchText,
   providerQuota,
   rightPaneView,
   approvalMonitorEntries,
@@ -80,6 +82,7 @@ export function HomeRightPane({
         <section className="home-monitor-panel home-characters-panel" role="tabpanel" aria-label="Characters">
           <HomeCharactersPanel
             characters={characterEntries}
+            searchText={searchText}
             characterLoadStatus={characterLoadStatus}
             feedback={characterListFeedback}
             onRetry={onRetryCharacters}

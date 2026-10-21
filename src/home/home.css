@@ -11,11 +11,56 @@
 }
 
 .home-settings-rail {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px 16px;
   padding: 0 8px;
+}
+
+.home-header-search {
+  display: flex;
+  flex: 1 1 260px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.home-page .home-header-search-field {
+  flex: 1 1 auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 42px;
+  border-radius: 14px;
+}
+
+.home-header-search-field .toolbar-search-input {
+  padding: 8px 0;
+}
+
+.home-header-search-field input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.home-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+}
+
+.home-search-clear:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.home-search-clear svg {
+  width: 16px;
+  height: 16px;
 }
 
 .home-settings-actions {
@@ -27,11 +72,11 @@
 }
 
 .home-header-feedback {
-  grid-column: 1 / -1;
+  flex-basis: 100%;
 }
 
 .home-page .home-settings-rail .home-pane-toggle {
-  justify-self: end;
+  margin-left: auto;
   width: fit-content;
 }
 
@@ -40,7 +85,7 @@
   gap: 12px;
 }
 
-.home-monitor-window-button {
+.home-page .home-monitor-window-button {
   display: inline-grid;
   place-items: center;
   width: 42px;
@@ -289,24 +334,16 @@
 
 .home-page .home-settings-button {
   flex: 0 0 auto;
+  width: auto;
 }
 
 .home-page .home-character-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 10px;
   min-width: 0;
   width: 100%;
-}
-
-.home-page .home-character-toolbar .toolbar-search-field {
-  padding: 0 10px;
-  border-radius: 14px;
-}
-
-.home-page .home-character-toolbar .toolbar-search-input {
-  padding: 7px 0;
 }
 
 .home-page .home-monitor-body {
@@ -1120,7 +1157,7 @@
   box-shadow: 0 10px 22px rgba(111, 140, 255, 0.24);
 }
 
-.home-page .toolbar-search-row > .start-session-button {
+.home-page .home-header-search > .start-session-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1128,7 +1165,6 @@
   min-width: 42px;
   height: 42px;
   padding: 0;
-  margin-right: 8px;
 }
 
 .home-page .home-create-icon {
@@ -1318,14 +1354,6 @@
 
 .section-head.section-head-actions-only {
   justify-content: flex-end;
-}
-
-.toolbar-search-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 16px;
-  margin: 14px 6px 22px;
 }
 
 .launch-search-row {

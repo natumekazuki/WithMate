@@ -93,6 +93,42 @@ test("pending ID集合は100件の境界を超えるとallに昇格する", asyn
 });
 
 // @test-value v2
+// kind = "invariant"
+// claim = "検索による失効は実行中とpendingの更新IDを最新検索の先頭page置換へ引き継ぎ、検索専用要求でscopeを消さない"
+// oracle = { type = "contract", ref = "docs/features/home-session-pagination.md 再取得時の状態維持" }
+// fault = "query失効後に実行中scopeを破棄するか、検索専用要求で通知IDまたはreplace modeを上書きする"
+// observable = "最新contextへ適用されたrequest modeと通知ID集合"
+// observation_boundary = "public-boundary"
+// scope = "Home refreshの検索変更と通知集約"
+// lifecycle = "permanent"
+// impact = "検索入力中に届いたSession更新がopen summaryとCharacter利用履歴へ反映されなくなる"
+// distinction = "通常の通知集約と異なり、検索debounce要求の前に失効中のreadが完了する順序をdeferredで確認する"
+// @end-test-value
+test("検索失効は実行中とpendingの通知scopeをdebounce前にも保持する", async () => {
+  for (const hasPending of [false, true]) {
+    const gate = deferred();
+    const requests: HomeSessionSummaryRefreshRequest[] = [];
+    const applied: HomeSessionSummaryRefreshRequest[] = [];
+    const refresher = createHomeSessionSummaryRefresher(async (request, isCurrent) => {
+      requests.push(request);
+      if (requests.length === 1) await gate.promise;
+      if (isCurrent()) applied.push(request);
+    });
+    const completion = refresher.refresh({ mode: "preserve", invalidation: { scope: "ids", sessionIds: ["running"] } });
+    await Promise.resolve();
+    if (hasPending) void refresher.refresh({ mode: "preserve", invalidation: { scope: "ids", sessionIds: ["pending"] } });
+    refresher.invalidate("replace");
+    if (hasPending) void refresher.refresh({ mode: "replace", invalidation: null });
+    gate.resolve();
+    await completion;
+    assert.deepEqual(applied, [{ mode: "replace", invalidation: { scope: "ids", sessionIds: hasPending ? ["running", "pending"] : ["running"] } }]);
+    await refresher.refresh({ mode: "replace", invalidation: null });
+    assert.deepEqual(requests.at(-1), { mode: "replace", invalidation: null });
+    refresher.dispose();
+  }
+});
+
+// @test-value v2
 // kind = "contract"
 // claim = "query失効で現在結果の適用を止め、disposeはpendingと後続refreshを停止して終了済みHomeへ結果を返さない"
 // oracle = { type = "contract", ref = "docs/features/home-session-pagination.md queryの分離" }

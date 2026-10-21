@@ -79,6 +79,7 @@ type Harness = {
   setAuxiliaryQuery: (handler: () => Promise<AuxiliarySessionSummary[]>) => void;
   emitLive: (sessionId: string, cancellationState?: LiveSessionRunStatus["cancellationState"] | null) => Promise<void>;
   liveSubscriptionCount: () => number;
+  characterQueryCount: () => number;
   emitInvalidation: (payload: SessionSummaryInvalidation) => Promise<void>;
   emitOpenIds: (ids: string[]) => Promise<void>;
   opened: Array<[string, string | undefined]>;
@@ -113,8 +114,9 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     workspacePath: "C:\\sessions\\created-session", branch: "", approvalMode: "on-request",
   });
   const requests: CreateSessionRequest[] = [];
+  let characterQueries = 0;
   const api: Partial<WithMateWindowApi> = {
-    listCharacters: async () => [character("used"), character("unused")],
+    listCharacters: async () => { characterQueries += 1; return [character("used"), character("unused")]; },
     getMateState: async () => "not_created",
     getAppSettings: async () => createDefaultAppSettings(),
     subscribeAppSettings: () => () => {},
@@ -220,6 +222,7 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
       });
     },
     liveSubscriptionCount: () => liveListeners.size,
+    characterQueryCount: () => characterQueries,
     emitInvalidation: async (payload) => {
       await act(async () => { for (const listener of invalidationListeners) listener(payload); });
     },
@@ -627,7 +630,7 @@ test("検索後の最新取得待機中に旧一覧・履歴の失敗を適用�
     home.setListPage((request) => request.scope === "recent" ? freshRecent.promise
       : Promise.resolve(page(request.scope === "open" ? [session("open")] : [])));
     home.setUsage(() => freshUsage.promise);
-    const search = home.element.querySelector<HTMLInputElement>('[aria-label="Search sessions"] input');
+    const search = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
     assert.ok(search);
     await act(async () => {
       Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, "fresh");
@@ -706,7 +709,7 @@ test("通知集中と検索・open変更は最新1件へ収束して旧2page目�
       await home.emitInvalidation({ scope: "ids", sessionIds: [String(index)], detailChanged: false });
     }
     await home.focus();
-    const search = home.element.querySelector<HTMLInputElement>('[aria-label="Search sessions"] input');
+    const search = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
     assert.ok(search);
     await act(async () => {
       Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, "fresh");
@@ -728,6 +731,78 @@ test("通知集中と検索・open変更は最新1件へ収束して旧2page目�
     await home.close();
     Object.defineProperty(globalThis, "IntersectionObserver", { value: previousObserver, configurable: true });
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Home headerの共通検索はSessionとMonitorのMain Character名とcatalog名へ届き、タブ往復で値を保持してClear Searchで両一覧へ復帰する"
+// oracle = { type = "contract", ref = "GitHub Issue #860 / docs/design/desktop-ui.md Home Window" }
+// fault = "検索stateが一覧の一方へ渡らない、タブ切替で入力を失う、clearが一方へ届かない、または入力ごとにcatalogを再取得する"
+// observable = "header入力値、Session/Monitor cardとCharacter名一覧、listCharacters呼出し回数、clear後のfocus"
+// observation_boundary = "component-behavior"
+// scope = "HomeAppのheader検索・Session取得・Monitor投影・Character catalog結線"
+// lifecycle = "permanent"
+// impact = "同じ検索語なのに表示面ごとに別の対象を示し、paneを往復するたびに検索をやり直す"
+// distinction = "pure filterやbackend検索testでは検出できない共有stateと実React入力・タブ・clearの結線を既存Home harnessで確認する"
+// @end-test-value
+test("header検索をSessions・Monitor・Charactersで共有し、タブ往復とclearで保持・復帰する", async () => {
+  const home = await mountHome({ openIds: ["open", "other-open"] });
+  try {
+    home.setListPage(async (request) => {
+      if (request.scope === "open") return page((request.sessionIds ?? []).map((id) => session(id, id === "open" ? "used" : "other")));
+      if (request.scope === "pinned") return page([]);
+      const query = request.searchText?.trim().toLocaleLowerCase() ?? "";
+      return page([session("used-session", "used"), session("other-session", "other")]
+        .filter((entry) => [entry.taskTitle, entry.character].some((value) => value.toLocaleLowerCase().includes(query))));
+    });
+    await home.settle();
+    const charactersQueries = home.characterQueryCount();
+    const input = () => {
+      const found = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
+      assert.ok(found);
+      return found;
+    };
+    const changeSearch = async (value: string) => {
+      await act(async () => {
+        const search = input();
+        Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, value);
+        search.dispatchEvent(new home.dom.window.Event("input", { bubbles: true }));
+      });
+      await home.settle();
+    };
+    const monitorTitles = () => Array.from(home.element.querySelectorAll(".home-monitor-card .home-monitor-parent-title")).map((entry) => entry.textContent);
+    await changeSearch("used");
+    const sessionsText = home.element.querySelector(".home-session-card-list")?.textContent ?? "";
+    assert.match(sessionsText, /used-session/);
+    assert.doesNotMatch(sessionsText, /other-session/);
+    assert.deepEqual(monitorTitles(), ["open"]);
+
+    await act(async () => button(home.element, "Characters").click());
+    assert.equal(input().value, "used");
+    await changeSearch("UNUSED");
+    const characterNames = () => Array.from(home.element.querySelectorAll(".home-character-card-title")).map((entry) => entry.textContent);
+    assert.deepEqual(characterNames(), ["unused"]);
+    await act(async () => button(home.element, "Monitor").click());
+    assert.equal(input().value, "UNUSED");
+    assert.deepEqual(monitorTitles(), []);
+    await act(async () => button(home.element, "Characters").click());
+    assert.equal(input().value, "UNUSED");
+    assert.deepEqual(characterNames(), ["unused"]);
+
+    const clear = home.element.querySelector<HTMLButtonElement>('[aria-label="Clear Search"]');
+    assert.ok(clear);
+    await act(async () => clear.click());
+    await home.settle();
+    assert.equal(input().value, "");
+    assert.equal(home.dom.window.document.activeElement, input());
+    assert.deepEqual(characterNames(), ["used", "unused"]);
+    const restoredSessions = home.element.querySelector(".home-session-card-list")?.textContent ?? "";
+    assert.match(restoredSessions, /used-session/);
+    assert.match(restoredSessions, /other-session/);
+    await act(async () => button(home.element, "Monitor").click());
+    assert.deepEqual(monitorTitles().sort(), ["open", "other-open"]);
+    assert.equal(home.characterQueryCount(), charactersQueries);
+  } finally { await home.close(); }
 });
 
 // @test-value v2

@@ -16,6 +16,8 @@ Sessionのtitle、pin、実行状態などが更新された場合は一覧を�
 
 通知、focus復帰、検索・open Window IDの変更による再取得は、Home専用ownerで実行中1件と最新pending1件へ集約します。pendingは必要なscopeを引き継ぎ、検索変更の先頭pageへの置換を優先します。対象IDは100件まで保持し、超過した場合は全scopeへ昇格します。実行時に最新の検索、open ID、既読page数を使います。
 
+検索だけの変更ではRecent／Pinnedの先頭pageを置換し、open summaryとCharacter利用履歴の取得状態を維持します。初回取得、open Window ID変更、focus復帰、Session更新通知はopen summaryと利用履歴も更新します。検索変更で実行中の取得が失効しても、その更新scopeとpending通知を最新の検索へ引き継ぎ、未反映の更新を落としません。
+
 ID通知でもlastActive順、pin、検索membership、Character利用順が変わり得るため、Recent／Pinnedの既読範囲と利用履歴は再取得します。`detailChanged: false`もsummaryの更新通知として扱います。open summaryは通知IDと現在openなIDの交差集合を更新し、未取得・取得失敗時と全scope要求ではopen集合全体を再取得します。
 
 再取得後も可能な限りscroll位置を維持します。削除や検索条件の変更でrow集合が変わった場合は、現在の結果に合わせて位置を調整します。
