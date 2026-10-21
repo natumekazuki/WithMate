@@ -156,8 +156,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
     - text color = themeのcontrast helperで決めたdark / light palette
 - `Previews`
   - Home共通headerのsegmented toggleで`Monitor`／`Characters`と排他的に切り替える。既存MonitorのAuxiliary欄は変更しない
-  - 開いているFile Preview Windowを親Session別に一覧化し、Main／Auxiliary由来のpreviewを集約する。Session Windowを閉じても残っているpreviewを含め、Recent Sessionsの検索・取得範囲や実行状態では絞り込まない
+  - 開いているSession Windowをpreviewの有無にかかわらずすべて一覧化し、Main／Auxiliary由来のFile Preview Windowを親Sessionへ集約する。Session Windowを閉じても残っているpreviewを含め、Recent Sessionsの検索・取得範囲や実行状態では絞り込まない
   - Monitorと共通の親行にCharacter avatarとSession titleを置き、titleのclickでそのSession Windowを開く。右側のPreview icon・件数・展開buttonからfile一覧を開閉する。Attention／Running／Stoppedの分類は設けない
+  - 開いているSessionはClose All後も同じ位置に残し、previewが0件なら件数のみ表示して展開とClose Allを無効にする。Session Windowが閉じていてpreviewも0件になった親は一覧から除く
   - 子一覧はMonitorのAuxiliaryと同じ高さ上限と枠内scroll、1行省略表示の密度を使い、件数が増えてもcardを無制限に伸ばさない。開いているpreviewの総数や取得件数は制限しない
   - 子行はfile名だけを常設表示し、識別pathはtooltipとaccessible nameに残す。clickは既存previewを前面化し、表示内容を再navigateしない
   - 個別Closeは子行、Close Allは親行のnative context menuから実行する。常設のClose buttonは置かず、右クリックに加えてContext Menuキー／Shift+F10でも操作できる。親単位CloseはそのSession配下のpreviewだけを閉じ、Session本体や他Sessionへ影響させない

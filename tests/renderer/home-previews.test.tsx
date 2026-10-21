@@ -63,6 +63,7 @@ test("Previews dispatches the selected preview token and owning group independen
   const api: HomePreviewsApi = {
     listSessionFilePreviewWindows: async () => [group("parent-a", "main-preview"), group("parent-b", "aux-preview")],
     subscribeSessionFilePreviewWindowsChanged: () => () => {},
+    subscribeOpenSessionWindowIds: () => () => {},
     focusSessionFilePreviewWindow: async (token) => { calls.push(["focus", token]); },
     closeSessionFilePreviewWindow: async (token) => { calls.push(["close", token]); if (closeFailure) throw new Error("Window close failed"); },
     closeSessionFilePreviewWindows: async (owner) => { calls.push(["group", owner]); },
@@ -130,6 +131,7 @@ test("Previews keeps the latest refresh and recovers a failed refresh without di
   const api: HomePreviewsApi = {
     listSessionFilePreviewWindows: () => { const request = deferred<SessionFilePreviewWindowGroup[]>(); requests.push(request); return request.promise; },
     subscribeSessionFilePreviewWindowsChanged: (listener) => { emit = listener; return () => { unsubscribed = true; }; },
+    subscribeOpenSessionWindowIds: () => () => {},
     focusSessionFilePreviewWindow: async () => {}, closeSessionFilePreviewWindow: async () => {}, closeSessionFilePreviewWindows: async () => {},
     showSessionFilePreviewContextMenu: async () => "dismissed", openSession: async () => {},
   };
@@ -151,4 +153,69 @@ test("Previews keeps the latest refresh and recovers a failed refresh without di
     assert.equal(doc.querySelectorAll('[role="alert"]').length, 0);
   });
   assert.equal(unsubscribed, true);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "開いているSessionはPreview 0件でも操作可能な親行を保ち、Close AllとWindow開閉通知で最新一覧へ更新する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "Close Allで開いている親を除く、0件でも空展開やClose Allを実行する、またはSession Windowの開閉を反映しない"
+// observable = "Close All前後の同一card、0件のdisabled disclosure、Session open引数、Window通知後のcard一覧と購読解除"
+// observation_boundary = "component-behavior"
+// scope = "Home Previewsの0件親表示とSession/Preview変更通知"
+// lifecycle = "permanent"
+// impact = "Previewを整理した後も開いているSessionの位置と復帰導線を保つ"
+// distinction = "取得結果だけのtestではrendererの0件除外とWindow購読漏れを検出できず、小さなDOM testで実操作を確認する"
+// @end-test-value
+test("Previews retains open sessions after Close All and reacts to Session Window changes", async () => {
+  let groups = [group("open"), { ...group("empty"), previews: [] }, group("detached")];
+  let emitPreviews = () => {};
+  let emitSessions = (_ids: string[]) => {};
+  let previewUnsubscribed = false;
+  let sessionUnsubscribed = false;
+  const opened: string[] = [];
+  const closed: string[] = [];
+  let menus = 0;
+  const api: HomePreviewsApi = {
+    listSessionFilePreviewWindows: async () => groups,
+    subscribeSessionFilePreviewWindowsChanged: (listener) => { emitPreviews = listener; return () => { previewUnsubscribed = true; }; },
+    subscribeOpenSessionWindowIds: (listener) => { emitSessions = listener; return () => { sessionUnsubscribed = true; }; },
+    focusSessionFilePreviewWindow: async () => {}, closeSessionFilePreviewWindow: async () => {},
+    closeSessionFilePreviewWindows: async (owner) => {
+      closed.push(owner);
+      groups = groups.map((entry) => entry.ownerSessionId === owner ? { ...entry, previews: [] } : entry);
+      emitPreviews();
+    },
+    showSessionFilePreviewContextMenu: async () => { menus++; return "close"; },
+    openSession: async (owner) => { opened.push(owner); },
+  };
+  await withPreviews(api, async (doc) => {
+    const titles = () => [...doc.querySelectorAll(".home-previews-session")].map((button) => button.getAttribute("title"));
+    assert.deepEqual(titles(), ["open", "empty", "detached"]);
+    const card = doc.querySelector<HTMLElement>(".home-monitor-card")!;
+    const parent = card.querySelector<HTMLButtonElement>(".home-previews-session")!;
+    const disclosure = card.querySelector<HTMLButtonElement>(".home-previews-disclosure")!;
+    await act(async () => disclosure.click());
+    assert.equal(disclosure.getAttribute("aria-expanded"), "true");
+    await act(async () => { parent.dispatchEvent(new doc.defaultView!.MouseEvent("contextmenu", { bubbles: true, cancelable: true })); });
+    assert.deepEqual(closed, ["open"]);
+    assert.deepEqual(titles(), ["open", "empty", "detached"]);
+    assert.equal(doc.querySelector(".home-monitor-card"), card);
+    assert.equal(disclosure.disabled, true);
+    assert.equal(disclosure.getAttribute("aria-expanded"), "false");
+    assert.equal(disclosure.title, "Previews: 0");
+    assert.equal(card.querySelector(".home-previews-children")!.hasAttribute("hidden"), true);
+    await act(async () => {
+      parent.click();
+      parent.dispatchEvent(new doc.defaultView!.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      parent.dispatchEvent(new doc.defaultView!.KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true }));
+    });
+    assert.deepEqual(opened, ["open"]);
+    assert.equal(menus, 1);
+    groups = [groups[0]!, { ...group("new"), previews: [] }, groups[2]!];
+    await act(async () => emitSessions(["open", "new"]));
+    assert.deepEqual(titles(), ["open", "new", "detached"]);
+  });
+  assert.equal(previewUnsubscribed, true);
+  assert.equal(sessionUnsubscribed, true);
 });

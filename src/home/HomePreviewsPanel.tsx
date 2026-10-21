@@ -37,18 +37,19 @@ export function HomePreviewsContent({ groups, status, readError, actionError, pe
       <div className="home-previews-list" aria-label="Open file previews">
         {groups.map((group, index) => {
           const title = group.session ? group.session.taskTitle || group.session.id : "Session unavailable";
-          const isExpanded = expanded.has(group.ownerSessionId);
+          const hasPreviews = group.previews.length > 0;
+          const isExpanded = hasPreviews && expanded.has(group.ownerSessionId);
           const groupPending = pending.has(`group:${group.ownerSessionId}`);
           const sessionPending = pending.has(`session:${group.ownerSessionId}`);
           const openGroupMenu = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
-            if (!groupPending) showContextMenu(event, (point) => showGroupMenu(group.ownerSessionId, point));
+            if (hasPreviews && !groupPending) showContextMenu(event, (point) => showGroupMenu(group.ownerSessionId, point));
           };
           const childrenId = `${id}-${index}`;
           return <div className="home-monitor-card" key={group.ownerSessionId}>
             <div className="home-monitor-parent-row home-previews-parent-row" onContextMenu={openGroupMenu} onKeyDown={openGroupMenu}>
               <div className="home-monitor-parent-identity">
                 <button className="home-monitor-parent-button home-previews-session" type="button"
-                  title={title} aria-label={`Open session: ${title}`} aria-haspopup="menu"
+                  title={title} aria-label={`Open session: ${title}`} aria-haspopup={hasPreviews ? "menu" : undefined}
                   disabled={!group.session || sessionPending} aria-busy={sessionPending}
                   onClick={() => openSession(group.ownerSessionId)}>
                   <ButtonContent busy={sessionPending}>
@@ -58,7 +59,7 @@ export function HomePreviewsContent({ groups, status, readError, actionError, pe
                 </button>
               </div>
               <button className="home-monitor-disclosure home-previews-disclosure" type="button"
-                aria-label={`${isExpanded ? "Hide" : "Show"} previews for ${title}`} title={`Previews: ${group.previews.length.toLocaleString("en-US")}`} aria-expanded={isExpanded} aria-controls={childrenId} aria-haspopup="menu" aria-busy={groupPending}
+                aria-label={hasPreviews ? `${isExpanded ? "Hide" : "Show"} previews for ${title}` : `Previews for ${title}: 0`} title={`Previews: ${group.previews.length.toLocaleString("en-US")}`} aria-expanded={isExpanded} aria-controls={childrenId} aria-haspopup={hasPreviews ? "menu" : undefined} aria-busy={groupPending} disabled={!hasPreviews}
                 onClick={() => setExpanded((current) => {
                   const next = new Set(current);
                   if (next.has(group.ownerSessionId)) next.delete(group.ownerSessionId); else next.add(group.ownerSessionId);
@@ -66,7 +67,7 @@ export function HomePreviewsContent({ groups, status, readError, actionError, pe
                 })}>
                 <ButtonContent busy={groupPending}><ComposerIcon name="preview" /></ButtonContent>
                 <span className="home-monitor-status-icon-count">{group.previews.length.toLocaleString("en-US")}</span>
-                <span aria-hidden="true">{isExpanded ? "▾" : "▸"}</span>
+                <span aria-hidden="true">{hasPreviews ? isExpanded ? "▾" : "▸" : null}</span>
               </button>
             </div>
             <div id={childrenId} className="home-monitor-auxiliary-list home-previews-children" aria-label={`Previews for ${title}`} hidden={!isExpanded}>
