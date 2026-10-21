@@ -865,6 +865,14 @@ export const CREATE_V6_SESSION_TURNS_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_session_turns_phase_updated
     ON session_turns_v6(phase, updated_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turns_session_failed_message
+    ON session_turns_v6(session_id, assistant_message_seq, id DESC)
+    WHERE phase = 'failed' AND session_id IS NOT NULL;
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turns_auxiliary_failed_message
+    ON session_turns_v6(auxiliary_session_id, assistant_message_seq, id DESC)
+    WHERE phase = 'failed' AND auxiliary_session_id IS NOT NULL;
 `;
 
 export const CREATE_V6_MEMORY_ENTRIES_TABLE_SQL = `

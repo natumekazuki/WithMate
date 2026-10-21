@@ -67,14 +67,18 @@ function layoutMonitorCards(list: HTMLElement) {
   const columns = Number(styles.getPropertyValue("--home-monitor-columns")) || 1;
   const gap = parseFloat(styles.rowGap) || 0;
   const midpoint = Math.ceil(cards.length / columns);
+  const cardHeights = cards.map((card) => card.getBoundingClientRect().height);
   const heights = [0, 0];
   cards.forEach((card, index) => {
     const column = index < midpoint ? 0 : 1;
-    card.style.left = column === 0 ? "0px" : "calc((100% + var(--home-monitor-column-gap)) / 2)";
-    card.style.top = `${heights[column]}px`;
-    heights[column]! += card.getBoundingClientRect().height + gap;
+    const left = column === 0 ? "0px" : "calc((100% + var(--home-monitor-column-gap)) / 2)";
+    const top = `${heights[column]}px`;
+    if (card.style.left !== left) card.style.left = left;
+    if (card.style.top !== top) card.style.top = top;
+    heights[column]! += cardHeights[index]! + gap;
   });
-  list.style.height = `${Math.max(0, ...heights) - (cards.length ? gap : 0)}px`;
+  const height = `${Math.max(0, ...heights) - (cards.length ? gap : 0)}px`;
+  if (list.style.height !== height) list.style.height = height;
 }
 
 function MonitorStatusIcon({

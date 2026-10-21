@@ -2,6 +2,7 @@ import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemet
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
 
 export const PROVIDER_QUOTA_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const PROVIDER_QUOTA_MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 
 type SessionObservabilityServiceOptions = {
   onProviderQuotaTelemetryChanged: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void;
@@ -23,6 +24,8 @@ export class SessionObservabilityService {
   private readonly providerQuotaRefreshTimers = new Map<string, NodeJS.Timeout[]>();
   private readonly providerQuotaPollingTimers = new Map<string, NodeJS.Timeout>();
   private readonly providerQuotaRetryNotBefore = new Map<string, number>();
+  private readonly providerQuotaSuccessNotBefore = new Map<string, number>();
+  private readonly providerQuotaTrailingTimers = new Map<string, NodeJS.Timeout>();
   private readonly providerQuotaOperations = new Set<Promise<ProviderQuotaTelemetry | null>>();
   private disposed = false;
 
@@ -60,6 +63,9 @@ export class SessionObservabilityService {
     this.providerQuotaRefreshPromises.get(providerId)?.controller.abort();
     this.providerQuotaRefreshPromises.delete(providerId);
     this.providerQuotaRetryNotBefore.delete(providerId);
+    this.providerQuotaSuccessNotBefore.delete(providerId);
+    clearTimeout(this.providerQuotaTrailingTimers.get(providerId));
+    this.providerQuotaTrailingTimers.delete(providerId);
     clearInterval(this.providerQuotaPollingTimers.get(providerId));
     this.providerQuotaPollingTimers.delete(providerId);
     const scheduledTimers = this.providerQuotaRefreshTimers.get(providerId) ?? [];
@@ -77,6 +83,8 @@ export class SessionObservabilityService {
       ...this.providerQuotaRefreshTimers.keys(),
       ...this.providerQuotaPollingTimers.keys(),
       ...this.providerQuotaRetryNotBefore.keys(),
+      ...this.providerQuotaSuccessNotBefore.keys(),
+      ...this.providerQuotaTrailingTimers.keys(),
     ]);
     for (const providerId of providerIds) {
       this.clearProviderQuotaTelemetry(providerId);
@@ -109,6 +117,12 @@ export class SessionObservabilityService {
     if (inFlight) {
       return inFlight.promise;
     }
+    if (Date.now() < (this.providerQuotaSuccessNotBefore.get(providerId) ?? 0)) {
+      this.scheduleProviderQuotaTrailingRefresh(providerId, refresh);
+      return this.getProviderQuotaTelemetry(providerId);
+    }
+    clearTimeout(this.providerQuotaTrailingTimers.get(providerId));
+    this.providerQuotaTrailingTimers.delete(providerId);
     const controller = new AbortController();
     const attemptStartedAt = Date.now();
     const tracksStatus = providerId === "codex" || providerId === "claude";
@@ -119,8 +133,9 @@ export class SessionObservabilityService {
       const next = telemetry ?? (tracksStatus
         ? { provider: providerId, updatedAt: null, snapshots: [], status: "unsupported" as const }
         : null);
-      this.setProviderQuotaTelemetry(providerId, next);
       this.providerQuotaRetryNotBefore.delete(providerId);
+      if (tracksStatus) this.providerQuotaSuccessNotBefore.set(providerId, Date.now() + PROVIDER_QUOTA_MIN_REFRESH_INTERVAL_MS);
+      this.setProviderQuotaTelemetry(providerId, next);
       return next;
     }, (error: unknown) => {
       if (this.providerQuotaRefreshPromises.get(providerId) !== operation) return null;
@@ -167,6 +182,10 @@ export class SessionObservabilityService {
     refresh: (signal: AbortSignal) => Promise<ProviderQuotaTelemetry | null>,
   ): void {
     if (this.disposed) return;
+    if (Date.now() < (this.providerQuotaSuccessNotBefore.get(providerId) ?? 0)) {
+      this.scheduleProviderQuotaTrailingRefresh(providerId, refresh);
+      return;
+    }
     const existingTimers = this.providerQuotaRefreshTimers.get(providerId) ?? [];
     for (const timer of existingTimers) {
       clearTimeout(timer);
@@ -178,6 +197,19 @@ export class SessionObservabilityService {
       }, delayMs),
     );
     this.providerQuotaRefreshTimers.set(providerId, timers);
+  }
+
+  private scheduleProviderQuotaTrailingRefresh(
+    providerId: string,
+    refresh: (signal: AbortSignal) => Promise<ProviderQuotaTelemetry | null>,
+  ): void {
+    if (this.providerQuotaTrailingTimers.has(providerId)) return;
+    const timer = setTimeout(() => {
+      if (this.providerQuotaTrailingTimers.get(providerId) !== timer) return;
+      this.providerQuotaTrailingTimers.delete(providerId);
+      void this.refreshProviderQuotaTelemetry(providerId, refresh).catch(() => undefined);
+    }, Math.max(0, (this.providerQuotaSuccessNotBefore.get(providerId) ?? 0) - Date.now()));
+    this.providerQuotaTrailingTimers.set(providerId, timer);
   }
 
   public hasProviderQuotaPolling(providerId: string): boolean {

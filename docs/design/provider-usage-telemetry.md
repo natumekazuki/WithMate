@@ -4,9 +4,9 @@ providerのquotaはapp全体、context usageはSessionごとの一時的な観�
 
 ## Codex・Claudeの取得と更新
 
-有効なCodex・Claudeについて、設定の初期化後に非同期で1回、以後5分ごとに取得する。Homeの起動完了は取得を待たない。Main・Auxiliaryのturn終端では同providerの3秒後の取得を予約し、短時間の終端はまとめる。Windowのsnapshot取得はcache参照のみで、Windowの開閉・focusは取得契機にしない。
+有効なCodex・Claudeについて、設定の初期化後に非同期で1回、以後5分ごとに取得する。Homeの起動完了は取得を待たない。Main・Auxiliaryのturn終端では同providerの3秒後の取得を予約し、短時間の終端はまとめる。短命な取得processの頻繁な起動を避けるため、成功した取得（適用外を含む）の完了後60秒間はprovider単位で再取得を抑制する。抑制中の取得要求は、その60秒の期限で発火する1件へ集約し、後続turnで期限を延期しない。Windowのsnapshot取得はcache参照のみで、Windowの開閉・focusは取得契機にしない。
 
-Mainはproviderごとの同時取得を重複抑止する。WithMateの認証設定変更・有効化では旧cacheと予約を破棄して取得し、無効化では停止する。clear・reset・disposeでは進行中取得のsignalをabortし、破棄前の応答とその完了処理が新しいcache・取得管理へ戻らないようにする。終了・DB再作成時は取得processのcleanupを待つ。
+Mainはproviderごとの同時取得を重複抑止する。WithMateの認証設定変更・有効化では旧cache・予約・最短間隔の状態を破棄して即時取得し、無効化では停止する。clear・reset・disposeでは進行中取得のsignalをabortし、破棄前の応答とその完了処理が新しいcache・取得管理へ戻らないようにする。終了・DB再作成時は取得processのcleanupを待つ。Copilotにはこの60秒の抑制を適用せず、既存の取得・予約を維持する。
 
 未取得は`null`、取得中は`loading`、成功は`ready`、失敗は`error`、契約枠の適用外は`unsupported`とする。失敗時も最終成功値とその`updatedAt`を保持し、成功前の`updatedAt`は`null`にする。失敗直後のturn終端などでは再試行せず、当該取得開始から5分後以降に再試行する。取得不能を使用率0・残量100%・無制限へ変換しない。raw errorや認証情報はtelemetryへ載せない。
 
